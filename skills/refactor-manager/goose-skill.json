@@ -1,0 +1,35 @@
+﻿{
+  "name": "refactor-manager",
+  "version": "1.0.0",
+  "description": "5-phase code refactoring with Manager control at each step",
+  "triggers": ["/refactor", "refactor-manager", "refactor"],
+  "entry_point": "agent_system.refactor_kit:RefactorManager",
+  "parameters": {
+    "target": {
+      "type": "str",
+      "description": "File or module to refactor",
+      "required": true
+    },
+    "agent": {
+      "type": "str",
+      "description": "AI agent to use (goose, claw, or manual)",
+      "default": "goose",
+      "choices": ["goose", "claw", "manual"]
+    },
+    "work_dir": {
+      "type": "str",
+      "description": "Directory for refactoring artifacts",
+      "default": ".refactor"
+    }
+  },
+  "workflow": [
+    "PHASE 1: Analysis (read-only, document invariants)",
+    "PHASE 2: Plan (propose minimal changes)",
+    "PHASE 3: Refactor (execute approved changes)",
+    "PHASE 4: Validation (tests + ruff + regression)",
+    "PHASE 5: Iteration (fix minimal errors if needed)"
+  ],
+  "approval_gates": true,
+  "manager_required": true,
+  "status": "production"
+}

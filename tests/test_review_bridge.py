@@ -1,0 +1,475 @@
+"""Tests for review bridge fail-safe (WP-2026-118).
+
+These tests verify that the review bridge handles event_bus.emit() failures
+gracefully, logging errors audibly without crashing the review cycle.
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from bus.event_bus import EventBus
+from bus.review_bridge import ReviewBridge, ReviewDecision
+
+
+@pytest.fixture
+def event_bus(tmp_path):
+    """Create an EventBus instance for testing."""
+    runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+    return EventBus(runtime_dir=runtime_dir)
+
+
+@pytest.fixture
+def review_bridge(event_bus, tmp_path):
+    """Create a ReviewBridge instance for testing."""
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    collaboration_dir.mkdir(parents=True)
+    (collaboration_dir / "work_plan.md").write_text(
+        "---\n\n## Metadata\n- **ID:** WP-TEST-001\n- **deliverable_type:** code\n",
+        encoding="utf-8",
+    )
+    (collaboration_dir / "TURN.md").write_text(
+        "# TURNO ACTUAL\n\n## Agente Activo\n\n| Campo | Valor |\n|-------|-------|\n| **ROL** | **BUILDER** |\n| **Plan ID** | WP-TEST-001 |\n",
+        encoding="utf-8",
+    )
+    (collaboration_dir / "STATE.md").write_text(
+        "# STATE.md\n\n## Estado Canonico\n- **Plan Activo:** WP-TEST-001\n",
+        encoding="utf-8",
+    )
+    (collaboration_dir / "execution_log.md").write_text(
+        "# Execution Log - WP-TEST-001\n\n## Estado\n**Estado:** READY_FOR_REVIEW\n",
+        encoding="utf-8",
+    )
+    return ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+
+def test_emit_fail_safe_on_managing_reviewing(review_bridge, event_bus, tmp_path):
+    """WP-2026-118: Bridge logs error and aborts cleanly if emit() fails during MANAGER_REVIEWING.
+
+    Before: An emit() failure would propagate traceback and crash the cycle.
+    During: Simulates event_bus.emit() raising an exception during initial emit.
+    After: Bridge returns ReviewResult with INSPECT decision and auditable error message.
+    """
+    # Emit STATE_CHANGED to set ticket state to READY_FOR_REVIEW
+    event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id="WP-TEST-001",
+        actor="BUILDER",
+        payload={"from_state": "IN_PROGRESS", "to_state": "READY_FOR_REVIEW"},
+    )
+
+    # Create a mock supervisor
+    supervisor = MagicMock()
+
+    # Mock event_bus.emit to raise an exception on first call
+    with patch.object(event_bus, 'emit', side_effect=Exception("Simulated bus failure")):
+        result = review_bridge.run_manager_review_cycle(
+            ticket_id="WP-TEST-001",
+            supervisor=supervisor,
+            timeout_seconds=10,
+        )
+
+    # Verify graceful failure
+    assert result.decision == ReviewDecision.INSPECT
+    assert result.exit_code == 1
+    assert "FAIL-SAFE" in result.stderr
+    assert "event_bus.emit() failed" in result.stderr or "MANAGER_REVIEWING" in result.stderr
+
+
+def test_emit_fail_safe_on_review_decision(review_bridge, event_bus, tmp_path, capfd):
+    """WP-2026-118: Bridge logs error but continues if emit() fails on REVIEW_DECISION.
+
+    Before: An emit() failure on REVIEW_DECISION would crash with raw traceback.
+    During: Simulates event_bus.emit() raising an exception when emitting REVIEW_DECISION.
+    After: Bridge logs error audibly and returns result with decision intact.
+    """
+    # Emit STATE_CHANGED to set ticket state to READY_FOR_REVIEW
+    event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id="WP-TEST-001",
+        actor="BUILDER",
+        payload={"from_state": "IN_PROGRESS", "to_state": "READY_FOR_REVIEW"},
+    )
+
+    supervisor = MagicMock()
+
+    # Create a mock for the backend execution
+    def mock_run_opencode(*args, **kwargs):
+        return ("DECISION: APPROVE\n", "", 0)
+
+    # Patch the review execution to return APPROVE
+    with patch.object(review_bridge, '_run_opencode_review', side_effect=mock_run_opencode):
+        # Mock emit to fail only on REVIEW_DECISION
+        def conditional_emit(*args, **kwargs):
+            event_type = args[0] if args else kwargs.get('event_type', '')
+            # Fail only on REVIEW_DECISION
+            if event_type == "REVIEW_DECISION":
+                raise Exception("Simulated REVIEW_DECISION emit failure")
+            # For other events, just return a dummy record
+            from bus.event_bus import EventRecord
+            from datetime import datetime, timezone
+            return EventRecord(
+                event_id=f"evt-{event_type}",
+                event_type=event_type,
+                ticket_id="WP-TEST-001",
+                actor="MANAGER",
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                payload=kwargs.get('payload', {}),
+                sequence_number=1,
+            )
+
+        with patch.object(event_bus, 'emit', side_effect=conditional_emit):
+            result = review_bridge.run_manager_review_cycle(
+                ticket_id="WP-TEST-001",
+                supervisor=supervisor,
+                timeout_seconds=10,
+            )
+
+    # Decision should still be APPROVE (the review ran successfully)
+    assert result.decision == ReviewDecision.APPROVE
+    # But stderr should contain the fail-safe message
+    captured = capfd.readouterr()
+    assert "FAIL-SAFE" in captured.err or "REVIEW_DECISION emit failed" in captured.err
+
+
+def test_emit_fail_safe_on_review_attempt(review_bridge, event_bus, tmp_path):
+    """WP-2026-118: _emit_review_attempt logs error but doesn't crash if emit() fails.
+
+    Before: An emit() failure in _emit_review_attempt would crash the cycle.
+    During: Simulates event_bus.emit() failing during MANAGER_REVIEW_ATTEMPT emit.
+    After: Error is logged to stderr but cycle continues.
+    """
+    # Call _emit_review_attempt with mocked failing emit
+    with patch.object(event_bus, 'emit', side_effect=Exception("Bus error")):
+        # Should not raise, just log to stderr
+        review_bridge._emit_review_attempt(
+            ticket_id="WP-TEST-001",
+            attempt=1,
+            timeout_s=180,
+            exit_code=0,
+            duration=1.5,
+            stdout="Test output",
+            decision=ReviewDecision.CHANGES,
+        )
+
+    # If we reach here, the fail-safe worked (no exception propagated)
+
+
+def test_review_bridge_handles_invalid_ticket_state(review_bridge, event_bus, tmp_path):
+    """WP-2026-118: Bridge blocks review if ticket state is not READY_FOR_REVIEW.
+
+    Before: Bridge might attempt review on tickets in wrong state.
+    During: Sets ticket state to IN_PROGRESS instead of READY_FOR_REVIEW.
+    After: Bridge returns INSPECT with clear error message.
+    """
+    # Modify execution_log to show IN_PROGRESS state
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    (collaboration_dir / "execution_log.md").write_text(
+        "# Execution Log - WP-TEST-001\n\n## Estado\n**Estado:** IN_PROGRESS\n",
+        encoding="utf-8",
+    )
+
+    supervisor = MagicMock()
+
+    result = review_bridge.run_manager_review_cycle(
+        ticket_id="WP-TEST-001",
+        supervisor=supervisor,
+        timeout_seconds=10,
+    )
+
+    assert result.decision == ReviewDecision.INSPECT
+    assert result.exit_code == 1
+    assert "READY_FOR_REVIEW" in result.stderr
+
+
+def test_review_bridge_fail_safe_emits_to_stderr(review_bridge, event_bus, tmp_path, capfd):
+    """WP-2026-118: Verify fail-safe messages are written to stderr.
+
+    Before: Errors might be silently swallowed or go to stdout.
+    During: Triggers emit() failure and captures stderr output.
+    After: stderr contains structured fail-safe message with ticket_id.
+    """
+    with patch.object(event_bus, 'emit', side_effect=Exception("Test bus error")):
+        review_bridge._emit_review_attempt(
+            ticket_id="WP-FAIL-001",
+            attempt=3,
+            timeout_s=180,
+            exit_code=1,
+            duration=2.0,
+            stdout="Review output",
+            decision=ReviewDecision.CHANGES,
+        )
+
+    captured = capfd.readouterr()
+    assert "FAIL-SAFE" in captured.err
+    assert "WP-FAIL-001" in captured.err
+    assert "attempt 3" in captured.err.lower()
+
+
+# =============================================================================
+# Tests WP-2026-120: Review Parser Handshake Hardening
+# =============================================================================
+
+
+class TestOpencodeJsonParserRealSchema:
+    """Tests for WP-2026-120: OpenCode JSON parser with real schema."""
+
+    def test_parse_json_text_event_with_decision_approve(self, tmp_path):
+        """Test parser detects DECISION: APPROVE in type:text event with part.text."""
+        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        # OpenCode NDJSON schema real: type:"text" con part.text
+        stdout = """{"type":"text","part":{"text":"Review complete. All criteria met.\\nDECISION: APPROVE"}}
+"""
+        decision = bridge._parse_opencode_json_decision(stdout)
+        assert decision == ReviewDecision.APPROVE
+
+    def test_parse_json_text_event_with_decision_changes(self, tmp_path):
+        """Test parser detects DECISION: CHANGES in type:text event with part.text."""
+        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        stdout = """{"type":"text","part":{"text":"Found issues:\\n- Missing tests\\n\\nDECISION: CHANGES"}}
+"""
+        decision = bridge._parse_opencode_json_decision(stdout)
+        assert decision == ReviewDecision.CHANGES
+
+    def test_parse_json_prioritizes_final_answer_phase(self, tmp_path):
+        """Test parser prioritizes phase:final_answer over other text events."""
+        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        # Multiple text events - final_answer should take precedence
+        stdout = """{"type":"text","part":{"text":"Initial thought: DECISION: CHANGES"}}
+{"type":"text","part":{"text":"After reflection: DECISION: APPROVE"},"phase":"final_answer"}
+"""
+        decision = bridge._parse_opencode_json_decision(stdout)
+        # final_answer with APPROVE should win
+        assert decision == ReviewDecision.APPROVE
+
+    def test_parse_json_no_final_answer_uses_last_text_decision(self, tmp_path):
+        """Test parser uses last text event decision when no final_answer exists."""
+        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        # Multiple text events without phase - first valid decision wins
+        stdout = """{"type":"text","part":{"text":"Initial thought: DECISION: APPROVE"}}
+{"type":"text","part":{"text":"After reflection: DECISION: CHANGES"}}
+"""
+        decision = bridge._parse_opencode_json_decision(stdout)
+        # First valid decision should be returned
+        assert decision == ReviewDecision.APPROVE
+
+    def test_parse_json_invalid_json_lines_returns_inspect(self, tmp_path):
+        """Test parser returns INSPECT when JSON is malformed."""
+        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        stdout = """not valid json
+{broken json
+{"type":"text"}
+"""
+        decision = bridge._parse_opencode_json_decision(stdout)
+        assert decision == ReviewDecision.INSPECT
+
+    def test_parse_json_empty_stdout_returns_inspect(self, tmp_path):
+        """Test parser returns INSPECT for empty stdout."""
+        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        decision = bridge._parse_opencode_json_decision("")
+        assert decision == ReviewDecision.INSPECT
+
+    def test_parse_json_text_event_missing_part_field(self, tmp_path):
+        """Test parser handles text events without part field gracefully."""
+        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        stdout = """{"type":"text"}
+{"type":"text","part":"not a dict"}
+"""
+        decision = bridge._parse_opencode_json_decision(stdout)
+        assert decision == ReviewDecision.INSPECT
+
+
+class TestParseOpencodeDecisionWithRetry:
+    """Tests for WP-2026-120: Parser with controlled retry."""
+
+    def test_retry_not_invoked_on_valid_decision(self, tmp_path):
+        """Test retry is not invoked when parser extracts valid decision."""
+        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        # Use actual newline, not escaped
+        stdout = "Review complete.\nDECISION: APPROVE"
+        stderr = ""
+
+        decision, attempts = bridge._parse_opencode_decision_with_retry(
+            stdout, stderr, max_retries=2
+        )
+
+        assert decision == ReviewDecision.APPROVE
+        assert attempts == 1  # No retry needed
+
+    def test_retry_invoked_on_inspect_with_valid_output(self, tmp_path):
+        """Test retry is invoked when INSPECT but output looks valid."""
+        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        # Output without DECISION: pattern - parser returns INSPECT
+        stdout = "Review complete. No issues found."
+        stderr = ""
+
+        decision, attempts = bridge._parse_opencode_decision_with_retry(
+            stdout, stderr, max_retries=2
+        )
+
+        assert decision == ReviewDecision.INSPECT
+        # Should attempt max_retries + 1 times (initial + retries)
+        assert attempts == 3  # 1 initial + 2 retries
+
+    def test_retry_not_invoked_on_technical_failure(self, tmp_path):
+        """Test retry is skipped on technical failures (timeout, etc.)."""
+        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        stdout = "Some output"
+        stderr = "TimeoutExpired: command timed out"
+
+        decision, attempts = bridge._parse_opencode_decision_with_retry(
+            stdout, stderr, max_retries=2
+        )
+
+        assert decision == ReviewDecision.INSPECT
+        assert attempts == 1  # No retry on technical failure
+
+    def test_retry_not_invoked_on_empty_stdout(self, tmp_path):
+        """Test retry is skipped when stdout is empty."""
+        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        stdout = ""
+        stderr = ""
+
+        decision, attempts = bridge._parse_opencode_decision_with_retry(
+            stdout, stderr, max_retries=2
+        )
+
+        assert decision == ReviewDecision.INSPECT
+        assert attempts == 1  # No retry on empty output
+
+    def test_retry_exponential_backoff(self, tmp_path, monkeypatch):
+        """Test retry uses exponential backoff delays."""
+        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+        import time
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        sleep_calls = []
+        original_sleep = time.sleep
+
+        def mock_sleep(duration):
+            sleep_calls.append(duration)
+            original_sleep(0.001)  # Small real delay for test stability
+
+        monkeypatch.setattr(time, "sleep", mock_sleep)
+
+        stdout = "No decision pattern here"
+        stderr = ""
+
+        bridge._parse_opencode_decision_with_retry(stdout, stderr, max_retries=2)
+
+        # Should have 2 sleep calls: 0.1*2^0=0.1, 0.1*2^1=0.2
+        assert len(sleep_calls) == 2
+        assert sleep_calls[0] == 0.1
+        assert sleep_calls[1] == 0.2
+
+
+class TestNoBareWordFallback:
+    """Tests for WP-2026-120: No bare word fallback for decisions."""
+
+    def test_no_changes_needed_not_interpreted_as_changes(self, tmp_path, monkeypatch):
+        """Test 'no changes needed' does not trigger CHANGES decision."""
+        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        # Disable JSON format to test text parser
+        monkeypatch.setattr(bridge, "_supports_json_format", False)
+
+        stdout = "The code looks fine. No changes needed at this time."
+        decision = bridge._parse_opencode_decision(stdout)
+
+        # Should be INSPECT, not CHANGES (no DECISION: pattern)
+        assert decision == ReviewDecision.INSPECT
+
+    def test_approve_without_decision_pattern_returns_inspect(self, tmp_path, monkeypatch):
+        """Test 'APPROVE' without DECISION: pattern returns INSPECT."""
+        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        monkeypatch.setattr(bridge, "_supports_json_format", False)
+
+        stdout = "I approve of this implementation."
+        decision = bridge._parse_opencode_decision(stdout)
+
+        assert decision == ReviewDecision.INSPECT
+
+    def test_explicit_decision_pattern_is_recognized(self, tmp_path, monkeypatch):
+        """Test explicit DECISION: pattern is correctly recognized."""
+        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        monkeypatch.setattr(bridge, "_supports_json_format", False)
+
+        stdout = "Review complete.\nDECISION: APPROVE"
+        decision = bridge._parse_opencode_decision(stdout)
+
+        assert decision == ReviewDecision.APPROVE

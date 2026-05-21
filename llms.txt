@@ -1,0 +1,51 @@
+# orquestacion_agentes
+
+> Multi-agent orchestration template (Manager/Builder/Supervisor). Python 3.10+ runtime, OpenCode backend, terminal-driven flow, canonical state in `.agent/`, skills under `skills/`, hard scope gate, anti-fabrication verification protocol. Local audit + repo compare + refactor manager are first-class skills.
+
+Repo: https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main
+
+## Core entry points
+
+- [AGENTS.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/AGENTS.md)
+- [CLAUDE.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/CLAUDE.md)
+- [QUICKSTART.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/QUICKSTART.md)
+- [PROJECT.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/PROJECT.md)
+- [CHANGELOG.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/CHANGELOG.md)
+
+## Configuration
+
+- [INTERACTION_MODES.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/INTERACTION_MODES.md)
+- [agents.json](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/.agent/config/agents.json)
+- [pyproject.toml](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/pyproject.toml)
+
+## Debugging & introspection
+
+- [local_audit.py](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/scripts/local_audit.py)
+- [agent_controller.py](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/.agent/agent_controller.py)
+- [test_manager_smoke.ps1](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/scripts/test_manager_smoke.ps1)
+
+## Philosophy & onboarding
+
+- [session_bootstrap.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/prompts/session_bootstrap.md)
+- [refactor_bootstrap.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/prompts/refactor_bootstrap.md)
+
+## Skills (read RESOLVER first)
+
+- [skills/local-audit](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/skills/local-audit/SKILL.md)
+- [skills/repo-compare](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/skills/repo-compare/SKILL.md)
+- [skills/refactor-manager](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/skills/refactor-manager/SKILL.md)
+- [skills/project-finalize](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/skills/project-finalize/SKILL.md)
+- [skills/version-changelog](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/skills/version-changelog/SKILL.md)
+
+## Operational tips
+
+- `python scripts/local_audit.py [--quick]` — 40-line snapshot (version, active plan, git, skills, recent WPs, memory).
+- `python .agent/agent_controller.py --validate --json --force` — drift detection.
+- `python scripts/run_pytest_safe.py` — test suite for current scope.
+- `ruff check . && ruff format .` — lint + format.
+- `uv run pip-audit .` — supply-chain audit.
+- `python scripts/build_llms.py` — regenerate this file + llms-full.txt.
+
+## Forks
+
+If you fork, override the URL base before regenerating: `LLMS_REPO_BASE=https://raw.githubusercontent.com/your-org/your-fork/main python scripts/build_llms.py`.

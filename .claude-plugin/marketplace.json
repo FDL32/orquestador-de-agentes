@@ -1,0 +1,114 @@
+﻿{
+  "name": "z-scripts-karpathy",
+  "id": "z-scripts-karpathy",
+  "owner": {
+    "name": "z_scripts"
+  },
+  "metadata": {
+    "description": "Complete multi-agent orchestration system with Karpathy behavioral principles, anti-pattern reference, security architecture, and 13+ reusable skills",
+    "version": "1.0.0",
+    "category": "productivity",
+    "keywords": [
+      "multi-agent",
+      "orchestration",
+      "karpathy-principles",
+      "behavioral-guidelines",
+      "anti-patterns",
+      "security",
+      "skills",
+      "quality-gates"
+    ]
+  },
+  "plugins": [
+    {
+      "name": "z-scripts-karpathy-suite",
+      "source": "./",
+      "description": "Multi-agent orchestration framework with 4 Karpathy behavioral principles, anti-pattern detection, security-hardened hooks, Quality Gates (ruff+pytest), and 13+ micro-skills",
+      "version": "1.0.0",
+      "author": {
+        "name": "z_scripts Framework"
+      },
+      "license": "MIT",
+      "keywords": [
+        "multi-agent",
+        "orchestration",
+        "karpathy",
+        "behavioral-guidelines",
+        "anti-patterns",
+        "security",
+        "skills",
+        "quality-gates",
+        "manager-builder",
+        "agent-system"
+      ],
+      "category": "productivity",
+      "skills": [
+        {
+          "name": "karpathy-guidelines",
+          "description": "4 Behavioral Principles (Think Before Coding, Simplicity First, Surgical Changes, Goal-Driven Execution)",
+          "scope": "all"
+        },
+        {
+          "name": "anti-patterns-reference",
+          "description": "Dataset of 6 anti-patterns with before/after examples in Python, z_scripts context",
+          "scope": "all"
+        },
+        {
+          "name": "security-hardening",
+          "description": "guard_paths.py hook, 3-zone architecture (privada/publica/quarantine), secret management",
+          "scope": "builder"
+        },
+        {
+          "name": "quality-gates-runner",
+          "description": "Unified Quality Gates: ruff check/format + pytest-safe + compilation validation",
+          "scope": "builder"
+        },
+        {
+          "name": "graphify-knowledge",
+          "description": "Persistent knowledge graph (70x less tokens) for large codebases",
+          "scope": "manager"
+        },
+        {
+          "name": "version-changelog",
+          "description": "SemVer 2.0 + Keep a Changelog automation",
+          "scope": "manager"
+        },
+        {
+          "name": "project-finalize",
+          "description": "Professional project closeout with Plan Type: FINALIZATION",
+          "scope": "manager"
+        },
+        {
+          "name": "agent-status",
+          "description": "Real-time system status (turno, fases, Quality Gates, state drift detection)",
+          "scope": "all"
+        },
+        {
+          "name": "update-config",
+          "description": "Configure Claude Code harness: hooks, settings, permissions, env vars",
+          "scope": "manager"
+        },
+        {
+          "name": "keybindings-help",
+          "description": "Customize keyboard shortcuts and keybindings",
+          "scope": "all"
+        },
+        {
+          "name": "simplify-code",
+          "description": "Review code for reuse, quality, efficiency â€” fix issues found",
+          "scope": "builder"
+        },
+        {
+          "name": "fewer-permission-prompts",
+          "description": "Scan transcripts for common calls, add allowlist to reduce permission prompts",
+          "scope": "manager"
+        },
+        {
+          "name": "loop-scheduler",
+          "description": "Run prompt/command on recurring interval (cron-like, self-paced, or one-time)",
+          "scope": "all"
+        }
+      ]
+    }
+  ]
+}

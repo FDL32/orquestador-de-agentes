@@ -1,0 +1,32 @@
+# Host-Setup Hook (PowerShell) — invocado por scripts/install_agent_system.py
+#
+# Contrato:
+#  - cwd = raíz del proyecto destino
+#  - exit 0 = éxito (install continúa)
+#  - exit != 0 = abortar install
+#  - El instalador muestra las primeras 20 líneas + pide confirmación humana
+#
+# Casos de uso típicos:
+#  - Generar .env.example a partir de plantilla
+#  - Crear directorios runtime/ cache/ que el destino necesita
+#  - Validar deps específicas del dominio (node, pandoc, etc.)
+#  - Inicializar git hooks específicos del proyecto
+#
+# NO usar para:
+#  - Modificar archivos del bundle copiado (eso es scope-violation)
+#  - Operaciones destructivas sin confirmar
+#  - Credenciales o secretos (van en .env del destino, no aquí)
+#
+# Instrucciones de activación:
+#  1. Renombra este archivo a .agent/host-setup.ps1 (sin .example)
+#  2. Edita para añadir tu setup específico de dominio
+#  3. El instalador lo detectará automáticamente en la próxima instalación
+#
+# Origen del patrón: OpenHands .openhands/setup.sh (MIT)
+# Adaptado para orquestacion_agentes en WP-2026-094
+
+$ErrorActionPreference = 'Stop'
+Write-Host "[host-setup] Bootstrap del proyecto destino (template)."
+# New-Item -ItemType Directory -Force -Path logs, cache | Out-Null
+# Copy-Item -Path config.example.json -Destination config.json -ErrorAction SilentlyContinue
+Write-Host "[host-setup] Listo."

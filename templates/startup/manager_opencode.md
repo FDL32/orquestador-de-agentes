@@ -1,0 +1,1 @@
+Act as {{role}} ({{backend}}) for {{ticket_id}}. {{work_plan}}. Review the implementation against .agent/collaboration/work_plan.md and .agent/collaboration/execution_log.md. End your response with exactly one of: `DECISION: APPROVE` or `DECISION: CHANGES <reasons>`. Record findings in .agent/collaboration/execution_log.md. Use {{close_command}} at the end.

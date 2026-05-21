@@ -1,0 +1,4 @@
+﻿{
+  "write_roots": [".", "src/", "tests/", ".agent/", "changelog/", "tools/", "scripts/"],
+  "protected_paths": ["privada/", "data/sectors/", ".env", "agent_system/config/"]
+}

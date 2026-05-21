@@ -1,0 +1,14 @@
+{
+  "agent_core_version": "v9.14.0",
+  "template_version": "1.0.0",
+  "status": "canonical",
+  "confidence": "high",
+  "last_updated": "2026-05-19T09:44:00+02:00",
+  "components": {
+    "agent_controller": "1.0.0",
+    "hooks": "1.0.0",
+    "rules": "1.0.0"
+  },
+  "markers_validated": true,
+  "drift_detected": false
+}
