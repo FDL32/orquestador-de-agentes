@@ -28,6 +28,7 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Iterable
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -51,6 +52,7 @@ HOST_SETUP_CANDIDATES = ("host-setup.sh", "host-setup.ps1")
 
 # Manifest file for portable workspace allowlist
 MANIFEST_WORKSPACE = "MANIFEST.workspace"
+MANIFEST_WORKSPACE_VERSION = "1.0"
 
 
 def read_json(path: Path) -> dict | None:
@@ -411,6 +413,65 @@ def flip_profile_in_destination(project_agent: Path, dry_run: bool = False) -> N
         print(f"[WARN] Failed to flip active_profile in {config_file}: {e}")
 
 
+def write_motor_destination_link(
+    project_agent: Path,
+    motor_root: Path,
+    destination_root: Path,
+    motor_version: str | None,
+    destination_id: str | None = None,
+    dry_run: bool = False,
+) -> None:
+    """
+    Write the motor-destination link file in the destination workspace.
+
+    Before: Destination .agent/config/ directory exists; link file may or may not exist.
+    During: Creates/overwrites motor_destination_link.json with schema fields.
+    After: Link file exists with motor_root, destination_root, motor_version, etc.
+
+    Schema:
+    - motor_root: absolute or derived path to the external motor
+    - destination_root: absolute path to the destination workspace
+    - motor_version: technical version from .agent/.version_manifest.json
+    - destination_id: stable identifier for the destination (optional, derived from path)
+    - created_at: ISO-8601 UTC timestamp of install/sync
+    - manifest_version: MANIFEST.workspace contract version applied
+
+    Args:
+        project_agent: Path to destination .agent/ directory.
+        motor_root: Path to the motor central repository.
+        destination_root: Path to the destination project root.
+        motor_version: Version string from motor's .version_manifest.json.
+        destination_id: Optional stable identifier; defaults to destination_root name.
+        dry_run: If True, simulate without writing.
+    """
+    config_dir = project_agent / "config"
+    link_file = config_dir / "motor_destination_link.json"
+
+    if destination_id is None:
+        destination_id = destination_root.name
+
+    payload = {
+        "motor_root": str(motor_root.resolve()),
+        "destination_root": str(destination_root.resolve()),
+        "motor_version": motor_version or "unknown",
+        "destination_id": destination_id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "manifest_version": MANIFEST_WORKSPACE_VERSION,
+    }
+
+    if dry_run:
+        print(f"[DRY-RUN] Would write motor-destination link: {link_file}")
+        print(f"[DRY-RUN] Link payload: {json.dumps(payload, indent=2)}")
+        return
+
+    config_dir.mkdir(parents=True, exist_ok=True)
+    link_file.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    print(f"[INFO] Wrote motor-destination link: {link_file}")
+
+
 def _detect_host_setup(destination: Path) -> Path | None:
     """
     Return the first existing host-setup.{sh,ps1} in destination/.agent/, or None.
@@ -512,6 +573,19 @@ def install_agent_system(
         template_agent, project_agent, dry_run=dry_run, allowlist=allowlist
     )
     flip_profile_in_destination(project_agent, dry_run=dry_run)
+
+    # Write motor-destination link file
+    motor_version = get_manifest_version(template_agent)
+    destination_root = project_agent.parent
+    motor_root = template_agent.parent
+    write_motor_destination_link(
+        project_agent=project_agent,
+        motor_root=motor_root,
+        destination_root=destination_root,
+        motor_version=motor_version,
+        dry_run=dry_run,
+    )
+
     integrity_ok = ensure_hooks_config_integrity(project_agent, dry_run=dry_run)
 
     if dry_run:
@@ -584,6 +658,18 @@ def sync_agent_system(  # noqa: C901
         template_agent, project_agent, dry_run=dry_run, allowlist=allowlist
     )
     flip_profile_in_destination(project_agent, dry_run=dry_run)
+
+    # Write motor-destination link file (idempotent update)
+    motor_version = get_manifest_version(template_agent)
+    destination_root = project_agent.parent
+    motor_root = template_agent.parent
+    write_motor_destination_link(
+        project_agent=project_agent,
+        motor_root=motor_root,
+        destination_root=destination_root,
+        motor_version=motor_version,
+        dry_run=dry_run,
+    )
 
     integrity_ok = ensure_hooks_config_integrity(project_agent, dry_run=dry_run)
 

@@ -1,11 +1,11 @@
 # MANIFEST.workspace - Contrato del Workspace Destino
 #
 # Este manifiesto define el contrato del workspace de proyecto destino
-# que recibe el motor central desde orquestacion_agentes.
+# que recibe el motor central desde orquestador_de_agentes.
 #
 # Reglas:
 # - El workspace destino conserva SOLO estado, memoria, eventos y configuracion del proyecto.
-# - El motor central vive en el repo fuente unico (orquestacion_agentes).
+# - El motor central vive en el repo fuente unico (orquestador_de_agentes).
 # - El destino NO copia el motor completo, solo consume lo allowlisted.
 #
 # Categorias:
@@ -35,6 +35,7 @@
 
 # Configuracion del proyecto destino
 .agent/config/agents.json
+.agent/config/motor_destination_link.json
 
 # =============================================================================
 # EXPLICITAMENTE EXCLUIDO (motor central vive en repo fuente unico)
@@ -115,6 +116,13 @@
 # El destino NO copia el motor: prepara un workspace (.agent/ con estado,
 # memoria, eventos y config) y referencia el motor externo. El instalador
 # (scripts/install_agent_system.py) actua como bootstrapper del destino.
+#
+# Enlace motor-destino (WP-2026-123):
+# - El instalador escribe .agent/config/motor_destination_link.json en cada
+#   --install / --sync para dejar trazabilidad portable del workspace instalado.
+# - Schema: motor_root, destination_root, motor_version, destination_id,
+#   created_at (ISO-8601 UTC), manifest_version.
+# - Este archivo se conserva en el destino y se actualiza en cada sync.
 #
 # Superficies vivas vs historicas (WP-2026-107):
 # - Vivas: las escribe el codigo activamente (NO archivar).

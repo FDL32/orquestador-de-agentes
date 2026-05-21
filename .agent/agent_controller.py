@@ -40,7 +40,7 @@ if sys.platform == "win32":
 # WP-2026-122: project_root is now resolved dynamically via runtime.project_root
 _AGENT_DIR = Path(__file__).parent.resolve()
 _PROJECT_ROOT_DERIVED = _AGENT_DIR.parent
-for _path in (str(_PROJECT_ROOT_DERIVED), str(_AGENT_DIR)):
+for _path in (str(_AGENT_DIR), str(_PROJECT_ROOT_DERIVED)):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 

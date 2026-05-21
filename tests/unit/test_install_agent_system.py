@@ -12,6 +12,7 @@ from scripts.install_agent_system import (
     detect_destination_residues,
     ensure_hooks_config_integrity,
     flip_profile_in_destination,
+    write_motor_destination_link,
 )
 
 
@@ -224,3 +225,106 @@ def test_maybe_invoke_auto_yes_skips_prompt(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     # Should NOT contain the prompt text
     assert "Execute this script?" not in out
+
+
+# =============================================================================
+# Motor-destination link tests (WP-2026-123)
+# =============================================================================
+
+
+def test_write_motor_destination_link_creates_file(tmp_path):
+    """Verify that write_motor_destination_link creates the link file with correct schema."""
+    from scripts.install_agent_system import MANIFEST_WORKSPACE_VERSION
+
+    project_agent = tmp_path / ".agent"
+    project_agent.mkdir(parents=True, exist_ok=True)
+    motor_root = tmp_path / "motor"
+    motor_root.mkdir(parents=True, exist_ok=True)
+    destination_root = tmp_path
+
+    write_motor_destination_link(
+        project_agent=project_agent,
+        motor_root=motor_root,
+        destination_root=destination_root,
+        motor_version="v9.14.0",
+        destination_id="test-dest",
+        dry_run=False,
+    )
+
+    link_file = project_agent / "config" / "motor_destination_link.json"
+    assert link_file.exists()
+
+    data = json.loads(link_file.read_text(encoding="utf-8"))
+    assert data["motor_root"] == str(motor_root.resolve())
+    assert data["destination_root"] == str(destination_root.resolve())
+    assert data["motor_version"] == "v9.14.0"
+    assert data["destination_id"] == "test-dest"
+    assert "created_at" in data
+    assert data["manifest_version"] == MANIFEST_WORKSPACE_VERSION
+
+
+def test_write_motor_destination_link_default_destination_id(tmp_path):
+    """When destination_id is None, it defaults to destination_root.name."""
+    project_agent = tmp_path / ".agent"
+    project_agent.mkdir(parents=True, exist_ok=True)
+    motor_root = tmp_path / "motor"
+    motor_root.mkdir(parents=True, exist_ok=True)
+    destination_root = tmp_path / "my_project"
+    destination_root.mkdir(parents=True, exist_ok=True)
+
+    write_motor_destination_link(
+        project_agent=project_agent,
+        motor_root=motor_root,
+        destination_root=destination_root,
+        motor_version="v9.14.0",
+        destination_id=None,
+        dry_run=False,
+    )
+
+    link_file = project_agent / "config" / "motor_destination_link.json"
+    data = json.loads(link_file.read_text(encoding="utf-8"))
+    assert data["destination_id"] == "my_project"
+
+
+def test_write_motor_destination_link_unknown_version(tmp_path):
+    """When motor_version is None, it defaults to 'unknown'."""
+    project_agent = tmp_path / ".agent"
+    project_agent.mkdir(parents=True, exist_ok=True)
+    motor_root = tmp_path / "motor"
+    motor_root.mkdir(parents=True, exist_ok=True)
+    destination_root = tmp_path
+
+    write_motor_destination_link(
+        project_agent=project_agent,
+        motor_root=motor_root,
+        destination_root=destination_root,
+        motor_version=None,
+        dry_run=False,
+    )
+
+    link_file = project_agent / "config" / "motor_destination_link.json"
+    data = json.loads(link_file.read_text(encoding="utf-8"))
+    assert data["motor_version"] == "unknown"
+
+
+def test_write_motor_destination_link_dry_run(tmp_path, capsys):
+    """When dry_run=True, no file is written but message is printed."""
+    project_agent = tmp_path / ".agent"
+    project_agent.mkdir(parents=True, exist_ok=True)
+    motor_root = tmp_path / "motor"
+    motor_root.mkdir(parents=True, exist_ok=True)
+    destination_root = tmp_path
+
+    write_motor_destination_link(
+        project_agent=project_agent,
+        motor_root=motor_root,
+        destination_root=destination_root,
+        motor_version="v9.14.0",
+        dry_run=True,
+    )
+
+    link_file = project_agent / "config" / "motor_destination_link.json"
+    assert not link_file.exists()
+
+    out = capsys.readouterr().out
+    assert "Would write motor-destination link" in out

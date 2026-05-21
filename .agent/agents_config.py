@@ -10,14 +10,21 @@ WP-2026-122: Uses runtime.project_root for dynamic project root resolution.
 import argparse
 import json
 import shutil
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+
 # WP-2026-122: Single source of truth for project root resolution
-from runtime.project_root import get_agent_dir
+_AGENT_DIR = Path(__file__).parent.resolve()
+_PROJECT_ROOT_DERIVED = _AGENT_DIR.parent
+if str(_PROJECT_ROOT_DERIVED) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT_DERIVED))
+
+from runtime.project_root import get_agent_dir  # noqa: E402
 
 
 class _LazyPath:
