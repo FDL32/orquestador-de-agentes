@@ -38,6 +38,7 @@ def _project_root() -> Path:
         return resolve_project_root()
     return _SCRIPT_ROOT
 
+
 from bus.review_bridge import ReviewBridge  # noqa: E402
 from bus.state_machine import StateMachine, TicketState  # noqa: E402
 from bus.supervisor import SequentialTicketSupervisor  # noqa: E402

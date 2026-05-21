@@ -29,6 +29,7 @@ except ImportError:
     get_collab_dir = None
     resolve_project_root = None
 
+
 class _LazyPath:
     def __init__(self, resolver):
         self._resolver = resolver
@@ -59,6 +60,7 @@ def _project_root() -> Path:
     if resolve_project_root is not None:
         return resolve_project_root()
     return _collab_dir().parent.parent
+
 
 COLLAB_DIR = _LazyPath(_collab_dir)
 PROJECT_ROOT = _LazyPath(_project_root)

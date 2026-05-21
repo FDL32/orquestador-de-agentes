@@ -3,6 +3,7 @@ UI State Projector - Projects event bus state to UI JSON.
 
 WP-2026-122: Uses runtime.project_root for dynamic project root resolution.
 """
+
 from __future__ import annotations
 
 import json
