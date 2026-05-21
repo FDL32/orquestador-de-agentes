@@ -409,10 +409,17 @@ def _sync_mark_ready_targets(plan_id: str, plan_content: str) -> None:
     log_status_before = get_status(read_file(EXEC_LOG), "**Estado:**")
     if BUS_AVAILABLE and event_bus:
         from bus.state_machine import StateMachine, TicketState
+
         events = event_bus.read_events(ticket_id=plan_id)
-        bus_state = StateMachine.derive_state_from_events([e.to_dict() for e in events]) if events else TicketState.UNKNOWN
+        bus_state = (
+            StateMachine.derive_state_from_events([e.to_dict() for e in events])
+            if events
+            else TicketState.UNKNOWN
+        )
         # Use bus state if available, fallback to log
-        from_state = bus_state.value if bus_state != TicketState.UNKNOWN else log_status_before
+        from_state = (
+            bus_state.value if bus_state != TicketState.UNKNOWN else log_status_before
+        )
     else:
         from_state = log_status_before
 
@@ -2286,6 +2293,7 @@ def _materialize_state_transition(
         updated_state = state_content
         # Replace the current state line
         import re
+
         updated_state = re.sub(
             r"^- \*\*Estado actual:\*\* .+",
             f"- **Estado actual:** {to_state}",
@@ -2325,9 +2333,18 @@ def _handle_escalate_human_gate(ticket_id: str, json_output: bool) -> int:
 
     if ticket_id != current_plan_id:
         if json_output:
-            print(json.dumps({"error": f"Ticket {ticket_id} does not match active ticket {current_plan_id}"}, indent=2))
+            print(
+                json.dumps(
+                    {
+                        "error": f"Ticket {ticket_id} does not match active ticket {current_plan_id}"
+                    },
+                    indent=2,
+                )
+            )
         else:
-            print(f"[ERROR] Ticket {ticket_id} does not match active ticket {current_plan_id}")
+            print(
+                f"[ERROR] Ticket {ticket_id} does not match active ticket {current_plan_id}"
+            )
         return 1
 
     # Materialize the transition canonically
@@ -2340,7 +2357,11 @@ def _handle_escalate_human_gate(ticket_id: str, json_output: bool) -> int:
     )
 
     if json_output:
-        print(json.dumps({"status": "escalated_to_human_gate", "ticket_id": ticket_id}, indent=2))
+        print(
+            json.dumps(
+                {"status": "escalated_to_human_gate", "ticket_id": ticket_id}, indent=2
+            )
+        )
     else:
         print(f"[OK] Ticket {ticket_id} escalated to HUMAN_GATE (inspect).")
 
@@ -2369,14 +2390,19 @@ def _assert_bus_projection_consistency(ticket_id: str) -> list[str]:
         return warnings
 
     from bus.state_machine import StateMachine
+
     bus_state = StateMachine.derive_state_from_events([e.to_dict() for e in events])
 
     # Get projection states
     state_content = read_file(STATE_FILE)
     exec_log_content = read_file(EXEC_LOG)
 
-    state_md_state = get_status(state_content, "**Estado actual:**") if state_content else "UNKNOWN"
-    exec_log_state = get_status(exec_log_content, "**Estado:**") if exec_log_content else "UNKNOWN"
+    state_md_state = (
+        get_status(state_content, "**Estado actual:**") if state_content else "UNKNOWN"
+    )
+    exec_log_state = (
+        get_status(exec_log_content, "**Estado:**") if exec_log_content else "UNKNOWN"
+    )
 
     # Compare
     if bus_state.value != state_md_state:
@@ -2416,37 +2442,71 @@ def _handle_request_changes(  # noqa: C901
 
     if not current_plan_id or current_plan_id == "N/A":
         if json_output:
-            print(json.dumps({"error": "No active ticket found in work_plan.md"}, indent=2))
+            print(
+                json.dumps(
+                    {"error": "No active ticket found in work_plan.md"}, indent=2
+                )
+            )
         else:
             print("[ERROR] No active ticket found in work_plan.md")
         return 1
 
     if ticket_id != current_plan_id:
         if json_output:
-            print(json.dumps({"error": f"Ticket {ticket_id} does not match active ticket {current_plan_id}"}, indent=2))
+            print(
+                json.dumps(
+                    {
+                        "error": f"Ticket {ticket_id} does not match active ticket {current_plan_id}"
+                    },
+                    indent=2,
+                )
+            )
         else:
-            print(f"[ERROR] Ticket {ticket_id} does not match active ticket {current_plan_id}")
+            print(
+                f"[ERROR] Ticket {ticket_id} does not match active ticket {current_plan_id}"
+            )
         return 1
 
     # WP-2026-124: Check bus-derived state first
     if BUS_AVAILABLE and event_bus:
         from bus.state_machine import StateMachine, TicketState
+
         events = event_bus.read_events(ticket_id=ticket_id)
-        bus_state = StateMachine.derive_state_from_events([e.to_dict() for e in events]) if events else TicketState.UNKNOWN
+        bus_state = (
+            StateMachine.derive_state_from_events([e.to_dict() for e in events])
+            if events
+            else TicketState.UNKNOWN
+        )
 
         # Fallback to execution_log.md if bus state is UNKNOWN
         if bus_state == TicketState.UNKNOWN:
             if "READY_FOR_REVIEW" not in log_status:
                 if json_output:
-                    print(json.dumps({"error": f"Ticket {ticket_id} is not in READY_FOR_REVIEW"}, indent=2))
+                    print(
+                        json.dumps(
+                            {"error": f"Ticket {ticket_id} is not in READY_FOR_REVIEW"},
+                            indent=2,
+                        )
+                    )
                 else:
-                    print(f"[ERROR] Ticket {ticket_id} is not in READY_FOR_REVIEW (current state: {log_status})")
+                    print(
+                        f"[ERROR] Ticket {ticket_id} is not in READY_FOR_REVIEW (current state: {log_status})"
+                    )
                 return 1
         elif bus_state != TicketState.READY_FOR_REVIEW:
             if json_output:
-                print(json.dumps({"error": f"Ticket {ticket_id} bus state is {bus_state.value}, not READY_FOR_REVIEW"}, indent=2))
+                print(
+                    json.dumps(
+                        {
+                            "error": f"Ticket {ticket_id} bus state is {bus_state.value}, not READY_FOR_REVIEW"
+                        },
+                        indent=2,
+                    )
+                )
             else:
-                print(f"[ERROR] Ticket {ticket_id} bus state is {bus_state.value}, not READY_FOR_REVIEW")
+                print(
+                    f"[ERROR] Ticket {ticket_id} bus state is {bus_state.value}, not READY_FOR_REVIEW"
+                )
             return 1
 
     rejection_count = 0
@@ -2500,7 +2560,10 @@ def _handle_request_changes(  # noqa: C901
     else:
         to_state = "IN_PROGRESS"
         # Fallback: legacy route without bus
-        update_log_status(to_state, f"Manager requested changes ({rejection_count} rejections). Requeuing Builder.")
+        update_log_status(
+            to_state,
+            f"Manager requested changes ({rejection_count} rejections). Requeuing Builder.",
+        )
         action = {
             "role": "BUILDER",
             "context_file": ".builder_rules",
@@ -2524,14 +2587,36 @@ def _handle_request_changes(  # noqa: C901
 
     if to_state == "HUMAN_GATE":
         if json_output:
-            print(json.dumps({"status": "escalated_to_human_gate", "ticket_id": ticket_id, "rejections": rejection_count}, indent=2))
+            print(
+                json.dumps(
+                    {
+                        "status": "escalated_to_human_gate",
+                        "ticket_id": ticket_id,
+                        "rejections": rejection_count,
+                    },
+                    indent=2,
+                )
+            )
         else:
-            print(f"[OK] Ticket {ticket_id} escalated to HUMAN_GATE after {rejection_count} rejections.")
+            print(
+                f"[OK] Ticket {ticket_id} escalated to HUMAN_GATE after {rejection_count} rejections."
+            )
     else:
         if json_output:
-            print(json.dumps({"status": "changes_requested", "ticket_id": ticket_id, "rejections": rejection_count}, indent=2))
+            print(
+                json.dumps(
+                    {
+                        "status": "changes_requested",
+                        "ticket_id": ticket_id,
+                        "rejections": rejection_count,
+                    },
+                    indent=2,
+                )
+            )
         else:
-            print(f"[OK] Ticket {ticket_id} transitioned to IN_PROGRESS ({rejection_count} rejections).")
+            print(
+                f"[OK] Ticket {ticket_id} transitioned to IN_PROGRESS ({rejection_count} rejections)."
+            )
 
     return 0
 

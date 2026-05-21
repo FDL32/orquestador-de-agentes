@@ -557,9 +557,7 @@ class ReviewBridge:
                 # En Windows, shell=True con una lista hace que cmd.exe trate
                 # args[1:] como argumentos del propio shell: opencode arrancaria
                 # sin ninguno. list2cmdline produce el string correcto.
-                run_args = (
-                    subprocess.list2cmdline(cmd_args) if use_shell else cmd_args
-                )
+                run_args = subprocess.list2cmdline(cmd_args) if use_shell else cmd_args
                 result = subprocess.run(
                     run_args,
                     capture_output=True,
@@ -1355,7 +1353,13 @@ class ReviewBridge:
             # via CLI, same as changes. This ensures STATE_CHANGED is emitted.
             controller = self.project_root / ".agent" / "agent_controller.py"
             subprocess.run(
-                [sys.executable, str(controller), "--escalate-human-gate", "--ticket", ticket_id],
+                [
+                    sys.executable,
+                    str(controller),
+                    "--escalate-human-gate",
+                    "--ticket",
+                    ticket_id,
+                ],
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
