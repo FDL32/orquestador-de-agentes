@@ -9,7 +9,9 @@ def test_launcher_uses_dynamic_executable_resolution() -> None:
     content = SCRIPT_PATH.read_text(encoding="utf-8")
 
     assert "Resolve-HostShellExecutable" in content
-    assert "Resolve-ManagerExecutable" in content
+    # El backend del Manager se resuelve dinamicamente desde agents.json
+    # (la antigua Resolve-ManagerExecutable hardcodeaba codex y era codigo muerto).
+    assert "Get-BackendFromConfig -Role 'MANAGER'" in content
     assert "Resolve-KiloExecutable" in content
     assert "Repair-StartupBridgeState" in content
     assert "BridgeStateCorrupt" in content

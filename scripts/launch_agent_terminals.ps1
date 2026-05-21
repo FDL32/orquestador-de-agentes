@@ -873,12 +873,6 @@ function Get-CanonicalFilesForOpenCode {
     return $canonicalFiles
 }
 
-function Resolve-ManagerExecutable {
-    param([string]$OverridePath)
-
-    return Resolve-BackendExecutable -BackendName 'codex' -OverridePath $OverridePath
-}
-
 function Resolve-KiloExecutable {
     return Resolve-BackendExecutable -BackendName 'kilo' -OverridePath ''
 }
