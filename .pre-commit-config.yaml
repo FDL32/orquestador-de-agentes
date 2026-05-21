@@ -14,13 +14,13 @@ repos:
       - id: check-ast
         exclude: ^tests/sandbox/
       - id: end-of-file-fixer
-        exclude: '^(\.agent/runtime/|tests/sandbox/|.*\.svg$|\.agent/context/project_map\.md$)'
+        exclude: '^(\.agent/runtime/|\.agent/collaboration/|tests/sandbox/|.*\.svg$|\.agent/context/project_map\.md$)'
       - id: mixed-line-ending
         args: [--fix=lf]
-        exclude: '^(\.agent/runtime/|tests/sandbox/|.*\.ps1$|.*\.cmd$|.*\.bat$|\.agent/context/project_map\.md$|\.claude/settings\.json$)'
+        exclude: '^(\.agent/runtime/|\.agent/collaboration/|tests/sandbox/|.*\.ps1$|.*\.cmd$|.*\.bat$|\.agent/context/project_map\.md$|\.claude/settings\.json$)'
       - id: trailing-whitespace
         args: [--markdown-linebreak-ext=md]
-        exclude: '^(\.agent/runtime/|tests/sandbox/)'
+        exclude: '^(\.agent/runtime/|\.agent/collaboration/|tests/sandbox/)'
 
   - repo: local
     hooks:
