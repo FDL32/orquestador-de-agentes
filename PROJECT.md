@@ -11,15 +11,14 @@
 
 ## Current Cycle
 
-- Active ticket: WP-2026-113 READY_FOR_REVIEW (Central motor release consolidation).
-- Mode: release consolidation / drift cleanup.
+- Active ticket: WP-2026-122 IN_PLANNING (Project root runtime parametric implementation).
+- Mode: implementation planning / WP-A kickoff.
 - Builder backend: OpenCode (model: opencode-go/qwen3.5-plus).
 - Manager backend: OpenCode (model: configurable via agents.json).
 - Target model: Qwen3.5 Plus [NO VERIFICADO como provider/model].
-- Outcome: Motor central consolidado tras WP-2026-111 y WP-2026-112.
-- Manifiestos, documentacion e instalador alineados con arquitectura de motor externo.
-- Superficies vivas normalizadas sin drift de tickets cerrados.
-- BUILDER_EXIT emitido, esperando aprobacion del Manager.
+- Outcome: WP-A implementation plan drafted from the WP-2026-121 audit deliverable.
+- Manifiestos, documentacion e instalador siguen alineados con la arquitectura de motor externo.
+- Superficies vivas normalizadas para empezar la implementacion de project_root.
 
 ## Source of truth
 
