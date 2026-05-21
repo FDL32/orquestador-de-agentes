@@ -65,20 +65,22 @@ def _resolve_manager_executable(explicit: Path | None) -> Path:
             return explicit
         raise FileNotFoundError(f"Manager backend executable not found: {explicit}")
 
-    detected = shutil.which("codex")
+    # Resuelve el ejecutable del backend asignado a MANAGER en agents.json.
+    # WP-2026-072 movio el Manager a OpenCode; no se asume Codex (legacy).
+    try:
+        from agents_config import get_backend_for_role, load_agents_config
+
+        backend = get_backend_for_role("MANAGER", load_agents_config(PROJECT_ROOT))
+    except Exception:
+        backend = "opencode"  # agents.json ilegible -> default OpenCode
+
+    detected = shutil.which(backend)
     if detected:
         return Path(detected)
 
-    vscode_extensions = Path.home() / ".vscode" / "extensions"
-    if vscode_extensions.exists():
-        matches = sorted(
-            vscode_extensions.glob("openai.chatgpt-*/bin/windows-x86_64/codex.exe")
-        )
-        if matches:
-            return matches[-1]
-
     raise FileNotFoundError(
-        "No se pudo localizar el ejecutable del backend Manager. Usa --backend-path."
+        f"No se pudo localizar el ejecutable del backend Manager '{backend}'. "
+        "Pasa --backend-path con la ruta explicita."
     )
 
 
