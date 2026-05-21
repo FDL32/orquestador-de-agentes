@@ -401,8 +401,21 @@ def _scope_gate_allows_close(gate_result: dict, scope_override: str | None) -> b
 
 
 def _sync_mark_ready_targets(plan_id: str, plan_content: str) -> None:
-    """Update TURN.md and STATE.md after mark-ready."""
+    """Update TURN.md and STATE.md after mark-ready.
+
+    WP-2026-124: Uses bus-derived state as authority, not execution_log.md.
+    """
+    # WP-2026-124: Get bus-derived state
     log_status_before = get_status(read_file(EXEC_LOG), "**Estado:**")
+    if BUS_AVAILABLE and event_bus:
+        from bus.state_machine import StateMachine, TicketState
+        events = event_bus.read_events(ticket_id=plan_id)
+        bus_state = StateMachine.derive_state_from_events([e.to_dict() for e in events]) if events else TicketState.UNKNOWN
+        # Use bus state if available, fallback to log
+        from_state = bus_state.value if bus_state != TicketState.UNKNOWN else log_status_before
+    else:
+        from_state = log_status_before
+
     action = {
         "role": "MANAGER",
         "context_file": ".manager_rules",
@@ -433,6 +446,21 @@ def _sync_mark_ready_targets(plan_id: str, plan_content: str) -> None:
         latest_state_event = event_bus.latest_event(
             ticket_id=plan_id, event_type="STATE_CHANGED"
         )
+        if (
+            not latest_state_event
+            or latest_state_event.payload.get("to_state") != "READY_FOR_REVIEW"
+        ):
+            event_bus.emit(
+                event_type="STATE_CHANGED",
+                ticket_id=plan_id,
+                actor="BUILDER",
+                payload={
+                    "from_state": from_state,
+                    "to_state": "READY_FOR_REVIEW",
+                    "reason": "Builder completed implementation",
+                    "source": "mark-ready",
+                },
+            )
         if (
             not latest_state_event
             or latest_state_event.payload.get("to_state") != "READY_FOR_REVIEW"
@@ -2151,6 +2179,218 @@ def _handle_manager_approve(  # noqa: C901 - flag handler intentionally branches
     return 0
 
 
+def _materialize_state_transition(
+    ticket_id: str,
+    to_state: str,
+    reason: str,
+    actor: str = "SUPERVISOR",
+    source: str = "canonical",
+) -> None:
+    """Materialize a state transition canonically.
+
+    This is the shared route for all state transitions (approve, changes, inspect).
+    It ensures that STATE.md, TURN.md, execution_log.md and the bus are synchronized.
+
+    Before: Requires ticket_id, to_state, reason, and optional actor/source.
+    During: Emits STATE_CHANGED to bus, updates execution_log.md, TURN.md, STATE.md.
+    After: All projections reflect the new state derived from the bus event.
+    """
+    plan_content = read_file(WORK_PLAN)
+    log_content = read_file(EXEC_LOG)
+    log_status = get_status(log_content, "**Estado:**")
+
+    # Emit STATE_CHANGED to bus first (bus is the authority)
+    if BUS_AVAILABLE and event_bus:
+        event_bus.emit(
+            event_type="STATE_CHANGED",
+            ticket_id=ticket_id,
+            actor=actor,
+            payload={
+                "from_state": log_status,
+                "to_state": to_state,
+                "reason": reason,
+                "source": source,
+            },
+        )
+
+    # Sync execution_log.md
+    update_log_status(to_state, reason)
+
+    # Sync TURN.md based on target state
+    if to_state == "HUMAN_GATE":
+        action = {
+            "role": "SUPERVISOR",
+            "context_file": ".supervisor_rules",
+            "workflow_file": ".agent/workflows/supervisor_workflow.md",
+            "instruction": f"Escalated to HUMAN_GATE: {reason}",
+            "plan_id": ticket_id,
+            "plan_status": get_status(plan_content, "**Estado:**"),
+            "log_status": to_state,
+            "action_type": "HUMAN_GATE",
+            "plan_type": get_plan_type(plan_content),
+        }
+    elif to_state == "IN_PROGRESS":
+        action = {
+            "role": "BUILDER",
+            "context_file": ".builder_rules",
+            "workflow_file": ".agent/workflows/builder_workflow.md",
+            "instruction": f"Requeued to Builder: {reason}",
+            "plan_id": ticket_id,
+            "plan_status": get_status(plan_content, "**Estado:**"),
+            "log_status": to_state,
+            "action_type": "IMPLEMENT",
+            "plan_type": get_plan_type(plan_content),
+        }
+    elif to_state == "READY_TO_CLOSE":
+        action = {
+            "role": "SUPERVISOR",
+            "context_file": ".supervisor_rules",
+            "workflow_file": ".agent/workflows/supervisor_workflow.md",
+            "instruction": f"Ticket approved, pending close: {reason}",
+            "plan_id": ticket_id,
+            "plan_status": get_status(plan_content, "**Estado:**"),
+            "log_status": to_state,
+            "action_type": "CLOSEOUT",
+            "plan_type": get_plan_type(plan_content),
+        }
+    elif to_state == "COMPLETED":
+        action = {
+            "role": "MANAGER",
+            "context_file": ".manager_rules",
+            "workflow_file": ".agent/workflows/manager_workflow.md",
+            "instruction": f"Ticket {ticket_id} closed. Create new work_plan.md for next cycle.",
+            "plan_id": "N/A",
+            "plan_status": "COMPLETED",
+            "log_status": "COMPLETED",
+            "action_type": "CREATE_PLAN",
+        }
+    else:
+        # Fallback for unknown states
+        action = {
+            "role": "UNKNOWN",
+            "context_file": "N/A",
+            "workflow_file": "N/A",
+            "instruction": f"State transition to {to_state}: {reason}",
+            "plan_id": ticket_id,
+            "plan_status": get_status(plan_content, "**Estado:**"),
+            "log_status": to_state,
+            "action_type": "STATE_TRANSITION",
+            "plan_type": get_plan_type(plan_content),
+        }
+
+    update_turn_file(action)
+
+    # Sync STATE.md
+    state_content = read_file(STATE_FILE)
+    if state_content:
+        updated_state = state_content
+        # Replace the current state line
+        import re
+        updated_state = re.sub(
+            r"^- \*\*Estado actual:\*\* .+",
+            f"- **Estado actual:** {to_state}",
+            updated_state,
+            flags=re.MULTILINE,
+        )
+        write_file(STATE_FILE, updated_state)
+
+
+def _handle_escalate_human_gate(ticket_id: str, json_output: bool) -> int:
+    """Handle --escalate-human-gate flag for inspect decisions.
+
+    This emits STATE_CHANGED -> HUMAN_GATE (actor SUPERVISOR) and synchronizes
+    all projections (STATE.md, TURN.md, execution_log.md) via the canonical
+    materialization route. Does NOT touch the rejection counter.
+
+    Before: Requires ticket_id string.
+    During: Calls _materialize_state_transition with to_state=HUMAN_GATE.
+    After: All projections reflect HUMAN_GATE state, bus has STATE_CHANGED event.
+    """
+    if not ticket_id or ticket_id == "N/A":
+        if json_output:
+            print(json.dumps({"error": "No ticket_id provided"}, indent=2))
+        else:
+            print("[ERROR] No ticket_id provided. Use --ticket WP-XXXX")
+        return 1
+
+    plan_content = read_file(WORK_PLAN)
+    current_plan_id = get_plan_id(plan_content)
+
+    if not current_plan_id or current_plan_id == "N/A":
+        if json_output:
+            print(json.dumps({"error": "No active ticket found"}, indent=2))
+        else:
+            print("[ERROR] No active ticket found in work_plan.md")
+        return 1
+
+    if ticket_id != current_plan_id:
+        if json_output:
+            print(json.dumps({"error": f"Ticket {ticket_id} does not match active ticket {current_plan_id}"}, indent=2))
+        else:
+            print(f"[ERROR] Ticket {ticket_id} does not match active ticket {current_plan_id}")
+        return 1
+
+    # Materialize the transition canonically
+    _materialize_state_transition(
+        ticket_id=ticket_id,
+        to_state="HUMAN_GATE",
+        reason="Manager inspect: human review required",
+        actor="SUPERVISOR",
+        source="escalate-human-gate",
+    )
+
+    if json_output:
+        print(json.dumps({"status": "escalated_to_human_gate", "ticket_id": ticket_id}, indent=2))
+    else:
+        print(f"[OK] Ticket {ticket_id} escalated to HUMAN_GATE (inspect).")
+
+    return 0
+
+
+def _assert_bus_projection_consistency(ticket_id: str) -> list[str]:
+    """Assert that bus-derived state matches projection state.
+
+    WP-2026-124: Post-cycle verification that bus and projections are aligned.
+    Does NOT auto-heal - returns warnings for manual intervention.
+
+    Before: Requires ticket_id string.
+    During: Compares bus-derived state with STATE.md and execution_log.md states.
+    After: Returns list of drift warnings (empty if consistent).
+    """
+    warnings = []
+    if not BUS_AVAILABLE or not event_bus:
+        warnings.append("Bus not available for consistency check")
+        return warnings
+
+    # Get bus-derived state
+    events = event_bus.read_events(ticket_id=ticket_id)
+    if not events:
+        warnings.append(f"No events in bus for ticket {ticket_id}")
+        return warnings
+
+    from bus.state_machine import StateMachine
+    bus_state = StateMachine.derive_state_from_events([e.to_dict() for e in events])
+
+    # Get projection states
+    state_content = read_file(STATE_FILE)
+    exec_log_content = read_file(EXEC_LOG)
+
+    state_md_state = get_status(state_content, "**Estado actual:**") if state_content else "UNKNOWN"
+    exec_log_state = get_status(exec_log_content, "**Estado:**") if exec_log_content else "UNKNOWN"
+
+    # Compare
+    if bus_state.value != state_md_state:
+        warnings.append(
+            f"DRIFT: bus_state={bus_state.value} != STATE.md={state_md_state}"
+        )
+    if bus_state.value != exec_log_state:
+        warnings.append(
+            f"DRIFT: bus_state={bus_state.value} != execution_log.md={exec_log_state}"
+        )
+
+    return warnings
+
+
 def _handle_request_changes(  # noqa: C901
     ticket_id: str, json_output: bool, force_mode: bool
 ) -> int:
@@ -2159,6 +2399,8 @@ def _handle_request_changes(  # noqa: C901
     Transitions ticket to IN_PROGRESS (requeue builder) if N < threshold, or
     HUMAN_GATE if N >= threshold. The threshold is the single source of truth
     in agents.json (manager_review.max_attempts); see get_human_gate_threshold().
+
+    WP-2026-124: Now uses bus-derived state via _materialize_state_transition.
     """
     if not ticket_id or ticket_id == "N/A":
         if json_output:
@@ -2174,44 +2416,38 @@ def _handle_request_changes(  # noqa: C901
 
     if not current_plan_id or current_plan_id == "N/A":
         if json_output:
-            print(
-                json.dumps(
-                    {"error": "No active ticket found in work_plan.md"}, indent=2
-                )
-            )
+            print(json.dumps({"error": "No active ticket found in work_plan.md"}, indent=2))
         else:
             print("[ERROR] No active ticket found in work_plan.md")
         return 1
 
     if ticket_id != current_plan_id:
         if json_output:
-            print(
-                json.dumps(
-                    {
-                        "error": f"Ticket {ticket_id} does not match active ticket {current_plan_id}"
-                    },
-                    indent=2,
-                )
-            )
+            print(json.dumps({"error": f"Ticket {ticket_id} does not match active ticket {current_plan_id}"}, indent=2))
         else:
-            print(
-                f"[ERROR] Ticket {ticket_id} does not match active ticket {current_plan_id}"
-            )
+            print(f"[ERROR] Ticket {ticket_id} does not match active ticket {current_plan_id}")
         return 1
 
-    if "READY_FOR_REVIEW" not in log_status:
-        if json_output:
-            print(
-                json.dumps(
-                    {"error": f"Ticket {ticket_id} is not in READY_FOR_REVIEW"},
-                    indent=2,
-                )
-            )
-        else:
-            print(
-                f"[ERROR] Ticket {ticket_id} is not in READY_FOR_REVIEW (current state: {log_status})"
-            )
-        return 1
+    # WP-2026-124: Check bus-derived state first
+    if BUS_AVAILABLE and event_bus:
+        from bus.state_machine import StateMachine, TicketState
+        events = event_bus.read_events(ticket_id=ticket_id)
+        bus_state = StateMachine.derive_state_from_events([e.to_dict() for e in events]) if events else TicketState.UNKNOWN
+
+        # Fallback to execution_log.md if bus state is UNKNOWN
+        if bus_state == TicketState.UNKNOWN:
+            if "READY_FOR_REVIEW" not in log_status:
+                if json_output:
+                    print(json.dumps({"error": f"Ticket {ticket_id} is not in READY_FOR_REVIEW"}, indent=2))
+                else:
+                    print(f"[ERROR] Ticket {ticket_id} is not in READY_FOR_REVIEW (current state: {log_status})")
+                return 1
+        elif bus_state != TicketState.READY_FOR_REVIEW:
+            if json_output:
+                print(json.dumps({"error": f"Ticket {ticket_id} bus state is {bus_state.value}, not READY_FOR_REVIEW"}, indent=2))
+            else:
+                print(f"[ERROR] Ticket {ticket_id} bus state is {bus_state.value}, not READY_FOR_REVIEW")
+            return 1
 
     rejection_count = 0
     if BUS_AVAILABLE and event_bus:
@@ -2253,68 +2489,18 @@ def _handle_request_changes(  # noqa: C901
             else f"Escalated to HUMAN_GATE after {rejection_count} rejections"
         )
 
-        event_bus.emit(
-            event_type="STATE_CHANGED",
+        # WP-2026-124: Use canonical materialization route
+        _materialize_state_transition(
             ticket_id=ticket_id,
+            to_state=to_state,
+            reason=reason,
             actor="SUPERVISOR",
-            payload={
-                "from_state": log_status,
-                "to_state": to_state,
-                "reason": reason,
-                "source": "request-changes",
-            },
+            source="request-changes",
         )
     else:
         to_state = "IN_PROGRESS"
-
-    # Sync markdowns
-    if to_state == "HUMAN_GATE":
-        update_log_status(
-            "HUMAN_GATE",
-            f"Manager requested changes. Escalated to HUMAN_GATE after {rejection_count} rejections.",
-        )
-        action = {
-            "role": "SUPERVISOR",
-            "context_file": ".supervisor_rules",
-            "workflow_file": ".agent/workflows/supervisor_workflow.md",
-            "instruction": f"Escalated to HUMAN_GATE after {rejection_count} rejections on {ticket_id}.",
-            "plan_id": ticket_id,
-            "plan_status": get_status(plan_content, "**Estado:**"),
-            "log_status": "HUMAN_GATE",
-            "action_type": "HUMAN_GATE",
-            "plan_type": get_plan_type(plan_content),
-        }
-        update_turn_file(action)
-
-        state_content = read_file(STATE_FILE)
-        if state_content:
-            updated_state = state_content.replace(
-                "- **Estado actual:** READY_FOR_REVIEW",
-                "- **Estado actual:** HUMAN_GATE",
-                1,
-            )
-            write_file(STATE_FILE, updated_state)
-
-        if json_output:
-            print(
-                json.dumps(
-                    {
-                        "status": "escalated_to_human_gate",
-                        "ticket_id": ticket_id,
-                        "rejections": rejection_count,
-                    },
-                    indent=2,
-                )
-            )
-        else:
-            print(
-                f"[OK] Ticket {ticket_id} escalated to HUMAN_GATE after {rejection_count} rejections."
-            )
-    else:
-        update_log_status(
-            "IN_PROGRESS",
-            f"Manager requested changes ({rejection_count} rejections). Requeuing Builder.",
-        )
+        # Fallback: legacy route without bus
+        update_log_status(to_state, f"Manager requested changes ({rejection_count} rejections). Requeuing Builder.")
         action = {
             "role": "BUILDER",
             "context_file": ".builder_rules",
@@ -2322,12 +2508,11 @@ def _handle_request_changes(  # noqa: C901
             "instruction": f"Manager requested changes on {ticket_id}. Re-implement fixes.",
             "plan_id": ticket_id,
             "plan_status": get_status(plan_content, "**Estado:**"),
-            "log_status": "IN_PROGRESS",
+            "log_status": to_state,
             "action_type": "IMPLEMENT",
             "plan_type": get_plan_type(plan_content),
         }
         update_turn_file(action)
-
         state_content = read_file(STATE_FILE)
         if state_content:
             updated_state = state_content.replace(
@@ -2337,21 +2522,16 @@ def _handle_request_changes(  # noqa: C901
             )
             write_file(STATE_FILE, updated_state)
 
+    if to_state == "HUMAN_GATE":
         if json_output:
-            print(
-                json.dumps(
-                    {
-                        "status": "changes_requested",
-                        "ticket_id": ticket_id,
-                        "rejections": rejection_count,
-                    },
-                    indent=2,
-                )
-            )
+            print(json.dumps({"status": "escalated_to_human_gate", "ticket_id": ticket_id, "rejections": rejection_count}, indent=2))
         else:
-            print(
-                f"[OK] Ticket {ticket_id} transitioned to IN_PROGRESS ({rejection_count} rejections)."
-            )
+            print(f"[OK] Ticket {ticket_id} escalated to HUMAN_GATE after {rejection_count} rejections.")
+    else:
+        if json_output:
+            print(json.dumps({"status": "changes_requested", "ticket_id": ticket_id, "rejections": rejection_count}, indent=2))
+        else:
+            print(f"[OK] Ticket {ticket_id} transitioned to IN_PROGRESS ({rejection_count} rejections).")
 
     return 0
 
@@ -2535,6 +2715,10 @@ def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
     # Check for --bootstrap-ticket
     if "--bootstrap-ticket" in sys.argv:
         return _handle_bootstrap_ticket(json_output)
+
+    # Check for --escalate-human-gate
+    if "--escalate-human-gate" in sys.argv:
+        return _handle_escalate_human_gate(ticket_id, json_output)
 
     # Check for specific flag handlers
     for flag, handler in FLAG_HANDLERS.items():

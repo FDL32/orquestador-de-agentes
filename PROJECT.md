@@ -2,8 +2,8 @@
 
 - Project: `orquestacion_agentes`
 - Version: `v9.14.0`
-- State: WP-2026-123 COMPLETED (Workspace minimo del destino - enlace motor-destino).
-- Last review: 2026-05-20
+- State: WP-2026-123 COMPLETED (Workspace minimo del destino).
+- Last review: 2026-05-21
 - Mission: keep the central motor clean, versioned once, and externally referenced
   - The repo is the unique source of operational code (motor central).
   - Destination projects keep only their `.agent/` workspace (state, memory, events, config).
@@ -11,13 +11,14 @@
 
 ## Current Cycle
 
-- Active ticket: WP-2026-123 COMPLETED (Workspace minimo del destino).
-- Mode: implementation / Builder turn completed.
+- Active ticket: WP-2026-124 IN_PROGRESS (Drift canonico del bus).
+- Mode: implementation / Builder turn started.
 - Builder backend: OpenCode (model: opencode-go/qwen3.5-plus).
 - Manager backend: OpenCode (model: configurable via agents.json).
 - Target model: Qwen3.5 Plus [NO VERIFICADO como provider/model].
-- Outcome: workspace minimo implantado con archivo de enlace motor-destino.
-- Manifiestos, documentacion e instalador alineados con el contrato del enlace.
+- Outcome: route unica de materializacion en ejecucion.
+- Manifiestos, documentacion e instalador siguen alineados con la arquitectura de motor externo.
+- El bus canonico es la autoridad y las proyecciones deben derivarse de el.
 
 ## Source of truth
 
@@ -66,6 +67,12 @@ Objetivo: mantener `orquestacion_agentes/` como motor central unico y abrir el p
 - Abrir motor y destino como workspace separados en VS Code.
 - Mantener el motor en `orquestacion_agentes/` y el proyecto destino limpio.
 - La operacion debe seguir funcionando con el mismo contrato canonico de bus y colaboracion.
+
+### WP-2026-124 - Drift canonico del bus
+- Unificar la materializacion de transiciones de estado.
+- Hacer que los guards lean el bus derivado.
+- Sincronizar las proyecciones desde la autoridad canonica.
+- Validar con tests end-to-end que bus y proyecciones no vuelven a divergir.
 
 ### Regla de secuencia
 - Consolidar/publicar primero la base estable actual.

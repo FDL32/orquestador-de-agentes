@@ -1,5 +1,5 @@
 # Mapa del Proyecto
-**Actualizado:** 2026-05-21 22:15:25
+**Actualizado:** 2026-05-21 23:34:52
 
 ## Estructura de Archivos
 ```
@@ -7,11 +7,11 @@
 .agent\agent_controller.py
 .agent\agents_config.py
 .agent\collaboration\.session_state.json
-.agent\collaboration\AUDIT_WP-2026-122.md
+.agent\collaboration\_archive\plan_audit\AUDIT_WP-2026-122.md
+.agent\collaboration\_archive\plan_audit\PLAN_WP-2026-122.md
 .agent\collaboration\AUDIT_WP-2026-123.md
 .agent\collaboration\execution_log.md
 .agent\collaboration\notifications.md
-.agent\collaboration\PLAN_WP-2026-122.md
 .agent\collaboration\PLAN_WP-2026-123.md
 .agent\collaboration\review_queue.md
 .agent\collaboration\STATE.md
@@ -35,6 +35,7 @@
 .agent\known_models.json
 .agent\project_manifest.toml
 .agent\runtime\__init__.py
+.agent\runtime\builder_lock.txt
 .agent\runtime\circuit_breaker.json
 .agent\runtime\deliverables\WP-2026-121-project-root-audit.md
 .agent\runtime\manager_bridge_state.json
@@ -52,6 +53,5 @@
 .agent\runtime\uv-cache\archive-v0\0AM_tUYG25RkXBFK-YV4R\colorama\tests\__init__.py
 .agent\runtime\uv-cache\archive-v0\0AM_tUYG25RkXBFK-YV4R\colorama\tests\ansi_test.py
 .agent\runtime\uv-cache\archive-v0\0AM_tUYG25RkXBFK-YV4R\colorama\tests\ansitowin32_test.py
-.agent\runtime\uv-cache\archive-v0\0AM_tUYG25RkXBFK-YV4R\colorama\tests\initialise_test.py
-... (+2387 archivos mas)
+... (+2388 archivos mas)
 ```

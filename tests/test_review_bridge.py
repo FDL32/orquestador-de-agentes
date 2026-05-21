@@ -100,33 +100,34 @@ def test_emit_fail_safe_on_review_decision(review_bridge, event_bus, tmp_path, c
     def mock_run_opencode(*args, **kwargs):
         return ("DECISION: APPROVE\n", "", 0)
 
-    # Patch the review execution to return APPROVE
+    # Patch the review execution to return APPROVE AND mock backend to use opencode
     with patch.object(review_bridge, '_run_opencode_review', side_effect=mock_run_opencode):
-        # Mock emit to fail only on REVIEW_DECISION
-        def conditional_emit(*args, **kwargs):
-            event_type = args[0] if args else kwargs.get('event_type', '')
-            # Fail only on REVIEW_DECISION
-            if event_type == "REVIEW_DECISION":
-                raise Exception("Simulated REVIEW_DECISION emit failure")
-            # For other events, just return a dummy record
-            from bus.event_bus import EventRecord
-            from datetime import datetime, timezone
-            return EventRecord(
-                event_id=f"evt-{event_type}",
-                event_type=event_type,
-                ticket_id="WP-TEST-001",
-                actor="MANAGER",
-                timestamp=datetime.now(timezone.utc).isoformat(),
-                payload=kwargs.get('payload', {}),
-                sequence_number=1,
-            )
+        with patch.object(review_bridge, '_get_manager_backend', return_value='opencode'):
+            # Mock emit to fail only on REVIEW_DECISION
+            def conditional_emit(*args, **kwargs):
+                event_type = args[0] if args else kwargs.get('event_type', '')
+                # Fail only on REVIEW_DECISION
+                if event_type == "REVIEW_DECISION":
+                    raise Exception("Simulated REVIEW_DECISION emit failure")
+                # For other events, just return a dummy record
+                from bus.event_bus import EventRecord
+                from datetime import datetime, timezone
+                return EventRecord(
+                    event_id=f"evt-{event_type}",
+                    event_type=event_type,
+                    ticket_id="WP-TEST-001",
+                    actor="MANAGER",
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    payload=kwargs.get('payload', {}),
+                    sequence_number=1,
+                )
 
-        with patch.object(event_bus, 'emit', side_effect=conditional_emit):
-            result = review_bridge.run_manager_review_cycle(
-                ticket_id="WP-TEST-001",
-                supervisor=supervisor,
-                timeout_seconds=10,
-            )
+            with patch.object(event_bus, 'emit', side_effect=conditional_emit):
+                result = review_bridge.run_manager_review_cycle(
+                    ticket_id="WP-TEST-001",
+                    supervisor=supervisor,
+                    timeout_seconds=10,
+                )
 
     # Decision should still be APPROVE (the review ran successfully)
     assert result.decision == ReviewDecision.APPROVE

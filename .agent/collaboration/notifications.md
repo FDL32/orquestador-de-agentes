@@ -80,3 +80,10 @@ Sin notificaciones. Proyeccion viva regenerada por `agent_controller.py`.
 - **Plan ID:** WP-2026-123
 - **Decision:** INSPECT
 - **Source:** manager backend exec review
+
+---
+
+### MANAGER_REVIEW - 2026-05-22 00:15:59
+- **Plan ID:** WP-2026-124
+- **Decision:** INSPECT
+- **Source:** manager backend exec review
