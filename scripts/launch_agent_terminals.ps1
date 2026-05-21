@@ -91,9 +91,8 @@ function Assert-CanonicalProjectRoot {
     param([Parameter(Mandatory)] [string]$ProjectRoot)
 
     $resolvedRoot = (Resolve-Path -LiteralPath $ProjectRoot).Path
-    if ((Split-Path -Leaf $resolvedRoot) -ne 'orquestacion_agentes') {
-        throw "La autoridad operativa unica debe ser orquestacion_agentes. Raiz recibida: $resolvedRoot"
-    }
+    # La raiz es canonica por su estructura .agent/, no por el nombre de la
+    # carpeta: el repo puede renombrarse (desacople motor/destino, WP-2026-072+).
 
     $requiredPaths = @(
         '.agent\collaboration\work_plan.md',
