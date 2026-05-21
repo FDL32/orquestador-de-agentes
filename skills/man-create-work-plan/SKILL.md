@@ -184,12 +184,44 @@ AÃ±adir notificaciÃ³n:
 **Estado:** â³ PENDING
 ```
 
+## Handoff canonico al Builder (OBLIGATORIO)
+
+Preparar la documentacion para el Builder NO es solo aprobar el work_plan.
+Son SIETE artefactos. Omitir uno deja el ciclo incompleto. Error recurrente:
+olvidar `PLAN_WP-*.md` y `AUDIT_WP-*.md`.
+
+Checklist obligatorio, en orden:
+
+1. `work_plan.md` — contenido completo + `Estado: APPROVED`.
+2. `PLAN_WP-XXXX.md` — estrategia tecnica del ticket (en `.agent/collaboration/`).
+3. `AUDIT_WP-XXXX.md` — criterios que el Manager verificara en el review.
+4. `execution_log.md` — `Estado: IN_PROGRESS`, bitacora inicializada.
+5. `TURN.md` — regenerar a `ROL=BUILDER`:
+   `python .agent/agent_controller.py --reset-turn --force`
+   Sin `--reset-turn` el controller NO sobrescribe un TURN.md existente.
+6. `STATE.md` — lo regenera el mismo comando del paso 5.
+7. Bus — emitir `STATE_CHANGED -> IN_PROGRESS`:
+   `python .agent/agent_controller.py --bootstrap-ticket --json`
+   Idempotente (`already_bootstrapped` si ya existe).
+
+Verificacion final OBLIGATORIA:
+`python .agent/agent_controller.py --validate --json --force` -> 0 errores.
+
+Solo con los 7 artefactos + validate en verde el turno es del Builder y el
+launcher abrira su ventana del Builder.
+
 ## Output Format
 
-El plan debe generar:
-1. `work_plan.md` completo y aprobado
-2. `notifications.md` con handoff al Builder
-3. ADR opcional en `.agent/decisions/` (si trade-off significativo)
+El handoff al Builder genera/actualiza, sin omitir ninguno:
+1. `work_plan.md` (APPROVED)
+2. `PLAN_WP-XXXX.md` (estrategia tecnica)
+3. `AUDIT_WP-XXXX.md` (criterios de auditoria)
+4. `execution_log.md` (IN_PROGRESS)
+5. `TURN.md` + `STATE.md` (regenerados con `--reset-turn`)
+6. Bus: evento `STATE_CHANGED -> IN_PROGRESS`
+7. `--validate` en verde
+8. `notifications.md` con handoff al Builder (opcional)
+9. ADR en `.agent/decisions/` (opcional, si trade-off significativo)
 
 ## References
 
