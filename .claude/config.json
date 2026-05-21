@@ -1,0 +1,41 @@
+﻿{
+  "projectName": "Agent System Multi-Agente",
+  "description": "Sistema Manager + Builder con Quality Gates, Hook System y Agentes Nativos v5",
+  "version": "5.0",
+  "maxFilesToTrack": 10,
+  "customInstructions": [
+    "Leer siempre .agent_common_rules.md primero",
+    "Ejecutar python .agent/agent_controller.py al inicio de cada mensaje",
+    "Respetar lÃ­mites de sesiÃ³n (>2h)",
+    "Verificar turno antes de actuar"
+  ],
+  "workingDirectory": "agent_system",
+  "excludePaths": [
+    "**/privada/**",
+    "**/.venv/**",
+    "**/__pycache__/**",
+    "**/.pytest_cache/**",
+    "**/.ruff_cache/**",
+    "**/node_modules/**",
+    "**/.git/**"
+  ],
+  "priorityFiles": [
+    ".agent_common_rules.md",
+    ".manager_rules",
+    ".builder_rules",
+    ".agent/agent_controller.py",
+    ".agent/collaboration/work_plan.md",
+    ".agent/collaboration/execution_log.md",
+    ".agent/collaboration/review_queue.md",
+    ".agent/collaboration/notifications.md",
+    ".agent/collaboration/TURN.md"
+  ],
+  "workflow": {
+    "alwaysExecuteFirst": "python .agent/agent_controller.py",
+    "sessionLimits": {
+      "maxHours": 2,
+      "maxFilesModified": 5,
+      "maxSameFileEdits": 3
+    }
+  }
+}

@@ -1,0 +1,1136 @@
+[CmdletBinding()]
+param(
+    # Default deferred to after param-binding because $PSScriptRoot,
+    # $PSCommandPath, and $MyInvocation.MyCommand.Path can all be empty/null
+    # during param-block default evaluation when PowerShell 5.1 is invoked via
+    # subprocess argv. Supervisor relaunch path SHOULD pass -ProjectRoot
+    # explicitly to avoid any path-detection dance.
+    [string]$ProjectRoot,
+    [string]$ManagerBackendPath,
+    [string]$BuilderPrompt,
+    [switch]$LaunchBuilder = $true,
+    [switch]$LaunchSupervisor = $true,
+    [switch]$LaunchBridge = $true,
+    [switch]$LaunchMonitor = $true,
+    [switch]$LaunchWatcher = $false,
+    [switch]$StrictLaunch = $true,
+    [switch]$ResumeBuilder = $false,
+    [switch]$OnlyBuilder = $false
+)
+
+$ErrorActionPreference = 'Stop'
+
+# Resolve ProjectRoot AFTER param binding (here $PSScriptRoot, $PSCommandPath
+# and $MyInvocation.MyCommand.Path are reliably populated).
+if (-not $ProjectRoot) {
+    $scriptDir = $null
+    if ($PSScriptRoot) {
+        $scriptDir = $PSScriptRoot
+    } elseif ($PSCommandPath) {
+        $scriptDir = Split-Path -Parent $PSCommandPath
+    } elseif ($MyInvocation -and $MyInvocation.MyCommand -and $MyInvocation.MyCommand.Path) {
+        $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+    }
+    if (-not $scriptDir) {
+        throw "Cannot resolve script directory automatically. Pass -ProjectRoot <path> explicitly."
+    }
+    $ProjectRoot = (Resolve-Path (Join-Path $scriptDir '..')).Path
+}
+
+Set-StrictMode -Version Latest
+
+# OnlyBuilder: when invoked from supervisor requeue (subprocess), force-disable
+# the other launchers. Avoids the PowerShell 5.1 SwitchParameter cast issue
+# where `-LaunchSupervisor:$false` or `:0` arrive as strings via argv and fail
+# to bind. This switch is additive — interactive launching unaffected.
+if ($OnlyBuilder) {
+    $LaunchSupervisor = $false
+    $LaunchBridge = $false
+    $LaunchMonitor = $false
+    $LaunchWatcher = $false
+}
+
+function ConvertTo-SingleQuotedLiteral {
+    param([Parameter(Mandatory)] [string]$Text)
+    return "'" + ($Text -replace "'", "''") + "'"
+}
+
+function Resolve-VenvPython {
+    param([Parameter(Mandatory)] [string]$Root)
+
+    $candidate = Join-Path $Root '.venv\Scripts\python.exe'
+    if (Test-Path -LiteralPath $candidate) {
+        return $candidate
+    }
+
+    $fallback = Get-Command python -ErrorAction SilentlyContinue
+    if ($null -ne $fallback) {
+        return $fallback.Source
+    }
+
+    throw 'No se encontro python en .venv ni en PATH.'
+}
+
+function Resolve-HostShellExecutable {
+    $currentProcess = Get-Process -Id $PID -ErrorAction SilentlyContinue
+    if ($null -ne $currentProcess -and -not [string]::IsNullOrWhiteSpace($currentProcess.Path) -and (Test-Path -LiteralPath $currentProcess.Path)) {
+        return $currentProcess.Path
+    }
+
+    foreach ($candidate in @('pwsh.exe', 'powershell.exe')) {
+        $command = Get-Command $candidate -ErrorAction SilentlyContinue
+        if ($null -ne $command) {
+            return $command.Source
+        }
+    }
+
+    throw 'No se pudo resolver el ejecutable del shell anfitrion.'
+}
+
+function Assert-CanonicalProjectRoot {
+    param([Parameter(Mandatory)] [string]$ProjectRoot)
+
+    $resolvedRoot = (Resolve-Path -LiteralPath $ProjectRoot).Path
+    if ((Split-Path -Leaf $resolvedRoot) -ne 'orquestacion_agentes') {
+        throw "La autoridad operativa unica debe ser orquestacion_agentes. Raiz recibida: $resolvedRoot"
+    }
+
+    $requiredPaths = @(
+        '.agent\collaboration\work_plan.md',
+        '.agent\collaboration\TURN.md',
+        '.agent\collaboration\execution_log.md',
+        '.agent\collaboration\STATE.md',
+        '.agent\runtime\events\events.jsonl'
+    )
+
+    foreach ($relative in $requiredPaths) {
+        $absolute = Join-Path $resolvedRoot $relative
+        if (-not (Test-Path -LiteralPath $absolute)) {
+            throw "Falta el artefacto canónico requerido: $relative"
+        }
+    }
+
+    return $resolvedRoot
+}
+
+function Get-PlanIdFromContent {
+    param(
+        [Parameter(Mandatory)] [string]$Content,
+        [Parameter(Mandatory)] [string]$Pattern,
+        [Parameter(Mandatory)] [string]$SourceName
+    )
+
+    if ($Content -match $Pattern) {
+        return $Matches[1]
+    }
+
+    throw "No se pudo extraer el plan activo desde $SourceName."
+}
+
+function Get-PlanIdFromWorkPlanContent {
+    param([Parameter(Mandatory)] [string]$Content)
+
+    $patterns = @(
+        '\*\*Plan activo:\*\*\s*(WP-\d{4}-[A-Za-z0-9]+)',
+        '\*\*ID:\*\*\s*(WP-\d{4}-[A-Za-z0-9]+)',
+        '^\s*##\s*(WP-\d{4}-[A-Za-z0-9]+)\s*:',
+        '(WP-\d{4}-[A-Za-z0-9]+)'
+    )
+
+    foreach ($pattern in $patterns) {
+        try {
+            return Get-PlanIdFromContent -Content $Content -Pattern $pattern -SourceName 'work_plan.md'
+        }
+        catch {
+            continue
+        }
+    }
+
+    throw 'No se pudo extraer el plan activo desde work_plan.md.'
+}
+
+function Get-PlanIdFromStateContent {
+    param([Parameter(Mandatory)] [string]$Content)
+
+    $patterns = @(
+        '-\s*\*\*Plan Activo:\*\*\s*(WP-\d{4}-[A-Za-z0-9]+)',
+        '-\s*\*\*ID:\*\*\s*(WP-\d{4}-[A-Za-z0-9]+)',
+        '\*\*Plan Activo:\*\*\s*(WP-\d{4}-[A-Za-z0-9]+)',
+        '\*\*ID:\*\*\s*(WP-\d{4}-[A-Za-z0-9]+)',
+        '(WP-\d{4}-[A-Za-z0-9]+)'
+    )
+
+    foreach ($pattern in $patterns) {
+        try {
+            return Get-PlanIdFromContent -Content $Content -Pattern $pattern -SourceName 'STATE.md'
+        }
+        catch {
+            continue
+        }
+    }
+
+    throw 'No se pudo extraer el plan activo desde STATE.md.'
+}
+
+function Get-OptionalPlanIdFromTurnContent {
+    param([Parameter(Mandatory)] [string]$Content)
+
+    $planIdPattern = 'WP-\d{4}-[A-Za-z0-9]+'
+    $pattern = "\|\s*\*\*Plan ID\*\*\s*\|\s*\*{0,2}($planIdPattern)\*{0,2}\s*\|"
+    if ($Content -match $pattern) {
+        return $Matches[1]
+    }
+
+    if ($Content -match '\|\s*\*\*Plan ID\*\*\s*\|\s*NINGUNO\s*\|') {
+        return $null
+    }
+
+    return $null
+}
+
+function Get-OptionalPropertyValue {
+    param(
+        [object]$Object,
+        [Parameter(Mandatory)] [string[]]$Names
+    )
+
+    foreach ($name in $Names) {
+        if ($null -ne $Object -and $Object.PSObject.Properties.Name -contains $name) {
+            return $Object.$name
+        }
+    }
+
+    return $null
+}
+
+function Get-CurrentBuilderRound {
+    param([Parameter(Mandatory)] [string]$ProjectRoot)
+
+    $supervisorStatePath = Join-Path $ProjectRoot '.agent\runtime\supervisor_state.json'
+    if (-not (Test-Path -LiteralPath $supervisorStatePath)) {
+        return 1
+    }
+
+    try {
+        $state = Get-Content -LiteralPath $supervisorStatePath -Raw | ConvertFrom-Json
+        $round = [int](Get-OptionalPropertyValue -Object $state -Names @('loop_current_round'))
+        # Para Builder inicial, si round=0 (no requeue aún), es BR1
+        # Si round=1, significa que ya hubo un requeue, así que próximo Builder es BR2, etc.
+        return [Math]::Max(1, $round + 1)
+    }
+    catch {
+        return 1
+    }
+}
+
+function Read-BuilderLockState {
+    param([Parameter(Mandatory)] [string]$ProjectRoot)
+
+    $lockPath = Join-Path $ProjectRoot '.agent\runtime\builder_lock.txt'
+    if (-not (Test-Path -LiteralPath $lockPath)) {
+        return $null
+    }
+
+    try {
+        $raw = (Get-Content -LiteralPath $lockPath -Raw).Trim()
+        if ([string]::IsNullOrWhiteSpace($raw)) {
+            return $null
+        }
+
+        if ($raw.StartsWith('{')) {
+            $state = $raw | ConvertFrom-Json
+            return [pscustomobject]@{
+                LockPath     = $lockPath
+                TicketId     = Get-OptionalPropertyValue -Object $state -Names @('ticket_id', 'ticketId')
+                ProjectRoot  = Get-OptionalPropertyValue -Object $state -Names @('project_root', 'projectRoot')
+                StartedAt    = Get-OptionalPropertyValue -Object $state -Names @('started_at', 'startedAt')
+                # WP-2026-117: PID eliminado del contrato del lock - no usar como señal de vida
+                Role         = Get-OptionalPropertyValue -Object $state -Names @('role')
+                Backend      = Get-OptionalPropertyValue -Object $state -Names @('backend')
+                Round        = Get-OptionalPropertyValue -Object $state -Names @('round')
+                Raw          = $state
+                LegacyFormat = $false
+            }
+        }
+
+        return [pscustomobject]@{
+            LockPath     = $lockPath
+            TicketId     = $null
+            ProjectRoot  = $ProjectRoot
+            StartedAt    = $raw
+            Pid          = $null
+            Role         = 'BUILDER'
+            Backend      = $null
+            Raw          = $raw
+            LegacyFormat = $true
+        }
+    }
+    catch {
+        Write-Warning "builder_lock.txt corrupto o no parseable; se eliminara. Detalle: $($_.Exception.Message)"
+        Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
+        return $null
+    }
+}
+
+function Remove-StaleLegacyLock {
+    param(
+        [Parameter(Mandatory)] [string]$LockPath,
+        [int]$MaxAgeSeconds = 300
+    )
+
+    if (-not (Test-Path -LiteralPath $LockPath)) {
+        return $false
+    }
+
+    try {
+        $item = Get-Item -LiteralPath $LockPath -ErrorAction Stop
+        $fileAge = [DateTime]::UtcNow - $item.LastWriteTimeUtc
+        if ($fileAge.TotalSeconds -gt $MaxAgeSeconds) {
+            Write-Warning "builder_lock legacy supera el TTL ($([math]::Round($fileAge.TotalSeconds, 0)) s). Se eliminara."
+            Remove-Item -LiteralPath $LockPath -Force -ErrorAction SilentlyContinue
+            return $true
+        }
+    }
+    catch {
+        Write-Warning "No se pudo inspeccionar el builder_lock legacy. Se eliminara por seguridad."
+        Remove-Item -LiteralPath $LockPath -Force -ErrorAction SilentlyContinue
+        return $true
+    }
+
+    return $false
+}
+
+function Repair-BuilderLockState {
+    param(
+        [Parameter(Mandatory)] [string]$ProjectRoot,
+        [int]$MaxAgeMinutes = 30
+    )
+
+    $state = Read-BuilderLockState -ProjectRoot $ProjectRoot
+    if ($null -eq $state) {
+        return $null
+    }
+
+    $lockPath = $state.LockPath
+    $currentRoot = (Resolve-Path -LiteralPath $ProjectRoot).Path
+
+    if (-not [string]::IsNullOrWhiteSpace($state.ProjectRoot)) {
+        try {
+            $lockRoot = (Resolve-Path -LiteralPath $state.ProjectRoot).Path
+            if ($lockRoot -ne $currentRoot) {
+                Write-Warning "builder_lock.txt pertenece a $lockRoot y el proyecto activo es $currentRoot. Se eliminara."
+                Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
+                return $null
+            }
+        }
+        catch {
+            Write-Warning "builder_lock.txt contiene una ruta de proyecto invalida. Se eliminara."
+            Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
+            return $null
+        }
+    }
+
+    $workPlanPath = Join-Path $ProjectRoot '.agent\collaboration\work_plan.md'
+    $workPlanContent = Get-Content -LiteralPath $workPlanPath -Raw
+    $activeTicket = Get-PlanIdFromWorkPlanContent -Content $workPlanContent
+
+    if ($state.TicketId -and $state.TicketId -ne $activeTicket) {
+        Write-Warning "builder_lock.txt apunta a $($state.TicketId) y el ticket activo es $activeTicket. Se eliminara."
+        Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
+        return $null
+    }
+
+    $startedAtText = $state.StartedAt
+    $startedAt = $null
+    if (-not [string]::IsNullOrWhiteSpace($startedAtText)) {
+        try {
+            $startedAt = [DateTimeOffset]::Parse(
+                $startedAtText,
+                [System.Globalization.CultureInfo]::InvariantCulture,
+                [System.Globalization.DateTimeStyles]::RoundtripKind
+            )
+        }
+        catch {
+            $startedAt = $null
+        }
+    }
+
+    if ($state.LegacyFormat) {
+        $legacyLockRemoved = Remove-StaleLegacyLock -LockPath $lockPath -MaxAgeSeconds 300
+        if ($legacyLockRemoved) {
+            return $null
+        }
+    }
+
+    if ($null -ne $startedAt) {
+        $age = [DateTimeOffset]::UtcNow - $startedAt.ToUniversalTime()
+        if ($age.TotalMinutes -gt $MaxAgeMinutes) {
+            Write-Warning "builder_lock.txt excede el TTL ($([math]::Round($age.TotalMinutes, 1)) min). Se eliminara."
+            Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
+            return $null
+        }
+    }
+    elseif (-not $state.LegacyFormat) {
+        Write-Warning "builder_lock.txt no contiene un timestamp valido. Se eliminara."
+        Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
+        return $null
+    }
+
+    if (-not $state.LegacyFormat) {
+        Write-Warning "builder_lock.txt no contiene un timestamp valido. Se eliminara."
+        Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
+        return $null
+    }
+    # WP-2026-117: PID eliminado del contrato - no verificar proceso por PID
+
+    return $state
+}
+
+function Remove-StaleRuntimeArtifacts {
+    param(
+        [Parameter(Mandatory)] [string]$ProjectRoot,
+        [int]$BuilderLockTtlMinutes = 30,
+        [int]$PromptTtlMinutes = 15
+    )
+
+    $results = [ordered]@{
+        BuilderLockRemoved = $false
+        ManagerPromptRemoved = 0
+        BridgeStateRepaired = $false
+        SupervisorStateRepaired = $false
+    }
+
+    $bridgeStatePath = Join-Path $ProjectRoot '.agent\runtime\manager_bridge_state.json'
+    if (Test-Path -LiteralPath $bridgeStatePath) {
+        $alignment = Repair-StartupBridgeState -ProjectRoot $ProjectRoot
+        $results.BridgeStateRepaired = $alignment.BridgeStateCorrupt -or (
+            $null -ne $alignment.BridgeState -and
+            $alignment.BridgeLastTicketId -and
+            $alignment.BridgeLastTicketId -ne $alignment.WorkPlanId
+        )
+    }
+
+    $supervisorStatePath = Join-Path $ProjectRoot '.agent\runtime\supervisor_state.json'
+    if (Test-Path -LiteralPath $supervisorStatePath) {
+        $alignment = Repair-StartupSupervisorState -ProjectRoot $ProjectRoot
+        $results.SupervisorStateRepaired = $alignment.SupervisorStateCorrupt -or (
+            $null -ne $alignment.SupervisorState -and
+            $alignment.SupervisorLastTicketId -and
+            $alignment.SupervisorLastTicketId -ne $alignment.WorkPlanId
+        )
+    }
+
+    $builderLock = Repair-BuilderLockState -ProjectRoot $ProjectRoot -MaxAgeMinutes $BuilderLockTtlMinutes
+    if ($null -eq $builderLock -and (Test-Path -LiteralPath (Join-Path $ProjectRoot '.agent\runtime\builder_lock.txt'))) {
+        $results.BuilderLockRemoved = $true
+    }
+
+    $tempDir = [System.IO.Path]::GetTempPath()
+    $cutoff = [DateTime]::UtcNow.AddMinutes(-$PromptTtlMinutes)
+    Get-ChildItem -Path $tempDir -Filter 'manager_prompt_*.md' -File -ErrorAction SilentlyContinue | ForEach-Object {
+        if ($_.LastWriteTimeUtc -lt $cutoff) {
+            Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
+            $results.ManagerPromptRemoved += 1
+        }
+    }
+
+    return [pscustomobject]$results
+}
+
+function Get-ActiveRole {
+    param([Parameter(Mandatory)] [string]$ProjectRoot)
+
+    $turnPath = Join-Path $ProjectRoot '.agent\collaboration\TURN.md'
+    if (-not (Test-Path -LiteralPath $turnPath)) {
+        Write-Warning 'TURN.md no encontrado. Asumiendo BUILDER para compatibilidad.'
+        return 'BUILDER'
+    }
+
+    $content = Get-Content -LiteralPath $turnPath -Raw
+    if ($content -match '\*\*ROL\*\*\s*\|\s*\*\*(\w+)\*\*') {
+        return $matches[1]
+    }
+
+    Write-Warning 'No se pudo parsear ROL de TURN.md. Asumiendo BUILDER para compatibilidad.'
+    return 'BUILDER'
+}
+
+function Get-StartupAlignment {
+    param([Parameter(Mandatory)] [string]$ProjectRoot)
+
+    $workPlanPath = Join-Path $ProjectRoot '.agent\collaboration\work_plan.md'
+    $turnPath = Join-Path $ProjectRoot '.agent\collaboration\TURN.md'
+    $statePath = Join-Path $ProjectRoot '.agent\collaboration\STATE.md'
+    $bridgeStatePath = Join-Path $ProjectRoot '.agent\runtime\manager_bridge_state.json'
+
+    $workPlanContent = Get-Content -LiteralPath $workPlanPath -Raw
+    $turnContent = Get-Content -LiteralPath $turnPath -Raw
+    $stateContent = Get-Content -LiteralPath $statePath -Raw
+
+    $planIdPattern = 'WP-\d{4}-[A-Za-z0-9]+'
+    $workPlanId = Get-PlanIdFromWorkPlanContent -Content $workPlanContent
+    $turnPlanId = Get-OptionalPlanIdFromTurnContent -Content $turnContent
+    if ($null -eq $turnPlanId) {
+        $turnPlanId = $workPlanId
+    }
+    $statePlanId = Get-PlanIdFromStateContent -Content $stateContent
+    $activeRole = Get-ActiveRole -ProjectRoot $ProjectRoot
+
+    $bridgeState = $null
+    $bridgeStateCorrupt = $false
+    if (Test-Path -LiteralPath $bridgeStatePath) {
+        try {
+            $bridgeState = Get-Content -LiteralPath $bridgeStatePath -Raw | ConvertFrom-Json
+        }
+        catch {
+            Write-Warning 'manager_bridge_state.json esta corrupto o vacio; se regenerara en el siguiente arranque.'
+            $bridgeStateCorrupt = $true
+        }
+    }
+
+    return [pscustomobject]@{
+        WorkPlanId = $workPlanId
+        TurnPlanId = $turnPlanId
+        StatePlanId = $statePlanId
+        ActiveRole = $activeRole
+        BridgeStatePath = $bridgeStatePath
+        BridgeLastTicketId = Get-OptionalPropertyValue -Object $bridgeState -Names @('last_ticket_id', 'ticket_id', 'active_ticket')
+        BridgeState = $bridgeState
+        BridgeStateCorrupt = $bridgeStateCorrupt
+    }
+}
+
+function Repair-StartupBridgeState {
+    param([Parameter(Mandatory)] [string]$ProjectRoot)
+
+    $alignment = Get-StartupAlignment -ProjectRoot $ProjectRoot
+    if ($alignment.BridgeStateCorrupt) {
+        Remove-Item -LiteralPath $alignment.BridgeStatePath -Force -ErrorAction SilentlyContinue
+    }
+    elseif ($null -ne $alignment.BridgeState -and $alignment.BridgeLastTicketId -and $alignment.BridgeLastTicketId -ne $alignment.WorkPlanId) {
+        Write-Warning "manager_bridge_state.json apunta a $($alignment.BridgeLastTicketId) y el ticket activo es $($alignment.WorkPlanId). Se limpiara para evitar arrastrar estado viejo."
+        Remove-Item -LiteralPath $alignment.BridgeStatePath -Force -ErrorAction SilentlyContinue
+    }
+
+    return $alignment
+}
+
+function Get-SupervisorStateAlignment {
+    param([Parameter(Mandatory)] [string]$ProjectRoot)
+
+    $supervisorStatePath = Join-Path $ProjectRoot '.agent\runtime\supervisor_state.json'
+    $supervisorState = $null
+    $supervisorStateCorrupt = $false
+    if (Test-Path -LiteralPath $supervisorStatePath) {
+        try {
+            $supervisorState = Get-Content -LiteralPath $supervisorStatePath -Raw | ConvertFrom-Json
+        }
+        catch {
+            Write-Warning 'supervisor_state.json esta corrupto o vacio; se regenerara en el siguiente arranque.'
+            $supervisorStateCorrupt = $true
+        }
+    }
+
+    return [pscustomobject]@{
+        SupervisorStatePath = $supervisorStatePath
+        SupervisorState = $supervisorState
+        SupervisorLastTicketId = Get-OptionalPropertyValue -Object $supervisorState -Names @('active_ticket', 'ticket_id')
+        SupervisorStateCorrupt = $supervisorStateCorrupt
+    }
+}
+
+function Repair-StartupSupervisorState {
+    param([Parameter(Mandatory)] [string]$ProjectRoot)
+
+    $alignment = Get-StartupAlignment -ProjectRoot $ProjectRoot
+    $supervisorAlignment = Get-SupervisorStateAlignment -ProjectRoot $ProjectRoot
+
+    if ($supervisorAlignment.SupervisorStateCorrupt) {
+        Remove-Item -LiteralPath $supervisorAlignment.SupervisorStatePath -Force -ErrorAction SilentlyContinue
+    }
+    elseif ($null -ne $supervisorAlignment.SupervisorState -and $supervisorAlignment.SupervisorLastTicketId -and $supervisorAlignment.SupervisorLastTicketId -ne $alignment.WorkPlanId) {
+        Write-Warning "supervisor_state.json apunta a $($supervisorAlignment.SupervisorLastTicketId) y el ticket activo es $($alignment.WorkPlanId). Se limpiara para evitar arrastrar estado viejo."
+        Remove-Item -LiteralPath $supervisorAlignment.SupervisorStatePath -Force -ErrorAction SilentlyContinue
+    }
+
+    $alignment | Add-Member -NotePropertyName SupervisorStatePath -NotePropertyValue $supervisorAlignment.SupervisorStatePath -Force
+    $alignment | Add-Member -NotePropertyName SupervisorState -NotePropertyValue $supervisorAlignment.SupervisorState -Force
+    $alignment | Add-Member -NotePropertyName SupervisorLastTicketId -NotePropertyValue $supervisorAlignment.SupervisorLastTicketId -Force
+    $alignment | Add-Member -NotePropertyName SupervisorStateCorrupt -NotePropertyValue $supervisorAlignment.SupervisorStateCorrupt -Force
+    return $alignment
+}
+
+function Assert-StartupAlignment {
+    param([Parameter(Mandatory)] [string]$ProjectRoot)
+
+    $alignment = Repair-StartupBridgeState -ProjectRoot $ProjectRoot
+    $alignment = Repair-StartupSupervisorState -ProjectRoot $ProjectRoot
+    $issues = @()
+
+    if ($alignment.WorkPlanId -ne $alignment.TurnPlanId) {
+        $issues += "work_plan.md ($($alignment.WorkPlanId)) != TURN.md ($($alignment.TurnPlanId))"
+    }
+
+    if ($alignment.WorkPlanId -ne $alignment.StatePlanId) {
+        $issues += "work_plan.md ($($alignment.WorkPlanId)) != STATE.md ($($alignment.StatePlanId))"
+    }
+
+    if ($issues.Count -gt 0) {
+        throw "Alineacion inicial invalida:`n- " + ($issues -join "`n- ")
+    }
+
+    return $alignment
+}
+
+function Invoke-ImportPreflight {
+    param([Parameter(Mandatory)] [string]$ProjectRoot)
+
+    # WP-2026-118: Preflight ligero de imports criticos antes de abrir ventanas.
+    # Solo valida que los modulos del bus y agent_controller importen sin error.
+    # No ejecuta gates pesadas (ruff/pytest) en el arranque.
+
+    $venvPython = Resolve-VenvPython -Root $ProjectRoot
+    $criticalModules = @(
+        'bus.event_bus',
+        'bus.review_bridge',
+        'agent_controller'
+    )
+
+    $failedImports = @()
+    foreach ($module in $criticalModules) {
+        $result = & $venvPython -c "import sys; sys.path.insert(0, r'$ProjectRoot'); sys.path.insert(0, r'$ProjectRoot\.agent'); __import__('$module')" 2>&1
+        $exitCode = $LASTEXITCODE
+
+        if ($exitCode -ne 0) {
+            $failedImports += $module
+            Write-Warning "Import fallido: $module"
+        }
+    }
+
+    if ($failedImports.Count -gt 0) {
+        $errorMsg = "Preflight de imports fallido. Modulos criticos con error:`n"
+        foreach ($mod in $failedImports) {
+            $errorMsg += "  - $mod`n"
+        }
+        $errorMsg += "`nEl launcher aborta para evitar abrir ventanas con el bus roto."
+        throw $errorMsg
+    }
+
+    Write-Host "Preflight de imports: OK (bus.event_bus, bus.review_bridge, agent_controller)"
+}
+
+function Is-BuilderRunningInProject {
+    param([Parameter(Mandatory)] [string]$ProjectRoot)
+
+    return $null -ne (Repair-BuilderLockState -ProjectRoot $ProjectRoot)
+}
+
+function Stop-ProjectAgentProcesses {
+    param([Parameter(Mandatory)] [string]$ProjectRoot)
+
+    $normalizedRoot = [regex]::Escape((Resolve-Path -LiteralPath $ProjectRoot).Path)
+    $staleProcessPatterns = @(
+        'ticket_supervisor\.py',
+        'manager_review_bridge\.py',
+        'kilo\.exe\s+run\s+--auto',
+        'builder_lock\.txt'
+    )
+
+    $staleProcesses = @()
+    try {
+        $staleProcesses = Get-CimInstance Win32_Process | Where-Object {
+            $commandLine = $_.CommandLine
+            $null -ne $commandLine -and
+            $_.ProcessId -ne $PID -and
+            ($commandLine -match $normalizedRoot) -and
+            (($staleProcessPatterns | Where-Object { $commandLine -match $_ }) -ne $null)
+        }
+    }
+    catch {
+        Write-Warning "No se pudieron inspeccionar procesos viejos del proyecto; se continuara sin esa limpieza. Detalle: $($_.Exception.Message)"
+        return
+    }
+
+    foreach ($process in $staleProcesses) {
+        try {
+            Write-Warning "Cerrando sesion vieja del proyecto: PID $($process.ProcessId) -> $($process.Name)"
+            Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
+        }
+        catch {
+            Write-Warning "No se pudo cerrar el proceso $($process.ProcessId): $($_.Exception.Message)"
+        }
+    }
+}
+
+function Resolve-BackendExecutable {
+    param(
+        [Parameter(Mandatory)] [string]$BackendName,
+        [string]$OverridePath
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($OverridePath)) {
+        if (Test-Path -LiteralPath $OverridePath) {
+            return $OverridePath
+        }
+        throw "No se encontro el ejecutable en la ruta indicada: $OverridePath"
+    }
+
+    # Get discovery method from config
+    $discoveryMethod = Get-BackendDiscoveryMethod -BackendName $BackendName
+    $executableName = Get-BackendExecutableName -BackendName $BackendName
+
+    if ($discoveryMethod -eq 'vscode_extension') {
+        $userProfile = [Environment]::GetFolderPath('UserProfile')
+        $extensionRoot = Join-Path $userProfile '.vscode\extensions'
+        if (Test-Path -LiteralPath $extensionRoot) {
+            $extensionGlob = Get-BackendExtensionGlob -BackendName $BackendName
+            $binaryName = Get-BackendBinaryName -BackendName $BackendName
+            $extensionMatch = Get-ChildItem -Path $extensionRoot -Filter $extensionGlob -Recurse -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -eq $binaryName } |
+                Sort-Object FullName -Descending |
+                Select-Object -First 1
+            if ($null -ne $extensionMatch) {
+                return $extensionMatch.FullName
+            }
+        }
+    }
+
+    # Fallback to PATH
+    foreach ($candidate in @($executableName, "$executableName.exe")) {
+        $command = Get-Command $candidate -ErrorAction SilentlyContinue
+        if ($null -ne $command) {
+            return $command.Source
+        }
+    }
+
+    throw "No se encontro el ejecutable para el backend '$BackendName' en las extensiones de VS Code ni en PATH."
+}
+
+function Get-BackendFromConfig {
+    param([Parameter(Mandatory)] [string]$Role)
+
+    $venvPython = Resolve-VenvPython -Root $ProjectRoot
+    $agentsConfigPath = Join-Path $ProjectRoot '.agent\agents_config.py'
+
+    try {
+        $backend = & $venvPython $agentsConfigPath get_backend_for_role $Role 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "Error al obtener backend para rol '$Role': $backend"
+        }
+        return $backend.Trim()
+    }
+    catch {
+        throw "Error al leer configuracion de agentes: $($_.Exception.Message)"
+    }
+}
+
+function Get-BackendExecutableName {
+    param([Parameter(Mandatory)] [string]$BackendName)
+
+    $venvPython = Resolve-VenvPython -Root $ProjectRoot
+    $agentsConfigPath = Join-Path $ProjectRoot '.agent\agents_config.py'
+
+    try {
+        $exe = & $venvPython $agentsConfigPath get_executable $BackendName 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "Error al obtener ejecutable para backend '$BackendName': $exe"
+        }
+        return $exe.Trim()
+    }
+    catch {
+        throw "Error al leer configuracion de agentes: $($_.Exception.Message)"
+    }
+}
+
+function Get-BackendArgs {
+    param([Parameter(Mandatory)] [string]$BackendName)
+
+    $venvPython = Resolve-VenvPython -Root $ProjectRoot
+    $agentsConfigPath = Join-Path $ProjectRoot '.agent\agents_config.py'
+
+    try {
+        $args = & $venvPython $agentsConfigPath get_args $BackendName 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "Error al obtener argumentos para backend '$BackendName': $args"
+        }
+        return $args.Trim()
+    }
+    catch {
+        throw "Error al leer configuracion de agentes: $($_.Exception.Message)"
+    }
+}
+
+function Get-BackendDiscoveryMethod {
+    param([Parameter(Mandatory)] [string]$BackendName)
+
+    $venvPython = Resolve-VenvPython -Root $ProjectRoot
+    $agentsConfigPath = Join-Path $ProjectRoot '.agent\agents_config.py'
+
+    try {
+        $method = & $venvPython $agentsConfigPath get_discovery $BackendName 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "Error al obtener metodo de discovery para backend '$BackendName': $method"
+        }
+        return $method.Trim()
+    }
+    catch {
+        throw "Error al leer configuracion de agentes: $($_.Exception.Message)"
+    }
+}
+
+function Get-BackendExtensionGlob {
+    param([Parameter(Mandatory)] [string]$BackendName)
+
+    # Read extension_glob from config JSON directly for efficiency
+    $configPath = Join-Path $ProjectRoot '.agent\config\agents.json'
+    if (Test-Path -LiteralPath $configPath) {
+        $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+        $backend = $config.backends.$BackendName
+        if ($null -ne $backend -and $null -ne $backend.discovery -and $null -ne $backend.discovery.extension_glob) {
+            return $backend.discovery.extension_glob
+        }
+    }
+    # Fallback: return executable-based glob from config or default wildcard
+    return '*'
+}
+
+function Get-BackendBinaryName {
+    param([Parameter(Mandatory)] [string]$BackendName)
+
+    # Read binary_name from config JSON directly for efficiency
+    $configPath = Join-Path $ProjectRoot '.agent\config\agents.json'
+    if (Test-Path -LiteralPath $configPath) {
+        $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+        $backend = $config.backends.$BackendName
+        if ($null -ne $backend -and $null -ne $backend.discovery -and $null -ne $backend.discovery.binary_name) {
+            return $backend.discovery.binary_name
+        }
+    }
+    # Fallback to executable name from config
+    return Get-BackendExecutableName -BackendName $BackendName
+}
+
+function Get-OpenCodeBuilderPrompt {
+    param(
+        [Parameter(Mandatory)] [string]$TicketId,
+        [Parameter(Mandatory)] [string]$ProjectRoot
+    )
+
+    # Composicion del prompt para OpenCode Builder
+    # Incluye ticket_id real, recordatorio de Files Likely Touched y cierre obligatorio
+    $prompt = @"
+Actua como BUILDER para $TicketId.
+Lee .agent/collaboration/TURN.md, .agent/collaboration/work_plan.md, .agent/collaboration/execution_log.md, .agent/collaboration/STATE.md y PROJECT.md.
+Implementa solo $TicketId siguiendo .agent/collaboration/work_plan.md y los Files Likely Touched.
+No cambies el alcance. No reescribas el plan.
+Registra evidencia clara en .agent/collaboration/execution_log.md.
+Mantente en el runtime bus-first y evita editar .agent/collaboration/TURN.md, .agent/collaboration/STATE.md o .agent/collaboration/execution_log.md a mano.
+Ejecuta ruff y pytest-safe sobre lo tocado.
+
+CIERRE OBLIGATORIO:
+Emite BUILDER_EXIT en el bus con ticket_id, exit_reason y completion_summary antes de cerrar.
+Ejecuta python .agent/agent_controller.py --mark-ready --json --force al final.
+"@
+    return $prompt
+}
+
+function Get-CanonicalFilesForOpenCode {
+    param([Parameter(Mandatory)] [string]$ProjectRoot)
+
+    # Ficheros canonicos base que siempre se adjuntan
+    $canonicalFiles = @(
+        '.agent\collaboration\work_plan.md',
+        '.agent\collaboration\TURN.md',
+        '.agent\collaboration\execution_log.md',
+        '.agent\collaboration\STATE.md'
+    )
+
+    # Verificar si existen PLAN_<ticket>.md y AUDIT_<ticket>.md
+    $ticketId = $null
+    $workPlanPath = Join-Path $ProjectRoot '.agent\collaboration\work_plan.md'
+    if (Test-Path -LiteralPath $workPlanPath) {
+        $workPlanContent = Get-Content -LiteralPath $workPlanPath -Raw
+        try {
+            $ticketId = Get-PlanIdFromWorkPlanContent -Content $workPlanContent
+        }
+        catch {
+            # Si no se puede extraer el ticket, continuamos sin los archivos extra
+        }
+    }
+
+    if ($ticketId) {
+        $planPath = Join-Path $ProjectRoot ".agent\collaboration\PLAN_$ticketId.md"
+        $auditPath = Join-Path $ProjectRoot ".agent\collaboration\AUDIT_$ticketId.md"
+
+        if (Test-Path -LiteralPath $planPath) {
+            $canonicalFiles += $planPath
+        }
+        if (Test-Path -LiteralPath $auditPath) {
+            $canonicalFiles += $auditPath
+        }
+    }
+
+    return $canonicalFiles
+}
+
+function Resolve-ManagerExecutable {
+    param([string]$OverridePath)
+
+    return Resolve-BackendExecutable -BackendName 'codex' -OverridePath $OverridePath
+}
+
+function Resolve-KiloExecutable {
+    return Resolve-BackendExecutable -BackendName 'kilo' -OverridePath ''
+}
+
+function Get-TemplateContent {
+    param([Parameter(Mandatory)] [string]$ProjectRoot, [Parameter(Mandatory)] [string]$TemplateName)
+
+    $templatePath = Join-Path $ProjectRoot "templates/startup/$TemplateName.md"
+    if (-not (Test-Path -LiteralPath $templatePath)) {
+        throw "Plantilla no encontrada: $templatePath"
+    }
+    return Get-Content -LiteralPath $templatePath -Raw
+}
+
+function Fill-TemplateVariables {
+    param(
+        [Parameter(Mandatory)] [string]$TemplateContent,
+        [Parameter(Mandatory)] [string]$TicketId,
+        [Parameter(Mandatory)] [string]$WorkPlan,
+        [Parameter(Mandatory)] [string]$CloseCommand,
+        [Parameter(Mandatory)] [string]$Role,
+        [Parameter(Mandatory)] [string]$Backend
+    )
+
+    $filled = $TemplateContent
+    $filled = $filled -replace '\{\{ticket_id\}\}', $TicketId
+    $filled = $filled -replace '\{\{work_plan\}\}', $WorkPlan
+    $filled = $filled -replace '\{\{close_command\}\}', $CloseCommand
+    $filled = $filled -replace '\{\{role\}\}', $Role
+    $filled = $filled -replace '\{\{backend\}\}', $Backend
+    return $filled
+}
+
+
+function Start-AgentWindow {
+    param(
+        [Parameter(Mandatory)] [string]$Title,
+        [Parameter(Mandatory)] [string]$Command
+    )
+
+    $shellExecutable = Resolve-HostShellExecutable
+    $payload = "Set-Location -LiteralPath $(ConvertTo-SingleQuotedLiteral $ProjectRoot); $Command"
+
+    return Start-Process -PassThru -FilePath $shellExecutable -WorkingDirectory $ProjectRoot -ArgumentList @(
+        '-NoExit',
+        '-ExecutionPolicy', 'Bypass',
+        '-Command',
+        $payload
+    )
+}
+
+if (-not $ResumeBuilder) {
+    if ($StrictLaunch) {
+        $ProjectRoot = Assert-CanonicalProjectRoot -ProjectRoot $ProjectRoot
+        Stop-ProjectAgentProcesses -ProjectRoot $ProjectRoot
+        Write-Host 'Limpieza previa: sesiones viejas del proyecto cerradas antes del nuevo arranque'
+        $alignment = Assert-StartupAlignment -ProjectRoot $ProjectRoot
+        Write-Host "Preflight estricto: alineacion validada para $($alignment.WorkPlanId)"
+    }
+    else {
+        $ProjectRoot = Assert-CanonicalProjectRoot -ProjectRoot $ProjectRoot
+        Stop-ProjectAgentProcesses -ProjectRoot $ProjectRoot
+        Write-Host 'Limpieza previa: sesiones viejas del proyecto cerradas antes del nuevo arranque'
+        $alignment = Repair-StartupSupervisorState -ProjectRoot $ProjectRoot
+        Write-Host "Preflight flexible: alineacion reparada para $($alignment.WorkPlanId) | bridge_reparado=$($alignment.BridgeStateCorrupt -or ($null -ne $alignment.BridgeState -and $alignment.BridgeLastTicketId -and $alignment.BridgeLastTicketId -ne $alignment.WorkPlanId)) | supervisor_reparado=$($alignment.SupervisorStateCorrupt -or ($null -ne $alignment.SupervisorState -and $alignment.SupervisorLastTicketId -and $alignment.SupervisorLastTicketId -ne $alignment.WorkPlanId))"
+    }
+
+    $artifactCleanup = Remove-StaleRuntimeArtifacts -ProjectRoot $ProjectRoot
+    if ($artifactCleanup.BuilderLockRemoved -or $artifactCleanup.ManagerPromptRemoved -gt 0 -or $artifactCleanup.BridgeStateRepaired -or $artifactCleanup.SupervisorStateRepaired) {
+        Write-Host "Limpieza de runtime: builder_lock=$($artifactCleanup.BuilderLockRemoved), prompts=$($artifactCleanup.ManagerPromptRemoved), bridge_state_reparado=$($artifactCleanup.BridgeStateRepaired), supervisor_state_reparado=$($artifactCleanup.SupervisorStateRepaired)"
+    }
+
+    # WP-2026-118: Preflight de imports criticos antes de abrir ventanas
+    Invoke-ImportPreflight -ProjectRoot $ProjectRoot
+} else {
+    Write-Host "[launcher] Resume mode: skipping aggressive cleanup + strict preflight"
+    $ProjectRoot = Assert-CanonicalProjectRoot -ProjectRoot $ProjectRoot
+    # Resume path still needs alignment metadata (ticket id, active role) to
+    # spawn Builder against the right ticket. Use the pure read function
+    # (no repair, no cleanup) so $alignment is defined downstream.
+    $alignment = Get-StartupAlignment -ProjectRoot $ProjectRoot
+}
+
+# Leer work_plan.md para {{work_plan}}
+$workPlanPath = Join-Path $ProjectRoot '.agent\collaboration\work_plan.md'
+$workPlanContent = Get-Content -LiteralPath $workPlanPath -Raw
+
+# Variables comunes
+$ticketId = $alignment.WorkPlanId
+$closeCommand = "python .agent/agent_controller.py --mark-ready --json --force"
+$role = $alignment.ActiveRole
+# Get backend from centralized config instead of hardcoding
+$backend = Get-BackendFromConfig -Role $role
+
+# Bootstrap bus event for active ticket to prevent bridge UNKNOWN state
+$venvPython = Resolve-VenvPython -Root $ProjectRoot
+$controllerPath = Join-Path $ProjectRoot '.agent\agent_controller.py'
+$bootstrapResult = & $venvPython $controllerPath --bootstrap-ticket --json 2>&1
+$bootstrapExitCode = $LASTEXITCODE
+$bootstrapResultText = ($bootstrapResult | Out-String).Trim()
+Write-Host "Bus bootstrap: $bootstrapResultText"
+
+if ($bootstrapExitCode -ne 0) {
+    throw "Bus bootstrap failed with exit code ${bootstrapExitCode}: $bootstrapResultText"
+}
+
+try {
+    $bootstrapJson = $bootstrapResultText | ConvertFrom-Json
+} catch {
+    throw "Bus bootstrap returned invalid JSON: $bootstrapResultText"
+}
+
+if ($bootstrapJson.PSObject.Properties['error']) {
+    throw "Bus bootstrap error: $($bootstrapJson.error)"
+}
+
+if ($bootstrapJson.PSObject.Properties['status'] -and $bootstrapJson.status -eq 'skipped') {
+    $skippedPlanId = if ($bootstrapJson.PSObject.Properties['plan_id']) { $bootstrapJson.plan_id } else { 'unknown' }
+    $skippedReason = if ($bootstrapJson.PSObject.Properties['reason']) { $bootstrapJson.reason } else { 'no reason given' }
+    throw "Bus bootstrap skipped for ${skippedPlanId}: $skippedReason"
+}
+
+if ($LaunchSupervisor) {
+    $venvPython = Resolve-VenvPython -Root $ProjectRoot
+    $venvPythonLiteral = ConvertTo-SingleQuotedLiteral $venvPython
+    Start-AgentWindow -Title 'Supervisor' -Command "& $venvPythonLiteral scripts\ticket_supervisor.py --reactive"
+    Write-Host "Supervisor: lanzado con ticket_supervisor.py --reactive"
+}
+
+if ($LaunchWatcher) {
+    $venvPython = Resolve-VenvPython -Root $ProjectRoot
+    $venvPythonLiteral = ConvertTo-SingleQuotedLiteral $venvPython
+    $watcherPath = Join-Path $ProjectRoot 'scripts\requeue_watcher.py'
+    if (Test-Path -LiteralPath $watcherPath) {
+        Start-AgentWindow -Title 'Requeue Watcher' -Command "& $venvPythonLiteral scripts\requeue_watcher.py --project-root . --poll-interval 5 --max-age 30"
+        Write-Host "Requeue Watcher: lanzado para vigilar eventos de requeue"
+    }
+    else {
+        Write-Host "Requeue Watcher: no lanzado - scripts\requeue_watcher.py no existe en este snapshot"
+    }
+}
+
+if ($LaunchBridge) {
+    $venvPython = Resolve-VenvPython -Root $ProjectRoot
+    $venvPythonLiteral = ConvertTo-SingleQuotedLiteral $venvPython
+    # Get Manager backend from config
+    $managerBackend = Get-BackendFromConfig -Role 'MANAGER'
+    $managerExe = Resolve-BackendExecutable -BackendName $managerBackend -OverridePath $ManagerBackendPath
+    $managerExeLiteral = ConvertTo-SingleQuotedLiteral $managerExe
+    Start-AgentWindow -Title 'Review Bridge' -Command "& $venvPythonLiteral scripts\manager_review_bridge.py --watch --backend-path $managerExeLiteral"
+    Write-Host "Review Bridge: lanzado"
+}
+
+if ($LaunchMonitor) {
+    $venvPython = Resolve-VenvPython -Root $ProjectRoot
+    $venvPythonLiteral = ConvertTo-SingleQuotedLiteral $venvPython
+    Start-AgentWindow -Title 'Ticket Activity Monitor' -Command "& $venvPythonLiteral scripts\ticket_activity_monitor.py"
+    Write-Host "Ticket Activity Monitor: lanzado para el ticket activo"
+}
+
+if ($LaunchBuilder) {
+    $activeRole = Get-ActiveRole -ProjectRoot $ProjectRoot
+    $launchBuilderAnyway = -not [string]::IsNullOrWhiteSpace($BuilderPrompt)
+    if ($activeRole -eq 'BUILDER' -or $launchBuilderAnyway) {
+        $lockPath = Join-Path $ProjectRoot '.agent\runtime\builder_lock.txt'
+        Remove-StaleLegacyLock -LockPath $lockPath -MaxAgeSeconds 300 | Out-Null
+        if (-not (Is-BuilderRunningInProject -ProjectRoot $ProjectRoot)) {
+            $builderProcess = $null
+            # Get Builder backend from config (already set in $backend at line ~863)
+            $builderBackend = $backend
+            $builderExe = Resolve-BackendExecutable -BackendName $builderBackend -OverridePath ''
+            $builderExeLiteral = ConvertTo-SingleQuotedLiteral $builderExe
+            $currentRound = Get-CurrentBuilderRound -ProjectRoot $ProjectRoot
+            $windowTitle = "BR$currentRound | $ticketId"
+
+            # For opencode backend, use opencode run with composed prompt, model from config, and canonical files
+            # For other backends, use template startup/{role}_{backend}.md
+            if ($builderBackend -eq 'opencode') {
+                # Read model from .opencode/opencode.json config
+                $opencodeConfigPath = Join-Path $ProjectRoot '.opencode\opencode.json'
+                if (-not (Test-Path -LiteralPath $opencodeConfigPath)) {
+                    throw "OpenCode config not found: $opencodeConfigPath"
+                }
+                $opencodeConfig = Get-Content -LiteralPath $opencodeConfigPath -Raw | ConvertFrom-Json
+                $model = $opencodeConfig.model
+                if ([string]::IsNullOrWhiteSpace($model)) {
+                    throw "OpenCode config does not specify a model."
+                }
+
+                # Compose prompt from active ticket
+                $builderPrompt = Get-OpenCodeBuilderPrompt -TicketId $ticketId -ProjectRoot $ProjectRoot
+
+                # Get canonical files to attach
+                $canonicalFiles = Get-CanonicalFilesForOpenCode -ProjectRoot $ProjectRoot
+
+                # Build opencode run command with proper single-quoted literals so that
+                # the multi-word prompt and file paths survive the stringification into
+                # Start-AgentWindow's -Command payload. Stringifying a PowerShell array
+                # directly into "$arr" joins elements with spaces and destroys quoting,
+                # which was the WP-2026-067 regression that prevented Builder startup.
+                $promptLiteral = ConvertTo-SingleQuotedLiteral $builderPrompt
+                $modelLiteral = ConvertTo-SingleQuotedLiteral $model
+                $rootLiteral = ConvertTo-SingleQuotedLiteral $ProjectRoot
+
+                $fileFlags = @()
+                foreach ($file in $canonicalFiles) {
+                    $fileLiteral = ConvertTo-SingleQuotedLiteral $file
+                    $fileFlags += "-f $fileLiteral"
+                }
+                $fileFlagsString = $fileFlags -join ' '
+
+                # --port 0 makes opencode run spawn its own local server before executing.
+                # Required since v1.15.x: without a running server the CLI fails with
+                # "InstanceRef not provided" when launched from Start-Process (no TTY).
+                $command = "& $builderExeLiteral run $promptLiteral --agent builder --model $modelLiteral --dir $rootLiteral --port 0 $fileFlagsString"
+                $builderProcess = Start-AgentWindow -Title $windowTitle -Command $command
+                Write-Host "Builder: lanzado para rol $activeRole con backend OpenCode (opencode run con prompt compuesto)"
+            }
+            else {
+                # Use template for other backends
+                if ([string]::IsNullOrWhiteSpace($BuilderPrompt)) {
+                    $templateName = "builder_$builderBackend"
+                    $templateContent = Get-TemplateContent -ProjectRoot $ProjectRoot -TemplateName $templateName
+                    $filledPrompt = Fill-TemplateVariables -TemplateContent $templateContent -TicketId $ticketId -WorkPlan $workPlanContent -CloseCommand $closeCommand -Role $role -Backend $builderBackend
+                    $builderPromptLiteral = ConvertTo-SingleQuotedLiteral $filledPrompt
+                    $builderProcess = Start-AgentWindow -Title $windowTitle -Command "& $builderExeLiteral run --auto $builderPromptLiteral"
+                }
+                else {
+                    $builderPromptLiteral = ConvertTo-SingleQuotedLiteral $BuilderPrompt
+                    $builderProcess = Start-AgentWindow -Title $windowTitle -Command "& $builderExeLiteral run --auto $builderPromptLiteral"
+                }
+                Write-Host "Builder: lanzado para rol $activeRole con plantilla $templateName"
+            }
+
+            # WP-2026-117: Lock minimo sin PID - solo ticket_id + started_at como apoyo operativo
+            $builderLockState = [ordered]@{
+                ticket_id    = $ticketId
+                project_root = (Resolve-Path -LiteralPath $ProjectRoot).Path
+                started_at   = [DateTimeOffset]::UtcNow.ToString('o')
+                role         = 'BUILDER'
+                backend      = $backend
+                round        = $currentRound
+            }
+            $builderLockState | ConvertTo-Json -Depth 4 | Out-File -LiteralPath $lockPath -Encoding UTF8
+        }
+        else {
+            Write-Host 'Builder: no lanzado - ya esta ejecutandose en este proyecto'
+        }
+    }
+    else {
+        Write-Host "Builder: no lanzado - rol activo es $activeRole y no hay override manual"
+    }
+}
+
+Write-Host "Arranque terminal-driven completado para $ProjectRoot"

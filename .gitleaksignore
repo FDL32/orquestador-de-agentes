@@ -1,0 +1,5 @@
+# Falsos positivos conocidos.
+# tests/test_redact.py usa el JWT de ejemplo publico de jwt.io como fixture
+# para verificar la logica de redaccion de secretos. No es una credencial real.
+tests/test_redact.py:jwt:14
+tests/test_redact.py:jwt:43

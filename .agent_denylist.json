@@ -1,0 +1,4 @@
+﻿{
+  "blocked_patterns": ["^privada/.*", ".*/.env", "^data/sectors/.*", ".*/.git/.*", ".*secrets.*"],
+  "blocked_commands": ["rm -rf", "git push --force", "pip install --upgrade-all", "shred", "format"]
+}

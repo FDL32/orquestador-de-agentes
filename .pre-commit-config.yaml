@@ -1,0 +1,69 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: check-yaml
+        exclude: ^tests/sandbox/
+      - id: check-json
+        exclude: ^tests/sandbox/
+      - id: check-toml
+        exclude: ^tests/sandbox/
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: check-executables-have-shebangs
+      - id: check-ast
+        exclude: ^tests/sandbox/
+      - id: end-of-file-fixer
+        exclude: '^(\.agent/runtime/|tests/sandbox/|.*\.svg$|\.agent/context/project_map\.md$)'
+      - id: mixed-line-ending
+        args: [--fix=lf]
+        exclude: '^(\.agent/runtime/|tests/sandbox/|.*\.ps1$|.*\.cmd$|.*\.bat$|\.agent/context/project_map\.md$|\.claude/settings\.json$)'
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+        exclude: '^(\.agent/runtime/|tests/sandbox/)'
+
+  - repo: local
+    hooks:
+      # Hook scope protected by scripts/check_ruff_hook_scope.py to prevent non-Python/Markdown drift
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check
+        language: system
+        pass_filenames: true
+        types: [python]
+
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        pass_filenames: true
+        types: [python]
+
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.11.3
+    hooks:
+      - id: uv-lock
+
+  - repo: local
+    hooks:
+      # Guard against dangerous truncation of execution_log.md without archive compensation
+      - id: check-history-truncation
+        name: check history truncation guard
+        entry: python scripts/check_no_history_truncation.py
+        language: system
+        pass_filenames: false
+        stages: [commit]
+
+      - id: pip-audit
+        name: pip-audit (CVE Detection)
+        entry: uv run pip-audit
+        language: system
+        pass_filenames: false
+        stages: [pre-push, manual]
+
+      - id: vulture
+        name: vulture - dead code detection
+        entry: uv run vulture bus/ runtime/ scripts/ skills/ tools/ --min-confidence 80 --exclude whitelists,.agent,.cache,.claude,.codex,.opencode,.tmp,.uv-cache,.ruff_cache,tests
+        language: system
+        types: [python]
+        stages: [manual]

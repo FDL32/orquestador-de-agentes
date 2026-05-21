@@ -1,0 +1,69 @@
+# Overrides locales del sistema multi-agente
+.claude/settings.local.json
+.agent/config/hooks_config.local.json
+
+# Caches y artefactos temporales
+.pytest_cache/
+.ruff_cache/
+.tmp/
+tmp_pytest_*/
+__pycache__/
+**/__pycache__/
+.runtime/test_runtime/
+.runtime/probe_dirs/
+.runtime/pytest_safe/
+.agent/runtime/tmp/
+.agent/runtime/uv-cache/
+graphify-out/
+debug_output.txt
+output.txt
+temp_output.txt
+
+# Runtime/logs generados
+.agent/runtime/pytest-safe/last-run.*
+.agent/logs/*.log
+.agent/test_logs/
+tests/.test_workspace/
+
+# Exclusion explicita del mirror oculto de tests
+.__pytest_hidden__/
+
+# Pre-commit cache
+.cache/
+
+# Runtime state per-process (no commitear)
+.agent/runtime/*.txt
+.agent/runtime/*.json
+.agent/runtime/audit/
+.agent/runtime/compare/
+.agent/runtime/reviews/
+.agent/runtime/events/logs/
+.agent/collaboration/.session_state.json
+
+# Runtime local del CLI Goose (perfil, logs, config local del motor externo)
+.agent/runtime/goose/
+
+# Cache de modulos de PowerShell creada accidentalmente en el arbol
+/Microsoft/
+
+# Output runtime del refactor-kit (resultados de fase, regenerable)
+/.refactor/
+# Snapshots rotados de notifications.md (superficie viva, regenerable)
+.agent/collaboration/archive/
+
+# Codex CLI runtime (sessions contienen prompts y rollouts sensibles, no commitear)
+.codex/
+
+# Logs de debug capturados ad hoc
+*.log
+
+# Pytest sandbox runtime (archivos generados, algunos corruptos a proposito para
+# testear error handling - no deben llegar a check-json/check-toml en CI)
+tests/sandbox/test_runtime/
+tests/sandbox/_check_mem/
+tests/sandbox/_check_mem2/
+tests/sandbox/debug_request/
+tests/sandbox/probe_dirs/
+tests/sandbox/tmp*/
+.agent/runtime/memory/observations.jsonl.bak.*
+.agent/runtime/memory/CONSOLIDATION_REPORT.md

@@ -1,0 +1,15 @@
+[project]
+id = "orquestacion_agentes"
+name = "Orquestacion Agentes"
+version = "1.0.0"
+type = "python_app"
+created_from = "legacy_markers"
+goal_id = "orquestacion_agentes_v1"
+
+[paths]
+root = "."
+agent_dir = ".agent"
+
+[agent_system]
+min_version = "8.0.0"
+upgrade_channel = "stable"

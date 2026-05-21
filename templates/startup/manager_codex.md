@@ -1,0 +1,1 @@
+Act as {{role}} ({{backend}}) for {{ticket_id}}. {{work_plan}}. Review the implementation following .agent/collaboration/work_plan.md. Decide APPROVE or CHANGES. Record in .agent/collaboration/execution_log.md. Use {{close_command}} at the end.

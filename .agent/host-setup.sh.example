@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Host-Setup Hook — invocado por scripts/install_agent_system.py
+#
+# Contrato:
+#  - cwd = raíz del proyecto destino
+#  - exit 0 = éxito (install continúa)
+#  - exit != 0 = abortar install
+#  - El instalador muestra las primeras 20 líneas + pide confirmación humana
+#
+# Casos de uso típicos:
+#  - Generar .env.example a partir de plantilla
+#  - Crear directorios runtime/ cache/ que el destino necesita
+#  - Validar deps específicas del dominio (node, pandoc, etc.)
+#  - Inicializar git hooks específicos del proyecto
+#
+# NO usar para:
+#  - Modificar archivos del bundle copiado (eso es scope-violation)
+#  - Operaciones destructivas sin confirmar
+#  - Credenciales o secretos (van en .env del destino, no aquí)
+#
+# Instrucciones de activación:
+#  1. Renombra este archivo a .agent/host-setup.sh (sin .example)
+#  2. Edita para añadir tu setup específico de dominio
+#  3. El instalador lo detectará automáticamente en la próxima instalación
+#
+# Origen del patrón: OpenHands .openhands/setup.sh (MIT)
+# Adaptado para orquestacion_agentes en WP-2026-094
+
+set -euo pipefail
+echo "[host-setup] Bootstrap del proyecto destino (template)."
+# mkdir -p logs/ cache/
+# cp -n config.example.json config.json
+# ... pon aquí tu setup específico de dominio
+echo "[host-setup] Listo."

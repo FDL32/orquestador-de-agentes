@@ -1,0 +1,180 @@
+# MANIFEST.distribute - Contrato del MOTOR Central
+#
+# Este manifiesto define la frontera del codigo operativo del motor central.
+# El motor NO se copia al destino: vive una unica vez en el repo fuente
+# (orquestacion_agentes) y los proyectos destino lo referencian externamente.
+#
+# Reglas:
+# - Las rutas listadas delimitan QUE forma parte del motor central.
+# - .agent/ se trata como subrutas especificas, no como bloque monolitico.
+# - El instalador (scripts/install_agent_system.py) usa este manifiesto
+#   para preparar el destino sin copiar el motor.
+#
+# Categorias:
+# - MOTOR: codigo y configuracion operativa esencial (repo fuente)
+# - EXCLUIDO: historial, runtime transitorio, caches, logs
+
+# =============================================================================
+# RAIZ DEL REPOSITORIO (documentacion y configuracion esencial)
+# =============================================================================
+AGENTS.md
+PROJECT.md
+pyproject.toml
+uv.lock
+
+# =============================================================================
+# SCRIPTS OPERATIVOS
+# =============================================================================
+scripts/install_agent_system.py
+scripts/run_pytest_safe.py
+scripts/local_audit.py
+scripts/memory_consolidate.py
+scripts/archive_collaboration_artifacts.py
+scripts/check_ruff_hook_scope.py
+scripts/run_gates_dispatch.py
+
+# =============================================================================
+# SKILLS (micro-habilidades reutilizables)
+# =============================================================================
+skills/
+
+# =============================================================================
+# .AGENT/ - SUBRUTAS ALLOWLISTADAS
+# =============================================================================
+
+# Configuracion esencial
+.agent/config/agents.json
+.agent/config/hooks_config.json
+.agent/project_manifest.toml
+.agent/.version_manifest.json
+.agent/known_models.json
+
+# Controlador y componentes core
+.agent/agent_controller.py
+.agent/session_tracker.py
+.agent/completion_checker.py
+.agent/completion_common.py
+.agent/agents_config.py
+
+# Hooks de instalacion (plantillas)
+.agent/host-setup.sh.example
+.agent/host-setup.ps1.example
+
+# Council (broker de auditoria)
+.agent/council/__init__.py
+.agent/council/audit_rules.py
+.agent/council/council_broker.py
+.agent/council/verdict.py
+
+# Runtime - solo lo estructural, no transitorio
+.agent/runtime/__init__.py
+.agent/runtime/events/events.jsonl
+.agent/runtime/memory/observations.jsonl
+.agent/runtime/memory/MEMORY.md
+.agent/runtime/memory/memory_helpers.py
+
+# Collaboration - solo superficies vivas (NO historial)
+.agent/collaboration/work_plan.md
+.agent/collaboration/TURN.md
+.agent/collaboration/STATE.md
+.agent/collaboration/execution_log.md
+.agent/collaboration/notifications.md
+.agent/collaboration/review_queue.md
+
+# =============================================================================
+# EXPLICITAMENTE EXCLUIDO (documentacion para claridad)
+# =============================================================================
+#
+# Historial de tickets cerrados:
+#   .agent/collaboration/PLAN_WP-*.md
+#   .agent/collaboration/AUDIT_WP-*.md
+#   .agent/collaboration/_archive/
+#   .agent/collaboration/archive/
+#
+# Runtime transitorio:
+#   .agent/runtime/tmp/
+#   .agent/runtime/uv-cache/
+#   .agent/runtime/test_logs/
+#   .agent/runtime/__pycache__/
+#   .agent/runtime/reviews/
+#   .agent/runtime/compare/
+#   .agent/runtime/deliverables/
+#   .agent/runtime/audit/
+#   .agent/runtime/goose/
+#   .agent/runtime/pytest-safe/
+#   .agent/runtime/*.lock
+#   .agent/runtime/*.txt
+#   .agent/runtime/*.json (excepto hooks_config.json)
+#
+# Caches y residuos:
+#   .agent/__pycache__/
+#   .agent/council/__pycache__/
+#   .agent/runtime/memory/__pycache__/
+#   .agent/runtime/memory/*.bak*
+#   .ruff_cache/
+#   .cache/
+#   .uv-cache/
+#   .venv/
+#
+# Logs y diagnosticos:
+#   debug.log
+#   opencode_models_error.log
+#
+# Herramientas de validacion standalone:
+#   validate_template.bat
+#   validate_template.ps1
+#   VERIFY_VERSION.sh
+#   MI_PROYECTO.bat
+#
+# Documentacion historica y guias de upgrade:
+#   UPGRADE_GUIDE.md
+#   UPGRADE_CLEANUP_GUIDE.md
+#   RELEASE_CHECKLIST.md
+#   MANUAL_PUBLICATION_CHECKLIST.md
+#   DISTRIBUTION_GUIDE.md
+#   SOLUTION_WP-*.md
+#   LECCIONES_WP-*.md
+#   CLOSURE_MODEL.md
+#
+# Configuracion de desarrollo:
+#   .pre-commit-config.yaml
+#   pytest.ini
+#   uv.toml
+#   .gitignore
+#   .gosehints
+#
+# Plugins y extensiones:
+#   .claude/
+#   .claude-plugin/
+#   .codex/
+#   .opencode/
+#   .github/
+#
+# Directorios de desarrollo:
+#   agent_system/
+#   bus/
+#   graphify-out/
+#   Microsoft/
+#   prompts/
+#   templates/
+#   tests/
+#   tools/
+#   .tmp/
+#   .tmp-pytest-detect/
+#   .tmp-pytest-upgrade/
+#
+# Archivos de estado de sesion:
+#   .agent/collaboration/.session_state.json
+#   .agent/runtime/builder_lock.txt
+#   .agent/runtime/circuit_breaker.json
+#   .agent/runtime/llm_evals_config.json
+#   .agent/runtime/supervisor_state.json
+#   .agent/runtime/pytest-safe/last-run.json
+#   .agent/runtime/pytest-safe/last-run.log
+#
+# Memory archive y backups:
+#   .agent/runtime/memory/archive/
+#   .agent/runtime/memory/observations.jsonl.bak*
+#   .agent/runtime/memory/CONSOLIDATION_REPORT.md
+#   .agent/runtime/memory/feedback-*.md
+#   .agent/runtime/memory/SESSION_BRIEF.md

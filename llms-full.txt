@@ -1,0 +1,420 @@
+# orquestacion_agentes
+
+> Multi-agent orchestration template (Manager/Builder/Supervisor). Python 3.10+ runtime, OpenCode backend, terminal-driven flow, canonical state in `.agent/`, skills under `skills/`, hard scope gate, anti-fabrication verification protocol. Local audit + repo compare + refactor manager are first-class skills.
+
+Repo: https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main
+
+## Core entry points
+
+- [AGENTS.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/AGENTS.md)
+- [CLAUDE.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/CLAUDE.md)
+- [QUICKSTART.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/QUICKSTART.md)
+- [PROJECT.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/PROJECT.md)
+- [CHANGELOG.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/CHANGELOG.md)
+
+## Configuration
+
+- [INTERACTION_MODES.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/INTERACTION_MODES.md)
+- [agents.json](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/.agent/config/agents.json)
+- [pyproject.toml](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/pyproject.toml)
+
+## Debugging & introspection
+
+- [local_audit.py](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/scripts/local_audit.py)
+- [agent_controller.py](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/.agent/agent_controller.py)
+- [test_manager_smoke.ps1](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/scripts/test_manager_smoke.ps1)
+
+## Philosophy & onboarding
+
+- [session_bootstrap.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/prompts/session_bootstrap.md)
+- [refactor_bootstrap.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/prompts/refactor_bootstrap.md)
+
+## Skills (read RESOLVER first)
+
+- [skills/local-audit](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/skills/local-audit/SKILL.md)
+- [skills/repo-compare](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/skills/repo-compare/SKILL.md)
+- [skills/refactor-manager](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/skills/refactor-manager/SKILL.md)
+- [skills/project-finalize](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/skills/project-finalize/SKILL.md)
+- [skills/version-changelog](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/skills/version-changelog/SKILL.md)
+
+## Operational tips
+
+- `python scripts/local_audit.py [--quick]` — 40-line snapshot (version, active plan, git, skills, recent WPs, memory).
+- `python .agent/agent_controller.py --validate --json --force` — drift detection.
+- `python scripts/run_pytest_safe.py` — test suite for current scope.
+- `ruff check . && ruff format .` — lint + format.
+- `uv run pip-audit .` — supply-chain audit.
+- `python scripts/build_llms.py` — regenerate this file + llms-full.txt.
+
+## Forks
+
+If you fork, override the URL base before regenerating: `LLMS_REPO_BASE=https://raw.githubusercontent.com/your-org/your-fork/main python scripts/build_llms.py`.
+
+
+---
+
+# Inlined core docs
+
+## AGENTS.md
+
+```markdown
+# AGENTS.md - Instrucciones transversales
+
+## Agentes disponibles
+
+- Claude Code: agente principal y supervisor.
+- Codex / GitHub Copilot: agentes soportados si leen este archivo dentro del arbol.
+- Goose / Claw: motores orquestados por `scripts/orquestador.py`.
+
+## Resumen del entorno
+
+- Runtime: Python 3.10+, `pathlib`, `typing`.
+- Package manager: `uv` (`uv add <lib>`, nunca `pip` directo).
+- Testing y calidad: `pytest`, `ruff`.
+- Seguridad: `gitleaks`, `pip-audit`.
+
+## Rutas importantes
+
+- `agent_system/`: codigo base de apoyo incluido con la plantilla.
+- `scripts/`: utilidades de instalacion, upgrade, rollback y validacion.
+- `skills/`: micro-habilidades reutilizables.
+- `.agent/collaboration/`: estado operacional canonico.
+- `.agent/runtime/memory/`: memoria persistente por proyecto.
+- `.agent/council/`: broker de consejo y auditoria paralela.
+- `REPOSITORY_STRUCTURE.md`: mapa interno publicable del repositorio.
+
+## Contrato de version y portabilidad
+
+- `pyproject.toml` define la version del paquete portable.
+- `.agent/.version_manifest.json` define la version tecnica del core.
+- Los comandos canonical y legacy se documentan por separado.
+- Estado actual: `v9.11.0` terminal-driven closeout completado, plantilla lista para copiar al siguiente proyecto.
+- Este repositorio se trata como autonomo al publicar; evita depender de rutas o metadatos del workspace padre en la documentacion publica.
+
+## Comandos principales
+
+- Instalacion inicial: `python scripts/install_agent_system.py --install`
+- Sincronizacion estricta: `python scripts/install_agent_system.py --sync`
+- Sincronizacion interactiva: `python scripts/install_agent_system.py --sync --prune`
+- Vista previa: `python scripts/install_agent_system.py --sync --dry-run`
+- Estado del sistema: `python .agent/agent_controller.py`
+- Auditoria local: `python scripts/local_audit.py`
+- Comparar con repo GitHub: skill `/repo-compare`
+- Interaccion por terminal: `python scripts/ticket_supervisor.py --reactive`
+- Tests: `python scripts/run_pytest_safe.py`
+- Calidad: `ruff check . && ruff format .`
+- Auditoria de dependencias: `uv run pip-audit .`
+
+## Convenciones
+
+- Lee `PROJECT.md` antes de tocar arquitectura o estado.
+- Lee `INTERACTION_MODES.md` antes de operar por chat o por terminal.
+- Para arrancar una sesion nueva con cualquier agente, usa el bootstrap canonico en `prompts/session_bootstrap.md` (apunta a archivos clave en lugar de embeber).
+- Usa `pathlib` y `try/except` explicito para I/O.
+- Mantiene la raiz limpia: no metas basura temporal en el arbol portable.
+- Usa `.agent/collaboration/work_plan.md` y `.agent/collaboration/execution_log.md` para el estado canonico.
+
+## Memoria por proyecto
+
+- `.agent/runtime/memory/observations.jsonl` guarda observaciones persistentes.
+- `.agent/runtime/memory/MEMORY.md` es un indice humano, no reemplaza el estado canonico.
+- Regenera el indice solo de forma explicita.
+
+## Secretos y seguridad
+
+- No guardes credenciales, tokens ni rutas sensibles.
+- No toques `privada/`.
+- No desactives `guard_paths` para trabajar mas rapido.
+- No pidas dependencias nuevas sin aprobacion.
+
+## Criterio de cierre
+
+> Detalle operativo de los quality gates y comandos diarios (incluye flags exactos y secuencia recomendada): ver [QUICKSTART.md sección "6. Comandos diarios"](QUICKSTART.md#6-comandos-diarios).
+
+Considera una tarea cerrada solo cuando:
+1. `ruff`, `pytest` y `pip-audit` pasan.
+2. El codigo nuevo usa rutas y manejo de errores correctos.
+3. Las decisiones importantes quedan consolidadas en `PROJECT.md` o `CHANGELOG.md`.
+
+```
+
+## CLAUDE.md
+
+```markdown
+# Claude Code Guide
+
+@AGENTS.md
+
+## Role
+
+Claude Code is a supported backend for this template and can act as Builder or Manager depending on the active ticket.
+Prefer the current code and the canonical docs over memory or stale notes.
+Current portable release: `v9.9.0`, copy-ready after the terminal-driven closeout.
+Treat this repository as standalone when editing public docs or commands; do not assume a parent workspace is available.
+
+## Workflow
+
+For any non-trivial change:
+1. Read `PROJECT.md` and `CHANGELOG.md` first.
+2. Use plan mode if the change spans multiple layers.
+3. Make the smallest useful change.
+4. Run the quality gates before closing the task.
+
+If you plan to run the template from terminal, read `QUICKSTART.md` first, then `INTERACTION_MODES.md`, and follow the terminal-driven flow.
+
+For a fresh agent onboarding (new conversation, new backend, post-compaction recovery), use the canonical bootstrap prompt at `prompts/session_bootstrap.md`. Paste it as the first message; it briefs the agent on roles, canonical files, recurring issues and behavior contract without burning context on docs.
+
+## Useful commands
+
+> Ver lista completa en [QUICKSTART.md sección "6. Comandos diarios"](QUICKSTART.md#6-comandos-diarios).
+
+Comandos rápidos:
+- `/agent-status` muestra el estado multi-agente actual.
+- `/quality-gates` ejecuta `ruff`, `pytest-safe` y `pip-audit`.
+
+## Rule loading
+
+If `.claude/rules/README.md` exists, use it as a map for session-specific context modules.
+If a rule conflicts with the codebase, follow the code and record the discrepancy in the project docs.
+
+```
+
+## prompts/session_bootstrap.md
+
+```markdown
+# Session Bootstrap Prompt
+
+Pega este bloque tal cual al iniciar una nueva conversacion con un agente nuevo (Claude Code, Codex, OpenCode o cualquier backend) que vaya a operar sobre `orquestacion_agentes`. Esta optimizado para orientar al agente sin gastar la ventana de contexto inicial cargando documentacion completa: apunta a archivos canonicos en lugar de embeber contenido.
+
+---
+
+## Prompt (copia y pega)
+
+```
+Eres el agente principal del sistema multi-agente del repositorio orquestacion_agentes.
+
+## Lectura obligatoria antes de actuar
+
+Lee en este orden, sin omitir ninguno:
+
+0. `.agent/runtime/audit/AUDIT.md` si existe (snapshot estructurado del cierre anterior, ~40 lineas con version, plan activo, git posture, skills, WPs recientes, health). Si esta presente y fresco (mtime < 24h), puede sustituir los puntos 2-4 siguientes en sesiones rapidas. Si falta o esta stale, regenera con `python scripts/local_audit.py`.
+1. `CLAUDE.md` y `AGENTS.md` (instrucciones transversales).
+2. `QUICKSTART.md` (como arrancar el flujo terminal-driven).
+3. `PROJECT.md` y `CHANGELOG.md` (estado del proyecto, decisiones).
+4. `.agent/collaboration/TURN.md`, `STATE.md`, `work_plan.md`, `execution_log.md` (estado canonico).
+5. `.agent/runtime/memory/MEMORY.md` y `.agent/runtime/memory/observations.jsonl` (memoria persistente del proyecto).
+
+## Resumen breve del sistema
+
+- **Runtime activo:** `orquestacion_agentes/` (repo portable).
+- **Roles:** Manager (OpenCode via `scripts/manager_review_bridge.py`, modelo configurable en `.agent/config/agents.json`) y Builder (OpenCode, modelo `opencode-go/qwen3.5-plus`).
+- **Bus canonico:** `.agent/runtime/events/events.jsonl` (append-only, autoridad absoluta).
+- **Proyecciones:** `TURN.md`, `STATE.md`, `work_plan.md`, `execution_log.md` se derivan del bus.
+- **Launcher:** `scripts/launch_agent_terminals.ps1` abre Supervisor + Bridge + Builder segun `TURN.md`. WP-2026-067 integro OpenCode con prompt compuesto desde ticket.
+- **Config de agentes:** `.agent/config/agents.json` mapea backend->ejecutable. Builder=opencode, Manager=opencode, Supervisor=default.
+- **Validate:** `python .agent/agent_controller.py --validate --json --force` debe pasar antes de cualquier cierre.
+- **Quality gates:** `ruff check .`, `python scripts/run_pytest_safe.py`, `pip-audit`.
+
+## Ciclo canonico de un ticket
+
+> Flujo completo y arquitectura: ver [PROJECT.md sección "Current architecture"](../PROJECT.md#current-architecture).
+
+1. Manager crea `work_plan.md` (DRAFT) y opcionalmente `PLAN_WP-XXXX.md` (estrategia tecnica) + `AUDIT_WP-XXXX.md` (criterios de auditoria). User aprueba editando work_plan a APPROVED.
+2. Builder implementa y al final ejecuta `python .agent/agent_controller.py --mark-ready --json --force` que emite `BUILDER_EXIT` y luego `STATE_CHANGED -> READY_FOR_REVIEW` al bus (orden fijado por WP-074).
+3. Bridge dispara OpenCode review automaticamente. Si aprueba -> cascada hasta COMPLETED.
+4. Markdowns se sincronizan a COMPLETED. Commit + push.
+
+**Manager devuelve `inspect`:** patron recurrente (WP-075, WP-076). El bridge ejecuta el review pero el parser no extrae `DECISION: APPROVE|CHANGES`. Workaround: verificar el trabajo manualmente (`git diff`, `--validate`, walk-through) y ejecutar `python .agent/agent_controller.py --manager-approve --ticket WP-XXXX --force` para disparar la cascada de cierre. No es fabricacion: el codigo del Builder esta bien, solo falla el handshake textual.
+
+## Reglas no negociables
+
+- **Verifica antes de actuar.** No confies en reportes de Builder o agentes externos: `git status`, `tail events.jsonl`, `--validate`. El patron de fabricacion esta documentado en [AGENTS.md](AGENTS.md).
+- **No mezcles chat y terminal** sin sincronizar TURN/STATE/execution_log.
+- **`.codex/` y `*.log` estan gitignorados** (rollouts con prompts sensibles). No los toques.
+- **OAuth race Codex:** Resuelto por WP-072 mediante el cambio al backend OpenCode. La dependencia de Codex como backend del Manager ha sido eliminada por defecto.
+- **Manager-approve CLI:** Se realiza mediante `python .agent/agent_controller.py --manager-approve --ticket WP-XXXX --force` (canonical closeout sin scripts ad-hoc).
+- **No abras WP nuevos sin instruccion explicita del usuario.**
+
+## Comportamiento esperado
+
+- Responde **breve**, optimizando tokens. Sin emojis salvo que el usuario los use.
+- Antes de cambios destructivos (git push, edits a `.agent/`, ejecucion de cascade), confirma con el usuario.
+- Si el usuario pide algo que el codigo ya hace, **revisa el codigo primero** antes de proponer nada nuevo.
+- Si vas a tocar la rama Codex/Kilo del launcher: para. Eso es scope-creep y no entra sin un WP nuevo.
+
+Cuando termines la lectura, di "Sistema internalizado" y enumera en 5 lineas maximo: ultimo ticket cerrado, archivos clave que leiste, drift detectado (si hay), siguiente accion recomendada.
+```
+
+---
+
+## Cuando usarlo
+
+- Primera interaccion con un agente nuevo en una sesion limpia.
+- Al recuperarse de una conversacion comprimida donde el agente perdio contexto.
+- Al cambiar de backend (de Claude Code a Codex, de Kilo a OpenCode, etc.) y necesitar que el nuevo backend asuma rapido.
+
+## Cuando NO usarlo
+
+- A mitad de un ticket en curso (rompe el flujo establecido).
+- Si ya hay un `work_plan.md` activo IN_PROGRESS — el agente debe leer primero ese, no este bootstrap.
+- En llamadas one-shot a OpenCode/Codex desde el launcher — ahi sirve el prompt compuesto que ya genera `Get-OpenCodeBuilderPrompt`.
+
+## Mantenimiento
+
+Actualiza este archivo cuando:
+- Cambia el modelo por defecto del Builder o Manager.
+- Aparece una nueva regla operativa relevante (memoria, ticket cerrado con leccion).
+- Se anade o quita un archivo canonico al flujo.
+
+No lo conviertas en sustituto de `PROJECT.md` o `CHANGELOG.md`: este bootstrap apunta, no documenta.
+
+```
+
+## skills/local-audit/SKILL.md
+
+```markdown
+---
+name: Local Audit
+version: 1.0.0
+description: Genera un snapshot rapido y estructurado del estado actual del repositorio, util para arranque de sesion y antes de comparaciones con otros repositorios.
+triggers: [/audit, /local-audit, /snapshot]
+---
+
+# local-audit
+
+Skill para generar y revisar una foto operativa y estructurada del estado del repositorio (auditoría local).
+
+## Overview
+
+Cuando se invoca este skill, ejecuta el script `scripts/local_audit.py` que consolida la información más importante del repositorio de forma eficiente y rápida (version, estado del agente, checks de salud, skills disponibles, configuración y logs recientes).
+
+El resultado es consumible tanto por agentes (JSON) como por humanos (MD).
+
+## Workflow
+
+### Paso 1: Ejecutar la auditoría
+
+```bash
+python scripts/local_audit.py
+```
+
+Este comando generará dos archivos:
+- `.agent/runtime/audit/audit.json`
+- `.agent/runtime/audit/AUDIT.md`
+
+### Paso 2: Leer el resultado
+
+El agente debe leer e incorporar al contexto el contenido de `.agent/runtime/audit/AUDIT.md`.
+
+### Paso 3: Análisis de salud (Opcional)
+
+Si el reporte indica que hay `Errors` o `Warnings` en la sección "Health Check", el agente debe notificar al usuario para evaluar si es seguro proceder con el trabajo o si se debe abrir un ticket para corregir la deriva.
+
+## Casos de Uso
+
+- **Arranque de sesión**: Ejecutar esta skill ayuda a ganar contexto rápido de qué está pasando en el repo sin leer múltiples archivos dispersos.
+- **Antes de comparar repos**: Provee el inventario de "lo que ya tenemos" para no proponer funcionalidades repetidas.
+- **Pre-closeout**: Validación rápida del estado global del proyecto.
+
+```
+
+## skills/repo-compare/SKILL.md
+
+```markdown
+---
+name: Repo Compare
+version: 1.0.0
+description: Comparar proyecto local con repositorio GitHub para detectar funcionalidades de alto valor
+triggers: [/repo-compare, /compare, /gh-compare]
+---
+
+# repo-compare
+
+Skill para comparar el proyecto local (`z_scripts/`) con cualquier repositorio público de GitHub y detectar funcionalidades, utilidades o patrones de alto valor que se puedan incorporar.
+
+Usa `.agent/runtime/audit/AUDIT.md` como **Fase 0 autoritativa** del contexto local, eliminando hallucinación sobre "qué ya existe". Lee el repo remoto vía GitHub MCP (`mcp__github__get_file_contents`, `mcp__github__search_code`).
+
+## When to activate
+
+- Cuando recibes una URL de GitHub (`https://github.com/<owner>/<repo>`) y quieres detectar funcionalidades portables.
+- Cuando el Manager o usuario pregunta "¿qué podemos aprender de este repo?".
+- Cuando quieres evaluar si un repo merece inversión de tiempo antes de explorarlo en profundidad.
+
+## When NOT to activate
+
+- Si no hay AUDIT.md fresco (< 24h) y no se puede regenerar.
+- Si el repo target es privado (MCP GitHub solo lee públicos).
+- Si el usuario solo quiere una búsqueda puntual de código (usar `mcp__github__search_code` directo).
+
+## Workflow (5 pasos)
+
+### Paso 1: Preflight AUDIT
+- Verificar `.agent/runtime/audit/AUDIT.md`:
+  - Si falta o `generated_at > 24h`: intentar ejecutar `python scripts/local_audit.py --quick` automáticamente.
+  - Si el entorno no permite shell: pedir al usuario que lo ejecute.
+- Cargar `AUDIT.md` como contexto Fase 0.
+
+### Paso 2: Validar input
+- Requiere URL GitHub `https://github.com/<owner>/<repo>`.
+- Si no se proporciona: pedir al usuario.
+
+### Paso 3: Filtro rápido (Fase 1 del prompt)
+- Score 0-5 sobre 5 dimensiones: README claro, tests/CI presentes, señales mantenimiento, encaje técnico, claridad estructural.
+- Si total < 3 → marcar `[BAJO VALOR]`, abortar con explicación breve.
+
+### Paso 4: Exploración (Fase 2)
+- Usar `mcp__github__get_file_contents` y `mcp__github__search_code`.
+- **Cap operativo**: max 8-12 archivos × 500 líneas por archivo.
+- Si archivo > 500 líneas: leer primeras 100 + grep dirigido por patrones específicos.
+- Orden: README → estructura raíz → `skills/`, `hooks/`, `tools/`, `agents/` → `prompts/`, `.rules`, `.agent/` → `tests/`, CLI → `.github/workflows/`.
+
+### Paso 5: Output (Fase 3+4)
+- 3-5 oportunidades con plantilla canónica (ver `references/output-format.md`).
+- Cada oportunidad incluye:
+  - Campo `¿Ya existe en z_scripts?` citando ruta + sección de AUDIT.md (no `Yes/No` a secas).
+  - Campo `📎 Fuente verificada: [AUDIT.md sección X | GitHub: owner/repo/path:L# | Ambos]`.
+- Matriz final (Impacto / Esfuerzo / Encaje / Decisión).
+- Sección "Qué Ignorar" + "Acción Inmediata".
+- Persistir output a `.agent/runtime/compare/<owner>-<repo>-<ref>-<YYYY-MM-DD>.md` (default `ref=HEAD`, idealmente capturar SHA real vía `mcp__github__list_commits` paginación 1).
+
+## Constraints
+
+- **Skill PURA**: no crear ningún `.py` bajo `skills/repo-compare/`. El agente invocador usa sus propias herramientas (MCP GitHub).
+- **No inventar**: si no puedes verificar algo, escribe `[NO VERIFICADO]` o `[NO ENCONTRADO]`.
+- **AUDIT.md es Fase 0**: si AUDIT.md indica que algo ya existe, marcar `[YA EXISTE]` automáticamente.
+- **Cap operativo medible**: máximo 12 archivos remotos leídos. Contar invocaciones de `mcp__github__get_file_contents`.
+- **Output gitignored**: `.agent/runtime/compare/` está en `.gitignore`. No commitear comparaciones generadas.
+
+## References
+
+- `PROMPT_TEMPLATE.md` — Prompt completo con 5 fases + cap operativo + invariantes anti-fabricación.
+- `references/output-format.md` — Plantilla de oportunidad + matriz + secciones finales.
+- `references/filter-criteria.md` — Scoring 0-5 y umbral 3 (BAJO VALOR).
+- `skills/refactor-manager/SKILL.md` — Patrón arquitectónico replicado (skill pura + prompt template + references/).
+
+## Troubleshooting
+
+**P: ¿Qué si MCP GitHub no está disponible o falla (rate limit, auth)?**
+R: Documentar en `execution_log.md` la razón. Dejar el smoke como tarea humana pendiente. NO marcar el WP como READY_FOR_REVIEW sin smoke ejecutado o documentado como bloqueado.
+
+**P: ¿Qué si el repo target tiene archivos muy grandes (> 500 líneas)?**
+R: Aplicar cap operativo: leer primeras 100 líneas + `mcp__github__search_code` con patrones dirigidos. Documentar en el output qué se truncó.
+
+**P: ¿Qué si AUDIT.md está stale (> 24h)?**
+R: Ejecutar `python scripts/local_audit.py --quick` antes de continuar. Si no se puede, pedir al usuario que lo ejecute.
+
+## Example usage
+
+```bash
+# Usuario activa la skill
+/repo-compare https://github.com/Aider-AI/aider
+
+# El agente ejecuta:
+# FASE 1: Verifica AUDIT.md (fresco? si no, regenerar)
+# FASE 2: Filtro rápido (score 0-5, si < 3 abortar)
+# FASE 3: Exploración (≤ 12 archivos × ≤ 500 líneas)
+# FASE 4: Oportunidades (3-5 entradas con plantilla)
+# FASE 5: Persistir output a .agent/runtime/compare/Aider-AI-aider-<sha>-2026-05-18.md
+```
+
+```

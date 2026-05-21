@@ -1,0 +1,110 @@
+# Goose Integration Hints for z_scripts
+
+## Native Skills
+
+### /refactor — Manager-Controlled Code Refactoring
+
+**Description:**
+5-phase code refactoring with Manager oversight at each step:
+1. ANÁLISIS: Read code, document invariants (read-only)
+2. PLAN: Propose minimal changes (Manager approves)
+3. REFACTOR: Execute approved plan
+4. VALIDACIÓN: Tests + ruff + regression checks
+5. ITERACIÓN: Fix minimal errors if validation fails
+
+**How to Use (Native Import):**
+
+```python
+from skills.refactor_manager.goose_integration import invoke
+
+result = invoke(
+    target="src/core.py",        # Required: file to refactor
+    agent="goose",               # Optional: goose|claw|manual (default: goose)
+    work_dir=".refactor"         # Optional: artifact directory (default: .refactor)
+)
+
+# Check result
+if result["status"] == "COMPLETED":
+    print(f"Successfully refactored {result['target']}")
+    print(f"Phases: {result['phases']}")
+    # Access artifacts
+    analysis = result["artifacts"]["01_analysis"]
+    plan = result["artifacts"]["02_plan"]
+    refactor = result["artifacts"]["03_refactor"]
+    validation = result["artifacts"]["04_validation"]
+    iteration = result["artifacts"]["05_iteration"]
+else:
+    print(f"Error: {result['error']}")
+```
+
+**Parameters:**
+- `target` (required, str): File or module path to refactor
+- `agent` (optional, str): "goose", "claw", or "manual" (default: "goose")
+- `work_dir` (optional, str): Directory for artifacts (default: ".refactor")
+
+**Returns:**
+dict with:
+- `status`: "COMPLETED" or "FAILED"
+- `target`: The file refactored
+- `phases`: List of executed phases ["01_analysis", "02_plan", ...]
+- `artifacts`: dict with results from each phase
+- `error`: (if status=="FAILED") Error message
+
+**Manager Approval:**
+At each phase, Manager is prompted (via stdin) to approve continuation.
+Answers: S/Y/[Enter]=yes, N=no
+
+**When to Use:**
+- Need safe refactoring with Manager oversight
+- Refactoring critical code (behavior must not change)
+- Want full audit trail of decisions
+- Want Manager to verify each phase before proceeding
+
+**When NOT to Use:**
+- Quick, uncontrolled refactoring (use /implement instead)
+- When Manager approval overhead is unacceptable
+- Refactoring non-critical code
+
+**Example Conversation:**
+
+Goose: "I notice run_pytest_safe.py could be improved with better error handling."
+Goose: "Let me use the native /refactor skill to safely refactor it."
+
+[Goose invokes]
+from skills.refactor_manager.goose_integration import invoke
+result = invoke(target="scripts/run_pytest_safe.py")
+
+Manager: [reads analysis results]
+Manager: "S"  [approves phase 1]
+
+Manager: [reads plan results]
+Manager: "S"  [approves phase 2]
+
+[... phases 3-5 execute ...]
+
+Goose: "Refactoring complete! All phases passed validation."
+Goose: "The improved error handling is now in place."
+
+**Output Files:**
+Results saved to `.refactor/phases/`:
+- 01_analysis.json — What the code does, invariants
+- 02_plan.json — Proposed changes
+- 03_refactor.json — Applied changes
+- 04_validation.json — Test results, ruff checks
+- 05_iteration.json — Any fixes applied
+
+**Troubleshooting:**
+
+Q: "ImportError: No module named 'agent_system'"
+A: Make sure PYTHONPATH includes z_scripts root
+
+Q: "Manager approval timed out"
+A: Manager needs to type S/N and press Enter at each phase prompt
+
+Q: "Validation failed, iterating..."
+A: Phase 5 automatically tries to fix validation errors
+
+**Related Skills:**
+- /implement — Write new code (no refactoring)
+- /review — Review changes (read-only analysis)
+- /audit — Security audit (detection-only)

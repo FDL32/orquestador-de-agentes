@@ -1,0 +1,59 @@
+{
+    "hooks":  {
+                  "PreToolUse":  [
+                                     {
+                                         "matcher":  "Write|Edit",
+                                         "hooks":  [
+                                                       {
+                                                           "type":  "command",
+                                                           "command":  "python -c \"import sys,subprocess; from pathlib import Path; cwd=Path(\u0027.\u0027).resolve(); root=next((p for p in [cwd]+list(cwd.parents) if (p/\u0027.claude\u0027).exists()),cwd); cands=[root/\u0027orquestacion_agentes\u0027/\u0027.agent\u0027/\u0027hooks\u0027/\u0027guard_paths.py\u0027, root/\u0027.agent\u0027/\u0027hooks\u0027/\u0027guard_paths.py\u0027, root/\u0027agent_system\u0027/\u0027.agent\u0027/\u0027hooks\u0027/\u0027guard_paths.py\u0027]; hook=next((p for p in cands if p.exists()),None); data=sys.stdin.buffer.read(); sys.exit(0 if hook is None else subprocess.run([sys.executable,str(hook)],input=data).returncode)\""
+                                                       }
+                                                   ]
+                                     }
+                                 ],
+                  "PostToolUse":  [
+                                      {
+                                          "matcher":  "Read|Grep|Glob|WebFetch",
+                                          "hooks":  [
+                                                        {
+                                                            "type":  "command",
+                                                            "command":  "python -c \"import sys,subprocess; from pathlib import Path; cwd=Path(\u0027.\u0027).resolve(); root=next((p for p in [cwd]+list(cwd.parents) if (p/\u0027.claude\u0027).exists()),cwd); cands=[root/\u0027orquestacion_agentes\u0027/\u0027.agent\u0027/\u0027hooks\u0027/\u0027native_post_tool_hook.py\u0027, root/\u0027.agent\u0027/\u0027hooks\u0027/\u0027native_post_tool_hook.py\u0027, root/\u0027agent_system\u0027/\u0027.agent\u0027/\u0027hooks\u0027/\u0027native_post_tool_hook.py\u0027]; hook=next((p for p in cands if p.exists()),None); data=sys.stdin.buffer.read(); sys.exit(0 if hook is None else subprocess.run([sys.executable,str(hook)],input=data).returncode)\""
+                                                        }
+                                                    ]
+                                      }
+                                  ],
+                  "PreCompact":  [
+                                     {
+                                         "matcher":  "",
+                                         "hooks":  [
+                                                       {
+                                                           "type":  "command",
+                                                           "command":  "python -c \"import sys,subprocess; from pathlib import Path; cwd=Path(\u0027.\u0027).resolve(); root=next((p for p in [cwd]+list(cwd.parents) if (p/\u0027.claude\u0027).exists()),cwd); cands=[root/\u0027orquestacion_agentes\u0027/\u0027.agent\u0027/\u0027hooks\u0027/\u0027pre_compact_hook.py\u0027, root/\u0027.agent\u0027/\u0027hooks\u0027/\u0027pre_compact_hook.py\u0027, root/\u0027agent_system\u0027/\u0027.agent\u0027/\u0027hooks\u0027/\u0027pre_compact_hook.py\u0027]; hook=next((p for p in cands if p.exists()),None); data=sys.stdin.buffer.read(); sys.exit(0 if hook is None else subprocess.run([sys.executable,str(hook)],input=data).returncode)\""
+                                                       }
+                                                   ]
+                                     }
+                                 ],
+                  "Stop":  [
+                               {
+                                   "matcher":  "",
+                                   "hooks":  [
+                                                 {
+                                                     "type":  "command",
+                                                     "command":  "python -c \"import sys,subprocess; from pathlib import Path; cwd=Path(\u0027.\u0027).resolve(); root=next((p for p in [cwd]+list(cwd.parents) if (p/\u0027.claude\u0027).exists()),cwd); cands=[root/\u0027orquestacion_agentes\u0027/\u0027.agent\u0027/\u0027hooks\u0027/\u0027native_stop_hook.py\u0027, root/\u0027.agent\u0027/\u0027hooks\u0027/\u0027native_stop_hook.py\u0027, root/\u0027agent_system\u0027/\u0027.agent\u0027/\u0027hooks\u0027/\u0027native_stop_hook.py\u0027]; hook=next((p for p in cands if p.exists()),None); data=sys.stdin.buffer.read(); sys.exit(0 if hook is None else subprocess.run([sys.executable,str(hook)],input=data).returncode)\""
+                                                 }
+                                             ]
+                               }
+                           ],
+                  "SubagentStop":  [
+                                       {
+                                           "matcher":  "",
+                                           "hooks":  [
+                                                         {
+                                                             "type":  "command",
+                                                             "command":  "python -c \"import sys,subprocess; from pathlib import Path; cwd=Path(\u0027.\u0027).resolve(); root=next((p for p in [cwd]+list(cwd.parents) if (p/\u0027.claude\u0027).exists()),cwd); cands=[root/\u0027orquestacion_agentes\u0027/\u0027.agent\u0027/\u0027hooks\u0027/\u0027subagent_stop_hook.py\u0027, root/\u0027.agent\u0027/\u0027hooks\u0027/\u0027subagent_stop_hook.py\u0027, root/\u0027agent_system\u0027/\u0027.agent\u0027/\u0027hooks\u0027/\u0027subagent_stop_hook.py\u0027]; hook=next((p for p in cands if p.exists()),None); data=sys.stdin.buffer.read(); sys.exit(0 if hook is None else subprocess.run([sys.executable,str(hook)],input=data).returncode)\""
+                                                         }
+                                                     ]
+                                       }
+                                   ]
+              }
+}

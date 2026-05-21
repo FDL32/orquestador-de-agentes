@@ -1,0 +1,62 @@
+{
+  "schema_version": "1.1",
+  "_migrations": ["1.0_to_1.1"],
+  "active_profile": "engine-dev",
+  "backends": {
+    "kilo": {
+      "executable": "kilo.exe",
+      "args": ["run", "--auto"],
+      "discovery": {
+        "method": "vscode_extension",
+        "extension_glob": "kilocode.kilo-code-*",
+        "binary_name": "kilo.exe",
+        "path_fallback": true
+      }
+    },
+    "codex": {
+      "executable": "codex.cmd",
+      "args": ["exec"],
+      "discovery": {
+        "method": "path_only",
+        "extension_glob": "openai.chatgpt-*",
+        "binary_name": "codex.exe",
+        "path_fallback": true
+      }
+    },
+    "opencode": {
+      "executable": "opencode",
+      "args": ["run"],
+      "discovery": {
+        "method": "path_only"
+      }
+    },
+    "claude": {
+      "executable": "claude",
+      "args": ["-p"],
+      "discovery": {
+        "method": "path_only"
+      }
+    },
+    "default": {
+      "executable": "",
+      "args": [],
+      "discovery": {
+        "method": "path_only"
+      }
+    }
+  },
+  "role_assignments": {
+    "BUILDER": "opencode",
+    "MANAGER": "opencode",
+    "SUPERVISOR": "default"
+  },
+  "role_models": {
+    "BUILDER": "opencode-go/qwen3.5-plus",
+    "MANAGER": "openai/gpt-5.4-mini"
+  },
+  "manager_review": {
+    "timeout_seconds": 180,
+    "max_attempts": 5,
+    "retry_backoff_multiplier": 2.0
+  }
+}

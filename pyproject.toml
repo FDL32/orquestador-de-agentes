@@ -1,0 +1,84 @@
+[project]
+name = "orquestacion-agentes"
+version = "9.14.0"
+description = "Multi-agent orchestration system with Manager/Builder architecture"
+requires-python = ">=3.10,<3.14"
+authors = [
+    { name = "Orquestacion Agentes Contributors" }
+]
+
+[dependency-groups]
+dev = [
+    "ruff==0.15.1",
+    "mypy==1.19.1",
+    "pre-commit==4.5.1",
+    "pytest==9.0.3",
+    "pytest-asyncio==1.3.0",
+    "pytest-cov==6.0",
+    "pip-audit==2.9.0",
+    "requests==2.33.1",
+    "pyyaml>=6.0",
+    "pygments>=2.20.0",
+    "rich>=15.0.0",
+    "pyparsing>=3.0",
+    "urllib3>=2.7.0",
+    "tomli>=2.4.1",
+    "vulture>=2.0",
+    "deadcode>=2.0",
+]
+
+[tool.ruff]
+src = ["src"]
+target-version = "py310"
+extend-exclude = [
+    "tests/",
+    "scripts/sandbox/",
+    ".codex/",
+]
+respect-gitignore = true
+force-exclude = true
+fix = true
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.ruff.lint]
+extend-select = [
+    "E",      # pycodestyle errors
+    "F",      # Pyflakes
+    "B",      # flake8-bugbear
+    "S",      # bandit (security)
+    "RUF",    # ruff-specific
+    "N",      # pep8-naming
+    "W",      # pycodestyle warnings
+    "I",      # isort
+    "PERF",   # performance
+    "UP",     # pyupgrade
+    "C90",    # cyclomatic complexity (McCabe)
+    "ERA",    # dead/commented code
+    "SIM",    # simplifications
+]
+ignore = ["E501"]  # line too long handled by formatter
+
+[tool.ruff.lint.isort]
+no-sections = false
+case-sensitive = true
+combine-as-imports = true
+lines-after-imports = 2
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]
+
+[tool.mypy]
+strict = true
+disallow_untyped_defs = true
+disallow_any_unimported = true
+no_implicit_optional = true
+python_version = "3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--tb=short --cov=src --cov-report=term-missing"
+asyncio_mode = "auto"
+
+[tool.uv]

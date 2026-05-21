@@ -1,0 +1,121 @@
+# MANIFEST.workspace - Contrato del Workspace Destino
+#
+# Este manifiesto define el contrato del workspace de proyecto destino
+# que recibe el motor central desde orquestacion_agentes.
+#
+# Reglas:
+# - El workspace destino conserva SOLO estado, memoria, eventos y configuracion del proyecto.
+# - El motor central vive en el repo fuente unico (orquestacion_agentes).
+# - El destino NO copia el motor completo, solo consume lo allowlisted.
+#
+# Categorias:
+# - DESTINO: datos y estado propios del proyecto
+# - EXCLUIDO: motor central, historial, runtime transitorio
+
+# =============================================================================
+# WORKSPACE DESTINO - ESTADO Y DATOS DEL PROYECTO
+# =============================================================================
+
+# =============================================================================
+# .AGENT/ - SUPERFICIES VIVAS (las escribe el codigo en cada ciclo)
+# =============================================================================
+
+# Collaboration - superficies vivas (NO archivar)
+.agent/collaboration/work_plan.md
+.agent/collaboration/TURN.md
+.agent/collaboration/STATE.md
+.agent/collaboration/execution_log.md
+.agent/collaboration/notifications.md
+.agent/collaboration/review_queue.md
+
+# Runtime - solo lo estructural, no transitorio
+.agent/runtime/events/events.jsonl
+.agent/runtime/memory/observations.jsonl
+.agent/runtime/memory/MEMORY.md
+
+# Configuracion del proyecto destino
+.agent/config/agents.json
+
+# =============================================================================
+# EXPLICITAMENTE EXCLUIDO (motor central vive en repo fuente unico)
+# =============================================================================
+#
+# MOTOR CENTRAL (codigo operativo - vive en orquestacion_agentes):
+#   .agent/agent_controller.py
+#   .agent/session_tracker.py
+#   .agent/completion_checker.py
+#   .agent/completion_common.py
+#   .agent/agents_config.py
+#   .agent/council/
+#   .agent/runtime/__init__.py
+#   .agent/runtime/memory/memory_helpers.py
+#   scripts/
+#   skills/
+#
+# Historial de tickets cerrados:
+#   .agent/collaboration/PLAN_WP-*.md
+#   .agent/collaboration/AUDIT_WP-*.md
+#   .agent/collaboration/_archive/
+#   .agent/collaboration/archive/
+#
+# Runtime transitorio:
+#   .agent/runtime/tmp/
+#   .agent/runtime/uv-cache/
+#   .agent/runtime/test_logs/
+#   .agent/runtime/__pycache__/
+#   .agent/runtime/reviews/
+#   .agent/runtime/compare/
+#   .agent/runtime/deliverables/
+#   .agent/runtime/audit/
+#   .agent/runtime/goose/
+#   .agent/runtime/pytest-safe/
+#   .agent/runtime/*.lock
+#   .agent/runtime/*.txt
+#   .agent/runtime/*.json (excepto agents.json)
+#
+# Caches y residuos:
+#   .agent/__pycache__/
+#   .agent/council/__pycache__/
+#   .agent/runtime/memory/__pycache__/
+#   .agent/runtime/memory/*.bak*
+#   .ruff_cache/
+#   .cache/
+#   .uv-cache/
+#   .venv/
+#
+# Logs y diagnosticos:
+#   debug.log
+#   opencode_models_error.log
+#
+# Archivos de estado de sesion:
+#   .agent/collaboration/.session_state.json
+#   .agent/runtime/builder_lock.txt
+#   .agent/runtime/circuit_breaker.json
+#   .agent/runtime/llm_evals_config.json
+#   .agent/runtime/supervisor_state.json
+#   .agent/runtime/pytest-safe/last-run.json
+#   .agent/runtime/pytest-safe/last-run.log
+#
+# Memory archive y backups:
+#   .agent/runtime/memory/archive/
+#   .agent/runtime/memory/observations.jsonl.bak*
+#   .agent/runtime/memory/CONSOLIDATION_REPORT.md
+#   .agent/runtime/memory/feedback-*.md
+#   .agent/runtime/memory/SESSION_BRIEF.md
+
+# =============================================================================
+# NOTA OPERATIVA
+# =============================================================================
+#
+# Este manifiesto complementa MANIFEST.distribute en la arquitectura de motor
+# central:
+# - MANIFEST.distribute: define la frontera del motor central (repo fuente).
+# - MANIFEST.workspace: define QUE se conserva EN el workspace destino.
+#
+# El destino NO copia el motor: prepara un workspace (.agent/ con estado,
+# memoria, eventos y config) y referencia el motor externo. El instalador
+# (scripts/install_agent_system.py) actua como bootstrapper del destino.
+#
+# Superficies vivas vs historicas (WP-2026-107):
+# - Vivas: las escribe el codigo activamente (NO archivar).
+# - Historicas: solo PLAN/AUDIT cerrados van a _archive/plan_audit/.

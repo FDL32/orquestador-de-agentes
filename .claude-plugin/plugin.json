@@ -1,0 +1,41 @@
+﻿{
+  "name": "z-scripts-karpathy-suite",
+  "description": "Multi-agent orchestration system with Karpathy behavioral principles, security architecture, and reusable skills",
+  "version": "1.0.0",
+  "author": {
+    "name": "z_scripts Framework"
+  },
+  "license": "MIT",
+  "keywords": [
+    "multi-agent",
+    "orchestration",
+    "karpathy",
+    "behavioral-guidelines",
+    "security",
+    "skills",
+    "quality-gates"
+  ],
+  "skills": [
+    "./skills/karpathy-guidelines",
+    "./skills/anti-patterns-reference",
+    "./skills/security-hardening",
+    "./skills/quality-gates-runner",
+    "./skills/graphify-knowledge",
+    "./skills/version-changelog",
+    "./skills/project-finalize",
+    "./skills/agent-status",
+    "./skills/update-config",
+    "./skills/keybindings-help",
+    "./skills/simplify-code",
+    "./skills/fewer-permission-prompts",
+    "./skills/loop-scheduler"
+  ],
+  "requirements": {
+    "claude_version": "4.0+",
+    "features": [
+      "tool_use",
+      "file_operations",
+      "bash_execution"
+    ]
+  }
+}
