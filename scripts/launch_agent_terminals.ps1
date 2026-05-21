@@ -997,6 +997,8 @@ if ($bootstrapJson.PSObject.Properties['status'] -and $bootstrapJson.status -eq 
 if ($LaunchSupervisor) {
     $venvPython = Resolve-VenvPython -Root $ProjectRoot
     $venvPythonLiteral = ConvertTo-SingleQuotedLiteral $venvPython
+    # WP-2026-122: Export AGENT_PROJECT_ROOT for child processes
+    $env:AGENT_PROJECT_ROOT = (Resolve-Path -LiteralPath $ProjectRoot).Path
     Start-AgentWindow -Title 'Supervisor' -Command "& $venvPythonLiteral scripts\ticket_supervisor.py --reactive"
     Write-Host "Supervisor: lanzado con ticket_supervisor.py --reactive"
 }
@@ -1017,6 +1019,8 @@ if ($LaunchWatcher) {
 if ($LaunchBridge) {
     $venvPython = Resolve-VenvPython -Root $ProjectRoot
     $venvPythonLiteral = ConvertTo-SingleQuotedLiteral $venvPython
+    # WP-2026-122: Export AGENT_PROJECT_ROOT for child processes
+    $env:AGENT_PROJECT_ROOT = (Resolve-Path -LiteralPath $ProjectRoot).Path
     # Get Manager backend from config
     $managerBackend = Get-BackendFromConfig -Role 'MANAGER'
     $managerExe = Resolve-BackendExecutable -BackendName $managerBackend -OverridePath $ManagerBackendPath
@@ -1028,6 +1032,8 @@ if ($LaunchBridge) {
 if ($LaunchMonitor) {
     $venvPython = Resolve-VenvPython -Root $ProjectRoot
     $venvPythonLiteral = ConvertTo-SingleQuotedLiteral $venvPython
+    # WP-2026-122: Export AGENT_PROJECT_ROOT for child processes
+    $env:AGENT_PROJECT_ROOT = (Resolve-Path -LiteralPath $ProjectRoot).Path
     Start-AgentWindow -Title 'Ticket Activity Monitor' -Command "& $venvPythonLiteral scripts\ticket_activity_monitor.py"
     Write-Host "Ticket Activity Monitor: lanzado para el ticket activo"
 }
@@ -1050,6 +1056,8 @@ if ($LaunchBuilder) {
             # For opencode backend, use opencode run with composed prompt, model from config, and canonical files
             # For other backends, use template startup/{role}_{backend}.md
             if ($builderBackend -eq 'opencode') {
+                # WP-2026-122: Export AGENT_PROJECT_ROOT for child processes
+                $env:AGENT_PROJECT_ROOT = (Resolve-Path -LiteralPath $ProjectRoot).Path
                 # Read model from .opencode/opencode.json config
                 $opencodeConfigPath = Join-Path $ProjectRoot '.opencode\opencode.json'
                 if (-not (Test-Path -LiteralPath $opencodeConfigPath)) {

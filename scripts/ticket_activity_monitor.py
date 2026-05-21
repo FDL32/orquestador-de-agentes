@@ -10,10 +10,28 @@ import time
 from pathlib import Path
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-COLLAB_DIR = PROJECT_ROOT / ".agent" / "collaboration"
-EVENTS_PATH = PROJECT_ROOT / ".agent" / "runtime" / "events" / "events.jsonl"
-STATE_PATH = PROJECT_ROOT / ".agent" / "runtime" / "supervisor_state.json"
+try:
+    from runtime.project_root import resolve_project_root
+except ImportError:
+    resolve_project_root = None
+
+
+def _project_root() -> Path:
+    if resolve_project_root is not None:
+        return resolve_project_root()
+    return Path(__file__).resolve().parents[1]
+
+
+def _collab_dir() -> Path:
+    return _project_root() / ".agent" / "collaboration"
+
+
+def _events_path() -> Path:
+    return _project_root() / ".agent" / "runtime" / "events" / "events.jsonl"
+
+
+def _state_path() -> Path:
+    return _project_root() / ".agent" / "runtime" / "supervisor_state.json"
 
 
 def _read_json(path: Path) -> dict[str, object]:
@@ -26,7 +44,7 @@ def _read_json(path: Path) -> dict[str, object]:
 
 
 def _active_ticket_from_work_plan() -> str | None:
-    work_plan_path = COLLAB_DIR / "work_plan.md"
+    work_plan_path = _collab_dir() / "work_plan.md"
     if not work_plan_path.exists():
         return None
     content = work_plan_path.read_text(encoding="utf-8")
@@ -42,7 +60,7 @@ def _active_ticket_from_work_plan() -> str | None:
 
 
 def _active_ticket() -> str | None:
-    state = _read_json(STATE_PATH)
+    state = _read_json(_state_path())
     ticket = state.get("active_ticket")
     if isinstance(ticket, str) and ticket:
         return ticket
@@ -71,11 +89,12 @@ def _derive_state(events: list[dict[str, object]]) -> str:
 
 
 def _load_events(ticket_id: str) -> list[dict[str, object]]:
-    if not EVENTS_PATH.exists():
+    events_path = _events_path()
+    if not events_path.exists():
         return []
 
     events: list[dict[str, object]] = []
-    for line in EVENTS_PATH.read_text(encoding="utf-8").splitlines():
+    for line in events_path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
         try:

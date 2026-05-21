@@ -1,3 +1,8 @@
+"""
+Memory helpers for observation management.
+
+WP-2026-122: Uses runtime.project_root for dynamic project root resolution.
+"""
 from __future__ import annotations
 
 import json
@@ -5,7 +10,12 @@ from collections import Counter
 from pathlib import Path
 
 
+# WP-2026-122: Deferred path resolution - this module is already in runtime/memory/
+# so we use __file__ based resolution which is correct for the memory directory
+
+
 def get_memory_dir() -> Path:
+    """Get the memory directory path (where this module lives)."""
     return Path(__file__).resolve().parent
 
 

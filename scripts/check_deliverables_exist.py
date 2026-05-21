@@ -2,6 +2,8 @@
 """Check that all declared deliverables in work_plan.md exist on disk.
 
 Exits 0 if all exist, 1 if any are missing.
+
+WP-2026-122: Uses runtime.project_root for dynamic project root resolution.
 """
 
 from __future__ import annotations
@@ -12,12 +14,28 @@ import sys
 from pathlib import Path
 
 
+# WP-2026-122: Deferred path resolution via runtime.project_root
+try:
+    from runtime.project_root import get_collab_dir, resolve_project_root
+except ImportError:
+    # Fallback if runtime.project_root not available
+    get_collab_dir = None
+    resolve_project_root = None
+
+PROJECT_ROOT = (
+    resolve_project_root()
+    if resolve_project_root is not None
+    else Path(__file__).resolve().parent.parent
+)
 # Allow overriding PROJECT_ROOT for testing
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if "TEST_PROJECT_ROOT" in os.environ:
     PROJECT_ROOT = Path(os.environ["TEST_PROJECT_ROOT"])
 
-WORK_PLAN = PROJECT_ROOT / ".agent" / "collaboration" / "work_plan.md"
+WORK_PLAN = (
+    get_collab_dir() / "work_plan.md"
+    if get_collab_dir is not None
+    else PROJECT_ROOT / ".agent" / "collaboration" / "work_plan.md"
+)
 
 
 def looks_like_path(token: str) -> bool:

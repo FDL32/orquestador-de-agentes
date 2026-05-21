@@ -3,6 +3,8 @@ Agent Configuration Loader - Centralized backend and role configuration.
 
 This module provides a single source of truth for agent backend assignments
 and discovery methods, removing hardcoding from the PowerShell launcher.
+
+WP-2026-122: Uses runtime.project_root for dynamic project root resolution.
 """
 
 import argparse
@@ -14,8 +16,35 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+# WP-2026-122: Single source of truth for project root resolution
+from runtime.project_root import get_agent_dir
 
-CONFIG_PATH = Path(__file__).parent / "config" / "agents.json"
+
+class _LazyPath:
+    def __init__(self, resolver):
+        self._resolver = resolver
+
+    def resolve(self) -> Path:
+        return self._resolver()
+
+    def __truediv__(self, other):
+        return self.resolve() / other
+
+    def __getattr__(self, name: str):
+        return getattr(self.resolve(), name)
+
+    def __fspath__(self) -> str:
+        return str(self.resolve())
+
+    def __str__(self) -> str:
+        return str(self.resolve())
+
+
+def _config_path() -> Path:
+    return get_agent_dir() / "config" / "agents.json"
+
+
+CONFIG_PATH = _LazyPath(_config_path)
 
 KNOWN_ROLES = {"BUILDER", "MANAGER", "SUPERVISOR"}
 REQUIRED_BACKEND_KEYS = {"executable", "args", "discovery"}
@@ -65,7 +94,8 @@ def load_agents_config(project_root: Path | None = None) -> dict[str, Any]:
 
     Args:
         project_root: Optional project root path. If None, uses the parent
-                      directory of this module's location.
+                      directory of this module's location (or runtime.project_root
+                      if available for WP-2026-122 dynamic resolution).
 
     Returns:
         Validated configuration dictionary.
@@ -74,9 +104,13 @@ def load_agents_config(project_root: Path | None = None) -> dict[str, Any]:
         AgentsConfigError: If config file is missing or invalid.
     """
     if project_root is None:
-        project_root = Path(__file__).parent.parent
-
-    config_path = project_root / ".agent" / "config" / "agents.json"
+        # WP-2026-122: Use dynamic project_root resolution if available
+        if get_agent_dir is not None:
+            config_path = get_agent_dir() / "config" / "agents.json"
+        else:
+            config_path = Path(__file__).parent / "config" / "agents.json"
+    else:
+        config_path = project_root / ".agent" / "config" / "agents.json"
 
     if not config_path.exists():
         raise AgentsConfigError(f"Configuration file not found: {config_path}")

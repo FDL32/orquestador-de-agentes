@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Run the sequential ticket supervisor for WP-2026-024..026."""
+"""Run the sequential ticket supervisor for WP-2026-024..026.
+
+WP-2026-122: Uses runtime.project_root for dynamic project root resolution.
+"""
 
 from __future__ import annotations
 
@@ -8,8 +11,41 @@ import sys
 from pathlib import Path
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-AGENT_DIR = PROJECT_ROOT / ".agent"
+# WP-2026-122: Deferred path resolution via runtime.project_root
+try:
+    from runtime.project_root import resolve_project_root
+except ImportError:
+    # Fallback if runtime.project_root not available
+    resolve_project_root = None
+
+def _project_root() -> Path:
+    if resolve_project_root is not None:
+        return resolve_project_root()
+    return Path(__file__).resolve().parents[1]
+
+
+class _LazyPath:
+    def __init__(self, resolver):
+        self._resolver = resolver
+
+    def resolve(self) -> Path:
+        return self._resolver()
+
+    def __getattr__(self, name: str):
+        return getattr(self.resolve(), name)
+
+    def __truediv__(self, other):
+        return self.resolve() / other
+
+    def __fspath__(self) -> str:
+        return str(self.resolve())
+
+    def __str__(self) -> str:
+        return str(self.resolve())
+
+
+PROJECT_ROOT = _LazyPath(_project_root)
+AGENT_DIR = _LazyPath(lambda: _project_root() / ".agent")
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 if str(AGENT_DIR) not in sys.path:

@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Run an automated manager review when a ticket reaches READY_FOR_REVIEW."""
+"""Run an automated manager review when a ticket reaches READY_FOR_REVIEW.
+
+WP-2026-122: Uses runtime.project_root for dynamic project root resolution.
+"""
 
 from __future__ import annotations
 
@@ -15,12 +18,25 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-AGENT_DIR = PROJECT_ROOT / ".agent"
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-if str(AGENT_DIR) not in sys.path:
-    sys.path.insert(0, str(AGENT_DIR))
+# WP-2026-122: Deferred path resolution via runtime.project_root
+try:
+    from runtime.project_root import resolve_project_root
+except ImportError:
+    # Fallback if runtime.project_root not available
+    resolve_project_root = None
+
+_SCRIPT_ROOT = Path(__file__).resolve().parents[1]
+if str(_SCRIPT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_ROOT))
+_AGENT_DIR = _SCRIPT_ROOT / ".agent"
+if str(_AGENT_DIR) not in sys.path:
+    sys.path.insert(0, str(_AGENT_DIR))
+
+
+def _project_root() -> Path:
+    if resolve_project_root is not None:
+        return resolve_project_root()
+    return _SCRIPT_ROOT
 
 from bus.review_bridge import ReviewBridge  # noqa: E402
 from bus.state_machine import StateMachine, TicketState  # noqa: E402
@@ -56,7 +72,7 @@ class BridgeState:
 
 
 def _state_path() -> Path:
-    return PROJECT_ROOT / ".agent" / "runtime" / "manager_bridge_state.json"
+    return _project_root() / ".agent" / "runtime" / "manager_bridge_state.json"
 
 
 def _resolve_manager_executable(explicit: Path | None) -> Path:
@@ -70,7 +86,7 @@ def _resolve_manager_executable(explicit: Path | None) -> Path:
     try:
         from agents_config import get_backend_for_role, load_agents_config
 
-        backend = get_backend_for_role("MANAGER", load_agents_config(PROJECT_ROOT))
+        backend = get_backend_for_role("MANAGER", load_agents_config(_project_root()))
     except Exception:
         backend = "opencode"  # agents.json ilegible -> default OpenCode
 
@@ -263,6 +279,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Explicit path to the manager backend executable",
     )
     parser.add_argument(
+        "--project-root",
+        type=Path,
+        default=None,
+        help="Destination workspace root to review",
+    )
+    parser.add_argument(
         "--timeout",
         type=int,
         default=300,
@@ -329,8 +351,15 @@ def _tick(
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
-    supervisor = SequentialTicketSupervisor(project_root=PROJECT_ROOT, auto_sync=True)
-    review = ReviewBridge(event_bus=supervisor.event_bus, project_root=PROJECT_ROOT)
+    if args.project_root is not None:
+        resolved = str(args.project_root.resolve())
+        if resolve_project_root is not None:
+            import os
+
+            os.environ["AGENT_PROJECT_ROOT"] = resolved
+    project_root = _project_root()
+    supervisor = SequentialTicketSupervisor(project_root=project_root, auto_sync=True)
+    review = ReviewBridge(event_bus=supervisor.event_bus, project_root=project_root)
 
     if args.watch:
         supervisor.bootstrap()

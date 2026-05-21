@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Builder agent for the active ticket - implements work plan."""
+"""Builder agent for the active ticket - implements work plan.
+
+WP-2026-122: Uses runtime.project_root for dynamic project root resolution.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +13,18 @@ from datetime import datetime
 from pathlib import Path
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+# WP-2026-122: Deferred path resolution via runtime.project_root
+try:
+    from runtime.project_root import resolve_project_root
+except ImportError:
+    # Fallback if runtime.project_root not available
+    resolve_project_root = None
+
+PROJECT_ROOT = (
+    resolve_project_root()
+    if resolve_project_root is not None
+    else Path(__file__).resolve().parents[1]
+)
 AGENT_DIR = PROJECT_ROOT / ".agent"
 if str(AGENT_DIR) not in sys.path:
     sys.path.insert(0, str(AGENT_DIR))

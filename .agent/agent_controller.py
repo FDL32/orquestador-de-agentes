@@ -18,11 +18,13 @@ Uso:
     python .agent/agent_controller.py --validate   # Solo validar archivos de estado
     python .agent/agent_controller.py --strict     # Modo estricto (bloquea si falla)
     python .agent/agent_controller.py --bootstrap-ticket # Emitir STATE_CHANGED inicial para el ticket activo
+    python .agent/agent_controller.py --project-root /path/to/destino  # Operar sobre workspace externo
 """
 
 # Fix encoding issues on Windows
 import codecs
 import json
+import os
 import re
 import subprocess
 import sys
@@ -35,11 +37,23 @@ if sys.platform == "win32":
     sys.stderr = codecs.getwriter("utf-8")(sys.stderr.buffer)
 
 # Fix imports when run as script (not as package)
+# WP-2026-122: project_root is now resolved dynamically via runtime.project_root
 _AGENT_DIR = Path(__file__).parent.resolve()
-_PROJECT_ROOT = _AGENT_DIR.parent
-for _path in (str(_PROJECT_ROOT), str(_AGENT_DIR)):
+_PROJECT_ROOT_DERIVED = _AGENT_DIR.parent
+for _path in (str(_PROJECT_ROOT_DERIVED), str(_AGENT_DIR)):
     if _path not in sys.path:
         sys.path.insert(0, _path)
+
+# WP-2026-122: Import project_root module for dynamic path resolution
+# Entry points set AGENT_PROJECT_ROOT env var after parsing --project-root
+# Import AFTER sys.path setup to ensure runtime/ is importable
+from runtime.project_root import (  # noqa: E402
+    get_agent_dir,
+    get_collab_dir,
+    get_context_dir,
+    resolve_project_root,
+)
+
 
 # ============================================================================
 # IMPORTS: HOOK SYSTEM, SESSION TRACKER & COMPLETION CHECKER
@@ -83,24 +97,54 @@ except ImportError:
     count_trailing_changes = None
 
 # ============================================================================
-# PATH CONFIGURATION
+# PATH CONFIGURATION - WP-2026-122: Deferred resolution via project_root module
 # ============================================================================
+# Paths now resolved dynamically via runtime.project_root functions
+
+
+def _project_root() -> Path:
+    return resolve_project_root()
+
+
+class _LazyPath:
+    def __init__(self, resolver):
+        self._resolver = resolver
+
+    def resolve(self) -> Path:
+        return self._resolver()
+
+    def __truediv__(self, other):
+        return self.resolve() / other
+
+    def __getattr__(self, name: str):
+        return getattr(self.resolve(), name)
+
+    def __fspath__(self) -> str:
+        return str(self.resolve())
+
+    def __str__(self) -> str:
+        return str(self.resolve())
+
+    def __repr__(self) -> str:
+        return f"_LazyPath({self.resolve()!r})"
+
+
 SCRIPT_DIR = Path(__file__).parent
-PROJECT_ROOT = SCRIPT_DIR.parent
-AGENT_DIR = PROJECT_ROOT / ".agent"
-COLLAB_DIR = AGENT_DIR / "collaboration"
-CONTEXT_DIR = AGENT_DIR / "context"
+PROJECT_ROOT = _LazyPath(_project_root)
+AGENT_DIR = _LazyPath(get_agent_dir)
+COLLAB_DIR = _LazyPath(get_collab_dir)
+CONTEXT_DIR = _LazyPath(get_context_dir)
 
 # State files
-WORK_PLAN = COLLAB_DIR / "work_plan.md"
-EXEC_LOG = COLLAB_DIR / "execution_log.md"
-REVIEW_QUEUE = COLLAB_DIR / "review_queue.md"
-NOTIFICATIONS = COLLAB_DIR / "notifications.md"
-TURN_FILE = COLLAB_DIR / "TURN.md"
-STATE_FILE = COLLAB_DIR / "STATE.md"
-PROJECT_MAP = CONTEXT_DIR / "project_map.md"
-ARCHIVE_DIR = COLLAB_DIR / "archive"
-AGENTS_CONFIG_PATH = AGENT_DIR / "config" / "agents.json"
+WORK_PLAN = _LazyPath(lambda: get_collab_dir() / "work_plan.md")
+EXEC_LOG = _LazyPath(lambda: get_collab_dir() / "execution_log.md")
+REVIEW_QUEUE = _LazyPath(lambda: get_collab_dir() / "review_queue.md")
+NOTIFICATIONS = _LazyPath(lambda: get_collab_dir() / "notifications.md")
+TURN_FILE = _LazyPath(lambda: get_collab_dir() / "TURN.md")
+STATE_FILE = _LazyPath(lambda: get_collab_dir() / "STATE.md")
+PROJECT_MAP = _LazyPath(lambda: get_context_dir() / "project_map.md")
+ARCHIVE_DIR = _LazyPath(lambda: get_collab_dir() / "archive")
+AGENTS_CONFIG_PATH = _LazyPath(lambda: get_agent_dir() / "config" / "agents.json")
 
 # Archive configuration
 MAX_NOTIFICATIONS_SIZE_KB = 50
@@ -152,16 +196,28 @@ VALID_LOG_STATES = {
     "N/A",
 }
 
-# Ensure directories exist
-CONTEXT_DIR.mkdir(parents=True, exist_ok=True)
-ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+def _ensure_runtime_dirs() -> None:
+    context_dir = get_context_dir()
+    archive_dir = get_collab_dir() / "archive"
+    context_dir.mkdir(parents=True, exist_ok=True)
+    archive_dir.mkdir(parents=True, exist_ok=True)
 
-# Event bus
-event_bus = EventBus(AGENT_DIR / "runtime" / "events") if BUS_AVAILABLE else None
+
+def _get_event_bus() -> EventBus | None:
+    global event_bus
+    if not BUS_AVAILABLE:
+        return None
+    if event_bus is None:
+        event_bus = EventBus(get_agent_dir() / "runtime" / "events")
+    return event_bus
+
+
+# Event bus is initialized lazily after the project root is known.
+event_bus = None
 
 # Circuit breaker state
-CIRCUIT_BREAKER_PATH = AGENT_DIR / "runtime" / "circuit_breaker.json"
-BUILDER_LOCK_PATH = AGENT_DIR / "runtime" / "builder_lock.txt"
+CIRCUIT_BREAKER_PATH = _LazyPath(lambda: get_agent_dir() / "runtime" / "circuit_breaker.json")
+BUILDER_LOCK_PATH = _LazyPath(lambda: get_agent_dir() / "runtime" / "builder_lock.txt")
 
 # ============================================================================
 # SCOPE GATE UTILITIES
@@ -175,12 +231,17 @@ EXCLUDE_FILES_REL = {
     "notifications.md",
     ".session_state.json",
 }
-EXCLUDE_FILES = {str((COLLAB_DIR / f).resolve()) for f in EXCLUDE_FILES_REL}
-EXCLUDE_FILES.add(str((CONTEXT_DIR / "project_map.md").resolve()))
-# Exclude bus runtime files (events.jsonl is managed by the bus, not the Builder)
-EXCLUDE_FILES.add(str((AGENT_DIR / "runtime" / "events" / "events.jsonl").resolve()))
-# Exclude agent config directory (managed by agents_config.py, not the Builder)
-EXCLUDE_FILES.add(str((AGENT_DIR / "config").resolve()))
+def _exclude_files() -> set[str]:
+    collab_dir = get_collab_dir()
+    agent_dir = get_agent_dir()
+    context_dir = get_context_dir()
+    exclude_files = {str((collab_dir / f).resolve()) for f in EXCLUDE_FILES_REL}
+    exclude_files.add(str((context_dir / "project_map.md").resolve()))
+    # Exclude bus runtime files (events.jsonl is managed by the bus, not the Builder)
+    exclude_files.add(str((agent_dir / "runtime" / "events" / "events.jsonl").resolve()))
+    # Exclude agent config directory (managed by agents_config.py, not the Builder)
+    exclude_files.add(str((agent_dir / "config").resolve()))
+    return exclude_files
 
 
 def parse_files_likely_touched(work_plan_content: str) -> set[str]:
@@ -1482,7 +1543,7 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
         print("  Resolve the underlying issue before marking ready.")
         return 1
 
-    gate_result = check_scope_gate(plan_content, get_changed_files(), EXCLUDE_FILES)
+    gate_result = check_scope_gate(plan_content, get_changed_files(), _exclude_files())
     if not _scope_gate_allows_close(gate_result, scope_override):
         return 1
 
@@ -1805,7 +1866,7 @@ def _check_scope_for_validate(
     errors, warnings = [], []
     if "READY_FOR_REVIEW" in log_status:
         changed_files = get_changed_files()
-        gate_result = check_scope_gate(plan_content, changed_files, EXCLUDE_FILES)
+        gate_result = check_scope_gate(plan_content, changed_files, _exclude_files())
         if not gate_result["valid"]:
             # Scope violations in READY_FOR_REVIEW are warnings only, not errors
             warnings.extend(
@@ -2408,6 +2469,17 @@ FLAG_HANDLERS = {
 
 def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
     """Funcion principal del controller."""
+    # WP-2026-122: Parse --project-root FIRST and export to environment
+    # This must happen before any imports that depend on project_root
+    if "--project-root" in sys.argv:
+        idx = sys.argv.index("--project-root")
+        if idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("--"):
+            project_root_value = sys.argv[idx + 1]
+            os.environ["AGENT_PROJECT_ROOT"] = str(Path(project_root_value).resolve())
+
+    _ensure_runtime_dirs()
+    _get_event_bus()
+
     skip_gates = "--skip-gates" in sys.argv
     json_output = "--json" in sys.argv
     force_mode = "--force" in sys.argv

@@ -494,8 +494,9 @@ class TestPromptTransportDispatch:
             ticket_id="WP-T", prompt=short_prompt, timeout_seconds=5
         )
 
-        # Prompt is in argv position 2
-        assert captured["cmd"][2] == short_prompt
+        # Prompt is appended after the flags
+        assert captured["cmd"][-1] == short_prompt
+        assert captured["cmd"][1] == "run"
         # --file flag NOT present
         assert "--file" not in captured["cmd"]
 
@@ -534,12 +535,12 @@ class TestPromptTransportDispatch:
 
         # --file flag IS present
         assert "--file" in captured["cmd"]
-        # Prompt NOT in argv (position 2 is the minimal message)
+        # Prompt NOT in the flag section of argv
         assert long_prompt not in captured["cmd"]
         # Prompt IS in tempfile content
         assert "End with exactly DECISION: APPROVE or DECISION: CHANGES." in captured["file_content"]
         assert captured["file_content"].endswith(long_prompt)
-        assert long_prompt not in " ".join(captured["cmd"])
+        assert long_prompt not in " ".join(captured["cmd"][:-1])
 
     def test_tempfile_cleaned_up_after_call(self, tmp_path, monkeypatch):
         """Tempfile is cleaned up after subprocess call completes."""
