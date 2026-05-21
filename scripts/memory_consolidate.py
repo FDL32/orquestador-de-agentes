@@ -3,6 +3,8 @@
 
 Deterministic, no LLM, no cron. Run manually at session close.
 Default dry-run; --apply to write changes.
+
+WP-2026-122: Uses runtime.project_root for dynamic project root resolution.
 """
 
 from __future__ import annotations
@@ -15,8 +17,19 @@ from pathlib import Path
 from typing import Any
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-MEMORY_DIR = PROJECT_ROOT / ".agent" / "runtime" / "memory"
+# WP-2026-122: Deferred path resolution via runtime.project_root
+try:
+    from runtime.project_root import get_agent_dir
+except ImportError:
+    # Fallback if runtime.project_root not available
+    get_agent_dir = None
+
+AGENT_DIR = (
+    get_agent_dir()
+    if get_agent_dir is not None
+    else Path(__file__).resolve().parent.parent / ".agent"
+)
+MEMORY_DIR = AGENT_DIR / "runtime" / "memory"
 ARCHIVE_DIR = MEMORY_DIR / "archive"
 OBS = MEMORY_DIR / "observations.jsonl"
 MEMORY_MD = MEMORY_DIR / "MEMORY.md"

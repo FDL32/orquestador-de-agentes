@@ -11,14 +11,14 @@
 
 ## Current Cycle
 
-- Active ticket: WP-2026-122 IN_PLANNING (Project root runtime parametric implementation).
-- Mode: implementation planning / WP-A kickoff.
+- Active ticket: WP-2026-122 IN_PROGRESS (Project root runtime parametric implementation).
+- Mode: implementation / Builder requeue after CHANGES.
 - Builder backend: OpenCode (model: opencode-go/qwen3.5-plus).
 - Manager backend: OpenCode (model: configurable via agents.json).
 - Target model: Qwen3.5 Plus [NO VERIFICADO como provider/model].
-- Outcome: WP-A implementation plan drafted from the WP-2026-121 audit deliverable.
+- Outcome: WP-A implementation is in progress after Manager CHANGES review.
 - Manifiestos, documentacion e instalador siguen alineados con la arquitectura de motor externo.
-- Superficies vivas normalizadas para empezar la implementacion de project_root.
+- Superficies vivas normalizadas para continuar la implementacion de `project_root`.
 
 ## Source of truth
 

@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Runner seguro para pytest en agent_system.
 
-Objetivos:
+Objectives:
 - inspeccionar el estado antes de tocar nada
 - evitar ejecuciones concurrentes de pytest
 - mantener los temporales dentro del proyecto
 - limpiar residuos conocidos antes y despues del run
 - dejar log del ultimo run para diagnostico
+
+WP-2026-122: Uses runtime.project_root for dynamic project root resolution.
 """
 
 from __future__ import annotations
@@ -22,11 +24,48 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-RUNTIME_DIR = PROJECT_ROOT / ".agent" / "runtime" / "pytest-safe"
-LOCK_FILE = RUNTIME_DIR / "pytest.lock"
-LAST_RUN_LOG = RUNTIME_DIR / "last-run.log"
-LAST_RUN_JSON = RUNTIME_DIR / "last-run.json"
+# WP-2026-122: Deferred path resolution via runtime.project_root
+try:
+    from runtime.project_root import get_agent_dir, resolve_project_root
+except ImportError:
+    # Fallback if runtime.project_root not available
+    get_agent_dir = None
+    resolve_project_root = None
+
+def _project_root() -> Path:
+    if resolve_project_root is not None:
+        return resolve_project_root()
+    return Path(__file__).resolve().parent.parent
+
+
+class _LazyPath:
+    def __init__(self, resolver):
+        self._resolver = resolver
+
+    def resolve(self) -> Path:
+        return self._resolver()
+
+    def __getattr__(self, name: str):
+        return getattr(self.resolve(), name)
+
+    def __truediv__(self, other):
+        return self.resolve() / other
+
+    def __fspath__(self) -> str:
+        return str(self.resolve())
+
+    def __str__(self) -> str:
+        return str(self.resolve())
+
+
+PROJECT_ROOT = _LazyPath(_project_root)
+AGENT_DIR = _LazyPath(
+    lambda: get_agent_dir() if get_agent_dir is not None else _project_root() / ".agent"
+)
+RUNTIME_DIR = _LazyPath(lambda: AGENT_DIR.resolve() / "runtime" / "pytest-safe")
+LOCK_FILE = _LazyPath(lambda: RUNTIME_DIR.resolve() / "pytest.lock")
+LAST_RUN_LOG = _LazyPath(lambda: RUNTIME_DIR.resolve() / "last-run.log")
+LAST_RUN_JSON = _LazyPath(lambda: RUNTIME_DIR.resolve() / "last-run.json")
 
 DEFAULT_PYTEST_ARGS = [
     "tests/test_event_bus.py",

@@ -1,4 +1,9 @@
 # ruff: noqa: S603
+"""
+Completion common utilities.
+
+WP-2026-122: Uses runtime.project_root for dynamic project root resolution.
+"""
 from __future__ import annotations
 
 import subprocess
@@ -7,10 +12,51 @@ from pathlib import Path
 from typing import Any
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-WORK_PLAN = PROJECT_ROOT / ".agent" / "collaboration" / "work_plan.md"
-EXEC_LOG = PROJECT_ROOT / ".agent" / "collaboration" / "execution_log.md"
-REVIEW_QUEUE = PROJECT_ROOT / ".agent" / "collaboration" / "review_queue.md"
+# WP-2026-122: Deferred path resolution via runtime.project_root
+try:
+    from runtime.project_root import get_collab_dir, resolve_project_root
+except ImportError:
+    # Fallback if runtime.project_root not available
+    get_collab_dir = None
+    resolve_project_root = None
+
+class _LazyPath:
+    def __init__(self, resolver):
+        self._resolver = resolver
+
+    def resolve(self) -> Path:
+        return self._resolver()
+
+    def __truediv__(self, other):
+        return self.resolve() / other
+
+    def __getattr__(self, name: str):
+        return getattr(self.resolve(), name)
+
+    def __fspath__(self) -> str:
+        return str(self.resolve())
+
+    def __str__(self) -> str:
+        return str(self.resolve())
+
+
+def _collab_dir() -> Path:
+    if get_collab_dir is not None:
+        return get_collab_dir()
+    return Path(__file__).parent / "collaboration"
+
+
+def _project_root() -> Path:
+    if resolve_project_root is not None:
+        return resolve_project_root()
+    return Path(__file__).resolve().parent.parent
+
+# Deferred path resolution for collaboration files
+COLLAB_DIR = _LazyPath(_collab_dir)
+PROJECT_ROOT = _LazyPath(_project_root)
+WORK_PLAN = _LazyPath(lambda: _collab_dir() / "work_plan.md")
+EXEC_LOG = _LazyPath(lambda: _collab_dir() / "execution_log.md")
+REVIEW_QUEUE = _LazyPath(lambda: _collab_dir() / "review_queue.md")
 
 
 def _read_text(path: Path) -> str:

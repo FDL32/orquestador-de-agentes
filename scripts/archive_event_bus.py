@@ -16,6 +16,8 @@ After:
     - Closed tickets are moved to .agent/runtime/events/archive/events.<id>.jsonl.
     - The active bus keeps only non-terminal tickets.
     - The script exits non-zero only on operational failure.
+
+WP-2026-122: Uses runtime.project_root for dynamic project root resolution.
 """
 
 from __future__ import annotations
@@ -27,7 +29,18 @@ from pathlib import Path
 from bus.event_bus import EventBus
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+# WP-2026-122: Deferred path resolution via runtime.project_root
+try:
+    from runtime.project_root import resolve_project_root
+except ImportError:
+    # Fallback if runtime.project_root not available
+    resolve_project_root = None
+
+PROJECT_ROOT = (
+    resolve_project_root()
+    if resolve_project_root is not None
+    else Path(__file__).resolve().parents[1]
+)
 EVENTS_DIR = PROJECT_ROOT / ".agent" / "runtime" / "events"
 
 TERMINAL_STATES = {"COMPLETED", "HUMAN_GATE"}

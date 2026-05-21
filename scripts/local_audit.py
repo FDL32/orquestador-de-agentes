@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+"""Local audit script for project state verification.
+
+WP-2026-122: Uses runtime.project_root for dynamic project root resolution.
+"""
 import contextlib
 import json
 import subprocess
@@ -6,9 +10,24 @@ import sys
 from pathlib import Path
 
 
-# Paths
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-AGENT_DIR = PROJECT_ROOT / ".agent"
+# WP-2026-122: Deferred path resolution via runtime.project_root
+try:
+    from runtime.project_root import get_agent_dir, resolve_project_root
+except ImportError:
+    # Fallback if runtime.project_root not available
+    get_agent_dir = None
+    resolve_project_root = None
+
+PROJECT_ROOT = (
+    resolve_project_root()
+    if resolve_project_root is not None
+    else Path(__file__).resolve().parent.parent
+)
+AGENT_DIR = (
+    get_agent_dir()
+    if get_agent_dir is not None
+    else PROJECT_ROOT / ".agent"
+)
 COLLAB_DIR = AGENT_DIR / "collaboration"
 RUNTIME_DIR = AGENT_DIR / "runtime"
 AUDIT_DIR = RUNTIME_DIR / "audit"

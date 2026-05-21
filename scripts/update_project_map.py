@@ -27,11 +27,50 @@ sys.stdout.reconfigure(encoding="utf-8")
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Rutas
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-PROJECT_ROOT = Path(__file__).parent.parent.resolve()
-OUT_DIR = PROJECT_ROOT / "graphify-out"
-GRAPH_FILE = OUT_DIR / "graph.json"
-CACHE_FILE = OUT_DIR / "cache" / "sha256.json"
-REPORT_FILE = OUT_DIR / "GRAPH_REPORT.md"
+try:
+    from runtime.project_root import resolve_project_root
+except ImportError:
+    resolve_project_root = None
+
+
+def _project_root() -> Path:
+    if resolve_project_root is not None:
+        return resolve_project_root()
+    return Path(__file__).resolve().parents[1]
+
+
+def _out_dir(project_root: Path) -> Path:
+    return project_root / "graphify-out"
+
+
+class _LazyPath:
+    def __init__(self, resolver):
+        self._resolver = resolver
+
+    def resolve(self) -> Path:
+        return self._resolver()
+
+    def __getattr__(self, name: str):
+        return getattr(self.resolve(), name)
+
+    def __truediv__(self, other):
+        return self.resolve() / other
+
+    def __fspath__(self) -> str:
+        return str(self.resolve())
+
+    def __str__(self) -> str:
+        return str(self.resolve())
+
+    def __repr__(self) -> str:
+        return f"_LazyPath({self.resolve()!r})"
+
+
+PROJECT_ROOT = _LazyPath(_project_root)
+OUT_DIR = _LazyPath(lambda: _out_dir(_project_root()))
+GRAPH_FILE = _LazyPath(lambda: _out_dir(_project_root()) / "graph.json")
+CACHE_FILE = _LazyPath(lambda: _out_dir(_project_root()) / "cache" / "sha256.json")
+REPORT_FILE = _LazyPath(lambda: _out_dir(_project_root()) / "GRAPH_REPORT.md")
 
 # Extensiones a procesar
 EXTENSIONS = {".py", ".md"}
@@ -89,8 +128,9 @@ def collect_files(root: Path) -> list[Path]:
 
 def rel(path: Path) -> str:
     """Ruta relativa desde PROJECT_ROOT como string con forward slashes."""
+    project_root = _project_root()
     try:
-        return path.relative_to(PROJECT_ROOT).as_posix()
+        return path.relative_to(project_root).as_posix()
     except ValueError:
         return path.as_posix()
 
@@ -146,7 +186,8 @@ def build_graph() -> tuple[dict, dict]:
     nodes: dict[str, dict] = {}
     edges: list[dict] = []
 
-    files = collect_files(PROJECT_ROOT)
+    project_root = _project_root()
+    files = collect_files(project_root)
     current_hashes: dict[str, str] = {}
 
     for f in files:
@@ -177,7 +218,7 @@ def build_graph() -> tuple[dict, dict]:
         # Convertir referencias a rutas relativas si es posible
         for ref in refs:
             # Si el target estÃ¡ dentro del proyecto, normalizar
-            target_path = PROJECT_ROOT / ref
+            target_path = project_root / ref
             try:
                 if target_path.exists() and target_path.is_file():
                     target_rel = rel(target_path)

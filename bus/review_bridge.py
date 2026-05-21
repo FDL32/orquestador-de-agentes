@@ -479,7 +479,6 @@ class ReviewBridge:
                 cmd_args = [
                     exe_full,
                     "run",
-                    prompt,
                     "--agent",
                     "manager",
                     "--dir",
@@ -504,7 +503,6 @@ class ReviewBridge:
                 cmd_args = [
                     exe_full,
                     "run",
-                    "Review.",  # minimal positional required by OpenCode CLI
                     "--file",
                     tmp_path,
                     "--agent",
@@ -521,6 +519,11 @@ class ReviewBridge:
 
             if self._supports_json_format:
                 cmd_args.extend(["--format", "json"])
+
+            if len(prompt) < ARGV_PROMPT_THRESHOLD:
+                cmd_args.append(prompt)
+            else:
+                cmd_args.append("Review.")  # minimal positional required by OpenCode CLI
 
             use_shell = False
             if os.name == "nt" and (

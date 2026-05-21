@@ -1,3 +1,8 @@
+"""
+UI State Projector - Projects event bus state to UI JSON.
+
+WP-2026-122: Uses runtime.project_root for dynamic project root resolution.
+"""
 from __future__ import annotations
 
 import json
@@ -8,14 +13,33 @@ from pathlib import Path
 from bus.event_bus import EventBus
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+# WP-2026-122: Deferred path resolution via runtime.project_root
+try:
+    from runtime.project_root import resolve_project_root
+except ImportError:
+    # Fallback if runtime.project_root not available
+    resolve_project_root = None
+
+
+def _project_root() -> Path:
+    if resolve_project_root is not None:
+        return resolve_project_root()
+    return Path(__file__).resolve().parents[1]
 
 
 class UIStateProjector:
-    def __init__(self, runtime_dir: Path | None = None):
-        self.runtime_dir = Path(runtime_dir or (PROJECT_ROOT / ".agent" / "runtime"))
+    def __init__(
+        self,
+        runtime_dir: Path | None = None,
+        project_root: Path | None = None,
+    ):
+        root = Path(project_root) if project_root is not None else _project_root()
+        self.project_root = root
+        self.runtime_dir = Path(runtime_dir or (root / ".agent" / "runtime"))
+        if runtime_dir is not None and project_root is None:
+            self.project_root = self.runtime_dir.parents[1]
         self.ui_state_path = self.runtime_dir / "ui_state.json"
-        self.collaboration_dir = PROJECT_ROOT / ".agent" / "collaboration"
+        self.collaboration_dir = self.project_root / ".agent" / "collaboration"
         self.turn_path = self.collaboration_dir / "TURN.md"
         self.event_bus = EventBus(runtime_dir=self.runtime_dir / "events")
 
