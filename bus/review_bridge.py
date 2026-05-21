@@ -474,8 +474,12 @@ class ReviewBridge:
 
         tmp_path = None
         try:
-            # Dispatch: short prompt -> argv, long prompt -> tempfile + --file
-            if len(prompt) < ARGV_PROMPT_THRESHOLD:
+            # Dispatch: short prompt -> argv, long prompt -> tempfile + --file.
+            # En Windows se fuerza SIEMPRE la ruta --file: con shell=True un
+            # prompt corto con metacaracteres de cmd.exe (| < > & % ") rompe la
+            # invocacion de opencode y este recibe argv destrozado.
+            use_argv = os.name != "nt" and len(prompt) < ARGV_PROMPT_THRESHOLD
+            if use_argv:
                 cmd_args = [
                     exe_full,
                     "run",
@@ -520,7 +524,7 @@ class ReviewBridge:
             if self._supports_json_format:
                 cmd_args.extend(["--format", "json"])
 
-            if len(prompt) < ARGV_PROMPT_THRESHOLD:
+            if use_argv:
                 cmd_args.append(prompt)
             else:
                 cmd_args.append(

@@ -465,7 +465,7 @@ class TestPromptTransportDispatch:
     """Tests for argv vs --file dispatch based on prompt length."""
 
     def test_short_prompt_uses_argv_path(self, tmp_path, monkeypatch):
-        """Prompt <8000 chars uses argv transport, no --file flag."""
+        """En posix, un prompt corto usa transporte argv, sin flag --file."""
         from bus.review_bridge import ReviewBridge, EventBus
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
@@ -478,6 +478,9 @@ class TestPromptTransportDispatch:
         monkeypatch.setattr(bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW")
         monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
         monkeypatch.setattr(bridge, "_supports_json_format", False)
+        # En Windows la ruta argv esta deshabilitada (siempre --file); este
+        # test fija os.name=posix para verificar el contrato de la ruta argv.
+        monkeypatch.setattr("os.name", "posix")
 
         captured = {}
 
@@ -499,6 +502,42 @@ class TestPromptTransportDispatch:
         assert captured["cmd"][1] == "run"
         # --file flag NOT present
         assert "--file" not in captured["cmd"]
+
+    def test_short_prompt_on_windows_uses_file_path(self, tmp_path, monkeypatch):
+        """En Windows un prompt corto tambien va por --file: con shell=True los
+        metacaracteres de cmd.exe (| < > & %) destrozarian la invocacion."""
+        from bus.review_bridge import ReviewBridge, EventBus
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        monkeypatch.setattr(bridge, "_get_manager_model", lambda: None)
+        monkeypatch.setattr(bridge, "_get_canonical_files", lambda: [])
+        monkeypatch.setattr(bridge, "_get_active_ticket_id", lambda: None)
+        monkeypatch.setattr(bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW")
+        monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
+        monkeypatch.setattr(bridge, "_supports_json_format", False)
+        monkeypatch.setattr("os.name", "nt")
+
+        captured = {}
+
+        def fake_run(cmd_args, **kwargs):
+            captured["cmd"] = cmd_args
+            return subprocess.CompletedProcess(
+                args=cmd_args, returncode=0, stdout="DECISION: APPROVE", stderr=""
+            )
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        short_prompt = "Review this | trivial & ticket"
+        bridge._run_opencode_review(
+            ticket_id="WP-T", prompt=short_prompt, timeout_seconds=5
+        )
+
+        # En Windows: --file presente y el prompt NUNCA en argv
+        assert "--file" in captured["cmd"]
+        assert short_prompt not in captured["cmd"]
 
     def test_long_prompt_uses_file_path(self, tmp_path, monkeypatch):
         """Prompt >10000 chars uses tempfile + --file, prompt NOT in argv."""
