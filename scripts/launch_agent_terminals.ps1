@@ -597,7 +597,7 @@ function Invoke-ImportPreflight {
 
     $failedImports = @()
     foreach ($module in $criticalModules) {
-        $result = & $venvPython -c "import sys; sys.path.insert(0, r'$ProjectRoot'); sys.path.insert(0, r'$ProjectRoot\.agent'); __import__('$module')" 2>&1
+        $result = & $venvPython -c "import sys; sys.path.insert(0, r'$ProjectRoot\.agent'); sys.path.insert(0, r'$ProjectRoot'); __import__('$module')" 2>&1
         $exitCode = $LASTEXITCODE
 
         if ($exitCode -ne 0) {

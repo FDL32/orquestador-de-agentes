@@ -50,6 +50,7 @@ This is a **reference** setup, not a constraint. Swap any role for another backe
 | WP-2026-095 | **Manager review V2**: single-shot prompt with budget, retry, forensic events |
 | WP-2026-111 | **Central motor + destination workspace**: motor lives once, destination references externally |
 | WP-2026-113 | **Central motor release consolidation**: manifiestos, documentacion e instalador alineados |
+| WP-2026-123 | **Workspace minimo del destino**: enlace motor-destino con schema explicito |
 
 ## Central motor architecture (WP-2026-111)
 
@@ -61,6 +62,7 @@ The motor lives **once** in this repo. A destination project:
 4. **Can bootstrap itself**: drop `.agent/host-setup.{sh,ps1}` in the destination. `scripts/install_agent_system.py` detects and invokes it with interactive confirmation post-copy.
 5. **Chooses deliverable type per ticket**: `deliverable_type: code | documentation | research | analysis | mixed` in `work_plan.md` switches the gate dispatch and Manager review rubric.
 6. **Flips profile automatically**: `agents.json.active_profile` goes from `engine-dev` (motor repo) to `host-project` (destination) during install/sync.
+7. **Receives motor-destination link file**: `.agent/config/motor_destination_link.json` with schema (motor_root, destination_root, motor_version, destination_id, created_at, manifest_version) for portable traceability (WP-2026-123).
 
 ## Version contract
 
@@ -104,6 +106,7 @@ The installer:
 3. Detects `.agent/host-setup.{sh,ps1}` if present and (with `y/N` confirmation, or `--yes` for CI) executes it.
 4. Reports the source (host vs motor) of each discovered skill.
 5. Does NOT copy motor code (scripts/, skills/, bus/, agent_system/, core .agent/).
+6. Writes `.agent/config/motor_destination_link.json` with schema explicit for portable traceability (WP-2026-123).
 
 ## Common commands
 
