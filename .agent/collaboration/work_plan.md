@@ -1,8 +1,8 @@
-# Plan de Trabajo: WP-2026-123 - Workspace minimo del destino
+# Plan de Trabajo: WP-2026-124 - Drift canonico del bus
 
 ## Metadata
-- **ID:** WP-2026-123
-- **Estado:** APPROVED
+- **ID:** WP-2026-124
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Creado:** 2026-05-21
 - **Prioridad:** HIGH
@@ -14,103 +14,140 @@
 
 ## Objetivo
 
-Hacer que el instalador mantenga en el proyecto destino solo el `.agent/`
-minimo, sin copiar el motor, y que ademas escriba un archivo de enlace
-motor-destino para dejar trazabilidad portable del workspace instalado.
+Eliminar el drift entre el bus canonico y las proyecciones de colaboracion.
+Un `REVIEW_DECISION` nunca debe poder existir sin su `STATE_CHANGED`
+correspondiente, y los guards deben leer el estado derivado del bus como
+autoridad, no `execution_log.md`.
 
 ## Contexto
 
-WP-2026-122 ya dejo resuelto el desacople de `project_root` en el motor.
-Tambien ya existe en `install_agent_system.py` la logica de copia allowlist-
-driven del destino y la proteccion contra copiar codigo del motor operativo.
-WP-2026-123 no reescribe eso: publica el contrato faltante del enlace y ajusta
-el allowlist para conservarlo en el destino.
+WP-2026-123 quedo atascado en `inspect` (HUMAN_GATE derivado) sin cerrarse
+canonicamente: el bus salto de su `REVIEW_DECISION inspect` directo a otro
+ticket, sin `STATE_CHANGED`. Ese es exactamente el agujero a cerrar: `inspect`
+queda hoy como derivacion del bus y deja `STATE.md` / `execution_log.md`
+desalineados.
 
-La base existente ya aporta:
+Regla unica de este WP (sin auto-healing silencioso):
 
-- `MANIFEST.workspace` con la lista de superficies que deben quedar en el
-  destino.
-- `scripts/install_agent_system.py` con copia allowlist-driven y flip de
-  `active_profile` a `host-project`.
-- `README.md` y `PROJECT.md` con la arquitectura de motor central + destino.
+- el bus manda;
+- las proyecciones se materializan desde el bus;
+- si bus y proyeccion divergen, se aborta o se pide intervencion humana.
 
-La pieza que falta definir es el contrato de enlace motor-destino. El WP-B lo
-introduce como un artefacto generado por el instalador dentro del destino:
+## Decision arquitectonica (opcion B)
 
-- `.agent/config/motor_destination_link.json`
+La materializacion compartida NO se mueve a un modulo nuevo y NO se importa
+entre paquetes (evita el import circular: `bus/review_bridge.py` no puede
+importar `agent_controller.py`, que a su vez importa `bus/*`).
 
-Schema propuesto del enlace:
+En su lugar:
 
-- `motor_root`: ruta al motor externo, absoluta o derivada de entorno.
-- `destination_root`: ruta raiz del destino instalado.
-- `motor_version`: version tecnica del motor que esta consumiendo el destino.
-- `destination_id`: identificador estable del destino o workspace.
-- `created_at`: timestamp ISO-8601 UTC de la instalacion o sync.
-- `manifest_version`: version del contrato `MANIFEST.workspace` aplicado.
+- La materializacion canonica (emitir `STATE_CHANGED` + sincronizar
+  `STATE.md` / `TURN.md` / `execution_log.md`) vive en `agent_controller.py`,
+  donde ya estan `update_log_status` y `update_turn_file` y la ruta de
+  `changes` (`_handle_request_changes`).
+- `scripts/manager_review_bridge.py` la **dispara por CLI**, invocando
+  `agent_controller.py` como subproceso — exactamente igual que `changes` ya
+  hace hoy. Cero import entre paquetes, cero modulo nuevo.
+- Se anade un flag `--escalate-human-gate --ticket WP-XXXX` a
+  `agent_controller.py` para la ruta `inspect`: emite `STATE_CHANGED ->
+  HUMAN_GATE` (actor `SUPERVISOR`) y sincroniza las 3 proyecciones. NO toca
+  el contador de rejections (`inspect` no es un rechazo del Manager).
+
+## Contracto de alcance
+
+Cubre el bloque drift/bus canonico:
+
+- materializacion canonica de transiciones para `approve` / `changes` /
+  `inspect` por la misma ruta CLI;
+- sincronizacion de `STATE.md` / `TURN.md` / `execution_log.md` desde el bus;
+- guards (`--mark-ready`, `--request-changes`) que leen el estado derivado
+  del bus;
+- asercion post-ciclo bus == proyeccion;
+- test e2e de regresion del ciclo review -> transition -> projection;
+- fix del test roto pre-existente `test_emit_fail_safe_on_review_decision`.
+
+Queda **fuera** de este WP la higiene de transporte de `inspect` (filtrado de
+basura del backend en `review_queue.md`) y el health check pre-ciclo. Eso es
+un WP posterior.
 
 ## Files Likely Touched
 
 ### Codigo
 
-- `scripts/install_agent_system.py`
-- `MANIFEST.workspace`
+- `.agent/agent_controller.py`
+- `scripts/manager_review_bridge.py`
+- `bus/review_bridge.py`
 
-### Documentacion
+### Documentacion / Estado
 
-- `README.md`
+- `.agent/collaboration/STATE.md`
+- `.agent/collaboration/TURN.md`
+- `.agent/collaboration/execution_log.md`
+- `.agent/collaboration/work_plan.md`
+- `.agent/collaboration/PLAN_WP-2026-124.md`
+- `.agent/collaboration/AUDIT_WP-2026-124.md`
 - `PROJECT.md`
 
 ### Tests
 
-- `tests/unit/test_install_agent_system.py`
-- `tests/unit/test_workspace_manifest.py`
+- `tests/test_review_bridge.py`
+- `tests/test_manager_review_bridge.py`
+- `tests/unit/test_bus_drift_detection.py`
+- `tests/unit/test_bus_emission_on_mark_ready.py`
+- `tests/test_review_cycle_e2e.py`
 
 ## Plan
 
-### Fase 1: Contrato del workspace minimo
+### Fase 1: Materializacion canonica via CLI
 
-- Definir el schema del archivo `.agent/config/motor_destination_link.json`.
-- Alinear `MANIFEST.workspace` para conservar el link generado y las
-  superficies minimas que deben existir tras `--install` / `--sync`.
-- Mantener `agents.json` como configuracion del destino y `active_profile`
-  como `host-project`.
+- Extraer la materializacion de estado de `_handle_request_changes` a una
+  funcion interna reutilizable de `agent_controller.py` (sin moverla de
+  modulo).
+- Anadir el flag `--escalate-human-gate --ticket WP-XXXX`: emite
+  `STATE_CHANGED -> HUMAN_GATE` (actor `SUPERVISOR`) + sincroniza las 3
+  proyecciones. Sin tocar el contador de rejections.
+- Hacer que `scripts/manager_review_bridge.py`, al recibir `inspect`, dispare
+  `agent_controller.py --escalate-human-gate` por subproceso (misma mecanica
+  que `changes`). Garantiza que todo `REVIEW_DECISION` deje su `STATE_CHANGED`.
 
-### Fase 2: Instalador
+### Fase 2: Guards leen el bus
 
-- Hacer que `scripts/install_agent_system.py` cree el arbol minimo de `.agent/`
-  en el destino.
-- Escribir el archivo de enlace motor-destino en `.agent/config/`.
-- Evitar la copia del motor operativo en cualquier modo canonical.
+- `--mark-ready` y `--request-changes` consultan el estado derivado del bus
+  (`StateMachine.derive_state_from_events`), no `execution_log.md`.
+- Las proyecciones quedan como conveniencia humana, no como autoridad.
 
-### Fase 3: Documentacion y tests
+### Fase 3: Asercion post-ciclo
 
-- Actualizar `README.md` y `PROJECT.md` con el contrato del workspace minimo.
-- Anadir o ajustar tests del instalador y del allowlist de `MANIFEST.workspace`.
-- Verificar que el sync/install sigue siendo idempotente.
+- Tras cada ciclo de review, verificar que el estado derivado del bus coincide
+  con el de las proyecciones. Si divergen, fallar ruidoso (no auto-corregir).
 
 ### Fase 4: Validacion
 
-- `ruff check .`
-- `pytest` en el slice afectado
-- `python .agent/agent_controller.py --validate --json --force`
+- Anadir `tests/test_review_cycle_e2e.py`: ciclo review -> decision -> bus ->
+  proyecciones, para `approve`, `changes` e `inspect`.
+- Arreglar `test_emit_fail_safe_on_review_decision` (roto pre-existente en
+  `tests/test_review_bridge.py`).
+- `ruff check .`, `pytest` del slice, `agent_controller.py --validate`.
 
 ## Criterios de Aceptacion
 
-- [ ] El destino crea solo el `.agent/` minimo necesario.
-- [ ] Se escribe un archivo de enlace motor-destino en `.agent/config/`.
-- [ ] El motor operativo no se copia al destino.
-- [ ] `MANIFEST.workspace` sigue siendo la fuente de allowlist del destino.
-- [ ] `MANIFEST.workspace` conserva el link generado para que sobreviva a
-      `--sync --prune`.
-- [ ] `active_profile` del destino sigue en `host-project`.
-- [ ] Los tests afectados pasan.
-- [ ] `ruff check .` pasa limpio.
-- [ ] `agent_controller.py --validate` pasa limpio.
+- [ ] `inspect` emite `STATE_CHANGED -> HUMAN_GATE` via CLI; no queda como
+      decision fantasma.
+- [ ] `approve`, `changes` e `inspect` materializan por la misma ruta.
+- [ ] `STATE.md`, `TURN.md`, `execution_log.md` se materializan desde el bus.
+- [ ] `--mark-ready` y `--request-changes` leen el estado derivado del bus.
+- [ ] No queda drift persistente entre bus y proyecciones.
+- [ ] No hay import circular: `bus/review_bridge.py` no importa
+      `agent_controller.py`.
+- [ ] `test_emit_fail_safe_on_review_decision` pasa.
+- [ ] El test e2e de regresion pasa.
+- [ ] `ruff check .` y `agent_controller.py --validate` pasan limpios.
 
 ## Riesgos
 
-- El cambio puede afectar a la semantica de `--install` y `--sync`.
-- Hay que evitar duplicar en el destino metadatos del motor que ya existen en
-  el repo central.
-- El archivo de enlace debe ser estable y no depender de rutas locales
-  temporales.
+- El cambio toca la autoridad canonica de estado; verificar que las rutas
+  legacy de `changes` / `approve` no se rompen.
+- No introducir auto-healing silencioso: si bus y proyeccion divergen, el
+  sistema debe fallar visiblemente.
+- La cobertura de tests debe ejercitar el ciclo completo, no solo la ruta
+  feliz; incluir explicitamente `inspect`.

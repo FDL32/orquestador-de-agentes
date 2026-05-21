@@ -158,13 +158,17 @@ class ReviewBridge:
             if os.name == "nt":
                 executable = "opencode.cmd"
             exe_full = shutil.which(executable) or executable
+            detect_args = [exe_full, "run", "--help"]
+            use_detect_shell = os.name == "nt"
             result = subprocess.run(
-                [exe_full, "run", "--help"],
+                subprocess.list2cmdline(detect_args)
+                if use_detect_shell
+                else detect_args,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
                 timeout=5,
-                shell=(os.name == "nt"),
+                shell=use_detect_shell,
             )
             return "--format" in (result.stdout + result.stderr)
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
@@ -550,8 +554,14 @@ class ReviewBridge:
                 ]
 
             try:
+                # En Windows, shell=True con una lista hace que cmd.exe trate
+                # args[1:] como argumentos del propio shell: opencode arrancaria
+                # sin ninguno. list2cmdline produce el string correcto.
+                run_args = (
+                    subprocess.list2cmdline(cmd_args) if use_shell else cmd_args
+                )
                 result = subprocess.run(
-                    cmd_args,
+                    run_args,
                     capture_output=True,
                     text=True,
                     encoding="utf-8",
@@ -1340,6 +1350,19 @@ class ReviewBridge:
                     f"[manager-review-bridge] HUMAN_GATE: report at {report_path}",
                     file=sys.stderr,
                 )
+        elif decision == ReviewDecision.INSPECT:
+            # WP-2026-124: inspect now triggers the canonical materialization route
+            # via CLI, same as changes. This ensures STATE_CHANGED is emitted.
+            controller = self.project_root / ".agent" / "agent_controller.py"
+            subprocess.run(
+                [sys.executable, str(controller), "--escalate-human-gate", "--ticket", ticket_id],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                cwd=self.project_root,
+                env=self._review_env(),
+                timeout=base_timeout,
+            )
 
         if (
             decision == ReviewDecision.INSPECT

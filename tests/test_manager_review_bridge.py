@@ -538,6 +538,9 @@ class TestPromptTransportDispatch:
         # En Windows: --file presente y el prompt NUNCA en argv
         assert "--file" in captured["cmd"]
         assert short_prompt not in captured["cmd"]
+        # shell=True en Windows exige un string (list2cmdline), no una lista:
+        # con lista, cmd.exe se come args[1:] y opencode arranca sin ninguno.
+        assert isinstance(captured["cmd"], str)
 
     def test_long_prompt_uses_file_path(self, tmp_path, monkeypatch):
         """Prompt >10000 chars uses tempfile + --file, prompt NOT in argv."""
@@ -553,6 +556,9 @@ class TestPromptTransportDispatch:
         monkeypatch.setattr(bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW")
         monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
         monkeypatch.setattr(bridge, "_supports_json_format", False)
+        # Fija posix: en nt subprocess.run recibe un string (list2cmdline) y
+        # este test ejercita la mecanica --file sobre la ruta de lista.
+        monkeypatch.setattr("os.name", "posix")
 
         captured = {}
 
@@ -595,6 +601,8 @@ class TestPromptTransportDispatch:
         monkeypatch.setattr(bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW")
         monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
         monkeypatch.setattr(bridge, "_supports_json_format", False)
+        # Fija posix: en nt subprocess.run recibe un string (list2cmdline).
+        monkeypatch.setattr("os.name", "posix")
 
         captured_path = {}
 

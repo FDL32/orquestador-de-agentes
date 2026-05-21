@@ -1,14 +1,14 @@
 # STATE.md
 
 ## Estado Canonico
-- **Plan Activo:** WP-2026-123
-- **Estado actual:** READY_FOR_REVIEW
+- **Plan Activo:** WP-2026-124
+- **Estado actual:** COMPLETED
 - **Rol activo:** BUILDER
 - **Autoridad:** bus canonico (`.agent/runtime/events/events.jsonl`)
 
 ## Resumen
-- WP-2026-123 aprobado y en ejecucion para el workspace minimo del destino.
-- El Builder ha recibido el turno para implantar el contrato del destino.
+- WP-2026-124 preparado para eliminar el drift canonico entre bus y proyecciones.
+- El Builder tiene el turno para implantar la ruta unica de materializacion.
 
 ## Proximo evento esperado
-- `BUILDER_EXIT` o el siguiente evento del bus para WP-2026-123.
+- `BUILDER_EXIT` o el siguiente evento del bus para WP-2026-124.
