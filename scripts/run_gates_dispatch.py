@@ -67,13 +67,24 @@ def read_deliverable_type() -> str:
 
 
 def run_code_gates() -> int:
-    # 1. ruff
+    # 1. ruff check (linter)
     print("[dispatch] Running ruff check .")
     rc_ruff = subprocess.run(  # noqa: S603
         [sys.executable, "-m", "ruff", "check", "."], cwd=PROJECT_ROOT
     ).returncode
     if rc_ruff != 0:
         return rc_ruff
+
+    # 1b. ruff format --check (formatter): la CI quality-gates lo exige.
+    # ruff check (linter) y ruff format son cosas distintas; sin este paso
+    # un archivo sin formatear pasa el gate local pero rompe la CI.
+    print("[dispatch] Running ruff format --check .")
+    rc_fmt = subprocess.run(  # noqa: S603
+        [sys.executable, "-m", "ruff", "format", "--check", "."], cwd=PROJECT_ROOT
+    ).returncode
+    if rc_fmt != 0:
+        print("[dispatch] ruff format --check failed: ejecuta 'ruff format .'")
+        return rc_fmt
 
     # 2. pytest-safe
     print("[dispatch] Running pytest-safe")
