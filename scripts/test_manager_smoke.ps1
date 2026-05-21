@@ -3,7 +3,7 @@
 # de invocacion para diagnosticar el bug "INSPECT" del bridge.
 
 $ErrorActionPreference = 'Continue'
-$root = 'c:\Users\fdl\Proyectos_Python\z_scripts\orquestacion_agentes'
+$root = Split-Path -Parent $PSScriptRoot
 $model = 'openai/gpt-5.4-mini'
 Set-Location $root
 

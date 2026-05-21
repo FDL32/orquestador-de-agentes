@@ -123,7 +123,6 @@ def find_orquestacion_template(start_path: Path | None = None) -> tuple[Path, st
     common_paths = [
         Path.home() / "Proyectos_Python" / "orquestacion_agentes",
         Path.home() / "projects" / "orquestacion_agentes",
-        Path("C:/Users/fdl/Proyectos_Python/z_scripts/orquestacion_agentes"),
     ]
     for p in common_paths:
         if p.exists() and (p / ".agent" / "agent_controller.py").exists():
