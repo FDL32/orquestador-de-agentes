@@ -37,6 +37,7 @@ tests/.test_workspace/
 .agent/runtime/audit/
 .agent/runtime/compare/
 .agent/runtime/reviews/
+.agent/runtime/review_packets/
 .agent/runtime/events/logs/
 .agent/collaboration/.session_state.json
 
