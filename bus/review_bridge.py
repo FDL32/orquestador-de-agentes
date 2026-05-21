@@ -7,7 +7,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -459,7 +458,10 @@ class ReviewBridge:
     ) -> tuple[str, str, int]:
         """OpenCode review route using manager agent spec with context prompt.
 
-        Uses dual transport: short prompts go via argv, long prompts via tempfile + --file.
+        Transporte: el contexto completo se escribe a un review packet en
+        .agent/runtime/review_packets/<ticket>.md y el prompt posicional es
+        corto, indicando al Manager que lo lea. Evita el flag --file (array
+        que consume el mensaje) y el limite de longitud de la CLI.
         """
         model = self._get_manager_model()
 
@@ -476,112 +478,67 @@ class ReviewBridge:
             elif bat_candidate.exists():
                 exe_full = str(bat_candidate)
 
-        tmp_path = None
+        # Review packet: el contexto completo del review se escribe a un
+        # archivo dentro del repo; el Manager lo lee con sus herramientas.
+        # El prompt posicional es corto (sin metacaracteres de cmd.exe).
+        packets_dir = self.project_root / ".agent" / "runtime" / "review_packets"
+        packets_dir.mkdir(parents=True, exist_ok=True)
+        packet_path = packets_dir / f"{ticket_id}.md"
+        packet_path.write_text(prompt, encoding="utf-8")
+        packet_rel = packet_path.relative_to(self.project_root).as_posix()
+
+        review_message = (
+            f"Revisa {ticket_id} leyendo el archivo {packet_rel} con tus "
+            "herramientas de lectura. Termina con exactamente "
+            "DECISION: APPROVE o DECISION: CHANGES."
+        )
+
+        cmd_args = [exe_full, "run", "--agent", "manager"]
+        if model:
+            cmd_args.extend(["--model", model])
+        if self._supports_json_format:
+            cmd_args.extend(["--format", "json"])
+        cmd_args.append(review_message)
+
+        use_shell = False
+        if os.name == "nt" and (
+            exe_full.lower().endswith(".cmd")
+            or exe_full.lower().endswith(".bat")
+            or "opencode" in exe_full.lower()
+        ):
+            use_shell = True
+
+        if os.name == "nt" and exe_full.lower().endswith(".ps1"):
+            cmd_args = [
+                "powershell.exe",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                *cmd_args,
+            ]
+
         try:
-            # Dispatch: short prompt -> argv, long prompt -> tempfile + --file.
-            # En Windows se fuerza SIEMPRE la ruta --file: con shell=True un
-            # prompt corto con metacaracteres de cmd.exe (| < > & % ") rompe la
-            # invocacion de opencode y este recibe argv destrozado.
-            use_argv = os.name != "nt" and len(prompt) < ARGV_PROMPT_THRESHOLD
-            if use_argv:
-                cmd_args = [
-                    exe_full,
-                    "run",
-                    "--agent",
-                    "manager",
-                    "--dir",
-                    str(self.project_root),
-                    "--port",
-                    "0",
-                    "--dangerously-skip-permissions",
-                ]
-            else:
-                # Write prompt to tempfile and use --file flag
-                # ruff: noqa: SIM115 (delete=False required for Windows subprocess handoff)
-                tmp = tempfile.NamedTemporaryFile(
-                    mode="w", suffix=".md", delete=False, encoding="utf-8"
-                )
-                tmp.write(
-                    "Read the attached file and provide your review. "
-                    "End with exactly DECISION: APPROVE or DECISION: CHANGES.\n\n"
-                )
-                tmp.write(prompt)
-                tmp.close()
-                tmp_path = tmp.name
-                cmd_args = [
-                    exe_full,
-                    "run",
-                    "--file",
-                    tmp_path,
-                    "--agent",
-                    "manager",
-                    "--dir",
-                    str(self.project_root),
-                    "--port",
-                    "0",
-                    "--dangerously-skip-permissions",
-                ]
+            # En Windows, shell=True con una lista hace que cmd.exe trate
+            # args[1:] como argumentos del propio shell: opencode arrancaria
+            # sin ninguno. list2cmdline produce el string correcto.
+            run_args = subprocess.list2cmdline(cmd_args) if use_shell else cmd_args
+            result = subprocess.run(
+                run_args,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                cwd=self.project_root,
+                timeout=timeout_seconds,
+                shell=use_shell,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+            err_msg = f"{type(exc).__name__}: {exc}"
+            if isinstance(exc, subprocess.TimeoutExpired):
+                err_msg = f"TimeoutExpired: {exc}"
+            return "", err_msg, 1
 
-            if model:
-                cmd_args.extend(["--model", model])
-
-            if self._supports_json_format:
-                cmd_args.extend(["--format", "json"])
-
-            if use_argv:
-                cmd_args.append(prompt)
-            else:
-                cmd_args.append(
-                    "Review."
-                )  # minimal positional required by OpenCode CLI
-
-            use_shell = False
-            if os.name == "nt" and (
-                exe_full.lower().endswith(".cmd")
-                or exe_full.lower().endswith(".bat")
-                or "opencode" in exe_full.lower()
-            ):
-                use_shell = True
-
-            if os.name == "nt" and exe_full.lower().endswith(".ps1"):
-                cmd_args = [
-                    "powershell.exe",
-                    "-NoProfile",
-                    "-ExecutionPolicy",
-                    "Bypass",
-                    "-File",
-                    *cmd_args,
-                ]
-
-            try:
-                # En Windows, shell=True con una lista hace que cmd.exe trate
-                # args[1:] como argumentos del propio shell: opencode arrancaria
-                # sin ninguno. list2cmdline produce el string correcto.
-                run_args = subprocess.list2cmdline(cmd_args) if use_shell else cmd_args
-                result = subprocess.run(
-                    run_args,
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    cwd=self.project_root,
-                    timeout=timeout_seconds,
-                    shell=use_shell,
-                )
-            except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
-                err_msg = f"{type(exc).__name__}: {exc}"
-                if isinstance(exc, subprocess.TimeoutExpired):
-                    err_msg = f"TimeoutExpired: {exc}"
-                return "", err_msg, 1
-
-            return result.stdout or "", result.stderr or "", result.returncode
-        finally:
-            # Cleanup tempfile if created (best-effort, may fail on Windows file-lock)
-            if tmp_path:
-                # ruff: noqa: SIM105 (clearer than contextlib.suppress for this case)
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
+        return result.stdout or "", result.stderr or "", result.returncode
 
     def _load_review_config(self) -> dict:
         """Load review configuration from agents.json with WP-2026-106 defaults.

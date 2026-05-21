@@ -461,202 +461,90 @@ class TestOpencodeReviewRoute:
         assert "-f" not in captured_cmd
 
 
-class TestPromptTransportDispatch:
-    """Tests for argv vs --file dispatch based on prompt length."""
+class TestReviewPacketTransport:
+    """WP-2026-126: el contexto del review va por un review packet en disco,
+    no por --file (flag array que consume el mensaje) ni por argv largo."""
 
-    def test_short_prompt_uses_argv_path(self, tmp_path, monkeypatch):
-        """En posix, un prompt corto usa transporte argv, sin flag --file."""
+    @staticmethod
+    def _bridge(tmp_path, monkeypatch, os_name):
         from bus.review_bridge import ReviewBridge, EventBus
 
-        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
-        event_bus = EventBus(runtime_dir=runtime_dir)
+        event_bus = EventBus(runtime_dir=tmp_path / ".agent" / "runtime" / "events")
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
-
         monkeypatch.setattr(bridge, "_get_manager_model", lambda: None)
-        monkeypatch.setattr(bridge, "_get_canonical_files", lambda: [])
-        monkeypatch.setattr(bridge, "_get_active_ticket_id", lambda: None)
-        monkeypatch.setattr(bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW")
-        monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
         monkeypatch.setattr(bridge, "_supports_json_format", False)
-        # En Windows la ruta argv esta deshabilitada (siempre --file); este
-        # test fija os.name=posix para verificar el contrato de la ruta argv.
-        monkeypatch.setattr("os.name", "posix")
+        monkeypatch.setattr("os.name", os_name)
+        return bridge
 
-        captured = {}
-
-        def fake_run(cmd_args, **kwargs):
-            captured["cmd"] = cmd_args
-            return subprocess.CompletedProcess(
-                args=cmd_args, returncode=0, stdout="DECISION: APPROVE", stderr=""
-            )
-
-        monkeypatch.setattr(subprocess, "run", fake_run)
-
-        short_prompt = "Review this trivial ticket"
-        stdout, stderr, exit_code = bridge._run_opencode_review(
-            ticket_id="WP-T", prompt=short_prompt, timeout_seconds=5
+    def test_writes_review_packet(self, tmp_path, monkeypatch):
+        """El contexto completo se escribe a .agent/runtime/review_packets/<ticket>.md."""
+        bridge = self._bridge(tmp_path, monkeypatch, "posix")
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda c, **k: subprocess.CompletedProcess(c, 0, "DECISION: APPROVE", ""),
         )
 
-        # Prompt is appended after the flags
-        assert captured["cmd"][-1] == short_prompt
-        assert captured["cmd"][1] == "run"
-        # --file flag NOT present
-        assert "--file" not in captured["cmd"]
-
-    def test_short_prompt_on_windows_uses_file_path(self, tmp_path, monkeypatch):
-        """En Windows un prompt corto tambien va por --file: con shell=True los
-        metacaracteres de cmd.exe (| < > & %) destrozarian la invocacion."""
-        from bus.review_bridge import ReviewBridge, EventBus
-
-        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
-        event_bus = EventBus(runtime_dir=runtime_dir)
-        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
-
-        monkeypatch.setattr(bridge, "_get_manager_model", lambda: None)
-        monkeypatch.setattr(bridge, "_get_canonical_files", lambda: [])
-        monkeypatch.setattr(bridge, "_get_active_ticket_id", lambda: None)
-        monkeypatch.setattr(bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW")
-        monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
-        monkeypatch.setattr(bridge, "_supports_json_format", False)
-        monkeypatch.setattr("os.name", "nt")
-
-        captured = {}
-
-        def fake_run(cmd_args, **kwargs):
-            captured["cmd"] = cmd_args
-            return subprocess.CompletedProcess(
-                args=cmd_args, returncode=0, stdout="DECISION: APPROVE", stderr=""
-            )
-
-        monkeypatch.setattr(subprocess, "run", fake_run)
-
-        short_prompt = "Review this | trivial & ticket"
+        prompt = "CONTEXTO DE REVIEW\n" + ("x" * 8000)
         bridge._run_opencode_review(
-            ticket_id="WP-T", prompt=short_prompt, timeout_seconds=5
+            ticket_id="WP-T", prompt=prompt, timeout_seconds=5
         )
 
-        # En Windows: --file presente y el prompt NUNCA en argv
-        assert "--file" in captured["cmd"]
-        assert short_prompt not in captured["cmd"]
-        # shell=True en Windows exige un string (list2cmdline), no una lista:
-        # con lista, cmd.exe se come args[1:] y opencode arranca sin ninguno.
-        assert isinstance(captured["cmd"], str)
+        packet = (
+            tmp_path / ".agent" / "runtime" / "review_packets" / "WP-T.md"
+        )
+        assert packet.exists()
+        assert packet.read_text(encoding="utf-8") == prompt
 
-    def test_long_prompt_uses_file_path(self, tmp_path, monkeypatch):
-        """Prompt >10000 chars uses tempfile + --file, prompt NOT in argv."""
-        from bus.review_bridge import ReviewBridge, EventBus
-
-        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
-        event_bus = EventBus(runtime_dir=runtime_dir)
-        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
-
-        monkeypatch.setattr(bridge, "_get_manager_model", lambda: None)
-        monkeypatch.setattr(bridge, "_get_canonical_files", lambda: [])
-        monkeypatch.setattr(bridge, "_get_active_ticket_id", lambda: None)
-        monkeypatch.setattr(bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW")
-        monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
-        monkeypatch.setattr(bridge, "_supports_json_format", False)
-        # Fija posix: en nt subprocess.run recibe un string (list2cmdline) y
-        # este test ejercita la mecanica --file sobre la ruta de lista.
-        monkeypatch.setattr("os.name", "posix")
+    def test_positional_message_short_and_no_file_flag(self, tmp_path, monkeypatch):
+        """El prompt posicional es corto y referencia el packet; sin --file
+        y sin el prompt completo en la linea de comandos."""
+        bridge = self._bridge(tmp_path, monkeypatch, "posix")
 
         captured = {}
 
         def fake_run(cmd_args, **kwargs):
             captured["cmd"] = cmd_args
-            # Read tempfile content while it still exists
-            idx = cmd_args.index("--file")
-            captured["file_content"] = Path(cmd_args[idx + 1]).read_text(encoding="utf-8")
-            return subprocess.CompletedProcess(
-                args=cmd_args, returncode=0, stdout="DECISION: APPROVE", stderr=""
-            )
+            return subprocess.CompletedProcess(cmd_args, 0, "DECISION: APPROVE", "")
 
         monkeypatch.setattr(subprocess, "run", fake_run)
 
-        long_prompt = "x" * 12000
-        stdout, stderr, exit_code = bridge._run_opencode_review(
-            ticket_id="WP-T", prompt=long_prompt, timeout_seconds=5
+        prompt = "PROMPT-LARGO-UNICO " + ("x" * 9000)
+        bridge._run_opencode_review(
+            ticket_id="WP-T", prompt=prompt, timeout_seconds=5
         )
 
-        # --file flag IS present
-        assert "--file" in captured["cmd"]
-        # Prompt NOT in the flag section of argv
-        assert long_prompt not in captured["cmd"]
-        # Prompt IS in tempfile content
-        assert "End with exactly DECISION: APPROVE or DECISION: CHANGES." in captured["file_content"]
-        assert captured["file_content"].endswith(long_prompt)
-        assert long_prompt not in " ".join(captured["cmd"][:-1])
+        cmd = captured["cmd"]
+        assert "--file" not in cmd
+        assert prompt not in cmd
+        message = cmd[-1]
+        assert "WP-T" in message
+        assert "review_packets/WP-T.md" in message
+        assert len(message) < 400
 
-    def test_tempfile_cleaned_up_after_call(self, tmp_path, monkeypatch):
-        """Tempfile is cleaned up after subprocess call completes."""
-        from bus.review_bridge import ReviewBridge, EventBus
+    def test_windows_invocation_is_string_without_file_flag(
+        self, tmp_path, monkeypatch
+    ):
+        """En Windows shell=True: subprocess.run recibe un string (list2cmdline),
+        sin --file; el prompt completo nunca toca la CLI."""
+        bridge = self._bridge(tmp_path, monkeypatch, "nt")
 
-        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
-        event_bus = EventBus(runtime_dir=runtime_dir)
-        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
-
-        monkeypatch.setattr(bridge, "_get_manager_model", lambda: None)
-        monkeypatch.setattr(bridge, "_get_canonical_files", lambda: [])
-        monkeypatch.setattr(bridge, "_get_active_ticket_id", lambda: None)
-        monkeypatch.setattr(bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW")
-        monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
-        monkeypatch.setattr(bridge, "_supports_json_format", False)
-        # Fija posix: en nt subprocess.run recibe un string (list2cmdline).
-        monkeypatch.setattr("os.name", "posix")
-
-        captured_path = {}
+        captured = {}
 
         def fake_run(cmd_args, **kwargs):
-            idx = cmd_args.index("--file")
-            captured_path["path"] = cmd_args[idx + 1]
-            # Verify tempfile exists during call
-            assert Path(captured_path["path"]).exists()
-            return subprocess.CompletedProcess(
-                args=cmd_args, returncode=0, stdout="DECISION: APPROVE", stderr=""
-            )
+            captured["cmd"] = cmd_args
+            return subprocess.CompletedProcess(cmd_args, 0, "DECISION: APPROVE", "")
 
         monkeypatch.setattr(subprocess, "run", fake_run)
 
         bridge._run_opencode_review(
-            ticket_id="WP-T", prompt="x" * 12000, timeout_seconds=5
+            ticket_id="WP-T", prompt="x" * 9000, timeout_seconds=5
         )
 
-        # Tempfile cleaned up after call
-        assert not Path(captured_path["path"]).exists()
-
-    def test_tempfile_cleaned_up_on_subprocess_failure(self, tmp_path, monkeypatch):
-        """Tempfile is cleaned up even when subprocess raises TimeoutExpired."""
-        from bus.review_bridge import ReviewBridge, EventBus
-
-        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
-        event_bus = EventBus(runtime_dir=runtime_dir)
-        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
-
-        monkeypatch.setattr(bridge, "_get_manager_model", lambda: None)
-        monkeypatch.setattr(bridge, "_get_canonical_files", lambda: [])
-        monkeypatch.setattr(bridge, "_get_active_ticket_id", lambda: None)
-        monkeypatch.setattr(bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW")
-        monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
-        monkeypatch.setattr(bridge, "_supports_json_format", False)
-
-        captured_path = {}
-
-        def fake_run(cmd_args, **kwargs):
-            idx = cmd_args.index("--file")
-            captured_path["path"] = cmd_args[idx + 1]
-            raise subprocess.TimeoutExpired(cmd_args, kwargs.get("timeout", 5))
-
-        monkeypatch.setattr(subprocess, "run", fake_run)
-
-        # Should not raise, cleanup happens in finally
-        stdout, stderr, exit_code = bridge._run_opencode_review(
-            ticket_id="WP-T", prompt="x" * 12000, timeout_seconds=5
-        )
-
-        # Verify TimeoutExpired was caught
-        assert "TimeoutExpired" in stderr
-        # Tempfile cleaned up even after failure
-        assert not Path(captured_path["path"]).exists()
+        cmd = captured["cmd"]
+        assert isinstance(cmd, str)
+        assert "--file" not in cmd
+        assert "review_packets/WP-T.md" in cmd
 
 
 # =============================================================================
