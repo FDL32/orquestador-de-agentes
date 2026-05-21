@@ -523,7 +523,9 @@ class ReviewBridge:
             if len(prompt) < ARGV_PROMPT_THRESHOLD:
                 cmd_args.append(prompt)
             else:
-                cmd_args.append("Review.")  # minimal positional required by OpenCode CLI
+                cmd_args.append(
+                    "Review."
+                )  # minimal positional required by OpenCode CLI
 
             use_shell = False
             if os.name == "nt" and (

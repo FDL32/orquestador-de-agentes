@@ -31,6 +31,7 @@ except ImportError:
     # Fallback if runtime.project_root not available
     get_collab_dir = None
 
+
 class _LazyPath:
     def __init__(self, resolver):
         self._resolver = resolver

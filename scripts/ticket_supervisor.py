@@ -18,6 +18,7 @@ except ImportError:
     # Fallback if runtime.project_root not available
     resolve_project_root = None
 
+
 def _project_root() -> Path:
     if resolve_project_root is not None:
         return resolve_project_root()

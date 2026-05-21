@@ -3,6 +3,7 @@
 
 WP-2026-122: Uses runtime.project_root for dynamic project root resolution.
 """
+
 import contextlib
 import json
 import subprocess
@@ -23,11 +24,7 @@ PROJECT_ROOT = (
     if resolve_project_root is not None
     else Path(__file__).resolve().parent.parent
 )
-AGENT_DIR = (
-    get_agent_dir()
-    if get_agent_dir is not None
-    else PROJECT_ROOT / ".agent"
-)
+AGENT_DIR = get_agent_dir() if get_agent_dir is not None else PROJECT_ROOT / ".agent"
 COLLAB_DIR = AGENT_DIR / "collaboration"
 RUNTIME_DIR = AGENT_DIR / "runtime"
 AUDIT_DIR = RUNTIME_DIR / "audit"

@@ -4,6 +4,7 @@ Completion common utilities.
 
 WP-2026-122: Uses runtime.project_root for dynamic project root resolution.
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -19,6 +20,7 @@ except ImportError:
     # Fallback if runtime.project_root not available
     get_collab_dir = None
     resolve_project_root = None
+
 
 class _LazyPath:
     def __init__(self, resolver):
@@ -50,6 +52,7 @@ def _project_root() -> Path:
     if resolve_project_root is not None:
         return resolve_project_root()
     return Path(__file__).resolve().parent.parent
+
 
 # Deferred path resolution for collaboration files
 COLLAB_DIR = _LazyPath(_collab_dir)

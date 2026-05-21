@@ -196,6 +196,7 @@ VALID_LOG_STATES = {
     "N/A",
 }
 
+
 def _ensure_runtime_dirs() -> None:
     context_dir = get_context_dir()
     archive_dir = get_collab_dir() / "archive"
@@ -216,7 +217,9 @@ def _get_event_bus() -> EventBus | None:
 event_bus = None
 
 # Circuit breaker state
-CIRCUIT_BREAKER_PATH = _LazyPath(lambda: get_agent_dir() / "runtime" / "circuit_breaker.json")
+CIRCUIT_BREAKER_PATH = _LazyPath(
+    lambda: get_agent_dir() / "runtime" / "circuit_breaker.json"
+)
 BUILDER_LOCK_PATH = _LazyPath(lambda: get_agent_dir() / "runtime" / "builder_lock.txt")
 
 # ============================================================================
@@ -231,6 +234,8 @@ EXCLUDE_FILES_REL = {
     "notifications.md",
     ".session_state.json",
 }
+
+
 def _exclude_files() -> set[str]:
     collab_dir = get_collab_dir()
     agent_dir = get_agent_dir()
@@ -238,7 +243,9 @@ def _exclude_files() -> set[str]:
     exclude_files = {str((collab_dir / f).resolve()) for f in EXCLUDE_FILES_REL}
     exclude_files.add(str((context_dir / "project_map.md").resolve()))
     # Exclude bus runtime files (events.jsonl is managed by the bus, not the Builder)
-    exclude_files.add(str((agent_dir / "runtime" / "events" / "events.jsonl").resolve()))
+    exclude_files.add(
+        str((agent_dir / "runtime" / "events" / "events.jsonl").resolve())
+    )
     # Exclude agent config directory (managed by agents_config.py, not the Builder)
     exclude_files.add(str((agent_dir / "config").resolve()))
     return exclude_files
