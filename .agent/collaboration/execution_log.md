@@ -1,19 +1,19 @@
-# Execution Log - WP-2026-129
+# Execution Log - WP-2026-130
 
 ## Metadata
-- **ID:** WP-2026-129
-**Estado:** COMPLETED
+- **ID:** WP-2026-130
+**Estado:** IN_PROGRESS
 - **deliverable_type:** code
 
 ## Agente Activo
 - **Rol:** BUILDER
 - **Accion:** IMPLEMENT
-- **Plan:** Review env inheritance fix
+- **Plan:** Manager legacy naming cleanup
 
 ## Fases
-- Phase 1: eliminar el redirect de `HOME`, `USERPROFILE` y `CODEX_HOME` hacia `.codex` y cambiar el fallback del Manager a `"opencode"`.
-- Phase 2: verificar que OpenCode hereda el entorno normal y que el review bridge sigue funcionando.
-- Phase 3: validar el cambio con tests y quality gates.
+- Phase 1: renombrar la ruta legacy del Manager para que deje de describirse como `codex`.
+- Phase 2: actualizar los fixtures, templates y tests que siguen usando la nomenclatura legacy.
+- Phase 3: validar el rename con tests y quality gates sin tocar la compatibilidad real del backend `codex`.
 
 ## Registro de Implementacion
 
@@ -21,41 +21,34 @@
 - `work_plan.md`: ticket aprobado para el nuevo ciclo.
 - `STATE.md`: estado inicial del nuevo ticket.
 - `TURN.md`: turno del Builder preparado.
-- `PLAN_WP-2026-129.md`: alcance y estrategia del ticket.
-- `AUDIT_WP-2026-129.md`: criterios de auditoria definidos.
+- `PLAN_WP-2026-130.md`: alcance y estrategia del ticket.
+- `AUDIT_WP-2026-130.md`: criterios de auditoria definidos.
 
 ### Calidad Esperada
 - `ruff check .`
 - `pytest`
 - `python .agent/agent_controller.py --validate --json --force`
 
-### Implementacion Fase 1: Eliminar redirect de home en review_env() y fallback legacy del Manager
-- `bus/review_bridge.py` debe dejar de forzar HOME/USERPROFILE/CODEX_HOME a `.codex`.
-- `bus/review_bridge.py` debe dejar de caer en `"codex"` como backend fallback del Manager y usar `"opencode"`.
-- `tests/test_manager_review_bridge.py` debe cubrir que el review env hereda el entorno normal.
-- `tests/unit/test_review_env.py` puede aislar el helper de entorno si hace falta.
+### Implementacion Fase 1: Renombrar la ruta legacy del Manager
+- `bus/review_bridge.py` debe dejar de usar nombres `codex` para la ruta legacy del Manager.
+- `bus/review_bridge.py` debe cambiar la trazabilidad `legacy_codex` a una etiqueta semantica de Manager.
+- `tests/test_manager_review_bridge.py` debe cubrir el nuevo nombre sin cambiar la semantica del backend real.
+- `tests/test_launch_agent_terminals_script.py` debe reflejar el nuevo nombre del template legacy.
 
 ## Criterios de Aceptacion
-- [x] `_review_env()` ya no reescribe `HOME`, `USERPROFILE` ni `CODEX_HOME` hacia `.codex`.
-- [x] `_get_manager_backend()` ya no usa `"codex"` como fallback y resuelve `"opencode"` para el Manager.
-- [x] OpenCode puede ejecutar el review sin heredar un home artificial que rompa su arranque.
-- [x] Los tests cubren la herencia del entorno y evitan regresiones.
+- [ ] La ruta legacy del Manager ya no se describe como `codex`.
+- [ ] Los tests y templates reflejan la nomenclatura correcta.
+- [ ] El backend `codex` real sigue disponible como configuracion, sin romper compatibilidad.
+- [ ] Los tests cubren el rename y evitan regresiones.
 
 ## Evidencia de Implementacion
 
-### Fase 1 completada
-- `bus/review_bridge.py`: `_review_env()` ahora devuelve `os.environ.copy()` sin redirigir variables de home.
-- `bus/review_bridge.py`: `_get_manager_backend()` ahora usa `"opencode"` como fallback en lugar de `"codex"`.
-- `tests/unit/test_review_env.py`: Nuevo archivo con tests dedicados para la herencia del entorno.
-- `tests/test_manager_review_bridge.py`: Actualizado test `test_get_manager_backend_default_opencode` para reflejar el nuevo fallback.
-- `tests/test_manager_review_bridge.py`: Test `test_manager_review_cycle_approves` ahora fuerza backend codex explicitamente.
+### Fase 1 pendiente
+- `bus/review_bridge.py`: renombrar la ruta legacy del Manager.
+- `tests/test_manager_review_bridge.py`: ajustar fixtures y nombres de pruebas.
+- `tests/test_launch_agent_terminals_script.py`: cambiar la referencia del template legacy.
 
-### Quality gates
-- `ruff check .`: PASSED
-- `pytest`: 239 tests PASSED
-- `python .agent/agent_controller.py --validate --json --force`: PASSED (sin errores)
-
-
-Marked ready by Builder
-
-Manager approved canonical closeout for WP-2026-129
+### Quality gates esperados
+- `ruff check .`
+- `pytest`
+- `python .agent/agent_controller.py --validate --json --force`

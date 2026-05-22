@@ -238,7 +238,7 @@ class ReviewBridge:
     def _get_manager_backend(self) -> str:
         """Get the backend assigned to MANAGER role from agents.json.
 
-        Before: Fell back to "codex" when agents.json was unreadable.
+        Before: Fell back to a legacy backend when agents.json was unreadable.
         During: Reads agents.json and returns the MANAGER backend assignment.
         After: Returns "opencode" as the default fallback for the Manager.
         """
@@ -479,14 +479,14 @@ class ReviewBridge:
         )
         return "\n".join(parts)
 
-    def _run_codex_review(
+    def _run_legacy_manager_review(
         self,
         *,
         ticket_id: str,
         manager_executable: Path,
         timeout_seconds: int,
     ) -> tuple[str, str, int]:
-        """Legacy Codex review route. Preserved for backward compatibility."""
+        """Legacy Manager review route. Preserved for backward compatibility."""
         exe_str = str(manager_executable)
         if os.name == "nt" and exe_str.lower().endswith(".ps1"):
             cmd_candidate = Path(exe_str).with_suffix(".cmd")
@@ -1250,12 +1250,12 @@ class ReviewBridge:
                     decision = ReviewDecision.TRANSPORT_FAILED
                     parse_method = "transport_failed"
             else:
-                # Codex legacy route (or any other backend)
+                # Legacy Manager route (or any other non-OpenCode backend)
                 if manager_executable is None:
                     raise ValueError(
                         f"manager_executable required for backend '{backend}'"
                     )
-                stdout, stderr, exit_code = self._run_codex_review(
+                stdout, stderr, exit_code = self._run_legacy_manager_review(
                     ticket_id=ticket_id,
                     manager_executable=manager_executable,
                     timeout_seconds=current_timeout,
@@ -1264,8 +1264,8 @@ class ReviewBridge:
                     stdout, stderr, exit_code
                 )
                 if transport_ok:
-                    parse_method = "legacy_codex"
-                    # Legacy Codex parser
+                    parse_method = "legacy_manager"
+                    # Legacy Manager parser
                     if "CHANGES" in stdout.upper():
                         decision = ReviewDecision.CHANGES
                     elif "APPROVE" in stdout.upper() and exit_code == 0:

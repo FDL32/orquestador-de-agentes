@@ -2,7 +2,7 @@
 
 - Project: `orquestacion_agentes`
 - Version: `v9.14.0`
-- State: WP-2026-129 IN_PROGRESS (Review env inheritance fix).
+- State: WP-2026-130 IN_PROGRESS (Manager legacy naming cleanup).
 - Last review: 2026-05-21
 - Mission: keep the central motor clean, versioned once, and externally referenced
   - The repo is the unique source of operational code (motor central).
@@ -11,13 +11,13 @@
 
 ## Current Cycle
 
-- Active ticket: WP-2026-129 IN_PROGRESS (Review env inheritance fix).
+- Active ticket: WP-2026-130 IN_PROGRESS (Manager legacy naming cleanup).
 - Mode: implementation / Builder turn started.
 - Builder backend: OpenCode (model: opencode-go/qwen3.5-plus).
 - Manager backend: OpenCode (model: configurable via agents.json).
 - Target model: Qwen3.5 Plus [NO VERIFICADO como provider/model].
-- Outcome: implementation of review env inheritance fix in progress.
-- The review bridge should preserve the inherited environment for OpenCode.
+- Outcome: implementation of Manager naming cleanup in progress.
+- The review bridge should stop using `codex` as a name for the Manager route.
 - The bus canonical authority and prompt execution must stay aligned.
 
 ## Source of truth

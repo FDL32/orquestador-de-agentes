@@ -1,36 +1,37 @@
-# Work Plan - WP-2026-129
+# Work Plan - WP-2026-130
 
 ## Metadata
-- **ID:** WP-2026-129
-- **Estado:** COMPLETED
+- **ID:** WP-2026-130
+- **Estado:** APPROVED
 - **deliverable_type:** code
-- **Titulo:** Review env inheritance fix
+- **Titulo:** Manager legacy naming cleanup
 
 ## Objetivo
-Eliminar el redirect legacy de `HOME`, `USERPROFILE` y `CODEX_HOME` hacia `.codex` en el entorno de review para que OpenCode herede el entorno normal del proceso y no falle por una home aislada.
+Eliminar la mezcla semantica entre rol y backend en el Manager review path, renombrando referencias legacy de `codex` a `manager` donde realmente describen la ruta del Manager y no el backend real.
 
 ## Decision Arquitectonica
-- `_review_env()` debe preservar el entorno heredado en vez de reescribir las variables de home hacia `.codex`.
-- `_get_manager_backend()` debe dejar de caer en `"codex"` y usar `"opencode"` como fallback del Manager.
-- El fix debe ser compatible con OpenCode y no introducir un caso especial que rompa otros backends.
-- La review env debe quedar reproducible sin esconder el home real del proceso.
+- `_run_codex_review()` es un nombre legacy que mezcla el rol Manager con el backend historico; debe pasar a un nombre semantico de ruta legacy del Manager.
+- `parse_method = "legacy_codex"` debe pasar a una etiqueta de trazabilidad que describa la ruta legacy del Manager.
+- Las referencias de tests y templates que siguen hablando de `codex` como si fuera el Manager deben renombrarse para no mezclar rol con backend.
+- El backend real `codex` puede seguir existiendo en `agents.json`; lo que se limpia es el naming del path del Manager.
 
 ## Files Likely Touched
 - `bus/review_bridge.py`
 - `tests/test_manager_review_bridge.py`
-- `tests/unit/test_review_env.py`
+- `tests/test_launch_agent_terminals_script.py`
+- `templates/startup/manager_legacy.md`
 - `.agent/collaboration/work_plan.md`
-- `.agent/collaboration/PLAN_WP-2026-129.md`
-- `.agent/collaboration/AUDIT_WP-2026-129.md`
+- `.agent/collaboration/PLAN_WP-2026-130.md`
+- `.agent/collaboration/AUDIT_WP-2026-130.md`
 - `.agent/collaboration/STATE.md`
 - `.agent/collaboration/TURN.md`
 - `.agent/collaboration/execution_log.md`
 - `PROJECT.md`
 
 ## Fases
-1. Eliminar el redirect de `HOME`, `USERPROFILE` y `CODEX_HOME` hacia `.codex` en `_review_env()` y cambiar el fallback del Manager de `"codex"` a `"opencode"`.
-2. Asegurar que OpenCode hereda el entorno normal y que el review bridge sigue funcionando sin aislar la home.
-3. Verificar el cambio con tests del review bridge y quality gates.
+1. Renombrar la ruta legacy del Manager en `bus/review_bridge.py` para que deje de hablar de `codex` cuando en realidad describe un flujo de Manager.
+2. Renombrar los fixtures, tests y templates que siguen usando `codex` como etiqueta de la ruta del Manager.
+3. Verificar que el rename no toca la compatibilidad real del backend `codex` en `agents.json` ni rompe el arranque OpenCode.
 
 ## Calidad
 - `ruff check .`
@@ -38,10 +39,10 @@ Eliminar el redirect legacy de `HOME`, `USERPROFILE` y `CODEX_HOME` hacia `.code
 - `python .agent/agent_controller.py --validate --json --force`
 
 ## Criterios de aceptacion
-- `_review_env()` ya no reescribe `HOME`, `USERPROFILE` ni `CODEX_HOME` hacia `.codex`.
-- `_get_manager_backend()` ya no usa `"codex"` como fallback y resuelve `"opencode"` para el Manager.
-- OpenCode puede ejecutar el review sin heredar un home artificial que rompa su arranque.
-- Los tests cubren la herencia del entorno y evitan regresiones.
+- Ninguna ruta del Manager usa `codex` como nombre de rol o ruta legacy.
+- Los tests y templates del Manager hablan de la semantica correcta.
+- El backend `codex` real sigue existiendo como opcion configurada, sin confusion de nombres.
+- Los tests cubren el rename y evitan regresiones de nomenclatura.
 
 ## Nota
-WP-2026-128 queda como closeout historico del filtrado de skills. Este ticket corrige el entorno de review para no romper OpenCode con una home redirigida.
+WP-2026-129 queda como closeout historico del entorno de review. Este ticket corrige la nomenclatura legacy del Manager para no mezclar rol con backend.

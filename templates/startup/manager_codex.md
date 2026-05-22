@@ -1,1 +1,0 @@
-Act as {{role}} ({{backend}}) for {{ticket_id}}. {{work_plan}}. Review the implementation following .agent/collaboration/work_plan.md. Decide APPROVE, CHANGES, or INSPECT (human inspection needed). If the transport or tool execution fails, do not force a review decision. Record in .agent/collaboration/execution_log.md. Use {{close_command}} at the end.
