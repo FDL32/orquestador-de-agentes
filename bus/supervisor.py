@@ -78,7 +78,11 @@ class SequentialTicketSupervisor:
         data = asdict(state)
         data.pop("_revision", None)
         content = json.dumps(data, ensure_ascii=False, indent=2)
-        new_rev = self.write_artifact_atomic(self.state_path, content, expected_revision=getattr(state, "_revision", None))
+        new_rev = self.write_artifact_atomic(
+            self.state_path,
+            content,
+            expected_revision=getattr(state, "_revision", None),
+        )
         state._revision = new_rev
 
     def _compute_revision(self, content: str) -> int:
@@ -89,6 +93,7 @@ class SequentialTicketSupervisor:
         After: Returns monotonically increasing revision number for OCC.
         """
         import hashlib
+
         return int(hashlib.sha256(content.encode("utf-8")).hexdigest()[:8], 16)
 
     def _read_artifact_with_revision(
@@ -164,20 +169,23 @@ class SequentialTicketSupervisor:
                     expected_revision=expected_revision,
                     actual_revision=None,
                     ticket_id=ticket_id,
-                )
+                ) from None
 
             try:
                 # Read current content and revision under the lock
                 _, current_revision = self._read_artifact_with_revision(artifact_path)
 
                 # Check expected revision if provided
-                if expected_revision is not None and current_revision != expected_revision:
+                if (
+                    expected_revision is not None
+                    and current_revision != expected_revision
+                ):
                     raise ConcurrentStateError(
                         artifact_path=str(artifact_path),
                         expected_revision=expected_revision,
                         actual_revision=current_revision,
                         ticket_id=ticket_id,
-                    )
+                    ) from None
 
                 # Write atomically via temp file + replace
                 fd, temp_path = tempfile.mkstemp(
@@ -892,13 +900,21 @@ class SequentialTicketSupervisor:
                         "status": req.status.value,
                         "reason": req.reason.value if req.reason else "TIMEOUT_EXPIRED",
                         "to_state": target_state,
-                        "message": "Approval expired automatically by supervisor timeout policy"
-                    }
+                        "message": "Approval expired automatically by supervisor timeout policy",
+                    },
                 )
-                print(f"[ticket-supervisor] Auto-expired approval {req.approval_id}", flush=True)
+                print(
+                    f"[ticket-supervisor] Auto-expired approval {req.approval_id}",
+                    flush=True,
+                )
         except Exception as exc:
             import sys
-            print(f"[ticket-supervisor] Error checking approval timeouts: {exc}", file=sys.stderr, flush=True)
+
+            print(
+                f"[ticket-supervisor] Error checking approval timeouts: {exc}",
+                file=sys.stderr,
+                flush=True,
+            )
 
         previous_sequence = state.last_processed_sequence
         events = self.event_bus.read_events()

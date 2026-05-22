@@ -118,7 +118,7 @@ def test_manager_review_cycle_requests_changes(monkeypatch, tmp_path):
     assert any(event.event_type == "REVIEW_DECISION" for event in events)
 
 
-def test_manager_review_cycle_tool_error_inspects_without_transition(monkeypatch, tmp_path):
+def test_manager_review_cycle_tool_error_is_transport_failed(monkeypatch, tmp_path):
     bridge, event_bus, codex = _make_bridge(tmp_path)
     supervisor = DummySupervisor()
 
@@ -140,15 +140,15 @@ def test_manager_review_cycle_tool_error_inspects_without_transition(monkeypatch
         timeout_seconds=5,
     )
 
-    assert result.decision.value == "inspect"
+    assert result.decision.value == "transport_failed"
+    assert result.transport_ok is False
+    assert "exit_code=2" in result.transport_error
     assert supervisor.transitions == []
     events = event_bus.read_events(ticket_id="WP-2026-025")
     assert any(event.event_type == "MANAGER_REVIEWING" for event in events)
-    assert any(event.event_type == "REVIEW_DECISION" for event in events)
     assert any(
-        event.payload.get("decision") == "inspect"
+        event.event_type == "REVIEW_TRANSPORT_FAILED"
         for event in events
-        if event.event_type == "REVIEW_DECISION"
     )
 
 

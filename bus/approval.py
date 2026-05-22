@@ -62,7 +62,9 @@ class ApprovalRequest:
     ticket_id: str
     status: ApprovalStatus = ApprovalStatus.PENDING
     reason: ApprovalReason | None = None
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
     timeout_seconds: int = 300
     resolved_at: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -139,7 +141,9 @@ class ApprovalRequest:
             ticket_id=str(data.get("ticket_id", "")),
             status=ApprovalStatus(str(data.get("status", "pending"))),
             reason=ApprovalReason(data["reason"]) if data.get("reason") else None,
-            created_at=str(data.get("created_at", datetime.now(timezone.utc).isoformat())),
+            created_at=str(
+                data.get("created_at", datetime.now(timezone.utc).isoformat())
+            ),
             timeout_seconds=int(data.get("timeout_seconds", 300)),
             resolved_at=data.get("resolved_at"),
             metadata=dict(data.get("metadata", {})),

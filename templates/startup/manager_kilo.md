@@ -1,1 +1,1 @@
-Act as MANAGER for {{ticket_id}}. Review the implementation following .agent/collaboration/work_plan.md. Decide APPROVE or CHANGES. Record in .agent/collaboration/execution_log.md. Use {{close_command}} at the end.
+Act as MANAGER for {{ticket_id}}. Review the implementation following .agent/collaboration/work_plan.md. Decide APPROVE, CHANGES, or INSPECT when human inspection is needed. If the transport fails, do not invent a review decision. Record in .agent/collaboration/execution_log.md. Use {{close_command}} at the end.
