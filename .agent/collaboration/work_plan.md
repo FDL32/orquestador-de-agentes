@@ -1,50 +1,42 @@
-# Work Plan - WP-2026-127
+# Work Plan - WP-2026-128
 
 ## Metadata
-- **ID:** WP-2026-127
+- **ID:** WP-2026-128
 - **Estado:** COMPLETED
 - **deliverable_type:** code
-- **Titulo:** State revision, approval timeout and skill filtering
+- **Titulo:** Skill allowlist contract hardening
 
 ## Objetivo
-Implantar revision explicita por artefacto, aprobaciones con timeout configurable y filtrado de skills por rol para reducir drift, bloqueos y ruido de contexto.
+Endurecer el contrato de filtrado de skills por rol para que la configuracion sea valida, trazable y reproducible, evitando que roles vean skills no permitidas o que allowlists rotas entren silenciosamente al prompt.
 
 ## Decision Arquitectonica
-- La revision valida es por artefacto JSON/Markdown, no global por bus.
-- Las escrituras de estado deben ser atomicas y con control de concurrencia optimista.
-- La expiracion de aprobacion debe seguir una politica configurable por tipo de escalacion.
-- El filtrado de skills debe resolverse en el catalogo/routing de skills, no en el transporte de review.
+- `agents.json` pasa a ser la fuente de verdad operativa de allowlists por rol usando la key exacta `skill_allowlists`.
+- `bus/skill_resolver.py` sigue siendo la capa de resolucion, filtrado y validacion de skills.
+- `bus/review_bridge.py` solo consume la lista filtrada; no debe decidir permisos ni duplicar reglas de acceso.
+- La validacion temprana debe fallar de forma clara cuando una allowlist referencia skills inexistentes o un rol desconocido.
+- El prompt del Manager debe reflejar solo las skills realmente accesibles por su rol.
 
 ## Files Likely Touched
-- `bus/supervisor.py`
-- `bus/event_bus.py`
-- `bus/exceptions.py`
-- `bus/approval.py`
+- `.agent/agents_config.py`
+- `.agent/config/agents.json`
 - `bus/skill_resolver.py`
 - `bus/review_bridge.py`
-- `.agent/agent_controller.py`
-- `.agent/agents_config.py`
-- `scripts/ticket_supervisor.py`
-- `scripts/discover_skills.py`
-- `.agent/config/agents.json`
-- `tests/test_supervisor.py`
-- `tests/test_manager_review_bridge.py`
+- `bus/exceptions.py`
 - `tests/unit/test_agents_config.py`
 - `tests/unit/test_skill_discovery.py`
-- `tests/test_orquestador_scope.py`
-- `tests/unit/test_review_budget_retry.py`
+- `tests/test_manager_review_bridge.py`
 - `.agent/collaboration/work_plan.md`
-- `.agent/collaboration/PLAN_WP-2026-127.md`
-- `.agent/collaboration/AUDIT_WP-2026-127.md`
+- `.agent/collaboration/PLAN_WP-2026-128.md`
+- `.agent/collaboration/AUDIT_WP-2026-128.md`
 - `.agent/collaboration/STATE.md`
 - `.agent/collaboration/TURN.md`
 - `.agent/collaboration/execution_log.md`
 - `PROJECT.md`
 
 ## Fases
-1. Implementar `expectedRevision` por artefacto en estados JSON con escritura atomica y retry OCC.
-2. Introducir skill filtering por rol reutilizando `discover_skills.py` y validacion temprana de skills.
-3. Implementar pipeline de aprobacion con timeout configurable, razon de expiracion y resolucion canonica.
+1. Externalizar y versionar las allowlists de skills por rol en `agents.json` con la key `skill_allowlists` y compatibilidad hacia atras.
+2. Validar allowlists y referencias de skills de forma temprana, cruzandolas contra el catalogo real de `discover_skills.py` y fallando si el catalogo queda vacio.
+3. Verificar que el prompt del Manager y los tests consumen solo el catalogo filtrado y que las quality gates siguen limpias.
 
 ## Calidad
 - `ruff check .`
@@ -52,10 +44,11 @@ Implantar revision explicita por artefacto, aprobaciones con timeout configurabl
 - `python .agent/agent_controller.py --validate --json --force`
 
 ## Criterios de aceptacion
-- Un write con revision desfasada falla sin sobrescribir el artefacto.
-- Cada rol solo ve las skills permitidas por su allowlist.
-- Una aprobacion pendiente expira segun politica y materializa el estado correcto con trazabilidad de causa.
-- La documentacion canonica y el bus quedan sincronizados.
+- La configuracion puede declarar allowlists por rol sin romper compatibilidad.
+- Una allowlist con skills inexistentes falla de forma explicita o queda reportada por validacion.
+- Un catalogo de skills vacio se trata como error de infraestructura, no como skills huérfanas.
+- El prompt del Manager solo incluye skills permitidas para su rol.
+- El bus y las proyecciones siguen sincronizados bajo el nuevo contrato de skills.
 
 ## Nota
-WP-2026-126 queda como referencia historica; este ticket abre la siguiente fase de robustez del motor.
+WP-2026-127 quedo como referencia historica del endurecimiento del bus y la revision. Este ticket convierte el filtrado de skills en un contrato configurado y verificable, en vez de una regla solo implicita.

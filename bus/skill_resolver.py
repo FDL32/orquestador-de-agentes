@@ -9,10 +9,15 @@ discovery (discover_skills.py) from routing/permissions.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
-from .exceptions import SkillAccessDeniedError, SkillNotFoundError
+from .exceptions import (
+    EmptySkillCatalogError,
+    SkillAccessDeniedError,
+    SkillNotFoundError,
+)
 
 
 class SkillResolver:
@@ -84,8 +89,15 @@ class SkillResolver:
     def _discover_skills(self) -> dict[str, dict[str, Any]]:
         """Discover skills using discover_skills.py module.
 
+        Before: Empty catalogs were returned silently.
+        During: Validates that at least one skill was discovered.
+        After: Raises EmptySkillCatalogError if no skills found.
+
         Returns:
             Dictionary of skill_name -> skill_info (path, triggers, etc.)
+
+        Raises:
+            EmptySkillCatalogError: If no skills were discovered.
         """
         if self._discovered_skills is not None:
             return self._discovered_skills
@@ -99,9 +111,19 @@ class SkillResolver:
             for skill in result.get("skills", []):
                 skills_map[skill["name"]] = skill
             self._discovered_skills = skills_map
+
+            # WP-2026-128: Treat empty catalog as infrastructure error
+            if not skills_map:
+                raise EmptySkillCatalogError(
+                    project_root=self.project_root,
+                    skills_dir=self.project_root / "skills",
+                )
+
             return skills_map
         except ImportError:
-            return {}
+            raise EmptySkillCatalogError(
+                project_root=self.project_root, skills_dir=self.project_root / "skills"
+            ) from None
 
     def get_allowed_skills(self, role: str) -> list[dict[str, Any]]:
         """Get list of skills allowed for a role.
@@ -276,19 +298,57 @@ class SkillResolver:
 
         return "\n".join(lines)
 
+    def validate_allowlists_against_catalog(self) -> list[str]:
+        """Validate that all skills in allowlists exist in the discovered catalog.
+
+        Before: Allowlists could reference non-existent skills silently.
+        During: Cross-references each allowlist entry against discovered skills
+                by name and trigger. Collects warnings for missing references.
+        After: Returns list of warning strings for missing skill references.
+
+        Returns:
+            List of warning messages for skills in allowlists that don't exist.
+            Empty list if all allowlist entries are valid.
+        """
+        warnings = []
+        skills = self._discover_skills()
+        all_skill_names = set(skills.keys())
+        all_triggers = set()
+        for skill_info in skills.values():
+            all_triggers.update(skill_info.get("triggers", []))
+
+        for role, allowlist in self.role_allowlists.items():
+            missing = [
+                f"skill_allowlists[{role}] references non-existent skill/trigger: '{entry}'"
+                for entry in allowlist
+                if entry not in all_skill_names and entry not in all_triggers
+            ]
+            warnings.extend(missing)
+
+        return warnings
+
 
 def create_resolver(
     project_root: Path,
     config_path: Path | None = None,
+    validate: bool = True,
 ) -> SkillResolver:
     """Factory function to create a SkillResolver with config from agents.json.
 
+    Before: Factory created resolver without validation.
+    During: Optionally validates allowlists against catalog and raises on empty catalog.
+    After: Returns validated resolver or raises EmptySkillCatalogError.
+
     Args:
         project_root: Root path of the project.
-        config_path: Optional path to agents.json. Defaults to project_root/.agent/config/agents.json.
+        config_path: Optional path to agents.json.
+        validate: If True, validates allowlists and raises on empty catalog.
 
     Returns:
         Configured SkillResolver instance.
+
+    Raises:
+        EmptySkillCatalogError: If validate=True and no skills discovered.
     """
     if config_path is None:
         config_path = project_root / ".agent" / "config" / "agents.json"
@@ -301,4 +361,14 @@ def create_resolver(
         except (json.JSONDecodeError, OSError):
             pass
 
-    return SkillResolver(project_root=project_root, role_allowlists=allowlists)
+    resolver = SkillResolver(project_root=project_root, role_allowlists=allowlists)
+
+    if validate:
+        # This will raise EmptySkillCatalogError if catalog is empty
+        resolver._discover_skills()
+        # Collect warnings for missing allowlist references (non-blocking)
+        warnings = resolver.validate_allowlists_against_catalog()
+        for warning in warnings:
+            print(f"[skill-resolver] WARNING: {warning}", file=sys.stderr)
+
+    return resolver

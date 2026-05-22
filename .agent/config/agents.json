@@ -58,5 +58,29 @@
     "timeout_seconds": 180,
     "max_attempts": 5,
     "retry_backoff_multiplier": 2.0
+  },
+  "skill_allowlists": {
+    "BUILDER": [
+      "/impl",
+      "/implement",
+      "/tdd",
+      "/test",
+      "/debug",
+      "/refactor",
+      "/fix"
+    ],
+    "MANAGER": [
+      "/review",
+      "/audit",
+      "/validate",
+      "/inspect",
+      "/compare"
+    ],
+    "SUPERVISOR": [
+      "/orchestrate",
+      "/schedule",
+      "/archive",
+      "/report"
+    ]
   }
 }

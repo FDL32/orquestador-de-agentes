@@ -276,6 +276,43 @@ def test_build_review_prompt_includes_generated_artifacts_block(tmp_path):
     assert "Deletions, moves to _archive/" in prompt
 
 
+def test_build_review_prompt_includes_allowed_skills_for_role(tmp_path):
+    """Test that review prompt includes only skills allowed for the current role (WP-2026-128)."""
+    from bus.review_bridge import ReviewBridge
+    from bus.event_bus import EventBus
+    from bus.skill_resolver import SkillResolver
+
+    runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+    event_bus = EventBus(runtime_dir=runtime_dir)
+
+    # Create a resolver with specific allowlists
+    resolver = SkillResolver(
+        project_root=tmp_path,
+        role_allowlists={
+            "BUILDER": ["/impl", "/tdd"],
+            "MANAGER": ["/review", "/audit"],
+        },
+    )
+    # Mock discovered skills
+    resolver._discovered_skills = {
+        "impl": {"name": "Implement", "triggers": ["/impl"]},
+        "tdd": {"name": "TDD", "triggers": ["/tdd"]},
+        "review": {"name": "Review", "triggers": ["/review"]},
+        "audit": {"name": "Audit", "triggers": ["/audit"]},
+    }
+
+    bridge = ReviewBridge(
+        event_bus=event_bus, project_root=tmp_path, skill_resolver=resolver
+    )
+
+    prompt = bridge._build_review_prompt(ticket_id="WP-TEST-123", dtype="code")
+
+    # Should include the ALLOWED SKILLS section
+    assert "ALLOWED SKILLS FOR ROLE" in prompt
+    # Since TURN.md doesn't exist, role defaults to BUILDER
+    assert "BUILDER" in prompt
+
+
 class TestOpencodeReviewRoute:
     """Tests for OpenCode backend review route."""
 

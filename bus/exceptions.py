@@ -7,6 +7,8 @@ approval expiration, and skill validation errors.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 
 class ConcurrentStateError(Exception):
     """Raised when a state write conflicts with an expected revision.
@@ -134,3 +136,27 @@ class ApprovalTimeoutPolicyError(Exception):
         self.policy_name = policy_name
         self.reason = reason
         super().__init__(f"Approval timeout policy '{policy_name}' invalid: {reason}")
+
+
+class EmptySkillCatalogError(Exception):
+    """Raised when the skill catalog is empty after discovery.
+
+    Before: Empty catalogs were treated as normal, causing silent failures.
+    During: create_resolver() validates that at least one skill was discovered.
+    After: Empty catalogs raise EmptySkillCatalogError as infrastructure error.
+
+    Attributes:
+        project_root: Root path where skills were searched.
+        skills_dir: Path to the skills directory.
+    """
+
+    def __init__(self, project_root: Path, skills_dir: Path | None = None):
+        self.project_root = project_root
+        self.skills_dir = skills_dir
+        message = f"Empty skill catalog at {project_root}"
+        if skills_dir:
+            message += f" (skills_dir: {skills_dir})"
+        message += (
+            ". Check that skills/ directory exists and contains valid SKILL.md files."
+        )
+        super().__init__(message)

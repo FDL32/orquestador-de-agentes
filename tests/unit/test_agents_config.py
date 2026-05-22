@@ -520,3 +520,52 @@ class TestMigrationFramework:
         assert "role_models" in result
         assert result["role_models"]["BUILDER"] == "opencode-go/qwen3.5-plus"
         assert result["role_models"]["MANAGER"] == "openai/gpt-5.4-mini"
+
+
+class TestSkillAllowlists:
+    """Tests for WP-2026-128: skill allowlists validation."""
+
+    def test_load_config_with_skill_allowlists(self, tmp_path):
+        """Test loading config with skill_allowlists defined."""
+        config_with_allowlists = copy.deepcopy(VALID_CONFIG)
+        config_with_allowlists["skill_allowlists"] = {
+            "BUILDER": ["/impl", "/tdd"],
+            "MANAGER": ["/review"],
+        }
+        project_root = _create_test_config(tmp_path, config_with_allowlists)
+        config = load_agents_config(project_root)
+        assert "skill_allowlists" in config
+        assert config["skill_allowlists"]["BUILDER"] == ["/impl", "/tdd"]
+
+    def test_validate_skill_allowlists_unknown_role(self, tmp_path):
+        """Test validation fails when skill_allowlists has unknown role."""
+        bad_config = copy.deepcopy(VALID_CONFIG)
+        bad_config["skill_allowlists"] = {"UNKNOWN_ROLE": ["/impl"]}
+        project_root = _create_test_config(tmp_path, bad_config)
+
+        with pytest.raises(AgentsConfigError, match="Unknown role"):
+            load_agents_config(project_root)
+
+    def test_validate_skill_allowlists_not_list(self, tmp_path):
+        """Test validation fails when allowlist is not a list."""
+        bad_config = copy.deepcopy(VALID_CONFIG)
+        bad_config["skill_allowlists"] = {"BUILDER": "not_a_list"}
+        project_root = _create_test_config(tmp_path, bad_config)
+
+        with pytest.raises(AgentsConfigError, match="must be a list"):
+            load_agents_config(project_root)
+
+    def test_validate_skill_allowlists_not_object(self, tmp_path):
+        """Test validation fails when skill_allowlists is not an object."""
+        bad_config = copy.deepcopy(VALID_CONFIG)
+        bad_config["skill_allowlists"] = "invalid"
+        project_root = _create_test_config(tmp_path, bad_config)
+
+        with pytest.raises(AgentsConfigError, match="must be an object"):
+            load_agents_config(project_root)
+
+    def test_load_config_without_skill_allowlists_retrocompatible(self, tmp_path):
+        """Test config without skill_allowlists loads fine (retrocompatible)."""
+        project_root = _create_test_config(tmp_path, VALID_CONFIG)
+        config = load_agents_config(project_root)
+        assert "skill_allowlists" not in config  # Not required
