@@ -43,29 +43,40 @@ class TicketState(str, Enum):
 
 class StateMachine:
     @staticmethod
+    def _state_from_state_changed(payload: dict | None) -> TicketState:
+        state = str((payload or {}).get("to_state", "")).upper()
+        return TicketState.__members__.get(state, TicketState.UNKNOWN)
+
+    @staticmethod
+    def _state_from_review_decision(payload: dict | None) -> TicketState:
+        decision = str((payload or {}).get("decision", "")).lower()
+        return {
+            "changes": TicketState.IN_PROGRESS,
+            "approve": TicketState.READY_TO_CLOSE,
+            "inspect": TicketState.HUMAN_GATE,
+        }.get(decision, TicketState.UNKNOWN)
+
+    @staticmethod
+    def _state_from_approval_resolved(payload: dict | None) -> TicketState:
+        status = str((payload or {}).get("status", "")).lower()
+        return {
+            "expired": TicketState.BLOCKED,
+            "approved": TicketState.READY_FOR_REVIEW,
+            "rejected": TicketState.BLOCKED,
+            "cancelled": TicketState.BLOCKED,
+        }.get(status, TicketState.UNKNOWN)
+
+    @staticmethod
     def derive_state_from_events(events: list[dict]) -> TicketState:
         for event in reversed(events):
-            if event.get("event_type") == "STATE_CHANGED":
-                payload = event.get("payload") or {}
-                state = str(payload.get("to_state", "")).upper()
-                return TicketState.__members__.get(state, TicketState.UNKNOWN)
-            if event.get("event_type") == "CLOSE_CONFIRMED":
+            event_type = event.get("event_type")
+            payload = event.get("payload") or {}
+            if event_type == "STATE_CHANGED":
+                return StateMachine._state_from_state_changed(payload)
+            if event_type == "CLOSE_CONFIRMED":
                 return TicketState.COMPLETED
-            if event.get("event_type") == "REVIEW_DECISION":
-                decision = str((event.get("payload") or {}).get("decision", "")).lower()
-                if decision == "changes":
-                    return TicketState.IN_PROGRESS
-                if decision == "approve":
-                    return TicketState.READY_TO_CLOSE
-                if decision == "inspect":
-                    return TicketState.HUMAN_GATE
-            if event.get("event_type") == "APPROVAL_RESOLVED":
-                payload = event.get("payload") or {}
-                status = str(payload.get("status", "")).lower()
-                if status == "expired":
-                    return TicketState.BLOCKED
-                if status == "approved":
-                    return TicketState.READY_FOR_REVIEW
-                if status in ("rejected", "cancelled"):
-                    return TicketState.BLOCKED
+            if event_type == "REVIEW_DECISION":
+                return StateMachine._state_from_review_decision(payload)
+            if event_type == "APPROVAL_RESOLVED":
+                return StateMachine._state_from_approval_resolved(payload)
         return TicketState.UNKNOWN
