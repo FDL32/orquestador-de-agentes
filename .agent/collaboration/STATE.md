@@ -1,13 +1,13 @@
-# State - WP-2026-128
+# State - WP-2026-129
 
-Plan Activo: WP-2026-128
+Plan Activo: WP-2026-129
 Estado actual: IN_PROGRESS
 Rol activo: BUILDER
 
 Resumen:
-WP-2026-128 endurece el contrato de skills por rol para que la configuracion de allowlists sea valida, trazable y consumida solo por los agentes autorizados.
+WP-2026-129 elimina el redirect legacy de `HOME`, `USERPROFILE` y `CODEX_HOME` hacia `.codex` para que OpenCode herede un entorno de review normal y no falle al arrancar.
 
 Notas:
-- El ciclo canonico arranca para Builder con el contrato de skills filtradas.
-- `WP-2026-127` queda como antecedente historico del endurecimiento del bus, approvals y revision explicita.
-- La validacion final debe confirmar config, resolver, prompt del Manager y bus alineados.
+- El ciclo canonico arranca para Builder con el fix del entorno de review.
+- `WP-2026-128` queda como closeout historico del endurecimiento del contrato de skills.
+- La validacion final debe confirmar review bridge, prompt y tests alineados con la herencia normal del entorno.

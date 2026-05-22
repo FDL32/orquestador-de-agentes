@@ -224,24 +224,32 @@ class ReviewBridge:
             return False
 
     def _review_env(self) -> dict[str, str]:
-        env = os.environ.copy()
-        codex_home = self.project_root / ".codex"
-        codex_home.mkdir(parents=True, exist_ok=True)
-        env["HOME"] = str(codex_home)
-        env["USERPROFILE"] = str(codex_home)
-        env["CODEX_HOME"] = str(codex_home)
-        return env
+        """Return the inherited process environment for review execution.
+
+        Before: Redirected HOME, USERPROFILE, and CODEX_HOME to .codex,
+                isolating the review in an artificial home directory.
+        During: Copies os.environ without modification, preserving the
+                natural process inheritance for OpenCode and other backends.
+        After: Returns the unmodified environment dict for subprocess execution.
+        """
+        # WP-2026-129: Preserve inherited environment; do not redirect home vars
+        return os.environ.copy()
 
     def _get_manager_backend(self) -> str:
-        """Get the backend assigned to MANAGER role from agents.json."""
+        """Get the backend assigned to MANAGER role from agents.json.
+
+        Before: Fell back to "codex" when agents.json was unreadable.
+        During: Reads agents.json and returns the MANAGER backend assignment.
+        After: Returns "opencode" as the default fallback for the Manager.
+        """
         try:
             from agents_config import get_backend_for_role, load_agents_config
 
             config = load_agents_config(self.project_root)
             return get_backend_for_role("MANAGER", config)
         except Exception:
-            # Fallback to codex for backward compatibility
-            return "codex"
+            # WP-2026-129: Fallback to opencode for the Manager
+            return "opencode"
 
     def _get_manager_model(self) -> str | None:
         """Get the model override for MANAGER from role_models."""
