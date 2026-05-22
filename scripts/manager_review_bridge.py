@@ -255,12 +255,12 @@ def _sync_ticket_checkpoint(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Automated Codex manager review bridge"
+        description="Automated manager review bridge"
     )
     parser.add_argument(
         "--watch",
         action="store_true",
-        help="Keep watching for READY_FOR_REVIEW tickets and trigger Codex review automatically",
+        help="Keep watching for READY_FOR_REVIEW tickets and trigger manager review automatically",
     )
     parser.add_argument(
         "--once",
@@ -289,7 +289,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--timeout",
         type=int,
         default=300,
-        help="Timeout in seconds for the Codex review process",
+        help="Timeout in seconds for the manager review process",
     )
     return parser
 
