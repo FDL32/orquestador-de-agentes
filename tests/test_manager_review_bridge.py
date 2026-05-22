@@ -43,6 +43,8 @@ def test_manager_review_cycle_approves(monkeypatch, tmp_path):
 
     monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
     monkeypatch.setattr(bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW")
+    # Force codex backend for this legacy test
+    monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "codex")
 
     result = bridge.run_manager_review_cycle(
         ticket_id="WP-2026-025",
@@ -381,17 +383,17 @@ class TestOpencodeReviewRoute:
         assert decision == ReviewDecision.APPROVE
         assert method == "text_regex"
 
-    def test_get_manager_backend_default_codex(self, tmp_path):
-        """Test backend detection returns codex when agents.json has MANAGER=codex."""
+    def test_get_manager_backend_default_opencode(self, tmp_path):
+        """Test backend detection returns opencode as fallback when agents.json is missing."""
         from bus.review_bridge import ReviewBridge, EventBus
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
-        # With real agents.json (MANAGER: codex), should return "codex"
+        # With no agents.json, should fallback to "opencode" (WP-2026-129)
         backend = bridge._get_manager_backend()
-        assert backend == "codex"
+        assert backend == "opencode"
 
     def test_run_manager_review_cycle_dispatches_opencode(self, monkeypatch, tmp_path):
         """Test review cycle dispatches to opencode route when backend is opencode."""
