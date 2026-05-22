@@ -205,27 +205,38 @@ class EventBus:
         # Derive state from the last relevant event
         for event in reversed(ticket_events):
             if event.event_type == "STATE_CHANGED":
-                state_str = str((event.payload or {}).get("to_state", "")).upper()
-                return TicketState.__members__.get(state_str)
+                return self._state_from_state_changed(event.payload)
             if event.event_type == "CLOSE_CONFIRMED":
                 return TicketState.COMPLETED
             if event.event_type == "REVIEW_DECISION":
-                decision = str((event.payload or {}).get("decision", "")).lower()
-                if decision == "changes":
-                    return TicketState.IN_PROGRESS
-                if decision == "approve":
-                    return TicketState.READY_TO_CLOSE
-                if decision == "inspect":
-                    return TicketState.HUMAN_GATE
+                return self._state_from_review_decision(event.payload)
             if event.event_type == "APPROVAL_RESOLVED":
-                status = str((event.payload or {}).get("status", "")).lower()
-                if status == "expired":
-                    return TicketState.BLOCKED
-                if status == "approved":
-                    return TicketState.READY_FOR_REVIEW
-                if status in ("rejected", "cancelled"):
-                    return TicketState.BLOCKED
+                return self._state_from_approval_resolved(event.payload)
         return None
+
+    @staticmethod
+    def _state_from_state_changed(payload: dict | None) -> TicketState | None:
+        state_str = str((payload or {}).get("to_state", "")).upper()
+        return TicketState.__members__.get(state_str)
+
+    @staticmethod
+    def _state_from_review_decision(payload: dict | None) -> TicketState | None:
+        decision = str((payload or {}).get("decision", "")).lower()
+        return {
+            "changes": TicketState.IN_PROGRESS,
+            "approve": TicketState.READY_TO_CLOSE,
+            "inspect": TicketState.HUMAN_GATE,
+        }.get(decision)
+
+    @staticmethod
+    def _state_from_approval_resolved(payload: dict | None) -> TicketState | None:
+        status = str((payload or {}).get("status", "")).lower()
+        return {
+            "expired": TicketState.BLOCKED,
+            "approved": TicketState.READY_FOR_REVIEW,
+            "rejected": TicketState.BLOCKED,
+            "cancelled": TicketState.BLOCKED,
+        }.get(status)
 
     @staticmethod
     def _reentry_target_state(
@@ -246,22 +257,11 @@ class EventBus:
         if not payload:
             return None
         if event_type == "STATE_CHANGED":
-            return TicketState.__members__.get(str(payload.get("to_state", "")).upper())
+            return EventBus._state_from_state_changed(payload)
         if event_type == "REVIEW_DECISION":
-            decision = str(payload.get("decision", "")).lower()
-            return {
-                "changes": TicketState.IN_PROGRESS,
-                "approve": TicketState.READY_TO_CLOSE,
-                "inspect": TicketState.HUMAN_GATE,
-            }.get(decision)
+            return EventBus._state_from_review_decision(payload)
         if event_type == "APPROVAL_RESOLVED":
-            status = str(payload.get("status", "")).lower()
-            return {
-                "expired": TicketState.BLOCKED,
-                "approved": TicketState.READY_FOR_REVIEW,
-                "rejected": TicketState.BLOCKED,
-                "cancelled": TicketState.BLOCKED,
-            }.get(status)
+            return EventBus._state_from_approval_resolved(payload)
         return None
 
     def _is_reentry_blocked(self, ticket_id: str, to_state: TicketState) -> bool:
