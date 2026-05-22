@@ -2,7 +2,7 @@
 
 - Project: `orquestacion_agentes`
 - Version: `v9.14.0`
-- State: WP-2026-127 IN_PROGRESS (State revision, approval timeout and skill filtering).
+- State: WP-2026-128 IN_PROGRESS (Skill allowlist contract hardening).
 - Last review: 2026-05-21
 - Mission: keep the central motor clean, versioned once, and externally referenced
   - The repo is the unique source of operational code (motor central).
@@ -11,14 +11,14 @@
 
 ## Current Cycle
 
-- Active ticket: WP-2026-127 IN_PROGRESS (State revision, approval timeout and skill filtering).
+- Active ticket: WP-2026-128 IN_PROGRESS (Skill allowlist contract hardening).
 - Mode: implementation / Builder turn started.
 - Builder backend: OpenCode (model: opencode-go/qwen3.5-plus).
 - Manager backend: OpenCode (model: configurable via agents.json).
 - Target model: Qwen3.5 Plus [NO VERIFICADO como provider/model].
-- Outcome: implementation of OCC, approval timeout, and skill filtering in progress.
-- Manifiestos, documentacion e instalador siguen alineados con la arquitectura de motor externo.
-- El bus canonico es la autoridad y las proyecciones deben derivarse de el.
+- Outcome: implementation of skill allowlist hardening in progress.
+- The agents configuration remains the source of truth for role-specific allowlists.
+- The bus canonical authority and prompt filtering must stay aligned.
 
 ## Source of truth
 

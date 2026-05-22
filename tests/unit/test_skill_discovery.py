@@ -184,3 +184,82 @@ class TestSkillDiscoveryIntegration:
         assert skill["triggers"] == ["/my-trigger"]
         # Trigger map should map to the host's skill file path
         assert result["trigger_map"] == {"/my-trigger": str(host_dir / "bar-host" / "SKILL.md")}
+
+
+class TestSkillResolverValidation:
+    """Tests for WP-2026-128: SkillResolver validation."""
+
+    def test_validate_allowlists_against_catalog_valid(self, tmp_path):
+        """Test validation passes when allowlist references exist."""
+        from bus.skill_resolver import SkillResolver
+
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+        (skills_dir / "test_skill").mkdir()
+        (skills_dir / "test_skill" / "SKILL.md").write_text(
+            "---\nname: Test Skill\ntriggers: [/test]\n---"
+        )
+
+        resolver = SkillResolver(
+            project_root=tmp_path,
+            role_allowlists={"BUILDER": ["/test", "test_skill"]},
+        )
+        # Override discover to use our temp skills_dir
+        resolver._discovered_skills = {
+            "test_skill": {"name": "Test Skill", "triggers": ["/test"]}
+        }
+        warnings = resolver.validate_allowlists_against_catalog()
+        assert warnings == []
+
+    def test_validate_allowlists_against_catalog_missing(self, tmp_path):
+        """Test validation reports warnings for missing skill references."""
+        from bus.skill_resolver import SkillResolver
+
+        resolver = SkillResolver(
+            project_root=tmp_path,
+            role_allowlists={"BUILDER": ["/nonexistent", "missing_skill"]},
+        )
+        # Empty catalog
+        resolver._discovered_skills = {}
+        warnings = resolver.validate_allowlists_against_catalog()
+        assert len(warnings) == 2
+        assert "nonexistent" in warnings[0]
+        assert "missing_skill" in warnings[1]
+
+
+class TestEmptySkillCatalogError:
+    """Tests for WP-2026-128: EmptySkillCatalogError."""
+
+    def test_empty_skill_catalog_error_message(self, tmp_path):
+        """Test EmptySkillCatalogError has informative message."""
+        from bus.exceptions import EmptySkillCatalogError
+
+        error = EmptySkillCatalogError(project_root=tmp_path)
+        assert "Empty skill catalog" in str(error)
+        assert str(tmp_path) in str(error)
+
+    def test_empty_skill_catalog_error_with_skills_dir(self, tmp_path):
+        """Test EmptySkillCatalogError includes skills_dir when provided."""
+        from bus.exceptions import EmptySkillCatalogError
+
+        skills_dir = tmp_path / "skills"
+        error = EmptySkillCatalogError(project_root=tmp_path, skills_dir=skills_dir)
+        assert "skills_dir" in str(error) or str(skills_dir) in str(error)
+
+    def test_create_resolver_raises_on_empty_catalog(self, tmp_path, monkeypatch):
+        """Test create_resolver raises EmptySkillCatalogError when no skills."""
+        from bus.skill_resolver import create_resolver, SkillResolver
+        from bus.exceptions import EmptySkillCatalogError
+
+        # Mock discover_skills to return empty result
+        def mock_discover_skills():
+            return {"skills": [], "trigger_map": {}, "total_skills": 0, "total_triggers": 0}
+
+        monkeypatch.setattr("scripts.discover_skills.discover_skills", mock_discover_skills)
+
+        # Direct test: SkillResolver._discover_skills should raise on empty catalog
+        resolver = SkillResolver(project_root=tmp_path, role_allowlists={})
+
+        # _discover_skills should raise when no skills found
+        with pytest.raises(EmptySkillCatalogError):
+            resolver._discover_skills()

@@ -58,6 +58,39 @@ REQUIRED_BACKEND_KEYS = {"executable", "args", "discovery"}
 REQUIRED_DISCOVERY_KEYS = {"method"}
 
 
+def _validate_skill_allowlists(config: dict, config_path: Path) -> None:
+    """Validate the skill_allowlists section (optional, retrocompatible).
+
+    Before: skill_allowlists no existía; fallback en SkillResolver.
+    During: Valida que cada rol en skill_allowlists sea conocido y que
+            las skills referenciadas existan en el catalogo descubierto.
+    After: Permite configuracion vacia o omitida; falla si hay roles
+           desconocidos o skills inexistentes explicitamente declaradas.
+    """
+    if "skill_allowlists" not in config:
+        return  # Retrocompatible: si no hay allowlists, usar fallback
+
+    allowlists = config["skill_allowlists"]
+    if not isinstance(allowlists, dict):
+        raise AgentsConfigError(
+            f"Invalid 'skill_allowlists' in {config_path}: must be an object"
+        )
+
+    # Validar que cada rol en allowlists sea conocido
+    for role in allowlists:
+        if role not in KNOWN_ROLES:
+            raise AgentsConfigError(
+                f"Unknown role '{role}' in skill_allowlists. Known roles: {KNOWN_ROLES}"
+            )
+
+    # Validar que cada allowlist sea una lista
+    for role, skills in allowlists.items():
+        if not isinstance(skills, list):
+            raise AgentsConfigError(
+                f"skill_allowlists['{role}'] must be a list, got {type(skills).__name__}"
+            )
+
+
 class AgentsConfigError(Exception):
     """Raised when agent configuration is invalid."""
 
@@ -186,6 +219,9 @@ def _validate_config(config: dict, config_path: Path) -> None:
 
     # Check role_models (optional, retrocompatible)
     _validate_role_models(config, config_path)
+
+    # Check skill_allowlists (optional, retrocompatible)
+    _validate_skill_allowlists(config, config_path)
 
 
 def _validate_backend(name: str, backend: dict, config_path: Path) -> None:

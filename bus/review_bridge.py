@@ -160,7 +160,9 @@ class ReviewBridge:
         self.event_bus = event_bus
         self.project_root = Path(project_root)
         self.state_ingest = TicketStateIngest(event_bus, project_root)
-        self.skill_resolver = skill_resolver or create_resolver(project_root)
+        self.skill_resolver = skill_resolver or create_resolver(
+            project_root, validate=False
+        )
         self._supports_json_format = self._detect_json_format_support()
 
     def _get_current_role(self) -> str:
