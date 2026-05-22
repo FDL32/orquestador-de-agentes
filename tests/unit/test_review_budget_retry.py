@@ -62,6 +62,7 @@ def test_extract_ticket_section_isolates_active(tmp_path):
 
 
 def test_retry_succeeds_on_second_attempt(tmp_path, monkeypatch):
+    """Subprocess timeout retries the review cycle (INSPECT+fallback_inspect triggers continue)."""
     _write_canonical(tmp_path, "work_plan.md", "- **deliverable_type:** code\n")
     _write_canonical(tmp_path, "STATE.md", "s")
     _write_canonical(tmp_path, "TURN.md", "t")
@@ -76,6 +77,7 @@ def test_retry_succeeds_on_second_attempt(tmp_path, monkeypatch):
     def fake_run(**kw):
         call_count["n"] += 1
         if call_count["n"] == 1:
+            # Timeout: triggers INSPECT+fallback_inspect → outer loop continues
             return ("", "TimeoutExpired: timed out", 1)
         return ("DECISION: APPROVE\n", "", 0)
 
@@ -179,24 +181,26 @@ def test_parse_opencode_json_decision_approve(tmp_path):
     (type:"text" with part.text, phase:"final_answer")."""
     bridge, _ = _make_bridge(tmp_path)
     stdout = (
-        '{"type": "text", "part": {"type": "text", '
-        '"text": "The implementation is great. DECISION: APPROVE", '
-        '"phase": "final_answer"}}\n'
+        '{"type": "text", "phase": "final_answer", '
+        '"part": {"type": "text", '
+        '"text": "The implementation is great. DECISION: APPROVE"}}\n'
     )
-    decision = bridge._parse_opencode_json_decision(stdout)
+    decision, method = bridge._parse_opencode_json_decision(stdout)
     assert decision == ReviewDecision.APPROVE
+    assert method == "json_final_answer"
 
 
 def test_parse_opencode_json_decision_changes(tmp_path):
     """WP-2026-120: parser consumes the real OpenCode NDJSON schema."""
     bridge, _ = _make_bridge(tmp_path)
     stdout = (
-        '{"type": "text", "part": {"type": "text", '
-        '"text": "Please add tests. DECISION: CHANGES", '
-        '"phase": "final_answer"}}\n'
+        '{"type": "text", "phase": "final_answer", '
+        '"part": {"type": "text", '
+        '"text": "Please add tests. DECISION: CHANGES"}}\n'
     )
-    decision = bridge._parse_opencode_json_decision(stdout)
+    decision, method = bridge._parse_opencode_json_decision(stdout)
     assert decision == ReviewDecision.CHANGES
+    assert method == "json_final_answer"
 
 
 # =============================================================================

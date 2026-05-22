@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
+import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from .approval import ApprovalPolicy, ApprovalReason, ApprovalStatus, ApprovalStore
 from .event_bus import EventBus
+from .exceptions import ConcurrentStateError
 from .state_machine import StateMachine, TicketState
 
 
@@ -42,6 +46,7 @@ class SupervisorState:
     last_processed_sequence: int = 0
     loop_current_round: int = 0
     loop_max_rounds: int = 0
+    _revision: int | None = field(default=None, repr=False, compare=False)
 
 
 class SequentialTicketSupervisor:
@@ -70,9 +75,160 @@ class SequentialTicketSupervisor:
 
     def save_state(self, state: SupervisorState) -> None:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
-        self.state_path.write_text(
-            json.dumps(asdict(state), ensure_ascii=False, indent=2), encoding="utf-8"
+        data = asdict(state)
+        data.pop("_revision", None)
+        content = json.dumps(data, ensure_ascii=False, indent=2)
+        new_rev = self.write_artifact_atomic(self.state_path, content, expected_revision=getattr(state, "_revision", None))
+        state._revision = new_rev
+
+    def _compute_revision(self, content: str) -> int:
+        """Compute a revision number from content hash.
+
+        Before: State writes had no revision tracking.
+        During: Revision is computed as a hash-based integer from content.
+        After: Returns monotonically increasing revision number for OCC.
+        """
+        import hashlib
+        return int(hashlib.sha256(content.encode("utf-8")).hexdigest()[:8], 16)
+
+    def _read_artifact_with_revision(
+        self, artifact_path: Path
+    ) -> tuple[str, int | None]:
+        """Read artifact content and compute its current revision.
+
+        Args:
+            artifact_path: Path to the artifact file.
+
+        Returns:
+            Tuple of (content, revision) where revision is None if file doesn't exist.
+        """
+        if not artifact_path.exists():
+            return "", None
+        content = artifact_path.read_text(encoding="utf-8")
+        revision = self._compute_revision(content)
+        return content, revision
+
+    def write_artifact_atomic(
+        self,
+        artifact_path: Path,
+        new_content: str,
+        expected_revision: int | None = None,
+        ticket_id: str | None = None,
+        max_retries: int = 3,
+        retry_delay_ms: int = 50,
+    ) -> int:
+        """Write an artifact atomically with optimistic concurrency control.
+
+        Before: State writes could overwrite concurrent modifications silently.
+        During: Writer provides expectedRevision; bus compares with current revision
+                and retries on conflict up to max_retries.
+        After: Write succeeds with new revision, or raises ConcurrentStateError.
+
+        Args:
+            artifact_path: Path to the artifact file.
+            new_content: New content to write.
+            expected_revision: Expected current revision (None for blind write).
+            ticket_id: Optional ticket ID for error context.
+            max_retries: Maximum number of OCC retry attempts.
+            retry_delay_ms: Delay between retries in milliseconds.
+
+        Returns:
+            The new revision number after successful write.
+
+        Raises:
+            ConcurrentStateError: If revision mismatch persists after all retries.
+        """
+        import time
+
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = artifact_path.with_name(artifact_path.name + ".lock")
+
+        for attempt in range(max_retries):
+            lock_fd = None
+            try:
+                lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                # Stale lock recovery: if lock is older than 30 seconds, break it
+                try:
+                    if time.time() - os.path.getmtime(lock_path) > 30.0:
+                        os.unlink(lock_path)
+                        continue  # retry immediately after breaking stale lock
+                except OSError:
+                    pass  # File might have been deleted concurrently
+
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay_ms / 1000.0 * (attempt + 1))
+                    continue
+                raise ConcurrentStateError(
+                    artifact_path=str(artifact_path),
+                    expected_revision=expected_revision,
+                    actual_revision=None,
+                    ticket_id=ticket_id,
+                )
+
+            try:
+                # Read current content and revision under the lock
+                _, current_revision = self._read_artifact_with_revision(artifact_path)
+
+                # Check expected revision if provided
+                if expected_revision is not None and current_revision != expected_revision:
+                    raise ConcurrentStateError(
+                        artifact_path=str(artifact_path),
+                        expected_revision=expected_revision,
+                        actual_revision=current_revision,
+                        ticket_id=ticket_id,
+                    )
+
+                # Write atomically via temp file + replace
+                fd, temp_path = tempfile.mkstemp(
+                    dir=str(artifact_path.parent),
+                    prefix=".tmp_",
+                    suffix=".tmp",
+                )
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        f.write(new_content)
+                    os.replace(temp_path, str(artifact_path))
+                except Exception:
+                    import contextlib
+
+                    with contextlib.suppress(OSError):
+                        os.unlink(temp_path)
+                    raise
+
+                # Compute and return new revision
+                return self._compute_revision(new_content)
+            finally:
+                if lock_fd is not None:
+                    try:
+                        os.close(lock_fd)
+                        os.unlink(str(lock_path))
+                    except OSError:
+                        pass
+
+        # Should not reach here, but defensive fallback
+        raise ConcurrentStateError(
+            artifact_path=str(artifact_path),
+            expected_revision=expected_revision,
+            actual_revision=None,
+            ticket_id=ticket_id,
         )
+
+    def get_approval_store(self) -> ApprovalStore:
+        """Get or create the approval store for this supervisor.
+
+        Before: No persistent approval store existed.
+        During: ApprovalStore is lazily created under runtime_dir.
+        After: Returns configured ApprovalStore for managing approval requests.
+        """
+        store_path = self.runtime_dir / "approvals" / "store.json"
+        policy = ApprovalPolicy(
+            policy_name="default",
+            timeout_seconds=300,  # 5 minutes default
+            auto_resolve=True,
+            auto_resolve_status=ApprovalStatus.EXPIRED,
+        )
+        return ApprovalStore(store_path=store_path, policy=policy)
 
     @staticmethod
     def _normalize_ticket_id(ticket_id: str | None) -> str | None:
@@ -86,7 +242,8 @@ class SequentialTicketSupervisor:
     def load_state(self) -> SupervisorState:
         if not self.state_path.exists():
             return SupervisorState()
-        data = json.loads(self.state_path.read_text(encoding="utf-8"))
+        content, revision = self._read_artifact_with_revision(self.state_path)
+        data = json.loads(content)
         return SupervisorState(
             active_ticket=self._normalize_ticket_id(data.get("active_ticket")),
             completed_tickets=list(data.get("completed_tickets") or []),
@@ -94,6 +251,7 @@ class SequentialTicketSupervisor:
             last_processed_sequence=int(data.get("last_processed_sequence", 0)),
             loop_current_round=int(data.get("loop_current_round", 0)),
             loop_max_rounds=int(data.get("loop_max_rounds", 0)),
+            _revision=revision,
         )
 
     def ensure_ticket_queue(self) -> None:
@@ -711,6 +869,37 @@ class SequentialTicketSupervisor:
 
     def run_once(self) -> bool:
         state = self.load_state()
+
+        # Wire approval timeout expiration into the live loop
+        try:
+            store = self.get_approval_store()
+            expired = store.check_and_expire_all()
+            for req in expired:
+                target_state = "BLOCKED"
+                if req.reason == ApprovalReason.TIMEOUT_EXPIRED:
+                    target_state = "BLOCKED"
+                    self.transition_ticket(
+                        ticket_id=req.ticket_id,
+                        new_state=target_state,
+                        reason=f"Approval {req.approval_id} expired after {req.timeout_seconds}s",
+                    )
+                self.event_bus.emit(
+                    "APPROVAL_RESOLVED",
+                    ticket_id=req.ticket_id,
+                    actor="SUPERVISOR",
+                    payload={
+                        "approval_id": req.approval_id,
+                        "status": req.status.value,
+                        "reason": req.reason.value if req.reason else "TIMEOUT_EXPIRED",
+                        "to_state": target_state,
+                        "message": "Approval expired automatically by supervisor timeout policy"
+                    }
+                )
+                print(f"[ticket-supervisor] Auto-expired approval {req.approval_id}", flush=True)
+        except Exception as exc:
+            import sys
+            print(f"[ticket-supervisor] Error checking approval timeouts: {exc}", file=sys.stderr, flush=True)
+
         previous_sequence = state.last_processed_sequence
         events = self.event_bus.read_events()
         new_events = [

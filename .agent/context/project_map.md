@@ -1,5 +1,5 @@
 # Mapa del Proyecto
-**Actualizado:** 2026-05-21 23:34:52
+**Actualizado:** 2026-05-22 00:56:34
 
 ## Estructura de Archivos
 ```
@@ -8,11 +8,15 @@
 .agent\agents_config.py
 .agent\collaboration\.session_state.json
 .agent\collaboration\_archive\plan_audit\AUDIT_WP-2026-122.md
+.agent\collaboration\_archive\plan_audit\AUDIT_WP-2026-123.md
 .agent\collaboration\_archive\plan_audit\PLAN_WP-2026-122.md
-.agent\collaboration\AUDIT_WP-2026-123.md
+.agent\collaboration\_archive\plan_audit\PLAN_WP-2026-123.md
+.agent\collaboration\AUDIT_WP-2026-124.md
+.agent\collaboration\AUDIT_WP-2026-125.md
 .agent\collaboration\execution_log.md
 .agent\collaboration\notifications.md
-.agent\collaboration\PLAN_WP-2026-123.md
+.agent\collaboration\PLAN_WP-2026-124.md
+.agent\collaboration\PLAN_WP-2026-125.md
 .agent\collaboration\review_queue.md
 .agent\collaboration\STATE.md
 .agent\collaboration\TURN.md
@@ -49,9 +53,5 @@
 .agent\runtime\uv-cache\archive-v0\0AM_tUYG25RkXBFK-YV4R\colorama\__init__.py
 .agent\runtime\uv-cache\archive-v0\0AM_tUYG25RkXBFK-YV4R\colorama\ansi.py
 .agent\runtime\uv-cache\archive-v0\0AM_tUYG25RkXBFK-YV4R\colorama\ansitowin32.py
-.agent\runtime\uv-cache\archive-v0\0AM_tUYG25RkXBFK-YV4R\colorama\initialise.py
-.agent\runtime\uv-cache\archive-v0\0AM_tUYG25RkXBFK-YV4R\colorama\tests\__init__.py
-.agent\runtime\uv-cache\archive-v0\0AM_tUYG25RkXBFK-YV4R\colorama\tests\ansi_test.py
-.agent\runtime\uv-cache\archive-v0\0AM_tUYG25RkXBFK-YV4R\colorama\tests\ansitowin32_test.py
-... (+2388 archivos mas)
+... (+2393 archivos mas)
 ```

@@ -14,6 +14,7 @@ from enum import Enum
 from pathlib import Path
 
 from .event_bus import EventBus
+from .skill_resolver import SkillResolver, create_resolver
 from .utils import count_trailing_changes
 
 
@@ -25,6 +26,7 @@ class ReviewDecision(str, Enum):
     APPROVE = "approve"
     CHANGES = "changes"
     INSPECT = "inspect"
+    UNKNOWN = "unknown"
 
 
 @dataclass(slots=True)
@@ -145,11 +147,30 @@ class ReviewBridge:
     After: Returns ReviewResult with decision and emits events to bus.
     """
 
-    def __init__(self, event_bus: EventBus, project_root: Path):
+    def __init__(
+        self,
+        event_bus: EventBus,
+        project_root: Path,
+        skill_resolver: SkillResolver | None = None,
+    ):
         self.event_bus = event_bus
         self.project_root = Path(project_root)
         self.state_ingest = TicketStateIngest(event_bus, project_root)
+        self.skill_resolver = skill_resolver or create_resolver(project_root)
         self._supports_json_format = self._detect_json_format_support()
+
+    def _get_current_role(self) -> str:
+        """Get the current active role from TURN.md.
+
+        Returns:
+            Role name (e.g., "BUILDER", "MANAGER") or "BUILDER" as fallback.
+        """
+        turn_path = self.project_root / ".agent" / "collaboration" / "TURN.md"
+        if not turn_path.exists():
+            return "BUILDER"
+        content = turn_path.read_text(encoding="utf-8")
+        match = re.search(r"\|\s*\*\*ROL\*\*\s*\|\s*\*\*([A-Z]+)\*\*\s*\|", content)
+        return match.group(1) if match else "BUILDER"
 
     def _detect_json_format_support(self) -> bool:
         try:
@@ -381,6 +402,16 @@ class ReviewBridge:
         parts = [self._rubric_for_type(dtype, ticket_id)]
         for name, content in sections:
             parts.append(f"\n--- {name} ---\n{content}")
+
+        # WP-2026-127: Add skill filtering by role
+        current_role = self._get_current_role()
+        allowed_skills = self.skill_resolver.filter_skills_for_prompt(
+            current_role, include_metadata=False
+        )
+        parts.append(
+            f"\n--- ALLOWED SKILLS FOR ROLE {current_role} ---\n{allowed_skills}"
+        )
+
         parts.append(
             "\n--- SYSTEM GENERATED & ARCHIVED ARTIFACTS ---\n"
             "Note: The Manager must treat the following files as system-generated or routinely archived.\n"
@@ -405,7 +436,9 @@ class ReviewBridge:
             "- <file:line> <what is wrong> -> <what the Builder must do>\n\n"
             "## SUGGESTIONS\n"
             "- <non-blocking improvement, or 'none'>\n\n"
-            "DECISION: CHANGES\n"
+            "DECISION: CHANGES\n\n"
+            "If you cannot decide and need human intervention, end with EXACTLY:\n"
+            "DECISION: INSPECT\n"
         )
         return "\n".join(parts)
 
@@ -453,15 +486,17 @@ class ReviewBridge:
         *,
         ticket_id: str,
         prompt: str,
+        attempt: int = 1,
         manager_executable: Path | None = None,
         timeout_seconds: int,
     ) -> tuple[str, str, int]:
         """OpenCode review route using manager agent spec with context prompt.
 
         Transporte: el contexto completo se escribe a un review packet en
-        .agent/runtime/review_packets/<ticket>.md y el prompt posicional es
-        corto, indicando al Manager que lo lea. Evita el flag --file (array
-        que consume el mensaje) y el limite de longitud de la CLI.
+        .agent/runtime/review_packets/<ticket>_attempt-N.md y el prompt
+        posicional es corto, indicando al Manager que lo lea. Evita el flag
+        --file (array que consume el mensaje) y el limite de longitud de la
+        CLI.
         """
         model = self._get_manager_model()
 
@@ -481,9 +516,7 @@ class ReviewBridge:
         # Review packet: el contexto completo del review se escribe a un
         # archivo dentro del repo; el Manager lo lee con sus herramientas.
         # El prompt posicional es corto (sin metacaracteres de cmd.exe).
-        packets_dir = self.project_root / ".agent" / "runtime" / "review_packets"
-        packets_dir.mkdir(parents=True, exist_ok=True)
-        packet_path = packets_dir / f"{ticket_id}.md"
+        packet_path = self._get_review_packet_path(ticket_id, attempt)
         packet_path.write_text(prompt, encoding="utf-8")
         packet_rel = packet_path.relative_to(self.project_root).as_posix()
 
@@ -492,6 +525,11 @@ class ReviewBridge:
             "herramientas de lectura. Termina con exactamente "
             "DECISION: APPROVE o DECISION: CHANGES."
         )
+
+        if not review_message.isascii():
+            raise ValueError(
+                "Review message must be ASCII for Windows command transport."
+            )
 
         cmd_args = [exe_full, "run", "--agent", "manager"]
         if model:
@@ -584,6 +622,12 @@ class ReviewBridge:
         ticket_dir.mkdir(parents=True, exist_ok=True)
         return ticket_dir
 
+    def _get_review_packet_path(self, ticket_id: str, attempt: int) -> Path:
+        """Get the canonical review packet path for a ticket attempt."""
+        packets_dir = self.project_root / ".agent" / "runtime" / "review_packets"
+        packets_dir.mkdir(parents=True, exist_ok=True)
+        return packets_dir / f"{ticket_id}_attempt-{attempt}.md"
+
     def _persist_review_attempt(
         self,
         ticket_id: str,
@@ -591,6 +635,8 @@ class ReviewBridge:
         stdout: str,
         stderr: str,
         decision: ReviewDecision,
+        review_packet_path: Path | None = None,
+        parse_method: str = "",
     ) -> Path:
         """Persist a review attempt to attempt-N.md idempotently.
 
@@ -608,6 +654,13 @@ class ReviewBridge:
             "",
             f"## Ticket: {ticket_id}",
             f"## Decision: {decision.value.upper()}",
+            f"## Parse Method: {parse_method or 'unknown'}",
+            "",
+            "## Review Packet",
+            "",
+            str(review_packet_path.relative_to(self.project_root).as_posix())
+            if review_packet_path is not None
+            else "[not recorded]",
             "",
             "## STDOUT",
             "",
@@ -813,6 +866,7 @@ class ReviewBridge:
         stdout: str,
         decision: ReviewDecision | None = None,
         review_log_path: Path | None = None,
+        parse_method: str = "",
     ):
         """Emit a lightweight MANAGER_REVIEW_ATTEMPT event.
 
@@ -839,6 +893,8 @@ class ReviewBridge:
                 payload["decision"] = decision.value
             if review_log_path:
                 payload["review_log_path"] = str(review_log_path)
+            if parse_method:
+                payload["parse_method"] = parse_method
 
             self.event_bus.emit(
                 "MANAGER_REVIEW_ATTEMPT",
@@ -869,8 +925,13 @@ class ReviewBridge:
             return 0
         return count_trailing_changes(events)
 
-    def _parse_opencode_json_decision(self, stdout: str) -> ReviewDecision:
-        """Parse OpenCode NDJSON output for DECISION: APPROVE|CHANGES pattern.
+    def _parse_opencode_json_decision(self, stdout: str) -> tuple[ReviewDecision, str]:
+        """Parse OpenCode NDJSON output for DECISION: APPROVE|CHANGES|INSPECT pattern.
+
+        Returns (decision, parse_method) where parse_method is:
+          - "json_final_answer" if decision extracted from phase:final_answer
+          - "json_last_text" if decision extracted from last text event
+          - "json_no_decision" if no decision found in any JSON event
 
         Schema real de OpenCode:
         - Eventos type:"text" con part.text contienen el texto del modelo.
@@ -882,16 +943,16 @@ class ReviewBridge:
             stdout, require_final_answer=True
         )
         if final_answer_decision is not None:
-            return final_answer_decision
+            return final_answer_decision, "json_final_answer"
 
         # Second pass: use last text event decision (no phase filter)
         last_text_decision = self._extract_decision_from_text_events(
             stdout, require_final_answer=False
         )
         if last_text_decision is not None:
-            return last_text_decision
+            return last_text_decision, "json_last_text"
 
-        return ReviewDecision.INSPECT
+        return ReviewDecision.INSPECT, "json_no_decision"
 
     def _extract_decision_from_text_events(
         self, stdout: str, require_final_answer: bool
@@ -959,84 +1020,84 @@ class ReviewBridge:
             return ReviewDecision.CHANGES
         if "DECISION: APPROVE" in text_upper:
             return ReviewDecision.APPROVE
+        if "DECISION: INSPECT" in text_upper:
+            return ReviewDecision.INSPECT
 
         return None
 
     def _parse_opencode_decision_with_retry(
         self, stdout: str, stderr: str, max_retries: int = 2
-    ) -> tuple[ReviewDecision, int]:
+    ) -> tuple[ReviewDecision, int, str]:
         """Parse OpenCode output with controlled retry for transient parse failures.
+
+        Returns (decision, parse_attempts, parse_method).
 
         Before: A parse failure could immediately lead to INSPECT and potential
                 HUMAN_GATE escalation.
-        During: When parser returns INSPECT but output appears valid (non-empty stdout,
-                no technical errors), retry parsing up to max_retries times.
-        After: Returns (decision, parse_attempts) tuple for audit trail.
-
-        Args:
-            stdout: Output from OpenCode review execution.
-            stderr: Error output from OpenCode review execution.
-            max_retries: Maximum number of parse retry attempts (default: 2).
-
-        Returns:
-            Tuple of (ReviewDecision, number_of_parse_attempts).
+        During: When parser returns INSPECT with fallback_inspect but output
+                appears valid (non-empty stdout, no technical errors), retry
+                parsing up to max_retries times.
+        After: Returns (decision, parse_attempts, parse_method) for audit trail.
         """
         # First attempt
-        decision = self._parse_opencode_decision(stdout)
+        decision, parse_method = self._parse_opencode_decision(stdout)
         parse_attempts = 1
 
-        # If INSPECT and output looks valid (not a technical failure), retry
-        if decision == ReviewDecision.INSPECT:
-            # Check if this is a technical failure (timeout, execution error)
+        # If fallback INSPECT and output looks valid (not a technical failure), retry
+        if decision == ReviewDecision.INSPECT and parse_method == "fallback_inspect":
             is_technical_failure = (
                 "TimeoutExpired" in stderr
                 or "FileNotFoundError" in stderr
                 or "OSError" in stderr
                 or not stdout.strip()
             )
-
-            # Only retry for non-technical failures with substantial output
             if not is_technical_failure and stdout.strip():
-                # Output exists but parser couldn't extract decision - retry
                 for retry in range(max_retries):
-                    # Small delay between retries (exponential backoff)
                     time.sleep(0.1 * (2**retry))
-                    # Re-parse the same output (parser is deterministic,
-                    # but this provides an audit trail and allows future
-                    # enhancements like parser warmup)
-                    decision = self._parse_opencode_decision(stdout)
+                    decision, parse_method = self._parse_opencode_decision(stdout)
                     parse_attempts += 1
-                    if decision != ReviewDecision.INSPECT:
+                    if parse_method != "fallback_inspect":
                         break
 
-        return decision, parse_attempts
+        return decision, parse_attempts, parse_method
 
-    def _parse_opencode_decision(self, stdout: str) -> ReviewDecision:
-        """Parse OpenCode output for DECISION: APPROVE|CHANGES pattern.
+    def _parse_opencode_decision(self, stdout: str) -> tuple[ReviewDecision, str]:
+        """Parse OpenCode output for DECISION: APPROVE|CHANGES|INSPECT pattern.
+
+        Returns (decision, parse_method):
+          parse_method is one of:
+            - "json_final_answer"  — NDJSON final_answer phase
+            - "json_last_text"     — NDJSON last text event
+            - "text_regex"         — DECISION: pattern via regex
+            - "explicit_inspect"   — DECISION: INSPECT explicitly found
+            - "fallback_inspect"   — parser default, no pattern recognized
 
         Prioridad de parseo:
         1. Si hay formato JSON (NDJSON), usar el parser estructurado.
-        2. Buscar patron estructurado DECISION:\\s*(APPROVE|CHANGES).
-        3. NO hay fallback a palabra desnuda - si no hay patron estructurado,
-           retorna INSPECT para evitar falsos positivos.
+        2. Buscar patron estructurado DECISION:\\s*(APPROVE|CHANGES|INSPECT).
+        3. NO hay fallback a palabra desnuda — si no hay patron estructurado,
+           retorna INSPECT + "fallback_inspect" para evitar falsos positivos.
         """
         if self._supports_json_format:
-            json_decision = self._parse_opencode_json_decision(stdout)
+            json_decision, json_method = self._parse_opencode_json_decision(stdout)
             if json_decision != ReviewDecision.INSPECT:
-                return json_decision
+                return json_decision, json_method
 
         # Look for explicit DECISION: pattern only (no bare word fallback)
         stdout_upper = stdout.upper()
 
-        # Require structured DECISION: pattern - no bare word fallback
         if re.search(r"DECISION:\s*CHANGES", stdout_upper):
-            return ReviewDecision.CHANGES
+            return ReviewDecision.CHANGES, "text_regex"
         if re.search(r"DECISION:\s*APPROVE", stdout_upper):
-            return ReviewDecision.APPROVE
+            return ReviewDecision.APPROVE, "text_regex"
+        if re.search(r"DECISION:\s*INSPECT", stdout_upper):
+            return ReviewDecision.INSPECT, "explicit_inspect"
+
+        return ReviewDecision.INSPECT, "fallback_inspect"
 
         # No fallback to bare words - prevents false positives like
         # "no changes needed" being interpreted as CHANGES decision
-        return ReviewDecision.INSPECT
+        return ReviewDecision.UNKNOWN
 
     def run_manager_review_cycle(  # noqa: C901
         self,
@@ -1125,11 +1186,12 @@ class ReviewBridge:
                 stdout, stderr, exit_code = self._run_opencode_review(
                     ticket_id=ticket_id,
                     prompt=prompt,
+                    attempt=attempt,
                     manager_executable=manager_executable,
                     timeout_seconds=current_timeout,
                 )
                 # WP-2026-120: Use parser with controlled retry for transient failures
-                decision, _ = self._parse_opencode_decision_with_retry(stdout, stderr)
+                decision, _, parse_method = self._parse_opencode_decision_with_retry(stdout, stderr)
             else:
                 # Codex legacy route (or any other backend)
                 if manager_executable is None:
@@ -1141,6 +1203,7 @@ class ReviewBridge:
                     manager_executable=manager_executable,
                     timeout_seconds=current_timeout,
                 )
+                parse_method = "legacy_codex"
                 # Legacy Codex parser
                 if "CHANGES" in stdout.upper():
                     decision = ReviewDecision.CHANGES
@@ -1153,13 +1216,18 @@ class ReviewBridge:
 
             elapsed = time.time() - start_time
 
-            # WP-2026-106: Persist review attempt idempotently
-            if decision in (ReviewDecision.CHANGES, ReviewDecision.APPROVE):
-                review_log_path = self._persist_review_attempt(
-                    ticket_id, attempt, stdout, stderr, decision
-                )
-            else:
-                review_log_path = None
+            # Persist review attempt idempotently for all decisions
+            review_log_path = self._persist_review_attempt(
+                ticket_id,
+                attempt,
+                stdout,
+                stderr,
+                decision,
+                review_packet_path=self._get_review_packet_path(
+                    ticket_id, attempt
+                ),
+                parse_method=parse_method,
+            )
 
             # Parse structured sections for CHANGES
             structured = (
@@ -1197,6 +1265,7 @@ class ReviewBridge:
                 stdout=stdout,
                 decision=decision,
                 review_log_path=review_log_path,
+                parse_method=parse_method,
             )
 
             # Track attempt payload for potential human report (in-memory only)
@@ -1211,6 +1280,7 @@ class ReviewBridge:
                         "stdout_tail": (stdout or "")[-500:],
                         "stderr_tail": (stderr or "")[-500:],
                         "decision": decision.value,
+                        "parse_method": parse_method,
                         "review_log_path": str(review_log_path)
                         if review_log_path
                         else None,
@@ -1229,10 +1299,19 @@ class ReviewBridge:
                 break
 
             if decision == ReviewDecision.INSPECT:
-                # Retry only if the failure was technical (TimeoutExpired in stderr).
+                # Retry only if the failure was technical (TimeoutExpired in stderr)
+                # and the parser reached fallback_inspect (no explicit DECISION found).
                 if "TimeoutExpired" in stderr and attempt < max_attempts:
                     continue
-                # Semantic issues or non-timeout errors do not trigger retry.
+                # Semantic INSPECT (explicit or fallback without timeout) → break
+                break
+
+            if decision == ReviewDecision.UNKNOWN:
+                # UNKNOWN is no longer returned by the OpenCode parser (now INSPECT+method),
+                # but left as safety net for legacy Codex routes.
+                if "TimeoutExpired" in stderr and attempt < max_attempts:
+                    continue
+                decision = ReviewDecision.INSPECT
                 break
 
             # WP-2026-106 B3: CHANGES ends the cycle. Re-reviewing the same

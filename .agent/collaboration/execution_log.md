@@ -1,46 +1,67 @@
-# Execution Log
+# Execution Log - WP-2026-127
 
-## Estado
+## Metadata
+- **ID:** WP-2026-127
 **Estado:** COMPLETED
+- **deliverable_type:** code
 
-## WP-2026-124 - Drift canonico del bus
+## Agente Activo
+- **Rol:** MANAGER
+- **Accion:** REVIEW_WORK
+- **Plan:** State revision, approval timeout and skill filtering
 
-Plan aprobado para la ruta unica de materializacion del bus canonico.
-Turno del Builder para eliminar el drift entre bus y proyecciones.
+## Fases
+- Phase 1: implementar revision explicita por artefacto con escritura atomica y OCC.
+- Phase 2: resolver y validar filtrado de skills por rol con discovery reutilizable.
+- Phase 3: introducir el pipeline de aprobacion con timeout configurable y razon de expiracion.
 
----
+## Registro de Implementacion
 
-## Bitacora de Implementacion
+### Archivos Creados
+- `bus/exceptions.py`: Excepciones ConcurrentStateError, ApprovalExpiredError, SkillNotFoundError, SkillAccessDeniedError, ApprovalTimeoutPolicyError
+- `bus/approval.py`: Sistema de aprobaciones con ApprovalRequest, ApprovalPolicy, ApprovalStore
+- `bus/skill_resolver.py`: Filtrado de skills por rol con SkillResolver
+- `tests/test_wp_2026_127.py`: 44 tests cubriendo OCC, approval system y skill filtering
 
-### Fase 1: Materializacion canonica via CLI (COMPLETADA)
-- [x] Extraer la materializacion de estado a `_materialize_state_transition`
-- [x] Añadir flag `--escalate-human-gate` para `inspect`
-- [x] Hacer que `bus/review_bridge.py` dispare `inspect` por subproceso CLI
+### Archivos Modificados
+- `bus/supervisor.py`: Añadido write_artifact_atomic() con OCC, get_approval_store()
+- `bus/review_bridge.py`: Integracion de SkillResolver en _build_review_prompt()
 
-### Fase 2: Guards leen el bus (COMPLETADA)
-- [x] `--mark-ready` consulta `StateMachine.derive_state_from_events`
-- [x] `--request-changes` consulta `StateMachine.derive_state_from_events`
-- [x] `_materialize_state_transition` sincroniza las 3 proyecciones
+### Quality Gates
+- ruff check: PASSED (0 errores)
+- pytest: 237 tests passed (incluyendo 44 nuevos tests WP-2026-127)
+- agent_controller --validate: PASSED (0 errores)
 
-### Fase 3: Asercion post-ciclo (COMPLETADA)
-- [x] Añadir `_assert_bus_projection_consistency` para verificar bus == proyecciones
+### Criterios de Aceptacion Verificados
+- [x] Un write con revision desfasada falla sin sobrescribir el artefacto (ConcurrentStateError)
+- [x] Cada rol solo ve las skills permitidas por su allowlist (SkillResolver + filter_skills_for_prompt)
+- [x] Una aprobacion pendiente expira segun politica y materializa el estado correcto (ApprovalPolicy.check_and_expire)
+- [x] La documentacion canonica y el bus quedan sincronizados (validacion passed)
 
-### Fase 4: Validacion (COMPLETADA)
-- [x] Añadir `tests/test_review_cycle_e2e.py` (5 tests e2e)
-- [x] Arreglar `test_emit_fail_safe_on_review_decision`
-- [x] `ruff check .` - limpio
-- [x] `pytest` - 41 tests pasan (review_bridge, state_machine, review_cycle_e2e)
-- [x] `agent_controller.py --validate` - sin errores
-
-### Resumen
-WP-2026-124 COMPLETADO. Ruta unica de materializacion implementada:
-- `_materialize_state_transition` en `agent_controller.py` es la autoridad canonica
-- `--escalate-human-gate` emite `STATE_CHANGED -> HUMAN_GATE` para `inspect`
-- `--mark-ready` y `--request-changes` leen estado derivado del bus
-- `_assert_bus_projection_consistency` verifica bus == proyecciones
-- Tests e2e validan el ciclo completo para approve, changes e inspect
+## Evidencia de Tests
+- test_concurrent_state_error_*: 2 tests
+- test_approval_*_error: 3 tests
+- test_approval_request_*: 6 tests
+- test_approval_policy_*: 7 tests
+- test_approval_store_*: 9 tests
+- test_skill_resolver_*: 10 tests
+- test_supervisor_* (OCC): 5 tests
+- Total: 44 tests nuevos, 0 fallos
 
 
-Marked ready by Builder
+Manager inspect: human review required
 
-Manager approved canonical closeout for WP-2026-124
+Manager inspect: human review required
+
+Manager inspect: human review required
+
+Manager inspect: human review required
+
+Manager inspect: human review required
+
+Human resolution: resumed from HUMAN_GATE for a fresh review
+
+Manager inspect: human review required
+
+
+Manager approved canonical closeout for WP-2026-127

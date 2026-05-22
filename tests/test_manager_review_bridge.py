@@ -288,8 +288,9 @@ class TestOpencodeReviewRoute:
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
         stdout = "Review complete. All criteria met.\nDECISION: APPROVE"
-        decision = bridge._parse_opencode_decision(stdout)
+        decision, method = bridge._parse_opencode_decision(stdout)
         assert decision == ReviewDecision.APPROVE
+        assert method == "text_regex"
 
     def test_parse_opencode_decision_changes(self, tmp_path):
         """Test parser detects DECISION: CHANGES."""
@@ -300,11 +301,12 @@ class TestOpencodeReviewRoute:
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
         stdout = "Found issues:\n- Missing tests\n\nDECISION: CHANGES"
-        decision = bridge._parse_opencode_decision(stdout)
+        decision, method = bridge._parse_opencode_decision(stdout)
         assert decision == ReviewDecision.CHANGES
+        assert method == "text_regex"
 
     def test_parse_opencode_decision_no_decision_fallback_inspect(self, tmp_path):
-        """Test parser returns INSPECT when no DECISION found."""
+        """Test parser returns INSPECT+fallback_inspect when no decision found."""
         from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
@@ -312,8 +314,22 @@ class TestOpencodeReviewRoute:
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
         stdout = "Review complete but output lacks decision format."
-        decision = bridge._parse_opencode_decision(stdout)
+        decision, method = bridge._parse_opencode_decision(stdout)
         assert decision == ReviewDecision.INSPECT
+        assert method == "fallback_inspect"
+
+    def test_parse_opencode_decision_explicit_inspect(self, tmp_path):
+        """Test parser detects DECISION: INSPECT explicitly."""
+        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        stdout = "Cannot verify acceptance criteria remotely.\nDECISION: INSPECT"
+        decision, method = bridge._parse_opencode_decision(stdout)
+        assert decision == ReviewDecision.INSPECT
+        assert method == "explicit_inspect"
 
     def test_parse_opencode_decision_lowercase(self, tmp_path):
         """Test parser handles lowercase decision patterns."""
@@ -324,8 +340,9 @@ class TestOpencodeReviewRoute:
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
         stdout = "decision: approve"
-        decision = bridge._parse_opencode_decision(stdout)
+        decision, method = bridge._parse_opencode_decision(stdout)
         assert decision == ReviewDecision.APPROVE
+        assert method == "text_regex"
 
     def test_get_manager_backend_default_codex(self, tmp_path):
         """Test backend detection returns codex when agents.json has MANAGER=codex."""
@@ -356,7 +373,7 @@ class TestOpencodeReviewRoute:
 
         captured = {}
 
-        def fake_opencode_review(*, ticket_id, prompt="", manager_executable=None, timeout_seconds):
+        def fake_opencode_review(*, ticket_id, prompt="", attempt=1, manager_executable=None, timeout_seconds):
             captured["ticket_id"] = ticket_id
             return "DECISION: APPROVE", "", 0
 
@@ -477,7 +494,7 @@ class TestReviewPacketTransport:
         return bridge
 
     def test_writes_review_packet(self, tmp_path, monkeypatch):
-        """El contexto completo se escribe a .agent/runtime/review_packets/<ticket>.md."""
+        """El contexto completo se escribe a .agent/runtime/review_packets/<ticket>_attempt-N.md."""
         bridge = self._bridge(tmp_path, monkeypatch, "posix")
         monkeypatch.setattr(
             subprocess,
@@ -487,14 +504,54 @@ class TestReviewPacketTransport:
 
         prompt = "CONTEXTO DE REVIEW\n" + ("x" * 8000)
         bridge._run_opencode_review(
-            ticket_id="WP-T", prompt=prompt, timeout_seconds=5
+            ticket_id="WP-T", prompt=prompt, attempt=1, timeout_seconds=5
         )
 
         packet = (
-            tmp_path / ".agent" / "runtime" / "review_packets" / "WP-T.md"
+            tmp_path
+            / ".agent"
+            / "runtime"
+            / "review_packets"
+            / "WP-T_attempt-1.md"
         )
         assert packet.exists()
         assert packet.read_text(encoding="utf-8") == prompt
+
+    def test_review_packet_is_separate_per_attempt(self, tmp_path, monkeypatch):
+        """Cada intento escribe su propio packet y preserva la provenance."""
+        bridge = self._bridge(tmp_path, monkeypatch, "posix")
+
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda c, **k: subprocess.CompletedProcess(c, 0, "DECISION: APPROVE", ""),
+        )
+
+        bridge._run_opencode_review(
+            ticket_id="WP-T", prompt="PROMPT 1", attempt=1, timeout_seconds=5
+        )
+        bridge._run_opencode_review(
+            ticket_id="WP-T", prompt="PROMPT 2", attempt=2, timeout_seconds=5
+        )
+
+        packet_1 = (
+            tmp_path
+            / ".agent"
+            / "runtime"
+            / "review_packets"
+            / "WP-T_attempt-1.md"
+        )
+        packet_2 = (
+            tmp_path
+            / ".agent"
+            / "runtime"
+            / "review_packets"
+            / "WP-T_attempt-2.md"
+        )
+        assert packet_1.exists()
+        assert packet_2.exists()
+        assert packet_1.read_text(encoding="utf-8") == "PROMPT 1"
+        assert packet_2.read_text(encoding="utf-8") == "PROMPT 2"
 
     def test_positional_message_short_and_no_file_flag(self, tmp_path, monkeypatch):
         """El prompt posicional es corto y referencia el packet; sin --file
@@ -519,7 +576,7 @@ class TestReviewPacketTransport:
         assert prompt not in cmd
         message = cmd[-1]
         assert "WP-T" in message
-        assert "review_packets/WP-T.md" in message
+        assert "review_packets/WP-T_attempt-1.md" in message
         assert len(message) < 400
 
     def test_windows_invocation_is_string_without_file_flag(
@@ -544,7 +601,7 @@ class TestReviewPacketTransport:
         cmd = captured["cmd"]
         assert isinstance(cmd, str)
         assert "--file" not in cmd
-        assert "review_packets/WP-T.md" in cmd
+        assert "review_packets/WP-T_attempt-1.md" in cmd
 
 
 # =============================================================================
@@ -703,7 +760,7 @@ class TestBridgeHandshakeWithoutSnapshots:
         # Mock the review execution to capture that it was called
         captured = {}
 
-        def fake_opencode_review(*, ticket_id, prompt, manager_executable=None, timeout_seconds):
+        def fake_opencode_review(*, ticket_id, prompt, attempt=1, manager_executable=None, timeout_seconds):
             captured["prompt_includes_ticket"] = "WP-2026-102" in prompt
             return "DECISION: APPROVE", "", 0
 
@@ -928,11 +985,19 @@ class TestReviewAttemptPersistence:
             stdout="Review output here",
             stderr="",
             decision=ReviewDecision.CHANGES,
+            review_packet_path=tmp_path
+            / ".agent"
+            / "runtime"
+            / "review_packets"
+            / "WP-2026-106_attempt-1.md",
         )
 
         assert review_path.exists()
         assert review_path.name == "attempt-1.md"
         assert "WP-2026-106" in str(review_path)
+        content = review_path.read_text(encoding="utf-8")
+        assert "## Review Packet" in content
+        assert "WP-2026-106_attempt-1.md" in content
 
     def test_persist_review_attempt_idempotent(self, tmp_path):
         """Test _persist_review_attempt overwrites same file idempotently."""
@@ -949,6 +1014,11 @@ class TestReviewAttemptPersistence:
             stdout="First attempt",
             stderr="",
             decision=ReviewDecision.CHANGES,
+            review_packet_path=tmp_path
+            / ".agent"
+            / "runtime"
+            / "review_packets"
+            / "WP-2026-106_attempt-1.md",
         )
 
         # Second write (same attempt number)
@@ -958,6 +1028,11 @@ class TestReviewAttemptPersistence:
             stdout="Second attempt",
             stderr="",
             decision=ReviewDecision.CHANGES,
+            review_packet_path=tmp_path
+            / ".agent"
+            / "runtime"
+            / "review_packets"
+            / "WP-2026-106_attempt-1.md",
         )
 
         # Same file path
@@ -965,6 +1040,8 @@ class TestReviewAttemptPersistence:
         # Content is the second write (idempotent overwrite)
         content = path1.read_text(encoding="utf-8")
         assert "Second attempt" in content
+        assert "## Review Packet" in content
+        assert "WP-2026-106_attempt-1.md" in content
 
     def test_persist_review_attempt_includes_structured_sections(self, tmp_path):
         """Test _persist_review_attempt includes SUMMARY, BLOCKERS, SUGGESTIONS for CHANGES."""
