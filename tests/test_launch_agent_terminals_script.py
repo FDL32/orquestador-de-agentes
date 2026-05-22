@@ -60,10 +60,10 @@ def test_launcher_uses_startup_templates() -> None:
     assert "Start-DeferredFileCleanup" not in content
     assert "--manager-prompt-file" not in content
 
-    # Check that manager_codex template exists and contains variables
+    # Check that manager_legacy template exists and contains variables
     from pathlib import Path
     PROJECT_ROOT = Path(__file__).resolve().parents[1]
-    manager_template = PROJECT_ROOT / "templates" / "startup" / "manager_codex.md"
+    manager_template = PROJECT_ROOT / "templates" / "startup" / "manager_legacy.md"
     assert manager_template.exists()
     manager_content = manager_template.read_text(encoding="utf-8")
     assert "{{ticket_id}}" in manager_content

@@ -24,13 +24,13 @@ def _make_bridge(tmp_path: Path) -> tuple[ReviewBridge, EventBus, Path]:
     runtime_dir = tmp_path / ".agent" / "runtime" / "events"
     event_bus = EventBus(runtime_dir=runtime_dir)
     bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
-    codex = tmp_path / "codex.exe"
-    codex.write_text("", encoding="utf-8")
-    return bridge, event_bus, codex
+    legacy_manager_exe = tmp_path / "manager_legacy.exe"
+    legacy_manager_exe.write_text("", encoding="utf-8")
+    return bridge, event_bus, legacy_manager_exe
 
 
 def test_manager_review_cycle_approves(monkeypatch, tmp_path):
-    bridge, event_bus, codex = _make_bridge(tmp_path)
+    bridge, event_bus, legacy_manager_exe = _make_bridge(tmp_path)
     supervisor = DummySupervisor()
 
     def fake_run(cmd, **kwargs):
@@ -43,13 +43,13 @@ def test_manager_review_cycle_approves(monkeypatch, tmp_path):
 
     monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
     monkeypatch.setattr(bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW")
-    # Force codex backend for this legacy test
-    monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "codex")
+    # Force the legacy Manager backend for this compatibility test
+    monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "legacy_manager")
 
     result = bridge.run_manager_review_cycle(
         ticket_id="WP-2026-025",
         supervisor=supervisor,
-        manager_executable=codex,
+        manager_executable=legacy_manager_exe,
         timeout_seconds=5,
     )
 
@@ -67,7 +67,7 @@ def test_manager_review_cycle_requests_changes(monkeypatch, tmp_path):
     This test returns CHANGES once, then APPROVE to verify CHANGES path
     without triggering escalation.
     """
-    bridge, event_bus, codex = _make_bridge(tmp_path)
+    bridge, event_bus, legacy_manager_exe = _make_bridge(tmp_path)
     supervisor = DummySupervisor()
     calls: list[list[str]] = []
 
@@ -96,13 +96,13 @@ def test_manager_review_cycle_requests_changes(monkeypatch, tmp_path):
 
     monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
     monkeypatch.setattr(bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW")
-    # Force codex backend
-    monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "codex")
+    # Force the legacy Manager backend
+    monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "legacy_manager")
 
     result = bridge.run_manager_review_cycle(
         ticket_id="WP-2026-025",
         supervisor=supervisor,
-        manager_executable=codex,
+        manager_executable=legacy_manager_exe,
         timeout_seconds=5,
     )
 
@@ -121,7 +121,7 @@ def test_manager_review_cycle_requests_changes(monkeypatch, tmp_path):
 
 
 def test_manager_review_cycle_tool_error_is_transport_failed(monkeypatch, tmp_path):
-    bridge, event_bus, codex = _make_bridge(tmp_path)
+    bridge, event_bus, legacy_manager_exe = _make_bridge(tmp_path)
     supervisor = DummySupervisor()
 
     def fake_run(cmd, **kwargs):
@@ -138,7 +138,7 @@ def test_manager_review_cycle_tool_error_is_transport_failed(monkeypatch, tmp_pa
     result = bridge.run_manager_review_cycle(
         ticket_id="WP-2026-025",
         supervisor=supervisor,
-        manager_executable=codex,
+        manager_executable=legacy_manager_exe,
         timeout_seconds=5,
     )
 
@@ -432,24 +432,24 @@ class TestOpencodeReviewRoute:
         assert captured["ticket_id"] == "WP-2026-072"
         assert captured["transition"] == ("WP-2026-072", "READY_TO_CLOSE", "Manager approved")
 
-    def test_run_manager_review_cycle_dispatches_codex(self, monkeypatch, tmp_path):
-        """Test review cycle dispatches to codex route when backend is codex."""
+    def test_run_manager_review_cycle_dispatches_legacy_manager(self, monkeypatch, tmp_path):
+        """Test review cycle dispatches to the legacy Manager route."""
         from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
-        monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "codex")
+        monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "legacy_manager")
         monkeypatch.setattr(bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW")
 
         captured = {}
 
-        def fake_codex_review(*, ticket_id, manager_executable, timeout_seconds):
+        def fake_legacy_manager_review(*, ticket_id, manager_executable, timeout_seconds):
             captured["ticket_id"] = ticket_id
             return "APPROVE", "", 0
 
-        monkeypatch.setattr(bridge, "_run_codex_review", fake_codex_review)
+        monkeypatch.setattr(bridge, "_run_legacy_manager_review", fake_legacy_manager_review)
 
         class DummySupervisor:
             def transition_ticket(self, ticket_id, new_state, reason):
