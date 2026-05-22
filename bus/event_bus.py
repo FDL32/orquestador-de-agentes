@@ -217,6 +217,14 @@ class EventBus:
                     return TicketState.READY_TO_CLOSE
                 if decision == "inspect":
                     return TicketState.HUMAN_GATE
+            if event.event_type == "APPROVAL_RESOLVED":
+                status = str((event.payload or {}).get("status", "")).lower()
+                if status == "expired":
+                    return TicketState.BLOCKED
+                if status == "approved":
+                    return TicketState.READY_FOR_REVIEW
+                if status in ("rejected", "cancelled"):
+                    return TicketState.BLOCKED
         return None
 
     @staticmethod
@@ -246,6 +254,14 @@ class EventBus:
                 "approve": TicketState.READY_TO_CLOSE,
                 "inspect": TicketState.HUMAN_GATE,
             }.get(decision)
+        if event_type == "APPROVAL_RESOLVED":
+            status = str(payload.get("status", "")).lower()
+            return {
+                "expired": TicketState.BLOCKED,
+                "approved": TicketState.READY_FOR_REVIEW,
+                "rejected": TicketState.BLOCKED,
+                "cancelled": TicketState.BLOCKED,
+            }.get(status)
         return None
 
     def _is_reentry_blocked(self, ticket_id: str, to_state: TicketState) -> bool:

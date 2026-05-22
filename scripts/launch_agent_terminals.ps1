@@ -20,21 +20,62 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+function Resolve-DestinationRoot {
+    param([Parameter(Mandatory)] [string]$MotorRoot)
+
+    # Intenta leer motor_destination_link.json desde el motor actual
+    # y devuelve destination_root si existe.
+    $linkPath = Join-Path $MotorRoot '.agent\config\motor_destination_link.json'
+    if (Test-Path -LiteralPath $linkPath) {
+        try {
+            $link = Get-Content -LiteralPath $linkPath -Raw | ConvertFrom-Json
+            if ($null -ne $link.destination_root -and (Test-Path -LiteralPath $link.destination_root)) {
+                return (Resolve-Path -LiteralPath $link.destination_root).Path
+            }
+        }
+        catch {
+            Write-Warning "motor_destination_link.json existe pero no es legible; se usara el fallback local."
+        }
+    }
+    return $null
+}
+
 # Resolve ProjectRoot AFTER param binding (here $PSScriptRoot, $PSCommandPath
 # and $MyInvocation.MyCommand.Path are reliably populated).
+# Precedencia canonica: --project-root > AGENT_PROJECT_ROOT > motor_destination_link.json > fallback local
 if (-not $ProjectRoot) {
-    $scriptDir = $null
-    if ($PSScriptRoot) {
-        $scriptDir = $PSScriptRoot
-    } elseif ($PSCommandPath) {
-        $scriptDir = Split-Path -Parent $PSCommandPath
-    } elseif ($MyInvocation -and $MyInvocation.MyCommand -and $MyInvocation.MyCommand.Path) {
-        $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+    # 1) CLI ya fue chequeado (es $null)
+    # 2) Env var AGENT_PROJECT_ROOT
+    $envProjectRoot = [System.Environment]::GetEnvironmentVariable('AGENT_PROJECT_ROOT')
+    if (-not [string]::IsNullOrWhiteSpace($envProjectRoot) -and (Test-Path -LiteralPath $envProjectRoot)) {
+        $ProjectRoot = (Resolve-Path -LiteralPath $envProjectRoot).Path
+        Write-Host "ProjectRoot resuelto desde AGENT_PROJECT_ROOT: $ProjectRoot"
     }
-    if (-not $scriptDir) {
-        throw "Cannot resolve script directory automatically. Pass -ProjectRoot <path> explicitly."
+    else {
+        # 3) motor_destination_link.json (desde el motor actual)
+        $scriptDir = $null
+        if ($PSScriptRoot) {
+            $scriptDir = $PSScriptRoot
+        } elseif ($PSCommandPath) {
+            $scriptDir = Split-Path -Parent $PSCommandPath
+        } elseif ($MyInvocation -and $MyInvocation.MyCommand -and $MyInvocation.MyCommand.Path) {
+            $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+        }
+        if (-not $scriptDir) {
+            throw "Cannot resolve script directory automatically. Pass -ProjectRoot <path> explicitly."
+        }
+        $motorRoot = (Resolve-Path (Join-Path $scriptDir '..')).Path
+        $destinationRoot = Resolve-DestinationRoot -MotorRoot $motorRoot
+        if ($null -ne $destinationRoot) {
+            $ProjectRoot = $destinationRoot
+            Write-Host "ProjectRoot resuelto desde motor_destination_link.json: $ProjectRoot"
+        }
+        else {
+            # 4) Fallback local
+            $ProjectRoot = $motorRoot
+            Write-Host "ProjectRoot resuelto desde fallback local (motor): $ProjectRoot"
+        }
     }
-    $ProjectRoot = (Resolve-Path (Join-Path $scriptDir '..')).Path
 }
 
 Set-StrictMode -Version Latest

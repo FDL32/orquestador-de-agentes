@@ -2,7 +2,7 @@
 
 - Project: `orquestacion_agentes`
 - Version: `v9.14.0`
-- State: WP-2026-123 COMPLETED (Workspace minimo del destino).
+- State: WP-2026-127 IN_PROGRESS (State revision, approval timeout and skill filtering).
 - Last review: 2026-05-21
 - Mission: keep the central motor clean, versioned once, and externally referenced
   - The repo is the unique source of operational code (motor central).
@@ -11,12 +11,12 @@
 
 ## Current Cycle
 
-- Active ticket: WP-2026-124 IN_PROGRESS (Drift canonico del bus).
+- Active ticket: WP-2026-127 IN_PROGRESS (State revision, approval timeout and skill filtering).
 - Mode: implementation / Builder turn started.
 - Builder backend: OpenCode (model: opencode-go/qwen3.5-plus).
 - Manager backend: OpenCode (model: configurable via agents.json).
 - Target model: Qwen3.5 Plus [NO VERIFICADO como provider/model].
-- Outcome: route unica de materializacion en ejecucion.
+- Outcome: implementation of OCC, approval timeout, and skill filtering in progress.
 - Manifiestos, documentacion e instalador siguen alineados con la arquitectura de motor externo.
 - El bus canonico es la autoridad y las proyecciones deben derivarse de el.
 
@@ -74,8 +74,26 @@ Objetivo: mantener `orquestacion_agentes/` como motor central unico y abrir el p
 - Sincronizar las proyecciones desde la autoridad canonica.
 - Validar con tests end-to-end que bus y proyecciones no vuelven a divergir.
 
+### WP-2026-126 - Bus end-to-end review validation
+- Validar que el Manager recibe un review real mediante review packet.
+- Confirmar que el bus y las proyecciones cierran con una decision canonica.
+
+### WP-2026-127 - State revision, approval timeout and skill filtering
+- Introducir revision explicita por artefacto con escrituras atomicas y OCC.
+- Filtrar skills por rol con validacion temprana.
+- Implementar aprobacion con timeout configurable y resolucion canonica.
+
 ### Regla de secuencia
 - Consolidar/publicar primero la base estable actual.
 - Despues ejecutar WP-A.
 - Luego WP-B.
 - Finalmente WP-C.
+# WP-C launcher notes
+
+WP-C closes the motor/destination decoupling in the launcher.
+
+- The launcher must resolve the target workspace before starting Supervisor, Bridge, or Builder.
+- Precedence: `--project-root` > `AGENT_PROJECT_ROOT` > `motor_destination_link.json` > local fallback.
+- `motor_destination_link.json` is a persisted contract artifact, not a source of truth for engine code.
+- `WP-mini` hygiene stays deferred by design and is not part of WP-C scope.
+- The retroactive review of `WP-2026-123` is optional and non-blocking.

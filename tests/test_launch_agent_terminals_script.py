@@ -73,3 +73,22 @@ def test_launcher_uses_startup_templates() -> None:
     assert "{{backend}}" in manager_content
     assert "{{role}}" in manager_content
     assert "{{backend}}" in manager_content
+
+
+def test_launcher_multi_root_precedence() -> None:
+    """WP-2026-125: el launcher resuelve el workspace destino con precedencia canonica."""
+    content = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    # Funcion de resolucion de destino externo
+    assert "function Resolve-DestinationRoot" in content
+    assert "motor_destination_link.json" in content
+    assert "destination_root" in content
+
+    # Precedencia: --project-root > AGENT_PROJECT_ROOT > motor_destination_link.json > fallback
+    assert "AGENT_PROJECT_ROOT" in content
+    assert "GetEnvironmentVariable('AGENT_PROJECT_ROOT')" in content
+
+    # Mensajes de diagnostico de resolucion
+    assert "ProjectRoot resuelto desde AGENT_PROJECT_ROOT" in content
+    assert "ProjectRoot resuelto desde motor_destination_link.json" in content
+    assert "ProjectRoot resuelto desde fallback local" in content

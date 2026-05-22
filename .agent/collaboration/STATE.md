@@ -1,14 +1,13 @@
-# STATE.md
+# State - WP-2026-127
 
-## Estado Canonico
-- **Plan Activo:** WP-2026-124
-- **Estado actual:** COMPLETED
-- **Rol activo:** BUILDER
-- **Autoridad:** bus canonico (`.agent/runtime/events/events.jsonl`)
+Plan Activo: WP-2026-127
+Estado actual: READY_FOR_REVIEW
+Rol activo: MANAGER
 
-## Resumen
-- WP-2026-124 preparado para eliminar el drift canonico entre bus y proyecciones.
-- El Builder tiene el turno para implantar la ruta unica de materializacion.
+Resumen:
+WP-2026-127 implementa revision por artefacto, aprobacion con timeout configurable y filtrado de skills por rol para endurecer el ciclo multiagente.
 
-## Proximo evento esperado
-- `BUILDER_EXIT` o el siguiente evento del bus para WP-2026-124.
+Notas:
+- El estado canonico arranca para Builder con el nuevo alcance de robustez.
+- `WP-2026-126` queda como antecedente historico del review packet.
+- La validacion final debe confirmar bus, proyecciones y configuracion alineados.

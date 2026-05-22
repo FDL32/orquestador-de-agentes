@@ -59,4 +59,13 @@ class StateMachine:
                     return TicketState.READY_TO_CLOSE
                 if decision == "inspect":
                     return TicketState.HUMAN_GATE
+            if event.get("event_type") == "APPROVAL_RESOLVED":
+                payload = event.get("payload") or {}
+                status = str(payload.get("status", "")).lower()
+                if status == "expired":
+                    return TicketState.BLOCKED
+                if status == "approved":
+                    return TicketState.READY_FOR_REVIEW
+                if status in ("rejected", "cancelled"):
+                    return TicketState.BLOCKED
         return TicketState.UNKNOWN

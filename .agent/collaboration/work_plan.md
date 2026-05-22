@@ -1,153 +1,61 @@
-# Plan de Trabajo: WP-2026-124 - Drift canonico del bus
+# Work Plan - WP-2026-127
 
 ## Metadata
-- **ID:** WP-2026-124
+- **ID:** WP-2026-127
 - **Estado:** COMPLETED
 - **deliverable_type:** code
-- **Creado:** 2026-05-21
-- **Prioridad:** HIGH
-- **Asignado a:** Builder
-- **Backend:** OpenCode
-- **Tipo:** IMPLEMENTATION
-
----
+- **Titulo:** State revision, approval timeout and skill filtering
 
 ## Objetivo
+Implantar revision explicita por artefacto, aprobaciones con timeout configurable y filtrado de skills por rol para reducir drift, bloqueos y ruido de contexto.
 
-Eliminar el drift entre el bus canonico y las proyecciones de colaboracion.
-Un `REVIEW_DECISION` nunca debe poder existir sin su `STATE_CHANGED`
-correspondiente, y los guards deben leer el estado derivado del bus como
-autoridad, no `execution_log.md`.
-
-## Contexto
-
-WP-2026-123 quedo atascado en `inspect` (HUMAN_GATE derivado) sin cerrarse
-canonicamente: el bus salto de su `REVIEW_DECISION inspect` directo a otro
-ticket, sin `STATE_CHANGED`. Ese es exactamente el agujero a cerrar: `inspect`
-queda hoy como derivacion del bus y deja `STATE.md` / `execution_log.md`
-desalineados.
-
-Regla unica de este WP (sin auto-healing silencioso):
-
-- el bus manda;
-- las proyecciones se materializan desde el bus;
-- si bus y proyeccion divergen, se aborta o se pide intervencion humana.
-
-## Decision arquitectonica (opcion B)
-
-La materializacion compartida NO se mueve a un modulo nuevo y NO se importa
-entre paquetes (evita el import circular: `bus/review_bridge.py` no puede
-importar `agent_controller.py`, que a su vez importa `bus/*`).
-
-En su lugar:
-
-- La materializacion canonica (emitir `STATE_CHANGED` + sincronizar
-  `STATE.md` / `TURN.md` / `execution_log.md`) vive en `agent_controller.py`,
-  donde ya estan `update_log_status` y `update_turn_file` y la ruta de
-  `changes` (`_handle_request_changes`).
-- `scripts/manager_review_bridge.py` la **dispara por CLI**, invocando
-  `agent_controller.py` como subproceso — exactamente igual que `changes` ya
-  hace hoy. Cero import entre paquetes, cero modulo nuevo.
-- Se anade un flag `--escalate-human-gate --ticket WP-XXXX` a
-  `agent_controller.py` para la ruta `inspect`: emite `STATE_CHANGED ->
-  HUMAN_GATE` (actor `SUPERVISOR`) y sincroniza las 3 proyecciones. NO toca
-  el contador de rejections (`inspect` no es un rechazo del Manager).
-
-## Contracto de alcance
-
-Cubre el bloque drift/bus canonico:
-
-- materializacion canonica de transiciones para `approve` / `changes` /
-  `inspect` por la misma ruta CLI;
-- sincronizacion de `STATE.md` / `TURN.md` / `execution_log.md` desde el bus;
-- guards (`--mark-ready`, `--request-changes`) que leen el estado derivado
-  del bus;
-- asercion post-ciclo bus == proyeccion;
-- test e2e de regresion del ciclo review -> transition -> projection;
-- fix del test roto pre-existente `test_emit_fail_safe_on_review_decision`.
-
-Queda **fuera** de este WP la higiene de transporte de `inspect` (filtrado de
-basura del backend en `review_queue.md`) y el health check pre-ciclo. Eso es
-un WP posterior.
+## Decision Arquitectonica
+- La revision valida es por artefacto JSON/Markdown, no global por bus.
+- Las escrituras de estado deben ser atomicas y con control de concurrencia optimista.
+- La expiracion de aprobacion debe seguir una politica configurable por tipo de escalacion.
+- El filtrado de skills debe resolverse en el catalogo/routing de skills, no en el transporte de review.
 
 ## Files Likely Touched
-
-### Codigo
-
-- `.agent/agent_controller.py`
-- `scripts/manager_review_bridge.py`
+- `bus/supervisor.py`
+- `bus/event_bus.py`
+- `bus/exceptions.py`
+- `bus/approval.py`
+- `bus/skill_resolver.py`
 - `bus/review_bridge.py`
-
-### Documentacion / Estado
-
+- `.agent/agent_controller.py`
+- `.agent/agents_config.py`
+- `scripts/ticket_supervisor.py`
+- `scripts/discover_skills.py`
+- `.agent/config/agents.json`
+- `tests/test_supervisor.py`
+- `tests/test_manager_review_bridge.py`
+- `tests/unit/test_agents_config.py`
+- `tests/unit/test_skill_discovery.py`
+- `tests/test_orquestador_scope.py`
+- `tests/unit/test_review_budget_retry.py`
+- `.agent/collaboration/work_plan.md`
+- `.agent/collaboration/PLAN_WP-2026-127.md`
+- `.agent/collaboration/AUDIT_WP-2026-127.md`
 - `.agent/collaboration/STATE.md`
 - `.agent/collaboration/TURN.md`
 - `.agent/collaboration/execution_log.md`
-- `.agent/collaboration/work_plan.md`
-- `.agent/collaboration/PLAN_WP-2026-124.md`
-- `.agent/collaboration/AUDIT_WP-2026-124.md`
 - `PROJECT.md`
 
-### Tests
+## Fases
+1. Implementar `expectedRevision` por artefacto en estados JSON con escritura atomica y retry OCC.
+2. Introducir skill filtering por rol reutilizando `discover_skills.py` y validacion temprana de skills.
+3. Implementar pipeline de aprobacion con timeout configurable, razon de expiracion y resolucion canonica.
 
-- `tests/test_review_bridge.py`
-- `tests/test_manager_review_bridge.py`
-- `tests/unit/test_bus_drift_detection.py`
-- `tests/unit/test_bus_emission_on_mark_ready.py`
-- `tests/test_review_cycle_e2e.py`
+## Calidad
+- `ruff check .`
+- `pytest`
+- `python .agent/agent_controller.py --validate --json --force`
 
-## Plan
+## Criterios de aceptacion
+- Un write con revision desfasada falla sin sobrescribir el artefacto.
+- Cada rol solo ve las skills permitidas por su allowlist.
+- Una aprobacion pendiente expira segun politica y materializa el estado correcto con trazabilidad de causa.
+- La documentacion canonica y el bus quedan sincronizados.
 
-### Fase 1: Materializacion canonica via CLI
-
-- Extraer la materializacion de estado de `_handle_request_changes` a una
-  funcion interna reutilizable de `agent_controller.py` (sin moverla de
-  modulo).
-- Anadir el flag `--escalate-human-gate --ticket WP-XXXX`: emite
-  `STATE_CHANGED -> HUMAN_GATE` (actor `SUPERVISOR`) + sincroniza las 3
-  proyecciones. Sin tocar el contador de rejections.
-- Hacer que `scripts/manager_review_bridge.py`, al recibir `inspect`, dispare
-  `agent_controller.py --escalate-human-gate` por subproceso (misma mecanica
-  que `changes`). Garantiza que todo `REVIEW_DECISION` deje su `STATE_CHANGED`.
-
-### Fase 2: Guards leen el bus
-
-- `--mark-ready` y `--request-changes` consultan el estado derivado del bus
-  (`StateMachine.derive_state_from_events`), no `execution_log.md`.
-- Las proyecciones quedan como conveniencia humana, no como autoridad.
-
-### Fase 3: Asercion post-ciclo
-
-- Tras cada ciclo de review, verificar que el estado derivado del bus coincide
-  con el de las proyecciones. Si divergen, fallar ruidoso (no auto-corregir).
-
-### Fase 4: Validacion
-
-- Anadir `tests/test_review_cycle_e2e.py`: ciclo review -> decision -> bus ->
-  proyecciones, para `approve`, `changes` e `inspect`.
-- Arreglar `test_emit_fail_safe_on_review_decision` (roto pre-existente en
-  `tests/test_review_bridge.py`).
-- `ruff check .`, `pytest` del slice, `agent_controller.py --validate`.
-
-## Criterios de Aceptacion
-
-- [ ] `inspect` emite `STATE_CHANGED -> HUMAN_GATE` via CLI; no queda como
-      decision fantasma.
-- [ ] `approve`, `changes` e `inspect` materializan por la misma ruta.
-- [ ] `STATE.md`, `TURN.md`, `execution_log.md` se materializan desde el bus.
-- [ ] `--mark-ready` y `--request-changes` leen el estado derivado del bus.
-- [ ] No queda drift persistente entre bus y proyecciones.
-- [ ] No hay import circular: `bus/review_bridge.py` no importa
-      `agent_controller.py`.
-- [ ] `test_emit_fail_safe_on_review_decision` pasa.
-- [ ] El test e2e de regresion pasa.
-- [ ] `ruff check .` y `agent_controller.py --validate` pasan limpios.
-
-## Riesgos
-
-- El cambio toca la autoridad canonica de estado; verificar que las rutas
-  legacy de `changes` / `approve` no se rompen.
-- No introducir auto-healing silencioso: si bus y proyeccion divergen, el
-  sistema debe fallar visiblemente.
-- La cobertura de tests debe ejercitar el ciclo completo, no solo la ruta
-  feliz; incluir explicitamente `inspect`.
+## Nota
+WP-2026-126 queda como referencia historica; este ticket abre la siguiente fase de robustez del motor.

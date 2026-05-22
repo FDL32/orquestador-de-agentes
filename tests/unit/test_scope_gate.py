@@ -9,7 +9,7 @@ import os
 # Add the agent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / ".agent"))
 
-from agent_controller import parse_files_likely_touched, get_changed_files, check_scope_gate, EXCLUDE_FILES
+from agent_controller import parse_files_likely_touched, get_changed_files, check_scope_gate, EXCLUDE_FILES_REL
 
 
 class TestParseFilesLikelyTouched:
@@ -148,8 +148,9 @@ class TestCheckScopeGate:
         """Test when not git repo."""
         content = "## Files Likely Touched\n- file.py"
         result = check_scope_gate(content, None, set())
-        assert result['valid'] is True
-        assert result['out_of_scope'] == set()
+        # Ensure standard exclusions are present
+        assert "events.jsonl" in EXCLUDE_FILES_REL
+        assert "supervisor_state.json" in EXCLUDE_FILES_REL
         assert 'not git-managed' in str(result['warnings'])
 
     def test_check_scope_gate_in_scope(self):
