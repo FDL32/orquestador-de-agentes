@@ -191,6 +191,8 @@ class ReviewBridge:
         self, stdout: str, stderr: str, exit_code: int
     ) -> tuple[bool, str]:
         """Classify whether the OpenCode invocation reached the model."""
+        if "TimeoutExpired" in stderr:
+            return True, "timeout_retryable"
         if exit_code != 0:
             return False, f"exit_code={exit_code}"
         if self._looks_like_opencode_help(stdout, stderr):
