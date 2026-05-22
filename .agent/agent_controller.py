@@ -2248,6 +2248,18 @@ def _materialize_state_transition(
             "action_type": "IMPLEMENT",
             "plan_type": get_plan_type(plan_content),
         }
+    elif to_state == "READY_FOR_REVIEW":
+        action = {
+            "role": "MANAGER",
+            "context_file": ".manager_rules",
+            "workflow_file": ".agent/workflows/manager_workflow.md",
+            "instruction": f"Ticket {ticket_id} listo para review: {reason}",
+            "plan_id": ticket_id,
+            "plan_status": get_status(plan_content, "**Estado:**"),
+            "log_status": to_state,
+            "action_type": "REVIEW_WORK",
+            "plan_type": get_plan_type(plan_content),
+        }
     elif to_state == "READY_TO_CLOSE":
         action = {
             "role": "SUPERVISOR",
@@ -2364,6 +2376,76 @@ def _handle_escalate_human_gate(ticket_id: str, json_output: bool) -> int:
         )
     else:
         print(f"[OK] Ticket {ticket_id} escalated to HUMAN_GATE (inspect).")
+
+    return 0
+
+
+def _handle_resume_human_gate(ticket_id: str, json_output: bool) -> int:
+    """Handle --resume-human-gate flag.
+
+    Resolucion humana de un ticket en HUMAN_GATE: emite STATE_CHANGED ->
+    READY_FOR_REVIEW (actor SUPERVISOR) y sincroniza las proyecciones via la
+    ruta canonica de materializacion. Es la salida que faltaba al contrato de
+    --escalate-human-gate. Solo valida si el estado derivado del bus es
+    HUMAN_GATE.
+
+    Before: Requires ticket_id; bus-derived state must be HUMAN_GATE.
+    During: Verifies bus state, calls _materialize_state_transition.
+    After: Ticket returns to READY_FOR_REVIEW for a fresh review cycle.
+    """
+    if not ticket_id or ticket_id == "N/A":
+        if json_output:
+            print(json.dumps({"error": "No ticket_id provided"}, indent=2))
+        else:
+            print("[ERROR] No ticket_id provided. Use --ticket WP-XXXX")
+        return 1
+
+    current_plan_id = get_plan_id(read_file(WORK_PLAN))
+    if ticket_id != current_plan_id:
+        msg = f"Ticket {ticket_id} does not match active ticket {current_plan_id}"
+        if json_output:
+            print(json.dumps({"error": msg}, indent=2))
+        else:
+            print(f"[ERROR] {msg}")
+        return 1
+
+    # El bus es la autoridad: solo se resume desde HUMAN_GATE.
+    from bus.state_machine import StateMachine, TicketState
+
+    bus_state = None
+    if BUS_AVAILABLE and event_bus:
+        events = event_bus.read_events(ticket_id=ticket_id)
+        if events:
+            bus_state = StateMachine.derive_state_from_events(
+                [e.to_dict() for e in events]
+            )
+    if bus_state != TicketState.HUMAN_GATE:
+        msg = (
+            f"Ticket {ticket_id} bus state is {bus_state}, not HUMAN_GATE. "
+            "--resume-human-gate solo aplica a tickets en HUMAN_GATE."
+        )
+        if json_output:
+            print(json.dumps({"error": msg}, indent=2))
+        else:
+            print(f"[ERROR] {msg}")
+        return 1
+
+    _materialize_state_transition(
+        ticket_id=ticket_id,
+        to_state="READY_FOR_REVIEW",
+        reason="Human resolution: resumed from HUMAN_GATE for a fresh review",
+        actor="SUPERVISOR",
+        source="resume-human-gate",
+    )
+
+    if json_output:
+        print(
+            json.dumps(
+                {"status": "resumed_to_review", "ticket_id": ticket_id}, indent=2
+            )
+        )
+    else:
+        print(f"[OK] Ticket {ticket_id} resumed from HUMAN_GATE to READY_FOR_REVIEW.")
 
     return 0
 
@@ -2804,6 +2886,10 @@ def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
     # Check for --escalate-human-gate
     if "--escalate-human-gate" in sys.argv:
         return _handle_escalate_human_gate(ticket_id, json_output)
+
+    # Check for --resume-human-gate (salida canonica de HUMAN_GATE)
+    if "--resume-human-gate" in sys.argv:
+        return _handle_resume_human_gate(ticket_id, json_output)
 
     # Check for specific flag handlers
     for flag, handler in FLAG_HANDLERS.items():
