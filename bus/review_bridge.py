@@ -27,6 +27,7 @@ class ReviewDecision(str, Enum):
     CHANGES = "changes"
     INSPECT = "inspect"
     UNKNOWN = "unknown"
+    TRANSPORT_FAILED = "transport_failed"
 
 
 @dataclass(slots=True)
@@ -36,6 +37,9 @@ class ReviewResult:
     stderr: str = ""
     exit_code: int = 0
     feedback: str = ""
+    transport_ok: bool = True
+    transport_error: str = ""
+    parse_method: str = ""
 
 
 @dataclass(slots=True)
@@ -171,6 +175,27 @@ class ReviewBridge:
         content = turn_path.read_text(encoding="utf-8")
         match = re.search(r"\|\s*\*\*ROL\*\*\s*\|\s*\*\*([A-Z]+)\*\*\s*\|", content)
         return match.group(1) if match else "BUILDER"
+
+    @staticmethod
+    def _looks_like_opencode_help(stdout: str, stderr: str) -> bool:
+        """Detect an OpenCode help banner instead of model output."""
+        combined = f"{stdout}\n{stderr}".lower()
+        markers = (
+            "opencode run [message..]",
+            "run opencode with a message",
+            "show help",
+        )
+        return any(marker in combined for marker in markers)
+
+    def _classify_transport_result(
+        self, stdout: str, stderr: str, exit_code: int
+    ) -> tuple[bool, str]:
+        """Classify whether the OpenCode invocation reached the model."""
+        if exit_code != 0:
+            return False, f"exit_code={exit_code}"
+        if self._looks_like_opencode_help(stdout, stderr):
+            return False, "help_output_detected"
+        return True, ""
 
     def _detect_json_format_support(self) -> bool:
         try:
@@ -637,6 +662,8 @@ class ReviewBridge:
         decision: ReviewDecision,
         review_packet_path: Path | None = None,
         parse_method: str = "",
+        transport_ok: bool = True,
+        transport_error: str = "",
     ) -> Path:
         """Persist a review attempt to attempt-N.md idempotently.
 
@@ -655,12 +682,17 @@ class ReviewBridge:
             f"## Ticket: {ticket_id}",
             f"## Decision: {decision.value.upper()}",
             f"## Parse Method: {parse_method or 'unknown'}",
+            f"## Transport OK: {transport_ok}",
             "",
             "## Review Packet",
             "",
             str(review_packet_path.relative_to(self.project_root).as_posix())
             if review_packet_path is not None
             else "[not recorded]",
+            "",
+            "## Transport Error",
+            "",
+            transport_error or "[none]",
             "",
             "## STDOUT",
             "",
@@ -867,6 +899,8 @@ class ReviewBridge:
         decision: ReviewDecision | None = None,
         review_log_path: Path | None = None,
         parse_method: str = "",
+        transport_ok: bool = True,
+        transport_error: str = "",
     ):
         """Emit a lightweight MANAGER_REVIEW_ATTEMPT event.
 
@@ -888,6 +922,7 @@ class ReviewBridge:
                 "exit_code": exit_code,
                 "duration_seconds": round(duration, 2),
                 "stdout_tail": (stdout or "")[-500:],
+                "transport_ok": transport_ok,
             }
             if decision:
                 payload["decision"] = decision.value
@@ -895,6 +930,8 @@ class ReviewBridge:
                 payload["review_log_path"] = str(review_log_path)
             if parse_method:
                 payload["parse_method"] = parse_method
+            if transport_error:
+                payload["transport_error"] = transport_error
 
             self.event_bus.emit(
                 "MANAGER_REVIEW_ATTEMPT",
@@ -1095,10 +1132,6 @@ class ReviewBridge:
 
         return ReviewDecision.INSPECT, "fallback_inspect"
 
-        # No fallback to bare words - prevents false positives like
-        # "no changes needed" being interpreted as CHANGES decision
-        return ReviewDecision.UNKNOWN
-
     def run_manager_review_cycle(  # noqa: C901
         self,
         *,
@@ -1170,6 +1203,9 @@ class ReviewBridge:
 
         final_stdout, final_stderr, final_exit = "", "", 0
         decision = ReviewDecision.INSPECT
+        parse_method = ""
+        transport_ok = True
+        transport_error = ""
 
         # WP-2026-106 B3: the escalation counter is derived purely from bus
         # history, never a local loop accumulator. It is computed once, after
@@ -1190,8 +1226,17 @@ class ReviewBridge:
                     manager_executable=manager_executable,
                     timeout_seconds=current_timeout,
                 )
-                # WP-2026-120: Use parser with controlled retry for transient failures
-                decision, _, parse_method = self._parse_opencode_decision_with_retry(stdout, stderr)
+                transport_ok, transport_error = self._classify_transport_result(
+                    stdout, stderr, exit_code
+                )
+                if transport_ok:
+                    # WP-2026-120: Use parser with controlled retry for transient failures
+                    decision, _, parse_method = (
+                        self._parse_opencode_decision_with_retry(stdout, stderr)
+                    )
+                else:
+                    decision = ReviewDecision.TRANSPORT_FAILED
+                    parse_method = "transport_failed"
             else:
                 # Codex legacy route (or any other backend)
                 if manager_executable is None:
@@ -1203,16 +1248,23 @@ class ReviewBridge:
                     manager_executable=manager_executable,
                     timeout_seconds=current_timeout,
                 )
-                parse_method = "legacy_codex"
-                # Legacy Codex parser
-                if "CHANGES" in stdout.upper():
-                    decision = ReviewDecision.CHANGES
-                elif "APPROVE" in stdout.upper() and exit_code == 0:
-                    decision = ReviewDecision.APPROVE
-                elif "--uncommitted" in stderr:
-                    decision = ReviewDecision.INSPECT
+                transport_ok, transport_error = self._classify_transport_result(
+                    stdout, stderr, exit_code
+                )
+                if transport_ok:
+                    parse_method = "legacy_codex"
+                    # Legacy Codex parser
+                    if "CHANGES" in stdout.upper():
+                        decision = ReviewDecision.CHANGES
+                    elif "APPROVE" in stdout.upper() and exit_code == 0:
+                        decision = ReviewDecision.APPROVE
+                    elif "--uncommitted" in stderr:
+                        decision = ReviewDecision.INSPECT
+                    else:
+                        decision = ReviewDecision.INSPECT
                 else:
-                    decision = ReviewDecision.INSPECT
+                    decision = ReviewDecision.TRANSPORT_FAILED
+                    parse_method = "transport_failed"
 
             elapsed = time.time() - start_time
 
@@ -1223,10 +1275,10 @@ class ReviewBridge:
                 stdout,
                 stderr,
                 decision,
-                review_packet_path=self._get_review_packet_path(
-                    ticket_id, attempt
-                ),
+                review_packet_path=self._get_review_packet_path(ticket_id, attempt),
                 parse_method=parse_method,
+                transport_ok=transport_ok,
+                transport_error=transport_error,
             )
 
             # Parse structured sections for CHANGES
@@ -1266,6 +1318,8 @@ class ReviewBridge:
                 decision=decision,
                 review_log_path=review_log_path,
                 parse_method=parse_method,
+                transport_ok=transport_ok,
+                transport_error=transport_error,
             )
 
             # Track attempt payload for potential human report (in-memory only)
@@ -1281,6 +1335,8 @@ class ReviewBridge:
                         "stderr_tail": (stderr or "")[-500:],
                         "decision": decision.value,
                         "parse_method": parse_method,
+                        "transport_ok": transport_ok,
+                        "transport_error": transport_error,
                         "review_log_path": str(review_log_path)
                         if review_log_path
                         else None,
@@ -1296,6 +1352,12 @@ class ReviewBridge:
             # WP-2026-106: Only break on APPROVE or INSPECT
             # CHANGES continues until threshold reached
             if decision == ReviewDecision.APPROVE:
+                break
+
+            if decision == ReviewDecision.TRANSPORT_FAILED:
+                # Transport failed before the model could produce a valid review.
+                # Do not escalate to HUMAN_GATE; surface the infrastructure error
+                # to the bus and stop the cycle so the caller can retry manually.
                 break
 
             if decision == ReviewDecision.INSPECT:
@@ -1322,8 +1384,50 @@ class ReviewBridge:
 
         # WP-2026-106 B1: keep the bus lightweight. Full review text lives in
         # attempt-N.md on disk; the event only carries a short forensic tail.
-        # Emit REVIEW_DECISION FIRST so the bus-derived counter below sees it.
-        # WP-2026-118: Wrap in fail-safe
+        # Transport failures are tracked as a separate event so they cannot be
+        # mistaken for a human review decision.
+        if decision == ReviewDecision.TRANSPORT_FAILED:
+            try:
+                self.event_bus.emit(
+                    "REVIEW_TRANSPORT_FAILED",
+                    ticket_id=ticket_id,
+                    actor="MANAGER",
+                    payload={
+                        "stdout_tail": (final_stdout or "")[-500:],
+                        "stderr_tail": (final_stderr or "")[-500:],
+                        "exit_code": final_exit,
+                        "transport_error": transport_error,
+                        "parse_method": parse_method,
+                        "transport_ok": transport_ok,
+                    },
+                )
+            except Exception as exc:
+                print(
+                    f"[manager-review-bridge] FAIL-SAFE: Cannot emit REVIEW_TRANSPORT_FAILED for "
+                    f"ticket {ticket_id}: {type(exc).__name__}: {exc}.",
+                    file=sys.stderr,
+                )
+                return ReviewResult(
+                    decision=decision,
+                    stdout=final_stdout,
+                    stderr=f"REVIEW_TRANSPORT_FAILED emit failed: {exc}",
+                    exit_code=1,
+                    feedback=final_stdout.strip() or final_stderr.strip(),
+                    transport_ok=False,
+                    transport_error=transport_error or str(exc),
+                    parse_method=parse_method,
+                )
+            return ReviewResult(
+                decision=decision,
+                stdout=final_stdout,
+                stderr=final_stderr,
+                exit_code=final_exit,
+                feedback=final_stdout.strip() or final_stderr.strip(),
+                transport_ok=False,
+                transport_error=transport_error,
+                parse_method=parse_method,
+            )
+
         try:
             self.event_bus.emit(
                 "REVIEW_DECISION",
@@ -1349,6 +1453,7 @@ class ReviewBridge:
                 stderr=f"REVIEW_DECISION emit failed: {exc}",
                 exit_code=1,
                 feedback=final_stdout.strip() or final_stderr.strip(),
+                parse_method=parse_method,
             )
 
         if decision == ReviewDecision.APPROVE:
@@ -1420,4 +1525,7 @@ class ReviewBridge:
             stderr=final_stderr,
             exit_code=final_exit,
             feedback=final_stdout.strip() or final_stderr.strip(),
+            transport_ok=transport_ok,
+            transport_error=transport_error,
+            parse_method=parse_method,
         )
