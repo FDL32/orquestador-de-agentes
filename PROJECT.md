@@ -17,7 +17,7 @@
 - Manager backend: OpenCode (model: configurable via agents.json).
 - Target model: Qwen3.5 Plus [NO VERIFICADO como provider/model].
 - Outcome: implementation of Manager naming cleanup in progress.
-- The review bridge should stop using `codex` as a name for the Manager route.
+- The review bridge no longer uses `codex` as a name for the Manager route (resolved WP-2026-130).
 - The bus canonical authority and prompt execution must stay aligned.
 
 ## Source of truth
