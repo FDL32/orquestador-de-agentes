@@ -254,9 +254,7 @@ def _sync_ticket_checkpoint(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Automated manager review bridge"
-    )
+    parser = argparse.ArgumentParser(description="Automated manager review bridge")
     parser.add_argument(
         "--watch",
         action="store_true",
