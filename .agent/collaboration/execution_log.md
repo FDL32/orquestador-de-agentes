@@ -31,10 +31,10 @@
 - `python .agent/agent_controller.py --validate --json --force`
 
 ## Criterios de Aceptacion
-- [ ] AP-01..AP-07 se cargan desde archivo y se reutilizan con caché.
-- [ ] El rubric del Manager deja de duplicar la lista inline de APs.
-- [ ] El fallback seguro mantiene el prompt funcional si el archivo canónico no se puede leer.
-- [ ] Los tests cubren carga unica, composicion y degradacion segura.
+- [x] AP-01..AP-07 se cargan desde archivo y se reutilizan con caché.
+- [x] El rubric del Manager deja de duplicar la lista inline de APs.
+- [x] El fallback seguro mantiene el prompt funcional si el archivo canónico no se puede leer.
+- [x] Los tests cubren carga unica, composicion y degradacion segura.
 
 ## Evidencia de Implementacion
 ### Preparacion Canonica
