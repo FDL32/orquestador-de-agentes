@@ -169,7 +169,18 @@ Si el WP no tiene origen externo (es trabajo propio del proyecto): este paso es 
   - Si OK → continuar con el cierre del Manager (Paso 10).
   - El output queda en `.agent/runtime/audit/` (gitignored, sirve como entrada `Paso 0` del `session_bootstrap` en la próxima sesión).
 
-### Paso 9d: Builder ejecuta consolidación de memoria (opcional)
+### Paso 9d: Builder genera observaciones de cierre de sesion
+
+- Ejecutar `python scripts/session_close_observations.py --ticket WP-2026-XXX --verbose`
+- Revisar `.agent/runtime/memory/session_close_report.md` para verificar:
+  - Observaciones generadas y filtradas
+  - Razones de rechazo (si las hay)
+  - Topics cubiertos en este ciclo
+- Validar que las observaciones validadas se appendearon a `observations.jsonl`
+- Este paso es **obligatorio** antes de consolidar memoria en cierres de sesion largos
+- **Skill relacionada**: `session-close-observations`
+
+### Paso 9e: Builder ejecuta consolidación de memoria (opcional)
 
 - Ejecutar `python scripts/memory_consolidate.py --verbose` (dry-run primero)
 - Revisar `.agent/runtime/memory/CONSOLIDATION_REPORT.md` para verificar cifras
@@ -177,8 +188,9 @@ Si el WP no tiene origen externo (es trabajo propio del proyecto): este paso es 
 - Validar que `MEMORY.md` se regeneró correctamente
 - Este paso es opcional; invocar solo en cierres de sesión largos o cuando `observations.jsonl` haya crecido significativamente
 - **Origen externo**: Oportunidad #4 de `garrytan/gbrain` (dream cycle pattern) - ver `CREDITS.md`
+- **Pre-requisito**: Haber ejecutado Paso 9d (`session_close_observations.py`) para generar observaciones de cierre
 
-### Paso 9e: Builder verifica housekeeping del histórico (sugerencia)
+### Paso 9f: Builder verifica housekeeping del histórico (sugerencia)
 
 - Si `execution_log.md` supera ~10 entradas WP completadas, considerar ejecutar:
   - `python scripts/archive_execution_log.py --dry-run` para previsualizar
@@ -216,6 +228,8 @@ Si el proyecto termina o cambia de manos, dejar explicito:
 - `../bui-self-audit/SKILL.md` - Auditoria obligatoria del Builder
 - `../bui-run-quality-gates/SKILL.md` - Quality gates finales
 - `../man-review-implementation/SKILL.md` - Revision final del Manager
+- `../session-close-observations/SKILL.md` - Generar observaciones de cierre
+- `../memory-consolidate/SKILL.md` - Consolidacion de memoria
 
 ## Constraints
 
