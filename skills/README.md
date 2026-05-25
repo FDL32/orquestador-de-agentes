@@ -20,6 +20,7 @@
 | 12 | `setup-agent-system` | Instalar el sistema multi-agente | Usuario | `setup`, `multi-agent`, `configuration` |
 | 13 | `create-agent-skill` | Crear nuevas micro-skills | Ambos | `meta`, `skill-creation`, `template` |
 | 14 | `code-audit` | AuditorÃ­a sistemÃ¡tica: dead code, deuda tÃ©cnica, abandono | Builder | `audit`, `quality`, `python`, `builder` |
+| 15 | `session-close-observations` | Generar observaciones curadas al cerrar sesion | Ambos | `core`, `system`, `memory` |
 
 ## Uso por Rol
 
@@ -41,6 +42,7 @@
 - `secure-existing-project` - Seguridad
 - `scaffold-python-project` - Crear proyectos
 - `create-agent-skill` - Crear skills
+- `session-close-observations` - Generar observaciones curadas al cerrar sesion
 
 ### Usuario / Setup
 - `setup-agent-system` - Instalacion inicial

@@ -1,5 +1,5 @@
 # Mapa del Proyecto
-**Actualizado:** 2026-05-25 11:38:57
+**Actualizado:** 2026-05-25 13:48:17
 
 ## Estructura de Archivos
 ```
@@ -15,6 +15,9 @@
 .agent\collaboration\_archive\plan_audit\AUDIT_WP-2026-127.md
 .agent\collaboration\_archive\plan_audit\AUDIT_WP-2026-128.md
 .agent\collaboration\_archive\plan_audit\AUDIT_WP-2026-129.md
+.agent\collaboration\_archive\plan_audit\AUDIT_WP-2026-130.md
+.agent\collaboration\_archive\plan_audit\AUDIT_WP-2026-131.md
+.agent\collaboration\_archive\plan_audit\AUDIT_WP-2026-132.md
 .agent\collaboration\_archive\plan_audit\PLAN_WP-2026-122.md
 .agent\collaboration\_archive\plan_audit\PLAN_WP-2026-123.md
 .agent\collaboration\_archive\plan_audit\PLAN_WP-2026-124.md
@@ -23,13 +26,16 @@
 .agent\collaboration\_archive\plan_audit\PLAN_WP-2026-127.md
 .agent\collaboration\_archive\plan_audit\PLAN_WP-2026-128.md
 .agent\collaboration\_archive\plan_audit\PLAN_WP-2026-129.md
+.agent\collaboration\_archive\plan_audit\PLAN_WP-2026-130.md
+.agent\collaboration\_archive\plan_audit\PLAN_WP-2026-131.md
+.agent\collaboration\_archive\plan_audit\PLAN_WP-2026-132.md
 .agent\collaboration\archive\notifications_20260525_105734.md
-.agent\collaboration\AUDIT_WP-2026-130.md
-.agent\collaboration\AUDIT_WP-2026-131.md
+.agent\collaboration\archive\notifications_20260525_113857.md
+.agent\collaboration\archive\notifications_20260525_122926.md
+.agent\collaboration\AUDIT_WP-2026-134.md
 .agent\collaboration\execution_log.md
 .agent\collaboration\notifications.md
-.agent\collaboration\PLAN_WP-2026-130.md
-.agent\collaboration\PLAN_WP-2026-131.md
+.agent\collaboration\PLAN_WP-2026-134.md
 .agent\collaboration\review_queue.md
 .agent\collaboration\STATE.md
 .agent\collaboration\TURN.md
@@ -47,11 +53,5 @@
 .agent\hooks\native_stop_hook.py
 .agent\hooks\post_tool_hook.py
 .agent\hooks\pre_compact_hook.py
-.agent\hooks\stop_hook.py
-.agent\hooks\subagent_stop_hook.py
-.agent\known_models.json
-.agent\project_manifest.toml
-.agent\runtime\__init__.py
-.agent\runtime\builder_lock.txt
-... (+2417 archivos mas)
+... (+2493 archivos mas)
 ```

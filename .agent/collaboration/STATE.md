@@ -1,13 +1,13 @@
-# State - WP-2026-131
+# State - WP-2026-134
 
-Plan Activo: WP-2026-131
-Estado actual: IN_PROGRESS
-Rol activo: BUILDER
+Plan Activo: WP-2026-134
+Estado actual: COMPLETED
+Rol activo: MANAGER
 
 Resumen:
-WP-2026-131 limita `MEMORY.md` para que siga siendo un indice humano corto y estable.
+WP-2026-134 ancla el review del Manager al diff real del ticket y añade provenance para evitar reviews vacios tras el commit del Builder.
 
 Notas:
-- `observations.jsonl` sigue siendo la fuente historica para trazabilidad profunda.
-- El alcance es minimo: memoria, documentacion operativa y validacion del indice.
-- Si aparece deriva hacia bus o state machine, el ticket debe escalarse aparte.
+- `origin/main` es la base preferida, con fallback seguro si no esta disponible.
+- El contrato de decision sigue siendo `APPROVE / CHANGES / INSPECT`.
+- El ticket queda cerrado de forma canonica y listo para el siguiente ciclo.
