@@ -50,7 +50,7 @@ def load_observations_safe() -> list[dict[str, Any]]:
         return observations
 
     try:
-        with open(OBSERVATIONS_FILE, encoding="utf-8") as f:
+        with open(OBSERVATIONS_FILE, encoding="utf-8", errors="replace") as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -207,9 +207,9 @@ def score_observation(obs: dict[str, Any], keywords: list[str]) -> int:
             pass
 
     # Keyword matching score
-    topic = obs.get("topic", "").lower()
-    signal = obs.get("signal", "").lower()
-    source = obs.get("source", "").lower()
+    topic = str(obs.get("topic") or "").lower()
+    signal = str(obs.get("signal") or "").lower()
+    source = str(obs.get("source") or "").lower()
 
     text_to_match = f"{topic} {signal} {source}"
 
@@ -269,10 +269,10 @@ def format_memory_section(observations: list[dict[str, Any]]) -> str:
 
     lines = ["**Memoria relevante**:", ""]
     for obs in observations:
-        timestamp = obs.get("timestamp", "")[:10]  # Just date part
-        topic = obs.get("topic", "sin-topic")
-        signal = obs.get("signal", "")[:100]  # Truncate long signals
-        source = obs.get("source", "")
+        timestamp = str(obs.get("timestamp") or "")[:10]  # Just date part
+        topic = str(obs.get("topic") or "sin-topic")
+        signal = str(obs.get("signal") or "")[:100]  # Truncate long signals
+        source = str(obs.get("source") or "")
 
         if signal:
             lines.append(f"- [{timestamp}] **{topic}**: {signal} (fuente: {source})")
