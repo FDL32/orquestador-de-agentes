@@ -1,19 +1,19 @@
-# Execution Log - WP-2026-130
+# Execution Log - WP-2026-131
 
 ## Metadata
-- **ID:** WP-2026-130
-**Estado:** COMPLETED
+- **ID:** WP-2026-131
+- **Estado:** IN_PROGRESS
 - **deliverable_type:** code
 
 ## Agente Activo
 - **Rol:** BUILDER
 - **Accion:** IMPLEMENT
-- **Plan:** Manager legacy naming cleanup
+- **Plan:** Memory index cap for persistent observations
 
 ## Fases
-- Phase 1: renombrar la ruta legacy del Manager para que deje de describirse como `codex`.
-- Phase 2: actualizar los fixtures, templates y tests que siguen usando la nomenclatura legacy.
-- Phase 3: validar el rename con tests y quality gates sin tocar la compatibilidad real del backend `codex`.
+- Phase 1: introducir el cap de lineas en `MEMORY.md` y ajustar la regeneracion del indice.
+- Phase 2: actualizar `AGENTS.md` para documentar la regla operativa.
+- Phase 3: validar que la historia completa sigue viviendo en `observations.jsonl` y que las gates pasan.
 
 ## Registro de Implementacion
 
@@ -21,39 +21,37 @@
 - `work_plan.md`: ticket aprobado para el nuevo ciclo.
 - `STATE.md`: estado inicial del nuevo ticket.
 - `TURN.md`: turno del Builder preparado.
-- `PLAN_WP-2026-130.md`: alcance y estrategia del ticket.
-- `AUDIT_WP-2026-130.md`: criterios de auditoria definidos.
+- `PLAN_WP-2026-131.md`: alcance y estrategia del ticket.
+- `AUDIT_WP-2026-131.md`: criterios de auditoria definidos.
 
 ### Calidad Esperada
-- `ruff check .`
-- `pytest`
+- `python scripts/memory_consolidate.py --dry-run`
+- `python scripts/run_pytest_safe.py tests/unit/test_memory_consolidate.py -q`
 - `python .agent/agent_controller.py --validate --json --force`
 
-### Implementacion Fase 1: Renombrar la ruta legacy del Manager
-- `bus/review_bridge.py` debe dejar de usar nombres `codex` para la ruta legacy del Manager.
-- `bus/review_bridge.py` debe cambiar la trazabilidad `legacy_codex` a una etiqueta semantica de Manager.
-- `tests/test_manager_review_bridge.py` debe cubrir el nuevo nombre sin cambiar la semantica del backend real.
-- `tests/test_launch_agent_terminals_script.py` debe reflejar el nuevo nombre del template legacy.
-
 ## Criterios de Aceptacion
-- [ ] La ruta legacy del Manager ya no se describe como `codex`.
-- [ ] Los tests y templates reflejan la nomenclatura correcta.
-- [ ] El backend `codex` real sigue disponible como configuracion, sin romper compatibilidad.
-- [ ] Los tests cubren el rename y evitan regresiones.
+- [ ] `MEMORY.md` no supera 80 lineas.
+- [ ] `MEMORY.md` sigue siendo un indice humano util.
+- [ ] `observations.jsonl` conserva la historia completa.
+- [ ] `AGENTS.md` documenta la regla sin ambiguedades.
+- [ ] Los tests de memoria siguen pasando y validan la regeneracion del indice.
 
 ## Evidencia de Implementacion
 
-### Fase 1 pendiente
-- `bus/review_bridge.py`: renombrar la ruta legacy del Manager.
-- `tests/test_manager_review_bridge.py`: ajustar fixtures y nombres de pruebas.
-- `tests/test_launch_agent_terminals_script.py`: cambiar la referencia del template legacy.
+### Implementacion completada
+- `scripts/memory_consolidate.py`: añadido `MEMORY_MD_LINE_CAP = 80` y logica de truncamiento con marcador visible en `regen_memory_md()`.
+- `tests/unit/test_memory_consolidate.py`: añadido `test_regen_memory_md_line_cap()` que genera 100 entradas y valida el cap.
+- `AGENTS.md`: actualizada seccion "Memoria por proyecto" con la regla del cap y el mecanismo de truncamiento.
 
-### Quality gates esperados
-- `ruff check .`
-- `pytest`
-- `python .agent/agent_controller.py --validate --json --force`
+### Quality gates ejecutados
+- `python scripts/memory_consolidate.py`: DRY-RUN pasado (1 entrada, 0 dropped).
+- `python scripts/run_pytest_safe.py tests/unit/test_memory_consolidate.py -q`: 12 tests pasados.
+- `ruff check scripts/memory_consolidate.py tests/unit/test_memory_consolidate.py AGENTS.md`: All checks passed.
+- `python .agent/agent_controller.py --validate --json --force`: Validacion sin errores.
 
-
-Marked ready by Builder
-
-Manager approved canonical closeout for WP-2026-130
+### Verificacion de criterios
+- [x] `MEMORY.md` no supera 80 lineas (actual: 8 lineas).
+- [x] `MEMORY.md` sigue siendo un indice humano util.
+- [x] `observations.jsonl` conserva la historia completa.
+- [x] `AGENTS.md` documenta la regla sin ambiguedades.
+- [x] Los tests de memoria siguen pasando y validan la regeneracion del indice.

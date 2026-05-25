@@ -14,6 +14,7 @@ from scripts.memory_consolidate import (
     DEDUPE_WINDOW_HOURS,
     MEMORY_DIR,
     MEMORY_MD,
+    MEMORY_MD_LINE_CAP,
     OBS,
     REPORT,
     dedupe,
@@ -206,3 +207,42 @@ def test_dry_run_no_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     assert not test_memory_md.exists()
     assert test_report.exists()
     assert "DRY-RUN" in test_report.read_text(encoding="utf-8")
+
+
+def test_regen_memory_md_line_cap() -> None:
+    """MEMORY.md should be capped at MEMORY_MD_LINE_CAP (80) lines.
+
+    Generates an artificially large number of entries to force the index
+    to exceed the cap, then verifies truncation with visible marker.
+    """
+    now = datetime.now(timezone.utc)
+    # Create enough entries to exceed 80 lines
+    # Each entry in the output takes ~2 lines (topic header + signal)
+    # Plus index and summary sections (~20 lines)
+    # So we need ~100 entries to safely exceed the cap
+    entries = [
+        {
+            "signal": f"Test signal {i} with enough text to be meaningful",
+            "topic": f"topic_{i % 10}",  # 10 different topics
+            "timestamp": now.isoformat(),
+            "source": "builder",
+        }
+        for i in range(100)
+    ]
+    stats = {"kept": 100, "deduped": 0, "dropped": 0, "archived": 0}
+    content = regen_memory_md(entries, stats)
+    lines = content.split("\n")
+
+    # Verify cap is enforced
+    assert len(lines) <= MEMORY_MD_LINE_CAP, (
+        f"MEMORY.md has {len(lines)} lines, exceeds cap of {MEMORY_MD_LINE_CAP}"
+    )
+
+    # Verify truncation marker is present when capped
+    assert "[MEMORY.md truncated at" in content
+    assert "Full history available in observations.jsonl" in content
+
+    # Verify structure is still valid (header and index always present)
+    assert "# MEMORY" in content
+    assert "Regenerated:" in content
+    assert "Total observations: 100" in content
