@@ -103,7 +103,13 @@ def main() -> int:
     )
 
     if args.reactive:
-        supervisor.bootstrap()
+        if not supervisor.bootstrap():
+            print(
+                "[ticket-supervisor] bootstrap rejected: another supervisor instance is active",
+                file=sys.stderr,
+                flush=True,
+            )
+            return 1
         state = supervisor.load_state()
         print(
             f"[ticket-supervisor] reactive mode start | active={state.active_ticket or 'NONE'} "
@@ -114,7 +120,13 @@ def main() -> int:
         return 0
 
     if args.loop:
-        supervisor.bootstrap()
+        if not supervisor.bootstrap():
+            print(
+                "[ticket-supervisor] bootstrap rejected: another supervisor instance is active",
+                file=sys.stderr,
+                flush=True,
+            )
+            return 1
         state = supervisor.load_state()
         print(
             f"[ticket-supervisor] loop mode start | active={state.active_ticket or 'NONE'} "
@@ -124,7 +136,14 @@ def main() -> int:
         supervisor.run_loop(poll_interval=args.poll_interval)
         return 0
 
-    supervisor.bootstrap()
+    # --once mode: acquire lock for single tick, then release
+    if not supervisor.bootstrap():
+        print(
+            "[ticket-supervisor] once mode skipped: another supervisor instance is active",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 1
     state = supervisor.load_state()
     print(
         f"[ticket-supervisor] once mode start | active={state.active_ticket or 'NONE'} "
@@ -132,6 +151,7 @@ def main() -> int:
         flush=True,
     )
     changed = supervisor.run_once()
+    supervisor._release_supervisor_lock()
     if changed:
         print("[ticket-supervisor] once mode processed new events", flush=True)
     return 0

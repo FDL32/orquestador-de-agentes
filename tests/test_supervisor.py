@@ -845,7 +845,8 @@ def test_run_reactive_uses_idle_timeout_reset(tmp_path, monkeypatch):
         runtime_dir=runtime_dir,
         auto_sync=False,
     )
-    monkeypatch.setattr(supervisor, "bootstrap", lambda: None)
+    # Bootstrap must return True for run_reactive to proceed
+    monkeypatch.setattr(supervisor, "bootstrap", lambda: True)
 
     run_once_calls: list[int] = []
 
@@ -951,6 +952,7 @@ def test_ticket_supervisor_reactive_prints_bootstrapped_state(monkeypatch, tmp_p
         def bootstrap(self):
             self.state.active_ticket = "WP-2026-042"
             self.state.completed_tickets = ["WP-2026-024", "WP-2026-027"]
+            return True  # Must return True for run_reactive to proceed
 
         def load_state(self):
             return self.state
@@ -2316,3 +2318,404 @@ def test_supervisor_state_reconciliation_e2e(tmp_path):
     assert state.active_ticket == "WP-2026-119"
     assert state.last_processed_sequence == 6  # 6 events in bus
     assert state.loop_current_round == 2
+
+
+# =============================================================================
+# Tests WP-2026-137: Supervisor startup lock and reconciliation dedupe
+# =============================================================================
+
+
+def test_supervisor_lock_acquire_atomic(tmp_path):
+    """Test that supervisor lock is acquired atomically."""
+    import json
+    import os
+
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    # Acquire lock
+    result = supervisor._acquire_supervisor_lock()
+    assert result is True
+    assert supervisor._lock_fd is not None
+    assert supervisor.supervisor_lock_path.exists()
+
+    # Verify lock content
+    lock_data = json.loads(supervisor.supervisor_lock_path.read_text(encoding="utf-8"))
+    assert lock_data["pid"] == os.getpid()
+    assert "started_at" in lock_data
+
+    # Release lock
+    supervisor._release_supervisor_lock()
+    assert not supervisor.supervisor_lock_path.exists()
+
+
+def test_supervisor_lock_contention(tmp_path):
+    """Test that second supervisor instance cannot acquire lock when first holds it."""
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor1 = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    supervisor2 = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    # First supervisor acquires lock
+    result1 = supervisor1._acquire_supervisor_lock()
+    assert result1 is True
+
+    # Second supervisor should fail to acquire lock
+    result2 = supervisor2._acquire_supervisor_lock()
+    assert result2 is False
+
+    # Release lock from first supervisor
+    supervisor1._release_supervisor_lock()
+
+    # Now second supervisor should be able to acquire
+    result2_retry = supervisor2._acquire_supervisor_lock()
+    assert result2_retry is True
+
+    supervisor2._release_supervisor_lock()
+
+
+def test_supervisor_lock_stale_by_mtime(tmp_path):
+    """Test that stale lock (old mtime) is broken and re-acquired."""
+    import json
+    import os
+    import time
+
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    # Create a fake old lock file
+    lock_path = supervisor.supervisor_lock_path
+    lock_data = {
+        "pid": 999999,  # Dead PID
+        "ticket_id": "WP-OLD",
+        "started_at": "2020-01-01T00:00:00Z",
+    }
+    lock_path.write_text(json.dumps(lock_data), encoding="utf-8")
+
+    # Make lock file old (>15 min)
+    old_time = time.time() - 1000
+    os.utime(lock_path, (old_time, old_time))
+
+    # Should break stale lock and acquire successfully
+    result = supervisor._acquire_supervisor_lock()
+    assert result is True
+
+    # Verify new lock has current PID
+    new_lock_data = json.loads(lock_path.read_text(encoding="utf-8"))
+    assert new_lock_data["pid"] == os.getpid()
+
+    supervisor._release_supervisor_lock()
+
+
+def test_bootstrap_rejects_duplicate_instance(tmp_path, monkeypatch):
+    """Test that bootstrap returns False when another instance holds the lock."""
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor1 = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    supervisor2 = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    # First supervisor acquires lock via bootstrap
+    result1 = supervisor1.bootstrap()
+    assert result1 is True
+
+    # Second supervisor should be rejected
+    result2 = supervisor2.bootstrap()
+    assert result2 is False
+
+    # Clean up
+    supervisor1._release_supervisor_lock()
+
+
+def test_bootstrap_reconciled_deduplication(tmp_path):
+    """Test that SUPERVISOR_RECONCILED is not emitted twice for same pair."""
+    from bus.supervisor import SequentialTicketSupervisor, SupervisorState
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    # Create TURN.md with ticket
+    turn_path = collaboration_dir / "TURN.md"
+    turn_path.write_text(
+        "\n".join(
+            [
+                "# TURNO ACTUAL",
+                "",
+                "| Campo | Valor |",
+                "|-------|-------|",
+                "| **ROL** | **BUILDER** |",
+                "| **Plan ID** | WP-2026-137 |",
+                "| **Accion** | IMPLEMENT |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    # Start with stale state pointing to old ticket
+    supervisor.save_state(
+        SupervisorState(active_ticket="WP-2026-136")
+    )
+
+    # First bootstrap - should emit SUPERVISOR_RECONCILED
+    result1 = supervisor.bootstrap()
+    assert result1 is True
+
+    events1 = supervisor.event_bus.read_events(
+        ticket_id="WP-2026-137", event_type="SUPERVISOR_RECONCILED"
+    )
+    assert len(events1) == 1
+    assert events1[0].payload["previous_ticket"] == "WP-2026-136"
+    assert events1[0].payload["recovered_ticket"] == "WP-2026-137"
+
+    # Release lock to simulate restart
+    supervisor._release_supervisor_lock()
+
+    # Second bootstrap with same state - should NOT emit again
+    result2 = supervisor.bootstrap()
+    assert result2 is True
+
+    events2 = supervisor.event_bus.read_events(
+        ticket_id="WP-2026-137", event_type="SUPERVISOR_RECONCILED"
+    )
+    # Still only 1 event - deduplication worked
+    assert len(events2) == 1
+
+    supervisor._release_supervisor_lock()
+
+
+def test_bootstrap_reconciled_different_pair_emits(tmp_path):
+    """Test that SUPERVISOR_RECONCILED is emitted for different ticket pairs."""
+    from bus.supervisor import SequentialTicketSupervisor, SupervisorState
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    # Create TURN.md with ticket WP-2026-137
+    turn_path = collaboration_dir / "TURN.md"
+    turn_path.write_text(
+        "\n".join(
+            [
+                "# TURNO ACTUAL",
+                "",
+                "| Campo | Valor |",
+                "|-------|-------|",
+                "| **ROL** | **BUILDER** |",
+                "| **Plan ID** | WP-2026-137 |",
+                "| **Accion** | IMPLEMENT |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    # First bootstrap: None -> WP-2026-137 (recovery, no RECONCILED event)
+    supervisor.save_state(SupervisorState(active_ticket=None))
+    result1 = supervisor.bootstrap()
+    assert result1 is True
+
+    # Recovery from None should not emit RECONCILED
+    events_after_first = supervisor.event_bus.read_events(
+        ticket_id="WP-2026-137", event_type="SUPERVISOR_RECONCILED"
+    )
+    assert len(events_after_first) == 0
+
+    # Release lock to simulate restart
+    supervisor._release_supervisor_lock()
+
+    # Change TURN.md to WP-2026-138
+    turn_path.write_text(
+        "\n".join(
+            [
+                "# TURNO ACTUAL",
+                "",
+                "| Campo | Valor |",
+                "|-------|-------|",
+                "| **ROL** | **BUILDER** |",
+                "| **Plan ID** | WP-2026-138 |",
+                "| **Accion** | IMPLEMENT |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    # Second bootstrap: WP-2026-137 -> WP-2026-138 (reconciliation, should emit)
+    result2 = supervisor.bootstrap()
+    assert result2 is True
+
+    # Should emit RECONCILED for the new pair
+    events_after_second = supervisor.event_bus.read_events(
+        ticket_id="WP-2026-138", event_type="SUPERVISOR_RECONCILED"
+    )
+    assert len(events_after_second) == 1
+    assert events_after_second[0].payload["previous_ticket"] == "WP-2026-137"
+    assert events_after_second[0].payload["recovered_ticket"] == "WP-2026-138"
+
+    supervisor._release_supervisor_lock()
+
+    # Second bootstrap: WP-2026-137 -> WP-2026-138 (different pair)
+    # Manually set state to simulate ticket change
+    supervisor.save_state(SupervisorState(active_ticket="WP-2026-137"))
+    result2 = supervisor.bootstrap()
+    assert result2 is True
+
+    # Should have new event for the different pair
+    events_after_second = supervisor.event_bus.read_events(
+        ticket_id="WP-2026-138", event_type="SUPERVISOR_RECONCILED"
+    )
+    assert len(events_after_second) == 1
+
+    supervisor._release_supervisor_lock()
+
+
+def test_run_reactive_releases_lock_on_exit(tmp_path, monkeypatch):
+    """Test that run_reactive releases lock when exiting."""
+    import time
+
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    # Mock run_once to return False immediately for quick exit
+    monkeypatch.setattr(supervisor, "run_once", lambda: False)
+
+    # Mock time.time to simulate timeout quickly
+    times = iter([0.0, 0.0, 2.0])  # Start, check, timeout
+    monkeypatch.setattr("time.time", lambda: next(times))
+    monkeypatch.setattr("time.sleep", lambda _seconds: None)
+
+    # Run reactive with very short timeout
+    result = supervisor.run_reactive(timeout_seconds=1.0)
+
+    # Lock should be released after exit
+    assert not supervisor.supervisor_lock_path.exists()
+    assert supervisor._lock_fd is None
+
+
+def test_run_loop_releases_lock_on_exception(tmp_path, monkeypatch):
+    """Test that run_loop releases lock even when exception occurs."""
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    # Mock run_once to raise exception on first call
+    call_count = 0
+
+    def flaky_run_once():
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RuntimeError("Simulated error")
+        return False
+
+    monkeypatch.setattr(supervisor, "run_once", flaky_run_once)
+
+    # Mock time.sleep to exit quickly
+    sleep_count = 0
+
+    def quick_sleep(_seconds):
+        nonlocal sleep_count
+        sleep_count += 1
+        if sleep_count > 2:
+            raise KeyboardInterrupt("Stop loop")
+
+    monkeypatch.setattr("time.sleep", quick_sleep)
+
+    # Run loop should release lock even with exception
+    try:
+        supervisor.run_loop(poll_interval=0.1)
+    except (RuntimeError, KeyboardInterrupt):
+        pass
+
+    # Lock should be released despite exception
+    assert not supervisor.supervisor_lock_path.exists()
+    assert supervisor._lock_fd is None

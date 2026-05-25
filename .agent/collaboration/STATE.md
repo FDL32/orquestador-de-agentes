@@ -1,13 +1,14 @@
-# State - WP-2026-136
+# State - WP-2026-137
 
-Plan Activo: WP-2026-136
-Estado actual: COMPLETED
-Rol activo: -
+Plan Activo: WP-2026-137
+Estado actual: IN_PROGRESS
+Rol activo: BUILDER
 
 Resumen:
-WP-2026-136 completado. Flag --candidates implementado con exclusion mutua real
-(add_mutually_exclusive_group), load_candidates_from_file estricta (ValueError para
-UTF-8 invalido), lista vacia -> exit 0. load_existing_observations endurecida.
-25 tests verdes. SKILL.md actualizado.
+WP-2026-137 protege el arranque del supervisor con lock de instancia e idempotencia de reconciliacion.
 
-Post-review human fix: strict UTF-8 decode y exit 0 para lista vacia.
+Notas:
+- El bus es la fuente canonica del ciclo y debe permanecer monotono.
+- `SUPERVISOR_RECONCILED` no debe repetirse para el mismo ticket recuperado.
+- Si aparece deriva hacia memoria, rubrica o pipeline de observaciones, el ticket debe escalarse aparte.
+
