@@ -585,3 +585,78 @@ class TestDocumentationPromptWiring:
         prompt = bridge._build_review_prompt("WP-2026-TEST", "documentation")
         assert "focus strictly on the clarity" in prompt
         assert "Lecciones acumuladas de auditoria" in prompt
+
+
+class TestCanonicalAntiPatternInventory:
+    """Direct tests for AP-08: new canonical AP loading methods (WP-2026-139 hotfix)."""
+
+    _AP_CONTENT = "\n".join([
+        "# Inventario Canonico",
+        "",
+        "## AP-01 - Mock drift",
+        "- El patch apunta a un simbolo distinto.",
+        "",
+        "## AP-02 - Floor assertion",
+        "- El umbral ya esta satisfecho por el baseline.",
+    ])
+
+    def _make_bridge(self, tmp_path: Path) -> ReviewBridge:
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        (collab / "work_plan.md").write_text(
+            "# Work Plan\n- **ID:** WP-TEST\n- **deliverable_type:** code\n",
+            encoding="utf-8",
+        )
+        for name in ("STATE.md", "TURN.md", "execution_log.md"):
+            (collab / name).write_text("", encoding="utf-8")
+        event_bus = EventBus(runtime_dir=tmp_path / ".agent" / "runtime" / "events")
+        return ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+    def test_parse_extracts_ap_id_and_name(self):
+        result = ReviewBridge._parse_canonical_anti_patterns(self._AP_CONTENT)
+        assert result == [("AP-01", "Mock drift"), ("AP-02", "Floor assertion")]
+
+    def test_parse_returns_empty_for_content_without_ap_headers(self):
+        result = ReviewBridge._parse_canonical_anti_patterns("# No AP headers\n- just content")
+        assert result == []
+
+    def test_load_warns_and_returns_empty_when_file_missing(self, tmp_path, monkeypatch):
+        bridge = self._make_bridge(tmp_path)
+        monkeypatch.setattr(bridge, "_canonical_anti_patterns_path", lambda: tmp_path / "nonexistent.md")
+        with pytest.warns(RuntimeWarning, match="unavailable"):
+            result = bridge._load_canonical_anti_patterns()
+        assert result == []
+
+    def test_load_warns_and_returns_empty_when_file_has_no_ap_entries(self, tmp_path, monkeypatch):
+        stub = tmp_path / "anti-patterns.md"
+        stub.write_text("# No AP headers here", encoding="utf-8")
+        bridge = self._make_bridge(tmp_path)
+        monkeypatch.setattr(bridge, "_canonical_anti_patterns_path", lambda: stub)
+        with pytest.warns(RuntimeWarning, match="empty or invalid"):
+            result = bridge._load_canonical_anti_patterns()
+        assert result == []
+
+    def test_render_formats_inventory_lines(self, tmp_path):
+        bridge = self._make_bridge(tmp_path)
+        bridge._canonical_anti_patterns = [("AP-01", "Mock drift"), ("AP-02", "Floor assertion")]
+        rendered = bridge._render_canonical_anti_pattern_inventory()
+        assert "AP-01 Mock drift" in rendered
+        assert "AP-02 Floor assertion" in rendered
+        assert "skills/_shared/anti-patterns.md" in rendered
+
+    def test_render_returns_empty_string_when_inventory_empty(self, tmp_path):
+        bridge = self._make_bridge(tmp_path)
+        bridge._canonical_anti_patterns = []
+        assert bridge._render_canonical_anti_pattern_inventory() == ""
+
+    def test_rubric_includes_ap_inventory_block_for_code_type(self, tmp_path):
+        bridge = self._make_bridge(tmp_path)
+        bridge._canonical_anti_patterns = [("AP-01", "Mock drift")]
+        rubric = bridge._rubric_for_type("code", "WP-TEST")
+        assert "AP-01 Mock drift" in rubric
+
+    def test_rubric_omits_ap_inventory_block_when_inventory_empty(self, tmp_path):
+        bridge = self._make_bridge(tmp_path)
+        bridge._canonical_anti_patterns = []
+        rubric = bridge._rubric_for_type("code", "WP-TEST")
+        assert "Canonical anti-pattern inventory" not in rubric
