@@ -253,3 +253,12 @@ Un ticket cuyo único entregable son directorios vacíos, `.gitkeep`, archivos d
 ✅ `deliverable_type: documentation` — no se invocan gates de ruff ni pytest sobre entregables que no son Python.
 
 Regla: si no hay ningún archivo `.py` nuevo o modificado entre los entregables declarados, el tipo no es `code`.
+
+### AP-08 — Test coverage drift (funciones nuevas sin tests directos)
+
+Ejecutar el suite existente y ver que pasa no es evidencia de cobertura si las funciones nuevas introducidas en el diff no aparecen en ningún test.
+
+❌ El Builder añade `_parse_inventory()`, `_load_inventory()` y `_render_inventory()` y declara "pytest pasa" — pero ningún test llama directamente a esas funciones.
+✅ Cada función nueva introducida en el diff tiene al menos un test que la invoca directamente, incluyendo el path de fallback si aplica.
+
+Regla: antes de declarar READY_FOR_REVIEW, verifica que cada `def` nuevo o `method` nuevo aparezca al menos una vez como llamada directa en `test_*.py`. Si no aparece, el test no existe.
