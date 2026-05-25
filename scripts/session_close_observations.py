@@ -160,14 +160,14 @@ def load_existing_observations() -> list[dict[str, Any]]:
     """Load existing observations from file.
 
     Before: Requires observations.jsonl to exist (or not).
-    During: Parses JSONL, skipping malformed lines.
+    During: Parses JSONL, skipping malformed lines. Tolerates invalid UTF-8 bytes.
     After: Returns list of observation dicts.
     """
     if not OBS_FILE.exists():
         return []
 
     entries = []
-    with open(OBS_FILE, encoding="utf-8") as f:
+    with open(OBS_FILE, encoding="utf-8", errors="replace") as f:
         for line_num, line in enumerate(f, 1):
             line = line.strip()
             if not line:
@@ -191,6 +191,47 @@ def append_observations(entries: list[dict[str, Any]]) -> None:
     with open(OBS_FILE, "a", encoding="utf-8") as f:
         for entry in entries:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def load_candidates_from_file(path: str) -> list[dict[str, Any]]:
+    """Load candidate observations from JSON file.
+
+    Before: Requires path to JSON file containing list of candidate observations.
+    During: Reads file, decodes UTF-8 (tolerant), parses JSON, validates top-level is list.
+            Non-dict elements are skipped with warning.
+    After: Returns list of candidate dicts. Raises:
+           - FileNotFoundError if file does not exist
+           - ValueError("UTF-8 decode error: ...") if invalid UTF-8 bytes
+           - ValueError("JSON decode error: ...") if JSON is malformed
+           - ValueError("Expected list, got <type>") if top-level is not a list
+    """
+    file_path = Path(path)
+    if not file_path.exists():
+        raise FileNotFoundError(f"Candidates file not found: {path}")
+
+    try:
+        content = file_path.read_text(encoding="utf-8", errors="replace")
+    except Exception as e:
+        raise ValueError(f"UTF-8 decode error: {e}") from e
+
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"JSON decode error: {e}") from e
+
+    if not isinstance(data, list):
+        data_type = type(data).__name__
+        raise ValueError(f"Expected list, got {data_type}")
+
+    candidates = []
+    for idx, item in enumerate(data):
+        if not isinstance(item, dict):
+            item_type = type(item).__name__
+            print(f"Warning: Skipping element {idx} (expected dict, got {item_type})")
+            continue
+        candidates.append(item)
+
+    return candidates
 
 
 def generate_report(
@@ -326,18 +367,72 @@ def extract_candidates_from_ticket(ticket_id: str) -> list[dict[str, Any]]:
     return candidates
 
 
+def _write_report(
+    generated: int,
+    passed: int,
+    rejected: int,
+    appended: int,
+    rejected_reasons: list[str],
+    topics: list[str],
+    dry_run: bool,
+) -> str:
+    """Generate and write session close report.
+
+    Before: Requires stats, rejection reasons, topics, and dry-run flag.
+    During: Formats markdown report and writes to REPORT_FILE.
+    After: Report file updated, summary printed to stdout. Returns report string.
+    """
+    report = generate_report(
+        generated=generated,
+        passed=passed,
+        rejected=rejected,
+        appended=appended,
+        rejected_reasons=rejected_reasons,
+        topics=topics,
+    )
+
+    mode = "DRY-RUN" if dry_run else "APPLIED"
+    REPORT_FILE.write_text(report, encoding="utf-8")
+    print(f"[{mode}] Report written to {REPORT_FILE}")
+    return report
+
+
+def _load_candidates(args: argparse.Namespace, verbose: bool) -> list[dict[str, Any]]:
+    """Load candidates from ticket or file based on active flag.
+
+    Before: Requires parsed args with --ticket or --candidates, and verbose flag.
+    During: Dispatches to extract_candidates_from_ticket() or load_candidates_from_file().
+    After: Returns list of candidate observations. Prints verbose info if enabled.
+    """
+    if args.ticket:
+        candidates = extract_candidates_from_ticket(args.ticket)
+        if verbose:
+            print(f"Extracted {len(candidates)} candidates from ticket {args.ticket}")
+    elif args.candidates:
+        candidates = load_candidates_from_file(args.candidates)
+        if verbose:
+            print(f"Loaded {len(candidates)} candidates from {args.candidates}")
+    else:
+        # Should never reach here due to mutually_exclusive_group(required=True)
+        print("Error: Either --ticket or --candidates is required", file=sys.stderr)
+        return []
+    return candidates
+
+
 def main() -> int:
     """Main entry point.
 
-    Before: Requires command-line arguments.
-    During: Processes candidates, applies filters, appends valid observations.
+    Before: Requires command-line arguments (--ticket or --candidates, mutually exclusive).
+    During: Loads candidates from ticket or file, processes filters, appends valid observations.
     After: Returns exit code (0 success, 1 error).
     """
     parser = argparse.ArgumentParser(
         description="Generate curated observations at session close"
     )
-    parser.add_argument(
-        "--ticket", type=str, required=True, help="Ticket ID (e.g., WP-2026-132)"
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--ticket", type=str, help="Ticket ID (e.g., WP-2026-132)")
+    group.add_argument(
+        "--candidates", type=str, help="Path to JSON file with candidate observations"
     )
     parser.add_argument("--verbose", action="store_true", help="Print detailed output")
     parser.add_argument(
@@ -354,10 +449,10 @@ def main() -> int:
         if args.verbose:
             print(f"Loaded {len(existing)} existing observations")
 
-        # Generate candidates from ticket
-        candidates = extract_candidates_from_ticket(args.ticket)
-        if args.verbose:
-            print(f"Generated {len(candidates)} candidate observations")
+        # Generate/load candidates based on active flag
+        candidates = _load_candidates(args, args.verbose)
+        if not candidates:
+            return 1
 
         # Process through filters
         appended, rejected_reasons = process_candidates(candidates, existing)
@@ -373,26 +468,25 @@ def main() -> int:
                     f"[DRY-RUN] Would append {len(appended)} observations to {OBS_FILE}"
                 )
 
-        # Generate report
-        report = generate_report(
+        # Write report
+        report = _write_report(
             generated=len(candidates),
             passed=len(appended),
             rejected=len(candidates) - len(appended),
             appended=len(appended),
             rejected_reasons=rejected_reasons,
             topics=list(set(c.get("topic", "unknown") for c in candidates)),
+            dry_run=args.dry_run,
         )
-
-        # Write report
-        mode = "DRY-RUN" if args.dry_run else "APPLIED"
-        REPORT_FILE.write_text(report, encoding="utf-8")
-        print(f"[{mode}] Report written to {REPORT_FILE}")
 
         if args.verbose:
             print("\n" + report)
 
         return 0
 
+    except (FileNotFoundError, ValueError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1

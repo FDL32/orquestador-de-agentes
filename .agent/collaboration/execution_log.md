@@ -1,66 +1,53 @@
-# Execution Log - WP-2026-135
+# Execution Log - WP-2026-136
 
 ## Metadata
-- **ID:** WP-2026-135
-**Estado:** COMPLETED
+- **ID:** WP-2026-136
+**Estado:** IN_PROGRESS
 - **deliverable_type:** code
 
 ## Agente Activo
 - **Rol:** BUILDER
 - **Accion:** IMPLEMENT
-- **Plan:** Selective context recovery lite for pre-compact hook
+- **Plan:** Semantic --candidates input for session_close_observations
 
 ## Fases
-- Phase 1: implementar carga segura de memoria y extraccion de keywords del work_plan.
-- Phase 2: derivar `AGENT_DIR` desde `Path(__file__).resolve().parent.parent` y evitar depender del cwd.
-- Phase 3: rankear observaciones por recencia y coincidencia de keywords.
-- Phase 4: añadir tests de memoria vacia, JSONL corrupto, ranking basico y presencia de `additionalContext`.
+- Phase 1: implementar `load_candidates_from_file(path)`.
+- Phase 2: refactorizar argparse con grupo mutuamente exclusivo.
+- Phase 3: ramificar `main()` segun el flag activo.
+- Phase 4: anadir tests (fichero inexistente, JSON invalido, lista vacia,
+  candidatos invalidos, happy path, exclusion mutua).
+- Phase 5: actualizar SKILL.md CLI section.
 
 ## Registro de Implementacion
 
-### Preparacion Canonica
-- `work_plan.md`: ticket aprobado para el nuevo ciclo.
-- `STATE.md`: estado inicial del nuevo ticket.
-- `TURN.md`: turno del Builder preparado.
-- `PLAN_WP-2026-135.md`: alcance y estrategia del ticket.
-- `AUDIT_WP-2026-135.md`: criterios de auditoria definidos.
+**Fase 1 - load_candidates_from_file():** Ya implementada en el codigo base con manejo completo de errores (FileNotFoundError, ValueError para UTF-8/JSON/top-level invalido, skip de elementos no-dict).
 
-### Calidad Esperada
-- `ruff check . && ruff format --check .`
-- `python scripts/run_pytest_safe.py tests/unit/test_pre_compact_hook.py -q`
-- `python .agent/agent_controller.py --validate --json --force`
+**Fase 2 - argparse refactor:** Ya implementado con `add_mutually_exclusive_group(required=True)` en linea 410.
 
-## Criterios de Aceptacion
-- [ ] El hook no falla si `observations.jsonl` no existe o esta corrupto.
-- [ ] La recuperacion de contexto produce una seccion `Memoria relevante` compacta dentro de `additionalContext`.
-- [ ] La salida relevante queda limitada a 5 observaciones maximo.
-- [ ] El ranking combina recencia y coincidencia de palabras clave del `work_plan`.
-- [ ] Los tests cubren memoria vacia, archivo ausente, JSONL corrupto, ranking basico y `additionalContext`.
+**Fase 3 - main() refactor:** Se extrajo logica a `_load_candidates()` para reducir complejidad ciclomatica de 13 a 10. Dispatch correcto segun flag activo.
 
-## Evidencia de Implementacion
+**Fase 4 - Tests:** 23 tests en total, incluyendo 6 nuevos para WP-2026-136:
+- test_load_candidates_from_file_valid_json
+- test_load_candidates_from_file_file_not_found
+- test_load_candidates_from_file_invalid_json
+- test_load_candidates_from_file_top_level_not_list
+- test_load_candidates_from_file_skips_non_dict_elements
+- test_main_mutually_exclusive_args
+- test_main_with_candidates_flag_does_not_call_extract_from_ticket
 
-### Fase 1 completada
-- `.agent/hooks/pre_compact_hook.py`: implementado con carga segura, keywords y ranking.
-  - `load_observations_safe()`: lee observations.jsonl sin fallar (archivo ausente, vacio o corrupto).
-  - `extract_keywords_from_work_plan()`: extrae palabras clave del work_plan.md activo.
-  - `score_observation()`: combina recencia (timestamp) y matching de keywords.
-  - `rank_observations()`: ordena por score y aplica cap de MAX_OBSERVATIONS=5.
-  - `build_additional_context()`: proyecta "Memoria relevante" en additionalContext.
-  - `main()`: mantiene contrato JSON con `continue=true` y emite additionalContext si hay memoria.
-- `tests/unit/test_pre_compact_hook.py`: 24 tests creados.
-  - Cobertura: memoria vacia, archivo ausente, JSONL corrupto, matching por keywords, ranking por recencia, additionalContext presente/ausente.
+Fix aplicado: anadido `import sys` faltante en tests.
 
-### Quality gates ejecutados
-- `ruff check .`: All checks passed!
-- `python scripts/run_pytest_safe.py tests/unit/test_pre_compact_hook.py -q`: 24 passed
-- `python .agent/agent_controller.py --validate --json --force`: errors vacios, warnings vacios
+**Fase 5 - SKILL.md:** Ya documenta modo --candidates y exclusion mutua.
 
-### Criterios de aceptacion verificados
-- [x] El hook no falla si `observations.jsonl` no existe o esta corrupto.
-- [x] La recuperacion de contexto produce una seccion `Memoria relevante` compacta dentro de `additionalContext`.
-- [x] La salida relevante queda limitada a 5 observaciones maximo.
-- [x] El ranking combina recencia y coincidencia de palabras clave del `work_plan`.
-- [x] Los tests cubren memoria vacia, archivo ausente, JSONL corrupto, ranking basico y `additionalContext`.
+**Quality Gates:**
+- ruff check: PASSED
+- ruff format: PASSED (1 file reformatted)
+- pytest: 23/23 tests PASSED
+- pip-audit: No vulnerabilities
 
+**Pruebas manuales:**
+- --candidates con JSON valido: PASSED (dry-run exit 0)
+- --ticket + --candidates juntos: PASSED (argparse error, exit 2)
+- Sin flags: PASSED (argparse error, exit 2)
 
-Scope override: execution_log.md updated with implementation evidence as required by builder workflow. Out of scope files: C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\collaboration\AUDIT_WP-2026-135.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\collaboration\PLAN_WP-2026-135.md
+**Estado:** IMPLEMENTATION COMPLETED

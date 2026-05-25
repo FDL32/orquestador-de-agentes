@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -237,3 +238,130 @@ def test_extract_candidates_from_ticket_unknown_id(monkeypatch: pytest.MonkeyPat
 
     candidates = sco.extract_candidates_from_ticket("WP-2026-999")
     assert len(candidates) == 0
+
+
+# =============================================================================
+# Tests para load_candidates_from_file (WP-2026-136)
+# =============================================================================
+
+def test_load_candidates_from_file_valid_json(tmp_path: Path) -> None:
+    """load_candidates_from_file returns list of dicts with valid JSON."""
+    candidates_file = tmp_path / "candidates.json"
+    candidates_file.write_text(
+        '[{"signal": "Test signal 1", "category": "fact"}, '
+        '{"signal": "Test signal 2", "category": "decision"}]',
+        encoding="utf-8"
+    )
+
+    import scripts.session_close_observations as sco
+    result = sco.load_candidates_from_file(str(candidates_file))
+
+    assert len(result) == 2
+    assert result[0]["signal"] == "Test signal 1"
+    assert result[1]["category"] == "decision"
+
+
+def test_load_candidates_from_file_file_not_found() -> None:
+    """load_candidates_from_file raises FileNotFoundError when file absent."""
+    import scripts.session_close_observations as sco
+
+    with pytest.raises(FileNotFoundError, match="Candidates file not found"):
+        sco.load_candidates_from_file("/nonexistent/path/candidates.json")
+
+
+def test_load_candidates_from_file_invalid_json(tmp_path: Path) -> None:
+    """load_candidates_from_file raises ValueError with corrupt JSON."""
+    candidates_file = tmp_path / "candidates.json"
+    candidates_file.write_text('{"invalid": json, broken}', encoding="utf-8")
+
+    import scripts.session_close_observations as sco
+
+    with pytest.raises(ValueError, match="JSON decode error"):
+        sco.load_candidates_from_file(str(candidates_file))
+
+
+def test_load_candidates_from_file_top_level_not_list(tmp_path: Path) -> None:
+    """load_candidates_from_file raises ValueError if top-level is not list."""
+    candidates_file = tmp_path / "candidates.json"
+    candidates_file.write_text('{"not": "a list"}', encoding="utf-8")
+
+    import scripts.session_close_observations as sco
+
+    with pytest.raises(ValueError, match="Expected list, got"):
+        sco.load_candidates_from_file(str(candidates_file))
+
+
+def test_load_candidates_from_file_skips_non_dict_elements(tmp_path: Path, capsys) -> None:
+    """load_candidates_from_file skips non-dict elements with warning."""
+    candidates_file = tmp_path / "candidates.json"
+    candidates_file.write_text(
+        '[{"signal": "Valid"}, "string element", 123, null, {"signal": "Also valid"}]',
+        encoding="utf-8"
+    )
+
+    import scripts.session_close_observations as sco
+    result = sco.load_candidates_from_file(str(candidates_file))
+
+    assert len(result) == 2
+    assert result[0]["signal"] == "Valid"
+    assert result[1]["signal"] == "Also valid"
+
+    captured = capsys.readouterr()
+    assert "Warning: Skipping element" in captured.out
+
+
+def test_main_mutually_exclusive_args(capsys, monkeypatch: pytest.MonkeyPatch) -> None:
+    """argparse enforces mutual exclusion between --ticket and --candidates."""
+    import scripts.session_close_observations as sco
+
+    # Both flags should raise SystemExit due to mutually_exclusive_group(required=True)
+    monkeypatch.setattr(sys, "argv", ["session_close_observations.py", "--ticket", "WP-2026-001", "--candidates", "file.json"])
+
+    with pytest.raises(SystemExit):
+        sco.main()
+
+    # No flags should also raise SystemExit
+    monkeypatch.setattr(sys, "argv", ["session_close_observations.py"])
+
+    with pytest.raises(SystemExit):
+        sco.main()
+
+
+def test_main_with_candidates_flag_does_not_call_extract_from_ticket(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """main() with --candidates does not call extract_candidates_from_ticket."""
+    import scripts.session_close_observations as sco
+
+    candidates_file = tmp_path / "candidates.json"
+    candidates_file.write_text(
+        '[{"timestamp": "2026-05-25T12:00:00Z", "signal": "This is a valid signal with enough length", '
+        '"category": "fact", "source_ticket": "WP-2026-136", "topic": "test", "source": "test"}]',
+        encoding="utf-8"
+    )
+
+    # Patch extract_candidates_from_ticket to verify it's NOT called
+    called = {"count": 0}
+    original_extract = sco.extract_candidates_from_ticket
+
+    def patched_extract(ticket_id: str) -> list:
+        called["count"] += 1
+        return original_extract(ticket_id)
+
+    monkeypatch.setattr(sco, "extract_candidates_from_ticket", patched_extract)
+    monkeypatch.setattr(sys, "argv", [
+        "session_close_observations.py",
+        "--candidates", str(candidates_file),
+        "--dry-run",
+        "--verbose"
+    ])
+
+    # Patch MEMORY_DIR to use tmp_path
+    monkeypatch.setattr(sco, "MEMORY_DIR", tmp_path)
+    monkeypatch.setattr(sco, "OBS_FILE", tmp_path / "observations.jsonl")
+    monkeypatch.setattr(sco, "REPORT_FILE", tmp_path / "report.md")
+
+    exit_code = sco.main()
+
+    assert exit_code == 0
+    assert called["count"] == 0  # extract_candidates_from_ticket was NOT called
