@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import time
+import warnings
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
@@ -166,6 +167,7 @@ class ReviewBridge:
             project_root, validate=False
         )
         self._supports_json_format = self._detect_json_format_support()
+        self._canonical_anti_patterns = self._load_canonical_anti_patterns()
 
     def _get_current_role(self) -> str:
         """Get the current active role from TURN.md.
@@ -445,6 +447,56 @@ class ReviewBridge:
             self.project_root / ".agent" / "runtime" / "memory" / "observations.jsonl"
         )
 
+    def _canonical_anti_patterns_path(self) -> Path:
+        return (
+            Path(__file__).resolve().parents[1]
+            / "skills"
+            / "_shared"
+            / "anti-patterns.md"
+        )
+
+    @staticmethod
+    def _parse_canonical_anti_patterns(content: str) -> list[tuple[str, str]]:
+        inventory: list[tuple[str, str]] = []
+        pattern = re.compile(r"^##\s+(AP-\d{2})\s*-\s*(.+?)\s*$")
+        for raw_line in content.splitlines():
+            match = pattern.match(raw_line.strip())
+            if not match:
+                continue
+            inventory.append((match.group(1), match.group(2).strip()))
+        return inventory
+
+    def _load_canonical_anti_patterns(self) -> list[tuple[str, str]]:
+        path = self._canonical_anti_patterns_path()
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            warnings.warn(
+                f"Canonical anti-pattern inventory unavailable at {path}: {exc}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return []
+
+        inventory = self._parse_canonical_anti_patterns(content)
+        if not inventory:
+            warnings.warn(
+                f"Canonical anti-pattern inventory at {path} is empty or invalid.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        return inventory
+
+    def _render_canonical_anti_pattern_inventory(self) -> str:
+        if not self._canonical_anti_patterns:
+            return ""
+        lines = [
+            "Canonical anti-pattern inventory (from skills/_shared/anti-patterns.md):"
+        ]
+        for ap_id, ap_name in self._canonical_anti_patterns:
+            lines.append(f"- {ap_id} {ap_name}")
+        return "\n".join(lines)
+
     @staticmethod
     def _parse_observation_timestamp(raw_timestamp: object) -> datetime:
         if isinstance(raw_timestamp, str):
@@ -530,12 +582,16 @@ class ReviewBridge:
 
     def _rubric_for_type(self, dtype: str, ticket_id: str) -> str:
         scaffolding_precheck = (
-            "Scaffolding classification precheck: if the majority of Files Likely Touched are "
+            "AP-07 Scaffolding misclassified as code precheck: if the majority of Files Likely Touched are "
             "structural non-Python artifacts (references/, .gitkeep, empty dirs, placeholders, "
             "config stubs) with no logic — even if one small support file is included — "
             "the correct deliverable_type is 'documentation', not 'code'. "
             "Flag 'code' classification for majority-scaffolding tickets as a planning error "
             "(SUGGESTIONS, not BLOCKER)."
+        )
+        canonical_anti_patterns = self._render_canonical_anti_pattern_inventory()
+        canonical_anti_patterns_block = (
+            f"{canonical_anti_patterns}\n\n" if canonical_anti_patterns else ""
         )
         if dtype == "code":
             return (
@@ -543,21 +599,22 @@ class ReviewBridge:
                 f"Verify the implementation correctness, testing coverage, and style guides. "
                 f"Check acceptance criteria and Files Likely Touched.\n\n"
                 f"{scaffolding_precheck}\n\n"
+                f"{canonical_anti_patterns_block}"
                 f"Test anti-patterns — flag as BLOCKERS if found:\n"
-                f"- Mock drift: each patch/mock must target the actual API the code calls "
+                f"- AP-01 Mock drift: each patch/mock must target the actual API the code calls "
                 f"(e.g. patching pathlib.Path.open is inert if the code uses the built-in open()).\n"
-                f"- Floor assertion: each numeric threshold must exceed the base value that exists "
+                f"- AP-02 Floor assertion: each numeric threshold must exceed the base value that exists "
                 f"without the tested feature (e.g. assert score >= 150 is trivially true if "
                 f"the base recency score alone is ~20_000_000).\n\n"
                 f"Implementation anti-patterns — flag as BLOCKERS if found:\n"
-                f"- Zero-logic wrapper: a function whose entire body is a single 1:1 delegate "
+                f"- AP-03 Zero-logic wrapper: a function whose entire body is a single 1:1 delegate "
                 f"call with no own logic must be inlined or eliminated.\n"
-                f"- Exclusive resource acquisition without reentrancy guard: if the diff introduces "
+                f"- AP-04 Exclusive resource acquisition without reentrancy guard: if the diff introduces "
                 f"exclusive resource acquisition (O_CREAT|O_EXCL, flock, Lock.acquire(), lock-file "
                 f"creation) inside a method that can be reached from more than one call site or "
                 f"called twice on the same instance (e.g. standalone + inside a wrapper), verify "
                 f"that an explicit instance-level reentrancy guard exists. Without it: BLOCKER.\n"
-                f"- Boolean truthiness regression in changed return contracts: if the diff changes "
+                f"- AP-05 Boolean truthiness regression in changed return contracts: if the diff changes "
                 f"a method's return type from implicit None to explicit bool, verify that every "
                 f"caller uses `is False` / `is True` rather than generic truthiness (`if not x`, "
                 f"`if x`, `while x`). Mixing None, False, and True under a falsy guard silently "
@@ -571,19 +628,20 @@ class ReviewBridge:
                 f"that all declared non-code deliverables exist, are well-structured, and are fully complete. "
                 f"Check acceptance criteria and Files Likely Touched.\n\n"
                 f"{scaffolding_precheck}\n\n"
+                f"{canonical_anti_patterns_block}"
                 f"Test anti-patterns — flag as BLOCKERS if found:\n"
-                f"- Mock drift: each patch/mock must target the actual API the code calls.\n"
-                f"- Floor assertion: each numeric threshold must exceed the base value that "
+                f"- AP-01 Mock drift: each patch/mock must target the actual API the code calls.\n"
+                f"- AP-02 Floor assertion: each numeric threshold must exceed the base value that "
                 f"exists without the tested feature.\n\n"
                 f"Implementation anti-patterns — flag as BLOCKERS if found:\n"
-                f"- Zero-logic wrapper: a function whose entire body is a single 1:1 delegate "
+                f"- AP-03 Zero-logic wrapper: a function whose entire body is a single 1:1 delegate "
                 f"call with no own logic must be inlined or eliminated.\n"
-                f"- Exclusive resource acquisition without reentrancy guard: if the diff introduces "
+                f"- AP-04 Exclusive resource acquisition without reentrancy guard: if the diff introduces "
                 f"exclusive resource acquisition (O_CREAT|O_EXCL, flock, Lock.acquire(), lock-file "
                 f"creation) inside a method that can be reached from more than one call site or "
                 f"called twice on the same instance, verify that an explicit reentrancy guard exists. "
                 f"Without it: BLOCKER.\n"
-                f"- Boolean truthiness regression in changed return contracts: if the diff changes "
+                f"- AP-05 Boolean truthiness regression in changed return contracts: if the diff changes "
                 f"a method's return type from implicit None to explicit bool, verify all callers use "
                 f"`is False` / `is True` rather than generic truthiness (`if not x`, `if x`). "
                 f"Any caller still using generic truthiness after the change: BLOCKER."
@@ -649,7 +707,7 @@ class ReviewBridge:
         # Cross-cutting: validator evidence gate (all types)
         parts.append(
             "\n--- Cross-cutting check (all ticket types) ---\n"
-            "Validator evidence gate: if the work_plan declares an explicit validator as a "
+            "AP-06 Validator evidence missing: if the work_plan declares an explicit validator as a "
             "quality gate (e.g. skills/validate_all.py, agent_controller --validate, ruff, pytest), "
             "execution_log.md must contain: (1) the exact command executed, (2) the result, and "
             "(3) a numeric outcome where applicable (e.g. '0 invalid skills', '253 passed', "

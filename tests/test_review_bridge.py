@@ -553,7 +553,7 @@ class TestDocumentationPromptWiring:
         """documentation prompt must include the cross-cutting validator evidence gate."""
         bridge = self._make_bridge(tmp_path)
         prompt = bridge._build_review_prompt("WP-2026-TEST", "documentation")
-        assert "Validator evidence gate" in prompt
+        assert "AP-06 Validator evidence missing" in prompt
         assert "execution_log.md must contain" in prompt
 
     def test_documentation_receives_learnings_when_applies_to_all(self, tmp_path):

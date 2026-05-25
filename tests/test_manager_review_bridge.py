@@ -512,6 +512,9 @@ def test_build_review_prompt_includes_manager_learnings_for_code_and_preserves_s
     prompt = bridge._build_review_prompt(ticket_id="WP-TEST-123", dtype="code")
 
     assert "Review code ticket WP-TEST-123." in prompt
+    assert "Canonical anti-pattern inventory" in prompt
+    assert "- AP-01 Mock drift" in prompt
+    assert "- AP-07 Scaffolding misclassified as code" in prompt
     assert "Test anti-patterns" in prompt
     assert "Implementation anti-patterns" in prompt
     assert "--- Lecciones acumuladas de auditoria ---" in prompt
@@ -537,6 +540,50 @@ def test_build_review_prompt_ignores_missing_observations_file(tmp_path):
     prompt = bridge._build_review_prompt(ticket_id="WP-TEST-123", dtype="code")
 
     assert "--- Lecciones acumuladas de auditoria ---" not in prompt
+    assert "Test anti-patterns" in prompt
+    assert "Implementation anti-patterns" in prompt
+
+
+def test_build_review_prompt_loads_canonical_anti_patterns_once_per_instance(
+    monkeypatch, tmp_path
+):
+    calls = 0
+
+    def fake_load(self):
+        nonlocal calls
+        calls += 1
+        return [("AP-01", "Mock drift")]
+
+    monkeypatch.setattr(
+        "bus.review_bridge.ReviewBridge._load_canonical_anti_patterns",
+        fake_load,
+    )
+
+    bridge = _make_review_prompt_bridge(tmp_path, deliverable_type="code")
+    assert calls == 1
+
+    bridge._build_review_prompt(ticket_id="WP-TEST-123", dtype="code")
+    bridge._build_review_prompt(ticket_id="WP-TEST-123", dtype="code")
+
+    assert calls == 1
+
+
+def test_build_review_prompt_warns_and_omits_inventory_when_shared_file_missing(
+    monkeypatch, tmp_path
+):
+    missing_path = tmp_path / "missing" / "anti-patterns.md"
+
+    monkeypatch.setattr(
+        "bus.review_bridge.ReviewBridge._canonical_anti_patterns_path",
+        lambda self: missing_path,
+    )
+
+    with pytest.warns(RuntimeWarning, match="Canonical anti-pattern inventory"):
+        bridge = _make_review_prompt_bridge(tmp_path, deliverable_type="code")
+
+    prompt = bridge._build_review_prompt(ticket_id="WP-TEST-123", dtype="code")
+
+    assert "Canonical anti-pattern inventory" not in prompt
     assert "Test anti-patterns" in prompt
     assert "Implementation anti-patterns" in prompt
 
