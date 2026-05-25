@@ -42,3 +42,12 @@
 - [ ] NO Magic Numbers (usar constantes nombradas)
 - [ ] NO CÃ³digo muerto (imports/variables no usadas)
 - [ ] NO Silent failures (loguear errores)
+
+## Anti-Patrones AP-01 a AP-07
+- [ ] AP-01 Mock drift: el patch apunta al simbolo real que llama el codigo bajo test
+- [ ] AP-02 Floor assertion: el umbral falla si se comenta la feature que aporta el valor
+- [ ] AP-03 Zero-logic wrapper: no hay funciones 1:1 sin logica propia
+- [ ] AP-04 Exclusive resource acquisition without reentrancy guard: hay guarda de instancia si existe reentrada
+- [ ] AP-05 Return contract drift (None -> bool): los callers usan `is False` / `is True` si el contrato cambio
+- [ ] AP-06 Validator evidence missing: el execution log muestra comando, salida y resultado limpio
+- [ ] AP-07 Scaffolding misclassified as code: los tickets de solo estructura se tratan como documentation

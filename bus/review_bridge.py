@@ -467,7 +467,23 @@ class ReviewBridge:
             return text
         return text[: MAX_OBSERVATION_SIGNAL_CHARS - 3].rstrip() + "..."
 
-    def _load_manager_review_observations(self) -> list[tuple[datetime, str, str]]:
+    @staticmethod
+    def _observation_matches_dtype(record: dict, dtype: str) -> bool:
+        """Return True if the observation applies to the given deliverable_type."""
+        applies_to = record.get("applies_to")
+        if applies_to is None or applies_to == "all":
+            return True
+        targets = applies_to if isinstance(applies_to, list) else [applies_to]
+        return dtype in targets or "all" in targets
+
+    def _load_manager_review_observations(
+        self, dtype: str = "all"
+    ) -> list[tuple[datetime, str, str]]:
+        """Load manager-review-rubric observations filtered by deliverable_type scope.
+
+        Absent applies_to = all types (legacy compat). "all" = all types.
+        List or string value = include only when dtype matches.
+        """
         path = self._observations_path()
         if not path.exists():
             return []
@@ -489,6 +505,8 @@ class ReviewBridge:
                 continue
             if record.get("topic") != "manager-review-rubric":
                 continue
+            if not self._observation_matches_dtype(record, dtype):
+                continue
             signal = self._truncate_observation_signal(record.get("signal", ""))
             if not signal:
                 continue
@@ -499,8 +517,8 @@ class ReviewBridge:
         observations.sort(key=lambda item: item[0], reverse=True)
         return observations[:MAX_RUBRIC_OBSERVATIONS]
 
-    def _render_manager_review_learnings(self) -> str:
-        observations = self._load_manager_review_observations()
+    def _render_manager_review_learnings(self, dtype: str = "all") -> str:
+        observations = self._load_manager_review_observations(dtype=dtype)
         if not observations:
             return ""
 
@@ -511,11 +529,20 @@ class ReviewBridge:
         return "\n".join(lines)
 
     def _rubric_for_type(self, dtype: str, ticket_id: str) -> str:
+        scaffolding_precheck = (
+            "Scaffolding classification precheck: if the majority of Files Likely Touched are "
+            "structural non-Python artifacts (references/, .gitkeep, empty dirs, placeholders, "
+            "config stubs) with no logic — even if one small support file is included — "
+            "the correct deliverable_type is 'documentation', not 'code'. "
+            "Flag 'code' classification for majority-scaffolding tickets as a planning error "
+            "(SUGGESTIONS, not BLOCKER)."
+        )
         if dtype == "code":
             return (
                 f"Review code ticket {ticket_id}. "
                 f"Verify the implementation correctness, testing coverage, and style guides. "
                 f"Check acceptance criteria and Files Likely Touched.\n\n"
+                f"{scaffolding_precheck}\n\n"
                 f"Test anti-patterns — flag as BLOCKERS if found:\n"
                 f"- Mock drift: each patch/mock must target the actual API the code calls "
                 f"(e.g. patching pathlib.Path.open is inert if the code uses the built-in open()).\n"
@@ -543,6 +570,7 @@ class ReviewBridge:
                 f"Verify code correctness, tests, and style guides, and additionally verify "
                 f"that all declared non-code deliverables exist, are well-structured, and are fully complete. "
                 f"Check acceptance criteria and Files Likely Touched.\n\n"
+                f"{scaffolding_precheck}\n\n"
                 f"Test anti-patterns — flag as BLOCKERS if found:\n"
                 f"- Mock drift: each patch/mock must target the actual API the code calls.\n"
                 f"- Floor assertion: each numeric threshold must exceed the base value that "
@@ -617,12 +645,21 @@ class ReviewBridge:
 
         # Compose
         parts = [self._rubric_for_type(dtype, ticket_id)]
-        if dtype in ("code", "mixed"):
-            learnings = self._render_manager_review_learnings()
-            if learnings:
-                parts.append(
-                    f"\n--- Lecciones acumuladas de auditoria ---\n{learnings}"
-                )
+
+        # Cross-cutting: validator evidence gate (all types)
+        parts.append(
+            "\n--- Cross-cutting check (all ticket types) ---\n"
+            "Validator evidence gate: if the work_plan declares an explicit validator as a "
+            "quality gate (e.g. skills/validate_all.py, agent_controller --validate, ruff, pytest), "
+            "execution_log.md must contain: (1) the exact command executed, (2) the result, and "
+            "(3) a numeric outcome where applicable (e.g. '0 invalid skills', '253 passed', "
+            "'All checks passed'). Declared validator + absent or ambiguous evidence: BLOCKER."
+        )
+
+        # Dynamic learnings — all types, scoped by dtype
+        learnings = self._render_manager_review_learnings(dtype=dtype)
+        if learnings:
+            parts.append(f"\n--- Lecciones acumuladas de auditoria ---\n{learnings}")
         for name, content in sections:
             parts.append(f"\n--- {name} ---\n{content}")
 

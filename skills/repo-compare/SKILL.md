@@ -1,9 +1,13 @@
 ---
 name: repo-compare
-version: 1.0.0
+version: 2.0.0
 description: Comparar proyecto local con repositorio GitHub para detectar funcionalidades de alto valor
 triggers: [/repo-compare, /compare, /gh-compare]
 author: agent
+role: shared
+stage: support
+writes_memory: false
+quality_gate: false
 tags: [core, system]
 ---
 

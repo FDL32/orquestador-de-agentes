@@ -1,9 +1,13 @@
 ---
 name: memory-consolidate
-version: 1.0.0
+version: 2.0.0
 description: Dedupe + filter + archive observations.jsonl deterministic V1 of Dream Cycle pattern
 triggers: [/consolidate, /memory, /dream-cycle]
 author: agent
+role: shared
+stage: memory
+writes_memory: true
+quality_gate: false
 tags: [core, system]
 ---
 

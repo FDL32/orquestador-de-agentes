@@ -1,9 +1,13 @@
 ---
-name: implement-feature
-version: 1.0.0
+name: bui-implement-from-plan
+version: 2.0.0
 description: Implementar nueva funcionalidad basado en especificaciÃ³n
 triggers: [/implement, implement, /code]
 author: agent
+role: builder
+stage: implement
+writes_memory: false
+quality_gate: false
 tags: [core, system]
 ---
 

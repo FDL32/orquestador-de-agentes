@@ -1,9 +1,13 @@
 ---
 name: setup-agent-system
-version: 1.0.0
+version: 2.0.0
 description: Instalar y configurar el sistema de agentes con flujo oficial por etapas y compatibilidad legacy Manager+Builder en un proyecto existente
 triggers: [/agent-setup, /agent-install, /init]
 author: agent
+role: user
+stage: setup
+writes_memory: false
+quality_gate: false
 tags: [core, system]
 ---
 

@@ -1,9 +1,13 @@
 ---
 name: secure-existing-project
-version: 1.0.0
+version: 2.0.0
 description: Aplicar arquitectura de seguridad privada/publica a proyecto Python existente
 triggers: [/secure, /security-audit, /harden]
 author: agent
+role: shared
+stage: support
+writes_memory: false
+quality_gate: false
 tags: [core, system]
 ---
 

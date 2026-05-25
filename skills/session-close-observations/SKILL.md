@@ -1,9 +1,13 @@
 ---
 name: session-close-observations
-version: 1.0.0
+version: 2.0.0
 description: Generar observaciones curadas al final de cada sesion para memoria auto-mejorable
 triggers: [/session-close, /close-observations, /generate-observations]
 author: agent
+role: shared
+stage: close
+writes_memory: true
+quality_gate: false
 tags: [core, system, memory]
 ---
 

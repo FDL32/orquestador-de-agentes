@@ -1,8 +1,12 @@
 ---
 name: systematic-debugging
-version: 1.0.0
+version: 2.0.0
 description: Proceso riguroso de cuatro fases para diagnosticar y corregir errores, priorizando la investigación de causa raíz y limitando los intentos iterativos ciegos a un umbral estricto.
 author: agent
+role: shared
+stage: implement
+writes_memory: false
+quality_gate: false
 tags: [process, debugging, methodology]
 triggers: [/debug, /systematic-debugging, debug]
 ---

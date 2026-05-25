@@ -1,9 +1,13 @@
 ---
 name: code-audit
-version: 1.0.0
+version: 2.0.0
 description: AuditorÃ­a sistemÃ¡tica de cÃ³digo Python detectando dead code, technical debt, y archivos inactivos usando vulture, deadcode, ruff y git log
 triggers: [/code-audit, code-quality, /deadcode]
 author: agent
+role: shared
+stage: review
+writes_memory: false
+quality_gate: false
 tags: [core, system]
 ---
 

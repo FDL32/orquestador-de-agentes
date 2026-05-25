@@ -1,8 +1,12 @@
 ---
 name: test-driven-development
-version: 1.0.0
+version: 2.0.0
 description: Metodología estructurada en ciclos Red/Green/Refactor para asegurar que la implementación cumple los requisitos desde el inicio y mantiene la base de código libre de regresiones.
 author: agent
+role: shared
+stage: implement
+writes_memory: false
+quality_gate: false
 tags: [process, testing, methodology]
 triggers: [/tdd, /test-driven, tdd]
 ---

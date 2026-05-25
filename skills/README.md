@@ -1,62 +1,100 @@
-﻿# Catalogo de Micro-Skills
+# Catalogo de Micro-Skills
 
-> **Sistema Multi-Agente v5** - Skills portables para Manager y Builder
+> Sistema Multi-Agente v6 - Skills portables para Manager, Builder y soporte compartido
 
-## Resumen
+## 1. Mapa del ciclo
 
-| # | Skill | Descripcion | Usuario | Tags |
-|---|-------|-------------|---------|------|
-| 1 | `man-review-implementation` | Revisar trabajo del Builder | Manager | `manager`, `review`, `quality` |
-| 2 | `man-create-work-plan` | Crear planes de trabajo | Manager | `manager`, `planning`, `architecture` |
-| 3 | `man-resolve-escalation` | Resolver bloqueos del Builder | Manager | `manager`, `escalation`, `decision` |
-| 4 | `bui-implement-from-plan` | Ejecutar un plan aprobado | Builder | `builder`, `implementation`, `coding` |
-| 5 | `bui-run-quality-gates` | Validar codigo con ruff y pytest | Builder | `builder`, `testing`, `quality` |
-| 6 | `bui-self-audit` | Auto-auditoria obligatoria antes de review | Builder | `builder`, `audit`, `quality` |
-| 7 | `graphify` | Construir un grafo persistente del codebase | Builder | `graphify`, `tokens`, `knowledge-graph` |
-| 8 | `project-finalize` | Cierre profesional: auditoria, limpieza y docs | Ambos | `closeout`, `cleanup`, `documentation` |
-| 9 | `version-changelog` | Gestion semantica de versiones y changelog | Ambos | `versioning`, `semver`, `changelog` |
-| 10 | `secure-existing-project` | Aplicar seguridad a proyecto existente | Ambos | `security`, `architecture`, `migration` |
-| 11 | `scaffold-python-project` | Crear estructura de proyecto Python nuevo | Ambos | `python`, `project`, `scaffold` |
-| 12 | `setup-agent-system` | Instalar el sistema multi-agente | Usuario | `setup`, `multi-agent`, `configuration` |
-| 13 | `create-agent-skill` | Crear nuevas micro-skills | Ambos | `meta`, `skill-creation`, `template` |
-| 14 | `code-audit` | AuditorÃ­a sistemÃ¡tica: dead code, deuda tÃ©cnica, abandono | Builder | `audit`, `quality`, `python`, `builder` |
-| 15 | `session-close-observations` | Generar observaciones curadas al cerrar sesion | Ambos | `core`, `system`, `memory` |
+```text
+setup -> plan -> implement -> review -> quality -> close -> memory
+   ^                                                        |
+   +---------------------- meta / support -------------------+
+```
 
-## Uso por Rol
+Flujo minimo de mejora continua:
+- el Builder implementa desde el plan aprobado
+- el Manager revisa y deja observaciones o bloqueos
+- `session-close-observations` convierte aprendizajes en memoria
+- `review_bridge` inyecta memoria curada en revisiones futuras
+- `bui-implement-from-plan/references/code-rules.md` y `man-review-implementation` reflejan las reglas activas
+- `_shared/anti-patterns.md` mantiene el inventario canonicamente numerado AP-01..AP-07
+
+## 2. Tabla operativa
+
+| Skill | Role | Stage | writes_memory | quality_gate | Descripcion |
+|---|---|---|---|---|---|
+| `setup-agent-system` | `user` | `setup` | `false` | `false` | Instalar y configurar el sistema de agentes con flujo oficial por etapas y compatibilidad legacy Manager+Builder en un proyecto existente |
+| `man-create-work-plan` | `manager` | `plan` | `false` | `false` | Crear planes de implementacion estructurados con fases, tareas y criterios de aceptacion |
+| `man-review-implementation` | `manager` | `review` | `false` | `false` | Revisar trabajo del Builder segun el plan aprobado y criterios de calidad |
+| `man-resolve-escalation` | `manager` | `review` | `false` | `false` | Resolver bloqueos y escalaciones del Builder con decisiones documentadas |
+| `bui-implement-from-plan` | `builder` | `implement` | `false` | `false` | Ejecutar un plan aprobado |
+| `bui-write-deliverable` | `builder` | `implement` | `false` | `false` | Generar un deliverable markdown (no-codigo) desde descripcion y criterios de aceptacion |
+| `bui-run-quality-gates` | `builder` | `quality` | `false` | `true` | Validar codigo con ruff y pytest segun el tipo de entregable |
+| `bui-self-audit` | `builder` | `review` | `false` | `false` | Auto-auditoria obligatoria antes de reportar cualquier tarea como completada |
+| `test-driven-development` | `shared` | `implement` | `false` | `false` | Metodologia Red/Green/Refactor para mantener la base de codigo libre de regresiones |
+| `systematic-debugging` | `shared` | `implement` | `false` | `false` | Proceso riguroso de cuatro fases para diagnosticar y corregir errores |
+| `code-audit` | `shared` | `review` | `false` | `false` | Auditoria sistematica de dead code, deuda tecnica y archivos inactivos |
+| `refactor-manager` | `shared` | `review` | `false` | `false` | Protocolo de reingenieria segura con analisis, plan, refactor, validacion e iteracion |
+| `project-finalize` | `shared` | `close` | `false` | `false` | Cierre profesional con auditoria, limpieza, documentacion, versionado y verificacion final |
+| `version-changelog` | `shared` | `close` | `false` | `false` | Gestion semantica de versiones y CHANGELOG.md siguiendo SemVer y Keep a Changelog |
+| `session-close-observations` | `shared` | `close` | `true` | `false` | Generar observaciones curadas al final de cada sesion para memoria auto-mejorable |
+| `memory-consolidate` | `shared` | `memory` | `true` | `false` | Dedupe, filter y archive de `observations.jsonl` |
+| `create-agent-skill` | `shared` | `meta` | `false` | `false` | Meta-skill para crear nuevas micro-skills siguiendo el estandar Agent Skills |
+| `graphify` | `shared` | `support` | `false` | `false` | Construir grafo de conocimiento persistente del codebase para exploracion eficiente |
+| `local-audit` | `shared` | `support` | `false` | `false` | Generar un snapshot rapido y estructurado del estado del repositorio |
+| `repo-compare` | `shared` | `support` | `false` | `false` | Comparar proyecto local con repositorio GitHub para detectar funcionalidades de valor |
+| `secure-existing-project` | `shared` | `support` | `false` | `false` | Aplicar arquitectura de seguridad privada/publica a proyecto Python existente |
+| `scaffold-python-project` | `shared` | `setup` | `false` | `false` | Crear estructura completa de proyecto Python nuevo con seguridad integrada |
+
+## 3. Bucle de mejora continua
+
+```text
+bug / finding humano
+  -> observations.jsonl
+  -> session-close-observations
+  -> review_bridge
+  -> Manager review prompt
+  -> nueva deteccion / nuevo aprendizaje
+```
+
+Fuentes y destinos:
+- `observations.jsonl` guarda aprendizajes persistentes
+- `session-close-observations` consolida aprendizajes al cerrar sesion
+- `review_bridge` inyecta memoria curada en el prompt del Manager
+- `code-rules.md` del Builder recoge reglas preventivas
+- `man-review-implementation` usa el inventario AP-01..AP-07 como checklist bloqueante
+- `skills/_shared/anti-patterns.md` es la referencia compartida para Builder y Manager
+
+## 4. Indice compacto
 
 ### Manager
-- `man-review-implementation` - Revisar codigo
-- `man-create-work-plan` - Planificar
-- `man-resolve-escalation` - Resolver bloqueos
+- `man-create-work-plan` - plan
+- `man-review-implementation` - review
+- `man-resolve-escalation` - review
 
 ### Builder
-- `bui-implement-from-plan` - Implementar
-- `bui-run-quality-gates` - Validar calidad
-- `bui-self-audit` - Auto-auditar antes de review
-- `code-audit` - Auditar dead code, deuda tÃ©cnica, archivos inactivos
-- `graphify` - Explorar corpus grandes con menos tokens
+- `bui-implement-from-plan` - implement
+- `bui-write-deliverable` - implement
+- `bui-run-quality-gates` - quality
+- `bui-self-audit` - review
 
 ### Compartidas
-- `project-finalize` - Cierre profesional
-- `version-changelog` - Versionado y changelog
-- `secure-existing-project` - Seguridad
-- `scaffold-python-project` - Crear proyectos
-- `create-agent-skill` - Crear skills
-- `session-close-observations` - Generar observaciones curadas al cerrar sesion
+- `test-driven-development` - implement
+- `systematic-debugging` - implement
+- `code-audit` - review
+- `refactor-manager` - review
+- `project-finalize` - close
+- `version-changelog` - close
+- `session-close-observations` - close
+- `memory-consolidate` - memory
+- `create-agent-skill` - meta
+- `graphify` - support
+- `local-audit` - support
+- `repo-compare` - support
+- `secure-existing-project` - support
+- `scaffold-python-project` - setup
 
-### Usuario / Setup
-- `setup-agent-system` - Instalacion inicial
-
-## Estructura
-
-Cada skill contiene:
-```
-skill-name/
-|-- SKILL.md              # Instrucciones principales
-`-- references/           # Documentacion de apoyo
-    |-- ref1.md
-    `-- ref2.md
-```
+### Usuario
+- `setup-agent-system` - setup
 
 ## Validacion
 
@@ -65,20 +103,21 @@ python skills/validate_all.py
 ```
 
 Verifica:
-- Frontmatter YAML valido
-- Campos requeridos presentes
-- Estructura correcta
+- frontmatter YAML valido
+- campos requeridos presentes
+- enums validos para `role` y `stage`
+- tipos booleanos para `writes_memory` y `quality_gate`
+- directorios que empiezan por `_` se tratan como infraestructura compartida y no se validan como skills
+- `references/` es recomendado; si falta o solo tiene `.gitkeep`, el validador avisa pero no falla
 
 ## Convenciones
 
-**Nombres:**
 - `man-[accion]` - Skills del Manager
 - `bui-[accion]` - Skills del Builder
 - `[accion]` - Skills compartidas
-
-**Limites:**
-- SKILL.md: maximo 250 lineas
-- References: maximo 80 lineas cada una
+- `_shared/` - Inventario y referencias compartidas, fuera del discovery de skills
+- `SKILL.md` - frontmatter con taxonomia operativa
+- `references/` - documentacion de apoyo
 
 ## Referencias
 
