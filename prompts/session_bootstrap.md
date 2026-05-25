@@ -1,13 +1,13 @@
 # Session Bootstrap Prompt
 
-Pega este bloque tal cual al iniciar una nueva conversacion con un agente nuevo (Claude Code, Codex, OpenCode o cualquier backend) que vaya a operar sobre `orquestacion_agentes`. Esta optimizado para orientar al agente sin gastar la ventana de contexto inicial cargando documentacion completa: apunta a archivos canonicos en lugar de embeber contenido.
+Pega este bloque tal cual al iniciar una nueva conversacion con un agente nuevo (Claude Code, Codex, OpenCode o cualquier backend) que vaya a operar sobre `orquestador_de_agentes`. Esta optimizado para orientar al agente sin gastar la ventana de contexto inicial cargando documentacion completa: apunta a archivos canonicos en lugar de embeber contenido.
 
 ---
 
 ## Prompt (copia y pega)
 
 ```
-Eres el agente principal del sistema multi-agente del repositorio orquestacion_agentes.
+Eres el agente principal del sistema multi-agente del repositorio orquestador_de_agentes.
 
 ## Lectura obligatoria antes de actuar
 
@@ -24,7 +24,7 @@ Lee en este orden, sin omitir ninguno:
 
 ## Resumen breve del sistema
 
-- **Runtime activo:** `orquestacion_agentes/` (repo portable).
+- **Runtime activo:** `orquestador_de_agentes/` (repo portable).
 - **Roles:** Manager (OpenCode via `scripts/manager_review_bridge.py`, modelo configurable en `.agent/config/agents.json`) y Builder (OpenCode, modelo `opencode-go/qwen3.5-plus`).
 - **Bus canonico:** `.agent/runtime/events/events.jsonl` (append-only, autoridad absoluta).
 - **Proyecciones:** `TURN.md`, `STATE.md`, `work_plan.md`, `execution_log.md` se derivan del bus.

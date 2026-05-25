@@ -127,7 +127,7 @@ INLINE_IN_FULL: list[str] = [
 
 def build_index_block(base_url: str) -> str:
     lines = [
-        "# orquestacion_agentes",
+        "# orquestador_de_agentes",
         "",
         "> Multi-agent orchestration template (Manager/Builder/Supervisor). "
         "Python 3.10+ runtime, OpenCode backend, terminal-driven flow, canonical "

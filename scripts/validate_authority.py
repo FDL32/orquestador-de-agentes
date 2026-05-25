@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Validate that all tools use the same .agent/collaboration authority.
 
-The operational authority is the `orquestacion_agentes/` tree. Any other
+The operational authority is the `orquestador_de_agentes/` tree. Any other
 `.agent/collaboration` copies are treated as historical or test fixtures and
 must not be used by launchers, bridges or controllers.
 
@@ -103,7 +103,7 @@ def main() -> int:
 
     canonical = str(canonical_root)
     if canonical not in copies:
-        print("[ERROR] No canonical orquestacion_agentes found!")
+        print("[ERROR] No canonical orquestador_de_agentes found!")
         print(f"[DEBUG] Expected: {canonical}")
         print(f"[DEBUG] Scanned {len(copies)} directories")
         return 1

@@ -41,7 +41,7 @@
 # EXPLICITAMENTE EXCLUIDO (motor central vive en repo fuente unico)
 # =============================================================================
 #
-# MOTOR CENTRAL (codigo operativo - vive en orquestacion_agentes):
+# MOTOR CENTRAL (codigo operativo - vive en orquestador_de_agentes):
 #   .agent/agent_controller.py
 #   .agent/session_tracker.py
 #   .agent/completion_checker.py

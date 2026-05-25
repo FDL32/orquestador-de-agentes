@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WP-2026-130
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Titulo:** Manager legacy naming cleanup
 

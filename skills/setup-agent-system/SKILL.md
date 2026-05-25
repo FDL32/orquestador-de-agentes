@@ -28,8 +28,8 @@ Configura el flujo oficial por etapas (`plan -> build -> review -> validate`) y 
 
 **OpciÃ³n A: Script automÃ¡tico**
 ```bash
-python orquestacion_agentes/scripts/install_agent_system.py --install
-python orquestacion_agentes/scripts/install_agent_system.py --sync
+python orquestador_de_agentes/scripts/install_agent_system.py --install
+python orquestador_de_agentes/scripts/install_agent_system.py --sync
 ```
 
 **OpciÃ³n B: Manual**

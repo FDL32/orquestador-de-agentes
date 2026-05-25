@@ -92,6 +92,6 @@ ubicarlos.
 
 ## Integracion con tickets
 
-Dentro de `orquestacion_agentes`, cada Prompt 2 corresponde tipicamente a un
+Dentro de `orquestador_de_agentes`, cada Prompt 2 corresponde tipicamente a un
 ticket WP independiente con su `work_plan.md` y su ciclo Manager -> Builder
 completo. No metas multiples sub-fases en el mismo ticket.

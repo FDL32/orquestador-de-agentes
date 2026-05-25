@@ -1,14 +1,8 @@
 # MEMORY
 
-Indice humano de memoria persistente del proyecto.
+Total de observaciones: 1
 
-Total observations: 0
+- Arranque (1 observaciones)
 
-Sin observaciones. `observations.jsonl` se ira poblando conforme el sistema
-opere; regenera este indice con `python scripts/memory_consolidate.py`.
-
----
-
-## Archive Pointers
-
-No archive files yet.
+## arranque
+- Runtime correcto localizado en orquestador_de_agentes; validacion limpia y memoria lista para continuar el trabajo.

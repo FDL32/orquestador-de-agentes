@@ -210,7 +210,7 @@ Deriva variantes cambiando solo la seccion **Objetivo general** o las prioridade
 
 ## Integracion con el sistema multi-agente
 
-Cuando el ticket corre dentro de `orquestacion_agentes`:
+Cuando el ticket corre dentro de `orquestador_de_agentes`:
 
 - El Manager invoca esta skill via `skills/refactor-manager/SKILL.md` (5 fases canonicas).
 - El Builder recibe este `PROMPT_TEMPLATE.md` como contexto operativo.

@@ -44,7 +44,7 @@ Implementar otra cosa.
 """, encoding="utf-8")
 
     # execution_log.md
-    (collab / "execution_log.md").write_text("""# Execution Log - orquestacion_agentes
+    (collab / "execution_log.md").write_text("""# Execution Log - orquestador_de_agentes
 
 **Estado:** IN_PROGRESS
 - Current state: WP-2026-001 IN_PROGRESS

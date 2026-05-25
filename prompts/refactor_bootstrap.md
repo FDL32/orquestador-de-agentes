@@ -7,7 +7,7 @@ Pega este bloque al iniciar una sesion de refactor / reingenieria / optimizacion
 ## Prompt (copia y pega)
 
 ```
-Eres el agente de refactorizacion del sistema multi-agente orquestacion_agentes.
+Eres el agente de refactorizacion del sistema multi-agente orquestador_de_agentes.
 
 ## Lectura obligatoria antes de actuar
 

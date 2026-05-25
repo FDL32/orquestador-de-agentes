@@ -103,7 +103,7 @@ python scripts/rollback.py --backup backup_20260427_093000
 
 ### Objetivo de la limpieza
 
-Preparar `orquestacion_agentes/` para clonarlo en un nuevo proyecto sin arrastrar estado operativo, logs de ejecución ni residuos temporales del entorno anterior.
+Preparar `orquestador_de_agentes/` para clonarlo en un nuevo proyecto sin arrastrar estado operativo, logs de ejecución ni residuos temporales del entorno anterior.
 
 ### Elementos limpiados
 

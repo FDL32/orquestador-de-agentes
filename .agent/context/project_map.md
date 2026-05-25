@@ -1,5 +1,5 @@
 # Mapa del Proyecto
-**Actualizado:** 2026-05-22 00:56:34
+**Actualizado:** 2026-05-25 10:57:33
 
 ## Estructura de Archivos
 ```
@@ -9,14 +9,24 @@
 .agent\collaboration\.session_state.json
 .agent\collaboration\_archive\plan_audit\AUDIT_WP-2026-122.md
 .agent\collaboration\_archive\plan_audit\AUDIT_WP-2026-123.md
+.agent\collaboration\_archive\plan_audit\AUDIT_WP-2026-124.md
+.agent\collaboration\_archive\plan_audit\AUDIT_WP-2026-125.md
+.agent\collaboration\_archive\plan_audit\AUDIT_WP-2026-126.md
+.agent\collaboration\_archive\plan_audit\AUDIT_WP-2026-127.md
+.agent\collaboration\_archive\plan_audit\AUDIT_WP-2026-128.md
+.agent\collaboration\_archive\plan_audit\AUDIT_WP-2026-129.md
 .agent\collaboration\_archive\plan_audit\PLAN_WP-2026-122.md
 .agent\collaboration\_archive\plan_audit\PLAN_WP-2026-123.md
-.agent\collaboration\AUDIT_WP-2026-124.md
-.agent\collaboration\AUDIT_WP-2026-125.md
+.agent\collaboration\_archive\plan_audit\PLAN_WP-2026-124.md
+.agent\collaboration\_archive\plan_audit\PLAN_WP-2026-125.md
+.agent\collaboration\_archive\plan_audit\PLAN_WP-2026-126.md
+.agent\collaboration\_archive\plan_audit\PLAN_WP-2026-127.md
+.agent\collaboration\_archive\plan_audit\PLAN_WP-2026-128.md
+.agent\collaboration\_archive\plan_audit\PLAN_WP-2026-129.md
+.agent\collaboration\AUDIT_WP-2026-130.md
 .agent\collaboration\execution_log.md
 .agent\collaboration\notifications.md
-.agent\collaboration\PLAN_WP-2026-124.md
-.agent\collaboration\PLAN_WP-2026-125.md
+.agent\collaboration\PLAN_WP-2026-130.md
 .agent\collaboration\review_queue.md
 .agent\collaboration\STATE.md
 .agent\collaboration\TURN.md
@@ -43,15 +53,5 @@
 .agent\runtime\circuit_breaker.json
 .agent\runtime\deliverables\WP-2026-121-project-root-audit.md
 .agent\runtime\manager_bridge_state.json
-.agent\runtime\memory\MEMORY.md
-.agent\runtime\memory\memory_helpers.py
-.agent\runtime\pytest-safe\last-run.json
-.agent\runtime\reviews\WP-2026-121\attempt-1.md
-.agent\runtime\reviews\WP-2026-122\attempt-1.md
-.agent\runtime\reviews\WP-2026-122\attempt-2.md
-.agent\runtime\supervisor_state.json
-.agent\runtime\uv-cache\archive-v0\0AM_tUYG25RkXBFK-YV4R\colorama\__init__.py
-.agent\runtime\uv-cache\archive-v0\0AM_tUYG25RkXBFK-YV4R\colorama\ansi.py
-.agent\runtime\uv-cache\archive-v0\0AM_tUYG25RkXBFK-YV4R\colorama\ansitowin32.py
-... (+2393 archivos mas)
+... (+2414 archivos mas)
 ```

@@ -1,95 +1,95 @@
-﻿# MANIFEST_SPEC.md - EspecificaciÃ³n TÃ©cnica del Sistema de Manifiestos
+# MANIFEST_SPEC.md - Especificación Técnica del Sistema de Manifiestos
 
-## IntroducciÃ³n
+## Introducción
 
-Esta especificaciÃ³n define el contrato tÃ©cnico para los manifiestos del sistema multiagente. Los manifiestos aseguran consistencia, detecciÃ³n automÃ¡tica y upgrade seguro entre proyectos y versiones del sistema.
+Esta especificación define el contrato técnico para los manifiestos del sistema multiagente. Los manifiestos aseguran consistencia, detección automática y upgrade seguro entre proyectos y versiones del sistema.
 
-- **VersiÃ³n mÃ­nima del sistema**: 8.0 (soporte inicial de manifiestos).
-- **UbicaciÃ³n**: `.agent/project_manifest.toml` y `.agent/.version_manifest.json`.
+- **Versión mínima del sistema**: 8.0 (soporte inicial de manifiestos).
+- **Ubicación**: `.agent/project_manifest.toml` y `.agent/.version_manifest.json`.
 - **Autoridad**: `.agent` gobierna todos los aspectos; conflictos se resuelven priorizando el manifest.
 
 ## project_manifest.toml
 
-Contrato estable del proyecto. Define configuraciÃ³n canÃ³nica, rutas y dependencias. No se modifica con upgrades del sistema.
+Contrato estable del proyecto. Define configuración canónica, rutas y dependencias. No se modifica con upgrades del sistema.
 
 ### Campos y Tipos
 
-| Campo | Tipo | Obligatorio | DescripciÃ³n | Validaciones |
+| Campo | Tipo | Obligatorio | Descripción | Validaciones |
 |-------|------|-------------|-------------|--------------|
-| [project] | SecciÃ³n | SÃ­ | InformaciÃ³n bÃ¡sica del proyecto | |
-| project.id | String | SÃ­ | Identificador tÃ©cnico estable | Sin espacios, usado por tooling |
-| project.name | String | SÃ­ | Nombre legible humano | AlfanumÃ©rico, con espacios permitidos |
-| project.version | String | SÃ­ | VersiÃ³n semÃ¡ntica del proyecto | Formato SemVer (e.g., "1.0.0") |
+| [project] | Sección | Sí | Información básica del proyecto | |
+| project.id | String | Sí | Identificador técnico estable | Sin espacios, usado por tooling |
+| project.name | String | Sí | Nombre legible humano | Alfanumérico, con espacios permitidos |
+| project.version | String | Sí | Versión semántica del proyecto | Formato SemVer (e.g., "1.0.0") |
 | project.type | String | No | Tipo de proyecto | e.g., "python_app", "web_app" |
-| project.created_from | String | No | Origen de creaciÃ³n | e.g., "orquestacion_agentes" |
-| project.description | String | No | DescripciÃ³n breve | MÃ¡ximo 200 caracteres |
-| [paths] | SecciÃ³n | SÃ­ | Rutas canÃ³nicas | Todas relativas al root |
-| paths.root | String | SÃ­ | Directorio raÃ­z | Siempre "." |
-| paths.agent_dir | String | SÃ­ | Directorio del sistema agente | Siempre ".agent" |
-| paths.claude_dir | String | No | Directorio de integraciÃ³n Claude | ".claude" por defecto |
+| project.created_from | String | No | Origen de creación | e.g., "orquestador_de_agentes" |
+| project.description | String | No | Descripción breve | Máximo 200 caracteres |
+| [paths] | Sección | Sí | Rutas canónicas | Todas relativas al root |
+| paths.root | String | Sí | Directorio raíz | Siempre "." |
+| paths.agent_dir | String | Sí | Directorio del sistema agente | Siempre ".agent" |
+| paths.claude_dir | String | No | Directorio de integración Claude | ".claude" por defecto |
 | paths.scripts_dir | String | No | Directorio de scripts | "scripts" por defecto |
 | paths.tests_dir | String | No | Directorio de tests | "tests" por defecto |
 | paths.src_dir | String | No | Directorio fuente | "src" por defecto |
-| [dependencies] | SecciÃ³n | No | Dependencias del proyecto | |
-| dependencies.python | String | No | VersiÃ³n mÃ­nima de Python | Formato ">=3.10" |
+| [dependencies] | Sección | No | Dependencias del proyecto | |
+| dependencies.python | String | No | Versión mínima de Python | Formato ">=3.10" |
 | dependencies.frameworks | Array<String> | No | Frameworks principales | Lista de nombres |
-| [security] | SecciÃ³n | SÃ­ | ConfiguraciÃ³n de seguridad | |
-| security.allowlist | Array<String> | SÃ­ | Rutas permitidas | Patrones glob (e.g., ["scripts/", "src/"]) |
-| security.denylist | Array<String> | SÃ­ | Rutas bloqueadas | Patrones glob (e.g., ["privada/", ".env"]) |
-| [metadata] | SecciÃ³n | No | Metadatos opcionales | |
-| metadata.created_at | String | No | Fecha de creaciÃ³n | Formato ISO 8601 |
-| metadata.updated_at | String | No | Fecha de Ãºltima actualizaciÃ³n | Formato ISO 8601 |
-| [agents] | SecciÃ³n | No | Agentes externos permitidos | |
-| agents.allowed | Array<String> | No | Lista de agentes externos autorizados | Nombres vÃ¡lidos (e.g., ["claude", "codex"]) |
-| [quality_gates] | SecciÃ³n | No | ConfiguraciÃ³n de quality gates | |
+| [security] | Sección | Sí | Configuración de seguridad | |
+| security.allowlist | Array<String> | Sí | Rutas permitidas | Patrones glob (e.g., ["scripts/", "src/"]) |
+| security.denylist | Array<String> | Sí | Rutas bloqueadas | Patrones glob (e.g., ["privada/", ".env"]) |
+| [metadata] | Sección | No | Metadatos opcionales | |
+| metadata.created_at | String | No | Fecha de creación | Formato ISO 8601 |
+| metadata.updated_at | String | No | Fecha de última actualización | Formato ISO 8601 |
+| [agents] | Sección | No | Agentes externos permitidos | |
+| agents.allowed | Array<String> | No | Lista de agentes externos autorizados | Nombres válidos (e.g., ["claude", "codex"]) |
+| [quality_gates] | Sección | No | Configuración de quality gates | |
 | quality_gates.unit_tests | Boolean | No | Ejecutar unit tests | true/false |
 | quality_gates.integration_tests | Boolean | No | Ejecutar integration tests | true/false |
 | quality_gates.linting | Boolean | No | Ejecutar linting | true/false |
-| [agent_system] | SecciÃ³n | No | Compatibilidad con sistema multiagente | |
-| agent_system.min_version | String | No | VersiÃ³n mÃ­nima requerida | SemVer (e.g., "8.0.0") |
-| agent_system.max_version | String | No | VersiÃ³n mÃ¡xima soportada | SemVer o patrÃ³n (e.g., "9.x") |
-| agent_system.upgrade_channel | String | No | Canal de actualizaciÃ³n | Valores: "stable", "beta", "nightly" |
+| [agent_system] | Sección | No | Compatibilidad con sistema multiagente | |
+| agent_system.min_version | String | No | Versión mínima requerida | SemVer (e.g., "8.0.0") |
+| agent_system.max_version | String | No | Versión máxima soportada | SemVer o patrón (e.g., "9.x") |
+| agent_system.upgrade_channel | String | No | Canal de actualización | Valores: "stable", "beta", "nightly" |
 
 ### Validaciones Generales
 
 - Todos los paths son relativos al root del proyecto.
 - No incluir rutas absolutas ni personales.
 - No incluir secretos, tokens o credenciales.
-- Array<String> para listas, con elementos no vacÃ­os.
+- Array<String> para listas, con elementos no vacíos.
 - Strings sin caracteres de control.
 
 ### Valores Permitidos
 
-- project.id: Sin espacios, alfanumÃ©rico con guiones bajos.
-- project.version: SemVer vÃ¡lido.
+- project.id: Sin espacios, alfanumérico con guiones bajos.
+- project.version: SemVer válido.
 - project.type: Valores comunes: "python_app", "web_app", etc.
 - paths.root: Siempre ".".
 - paths.agent_dir: Siempre ".agent".
-- security.allowlist/denylist: Patrones vÃ¡lidos para pathlib.glob.
-- agents.allowed: Lista de nombres de agentes externos vÃ¡lidos.
+- security.allowlist/denylist: Patrones válidos para pathlib.glob.
+- agents.allowed: Lista de nombres de agentes externos válidos.
 - quality_gates.*: true/false.
-- agent_system.min_version/max_version: SemVer vÃ¡lido o patrÃ³n.
+- agent_system.min_version/max_version: SemVer válido o patrón.
 - agent_system.upgrade_channel: "stable", "beta", "nightly".
 
 ## .version_manifest.json
 
-Estado tÃ©cnico del sistema instalado. Registra versiones, status y confidence. Actualizado automÃ¡ticamente por herramientas.
+Estado técnico del sistema instalado. Registra versiones, status y confidence. Actualizado automáticamente por herramientas.
 
 ### Campos y Tipos
 
-| Campo | Tipo | Obligatorio | DescripciÃ³n | Validaciones |
+| Campo | Tipo | Obligatorio | Descripción | Validaciones |
 |-------|------|-------------|-------------|--------------|
-| agent_core_version | String | SÃ­ | VersiÃ³n del nÃºcleo agente | SemVer |
-| template_version | String | SÃ­ | VersiÃ³n de la plantilla | SemVer |
-| status | String | SÃ­ | Estado del sistema | Valores: "canonical", "recovered", "unknown" |
-| confidence | String | SÃ­ | Nivel de certidumbre | Valores: "high", "medium", "low", "recovered_from_markers" |
-| last_updated | String | SÃ­ | Timestamp de Ãºltima actualizaciÃ³n | ISO 8601 con timezone |
-| components | Object | SÃ­ | Versiones de componentes | |
-| components.agent_controller | String | SÃ­ | VersiÃ³n del controlador | SemVer |
-| components.hooks | String | SÃ­ | VersiÃ³n de hooks | SemVer |
-| components.rules | String | SÃ­ | VersiÃ³n de reglas | SemVer |
-| markers_validated | Boolean | SÃ­ | Si markers legacy fueron validados | true/false |
-| drift_detected | Boolean | SÃ­ | Si se detectÃ³ drift | true/false |
+| agent_core_version | String | Sí | Versión del núcleo agente | SemVer |
+| template_version | String | Sí | Versión de la plantilla | SemVer |
+| status | String | Sí | Estado del sistema | Valores: "canonical", "recovered", "unknown" |
+| confidence | String | Sí | Nivel de certidumbre | Valores: "high", "medium", "low", "recovered_from_markers" |
+| last_updated | String | Sí | Timestamp de última actualización | ISO 8601 con timezone |
+| components | Object | Sí | Versiones de componentes | |
+| components.agent_controller | String | Sí | Versión del controlador | SemVer |
+| components.hooks | String | Sí | Versión de hooks | SemVer |
+| components.rules | String | Sí | Versión de reglas | SemVer |
+| markers_validated | Boolean | Sí | Si markers legacy fueron validados | true/false |
+| drift_detected | Boolean | Sí | Si se detectó drift | true/false |
 
 ### JSON Schema
 
@@ -165,14 +165,14 @@ Estado tÃ©cnico del sistema instalado. Registra versiones, status y confidence
 
 ### Valores Permitidos
 
-- status: "canonical" (instalaciÃ³n estÃ¡ndar), "recovered" (reparado), "unknown" (no determinado).
-- confidence: "high" (alta certidumbre), "medium", "low", "recovered_from_markers" (origen no-canÃ³nico).
+- status: "canonical" (instalación estándar), "recovered" (reparado), "unknown" (no determinado).
+- confidence: "high" (alta certidumbre), "medium", "low", "recovered_from_markers" (origen no-canónico).
 
 ## Reglas de Autoridad
 
 ### Para Rutas
 
-- project_manifest.toml prevalece: Cualquier detecciÃ³n heurÃ­stica debe coincidir.
+- project_manifest.toml prevalece: Cualquier detección heurística debe coincidir.
 - Discrepancias = drift: Reportar como WARNING, sugerir repair.
 - Repair con doctor --repair-manifest o upgrade --confirm: Actualiza status a "recovered", confidence a "recovered_from_markers".
 
@@ -180,19 +180,19 @@ Estado tÃ©cnico del sistema instalado. Registra versiones, status y confidence
 
 - Solo herramientas autorizadas (upgrade, doctor --repair-manifest, migrate) pueden modificar.
 - Status refleja estado real del sistema.
-- Confidence refleja origen y validaciÃ³n de la informaciÃ³n.
+- Confidence refleja origen y validación de la información.
 - Cambios auditados en execution_log.md con timestamp.
 
 ### Autoridad General
 
-- .agent es autoridad Ãºnica para manifests y estado tÃ©cnico.
+- .agent es autoridad única para manifests y estado técnico.
 - .claude consume pero no modifica.
 - Conflicto: Priorizar .agent; regenerar .claude si diverge.
 
 ## Compatibilidad Futura
 
-- **VersiÃ³n mÃ­nima**: Sistema 8.0 soporta manifiestos; versiones anteriores usan markers legacy.
-- **Backward compatibility**: Manifests antiguos vÃ¡lidos si cumplen schema mÃ­nimo.
+- **Versión mínima**: Sistema 8.0 soporta manifiestos; versiones anteriores usan markers legacy.
+- **Backward compatibility**: Manifests antiguos válidos si cumplen schema mínimo.
 - **Forward compatibility**: Nuevos campos opcionales; herramientas ignoran desconocidos.
 - **Upgrade path**: doctor_agent_system.py detecta versiones, upgrade_agent_system.py migra schema.
 - **Deprecation**: Campos obsoletos marcados en changelog; removidos en versiones mayores.
@@ -207,7 +207,7 @@ id = "mi_proyecto"
 name = "Mi Proyecto"
 version = "1.0.0"
 type = "python_app"
-created_from = "orquestacion_agentes"
+created_from = "orquestador_de_agentes"
 description = "Proyecto multiagente de ejemplo"
 
 [paths]

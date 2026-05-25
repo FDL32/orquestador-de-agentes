@@ -31,7 +31,7 @@
 - `MANIFEST.workspace` define el contrato del workspace destino (estado, memoria, config).
 - Los comandos canonical y legacy se documentan por separado.
 - Estado actual: `v9.14.0` motor central + workspace destino (WP-2026-111).
-- El motor vive una unica vez en `orquestacion_agentes/`; los proyectos destino lo referencian externamente.
+- El motor vive una unica vez en `orquestador_de_agentes/`; los proyectos destino lo referencian externamente.
 
 ## MANIFEST.distribute y MANIFEST.workspace (WP-2026-111)
 
@@ -39,7 +39,7 @@ Los archivos `MANIFEST.distribute` y `MANIFEST.workspace` en la raiz del reposit
 
 - **MANIFEST.distribute**: Define la frontera del motor central (codigo operativo del repo fuente). El motor NO se copia; este manifiesto delimita que rutas forman parte del codigo operativo.
 - **MANIFEST.workspace**: Define que se conserva EN el workspace destino (estado, memoria, eventos, configuracion del proyecto).
-- **Arquitectura**: El motor vive una unica vez en `orquestacion_agentes/`; cada proyecto destino conserva solo su `.agent/` de workspace y referencia el motor externo.
+- **Arquitectura**: El motor vive una unica vez en `orquestador_de_agentes/`; cada proyecto destino conserva solo su `.agent/` de workspace y referencia el motor externo.
 
 **Superficies vivas en `.agent/collaboration/`** (NO archivar, el codigo las escribe):
 - `work_plan.md`, `TURN.md`, `STATE.md`, `execution_log.md`, `notifications.md`, `review_queue.md`
@@ -179,7 +179,7 @@ El dispatcher, sus políticas y guardias son stdlib only; no añaden dependencia
 
 ## Host-first skill precedence & Config Profiles (WP-2026-090)
 
-- **Host-first precedence**: Cuando el bundle `orquestacion_agentes` se instala en un proyecto de destino (host), las skills definidas en el host (`<destino>/.agent/skills/`) toman precedencia absoluta sobre las homónimas del bundle (`orquestacion_agentes/skills/`). El bundle actúa estrictamente como un fallback determinista.
+- **Host-first precedence**: Cuando el bundle `orquestador_de_agentes` se instala en un proyecto de destino (host), las skills definidas en el host (`<destino>/.agent/skills/`) toman precedencia absoluta sobre las homónimas del bundle (`orquestador_de_agentes/skills/`). El bundle actúa estrictamente como un fallback determinista.
 - **Config Profiles**: `agents.json` define `"active_profile"`. El repo local de desarrollo usa `"engine-dev"`. El instalador `install_agent_system.py` cambia automáticamente este valor a `"host-project"` en el destino durante `--install` o `--sync`.
 
 ## Host setup hook (WP-2026-094)

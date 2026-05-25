@@ -182,7 +182,7 @@ def test_ticket_state_falls_back_to_execution_log(tmp_path):
                 "",
                 "## Project summary",
                 "",
-                "- Project: `orquestacion_agentes`",
+                "- Project: `orquestador_de_agentes`",
                 "- **Estado:** READY_FOR_REVIEW",
                 "- Current state: ACTIVE",
                 "- Active workstreams: WP-2026-025",

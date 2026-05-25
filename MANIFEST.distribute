@@ -2,7 +2,7 @@
 #
 # Este manifiesto define la frontera del codigo operativo del motor central.
 # El motor NO se copia al destino: vive una unica vez en el repo fuente
-# (orquestacion_agentes) y los proyectos destino lo referencian externamente.
+# (orquestador_de_agentes) y los proyectos destino lo referencian externamente.
 #
 # Reglas:
 # - Las rutas listadas delimitan QUE forma parte del motor central.

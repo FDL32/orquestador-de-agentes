@@ -1,6 +1,6 @@
 # Project state
 
-- Project: `orquestacion_agentes`
+- Project: `orquestador_de_agentes`
 - Version: `v9.14.0`
 - State: WP-2026-130 IN_PROGRESS (Manager legacy naming cleanup).
 - Last review: 2026-05-21
@@ -34,7 +34,7 @@
 
 ## Current architecture
 
-- Central motor: operational code lives once in `orquestacion_agentes/`.
+- Central motor: operational code lives once in `orquestador_de_agentes/`.
 - Destination workspace: each project keeps only `.agent/` with state, memory, events, config.
 - External reference: destination projects reference the motor externally (not copied).
 - Markdown projections remain human-readable snapshots derived from the bus.
@@ -50,7 +50,7 @@
 
 ## Roadmap de Desacople Motor / Destino
 
-Objetivo: mantener `orquestacion_agentes/` como motor central unico y abrir el proyecto de destino como workspace separado, con su propio `.agent/` minimo.
+Objetivo: mantener `orquestador_de_agentes/` como motor central unico y abrir el proyecto de destino como workspace separado, con su propio `.agent/` minimo.
 
 ### WP-A - Desacople de `project_root` en el motor
 - Auditar todas las rutas derivadas de `Path(__file__)` en el motor.
@@ -65,7 +65,7 @@ Objetivo: mantener `orquestacion_agentes/` como motor central unico y abrir el p
 
 ### WP-C - Launcher multi-root
 - Abrir motor y destino como workspace separados en VS Code.
-- Mantener el motor en `orquestacion_agentes/` y el proyecto destino limpio.
+- Mantener el motor en `orquestador_de_agentes/` y el proyecto destino limpio.
 - La operacion debe seguir funcionando con el mismo contrato canonico de bus y colaboracion.
 
 ### WP-2026-124 - Drift canonico del bus

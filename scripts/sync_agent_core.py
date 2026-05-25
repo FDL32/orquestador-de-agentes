@@ -3,7 +3,7 @@
 DEPRECATED: Use install_agent_system.py --sync instead.
 
 This script is no longer the recommended sync method.
-Use: python orquestacion_agentes/scripts/install_agent_system.py --sync
+Use: python orquestador_de_agentes/scripts/install_agent_system.py --sync
 
 This file is kept for backward compatibility only.
 New projects MUST use install_agent_system.py.
@@ -21,7 +21,7 @@ def detect_target_version(dest: Path) -> dict:
     DEPRECATED: Use install_agent_system.py --sync instead.
 
     This script is no longer the recommended sync method.
-    Use: python orquestacion_agentes/scripts/install_agent_system.py --sync
+    Use: python orquestador_de_agentes/scripts/install_agent_system.py --sync
 
     This file is kept for backward compatibility only.
     New projects MUST use install_agent_system.py.
@@ -53,16 +53,16 @@ def find_template_from_dest(dest: Path) -> tuple[Path, str] | None:
     DEPRECATED: Use install_agent_system.py --sync instead.
 
     This script is no longer the recommended sync method.
-    Use: python orquestacion_agentes/scripts/install_agent_system.py --sync
+    Use: python orquestador_de_agentes/scripts/install_agent_system.py --sync
 
     This file is kept for backward compatibility only.
     New projects MUST use install_agent_system.py.
     """
     search_paths = [
-        ("dest-local", dest / "orquestacion_agentes"),
-        ("dest-tools", dest / "tools" / "orquestacion_agentes"),
-        ("dest-parent", dest.parent / "orquestacion_agentes"),
-        ("dest-parent-z_scripts", dest.parent / "z_scripts" / "orquestacion_agentes"),
+        ("dest-local", dest / "orquestador_de_agentes"),
+        ("dest-tools", dest / "tools" / "orquestador_de_agentes"),
+        ("dest-parent", dest.parent / "orquestador_de_agentes"),
+        ("dest-parent-z_scripts", dest.parent / "z_scripts" / "orquestador_de_agentes"),
     ]
 
     for method_name, path in search_paths:
@@ -77,7 +77,7 @@ def find_orquestacion_template(start_path: Path | None = None) -> tuple[Path, st
     DEPRECATED: Use install_agent_system.py --sync instead.
 
     This script is no longer the recommended sync method.
-    Use: python orquestacion_agentes/scripts/install_agent_system.py --sync
+    Use: python orquestador_de_agentes/scripts/install_agent_system.py --sync
 
     This file is kept for backward compatibility only.
     New projects MUST use install_agent_system.py.
@@ -90,29 +90,29 @@ def find_orquestacion_template(start_path: Path | None = None) -> tuple[Path, st
                 f"[WARN] --source provided but missing .agent/agent_controller.py: {start_path}"
             )
 
-    # Strategy 1: Relative to this script Ã¢â‚¬â€ BUSCAR plantilla en tools/orquestacion_agentes
+    # Strategy 1: Relative to this script Ã¢â‚¬â€ BUSCAR plantilla en tools/orquestador_de_agentes
     # Script location: <proyecto>/tools/scripts/sync_agent_core.py
-    # Plantilla esperada: <proyecto>/tools/orquestacion_agentes/
+    # Plantilla esperada: <proyecto>/tools/orquestador_de_agentes/
     script_path = Path(__file__).resolve()
     project_root = (
         script_path.parent.parent.parent
     )  # tools/scripts -> tools -> <proyecto>
-    candidate = project_root / "tools" / "orquestacion_agentes"
+    candidate = project_root / "tools" / "orquestador_de_agentes"
     if candidate.exists() and (candidate / ".agent" / "agent_controller.py").exists():
         return candidate, "script-relative"
     # No fallback aquÃƒÂ­ Ã¢â‚¬â€ si no encuentra plantilla local, pasa a Strategy 2
 
-    # Strategy 2: Sibling directories (buscar orquestacion_agentes junto al proyecto actual)
+    # Strategy 2: Sibling directories (buscar orquestador_de_agentes junto al proyecto actual)
     # project_root es el directorio que contiene el script (Crear_Texto_LLM/)
     # Buscamos en directorios hermanos de project_root
     sibling_search_root = project_root.parent  # Directorio padre de Crear_Texto_LLM/
     if sibling_search_root.exists():
         siblings = [p for p in sibling_search_root.iterdir() if p.is_dir()]
         for sibling in siblings:
-            # Priorizar directorio llamado 'orquestacion_agentes' o 'z_scripts'
-            if sibling.name in ("orquestacion_agentes", "z_scripts"):
+            # Priorizar directorio llamado 'orquestador_de_agentes' o 'z_scripts'
+            if sibling.name in ("orquestador_de_agentes", "z_scripts"):
                 candidate_sibling = (
-                    sibling / "orquestacion_agentes"
+                    sibling / "orquestador_de_agentes"
                     if sibling.name == "z_scripts"
                     else sibling
                 )
@@ -121,8 +121,8 @@ def find_orquestacion_template(start_path: Path | None = None) -> tuple[Path, st
 
     # Strategy 3: Common paths (PROJECTS_PATHS)
     common_paths = [
-        Path.home() / "Proyectos_Python" / "orquestacion_agentes",
-        Path.home() / "projects" / "orquestacion_agentes",
+        Path.home() / "Proyectos_Python" / "orquestador_de_agentes",
+        Path.home() / "projects" / "orquestador_de_agentes",
     ]
     for p in common_paths:
         if p.exists() and (p / ".agent" / "agent_controller.py").exists():
@@ -136,10 +136,10 @@ def find_orquestacion_template(start_path: Path | None = None) -> tuple[Path, st
             return inverse_result
 
     raise FileNotFoundError(
-        "No se pudo detectar plantilla orquestacion_agentes.\n"
+        "No se pudo detectar plantilla orquestador_de_agentes.\n"
         "Buscada en:\n"
         "  - --source argumento\n"
-        "  - Relativo al script (tools/orquestacion_agentes)\n"
+        "  - Relativo al script (tools/orquestador_de_agentes)\n"
         "  - Directorios hermanos\n"
         "  - Rutas comunes\n"
         "  - BÃƒÂºsqueda inversa desde destino\n\n"
@@ -154,7 +154,7 @@ def sync_with_robocopy(
     DEPRECATED: Use install_agent_system.py --sync instead.
 
     This script is no longer the recommended sync method.
-    Use: python orquestacion_agentes/scripts/install_agent_system.py --sync
+    Use: python orquestador_de_agentes/scripts/install_agent_system.py --sync
 
     This file is kept for backward compatibility only.
     New projects MUST use install_agent_system.py.
@@ -209,7 +209,7 @@ def sync_with_shutil(
     DEPRECATED: Use install_agent_system.py --sync instead.
 
     This script is no longer the recommended sync method.
-    Use: python orquestacion_agentes/scripts/install_agent_system.py --sync
+    Use: python orquestador_de_agentes/scripts/install_agent_system.py --sync
 
     This file is kept for backward compatibility only.
     New projects MUST use install_agent_system.py.
@@ -255,7 +255,7 @@ def validate_sync(dest: Path) -> dict:
     DEPRECATED: Use install_agent_system.py --sync instead.
 
     This script is no longer the recommended sync method.
-    Use: python orquestacion_agentes/scripts/install_agent_system.py --sync
+    Use: python orquestador_de_agentes/scripts/install_agent_system.py --sync
 
     This file is kept for backward compatibility only.
     New projects MUST use install_agent_system.py.
@@ -346,7 +346,7 @@ def print_report(
     DEPRECATED: Use install_agent_system.py --sync instead.
 
     This script is no longer the recommended sync method.
-    Use: python orquestacion_agentes/scripts/install_agent_system.py --sync
+    Use: python orquestador_de_agentes/scripts/install_agent_system.py --sync
 
     This file is kept for backward compatibility only.
     New projects MUST use install_agent_system.py.
@@ -391,12 +391,12 @@ def print_report(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Sync Agent Core Ã¢â‚¬â€ Sincroniza nÃƒÂºcleo .agent/ desde plantilla orquestacion_agentes"
+        description="Sync Agent Core Ã¢â‚¬â€ Sincroniza nÃƒÂºcleo .agent/ desde plantilla orquestador_de_agentes"
     )
     parser.add_argument(
         "--source",
         type=Path,
-        help="Ruta a plantilla orquestacion_agentes (auto-detectada si no se proporciona)",
+        help="Ruta a plantilla orquestador_de_agentes (auto-detectada si no se proporciona)",
     )
     parser.add_argument(
         "--dest",

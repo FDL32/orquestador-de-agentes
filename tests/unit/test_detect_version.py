@@ -1,4 +1,4 @@
-﻿"""
+"""
 Tests for scripts/detect_version.py (AgentSystemDetector)
 
 Covers: manifest-first detection, version fingerprinting, confidence scoring, upgrade paths, fail-safe defaults.
@@ -22,7 +22,7 @@ class TestVersionDetection:
         """Test detection of v8.x architectural patterns."""
         # v8.x markers: .agent/agent_controller.py, scripts/run_pytest_safe.py
         # Optional: .agent/hooks/guard_paths.py, .agent/collaboration/
-        # Absent: .agent/rules, skills, AGENTS.md, orquestacion_agentes
+        # Absent: .agent/rules, skills, AGENTS.md, orquestador_de_agentes
 
         project = tmp_path / "v8x_project"
         project.mkdir()
@@ -39,7 +39,7 @@ class TestVersionDetection:
         (project / ".agent" / "collaboration").mkdir()
 
         # Absent markers (implicitly absent in tmp_path)
-        # .agent/rules, skills/, AGENTS.md, orquestacion_agentes not created
+        # .agent/rules, skills/, AGENTS.md, orquestador_de_agentes not created
 
         detector = AgentSystemDetector(str(project))
         result = detector.detect_version()
@@ -83,7 +83,7 @@ class TestVersionDetection:
 
     def test_detect_v9_2_structures(self, tmp_path):
         """Test detection of v9.2 patterns."""
-        # v9.2: + agent_system/refactor_kit/, optional orquestacion_agentes/, AGENTS.md
+        # v9.2: + agent_system/refactor_kit/, optional orquestador_de_agentes/, AGENTS.md
         # Absent: .claude/rules (pre-9.2.1)
 
         project = tmp_path / "v9_2_project"

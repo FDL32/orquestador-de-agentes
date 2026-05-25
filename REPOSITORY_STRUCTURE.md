@@ -1,12 +1,12 @@
 # Repository Structure
 
-This document describes the public, standalone layout of `orquestacion_agentes`.
+This document describes the public, standalone layout of `orquestador_de_agentes`.
 It is written so the repository can be cloned or published without any knowledge of a parent workspace.
 
 ## Canonical layout
 
 ```text
-orquestacion_agentes/
+orquestador_de_agentes/
 ├── .agent/
 │   ├── collaboration/
 │   ├── runtime/
