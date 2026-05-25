@@ -13,15 +13,17 @@ Cubre:
 
 import json
 import pathlib
-import pytest
 import sys
 from io import StringIO
 from unittest.mock import patch
 
+import pytest
+
+
 # Importar el hook
 HOOK_PATH = pathlib.Path(__file__).parent.parent.parent / ".agent" / "hooks"
 sys.path.insert(0, str(HOOK_PATH))
-import pre_compact_hook as hook
+import pre_compact_hook as hook  # noqa: E402
 
 
 class TestLoadObservationsSafe:
@@ -47,7 +49,7 @@ class TestLoadObservationsSafe:
         obs_file.write_text(
             '{"timestamp": "2026-05-24T21:45:59Z", "topic": "test", "signal": "signal1", "source": "builder"}\n'
             '{"timestamp": "2026-05-25T10:00:00Z", "topic": "arch", "signal": "signal2", "source": "manager"}\n',
-            encoding="utf-8"
+            encoding="utf-8",
         )
         with patch.object(hook, "OBSERVATIONS_FILE", obs_file):
             obs = hook.load_observations_safe()
@@ -60,10 +62,10 @@ class TestLoadObservationsSafe:
         obs_file = tmp_path / "observations.jsonl"
         obs_file.write_text(
             '{"timestamp": "2026-05-24T21:45:59Z", "topic": "test", "signal": "signal1", "source": "builder"}\n'
-            'not valid json\n'
+            "not valid json\n"
             '{"timestamp": "2026-05-25T10:00:00Z", "topic": "arch", "signal": "signal2", "source": "manager"}\n'
-            'another bad line\n',
-            encoding="utf-8"
+            "another bad line\n",
+            encoding="utf-8",
         )
         with patch.object(hook, "OBSERVATIONS_FILE", obs_file):
             obs = hook.load_observations_safe()
@@ -73,9 +75,11 @@ class TestLoadObservationsSafe:
         """Test cuando hay error de I/O al leer (OSError desde built-in open)."""
         obs_file = tmp_path / "obs.jsonl"
         obs_file.touch()  # file exists so the guard passes
-        with patch.object(hook, "OBSERVATIONS_FILE", obs_file):
-            with patch("builtins.open", side_effect=OSError("Permission denied")):
-                obs = hook.load_observations_safe()
+        with (
+            patch.object(hook, "OBSERVATIONS_FILE", obs_file),
+            patch("builtins.open", side_effect=OSError("Permission denied")),
+        ):
+            obs = hook.load_observations_safe()
         assert obs == []
 
 
@@ -98,23 +102,29 @@ class TestExtractKeywordsFromWorkPlan:
             "## Files Likely Touched\n"
             "- pre_compact_hook.py\n"
             "- test_pre_compact_hook.py\n",
-            encoding="utf-8"
+            encoding="utf-8",
         )
         with patch.object(hook, "WORK_PLAN_FILE", wp_file):
             keywords = hook.extract_keywords_from_work_plan()
             # Debe contener palabras significativas (no stop words)
-            assert "pre-compactacion" in keywords or "pre" in keywords or "compactacion" in keywords
+            assert (
+                "pre-compactacion" in keywords
+                or "pre" in keywords
+                or "compactacion" in keywords
+            )
             assert "contexto" in keywords
             assert "hook" not in keywords  # es stop word
             assert "test" not in keywords  # es stop word
 
     def test_io_error(self, tmp_path):
         """Test cuando hay error de lectura."""
-        with patch.object(hook, "WORK_PLAN_FILE", tmp_path / "nonexistent.md"):
-            with patch.object(pathlib.Path, "exists", return_value=True):
-                with patch.object(pathlib.Path, "read_text", side_effect=IOError("Error")):
-                    keywords = hook.extract_keywords_from_work_plan()
-                    assert keywords == []
+        with (
+            patch.object(hook, "WORK_PLAN_FILE", tmp_path / "nonexistent.md"),
+            patch.object(pathlib.Path, "exists", return_value=True),
+            patch.object(pathlib.Path, "read_text", side_effect=OSError("Error")),
+        ):
+            keywords = hook.extract_keywords_from_work_plan()
+            assert keywords == []
 
 
 class TestScoreObservation:
@@ -131,7 +141,7 @@ class TestScoreObservation:
             "timestamp": "2026-05-24T21:45:59Z",
             "topic": "unrelated",
             "signal": "nothing matches",
-            "source": "builder"
+            "source": "builder",
         }
         score = hook.score_observation(obs, ["python", "context", "hook"])
         # Solo debe tener score de recencia, no de keywords
@@ -149,7 +159,7 @@ class TestScoreObservation:
         }
         score_no_kw = hook.score_observation(obs, [])
         score_with_kw = hook.score_observation(obs, ["python", "context", "recovery"])
-        # 3 keywords × 50 bonus each — delta must exceed base recency score
+        # 3 keywords x 50 bonus each - delta must exceed base recency score
         assert score_with_kw >= score_no_kw + 3 * 50
 
     def test_partial_match(self):
@@ -158,7 +168,7 @@ class TestScoreObservation:
             "timestamp": "2026-05-24T21:45:59Z",
             "topic": "context",
             "signal": "something else",
-            "source": "builder"
+            "source": "builder",
         }
         score = hook.score_observation(obs, ["python", "context", "hook"])
         # Debe matchear solo "context"
@@ -176,7 +186,12 @@ class TestRankObservations:
     def test_cap_at_max(self):
         """Test que el ranking respeta el MAX_OBSERVATIONS cap."""
         observations = [
-            {"timestamp": f"2026-05-{24-i:02d}T10:00:00Z", "topic": f"topic{i}", "signal": f"signal{i}", "source": "builder"}
+            {
+                "timestamp": f"2026-05-{24 - i:02d}T10:00:00Z",
+                "topic": f"topic{i}",
+                "signal": f"signal{i}",
+                "source": "builder",
+            }
             for i in range(10)
         ]
         ranked = hook.rank_observations(observations, [])
@@ -186,9 +201,19 @@ class TestRankObservations:
         """Test que el ranking combina recencia y keywords."""
         observations = [
             # Vieja pero con keywords
-            {"timestamp": "2026-05-01T10:00:00Z", "topic": "context", "signal": "python hook", "source": "builder"},
+            {
+                "timestamp": "2026-05-01T10:00:00Z",
+                "topic": "context",
+                "signal": "python hook",
+                "source": "builder",
+            },
             # Reciente sin keywords
-            {"timestamp": "2026-05-25T10:00:00Z", "topic": "other", "signal": "nothing", "source": "builder"},
+            {
+                "timestamp": "2026-05-25T10:00:00Z",
+                "topic": "other",
+                "signal": "nothing",
+                "source": "builder",
+            },
         ]
         ranked = hook.rank_observations(observations, ["python", "context", "hook"])
         # La primera debe estar arriba por keywords aunque sea mas vieja
@@ -206,7 +231,12 @@ class TestFormatMemorySection:
     def test_format_single_observation(self):
         """Test formateo de una observacion."""
         observations = [
-            {"timestamp": "2026-05-24T21:45:59Z", "topic": "test", "signal": "test signal", "source": "builder"}
+            {
+                "timestamp": "2026-05-24T21:45:59Z",
+                "topic": "test",
+                "signal": "test signal",
+                "source": "builder",
+            }
         ]
         section = hook.format_memory_section(observations)
         assert "**Memoria relevante**:" in section
@@ -217,11 +247,20 @@ class TestFormatMemorySection:
         """Test que señales largas se truncan."""
         long_signal = "a" * 200
         observations = [
-            {"timestamp": "2026-05-24T21:45:59Z", "topic": "test", "signal": long_signal, "source": "builder"}
+            {
+                "timestamp": "2026-05-24T21:45:59Z",
+                "topic": "test",
+                "signal": long_signal,
+                "source": "builder",
+            }
         ]
         section = hook.format_memory_section(observations)
         # El signal debe estar truncado a 100 chars
-        assert len(long_signal[:100]) in [len(line) for line in section.split("\n") if "test" in line] or long_signal[:100] in section
+        assert (
+            len(long_signal[:100])
+            in [len(line) for line in section.split("\n") if "test" in line]
+            or long_signal[:100] in section
+        )
 
 
 class TestMainHook:
@@ -232,13 +271,15 @@ class TestMainHook:
         stdin_mock = StringIO("")
         stdout_mock = StringIO()
 
-        with patch.object(sys, "stdin", stdin_mock):
-            with patch.object(sys, "stdout", stdout_mock):
-                with patch.object(hook, "load_observations_safe", return_value=[]):
-                    with patch.object(hook, "extract_keywords_from_work_plan", return_value=[]):
-                        with pytest.raises(SystemExit) as exc_info:
-                            hook.main()
-                        assert exc_info.value.code == 0
+        with (
+            patch.object(sys, "stdin", stdin_mock),
+            patch.object(sys, "stdout", stdout_mock),
+            patch.object(hook, "load_observations_safe", return_value=[]),
+            patch.object(hook, "extract_keywords_from_work_plan", return_value=[]),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            hook.main()
+        assert exc_info.value.code == 0
 
         result = json.loads(stdout_mock.getvalue())
         assert result["continue"] is True
@@ -250,16 +291,25 @@ class TestMainHook:
         stdout_mock = StringIO()
 
         observations = [
-            {"timestamp": "2026-05-24T21:45:59Z", "topic": "context", "signal": "relevant signal", "source": "builder"}
+            {
+                "timestamp": "2026-05-24T21:45:59Z",
+                "topic": "context",
+                "signal": "relevant signal",
+                "source": "builder",
+            }
         ]
 
-        with patch.object(sys, "stdin", stdin_mock):
-            with patch.object(sys, "stdout", stdout_mock):
-                with patch.object(hook, "load_observations_safe", return_value=observations):
-                    with patch.object(hook, "extract_keywords_from_work_plan", return_value=["context"]):
-                        with pytest.raises(SystemExit) as exc_info:
-                            hook.main()
-                        assert exc_info.value.code == 0
+        with (
+            patch.object(sys, "stdin", stdin_mock),
+            patch.object(sys, "stdout", stdout_mock),
+            patch.object(hook, "load_observations_safe", return_value=observations),
+            patch.object(
+                hook, "extract_keywords_from_work_plan", return_value=["context"]
+            ),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            hook.main()
+        assert exc_info.value.code == 0
 
         result = json.loads(stdout_mock.getvalue())
         assert result["continue"] is True
@@ -271,13 +321,15 @@ class TestMainHook:
         stdin_mock = StringIO("{}")
         stdout_mock = StringIO()
 
-        with patch.object(sys, "stdin", stdin_mock):
-            with patch.object(sys, "stdout", stdout_mock):
-                with patch.object(hook, "load_observations_safe", return_value=[]):
-                    with patch.object(hook, "extract_keywords_from_work_plan", return_value=[]):
-                        with pytest.raises(SystemExit) as exc_info:
-                            hook.main()
-                        assert exc_info.value.code == 0
+        with (
+            patch.object(sys, "stdin", stdin_mock),
+            patch.object(sys, "stdout", stdout_mock),
+            patch.object(hook, "load_observations_safe", return_value=[]),
+            patch.object(hook, "extract_keywords_from_work_plan", return_value=[]),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            hook.main()
+        assert exc_info.value.code == 0
 
         result = json.loads(stdout_mock.getvalue())
         assert result["continue"] is True
@@ -288,13 +340,15 @@ class TestMainHook:
         stdin_mock = StringIO("not valid json")
         stdout_mock = StringIO()
 
-        with patch.object(sys, "stdin", stdin_mock):
-            with patch.object(sys, "stdout", stdout_mock):
-                with patch.object(hook, "load_observations_safe", return_value=[]):
-                    with patch.object(hook, "extract_keywords_from_work_plan", return_value=[]):
-                        with pytest.raises(SystemExit) as exc_info:
-                            hook.main()
-                        assert exc_info.value.code == 0
+        with (
+            patch.object(sys, "stdin", stdin_mock),
+            patch.object(sys, "stdout", stdout_mock),
+            patch.object(hook, "load_observations_safe", return_value=[]),
+            patch.object(hook, "extract_keywords_from_work_plan", return_value=[]),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            hook.main()
+        assert exc_info.value.code == 0
 
         result = json.loads(stdout_mock.getvalue())
         assert result["continue"] is True

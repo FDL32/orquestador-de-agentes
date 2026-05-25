@@ -9,14 +9,10 @@ Tests cover:
 
 from __future__ import annotations
 
-import json
-import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
-
 from bus.approval import (
     ApprovalPolicy,
     ApprovalReason,
@@ -231,10 +227,14 @@ def test_approval_policy_creation():
 
 def test_approval_policy_invalid_timeout():
     """Test ApprovalPolicy rejects non-positive timeout."""
-    with pytest.raises(ApprovalTimeoutPolicyError, match="timeout_seconds must be positive"):
+    with pytest.raises(
+        ApprovalTimeoutPolicyError, match="timeout_seconds must be positive"
+    ):
         ApprovalPolicy(timeout_seconds=0)
 
-    with pytest.raises(ApprovalTimeoutPolicyError, match="timeout_seconds must be positive"):
+    with pytest.raises(
+        ApprovalTimeoutPolicyError, match="timeout_seconds must be positive"
+    ):
         ApprovalPolicy(timeout_seconds=-100)
 
 
@@ -568,7 +568,10 @@ def test_skill_resolver_with_mocked_discovery(tmp_path):
     # Validate access
     assert resolver.validate_skill_access("/test", "BUILDER") is True
     assert resolver.validate_skill_access("/testing", "BUILDER") is True
-    assert resolver.validate_skill_access("/other", "BUILDER", raise_on_denied=False) is False
+    assert (
+        resolver.validate_skill_access("/other", "BUILDER", raise_on_denied=False)
+        is False
+    )
 
 
 def test_skill_resolver_resolve_skill_by_name(tmp_path):
@@ -577,9 +580,7 @@ def test_skill_resolver_resolve_skill_by_name(tmp_path):
     test_skill = skills_dir / "test_skill"
     test_skill.mkdir(parents=True)
     skill_file = test_skill / "SKILL.md"
-    skill_file.write_text(
-        "---\nname: Test Skill\ntriggers: [/test]\n---\n\nContent\n"
-    )
+    skill_file.write_text("---\nname: Test Skill\ntriggers: [/test]\n---\n\nContent\n")
 
     resolver = SkillResolver(project_root=tmp_path)
     resolver._discovered_skills = {

@@ -58,7 +58,7 @@ def test_validate_schema_invalid_category() -> None:
         "category": "opinion",  # Invalid
         "source_ticket": "WP-2026-132",
         "topic": "test",
-        "source": "session-close"
+        "source": "session-close",
     }
     is_valid, errors = validate_schema(entry)
     assert is_valid is False
@@ -73,7 +73,7 @@ def test_validate_schema_valid() -> None:
         "category": "fact",
         "source_ticket": "WP-2026-132",
         "topic": "test",
-        "source": "session-close"
+        "source": "session-close",
     }
     is_valid, errors = validate_schema(entry)
     assert is_valid is True
@@ -88,7 +88,7 @@ def test_validate_schema_short_signal() -> None:
         "category": "fact",
         "source_ticket": "WP-2026-132",
         "topic": "test",
-        "source": "session-close"
+        "source": "session-close",
     }
     is_valid, errors = validate_schema(entry)
     assert is_valid is False
@@ -105,7 +105,7 @@ def test_is_duplicate_exact_match() -> None:
             "category": "fact",
             "source_ticket": "WP-2026-132",
             "topic": "test",
-            "source": "builder"
+            "source": "builder",
         }
     ]
 
@@ -115,7 +115,7 @@ def test_is_duplicate_exact_match() -> None:
         "category": "fact",
         "source_ticket": "WP-2026-133",
         "topic": "test",
-        "source": "session-close"
+        "source": "session-close",
     }
 
     assert is_duplicate(candidate, existing) is True
@@ -131,7 +131,7 @@ def test_is_duplicate_different_signal() -> None:
             "category": "fact",
             "source_ticket": "WP-2026-132",
             "topic": "test",
-            "source": "builder"
+            "source": "builder",
         }
     ]
 
@@ -141,7 +141,7 @@ def test_is_duplicate_different_signal() -> None:
         "category": "fact",
         "source_ticket": "WP-2026-133",
         "topic": "test",
-        "source": "session-close"
+        "source": "session-close",
     }
 
     assert is_duplicate(candidate, existing) is False
@@ -157,7 +157,7 @@ def test_is_duplicate_outside_window() -> None:
             "category": "fact",
             "source_ticket": "WP-2026-132",
             "topic": "test",
-            "source": "builder"
+            "source": "builder",
         }
     ]
 
@@ -167,7 +167,7 @@ def test_is_duplicate_outside_window() -> None:
         "category": "fact",
         "source_ticket": "WP-2026-133",
         "topic": "test",
-        "source": "session-close"
+        "source": "session-close",
     }
 
     assert is_duplicate(candidate, existing) is False
@@ -182,7 +182,7 @@ def test_process_candidates_filters_invalid() -> None:
             "category": "fact",
             "source_ticket": "WP-2026-132",
             "topic": "test",
-            "source": "session-close"
+            "source": "session-close",
         }
     ]
     existing = []
@@ -201,7 +201,7 @@ def test_process_candidates_accepts_valid() -> None:
             "category": "fact",
             "source_ticket": "WP-2026-132",
             "topic": "test",
-            "source": "session-close"
+            "source": "session-close",
         }
     ]
     existing = []
@@ -228,12 +228,18 @@ def test_valid_categories() -> None:
     assert {"convention", "decision", "fact", "pattern"} == VALID_CATEGORIES
 
 
-def test_extract_candidates_from_ticket_unknown_id(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_extract_candidates_from_ticket_unknown_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Extract candidates returns empty list when ticket ID not found in work_plan."""
     fake_plan = tmp_path / "work_plan.md"
-    fake_plan.write_text("# Work Plan - WP-2026-001\n## Metadata\n- **ID:** WP-2026-001\n", encoding="utf-8")
+    fake_plan.write_text(
+        "# Work Plan - WP-2026-001\n## Metadata\n- **ID:** WP-2026-001\n",
+        encoding="utf-8",
+    )
 
     import scripts.session_close_observations as sco
+
     monkeypatch.setattr(sco, "AGENT_DIR", tmp_path)
 
     candidates = sco.extract_candidates_from_ticket("WP-2026-999")
@@ -244,16 +250,18 @@ def test_extract_candidates_from_ticket_unknown_id(monkeypatch: pytest.MonkeyPat
 # Tests para load_candidates_from_file (WP-2026-136)
 # =============================================================================
 
+
 def test_load_candidates_from_file_valid_json(tmp_path: Path) -> None:
     """load_candidates_from_file returns list of dicts with valid JSON."""
     candidates_file = tmp_path / "candidates.json"
     candidates_file.write_text(
         '[{"signal": "Test signal 1", "category": "fact"}, '
         '{"signal": "Test signal 2", "category": "decision"}]',
-        encoding="utf-8"
+        encoding="utf-8",
     )
 
     import scripts.session_close_observations as sco
+
     result = sco.load_candidates_from_file(str(candidates_file))
 
     assert len(result) == 2
@@ -291,15 +299,18 @@ def test_load_candidates_from_file_top_level_not_list(tmp_path: Path) -> None:
         sco.load_candidates_from_file(str(candidates_file))
 
 
-def test_load_candidates_from_file_skips_non_dict_elements(tmp_path: Path, capsys) -> None:
+def test_load_candidates_from_file_skips_non_dict_elements(
+    tmp_path: Path, capsys
+) -> None:
     """load_candidates_from_file skips non-dict elements with warning."""
     candidates_file = tmp_path / "candidates.json"
     candidates_file.write_text(
         '[{"signal": "Valid"}, "string element", 123, null, {"signal": "Also valid"}]',
-        encoding="utf-8"
+        encoding="utf-8",
     )
 
     import scripts.session_close_observations as sco
+
     result = sco.load_candidates_from_file(str(candidates_file))
 
     assert len(result) == 2
@@ -315,7 +326,17 @@ def test_main_mutually_exclusive_args(capsys, monkeypatch: pytest.MonkeyPatch) -
     import scripts.session_close_observations as sco
 
     # Both flags should raise SystemExit due to mutually_exclusive_group(required=True)
-    monkeypatch.setattr(sys, "argv", ["session_close_observations.py", "--ticket", "WP-2026-001", "--candidates", "file.json"])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "session_close_observations.py",
+            "--ticket",
+            "WP-2026-001",
+            "--candidates",
+            "file.json",
+        ],
+    )
 
     with pytest.raises(SystemExit):
         sco.main()
@@ -337,7 +358,7 @@ def test_main_with_candidates_flag_does_not_call_extract_from_ticket(
     candidates_file.write_text(
         '[{"timestamp": "2026-05-25T12:00:00Z", "signal": "This is a valid signal with enough length", '
         '"category": "fact", "source_ticket": "WP-2026-136", "topic": "test", "source": "test"}]',
-        encoding="utf-8"
+        encoding="utf-8",
     )
 
     # Patch extract_candidates_from_ticket to verify it's NOT called
@@ -349,12 +370,17 @@ def test_main_with_candidates_flag_does_not_call_extract_from_ticket(
         return original_extract(ticket_id)
 
     monkeypatch.setattr(sco, "extract_candidates_from_ticket", patched_extract)
-    monkeypatch.setattr(sys, "argv", [
-        "session_close_observations.py",
-        "--candidates", str(candidates_file),
-        "--dry-run",
-        "--verbose"
-    ])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "session_close_observations.py",
+            "--candidates",
+            str(candidates_file),
+            "--dry-run",
+            "--verbose",
+        ],
+    )
 
     # Patch MEMORY_DIR to use tmp_path
     monkeypatch.setattr(sco, "MEMORY_DIR", tmp_path)
@@ -387,11 +413,16 @@ def test_main_empty_candidates_exits_zero(
     candidates_file = tmp_path / "candidates.json"
     candidates_file.write_text("[]", encoding="utf-8")
 
-    monkeypatch.setattr(sys, "argv", [
-        "session_close_observations.py",
-        "--candidates", str(candidates_file),
-        "--dry-run",
-    ])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "session_close_observations.py",
+            "--candidates",
+            str(candidates_file),
+            "--dry-run",
+        ],
+    )
     monkeypatch.setattr(sco, "OBS_FILE", tmp_path / "observations.jsonl")
     monkeypatch.setattr(sco, "REPORT_FILE", tmp_path / "report.md")
 

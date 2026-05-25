@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 spec = importlib.util.spec_from_file_location(
     "archive_execution_log",
@@ -29,7 +30,9 @@ def test_below_keep_threshold_no_archive(tmp_path: Path) -> None:
     log.write_text(_build_log(5), encoding="utf-8")
     archived = mod.archive_execution_log(log, keep_sections=10, dry_run=False)
     assert archived == 0
-    assert not (tmp_path / "archive").exists() or not any((tmp_path / "archive").iterdir())
+    assert not (tmp_path / "archive").exists() or not any(
+        (tmp_path / "archive").iterdir()
+    )
 
 
 def test_keeps_boundary_correctly(tmp_path: Path) -> None:
@@ -43,7 +46,9 @@ def test_keeps_boundary_correctly(tmp_path: Path) -> None:
         assert f"### WP-2026-{i:03d}" in remaining, f"missing WP-{i:03d} in active log"
     # The 2 oldest must NOT be in the active log
     for i in (1, 2):
-        assert f"### WP-2026-{i:03d}" not in remaining, f"WP-{i:03d} should have been archived"
+        assert f"### WP-2026-{i:03d}" not in remaining, (
+            f"WP-{i:03d} should have been archived"
+        )
     # And must be in the archive file
     archive_files = list((tmp_path / "archive").glob("execution_log_*.md"))
     assert len(archive_files) == 1

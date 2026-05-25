@@ -35,9 +35,9 @@ class TestVolatileFilesExclusion:
 
         exclude_pattern = match.group(1)
         # Verify project_map.md is in the exclude pattern
-        assert (
-            r"\.agent/context/project_map\.md" in exclude_pattern
-        ), f"project_map.md should be excluded. Current pattern: {exclude_pattern}"
+        assert r"\.agent/context/project_map\.md" in exclude_pattern, (
+            f"project_map.md should be excluded. Current pattern: {exclude_pattern}"
+        )
 
     def test_project_map_excluded_from_mixed_line_ending(
         self, pre_commit_config_content: str
@@ -50,9 +50,9 @@ class TestVolatileFilesExclusion:
 
         exclude_pattern = match.group(1)
         # Verify project_map.md is in the exclude pattern
-        assert (
-            r"\.agent/context/project_map\.md" in exclude_pattern
-        ), f"project_map.md should be excluded. Current pattern: {exclude_pattern}"
+        assert r"\.agent/context/project_map\.md" in exclude_pattern, (
+            f"project_map.md should be excluded. Current pattern: {exclude_pattern}"
+        )
 
     def test_claude_settings_excluded_from_mixed_line_ending(
         self, pre_commit_config_content: str
@@ -65,9 +65,9 @@ class TestVolatileFilesExclusion:
 
         exclude_pattern = match.group(1)
         # Verify .claude/settings.json is in the exclude pattern
-        assert (
-            r"\.claude/settings\.json" in exclude_pattern
-        ), f".claude/settings.json should be excluded. Current pattern: {exclude_pattern}"
+        assert r"\.claude/settings\.json" in exclude_pattern, (
+            f".claude/settings.json should be excluded. Current pattern: {exclude_pattern}"
+        )
 
 
 class TestHookConfigurationIntegrity:
@@ -77,13 +77,17 @@ class TestHookConfigurationIntegrity:
         """Verify pre-commit configuration file exists."""
         assert PRE_COMMIT_CONFIG_PATH.exists(), "pre-commit config not found"
 
-    def test_end_of_file_fixer_has_exclude(self, pre_commit_config_content: str) -> None:
+    def test_end_of_file_fixer_has_exclude(
+        self, pre_commit_config_content: str
+    ) -> None:
         """Verify end-of-file-fixer has an exclude pattern."""
         pattern = r"- id: end-of-file-fixer.*?exclude: '(.+?)'"
         match = re.search(pattern, pre_commit_config_content, re.DOTALL)
         assert match is not None, "end-of-file-fixer must have an exclude pattern"
 
-    def test_mixed_line_ending_has_exclude(self, pre_commit_config_content: str) -> None:
+    def test_mixed_line_ending_has_exclude(
+        self, pre_commit_config_content: str
+    ) -> None:
         """Verify mixed-line-ending has an exclude pattern."""
         pattern = r"- id: mixed-line-ending.*?exclude: '(.+?)'"
         match = re.search(pattern, pre_commit_config_content, re.DOTALL)

@@ -3,6 +3,7 @@
 These tests verify that the review bridge handles event_bus.emit() failures
 gracefully, logging errors audibly without crashing the review cycle.
 """
+
 from __future__ import annotations
 
 import json
@@ -10,7 +11,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from bus.event_bus import EventBus
 from bus.review_bridge import ReviewBridge, ReviewDecision
 
@@ -46,7 +46,9 @@ def review_bridge(event_bus, tmp_path):
     return ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
 
-def test_manager_review_observation_loader_caps_filters_and_truncates(review_bridge, tmp_path):
+def test_manager_review_observation_loader_caps_filters_and_truncates(
+    review_bridge, tmp_path
+):
     memory_dir = tmp_path / ".agent" / "runtime" / "memory"
     memory_dir.mkdir(parents=True, exist_ok=True)
     observations_path = memory_dir / "observations.jsonl"
@@ -108,7 +110,9 @@ def test_emit_fail_safe_on_managing_reviewing(review_bridge, event_bus, tmp_path
     supervisor = MagicMock()
 
     # Mock event_bus.emit to raise an exception on first call
-    with patch.object(event_bus, 'emit', side_effect=Exception("Simulated bus failure")):
+    with patch.object(
+        event_bus, "emit", side_effect=Exception("Simulated bus failure")
+    ):
         result = review_bridge.run_manager_review_cycle(
             ticket_id="WP-TEST-001",
             supervisor=supervisor,
@@ -119,7 +123,10 @@ def test_emit_fail_safe_on_managing_reviewing(review_bridge, event_bus, tmp_path
     assert result.decision == ReviewDecision.INSPECT
     assert result.exit_code == 1
     assert "FAIL-SAFE" in result.stderr
-    assert "event_bus.emit() failed" in result.stderr or "MANAGER_REVIEWING" in result.stderr
+    assert (
+        "event_bus.emit() failed" in result.stderr
+        or "MANAGER_REVIEWING" in result.stderr
+    )
 
 
 def test_emit_fail_safe_on_review_decision(review_bridge, event_bus, tmp_path, capfd):
@@ -144,33 +151,39 @@ def test_emit_fail_safe_on_review_decision(review_bridge, event_bus, tmp_path, c
         return ("DECISION: APPROVE\n", "", 0)
 
     # Patch the review execution to return APPROVE AND mock backend to use opencode
-    with patch.object(review_bridge, '_run_opencode_review', side_effect=mock_run_opencode):
-        with patch.object(review_bridge, '_get_manager_backend', return_value='opencode'):
-            # Mock emit to fail only on REVIEW_DECISION
-            def conditional_emit(*args, **kwargs):
-                event_type = args[0] if args else kwargs.get('event_type', '')
-                # Fail only on REVIEW_DECISION
-                if event_type == "REVIEW_DECISION":
-                    raise Exception("Simulated REVIEW_DECISION emit failure")
-                # For other events, just return a dummy record
-                from bus.event_bus import EventRecord
-                from datetime import datetime, timezone
-                return EventRecord(
-                    event_id=f"evt-{event_type}",
-                    event_type=event_type,
-                    ticket_id="WP-TEST-001",
-                    actor="MANAGER",
-                    timestamp=datetime.now(timezone.utc).isoformat(),
-                    payload=kwargs.get('payload', {}),
-                    sequence_number=1,
-                )
+    with (
+        patch.object(
+            review_bridge, "_run_opencode_review", side_effect=mock_run_opencode
+        ),
+        patch.object(review_bridge, "_get_manager_backend", return_value="opencode"),
+    ):
+        # Mock emit to fail only on REVIEW_DECISION
+        def conditional_emit(*args, **kwargs):
+            event_type = args[0] if args else kwargs.get("event_type", "")
+            # Fail only on REVIEW_DECISION
+            if event_type == "REVIEW_DECISION":
+                raise Exception("Simulated REVIEW_DECISION emit failure")
+            # For other events, just return a dummy record
+            from datetime import datetime, timezone
 
-            with patch.object(event_bus, 'emit', side_effect=conditional_emit):
-                result = review_bridge.run_manager_review_cycle(
-                    ticket_id="WP-TEST-001",
-                    supervisor=supervisor,
-                    timeout_seconds=10,
-                )
+            from bus.event_bus import EventRecord
+
+            return EventRecord(
+                event_id=f"evt-{event_type}",
+                event_type=event_type,
+                ticket_id="WP-TEST-001",
+                actor="MANAGER",
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                payload=kwargs.get("payload", {}),
+                sequence_number=1,
+            )
+
+        with patch.object(event_bus, "emit", side_effect=conditional_emit):
+            result = review_bridge.run_manager_review_cycle(
+                ticket_id="WP-TEST-001",
+                supervisor=supervisor,
+                timeout_seconds=10,
+            )
 
     # Decision should still be APPROVE (the review ran successfully)
     assert result.decision == ReviewDecision.APPROVE
@@ -187,7 +200,7 @@ def test_emit_fail_safe_on_review_attempt(review_bridge, event_bus, tmp_path):
     After: Error is logged to stderr but cycle continues.
     """
     # Call _emit_review_attempt with mocked failing emit
-    with patch.object(event_bus, 'emit', side_effect=Exception("Bus error")):
+    with patch.object(event_bus, "emit", side_effect=Exception("Bus error")):
         # Should not raise, just log to stderr
         review_bridge._emit_review_attempt(
             ticket_id="WP-TEST-001",
@@ -229,14 +242,16 @@ def test_review_bridge_handles_invalid_ticket_state(review_bridge, event_bus, tm
     assert "READY_FOR_REVIEW" in result.stderr
 
 
-def test_review_bridge_fail_safe_emits_to_stderr(review_bridge, event_bus, tmp_path, capfd):
+def test_review_bridge_fail_safe_emits_to_stderr(
+    review_bridge, event_bus, tmp_path, capfd
+):
     """WP-2026-118: Verify fail-safe messages are written to stderr.
 
     Before: Errors might be silently swallowed or go to stdout.
     During: Triggers emit() failure and captures stderr output.
     After: stderr contains structured fail-safe message with ticket_id.
     """
-    with patch.object(event_bus, 'emit', side_effect=Exception("Test bus error")):
+    with patch.object(event_bus, "emit", side_effect=Exception("Test bus error")):
         review_bridge._emit_review_attempt(
             ticket_id="WP-FAIL-001",
             attempt=3,
@@ -263,7 +278,7 @@ class TestOpencodeJsonParserRealSchema:
 
     def test_parse_json_text_event_with_decision_approve(self, tmp_path):
         """Test parser detects DECISION: APPROVE in type:text event with part.text."""
-        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge, ReviewDecision
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -277,7 +292,7 @@ class TestOpencodeJsonParserRealSchema:
 
     def test_parse_json_text_event_with_decision_changes(self, tmp_path):
         """Test parser detects DECISION: CHANGES in type:text event with part.text."""
-        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge, ReviewDecision
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -290,7 +305,7 @@ class TestOpencodeJsonParserRealSchema:
 
     def test_parse_json_prioritizes_final_answer_phase(self, tmp_path):
         """Test parser prioritizes phase:final_answer over other text events."""
-        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge, ReviewDecision
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -306,7 +321,7 @@ class TestOpencodeJsonParserRealSchema:
 
     def test_parse_json_no_final_answer_uses_last_text_decision(self, tmp_path):
         """Test parser uses last text event decision when no final_answer exists."""
-        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge, ReviewDecision
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -322,7 +337,7 @@ class TestOpencodeJsonParserRealSchema:
 
     def test_parse_json_invalid_json_lines_returns_inspect(self, tmp_path):
         """Test parser returns INSPECT when JSON is malformed."""
-        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge, ReviewDecision
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -337,7 +352,7 @@ class TestOpencodeJsonParserRealSchema:
 
     def test_parse_json_empty_stdout_returns_inspect(self, tmp_path):
         """Test parser returns INSPECT for empty stdout."""
-        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge, ReviewDecision
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -348,7 +363,7 @@ class TestOpencodeJsonParserRealSchema:
 
     def test_parse_json_text_event_missing_part_field(self, tmp_path):
         """Test parser handles text events without part field gracefully."""
-        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge, ReviewDecision
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -366,7 +381,7 @@ class TestParseOpencodeDecisionWithRetry:
 
     def test_retry_not_invoked_on_valid_decision(self, tmp_path):
         """Test retry is not invoked when parser extracts valid decision."""
-        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge, ReviewDecision
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -385,7 +400,7 @@ class TestParseOpencodeDecisionWithRetry:
 
     def test_retry_invoked_on_inspect_with_valid_output(self, tmp_path):
         """Test retry is invoked when INSPECT but output looks valid."""
-        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge, ReviewDecision
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -405,7 +420,7 @@ class TestParseOpencodeDecisionWithRetry:
 
     def test_retry_not_invoked_on_technical_failure(self, tmp_path):
         """Test retry is skipped on technical failures (timeout, etc.)."""
-        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge, ReviewDecision
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -423,7 +438,7 @@ class TestParseOpencodeDecisionWithRetry:
 
     def test_retry_not_invoked_on_empty_stdout(self, tmp_path):
         """Test retry is skipped when stdout is empty."""
-        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge, ReviewDecision
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -441,8 +456,9 @@ class TestParseOpencodeDecisionWithRetry:
 
     def test_retry_exponential_backoff(self, tmp_path, monkeypatch):
         """Test retry uses exponential backoff delays."""
-        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
         import time
+
+        from bus.review_bridge import EventBus, ReviewBridge
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -473,7 +489,7 @@ class TestNoBareWordFallback:
 
     def test_no_changes_needed_not_interpreted_as_changes(self, tmp_path, monkeypatch):
         """Test 'no changes needed' does not trigger CHANGES decision."""
-        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge, ReviewDecision
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -488,9 +504,11 @@ class TestNoBareWordFallback:
         # Should be INSPECT, not CHANGES (no DECISION: pattern)
         assert decision == ReviewDecision.INSPECT
 
-    def test_approve_without_decision_pattern_returns_inspect(self, tmp_path, monkeypatch):
+    def test_approve_without_decision_pattern_returns_inspect(
+        self, tmp_path, monkeypatch
+    ):
         """Test 'APPROVE' without DECISION: pattern returns INSPECT."""
-        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge, ReviewDecision
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -505,7 +523,7 @@ class TestNoBareWordFallback:
 
     def test_explicit_decision_pattern_is_recognized(self, tmp_path, monkeypatch):
         """Test explicit DECISION: pattern is correctly recognized."""
-        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge, ReviewDecision
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -522,7 +540,9 @@ class TestNoBareWordFallback:
 class TestDocumentationPromptWiring:
     """Regression tests: documentation type receives cross-cutting checks and learnings."""
 
-    def _make_bridge(self, tmp_path: Path, dtype: str = "documentation") -> ReviewBridge:
+    def _make_bridge(
+        self, tmp_path: Path, dtype: str = "documentation"
+    ) -> ReviewBridge:
         collab = tmp_path / ".agent" / "collaboration"
         collab.mkdir(parents=True)
         (collab / "work_plan.md").write_text(
@@ -539,6 +559,7 @@ class TestDocumentationPromptWiring:
         obs_path = tmp_path / ".agent" / "runtime" / "memory" / "observations.jsonl"
         obs_path.parent.mkdir(parents=True, exist_ok=True)
         import datetime
+
         record = {
             "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "topic": "manager-review-rubric",
@@ -566,14 +587,18 @@ class TestDocumentationPromptWiring:
 
     def test_documentation_excludes_code_only_learnings(self, tmp_path):
         """documentation prompt must not include observations scoped to code/mixed only."""
-        self._write_observation(tmp_path, "code-only signal", applies_to=["code", "mixed"])
+        self._write_observation(
+            tmp_path, "code-only signal", applies_to=["code", "mixed"]
+        )
         bridge = self._make_bridge(tmp_path)
         prompt = bridge._build_review_prompt("WP-2026-TEST", "documentation")
         assert "code-only signal" not in prompt
 
     def test_code_receives_learnings_scoped_to_code(self, tmp_path):
         """code prompt includes observations scoped to code."""
-        self._write_observation(tmp_path, "code scoped signal", applies_to=["code", "mixed"])
+        self._write_observation(
+            tmp_path, "code scoped signal", applies_to=["code", "mixed"]
+        )
         bridge = self._make_bridge(tmp_path, dtype="code")
         prompt = bridge._build_review_prompt("WP-2026-TEST", "code")
         assert "code scoped signal" in prompt
@@ -590,15 +615,17 @@ class TestDocumentationPromptWiring:
 class TestCanonicalAntiPatternInventory:
     """Direct tests for AP-08: new canonical AP loading methods (WP-2026-139 hotfix)."""
 
-    _AP_CONTENT = "\n".join([
-        "# Inventario Canonico",
-        "",
-        "## AP-01 - Mock drift",
-        "- El patch apunta a un simbolo distinto.",
-        "",
-        "## AP-02 - Floor assertion",
-        "- El umbral ya esta satisfecho por el baseline.",
-    ])
+    _AP_CONTENT = "\n".join(
+        [
+            "# Inventario Canonico",
+            "",
+            "## AP-01 - Mock drift",
+            "- El patch apunta a un simbolo distinto.",
+            "",
+            "## AP-02 - Floor assertion",
+            "- El umbral ya esta satisfecho por el baseline.",
+        ]
+    )
 
     def _make_bridge(self, tmp_path: Path) -> ReviewBridge:
         collab = tmp_path / ".agent" / "collaboration"
@@ -617,17 +644,25 @@ class TestCanonicalAntiPatternInventory:
         assert result == [("AP-01", "Mock drift"), ("AP-02", "Floor assertion")]
 
     def test_parse_returns_empty_for_content_without_ap_headers(self):
-        result = ReviewBridge._parse_canonical_anti_patterns("# No AP headers\n- just content")
+        result = ReviewBridge._parse_canonical_anti_patterns(
+            "# No AP headers\n- just content"
+        )
         assert result == []
 
-    def test_load_warns_and_returns_empty_when_file_missing(self, tmp_path, monkeypatch):
+    def test_load_warns_and_returns_empty_when_file_missing(
+        self, tmp_path, monkeypatch
+    ):
         bridge = self._make_bridge(tmp_path)
-        monkeypatch.setattr(bridge, "_canonical_anti_patterns_path", lambda: tmp_path / "nonexistent.md")
+        monkeypatch.setattr(
+            bridge, "_canonical_anti_patterns_path", lambda: tmp_path / "nonexistent.md"
+        )
         with pytest.warns(RuntimeWarning, match="unavailable"):
             result = bridge._load_canonical_anti_patterns()
         assert result == []
 
-    def test_load_warns_and_returns_empty_when_file_has_no_ap_entries(self, tmp_path, monkeypatch):
+    def test_load_warns_and_returns_empty_when_file_has_no_ap_entries(
+        self, tmp_path, monkeypatch
+    ):
         stub = tmp_path / "anti-patterns.md"
         stub.write_text("# No AP headers here", encoding="utf-8")
         bridge = self._make_bridge(tmp_path)
@@ -638,7 +673,10 @@ class TestCanonicalAntiPatternInventory:
 
     def test_render_formats_inventory_lines(self, tmp_path):
         bridge = self._make_bridge(tmp_path)
-        bridge._canonical_anti_patterns = [("AP-01", "Mock drift"), ("AP-02", "Floor assertion")]
+        bridge._canonical_anti_patterns = [
+            ("AP-01", "Mock drift"),
+            ("AP-02", "Floor assertion"),
+        ]
         rendered = bridge._render_canonical_anti_pattern_inventory()
         assert "AP-01 Mock drift" in rendered
         assert "AP-02 Floor assertion" in rendered

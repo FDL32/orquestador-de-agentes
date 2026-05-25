@@ -96,7 +96,9 @@ class TestVersionDetection:
         (project / "skills").mkdir()
         (project / "agent_system" / "refactor_kit").mkdir(parents=True)
         (project / "CLAUDE.md").write_text("# CLAUDE")
-        (project / "AGENTS.md").write_text("# AGENTS")  # Required in v9.2.1+ but optional in v9.2
+        (project / "AGENTS.md").write_text(
+            "# AGENTS"
+        )  # Required in v9.2.1+ but optional in v9.2
 
         # Absent: .claude/rules should NOT exist
 
@@ -278,9 +280,11 @@ agent_dir = ".agent"
             "template_version": "1.0.0",
             "status": "recovered",
             "confidence": "high",
-            "last_updated": "2026-04-28T22:00:00+02:00"
+            "last_updated": "2026-04-28T22:00:00+02:00",
         }
-        (project / ".agent" / ".version_manifest.json").write_text(json.dumps(version_manifest))
+        (project / ".agent" / ".version_manifest.json").write_text(
+            json.dumps(version_manifest)
+        )
 
         detector = AgentSystemDetector(str(project))
         result = detector.detect_version()

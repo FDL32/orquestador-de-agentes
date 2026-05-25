@@ -1,14 +1,11 @@
 """Tests para circuit breaker y checkout atómico del Builder."""
 
-import json
-import os
 import sys
-import tempfile
-from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 
 # Add the agent directory to path for imports (same pattern as test_agents_config.py)
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / ".agent"))
@@ -51,7 +48,10 @@ class TestCircuitBreaker:
 
     def test_read_circuit_breaker_default(self, temp_runtime_dir):
         """Leer circuit breaker cuando no existe debe devolver estado CLOSED."""
-        with patch("agent_controller.CIRCUIT_BREAKER_PATH", temp_runtime_dir / "circuit_breaker.json"):
+        with patch(
+            "agent_controller.CIRCUIT_BREAKER_PATH",
+            temp_runtime_dir / "circuit_breaker.json",
+        ):
             state = _read_circuit_breaker()
             assert state["state"] == "CLOSED"
             assert state["failures"] == 0
@@ -80,7 +80,9 @@ class TestCircuitBreaker:
         """Verificar circuit breaker OPEN debe retornar open=True con razon."""
         breaker_path = temp_runtime_dir / "circuit_breaker.json"
         with patch("agent_controller.CIRCUIT_BREAKER_PATH", breaker_path):
-            _write_circuit_breaker({"state": "OPEN", "reason": "Repeated errors", "failures": 3})
+            _write_circuit_breaker(
+                {"state": "OPEN", "reason": "Repeated errors", "failures": 3}
+            )
             result = _check_circuit_breaker("WP-2026-065")
             assert result["open"] is True
             assert "Repeated errors" in result["reason"]
@@ -99,7 +101,9 @@ class TestCircuitBreaker:
         """Reset debe cambiar estado a CLOSED y limpiar contadores."""
         breaker_path = temp_runtime_dir / "circuit_breaker.json"
         with patch("agent_controller.CIRCUIT_BREAKER_PATH", breaker_path):
-            _write_circuit_breaker({"state": "OPEN", "failures": 5, "no_progress_count": 3})
+            _write_circuit_breaker(
+                {"state": "OPEN", "failures": 5, "no_progress_count": 3}
+            )
             _reset_circuit_breaker("WP-2026-065")
             state = _read_circuit_breaker()
             assert state["state"] == "CLOSED"
@@ -233,22 +237,35 @@ class TestInvariants:
         }
         mock_bus = MagicMock()
         mock_bus.latest_event = MagicMock(return_value=mock_event)
-        with patch("agent_controller.event_bus", mock_bus):
-            with patch("agent_controller._read_circuit_breaker", return_value={"state": "CLOSED"}):
-                with patch("agent_controller._read_builder_lock", return_value=None):
-                    result = _check_invariants(plan_content, log_content, "READY_FOR_REVIEW")
-                    assert len(result["errors"]) == 0
+        with (
+            patch("agent_controller.event_bus", mock_bus),
+            patch(
+                "agent_controller._read_circuit_breaker",
+                return_value={"state": "CLOSED"},
+            ),
+            patch("agent_controller._read_builder_lock", return_value=None),
+        ):
+            result = _check_invariants(plan_content, log_content, "READY_FOR_REVIEW")
+            assert len(result["errors"]) == 0
 
     def test_invariants_open_breaker_with_ready_for_review(self):
         """Circuit breaker OPEN con READY_FOR_REVIEW debe generar error."""
         plan_content = "# Work Plan\n\n**ID:** WP-2026-065\n\n**Estado:** APPROVED"
         log_content = "# Execution Log\n\n**Estado:** READY_FOR_REVIEW"
         mock_event = MagicMock()
-        mock_event.payload = {"ticket_id": "WP-2026-065", "exit_reason": "Done", "completion_summary": "Summary"}
+        mock_event.payload = {
+            "ticket_id": "WP-2026-065",
+            "exit_reason": "Done",
+            "completion_summary": "Summary",
+        }
         mock_bus = MagicMock()
         mock_bus.latest_event = MagicMock(return_value=mock_event)
-        with patch("agent_controller.event_bus", mock_bus):
-            with patch("agent_controller._read_circuit_breaker", return_value={"state": "OPEN"}):
-                with patch("agent_controller._read_builder_lock", return_value=None):
-                    result = _check_invariants(plan_content, log_content, "READY_FOR_REVIEW")
-                    assert any("Circuit breaker OPEN" in err for err in result["errors"])
+        with (
+            patch("agent_controller.event_bus", mock_bus),
+            patch(
+                "agent_controller._read_circuit_breaker", return_value={"state": "OPEN"}
+            ),
+            patch("agent_controller._read_builder_lock", return_value=None),
+        ):
+            result = _check_invariants(plan_content, log_content, "READY_FOR_REVIEW")
+            assert any("Circuit breaker OPEN" in err for err in result["errors"])

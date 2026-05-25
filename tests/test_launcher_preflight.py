@@ -3,6 +3,7 @@
 These tests verify that the launcher correctly detects import failures
 in critical bus modules before opening any terminal windows.
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -67,7 +68,10 @@ def test_import_preflight_detects_broken_module(monkeypatch, tmp_path):
         timeout=10,
     )
     assert result.returncode != 0, "Preflight should detect broken import"
-    assert "nonexistent_module_xyz" in result.stderr or "ModuleNotFoundError" in result.stderr
+    assert (
+        "nonexistent_module_xyz" in result.stderr
+        or "ModuleNotFoundError" in result.stderr
+    )
 
 
 def test_critical_modules_exist():
@@ -95,6 +99,7 @@ def test_bus_event_bus_imports_cleanly():
     """
     try:
         import bus.event_bus
+
         assert hasattr(bus.event_bus, "EventBus")
         assert hasattr(bus.event_bus, "EventRecord")
     except ImportError as e:
@@ -108,6 +113,7 @@ def test_bus_review_bridge_imports_cleanly():
     """
     try:
         import bus.review_bridge
+
         assert hasattr(bus.review_bridge, "ReviewBridge")
         assert hasattr(bus.review_bridge, "ReviewDecision")
     except ImportError as e:
@@ -121,6 +127,7 @@ def test_agent_controller_imports_cleanly():
     """
     try:
         import agent_controller
+
         assert hasattr(agent_controller, "get_human_gate_threshold")
     except ImportError as e:
         pytest.fail(f"agent_controller failed to import: {e}")

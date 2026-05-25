@@ -31,7 +31,10 @@ def _make_event_line(ticket_id: str, seq: int) -> str:
                 "ticket_id": ticket_id,
                 "actor": "SUPERVISOR",
                 "timestamp": "2026-05-20T00:00:00+00:00",
-                "payload": {"from_state": "IN_PROGRESS", "to_state": "READY_FOR_REVIEW"},
+                "payload": {
+                    "from_state": "IN_PROGRESS",
+                    "to_state": "READY_FOR_REVIEW",
+                },
                 "schema_version": "1.0",
                 "sequence_number": seq,
             },

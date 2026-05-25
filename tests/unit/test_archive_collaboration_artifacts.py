@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 spec = importlib.util.spec_from_file_location(
     "archive_collaboration_artifacts",
@@ -21,7 +22,9 @@ mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 
 
-def _setup_collaboration_dir(tmp_path: Path, active_wp: str, closed_wps: list[str]) -> Path:
+def _setup_collaboration_dir(
+    tmp_path: Path, active_wp: str, closed_wps: list[str]
+) -> Path:
     """Create a mock collaboration directory with active and closed PLAN/AUDIT files."""
     collab = tmp_path / "collaboration"
     collab.mkdir(parents=True, exist_ok=True)
@@ -71,7 +74,9 @@ def test_get_active_wp(tmp_path: Path) -> None:
     collab.mkdir()
     work_plan = collab / "work_plan.md"
 
-    work_plan.write_text("# Plan\n\n**ID:** WP-2026-100\n**Estado:** IN_PROGRESS\n", encoding="utf-8")
+    work_plan.write_text(
+        "# Plan\n\n**ID:** WP-2026-100\n**Estado:** IN_PROGRESS\n", encoding="utf-8"
+    )
     assert mod.get_active_wp(collab) == "WP-2026-100"
 
     # Missing work_plan
@@ -82,7 +87,9 @@ def test_get_active_wp(tmp_path: Path) -> None:
 
 def test_find_closed_plan_audit_files(tmp_path: Path) -> None:
     """Test finding closed PLAN/AUDIT files."""
-    collab = _setup_collaboration_dir(tmp_path, "WP-2026-100", ["WP-2026-099", "WP-2026-098"])
+    collab = _setup_collaboration_dir(
+        tmp_path, "WP-2026-100", ["WP-2026-099", "WP-2026-098"]
+    )
 
     closed = mod.find_closed_plan_audit_files(collab, "WP-2026-100")
     assert len(closed) == 4  # PLAN + AUDIT for each closed WP
@@ -189,6 +196,7 @@ def test_archive_dir_creation(tmp_path: Path) -> None:
     archive_dir = mod.get_archive_dir(collab)
     if archive_dir.exists():
         import shutil
+
         shutil.rmtree(archive_dir)
 
     result = mod.archive_collaboration_artifacts(collab, dry_run=False)

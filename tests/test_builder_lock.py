@@ -18,10 +18,11 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 import pytest
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER_PATH = PROJECT_ROOT / "scripts" / "launch_agent_terminals.ps1"
@@ -145,9 +146,10 @@ class TestSupervisorLockHandling:
         )
 
         # Should use bus-based liveness check
-        assert "BUILDER_EXIT" in method_content or "_has_builder_exited_after" in method_content, (
-            "_builder_alive should use bus events for liveness"
-        )
+        assert (
+            "BUILDER_EXIT" in method_content
+            or "_has_builder_exited_after" in method_content
+        ), "_builder_alive should use bus events for liveness"
 
         # Should use mtime fallback
         assert "st_mtime" in method_content or "mtime" in method_content, (
@@ -174,9 +176,7 @@ class TestLockStaleDetection:
         ttl_patterns = ["TTL", "stale", "Stale", "MaxAge", "stale-lock"]
         found = any(pattern in content for pattern in ttl_patterns)
 
-        assert found, (
-            "Launcher should reference TTL-based stale lock detection"
-        )
+        assert found, "Launcher should reference TTL-based stale lock detection"
 
     def test_supervisor_uses_started_at_for_ttl(self) -> None:
         """Supervisor must use started_at for TTL-based stale detection."""
@@ -191,9 +191,7 @@ class TestLockStaleDetection:
         age_patterns = ["age", "TotalMinutes", "TotalSeconds", "UtcNow -"]
         found = any(pattern in content for pattern in age_patterns)
 
-        assert found, (
-            "Supervisor must have age calculation for TTL detection"
-        )
+        assert found, "Supervisor must have age calculation for TTL detection"
 
 
 class TestLockIntegrity:

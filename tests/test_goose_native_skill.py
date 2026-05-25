@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# ruff: noqa: S101
 """
 Test Suite for Goose Native Skill Integration
 

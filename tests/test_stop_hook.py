@@ -1,4 +1,4 @@
-﻿"""Tests for stop_hook.py - Completion Verification hook."""
+"""Tests for stop_hook.py - Completion Verification hook."""
 
 import sys
 from pathlib import Path
@@ -54,7 +54,9 @@ class TestReadyForReviewSemantics:
             exists=True,
             read_text="# Execution Log\n\n- **Estado:** IN_PROGRESS\n",
         )
-        mock_plan = self._mock_path(exists=True, read_text="# Work Plan\n\n- [ ] Pendiente\n")
+        mock_plan = self._mock_path(
+            exists=True, read_text="# Work Plan\n\n- [ ] Pendiente\n"
+        )
 
         with (
             patch("stop_hook.EXEC_LOG", mock_log),

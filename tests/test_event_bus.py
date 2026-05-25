@@ -128,8 +128,14 @@ def test_emit_dedupe_uses_redacted_payload(tmp_path):
     raw_payload = {"prompt": "use key sk-abcdefghijklmnopqrstuvwxyz12345 now"}
 
     # First two emits stored (dedupe threshold = 2)
-    assert bus.emit("X", ticket_id="WP-T", actor="A", payload=dict(raw_payload)) is not None
-    assert bus.emit("X", ticket_id="WP-T", actor="A", payload=dict(raw_payload)) is not None
+    assert (
+        bus.emit("X", ticket_id="WP-T", actor="A", payload=dict(raw_payload))
+        is not None
+    )
+    assert (
+        bus.emit("X", ticket_id="WP-T", actor="A", payload=dict(raw_payload))
+        is not None
+    )
     # Third identical emit (same raw, same redacted) must be blocked
     assert bus.emit("X", ticket_id="WP-T", actor="A", payload=dict(raw_payload)) is None
 
@@ -142,7 +148,9 @@ def test_emit_dedupe_uses_redacted_payload(tmp_path):
 def _complete_ticket(bus, ticket_id="WP-RT"):
     """Helper: drive a ticket to COMPLETED (the only irreversible state)."""
     bus.emit(
-        "STATE_CHANGED", ticket_id=ticket_id, actor="SUPERVISOR",
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="SUPERVISOR",
         payload={"from_state": "READY_TO_CLOSE", "to_state": "COMPLETED"},
     )
 
@@ -153,7 +161,9 @@ def test_reentry_guard_blocks_state_changed_reopen(tmp_path):
     _complete_ticket(bus)
 
     result = bus.emit(
-        "STATE_CHANGED", ticket_id="WP-RT", actor="BUILDER",
+        "STATE_CHANGED",
+        ticket_id="WP-RT",
+        actor="BUILDER",
         payload={"from_state": "COMPLETED", "to_state": "READY_FOR_REVIEW"},
     )
     assert result is None, "STATE_CHANGED reopen from COMPLETED must be blocked"
@@ -170,7 +180,9 @@ def test_reentry_guard_blocks_review_decision_changes_reopen(tmp_path):
     _complete_ticket(bus)
 
     result = bus.emit(
-        "REVIEW_DECISION", ticket_id="WP-RT", actor="MANAGER",
+        "REVIEW_DECISION",
+        ticket_id="WP-RT",
+        actor="MANAGER",
         payload={"decision": "changes"},
     )
     assert result is None, "REVIEW_DECISION=changes must not reopen a COMPLETED ticket"
@@ -184,25 +196,35 @@ def test_reentry_guard_allows_changes_on_ready_to_close(tmp_path):
     """
     bus = EventBus(runtime_dir=tmp_path / ".agent" / "runtime" / "events")
     bus.emit(
-        "STATE_CHANGED", ticket_id="WP-RTC", actor="SUPERVISOR",
+        "STATE_CHANGED",
+        ticket_id="WP-RTC",
+        actor="SUPERVISOR",
         payload={"from_state": "READY_FOR_REVIEW", "to_state": "READY_TO_CLOSE"},
     )
     result = bus.emit(
-        "REVIEW_DECISION", ticket_id="WP-RTC", actor="MANAGER",
+        "REVIEW_DECISION",
+        ticket_id="WP-RTC",
+        actor="MANAGER",
         payload={"decision": "changes"},
     )
-    assert result is not None, "changes on READY_TO_CLOSE must be allowed (not terminal)"
+    assert result is not None, (
+        "changes on READY_TO_CLOSE must be allowed (not terminal)"
+    )
 
 
 def test_reentry_guard_allows_review_decision_on_open_ticket(tmp_path):
     """WP-2026-116: REVIEW_DECISION=changes is allowed on a ticket under review."""
     bus = EventBus(runtime_dir=tmp_path / ".agent" / "runtime" / "events")
     bus.emit(
-        "STATE_CHANGED", ticket_id="WP-OPEN", actor="SUPERVISOR",
+        "STATE_CHANGED",
+        ticket_id="WP-OPEN",
+        actor="SUPERVISOR",
         payload={"from_state": "IN_PROGRESS", "to_state": "READY_FOR_REVIEW"},
     )
     result = bus.emit(
-        "REVIEW_DECISION", ticket_id="WP-OPEN", actor="MANAGER",
+        "REVIEW_DECISION",
+        ticket_id="WP-OPEN",
+        actor="MANAGER",
         payload={"decision": "changes"},
     )
     assert result is not None, "REVIEW_DECISION on a non-terminal ticket must pass"

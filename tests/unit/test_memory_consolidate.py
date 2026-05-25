@@ -1,22 +1,14 @@
 #!/usr/bin/env python3
 """Tests for memory_consolidate.py."""
+
 from __future__ import annotations
 
-import json
-import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-
 from scripts.memory_consolidate import (
-    ARCHIVE_DIR,
-    DEDUPE_WINDOW_HOURS,
-    MEMORY_DIR,
-    MEMORY_MD,
     MEMORY_MD_LINE_CAP,
-    OBS,
-    REPORT,
     dedupe,
     is_noise,
     parse_entries,
@@ -196,8 +188,9 @@ def test_dry_run_no_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr("scripts.memory_consolidate.MEMORY_MD", test_memory_md)
     monkeypatch.setattr("scripts.memory_consolidate.REPORT", test_report)
 
-    from scripts import memory_consolidate
     import sys
+
+    from scripts import memory_consolidate
 
     monkeypatch.setattr(sys, "argv", ["memory_consolidate.py"])
 
@@ -227,8 +220,9 @@ def test_dry_run_flag_alias_no_write(
     monkeypatch.setattr("scripts.memory_consolidate.MEMORY_MD", test_memory_md)
     monkeypatch.setattr("scripts.memory_consolidate.REPORT", test_report)
 
-    from scripts import memory_consolidate
     import sys
+
+    from scripts import memory_consolidate
 
     monkeypatch.setattr(sys, "argv", ["memory_consolidate.py", "--dry-run"])
 

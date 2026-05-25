@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+
 # Add .agent to path for imports
 agent_dir = Path(__file__).parent.parent / ".agent"
 if str(agent_dir) not in sys.path:
@@ -25,13 +26,13 @@ if str(agent_dir) not in sys.path:
 
 import agent_controller  # noqa: E402
 from agent_controller import (  # noqa: E402
-    read_file,
-    write_file,
-    validate_state_files,
     determine_next_action,
+    read_file,
+    run_quality_gates,
     should_overwrite_turn,
     update_log_status,
-    run_quality_gates,
+    validate_state_files,
+    write_file,
 )
 
 
@@ -99,9 +100,14 @@ class TestValidateStateFiles:
 
     def test_validate_detects_missing_section(self):
         """validate_state_files detects missing required sections."""
-        with patch("agent_controller.read_file", return_value="# Empty file\n"):
-            with patch("agent_controller.TURN_FILE", MagicMock(exists=MagicMock(return_value=True))):
-                errors = validate_state_files()
+        with (
+            patch("agent_controller.read_file", return_value="# Empty file\n"),
+            patch(
+                "agent_controller.TURN_FILE",
+                MagicMock(exists=MagicMock(return_value=True)),
+            ),
+        ):
+            errors = validate_state_files()
 
         # Should detect missing sections
         assert len(errors["TURN.md"]) > 0 or len(errors["consistency"]) > 0
@@ -112,9 +118,11 @@ class TestDetermineNextAction:
 
     def test_determine_next_action_returns_dict(self):
         """determine_next_action returns proper action dict."""
-        with patch("agent_controller.read_file", return_value=""):
-            with patch("agent_controller.HOOKS_AVAILABLE", False):
-                action = determine_next_action(skip_gates=True)
+        with (
+            patch("agent_controller.read_file", return_value=""),
+            patch("agent_controller.HOOKS_AVAILABLE", False),
+        ):
+            action = determine_next_action(skip_gates=True)
 
         # Should return dict with role and action_type
         assert isinstance(action, dict)
@@ -137,9 +145,11 @@ class TestUpdateLogStatus:
 
     def test_update_log_status_returns_bool(self):
         """update_log_status returns success boolean."""
-        with patch("agent_controller.read_file", return_value="# Execution Log\n"):
-            with patch("agent_controller.write_file"):
-                result = update_log_status("IN_PROGRESS", "test note")
+        with (
+            patch("agent_controller.read_file", return_value="# Execution Log\n"),
+            patch("agent_controller.write_file"),
+        ):
+            result = update_log_status("IN_PROGRESS", "test note")
 
         assert isinstance(result, bool)
 
@@ -149,9 +159,11 @@ class TestRunQualityGates:
 
     def test_run_quality_gates_returns_dict(self):
         """run_quality_gates returns result dict with expected keys."""
-        with patch("agent_controller.read_file", return_value=""):
-            with patch("agent_controller.subprocess"):
-                result = run_quality_gates()
+        with (
+            patch("agent_controller.read_file", return_value=""),
+            patch("agent_controller.subprocess"),
+        ):
+            result = run_quality_gates()
 
         assert isinstance(result, dict)
         # Should have standard result keys: errors, passed, summary, warnings

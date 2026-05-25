@@ -1,8 +1,6 @@
 from __future__ import annotations
-import time
-from pathlib import Path
+
 from unittest.mock import MagicMock
-import pytest
 
 from bus.event_bus import EventBus
 from bus.review_bridge import ReviewBridge, ReviewDecision
@@ -27,7 +25,9 @@ def test_single_shot_prompt_includes_canonical(tmp_path, monkeypatch):
     _write_canonical(tmp_path, "TURN.md", "TURN_CONTENT")
     _write_canonical(tmp_path, "execution_log.md", "### WP-X\nlog body\n")
     bridge, _ = _make_bridge(tmp_path)
-    monkeypatch.setattr(bridge, "_build_diff_for_files_likely_touched", lambda *args: "diff_content")
+    monkeypatch.setattr(
+        bridge, "_build_diff_for_files_likely_touched", lambda *args: "diff_content"
+    )
 
     prompt = bridge._build_review_prompt("WP-X", "code")
     assert "STATE_CONTENT" in prompt
@@ -52,8 +52,11 @@ def test_prompt_truncates_diff_when_canonical_exceeds_60kb(tmp_path, monkeypatch
 
 
 def test_extract_ticket_section_isolates_active(tmp_path):
-    _write_canonical(tmp_path, "execution_log.md",
-        "### WP-A\nA body\n\n### WP-B\nB body\n\n### WP-C\nC body\n")
+    _write_canonical(
+        tmp_path,
+        "execution_log.md",
+        "### WP-A\nA body\n\n### WP-B\nB body\n\n### WP-C\nC body\n",
+    )
     bridge, _ = _make_bridge(tmp_path)
     section = bridge._extract_ticket_section("WP-B")
     assert "B body" in section
@@ -68,12 +71,17 @@ def test_retry_succeeds_on_second_attempt(tmp_path, monkeypatch):
     _write_canonical(tmp_path, "TURN.md", "t")
     _write_canonical(tmp_path, "execution_log.md", "### WP-X\n")
     bridge, _ = _make_bridge(tmp_path)
-    monkeypatch.setattr(bridge.state_ingest, "_latest_state", lambda tid: "READY_FOR_REVIEW")
-    monkeypatch.setattr(bridge, "_build_diff_for_files_likely_touched", lambda *args: "")
+    monkeypatch.setattr(
+        bridge.state_ingest, "_latest_state", lambda tid: "READY_FOR_REVIEW"
+    )
+    monkeypatch.setattr(
+        bridge, "_build_diff_for_files_likely_touched", lambda *args: ""
+    )
     monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
     monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
 
     call_count = {"n": 0}
+
     def fake_run(**kw):
         call_count["n"] += 1
         if call_count["n"] == 1:
@@ -87,7 +95,9 @@ def test_retry_succeeds_on_second_attempt(tmp_path, monkeypatch):
         def transition_ticket(self, *args, **kwargs):
             pass
 
-    result = bridge.run_manager_review_cycle(ticket_id="WP-X", supervisor=DummySupervisor())
+    result = bridge.run_manager_review_cycle(
+        ticket_id="WP-X", supervisor=DummySupervisor()
+    )
     assert result.decision == ReviewDecision.APPROVE
     assert call_count["n"] == 2
 
@@ -98,19 +108,28 @@ def test_retry_exhausted_falls_to_inspect(tmp_path, monkeypatch):
     _write_canonical(tmp_path, "TURN.md", "t")
     _write_canonical(tmp_path, "execution_log.md", "### WP-X\n")
     bridge, _ = _make_bridge(tmp_path)
-    monkeypatch.setattr(bridge.state_ingest, "_latest_state", lambda tid: "READY_FOR_REVIEW")
-    monkeypatch.setattr(bridge, "_build_diff_for_files_likely_touched", lambda *args: "")
+    monkeypatch.setattr(
+        bridge.state_ingest, "_latest_state", lambda tid: "READY_FOR_REVIEW"
+    )
+    monkeypatch.setattr(
+        bridge, "_build_diff_for_files_likely_touched", lambda *args: ""
+    )
     monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
     monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
 
-    monkeypatch.setattr(bridge, "_run_opencode_review",
-        lambda **kw: ("", "TimeoutExpired: timed out", 1))
+    monkeypatch.setattr(
+        bridge,
+        "_run_opencode_review",
+        lambda **kw: ("", "TimeoutExpired: timed out", 1),
+    )
 
     class DummySupervisor:
         def transition_ticket(self, *args, **kwargs):
             pass
 
-    result = bridge.run_manager_review_cycle(ticket_id="WP-X", supervisor=DummySupervisor())
+    result = bridge.run_manager_review_cycle(
+        ticket_id="WP-X", supervisor=DummySupervisor()
+    )
     assert result.decision == ReviewDecision.INSPECT
 
 
@@ -126,16 +145,27 @@ def test_decision_changes_does_not_retry_for_timeout(tmp_path, monkeypatch):
     _write_canonical(tmp_path, "TURN.md", "t")
     _write_canonical(tmp_path, "execution_log.md", "### WP-X\n")
     bridge, _ = _make_bridge(tmp_path)
-    monkeypatch.setattr(bridge.state_ingest, "_latest_state", lambda tid: "READY_FOR_REVIEW")
-    monkeypatch.setattr(bridge, "_build_diff_for_files_likely_touched", lambda *args: "")
+    monkeypatch.setattr(
+        bridge.state_ingest, "_latest_state", lambda tid: "READY_FOR_REVIEW"
+    )
+    monkeypatch.setattr(
+        bridge, "_build_diff_for_files_likely_touched", lambda *args: ""
+    )
     monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
     monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
-    monkeypatch.setattr("bus.review_bridge.subprocess.run", lambda *a, **kw: MagicMock(returncode=0))
+    monkeypatch.setattr(
+        "bus.review_bridge.subprocess.run", lambda *a, **kw: MagicMock(returncode=0)
+    )
 
     call_count = {"n": 0}
+
     def fake_run(**kw):
         call_count["n"] += 1
-        return ("## SUMMARY\nIssues\n## BLOCKERS\n- X\n## SUGGESTIONS\n- Y\nDECISION: CHANGES", "", 0)
+        return (
+            "## SUMMARY\nIssues\n## BLOCKERS\n- X\n## SUGGESTIONS\n- Y\nDECISION: CHANGES",
+            "",
+            0,
+        )
 
     monkeypatch.setattr(bridge, "_run_opencode_review", fake_run)
 
@@ -145,7 +175,9 @@ def test_decision_changes_does_not_retry_for_timeout(tmp_path, monkeypatch):
         def transition_ticket(self, ticket_id, new_state, reason):
             transitions.append((ticket_id, new_state, reason))
 
-    result = bridge.run_manager_review_cycle(ticket_id="WP-X", supervisor=DummySupervisor())
+    result = bridge.run_manager_review_cycle(
+        ticket_id="WP-X", supervisor=DummySupervisor()
+    )
     assert result.decision == ReviewDecision.CHANGES
     # WP-2026-106 B3: exactly one review per cycle, no inner retry on CHANGES.
     assert call_count["n"] == 1
@@ -157,13 +189,18 @@ def test_forensic_event_emitted_per_attempt(tmp_path, monkeypatch):
     _write_canonical(tmp_path, "TURN.md", "t")
     _write_canonical(tmp_path, "execution_log.md", "### WP-X\n")
     bridge, bus = _make_bridge(tmp_path)
-    monkeypatch.setattr(bridge.state_ingest, "_latest_state", lambda tid: "READY_FOR_REVIEW")
-    monkeypatch.setattr(bridge, "_build_diff_for_files_likely_touched", lambda *args: "")
+    monkeypatch.setattr(
+        bridge.state_ingest, "_latest_state", lambda tid: "READY_FOR_REVIEW"
+    )
+    monkeypatch.setattr(
+        bridge, "_build_diff_for_files_likely_touched", lambda *args: ""
+    )
     monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
     monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
 
-    monkeypatch.setattr(bridge, "_run_opencode_review",
-        lambda **kw: ("DECISION: APPROVE\n", "", 0))
+    monkeypatch.setattr(
+        bridge, "_run_opencode_review", lambda **kw: ("DECISION: APPROVE\n", "", 0)
+    )
 
     class DummySupervisor:
         def transition_ticket(self, *args, **kwargs):
@@ -210,15 +247,18 @@ def test_parse_opencode_json_decision_changes(tmp_path):
 
 def test_review_attempt_persistence_creates_file(tmp_path, monkeypatch):
     """Test review attempts are persisted to attempt-N.md."""
-    from bus.review_bridge import ReviewDecision
 
     _write_canonical(tmp_path, "work_plan.md", "- **deliverable_type:** code\n")
     _write_canonical(tmp_path, "STATE.md", "s")
     _write_canonical(tmp_path, "TURN.md", "t")
     _write_canonical(tmp_path, "execution_log.md", "### WP-X\n")
     bridge, _ = _make_bridge(tmp_path)
-    monkeypatch.setattr(bridge.state_ingest, "_latest_state", lambda tid: "READY_FOR_REVIEW")
-    monkeypatch.setattr(bridge, "_build_diff_for_files_likely_touched", lambda *args: "")
+    monkeypatch.setattr(
+        bridge.state_ingest, "_latest_state", lambda tid: "READY_FOR_REVIEW"
+    )
+    monkeypatch.setattr(
+        bridge, "_build_diff_for_files_likely_touched", lambda *args: ""
+    )
     monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
     monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
 
@@ -246,15 +286,18 @@ def test_review_attempt_persistence_creates_file(tmp_path, monkeypatch):
 
 def test_review_emits_lightweight_event_with_log_path(tmp_path, monkeypatch):
     """Test bus event contains review_log_path and stdout_tail, not full review."""
-    from bus.review_bridge import ReviewDecision
 
     _write_canonical(tmp_path, "work_plan.md", "- **deliverable_type:** code\n")
     _write_canonical(tmp_path, "STATE.md", "s")
     _write_canonical(tmp_path, "TURN.md", "t")
     _write_canonical(tmp_path, "execution_log.md", "### WP-X\n")
     bridge, bus = _make_bridge(tmp_path)
-    monkeypatch.setattr(bridge.state_ingest, "_latest_state", lambda tid: "READY_FOR_REVIEW")
-    monkeypatch.setattr(bridge, "_build_diff_for_files_likely_touched", lambda *args: "")
+    monkeypatch.setattr(
+        bridge.state_ingest, "_latest_state", lambda tid: "READY_FOR_REVIEW"
+    )
+    monkeypatch.setattr(
+        bridge, "_build_diff_for_files_likely_touched", lambda *args: ""
+    )
     monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
     monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
 
@@ -299,8 +342,12 @@ def test_human_gate_escalation_at_5_changes(tmp_path, monkeypatch):
     _write_canonical(tmp_path, "TURN.md", "t")
     _write_canonical(tmp_path, "execution_log.md", "### WP-X\n")
     bridge, bus = _make_bridge(tmp_path)
-    monkeypatch.setattr(bridge.state_ingest, "_latest_state", lambda tid: "READY_FOR_REVIEW")
-    monkeypatch.setattr(bridge, "_build_diff_for_files_likely_touched", lambda *args: "")
+    monkeypatch.setattr(
+        bridge.state_ingest, "_latest_state", lambda tid: "READY_FOR_REVIEW"
+    )
+    monkeypatch.setattr(
+        bridge, "_build_diff_for_files_likely_touched", lambda *args: ""
+    )
     monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
     monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
 
@@ -342,9 +389,7 @@ def test_human_gate_escalation_at_5_changes(tmp_path, monkeypatch):
             supervisor=DummySupervisor(),
             timeout_seconds=5,
         )
-        changes = bus.read_events(
-            ticket_id="WP-X", event_type="REVIEW_DECISION"
-        )
+        changes = bus.read_events(ticket_id="WP-X", event_type="REVIEW_DECISION")
         assert len(changes) == cycle
         # Counter is bus-derived, so it equals the number of cycles so far.
         assert bridge._count_prior_changes_from_bus("WP-X") == cycle
@@ -394,8 +439,12 @@ def test_review_attempt_bus_payload_is_lightweight(tmp_path, monkeypatch):
     _write_canonical(tmp_path, "TURN.md", "t")
     _write_canonical(tmp_path, "execution_log.md", "### WP-X\n")
     bridge, bus = _make_bridge(tmp_path)
-    monkeypatch.setattr(bridge.state_ingest, "_latest_state", lambda tid: "READY_FOR_REVIEW")
-    monkeypatch.setattr(bridge, "_build_diff_for_files_likely_touched", lambda *args: "")
+    monkeypatch.setattr(
+        bridge.state_ingest, "_latest_state", lambda tid: "READY_FOR_REVIEW"
+    )
+    monkeypatch.setattr(
+        bridge, "_build_diff_for_files_likely_touched", lambda *args: ""
+    )
     monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
     monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
 

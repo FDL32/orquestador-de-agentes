@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 """E2E tests for review cycle: review -> decision -> bus -> projections.
 
 WP-2026-124: These tests verify that approve, changes, and inspect all
@@ -8,15 +7,12 @@ projections remain aligned.
 
 from __future__ import annotations
 
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
-
 from bus.event_bus import EventBus
+from bus.review_bridge import ReviewBridge
 from bus.state_machine import StateMachine, TicketState
-from bus.review_bridge import ReviewBridge, ReviewDecision
 
 
 @pytest.fixture
@@ -63,7 +59,7 @@ class TestReviewCycleE2E:
             payload={"from_state": "IN_PROGRESS", "to_state": "READY_FOR_REVIEW"},
         )
 
-        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+        ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
         # Simulate APPROVE decision
         event_bus.emit(
@@ -110,7 +106,7 @@ class TestReviewCycleE2E:
             payload={"from_state": "IN_PROGRESS", "to_state": "READY_FOR_REVIEW"},
         )
 
-        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+        ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
         # Simulate CHANGES decision
         event_bus.emit(
@@ -157,7 +153,7 @@ class TestReviewCycleE2E:
             payload={"from_state": "IN_PROGRESS", "to_state": "READY_FOR_REVIEW"},
         )
 
-        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+        ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
         # Simulate INSPECT decision
         event_bus.emit(

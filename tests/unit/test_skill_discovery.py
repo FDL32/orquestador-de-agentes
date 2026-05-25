@@ -6,6 +6,7 @@ invalid SKILL.md handling, description extraction.
 """
 
 from pathlib import Path
+
 import pytest
 from scripts.discover_skills import discover_skills, extract_frontmatter
 
@@ -22,7 +23,9 @@ class TestSkillDiscovery:
             skill_path = skills_dir / skill_name
             skill_path.mkdir()
             skill_file = skill_path / "SKILL.md"
-            skill_file.write_text(f"---\nname: {skill_name}\ntriggers: [/{skill_name}]\n---\n")
+            skill_file.write_text(
+                f"---\nname: {skill_name}\ntriggers: [/{skill_name}]\n---\n"
+            )
 
         result = discover_skills(skills_dir)
 
@@ -35,7 +38,8 @@ class TestSkillDiscovery:
         """Test extraction of YAML frontmatter from SKILL.md."""
         content = "---\nname: Test Skill\ntriggers: [/test, testing]\ndescription: A test skill\nversion: 1.2.3\n---\nBody text"
         import tempfile
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.md') as f:
+
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".md") as f:
             f.write(content)
             temp_path = Path(f.name)
         try:
@@ -53,9 +57,13 @@ class TestSkillDiscovery:
         skills_dir.mkdir()
 
         (skills_dir / "skill_a").mkdir()
-        (skills_dir / "skill_a" / "SKILL.md").write_text("---\nname: Skill A\ntriggers: [/a, /unique]\n---")
+        (skills_dir / "skill_a" / "SKILL.md").write_text(
+            "---\nname: Skill A\ntriggers: [/a, /unique]\n---"
+        )
         (skills_dir / "skill_b").mkdir()
-        (skills_dir / "skill_b" / "SKILL.md").write_text("---\nname: Skill B\ntriggers: [/b]\n---")
+        (skills_dir / "skill_b" / "SKILL.md").write_text(
+            "---\nname: Skill B\ntriggers: [/b]\n---"
+        )
 
         result = discover_skills(skills_dir)
         trigger_map = result["trigger_map"]
@@ -68,7 +76,9 @@ class TestSkillDiscovery:
         skill_name = "candles"
         (skills_dir / skill_name).mkdir()
         skill_file = skills_dir / skill_name / "SKILL.md"
-        skill_file.write_text("---\nname: Candles\ntriggers: [/candle, /candles]\ndescription: Liturgical candles\n---")
+        skill_file.write_text(
+            "---\nname: Candles\ntriggers: [/candle, /candles]\ndescription: Liturgical candles\n---"
+        )
 
         result = discover_skills(skills_dir)
         assert "/candle" in result["trigger_map"]
@@ -82,7 +92,9 @@ class TestSkillDiscovery:
 
         (skills_dir / "orphan_skill").mkdir()
         (skills_dir / "broken_skill").mkdir()
-        (skills_dir / "broken_skill" / "SKILL.md").write_text("Just plain text, no frontmatter")
+        (skills_dir / "broken_skill" / "SKILL.md").write_text(
+            "Just plain text, no frontmatter"
+        )
         (skills_dir / "empty_skill").mkdir()
         (skills_dir / "empty_skill" / "SKILL.md").write_text("---\n---\n")
 
@@ -96,7 +108,9 @@ class TestSkillDiscovery:
         skills_dir.mkdir()
         description = "Rosary prayer beads"
         (skills_dir / "rosary").mkdir()
-        (skills_dir / "rosary" / "SKILL.md").write_text(f"---\nname: Rosary\ndescription: {description}\ntriggers: [/rosary]\n---\n")
+        (skills_dir / "rosary" / "SKILL.md").write_text(
+            f"---\nname: Rosary\ndescription: {description}\ntriggers: [/rosary]\n---\n"
+        )
 
         result = discover_skills(skills_dir)
         assert result["total_skills"] == 1
@@ -137,7 +151,9 @@ class TestSkillDiscoveryIntegration:
         assert skill["name"] == "Host Skill"
         assert skill["triggers"] == ["/host"]
         # Trigger map should map the host trigger to the host file path
-        assert result["trigger_map"] == {"/host": str(host_dir / "my-skill" / "SKILL.md")}
+        assert result["trigger_map"] == {
+            "/host": str(host_dir / "my-skill" / "SKILL.md")
+        }
 
     def test_bundle_fallback_when_host_missing(self, tmp_path):
         """Test that bundle skills act as fallbacks if host does not define them."""
@@ -156,7 +172,9 @@ class TestSkillDiscoveryIntegration:
 
         assert result["total_skills"] == 1
         assert result["skills"][0]["name"] == "Fallback Skill"
-        assert result["trigger_map"] == {"/fallback": str(bundle_dir / "fallback-skill" / "SKILL.md")}
+        assert result["trigger_map"] == {
+            "/fallback": str(bundle_dir / "fallback-skill" / "SKILL.md")
+        }
 
     def test_host_precedence_different_folder_same_trigger(self, tmp_path):
         """Test that host skills override trigger mappings even if folder names differ."""
@@ -183,7 +201,9 @@ class TestSkillDiscoveryIntegration:
         assert skill["name"] == "Host Skill"
         assert skill["triggers"] == ["/my-trigger"]
         # Trigger map should map to the host's skill file path
-        assert result["trigger_map"] == {"/my-trigger": str(host_dir / "bar-host" / "SKILL.md")}
+        assert result["trigger_map"] == {
+            "/my-trigger": str(host_dir / "bar-host" / "SKILL.md")
+        }
 
 
 class TestSkillResolverValidation:
@@ -248,14 +268,21 @@ class TestEmptySkillCatalogError:
 
     def test_create_resolver_raises_on_empty_catalog(self, tmp_path, monkeypatch):
         """Test create_resolver raises EmptySkillCatalogError when no skills."""
-        from bus.skill_resolver import create_resolver, SkillResolver
         from bus.exceptions import EmptySkillCatalogError
+        from bus.skill_resolver import SkillResolver
 
         # Mock discover_skills to return empty result
         def mock_discover_skills():
-            return {"skills": [], "trigger_map": {}, "total_skills": 0, "total_triggers": 0}
+            return {
+                "skills": [],
+                "trigger_map": {},
+                "total_skills": 0,
+                "total_triggers": 0,
+            }
 
-        monkeypatch.setattr("scripts.discover_skills.discover_skills", mock_discover_skills)
+        monkeypatch.setattr(
+            "scripts.discover_skills.discover_skills", mock_discover_skills
+        )
 
         # Direct test: SkillResolver._discover_skills should raise on empty catalog
         resolver = SkillResolver(project_root=tmp_path, role_allowlists={})

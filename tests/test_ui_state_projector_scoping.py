@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
+
 
 agent_dir = Path(__file__).parent.parent / ".agent"
 if str(agent_dir) not in sys.path:
     sys.path.insert(0, str(agent_dir))
 
-from runtime.ui_state_projector import UIStateProjector
+from runtime.ui_state_projector import UIStateProjector  # noqa: E402
 
 
 def test_get_active_ticket_from_supervisor_state(tmp_path):
@@ -143,4 +144,5 @@ def test_get_active_ticket_fallback_ignores_ninguno_in_turn_md(tmp_path):
 
 if __name__ == "__main__":
     import pytest
+
     pytest.main([__file__, "-v"])

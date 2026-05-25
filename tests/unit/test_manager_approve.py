@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
+
 # Add the agent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / ".agent"))
 
@@ -37,9 +38,7 @@ def mock_files(tmp_path: Path) -> dict:
 
     exec_log = collab_dir / "execution_log.md"
     exec_log.write_text(
-        "# Execution Log\n\n"
-        "## WP-TEST-001\n"
-        "**Estado:** READY_FOR_REVIEW\n"
+        "# Execution Log\n\n## WP-TEST-001\n**Estado:** READY_FOR_REVIEW\n"
     )
 
     turn_file = collab_dir / "TURN.md"
@@ -66,18 +65,18 @@ class TestManagerApprove:
         """--manager-approve should emit complete closeout cascade."""
         from agent_controller import _handle_manager_approve
 
-        with patch("agent_controller.event_bus", temp_bus), patch(
-            "agent_controller.BUS_AVAILABLE", True
-        ), patch("agent_controller.WORK_PLAN", mock_files["work_plan"]), patch(
-            "agent_controller.EXEC_LOG", mock_files["exec_log"]
-        ), patch(
-            "agent_controller.TURN_FILE", mock_files["turn"]
-        ), patch(
-            "agent_controller.STATE_FILE", mock_files["state"]
-        ), patch(
-            "agent_controller.AGENT_DIR", tmp_path / ".agent"
+        with (
+            patch("agent_controller.event_bus", temp_bus),
+            patch("agent_controller.BUS_AVAILABLE", True),
+            patch("agent_controller.WORK_PLAN", mock_files["work_plan"]),
+            patch("agent_controller.EXEC_LOG", mock_files["exec_log"]),
+            patch("agent_controller.TURN_FILE", mock_files["turn"]),
+            patch("agent_controller.STATE_FILE", mock_files["state"]),
+            patch("agent_controller.AGENT_DIR", tmp_path / ".agent"),
         ):
-            result = _handle_manager_approve("WP-TEST-001", json_output=False, force_mode=False)
+            result = _handle_manager_approve(
+                "WP-TEST-001", json_output=False, force_mode=False
+            )
 
         assert result == 0
 
@@ -112,23 +111,21 @@ class TestManagerApprove:
 
         # Set state to COMPLETED
         mock_files["exec_log"].write_text(
-            "# Execution Log\n\n"
-            "## WP-TEST-001\n"
-            "**Estado:** COMPLETED\n"
+            "# Execution Log\n\n## WP-TEST-001\n**Estado:** COMPLETED\n"
         )
 
-        with patch("agent_controller.event_bus", temp_bus), patch(
-            "agent_controller.BUS_AVAILABLE", True
-        ), patch("agent_controller.WORK_PLAN", mock_files["work_plan"]), patch(
-            "agent_controller.EXEC_LOG", mock_files["exec_log"]
-        ), patch(
-            "agent_controller.TURN_FILE", mock_files["turn"]
-        ), patch(
-            "agent_controller.STATE_FILE", mock_files["state"]
-        ), patch(
-            "agent_controller.AGENT_DIR", tmp_path / ".agent"
+        with (
+            patch("agent_controller.event_bus", temp_bus),
+            patch("agent_controller.BUS_AVAILABLE", True),
+            patch("agent_controller.WORK_PLAN", mock_files["work_plan"]),
+            patch("agent_controller.EXEC_LOG", mock_files["exec_log"]),
+            patch("agent_controller.TURN_FILE", mock_files["turn"]),
+            patch("agent_controller.STATE_FILE", mock_files["state"]),
+            patch("agent_controller.AGENT_DIR", tmp_path / ".agent"),
         ):
-            result = _handle_manager_approve("WP-TEST-001", json_output=True, force_mode=False)
+            result = _handle_manager_approve(
+                "WP-TEST-001", json_output=True, force_mode=False
+            )
 
         assert result == 0
 
@@ -144,23 +141,21 @@ class TestManagerApprove:
 
         # Set state to IN_PROGRESS
         mock_files["exec_log"].write_text(
-            "# Execution Log\n\n"
-            "## WP-TEST-001\n"
-            "**Estado:** IN_PROGRESS\n"
+            "# Execution Log\n\n## WP-TEST-001\n**Estado:** IN_PROGRESS\n"
         )
 
-        with patch("agent_controller.event_bus", temp_bus), patch(
-            "agent_controller.BUS_AVAILABLE", True
-        ), patch("agent_controller.WORK_PLAN", mock_files["work_plan"]), patch(
-            "agent_controller.EXEC_LOG", mock_files["exec_log"]
-        ), patch(
-            "agent_controller.TURN_FILE", mock_files["turn"]
-        ), patch(
-            "agent_controller.STATE_FILE", mock_files["state"]
-        ), patch(
-            "agent_controller.AGENT_DIR", tmp_path / ".agent"
+        with (
+            patch("agent_controller.event_bus", temp_bus),
+            patch("agent_controller.BUS_AVAILABLE", True),
+            patch("agent_controller.WORK_PLAN", mock_files["work_plan"]),
+            patch("agent_controller.EXEC_LOG", mock_files["exec_log"]),
+            patch("agent_controller.TURN_FILE", mock_files["turn"]),
+            patch("agent_controller.STATE_FILE", mock_files["state"]),
+            patch("agent_controller.AGENT_DIR", tmp_path / ".agent"),
         ):
-            result = _handle_manager_approve("WP-TEST-001", json_output=False, force_mode=False)
+            result = _handle_manager_approve(
+                "WP-TEST-001", json_output=False, force_mode=False
+            )
 
         assert result != 0
 
@@ -174,8 +169,9 @@ class TestManagerApprove:
         """--manager-approve should fail without ticket_id."""
         from agent_controller import _handle_manager_approve
 
-        with patch("agent_controller.event_bus", temp_bus), patch(
-            "agent_controller.BUS_AVAILABLE", True
+        with (
+            patch("agent_controller.event_bus", temp_bus),
+            patch("agent_controller.BUS_AVAILABLE", True),
         ):
             result = _handle_manager_approve(None, json_output=False, force_mode=False)
 
@@ -189,26 +185,24 @@ class TestManagerApprove:
 
         # Set state to COMPLETED
         mock_files["exec_log"].write_text(
-            "# Execution Log\n\n"
-            "## WP-TEST-001\n"
-            "**Estado:** COMPLETED\n"
+            "# Execution Log\n\n## WP-TEST-001\n**Estado:** COMPLETED\n"
         )
 
-        with patch("agent_controller.event_bus", temp_bus), patch(
-            "agent_controller.BUS_AVAILABLE", True
-        ), patch("agent_controller.WORK_PLAN", mock_files["work_plan"]), patch(
-            "agent_controller.EXEC_LOG", mock_files["exec_log"]
-        ), patch(
-            "agent_controller.TURN_FILE", mock_files["turn"]
-        ), patch(
-            "agent_controller.STATE_FILE", mock_files["state"]
-        ), patch(
-            "agent_controller.AGENT_DIR", tmp_path / ".agent"
+        with (
+            patch("agent_controller.event_bus", temp_bus),
+            patch("agent_controller.BUS_AVAILABLE", True),
+            patch("agent_controller.WORK_PLAN", mock_files["work_plan"]),
+            patch("agent_controller.EXEC_LOG", mock_files["exec_log"]),
+            patch("agent_controller.TURN_FILE", mock_files["turn"]),
+            patch("agent_controller.STATE_FILE", mock_files["state"]),
+            patch("agent_controller.AGENT_DIR", tmp_path / ".agent"),
         ):
             # Capture stdout
             captured = io.StringIO()
             sys.stdout = captured
-            result = _handle_manager_approve("WP-TEST-001", json_output=True, force_mode=False)
+            result = _handle_manager_approve(
+                "WP-TEST-001", json_output=True, force_mode=False
+            )
             sys.stdout = sys.__stdout__
 
         assert result == 0
@@ -229,20 +223,19 @@ class TestManagerApprove:
             '{"state": "OPEN", "failures": 3, "reason": "test failure"}'
         )
 
-        with patch("agent_controller.event_bus", temp_bus), patch(
-            "agent_controller.BUS_AVAILABLE", True
-        ), patch("agent_controller.WORK_PLAN", mock_files["work_plan"]), patch(
-            "agent_controller.EXEC_LOG", mock_files["exec_log"]
-        ), patch(
-            "agent_controller.TURN_FILE", mock_files["turn"]
-        ), patch(
-            "agent_controller.STATE_FILE", mock_files["state"]
-        ), patch(
-            "agent_controller.AGENT_DIR", tmp_path / ".agent"
-        ), patch(
-            "agent_controller.CIRCUIT_BREAKER_PATH", breaker_path
+        with (
+            patch("agent_controller.event_bus", temp_bus),
+            patch("agent_controller.BUS_AVAILABLE", True),
+            patch("agent_controller.WORK_PLAN", mock_files["work_plan"]),
+            patch("agent_controller.EXEC_LOG", mock_files["exec_log"]),
+            patch("agent_controller.TURN_FILE", mock_files["turn"]),
+            patch("agent_controller.STATE_FILE", mock_files["state"]),
+            patch("agent_controller.AGENT_DIR", tmp_path / ".agent"),
+            patch("agent_controller.CIRCUIT_BREAKER_PATH", breaker_path),
         ):
-            result = _handle_manager_approve("WP-TEST-001", json_output=False, force_mode=False)
+            result = _handle_manager_approve(
+                "WP-TEST-001", json_output=False, force_mode=False
+            )
 
         assert result == 0
 
@@ -266,23 +259,21 @@ class TestManagerApprove:
 
         # Set markdown state to READY_FOR_REVIEW (simulating drift)
         mock_files["exec_log"].write_text(
-            "# Execution Log\n\n"
-            "## WP-TEST-001\n"
-            "**Estado:** READY_FOR_REVIEW\n"
+            "# Execution Log\n\n## WP-TEST-001\n**Estado:** READY_FOR_REVIEW\n"
         )
 
-        with patch("agent_controller.event_bus", temp_bus), patch(
-            "agent_controller.BUS_AVAILABLE", True
-        ), patch("agent_controller.WORK_PLAN", mock_files["work_plan"]), patch(
-            "agent_controller.EXEC_LOG", mock_files["exec_log"]
-        ), patch(
-            "agent_controller.TURN_FILE", mock_files["turn"]
-        ), patch(
-            "agent_controller.STATE_FILE", mock_files["state"]
-        ), patch(
-            "agent_controller.AGENT_DIR", tmp_path / ".agent"
+        with (
+            patch("agent_controller.event_bus", temp_bus),
+            patch("agent_controller.BUS_AVAILABLE", True),
+            patch("agent_controller.WORK_PLAN", mock_files["work_plan"]),
+            patch("agent_controller.EXEC_LOG", mock_files["exec_log"]),
+            patch("agent_controller.TURN_FILE", mock_files["turn"]),
+            patch("agent_controller.STATE_FILE", mock_files["state"]),
+            patch("agent_controller.AGENT_DIR", tmp_path / ".agent"),
         ):
-            result = _handle_manager_approve("WP-TEST-001", json_output=True, force_mode=False)
+            result = _handle_manager_approve(
+                "WP-TEST-001", json_output=True, force_mode=False
+            )
 
         assert result == 0
 
@@ -295,21 +286,22 @@ class TestManagerApprove:
         # Verify JSON output
         import io
         import sys
+
         captured = io.StringIO()
         sys.stdout = captured
         # Re-run to capture output
-        with patch("agent_controller.event_bus", temp_bus), patch(
-            "agent_controller.BUS_AVAILABLE", True
-        ), patch("agent_controller.WORK_PLAN", mock_files["work_plan"]), patch(
-            "agent_controller.EXEC_LOG", mock_files["exec_log"]
-        ), patch(
-            "agent_controller.TURN_FILE", mock_files["turn"]
-        ), patch(
-            "agent_controller.STATE_FILE", mock_files["state"]
-        ), patch(
-            "agent_controller.AGENT_DIR", tmp_path / ".agent"
+        with (
+            patch("agent_controller.event_bus", temp_bus),
+            patch("agent_controller.BUS_AVAILABLE", True),
+            patch("agent_controller.WORK_PLAN", mock_files["work_plan"]),
+            patch("agent_controller.EXEC_LOG", mock_files["exec_log"]),
+            patch("agent_controller.TURN_FILE", mock_files["turn"]),
+            patch("agent_controller.STATE_FILE", mock_files["state"]),
+            patch("agent_controller.AGENT_DIR", tmp_path / ".agent"),
         ):
-            result = _handle_manager_approve("WP-TEST-001", json_output=True, force_mode=False)
+            result = _handle_manager_approve(
+                "WP-TEST-001", json_output=True, force_mode=False
+            )
         sys.stdout = sys.__stdout__
 
         output = json.loads(captured.getvalue())

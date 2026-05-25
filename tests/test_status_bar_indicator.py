@@ -1,12 +1,8 @@
 """Tests for status bar indicator."""
 
 import json
-import sys
-from pathlib import Path
-from unittest.mock import patch
 
 import pytest
-
 from runtime.status_bar_indicator import StatusBarIndicator
 
 
@@ -26,13 +22,13 @@ def mock_ui_state(temp_runtime_dir):
             "role": "BUILDER",
             "plan_id": "WP-2026-025",
             "action": "IMPLEMENT",
-            "timestamp": "2026-05-11 15:00:00"
+            "timestamp": "2026-05-11 15:00:00",
         },
         "active_plan": {
             "plan_id": "WP-2026-025",
             "status": "APPROVED",
-            "objective": "Mostrar estado en status bar"
-        }
+            "objective": "Mostrar estado en status bar",
+        },
     }
     ui_state_path = temp_runtime_dir / "ui_state.json"
     ui_state_path.write_text(json.dumps(ui_state))

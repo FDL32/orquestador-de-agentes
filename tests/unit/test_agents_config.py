@@ -1,28 +1,28 @@
 """Tests for agent configuration loader."""
 
-import pytest
-import json
 import copy
-from pathlib import Path
-from unittest.mock import patch, mock_open
+import json
 import sys
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
 
 # Add the agent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / ".agent"))
 
 from agents_config import (
-    load_agents_config,
-    get_backend_for_role,
-    get_backend_config,
-    resolve_executable,
+    AgentsConfigError,
+    _migrate_1_0_to_1_1,
     get_backend_args,
+    get_backend_config,
+    get_backend_for_role,
     get_discovery_method,
     get_model_for_role,
+    load_agents_config,
     migrate_agents_config,
-    MigrationReport,
-    _migrate_1_0_to_1_1,
-    MIGRATIONS,
-    AgentsConfigError,
+    resolve_executable,
 )
 
 
@@ -36,21 +36,16 @@ VALID_CONFIG = {
                 "method": "vscode_extension",
                 "extension_glob": "kilocode.kilo-code-*",
                 "binary_name": "kilo.exe",
-                "path_fallback": True
-            }
+                "path_fallback": True,
+            },
         },
         "opencode": {
             "executable": "opencode",
             "args": ["run"],
-            "discovery": {
-                "method": "path_only"
-            }
-        }
+            "discovery": {"method": "path_only"},
+        },
     },
-    "role_assignments": {
-        "BUILDER": "opencode",
-        "MANAGER": "kilo"
-    }
+    "role_assignments": {"BUILDER": "opencode", "MANAGER": "kilo"},
 }
 
 VALID_CONFIG_WITH_MODELS = {
@@ -63,25 +58,20 @@ VALID_CONFIG_WITH_MODELS = {
                 "method": "vscode_extension",
                 "extension_glob": "kilocode.kilo-code-*",
                 "binary_name": "kilo.exe",
-                "path_fallback": True
-            }
+                "path_fallback": True,
+            },
         },
         "opencode": {
             "executable": "opencode",
             "args": ["run"],
-            "discovery": {
-                "method": "path_only"
-            }
-        }
+            "discovery": {"method": "path_only"},
+        },
     },
-    "role_assignments": {
-        "BUILDER": "opencode",
-        "MANAGER": "kilo"
-    },
+    "role_assignments": {"BUILDER": "opencode", "MANAGER": "kilo"},
     "role_models": {
         "BUILDER": "opencode-go/qwen3.5-plus",
-        "MANAGER": "opencode-go/deepseek-v4-flash"
-    }
+        "MANAGER": "opencode-go/deepseek-v4-flash",
+    },
 }
 
 
@@ -178,7 +168,9 @@ class TestLoadAgentsConfig:
     def test_validate_backend_missing_required_key(self, tmp_path):
         """Test validation fails when backend missing required key."""
         bad_config = copy.deepcopy(VALID_CONFIG)
-        bad_config["backends"]["kilo"] = {"executable": "kilo.exe"}  # missing args and discovery
+        bad_config["backends"]["kilo"] = {
+            "executable": "kilo.exe"
+        }  # missing args and discovery
         project_root = _create_test_config(tmp_path, bad_config)
 
         with pytest.raises(AgentsConfigError, match="missing required key"):
@@ -190,7 +182,7 @@ class TestLoadAgentsConfig:
         bad_config["backends"]["kilo"]["args"] = "run --auto"  # should be list
         project_root = _create_test_config(tmp_path, bad_config)
 
-        with pytest.raises(AgentsConfigError, match="args.*must be a list"):
+        with pytest.raises(AgentsConfigError, match=r"args.*must be a list"):
             load_agents_config(project_root)
 
     def test_validate_unknown_discovery_method(self, tmp_path):
@@ -206,21 +198,21 @@ class TestLoadAgentsConfig:
 class TestGetBackendForRole:
     """Test role to backend lookup."""
 
-    @patch('agents_config.load_agents_config')
+    @patch("agents_config.load_agents_config")
     def test_get_builder_backend(self, mock_load):
         """Test getting backend for BUILDER role."""
         mock_load.return_value = VALID_CONFIG
         backend = get_backend_for_role("BUILDER")
         assert backend == "opencode"
 
-    @patch('agents_config.load_agents_config')
+    @patch("agents_config.load_agents_config")
     def test_get_manager_backend(self, mock_load):
         """Test getting backend for MANAGER role."""
         mock_load.return_value = VALID_CONFIG
         backend = get_backend_for_role("MANAGER")
         assert backend == "kilo"
 
-    @patch('agents_config.load_agents_config')
+    @patch("agents_config.load_agents_config")
     def test_get_unassigned_role(self, mock_load):
         """Test error when role has no backend assigned."""
         mock_load.return_value = VALID_CONFIG
@@ -231,7 +223,7 @@ class TestGetBackendForRole:
 class TestGetBackendConfig:
     """Test backend configuration retrieval."""
 
-    @patch('agents_config.load_agents_config')
+    @patch("agents_config.load_agents_config")
     def test_get_kilo_config(self, mock_load):
         """Test getting kilo backend config."""
         mock_load.return_value = VALID_CONFIG
@@ -239,7 +231,7 @@ class TestGetBackendConfig:
         assert config["executable"] == "kilo.exe"
         assert config["args"] == ["run", "--auto"]
 
-    @patch('agents_config.load_agents_config')
+    @patch("agents_config.load_agents_config")
     def test_get_opencode_config(self, mock_load):
         """Test getting opencode backend config."""
         mock_load.return_value = VALID_CONFIG
@@ -247,7 +239,7 @@ class TestGetBackendConfig:
         assert config["executable"] == "opencode"
         assert config["args"] == ["run"]
 
-    @patch('agents_config.load_agents_config')
+    @patch("agents_config.load_agents_config")
     def test_get_unknown_backend(self, mock_load):
         """Test error when backend is unknown."""
         mock_load.return_value = VALID_CONFIG
@@ -258,14 +250,14 @@ class TestGetBackendConfig:
 class TestResolveExecutable:
     """Test executable resolution."""
 
-    @patch('agents_config.load_agents_config')
+    @patch("agents_config.load_agents_config")
     def test_resolve_kilo_executable(self, mock_load):
         """Test resolving kilo executable."""
         mock_load.return_value = VALID_CONFIG
         exe = resolve_executable("kilo")
         assert exe == "kilo.exe"
 
-    @patch('agents_config.load_agents_config')
+    @patch("agents_config.load_agents_config")
     def test_resolve_opencode_executable(self, mock_load):
         """Test resolving opencode executable."""
         mock_load.return_value = VALID_CONFIG
@@ -276,14 +268,14 @@ class TestResolveExecutable:
 class TestGetBackendArgs:
     """Test backend arguments retrieval."""
 
-    @patch('agents_config.load_agents_config')
+    @patch("agents_config.load_agents_config")
     def test_get_kilo_args(self, mock_load):
         """Test getting kilo args."""
         mock_load.return_value = VALID_CONFIG
         args = get_backend_args("kilo")
         assert args == ["run", "--auto"]
 
-    @patch('agents_config.load_agents_config')
+    @patch("agents_config.load_agents_config")
     def test_get_opencode_args(self, mock_load):
         """Test getting opencode args."""
         mock_load.return_value = VALID_CONFIG
@@ -294,14 +286,14 @@ class TestGetBackendArgs:
 class TestGetDiscoveryMethod:
     """Test discovery method retrieval."""
 
-    @patch('agents_config.load_agents_config')
+    @patch("agents_config.load_agents_config")
     def test_get_vscode_extension_discovery(self, mock_load):
         """Test getting vscode_extension discovery method."""
         mock_load.return_value = VALID_CONFIG
         method = get_discovery_method("kilo")
         assert method == "vscode_extension"
 
-    @patch('agents_config.load_agents_config')
+    @patch("agents_config.load_agents_config")
     def test_get_path_only_discovery(self, mock_load):
         """Test getting path_only discovery method."""
         mock_load.return_value = VALID_CONFIG
@@ -312,28 +304,28 @@ class TestGetDiscoveryMethod:
 class TestGetModelForRole:
     """Test model override retrieval from role_models."""
 
-    @patch('agents_config.load_agents_config')
+    @patch("agents_config.load_agents_config")
     def test_get_model_with_override(self, mock_load):
         """Test getting model when role_models is present."""
         mock_load.return_value = VALID_CONFIG_WITH_MODELS
         model = get_model_for_role("MANAGER")
         assert model == "opencode-go/deepseek-v4-flash"
 
-    @patch('agents_config.load_agents_config')
+    @patch("agents_config.load_agents_config")
     def test_get_builder_model_with_override(self, mock_load):
         """Test getting BUILDER model when role_models is present."""
         mock_load.return_value = VALID_CONFIG_WITH_MODELS
         model = get_model_for_role("BUILDER")
         assert model == "opencode-go/qwen3.5-plus"
 
-    @patch('agents_config.load_agents_config')
+    @patch("agents_config.load_agents_config")
     def test_get_model_without_override(self, mock_load):
         """Test getting model returns None when role_models is absent."""
         mock_load.return_value = VALID_CONFIG  # No role_models
         model = get_model_for_role("MANAGER")
         assert model is None
 
-    @patch('agents_config.load_agents_config')
+    @patch("agents_config.load_agents_config")
     def test_get_model_partial_override(self, mock_load):
         """Test getting model returns None for role without override."""
         config_partial = copy.deepcopy(VALID_CONFIG_WITH_MODELS)
@@ -343,7 +335,7 @@ class TestGetModelForRole:
         model = get_model_for_role("MANAGER")
         assert model is None
 
-    @patch('agents_config.load_agents_config')
+    @patch("agents_config.load_agents_config")
     def test_get_model_unknown_role(self, mock_load):
         """Test error when role is unknown."""
         mock_load.return_value = VALID_CONFIG
@@ -365,7 +357,7 @@ class TestGetModelForRole:
         bad_config["role_models"] = "invalid"
         project_root = _create_test_config(tmp_path, bad_config)
 
-        with pytest.raises(AgentsConfigError, match="role_models.*must be an object"):
+        with pytest.raises(AgentsConfigError, match=r"role_models.*must be an object"):
             load_agents_config(project_root)
 
 
@@ -381,11 +373,21 @@ class TestMigrationFramework:
         After: Segunda invocación retorna applied=[], skipped=[...], backups=[].
         """
         cfg = tmp_path / "agents.json"
-        cfg.write_text(json.dumps({"schema_version": "1.0", "backends": {"opencode": {
-            "executable": "opencode",
-            "args": ["run"],
-            "discovery": {"method": "path_only"}
-        }}, "role_assignments": {"BUILDER": "opencode"}}))
+        cfg.write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0",
+                    "backends": {
+                        "opencode": {
+                            "executable": "opencode",
+                            "args": ["run"],
+                            "discovery": {"method": "path_only"},
+                        }
+                    },
+                    "role_assignments": {"BUILDER": "opencode"},
+                }
+            )
+        )
         report1 = migrate_agents_config(cfg)
         report2 = migrate_agents_config(cfg)
         assert report1.applied == ["1.0_to_1.1"]
@@ -402,11 +404,21 @@ class TestMigrationFramework:
         After: backup existe y contiene el contenido original (schema_version 1.0).
         """
         cfg = tmp_path / "agents.json"
-        cfg.write_text(json.dumps({"schema_version": "1.0", "backends": {"opencode": {
-            "executable": "opencode",
-            "args": ["run"],
-            "discovery": {"method": "path_only"}
-        }}, "role_assignments": {"BUILDER": "opencode"}}))
+        cfg.write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0",
+                    "backends": {
+                        "opencode": {
+                            "executable": "opencode",
+                            "args": ["run"],
+                            "discovery": {"method": "path_only"},
+                        }
+                    },
+                    "role_assignments": {"BUILDER": "opencode"},
+                }
+            )
+        )
         report = migrate_agents_config(cfg)
         assert len(report.backups) == 1
         assert report.backups[0].exists()
@@ -423,11 +435,21 @@ class TestMigrationFramework:
         After: agents.json tiene _migrations: ["1.0_to_1.1"] y schema_version: "1.1".
         """
         cfg = tmp_path / "agents.json"
-        cfg.write_text(json.dumps({"schema_version": "1.0", "backends": {"opencode": {
-            "executable": "opencode",
-            "args": ["run"],
-            "discovery": {"method": "path_only"}
-        }}, "role_assignments": {"BUILDER": "opencode"}}))
+        cfg.write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0",
+                    "backends": {
+                        "opencode": {
+                            "executable": "opencode",
+                            "args": ["run"],
+                            "discovery": {"method": "path_only"},
+                        }
+                    },
+                    "role_assignments": {"BUILDER": "opencode"},
+                }
+            )
+        )
         migrate_agents_config(cfg)
         result = json.loads(cfg.read_text())
         assert result["_migrations"] == ["1.0_to_1.1"]
@@ -443,16 +465,22 @@ class TestMigrationFramework:
         """
         cfg = tmp_path / "agents.json"
         # Config ya en 1.1 pero sin _migrations
-        cfg.write_text(json.dumps({
-            "schema_version": "1.1",
-            "backends": {"opencode": {
-                "executable": "opencode",
-                "args": ["run"],
-                "discovery": {"method": "path_only"}
-            }},
-            "role_assignments": {"BUILDER": "opencode"},
-            "role_models": {"BUILDER": "x"}
-        }))
+        cfg.write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.1",
+                    "backends": {
+                        "opencode": {
+                            "executable": "opencode",
+                            "args": ["run"],
+                            "discovery": {"method": "path_only"},
+                        }
+                    },
+                    "role_assignments": {"BUILDER": "opencode"},
+                    "role_models": {"BUILDER": "x"},
+                }
+            )
+        )
         report = migrate_agents_config(cfg)
         result = json.loads(cfg.read_text())
         assert result["_migrations"] == ["1.0_to_1.1"]
@@ -469,11 +497,21 @@ class TestMigrationFramework:
         After: mtime invariante, no backup creado, report muestra lo que pasaría.
         """
         cfg = tmp_path / "agents.json"
-        cfg.write_text(json.dumps({"schema_version": "1.0", "backends": {"opencode": {
-            "executable": "opencode",
-            "args": ["run"],
-            "discovery": {"method": "path_only"}
-        }}, "role_assignments": {"BUILDER": "opencode"}}))
+        cfg.write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0",
+                    "backends": {
+                        "opencode": {
+                            "executable": "opencode",
+                            "args": ["run"],
+                            "discovery": {"method": "path_only"},
+                        }
+                    },
+                    "role_assignments": {"BUILDER": "opencode"},
+                }
+            )
+        )
         mtime_before = cfg.stat().st_mtime
         report = migrate_agents_config(cfg, dry_run=True)
         mtime_after = cfg.stat().st_mtime
@@ -489,11 +527,17 @@ class TestMigrationFramework:
         During: handler crea nuevo dict, no muta input.
         After: input inalterado, output es dict diferente con schema 1.1.
         """
-        config = {"schema_version": "1.0", "backends": {"opencode": {
-            "executable": "opencode",
-            "args": ["run"],
-            "discovery": {"method": "path_only"}
-        }}, "role_assignments": {"BUILDER": "opencode"}}
+        config = {
+            "schema_version": "1.0",
+            "backends": {
+                "opencode": {
+                    "executable": "opencode",
+                    "args": ["run"],
+                    "discovery": {"method": "path_only"},
+                }
+            },
+            "role_assignments": {"BUILDER": "opencode"},
+        }
         config_snapshot = dict(config)
         result = _migrate_1_0_to_1_1(config)
         assert config == config_snapshot  # input no mutado
@@ -509,11 +553,21 @@ class TestMigrationFramework:
         After: schema_version 1.1, role_models con defaults WP-072, _migrations poblado.
         """
         cfg = tmp_path / "agents.json"
-        cfg.write_text(json.dumps({"schema_version": "1.0", "backends": {"opencode": {
-            "executable": "opencode",
-            "args": ["run"],
-            "discovery": {"method": "path_only"}
-        }}, "role_assignments": {"BUILDER": "opencode"}}))
+        cfg.write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0",
+                    "backends": {
+                        "opencode": {
+                            "executable": "opencode",
+                            "args": ["run"],
+                            "discovery": {"method": "path_only"},
+                        }
+                    },
+                    "role_assignments": {"BUILDER": "opencode"},
+                }
+            )
+        )
         migrate_agents_config(cfg)
         result = json.loads(cfg.read_text())
         assert result["schema_version"] == "1.1"

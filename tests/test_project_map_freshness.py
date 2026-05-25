@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+
 PROJECT_ROOT = Path(__file__).parent.parent
 GRAPH_FILE = PROJECT_ROOT / "graphify-out" / "graph.json"
 REPORT_FILE = PROJECT_ROOT / "graphify-out" / "GRAPH_REPORT.md"
@@ -77,11 +78,11 @@ class TestProjectMapExistence:
             "Â±",
             "Â²",
             "Â³",
-            "Â´",
+            "Â´",  # noqa: RUF001
             "Âµ",
             "Â¶",
             "Â·",
-            "Â¸",
+            "Â¸",  # noqa: RUF001
             "Â¹",
             "Âº",
             "Â»",
@@ -91,7 +92,7 @@ class TestProjectMapExistence:
             "Â¿",
             "Ã€",
             "Ã",
-            "Ã‚",
+            "Ã‚",  # noqa: RUF001
             "Ãƒ",
             "Ã„",
             "Ã…",

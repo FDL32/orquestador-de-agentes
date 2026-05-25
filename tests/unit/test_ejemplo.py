@@ -1,11 +1,10 @@
-﻿"""
+"""
 Tests unitarios de ejemplo.
 
 Este archivo demuestra cÃ³mo usar la infraestructura de tests:
 - fixtures de conftest.py (tmp_path, restore_cwd)
 - helpers de _temp_runtime.py
 """
-
 
 
 def test_ejemplo_basico(tmp_path):

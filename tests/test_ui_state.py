@@ -1,12 +1,10 @@
 """Tests for ui_state projection."""
 
 import json
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
-from bus.event_bus import EventBus, EventRecord
+from bus.event_bus import EventBus
 from runtime.ui_state_projector import UIStateProjector
 
 
@@ -27,7 +25,11 @@ def mock_event_bus(temp_runtime_dir):
         "TURN_CHANGED",
         ticket_id="WP-2026-024",
         actor="BUILDER",
-        payload={"action": "IMPLEMENT", "plan_status": "APPROVED", "log_status": "IN_PROGRESS"},
+        payload={
+            "action": "IMPLEMENT",
+            "plan_status": "APPROVED",
+            "log_status": "IN_PROGRESS",
+        },
         timestamp="2026-05-11T13:00:00",
     )
     return bus
@@ -169,7 +171,9 @@ def test_validate_projection(mock_event_bus, mock_collaboration_dir, temp_runtim
     assert projector.validate_projection()
 
 
-def test_cli_entry_point(capsys, mock_event_bus, mock_collaboration_dir, temp_runtime_dir):
+def test_cli_entry_point(
+    capsys, mock_event_bus, mock_collaboration_dir, temp_runtime_dir
+):
     """Test CLI entry point."""
     with patch("sys.path", []):
         # Mock to avoid import issues in test

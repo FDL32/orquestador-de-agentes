@@ -1,38 +1,37 @@
-# Work Plan - WP-2026-139
+# Work Plan - WP-2026-140
 
 ## Metadata
-- **ID:** WP-2026-139
-- **Estado:** COMPLETED
+- **ID:** WP-2026-140
+- **Estado:** APPROVED
 - **deliverable_type:** code
-- **Titulo:** Cached canonical anti-pattern inventory for review_bridge
+- **Titulo:** Bus import boundary test for scripts dependency firewall
 - **Asignado a:** Builder
 
 ## Objetivo
-Hacer que `bus/review_bridge.py` cargue el inventario canónico de anti-patrones desde `skills/_shared/anti-patterns.md` una sola vez y lo reutilice con caché al construir el rubric del Manager.
+Blindar la capa `bus/` para que no cree nuevas dependencias sobre `scripts/`, preservando solo la excepcion explicitamente permitida para `scripts.discover_skills`.
 
 ## Decision Arquitectonica
-- `ReviewBridge.__init__()` carga el inventario canónico de AP desde `skills/_shared/anti-patterns.md` y lo deja cacheado.
-- `_rubric_for_type()` deja de depender de la copia inline de APs y compone el bloque desde el inventario cacheado.
-- La lista canónica de AP sigue viviendo en `skills/_shared/anti-patterns.md`; `code-rules.md` y `review-checklist.md` permanecen como vistas derivadas.
-- Si el archivo canónico no estuviera disponible, el review no debe romperse y debe degradar de forma segura.
+- El boundary test analiza el arbol `bus/` y extrae las importaciones `scripts.*` de forma estaticamente segura.
+- La unica importacion permitida desde `bus/` hacia `scripts/` es `scripts.discover_skills`, porque esa es la seam existente de discovery de skills.
+- Si aparece cualquier otro `scripts.*` dentro de `bus/`, el test debe fallar con el modulo exacto y la importacion observada.
+- El ticket no cambia el codigo de produccion salvo que el boundary revele una excepcion adicional que deba formalizarse.
 
 ## Files Likely Touched
-- `bus/review_bridge.py`
-- `tests/test_manager_review_bridge.py`
+- `tests/test_bus_boundary.py`
 
 ## Fases
-1. Cargar el inventario canónico AP desde `skills/_shared/anti-patterns.md` con caché en `ReviewBridge.__init__()`.
-2. Reemplazar la lista inline de APs en `_rubric_for_type()` por la composición desde el inventario cacheado.
-3. Mantener intactos el rubic base, las lecciones dinámicas y el contrato `APPROVE / CHANGES / INSPECT`.
-4. Ajustar tests para cubrir carga una sola vez, composición del rubric y degradación segura.
+1. Implementar un test AST-based que recorra `bus/` y coleccione imports `scripts.*`.
+2. Declarar explicitamente el allowlist minimo: `scripts.discover_skills`.
+3. Hacer que el failure message identifique el modulo de `bus` y la importacion prohibida.
+4. Validar con el subset de tests, `ruff` y la validacion canonica.
 
 ## Calidad
-- `python scripts/run_pytest_safe.py tests/test_manager_review_bridge.py -q`
-- `ruff check bus/review_bridge.py tests/test_manager_review_bridge.py`
+- `python scripts/run_pytest_safe.py tests/test_bus_boundary.py -q`
+- `ruff check tests/test_bus_boundary.py`
 - `python .agent/agent_controller.py --validate --json --force`
 
 ## Criterios de aceptacion
-- `bus/review_bridge.py` carga AP canónicos desde archivo una sola vez y los reutiliza con caché.
-- El rubric del Manager conserva `AP-01..AP-07` sin la triple copia inline.
-- Los tests cubren carga, composición y fallback seguro.
+- `bus/` solo mantiene la importacion permitida `scripts.discover_skills`.
+- Cualquier nuevo `scripts.*` importado desde `bus/` hace fallar el test con una traza clara.
+- El boundary no produce falsos positivos sobre imports que no pertenecen a `bus/`.
 - La validacion canonica pasa sin errores.
