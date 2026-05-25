@@ -412,8 +412,9 @@ class ReviewBridge:
                 cwd=self.project_root,
                 timeout=10,
             )
-            if result.returncode == 0 and result.stdout.strip():
-                return result.stdout.strip()
+            if result.returncode == 0:
+                return result.stdout.strip() or "[no new commits since origin/main]"
+            # Remote genuinely unreachable — fall back to latest HEAD commit
             result = subprocess.run(
                 [git_bin, "log", "HEAD", "--format=%H %ai %an", "--no-merges", "-1"],
                 capture_output=True,
