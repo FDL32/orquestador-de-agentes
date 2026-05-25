@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WP-2026-131
-- **Estado:** IN_PROGRESS
+**Estado:** COMPLETED
 - **deliverable_type:** code
 
 ## Agente Activo
@@ -55,3 +55,8 @@
 - [x] `observations.jsonl` conserva la historia completa.
 - [x] `AGENTS.md` documenta la regla sin ambiguedades.
 - [x] Los tests de memoria siguen pasando y validan la regeneracion del indice.
+
+
+Marked ready by Builder
+
+Manager approved canonical closeout for WP-2026-131

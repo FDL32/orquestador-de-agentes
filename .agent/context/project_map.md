@@ -1,5 +1,5 @@
 # Mapa del Proyecto
-**Actualizado:** 2026-05-25 10:57:33
+**Actualizado:** 2026-05-25 11:38:57
 
 ## Estructura de Archivos
 ```
@@ -23,10 +23,13 @@
 .agent\collaboration\_archive\plan_audit\PLAN_WP-2026-127.md
 .agent\collaboration\_archive\plan_audit\PLAN_WP-2026-128.md
 .agent\collaboration\_archive\plan_audit\PLAN_WP-2026-129.md
+.agent\collaboration\archive\notifications_20260525_105734.md
 .agent\collaboration\AUDIT_WP-2026-130.md
+.agent\collaboration\AUDIT_WP-2026-131.md
 .agent\collaboration\execution_log.md
 .agent\collaboration\notifications.md
 .agent\collaboration\PLAN_WP-2026-130.md
+.agent\collaboration\PLAN_WP-2026-131.md
 .agent\collaboration\review_queue.md
 .agent\collaboration\STATE.md
 .agent\collaboration\TURN.md
@@ -50,8 +53,5 @@
 .agent\project_manifest.toml
 .agent\runtime\__init__.py
 .agent\runtime\builder_lock.txt
-.agent\runtime\circuit_breaker.json
-.agent\runtime\deliverables\WP-2026-121-project-root-audit.md
-.agent\runtime\manager_bridge_state.json
-... (+2414 archivos mas)
+... (+2417 archivos mas)
 ```

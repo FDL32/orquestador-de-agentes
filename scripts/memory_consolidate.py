@@ -378,6 +378,11 @@ def main() -> None:
         help="Apply changes (default: dry-run)",
     )
     parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Simulate without writing (default behavior)",
+    )
+    parser.add_argument(
         "--since",
         default="30d",
         help="Archive entries older than N days (default: 30d)",
@@ -389,7 +394,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    dry_run = not args.apply
+    dry_run = not args.apply or args.dry_run
 
     recent, stats, dropped, dedupe_count = _run_pipeline(args)
 

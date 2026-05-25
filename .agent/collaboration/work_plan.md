@@ -1,48 +1,51 @@
-# Work Plan - WP-2026-130
+# Work Plan - WP-2026-131
 
 ## Metadata
-- **ID:** WP-2026-130
+- **ID:** WP-2026-131
 - **Estado:** COMPLETED
 - **deliverable_type:** code
-- **Titulo:** Manager legacy naming cleanup
+- **Titulo:** Memory index cap for persistent observations
+- **Asignado a:** Builder
 
 ## Objetivo
-Eliminar la mezcla semantica entre rol y backend en el Manager review path, renombrando referencias legacy de `codex` a `manager` donde realmente describen la ruta del Manager y no el backend real.
+Convertir `MEMORY.md` en un indice humano corto y estable, dejando `observations.jsonl` como la fuente historica para busqueda profunda y trazabilidad.
 
 ## Decision Arquitectonica
-- `_run_codex_review()` es un nombre legacy que mezcla el rol Manager con el backend historico; debe pasar a un nombre semantico de ruta legacy del Manager.
-- `parse_method = "legacy_codex"` debe pasar a una etiqueta de trazabilidad que describa la ruta legacy del Manager.
-- Las referencias de tests y templates que siguen hablando de `codex` como si fuera el Manager deben renombrarse para no mezclar rol con backend.
-- El backend real `codex` puede seguir existiendo en `agents.json`; lo que se limpia es el naming del path del Manager.
+- `MEMORY.md` debe mantenerse acotado y util como indice, no como volcado historico.
+- La historia completa y la busqueda profunda pertenecen a `observations.jsonl`.
+- `scripts/memory_consolidate.py` es la unica pieza que materializa y recorta el indice.
+- `AGENTS.md` debe documentar la regla de memoria acotada de forma breve y operativa.
+- `scripts/memory_consolidate.py` debe declarar `MEMORY_MD_LINE_CAP = 80` y truncar el indice con un marcador visible cuando se supere el limite.
 
 ## Files Likely Touched
-- `bus/review_bridge.py`
-- `tests/test_manager_review_bridge.py`
-- `tests/test_launch_agent_terminals_script.py`
-- `templates/startup/manager_legacy.md`
-- `.agent/collaboration/work_plan.md`
-- `.agent/collaboration/PLAN_WP-2026-130.md`
-- `.agent/collaboration/AUDIT_WP-2026-130.md`
+- `scripts/memory_consolidate.py`
+- `tests/unit/test_memory_consolidate.py`
+- `.agent/runtime/memory/MEMORY.md`
+- `AGENTS.md`
+- `.agent/collaboration/PLAN_WP-2026-131.md`
+- `.agent/collaboration/AUDIT_WP-2026-131.md`
 - `.agent/collaboration/STATE.md`
 - `.agent/collaboration/TURN.md`
 - `.agent/collaboration/execution_log.md`
-- `PROJECT.md`
 
 ## Fases
-1. Renombrar la ruta legacy del Manager en `bus/review_bridge.py` para que deje de hablar de `codex` cuando en realidad describe un flujo de Manager.
-2. Renombrar los fixtures, tests y templates que siguen usando `codex` como etiqueta de la ruta del Manager.
-3. Verificar que el rename no toca la compatibilidad real del backend `codex` en `agents.json` ni rompe el arranque OpenCode.
+1. Definir el cap de lineas en `MEMORY.md` y la politica de recorte en `scripts/memory_consolidate.py`.
+2. Ajustar la regeneracion del indice para priorizar resumen util sobre historial largo y truncar con marcador visible cuando sea necesario.
+3. Añadir un test explicito que fuerce un output mayor a 80 lineas y verifique que el indice final queda acotado.
+4. Actualizar `AGENTS.md` en la seccion `Memoria por proyecto` con la regla de memoria acotada y la ubicacion de la historia completa.
+5. Validar que el indice no supera 80 lineas y que la historia sigue disponible en `observations.jsonl`.
 
 ## Calidad
-- `ruff check .`
-- `pytest`
+- `python scripts/memory_consolidate.py --dry-run`
+- `python scripts/run_pytest_safe.py tests/unit/test_memory_consolidate.py -q`
 - `python .agent/agent_controller.py --validate --json --force`
 
 ## Criterios de aceptacion
-- Ninguna ruta del Manager usa `codex` como nombre de rol o ruta legacy.
-- Los tests y templates del Manager hablan de la semantica correcta.
-- El backend `codex` real sigue existiendo como opcion configurada, sin confusion de nombres.
-- Los tests cubren el rename y evitan regresiones de nomenclatura.
+- `MEMORY.md` no supera 80 lineas.
+- `MEMORY.md` sigue siendo un indice humano util.
+- La trazabilidad historica queda en `observations.jsonl`.
+- `AGENTS.md` documenta la regla sin ambiguedades.
+- Los tests de memoria siguen pasando y cubren la regeneracion del indice.
 
 ## Nota
-WP-2026-129 queda como closeout historico del entorno de review. Este ticket corrige la nomenclatura legacy del Manager para no mezclar rol con backend.
+Este ticket es intencionalmente pequeno y autocontenido. Si durante la implementacion aparece la necesidad de tocar el bus o el state machine, se considera deriva de alcance y debe escalarse aparte.

@@ -209,6 +209,37 @@ def test_dry_run_no_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     assert "DRY-RUN" in test_report.read_text(encoding="utf-8")
 
 
+def test_dry_run_flag_alias_no_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--dry-run should be accepted as an explicit CLI alias."""
+    test_obs = tmp_path / "observations.jsonl"
+    original_content = '{"test": "entry"}\n'
+    test_obs.write_text(original_content, encoding="utf-8")
+
+    test_memory_md = tmp_path / "MEMORY.md"
+    test_report = tmp_path / "REPORT.md"
+    test_archive = tmp_path / "archive"
+
+    monkeypatch.setattr("scripts.memory_consolidate.OBS", test_obs)
+    monkeypatch.setattr("scripts.memory_consolidate.MEMORY_DIR", tmp_path)
+    monkeypatch.setattr("scripts.memory_consolidate.ARCHIVE_DIR", test_archive)
+    monkeypatch.setattr("scripts.memory_consolidate.MEMORY_MD", test_memory_md)
+    monkeypatch.setattr("scripts.memory_consolidate.REPORT", test_report)
+
+    from scripts import memory_consolidate
+    import sys
+
+    monkeypatch.setattr(sys, "argv", ["memory_consolidate.py", "--dry-run"])
+
+    memory_consolidate.main()
+
+    assert test_obs.read_text(encoding="utf-8") == original_content
+    assert not test_memory_md.exists()
+    assert test_report.exists()
+    assert "DRY-RUN" in test_report.read_text(encoding="utf-8")
+
+
 def test_regen_memory_md_line_cap() -> None:
     """MEMORY.md should be capped at MEMORY_MD_LINE_CAP (80) lines.
 

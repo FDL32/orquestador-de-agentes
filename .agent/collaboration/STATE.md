@@ -1,13 +1,13 @@
-# State - WP-2026-130
+# State - WP-2026-131
 
-Plan Activo: WP-2026-130
+Plan Activo: WP-2026-131
 Estado actual: IN_PROGRESS
 Rol activo: BUILDER
 
 Resumen:
-WP-2026-130 limpia la nomenclatura legacy del Manager para dejar de mezclar `codex` como nombre de ruta con el rol real del agente.
+WP-2026-131 limita `MEMORY.md` para que siga siendo un indice humano corto y estable.
 
 Notas:
-- El ciclo canonico arranca para Builder con el rename del Manager legacy.
-- `WP-2026-129` queda como closeout historico del fix de entorno de review.
-- La validacion final debe confirmar review bridge, templates y tests alineados con la nomenclatura correcta.
+- `observations.jsonl` sigue siendo la fuente historica para trazabilidad profunda.
+- El alcance es minimo: memoria, documentacion operativa y validacion del indice.
+- Si aparece deriva hacia bus o state machine, el ticket debe escalarse aparte.
