@@ -2,8 +2,8 @@
 
 - Project: `orquestador_de_agentes`
 - Version: `v9.14.0`
-- State: WP-2026-130 IN_PROGRESS (Manager legacy naming cleanup).
-- Last review: 2026-05-21
+- State: WP-2026-135 COMPLETED (pre-compact hook context recovery).
+- Last review: 2026-05-25
 - Mission: keep the central motor clean, versioned once, and externally referenced
   - The repo is the unique source of operational code (motor central).
   - Destination projects keep only their `.agent/` workspace (state, memory, events, config).
@@ -11,14 +11,11 @@
 
 ## Current Cycle
 
-- Active ticket: WP-2026-130 IN_PROGRESS (Manager legacy naming cleanup).
-- Mode: implementation / Builder turn started.
-- Builder backend: OpenCode (model: opencode-go/qwen3.5-plus).
-- Manager backend: OpenCode (model: configurable via agents.json).
-- Target model: Qwen3.5 Plus [NO VERIFICADO como provider/model].
-- Outcome: implementation of Manager naming cleanup in progress.
-- The review bridge no longer uses `codex` as a name for the Manager route (resolved WP-2026-130).
-- The bus canonical authority and prompt execution must stay aligned.
+- Active ticket: WP-2026-135 COMPLETED (pre-compact hook context recovery).
+- Mode: closed.
+- Outcome: hook pre-compact funcional con observaciones, keywords, ranking y additionalContext.
+  Anti-patrones (mock drift, floor assertion, zero-logic wrapper) incorporados en rubric del Manager.
+  25 tests. Dos bugs de hardening corregidos post-review (UTF-8 y tipos no-string).
 
 ## Source of truth
 

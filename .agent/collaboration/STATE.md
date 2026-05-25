@@ -1,13 +1,12 @@
-# State - WP-2026-134
+# State - WP-2026-135
 
-Plan Activo: WP-2026-134
+Plan Activo: WP-2026-135
 Estado actual: COMPLETED
-Rol activo: MANAGER
+Rol activo: -
 
 Resumen:
-WP-2026-134 ancla el review del Manager al diff real del ticket y añade provenance para evitar reviews vacios tras el commit del Builder.
-
-Notas:
-- `origin/main` es la base preferida, con fallback seguro si no esta disponible.
-- El contrato de decision sigue siendo `APPROVE / CHANGES / INSPECT`.
-- El ticket queda cerrado de forma canonica y listo para el siguiente ciclo.
+WP-2026-135 completado. Pre-compact hook funcional con recuperacion segura de contexto,
+ranking por recencia y keywords, proyeccion en additionalContext (cap 5 observaciones).
+Dos bugs de hardening corregidos post-review: UnicodeDecodeError en loader y
+AttributeError/TypeError por campos no-string en score/format.
+25 tests verdes. Anti-patrones generalizados en rubric del Manager y AGENTS.md.
