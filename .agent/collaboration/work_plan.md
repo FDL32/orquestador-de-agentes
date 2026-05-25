@@ -1,42 +1,38 @@
-# Work Plan - WP-2026-133
+# Work Plan - WP-2026-139
 
 ## Metadata
-- **ID:** WP-2026-133
-- **Estado:** COMPLETED
-- **deliverable_type:** documentation
-- **Titulo:** Skill references scaffold for validator
+- **ID:** WP-2026-139
+- **Estado:** APPROVED
+- **deliverable_type:** code
+- **Titulo:** Cached canonical anti-pattern inventory for review_bridge
 - **Asignado a:** Builder
 
 ## Objetivo
-Crear `references/` con `.gitkeep` en las skills que hoy fallan `skills/validate_all.py`, sin tocar la logica del validador.
+Hacer que `bus/review_bridge.py` cargue el inventario canónico de anti-patrones desde `skills/_shared/anti-patterns.md` una sola vez y lo reutilice con caché al construir el rubric del Manager.
 
 ## Decision Arquitectonica
-- El fix se limita a la estructura de skills: crear `references/` y mantener un `.gitkeep` por carpeta.
-- No se toca `skills/validate_all.py` ni ningun otro validador.
-- No se introduce logica nueva ni contenido adicional en las skills.
-- La solucion debe ser minima y estable para que Git preserve las carpetas vacias.
+- `ReviewBridge.__init__()` carga el inventario canónico de AP desde `skills/_shared/anti-patterns.md` y lo deja cacheado.
+- `_rubric_for_type()` deja de depender de la copia inline de APs y compone el bloque desde el inventario cacheado.
+- La lista canónica de AP sigue viviendo en `skills/_shared/anti-patterns.md`; `code-rules.md` y `review-checklist.md` permanecen como vistas derivadas.
+- Si el archivo canónico no estuviera disponible, el review no debe romperse y debe degradar de forma segura.
 
 ## Files Likely Touched
-- `skills/bui-write-deliverable/references/.gitkeep`
-- `skills/graphify/references/.gitkeep`
-- `skills/local-audit/references/.gitkeep`
-- `skills/memory-consolidate/references/.gitkeep`
-- `skills/refactor-manager/references/.gitkeep`
-- `skills/systematic-debugging/references/.gitkeep`
-- `skills/test-driven-development/references/.gitkeep`
+- `bus/review_bridge.py`
+- `tests/test_manager_review_bridge.py`
 
 ## Fases
-1. Crear los 7 directorios `references/` faltantes con `.gitkeep`.
-2. Ejecutar `skills/validate_all.py` y confirmar que el validador pasa.
-3. Verificar que no se haya modificado el validador ni el contrato de skills.
+1. Cargar el inventario canónico AP desde `skills/_shared/anti-patterns.md` con caché en `ReviewBridge.__init__()`.
+2. Reemplazar la lista inline de APs en `_rubric_for_type()` por la composición desde el inventario cacheado.
+3. Mantener intactos el rubic base, las lecciones dinámicas y el contrato `APPROVE / CHANGES / INSPECT`.
+4. Ajustar tests para cubrir carga una sola vez, composición del rubric y degradación segura.
 
 ## Calidad
-- `python skills/validate_all.py`
-- `ruff check skills/validate_all.py`
+- `python scripts/run_pytest_safe.py tests/test_manager_review_bridge.py -q`
+- `ruff check bus/review_bridge.py tests/test_manager_review_bridge.py`
 - `python .agent/agent_controller.py --validate --json --force`
 
 ## Criterios de aceptacion
-- `skills/validate_all.py` reporta 0 skills invalidas.
-- Las 7 skills afectadas contienen `references/.gitkeep`.
-- No se modifica `skills/validate_all.py`.
+- `bus/review_bridge.py` carga AP canónicos desde archivo una sola vez y los reutiliza con caché.
+- El rubric del Manager conserva `AP-01..AP-07` sin la triple copia inline.
+- Los tests cubren carga, composición y fallback seguro.
 - La validacion canonica pasa sin errores.

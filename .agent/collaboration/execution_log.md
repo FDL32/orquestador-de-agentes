@@ -1,19 +1,20 @@
-# Execution Log - WP-2026-133
+# Execution Log - WP-2026-139
 
 ## Metadata
-- **ID:** WP-2026-133
-**Estado:** COMPLETED
-- **deliverable_type:** documentation
+- **ID:** WP-2026-139
+**Estado:** IN_PROGRESS
+- **deliverable_type:** code
 
 ## Agente Activo
 - **Rol:** BUILDER
 - **Accion:** IMPLEMENT
-- **Plan:** Skill references scaffold for validator
+- **Plan:** Cached canonical anti-pattern inventory for review_bridge
 
 ## Fases
-- Phase 1: crear los `references/` faltantes con `.gitkeep` en las 7 skills afectadas.
-- Phase 2: validar que `skills/validate_all.py` deje de marcar skills invalidas.
-- Phase 3: conservar intacto el validador y limitarse a la estructura minima.
+- Phase 1: cargar AP-01..AP-07 desde `skills/_shared/anti-patterns.md` una sola vez.
+- Phase 2: eliminar la lista inline de APs y componer el rubric desde caché.
+- Phase 3: mantener el rubric base, las lecciones dinamicas y el contrato de review.
+- Phase 4: validar con tests la carga, la composicion y la degradacion segura.
 
 ## Registro de Implementacion
 
@@ -21,23 +22,30 @@
 - `work_plan.md`: ticket aprobado para el nuevo ciclo.
 - `STATE.md`: estado inicial del nuevo ticket.
 - `TURN.md`: turno del Builder preparado.
-- `PLAN_WP-2026-133.md`: alcance y estrategia del ticket.
-- `AUDIT_WP-2026-133.md`: criterios de auditoria definidos.
+- `PLAN_WP-2026-139.md`: alcance y estrategia del ticket.
+- `AUDIT_WP-2026-139.md`: criterios de auditoria definidos.
 
 ### Calidad Esperada
-- `python skills/validate_all.py`
+- `python scripts/run_pytest_safe.py tests/test_manager_review_bridge.py -q`
+- `ruff check bus/review_bridge.py tests/test_manager_review_bridge.py`
 - `python .agent/agent_controller.py --validate --json --force`
-- `ruff check skills/validate_all.py`
 
 ## Criterios de Aceptacion
-- [x] Las 7 skills afectadas tienen `references/.gitkeep`.
-- [x] `skills/validate_all.py` reporta 0 skills invalidas.
-- [x] El validador no cambia de logica.
-- [x] La validacion canonica pasa sin errores.
+- [ ] AP-01..AP-07 se cargan desde archivo y se reutilizan con caché.
+- [ ] El rubric del Manager deja de duplicar la lista inline de APs.
+- [ ] El fallback seguro mantiene el prompt funcional si el archivo canónico no se puede leer.
+- [ ] Los tests cubren carga unica, composicion y degradacion segura.
 
 ## Evidencia de Implementacion
-- 7 directorios `references/` creados con `.gitkeep` en:
-  - `skills/bui-write-deliverable/references/.gitkeep`
+### Preparacion Canonica
+- `work_plan.md`: ticket aprobado para el nuevo ciclo.
+- `STATE.md`: estado inicial del nuevo ticket.
+- `TURN.md`: turno del Builder preparado.
+- `PLAN_WP-2026-139.md`: alcance y estrategia del ticket.
+- `AUDIT_WP-2026-139.md`: criterios de auditoria definidos.
+
+### Evidencia
+- Pendiente de implementacion: mover el inventario AP canonico a carga desde archivo con caché.
   - `skills/graphify/references/.gitkeep`
   - `skills/local-audit/references/.gitkeep`
   - `skills/memory-consolidate/references/.gitkeep`
