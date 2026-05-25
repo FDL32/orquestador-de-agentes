@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WP-2026-139
-**Estado:** IN_PROGRESS
+**Estado:** READY_FOR_REVIEW
 - **deliverable_type:** code
 
 ## Agente Activo
@@ -45,25 +45,26 @@
 - `AUDIT_WP-2026-139.md`: criterios de auditoria definidos.
 
 ### Evidencia
-- Pendiente de implementacion: mover el inventario AP canonico a carga desde archivo con caché.
-  - `skills/graphify/references/.gitkeep`
-  - `skills/local-audit/references/.gitkeep`
-  - `skills/memory-consolidate/references/.gitkeep`
-  - `skills/refactor-manager/references/.gitkeep`
-  - `skills/systematic-debugging/references/.gitkeep`
-  - `skills/test-driven-development/references/.gitkeep`
-- `skills/validate_all.py`: 22 skills validas, 0 invalidas.
-- `ruff check skills/validate_all.py`: All checks passed.
-- `python .agent/agent_controller.py --validate --json --force`: Sin errores.
-- `skills/validate_all.py` intacto (sin cambios en git).
-- Commit: `9791884` - "WP-2026-133: Add references/.gitkeep to 7 skills for validator compliance"
+- La implementacion ya estaba completa en `bus/review_bridge.py`:
+  - `ReviewBridge.__init__()` llama a `_load_canonical_anti_patterns()` una sola vez y cachea en `self._canonical_anti_patterns`.
+  - `_canonical_anti_patterns_path()` resuelve ruta relativa desde `bus/review_bridge.py` hacia `skills/_shared/anti-patterns.md`.
+  - `_parse_canonical_anti_patterns()` extrae AP-01..AP-07 desde el archivo canonico.
+  - `_render_canonical_anti_pattern_inventory()` compone el bloque desde caché.
+  - `_rubric_for_type()` usa el inventario cacheado, sin triple copia inline.
+  - Fallback seguro: `warnings.warn()` + omision de seccion si el archivo no existe.
+- Tests existentes cubren todos los criterios:
+  - `test_build_review_prompt_loads_canonical_anti_patterns_once_per_instance`: carga unica.
+  - `test_build_review_prompt_warns_and_omits_inventory_when_shared_file_missing`: fallback seguro.
+  - `test_build_review_prompt_includes_manager_learnings_for_code_and_preserves_static_rubric`: composicion del rubric con AP-01..AP-07.
+- Quality gates:
+  - `python scripts/run_pytest_safe.py tests/test_manager_review_bridge.py -q`: 52 passed.
+  - `ruff check bus/review_bridge.py tests/test_manager_review_bridge.py`: All checks passed.
+  - `python .agent/agent_controller.py --validate --json --force`: Sin errores.
 
 ## BUILDER_EXIT
-- **ticket_id:** WP-2026-133
+- **ticket_id:** WP-2026-139
 - **exit_reason:** Implementation completed successfully
-- **completion_summary:** Creados 7 directorios references/.gitkeep en skills afectadas. skills/validate_all.py pasa con 0 skills invalidas. Validador intacto.
+- **completion_summary:** La carga cacheada de AP canonicos ya esta implementada en review_bridge.py. Tests cubren carga unica, composicion del rubric y fallback seguro. Quality gates pasan (52 tests, ruff, validacion).
 
 
 Marked ready by Builder
-
-Manager approved canonical closeout for WP-2026-133

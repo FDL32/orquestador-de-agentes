@@ -29,3 +29,7 @@ Este archivo es la fuente compartida de referencia para Builder y Manager.
 ## AP-07 - Scaffolding misclassified as code
 - Un ticket que solo crea estructura, placeholders o `.gitkeep` se clasifica como `code`.
 - Efecto: se activan gates que no aportan señal y generan ruido.
+
+## AP-08 - Test coverage drift
+- El Builder ejecuta el suite existente, ve que pasa, y declara calidad satisfecha — pero las funciones nuevas introducidas en el diff no tienen ningún test directo.
+- Efecto: el suite pasa sin probar el código nuevo; los bugs en las funciones nuevas son invisibles.

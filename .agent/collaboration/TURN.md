@@ -1,6 +1,6 @@
 # TURNO ACTUAL
 
-**Ultima actualizacion:** 2026-05-25 22:27:06
+**Ultima actualizacion:** 2026-05-25 22:46:56
 
 ---
 
@@ -8,27 +8,24 @@
 
 | Campo | Valor |
 |-------|-------|
-| **ROL** | **BUILDER** |
+| **ROL** | **MANAGER** |
 | **Plan ID** | WP-2026-139 |
 | **Tipo** | IMPLEMENTATION |
-| **Accion** | IMPLEMENT |
+| **Accion** | REVIEW_WORK |
 
 ---
 
 ## Instruccion
 
-> Implementa WP-2026-139 siguiendo `work_plan.md`, `PLAN_WP-2026-139.md` y `AUDIT_WP-2026-139.md`. Carga el inventario canonico de AP desde archivo con caché y no reintroduzcas la triple copia inline.
+> Builder completo WP-2026-139. Revisa el trabajo.
 
 ---
 
 ## Archivos a Leer
 
-1. `AGENTS.md` (contrato transversal)
-2. `PROJECT.md` (estado y decisiones del proyecto)
-3. `.agent/context/project_map.md` (mapa operativo)
-4. `.agent/collaboration/work_plan.md` (plan activo)
-5. `.agent/collaboration/PLAN_WP-2026-139.md` (estrategia)
-6. `.agent/collaboration/AUDIT_WP-2026-139.md` (criterios de auditoria)
+1. `.manager_rules` (Contexto del rol)
+2. `.agent/workflows/manager_workflow.md` (Flujo de trabajo)
+3. `.agent/context/project_map.md` (Estructura)
 
 ---
 
@@ -37,7 +34,7 @@
 | Archivo | Estado |
 |---------|--------|
 | work_plan.md | APPROVED |
-| execution_log.md | IN_PROGRESS |
+| execution_log.md | READY_FOR_REVIEW |
 
 ---
 
