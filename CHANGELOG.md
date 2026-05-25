@@ -1,3 +1,28 @@
+# 2026-05-26 - WP-2026-140 Bus import boundary test + ruff test suite cleanup
+
+### Added
+- `tests/test_bus_boundary.py`: firewall AST-based que verifica que `bus/` no importa
+  `scripts.*` salvo el seam permitido (`scripts.discover_skills`). Segunda prueba
+  grep-based detecta imports dinamicos (`importlib.import_module`, `__import__`).
+
+### Changed
+- `pyproject.toml`: `extend-exclude` corregido de `"tests/"` a `"tests/sandbox/"` para
+  que ruff cubra los tests reales. `per-file-ignores` ampliado con politica explicita
+  para patrones legitimos en tests: `S603`, `S607`, `S108`, `SIM115`, `PERF203`.
+
+### Fixed
+- 118 violaciones ruff en 70 archivos de tests: SIM117 (nested-with -> parenthesized),
+  PERF401 (for-append -> list comprehension), RUF001/002 (mojibake en docstrings),
+  RUF059 (tuplas desempaquetadas sin uso -> `_`), N805/N806 (naming), F841
+  (asignaciones sin uso), SIM105 (try/except/pass -> contextlib.suppress), B007,
+  E402, ERA001.
+
+### Summary
+- 255 tests verdes, ruff limpio. Seam `bus/ -> scripts/` protegido por firewall
+  estatico + dinamico. `per-file-ignores` como politica (no noqa por linea) para
+  patrones sistematicamente legitimos en el suite de tests.
+
+---
 # 2026-05-25 - WP-2026-136 Semantic --candidates input for session_close_observations
 
 ### Added

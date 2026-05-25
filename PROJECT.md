@@ -1,12 +1,13 @@
 # Project: orquestador_de_agentes
 **Version:** v9.14.0
-**State:** WP-2026-140 IN_PROGRESS (bus import boundary test for scripts dependency firewall)
+**State:** WP-2026-140 COMPLETED (bus import boundary test + ruff test suite cleanup)
 
 ## Current Cycle
 
-- Active ticket: WP-2026-140 IN_PROGRESS (bus import boundary test for scripts dependency firewall).
-- Mode: Builder.
-- Outcome: arranque canonico preparado con work_plan APPROVED, bus alineado y estado en IN_PROGRESS.
+- Active ticket: WP-2026-140 COMPLETED (2026-05-26).
+- Mode: idle — listo para siguiente ticket.
+- Outcome: firewall AST+grep para seam bus/->scripts/ operativo; 118 violaciones ruff
+  corregidas en 70 test files; 255 tests verdes; politica per-file-ignores establecida.
 
 ## Current readiness
 
