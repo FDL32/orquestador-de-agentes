@@ -737,28 +737,17 @@ class SequentialTicketSupervisor:
             for e in existing
         )
 
-    def bootstrap(self) -> bool:
-        """Bootstrap supervisor state from canonical sources.
+    def reconcile_state(self) -> None:
+        """Reconcile supervisor state from canonical sources without acquiring the lock.
 
-        Before: Relied on TURN.md (primary) and work_plan.md (fallback) for ticket recovery.
-        During: Prioritizes the bus's active non-terminal ticket over TURN.md and
-                work_plan.md. Uses file-based sources only as fallback when the bus
-                has no active non-terminal ticket. Reconciles stale state with the
-                bus-authoritative source. Reconciles loop_current_round from bus.
-                Only clears active_ticket when bus confirms terminal state.
-                Acquires instance lock atomically to prevent duplicate supervisors.
-        After: Supervisor state synchronized with bus-first precedence.
-               Returns True if bootstrap succeeded, False if lock rejected (duplicate instance).
+        Before: State may be stale, empty, or diverge from bus/TURN.md/work_plan.md.
+        During: Bus-first precedence. Recovers active ticket from bus → TURN.md →
+                work_plan.md → persisted state. Reconciles loop_current_round and
+                last_processed_sequence. Clears terminal tickets confirmed by bus.
+                Does NOT acquire the instance lock — safe to call from non-supervisor
+                processes (e.g. manager_review_bridge) that must not own the lock.
+        After: Supervisor state file synchronized with bus-authoritative source.
         """
-        # Acquire instance lock first - reject if another live supervisor exists
-        if not self._acquire_supervisor_lock():
-            print(
-                "[supervisor] bootstrap rejected: another supervisor instance is active",
-                file=sys.stderr,
-                flush=True,
-            )
-            return False
-
         state = self.load_state()
 
         # BUS-FIRST: Check if there's an active non-terminal ticket in the bus
@@ -804,6 +793,23 @@ class SequentialTicketSupervisor:
         if ticket_id:
             self._bootstrap_clear_terminal_ticket(state, ticket_id)
 
+    def bootstrap(self) -> bool:
+        """Acquire instance lock then reconcile supervisor state.
+
+        Before: Relies on TURN.md (primary) and work_plan.md (fallback) for ticket recovery.
+        During: Acquires instance lock atomically to prevent duplicate supervisors, then
+                delegates full state reconciliation to reconcile_state().
+        After: Supervisor state synchronized with bus-first precedence.
+               Returns True if bootstrap succeeded, False if lock rejected (duplicate instance).
+        """
+        if not self._acquire_supervisor_lock():
+            print(
+                "[supervisor] bootstrap rejected: another supervisor instance is active",
+                file=sys.stderr,
+                flush=True,
+            )
+            return False
+        self.reconcile_state()
         return True
 
     def _process_new_events(self) -> bool:
@@ -1187,7 +1193,4 @@ class SequentialTicketSupervisor:
         This method keeps the bridge flow stable without requiring the old controller
         entrypoint contract.
         """
-        # Note: sync_controller does not acquire/release lock - it's a read-only sync
-        # called from the review bridge which has its own lifecycle management.
-        self.bootstrap()
         return True
