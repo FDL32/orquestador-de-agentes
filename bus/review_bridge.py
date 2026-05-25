@@ -433,14 +433,30 @@ class ReviewBridge:
             return (
                 f"Review code ticket {ticket_id}. "
                 f"Verify the implementation correctness, testing coverage, and style guides. "
-                f"Check acceptance criteria and Files Likely Touched."
+                f"Check acceptance criteria and Files Likely Touched.\n\n"
+                f"Test anti-patterns — flag as BLOCKERS if found:\n"
+                f"- Mock drift: each patch/mock must target the actual API the code calls "
+                f"(e.g. patching pathlib.Path.open is inert if the code uses the built-in open()).\n"
+                f"- Floor assertion: each numeric threshold must exceed the base value that exists "
+                f"without the tested feature (e.g. assert score >= 150 is trivially true if "
+                f"the base recency score alone is ~20_000_000).\n\n"
+                f"Implementation anti-patterns — flag as BLOCKERS if found:\n"
+                f"- Zero-logic wrapper: a function whose entire body is a single 1:1 delegate "
+                f"call with no own logic must be inlined or eliminated."
             )
         elif dtype == "mixed":
             return (
                 f"Review mixed ticket {ticket_id}. "
                 f"Verify code correctness, tests, and style guides, and additionally verify "
                 f"that all declared non-code deliverables exist, are well-structured, and are fully complete. "
-                f"Check acceptance criteria and Files Likely Touched."
+                f"Check acceptance criteria and Files Likely Touched.\n\n"
+                f"Test anti-patterns — flag as BLOCKERS if found:\n"
+                f"- Mock drift: each patch/mock must target the actual API the code calls.\n"
+                f"- Floor assertion: each numeric threshold must exceed the base value that "
+                f"exists without the tested feature.\n\n"
+                f"Implementation anti-patterns — flag as BLOCKERS if found:\n"
+                f"- Zero-logic wrapper: a function whose entire body is a single 1:1 delegate "
+                f"call with no own logic must be inlined or eliminated."
             )
         else:  # documentation, research, analysis
             return (
