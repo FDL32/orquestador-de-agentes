@@ -38,6 +38,7 @@ REPORT = MEMORY_DIR / "CONSOLIDATION_REPORT.md"
 NOISE_PREFIXES = ("Tool ",)
 MIN_SIGNAL_LEN = 30
 DEDUPE_WINDOW_HOURS = 24
+MEMORY_MD_LINE_CAP = 80
 
 
 def is_noise(signal: str) -> bool:
@@ -141,7 +142,13 @@ def group_by_topic(entries: list[dict[str, Any]]) -> dict[str, list[dict[str, An
 
 
 def regen_memory_md(entries: list[dict[str, Any]], stats: dict[str, int]) -> str:
-    """Generate MEMORY.md content from entries."""
+    """Generate MEMORY.md content from entries.
+
+    Before: Requires entries list and stats dict.
+    During: Groups entries by topic, generates markdown with sections.
+    After: Returns markdown string capped at MEMORY_MD_LINE_CAP (80) lines
+           with visible truncation marker if exceeded.
+    """
     now = datetime.now(timezone.utc).isoformat()
     grouped = group_by_topic(entries)
 
@@ -192,7 +199,23 @@ def regen_memory_md(entries: list[dict[str, Any]], stats: dict[str, int]) -> str
         f"Stats: kept={stats['kept']}, deduped={stats['deduped']}, dropped={stats['dropped']}, archived={stats['archived']}"
     )
 
-    return "\n".join(lines)
+    content = "\n".join(lines)
+
+    # Apply line cap with truncation marker
+    all_lines = content.split("\n")
+    if len(all_lines) > MEMORY_MD_LINE_CAP:
+        cap_marker_lines = [
+            "",
+            "---",
+            "",
+            f"[MEMORY.md truncated at {MEMORY_MD_LINE_CAP} lines. "
+            "Full history available in observations.jsonl]",
+        ]
+        truncate_at = MEMORY_MD_LINE_CAP - len(cap_marker_lines)
+        truncated_lines = all_lines[:truncate_at] + cap_marker_lines
+        content = "\n".join(truncated_lines)
+
+    return content
 
 
 def write_report(stats: dict[str, Any], dry_run: bool = True) -> None:

@@ -147,8 +147,11 @@ Formato: tabla compacta `| WP | Source | Pattern | License | Adapted vs Ported |
 ## Memoria por proyecto
 
 - `.agent/runtime/memory/observations.jsonl` guarda observaciones persistentes.
-- `.agent/runtime/memory/MEMORY.md` es un indice humano, no reemplaza el estado canonico.
+- `.agent/runtime/memory/MEMORY.md` es un indice humano acotado, con tope de 80 lineas.
+- La historia completa y la busqueda profunda viven en `observations.jsonl`, no en `MEMORY.md`.
+- La regla vive aqui para evitar drift; actualiza esta seccion si cambia el cap o el marcador de truncado.
 - Regenera el indice solo de forma explicita.
+- `scripts/memory_consolidate.py` declara `MEMORY_MD_LINE_CAP = 80` y trunca el indice con un marcador visible cuando se supera el limite.
 
 ## deliverable_type (work_plan schema, V2)
 
