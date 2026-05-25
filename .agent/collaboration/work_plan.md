@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WP-2026-139
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Titulo:** Cached canonical anti-pattern inventory for review_bridge
 - **Asignado a:** Builder
