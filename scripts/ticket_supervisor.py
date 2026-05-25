@@ -150,8 +150,10 @@ def main() -> int:
         f"| completed={len(state.completed_tickets)}",
         flush=True,
     )
-    changed = supervisor.run_once()
-    supervisor._release_supervisor_lock()
+    try:
+        changed = supervisor.run_once()
+    finally:
+        supervisor._release_supervisor_lock()
     if changed:
         print("[ticket-supervisor] once mode processed new events", flush=True)
     return 0

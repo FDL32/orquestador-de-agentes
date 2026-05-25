@@ -298,7 +298,7 @@ def _tick(
     manager_path: Path | None,
     timeout: int,
 ) -> bool:
-    supervisor.bootstrap()
+    supervisor.reconcile_state()
     ticket_id, current_state, latest_sequence = _ticket_state(supervisor)
     if not ticket_id:
         return False
@@ -361,7 +361,7 @@ def main() -> int:
     review = ReviewBridge(event_bus=supervisor.event_bus, project_root=project_root)
 
     if args.watch:
-        supervisor.bootstrap()
+        supervisor.reconcile_state()
         state = supervisor.load_state()
         print(
             f"[manager-review-bridge] watch mode start | active={state.active_ticket or 'NONE'} "
@@ -393,7 +393,7 @@ def main() -> int:
             time.sleep(args.poll_interval)
 
     if args.once:
-        supervisor.bootstrap()
+        supervisor.reconcile_state()
         state = supervisor.load_state()
         print(
             f"[manager-review-bridge] once mode start | active={state.active_ticket or 'NONE'} "
