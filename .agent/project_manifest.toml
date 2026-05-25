@@ -1,10 +1,10 @@
 [project]
-id = "orquestacion_agentes"
-name = "Orquestacion Agentes"
+id = "orquestador_de_agentes"
+name = "Orquestador de Agentes"
 version = "1.0.0"
 type = "python_app"
 created_from = "legacy_markers"
-goal_id = "orquestacion_agentes_v1"
+goal_id = "orquestador_de_agentes_v1"
 
 [paths]
 root = "."

@@ -16,7 +16,7 @@ spec.loader.exec_module(mod)
 
 def _build_log(n: int) -> str:
     """Build an execution_log with N WP sections (oldest first, newest last)."""
-    header = "# Execution Log - orquestacion_agentes\n\n**Estado:** TEST\n\n"
+    header = "# Execution Log - orquestador_de_agentes\n\n**Estado:** TEST\n\n"
     sections = [
         f"### WP-2026-{i:03d} - test ticket {i}\n**Estado:** COMPLETED\nbody line {i}\n\n---\n\n"
         for i in range(1, n + 1)

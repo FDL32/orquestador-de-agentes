@@ -1,15 +1,15 @@
 #!/bin/bash
-# Portable version verifier for orquestacion_agentes/
+# Portable version verifier for orquestador_de_agentes/
 
 set -e
 
 echo "==============================================="
-echo "  PORTABLE VERSION VERIFIER - orquestacion_agentes/"
+echo "  PORTABLE VERSION VERIFIER - orquestador_de_agentes/"
 echo "==============================================="
 echo ""
 
 if [ ! -f "scripts/detect_version.py" ] && [ ! -f "scripts/detect_agent_system_version.py" ]; then
-    echo "ERROR: not running inside orquestacion_agentes"
+    echo "ERROR: not running inside orquestador_de_agentes"
     exit 1
 fi
 

@@ -1,4 +1,4 @@
-# orquestacion_agentes
+# orquestador_de_agentes
 
 Central motor for multi-agent orchestration. Operational code lives once here; destination projects keep only their `.agent/` workspace (state, memory, events, config) and reference the motor externally.
 
@@ -97,7 +97,7 @@ The motor lives **once** in this repo. A destination project:
 
 ```bash
 # From destination project root:
-python /path/to/orquestacion_agentes/scripts/install_agent_system.py --install
+python /path/to/orquestador_de_agentes/scripts/install_agent_system.py --install
 ```
 
 The installer:

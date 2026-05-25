@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 """
-Install or sync the Agent System from orquestacion_agentes/ motor central.
+Install or sync the Agent System from orquestador_de_agentes/ motor central.
 
 ARCHITECTURE: Central motor + destination workspace.
-- The motor (operational code) lives once in the source repo (orquestacion_agentes).
+- The motor (operational code) lives once in the source repo (orquestador_de_agentes).
 - The destination workspace keeps only .agent/ state, memory, events, and config.
 - The installer prepares (bootstraps) the destination to consume the external motor.
 - The motor is NOT copied to the destination.
 
 Usage:
-    python orquestacion_agentes/scripts/install_agent_system.py --install
-    python orquestacion_agentes/scripts/install_agent_system.py --sync
+    python orquestador_de_agentes/scripts/install_agent_system.py --install
+    python orquestador_de_agentes/scripts/install_agent_system.py --sync
         → Sync + auto-remove residues (strict, default)
 
-    python orquestacion_agentes/scripts/install_agent_system.py --sync --dry-run
+    python orquestador_de_agentes/scripts/install_agent_system.py --sync --dry-run
         → Preview changes without modifying
 
-    python orquestacion_agentes/scripts/install_agent_system.py --sync --prune
+    python orquestador_de_agentes/scripts/install_agent_system.py --sync --prune
         → Sync + interactively choose which residues to remove
 """
 
@@ -34,7 +34,7 @@ from pathlib import Path
 
 # Paths
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-TEMPLATE_ROOT = REPO_ROOT / "orquestacion_agentes"
+TEMPLATE_ROOT = REPO_ROOT / "orquestador_de_agentes"
 TEMPLATE_AGENT = TEMPLATE_ROOT / ".agent"
 PROJECT_AGENT = REPO_ROOT / ".agent"
 
@@ -549,7 +549,7 @@ def install_agent_system(
     dry_run: bool = False,
     auto_yes: bool = False,
 ) -> int:
-    print("[INSTALL] Agent System from orquestacion_agentes/")
+    print("[INSTALL] Agent System from orquestador_de_agentes/")
 
     if project_agent.exists():
         print(f"[WARN] {project_agent} already exists. Use --sync to update.")
@@ -619,7 +619,7 @@ def sync_agent_system(  # noqa: C901
     prune: bool = False,
     auto_yes: bool = False,
 ) -> int:
-    print("[SYNC] Agent System from orquestacion_agentes/")
+    print("[SYNC] Agent System from orquestador_de_agentes/")
 
     if not project_agent.exists():
         print("[ERROR] Project .agent/ not found. Run --install first.")
@@ -722,7 +722,7 @@ def sync_agent_system(  # noqa: C901
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Install or sync the Agent System from orquestacion_agentes/.agent"
+        description="Install or sync the Agent System from orquestador_de_agentes/.agent"
     )
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--install", action="store_true", help="Initial setup")
@@ -730,7 +730,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--source",
         type=Path,
-        help="Path to orquestacion_agentes template (auto-detected if omitted)",
+        help="Path to orquestador_de_agentes template (auto-detected if omitted)",
     )
     parser.add_argument(
         "--dest",
@@ -782,7 +782,7 @@ def detect_template_root(user_source: Path | None) -> Path:
         return candidate
 
     raise FileNotFoundError(
-        "Could not detect orquestacion_agentes template. Provide --source manually."
+        "Could not detect orquestador_de_agentes template. Provide --source manually."
     )
 
 

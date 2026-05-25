@@ -1,5 +1,5 @@
 """
-Extractor determinista de grafo de conocimiento para orquestacion_agentes.
+Extractor determinista de grafo de conocimiento para orquestador_de_agentes.
 
 Construye graphify-out/graph.json sin usar LLM:
   - Archivos .py: extracciÃ³n AST (imports, clases, funciones)
@@ -262,7 +262,7 @@ def generate_report(graph: dict) -> str:
 
     report = f"""# Graphify Report â€” {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}
 
-**Corpus:** orquestacion_agentes
+**Corpus:** orquestador_de_agentes
 
 ## EstadÃ­sticas
 

@@ -1,4 +1,4 @@
-﻿"""Tests for project map generation (Graphify) â€” ensures artifacts are fresh and valid."""
+"""Tests for project map generation (Graphify) — ensures artifacts are fresh and valid."""
 
 import json
 import subprocess
@@ -13,14 +13,14 @@ SCRIPT = PROJECT_ROOT / "scripts" / "update_project_map.py"
 
 
 class TestProjectMapExistence:
-    """Verifica que los artefactos graphify existen y son vÃ¡lidos."""
+    """Verifica que los artefactos graphify existen y son válidos."""
 
     def test_script_exists(self):
         """scripts/update_project_map.py existe."""
         assert SCRIPT.exists(), f"Missing script: {SCRIPT}"
 
     def test_graph_json_exists_and_valid(self):
-        """graphify-out/graph.json existe y es JSON vÃ¡lido."""
+        """graphify-out/graph.json existe y es JSON válido."""
         assert GRAPH_FILE.exists(), f"Missing graph file: {GRAPH_FILE}"
         data = json.loads(GRAPH_FILE.read_text(encoding="utf-8"))
         assert "nodes" in data
@@ -28,15 +28,15 @@ class TestProjectMapExistence:
         assert isinstance(data["nodes"], dict)
         assert isinstance(data["edges"], list)
 
-    def test_graph_corpus_is_orquestacion_agentes(self):
-        """El grafo solo contiene archivos del corpus orquestacion_agentes (no agent_system externo)."""
+    def test_graph_corpus_is_orquestador_de_agentes(self):
+        """El grafo solo contiene archivos del corpus orquestador_de_agentes (no agent_system externo)."""
         data = json.loads(GRAPH_FILE.read_text(encoding="utf-8"))
         nodes = data["nodes"]
         # Ensure no references to external agent_system PATHS (carpeta)
         # Allow "agent_system" in script NAMES (e.g., detect_agent_system_version.py)
         for path in nodes:
-            # âŒ Prohibir: agent_system/ como carpeta externa (dependencia)
-            # âœ… Permitir: detect_agent_system_version.py (nombre de script legÃ­timo)
+            # ❌ Prohibir: agent_system/ como carpeta externa (dependencia)
+            # ✅ Permitir: detect_agent_system_version.py (nombre de script legítimo)
             if path.startswith("agent_system/") or "/agent_system/" in path:
                 raise AssertionError(
                     f"External agent_system folder reference found: {path}"
@@ -44,7 +44,7 @@ class TestProjectMapExistence:
         # Ensure at least some files are under .agent/ (marker of this repo)
         has_agent = any(p.startswith(".agent/") for p in nodes)
         assert has_agent, (
-            "Graph missing .agent/ files â€” corpus not set to orquestacion_agentes"
+            "Graph missing .agent/ files — corpus not set to orquestador_de_agentes"
         )
 
     def test_report_md_exists(self):
@@ -58,60 +58,60 @@ class TestProjectMapExistence:
         """GRAPH_REPORT.md no contiene secuencias mojibake (UTF-8 mal interpretado)."""
         content = REPORT_FILE.read_text(encoding="utf-8")
         mojibake_patterns = [
-            "Ã¢â‚¬",
+            "â€",
+            "Ã",
+            "Â¡",
+            "Â¢",
+            "Â£",
+            "Â¤",
+            "Â¥",
+            "Â¦",
+            "Â§",
+            "Â¨",
+            "Â©",
+            "Â«",
+            "Â¬",
+            "Â®",
+            "Â¯",
+            "Â°",
+            "Â±",
+            "Â²",
+            "Â³",
+            "Â´",
+            "Âµ",
+            "Â¶",
+            "Â·",
+            "Â¸",
+            "Â¹",
+            "Âº",
+            "Â»",
+            "Â¼",
+            "Â½",
+            "Â¾",
+            "Â¿",
+            "Ã€",
+            "Ã",
+            "Ã‚",
             "Ãƒ",
-            "Ã‚Â¡",
-            "Ã‚Â¢",
-            "Ã‚Â£",
-            "Ã‚Â¤",
-            "Ã‚Â¥",
-            "Ã‚Â¦",
-            "Ã‚Â§",
-            "Ã‚Â¨",
-            "Ã‚Â©",
-            "Ã‚Â«",
-            "Ã‚Â¬",
-            "Ã‚Â®",
-            "Ã‚Â¯",
-            "Ã‚Â°",
-            "Ã‚Â±",
-            "Ã‚Â²",
-            "Ã‚Â³",
-            "Ã‚Â´",
-            "Ã‚Âµ",
-            "Ã‚Â¶",
-            "Ã‚Â·",
-            "Ã‚Â¸",
-            "Ã‚Â¹",
-            "Ã‚Âº",
-            "Ã‚Â»",
-            "Ã‚Â¼",
-            "Ã‚Â½",
-            "Ã‚Â¾",
-            "Ã‚Â¿",
-            "Ãƒâ‚¬",
-            "Ãƒ",
-            "Ãƒâ€š",
-            "ÃƒÆ’",
-            "Ãƒâ€ž",
-            "Ãƒâ€¦",
-            "Ãƒâ€ ",
-            "Ãƒâ€¡",
+            "Ã„",
+            "Ã…",
+            "Ã†",
+            "Ã‡",
         ]
         found = [p for p in mojibake_patterns if p in content]
         assert not found, f"Mojibake detected in report: {found}"
 
-    def test_report_mentions_orquestacion_agentes(self):
-        """El reporte identifica el corpus como orquestacion_agentes."""
+    def test_report_mentions_orquestador_de_agentes(self):
+        """El reporte identifica el corpus como orquestador_de_agentes."""
         content = REPORT_FILE.read_text(encoding="utf-8")
-        has_corpus = "orquestacion_agentes" in content or "corpus" in content.lower()
-        assert has_corpus, "Report does not mention orquestacion_agentes corpus"
+        has_corpus = "orquestador_de_agentes" in content or "corpus" in content.lower()
+        assert has_corpus, "Report does not mention orquestador_de_agentes corpus"
 
     def test_report_no_legacy_references(self):
-        """El reporte no menciona agent_system/ como carpeta externa (pero sÃ­ nombres de script)."""
+        """El reporte no menciona agent_system/ como carpeta externa (pero sí nombres de script)."""
         content = REPORT_FILE.read_text(encoding="utf-8")
-        # âŒ Prohibir: agent_system/ como carpeta externa
-        # âœ… Permitir: detect_agent_system_version.py (nombre de script legÃ­timo)
+        # ❌ Prohibir: agent_system/ como carpeta externa
+        # ✅ Permitir: detect_agent_system_version.py (nombre de script legítimo)
         assert "agent_system/" not in content.lower(), (
             "Report references external agent_system folder"
         )
@@ -124,10 +124,10 @@ class TestProjectMapExistence:
 
 
 class TestProjectMapFreshness:
-    """Verifica que el mapa estÃ¡ actualizado respecto al cÃ³digo fuente."""
+    """Verifica que el mapa está actualizado respecto al código fuente."""
 
     def test_graph_includes_key_files(self):
-        """El grafo incluye archivos crÃ­ticos del sistema."""
+        """El grafo incluye archivos críticos del sistema."""
         data = json.loads(GRAPH_FILE.read_text(encoding="utf-8"))
         nodes = data["nodes"]
         key_files = [
@@ -160,7 +160,7 @@ class TestProjectMapFreshness:
             assert cache[rel] == meta["sha256"], f"SHA256 mismatch for {rel}"
 
     def test_report_references_exist(self):
-        """El reporte menciona estadÃ­sticas y archivos."""
+        """El reporte menciona estadísticas y archivos."""
         content = REPORT_FILE.read_text(encoding="utf-8")
         assert "Nodos totales" in content or "total_nodes" in content
         assert "Python:" in content
@@ -168,7 +168,7 @@ class TestProjectMapFreshness:
 
 
 class TestUpdateScriptExecution:
-    """Pruebas de ejecuciÃ³n del script de actualizaciÃ³n."""
+    """Pruebas de ejecución del script de actualización."""
 
     def test_script_runs_cleanly(self):
         """El script se ejecuta sin errores y actualiza los artefactos."""

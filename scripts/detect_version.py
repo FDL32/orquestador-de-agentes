@@ -27,7 +27,7 @@ class AgentSystemDetector:
         "v8.x": {
             "required": [".agent/agent_controller.py", "scripts/run_pytest_safe.py"],
             "optional": [".agent/hooks/guard_paths.py", ".agent/collaboration/"],
-            "absent": [".agent/rules", "skills", "AGENTS.md", "orquestacion_agentes"],
+            "absent": [".agent/rules", "skills", "AGENTS.md", "orquestador_de_agentes"],
         },
         "v9.0-v9.1": {
             "required": [
@@ -47,7 +47,7 @@ class AgentSystemDetector:
                 "agent_system/refactor_kit/",
                 "CLAUDE.md",
             ],
-            "optional": ["orquestacion_agentes/", "AGENTS.md"],
+            "optional": ["orquestador_de_agentes/", "AGENTS.md"],
             "absent": [".claude/rules"],  # Pre-9.2.1
         },
         "v9.2.1+": {
@@ -60,7 +60,7 @@ class AgentSystemDetector:
                 "AGENTS.md",
                 "CLAUDE.md",
             ],
-            "optional": ["orquestacion_agentes/", ".version_manifest.json"],
+            "optional": ["orquestador_de_agentes/", ".version_manifest.json"],
             "absent": [],
         },
         "v9.6": {
@@ -77,7 +77,7 @@ class AgentSystemDetector:
                 "scripts/run_llm_evals.py",
                 ".agent/runtime/llm_evals_config.json",
             ],
-            "optional": ["orquestacion_agentes/", ".version_manifest.json"],
+            "optional": ["orquestador_de_agentes/", ".version_manifest.json"],
             "absent": [],
         },
         "v9.5": {
@@ -92,7 +92,7 @@ class AgentSystemDetector:
                 "QUICKSTART.md",
                 "INTERACTION_MODES.md",
             ],
-            "optional": ["orquestacion_agentes/", ".version_manifest.json"],
+            "optional": ["orquestador_de_agentes/", ".version_manifest.json"],
             "absent": [],
         },
         "v9.4": {
@@ -106,7 +106,7 @@ class AgentSystemDetector:
                 "CLAUDE.md",
                 "QUICKSTART.md",
             ],
-            "optional": ["orquestacion_agentes/", ".version_manifest.json"],
+            "optional": ["orquestador_de_agentes/", ".version_manifest.json"],
             "absent": [],
         },
     }

@@ -1,4 +1,4 @@
-# Release Checklist — Publicación limpia de `orquestacion_agentes`
+# Release Checklist — Publicación limpia de `orquestador_de_agentes`
 
 Checklist manual para publicar el motor en un git nuevo y limpio. **No es flujo
 operativo diario ni un WP** — se ejecuta una sola vez, cuando el motor esté

@@ -1,4 +1,4 @@
-# orquestacion_agentes
+# orquestador_de_agentes
 
 > Multi-agent orchestration template (Manager/Builder/Supervisor). Python 3.10+ runtime, OpenCode backend, terminal-driven flow, canonical state in `.agent/`, skills under `skills/`, hard scope gate, anti-fabrication verification protocol. Local audit + repo compare + refactor manager are first-class skills.
 

@@ -1,33 +1,33 @@
 ﻿# Sync Agent Core — Sincronización Portable del Núcleo Multi-Agente
 
 ## Descripción
-Sincroniza el directorio `.agent/` desde la plantilla canónica `orquestacion_agentes/` hacia la instancia local. **Por política de "sin drift", `--strict-sync` es el comportamiento por defecto:** elimina automáticamente archivos residuales que no existen en la plantilla.
+Sincroniza el directorio `.agent/` desde la plantilla canónica `orquestador_de_agentes/` hacia la instancia local. **Por política de "sin drift", `--strict-sync` es el comportamiento por defecto:** elimina automáticamente archivos residuales que no existen en la plantilla.
 
 Preserva la sesión activa (`collaboration/`, `runtime/`) y valida integridad del sistema.
 
 ## Cuándo usarlo
 - Antes de iniciar un nuevo ciclo de trabajo
-- Después de actualizar la plantilla `orquestacion_agentes/`
+- Después de actualizar la plantilla `orquestador_de_agentes/`
 - Para validar y asegurar coherencia del sistema multi-agente
 - En proyectos recién clonados sin `.agent/` configurado
 
 ## Uso
 ```bash
 # ✅ Por defecto: sync + strict (elimina residuos automáticamente)
-python orquestacion_agentes/scripts/install_agent_system.py --sync
+python orquestador_de_agentes/scripts/install_agent_system.py --sync
 
 # 📋 Vista previa (dry-run, no modifica nada)
-python orquestacion_agentes/scripts/install_agent_system.py --sync --dry-run
+python orquestador_de_agentes/scripts/install_agent_system.py --sync --dry-run
 
 # 🤔 Interactivo: pregunta cuáles residuos eliminar
-python orquestacion_agentes/scripts/install_agent_system.py --sync --prune
+python orquestador_de_agentes/scripts/install_agent_system.py --sync --prune
 
 # 🔨 Instalación inicial (solo si .agent/ no existe)
-python orquestacion_agentes/scripts/install_agent_system.py --install
+python orquestador_de_agentes/scripts/install_agent_system.py --install
 ```
 
 ## Qué hace
-1. **Detecta plantilla** — Busca `orquestacion_agentes` automáticamente (descendientes, hermanos, rutas comunes)
+1. **Detecta plantilla** — Busca `orquestador_de_agentes` automáticamente (descendientes, hermanos, rutas comunes)
 2. **Sincroniza** — Copia `.agent/` desde plantilla, preservando LOCAL_DIRS (`collaboration/`, `runtime/`)
 3. **Limpia automáticamente** — Por defecto (`--strict-sync`), elimina residuos de `.agent/` que no están en la plantilla
 4. **Valida** — Verifica integridad post-sync (archivos críticos, estructura)
@@ -77,8 +77,8 @@ Si necesitas **preservar cambios locales**, usa `--prune` e indica cuáles resid
 
 **Con `--sync` (default/strict):**
 ```
-[SYNC] Agent System from orquestacion_agentes/
-[INFO] Template detected: C:\...\orquestacion_agentes
+[SYNC] Agent System from orquestador_de_agentes/
+[INFO] Template detected: C:\...\orquestador_de_agentes
 [INFO] Destination:      C:\...\Crear_Texto_LLM
 [INFO] Mode:            LIVE
 [INFO] Template version: 9.2.1
@@ -138,7 +138,7 @@ Clean which residues? [all/comma-list/none]: 1,3
 | "No .agent/ found" | Proyecto sin inicializar | Ejecutar `--install` primero |
 | Residuos no se eliminaron | Usaste `--sync` sin `--prune` | Ejecutar con `--prune` si necesitas interactivo |
 | "collaboration/ se modificó" | Conflicto de contenido local | Script NO toca `collaboration/`. Revisar permisos o merge manual |
-| Validación falla post-sync | Archivos críticos missing en template | Revisar `orquestacion_agentes/.agent/` integridad |
+| Validación falla post-sync | Archivos críticos missing en template | Revisar `orquestador_de_agentes/.agent/` integridad |
 
 ## Comandos Relacionados
 - **`--install`** — Instalación inicial (solo si `.agent/` no existe)
@@ -150,8 +150,8 @@ Clean which residues? [all/comma-list/none]: 1,3
 
 **Desde v9.4.1+**, el script `install_agent_system.py` reemplaza el viejo `sync_agent_core.py`.
 
-- **Nuevo:** `orquestacion_agentes/scripts/install_agent_system.py` (mantenido, portable)
-- **Legacy:** `orquestacion_agentes/scripts/sync_agent_core.py` (deprecado, mantiene compatibilidad)
+- **Nuevo:** `orquestador_de_agentes/scripts/install_agent_system.py` (mantenido, portable)
+- **Legacy:** `orquestador_de_agentes/scripts/sync_agent_core.py` (deprecado, mantiene compatibilidad)
 
 ---
 

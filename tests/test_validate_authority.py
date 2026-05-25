@@ -34,11 +34,11 @@ class TestExtractTicketId:
 
 class TestIsCanonicalAuthority:
     def test_canonical_path_returns_true(self):
-        canonical = "/path/to/orquestacion_agentes/.agent/collaboration"
+        canonical = "/path/to/orquestador_de_agentes/.agent/collaboration"
         assert is_canonical_authority(canonical, Path(canonical)) is True
 
     def test_non_canonical_path_returns_false(self):
-        canonical = "/path/to/orquestacion_agentes/.agent/collaboration"
+        canonical = "/path/to/orquestador_de_agentes/.agent/collaboration"
         other = "/path/to/other/.agent/collaboration"
         assert is_canonical_authority(other, Path(canonical)) is False
 

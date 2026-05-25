@@ -1,6 +1,6 @@
 # Closure Model
 
-This document defines the two closure contracts used by `orquestacion_agentes`.
+This document defines the two closure contracts used by `orquestador_de_agentes`.
 
 ## 1. Definitions
 
