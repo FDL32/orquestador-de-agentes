@@ -134,10 +134,27 @@ Esta skill se invoca en `project-finalize` entre:
 - Paso 9c: `local_audit.py` (snapshot de auditoria)
 - Paso 9d: `memory_consolidate.py` (consolidacion de memoria)
 
-Comando tipico:
+Comandos tipicos:
 ```bash
+# Modo ticket: extrae candidatos automaticos del work_plan.md activo
 python scripts/session_close_observations.py --ticket WP-2026-XXX
+
+# Modo candidates: inyecta candidatos semanticos desde archivo JSON externo
+python scripts/session_close_observations.py --candidates candidates.json
+
+# Dry-run para previsualizar sin escribir
+python scripts/session_close_observations.py --ticket WP-2026-XXX --dry-run --verbose
 ```
+
+**Nota de exclusion mutua:** `--ticket` y `--candidates` son mutuamente excluyentes.
+Argparse impone que exactamente una de las dos flags debe estar presente por ejecucion.
+No es posible usar ambas simultaneamente ni omitir las dos.
+
+**Workflow con --candidates:**
+1. El agente/LLM construye un archivo JSON con candidatos semanticamente ricos
+2. Cada candidato debe seguir el schema de observacion (timestamp, signal, category, etc.)
+3. El script valida schema, aplica filtros de curacion y chequea duplicados
+4. Las observaciones validas se appendean a `observations.jsonl`
 
 ## Related Skills
 
