@@ -52,7 +52,7 @@ repos:
         entry: python scripts/check_no_history_truncation.py
         language: system
         pass_filenames: false
-        stages: [commit]
+        stages: [pre-commit]
 
       - id: pip-audit
         name: pip-audit (CVE Detection)
