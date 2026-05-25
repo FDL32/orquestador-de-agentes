@@ -1,5 +1,5 @@
 # Mapa del Proyecto
-**Actualizado:** 2026-05-25 17:56:55
+**Actualizado:** 2026-05-25 20:07:00
 
 ## Estructura de Archivos
 ```
@@ -20,6 +20,9 @@
 .agent\collaboration\_archive\plan_audit\AUDIT_WP-2026-132.md
 .agent\collaboration\_archive\plan_audit\AUDIT_WP-2026-134.md
 .agent\collaboration\_archive\plan_audit\AUDIT_WP-2026-135.md
+.agent\collaboration\_archive\plan_audit\AUDIT_WP-2026-136.md
+.agent\collaboration\_archive\plan_audit\AUDIT_WP-2026-137.md
+.agent\collaboration\_archive\plan_audit\AUDIT_WP-2026-138.md
 .agent\collaboration\_archive\plan_audit\PLAN_WP-2026-122.md
 .agent\collaboration\_archive\plan_audit\PLAN_WP-2026-123.md
 .agent\collaboration\_archive\plan_audit\PLAN_WP-2026-124.md
@@ -33,6 +36,9 @@
 .agent\collaboration\_archive\plan_audit\PLAN_WP-2026-132.md
 .agent\collaboration\_archive\plan_audit\PLAN_WP-2026-134.md
 .agent\collaboration\_archive\plan_audit\PLAN_WP-2026-135.md
+.agent\collaboration\_archive\plan_audit\PLAN_WP-2026-136.md
+.agent\collaboration\_archive\plan_audit\PLAN_WP-2026-137.md
+.agent\collaboration\_archive\plan_audit\PLAN_WP-2026-138.md
 .agent\collaboration\archive\notifications_20260525_105734.md
 .agent\collaboration\archive\notifications_20260525_113857.md
 .agent\collaboration\archive\notifications_20260525_122926.md
@@ -46,12 +52,6 @@
 .agent\collaboration\archive\notifications_20260525_163825.md
 .agent\collaboration\archive\notifications_20260525_164123.md
 .agent\collaboration\archive\notifications_20260525_172451.md
-.agent\collaboration\AUDIT_WP-2026-136.md
-.agent\collaboration\AUDIT_WP-2026-137.md
-.agent\collaboration\execution_log.md
-.agent\collaboration\notifications.md
-.agent\collaboration\PLAN_WP-2026-136.md
-.agent\collaboration\PLAN_WP-2026-137.md
-.agent\collaboration\review_queue.md
-... (+3090 archivos mas)
+.agent\collaboration\archive\notifications_20260525_175656.md
+... (+3103 archivos mas)
 ```
