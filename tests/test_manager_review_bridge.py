@@ -61,42 +61,32 @@ def test_manager_review_cycle_approves(monkeypatch, tmp_path):
 
 
 def test_manager_review_cycle_requests_changes(monkeypatch, tmp_path):
-    """Test review cycle handles CHANGES decision (WP-2026-106: single CHANGES then approve).
+    """Test review cycle emits CHANGES and ends the cycle immediately (WP-2026-106).
 
-    Note: With WP-2026-106, 5 consecutive CHANGES lead to HUMAN_GATE.
-    This test returns CHANGES once, then APPROVE to verify CHANGES path
-    without triggering escalation.
+    WP-2026-106: CHANGES breaks the inner loop immediately — no retry within
+    the same cycle. The Builder is requeued for a new cycle via agent_controller.
+    Multiple-cycle CHANGES→APPROVE behavior is covered by
+    test_review_cycle_approves_before_threshold.
     """
     bridge, event_bus, legacy_manager_exe = _make_bridge(tmp_path)
     supervisor = DummySupervisor()
-    calls: list[list[str]] = []
-
     call_count = {"n": 0}
 
     def fake_run(cmd, **kwargs):
-        calls.append(cmd)
         if any("agent_controller.py" in str(part) for part in cmd):
             return __import__("subprocess").CompletedProcess(cmd, 0, stdout="[OK] requeue", stderr="")
+        if isinstance(cmd, list) and cmd and Path(str(cmd[0])).name.lower() in ("git", "git.exe"):
+            return __import__("subprocess").CompletedProcess(cmd, 0, stdout="", stderr="")
         call_count["n"] += 1
-        # Return CHANGES first time, then APPROVE
-        if call_count["n"] == 1:
-            # Include structured sections to pass validation
-            return __import__("subprocess").CompletedProcess(
-                cmd,
-                0,
-                stdout="## SUMMARY\nNeeds fixes.\n## BLOCKERS\n- Parsing\n## SUGGESTIONS\n- Fix parsing\nDECISION: CHANGES",
-                stderr="",
-            )
         return __import__("subprocess").CompletedProcess(
             cmd,
             0,
-            stdout="DECISION: APPROVE",
+            stdout="## SUMMARY\nNeeds fixes.\n## BLOCKERS\n- Parsing\n## SUGGESTIONS\n- Fix parsing\nDECISION: CHANGES",
             stderr="",
         )
 
     monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
     monkeypatch.setattr(bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW")
-    # Force the legacy Manager backend
     monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "legacy_manager")
 
     result = bridge.run_manager_review_cycle(
@@ -106,15 +96,9 @@ def test_manager_review_cycle_requests_changes(monkeypatch, tmp_path):
         timeout_seconds=5,
     )
 
-    # First call returns CHANGES, second returns APPROVE
-    # Since we got APPROVE on retry, final decision is APPROVE
-    assert result.decision.value == "approve"
-    # Should have called twice (CHANGES then APPROVE)
-    assert call_count["n"] == 2
-    # Should transition to READY_TO_CLOSE
-    assert any(t[1] == "READY_TO_CLOSE" for t in supervisor.transitions)
-    # The --request-changes call happens when CHANGES is the FINAL decision
-    # Since we got APPROVE, no requeue call expected
+    # WP-2026-106: CHANGES ends the cycle immediately, no inner retry
+    assert result.decision.value == "changes"
+    assert call_count["n"] == 1
     events = event_bus.read_events(ticket_id="WP-2026-025")
     assert any(event.event_type == "MANAGER_REVIEWING" for event in events)
     assert any(event.event_type == "REVIEW_DECISION" for event in events)
@@ -276,6 +260,107 @@ def test_build_review_prompt_includes_generated_artifacts_block(tmp_path):
     assert "--- SYSTEM GENERATED & ARCHIVED ARTIFACTS ---" in prompt
     assert "archive_collaboration_artifacts.py" in prompt
     assert "Deletions, moves to _archive/" in prompt
+
+
+def test_build_review_prompt_uses_branch_base_diff(tmp_path, monkeypatch):
+    """Prompt includes diff anchored to origin/main...HEAD when remote is reachable."""
+    import subprocess as _subprocess
+    from bus.review_bridge import ReviewBridge
+    from bus.event_bus import EventBus
+
+    runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+    event_bus = EventBus(runtime_dir=runtime_dir)
+    bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+    SHA = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+
+    def fake_run(cmd, **kwargs):
+        if isinstance(cmd, list) and "origin/main...HEAD" in cmd and "diff" in cmd:
+            return _subprocess.CompletedProcess(
+                cmd, 0,
+                stdout="diff --git a/bus/review_bridge.py b/bus/review_bridge.py\n+added line\n",
+                stderr="",
+            )
+        if isinstance(cmd, list) and "origin/main..HEAD" in cmd and "log" in cmd:
+            return _subprocess.CompletedProcess(
+                cmd, 0,
+                stdout=f"{SHA} 2026-05-25 10:00:00 +0200 Test Author\n",
+                stderr="",
+            )
+        return _subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
+    prompt = bridge._build_review_prompt(ticket_id="WP-TEST-134", dtype="code")
+
+    assert "diff --git a/bus/review_bridge.py" in prompt
+    assert "[WARNING: origin/main not reachable" not in prompt
+
+
+def test_build_review_prompt_falls_back_to_head_when_no_remote(tmp_path, monkeypatch):
+    """Prompt degrades to git diff HEAD with visible warning when origin/main is unreachable."""
+    import subprocess as _subprocess
+    from bus.review_bridge import ReviewBridge
+    from bus.event_bus import EventBus
+
+    runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+    event_bus = EventBus(runtime_dir=runtime_dir)
+    bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+    def fake_run(cmd, **kwargs):
+        if isinstance(cmd, list) and "origin/main...HEAD" in cmd and "diff" in cmd:
+            return _subprocess.CompletedProcess(
+                cmd, 128, stdout="", stderr="fatal: ambiguous argument 'origin/main...HEAD'"
+            )
+        if isinstance(cmd, list) and "origin/main..HEAD" in cmd and "log" in cmd:
+            return _subprocess.CompletedProcess(
+                cmd, 128, stdout="", stderr="fatal: ambiguous argument 'origin/main..HEAD'"
+            )
+        if isinstance(cmd, list) and "diff" in cmd and "HEAD" in cmd:
+            return _subprocess.CompletedProcess(
+                cmd, 0,
+                stdout="diff --git a/bus/review_bridge.py b/bus/review_bridge.py\n+head line\n",
+                stderr="",
+            )
+        if isinstance(cmd, list) and "log" in cmd and cmd[-1] == "HEAD":
+            return _subprocess.CompletedProcess(
+                cmd, 0,
+                stdout="a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2 2026-05-25 10:00:00 +0200 Test Author\n",
+                stderr="",
+            )
+        return _subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
+    prompt = bridge._build_review_prompt(ticket_id="WP-TEST-134", dtype="code")
+
+    assert "[WARNING: origin/main not reachable" in prompt
+
+
+def test_build_review_prompt_includes_provenance_section(tmp_path, monkeypatch):
+    """Prompt includes --- git provenance --- section with SHA, date, and author."""
+    import subprocess as _subprocess
+    from bus.review_bridge import ReviewBridge
+    from bus.event_bus import EventBus
+
+    runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+    event_bus = EventBus(runtime_dir=runtime_dir)
+    bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+    SHA = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+
+    def fake_run(cmd, **kwargs):
+        if isinstance(cmd, list) and "log" in cmd and "origin/main..HEAD" in cmd:
+            return _subprocess.CompletedProcess(
+                cmd, 0,
+                stdout=f"{SHA} 2026-05-25 10:00:00 +0200 Test Author\n",
+                stderr="",
+            )
+        return _subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
+    prompt = bridge._build_review_prompt(ticket_id="WP-TEST-134", dtype="code")
+
+    assert "--- git provenance ---" in prompt
+    assert SHA in prompt
 
 
 def test_build_review_prompt_includes_allowed_skills_for_role(tmp_path):
