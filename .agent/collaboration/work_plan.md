@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WP-2026-133
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** documentation
 - **Titulo:** Skill references scaffold for validator
 - **Asignado a:** Builder
