@@ -58,7 +58,7 @@ Los archivos `MANIFEST.distribute` y `MANIFEST.workspace` en la raiz del reposit
 - Vista previa: `python scripts/install_agent_system.py --sync --dry-run`
 - Estado del sistema: `python .agent/agent_controller.py`
 - Auditoria local: `python scripts/local_audit.py`
-- Memoria consolidada: `python scripts/memory_consolidate.py [--apply]`
+- Memoria consolidada: `python scripts/memory_consolidate.py [--apply|--dry-run]`
 - Migrar config: `python .agent/agents_config.py --migrate [--dry-run]`
 - Comparar con repo GitHub: skill `/repo-compare`
 - Interaccion por terminal: `python scripts/ticket_supervisor.py --reactive`
