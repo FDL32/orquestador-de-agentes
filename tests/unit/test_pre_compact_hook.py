@@ -299,3 +299,45 @@ class TestMainHook:
         result = json.loads(stdout_mock.getvalue())
         assert result["continue"] is True
         assert result["input"] == {}  # Input vacio por error de parseo
+
+
+class TestRobustness:
+    """Tests para entradas malformadas no cubiertas por el schema basico."""
+
+    def test_load_observations_invalid_utf8(self, tmp_path):
+        """JSONL con bytes invalidos en UTF-8 no rompe el loader."""
+        obs_file = tmp_path / "obs.jsonl"
+        # Escribir bytes invalidos mezclados con JSON valido
+        obs_file.write_bytes(
+            b'{"timestamp": "2026-05-24T00:00:00Z", "topic": "ok", "signal": "s1", "source": "b"}\n'
+            b"\xff\xfe invalid utf8 line\n"
+            b'{"timestamp": "2026-05-25T00:00:00Z", "topic": "ok2", "signal": "s2", "source": "b"}\n'
+        )
+        with patch.object(hook, "OBSERVATIONS_FILE", obs_file):
+            obs = hook.load_observations_safe()
+        # La linea con bytes invalidos se saltea; las dos validas se cargan
+        assert len(obs) == 2
+        assert obs[0]["topic"] == "ok"
+        assert obs[1]["topic"] == "ok2"
+
+    def test_score_observation_non_string_fields(self):
+        """score_observation no falla con topic/signal/source no-string."""
+        obs = {
+            "timestamp": "2026-05-24T00:00:00Z",
+            "topic": 42,
+            "signal": None,
+            "source": True,
+        }
+        score = hook.score_observation(obs, ["42"])
+        assert isinstance(score, int)
+        assert score >= 0
+
+    def test_format_memory_section_non_string_fields(self):
+        """format_memory_section no lanza TypeError con campos no-string."""
+        observations = [
+            {"timestamp": None, "topic": 99, "signal": False, "source": 3.14}
+        ]
+        section = hook.format_memory_section(observations)
+        assert "**Memoria relevante**:" in section
+        # Los valores se convierten a str sin TypeError
+        assert "99" in section or "False" in section
