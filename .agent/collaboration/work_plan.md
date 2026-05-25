@@ -1,46 +1,47 @@
-# Work Plan - WP-2026-134
+# Work Plan - WP-2026-135
 
 ## Metadata
-- **ID:** WP-2026-134
+- **ID:** WP-2026-135
 - **Estado:** COMPLETED
 - **deliverable_type:** code
-- **Titulo:** Anchor Manager review diff to branch base and add provenance
+- **Titulo:** Selective context recovery lite for pre-compact hook
 - **Asignado a:** Builder
 
 ## Objetivo
-El Manager no debe revisar el working tree vacio tras el commit del Builder. Este ticket ancla el contexto de review al diff real del ticket, añade provenance del ultimo commit y mantiene el contrato canonico de decisiones intacto.
+Hacer que el hook de pre-compactacion recupere contexto util de forma ligera, proyectando una seccion `Memoria relevante` basada en `observations.jsonl` y en el `work_plan` activo, sin fallar si la memoria falta o esta corrupta.
 
 ## Decision Arquitectonica
-- `_git_diff_stat()` y `_build_diff_for_files_likely_touched()` usan `origin/main...HEAD` como base preferida.
-- Si `origin/main` no es alcanzable o no existe en el entorno, el bridge degrada de forma segura a `git diff HEAD` y muestra un warning explicito en el prompt del Manager.
-- Se añade `_git_provenance()` para emitir una linea compacta con SHA, fecha y autor del ultimo commit relevante del ticket.
-- `_build_review_prompt()` inserta una seccion `--- git provenance ---` antes del diff para dar trazabilidad al Manager.
-- El bloque `INSTRUCTIONS` del prompt declara de forma explicita que la revision es advisory y no sustituye el juicio del Manager.
-- El contrato `DECISION: APPROVE / CHANGES / INSPECT` permanece intacto.
-- No se introduce schema JSON estructurado ni panel multi-reviewer en este ticket.
+- `pre_compact_hook.py` debe leer `observations.jsonl` de forma segura y devolver una proyeccion util, aunque la memoria no exista o este corrupta.
+- La recuperacion de contexto usa dos senales simples: recencia y coincidencia de keywords extraidas del `work_plan` activo.
+- La salida relevante se limita a un maximo de 5 observaciones para mantener la compaction ligera.
+- El contrato actual del hook se preserva: `continue=true` y JSON estable de entrada/salida.
+- La proyeccion compacta se entrega en el campo `additionalContext` del JSON de salida, porque ese es el canal que consume Claude Code antes de compactar.
+- La resolucion de rutas debe derivarse desde `Path(__file__).resolve().parent.parent` para obtener `AGENT_DIR` y no depender de `Path.cwd()`.
+- No se introducen embeddings, sqlite, LLM ni dependencias pesadas.
 
 ## Files Likely Touched
-- `bus/review_bridge.py`
-- `tests/unit/test_manager_review_bridge.py`
+- `.agent/hooks/pre_compact_hook.py`
+- `tests/unit/test_pre_compact_hook.py`
 
 ## Fases
-1. Cambiar el origen del diff a `origin/main...HEAD` en `_git_diff_stat()` y `_build_diff_for_files_likely_touched()`, con fallback a `git diff HEAD` si el remote base no es alcanzable.
-2. Implementar `_git_provenance()` y añadir la seccion correspondiente al prompt del Manager.
-3. Actualizar el bloque `INSTRUCTIONS` para dejar claro que la revision es advisory.
-4. Ajustar tests para verificar el nuevo diff base, el fallback, la seccion de provenance y el contrato de salida.
+1. Implementar carga segura de observaciones y extraccion de keywords desde el `work_plan` activo.
+2. Derivar `AGENT_DIR` de `Path(__file__).resolve().parent.parent` y localizar `observations.jsonl` y `work_plan.md` sin depender del cwd.
+3. Rankear observaciones por recencia y coincidencia de palabras clave, con cap de 5.
+4. Formatear la seccion `Memoria relevante` dentro de `additionalContext` para la fase de compactacion.
+5. Añadir tests para memoria vacia, archivo ausente, JSONL corrupto, matching por keywords, ranking por recencia y presencia de `additionalContext`.
+6. Validar que el hook sigue devolviendo JSON estable sin romper el contrato `continue`.
 
 ## Calidad
 - `ruff check . && ruff format --check .`
-- `python scripts/run_pytest_safe.py tests/unit/test_manager_review_bridge.py -q`
+- `python scripts/run_pytest_safe.py tests/unit/test_pre_compact_hook.py -q`
 - `python .agent/agent_controller.py --validate --json --force`
 
 ## Criterios de aceptacion
-- El review prompt incluye `git diff origin/main...HEAD` cuando `origin/main` esta disponible.
-- Si `origin/main` no es alcanzable, el prompt degrada a `git diff HEAD` con warning visible.
-- El prompt incluye una seccion `--- git provenance ---` con SHA, fecha y autor.
-- El bloque `INSTRUCTIONS` deja explicito que la revision es advisory.
-- El contrato `DECISION: APPROVE / CHANGES / INSPECT` sigue funcionando sin cambios.
-- Los tests reflejan el nuevo contexto de review y siguen pasando.
+- El hook no falla si `observations.jsonl` no existe o esta corrupto.
+- La proyeccion incluye una seccion `Memoria relevante` compacta dentro de `additionalContext` cuando hay observaciones utiles.
+- La salida relevante no supera 5 observaciones.
+- El ranking combina recencia y coincidencia de palabras clave del `work_plan`.
+- Los tests cubren memoria vacia, archivo ausente, JSONL corrupto, ranking basico y `additionalContext`.
 
 ## Nota
-Inspirado en el patron de OpenClaw `autoreview`: bundle anclado a branch base, provenance y contrato advisory. El schema estructurado y el panel multi-reviewer quedan para un ticket posterior si hace falta.
+Este ticket es pequeno y autocontenido. Si aparece la necesidad de tocar bus, state machine o consolidacion de memoria, se considera deriva de alcance y debe escalarse aparte.

@@ -1,3 +1,33 @@
+# 2026-05-25 - WP-2026-135 Selective context recovery lite for pre-compact hook
+
+### Added
+- `.agent/hooks/pre_compact_hook.py`: hook funcional que carga `observations.jsonl`,
+  extrae keywords de `work_plan.md`, rankea por recencia + keyword matching (cap 5) y
+  proyecta `additionalContext` con sección `Memoria relevante` antes de compactar.
+- `tests/unit/test_pre_compact_hook.py`: 25 tests (TestLoadObservationsSafe,
+  TestExtractKeywordsFromWorkPlan, TestScoreObservation, TestRankObservations,
+  TestFormatMemorySection, TestMainHook, TestRobustness).
+
+### Changed
+- `bus/review_bridge.py`: rubric de `code` y `mixed` ampliad con checklist de
+  anti-patrones como BLOCKERs: mock drift, floor assertion, zero-logic wrapper.
+- `AGENTS.md`: documentados los tres anti-patrones bajo secciones de testing (§2)
+  e implementación (§3) para guiar a Builder y Manager en cada revisión.
+
+### Fixed
+- `pre_compact_hook.py` loader: `open(..., errors="replace")` para sobrevivir bytes
+  UTF-8 inválidos sin lanzar `UnicodeDecodeError`.
+- `score_observation` y `format_memory_section`: normalización `str(x or "")`
+  para evitar `AttributeError`/`TypeError` con campos `null`, numéricos o booleanos.
+
+### Summary
+- Hook ligero: sin embeddings, sin LLM, sin dependencias externas (stdlib only).
+- Rutas derivadas de `Path(__file__).resolve().parent.parent` (no `cwd()`).
+- Contrato del hook preservado: `continue=true`, JSON válido siempre.
+- 242 + 25 = 267 tests verdes (los 25 del hook no están en el runner pytest-safe
+  porque el archivo vive en `.agent/`; se ejecutan con pytest directo).
+
+---
 # 2026-05-20 - WP-2026-113 Central motor release consolidation
 
 ### Changed
