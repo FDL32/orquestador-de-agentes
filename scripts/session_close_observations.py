@@ -197,9 +197,9 @@ def load_candidates_from_file(path: str) -> list[dict[str, Any]]:
     """Load candidate observations from JSON file.
 
     Before: Requires path to JSON file containing list of candidate observations.
-    During: Reads file, decodes UTF-8 (tolerant), parses JSON, validates top-level is list.
+    During: Reads file with strict UTF-8 decoding, parses JSON, validates top-level is list.
             Non-dict elements are skipped with warning.
-    After: Returns list of candidate dicts. Raises:
+    After: Returns list of candidate dicts (may be empty). Raises:
            - FileNotFoundError if file does not exist
            - ValueError("UTF-8 decode error: ...") if invalid UTF-8 bytes
            - ValueError("JSON decode error: ...") if JSON is malformed
@@ -210,8 +210,8 @@ def load_candidates_from_file(path: str) -> list[dict[str, Any]]:
         raise FileNotFoundError(f"Candidates file not found: {path}")
 
     try:
-        content = file_path.read_text(encoding="utf-8", errors="replace")
-    except Exception as e:
+        content = file_path.read_bytes().decode("utf-8")
+    except UnicodeDecodeError as e:
         raise ValueError(f"UTF-8 decode error: {e}") from e
 
     try:
@@ -451,8 +451,6 @@ def main() -> int:
 
         # Generate/load candidates based on active flag
         candidates = _load_candidates(args, args.verbose)
-        if not candidates:
-            return 1
 
         # Process through filters
         appended, rejected_reasons = process_candidates(candidates, existing)

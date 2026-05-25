@@ -365,3 +365,36 @@ def test_main_with_candidates_flag_does_not_call_extract_from_ticket(
 
     assert exit_code == 0
     assert called["count"] == 0  # extract_candidates_from_ticket was NOT called
+
+
+def test_load_candidates_from_file_invalid_utf8(tmp_path: Path) -> None:
+    """load_candidates_from_file raises ValueError for invalid UTF-8 bytes (strict mode)."""
+    candidates_file = tmp_path / "candidates.json"
+    candidates_file.write_bytes(b'[{"signal": "ok"}' + b"\xff\xfe" + b"]")
+
+    import scripts.session_close_observations as sco
+
+    with pytest.raises(ValueError, match="UTF-8 decode error"):
+        sco.load_candidates_from_file(str(candidates_file))
+
+
+def test_main_empty_candidates_exits_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """main() with --candidates pointing to an empty list exits 0 (not an error)."""
+    import scripts.session_close_observations as sco
+
+    candidates_file = tmp_path / "candidates.json"
+    candidates_file.write_text("[]", encoding="utf-8")
+
+    monkeypatch.setattr(sys, "argv", [
+        "session_close_observations.py",
+        "--candidates", str(candidates_file),
+        "--dry-run",
+    ])
+    monkeypatch.setattr(sco, "OBS_FILE", tmp_path / "observations.jsonl")
+    monkeypatch.setattr(sco, "REPORT_FILE", tmp_path / "report.md")
+
+    exit_code = sco.main()
+
+    assert exit_code == 0
