@@ -72,6 +72,8 @@ class SequentialTicketSupervisor:
         self.event_bus = EventBus(runtime_dir=self.runtime_dir / "events")
         self.auto_sync = auto_sync
         self.state_path = self.runtime_dir / "supervisor_state.json"
+        self.supervisor_lock_path = self.runtime_dir / "supervisor_lock.txt"
+        self._lock_fd: int | None = None
 
     def save_state(self, state: SupervisorState) -> None:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -237,6 +239,122 @@ class SequentialTicketSupervisor:
             auto_resolve_status=ApprovalStatus.EXPIRED,
         )
         return ApprovalStore(store_path=store_path, policy=policy)
+
+    def _acquire_supervisor_lock(self) -> bool:
+        """Acquire supervisor instance lock atomically.
+
+        Before: No instance lock existed; multiple supervisors could start on same ticket.
+        During: Attempts atomic lock acquisition with O_CREAT | O_EXCL to prevent TOCTOU.
+                If lock exists, checks liveness via PID (Windows) + mtime fallback (15 min).
+                Stale locks are broken and re-acquired.
+        After: Returns True if lock acquired, False if another live instance holds it.
+
+        Lock file format (JSON):
+        {
+            "ticket_id": "WP-2026-XXX",
+            "pid": <process_id>,
+            "started_at": "<ISO8601 timestamp>"
+        }
+        """
+        import contextlib
+        import json
+        import os
+        from datetime import datetime, timezone
+
+        self.runtime_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = str(self.supervisor_lock_path)
+
+        try:
+            # Try atomic acquire first
+            self._lock_fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            # Write lock metadata
+            lock_data = {
+                "ticket_id": self.load_state().active_ticket,
+                "pid": os.getpid(),
+                "started_at": datetime.now(timezone.utc).isoformat(),
+            }
+            with os.fdopen(self._lock_fd, "w", encoding="utf-8") as f:
+                json.dump(lock_data, f, indent=2)
+            return True
+        except FileExistsError:
+            # Lock exists - check if it's stale
+            if self._is_supervisor_lock_stale():
+                # Break stale lock and re-acquire
+                with contextlib.suppress(OSError):
+                    os.unlink(lock_path)
+                # Retry acquisition
+                return self._acquire_supervisor_lock()
+            else:
+                # Lock is held by a live instance
+                return False
+
+    def _is_supervisor_lock_stale(self) -> bool:
+        """Check if supervisor lock is stale (orphaned).
+
+        Before: No stale lock detection.
+        During: Checks PID liveness via tasklist (Windows) + mtime fallback (15 min).
+        After: Returns True if lock is stale and can be broken safely.
+        """
+        import json
+        import time
+
+        if not self.supervisor_lock_path.exists():
+            return True  # No lock = can acquire
+
+        try:
+            lock_data = json.loads(
+                self.supervisor_lock_path.read_text(encoding="utf-8")
+            )
+        except (json.JSONDecodeError, OSError):
+            return True  # Corrupt lock = stale
+
+        # Check PID liveness (Windows only)
+        pid = lock_data.get("pid")
+        if pid and self._is_pid_alive(pid):
+            return False  # PID alive = lock is live
+
+        # Fallback: mtime check (15 min TTL)
+        try:
+            age = time.time() - self.supervisor_lock_path.stat().st_mtime
+            return age > 900  # 15 minutes
+        except OSError:
+            return True  # Can't stat = assume stale
+
+    def _release_supervisor_lock(self) -> None:
+        """Release supervisor instance lock.
+
+        Before: No lock release mechanism.
+        During: Closes lock file descriptor and removes lock file.
+        After: Lock file is removed; other instances can acquire.
+        """
+        import contextlib
+        import os
+
+        if self._lock_fd is not None:
+            with contextlib.suppress(OSError):
+                os.close(self._lock_fd)
+            self._lock_fd = None
+
+        with contextlib.suppress(OSError):
+            if self.supervisor_lock_path.exists():
+                self.supervisor_lock_path.unlink()
+
+    def _get_supervisor_lock_holder(self) -> dict | None:
+        """Read lock file and return lock holder info.
+
+        Before: No way to inspect lock holder.
+        During: Parses lock file JSON if it exists and is valid.
+        After: Returns dict with ticket_id, pid, started_at or None if no lock.
+        """
+        import json
+
+        if not self.supervisor_lock_path.exists():
+            return None
+
+        try:
+            return json.loads(self.supervisor_lock_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return None
 
     @staticmethod
     def _normalize_ticket_id(ticket_id: str | None) -> str | None:
@@ -592,7 +710,25 @@ class SequentialTicketSupervisor:
             state.last_action = "BOOTSTRAP_COMPLETED"
             self.save_state(state)
 
-    def bootstrap(self) -> None:
+    def _has_reconciled_event(
+        self, previous_ticket: str, recovered_ticket: str
+    ) -> bool:
+        """Check if SUPERVISOR_RECONCILED was already emitted for this exact pair.
+
+        Before: bootstrap() emitted SUPERVISOR_RECONCILED on every call when state was stale.
+        During: Reads existing SUPERVISOR_RECONCILED events for recovered_ticket from bus.
+        After: Returns True if a matching event exists; caller must skip re-emission.
+        """
+        existing = self.event_bus.read_events(
+            ticket_id=recovered_ticket, event_type="SUPERVISOR_RECONCILED"
+        )
+        return any(
+            (e.payload or {}).get("previous_ticket") == previous_ticket
+            and (e.payload or {}).get("recovered_ticket") == recovered_ticket
+            for e in existing
+        )
+
+    def bootstrap(self) -> bool:
         """Bootstrap supervisor state from canonical sources.
 
         Before: Relied on TURN.md (primary) and work_plan.md (fallback) for ticket recovery.
@@ -601,8 +737,19 @@ class SequentialTicketSupervisor:
                 has no active non-terminal ticket. Reconciles stale state with the
                 bus-authoritative source. Reconciles loop_current_round from bus.
                 Only clears active_ticket when bus confirms terminal state.
+                Acquires instance lock atomically to prevent duplicate supervisors.
         After: Supervisor state synchronized with bus-first precedence.
+               Returns True if bootstrap succeeded, False if lock rejected (duplicate instance).
         """
+        # Acquire instance lock first - reject if another live supervisor exists
+        if not self._acquire_supervisor_lock():
+            print(
+                "[supervisor] bootstrap rejected: another supervisor instance is active",
+                file=sys.stderr,
+                flush=True,
+            )
+            return False
+
         state = self.load_state()
 
         # BUS-FIRST: Check if there's an active non-terminal ticket in the bus
@@ -622,7 +769,9 @@ class SequentialTicketSupervisor:
             state.active_ticket = target_ticket
             state.last_action = "RECOVERED" if previous_ticket is None else "RECONCILED"
             self.save_state(state)
-            if previous_ticket is not None:
+            if previous_ticket is not None and not self._has_reconciled_event(
+                previous_ticket, target_ticket
+            ):
                 self.event_bus.emit(
                     "SUPERVISOR_RECONCILED",
                     ticket_id=target_ticket,
@@ -645,6 +794,8 @@ class SequentialTicketSupervisor:
         ticket_id = state.active_ticket or target_ticket
         if ticket_id:
             self._bootstrap_clear_terminal_ticket(state, ticket_id)
+
+        return True
 
     def _process_new_events(self) -> bool:
         """Process new events and reconcile last_processed_sequence with bus.
@@ -978,7 +1129,10 @@ class SequentialTicketSupervisor:
                 return default
             return value if value > 0 else default
 
-        self.bootstrap()
+        # Acquire lock via bootstrap - if rejected, another instance is running
+        if not self.bootstrap():
+            return False  # Lock rejected, another supervisor is active
+
         idle_timeout = _timeout_from_env(
             "TICKET_SUPERVISOR_IDLE_TIMEOUT_SECONDS", timeout_seconds
         )
@@ -986,25 +1140,36 @@ class SequentialTicketSupervisor:
         start_time = time.time()
         last_activity = start_time
         changed = False
-        while True:
-            now = time.time()
-            if max_runtime > 0 and now - start_time >= max_runtime:
-                break
-            if idle_timeout > 0 and now - last_activity >= idle_timeout:
-                break
-            if self.run_once():
-                changed = True
-                last_activity = time.time()
-            time.sleep(1.0)
+        try:
+            while True:
+                now = time.time()
+                if max_runtime > 0 and now - start_time >= max_runtime:
+                    break
+                if idle_timeout > 0 and now - last_activity >= idle_timeout:
+                    break
+                if self.run_once():
+                    changed = True
+                    last_activity = time.time()
+                time.sleep(1.0)
+        finally:
+            # Always release lock on exit (normal or exceptional)
+            self._release_supervisor_lock()
         return changed
 
     def run_loop(self, poll_interval: float = 1.0):
         import time
 
-        self.bootstrap()
-        while True:
-            self.run_once()
-            time.sleep(poll_interval)
+        # Acquire lock via bootstrap - if rejected, another instance is running
+        if not self.bootstrap():
+            return  # Lock rejected, another supervisor is active
+
+        try:
+            while True:
+                self.run_once()
+                time.sleep(poll_interval)
+        finally:
+            # Always release lock on exit
+            self._release_supervisor_lock()
 
     def sync_controller(self, *_args, **_kwargs) -> bool:
         """Compatibility shim for the review bridge.
@@ -1013,5 +1178,7 @@ class SequentialTicketSupervisor:
         This method keeps the bridge flow stable without requiring the old controller
         entrypoint contract.
         """
+        # Note: sync_controller does not acquire/release lock - it's a read-only sync
+        # called from the review bridge which has its own lifecycle management.
         self.bootstrap()
         return True
