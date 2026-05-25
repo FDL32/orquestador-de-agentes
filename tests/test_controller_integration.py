@@ -1,4 +1,4 @@
-﻿"""Test funcional de integración para agent_controller.py.
+"""Test funcional de integración para agent_controller.py.
 
 Sandbox bajo .tmp/ con nombres de directorio no ocultos:
   - Parchea la copia del controller: AGENT_DIR = SCRIPT_DIR (no .agent/).
@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+
 _REAL_CONTROLLER = Path(__file__).parent.parent / ".agent" / "agent_controller.py"
 _TMP_BASE = Path(__file__).parent.parent / ".tmp"
 _SANDBOX_ROOT = _TMP_BASE / "controller_sandbox"
@@ -23,7 +24,7 @@ _SANDBOX_ROOT = _TMP_BASE / "controller_sandbox"
 # en lugar de PROJECT_ROOT / ".agent". Así toda la estructura queda en
 # sandbox/agent/ (no oculto) y Windows no bloquea la creación de directorios.
 _PATCH_FROM = 'AGENT_DIR = PROJECT_ROOT / ".agent"'
-_PATCH_TO   = "AGENT_DIR = SCRIPT_DIR"
+_PATCH_TO = "AGENT_DIR = SCRIPT_DIR"
 
 
 # ---------------------------------------------------------------------------
@@ -57,7 +58,9 @@ def sandbox():
     (collab_dir / "archive").mkdir()
     (agent_dir / "context").mkdir()
 
-    patched_src = _REAL_CONTROLLER.read_text(encoding="utf-8").replace(_PATCH_FROM, _PATCH_TO)
+    patched_src = _REAL_CONTROLLER.read_text(encoding="utf-8").replace(
+        _PATCH_FROM, _PATCH_TO
+    )
     (agent_dir / "agent_controller.py").write_text(patched_src, encoding="utf-8")
 
     yield root, agent_dir, collab_dir
@@ -72,7 +75,13 @@ def sandbox():
 def _run(agent_dir: Path, root: Path, *args: str) -> dict | None:
     """Ejecuta el controller en el sandbox y devuelve el JSON parseado."""
     result = subprocess.run(
-        [sys.executable, str(agent_dir / "agent_controller.py"), "--json", "--force", *args],
+        [
+            sys.executable,
+            str(agent_dir / "agent_controller.py"),
+            "--json",
+            "--force",
+            *args,
+        ],
         cwd=str(root),
         capture_output=True,
         text=True,
@@ -136,7 +145,9 @@ def _notif() -> str:
 def test_approved_pending_returns_builder_implement(sandbox):
     """APPROVED + PENDING -> BUILDER / IMPLEMENT."""
     root, agent_dir, collab_dir = sandbox
-    (collab_dir / "work_plan.md").write_text(_plan("TEST-001", "APPROVED"), encoding="utf-8")
+    (collab_dir / "work_plan.md").write_text(
+        _plan("TEST-001", "APPROVED"), encoding="utf-8"
+    )
     (collab_dir / "execution_log.md").write_text(_log("PENDING"), encoding="utf-8")
     (collab_dir / "notifications.md").write_text(_notif(), encoding="utf-8")
 
@@ -151,7 +162,9 @@ def test_approved_pending_returns_builder_implement(sandbox):
 def test_completed_returns_manager_create_plan(sandbox):
     """COMPLETED -> MANAGER / CREATE_PLAN."""
     root, agent_dir, collab_dir = sandbox
-    (collab_dir / "work_plan.md").write_text(_plan("TEST-001", "COMPLETED"), encoding="utf-8")
+    (collab_dir / "work_plan.md").write_text(
+        _plan("TEST-001", "COMPLETED"), encoding="utf-8"
+    )
     (collab_dir / "execution_log.md").write_text(_log("COMPLETED"), encoding="utf-8")
     (collab_dir / "notifications.md").write_text(_notif(), encoding="utf-8")
 
@@ -166,7 +179,9 @@ def test_completed_returns_manager_create_plan(sandbox):
 def test_validate_returns_empty_arrays(sandbox):
     """Estado sano -> --validate devuelve todos los arrays vacíos."""
     root, agent_dir, collab_dir = sandbox
-    (collab_dir / "work_plan.md").write_text(_plan("TEST-001", "APPROVED"), encoding="utf-8")
+    (collab_dir / "work_plan.md").write_text(
+        _plan("TEST-001", "APPROVED"), encoding="utf-8"
+    )
     (collab_dir / "execution_log.md").write_text(_log("PENDING"), encoding="utf-8")
     (collab_dir / "notifications.md").write_text(_notif(), encoding="utf-8")
 
@@ -174,7 +189,9 @@ def test_validate_returns_empty_arrays(sandbox):
         [
             sys.executable,
             str(agent_dir / "agent_controller.py"),
-            "--validate", "--json", "--force",
+            "--validate",
+            "--json",
+            "--force",
         ],
         cwd=str(root),
         capture_output=True,

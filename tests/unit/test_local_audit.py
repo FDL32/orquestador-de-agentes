@@ -1,17 +1,15 @@
-import json
-import os
-from pathlib import Path
 from unittest.mock import patch
-import pytest
 
+import pytest
 from scripts.local_audit import (
-    get_versions,
+    fix_mojibake,
     get_active_state,
-    get_skills,
     get_backends,
     get_recent_wps,
-    fix_mojibake,
+    get_skills,
+    get_versions,
 )
+
 
 @pytest.fixture
 def mock_project_root(tmp_path):
@@ -32,18 +30,28 @@ def mock_project_root(tmp_path):
 
     return project_root
 
-def test_get_versions(mock_project_root):
-    (mock_project_root / "PROJECT.md").write_text("- Version: `v1.2.3`\n", encoding="utf-8")
-    (mock_project_root / "pyproject.toml").write_text('version = "2.0.0"\n', encoding="utf-8")
-    (mock_project_root / ".agent" / ".version_manifest.json").write_text('{"agent_core_version": "3.0.0"}', encoding="utf-8")
 
-    with patch("scripts.local_audit.PROJECT_ROOT", mock_project_root), \
-         patch("scripts.local_audit.AGENT_DIR", mock_project_root / ".agent"):
+def test_get_versions(mock_project_root):
+    (mock_project_root / "PROJECT.md").write_text(
+        "- Version: `v1.2.3`\n", encoding="utf-8"
+    )
+    (mock_project_root / "pyproject.toml").write_text(
+        'version = "2.0.0"\n', encoding="utf-8"
+    )
+    (mock_project_root / ".agent" / ".version_manifest.json").write_text(
+        '{"agent_core_version": "3.0.0"}', encoding="utf-8"
+    )
+
+    with (
+        patch("scripts.local_audit.PROJECT_ROOT", mock_project_root),
+        patch("scripts.local_audit.AGENT_DIR", mock_project_root / ".agent"),
+    ):
         versions = get_versions()
 
     assert versions["project_md"] == "v1.2.3"  # backticks stripped at parse time
     assert versions["pyproject"] == "2.0.0"
     assert versions["manifest"] == "3.0.0"
+
 
 def test_get_active_state(mock_project_root):
     collab_dir = mock_project_root / ".agent" / "collaboration"
@@ -80,12 +88,16 @@ def test_get_active_state(mock_project_root):
     assert state["status"] == "IN_PROGRESS"
 
     # Test STATE.md takes priority when it exists
-    state_file.write_text("- **Plan Activo:** ** WP-999 **\n- **Estado actual:** ** IN_PROGRESS **\n", encoding="utf-8")
+    state_file.write_text(
+        "- **Plan Activo:** ** WP-999 **\n- **Estado actual:** ** IN_PROGRESS **\n",
+        encoding="utf-8",
+    )
     with patch("scripts.local_audit.COLLAB_DIR", collab_dir):
         state = get_active_state()
 
     assert state["plan"] == "WP-999"
     assert state["status"] == "IN_PROGRESS"
+
 
 def test_check_version_drift():
     from scripts.local_audit import check_version_drift
@@ -94,7 +106,7 @@ def test_check_version_drift():
     versions_drift = {
         "project_md": "`v9.11.0`",
         "pyproject": "9.11.0",
-        "manifest": "v9.9.0"
+        "manifest": "v9.9.0",
     }
     drift, cleaned = check_version_drift(versions_drift)
     assert drift is True
@@ -105,18 +117,20 @@ def test_check_version_drift():
     versions_nodrift = {
         "project_md": "`v9.11.0`",
         "pyproject": "9.11.0",
-        "manifest": "v9.11.0"
+        "manifest": "v9.11.0",
     }
     drift, cleaned = check_version_drift(versions_nodrift)
     assert drift is False
+
 
 def test_fix_mojibake():
     # Test decoding standard double-encoded UTF-8 strings
     assert fix_mojibake("AuditorÃ­a") == "Auditoría"
     assert fix_mojibake("cÃ³digo") == "código"
-    assert fix_mojibake("â†’") == "→"
+    assert fix_mojibake("â†’") == "→"  # noqa: RUF001
     assert fix_mojibake("Normal string") == "Normal string"
-    assert fix_mojibake("Test\uFFFDString") == "Test?String"
+    assert fix_mojibake("Test\ufffdString") == "Test?String"
+
 
 def test_get_skills_parsing(mock_project_root):
     skill_dir = mock_project_root / "skills" / "test-skill"
@@ -143,20 +157,28 @@ This is a test skill.
     assert skills[0]["triggers"] == ["/test"]
     assert "Table" not in skills[0]
 
+
 def test_get_backends(mock_project_root):
     agents_json = mock_project_root / ".agent" / "config" / "agents.json"
-    agents_json.write_text('{"role_assignments": {"BUILDER": "test"}}', encoding="utf-8")
+    agents_json.write_text(
+        '{"role_assignments": {"BUILDER": "test"}}', encoding="utf-8"
+    )
 
     with patch("scripts.local_audit.AGENT_DIR", mock_project_root / ".agent"):
         backends = get_backends()
 
     assert backends["role_assignments"]["BUILDER"] == "test"
 
+
 def test_get_recent_wps(mock_project_root):
     exec_log = mock_project_root / ".agent" / "collaboration" / "execution_log.md"
-    exec_log.write_text("### WP-001\n### WP-002\nsome text\n### WP-003", encoding="utf-8")
+    exec_log.write_text(
+        "### WP-001\n### WP-002\nsome text\n### WP-003", encoding="utf-8"
+    )
 
-    with patch("scripts.local_audit.COLLAB_DIR", mock_project_root / ".agent" / "collaboration"):
+    with patch(
+        "scripts.local_audit.COLLAB_DIR", mock_project_root / ".agent" / "collaboration"
+    ):
         wps = get_recent_wps()
 
     assert len(wps) == 3

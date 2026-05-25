@@ -16,11 +16,12 @@ from unittest.mock import patch
 
 import pytest
 
+
 # Add scripts directory to path for import
 scripts_dir = Path(__file__).resolve().parent.parent.parent / "scripts"
 sys.path.insert(0, str(scripts_dir))
 
-from check_no_history_truncation import (
+from check_no_history_truncation import (  # noqa: E402
     TRUNCATION_THRESHOLD,
     check_archive_compensation,
     check_execution_log_truncation,
@@ -138,7 +139,7 @@ class TestCheckExecutionLogTruncation:
         mock_staged.return_value = ["M\texecution_log.md"]
         # Remove 30 lines (below 50 threshold)
         mock_diff.return_value = (5, 30)
-        is_truncated, added, removed = check_execution_log_truncation()
+        is_truncated, _, _ = check_execution_log_truncation()
         assert is_truncated is False
 
     @patch("check_no_history_truncation.get_staged_changes")
@@ -150,7 +151,7 @@ class TestCheckExecutionLogTruncation:
         mock_staged.return_value = ["M\texecution_log.md"]
         # Add 50 lines, remove 0
         mock_diff.return_value = (50, 0)
-        is_truncated, added, removed = check_execution_log_truncation()
+        is_truncated, _, _ = check_execution_log_truncation()
         assert is_truncated is False
 
     @patch("check_no_history_truncation.get_staged_changes")
@@ -162,7 +163,7 @@ class TestCheckExecutionLogTruncation:
         mock_staged.return_value = ["M\texecution_log.md"]
         # Remove exactly 50 lines (threshold), add 0
         mock_diff.return_value = (0, 50)
-        is_truncated, added, removed = check_execution_log_truncation()
+        is_truncated, _, _ = check_execution_log_truncation()
         # 50 > 50 is False, so should not be truncated
         assert is_truncated is False
 
@@ -175,7 +176,7 @@ class TestCheckExecutionLogTruncation:
         mock_staged.return_value = ["M\texecution_log.md"]
         # Remove 51 lines (just above threshold), add 0
         mock_diff.return_value = (0, 51)
-        is_truncated, added, removed = check_execution_log_truncation()
+        is_truncated, _, _ = check_execution_log_truncation()
         # 51 > 50 is True, and 51 > 0, so should be truncated
         assert is_truncated is True
 

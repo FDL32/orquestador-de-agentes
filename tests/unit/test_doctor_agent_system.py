@@ -1,11 +1,11 @@
-﻿"""
+"""
 Tests for scripts/doctor_agent_system.py (DoctorAgentSystem)
 
 Covers: diagnosis, manifest repair, validation.
 """
 
 import json
-import pytest
+
 from scripts.doctor_agent_system import DoctorAgentSystem
 
 
@@ -61,7 +61,9 @@ agent_dir = ".agent"
         assert diagnosis["severity"] == "warning"
         assert diagnosis["detection"]["detection_mode"] == "legacy_markers"
         assert any("Legacy detection" in issue for issue in diagnosis["issues"])
-        assert any("Migrate to manifests" in rec for rec in diagnosis["recommendations"])
+        assert any(
+            "Migrate to manifests" in rec for rec in diagnosis["recommendations"]
+        )
 
 
 class TestDoctorRepair:
@@ -107,8 +109,12 @@ class TestDoctorRepair:
         (project / ".agent").mkdir()
 
         # Create existing manifests
-        (project / ".agent" / "project_manifest.toml").write_text("[project]\nid = 'existing'")
-        (project / ".agent" / ".version_manifest.json").write_text('{"agent_core_version": "8.0.0"}')
+        (project / ".agent" / "project_manifest.toml").write_text(
+            "[project]\nid = 'existing'"
+        )
+        (project / ".agent" / ".version_manifest.json").write_text(
+            '{"agent_core_version": "8.0.0"}'
+        )
 
         doctor = DoctorAgentSystem(str(project))
         result = doctor.repair_manifest()
@@ -180,14 +186,20 @@ version = "1.0.0"
         assert "[project]" in content
         assert "[paths]" in content
         assert "[agent_system]" in content
-        assert "id = \"spec_test\"" in content  # Derived from directory name
+        assert 'id = "spec_test"' in content  # Derived from directory name
 
         # Check version manifest has all required fields
         with open(project / ".agent" / ".version_manifest.json") as f:
             version_data = json.load(f)
         required_fields = [
-            "agent_core_version", "template_version", "status", "confidence",
-            "last_updated", "components", "markers_validated", "drift_detected"
+            "agent_core_version",
+            "template_version",
+            "status",
+            "confidence",
+            "last_updated",
+            "components",
+            "markers_validated",
+            "drift_detected",
         ]
         for field in required_fields:
             assert field in version_data
@@ -264,7 +276,9 @@ version = "1.0.0"
 
         assert diagnosis["drift"]["detected"] is True
         assert diagnosis["drift"]["reparable"] is False
-        assert any("Multiple .agent/" in issue for issue in diagnosis["drift"]["details"])
+        assert any(
+            "Multiple .agent/" in issue for issue in diagnosis["drift"]["details"]
+        )
         assert diagnosis["severity"] == "error"
 
     def test_diagnose_paths_root_drift(self, tmp_path):
@@ -290,7 +304,9 @@ root = "some/other/path"
 
         assert diagnosis["drift"]["detected"] is True
         assert diagnosis["drift"]["reparable"] is False
-        assert any("paths.root drift" in issue for issue in diagnosis["drift"]["details"])
+        assert any(
+            "paths.root drift" in issue for issue in diagnosis["drift"]["details"]
+        )
 
     def test_diagnose_paths_agent_dir_drift(self, tmp_path):
         """Test diagnosis detects paths.agent_dir drift."""
@@ -315,7 +331,9 @@ agent_dir = "custom_agent"
 
         assert diagnosis["drift"]["detected"] is True
         assert diagnosis["drift"]["reparable"] is False
-        assert any("paths.agent_dir drift" in issue for issue in diagnosis["drift"]["details"])
+        assert any(
+            "paths.agent_dir drift" in issue for issue in diagnosis["drift"]["details"]
+        )
 
     def test_diagnose_reparable_drift(self, tmp_path):
         """Test diagnosis classifies partial manifests as reparable drift."""
@@ -332,7 +350,10 @@ agent_dir = "custom_agent"
 
         assert diagnosis["drift"]["detected"] is True
         assert diagnosis["drift"]["reparable"] is True
-        assert any("partial manifests" in issue.lower() for issue in diagnosis["drift"]["details"])
+        assert any(
+            "partial manifests" in issue.lower()
+            for issue in diagnosis["drift"]["details"]
+        )
 
     def test_validate_drift_checks(self, tmp_path):
         """Test validation includes drift-specific checks."""

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ruff: noqa: PERF203,S101
+# ruff: noqa: PERF203
 """
 Test Suite for Refactor-Kit Performance Optimizations
 

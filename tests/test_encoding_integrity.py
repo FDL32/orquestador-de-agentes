@@ -1,4 +1,4 @@
-﻿"""Tests to ensure no mojibake exists in operational files."""
+"""Tests to ensure no mojibake exists in operational files."""
 
 from pathlib import Path
 

@@ -1,4 +1,4 @@
-﻿"""
+"""
 Tests for scripts/rollback.py (RollbackManager)
 
 Covers: backup enumeration, restoration (latest & specific), manifest updates,
@@ -6,7 +6,12 @@ post-rollback verification.
 """
 
 import json
-from scripts.rollback import RollbackManager, list_available_backups, restore_latest_backup
+
+from scripts.rollback import (
+    RollbackManager,
+    list_available_backups,
+    restore_latest_backup,
+)
 
 
 class TestRollbackBackupEnumeration:
@@ -39,7 +44,7 @@ class TestRollbackBackupEnumeration:
                 "timestamp": ts,
                 "version_before": "v9.2",
                 "critical_paths_backed_up": [".agent/", "skills/"],
-                "restoration_command": f"python scripts/rollback.py --backup {ts}"
+                "restoration_command": f"python scripts/rollback.py --backup {ts}",
             }
             (backup / "BACKUP_MANIFEST.json").write_text(json.dumps(manifest))
 
@@ -82,11 +87,15 @@ class TestRollbackRestore:
         backup = backup_root / f"backup_{ts}"
         backup.mkdir()
         (backup / "config.txt").write_text("# backed up content")
-        (backup / "BACKUP_MANIFEST.json").write_text(json.dumps({
-            "timestamp": ts,
-            "version_before": "v9.2",
-            "critical_paths_backed_up": ["config.txt"]
-        }))
+        (backup / "BACKUP_MANIFEST.json").write_text(
+            json.dumps(
+                {
+                    "timestamp": ts,
+                    "version_before": "v9.2",
+                    "critical_paths_backed_up": ["config.txt"],
+                }
+            )
+        )
 
         (project / "config.txt").write_text("# current version")
 
@@ -106,15 +115,22 @@ class TestRollbackRestore:
         backup_root = project / ".agent" / "backups"
         backup_root.mkdir(parents=True)
 
-        for ts, content in [("20260426_120000", "old backup"), ("20260426_143022", "new backup")]:
+        for ts, content in [
+            ("20260426_120000", "old backup"),
+            ("20260426_143022", "new backup"),
+        ]:
             backup = backup_root / f"backup_{ts}"
             backup.mkdir()
             (backup / "marker.txt").write_text(content)
-            (backup / "BACKUP_MANIFEST.json").write_text(json.dumps({
-                "timestamp": ts,
-                "version_before": "v9.2",
-                "critical_paths_backed_up": ["marker.txt"]
-            }))
+            (backup / "BACKUP_MANIFEST.json").write_text(
+                json.dumps(
+                    {
+                        "timestamp": ts,
+                        "version_before": "v9.2",
+                        "critical_paths_backed_up": ["marker.txt"],
+                    }
+                )
+            )
 
         (project / "marker.txt").write_text("current")
 
@@ -142,22 +158,30 @@ class TestRollbackManifestUpdate:
             "detected_date": "2026-04-27T10:00:00",
             "upgraded_from": "v9.2",
         }
-        (project / ".agent" / ".version_manifest.json").write_text(json.dumps(current_manifest))
+        (project / ".agent" / ".version_manifest.json").write_text(
+            json.dumps(current_manifest)
+        )
 
         ts = "20260426_143022"
         backup = backup_root / f"backup_{ts}"
         backup.mkdir()
         (backup / "agent_controller.py").write_text("# backed up content")
-        (backup / "BACKUP_MANIFEST.json").write_text(json.dumps({
-            "timestamp": ts,
-            "version_before": "v9.2",
-            "critical_paths_backed_up": ["agent_controller.py"]
-        }))
+        (backup / "BACKUP_MANIFEST.json").write_text(
+            json.dumps(
+                {
+                    "timestamp": ts,
+                    "version_before": "v9.2",
+                    "critical_paths_backed_up": ["agent_controller.py"],
+                }
+            )
+        )
 
         manager = RollbackManager(str(project))
         manager.restore_backup(ts)
 
-        new_manifest = json.loads((project / ".agent" / ".version_manifest.json").read_text())
+        new_manifest = json.loads(
+            (project / ".agent" / ".version_manifest.json").read_text()
+        )
         assert "rollback_from" in new_manifest
         assert new_manifest["rollback_from"] == "v9.2.1+"
         assert "rolled_back_to" in new_manifest
@@ -175,11 +199,15 @@ class TestRollbackHelperFunctions:
         backup_root = project / ".agent" / "backups"
         backup_root.mkdir(parents=True)
         (backup_root / "backup_test_ts").mkdir()
-        (backup_root / "backup_test_ts" / "BACKUP_MANIFEST.json").write_text(json.dumps({
-            "timestamp": "test_ts",
-            "version_before": "v9.2",
-            "critical_paths_backed_up": []
-        }))
+        (backup_root / "backup_test_ts" / "BACKUP_MANIFEST.json").write_text(
+            json.dumps(
+                {
+                    "timestamp": "test_ts",
+                    "version_before": "v9.2",
+                    "critical_paths_backed_up": [],
+                }
+            )
+        )
 
         backups = list_available_backups(str(project))
         assert len(backups) == 1
@@ -192,11 +220,15 @@ class TestRollbackHelperFunctions:
         backup_root.mkdir(parents=True)
         backup = backup_root / "backup_latest"
         backup.mkdir()
-        (backup / "BACKUP_MANIFEST.json").write_text(json.dumps({
-            "timestamp": "latest",
-            "version_before": "v9.2",
-            "critical_paths_backed_up": []
-        }))
+        (backup / "BACKUP_MANIFEST.json").write_text(
+            json.dumps(
+                {
+                    "timestamp": "latest",
+                    "version_before": "v9.2",
+                    "critical_paths_backed_up": [],
+                }
+            )
+        )
 
         result = restore_latest_backup(str(project))
         assert "status" in result

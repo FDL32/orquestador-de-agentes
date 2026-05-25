@@ -1,10 +1,11 @@
-﻿"""Tests for safe_print encoding edge cases in completion_checker."""
+"""Tests for safe_print encoding edge cases in completion_checker."""
 
 import sys
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+
 
 # Add .agent to path for imports
 agent_dir = Path(__file__).parent.parent / ".agent"

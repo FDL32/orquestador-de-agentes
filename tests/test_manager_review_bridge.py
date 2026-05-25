@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import json
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
-
 from bus.event_bus import EventBus
-from bus.review_bridge import ReviewBridge, ReviewDecision, ReviewResult
+from bus.review_bridge import ReviewBridge, ReviewDecision
 from bus.supervisor import SequentialTicketSupervisor, SupervisorState
 from scripts.manager_review_bridge import BridgeState, _bridge_heartbeat, _ticket_state
 
@@ -17,7 +15,13 @@ class DummySupervisor:
     def __init__(self) -> None:
         self.transitions: list[tuple[str, str, str]] = []
 
-    def transition_ticket(self, ticket_id: str, new_state: str, reason: str, source_event_id: str | None = None) -> None:
+    def transition_ticket(
+        self,
+        ticket_id: str,
+        new_state: str,
+        reason: str,
+        source_event_id: str | None = None,
+    ) -> None:
         self.transitions.append((ticket_id, new_state, reason))
 
 
@@ -30,7 +34,9 @@ def _make_bridge(tmp_path: Path) -> tuple[ReviewBridge, EventBus, Path]:
     return bridge, event_bus, legacy_manager_exe
 
 
-def _make_review_prompt_bridge(tmp_path: Path, deliverable_type: str = "code") -> ReviewBridge:
+def _make_review_prompt_bridge(
+    tmp_path: Path, deliverable_type: str = "code"
+) -> ReviewBridge:
     runtime_dir = tmp_path / ".agent" / "runtime" / "events"
     event_bus = EventBus(runtime_dir=runtime_dir)
     collaboration_dir = tmp_path / ".agent" / "collaboration"
@@ -120,7 +126,9 @@ def test_manager_review_cycle_approves(monkeypatch, tmp_path):
         )
 
     monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
-    monkeypatch.setattr(bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW")
+    monkeypatch.setattr(
+        bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW"
+    )
     # Force the legacy Manager backend for this compatibility test
     monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "legacy_manager")
 
@@ -152,9 +160,17 @@ def test_manager_review_cycle_requests_changes(monkeypatch, tmp_path):
 
     def fake_run(cmd, **kwargs):
         if any("agent_controller.py" in str(part) for part in cmd):
-            return __import__("subprocess").CompletedProcess(cmd, 0, stdout="[OK] requeue", stderr="")
-        if isinstance(cmd, list) and cmd and Path(str(cmd[0])).name.lower() in ("git", "git.exe"):
-            return __import__("subprocess").CompletedProcess(cmd, 0, stdout="", stderr="")
+            return __import__("subprocess").CompletedProcess(
+                cmd, 0, stdout="[OK] requeue", stderr=""
+            )
+        if (
+            isinstance(cmd, list)
+            and cmd
+            and Path(str(cmd[0])).name.lower() in ("git", "git.exe")
+        ):
+            return __import__("subprocess").CompletedProcess(
+                cmd, 0, stdout="", stderr=""
+            )
         call_count["n"] += 1
         return __import__("subprocess").CompletedProcess(
             cmd,
@@ -164,7 +180,9 @@ def test_manager_review_cycle_requests_changes(monkeypatch, tmp_path):
         )
 
     monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
-    monkeypatch.setattr(bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW")
+    monkeypatch.setattr(
+        bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW"
+    )
     monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "legacy_manager")
 
     result = bridge.run_manager_review_cycle(
@@ -195,7 +213,9 @@ def test_manager_review_cycle_tool_error_is_transport_failed(monkeypatch, tmp_pa
         )
 
     monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
-    monkeypatch.setattr(bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW")
+    monkeypatch.setattr(
+        bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW"
+    )
 
     result = bridge.run_manager_review_cycle(
         ticket_id="WP-2026-025",
@@ -210,10 +230,7 @@ def test_manager_review_cycle_tool_error_is_transport_failed(monkeypatch, tmp_pa
     assert supervisor.transitions == []
     events = event_bus.read_events(ticket_id="WP-2026-025")
     assert any(event.event_type == "MANAGER_REVIEWING" for event in events)
-    assert any(
-        event.event_type == "REVIEW_TRANSPORT_FAILED"
-        for event in events
-    )
+    assert any(event.event_type == "REVIEW_TRANSPORT_FAILED" for event in events)
 
 
 def test_ticket_state_falls_back_to_execution_log(tmp_path):
@@ -325,8 +342,8 @@ def test_bridge_heartbeat_includes_cursor_and_sequence():
 
 
 def test_build_review_prompt_includes_generated_artifacts_block(tmp_path):
-    from bus.review_bridge import ReviewBridge
     from bus.event_bus import EventBus
+    from bus.review_bridge import ReviewBridge
 
     runtime_dir = tmp_path / ".agent" / "runtime" / "events"
     event_bus = EventBus(runtime_dir=runtime_dir)
@@ -343,26 +360,29 @@ def test_build_review_prompt_includes_generated_artifacts_block(tmp_path):
 def test_build_review_prompt_uses_branch_base_diff(tmp_path, monkeypatch):
     """Prompt includes diff anchored to origin/main...HEAD when remote is reachable."""
     import subprocess as _subprocess
-    from bus.review_bridge import ReviewBridge
+
     from bus.event_bus import EventBus
+    from bus.review_bridge import ReviewBridge
 
     runtime_dir = tmp_path / ".agent" / "runtime" / "events"
     event_bus = EventBus(runtime_dir=runtime_dir)
     bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
-    SHA = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+    sha = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
 
     def fake_run(cmd, **kwargs):
         if isinstance(cmd, list) and "origin/main...HEAD" in cmd and "diff" in cmd:
             return _subprocess.CompletedProcess(
-                cmd, 0,
+                cmd,
+                0,
                 stdout="diff --git a/bus/review_bridge.py b/bus/review_bridge.py\n+added line\n",
                 stderr="",
             )
         if isinstance(cmd, list) and "origin/main..HEAD" in cmd and "log" in cmd:
             return _subprocess.CompletedProcess(
-                cmd, 0,
-                stdout=f"{SHA} 2026-05-25 10:00:00 +0200 Test Author\n",
+                cmd,
+                0,
+                stdout=f"{sha} 2026-05-25 10:00:00 +0200 Test Author\n",
                 stderr="",
             )
         return _subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
@@ -377,8 +397,9 @@ def test_build_review_prompt_uses_branch_base_diff(tmp_path, monkeypatch):
 def test_build_review_prompt_falls_back_to_head_when_no_remote(tmp_path, monkeypatch):
     """Prompt degrades to git diff HEAD with visible warning when origin/main is unreachable."""
     import subprocess as _subprocess
-    from bus.review_bridge import ReviewBridge
+
     from bus.event_bus import EventBus
+    from bus.review_bridge import ReviewBridge
 
     runtime_dir = tmp_path / ".agent" / "runtime" / "events"
     event_bus = EventBus(runtime_dir=runtime_dir)
@@ -387,21 +408,29 @@ def test_build_review_prompt_falls_back_to_head_when_no_remote(tmp_path, monkeyp
     def fake_run(cmd, **kwargs):
         if isinstance(cmd, list) and "origin/main...HEAD" in cmd and "diff" in cmd:
             return _subprocess.CompletedProcess(
-                cmd, 128, stdout="", stderr="fatal: ambiguous argument 'origin/main...HEAD'"
+                cmd,
+                128,
+                stdout="",
+                stderr="fatal: ambiguous argument 'origin/main...HEAD'",
             )
         if isinstance(cmd, list) and "origin/main..HEAD" in cmd and "log" in cmd:
             return _subprocess.CompletedProcess(
-                cmd, 128, stdout="", stderr="fatal: ambiguous argument 'origin/main..HEAD'"
+                cmd,
+                128,
+                stdout="",
+                stderr="fatal: ambiguous argument 'origin/main..HEAD'",
             )
         if isinstance(cmd, list) and "diff" in cmd and "HEAD" in cmd:
             return _subprocess.CompletedProcess(
-                cmd, 0,
+                cmd,
+                0,
                 stdout="diff --git a/bus/review_bridge.py b/bus/review_bridge.py\n+head line\n",
                 stderr="",
             )
         if isinstance(cmd, list) and "log" in cmd and cmd[-1] == "HEAD":
             return _subprocess.CompletedProcess(
-                cmd, 0,
+                cmd,
+                0,
                 stdout="a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2 2026-05-25 10:00:00 +0200 Test Author\n",
                 stderr="",
             )
@@ -416,20 +445,22 @@ def test_build_review_prompt_falls_back_to_head_when_no_remote(tmp_path, monkeyp
 def test_build_review_prompt_includes_provenance_section(tmp_path, monkeypatch):
     """Prompt includes --- git provenance --- section with SHA, date, and author."""
     import subprocess as _subprocess
-    from bus.review_bridge import ReviewBridge
+
     from bus.event_bus import EventBus
+    from bus.review_bridge import ReviewBridge
 
     runtime_dir = tmp_path / ".agent" / "runtime" / "events"
     event_bus = EventBus(runtime_dir=runtime_dir)
     bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
-    SHA = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+    sha = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
 
     def fake_run(cmd, **kwargs):
         if isinstance(cmd, list) and "log" in cmd and "origin/main..HEAD" in cmd:
             return _subprocess.CompletedProcess(
-                cmd, 0,
-                stdout=f"{SHA} 2026-05-25 10:00:00 +0200 Test Author\n",
+                cmd,
+                0,
+                stdout=f"{sha} 2026-05-25 10:00:00 +0200 Test Author\n",
                 stderr="",
             )
         return _subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
@@ -438,13 +469,13 @@ def test_build_review_prompt_includes_provenance_section(tmp_path, monkeypatch):
     prompt = bridge._build_review_prompt(ticket_id="WP-TEST-134", dtype="code")
 
     assert "--- git provenance ---" in prompt
-    assert SHA in prompt
+    assert sha in prompt
 
 
 def test_build_review_prompt_includes_allowed_skills_for_role(tmp_path):
     """Test that review prompt includes only skills allowed for the current role (WP-2026-128)."""
-    from bus.review_bridge import ReviewBridge
     from bus.event_bus import EventBus
+    from bus.review_bridge import ReviewBridge
     from bus.skill_resolver import SkillResolver
 
     runtime_dir = tmp_path / ".agent" / "runtime" / "events"
@@ -478,7 +509,9 @@ def test_build_review_prompt_includes_allowed_skills_for_role(tmp_path):
     assert "BUILDER" in prompt
 
 
-def test_build_review_prompt_includes_manager_learnings_for_code_and_preserves_static_rubric(tmp_path):
+def test_build_review_prompt_includes_manager_learnings_for_code_and_preserves_static_rubric(
+    tmp_path,
+):
     bridge = _make_review_prompt_bridge(tmp_path, deliverable_type="code")
 
     observations = []
@@ -616,7 +649,7 @@ class TestOpencodeReviewRoute:
 
     def test_parse_opencode_decision_approve(self, tmp_path):
         """Test parser detects DECISION: APPROVE."""
-        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -629,7 +662,7 @@ class TestOpencodeReviewRoute:
 
     def test_parse_opencode_decision_changes(self, tmp_path):
         """Test parser detects DECISION: CHANGES."""
-        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -642,7 +675,7 @@ class TestOpencodeReviewRoute:
 
     def test_parse_opencode_decision_no_decision_fallback_inspect(self, tmp_path):
         """Test parser returns INSPECT+fallback_inspect when no decision found."""
-        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -655,7 +688,7 @@ class TestOpencodeReviewRoute:
 
     def test_parse_opencode_decision_explicit_inspect(self, tmp_path):
         """Test parser detects DECISION: INSPECT explicitly."""
-        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -668,7 +701,7 @@ class TestOpencodeReviewRoute:
 
     def test_parse_opencode_decision_lowercase(self, tmp_path):
         """Test parser handles lowercase decision patterns."""
-        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -681,7 +714,7 @@ class TestOpencodeReviewRoute:
 
     def test_get_manager_backend_default_opencode(self, tmp_path):
         """Test backend detection returns opencode as fallback when agents.json is missing."""
-        from bus.review_bridge import ReviewBridge, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -693,7 +726,7 @@ class TestOpencodeReviewRoute:
 
     def test_run_manager_review_cycle_dispatches_opencode(self, monkeypatch, tmp_path):
         """Test review cycle dispatches to opencode route when backend is opencode."""
-        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -701,14 +734,20 @@ class TestOpencodeReviewRoute:
 
         # Mock _get_manager_backend to return opencode
         monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
-        monkeypatch.setattr(bridge, "_get_manager_model", lambda: "opencode-go/deepseek-v4-flash")
+        monkeypatch.setattr(
+            bridge, "_get_manager_model", lambda: "opencode-go/deepseek-v4-flash"
+        )
         monkeypatch.setattr(bridge, "_get_canonical_files", lambda: [])
         monkeypatch.setattr(bridge, "_get_active_ticket_id", lambda: "WP-2026-072")
-        monkeypatch.setattr(bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW")
+        monkeypatch.setattr(
+            bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW"
+        )
 
         captured = {}
 
-        def fake_opencode_review(*, ticket_id, prompt="", attempt=1, manager_executable=None, timeout_seconds):
+        def fake_opencode_review(
+            *, ticket_id, prompt="", attempt=1, manager_executable=None, timeout_seconds
+        ):
             captured["ticket_id"] = ticket_id
             return "DECISION: APPROVE", "", 0
 
@@ -726,26 +765,38 @@ class TestOpencodeReviewRoute:
 
         assert result.decision == ReviewDecision.APPROVE
         assert captured["ticket_id"] == "WP-2026-072"
-        assert captured["transition"] == ("WP-2026-072", "READY_TO_CLOSE", "Manager approved")
+        assert captured["transition"] == (
+            "WP-2026-072",
+            "READY_TO_CLOSE",
+            "Manager approved",
+        )
 
-    def test_run_manager_review_cycle_dispatches_legacy_manager(self, monkeypatch, tmp_path):
+    def test_run_manager_review_cycle_dispatches_legacy_manager(
+        self, monkeypatch, tmp_path
+    ):
         """Test review cycle dispatches to the legacy Manager route."""
-        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
         monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "legacy_manager")
-        monkeypatch.setattr(bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW")
+        monkeypatch.setattr(
+            bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW"
+        )
 
         captured = {}
 
-        def fake_legacy_manager_review(*, ticket_id, manager_executable, timeout_seconds):
+        def fake_legacy_manager_review(
+            *, ticket_id, manager_executable, timeout_seconds
+        ):
             captured["ticket_id"] = ticket_id
             return "APPROVE", "", 0
 
-        monkeypatch.setattr(bridge, "_run_legacy_manager_review", fake_legacy_manager_review)
+        monkeypatch.setattr(
+            bridge, "_run_legacy_manager_review", fake_legacy_manager_review
+        )
 
         class DummySupervisor:
             def transition_ticket(self, ticket_id, new_state, reason):
@@ -763,12 +814,17 @@ class TestOpencodeReviewRoute:
 
         assert result.decision == ReviewDecision.APPROVE
         assert captured["ticket_id"] == "WP-2026-072"
-        assert captured["transition"] == ("WP-2026-072", "READY_TO_CLOSE", "Manager approved")
+        assert captured["transition"] == (
+            "WP-2026-072",
+            "READY_TO_CLOSE",
+            "Manager approved",
+        )
 
     def test_opencode_review_cmd_length_is_safe(self, monkeypatch, tmp_path):
         """Test the constructed command line respects the Windows CMD limit (~8k chars) by using a prompt file."""
         import subprocess
-        from bus.review_bridge import ReviewBridge, EventBus
+
+        from bus.review_bridge import EventBus, ReviewBridge
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -783,14 +839,18 @@ class TestOpencodeReviewRoute:
 
         monkeypatch.setattr(bridge, "_get_canonical_files", lambda: dummy_files)
         monkeypatch.setattr(bridge, "_get_active_ticket_id", lambda: "WP-2026-077")
-        monkeypatch.setattr(bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW")
+        monkeypatch.setattr(
+            bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW"
+        )
         monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
 
         captured_cmd = []
 
         def fake_run(cmd_args, **kwargs):
             captured_cmd.extend(cmd_args)
-            return subprocess.CompletedProcess(args=cmd_args, returncode=0, stdout="DECISION: APPROVE", stderr="")
+            return subprocess.CompletedProcess(
+                args=cmd_args, returncode=0, stdout="DECISION: APPROVE", stderr=""
+            )
 
         monkeypatch.setattr(subprocess, "run", fake_run)
 
@@ -799,12 +859,11 @@ class TestOpencodeReviewRoute:
                 pass
 
         bridge.run_manager_review_cycle(
-            ticket_id="WP-2026-077",
-            supervisor=DummySupervisor(),
-            timeout_seconds=5
+            ticket_id="WP-2026-077", supervisor=DummySupervisor(), timeout_seconds=5
         )
 
         import shlex
+
         cmd_string = shlex.join(captured_cmd)
 
         # Verify the length is well under the 6000 character safety margin
@@ -819,7 +878,7 @@ class TestReviewPacketTransport:
 
     @staticmethod
     def _bridge(tmp_path, monkeypatch, os_name):
-        from bus.review_bridge import ReviewBridge, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge
 
         event_bus = EventBus(runtime_dir=tmp_path / ".agent" / "runtime" / "events")
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
@@ -843,11 +902,7 @@ class TestReviewPacketTransport:
         )
 
         packet = (
-            tmp_path
-            / ".agent"
-            / "runtime"
-            / "review_packets"
-            / "WP-T_attempt-1.md"
+            tmp_path / ".agent" / "runtime" / "review_packets" / "WP-T_attempt-1.md"
         )
         assert packet.exists()
         assert packet.read_text(encoding="utf-8") == prompt
@@ -870,18 +925,10 @@ class TestReviewPacketTransport:
         )
 
         packet_1 = (
-            tmp_path
-            / ".agent"
-            / "runtime"
-            / "review_packets"
-            / "WP-T_attempt-1.md"
+            tmp_path / ".agent" / "runtime" / "review_packets" / "WP-T_attempt-1.md"
         )
         packet_2 = (
-            tmp_path
-            / ".agent"
-            / "runtime"
-            / "review_packets"
-            / "WP-T_attempt-2.md"
+            tmp_path / ".agent" / "runtime" / "review_packets" / "WP-T_attempt-2.md"
         )
         assert packet_1.exists()
         assert packet_2.exists()
@@ -902,9 +949,7 @@ class TestReviewPacketTransport:
         monkeypatch.setattr(subprocess, "run", fake_run)
 
         prompt = "PROMPT-LARGO-UNICO " + ("x" * 9000)
-        bridge._run_opencode_review(
-            ticket_id="WP-T", prompt=prompt, timeout_seconds=5
-        )
+        bridge._run_opencode_review(ticket_id="WP-T", prompt=prompt, timeout_seconds=5)
 
         cmd = captured["cmd"]
         assert "--file" not in cmd
@@ -1050,7 +1095,9 @@ class TestTicketStateIngest:
         assert ctx.ticket_id == "WP-2026-102"
         assert ctx.deliverable_type == "code"
 
-    def test_state_ingest_get_ticket_context_returns_none_when_no_ticket(self, tmp_path):
+    def test_state_ingest_get_ticket_context_returns_none_when_no_ticket(
+        self, tmp_path
+    ):
         """Test get_ticket_context returns None when no ticket can be resolved."""
         from bus.event_bus import EventBus
         from bus.review_bridge import TicketStateIngest
@@ -1069,7 +1116,7 @@ class TestBridgeHandshakeWithoutSnapshots:
     def test_bridge_uses_current_bus_state_not_snapshots(self, tmp_path, monkeypatch):
         """Test bridge queries event_bus directly, not stale snapshots."""
         from bus.event_bus import EventBus
-        from bus.review_bridge import ReviewBridge, ReviewDecision
+        from bus.review_bridge import ReviewBridge
 
         collaboration_dir = tmp_path / ".agent" / "collaboration"
         collaboration_dir.mkdir(parents=True)
@@ -1095,7 +1142,9 @@ class TestBridgeHandshakeWithoutSnapshots:
         # Mock the review execution to capture that it was called
         captured = {}
 
-        def fake_opencode_review(*, ticket_id, prompt, attempt=1, manager_executable=None, timeout_seconds):
+        def fake_opencode_review(
+            *, ticket_id, prompt, attempt=1, manager_executable=None, timeout_seconds
+        ):
             captured["prompt_includes_ticket"] = "WP-2026-102" in prompt
             return "DECISION: APPROVE", "", 0
 
@@ -1134,13 +1183,15 @@ class TestSupervisorNonTerminalStates:
 
         # Non-terminal states should return False
         for state in NON_TERMINAL_STATES:
-            assert state not in set(), "Sanity check: NON_TERMINAL_STATES is not empty"
+            assert state not in set(), "Sanity check: NON_TERMINAL_STATES is not empty"  # noqa: RUF060
 
         # COMPLETED and UNKNOWN are terminal
         assert TicketState.COMPLETED not in NON_TERMINAL_STATES
         assert TicketState.UNKNOWN not in NON_TERMINAL_STATES
 
-    def test_supervisor_bootstrap_preserves_active_ticket_in_non_terminal_state(self, tmp_path):
+    def test_supervisor_bootstrap_preserves_active_ticket_in_non_terminal_state(
+        self, tmp_path
+    ):
         """Test bootstrap does NOT clear active_ticket when bus is in non-terminal state."""
         from bus.supervisor import SequentialTicketSupervisor, SupervisorState
 
@@ -1196,7 +1247,7 @@ class TestStructuredChangesValidation:
 
     def test_validate_changes_structure_valid(self, tmp_path):
         """Test validation passes when all required sections present."""
-        from bus.review_bridge import ReviewBridge, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -1222,7 +1273,7 @@ DECISION: CHANGES
 
     def test_validate_changes_structure_missing_sections(self, tmp_path):
         """Test validation detects missing required sections."""
-        from bus.review_bridge import ReviewBridge, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -1241,7 +1292,7 @@ DECISION: CHANGES
 
     def test_validate_changes_structure_missing_decision(self, tmp_path):
         """Test validation detects missing DECISION: CHANGES."""
-        from bus.review_bridge import ReviewBridge, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -1263,7 +1314,7 @@ Implementation has issues.
 
     def test_parse_changes_structure_extracts_sections(self, tmp_path):
         """Test parser extracts SUMMARY, BLOCKERS, SUGGESTIONS correctly."""
-        from bus.review_bridge import ReviewBridge, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -1290,7 +1341,7 @@ DECISION: CHANGES
 
     def test_parse_changes_structure_empty_sections(self, tmp_path):
         """Test parser returns empty strings when sections missing."""
-        from bus.review_bridge import ReviewBridge, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -1308,7 +1359,7 @@ class TestReviewAttemptPersistence:
 
     def test_persist_review_attempt_creates_file(self, tmp_path):
         """Test _persist_review_attempt creates attempt-N.md file."""
-        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -1336,7 +1387,7 @@ class TestReviewAttemptPersistence:
 
     def test_persist_review_attempt_idempotent(self, tmp_path):
         """Test _persist_review_attempt overwrites same file idempotently."""
-        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -1380,7 +1431,7 @@ class TestReviewAttemptPersistence:
 
     def test_persist_review_attempt_includes_structured_sections(self, tmp_path):
         """Test _persist_review_attempt includes SUMMARY, BLOCKERS, SUGGESTIONS for CHANGES."""
-        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -1414,7 +1465,7 @@ DECISION: CHANGES
 
     def test_get_review_log_path_creates_directory(self, tmp_path):
         """Test _get_review_log_path creates ticket directory structure."""
-        from bus.review_bridge import ReviewBridge, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -1432,7 +1483,7 @@ class TestHumanGateEscalation:
 
     def test_generate_human_review_report_creates_file(self, tmp_path):
         """Test _generate_human_review_report creates report from template."""
-        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -1473,7 +1524,7 @@ class TestHumanGateEscalation:
 
     def test_human_review_report_consolidates_blockers(self, tmp_path):
         """Test _generate_human_review_report consolidates blockers from all attempts."""
-        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -1505,7 +1556,9 @@ class TestHumanGateEscalation:
         assert "Type errors" in content
         assert "Missing docs" in content
 
-    def test_review_cycle_escalates_to_human_gate_at_threshold(self, tmp_path, monkeypatch):
+    def test_review_cycle_escalates_to_human_gate_at_threshold(
+        self, tmp_path, monkeypatch
+    ):
         """WP-2026-106 B3: HUMAN_GATE report appears at the 5th cycle.
 
         One cycle = one review = one REVIEW_DECISION (no inner retry on
@@ -1513,7 +1566,7 @@ class TestHumanGateEscalation:
         is generated.
         """
         import bus.review_bridge as rb
-        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -1526,9 +1579,13 @@ class TestHumanGateEscalation:
             encoding="utf-8",
         )
 
-        monkeypatch.setattr(bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW")
+        monkeypatch.setattr(
+            bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW"
+        )
         monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
-        monkeypatch.setattr(bridge, "_build_diff_for_files_likely_touched", lambda *args: "")
+        monkeypatch.setattr(
+            bridge, "_build_diff_for_files_likely_touched", lambda *args: ""
+        )
         monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
 
         call_count = {"n": 0}
@@ -1559,8 +1616,12 @@ class TestHumanGateEscalation:
                 pass
 
         report = (
-            tmp_path / ".agent" / "runtime" / "reviews"
-            / "WP-2026-106" / "human_review_report.md"
+            tmp_path
+            / ".agent"
+            / "runtime"
+            / "reviews"
+            / "WP-2026-106"
+            / "human_review_report.md"
         )
 
         result = None
@@ -1585,7 +1646,7 @@ class TestHumanGateEscalation:
         READY_TO_CLOSE without escalating.
         """
         import bus.review_bridge as rb
-        from bus.review_bridge import ReviewBridge, ReviewDecision, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
@@ -1598,9 +1659,13 @@ class TestHumanGateEscalation:
             encoding="utf-8",
         )
 
-        monkeypatch.setattr(bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW")
+        monkeypatch.setattr(
+            bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW"
+        )
         monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
-        monkeypatch.setattr(bridge, "_build_diff_for_files_likely_touched", lambda *args: "")
+        monkeypatch.setattr(
+            bridge, "_build_diff_for_files_likely_touched", lambda *args: ""
+        )
         monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
         monkeypatch.setattr(
             rb.subprocess,
@@ -1645,7 +1710,7 @@ class TestHumanGateEscalation:
 
     def test_load_review_config_uses_max_attempts_5(self, tmp_path):
         """Test _load_review_config returns max_attempts=5 by default."""
-        from bus.review_bridge import ReviewBridge, EventBus
+        from bus.review_bridge import EventBus, ReviewBridge
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)

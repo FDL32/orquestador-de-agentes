@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
-import pytest
 
 from bus.event_bus import EventBus
 from bus.review_bridge import ReviewBridge
@@ -83,7 +81,9 @@ def test_opencode_review_prompts(monkeypatch, tmp_path):
     monkeypatch.setattr(bridge, "_read_canonical", lambda name: "")
     monkeypatch.setattr(bridge, "_read_canonical_optional", lambda name: None)
     monkeypatch.setattr(bridge, "_extract_ticket_section", lambda tid: "")
-    monkeypatch.setattr(bridge, "_build_diff_for_files_likely_touched", lambda *args: "")
+    monkeypatch.setattr(
+        bridge, "_build_diff_for_files_likely_touched", lambda *args: ""
+    )
     monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
 
     # 1. Test code prompt

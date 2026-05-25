@@ -1,4 +1,4 @@
-﻿"""
+"""
 Tests for scripts/migrate_legacy_project.py (LegacyMigrationManager)
 
 Covers: auto analysis, confirm migration, manifest creation, multiple .agent/ handling.
@@ -55,7 +55,9 @@ root = "."
 agent_dir = ".agent"
 """
         (project / ".agent" / "project_manifest.toml").write_text(manifest_content)
-        (project / ".agent" / ".version_manifest.json").write_text('{"agent_core_version": "8.0.0"}')
+        (project / ".agent" / ".version_manifest.json").write_text(
+            '{"agent_core_version": "8.0.0"}'
+        )
 
         manager = LegacyMigrationManager(str(project))
         analysis = manager.auto_migrate()
@@ -95,7 +97,9 @@ agent_dir = ".agent"
         (project / ".agent" / "agent_controller.py").write_text("#")
 
         # Create only project manifest
-        (project / ".agent" / "project_manifest.toml").write_text("[project]\nid = 'test'")
+        (project / ".agent" / "project_manifest.toml").write_text(
+            "[project]\nid = 'test'"
+        )
 
         manager = LegacyMigrationManager(str(project))
         analysis = manager.auto_migrate()
@@ -174,7 +178,9 @@ class TestMigrateConfirm:
         (project / ".agent" / "agent_controller.py").write_text("#")
 
         # Create only project manifest
-        (project / ".agent" / "project_manifest.toml").write_text("[project]\nid = 'test'")
+        (project / ".agent" / "project_manifest.toml").write_text(
+            "[project]\nid = 'test'"
+        )
 
         manager = LegacyMigrationManager(str(project))
         result = manager.confirm_migrate()
@@ -208,8 +214,12 @@ class TestMigrateConfirm:
         assert any("Conflict for file1.txt" in w for w in result["warnings"])
 
         # Check consolidation
-        assert (project / ".agent" / "file1.txt").read_text() == "root content"  # Kept root
-        assert (project / ".agent" / "file2.txt").read_text() == "subdir content"  # Consolidated
+        assert (
+            project / ".agent" / "file1.txt"
+        ).read_text() == "root content"  # Kept root
+        assert (
+            project / ".agent" / "file2.txt"
+        ).read_text() == "subdir content"  # Consolidated
         assert not sub_agent.exists()  # Removed
 
     def test_confirm_migrate_no_action_needed(self, tmp_path):
@@ -229,7 +239,9 @@ root = "."
 agent_dir = ".agent"
 """
         (project / ".agent" / "project_manifest.toml").write_text(manifest_content)
-        (project / ".agent" / ".version_manifest.json").write_text('{"agent_core_version": "8.0.0"}')
+        (project / ".agent" / ".version_manifest.json").write_text(
+            '{"agent_core_version": "8.0.0"}'
+        )
 
         manager = LegacyMigrationManager(str(project))
         result = manager.confirm_migrate()
@@ -300,7 +312,9 @@ agent_dir = ".agent"
         project.mkdir()
         (project / ".agent").mkdir()
         (project / ".agent" / "agent_controller.py").write_text("#")  # .agent exists
-        (project / ".nonexistent").mkdir()  # Declared alternative also exists, making drift ambiguous
+        (
+            project / ".nonexistent"
+        ).mkdir()  # Declared alternative also exists, making drift ambiguous
 
         # Create manifest with wrong agent_dir and two plausible paths
         manifest_content = """

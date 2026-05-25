@@ -1,4 +1,4 @@
-﻿"""
+"""
 Test para detectar referencias obsoletas en documentacion operativa ACTIVA
 Evita que vuelvan comandos antiguos que ya no existen en v5
 
@@ -16,6 +16,7 @@ import re
 from pathlib import Path
 
 import pytest
+
 
 ROOT = Path(__file__).parent.parent
 AGENT_DIR = ROOT / ".agent"
@@ -95,10 +96,11 @@ def test_required_commands_are_present_in_readme():
     readme_path = AGENT_DIR / "README.md"
     readme_content = readme_path.read_text(encoding="utf-8")
 
-    missing = []
-    for pattern in REQUIRED_COMMANDS:
-        if not re.search(pattern, readme_content):
-            missing.append(pattern)
+    missing = [
+        pattern
+        for pattern in REQUIRED_COMMANDS
+        if not re.search(pattern, readme_content)
+    ]
 
     assert len(missing) == 0, f"Comandos actuales faltantes en README: {missing}"
 

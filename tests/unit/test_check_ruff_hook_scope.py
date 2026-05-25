@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from scripts.check_ruff_hook_scope import check_pre_commit_config
 
+
 VALID_CONFIG = """
 repos:
   - repo: local

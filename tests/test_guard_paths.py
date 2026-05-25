@@ -1,9 +1,10 @@
-﻿"""Tests for guard_paths core logic."""
+"""Tests for guard_paths core logic."""
 
 import json
-import sys
 import os
+import sys
 from pathlib import Path
+
 
 # Add .agent to path for imports
 agent_dir = Path(__file__).parent.parent / ".agent"
@@ -11,12 +12,12 @@ if str(agent_dir) not in sys.path:
     sys.path.insert(0, str(agent_dir))
 
 from hooks.guard_paths import (  # noqa: E402
+    DEFAULT_ALLOWLIST,
+    _is_blocked_command,
+    _is_protected_path,
     _normalize,
     _read_json,
     _tool_paths,
-    _is_protected_path,
-    _is_blocked_command,
-    DEFAULT_ALLOWLIST,
 )
 
 
@@ -118,7 +119,12 @@ class TestIsProtectedPath:
         assert "archivo protegido" in reason
 
     def test_additional_protected_filenames_blocked(self):
-        protected_files = [".env.local", ".env.production", "secrets.json", "credentials.json"]
+        protected_files = [
+            ".env.local",
+            ".env.production",
+            "secrets.json",
+            "credentials.json",
+        ]
         for filename in protected_files:
             filepath = self.repo_root / filename
             filepath.write_text("content")
@@ -185,11 +191,11 @@ class TestIsBlockedCommand:
         assert "bloqueado" in reason.lower()
 
     def test_blocked_git_push_force(self):
-        blocked, reason = _is_blocked_command("git push --force origin main", {})
+        blocked, _ = _is_blocked_command("git push --force origin main", {})
         assert blocked is True
 
     def test_blocked_git_reset_hard(self):
-        blocked, reason = _is_blocked_command("git reset --hard", {})
+        blocked, _ = _is_blocked_command("git reset --hard", {})
         assert blocked is True
 
     def test_blocked_token_references(self):
@@ -197,7 +203,7 @@ class TestIsBlockedCommand:
             "echo sk-ant-api03-token123",
             "cat api_key.txt",
             "grep password file.txt",
-            "sed 's/bearer.*//' config.json"
+            "sed 's/bearer.*//' config.json",
         ]
         for cmd in blocked_commands:
             blocked, reason = _is_blocked_command(cmd, {})
@@ -210,7 +216,7 @@ class TestIsBlockedCommand:
             "mkfs.ext4 /dev/sdb",
             "fdisk /dev/sdc",
             "format c:",
-            "del /f /s /q *"
+            "del /f /s /q *",
         ]
         for cmd in destructive_cmds:
             blocked, reason = _is_blocked_command(cmd, {})

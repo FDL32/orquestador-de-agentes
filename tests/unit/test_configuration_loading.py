@@ -1,17 +1,15 @@
-﻿"""
+"""
 Tests for scripts/validate_agent_config.py â€” configuration loading functions.
 
 Covers: allowlist/denylist loading from JSON, fallback to defaults, invalid JSON handling.
 """
 
 import json
-from pathlib import Path
-import pytest
+
 from scripts.validate_agent_config import (
+    DEFAULT_ALLOWLIST,
     load_allowlist,
     load_denylist,
-    DEFAULT_ALLOWLIST,
-    DEFAULT_DENYLIST,
 )
 
 
@@ -22,7 +20,7 @@ class TestAllowlistLoading:
         """Test loading a valid allowlist file."""
         allow_data = {
             "write_roots": ["src/", "tests/"],
-            "protected_paths": ["privada/"]
+            "protected_paths": ["privada/"],
         }
         allow_file = tmp_path / ".agent_allowlist.json"
         allow_file.write_text(json.dumps(allow_data), encoding="utf-8")
@@ -53,10 +51,7 @@ class TestDenylistLoading:
 
     def test_load_denylist_success(self, tmp_path, monkeypatch):
         """Test loading a valid denylist file."""
-        deny_data = {
-            "blocked_patterns": ["^secret/.*"],
-            "blocked_commands": ["rm -rf"]
-        }
+        deny_data = {"blocked_patterns": ["^secret/.*"], "blocked_commands": ["rm -rf"]}
         deny_file = tmp_path / ".agent_denylist.json"
         deny_file.write_text(json.dumps(deny_data), encoding="utf-8")
         monkeypatch.chdir(tmp_path)
@@ -73,7 +68,9 @@ class TestConfigurationValidation:
     def test_configuration_validation_logic(self, tmp_path, monkeypatch):
         """Test configuration loading in isolation."""
         allow = {"write_roots": ["src/"], "protected_paths": ["privada/"]}
-        (tmp_path / ".agent_allowlist.json").write_text(json.dumps(allow), encoding="utf-8")
+        (tmp_path / ".agent_allowlist.json").write_text(
+            json.dumps(allow), encoding="utf-8"
+        )
         monkeypatch.chdir(tmp_path)
 
         assert load_allowlist()["write_roots"] == ["src/"]

@@ -33,9 +33,14 @@ def test_launcher_strict_launch_parameter() -> None:
 def test_launcher_reports_per_window() -> None:
     content = SCRIPT_PATH.read_text(encoding="utf-8")
 
-    assert 'Write-Host "Supervisor: lanzado con ticket_supervisor.py --reactive"' in content
+    assert (
+        'Write-Host "Supervisor: lanzado con ticket_supervisor.py --reactive"'
+        in content
+    )
     assert 'Write-Host "Review Bridge: lanzado' in content
-    assert 'Write-Host "Arranque terminal-driven completado para $ProjectRoot"' in content
+    assert (
+        'Write-Host "Arranque terminal-driven completado para $ProjectRoot"' in content
+    )
 
 
 def test_launcher_cleans_previous_project_sessions() -> None:
@@ -45,7 +50,10 @@ def test_launcher_cleans_previous_project_sessions() -> None:
     assert "manager_review_bridge\\.py" in content
     assert "kilo\\.exe\\s+run\\s+--auto" in content
     assert "builder_lock\\.txt" in content
-    assert "Limpieza previa: sesiones viejas del proyecto cerradas antes del nuevo arranque" in content
+    assert (
+        "Limpieza previa: sesiones viejas del proyecto cerradas antes del nuevo arranque"
+        in content
+    )
 
 
 def test_launcher_uses_startup_templates() -> None:
@@ -62,8 +70,9 @@ def test_launcher_uses_startup_templates() -> None:
 
     # Check that manager_legacy template exists and contains variables
     from pathlib import Path
-    PROJECT_ROOT = Path(__file__).resolve().parents[1]
-    manager_template = PROJECT_ROOT / "templates" / "startup" / "manager_legacy.md"
+
+    project_root = Path(__file__).resolve().parents[1]
+    manager_template = project_root / "templates" / "startup" / "manager_legacy.md"
     assert manager_template.exists()
     manager_content = manager_template.read_text(encoding="utf-8")
     assert "{{ticket_id}}" in manager_content
@@ -84,7 +93,7 @@ def test_launcher_multi_root_precedence() -> None:
     assert "motor_destination_link.json" in content
     assert "destination_root" in content
 
-    # Precedencia: --project-root > AGENT_PROJECT_ROOT > motor_destination_link.json > fallback
+    # Precedencia: --project-root > AGENT_PROJECT_ROOT > motor_destination_link.json > fallback  # noqa: ERA001
     assert "AGENT_PROJECT_ROOT" in content
     assert "GetEnvironmentVariable('AGENT_PROJECT_ROOT')" in content
 

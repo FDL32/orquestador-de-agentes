@@ -1,4 +1,4 @@
-﻿"""
+"""
 Tests for scripts/upgrade_agent_system.py (UpgradeManager)
 
 Covers: three-way merge, timestamped backups, customization detection,
@@ -62,8 +62,10 @@ class TestUpgradeBackup:
         manager = UpgradeManager(str(project), str(source))
 
         # Mock shutil to avoid actual file copies
-        with patch('scripts.upgrade.shutil.copytree') as mock_copytree, \
-             patch('scripts.upgrade.shutil.copy2') as mock_copy2:
+        with (
+            patch("scripts.upgrade.shutil.copytree") as mock_copytree,
+            patch("scripts.upgrade.shutil.copy2") as mock_copy2,
+        ):
             backup_path = manager.backup_current_state()
 
         # Backup directory should have been created
@@ -85,7 +87,7 @@ class TestUpgradeBackup:
         critical_paths = UpgradeManager.CRITICAL_PATHS
         for cp in critical_paths:
             full = project / cp
-            if cp.endswith('/'):
+            if cp.endswith("/"):
                 full.mkdir(parents=True, exist_ok=True)
                 (full / "file.txt").write_text(f"content in {cp}")
             else:
@@ -97,8 +99,10 @@ class TestUpgradeBackup:
 
         manager = UpgradeManager(str(project), str(source))
 
-        with patch('scripts.upgrade.shutil.copytree') as mock_copytree, \
-             patch('scripts.upgrade.shutil.copy2') as mock_copy2:
+        with (
+            patch("scripts.upgrade.shutil.copytree") as mock_copytree,
+            patch("scripts.upgrade.shutil.copy2") as mock_copy2,
+        ):
             manager.backup_current_state()
 
         total_calls = mock_copytree.call_count + mock_copy2.call_count
@@ -120,12 +124,14 @@ class TestUpgradeBackup:
 
         manager = UpgradeManager(str(project), str(source))
 
-        with patch('scripts.upgrade_agent_system.datetime') as mock_dt:
+        with patch("scripts.upgrade_agent_system.datetime") as mock_dt:
             dt1 = real_datetime(2026, 4, 27, 12, 0, 1)
             dt2 = real_datetime(2026, 4, 27, 12, 0, 2)
             mock_dt.now.side_effect = [dt1, dt2]
-            with patch('scripts.upgrade.shutil.copytree'), \
-                 patch('scripts.upgrade.shutil.copy2'):
+            with (
+                patch("scripts.upgrade.shutil.copytree"),
+                patch("scripts.upgrade.shutil.copy2"),
+            ):
                 backup1 = manager.backup_current_state()
                 backup2 = manager.backup_current_state()
 
@@ -146,7 +152,9 @@ class TestUpgradeMerge:
 
         (project / ".agent" / "rules").mkdir(parents=True)
         (project / ".agent" / "agent_controller.py").write_text("#")
-        (project / ".agent" / "rules" / "custom_rule.md").write_text("local customization")
+        (project / ".agent" / "rules" / "custom_rule.md").write_text(
+            "local customization"
+        )
         (source / ".agent" / "rules").mkdir(parents=True)
         (source / ".agent" / "rules" / "new_rule.md").write_text("upstream addition")
 
@@ -206,12 +214,15 @@ class TestUpgradeFailureHandling:
 
         manager = UpgradeManager(str(project), str(source))
 
-        with patch.object(manager, "verify_upgrade", return_value=(False, {})), patch.object(
-            manager,
-            "backup_current_state",
-            return_value=project / ".agent" / "backups" / "test_backup",
-        ), patch("scripts.upgrade.shutil.copytree"), patch(
-            "scripts.upgrade.shutil.copy2"
+        with (
+            patch.object(manager, "verify_upgrade", return_value=(False, {})),
+            patch.object(
+                manager,
+                "backup_current_state",
+                return_value=project / ".agent" / "backups" / "test_backup",
+            ),
+            patch("scripts.upgrade.shutil.copytree"),
+            patch("scripts.upgrade.shutil.copy2"),
         ):
             result = manager.run_upgrade(dry_run=False)
 
@@ -342,15 +353,19 @@ version = "v8.x"
             "agent_core_version": "v8.x",
             "template_version": "1.0.0",
             "status": "canonical",
-            "confidence": "high"
+            "confidence": "high",
         }
-        (project / ".agent" / ".version_manifest.json").write_text(json.dumps(version_manifest))
+        (project / ".agent" / ".version_manifest.json").write_text(
+            json.dumps(version_manifest)
+        )
 
         manager = UpgradeManager(str(project), str(source))
 
-        with patch.object(manager, 'backup_current_state'), \
-             patch.object(manager, 'merge_changes', return_value={}), \
-             patch.object(manager, 'verify_upgrade', return_value=(True, {})):
+        with (
+            patch.object(manager, "backup_current_state"),
+            patch.object(manager, "merge_changes", return_value={}),
+            patch.object(manager, "verify_upgrade", return_value=(True, {})),
+        ):
             result = manager.run_upgrade(dry_run=False)
 
         assert result["status"] == "COMPLETED"
@@ -388,34 +403,43 @@ agent_dir = ".agent"
             "components": {
                 "agent_controller": "1.0.0",
                 "hooks": "1.0.0",
-                "rules": "1.0.0"
+                "rules": "1.0.0",
             },
             "markers_validated": True,
-            "drift_detected": False
+            "drift_detected": False,
         }
-        (project / ".agent" / ".version_manifest.json").write_text(json.dumps(initial_version))
+        (project / ".agent" / ".version_manifest.json").write_text(
+            json.dumps(initial_version)
+        )
 
         manager = UpgradeManager(str(project), str(source))
 
         # Mock upgrade process
-        with patch.object(manager, 'backup_current_state'), \
-             patch.object(manager, 'merge_changes', return_value={}), \
-             patch.object(manager, 'verify_upgrade', return_value=(True, {})):
+        with (
+            patch.object(manager, "backup_current_state"),
+            patch.object(manager, "merge_changes", return_value={}),
+            patch.object(manager, "verify_upgrade", return_value=(True, {})),
+        ):
             result = manager.run_upgrade(dry_run=False)
 
         assert result["status"] == "COMPLETED"
 
         # Verify the written manifest follows the contract
-        written_manifest = json.loads((project / ".agent" / ".version_manifest.json").read_text())
+        written_manifest = json.loads(
+            (project / ".agent" / ".version_manifest.json").read_text()
+        )
         assert "agent_core_version" in written_manifest
         assert "status" in written_manifest
         assert "confidence" in written_manifest
-        assert written_manifest["agent_core_version"] == "v9.6"  # Target version in upgrade path
+        assert (
+            written_manifest["agent_core_version"] == "v9.6"
+        )  # Target version in upgrade path
         assert written_manifest["status"] == "upgraded"
         assert written_manifest["confidence"] == "high"
 
         # Verify detect_version.py can still read it correctly
         from scripts.detect_version import AgentSystemDetector
+
         detector = AgentSystemDetector(str(project))
         detection = detector.detect_version()
 
@@ -455,22 +479,27 @@ agent_dir = ".agent"
             "agent_core_version": "v8.x",
             "status": "canonical",
             "confidence": "high",
-            "detected_date": "2026-01-01T00:00:00"  # Old date
+            "detected_date": "2026-01-01T00:00:00",  # Old date
         }
-        (project / ".agent" / ".version_manifest.json").write_text(json.dumps(initial_version))
+        (project / ".agent" / ".version_manifest.json").write_text(
+            json.dumps(initial_version)
+        )
 
         manager = UpgradeManager(str(project), str(source))
 
         # Before upgrade, file should be detected as modified (newer than detected_date)
         import time
+
         time.sleep(0.1)  # Ensure file timestamp is newer
         changes_before = manager.detect_local_changes()
         assert "CLAUDE.md" in changes_before["modified"]
 
         # Perform upgrade (mock the process)
-        with patch.object(manager, 'backup_current_state'), \
-             patch.object(manager, 'merge_changes', return_value={}), \
-             patch.object(manager, 'verify_upgrade', return_value=(True, {})):
+        with (
+            patch.object(manager, "backup_current_state"),
+            patch.object(manager, "merge_changes", return_value={}),
+            patch.object(manager, "verify_upgrade", return_value=(True, {})),
+        ):
             result = manager.run_upgrade(dry_run=False)
 
         assert result["status"] == "COMPLETED"
@@ -563,7 +592,9 @@ version = "1.0.0"
         assert result["status"] == "BLOCKED"
         assert "Reparable drift detected" in result["message"]
         assert "drift_details" in result
-        assert any("partial manifests" in detail.lower() for detail in result["drift_details"])
+        assert any(
+            "partial manifests" in detail.lower() for detail in result["drift_details"]
+        )
 
     def test_upgrade_allows_drift_dry_run(self, tmp_path):
         """Test that --dry-run allows preview even with drift."""
@@ -614,14 +645,22 @@ agent_dir = ".agent"
 """
         (project / ".agent" / "project_manifest.toml").write_text(manifest_content)
 
-        version_content = {"agent_core_version": "v8.x", "status": "canonical", "confidence": "high"}
-        (project / ".agent" / ".version_manifest.json").write_text(json.dumps(version_content))
+        version_content = {
+            "agent_core_version": "v8.x",
+            "status": "canonical",
+            "confidence": "high",
+        }
+        (project / ".agent" / ".version_manifest.json").write_text(
+            json.dumps(version_content)
+        )
 
         manager = UpgradeManager(str(project), str(source))
 
-        with patch.object(manager, 'backup_current_state'), \
-             patch.object(manager, 'merge_changes', return_value={}), \
-             patch.object(manager, 'verify_upgrade', return_value=(True, {})):
+        with (
+            patch.object(manager, "backup_current_state"),
+            patch.object(manager, "merge_changes", return_value={}),
+            patch.object(manager, "verify_upgrade", return_value=(True, {})),
+        ):
             result = manager.run_upgrade(dry_run=False)
 
         assert result["status"] == "COMPLETED"

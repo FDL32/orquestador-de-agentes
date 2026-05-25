@@ -6,10 +6,11 @@ preventing drift like the incident on 2026-05-16 where local hooks used
 `pip-audit .` (reduced scope) while CI ran `pip-audit` (full environment).
 """
 
-import pytest
-import yaml
 from pathlib import Path
 from typing import Any
+
+import pytest
+import yaml
 
 
 def get_repo_root() -> Path:
@@ -19,7 +20,7 @@ def get_repo_root() -> Path:
 
 def load_yaml_file(path: Path) -> dict[str, Any]:
     """Load and parse a YAML file."""
-    with open(path, 'r', encoding='utf-8') as f:
+    with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
@@ -32,12 +33,12 @@ def extract_pip_audit_command_from_precommit(config: dict[str, Any]) -> str | No
     Returns:
         The entry command string for pip-audit hook, or None if not found.
     """
-    repos = config.get('repos', [])
+    repos = config.get("repos", [])
     for repo in repos:
-        hooks = repo.get('hooks', [])
+        hooks = repo.get("hooks", [])
         for hook in hooks:
-            if hook.get('id') == 'pip-audit':
-                return hook.get('entry')
+            if hook.get("id") == "pip-audit":
+                return hook.get("entry")
     return None
 
 
@@ -50,13 +51,13 @@ def extract_precommit_execution_from_ci(config: dict[str, Any]) -> str | None:
     Returns:
         The pre-commit run command, or None if not found.
     """
-    jobs = config.get('jobs', {})
-    for job_name, job_data in jobs.items():
-        steps = job_data.get('steps', [])
+    jobs = config.get("jobs", {})
+    for job_data in jobs.values():
+        steps = job_data.get("steps", [])
         for step in steps:
-            run_cmd = step.get('run', '')
+            run_cmd = step.get("run", "")
             # Look for pre-commit run command
-            if 'pre-commit run' in run_cmd:
+            if "pre-commit run" in run_cmd:
                 return run_cmd.strip()
     return None
 
@@ -84,21 +85,21 @@ class TestHookCIAlignment:
     def precommit_config(self) -> dict[str, Any]:
         """Load pre-commit configuration."""
         repo_root = get_repo_root()
-        return load_yaml_file(repo_root / '.pre-commit-config.yaml')
+        return load_yaml_file(repo_root / ".pre-commit-config.yaml")
 
     @pytest.fixture
     def ci_config(self) -> dict[str, Any]:
         """Load CI security audit workflow."""
         repo_root = get_repo_root()
         return load_yaml_file(
-            repo_root / '.github' / 'workflows' / 'security-audit.yml'
+            repo_root / ".github" / "workflows" / "security-audit.yml"
         )
 
     def test_pip_audit_hook_exists(self, precommit_config: dict[str, Any]):
         """Verify pip-audit hook is defined in pre-commit config."""
         entry = extract_pip_audit_command_from_precommit(precommit_config)
         assert entry is not None, "pip-audit hook not found in .pre-commit-config.yaml"
-        assert 'pip-audit' in entry
+        assert "pip-audit" in entry
 
     def test_ci_runs_precommit(self, ci_config: dict[str, Any]):
         """Verify CI runs pre-commit hooks (not pip-audit directly)."""
@@ -106,13 +107,13 @@ class TestHookCIAlignment:
         assert precommit_cmd is not None, (
             "CI does not run pre-commit; this breaks the delegate pattern"
         )
-        assert 'pre-commit run' in precommit_cmd
+        assert "pre-commit run" in precommit_cmd
 
     def test_ci_uses_prepush_stage(self, ci_config: dict[str, Any]):
         """Verify CI uses pre-push stage for pre-commit."""
         precommit_cmd = extract_precommit_execution_from_ci(ci_config)
         assert precommit_cmd is not None
-        assert '--hook-stage pre-push' in precommit_cmd, (
+        assert "--hook-stage pre-push" in precommit_cmd, (
             "CI should use --hook-stage pre-push to match hook configuration"
         )
 
@@ -130,12 +131,12 @@ class TestHookCIAlignment:
         tokens = normalize_command(entry)
         # The entry should be just "uv run pip-audit" without a trailing "."
         # A trailing "." would limit scope to current directory only
-        if '.' in tokens:
+        if "." in tokens:
             # Find position of pip-audit
             try:
-                pip_audit_idx = tokens.index('pip-audit')
+                pip_audit_idx = tokens.index("pip-audit")
                 # Check if next token is just "."
-                if pip_audit_idx + 1 < len(tokens) and tokens[pip_audit_idx + 1] == '.':
+                if pip_audit_idx + 1 < len(tokens) and tokens[pip_audit_idx + 1] == ".":
                     pytest.fail(
                         "pip-audit hook uses reduced scope '.' which differs from CI. "
                         "This was the cause of the 2026-05-16 CVE incident."
@@ -144,11 +145,13 @@ class TestHookCIAlignment:
                 pass  # pip-audit not found as separate token, might be in "uv run pip-audit"
 
         # Alternative check: the entry should not end with " ."
-        assert not entry.rstrip().endswith(' .'), (
+        assert not entry.rstrip().endswith(" ."), (
             "pip-audit entry ends with reduced scope indicator"
         )
 
-    def test_semantic_alignment(self, precommit_config: dict[str, Any], ci_config: dict[str, Any]):
+    def test_semantic_alignment(
+        self, precommit_config: dict[str, Any], ci_config: dict[str, Any]
+    ):
         """Verify semantic alignment between hook and CI.
 
         This test validates that:
@@ -159,17 +162,17 @@ class TestHookCIAlignment:
         # CI must delegate to pre-commit
         ci_precommit = extract_precommit_execution_from_ci(ci_config)
         assert ci_precommit is not None, "CI must delegate to pre-commit"
-        assert 'pre-commit run' in ci_precommit
+        assert "pre-commit run" in ci_precommit
 
         # Hook must define pip-audit
         hook_entry = extract_pip_audit_command_from_precommit(precommit_config)
         assert hook_entry is not None, "pip-audit hook must be defined"
-        assert 'pip-audit' in hook_entry
+        assert "pip-audit" in hook_entry
 
         # Hook must not use reduced scope
-        assert not hook_entry.rstrip().endswith(' .'), (
+        assert not hook_entry.rstrip().endswith(" ."), (
             "pip-audit must not use reduced scope '.'"
         )
 
         # CI must use pre-push stage
-        assert '--hook-stage pre-push' in ci_precommit
+        assert "--hook-stage pre-push" in ci_precommit

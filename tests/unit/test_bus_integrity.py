@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from bus.event_bus import EventBus
 
 
@@ -23,7 +22,7 @@ class TestAntiDuplicateEmit:
                 actor="BUILDER",
                 payload={"message": "test"},
             )
-            assert result is not None, f"Event {i+1} should have been emitted"
+            assert result is not None, f"Event {i + 1} should have been emitted"
 
         # Verify 3 events in bus
         events = bus.read_events()
@@ -120,7 +119,9 @@ class TestAntiDuplicateEmit:
         )
         assert result is not None
 
-    def test_different_event_type_resets_duplicate_counter(self, tmp_path: Path) -> None:
+    def test_different_event_type_resets_duplicate_counter(
+        self, tmp_path: Path
+    ) -> None:
         """Different event_type resets the duplicate counter."""
         bus = EventBus(tmp_path, max_consecutive_duplicates=3)
 
@@ -182,13 +183,15 @@ class TestAntiDuplicateEmit:
         bus = EventBus(tmp_path, max_consecutive_duplicates=3)
 
         # Emit A -> B -> A -> B -> A
-        for i in range(2):
+        for _ in range(2):
             bus.emit(event_type="EVENT_A", ticket_id="WP-001", actor="B", payload={})
             bus.emit(event_type="EVENT_B", ticket_id="WP-001", actor="B", payload={})
 
         # At this point: A, B, A, B are in the bus.
         # Emit the 3rd A
-        result = bus.emit(event_type="EVENT_A", ticket_id="WP-001", actor="B", payload={})
+        result = bus.emit(
+            event_type="EVENT_A", ticket_id="WP-001", actor="B", payload={}
+        )
         assert result is not None, "3rd A should be allowed (total in window: 3)"
 
         # At this point: A, B, A, B, A are in the bus.
@@ -197,11 +200,15 @@ class TestAntiDuplicateEmit:
 
         # At this point: A, B, A, B, A, B are in the bus.
         # Now the 4th A should be blocked even though it's interleaved
-        result = bus.emit(event_type="EVENT_A", ticket_id="WP-001", actor="B", payload={})
+        result = bus.emit(
+            event_type="EVENT_A", ticket_id="WP-001", actor="B", payload={}
+        )
         assert result is None, "4th interleaved A should be blocked"
 
         # Same for B
-        result = bus.emit(event_type="EVENT_B", ticket_id="WP-001", actor="B", payload={})
+        result = bus.emit(
+            event_type="EVENT_B", ticket_id="WP-001", actor="B", payload={}
+        )
         assert result is None, "4th interleaved B should be blocked"
 
     def test_configurable_max_consecutive_duplicates(self, tmp_path: Path) -> None:
@@ -216,7 +223,7 @@ class TestAntiDuplicateEmit:
                 actor="BUILDER",
                 payload={"message": "test"},
             )
-            assert result is not None, f"Event {i+1} should have been emitted"
+            assert result is not None, f"Event {i + 1} should have been emitted"
 
         # 6th should be blocked
         result = bus.emit(
@@ -251,10 +258,11 @@ class TestArchiveTicketEvents:
 
         # Verify archive contains WP-001 events
         archive_path = Path(result["archive_path"])
-        archive_events = []
-        for line in archive_path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                archive_events.append(json.loads(line))
+        archive_events = [
+            json.loads(line)
+            for line in archive_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
 
         assert len(archive_events) == 3
         assert all(e["ticket_id"] == "WP-001" for e in archive_events)
@@ -316,23 +324,36 @@ class TestArchiveTicketEvents:
         bus = EventBus(tmp_path)
 
         # Create events with known order
-        bus.emit(event_type="EVENT_1", ticket_id="WP-001", actor="BUILDER", payload={"seq": 1})
+        bus.emit(
+            event_type="EVENT_1",
+            ticket_id="WP-001",
+            actor="BUILDER",
+            payload={"seq": 1},
+        )
         bus.emit(event_type="EVENT_2", ticket_id="WP-002", actor="BUILDER", payload={})
-        bus.emit(event_type="EVENT_3", ticket_id="WP-001", actor="BUILDER", payload={"seq": 3})
+        bus.emit(
+            event_type="EVENT_3",
+            ticket_id="WP-001",
+            actor="BUILDER",
+            payload={"seq": 3},
+        )
 
         result = bus.archive_ticket_events("WP-001")
 
         # Read archive and verify order
         archive_path = Path(result["archive_path"])
-        archive_events = []
-        for line in archive_path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                archive_events.append(json.loads(line))
+        archive_events = [
+            json.loads(line)
+            for line in archive_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
 
         assert len(archive_events) == 2
         assert archive_events[0]["payload"]["seq"] == 1
         assert archive_events[1]["payload"]["seq"] == 3
-        assert archive_events[0]["sequence_number"] < archive_events[1]["sequence_number"]
+        assert (
+            archive_events[0]["sequence_number"] < archive_events[1]["sequence_number"]
+        )
 
 
 class TestBlockedEmitObservability:
@@ -364,10 +385,11 @@ class TestBlockedEmitObservability:
         assert log_path.exists(), "Block log file should be created"
 
         # Read and verify log entry
-        log_entries = []
-        for line in log_path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                log_entries.append(json.loads(line))
+        log_entries = [
+            json.loads(line)
+            for line in log_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
 
         assert len(log_entries) == 1, "Should have 1 blocked entry"
         entry = log_entries[0]
@@ -406,10 +428,11 @@ class TestBlockedEmitObservability:
         log_path = tmp_path / "logs" / "event_bus_blocks.jsonl"
         assert log_path.exists()
 
-        log_entries = []
-        for line in log_path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                log_entries.append(json.loads(line))
+        log_entries = [
+            json.loads(line)
+            for line in log_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
 
         assert len(log_entries) == 5, "Should have 5 blocked entries"
 
@@ -417,7 +440,9 @@ class TestBlockedEmitObservability:
         for i, entry in enumerate(log_entries, start=1):
             assert entry["session_block_number"] == i
 
-    def test_stderr_rate_limiting(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    def test_stderr_rate_limiting(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
         """Stderr output is rate-limited to STDERR_BLOCK_LIMIT messages."""
         bus = EventBus(tmp_path, max_consecutive_duplicates=3)
 
@@ -445,7 +470,9 @@ class TestBlockedEmitObservability:
 
         # Should have STDERR_BLOCK_LIMIT (5) individual warnings + 1 suppression warning
         # Total = 6 lines
-        assert len(stderr_lines) == 6, f"Expected 6 stderr lines, got {len(stderr_lines)}"
+        assert len(stderr_lines) == 6, (
+            f"Expected 6 stderr lines, got {len(stderr_lines)}"
+        )
 
         # First 5 should be individual block warnings
         for i in range(5):
@@ -473,10 +500,11 @@ class TestBlockedEmitObservability:
 
         # Log should have 4 entries (2 + 2)
         log_path = tmp_path / "logs" / "event_bus_blocks.jsonl"
-        log_entries = []
-        for line in log_path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                log_entries.append(json.loads(line))
+        log_entries = [
+            json.loads(line)
+            for line in log_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
 
         assert len(log_entries) == 4
         # Verify both event types are present

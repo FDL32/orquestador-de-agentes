@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
 from bus.redact import redact, redact_payload
 
 
@@ -30,7 +28,10 @@ def test_redact_email():
 
 def test_redact_windows_user_path():
     text = r"Project located at C:\Users\fdl\Proyectos_Python\z_scripts"
-    assert redact(text) == r"Project located at C:\Users\***REDACTED***\Proyectos_Python\z_scripts"
+    assert (
+        redact(text)
+        == r"Project located at C:\Users\***REDACTED***\Proyectos_Python\z_scripts"
+    )
 
     # Forward slash variant
     text_slash = "Path: c:/users/fdl/some_dir"

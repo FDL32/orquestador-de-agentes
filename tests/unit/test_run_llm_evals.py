@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = PROJECT_ROOT / "scripts" / "run_llm_evals.py"
 CONFIG_PATH = PROJECT_ROOT / ".agent" / "runtime" / "llm_evals_config.json"
@@ -15,7 +16,9 @@ CONFIG_PATH = PROJECT_ROOT / ".agent" / "runtime" / "llm_evals_config.json"
 @pytest.fixture
 def restore_config():
     """Restore the committed config after tests that mutate it."""
-    original_text = CONFIG_PATH.read_text(encoding="utf-8") if CONFIG_PATH.exists() else None
+    original_text = (
+        CONFIG_PATH.read_text(encoding="utf-8") if CONFIG_PATH.exists() else None
+    )
     yield
     if original_text is None:
         if CONFIG_PATH.exists():

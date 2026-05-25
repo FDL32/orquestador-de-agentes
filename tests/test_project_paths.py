@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 Unit tests for project_paths.py
 """
@@ -59,7 +59,9 @@ def _hide_repo_agent_dir():
         yield
         return
 
-    backup_dir = REPO_AGENT_DIR.with_name(f".agent.__hidden_for_tests__{uuid.uuid4().hex}")
+    backup_dir = REPO_AGENT_DIR.with_name(
+        f".agent.__hidden_for_tests__{uuid.uuid4().hex}"
+    )
     REPO_AGENT_DIR.rename(backup_dir)
     try:
         yield
@@ -105,7 +107,9 @@ class TestProjectPathsResolver:
         """Test canonical .agent resolution when only manifests exist."""
         agent_dir = tmp_path / ".agent"
         agent_dir.mkdir(parents=True, exist_ok=True)
-        (agent_dir / "project_manifest.toml").write_text("[project]\nid = 'demo'\nversion = '1.0.0'\n")
+        (agent_dir / "project_manifest.toml").write_text(
+            "[project]\nid = 'demo'\nversion = '1.0.0'\n"
+        )
         (agent_dir / ".version_manifest.json").write_text(
             '{"agent_core_version": "1.0.0", "status": "canonical", "confidence": "high", "last_updated": "2026-05-13T10:00:00+02:00", "components": {"agent_controller": "1.0.0", "hooks": "1.0.0", "rules": "1.0.0"}, "markers_validated": true, "drift_detected": false}'
         )
@@ -204,7 +208,15 @@ class TestProjectPathsResolver:
         agent_dir = _make_agent_dir(tmp_path)
 
         deep_subdir = tmp_path
-        for part in ("level1", "level2", "level3", "level4", "level5", "level6", "level7"):
+        for part in (
+            "level1",
+            "level2",
+            "level3",
+            "level4",
+            "level5",
+            "level6",
+            "level7",
+        ):
             deep_subdir = deep_subdir / part
         deep_subdir.mkdir(parents=True)
 

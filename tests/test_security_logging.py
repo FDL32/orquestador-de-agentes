@@ -1,7 +1,8 @@
-﻿"""Tests for security logging in guard_paths.py."""
+"""Tests for security logging in guard_paths.py."""
 
 import sys
 from pathlib import Path
+
 
 # Add .agent to path for imports
 agent_dir = Path(__file__).parent.parent / ".agent"
@@ -25,11 +26,11 @@ def _cleanup_log():
 
 
 class TestSecurityLogging:
-    def setup_class(cls):
+    def setup_class(self):
         """Ensure test log directory exists before all tests."""
         _ensure_test_log_dir()
 
-    def teardown_class(cls):
+    def teardown_class(self):
         """Remove test log after all tests."""
         _cleanup_log()
 

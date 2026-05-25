@@ -90,11 +90,13 @@ def tmp_path_factory() -> ProjectTmpPathFactory:
 
 
 @pytest.fixture
-def tmp_path(tmp_path_factory: ProjectTmpPathFactory, request: pytest.FixtureRequest) -> Path:
+def tmp_path(
+    tmp_path_factory: ProjectTmpPathFactory, request: pytest.FixtureRequest
+) -> Path:
     """Project-local tmp_path fixture."""
     return tmp_path_factory.mktemp(request.node.name, numbered=True)
 
 
-def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:  # noqa: ARG001
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     """Remove the session runtime once pytest finishes."""
     shutil.rmtree(SESSION_RUNTIME_ROOT, ignore_errors=True)

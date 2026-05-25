@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 spec = importlib.util.spec_from_file_location(
     "run_gates_dispatch",
@@ -30,7 +31,9 @@ def test_read_deliverable_type_missing_fallback(tmp_path, monkeypatch, capsys):
 
 def test_read_deliverable_type_compound_treated_as_mixed(tmp_path, monkeypatch):
     fake_plan = tmp_path / "work_plan.md"
-    fake_plan.write_text("- **deliverable_type:** code+documentation\n", encoding="utf-8")
+    fake_plan.write_text(
+        "- **deliverable_type:** code+documentation\n", encoding="utf-8"
+    )
     monkeypatch.setattr(dispatch, "WORK_PLAN", fake_plan)
     assert dispatch.read_deliverable_type() == "mixed"
 

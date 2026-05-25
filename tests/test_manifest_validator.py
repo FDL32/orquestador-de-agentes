@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 Unit tests for manifest_validator.py
 """
@@ -39,16 +39,19 @@ class TestManifestValidator:
     def test_validate_version_manifest_missing(self, tmp_path):
         """Test validation when .version_manifest.json is missing."""
         validator = ManifestValidator(tmp_path)
-        is_valid, msgs = validator.validate_manifests()
+        _, msgs = validator.validate_manifests()
         assert any(".version_manifest.json not found" in msg for msg in msgs)
 
     def test_validate_project_manifest_valid(self, tmp_path):
         """Test validation of valid project_manifest.toml."""
-        _write_project_manifest(tmp_path, """
+        _write_project_manifest(
+            tmp_path,
+            """
 [project]
 id = "test_project"
 version = "1.0.0"
-""")
+""",
+        )
 
         validator = ManifestValidator(tmp_path)
         is_valid, msgs = validator.validate_manifests()
@@ -62,10 +65,13 @@ version = "1.0.0"
 
     def test_validate_project_manifest_invalid_structure(self, tmp_path):
         """Test validation of invalid project_manifest.toml."""
-        _write_project_manifest(tmp_path, """
+        _write_project_manifest(
+            tmp_path,
+            """
 [wrong_section]
 id = "test"
-""")
+""",
+        )
 
         validator = ManifestValidator(tmp_path)
         valid, msgs = validator._validate_project_manifest()
@@ -74,12 +80,15 @@ id = "test"
 
     def test_validate_version_manifest_valid(self, tmp_path):
         """Test validation of valid .version_manifest.json."""
-        _write_version_manifest(tmp_path, {
+        _write_version_manifest(
+            tmp_path,
+            {
                 "version": "1.0.0",
                 "agent_core_version": "9.2.1+",
                 "status": "canonical",
-                "confidence": "high"
-            })
+                "confidence": "high",
+            },
+        )
 
         validator = ManifestValidator(tmp_path)
         valid, msgs = validator._validate_version_manifest()
@@ -88,12 +97,15 @@ id = "test"
 
     def test_validate_version_manifest_invalid_type(self, tmp_path):
         """Test validation of .version_manifest.json with wrong type."""
-        _write_version_manifest(tmp_path, {
+        _write_version_manifest(
+            tmp_path,
+            {
                 "version": 1.0,  # Should be str
                 "agent_core_version": "9.2.1+",
                 "status": "canonical",
-                "confidence": "high"
-            })
+                "confidence": "high",
+            },
+        )
 
         validator = ManifestValidator(tmp_path)
         valid, msgs = validator._validate_version_manifest()
@@ -102,32 +114,41 @@ id = "test"
 
     def test_legacy_version_alias_warning(self, tmp_path):
         """Test warning for legacy version alias in project manifest."""
-        _write_project_manifest(tmp_path, """
+        _write_project_manifest(
+            tmp_path,
+            """
 version = "legacy_version"
 
 [project]
 id = "test_project"
 version = "1.0.0"
-""")
+""",
+        )
 
         validator = ManifestValidator(tmp_path)
-        valid, msgs = validator._validate_project_manifest()
+        _, msgs = validator._validate_project_manifest()
         assert any("Legacy 'version' field present" in msg for msg in msgs)
 
     def test_load_validated_manifests(self, tmp_path):
         """Test loading validated manifests."""
-        _write_project_manifest(tmp_path, """
+        _write_project_manifest(
+            tmp_path,
+            """
 [project]
 id = "test_project"
 version = "1.0.0"
-""")
+""",
+        )
 
-        _write_version_manifest(tmp_path, {
+        _write_version_manifest(
+            tmp_path,
+            {
                 "version": "1.0.0",
                 "agent_core_version": "1.0.0",
                 "status": "canonical",
-                "confidence": "high"
-            })
+                "confidence": "high",
+            },
+        )
 
         validator = ManifestValidator(tmp_path)
         proj, ver, warnings = validator.load_validated_manifests()
@@ -140,18 +161,24 @@ version = "1.0.0"
 
     def test_check_legacy_version_conflicts(self, tmp_path):
         """Test checking for conflicts between legacy version and agent_core_version."""
-        _write_project_manifest(tmp_path, """
+        _write_project_manifest(
+            tmp_path,
+            """
 [project]
 id = "test_project"
 version = "1.0.0"
-""")
+""",
+        )
 
-        _write_version_manifest(tmp_path, {
+        _write_version_manifest(
+            tmp_path,
+            {
                 "version": "1.0.0",
                 "agent_core_version": "1.0.0",
                 "status": "canonical",
-                "confidence": "high"
-            })
+                "confidence": "high",
+            },
+        )
 
         validator = ManifestValidator(tmp_path)
         warnings = validator._check_legacy_version_conflicts()
@@ -160,11 +187,14 @@ version = "1.0.0"
 
     def test_validate_version_manifest_without_legacy_version(self, tmp_path):
         """Test validation of .version_manifest.json without legacy version field."""
-        _write_version_manifest(tmp_path, {
+        _write_version_manifest(
+            tmp_path,
+            {
                 "agent_core_version": "9.2.1+",
                 "status": "canonical",
-                "confidence": "high"
-            })
+                "confidence": "high",
+            },
+        )
 
         validator = ManifestValidator(tmp_path)
         valid, msgs = validator._validate_version_manifest()

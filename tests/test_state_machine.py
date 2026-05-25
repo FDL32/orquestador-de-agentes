@@ -1,4 +1,5 @@
 """Tests for bus/state_machine.py - WP-2026-112 HUMAN_GATE enforcement."""
+
 from __future__ import annotations
 
 from bus.state_machine import StateMachine, TicketState
@@ -91,6 +92,7 @@ def test_derive_state_from_close_confirmed_after_review_decision():
 
 # WP-2026-112: HUMAN_GATE transition validation tests
 # These tests document the expected behavior that the EventBus enforces
+
 
 def test_human_gate_is_valid_ticket_state():
     """HUMAN_GATE is a valid TicketState that can be derived from events."""

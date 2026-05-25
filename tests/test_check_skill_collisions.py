@@ -48,7 +48,12 @@ def test_name_collision_detected(tmp_path: Path) -> None:
     _write_skill(tmp_path, "b", declared_name="Audit", triggers=["/y"])
     names, _ = scan_skills(tmp_path)
     duplicates = {name: paths for name, paths in names.items() if len(paths) > 1}
-    assert duplicates == {"Audit": [tmp_path / "skills" / "a" / "SKILL.md", tmp_path / "skills" / "b" / "SKILL.md"]}
+    assert duplicates == {
+        "Audit": [
+            tmp_path / "skills" / "a" / "SKILL.md",
+            tmp_path / "skills" / "b" / "SKILL.md",
+        ]
+    }
 
 
 def test_file_without_frontmatter_skipped(tmp_path: Path) -> None:
@@ -83,4 +88,7 @@ def test_host_and_bundle_trigger_collision_detected(tmp_path: Path) -> None:
     assert len(names["Bundle"]) == 1
     assert len(names["Host"]) == 1
     assert len(triggers["/shared"]) == 2
-    assert any(path.parent.name == "host-skill" and ".agent" in path.parts for path in triggers["/shared"])
+    assert any(
+        path.parent.name == "host-skill" and ".agent" in path.parts
+        for path in triggers["/shared"]
+    )

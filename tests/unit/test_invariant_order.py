@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
+
 # Add the agent directory to path for imports (same pattern as test_builder_exit_and_breaker.py)
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / ".agent"))
 
@@ -42,9 +43,10 @@ class TestBuilderExitOrder:
             payload={"from_state": "IN_PROGRESS", "to_state": "READY_FOR_REVIEW"},
         )
 
-        with patch(
-            "agent_controller.event_bus", temp_bus
-        ), patch("agent_controller.BUS_AVAILABLE", True):
+        with (
+            patch("agent_controller.event_bus", temp_bus),
+            patch("agent_controller.BUS_AVAILABLE", True),
+        ):
             warnings = _check_builder_exit_order("WP-TEST-001")
             assert len(warnings) == 0
 
@@ -68,9 +70,10 @@ class TestBuilderExitOrder:
             payload={"exit_reason": "done", "completion_summary": "work completed"},
         )
 
-        with patch(
-            "agent_controller.event_bus", temp_bus
-        ), patch("agent_controller.BUS_AVAILABLE", True):
+        with (
+            patch("agent_controller.event_bus", temp_bus),
+            patch("agent_controller.BUS_AVAILABLE", True),
+        ):
             warnings = _check_builder_exit_order("WP-TEST-002")
             assert len(warnings) == 1
             assert "ORDER INVARIANT" in warnings[0]
@@ -89,9 +92,10 @@ class TestBuilderExitOrder:
             payload={"from_state": "IN_PROGRESS", "to_state": "READY_FOR_REVIEW"},
         )
 
-        with patch(
-            "agent_controller.event_bus", temp_bus
-        ), patch("agent_controller.BUS_AVAILABLE", True):
+        with (
+            patch("agent_controller.event_bus", temp_bus),
+            patch("agent_controller.BUS_AVAILABLE", True),
+        ):
             warnings = _check_builder_exit_order("WP-TEST-003")
             assert len(warnings) == 0
 
@@ -107,9 +111,10 @@ class TestBuilderExitOrder:
             payload={"exit_reason": "done", "completion_summary": "work completed"},
         )
 
-        with patch(
-            "agent_controller.event_bus", temp_bus
-        ), patch("agent_controller.BUS_AVAILABLE", True):
+        with (
+            patch("agent_controller.event_bus", temp_bus),
+            patch("agent_controller.BUS_AVAILABLE", True),
+        ):
             warnings = _check_builder_exit_order("WP-TEST-004")
             assert len(warnings) == 0
 
@@ -121,7 +126,9 @@ class TestBuilderExitOrder:
             warnings = _check_builder_exit_order("WP-TEST-005")
             assert len(warnings) == 0
 
-    def test_multiple_events_detects_any_inversion(self, temp_bus: EventBus, tmp_path: Path) -> None:
+    def test_multiple_events_detects_any_inversion(
+        self, temp_bus: EventBus, tmp_path: Path
+    ) -> None:
         """Should detect inversions at any point in the sequence, not just latest."""
         from agent_controller import _check_builder_exit_order
 
@@ -156,16 +163,19 @@ class TestBuilderExitOrder:
             payload={"from_state": "IN_PROGRESS", "to_state": "READY_FOR_REVIEW"},
         )
 
-        with patch(
-            "agent_controller.event_bus", temp_bus
-        ), patch("agent_controller.BUS_AVAILABLE", True):
+        with (
+            patch("agent_controller.event_bus", temp_bus),
+            patch("agent_controller.BUS_AVAILABLE", True),
+        ):
             warnings = _check_builder_exit_order("WP-TEST-006")
             # First READY_FOR_REVIEW (seq 2) has prior BUILDER_EXIT (seq 1) - OK
             # Second READY_FOR_REVIEW (seq 5) also has prior BUILDER_EXIT (seq 1) - OK
             # No warnings expected because there IS a prior BUILDER_EXIT for both
             assert len(warnings) == 0
 
-    def test_inversion_with_no_prior_exit(self, temp_bus: EventBus, tmp_path: Path) -> None:
+    def test_inversion_with_no_prior_exit(
+        self, temp_bus: EventBus, tmp_path: Path
+    ) -> None:
         """Should warn when STATE_CHANGED READY_FOR_REVIEW has no prior BUILDER_EXIT."""
         from agent_controller import _check_builder_exit_order
 
@@ -193,9 +203,10 @@ class TestBuilderExitOrder:
             payload={"from_state": "IN_PROGRESS", "to_state": "READY_FOR_REVIEW"},
         )
 
-        with patch(
-            "agent_controller.event_bus", temp_bus
-        ), patch("agent_controller.BUS_AVAILABLE", True):
+        with (
+            patch("agent_controller.event_bus", temp_bus),
+            patch("agent_controller.BUS_AVAILABLE", True),
+        ):
             warnings = _check_builder_exit_order("WP-TEST-007")
             # First READY_FOR_REVIEW (seq 1) has no prior BUILDER_EXIT - WARN
             # Second READY_FOR_REVIEW (seq 3) has prior BUILDER_EXIT (seq 2) - OK

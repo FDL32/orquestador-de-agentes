@@ -1,4 +1,4 @@
-﻿"""Tests para verificaciÃ³n de alcance en orquestador.py.
+"""Tests para verificaciÃ³n de alcance en orquestador.py.
 
 Suite pura sin acceso a filesystem real - usa mocks y pathlib.
 Enfoque: validar lÃ³gica de clasificaciÃ³n de archivos contra allowlist.
@@ -7,6 +7,7 @@ Enfoque: validar lÃ³gica de clasificaciÃ³n de archivos contra allowlist.
 import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
 
 # ---------------------------------------------------------------------------
 # Fixtures y helpers de mock
@@ -75,11 +76,13 @@ class TestSnapshotPaths:
         mock_stat = _make_stat(mtime_ns=2000, size=256)
         test_path = Path("test.py")
 
-        with patch("scripts.orquestador.os.stat", return_value=mock_stat):
-            with patch.object(Path, "exists", return_value=True):
-                with patch.object(Path, "is_file", return_value=True):
-                    with patch.object(Path, "is_dir", return_value=False):
-                        result = snapshot_paths([test_path])
+        with (
+            patch("scripts.orquestador.os.stat", return_value=mock_stat),
+            patch.object(Path, "exists", return_value=True),
+            patch.object(Path, "is_file", return_value=True),
+            patch.object(Path, "is_dir", return_value=False),
+        ):
+            result = snapshot_paths([test_path])
 
         assert str(test_path) in result
         assert result[str(test_path)]["mtime_ns"] == 2000
@@ -87,8 +90,9 @@ class TestSnapshotPaths:
 
     def test_snapshot_paths_expands_directories(self):
         """snapshot_paths expande directorios recursivamente."""
-        from scripts.orquestador import snapshot_paths
         from unittest.mock import MagicMock
+
+        from scripts.orquestador import snapshot_paths
 
         mock_stat = _make_stat(mtime_ns=3000, size=512)
         file_a_str = "src/module_a.py"
@@ -105,10 +109,12 @@ class TestSnapshotPaths:
         mock_path_obj = MagicMock()
         mock_path_obj.rglob.return_value = [file_a, file_b]
 
-        with patch("scripts.orquestador.os.stat", return_value=mock_stat):
-            with patch.object(Path, "is_file", return_value=True):
-                with patch.object(Path, "is_dir", return_value=False):
-                    result = snapshot_paths([src_dir])
+        with (
+            patch("scripts.orquestador.os.stat", return_value=mock_stat),
+            patch.object(Path, "is_file", return_value=True),
+            patch.object(Path, "is_dir", return_value=False),
+        ):
+            result = snapshot_paths([src_dir])
 
         # DeberÃ­a capturar al menos los archivos del directorio
         assert len(result) >= 0  # Al menos verifica que no falla
@@ -178,7 +184,7 @@ class TestClassifyScope:
         allowlist = {"write_roots": ["."]}
         touched = ["scripts/test.py", "src/main.py"]
 
-        in_scope, out_of_scope = classify_scope(touched, allowlist)
+        in_scope, _ = classify_scope(touched, allowlist)
 
         assert "scripts/test.py" in in_scope
         assert "src/main.py" in in_scope

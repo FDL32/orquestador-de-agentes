@@ -4,8 +4,6 @@ import json
 import subprocess
 from pathlib import Path
 
-import pytest
-
 from scripts.install_agent_system import (
     _detect_host_setup,
     _maybe_invoke_host_setup,
@@ -90,7 +88,6 @@ def test_ensure_hooks_config_integrity_validates(tmp_path):
 
 def test_install_agent_system_flips_profile(tmp_path):
     """Verify that flip_profile_in_destination flips active_profile from engine-dev to host-project."""
-    from scripts.install_agent_system import flip_profile_in_destination
 
     agent_dir = tmp_path / ".agent"
     agent_dir.mkdir(parents=True, exist_ok=True)

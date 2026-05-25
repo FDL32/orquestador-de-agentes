@@ -1,4 +1,4 @@
-﻿"""Test funcional de integraciÃ³n para el flujo de completitud y review handoff.
+"""Test funcional de integraciÃ³n para el flujo de completitud y review handoff.
 
 Valida el escenario real `APPROVED + READY_FOR_REVIEW` sin advisory espurio,
 usando un sandbox repo-local estable para no tocar el estado real del proyecto.
@@ -7,11 +7,11 @@ usando un sandbox repo-local estable para no tocar el estado real del proyecto.
 """
 
 import json
-import sys
 import shutil
 import subprocess
+import sys
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator
 
 import pytest
 
@@ -124,18 +124,24 @@ def test_approved_ready_for_review_handoff(sandbox: Path) -> None:
     write_sandbox_file(
         sandbox,
         ".agent/collaboration/work_plan.md",
-        WORK_PLAN_TEMPLATE.format(status="APPROVED")
+        WORK_PLAN_TEMPLATE.format(status="APPROVED"),
     )
 
     write_sandbox_file(
         sandbox,
         ".agent/collaboration/execution_log.md",
-        EXEC_LOG_TEMPLATE.format(status="READY_FOR_REVIEW")
+        EXEC_LOG_TEMPLATE.format(status="READY_FOR_REVIEW"),
     )
 
-    write_sandbox_file(sandbox, ".agent/collaboration/notifications.md", "# Registro de Notificaciones\n")
+    write_sandbox_file(
+        sandbox,
+        ".agent/collaboration/notifications.md",
+        "# Registro de Notificaciones\n",
+    )
     write_sandbox_file(sandbox, ".agent/collaboration/TURN.md", "")
-    write_sandbox_file(sandbox, ".agent/collaboration/review_queue.md", "# Cola de revisiones\n")
+    write_sandbox_file(
+        sandbox, ".agent/collaboration/review_queue.md", "# Cola de revisiones\n"
+    )
 
     # 1. Ejecutar controller en modo JSON y force
     result = run_controller(sandbox, "--json", "--force")
@@ -162,12 +168,14 @@ def test_approved_ready_for_review_handoff(sandbox: Path) -> None:
     # Validar que no hay advisory espurio en la salida
     assert "advisory" not in result.stdout.lower()
     assert "completitud" not in result.stdout.lower()
-    assert "âš ï¸" not in result.stdout
+    assert "âš ï¸" not in result.stdout  # noqa: RUF001
     assert "âŒ" not in result.stdout
 
     # 2. Ejecutar validaciÃ³n
     validate_result = run_controller(sandbox, "--validate", "--json", "--force")
-    assert validate_result.returncode == 0, f"ValidaciÃ³n fallÃ³: {validate_result.stderr}"
+    assert validate_result.returncode == 0, (
+        f"ValidaciÃ³n fallÃ³: {validate_result.stderr}"
+    )
 
     try:
         validate_output = json.loads(validate_result.stdout.strip())
@@ -191,18 +199,24 @@ def test_in_progress_does_not_pass_review(sandbox: Path) -> None:
     write_sandbox_file(
         sandbox,
         ".agent/collaboration/work_plan.md",
-        WORK_PLAN_TEMPLATE.format(status="APPROVED")
+        WORK_PLAN_TEMPLATE.format(status="APPROVED"),
     )
 
     write_sandbox_file(
         sandbox,
         ".agent/collaboration/execution_log.md",
-        EXEC_LOG_TEMPLATE.format(status="IN_PROGRESS")
+        EXEC_LOG_TEMPLATE.format(status="IN_PROGRESS"),
     )
 
-    write_sandbox_file(sandbox, ".agent/collaboration/notifications.md", "# Registro de Notificaciones\n")
+    write_sandbox_file(
+        sandbox,
+        ".agent/collaboration/notifications.md",
+        "# Registro de Notificaciones\n",
+    )
     write_sandbox_file(sandbox, ".agent/collaboration/TURN.md", "")
-    write_sandbox_file(sandbox, ".agent/collaboration/review_queue.md", "# Cola de revisiones\n")
+    write_sandbox_file(
+        sandbox, ".agent/collaboration/review_queue.md", "# Cola de revisiones\n"
+    )
 
     result = run_controller(sandbox, "--json", "--force")
     assert result.returncode == 0

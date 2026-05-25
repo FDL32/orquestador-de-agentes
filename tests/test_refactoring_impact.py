@@ -1,4 +1,3 @@
-# ruff: noqa: S607
 """
 Refactoring Impact Test Suite
 

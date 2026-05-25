@@ -53,7 +53,14 @@ def _write_execution_log(path):
     )
 
 
-def _write_turn(path, role="BUILDER", plan_id="WP-2026-024", action="IMPLEMENT", plan_status="APPROVED", log_status="IN_PROGRESS"):
+def _write_turn(
+    path,
+    role="BUILDER",
+    plan_id="WP-2026-024",
+    action="IMPLEMENT",
+    plan_status="APPROVED",
+    log_status="IN_PROGRESS",
+):
     path.write_text(
         "\n".join(
             [
@@ -364,24 +371,24 @@ def test_supervisor_does_not_promote_ready_for_review_from_execution_log(tmp_pat
     _write_work_plan(collaboration_dir / "work_plan.md")
     _write_execution_log(collaboration_dir / "execution_log.md")
     (collaboration_dir / "execution_log.md").write_text(
-            "\n".join(
-                [
-                    "# Execution Log",
-                    "",
-                    "## WP-2026-025: Status Bar Indicator",
-                    "",
-                    "### Summary",
-                    "",
-                    "**Estado:** READY_FOR_REVIEW ✅",
-                    "",
-                    "### Quality Gates",
-                    "- [OK] Ruff: Clean",
-                    "- [OK] Pytest: Tests OK",
-                    "- Quality Gates: PASSED",
-                ]
-            ),
-            encoding="utf-8",
-        )
+        "\n".join(
+            [
+                "# Execution Log",
+                "",
+                "## WP-2026-025: Status Bar Indicator",
+                "",
+                "### Summary",
+                "",
+                "**Estado:** READY_FOR_REVIEW ✅",
+                "",
+                "### Quality Gates",
+                "- [OK] Ruff: Clean",
+                "- [OK] Pytest: Tests OK",
+                "- Quality Gates: PASSED",
+            ]
+        ),
+        encoding="utf-8",
+    )
     _write_turn(
         collaboration_dir / "TURN.md",
         role="BUILDER",
@@ -407,7 +414,9 @@ def test_supervisor_does_not_promote_ready_for_review_from_execution_log(tmp_pat
 
     supervisor.bootstrap()
 
-    events = supervisor.event_bus.read_events(ticket_id="WP-2026-025", event_type="STATE_CHANGED")
+    events = supervisor.event_bus.read_events(
+        ticket_id="WP-2026-025", event_type="STATE_CHANGED"
+    )
     assert not events
     state = supervisor.load_state()
     assert state.active_ticket == "WP-2026-025"
@@ -441,9 +450,7 @@ def test_state_machine_e2e_flow(tmp_path):
     )
 
     events = supervisor.event_bus.read_events(ticket_id=ticket_id)
-    current_state = StateMachine.derive_state_from_events(
-        [e.to_dict() for e in events]
-    )
+    current_state = StateMachine.derive_state_from_events([e.to_dict() for e in events])
     assert current_state == TicketState.READY_FOR_REVIEW
 
     supervisor.event_bus.emit(
@@ -464,9 +471,7 @@ def test_state_machine_e2e_flow(tmp_path):
     )
 
     events = supervisor.event_bus.read_events(ticket_id=ticket_id)
-    current_state = StateMachine.derive_state_from_events(
-        [e.to_dict() for e in events]
-    )
+    current_state = StateMachine.derive_state_from_events([e.to_dict() for e in events])
     assert current_state == TicketState.IN_PROGRESS
 
     supervisor.transition_ticket(
@@ -493,9 +498,7 @@ def test_state_machine_e2e_flow(tmp_path):
     )
 
     events = supervisor.event_bus.read_events(ticket_id=ticket_id)
-    current_state = StateMachine.derive_state_from_events(
-        [e.to_dict() for e in events]
-    )
+    current_state = StateMachine.derive_state_from_events([e.to_dict() for e in events])
     assert current_state == TicketState.READY_TO_CLOSE
 
     assert supervisor.close_active_ticket() is False
@@ -510,9 +513,7 @@ def test_state_machine_e2e_flow(tmp_path):
     assert supervisor.close_active_ticket() is True
 
     events = supervisor.event_bus.read_events(ticket_id=ticket_id)
-    current_state = StateMachine.derive_state_from_events(
-        [e.to_dict() for e in events]
-    )
+    current_state = StateMachine.derive_state_from_events([e.to_dict() for e in events])
     assert current_state == TicketState.COMPLETED
 
     review_decisions = supervisor.event_bus.read_events(
@@ -939,7 +940,9 @@ def test_supervisor_bootstrap_emits_reconciled_only_for_stale_state(tmp_path):
     assert not any(event.event_type == "SUPERVISOR_RECONCILED" for event in events)
 
 
-def test_ticket_supervisor_reactive_prints_bootstrapped_state(monkeypatch, tmp_path, capsys):
+def test_ticket_supervisor_reactive_prints_bootstrapped_state(
+    monkeypatch, tmp_path, capsys
+):
     from scripts import ticket_supervisor as ticket_supervisor_script
 
     class DummySupervisor:
@@ -1230,8 +1233,8 @@ def test_supervisor_skips_relaunch_when_builder_alive(tmp_path, monkeypatch, cap
 
 def test_non_terminal_states_constant():
     """Test NON_TERMINAL_STATES constant is properly defined."""
-    from bus.supervisor import NON_TERMINAL_STATES
     from bus.state_machine import TicketState
+    from bus.supervisor import NON_TERMINAL_STATES
 
     assert isinstance(NON_TERMINAL_STATES, frozenset)
     assert len(NON_TERMINAL_STATES) > 0
@@ -1290,6 +1293,7 @@ def test_builder_alive_requeues_when_exited_with_alive_pid(tmp_path):
     import os
     import time
     from datetime import datetime, timezone
+
     from bus.supervisor import SequentialTicketSupervisor
 
     collaboration_dir = tmp_path / ".agent" / "collaboration"
@@ -1314,7 +1318,7 @@ def test_builder_alive_requeues_when_exited_with_alive_pid(tmp_path):
         "ticket_id": ticket_id,
         "project_root": str(tmp_path),
         "started_at": lock_start_dt.isoformat(),
-        "role": "BUILDER"
+        "role": "BUILDER",
     }
     lock_path.write_text(json.dumps(lock_data), encoding="utf-8")
 
@@ -1327,7 +1331,7 @@ def test_builder_alive_requeues_when_exited_with_alive_pid(tmp_path):
         "BUILDER_EXIT",
         ticket_id=ticket_id,
         actor="BUILDER",
-        payload={"exit_reason": "Changes completed"}
+        payload={"exit_reason": "Changes completed"},
     )
 
     # 4. Now, _builder_alive() must return False because of the event bus safeguard
@@ -1388,7 +1392,11 @@ def test_bus_active_non_terminal_ticket_ignores_completed(tmp_path):
         "STATE_CHANGED",
         ticket_id="WP-2026-100",
         actor="SUPERVISOR",
-        payload={"from_state": "READY_TO_CLOSE", "to_state": "COMPLETED", "reason": "Closed"},
+        payload={
+            "from_state": "READY_TO_CLOSE",
+            "to_state": "COMPLETED",
+            "reason": "Closed",
+        },
     )
 
     result = supervisor._bus_active_non_terminal_ticket()
@@ -1422,7 +1430,11 @@ def test_bus_active_non_terminal_ticket_prefers_highest_wp_id(tmp_path):
         "STATE_CHANGED",
         ticket_id="WP-2026-101",
         actor="SUPERVISOR",
-        payload={"from_state": "IN_PROGRESS", "to_state": "READY_FOR_REVIEW", "reason": "Review"},
+        payload={
+            "from_state": "IN_PROGRESS",
+            "to_state": "READY_FOR_REVIEW",
+            "reason": "Review",
+        },
     )
 
     result = supervisor._bus_active_non_terminal_ticket()
@@ -1481,7 +1493,11 @@ def test_bootstrap_bus_precedence_over_turn_divergence(tmp_path):
         "STATE_CHANGED",
         ticket_id="WP-2026-106",
         actor="SUPERVISOR",
-        payload={"from_state": "IN_PROGRESS", "to_state": "READY_FOR_REVIEW", "reason": "Review"},
+        payload={
+            "from_state": "IN_PROGRESS",
+            "to_state": "READY_FOR_REVIEW",
+            "reason": "Review",
+        },
     )
 
     # State starts empty
@@ -1544,7 +1560,11 @@ def test_bootstrap_bus_requeue_repeated_changes(tmp_path):
         "STATE_CHANGED",
         ticket_id=ticket_id,
         actor="SUPERVISOR",
-        payload={"from_state": "IN_PROGRESS", "to_state": "READY_FOR_REVIEW", "reason": "Review"},
+        payload={
+            "from_state": "IN_PROGRESS",
+            "to_state": "READY_FOR_REVIEW",
+            "reason": "Review",
+        },
     )
     supervisor.event_bus.emit(
         "REVIEW_DECISION",
@@ -1556,7 +1576,11 @@ def test_bootstrap_bus_requeue_repeated_changes(tmp_path):
         "STATE_CHANGED",
         ticket_id=ticket_id,
         actor="SUPERVISOR",
-        payload={"from_state": "READY_FOR_REVIEW", "to_state": "IN_PROGRESS", "reason": "Requeue"},
+        payload={
+            "from_state": "READY_FOR_REVIEW",
+            "to_state": "IN_PROGRESS",
+            "reason": "Requeue",
+        },
     )
 
     supervisor.save_state(SupervisorState())
@@ -1605,7 +1629,11 @@ def test_bootstrap_fallback_to_turn_when_bus_has_no_active(tmp_path):
         "STATE_CHANGED",
         ticket_id="WP-2026-104",
         actor="SUPERVISOR",
-        payload={"from_state": "READY_TO_CLOSE", "to_state": "COMPLETED", "reason": "Closed"},
+        payload={
+            "from_state": "READY_TO_CLOSE",
+            "to_state": "COMPLETED",
+            "reason": "Closed",
+        },
     )
 
     supervisor.save_state(SupervisorState())
@@ -1682,7 +1710,6 @@ def test_builder_alive_mtime_fallback_only(tmp_path, monkeypatch):
     """
     import json
     import subprocess
-    import time
 
     from bus.supervisor import SequentialTicketSupervisor
 
@@ -1761,7 +1788,6 @@ def test_builder_alive_stale_lock_no_exit_event(tmp_path, monkeypatch):
 def test_has_builder_exited_after_parse_error_logged(tmp_path, monkeypatch, capsys):
     """Test _has_builder_exited_after handles parse errors without crashing."""
     from datetime import datetime, timezone
-    from unittest.mock import patch, MagicMock
 
     from bus.supervisor import SequentialTicketSupervisor
 
@@ -1786,7 +1812,7 @@ def test_has_builder_exited_after_parse_error_logged(tmp_path, monkeypatch, caps
     mock_event.timestamp = "not-a-valid-timestamp"
 
     # Mock read_events to return event with bad timestamp
-    with patch.object(supervisor.event_bus, 'read_events', return_value=[mock_event]):
+    with patch.object(supervisor.event_bus, "read_events", return_value=[mock_event]):
         lock_start = datetime.now(timezone.utc)
 
         # Should not raise, should return False and log error
@@ -1898,7 +1924,9 @@ def test_event_bus_allows_revert_from_ready_to_close(tmp_path):
         payload={"from_state": "READY_TO_CLOSE", "to_state": "IN_PROGRESS"},
     )
 
-    assert result is not None, "READY_TO_CLOSE -> IN_PROGRESS must be allowed (not terminal)"
+    assert result is not None, (
+        "READY_TO_CLOSE -> IN_PROGRESS must be allowed (not terminal)"
+    )
     events = bus.read_events(ticket_id=ticket_id, event_type="STATE_CHANGED")
     assert len(events) == 2
 
@@ -2037,7 +2065,11 @@ def test_bootstrap_reconciles_last_processed_sequence_with_bus(tmp_path):
         "STATE_CHANGED",
         ticket_id="WP-2026-119",
         actor="SUPERVISOR",
-        payload={"from_state": "IN_PROGRESS", "to_state": "READY_FOR_REVIEW", "reason": "Review"},
+        payload={
+            "from_state": "IN_PROGRESS",
+            "to_state": "READY_FOR_REVIEW",
+            "reason": "Review",
+        },
     )
 
     # Persisted state has sequence ahead of bus (phantom)
@@ -2123,9 +2155,7 @@ def test_process_new_events_reconciles_sequence_down(tmp_path):
     )
 
     # Persisted state has phantom sequence ahead
-    supervisor.save_state(
-        SupervisorState(last_processed_sequence=999)
-    )
+    supervisor.save_state(SupervisorState(last_processed_sequence=999))
 
     changed = supervisor._process_new_events()
 
@@ -2188,15 +2218,17 @@ def test_bootstrap_reconciles_active_ticket_none_when_bus_terminal(tmp_path):
     # Format must match _execution_log_status regex pattern
     execution_log_path = collaboration_dir / "execution_log.md"
     execution_log_path.write_text(
-        "\n".join([
-            "# Execution Log",
-            "",
-            f"## {ticket_id}: Test Ticket",
-            "",
-            "### Summary",
-            "",
-            f"**Estado:** COMPLETED",
-        ]),
+        "\n".join(
+            [
+                "# Execution Log",
+                "",
+                f"## {ticket_id}: Test Ticket",
+                "",
+                "### Summary",
+                "",
+                "**Estado:** COMPLETED",
+            ]
+        ),
         encoding="utf-8",
     )
 
@@ -2218,25 +2250,35 @@ def test_bootstrap_reconciles_active_ticket_none_when_bus_terminal(tmp_path):
         "STATE_CHANGED",
         ticket_id=ticket_id,
         actor="SUPERVISOR",
-        payload={"from_state": "IN_PROGRESS", "to_state": "READY_FOR_REVIEW", "reason": "Review"},
+        payload={
+            "from_state": "IN_PROGRESS",
+            "to_state": "READY_FOR_REVIEW",
+            "reason": "Review",
+        },
     )
     supervisor.event_bus.emit(
         "STATE_CHANGED",
         ticket_id=ticket_id,
         actor="SUPERVISOR",
-        payload={"from_state": "READY_FOR_REVIEW", "to_state": "READY_TO_CLOSE", "reason": "Approved"},
+        payload={
+            "from_state": "READY_FOR_REVIEW",
+            "to_state": "READY_TO_CLOSE",
+            "reason": "Approved",
+        },
     )
     supervisor.event_bus.emit(
         "STATE_CHANGED",
         ticket_id=ticket_id,
         actor="SUPERVISOR",
-        payload={"from_state": "READY_TO_CLOSE", "to_state": "COMPLETED", "reason": "Closed"},
+        payload={
+            "from_state": "READY_TO_CLOSE",
+            "to_state": "COMPLETED",
+            "reason": "Closed",
+        },
     )
 
     # Persisted state has stale active_ticket
-    supervisor.save_state(
-        SupervisorState(active_ticket=ticket_id)
-    )
+    supervisor.save_state(SupervisorState(active_ticket=ticket_id))
 
     supervisor.bootstrap()
 
@@ -2281,7 +2323,11 @@ def test_supervisor_state_reconciliation_e2e(tmp_path):
         "STATE_CHANGED",
         ticket_id="WP-2026-118",
         actor="SUPERVISOR",
-        payload={"from_state": "IN_PROGRESS", "to_state": "COMPLETED", "reason": "Done"},
+        payload={
+            "from_state": "IN_PROGRESS",
+            "to_state": "COMPLETED",
+            "reason": "Done",
+        },
     )
     supervisor.event_bus.emit(
         "STATE_CHANGED",
@@ -2299,7 +2345,11 @@ def test_supervisor_state_reconciliation_e2e(tmp_path):
         "STATE_CHANGED",
         ticket_id="WP-2026-119",
         actor="SUPERVISOR",
-        payload={"from_state": "IN_PROGRESS", "to_state": "READY_FOR_REVIEW", "reason": "Review"},
+        payload={
+            "from_state": "IN_PROGRESS",
+            "to_state": "READY_FOR_REVIEW",
+            "reason": "Review",
+        },
     )
 
     # Persisted state is completely stale
@@ -2514,9 +2564,7 @@ def test_bootstrap_reconciled_deduplication(tmp_path):
     )
 
     # Start with stale state pointing to old ticket
-    supervisor.save_state(
-        SupervisorState(active_ticket="WP-2026-136")
-    )
+    supervisor.save_state(SupervisorState(active_ticket="WP-2026-136"))
 
     # First bootstrap - should emit SUPERVISOR_RECONCILED
     result1 = supervisor.bootstrap()
@@ -2639,7 +2687,6 @@ def test_bootstrap_reconciled_different_pair_emits(tmp_path):
 
 def test_run_reactive_releases_lock_on_exit(tmp_path, monkeypatch):
     """Test that run_reactive releases lock when exiting."""
-    import time
 
     from bus.supervisor import SequentialTicketSupervisor
 
@@ -2664,7 +2711,7 @@ def test_run_reactive_releases_lock_on_exit(tmp_path, monkeypatch):
     monkeypatch.setattr("time.sleep", lambda _seconds: None)
 
     # Run reactive with very short timeout
-    result = supervisor.run_reactive(timeout_seconds=1.0)
+    supervisor.run_reactive(timeout_seconds=1.0)
 
     # Lock should be released after exit
     assert not supervisor.supervisor_lock_path.exists()
@@ -2710,11 +2757,11 @@ def test_run_loop_releases_lock_on_exception(tmp_path, monkeypatch):
 
     monkeypatch.setattr("time.sleep", quick_sleep)
 
+    import contextlib
+
     # Run loop should release lock even with exception
-    try:
+    with contextlib.suppress(RuntimeError, KeyboardInterrupt):
         supervisor.run_loop(poll_interval=0.1)
-    except (RuntimeError, KeyboardInterrupt):
-        pass
 
     # Lock should be released despite exception
     assert not supervisor.supervisor_lock_path.exists()

@@ -3,12 +3,11 @@
 Before: _review_env() redirected HOME, USERPROFILE, CODEX_HOME to .codex.
 After: _review_env() preserves the inherited process environment.
 """
+
 from __future__ import annotations
 
 import os
 from pathlib import Path
-
-import pytest
 
 from bus.event_bus import EventBus
 from bus.review_bridge import ReviewBridge

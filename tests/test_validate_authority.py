@@ -4,16 +4,16 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+
 # Add scripts to path
 scripts_dir = Path(__file__).parent.parent / "scripts"
 if str(scripts_dir) not in sys.path:
     sys.path.insert(0, str(scripts_dir))
 
 from validate_authority import (  # noqa: E402
-    find_all_agent_dirs,
+    detect_legacy_copies,
     extract_ticket_id,
     is_canonical_authority,
-    detect_legacy_copies,
     main,
 )
 
@@ -48,7 +48,7 @@ class TestDetectLegacyCopies:
         copies = {
             "/canonical/.agent/collaboration": "WP-2026-052",
             "/legacy/.agent/collaboration": "WP-2026-051",
-            "/tests/.agent/collaboration": "UNKNOWN"
+            "/tests/.agent/collaboration": "UNKNOWN",
         }
         canonical = "/canonical/.agent/collaboration"
         legacy = detect_legacy_copies(copies, canonical)
@@ -59,7 +59,7 @@ class TestDetectLegacyCopies:
     def test_excludes_test_paths(self):
         copies = {
             "/repo/.agent/collaboration": "WP-2026-052",
-            "/repo/tests/.agent/collaboration": "UNKNOWN"
+            "/repo/tests/.agent/collaboration": "UNKNOWN",
         }
         canonical = "/repo/.agent/collaboration"
         legacy = detect_legacy_copies(copies, canonical)
@@ -67,22 +67,20 @@ class TestDetectLegacyCopies:
 
 
 class TestMainFunction:
-    @patch('validate_authority.find_all_agent_dirs')
+    @patch("validate_authority.find_all_agent_dirs")
     def test_main_success(self, mock_find):
         mock_root = Path(__file__).resolve().parents[1]
         mock_find.return_value = {
             str(mock_root / ".agent" / "collaboration"): "WP-2026-052"
         }
         # Mock the main function to avoid actual file operations
-        with patch('builtins.print'):
+        with patch("builtins.print"):
             result = main()
         assert result == 0
 
-    @patch('validate_authority.find_all_agent_dirs')
+    @patch("validate_authority.find_all_agent_dirs")
     def test_main_failure_no_canonical(self, mock_find):
-        mock_find.return_value = {
-            "/other/.agent/collaboration": "WP-2026-051"
-        }
-        with patch('builtins.print'):
+        mock_find.return_value = {"/other/.agent/collaboration": "WP-2026-051"}
+        with patch("builtins.print"):
             result = main()
         assert result == 1

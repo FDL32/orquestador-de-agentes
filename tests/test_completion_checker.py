@@ -1,4 +1,4 @@
-﻿"""Tests for completion_checker.py - Verificacion de completitud.
+"""Tests for completion_checker.py - Verificacion de completitud.
 
 Suite sin acceso a filesystem: usa mocks puros sobre subprocess.run y Path.exists.
 """
@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+
 # Add .agent to path for imports
 agent_dir = Path(__file__).parent.parent / ".agent"
 if str(agent_dir) not in sys.path:
@@ -16,12 +17,13 @@ if str(agent_dir) not in sys.path:
 
 import completion_checker  # noqa: E402
 from completion_checker import (  # noqa: E402
-    _check_tests_pass,
     _check_all_tasks_done,
     _check_execution_summary,
+    _check_tests_pass,
     check_completion,
     safe_print,
 )
+
 
 _PROJECT_ROOT = completion_checker.PROJECT_ROOT
 _TESTS_DIR = _PROJECT_ROOT / "tests"

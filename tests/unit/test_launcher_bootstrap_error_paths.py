@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pytest
 
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LAUNCHER = REPO_ROOT / "scripts" / "launch_agent_terminals.ps1"
 CONTROLLER = REPO_ROOT / ".agent" / "agent_controller.py"
@@ -54,19 +55,17 @@ def _resolve_python() -> str:
 class TestLauncherBootstrapErrorPaths:
     """Test bootstrap error handling in launch_agent_terminals.ps1."""
 
-    def _create_mock_controller(
-        self, exit_code: int, stdout: str
-    ) -> Path:
+    def _create_mock_controller(self, exit_code: int, stdout: str) -> Path:
         """Create a temporary mock controller script that returns specified output."""
         mock_script = tempfile.NamedTemporaryFile(
             mode="w", suffix=".py", delete=False, encoding="utf-8"
         )
         # Write a script that prints stdout and exits with specified code
-        mock_script.write(f'''
+        mock_script.write(f"""
 import sys
 print({stdout!r})
 sys.exit({exit_code})
-''')
+""")
         mock_script.close()
         return Path(mock_script.name)
 
@@ -85,7 +84,7 @@ sys.exit({exit_code})
         test_script = tempfile.NamedTemporaryFile(
             mode="w", suffix=".ps1", delete=False, encoding="utf-8"
         )
-        test_script.write(f'''
+        test_script.write(f"""
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Continue'
 
@@ -121,13 +120,20 @@ if ($bootstrapJson.PSObject.Properties['status'] -and $bootstrapJson.status -eq 
 }}
 
 Write-Host "BOOTSTRAP_OK"
-''')
+""")
         test_script.close()
         test_path = Path(test_script.name)
 
         try:
             result = subprocess.run(
-                [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(test_path)],
+                [
+                    powershell,
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(test_path),
+                ],
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -144,8 +150,7 @@ Write-Host "BOOTSTRAP_OK"
         (hotfix 540694a).
         """
         mock_controller = self._create_mock_controller(
-            exit_code=1,
-            stdout=json.dumps({"status": "error", "error": "reason"})
+            exit_code=1, stdout=json.dumps({"status": "error", "error": "reason"})
         )
         try:
             exit_code, stdout, stderr = self._run_launcher_bootstrap_section(
@@ -170,10 +175,12 @@ Write-Host "BOOTSTRAP_OK"
         """
         mock_controller = self._create_mock_controller(
             exit_code=0,
-            stdout=json.dumps({"status": "already_bootstrapped", "plan_id": "WP-XXXX"})
+            stdout=json.dumps({"status": "already_bootstrapped", "plan_id": "WP-XXXX"}),
         )
         try:
-            exit_code, stdout, stderr = self._run_launcher_bootstrap_section(mock_controller)
+            exit_code, stdout, stderr = self._run_launcher_bootstrap_section(
+                mock_controller
+            )
 
             # Should succeed - no crash from accessing missing .error property
             assert exit_code == 0, (
@@ -193,7 +200,9 @@ Write-Host "BOOTSTRAP_OK"
         """
         mock_controller = self._create_mock_controller(
             exit_code=0,
-            stdout=json.dumps({"status": "skipped", "plan_id": "WP-XXXX", "reason": "no_active"})
+            stdout=json.dumps(
+                {"status": "skipped", "plan_id": "WP-XXXX", "reason": "no_active"}
+            ),
         )
         try:
             exit_code, stdout, stderr = self._run_launcher_bootstrap_section(
@@ -215,8 +224,7 @@ Write-Host "BOOTSTRAP_OK"
     def test_bootstrap_non_json_stdout(self) -> None:
         """Test that non-JSON stdout throws 'invalid JSON' message."""
         mock_controller = self._create_mock_controller(
-            exit_code=0,
-            stdout="This is plain text, not JSON"
+            exit_code=0, stdout="This is plain text, not JSON"
         )
         try:
             exit_code, stdout, stderr = self._run_launcher_bootstrap_section(
@@ -228,7 +236,10 @@ Write-Host "BOOTSTRAP_OK"
             combined_output = stdout + stderr
             # Check for either English or Spanish JSON error message
             # (PowerShell may localize the ConvertFrom-Json error)
-            assert "invalid json" in combined_output.lower() or "json" in combined_output.lower(), (
+            assert (
+                "invalid json" in combined_output.lower()
+                or "json" in combined_output.lower()
+            ), (
                 f"Error message should mention JSON parsing failure. Output: {combined_output}"
             )
         finally:
@@ -242,8 +253,7 @@ Write-Host "BOOTSTRAP_OK"
         variable reference.
         """
         mock_controller = self._create_mock_controller(
-            exit_code=1,
-            stdout=json.dumps({"status": "error", "error": "test_reason"})
+            exit_code=1, stdout=json.dumps({"status": "error", "error": "test_reason"})
         )
         try:
             exit_code, stdout, stderr = self._run_launcher_bootstrap_section(
@@ -272,7 +282,7 @@ Write-Host "BOOTSTRAP_OK"
         """
         mock_controller = self._create_mock_controller(
             exit_code=0,
-            stdout=json.dumps({"status": "skipped"})  # No plan_id or reason
+            stdout=json.dumps({"status": "skipped"}),  # No plan_id or reason
         )
         try:
             exit_code, stdout, stderr = self._run_launcher_bootstrap_section(
@@ -286,7 +296,10 @@ Write-Host "BOOTSTRAP_OK"
                 f"Error message should mention 'skipped'. Output: {combined_output}"
             )
             # Should use fallback values for missing properties
-            assert "unknown" in combined_output.lower() or "no reason given" in combined_output.lower(), (
+            assert (
+                "unknown" in combined_output.lower()
+                or "no reason given" in combined_output.lower()
+            ), (
                 f"Error message should use fallback values for missing properties. "
                 f"Output: {combined_output}"
             )

@@ -1,4 +1,4 @@
-﻿"""Tests for completion_common.py - LÃ³gica compartida de completitud.
+"""Tests for completion_common.py - LÃ³gica compartida de completitud.
 
 Suite sin acceso a filesystem: usa mocks puros sobre Path.
 """
@@ -6,6 +6,7 @@ Suite sin acceso a filesystem: usa mocks puros sobre Path.
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
 
 agent_dir = Path(__file__).parent.parent / ".agent"
 if str(agent_dir) not in sys.path:

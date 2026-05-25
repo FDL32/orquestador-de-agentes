@@ -137,7 +137,7 @@ def test_installer_functionality():
 
         # Ejecutar instalador
         try:
-            result = subprocess.run(  # noqa: S603
+            result = subprocess.run(
                 [sys.executable, str(installer), str(temp_project)],
                 capture_output=True,
                 text=True,

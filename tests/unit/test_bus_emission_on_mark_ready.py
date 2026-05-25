@@ -1,9 +1,9 @@
 """Tests for STATE_CHANGED emission on --mark-ready."""
 
-import pytest
-from pathlib import Path
-from unittest.mock import patch, MagicMock
 import sys
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
@@ -12,23 +12,27 @@ _AGENT_DIR = _PROJECT_ROOT / ".agent"
 if str(_AGENT_DIR) not in sys.path:
     sys.path.insert(0, str(_AGENT_DIR))
 
-from agent_controller import _sync_mark_ready_targets
+from agent_controller import _sync_mark_ready_targets  # noqa: E402
 
 
 class TestBusEmissionOnMarkReady:
     """Test idempotent emission of STATE_CHANGED events."""
 
-    @patch('agent_controller.event_bus')
-    @patch('agent_controller.update_turn_file')
-    @patch('agent_controller.read_file')
-    @patch('agent_controller.write_file')
-    @patch('agent_controller.BUS_AVAILABLE', True)
-    def test_emits_state_changed_with_correct_schema(self, mock_write, mock_read, mock_update_turn, mock_bus):
+    @patch("agent_controller.event_bus")
+    @patch("agent_controller.update_turn_file")
+    @patch("agent_controller.read_file")
+    @patch("agent_controller.write_file")
+    @patch("agent_controller.BUS_AVAILABLE", True)
+    def test_emits_state_changed_with_correct_schema(
+        self, mock_write, mock_read, mock_update_turn, mock_bus
+    ):
         mock_bus.latest_event.return_value = None
         mock_bus.read_events.return_value = []
         mock_bus.emit.return_value = MagicMock()
 
-        mock_read.side_effect = lambda path: "content" if "STATE.md" in str(path) else "**Estado:** IN_PROGRESS"
+        mock_read.side_effect = lambda path: (
+            "content" if "STATE.md" in str(path) else "**Estado:** IN_PROGRESS"
+        )
 
         plan_content = "**Estado:** APPROVED\n**ID:** WP-2026-063"
         _sync_mark_ready_targets("WP-2026-063", plan_content)
@@ -43,36 +47,54 @@ class TestBusEmissionOnMarkReady:
         assert kwargs["payload"]["to_state"] == "READY_FOR_REVIEW"
         assert kwargs["payload"]["source"] == "mark-ready"
 
-    @patch('agent_controller.event_bus')
-    @patch('agent_controller.update_turn_file')
-    @patch('agent_controller.read_file')
-    @patch('agent_controller.write_file')
-    @patch('agent_controller.BUS_AVAILABLE', True)
-    def test_no_emission_when_already_emitted_same_state(self, mock_write, mock_read, mock_update_turn, mock_bus):
+    @patch("agent_controller.event_bus")
+    @patch("agent_controller.update_turn_file")
+    @patch("agent_controller.read_file")
+    @patch("agent_controller.write_file")
+    @patch("agent_controller.BUS_AVAILABLE", True)
+    def test_no_emission_when_already_emitted_same_state(
+        self, mock_write, mock_read, mock_update_turn, mock_bus
+    ):
         mock_event = MagicMock()
-        mock_event.payload = {"to_state": "READY_FOR_REVIEW", "from_state": "IN_PROGRESS", "reason": "test", "source": "mark-ready"}
+        mock_event.payload = {
+            "to_state": "READY_FOR_REVIEW",
+            "from_state": "IN_PROGRESS",
+            "reason": "test",
+            "source": "mark-ready",
+        }
         mock_bus.latest_event.return_value = mock_event
 
-        mock_read.side_effect = lambda path: "content" if "STATE.md" in str(path) else "**Estado:** READY_FOR_REVIEW"
+        mock_read.side_effect = lambda path: (
+            "content" if "STATE.md" in str(path) else "**Estado:** READY_FOR_REVIEW"
+        )
 
         plan_content = "**Estado:** APPROVED\n**ID:** WP-2026-063"
         _sync_mark_ready_targets("WP-2026-063", plan_content)
 
         mock_bus.emit.assert_not_called()
 
-    @patch('agent_controller.event_bus')
-    @patch('agent_controller.update_turn_file')
-    @patch('agent_controller.read_file')
-    @patch('agent_controller.write_file')
-    @patch('agent_controller.BUS_AVAILABLE', True)
-    def test_emits_when_previous_event_different_state(self, mock_write, mock_read, mock_update_turn, mock_bus):
+    @patch("agent_controller.event_bus")
+    @patch("agent_controller.update_turn_file")
+    @patch("agent_controller.read_file")
+    @patch("agent_controller.write_file")
+    @patch("agent_controller.BUS_AVAILABLE", True)
+    def test_emits_when_previous_event_different_state(
+        self, mock_write, mock_read, mock_update_turn, mock_bus
+    ):
         mock_event = MagicMock()
-        mock_event.payload = {"to_state": "IN_PROGRESS", "from_state": "DRAFT", "reason": "test", "source": "manual"}
+        mock_event.payload = {
+            "to_state": "IN_PROGRESS",
+            "from_state": "DRAFT",
+            "reason": "test",
+            "source": "manual",
+        }
         mock_bus.latest_event.return_value = mock_event
         mock_bus.read_events.return_value = [mock_event]
         mock_bus.emit.return_value = MagicMock()
 
-        mock_read.side_effect = lambda path: "content" if "STATE.md" in str(path) else "**Estado:** IN_PROGRESS"
+        mock_read.side_effect = lambda path: (
+            "content" if "STATE.md" in str(path) else "**Estado:** IN_PROGRESS"
+        )
 
         plan_content = "**Estado:** APPROVED\n**ID:** WP-2026-063"
         _sync_mark_ready_targets("WP-2026-063", plan_content)
@@ -85,26 +107,33 @@ class TestBusEmissionOnMarkReady:
         assert kwargs["payload"]["to_state"] == "READY_FOR_REVIEW"
         assert kwargs["payload"]["source"] == "mark-ready"
 
-    @patch('agent_controller.update_turn_file')
-    @patch('agent_controller.read_file')
-    @patch('agent_controller.write_file')
-    @patch('agent_controller.BUS_AVAILABLE', False)
-    def test_no_emission_when_bus_unavailable(self, mock_write, mock_read, mock_update_turn):
-        mock_read.side_effect = lambda path: "content" if "STATE.md" in str(path) else "**Estado:** IN_PROGRESS"
+    @patch("agent_controller.update_turn_file")
+    @patch("agent_controller.read_file")
+    @patch("agent_controller.write_file")
+    @patch("agent_controller.BUS_AVAILABLE", False)
+    def test_no_emission_when_bus_unavailable(
+        self, mock_write, mock_read, mock_update_turn
+    ):
+        mock_read.side_effect = lambda path: (
+            "content" if "STATE.md" in str(path) else "**Estado:** IN_PROGRESS"
+        )
 
         plan_content = "**Estado:** APPROVED\n**ID:** WP-2026-063"
         _sync_mark_ready_targets("WP-2026-063", plan_content)
 
-    @patch('agent_controller.event_bus')
-    @patch('agent_controller.update_turn_file')
-    @patch('agent_controller.read_file')
-    @patch('agent_controller.write_file')
-    @patch('agent_controller.BUS_AVAILABLE', True)
+    @patch("agent_controller.event_bus")
+    @patch("agent_controller.update_turn_file")
+    @patch("agent_controller.read_file")
+    @patch("agent_controller.write_file")
+    @patch("agent_controller.BUS_AVAILABLE", True)
     def test_from_state_derived_from_bus_not_markdown(
         self, mock_write, mock_read, mock_update_turn, mock_bus
     ):
         mock_event = MagicMock()
-        mock_event.payload = {"to_state": "IN_PROGRESS", "from_state": "READY_FOR_REVIEW"}
+        mock_event.payload = {
+            "to_state": "IN_PROGRESS",
+            "from_state": "READY_FOR_REVIEW",
+        }
         mock_event.event_type = "STATE_CHANGED"
         mock_event.ticket_id = "WP-2026-063"
         mock_event.to_dict.return_value = {
@@ -115,7 +144,9 @@ class TestBusEmissionOnMarkReady:
         mock_bus.read_events.return_value = [mock_event]
         mock_bus.emit.return_value = MagicMock()
 
-        mock_read.side_effect = lambda path: "content" if "STATE.md" in str(path) else "**Estado:** IN_PROGRESS"
+        mock_read.side_effect = lambda path: (
+            "content" if "STATE.md" in str(path) else "**Estado:** IN_PROGRESS"
+        )
 
         plan_content = "**Estado:** APPROVED\n**ID:** WP-2026-063"
         _sync_mark_ready_targets("WP-2026-063", plan_content)

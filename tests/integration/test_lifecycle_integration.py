@@ -1,21 +1,21 @@
 """
-Integration tests for lifecycle scripts: detect_version â†’ upgrade â†’ rollback
+Integration tests for lifecycle scripts: detect_version -> upgrade -> rollback
 
 Tests end-to-end workflows and thread safety for concurrent upgrade scenarios.
 """
 
 from unittest.mock import patch
-import pytest
+
 from scripts.detect_version import AgentSystemDetector
-from scripts.upgrade import UpgradeManager
 from scripts.rollback import RollbackManager
+from scripts.upgrade import UpgradeManager
 
 
 class TestLifecycleWorkflows:
     """Full end-to-end upgrade/rollback cycles."""
 
     def test_detect_then_upgrade_workflow(self, tmp_path):
-        """Test complete flow: detect version â†’ simulate upgrade."""
+        """Test complete flow: detect version -> simulate upgrade."""
         # Setup project at v9.2
         project = tmp_path / "project"
         source = tmp_path / "source"
@@ -58,7 +58,7 @@ class TestLifecycleWorkflows:
         assert "v9.6" in upgrade_result["target_version"]
 
     def test_upgrade_then_rollback_workflow(self, tmp_path):
-        """Test full cycle: detect â†’ upgrade â†’ verify â†’ rollback."""
+        """Test full cycle: detect -> upgrade -> verify -> rollback."""
         project = tmp_path / "project"
         source = tmp_path / "source"
         project.mkdir()
@@ -88,14 +88,18 @@ class TestLifecycleWorkflows:
         assert dry["status"] == "READY_FOR_UPGRADE"
 
         # 2. Actual upgrade (mocked verification)
-        with patch.object(upgrade_mgr, 'verify_upgrade', return_value=(True, {})):
+        with patch.object(upgrade_mgr, "verify_upgrade", return_value=(True, {})):
             result = upgrade_mgr.run_upgrade(dry_run=False)
 
         assert result["status"] == "COMPLETED"
 
         # 3. Rollback
         rollback_mgr = RollbackManager(str(project))
-        with patch.object(rollback_mgr, 'restore_backup', return_value={"status": "COMPLETED", "paths_restored": 10}):
+        with patch.object(
+            rollback_mgr,
+            "restore_backup",
+            return_value={"status": "COMPLETED", "paths_restored": 10},
+        ):
             rollback_result = rollback_mgr.restore_backup("test")
         assert rollback_result["status"] == "COMPLETED"
 
@@ -126,11 +130,13 @@ class TestConcurrentUpgradeSafety:
         versions = [m.detect_current_version() for m in managers]
         assert all(v == versions[0] for v in versions)
 
-        with patch('scripts.upgrade.datetime') as mock_dt:
-            times = [real_datetime(2026, 4, 27, 12, 0, i+1) for i in range(3)]
+        with patch("scripts.upgrade.datetime") as mock_dt:
+            times = [real_datetime(2026, 4, 27, 12, 0, i + 1) for i in range(3)]
             mock_dt.now.side_effect = times
-            with patch('scripts.upgrade.shutil.copytree'), \
-                 patch('scripts.upgrade.shutil.copy2'):
+            with (
+                patch("scripts.upgrade.shutil.copytree"),
+                patch("scripts.upgrade.shutil.copy2"),
+            ):
                 backups = [m.backup_current_state() for m in managers]
 
         backup_names = [b.name for b in backups]
@@ -141,7 +147,7 @@ class TestCrossScriptIntegration:
     """Integration across all three lifecycle scripts."""
 
     def test_full_lifecycle_chain(self, tmp_path):
-        """Test detect â†’ upgrade â†’ rollback â†’ verify complete cycle."""
+        """Test detect -> upgrade -> rollback -> verify complete cycle."""
         project = tmp_path / "project"
         source = tmp_path / "source"
         project.mkdir()
@@ -175,13 +181,19 @@ class TestCrossScriptIntegration:
         assert plan["status"] == "READY_FOR_UPGRADE"
 
         # 3. UPGRADE (execution)
-        with patch.object(up_mgr, 'verify_upgrade', return_value=(True, {"version_detected": True})):
+        with patch.object(
+            up_mgr, "verify_upgrade", return_value=(True, {"version_detected": True})
+        ):
             exec_result = up_mgr.run_upgrade(dry_run=False)
         assert exec_result["status"] == "COMPLETED"
 
         # 4. ROLLBACK
         rb_mgr = RollbackManager(str(project))
-        with patch.object(rb_mgr, 'restore_backup', return_value={"status": "COMPLETED", "paths_restored": 10}):
+        with patch.object(
+            rb_mgr,
+            "restore_backup",
+            return_value={"status": "COMPLETED", "paths_restored": 10},
+        ):
             rb_result = rb_mgr.restore_backup("ts123")
         assert rb_result["status"] == "COMPLETED"
 
