@@ -2,7 +2,7 @@
 
 - Project: `orquestador_de_agentes`
 - Version: `v9.14.0`
-- State: WP-2026-133 IN_PROGRESS (skill references scaffold for validator).
+- State: WP-2026-139 IN_PROGRESS (cached canonical anti-pattern inventory for review_bridge).
 - Last review: 2026-05-25
 - Mission: keep the central motor clean, versioned once, and externally referenced
   - The repo is the unique source of operational code (motor central).
@@ -11,7 +11,7 @@
 
 ## Current Cycle
 
-- Active ticket: WP-2026-133 IN_PROGRESS (skill references scaffold for validator).
+- Active ticket: WP-2026-139 IN_PROGRESS (cached canonical anti-pattern inventory for review_bridge).
 - Mode: Builder.
 - Outcome: arranque canonico preparado con work_plan APPROVED, bus alineado y estado
   en IN_PROGRESS.

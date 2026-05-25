@@ -1,6 +1,6 @@
 # TURNO ACTUAL
 
-**Ultima actualizacion:** 2026-05-25 22:24:14
+**Ultima actualizacion:** 2026-05-25 22:27:06
 
 ---
 
@@ -8,24 +8,27 @@
 
 | Campo | Valor |
 |-------|-------|
-| **ROL** | **MANAGER** |
-| **Plan ID** | N/A |
+| **ROL** | **BUILDER** |
+| **Plan ID** | WP-2026-139 |
 | **Tipo** | IMPLEMENTATION |
-| **Accion** | CREATE_PLAN |
+| **Accion** | IMPLEMENT |
 
 ---
 
 ## Instruccion
 
-> Ticket WP-2026-133 closed. Create new work_plan.md for next cycle.
+> Implementa WP-2026-139 siguiendo `work_plan.md`, `PLAN_WP-2026-139.md` y `AUDIT_WP-2026-139.md`. Carga el inventario canonico de AP desde archivo con caché y no reintroduzcas la triple copia inline.
 
 ---
 
 ## Archivos a Leer
 
-1. `.manager_rules` (Contexto del rol)
-2. `.agent/workflows/manager_workflow.md` (Flujo de trabajo)
-3. `.agent/context/project_map.md` (Estructura)
+1. `AGENTS.md` (contrato transversal)
+2. `PROJECT.md` (estado y decisiones del proyecto)
+3. `.agent/context/project_map.md` (mapa operativo)
+4. `.agent/collaboration/work_plan.md` (plan activo)
+5. `.agent/collaboration/PLAN_WP-2026-139.md` (estrategia)
+6. `.agent/collaboration/AUDIT_WP-2026-139.md` (criterios de auditoria)
 
 ---
 
@@ -33,8 +36,8 @@
 
 | Archivo | Estado |
 |---------|--------|
-| work_plan.md | COMPLETED |
-| execution_log.md | COMPLETED |
+| work_plan.md | APPROVED |
+| execution_log.md | IN_PROGRESS |
 
 ---
 
