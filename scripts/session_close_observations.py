@@ -369,7 +369,9 @@ def main() -> int:
                 print(f"Appended {len(appended)} observations to {OBS_FILE}")
         elif appended and args.dry_run:
             if args.verbose:
-                print(f"[DRY-RUN] Would append {len(appended)} observations to {OBS_FILE}")
+                print(
+                    f"[DRY-RUN] Would append {len(appended)} observations to {OBS_FILE}"
+                )
 
         # Generate report
         report = generate_report(
