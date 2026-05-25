@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WP-2026-137
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Titulo:** Supervisor startup lock and reconciliation dedupe
 - **Asignado a:** Builder

@@ -1,6 +1,6 @@
 # TURNO ACTUAL
 
-**Ultima actualizacion:** 2026-05-25 17:17:30
+**Ultima actualizacion:** 2026-05-25 18:29:16
 
 ---
 
@@ -8,27 +8,24 @@
 
 | Campo | Valor |
 |-------|-------|
-| **ROL** | **BUILDER** |
-| **Plan ID** | WP-2026-137 |
+| **ROL** | **MANAGER** |
+| **Plan ID** | N/A |
 | **Tipo** | IMPLEMENTATION |
-| **Accion** | IMPLEMENT |
+| **Accion** | CREATE_PLAN |
 
 ---
 
 ## Instruccion
 
-> Implementa WP-2026-137 siguiendo `work_plan.md`, `PLAN_WP-2026-137.md` y `AUDIT_WP-2026-137.md`. Mantén el alcance minimo y no toques la memoria ni el pipeline de observaciones.
+> Ticket WP-2026-137 closed. Create new work_plan.md for next cycle.
 
 ---
 
 ## Archivos a Leer
 
-1. `AGENTS.md` (contrato transversal)
-2. `PROJECT.md` (estado y decisiones del proyecto)
-3. `.agent/context/project_map.md` (mapa operativo)
-4. `.agent/collaboration/work_plan.md` (plan activo)
-5. `.agent/collaboration/PLAN_WP-2026-137.md` (estrategia)
-6. `.agent/collaboration/AUDIT_WP-2026-137.md` (criterios de auditoria)
+1. `.manager_rules` (Contexto del rol)
+2. `.agent/workflows/manager_workflow.md` (Flujo de trabajo)
+3. `.agent/context/project_map.md` (Estructura)
 
 ---
 
@@ -36,10 +33,9 @@
 
 | Archivo | Estado |
 |---------|--------|
-| work_plan.md | APPROVED |
-| execution_log.md | IN_PROGRESS |
+| work_plan.md | COMPLETED |
+| execution_log.md | COMPLETED |
 
 ---
 
 *Generado por agent_controller.py v5*
-

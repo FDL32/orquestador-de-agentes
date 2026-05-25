@@ -74,6 +74,7 @@ class SequentialTicketSupervisor:
         self.state_path = self.runtime_dir / "supervisor_state.json"
         self.supervisor_lock_path = self.runtime_dir / "supervisor_lock.txt"
         self._lock_fd: int | None = None
+        self._supervisor_lock_held: bool = False
 
     def save_state(self, state: SupervisorState) -> None:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -261,6 +262,11 @@ class SequentialTicketSupervisor:
         import os
         from datetime import datetime, timezone
 
+        # Reentrancy: same instance already holds the lock (e.g. standalone
+        # bootstrap() call followed by run_reactive() calling bootstrap() again).
+        if self._supervisor_lock_held:
+            return True
+
         self.runtime_dir.mkdir(parents=True, exist_ok=True)
         lock_path = str(self.supervisor_lock_path)
 
@@ -275,6 +281,7 @@ class SequentialTicketSupervisor:
             }
             with os.fdopen(self._lock_fd, "w", encoding="utf-8") as f:
                 json.dump(lock_data, f, indent=2)
+            self._supervisor_lock_held = True
             return True
         except FileExistsError:
             # Lock exists - check if it's stale
@@ -329,6 +336,8 @@ class SequentialTicketSupervisor:
         """
         import contextlib
         import os
+
+        self._supervisor_lock_held = False
 
         if self._lock_fd is not None:
             with contextlib.suppress(OSError):
@@ -1130,7 +1139,7 @@ class SequentialTicketSupervisor:
             return value if value > 0 else default
 
         # Acquire lock via bootstrap - if rejected, another instance is running
-        if not self.bootstrap():
+        if self.bootstrap() is False:
             return False  # Lock rejected, another supervisor is active
 
         idle_timeout = _timeout_from_env(
@@ -1160,7 +1169,7 @@ class SequentialTicketSupervisor:
         import time
 
         # Acquire lock via bootstrap - if rejected, another instance is running
-        if not self.bootstrap():
+        if self.bootstrap() is False:
             return  # Lock rejected, another supervisor is active
 
         try:
