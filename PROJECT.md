@@ -2,7 +2,7 @@
 
 - Project: `orquestador_de_agentes`
 - Version: `v9.14.0`
-- State: WP-2026-137 COMPLETED (supervisor startup lock and reconciliation dedupe).
+- State: WP-2026-138 COMPLETED (manager review memory injection from observations).
 - Last review: 2026-05-25
 - Mission: keep the central motor clean, versioned once, and externally referenced
   - The repo is the unique source of operational code (motor central).
@@ -11,9 +11,9 @@
 
 ## Current Cycle
 
-- Active ticket: WP-2026-137 COMPLETED (supervisor startup lock and reconciliation dedupe).
+- Active ticket: WP-2026-138 COMPLETED (manager review memory injection from observations).
 - Mode: closed.
-- Outcome: supervisor lock atomico e idempotencia de reconciliacion completados;
+- Outcome: memoria dinamica de auditoria integrada en el prompt del Manager;
   bus y markdowns sincronizados al cierre.
 
 ## Source of truth

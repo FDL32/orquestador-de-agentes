@@ -148,3 +148,10 @@
 - **Plan ID:** WP-2026-137
 - **Decision:** APPROVE
 - **Source:** manager backend exec review
+
+---
+
+### MANAGER_REVIEW - 2026-05-25 19:00:48
+- **Plan ID:** WP-2026-138
+- **Decision:** TRANSPORT_FAILED
+- **Source:** manager backend exec review
