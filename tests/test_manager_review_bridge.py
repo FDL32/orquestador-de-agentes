@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -27,6 +28,83 @@ def _make_bridge(tmp_path: Path) -> tuple[ReviewBridge, EventBus, Path]:
     legacy_manager_exe = tmp_path / "manager_legacy.exe"
     legacy_manager_exe.write_text("", encoding="utf-8")
     return bridge, event_bus, legacy_manager_exe
+
+
+def _make_review_prompt_bridge(tmp_path: Path, deliverable_type: str = "code") -> ReviewBridge:
+    runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+    event_bus = EventBus(runtime_dir=runtime_dir)
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    collaboration_dir.mkdir(parents=True, exist_ok=True)
+    (collaboration_dir / "work_plan.md").write_text(
+        "\n".join(
+            [
+                "# Work Plan - WP-TEST-123",
+                "",
+                "## Metadata",
+                "- **ID:** WP-TEST-123",
+                "- **Estado:** APPROVED",
+                f"- **deliverable_type:** {deliverable_type}",
+                "- **Titulo:** Test ticket",
+                "- **Asignado a:** Builder",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (collaboration_dir / "TURN.md").write_text(
+        "\n".join(
+            [
+                "# TURNO ACTUAL",
+                "",
+                "## Agente Activo",
+                "",
+                "| Campo | Valor |",
+                "|-------|-------|",
+                "| **ROL** | **BUILDER** |",
+                "| **Plan ID** | WP-TEST-123 |",
+                "| **Tipo** | IMPLEMENTATION |",
+                "| **Accion** | IMPLEMENT |",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (collaboration_dir / "STATE.md").write_text(
+        "\n".join(
+            [
+                "# State - WP-TEST-123",
+                "",
+                "Plan Activo: WP-TEST-123",
+                "Estado actual: IN_PROGRESS",
+                "Rol activo: BUILDER",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (collaboration_dir / "execution_log.md").write_text(
+        "\n".join(
+            [
+                "# Execution Log - WP-TEST-123",
+                "",
+                "## Metadata",
+                "- **ID:** WP-TEST-123",
+                "- **Estado:** IN_PROGRESS",
+                "- **deliverable_type:** code",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+
+def _write_observations(tmp_path: Path, lines: list[str]) -> Path:
+    memory_dir = tmp_path / ".agent" / "runtime" / "memory"
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    path = memory_dir / "observations.jsonl"
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
 
 
 def test_manager_review_cycle_approves(monkeypatch, tmp_path):
@@ -398,6 +476,92 @@ def test_build_review_prompt_includes_allowed_skills_for_role(tmp_path):
     assert "ALLOWED SKILLS FOR ROLE" in prompt
     # Since TURN.md doesn't exist, role defaults to BUILDER
     assert "BUILDER" in prompt
+
+
+def test_build_review_prompt_includes_manager_learnings_for_code_and_preserves_static_rubric(tmp_path):
+    bridge = _make_review_prompt_bridge(tmp_path, deliverable_type="code")
+
+    observations = []
+    for day in range(1, 8):
+        signal = f"lesson-{day}"
+        if day == 7:
+            signal = "x" * 240
+        observations.append(
+            json.dumps(
+                {
+                    "timestamp": f"2026-05-{day:02d}T10:00:00+00:00",
+                    "topic": "manager-review-rubric",
+                    "signal": signal,
+                    "source_ticket": f"WP-2026-13{day}",
+                }
+            )
+        )
+    observations.append("{not valid json")
+    observations.append(
+        json.dumps(
+            {
+                "timestamp": "2026-05-08T10:00:00+00:00",
+                "topic": "other-topic",
+                "signal": "should-not-appear",
+                "source_ticket": "WP-OTHER",
+            }
+        )
+    )
+    _write_observations(tmp_path, observations)
+
+    prompt = bridge._build_review_prompt(ticket_id="WP-TEST-123", dtype="code")
+
+    assert "Review code ticket WP-TEST-123." in prompt
+    assert "Test anti-patterns" in prompt
+    assert "Implementation anti-patterns" in prompt
+    assert "--- Lecciones acumuladas de auditoria ---" in prompt
+    assert prompt.index("--- Lecciones acumuladas de auditoria ---") > prompt.index(
+        "Implementation anti-patterns"
+    )
+    assert "should-not-appear" not in prompt
+
+    dynamic_section = prompt.split("--- Lecciones acumuladas de auditoria ---", 1)[1]
+    dynamic_section = dynamic_section.split("--- work_plan.md ---", 1)[0]
+    bullets = [line for line in dynamic_section.splitlines() if line.startswith("- [")]
+    assert len(bullets) == 5
+    assert bullets[0].startswith("- [2026-05-07]")
+    assert bullets[-1].startswith("- [2026-05-03]")
+    assert "x" * 197 in bullets[0]
+    assert "x" * 205 not in bullets[0]
+    assert bullets[0].endswith("(WP-2026-137)")
+
+
+def test_build_review_prompt_ignores_missing_observations_file(tmp_path):
+    bridge = _make_review_prompt_bridge(tmp_path, deliverable_type="code")
+
+    prompt = bridge._build_review_prompt(ticket_id="WP-TEST-123", dtype="code")
+
+    assert "--- Lecciones acumuladas de auditoria ---" not in prompt
+    assert "Test anti-patterns" in prompt
+    assert "Implementation anti-patterns" in prompt
+
+
+def test_build_review_prompt_includes_manager_learnings_for_mixed(tmp_path):
+    bridge = _make_review_prompt_bridge(tmp_path, deliverable_type="mixed")
+    _write_observations(
+        tmp_path,
+        [
+            json.dumps(
+                {
+                    "timestamp": "2026-05-25T10:00:00+00:00",
+                    "topic": "manager-review-rubric",
+                    "signal": "mixed tickets should inherit rubric learnings",
+                    "source_ticket": "WP-2026-138",
+                }
+            )
+        ],
+    )
+
+    prompt = bridge._build_review_prompt(ticket_id="WP-TEST-123", dtype="mixed")
+
+    assert "Review mixed ticket WP-TEST-123." in prompt
+    assert "--- Lecciones acumuladas de auditoria ---" in prompt
+    assert "mixed tickets should inherit rubric learnings" in prompt
 
 
 class TestOpencodeReviewRoute:

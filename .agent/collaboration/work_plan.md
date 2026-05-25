@@ -1,46 +1,48 @@
-# Work Plan - WP-2026-137
+# Work Plan - WP-2026-138
 
 ## Metadata
-- **ID:** WP-2026-137
+- **ID:** WP-2026-138
 - **Estado:** COMPLETED
 - **deliverable_type:** code
-- **Titulo:** Supervisor startup lock and reconciliation dedupe
+- **Titulo:** Manager review memory injection from observations
 - **Asignado a:** Builder
 
 ## Objetivo
-Eliminar la repeticion de `SUPERVISOR_RECONCILED` cuando el supervisor se arranca varias veces sobre el mismo ticket, reforzando el arranque con lock atómico, verificacion de liveness e idempotencia de reconciliacion.
+Inyectar las lecciones acumuladas de auditoria en el prompt del Manager leyendo `.agent/runtime/memory/observations.jsonl`, sin tocar el contrato de decision ni el rubric estatico base.
 
 ## Decision Arquitectonica
-- El supervisor debe comportarse como una instancia unica por ticket activo.
-- El lock debe adquirirse de forma atomica (`O_CREAT | O_EXCL`) para evitar TOCTOU.
-- La reconciliacion debe ser idempotente para el mismo par `previous_ticket` / `recovered_ticket`.
-- El launcher no debe bloquear el arranque por presencia del lock; como mucho puede informar y dejar que Python decida por liveness.
-- Si el PID check no esta disponible, el fallback de mtime debe ser corto y conservador.
-- La semantica de `run_reactive()` debe distinguir claramente entre "no hubo cambios" y "no se pudo adquirir lock".
-- El fix se limita a supervisor, launcher y tests; no toca la memoria persistente ni el flujo de auditoria.
+- `bus/review_bridge.py` debe leer `observations.jsonl` y filtrar `topic="manager-review-rubric"`.
+- La seccion dinamica se inyecta en `_build_review_prompt()` despues del rubric estatico y antes del bloque de contexto canonico.
+- La seccion dinamica se ordena por recencia y se limita a `MAX_RUBRIC_OBSERVATIONS = 5`.
+- Cada observacion se trunca a `MAX_OBSERVATION_SIGNAL_CHARS = 200` caracteres si supera el limite.
+- Si `observations.jsonl` falta, esta corrupto o no contiene observaciones validas, el prompt sigue sin la seccion dinamica y no falla.
+- El rubric estatico sigue siendo la base; la memoria dinamica solo lo amplifica.
+- La memoria dinamica se aplica a tickets `code` y `mixed`.
+- No se introduce escritura sobre `observations.jsonl` ni se modifica el pipeline de cierre de sesion.
+- El contrato `APPROVE / CHANGES / INSPECT` permanece intacto.
 
 ## Files Likely Touched
-- `bus/supervisor.py`
-- `scripts/launch_agent_terminals.ps1`
-- `scripts/ticket_supervisor.py`
-- `tests/test_supervisor.py`
-- `tests/test_launch_agent_terminals_script.py`
+- `bus/review_bridge.py`
+- `tests/test_review_bridge.py`
+- `tests/test_manager_review_bridge.py`
 
 ## Fases
-1. Añadir el lock de arranque atomico del supervisor y definir la semantica de liberacion/liveness.
-2. Hacer idempotente la emision de `SUPERVISOR_RECONCILED` para el mismo ticket recuperado.
-3. Revisar el launcher para que no sea el mecanismo de seguridad y solo actue como capa informativa/operativa.
-4. Cubrir el comportamiento con tests de arranque repetido, contencion de lock y dedupe.
+1. Implementar la lectura segura de `observations.jsonl` y el filtrado por topic.
+2. Inyectar la seccion de "Lecciones acumuladas" en `_build_review_prompt()` con cap, truncado y soporte para `code`/`mixed`.
+3. Mantener el rubric base y el contrato de decision intactos.
+4. Anadir tests para archivo ausente, contenido corrupto, filtrado por topic, cap, truncado por entrada y preservacion del rubric base.
 
 ## Calidad
-- `python scripts/run_pytest_safe.py tests/test_supervisor.py tests/test_launch_agent_terminals_script.py -q`
+- `python scripts/run_pytest_safe.py tests/test_review_bridge.py tests/test_manager_review_bridge.py -q`
 - `ruff check bus scripts tests`
 - `python .agent/agent_controller.py --validate --json --force`
 
 ## Criterios de aceptacion
-- `SUPERVISOR_RECONCILED` no se emite mas de una vez para el mismo `previous_ticket` / `recovered_ticket`.
-- El lock se adquiere de forma atomica y no hay ventana TOCTOU.
-- El launcher no bloquea el sistema si el lock queda huérfano; Python resuelve la liveness.
-- El estado del ticket recuperado sigue siendo correcto tras arranques repetidos.
-- Los tests cubren el camino feliz y el path de contencion del lock.
+- El prompt del Manager incluye una seccion dinamica de observaciones cuando existen entradas con `topic="manager-review-rubric"`.
+- La seccion dinamica muestra solo entradas recientes y respeta el cap acordado.
+- Cada observacion se trunca a 200 caracteres si excede el limite.
+- La seccion dinamica se aplica a tickets `code` y `mixed`.
+- Si el fichero falta o es invalido, la construccion del prompt sigue funcionando.
+- El rubric base y el contrato `APPROVE / CHANGES / INSPECT` no cambian.
+- Los tests cubren archivo ausente, filtrado, cap, truncado por entrada, mixed y formato estable.
 - La validacion canonica pasa sin errores.

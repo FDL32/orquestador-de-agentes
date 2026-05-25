@@ -20,6 +20,8 @@ from .utils import count_trailing_changes
 
 # Windows CreateProcess argv limit ~8191 chars; leave margin for other args
 ARGV_PROMPT_THRESHOLD = 8000
+MAX_RUBRIC_OBSERVATIONS = 5
+MAX_OBSERVATION_SIGNAL_CHARS = 200
 
 
 class ReviewDecision(str, Enum):
@@ -180,14 +182,24 @@ class ReviewBridge:
 
     @staticmethod
     def _looks_like_opencode_help(stdout: str, stderr: str) -> bool:
-        """Detect an OpenCode help banner instead of model output."""
-        combined = f"{stdout}\n{stderr}".lower()
+        """Detect an OpenCode help banner instead of model output.
+
+        Guards: if stdout contains real NDJSON events (step_start / step_finish)
+        it is genuine model output — the marker strings may appear inside source
+        code the model read, not as an actual help banner. Only inspect stderr
+        in that case, since OpenCode writes its CLI help to stderr.
+        """
+        ndjson_signatures = ('"type":"step_finish"', '"type":"step_start"')
+        stdout_has_ndjson = any(sig in stdout for sig in ndjson_signatures)
+        candidate = (
+            stderr.lower() if stdout_has_ndjson else f"{stdout}\n{stderr}".lower()
+        )
         markers = (
             "opencode run [message..]",
             "run opencode with a message",
             "show help",
         )
-        return any(marker in combined for marker in markers)
+        return any(marker in candidate for marker in markers)
 
     def _classify_transport_result(
         self, stdout: str, stderr: str, exit_code: int
@@ -428,6 +440,76 @@ class ReviewBridge:
         except Exception as e:
             return f"[Error fetching git provenance: {e}]"
 
+    def _observations_path(self) -> Path:
+        return (
+            self.project_root / ".agent" / "runtime" / "memory" / "observations.jsonl"
+        )
+
+    @staticmethod
+    def _parse_observation_timestamp(raw_timestamp: object) -> datetime:
+        if isinstance(raw_timestamp, str):
+            stamp = raw_timestamp.strip().replace("Z", "+00:00")
+            try:
+                parsed = datetime.fromisoformat(stamp)
+                return (
+                    parsed
+                    if parsed.tzinfo is not None
+                    else parsed.replace(tzinfo=timezone.utc)
+                )
+            except ValueError:
+                pass
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+    @staticmethod
+    def _truncate_observation_signal(signal: object) -> str:
+        text = str(signal or "").strip()
+        if len(text) <= MAX_OBSERVATION_SIGNAL_CHARS:
+            return text
+        return text[: MAX_OBSERVATION_SIGNAL_CHARS - 3].rstrip() + "..."
+
+    def _load_manager_review_observations(self) -> list[tuple[datetime, str, str]]:
+        path = self._observations_path()
+        if not path.exists():
+            return []
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except Exception:
+            return []
+
+        observations: list[tuple[datetime, str, str]] = []
+        for raw_line in lines:
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(record, dict):
+                continue
+            if record.get("topic") != "manager-review-rubric":
+                continue
+            signal = self._truncate_observation_signal(record.get("signal", ""))
+            if not signal:
+                continue
+            timestamp = self._parse_observation_timestamp(record.get("timestamp"))
+            source_ticket = str(record.get("source_ticket", "")).strip() or "unknown"
+            observations.append((timestamp, signal, source_ticket))
+
+        observations.sort(key=lambda item: item[0], reverse=True)
+        return observations[:MAX_RUBRIC_OBSERVATIONS]
+
+    def _render_manager_review_learnings(self) -> str:
+        observations = self._load_manager_review_observations()
+        if not observations:
+            return ""
+
+        lines = ["Lecciones acumuladas de auditoria (de revisiones anteriores):"]
+        for timestamp, signal, source_ticket in observations:
+            date = timestamp.astimezone(timezone.utc).date().isoformat()
+            lines.append(f"- [{date}] {signal} ({source_ticket})")
+        return "\n".join(lines)
+
     def _rubric_for_type(self, dtype: str, ticket_id: str) -> str:
         if dtype == "code":
             return (
@@ -535,6 +617,12 @@ class ReviewBridge:
 
         # Compose
         parts = [self._rubric_for_type(dtype, ticket_id)]
+        if dtype in ("code", "mixed"):
+            learnings = self._render_manager_review_learnings()
+            if learnings:
+                parts.append(
+                    f"\n--- Lecciones acumuladas de auditoria ---\n{learnings}"
+                )
         for name, content in sections:
             parts.append(f"\n--- {name} ---\n{content}")
 

@@ -46,6 +46,49 @@ def review_bridge(event_bus, tmp_path):
     return ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
 
+def test_manager_review_observation_loader_caps_filters_and_truncates(review_bridge, tmp_path):
+    memory_dir = tmp_path / ".agent" / "runtime" / "memory"
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    observations_path = memory_dir / "observations.jsonl"
+
+    lines = []
+    for day in range(1, 7):
+        signal = f"lesson-{day}"
+        if day == 6:
+            signal = "y" * 240
+        lines.append(
+            json.dumps(
+                {
+                    "timestamp": f"2026-05-{day:02d}T10:00:00+00:00",
+                    "topic": "manager-review-rubric",
+                    "signal": signal,
+                    "source_ticket": f"WP-2026-13{day}",
+                }
+            )
+        )
+    lines.append("{bad json")
+    lines.append(
+        json.dumps(
+            {
+                "timestamp": "2026-05-08T10:00:00+00:00",
+                "topic": "other-topic",
+                "signal": "ignore-me",
+                "source_ticket": "WP-OTHER",
+            }
+        )
+    )
+    observations_path.write_text("\n".join(lines), encoding="utf-8")
+
+    observations = review_bridge._load_manager_review_observations()
+
+    assert len(observations) == 5
+    assert observations[0][0].date().isoformat() == "2026-05-06"
+    assert observations[-1][0].date().isoformat() == "2026-05-02"
+    assert observations[0][1].endswith("...")
+    assert len(observations[0][1]) < 205
+    assert all(source_ticket != "WP-OTHER" for _, _, source_ticket in observations)
+
+
 def test_emit_fail_safe_on_managing_reviewing(review_bridge, event_bus, tmp_path):
     """WP-2026-118: Bridge logs error and aborts cleanly if emit() fails during MANAGER_REVIEWING.
 
@@ -229,7 +272,7 @@ class TestOpencodeJsonParserRealSchema:
         # OpenCode NDJSON schema real: type:"text" con part.text
         stdout = """{"type":"text","part":{"text":"Review complete. All criteria met.\\nDECISION: APPROVE"}}
 """
-        decision = bridge._parse_opencode_json_decision(stdout)
+        decision, _ = bridge._parse_opencode_json_decision(stdout)
         assert decision == ReviewDecision.APPROVE
 
     def test_parse_json_text_event_with_decision_changes(self, tmp_path):
@@ -242,7 +285,7 @@ class TestOpencodeJsonParserRealSchema:
 
         stdout = """{"type":"text","part":{"text":"Found issues:\\n- Missing tests\\n\\nDECISION: CHANGES"}}
 """
-        decision = bridge._parse_opencode_json_decision(stdout)
+        decision, _ = bridge._parse_opencode_json_decision(stdout)
         assert decision == ReviewDecision.CHANGES
 
     def test_parse_json_prioritizes_final_answer_phase(self, tmp_path):
@@ -257,7 +300,7 @@ class TestOpencodeJsonParserRealSchema:
         stdout = """{"type":"text","part":{"text":"Initial thought: DECISION: CHANGES"}}
 {"type":"text","part":{"text":"After reflection: DECISION: APPROVE"},"phase":"final_answer"}
 """
-        decision = bridge._parse_opencode_json_decision(stdout)
+        decision, _ = bridge._parse_opencode_json_decision(stdout)
         # final_answer with APPROVE should win
         assert decision == ReviewDecision.APPROVE
 
@@ -273,7 +316,7 @@ class TestOpencodeJsonParserRealSchema:
         stdout = """{"type":"text","part":{"text":"Initial thought: DECISION: APPROVE"}}
 {"type":"text","part":{"text":"After reflection: DECISION: CHANGES"}}
 """
-        decision = bridge._parse_opencode_json_decision(stdout)
+        decision, _ = bridge._parse_opencode_json_decision(stdout)
         # First valid decision should be returned
         assert decision == ReviewDecision.APPROVE
 
@@ -289,7 +332,7 @@ class TestOpencodeJsonParserRealSchema:
 {broken json
 {"type":"text"}
 """
-        decision = bridge._parse_opencode_json_decision(stdout)
+        decision, _ = bridge._parse_opencode_json_decision(stdout)
         assert decision == ReviewDecision.INSPECT
 
     def test_parse_json_empty_stdout_returns_inspect(self, tmp_path):
@@ -300,7 +343,7 @@ class TestOpencodeJsonParserRealSchema:
         event_bus = EventBus(runtime_dir=runtime_dir)
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
-        decision = bridge._parse_opencode_json_decision("")
+        decision, _ = bridge._parse_opencode_json_decision("")
         assert decision == ReviewDecision.INSPECT
 
     def test_parse_json_text_event_missing_part_field(self, tmp_path):
@@ -314,7 +357,7 @@ class TestOpencodeJsonParserRealSchema:
         stdout = """{"type":"text"}
 {"type":"text","part":"not a dict"}
 """
-        decision = bridge._parse_opencode_json_decision(stdout)
+        decision, _ = bridge._parse_opencode_json_decision(stdout)
         assert decision == ReviewDecision.INSPECT
 
 
@@ -333,7 +376,7 @@ class TestParseOpencodeDecisionWithRetry:
         stdout = "Review complete.\nDECISION: APPROVE"
         stderr = ""
 
-        decision, attempts = bridge._parse_opencode_decision_with_retry(
+        decision, attempts, _ = bridge._parse_opencode_decision_with_retry(
             stdout, stderr, max_retries=2
         )
 
@@ -352,7 +395,7 @@ class TestParseOpencodeDecisionWithRetry:
         stdout = "Review complete. No issues found."
         stderr = ""
 
-        decision, attempts = bridge._parse_opencode_decision_with_retry(
+        decision, attempts, _ = bridge._parse_opencode_decision_with_retry(
             stdout, stderr, max_retries=2
         )
 
@@ -371,7 +414,7 @@ class TestParseOpencodeDecisionWithRetry:
         stdout = "Some output"
         stderr = "TimeoutExpired: command timed out"
 
-        decision, attempts = bridge._parse_opencode_decision_with_retry(
+        decision, attempts, _ = bridge._parse_opencode_decision_with_retry(
             stdout, stderr, max_retries=2
         )
 
@@ -389,7 +432,7 @@ class TestParseOpencodeDecisionWithRetry:
         stdout = ""
         stderr = ""
 
-        decision, attempts = bridge._parse_opencode_decision_with_retry(
+        decision, attempts, _ = bridge._parse_opencode_decision_with_retry(
             stdout, stderr, max_retries=2
         )
 
@@ -440,7 +483,7 @@ class TestNoBareWordFallback:
         monkeypatch.setattr(bridge, "_supports_json_format", False)
 
         stdout = "The code looks fine. No changes needed at this time."
-        decision = bridge._parse_opencode_decision(stdout)
+        decision, _ = bridge._parse_opencode_decision(stdout)
 
         # Should be INSPECT, not CHANGES (no DECISION: pattern)
         assert decision == ReviewDecision.INSPECT
@@ -456,7 +499,7 @@ class TestNoBareWordFallback:
         monkeypatch.setattr(bridge, "_supports_json_format", False)
 
         stdout = "I approve of this implementation."
-        decision = bridge._parse_opencode_decision(stdout)
+        decision, _ = bridge._parse_opencode_decision(stdout)
 
         assert decision == ReviewDecision.INSPECT
 
@@ -471,6 +514,6 @@ class TestNoBareWordFallback:
         monkeypatch.setattr(bridge, "_supports_json_format", False)
 
         stdout = "Review complete.\nDECISION: APPROVE"
-        decision = bridge._parse_opencode_decision(stdout)
+        decision, _ = bridge._parse_opencode_decision(stdout)
 
         assert decision == ReviewDecision.APPROVE
