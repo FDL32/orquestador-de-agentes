@@ -2,7 +2,7 @@
 
 - Project: `orquestador_de_agentes`
 - Version: `v9.14.0`
-- State: WP-2026-135 COMPLETED (pre-compact hook context recovery).
+- State: WP-2026-136 COMPLETED (--candidates flag for session_close_observations).
 - Last review: 2026-05-25
 - Mission: keep the central motor clean, versioned once, and externally referenced
   - The repo is the unique source of operational code (motor central).
@@ -11,11 +11,11 @@
 
 ## Current Cycle
 
-- Active ticket: WP-2026-135 COMPLETED (pre-compact hook context recovery).
+- Active ticket: WP-2026-136 COMPLETED (--candidates flag for session_close_observations).
 - Mode: closed.
-- Outcome: hook pre-compact funcional con observaciones, keywords, ranking y additionalContext.
-  Anti-patrones (mock drift, floor assertion, zero-logic wrapper) incorporados en rubric del Manager.
-  25 tests. Dos bugs de hardening corregidos post-review (UTF-8 y tipos no-string).
+- Outcome: --candidates flag con exclusion mutua real (argparse), load_candidates_from_file
+  estricta (ValueError para UTF-8 invalido, exit 0 para lista vacia), load_existing_observations
+  endurecida. 25 tests. Dos bugs corregidos post-review humana.
 
 ## Source of truth
 

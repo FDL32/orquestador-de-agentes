@@ -1,3 +1,33 @@
+# 2026-05-25 - WP-2026-136 Semantic --candidates input for session_close_observations
+
+### Added
+- `scripts/session_close_observations.py`: flag `--candidates <json_file>` para
+  inyectar candidatos semanticos externos sin tocar el pipeline de validacion.
+  `load_candidates_from_file()` con manejo estricto: FileNotFoundError,
+  ValueError (UTF-8 invalido), ValueError (JSON roto), ValueError (non-list).
+  Elementos no-dict se saltan con warning.
+- `tests/unit/test_session_close_observations.py`: 25 tests (era 16). Nuevos:
+  exclusion mutua, JSON valido, archivo ausente, JSON corrupto, top-level invalido,
+  elementos no-dict, dispatch correcto, UTF-8 invalido, lista vacia exit 0.
+
+### Changed
+- `--ticket` y `--candidates` en `add_mutually_exclusive_group(required=True)`.
+- `load_existing_observations()` endurecida con `errors="replace"`.
+- `skills/session-close-observations/SKILL.md`: modo --candidates, exclusion mutua,
+  workflow con fuente externa documentados.
+
+### Fixed
+- `load_candidates_from_file` usaba `errors="replace"` silenciando UTF-8 invalido;
+  corregido a `read_bytes().decode("utf-8")` para lanzar ValueError como contratado.
+- Lista vacia de candidatos tratada como error (exit 1); corregido a exit 0.
+
+### Summary
+- Canal de inyeccion semantica listo para bucle de autoaprendizaje del Manager.
+  Fundamento de: audit_findings -> session_close --candidates -> observations.jsonl
+  -> review_bridge inyecta contexto dinamico en el prompt del Manager (WP-B).
+- 25 tests verdes, ruff limpio, stdlib only.
+
+---
 # 2026-05-25 - WP-2026-135 Selective context recovery lite for pre-compact hook
 
 ### Added

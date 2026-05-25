@@ -1,12 +1,13 @@
-# State - WP-2026-135
+# State - WP-2026-136
 
-Plan Activo: WP-2026-135
+Plan Activo: WP-2026-136
 Estado actual: COMPLETED
 Rol activo: -
 
 Resumen:
-WP-2026-135 completado. Pre-compact hook funcional con recuperacion segura de contexto,
-ranking por recencia y keywords, proyeccion en additionalContext (cap 5 observaciones).
-Dos bugs de hardening corregidos post-review: UnicodeDecodeError en loader y
-AttributeError/TypeError por campos no-string en score/format.
-25 tests verdes. Anti-patrones generalizados en rubric del Manager y AGENTS.md.
+WP-2026-136 completado. Flag --candidates implementado con exclusion mutua real
+(add_mutually_exclusive_group), load_candidates_from_file estricta (ValueError para
+UTF-8 invalido), lista vacia -> exit 0. load_existing_observations endurecida.
+25 tests verdes. SKILL.md actualizado.
+
+Post-review human fix: strict UTF-8 decode y exit 0 para lista vacia.
