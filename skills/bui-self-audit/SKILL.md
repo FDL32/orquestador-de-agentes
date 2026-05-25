@@ -1,9 +1,13 @@
 ---
 name: self-audit
-version: 1.0.0
+version: 2.0.0
 description: AuditorÃ­a obligatoria que el Builder ejecuta antes de reportar cualquier tarea como completada. Valida tipo de archivo, completitud multi-archivo, regresiÃ³n y gates globales.
 triggers: [/self-audit, audit, /inspect]
 author: agent
+role: builder
+stage: review
+writes_memory: false
+quality_gate: false
 tags: [core, system]
 ---
 

@@ -517,3 +517,71 @@ class TestNoBareWordFallback:
         decision, _ = bridge._parse_opencode_decision(stdout)
 
         assert decision == ReviewDecision.APPROVE
+
+
+class TestDocumentationPromptWiring:
+    """Regression tests: documentation type receives cross-cutting checks and learnings."""
+
+    def _make_bridge(self, tmp_path: Path, dtype: str = "documentation") -> ReviewBridge:
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        (collab / "work_plan.md").write_text(
+            f"# Work Plan\n- **ID:** WP-2026-TEST\n- **deliverable_type:** {dtype}\n",
+            encoding="utf-8",
+        )
+        for name in ("STATE.md", "TURN.md", "execution_log.md"):
+            (collab / name).write_text("", encoding="utf-8")
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        return ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+    def _write_observation(self, tmp_path: Path, signal: str, applies_to="all") -> None:
+        obs_path = tmp_path / ".agent" / "runtime" / "memory" / "observations.jsonl"
+        obs_path.parent.mkdir(parents=True, exist_ok=True)
+        import datetime
+        record = {
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "topic": "manager-review-rubric",
+            "signal": signal,
+            "source": "test",
+            "applies_to": applies_to,
+        }
+        with obs_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record) + "\n")
+
+    def test_documentation_receives_validator_evidence_gate(self, tmp_path):
+        """documentation prompt must include the cross-cutting validator evidence gate."""
+        bridge = self._make_bridge(tmp_path)
+        prompt = bridge._build_review_prompt("WP-2026-TEST", "documentation")
+        assert "Validator evidence gate" in prompt
+        assert "execution_log.md must contain" in prompt
+
+    def test_documentation_receives_learnings_when_applies_to_all(self, tmp_path):
+        """documentation prompt includes observations scoped to 'all'."""
+        self._write_observation(tmp_path, "test signal all scope", applies_to="all")
+        bridge = self._make_bridge(tmp_path)
+        prompt = bridge._build_review_prompt("WP-2026-TEST", "documentation")
+        assert "Lecciones acumuladas de auditoria" in prompt
+        assert "test signal all scope" in prompt
+
+    def test_documentation_excludes_code_only_learnings(self, tmp_path):
+        """documentation prompt must not include observations scoped to code/mixed only."""
+        self._write_observation(tmp_path, "code-only signal", applies_to=["code", "mixed"])
+        bridge = self._make_bridge(tmp_path)
+        prompt = bridge._build_review_prompt("WP-2026-TEST", "documentation")
+        assert "code-only signal" not in prompt
+
+    def test_code_receives_learnings_scoped_to_code(self, tmp_path):
+        """code prompt includes observations scoped to code."""
+        self._write_observation(tmp_path, "code scoped signal", applies_to=["code", "mixed"])
+        bridge = self._make_bridge(tmp_path, dtype="code")
+        prompt = bridge._build_review_prompt("WP-2026-TEST", "code")
+        assert "code scoped signal" in prompt
+
+    def test_static_rubric_unmodified_when_observations_present(self, tmp_path):
+        """Injecting observations must not alter the static rubric content."""
+        self._write_observation(tmp_path, "some learning", applies_to="all")
+        bridge = self._make_bridge(tmp_path)
+        prompt = bridge._build_review_prompt("WP-2026-TEST", "documentation")
+        assert "focus strictly on the clarity" in prompt
+        assert "Lecciones acumuladas de auditoria" in prompt

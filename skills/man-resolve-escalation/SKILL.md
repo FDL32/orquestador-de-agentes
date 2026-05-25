@@ -1,9 +1,13 @@
 ---
 name: resolve-escalation
-version: 1.0.0
+version: 2.0.0
 description: Skill para que el Manager resuelva bloqueos y escalaciones del Builder con decisiones documentadas
 triggers: [/escalate, escalation, /resolve]
 author: agent
+role: manager
+stage: review
+writes_memory: false
+quality_gate: false
 tags: [core, system]
 ---
 

@@ -4,6 +4,10 @@ version: 2.0.0
 description: Ejecutar gates apropiados según deliverable_type del WP activo
 triggers: [/gates, quality-gates, /check]
 author: agent
+role: builder
+stage: quality
+writes_memory: false
+quality_gate: true
 tags: [core, system]
 ---
 

@@ -47,6 +47,17 @@
 - **Valores tipicos**: `session-close`, `builder`, `manager`, `supervisor`
 - **Proposito**: Trazabilidad del origen
 
+### applies_to (opcional)
+- **Tipo**: string o list[string]
+- **Valores validos**: `code`, `mixed`, `documentation`, `research`, `analysis`, `all`
+- **Default**: `all` (si ausente, aplica a todos los deliverable_types)
+- **Proposito**: Filtrar observaciones por tipo de entregable en el prompt del Manager
+
+### anti_pattern_id (opcional)
+- **Tipo**: string
+- **Formato**: `AP-NN` (e.g. `AP-01`, `AP-07`)
+- **Proposito**: Enlazar la observacion con un anti-patron del inventario canonico (`skills/_shared/anti-patterns.md`). Si el AP ya esta codificado como regla, el review_bridge omite la observacion del prompt dinamico para evitar redundancia
+
 ## Ejemplos Validos
 
 ```json

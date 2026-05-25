@@ -1,9 +1,13 @@
 ---
 name: refactor-manager
-version: 1.0.0
+version: 2.0.0
 description: Protocolo de reingenierÃ­a segura con 5 fases (anÃ¡lisis â†’ plan â†’ refactor â†’ validaciÃ³n â†’ iteraciÃ³n)
 triggers: [/refactor, refactor-manager, refactor]
 author: agent
+role: shared
+stage: review
+writes_memory: false
+quality_gate: false
 tags: [core, system]
 ---
 

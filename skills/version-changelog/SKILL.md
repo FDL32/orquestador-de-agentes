@@ -1,9 +1,13 @@
 ---
 name: version-changelog
-version: 1.0.0
+version: 2.0.0
 description: GestiÃ³n de versiones semÃ¡nticas y CHANGELOG.md siguiendo Keep a Changelog y SemVer 2.0
 triggers: [/changelog, version, /release]
 author: agent
+role: shared
+stage: close
+writes_memory: false
+quality_gate: false
 tags: [core, system]
 ---
 

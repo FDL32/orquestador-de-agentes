@@ -1,9 +1,13 @@
 ---
 name: create-work-plan
-version: 1.0.0
+version: 2.0.0
 description: Skill para que el Manager cree planes de implementaciÃ³n estructurados con fases, tareas y criterios de aceptaciÃ³n
 triggers: [/plan, create-plan, /schedule]
 author: agent
+role: manager
+stage: plan
+writes_memory: false
+quality_gate: false
 tags: [core, system]
 ---
 

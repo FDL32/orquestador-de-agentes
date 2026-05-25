@@ -1,9 +1,13 @@
 ---
 name: graphify
-version: 1.0.0
+version: 2.0.0
 description: Construir grafo de conocimiento persistente del codebase para exploraciÃ³n eficiente con mÃ­nimo consumo de tokens
 triggers: [/graphify, graph, map]
 author: agent
+role: shared
+stage: support
+writes_memory: false
+quality_gate: false
 tags: [core, system]
 ---
 

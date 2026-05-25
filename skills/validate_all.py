@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-"""Validador de micro-skills del sistema multi-agente.
+"""Validator for the project micro-skills catalog.
 
-Verifica que cada SKILL.md tenga frontmatter YAML vÃ¡lido con los campos requeridos:
-- name: nombre de la skill
-- version: versiÃ³n semÃ¡ntica
-- description: descripciÃ³n breve
-- author: autor de la skill
-- tags: lista de etiquetas
-
-Uso:
-    python validate_all.py              # Valida todas las skills
-    python validate_all.py --verbose    # Muestra detalles de cada skill
-    python validate_all.py --json       # Output en formato JSON
+Checks that every SKILL.md has valid frontmatter with the required fields:
+- name: skill name
+- version: semantic version
+- description: short description
+- author: skill author
+- tags: list of tags
+- role: operational role
+- stage: lifecycle stage
+- writes_memory: boolean memory flag
+- quality_gate: boolean quality-gate flag
 """
+
+from __future__ import annotations
 
 import json
 import re
@@ -20,183 +21,279 @@ import sys
 from pathlib import Path
 
 
-# Campos obligatorios en el frontmatter
-REQUIRED_FIELDS = {"name", "version", "description", "author", "tags"}
+REQUIRED_FIELDS = {
+    "name",
+    "version",
+    "description",
+    "author",
+    "tags",
+    "role",
+    "stage",
+    "writes_memory",
+    "quality_gate",
+}
 
-# Directorio base de skills
+VALID_ROLES = {"builder", "manager", "shared", "user"}
+VALID_STAGES = {
+    "setup",
+    "plan",
+    "implement",
+    "review",
+    "quality",
+    "close",
+    "memory",
+    "meta",
+    "support",
+}
+
 SKILLS_DIR = Path(__file__).parent
 
+AP_CANONICAL_PATH = SKILLS_DIR / "_shared" / "anti-patterns.md"
 
-def extract_frontmatter(content: str) -> dict[str, any] | None:
-    """Extrae el frontmatter YAML del contenido de un SKILL.md.
+AP_REFS: dict[str, tuple[Path, str]] = {
+    "code-rules": (
+        SKILLS_DIR / "bui-implement-from-plan" / "references" / "code-rules.md",
+        "Builder code rules",
+    ),
+    "review-checklist": (
+        SKILLS_DIR / "man-review-implementation" / "references" / "review-checklist.md",
+        "Manager review checklist",
+    ),
+}
 
-    El frontmatter debe estar delimitado por --- al inicio y final.
 
-    Args:
-        content: Contenido completo del archivo SKILL.md
+def _extract_ap_ids_from_file(path: Path) -> set[str]:
+    """Extract AP-NN identifiers from a text file."""
+    if not path.exists():
+        return set()
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return set()
+    return set(re.findall(r"\bAP-\d{2}\b", content))
 
-    Returns:
-        Diccionario con el frontmatter parseado, o None si no existe o es invÃ¡lido
+
+def check_ap_sync() -> list[str]:
+    """Check that AP-NN IDs in derived files match the canonical inventory.
+
+    Returns a list of warning messages (never errors -- this is advisory).
     """
-    # Buscar patrÃ³n ---\n...\n---
+    warnings: list[str] = []
+
+    canonical_ids = _extract_ap_ids_from_file(AP_CANONICAL_PATH)
+    if not canonical_ids:
+        warnings.append(
+            f"No se encontraron AP-NN en {AP_CANONICAL_PATH.relative_to(SKILLS_DIR)}"
+        )
+        return warnings
+
+    for ref_path, ref_label in AP_REFS.values():
+        ref_ids = _extract_ap_ids_from_file(ref_path)
+        if not ref_ids:
+            warnings.append(
+                f"[AP-sync] {ref_label} ({ref_path.relative_to(SKILLS_DIR)}): "
+                f"no contiene ningun AP-NN"
+            )
+            continue
+
+        missing_in_ref = canonical_ids - ref_ids
+        extra_in_ref = ref_ids - canonical_ids
+
+        if missing_in_ref:
+            warnings.append(
+                f"[AP-sync] {ref_label}: faltan {', '.join(sorted(missing_in_ref))} "
+                f"presentes en {AP_CANONICAL_PATH.relative_to(SKILLS_DIR)}"
+            )
+        if extra_in_ref:
+            warnings.append(
+                f"[AP-sync] {ref_label}: {', '.join(sorted(extra_in_ref))} "
+                f"no existen en {AP_CANONICAL_PATH.relative_to(SKILLS_DIR)}"
+            )
+
+    return warnings
+
+
+def extract_frontmatter(content: str) -> dict[str, object] | None:
+    """Extract the frontmatter section from a SKILL.md file."""
     pattern = r"^---\s*\n(.*?)\n---\s*\n"
     match = re.search(pattern, content, re.DOTALL)
-
     if not match:
         return None
 
     frontmatter_text = match.group(1)
-    result = {}
+    result: dict[str, object] = {}
 
-    # Parsear lÃ­neas del frontmatter
     for line in frontmatter_text.strip().split("\n"):
         line = line.strip()
         if not line or line.startswith("#"):
             continue
 
-        # Buscar patrÃ³n key: value
-        if ":" in line:
-            key, value = line.split(":", 1)
-            key = key.strip()
-            value = value.strip()
+        if ":" not in line:
+            continue
 
-            # Parsear listas (tags: [item1, item2])
-            if value.startswith("[") and value.endswith("]"):
-                value = [
-                    v.strip().strip('"').strip("'") for v in value[1:-1].split(",")
-                ]
-            else:
-                # Quitar comillas si existen
-                value = value.strip('"').strip("'")
+        key, value = line.split(":", 1)
+        key = key.strip()
+        value = value.strip()
 
-            result[key] = value
+        if value.startswith("[") and value.endswith("]"):
+            value = [
+                item.strip().strip('"').strip("'")
+                for item in value[1:-1].split(",")
+                if item.strip()
+            ]
+        else:
+            value = value.strip('"').strip("'")
+            if value.lower() in {"true", "false"}:
+                value = value.lower() == "true"
+
+        result[key] = value
 
     return result
 
 
 def _validate_skill_file(skill_dir: Path) -> tuple[str | None, list[str]]:
-    """Validate SKILL.md file existence and readability."""
+    """Validate that SKILL.md exists and is readable."""
     skill_file = skill_dir / "SKILL.md"
     if not skill_file.exists():
         return None, ["No existe SKILL.md"]
 
     try:
-        content = skill_file.read_text(encoding="utf-8-sig")
-        return content, []
-    except Exception as e:
-        return None, [f"Error leyendo archivo: {e}"]
+        return skill_file.read_text(encoding="utf-8-sig"), []
+    except Exception as exc:
+        return None, [f"Error leyendo archivo: {exc}"]
 
 
-def _validate_frontmatter(content: str) -> tuple[dict | None, list[str]]:
-    """Extract and validate frontmatter."""
+def _validate_frontmatter(content: str) -> tuple[dict[str, object] | None, list[str]]:
+    """Extract and validate the frontmatter block."""
     frontmatter = extract_frontmatter(content)
     if frontmatter is None:
-        return None, ["No se encontrÃ³ frontmatter YAML vÃ¡lido (debe iniciar con ---)"]
+        return None, ["No se encontro frontmatter YAML valido (debe iniciar con ---)"]
     return frontmatter, []
 
 
-def _validate_required_fields(frontmatter: dict) -> list[str]:
+def _validate_required_fields(frontmatter: dict[str, object]) -> list[str]:
     """Validate required fields are present."""
-    errors = []
     missing_fields = REQUIRED_FIELDS - set(frontmatter.keys())
     if missing_fields:
-        errors.append(
-            f"Faltan campos obligatorios: {', '.join(sorted(missing_fields))}"
-        )
-    return errors
-
-
-def _validate_field_content(frontmatter: dict) -> list[str]:
-    """Validate field types and content."""
-    errors = []
-
-    if "name" in frontmatter:
-        name = frontmatter["name"]
-        if not name or not isinstance(name, str):
-            errors.append("El campo 'name' debe ser un string no vacÃ­o")
-        elif " " in name:
-            errors.append("El campo 'name' no debe contener espacios (usar kebab-case)")
-
-    if "version" in frontmatter:
-        version = frontmatter["version"]
-        # Validar formato semver simple (X.Y.Z)
-        if not re.match(r"^\d+\.\d+\.\d+$", str(version)):
-            errors.append("El campo 'version' debe seguir formato semver (X.Y.Z)")
-
-    if "tags" in frontmatter:
-        tags = frontmatter["tags"]
-        if not isinstance(tags, list):
-            errors.append("El campo 'tags' debe ser una lista")
-        elif len(tags) == 0:
-            errors.append("El campo 'tags' no debe estar vacÃ­o")
-
-    return errors
-
-
-def _validate_references_dir(skill_dir: Path) -> list[str]:
-    """Validate references directory exists."""
-    references_dir = skill_dir / "references"
-    if not references_dir.exists():
-        return ["No existe carpeta 'references/'"]
+        return [f"Faltan campos obligatorios: {', '.join(sorted(missing_fields))}"]
     return []
 
 
-def validate_skill(skill_dir: Path) -> tuple[bool, list[str]]:
-    """Valida una skill individual.
+def _validate_field_content(frontmatter: dict[str, object]) -> list[str]:
+    """Validate field types, enums and content."""
+    errors: list[str] = []
 
-    Args:
-        skill_dir: Ruta al directorio de la skill
+    name = frontmatter.get("name")
+    if not isinstance(name, str) or not name:
+        errors.append("El campo 'name' debe ser un string no vacio")
+    elif " " in name:
+        errors.append("El campo 'name' no debe contener espacios (usar kebab-case)")
 
-    Returns:
-        Tupla (es_vÃ¡lida, lista_de_errores)
+    version = frontmatter.get("version")
+    if not re.match(r"^\d+\.\d+\.\d+$", str(version)):
+        errors.append("El campo 'version' debe seguir formato semver (X.Y.Z)")
+
+    tags = frontmatter.get("tags")
+    if not isinstance(tags, list):
+        errors.append("El campo 'tags' debe ser una lista")
+    elif len(tags) == 0:
+        errors.append("El campo 'tags' no debe estar vacio")
+
+    role = frontmatter.get("role")
+    if not isinstance(role, str) or role not in VALID_ROLES:
+        errors.append("El campo 'role' debe ser uno de: builder, manager, shared, user")
+
+    stage = frontmatter.get("stage")
+    if not isinstance(stage, str) or stage not in VALID_STAGES:
+        errors.append(
+            "El campo 'stage' debe ser uno de: "
+            "setup, plan, implement, review, quality, close, memory, meta, support"
+        )
+
+    writes_memory = frontmatter.get("writes_memory")
+    if not isinstance(writes_memory, bool):
+        errors.append("El campo 'writes_memory' debe ser booleano (true/false)")
+
+    quality_gate = frontmatter.get("quality_gate")
+    if not isinstance(quality_gate, bool):
+        errors.append("El campo 'quality_gate' debe ser booleano (true/false)")
+
+    return errors
+
+
+def _validate_references_dir(skill_dir: Path) -> tuple[list[str], list[str]]:
+    """Validate the references directory.
+
+    references/ no es bloqueante: missing o .gitkeep-only become warnings.
     """
-    errors = []
+    references_dir = skill_dir / "references"
+    if not references_dir.exists():
+        return [], ["No existe carpeta 'references/'"]
 
-    # Validate file
+    try:
+        entries = [item for item in references_dir.iterdir() if item.name != ".gitkeep"]
+    except OSError as exc:
+        return [], [f"Error leyendo carpeta 'references/': {exc}"]
+
+    if not entries:
+        return [], ["Carpeta 'references/' solo contiene .gitkeep o esta vacia"]
+
+    return [], []
+
+
+def validate_skill(skill_dir: Path) -> tuple[bool, list[str], list[str]]:
+    """Validate a single skill directory."""
+    errors: list[str] = []
+    warnings: list[str] = []
+
     content, file_errors = _validate_skill_file(skill_dir)
     errors.extend(file_errors)
     if not content:
-        return False, errors
+        return False, errors, warnings
 
-    # Validate frontmatter
     frontmatter, fm_errors = _validate_frontmatter(content)
     errors.extend(fm_errors)
     if not frontmatter:
-        return False, errors
+        return False, errors, warnings
 
-    # Validate fields
     errors.extend(_validate_required_fields(frontmatter))
     errors.extend(_validate_field_content(frontmatter))
-    errors.extend(_validate_references_dir(skill_dir))
+    ref_errors, ref_warnings = _validate_references_dir(skill_dir)
+    errors.extend(ref_errors)
+    warnings.extend(ref_warnings)
 
-    return len(errors) == 0, errors
+    return len(errors) == 0, errors, warnings
 
 
-def validate_all_skills(verbose: bool = False) -> dict:
-    """Valida todas las skills en el directorio.
+def validate_all_skills(verbose: bool = False) -> dict[str, object]:
+    """Validate all skills in the skills directory."""
+    results: dict[str, object] = {
+        "total": 0,
+        "valid": 0,
+        "invalid": 0,
+        "warnings": 0,
+        "skills": [],
+    }
 
-    Args:
-        verbose: Si es True, muestra informaciÃ³n detallada
-
-    Returns:
-        Diccionario con resultados de la validaciÃ³n
-    """
-    results = {"total": 0, "valid": 0, "invalid": 0, "skills": []}
-
-    # Encontrar todos los directorios de skills
     skill_dirs = [
-        d for d in SKILLS_DIR.iterdir() if d.is_dir() and not d.name.startswith(".")
+        d
+        for d in SKILLS_DIR.iterdir()
+        if d.is_dir() and not d.name.startswith(".") and not d.name.startswith("_")
     ]
 
     for skill_dir in sorted(skill_dirs):
-        # Ignorar directorios especiales
-        if skill_dir.name in ["__pycache__", "scripts"]:
+        if skill_dir.name in {"__pycache__", "scripts"}:
             continue
 
         results["total"] += 1
-        is_valid, errors = validate_skill(skill_dir)
+        is_valid, errors, warnings = validate_skill(skill_dir)
 
-        skill_result = {"name": skill_dir.name, "valid": is_valid, "errors": errors}
+        skill_result = {
+            "name": skill_dir.name,
+            "valid": is_valid,
+            "errors": errors,
+            "warnings": warnings,
+        }
         results["skills"].append(skill_result)
 
         if is_valid:
@@ -204,28 +301,26 @@ def validate_all_skills(verbose: bool = False) -> dict:
         else:
             results["invalid"] += 1
 
+        results["warnings"] += len(warnings)
+
     return results
 
 
-def print_results(results: dict, verbose: bool = False) -> None:
-    """Imprime los resultados de la validaciÃ³n.
-
-    Args:
-        results: Diccionario con resultados
-        verbose: Si es True, muestra detalles de cada skill
-    """
+def print_results(results: dict[str, object], verbose: bool = False) -> None:
+    """Print validation results."""
     print("=" * 60)
-    print("ðŸ” VALIDACIÃ“N DE MICRO-SKILLS")
+    print("🔍 VALIDACIÓN DE MICRO-SKILLS")
     print("=" * 60)
-    print("\nðŸ“Š Resumen:")
+    print("\n📊 Resumen:")
     print(f"   Total: {results['total']}")
-    print(f"   âœ… VÃ¡lidas: {results['valid']}")
-    print(f"   âŒ InvÃ¡lidas: {results['invalid']}")
+    print(f"   ✅ Válidas: {results['valid']}")
+    print(f"   ❌ Inválidas: {results['invalid']}")
+    print(f"   ⚠️ Advertencias: {results.get('warnings', 0)}")
 
-    if verbose or results["invalid"] > 0:
+    if verbose or results["invalid"] > 0 or results.get("warnings", 0) > 0:
         print("\n[*] Detalles por skill:")
         for skill in results["skills"]:
-            status = "âœ…" if skill["valid"] else "âŒ"
+            status = "✅" if skill["valid"] else "❌"
             print(f"\n   {status} {skill['name']}")
 
             if not skill["valid"]:
@@ -233,6 +328,9 @@ def print_results(results: dict, verbose: bool = False) -> None:
                     print(f"      - {error}")
             elif verbose:
                 print("      - OK")
+
+            for warning in skill.get("warnings", []):
+                print(f"      [!] {warning}")
 
     print("\n" + "=" * 60)
 
@@ -244,24 +342,39 @@ def print_results(results: dict, verbose: bool = False) -> None:
     print("=" * 60)
 
 
-def main():
-    """FunciÃ³n principal."""
-    # Fix encoding issues on Windows
+def main() -> int:
+    """CLI entrypoint."""
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
     verbose = "--verbose" in sys.argv
     json_output = "--json" in sys.argv
+    check_ap = "--check-ap-sync" in sys.argv
 
     results = validate_all_skills(verbose=verbose)
+
+    if check_ap:
+        ap_warnings = check_ap_sync()
+        results["ap_sync_warnings"] = ap_warnings
+        results["warnings"] = results.get("warnings", 0) + len(ap_warnings)
 
     if json_output:
         print(json.dumps(results, indent=2, ensure_ascii=False))
     else:
         print_results(results, verbose=verbose)
 
-    # Exit code: 0 si todo vÃ¡lido, 1 si hay errores
-    sys.exit(0 if results["invalid"] == 0 else 1)
+        if check_ap:
+            ap_warnings = results.get("ap_sync_warnings", [])
+            if ap_warnings:
+                print("\n--- AP-NN Sync Check ---")
+                for w in ap_warnings:
+                    print(f"   [!] {w}")
+            else:
+                print("\n--- AP-NN Sync Check ---")
+                print("   [OK] Todos los AP-NN estan sincronizados")
+
+    exit_code = 0 if results["invalid"] == 0 else 1
+    return exit_code
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

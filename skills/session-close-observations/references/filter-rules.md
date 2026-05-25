@@ -82,11 +82,28 @@ La observacion no debe duplicar conocimiento existente:
 
 Una observacion es promovida a `observations.jsonl` cuando:
 
-1. ✅ Schema valido (6 campos, tipos correctos)
-2. ✅ Pasa los 3 filtros de curacion
-3. ✅ No es duplicado de observacion existente
-4. ✅ Signal >= 30 caracteres
-5. ✅ Categoria valida
+1. Schema valido (6 campos requeridos, tipos correctos)
+2. Pasa los 3 filtros de curacion
+3. No es duplicado de observacion existente
+4. Signal >= 30 caracteres
+5. Categoria valida
+
+## Reglas de Promocion desde audit_findings
+
+Cuando `session_close_observations.py` se ejecuta con `--from-reviews`, aplica estas reglas
+sobre los hallazgos de `.agent/runtime/reviews/WP-XXXX-XXX/audit_findings.jsonl`:
+
+| Condicion | Promueve |
+|-----------|----------|
+| `severity: blocker` + `reviewer: human` | Siempre |
+| `finding_type: anti-pattern` (cualquier reviewer) | Siempre |
+| Mismo `signal` en 2+ tickets distintos | Auto-promueve |
+| `severity: low` o ligado a un ticket concreto | No promueve |
+| `promoted: true` ya en el fichero | Respeta decision previa |
+
+Las observaciones promovidas desde audit_findings usan `source: "audit-promotion"` y
+conservan `source_ticket` del ticket original. Si el hallazgo tiene `anti_pattern_id`,
+se propaga al campo homologo en `observations.jsonl`.
 
 ## Implementacion
 

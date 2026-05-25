@@ -1,9 +1,13 @@
 ---
 name: write-deliverable
-version: 1.0.0
+version: 2.0.0
 description: Generar un deliverable markdown (no-código) dado descripción, output_path y acceptance criteria
 triggers: [/write-deliverable, /deliverable, /write-doc]
 author: agent
+role: builder
+stage: implement
+writes_memory: false
+quality_gate: false
 tags: [core, system]
 ---
 

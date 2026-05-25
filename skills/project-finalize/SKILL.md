@@ -1,9 +1,13 @@
 ---
 name: project-finalize
-version: 1.0.0
+version: 2.0.0
 description: Cierre profesional de un proyecto con auditoria, limpieza, documentacion, versionado y verificacion final sin romper el flujo Manager -> Builder
 triggers: [/finalize, close, /finish]
 author: agent
+role: shared
+stage: close
+writes_memory: false
+quality_gate: false
 tags: [core, system]
 ---
 
