@@ -2,7 +2,7 @@
 
 - Project: `orquestador_de_agentes`
 - Version: `v9.14.0`
-- State: WP-2026-137 IN_PROGRESS (supervisor startup lock and reconciliation dedupe).
+- State: WP-2026-137 COMPLETED (supervisor startup lock and reconciliation dedupe).
 - Last review: 2026-05-25
 - Mission: keep the central motor clean, versioned once, and externally referenced
   - The repo is the unique source of operational code (motor central).
@@ -11,10 +11,10 @@
 
 ## Current Cycle
 
-- Active ticket: WP-2026-137 IN_PROGRESS (supervisor startup lock and reconciliation dedupe).
-- Mode: Builder.
-- Outcome: arranque canonico preparado con work_plan APPROVED, bus alineado y estado
-  en IN_PROGRESS.
+- Active ticket: WP-2026-137 COMPLETED (supervisor startup lock and reconciliation dedupe).
+- Mode: closed.
+- Outcome: supervisor lock atomico e idempotencia de reconciliacion completados;
+  bus y markdowns sincronizados al cierre.
 
 ## Source of truth
 

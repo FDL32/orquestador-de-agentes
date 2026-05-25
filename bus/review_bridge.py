@@ -442,7 +442,18 @@ class ReviewBridge:
                 f"the base recency score alone is ~20_000_000).\n\n"
                 f"Implementation anti-patterns — flag as BLOCKERS if found:\n"
                 f"- Zero-logic wrapper: a function whose entire body is a single 1:1 delegate "
-                f"call with no own logic must be inlined or eliminated."
+                f"call with no own logic must be inlined or eliminated.\n"
+                f"- Exclusive resource acquisition without reentrancy guard: if the diff introduces "
+                f"exclusive resource acquisition (O_CREAT|O_EXCL, flock, Lock.acquire(), lock-file "
+                f"creation) inside a method that can be reached from more than one call site or "
+                f"called twice on the same instance (e.g. standalone + inside a wrapper), verify "
+                f"that an explicit instance-level reentrancy guard exists. Without it: BLOCKER.\n"
+                f"- Boolean truthiness regression in changed return contracts: if the diff changes "
+                f"a method's return type from implicit None to explicit bool, verify that every "
+                f"caller uses `is False` / `is True` rather than generic truthiness (`if not x`, "
+                f"`if x`, `while x`). Mixing None, False, and True under a falsy guard silently "
+                f"breaks when the method is monkeypatched or called from a legacy path. "
+                f"Any caller still using generic truthiness after the return-type change: BLOCKER."
             )
         elif dtype == "mixed":
             return (
@@ -456,7 +467,16 @@ class ReviewBridge:
                 f"exists without the tested feature.\n\n"
                 f"Implementation anti-patterns — flag as BLOCKERS if found:\n"
                 f"- Zero-logic wrapper: a function whose entire body is a single 1:1 delegate "
-                f"call with no own logic must be inlined or eliminated."
+                f"call with no own logic must be inlined or eliminated.\n"
+                f"- Exclusive resource acquisition without reentrancy guard: if the diff introduces "
+                f"exclusive resource acquisition (O_CREAT|O_EXCL, flock, Lock.acquire(), lock-file "
+                f"creation) inside a method that can be reached from more than one call site or "
+                f"called twice on the same instance, verify that an explicit reentrancy guard exists. "
+                f"Without it: BLOCKER.\n"
+                f"- Boolean truthiness regression in changed return contracts: if the diff changes "
+                f"a method's return type from implicit None to explicit bool, verify all callers use "
+                f"`is False` / `is True` rather than generic truthiness (`if not x`, `if x`). "
+                f"Any caller still using generic truthiness after the change: BLOCKER."
             )
         else:  # documentation, research, analysis
             return (

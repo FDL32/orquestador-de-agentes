@@ -1,11 +1,11 @@
 # State - WP-2026-137
 
 Plan Activo: WP-2026-137
-Estado actual: IN_PROGRESS
-Rol activo: BUILDER
+Estado actual: COMPLETED
+Rol activo: -
 
 Resumen:
-WP-2026-137 protege el arranque del supervisor con lock de instancia e idempotencia de reconciliacion.
+WP-2026-137 cerrado. Lock atomico de supervisor e idempotencia de SUPERVISOR_RECONCILED completados.
 
 Notas:
 - El bus es la fuente canonica del ciclo y debe permanecer monotono.

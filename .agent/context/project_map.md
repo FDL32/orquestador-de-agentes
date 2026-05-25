@@ -1,5 +1,5 @@
 # Mapa del Proyecto
-**Actualizado:** 2026-05-25 17:24:50
+**Actualizado:** 2026-05-25 17:56:55
 
 ## Estructura de Archivos
 ```
@@ -45,6 +45,7 @@
 .agent\collaboration\archive\notifications_20260525_163525.md
 .agent\collaboration\archive\notifications_20260525_163825.md
 .agent\collaboration\archive\notifications_20260525_164123.md
+.agent\collaboration\archive\notifications_20260525_172451.md
 .agent\collaboration\AUDIT_WP-2026-136.md
 .agent\collaboration\AUDIT_WP-2026-137.md
 .agent\collaboration\execution_log.md
@@ -52,6 +53,5 @@
 .agent\collaboration\PLAN_WP-2026-136.md
 .agent\collaboration\PLAN_WP-2026-137.md
 .agent\collaboration\review_queue.md
-.agent\collaboration\STATE.md
 ... (+3090 archivos mas)
 ```
