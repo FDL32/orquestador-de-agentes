@@ -2,7 +2,7 @@
 
 - Project: `orquestador_de_agentes`
 - Version: `v9.14.0`
-- State: WP-2026-138 COMPLETED (manager review memory injection from observations).
+- State: WP-2026-133 IN_PROGRESS (skill references scaffold for validator).
 - Last review: 2026-05-25
 - Mission: keep the central motor clean, versioned once, and externally referenced
   - The repo is the unique source of operational code (motor central).
@@ -11,10 +11,10 @@
 
 ## Current Cycle
 
-- Active ticket: WP-2026-138 COMPLETED (manager review memory injection from observations).
-- Mode: closed.
-- Outcome: memoria dinamica de auditoria integrada en el prompt del Manager;
-  bus y markdowns sincronizados al cierre.
+- Active ticket: WP-2026-133 IN_PROGRESS (skill references scaffold for validator).
+- Mode: Builder.
+- Outcome: arranque canonico preparado con work_plan APPROVED, bus alineado y estado
+  en IN_PROGRESS.
 
 ## Source of truth
 
