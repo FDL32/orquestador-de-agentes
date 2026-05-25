@@ -338,6 +338,16 @@ class ReviewBridge:
         try:
             git_bin = shutil.which("git") or "git"
             result = subprocess.run(
+                [git_bin, "diff", "--stat", "origin/main...HEAD"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                cwd=self.project_root,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                return result.stdout or "[git diff --stat empty]"
+            result = subprocess.run(
                 [git_bin, "diff", "--stat", "HEAD"],
                 capture_output=True,
                 text=True,
@@ -345,7 +355,9 @@ class ReviewBridge:
                 cwd=self.project_root,
                 timeout=10,
             )
-            return result.stdout or "[git diff --stat empty]"
+            return "[WARNING: origin/main not reachable, using HEAD fallback]\n" + (
+                result.stdout or "[git diff --stat empty]"
+            )
         except Exception as e:
             return f"[Error fetching git diff --stat: {e}]"
 
@@ -355,14 +367,25 @@ class ReviewBridge:
         try:
             git_bin = shutil.which("git") or "git"
             result = subprocess.run(
-                [git_bin, "diff", "HEAD"],
+                [git_bin, "diff", "origin/main...HEAD"],
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
                 cwd=self.project_root,
                 timeout=15,
             )
-            diff = result.stdout or ""
+            warning_prefix = ""
+            if result.returncode != 0:
+                result = subprocess.run(
+                    [git_bin, "diff", "HEAD"],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    cwd=self.project_root,
+                    timeout=15,
+                )
+                warning_prefix = "[WARNING: origin/main not reachable, using git diff HEAD fallback]\n"
+            diff = warning_prefix + (result.stdout or "")
             diff_bytes = diff.encode("utf-8")
             if len(diff_bytes) <= budget_bytes:
                 return diff
@@ -370,6 +393,39 @@ class ReviewBridge:
             return truncated + "\n\n[diff truncado por budget]"
         except Exception as e:
             return f"[Error fetching git diff: {e}]"
+
+    def _git_provenance(self) -> str:
+        try:
+            git_bin = shutil.which("git") or "git"
+            result = subprocess.run(
+                [
+                    git_bin,
+                    "log",
+                    "origin/main..HEAD",
+                    "--format=%H %ai %an",
+                    "--no-merges",
+                    "-1",
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                cwd=self.project_root,
+                timeout=10,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip()
+            result = subprocess.run(
+                [git_bin, "log", "HEAD", "--format=%H %ai %an", "--no-merges", "-1"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                cwd=self.project_root,
+                timeout=10,
+            )
+            line = result.stdout.strip() or "[no commits found]"
+            return f"[WARNING: origin/main not reachable] {line}"
+        except Exception as e:
+            return f"[Error fetching git provenance: {e}]"
 
     def _rubric_for_type(self, dtype: str, ticket_id: str) -> str:
         if dtype == "code":
@@ -420,6 +476,11 @@ class ReviewBridge:
         hard_cap_bytes = 80 * 1024
         canonical_budget = 60 * 1024
 
+        # P4.5: git provenance (compact, inserted before diff)
+        provenance = self._git_provenance()
+        sections.append(("git provenance", provenance))
+        used += len(provenance.encode("utf-8"))
+
         # P5: diff con budget restante
         if used < canonical_budget:
             remaining = hard_cap_bytes - used
@@ -460,6 +521,7 @@ class ReviewBridge:
         )
         parts.append(
             "\n--- INSTRUCTIONS ---\n"
+            "This review is advisory. It informs but does not replace the human operator's judgment.\n\n"
             "Judge whether the ticket OBJECTIVE and every Acceptance Criterion "
             "are actually met by the code in the diff. A criterion not addressed "
             "by the diff is NOT met, even if unrelated code looks fine.\n\n"
