@@ -96,6 +96,23 @@ except ImportError:
     EventBus = None
     count_trailing_changes = None
 
+# WP-2026-146: Import approval system for HUMAN_GATE timeout
+try:
+    from bus.approval import (
+        ApprovalPolicy,
+        ApprovalReason,
+        ApprovalStatus,
+        ApprovalStore,
+    )
+
+    APPROVAL_SYSTEM_AVAILABLE = True
+except ImportError:
+    APPROVAL_SYSTEM_AVAILABLE = False
+    ApprovalPolicy = None
+    ApprovalReason = None
+    ApprovalStatus = None
+    ApprovalStore = None
+
 # ============================================================================
 # PATH CONFIGURATION - WP-2026-122: Deferred resolution via project_root module
 # ============================================================================
@@ -155,6 +172,11 @@ MAX_NOTIFICATION_ENTRIES = 20
 # Fallback used only if config is missing or unreadable.
 HUMAN_GATE_REJECTION_FALLBACK = 5
 
+# WP-2026-146: HUMAN_GATE timeout configuration. Single source of truth is
+# manager_review.human_gate_timeout_seconds in agents.json. Fallback used if missing.
+# Distinct from manager_review.timeout_seconds (AI subprocess wait, ~180s).
+HUMAN_GATE_TIMEOUT_FALLBACK = 86400  # 24 hours
+
 
 def get_human_gate_threshold() -> int:
     """Return the consecutive-CHANGES count that escalates a ticket to HUMAN_GATE.
@@ -169,6 +191,25 @@ def get_human_gate_threshold() -> int:
         return value if value > 0 else HUMAN_GATE_REJECTION_FALLBACK
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return HUMAN_GATE_REJECTION_FALLBACK
+
+
+def get_human_gate_timeout() -> int:
+    """Return the timeout in seconds for HUMAN_GATE approval requests.
+
+    Reads manager_review.human_gate_timeout_seconds from agents.json.
+    This is intentionally separate from manager_review.timeout_seconds,
+    which controls the AI subprocess wait (~180s). Human gates need hours.
+    Falls back to HUMAN_GATE_TIMEOUT_FALLBACK (24h) if absent or malformed.
+
+    Returns:
+        Timeout in seconds (positive integer).
+    """
+    try:
+        cfg = json.loads(AGENTS_CONFIG_PATH.read_text(encoding="utf-8"))
+        value = int(cfg.get("manager_review", {}).get("human_gate_timeout_seconds"))
+        return value if value > 0 else HUMAN_GATE_TIMEOUT_FALLBACK
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return HUMAN_GATE_TIMEOUT_FALLBACK
 
 
 # Configuracion de comprobaciones
@@ -211,6 +252,26 @@ def _get_event_bus() -> EventBus | None:
     if event_bus is None:
         event_bus = EventBus(get_agent_dir() / "runtime" / "events")
     return event_bus
+
+
+def _get_approval_store() -> ApprovalStore | None:
+    """Get or create the approval store for HUMAN_GATE timeout.
+
+    Before: No approval store existed in agent_controller.
+    During: Creates ApprovalStore under runtime_dir with configurable timeout.
+    After: Returns configured ApprovalStore or None if approval system unavailable.
+    """
+    if not APPROVAL_SYSTEM_AVAILABLE:
+        return None
+    store_path = get_agent_dir() / "runtime" / "approvals" / "store.json"
+    timeout_seconds = get_human_gate_timeout()
+    policy = ApprovalPolicy(
+        policy_name="human_gate",
+        timeout_seconds=timeout_seconds,
+        auto_resolve=True,
+        auto_resolve_status=ApprovalStatus.EXPIRED,
+    )
+    return ApprovalStore(store_path=store_path, policy=policy)
 
 
 # Event bus is initialized lazily after the project root is known.
@@ -735,6 +796,91 @@ def _emit_builder_exit(plan_id: str, exit_reason: str, completion_summary: str) 
                 "source": "mark-ready",
             },
         )
+
+
+def _create_human_gate_approval_request(
+    ticket_id: str, timeout_seconds: int | None = None
+) -> bool:
+    """Create and persist an ApprovalRequest when escalating to HUMAN_GATE.
+
+    Before: HUMAN_GATE escalation had no persistent timeout tracking.
+    During: Creates an ApprovalRequest with timeout metadata in the ApprovalStore.
+    After: The approval request persists across restarts and can be expired by
+           the supervisor's check_and_expire_all() loop.
+
+    Args:
+        ticket_id: The ticket ID being escalated to HUMAN_GATE.
+        timeout_seconds: Optional timeout override. Defaults to config value.
+
+    Returns:
+        True if the approval request was created successfully, False otherwise.
+    """
+    if not APPROVAL_SYSTEM_AVAILABLE:
+        print(
+            "[WARN] Approval system unavailable; HUMAN_GATE timeout will not persist.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return False
+
+    store = _get_approval_store()
+    if store is None:
+        print(
+            "[WARN] Could not create ApprovalStore; HUMAN_GATE timeout will not persist.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return False
+
+    import uuid
+
+    approval_id = f"hg-{uuid.uuid4().hex[:12]}"
+
+    # Create and persist the approval request
+    timeout = (
+        timeout_seconds if timeout_seconds is not None else get_human_gate_timeout()
+    )
+    metadata = {
+        "escalation_type": "human_gate",
+        "timeout_seconds": timeout,
+        "created_by": "agent_controller",
+        "source": "escalate-human-gate",
+    }
+
+    try:
+        # Use custom policy if timeout_seconds was provided
+        if timeout_seconds is not None:
+            custom_policy = ApprovalPolicy(
+                policy_name="human_gate_custom",
+                timeout_seconds=timeout_seconds,
+                auto_resolve=True,
+                auto_resolve_status=ApprovalStatus.EXPIRED,
+            )
+            store.create_request(
+                approval_id=approval_id,
+                ticket_id=ticket_id,
+                metadata=metadata,
+                policy=custom_policy,
+            )
+        else:
+            store.create_request(
+                approval_id=approval_id,
+                ticket_id=ticket_id,
+                metadata=metadata,
+            )
+        print(
+            f"[OK] Created HUMAN_GATE approval request {approval_id} for {ticket_id} "
+            f"(timeout={timeout}s).",
+            flush=True,
+        )
+        return True
+    except Exception as exc:
+        print(
+            f"[ERROR] Failed to create HUMAN_GATE approval request: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return False
 
 
 def _auto_archive_closed_artifacts() -> None:
@@ -2352,6 +2498,10 @@ def _materialize_state_transition(
 
     # Sync execution_log.md
     update_log_status(to_state, reason)
+
+    # WP-2026-146: Create persistent ApprovalRequest when escalating to HUMAN_GATE
+    if to_state == "HUMAN_GATE":
+        _create_human_gate_approval_request(ticket_id)
 
     # Sync TURN.md based on target state
     if to_state == "HUMAN_GATE":
