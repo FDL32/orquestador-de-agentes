@@ -1,41 +1,40 @@
-# Work Plan - WP-2026-142
+# Work Plan - WP-2026-143
 
 ## Metadata
-- **ID:** WP-2026-142
+- **ID:** WP-2026-143
 - **Estado:** COMPLETED
 - **deliverable_type:** code
-- **Titulo:** Symmetric mark-ready scope gate
+- **Titulo:** Bus-backed mark-ready idempotency
 - **Asignado a:** Builder
 
 ## Objetivo
-Endurecer `--mark-ready` para que el Builder no pueda superar el scope gate declarando archivos tocados que no aparecen en el diff real. El gate conservara el bloqueo actual por archivos fuera de scope, añadira bloqueo por cobertura cero y dejara cobertura parcial como warning.
+Hacer `--mark-ready` idempotente usando el estado del bus como autoridad. Si el bus ya indica `READY_FOR_REVIEW`, `READY_TO_CLOSE` o `COMPLETED`, el comando debe salir limpio sin emitir `BUILDER_EXIT` ni `STATE_CHANGED` duplicados. Si el bus no esta disponible, se conserva el fallback actual sobre markdown.
 
 ## Decision Arquitectonica
-- `check_scope_gate` comparara en ambas direcciones `Files Likely Touched` contra los archivos realmente cambiados.
-- El bloqueo actual por `changed_files - whitelist` se conserva sin cambios.
-- Si `whitelist ∩ changed_files = ∅`, el cierre se bloquea por fabricacion total.
-- Si `whitelist - changed_files ≠ ∅`, se registrara advertencia de cobertura parcial sin bloquear.
-- `changed_files is None` y whitelist vacia mantienen el comportamiento actual de paso.
+- `--mark-ready` consultara primero el estado derivado del bus para el ticket activo.
+- `READY_FOR_REVIEW` seguira siendo el camino idempotente de "ya listo".
+- `READY_TO_CLOSE` y `COMPLETED` seran no-op limpios para evitar ciclos de review duplicados.
+- Si el bus no esta disponible o no puede derivarse un estado, se mantiene el fallback actual sobre markdown.
+- El scope gate y el circuit breaker conservan su comportamiento actual.
 
 ## Files Likely Touched
 - `.agent/agent_controller.py`
-- `tests/unit/test_scope_gate.py`
 - `tests/unit/test_bus_emission_on_mark_ready.py`
+- `tests/unit/test_mark_ready_idempotency.py`
 
 ## Fases
-1. Extender `check_scope_gate` con cobertura simetrica y resultados diferenciados por severidad.
-2. Añadir pruebas unitarias para cobertura cero, cobertura parcial y preservacion de los casos base.
-3. Verificar el flujo end-to-end de `--mark-ready` y el evento de bus asociado.
+1. Introducir un guard de estado del bus en `--mark-ready` y separar los caminos `READY_FOR_REVIEW`, `READY_TO_CLOSE` y `COMPLETED`.
+2. Anadir tests para el no-op idempotente y para el fallback cuando el bus no esta disponible.
+3. Verificar que no se emiten eventos duplicados y que el flujo existente sigue funcionando.
 4. Validar con los gates locales del repositorio.
 
 ## Calidad
-- `python scripts/run_pytest_safe.py tests/unit/test_scope_gate.py -q`
 - `python scripts/run_pytest_safe.py tests/unit/test_bus_emission_on_mark_ready.py -q`
+- `python scripts/run_pytest_safe.py tests/unit/test_mark_ready_idempotency.py -q`
 - `python .agent/agent_controller.py --validate --json --force`
 
 ## Criterios de aceptacion
-- `check_scope_gate` bloquea cobertura cero y sigue bloqueando archivos fuera de scope.
-- La cobertura parcial genera warning, pero no bloquea.
-- `--mark-ready` respeta el nuevo resultado del gate sin romper la emision del bus.
-- La validacion canonica pasa sin errores.
+- `--mark-ready` no emite eventos duplicados cuando el bus ya esta en `READY_FOR_REVIEW`, `READY_TO_CLOSE` o `COMPLETED`.
+- El guard lee el estado del bus y no depende del drift de markdown para evitar un segundo ciclo de review.
+- El fallback actual se conserva cuando el bus no esta disponible.
 - La validacion canonica pasa sin errores.

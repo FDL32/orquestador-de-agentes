@@ -1543,7 +1543,15 @@ def _handle_check_completion() -> int:
 def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-ready, breaker)
     scope_override: str | None, json_output: bool, force_mode: bool
 ) -> int:
-    """Handle --mark-ready flag."""
+    """Handle --mark-ready flag.
+
+    WP-2026-143: Bus-backed idempotency. Consults bus-derived state as authority.
+    - READY_FOR_REVIEW, READY_TO_CLOSE, COMPLETED: clean no-op (no duplicate events).
+    - HUMAN_GATE: blocked (requires human intervention).
+    - Fallback to markdown-based logic if bus is unavailable.
+    """
+    from bus.state_machine import TicketState
+
     plan_content, log_content, plan_id = _load_mark_ready_context()
     if not plan_id or plan_id == "N/A":
         print("[ERROR] No active plan found.")
@@ -1551,10 +1559,23 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
 
     log_status = get_status(log_content, "**Estado:**")
 
+    # WP-2026-143: Get bus-derived state as authority
+    bus_state = None
+    if BUS_AVAILABLE and event_bus:
+        from bus.state_machine import StateMachine
+
+        events = event_bus.read_events(ticket_id=plan_id)
+        if events:
+            bus_state = StateMachine.derive_state_from_events(
+                [e.to_dict() for e in events]
+            )
+
     # WP-2026-106 hotfix: a ticket escalated to HUMAN_GATE can only leave that
     # state by explicit human intervention. The Builder must not be able to
     # re-declare READY_FOR_REVIEW and bypass the Manager review cycle.
-    if "HUMAN_GATE" in log_status:
+    if bus_state == TicketState.HUMAN_GATE or (
+        bus_state is None and "HUMAN_GATE" in log_status
+    ):
         msg = (
             f"Ticket {plan_id} is in HUMAN_GATE. mark-ready is blocked: "
             "only a human can move it out of HUMAN_GATE."
@@ -1569,7 +1590,33 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
             print(f"[ERROR] {msg}")
         return 1
 
-    if "READY_FOR_REVIEW" in log_status:
+    # WP-2026-143: Bus-backed idempotency guard
+    # If bus state is READY_FOR_REVIEW, READY_TO_CLOSE, or COMPLETED, exit cleanly
+    # without emitting duplicate BUILDER_EXIT or STATE_CHANGED events.
+    if bus_state is not None and bus_state in (
+        TicketState.READY_FOR_REVIEW,
+        TicketState.READY_TO_CLOSE,
+        TicketState.COMPLETED,
+    ):
+        if json_output:
+            print(
+                json.dumps(
+                    {
+                        "status": "already_ready",
+                        "plan_id": plan_id,
+                        "bus_state": bus_state.value,
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            print(
+                f"[INFO] Ticket {plan_id} bus state is {bus_state.value}. No action needed."
+            )
+        return 0
+
+    # Fallback: markdown-based idempotency (bus unavailable or no events)
+    if bus_state is None and "READY_FOR_REVIEW" in log_status:
         if json_output:
             print(json.dumps({"status": "already_ready", "plan_id": plan_id}, indent=2))
         else:

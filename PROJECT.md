@@ -1,13 +1,13 @@
 # Project: orquestador_de_agentes
 **Version:** v9.14.0
-**State:** WP-2026-141 IN_PROGRESS (google eng-practices documentation alignment)
+**State:** WP-2026-143 COMPLETED (bus-backed mark-ready idempotency)
 
 ## Current Cycle
 
-- Active ticket: WP-2026-141 IN_PROGRESS (2026-05-26).
+- Active ticket: WP-2026-143 COMPLETED (2026-05-26).
 - Mode: idle — listo para siguiente ticket.
-- Outcome: firewall AST+grep para seam bus/->scripts/ operativo; 118 violaciones ruff
-  corregidas en 70 test files; 255 tests verdes; politica per-file-ignores establecida.
+- Outcome: `--mark-ready` now uses bus-backed idempotency and avoids duplicate
+  review cycles after drift.
 
 ## Current readiness
 
