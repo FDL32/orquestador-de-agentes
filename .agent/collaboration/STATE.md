@@ -1,11 +1,11 @@
 # State - WP-2026-146
 
 Plan Activo: WP-2026-146
-Estado actual: IN_PROGRESS
-Rol activo: BUILDER
+Estado actual: COMPLETED
+Rol activo: MANAGER
 
 Resumen:
-WP-2026-146 en progreso: el Builder implementara un timeout bounded para `HUMAN_GATE` usando la ruta canonica de resolucion de approvals.
+WP-2026-146 completado: el timeout de `HUMAN_GATE` quedo ligado al `ApprovalStore` persistente y la expiracion canonica ya esta operativa.
 
 Notas:
 - El alcance es code.
