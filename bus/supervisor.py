@@ -233,9 +233,14 @@ class SequentialTicketSupervisor:
         After: Returns configured ApprovalStore for managing approval requests.
         """
         store_path = self.runtime_dir / "approvals" / "store.json"
+        # This policy timeout only applies to requests created directly by the
+        # supervisor. HUMAN_GATE requests are created by agent_controller with
+        # their own timeout (manager_review.human_gate_timeout_seconds, default
+        # 86400s); is_expired() reads the request's own timeout_seconds, so
+        # this 300s default does not affect those requests.
         policy = ApprovalPolicy(
             policy_name="default",
-            timeout_seconds=300,  # 5 minutes default
+            timeout_seconds=300,
             auto_resolve=True,
             auto_resolve_status=ApprovalStatus.EXPIRED,
         )
