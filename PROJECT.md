@@ -1,12 +1,12 @@
 # Project: orquestador_de_agentes
 **Version:** v9.14.0
-**State:** WP-2026-146 IN_PROGRESS (human gate timeout and expiry)
+**State:** WP-2026-146 COMPLETED (human gate timeout and expiry)
 
 ## Current Cycle
 
-- Active ticket: WP-2026-146 IN_PROGRESS (2026-05-26).
-- Mode: active - Builder wiring bounded HUMAN_GATE expiry.
-- Outcome: the active ticket will prove whether the existing approval-resolution path can bound HUMAN_GATE without adding a new terminal state.
+- Active ticket: WP-2026-146 COMPLETED (2026-05-26).
+- Mode: closed - canonical human gate timeout wiring completed.
+- Outcome: the existing approval-resolution path now bounds HUMAN_GATE without adding a new terminal state.
 
 ## Current readiness
 

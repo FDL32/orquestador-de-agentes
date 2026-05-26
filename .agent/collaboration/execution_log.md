@@ -67,7 +67,7 @@
 - The implementation reuses the existing `ApprovalRequest` and `ApprovalStore` from `bus/approval.py`.
 - When a ticket is escalated to HUMAN_GATE, `_materialize_state_transition()` calls `_create_human_gate_approval_request()` which persists an `ApprovalRequest` with timeout metadata.
 - The supervisor's `run_once()` loop already calls `check_and_expire_all()` on the approval store, which auto-expires pending requests past their timeout and emits `APPROVAL_RESOLVED` events.
-- The timeout value is read from `manager_review.timeout_seconds` in `agents.json`, with a fallback of 300 seconds (5 minutes).
+- The timeout value is read from `manager_review.human_gate_timeout_seconds` in `agents.json`, with a fallback of 86400 seconds (24 hours).
 - No new terminal state was introduced; expired approvals resolve to `BLOCKED` state via the canonical approval-resolution path.
 
 
