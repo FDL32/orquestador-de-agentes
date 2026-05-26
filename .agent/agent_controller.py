@@ -177,6 +177,15 @@ HUMAN_GATE_REJECTION_FALLBACK = 5
 # Distinct from manager_review.timeout_seconds (AI subprocess wait, ~180s).
 HUMAN_GATE_TIMEOUT_FALLBACK = 86400  # 24 hours
 
+# WP-2026-147: Graph context adapter import (optional)
+try:
+    from scripts.graph_context import generate_context_for_destination
+
+    GRAPH_CONTEXT_AVAILABLE = True
+except ImportError:
+    GRAPH_CONTEXT_AVAILABLE = False
+    generate_context_for_destination = None
+
 
 def get_human_gate_threshold() -> int:
     """Return the consecutive-CHANGES count that escalates a ticket to HUMAN_GATE.
@@ -1515,6 +1524,36 @@ def _lookup_transition(
     return None
 
 
+def _inject_graph_context(instruction: str) -> str:
+    """
+    Inject a compact ## Project Context block into the instruction if graphify artifacts exist.
+
+    Before:
+        - instruction is a plain string.
+        - GRAPH_CONTEXT_AVAILABLE determines if adapter is importable.
+
+    During:
+        - Checks for graphify-out/graph.json existence.
+        - Calls generate_context_for_destination if available.
+        - Prepends context block to instruction.
+
+    After:
+        - Returns instruction with optional ## Project Context prepended.
+        - Returns original instruction unchanged if graph context unavailable.
+    """
+    if not GRAPH_CONTEXT_AVAILABLE:
+        return instruction
+
+    try:
+        context_block = generate_context_for_destination(PROJECT_ROOT.resolve())
+        if context_block:
+            return f"{context_block}\n\n---\n\n{instruction}"
+    except Exception:  # noqa: S110
+        pass  # Gracefully degrade if graph context unavailable
+
+    return instruction
+
+
 def determine_next_action(skip_gates: bool = False, strict_mode: bool = False) -> dict:
     """Analiza el estado y determina la siguiente accion."""
     plan_content = read_file(WORK_PLAN)
@@ -1557,6 +1596,7 @@ def determine_next_action(skip_gates: bool = False, strict_mode: bool = False) -
     # Handle finalization instruction variation
     if "APPROVED" in plan_status and plan_type == "FINALIZATION":
         instruction = f"Plan {plan_id} aprobado. Ejecuta cierre segun work_plan.md"
+        instruction = _inject_graph_context(instruction)
         return {
             "role": "BUILDER",
             "context_file": ".builder_rules",
@@ -1573,6 +1613,7 @@ def determine_next_action(skip_gates: bool = False, strict_mode: bool = False) -
     transition = _lookup_transition(plan_status, log_status, plan_id)
     if transition:
         role, action_type, instruction = transition
+        instruction = _inject_graph_context(instruction)
         context_file = ".manager_rules" if role == "MANAGER" else ".builder_rules"
         workflow_file = (
             ".agent/workflows/manager_workflow.md"
@@ -1592,11 +1633,13 @@ def determine_next_action(skip_gates: bool = False, strict_mode: bool = False) -
         }
 
     # Fallback for unknown states
+    instruction = "Estado indeterminado. Revisa archivos manualmente."
+    instruction = _inject_graph_context(instruction)
     return {
         "role": "UNKNOWN",
         "context_file": "N/A",
         "workflow_file": "N/A",
-        "instruction": "Estado indeterminado. Revisa archivos manualmente.",
+        "instruction": instruction,
         "plan_id": plan_id,
         "plan_status": plan_status,
         "log_status": log_status,
