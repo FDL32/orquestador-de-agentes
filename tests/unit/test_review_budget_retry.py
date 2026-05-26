@@ -102,7 +102,7 @@ def test_retry_succeeds_on_second_attempt(tmp_path, monkeypatch):
     assert call_count["n"] == 2
 
 
-def test_retry_exhausted_falls_to_inspect(tmp_path, monkeypatch):
+def test_retry_exhausted_timeout_becomes_transport_failed(tmp_path, monkeypatch):
     _write_canonical(tmp_path, "work_plan.md", "- **deliverable_type:** code\n")
     _write_canonical(tmp_path, "STATE.md", "s")
     _write_canonical(tmp_path, "TURN.md", "t")
@@ -130,7 +130,10 @@ def test_retry_exhausted_falls_to_inspect(tmp_path, monkeypatch):
     result = bridge.run_manager_review_cycle(
         ticket_id="WP-X", supervisor=DummySupervisor()
     )
-    assert result.decision == ReviewDecision.INSPECT
+    # WP-2026-144 hotfix: timeout-exhausted retries must not reach the bus as
+    # inspect (→ HUMAN_GATE). They are reclassified as transport_failed.
+    assert result.decision == ReviewDecision.TRANSPORT_FAILED
+    assert result.transport_ok is False
 
 
 def test_decision_changes_does_not_retry_for_timeout(tmp_path, monkeypatch):

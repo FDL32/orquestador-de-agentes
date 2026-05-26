@@ -971,6 +971,49 @@ def _validate_cross_file_consistency() -> list[str]:
     return errors
 
 
+def _validate_host_project_prefix() -> list[str]:
+    """Validate that host-project destinations have 'Ticket prefix:' in PROJECT.md.
+
+    Before: Requires PROJECT.md to exist at project root; agents.json to be readable.
+    During: Checks if active_profile is 'host-project' and if PROJECT.md has 'Ticket prefix:'.
+    After: Returns list of warnings (empty if validation passes).
+
+    Returns:
+        List of warning strings (empty if no issues).
+    """
+    warnings = []
+    agents_config = AGENTS_CONFIG_PATH
+    if not agents_config.exists():
+        return warnings
+
+    try:
+        config_data = json.loads(agents_config.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return warnings
+
+    active_profile = config_data.get("active_profile", "")
+    if active_profile != "host-project":
+        return warnings
+
+    # Only check for host-project profile
+    project_md = PROJECT_ROOT / "PROJECT.md"
+    if not project_md.exists():
+        warnings.append(
+            "[WARN] host-project destination lacks PROJECT.md. "
+            "Add 'Ticket prefix: XXX' to declare local ticket namespace."
+        )
+        return warnings
+
+    content = project_md.read_text(encoding="utf-8")
+    if "Ticket prefix:" not in content:
+        warnings.append(
+            "[WARN] host-project destination lacks 'Ticket prefix:' in PROJECT.md. "
+            "Add 'Ticket prefix: XXX' to declare local ticket namespace (XXX-YYYY-NNN)."
+        )
+
+    return warnings
+
+
 def validate_state_files() -> dict[str, list[str]]:
     """Valida el formato y consistencia cruzada de los archivos de estado."""
     return {
@@ -979,6 +1022,7 @@ def validate_state_files() -> dict[str, list[str]]:
         "notifications.md": _validate_notifications(),
         "TURN.md": _validate_turn_file(),
         "consistency": _validate_cross_file_consistency(),
+        "host_project_prefix": _validate_host_project_prefix(),
     }
 
 

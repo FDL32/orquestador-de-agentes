@@ -1,3 +1,52 @@
+# 2026-05-26 - WP-2026-144 Destination ticket prefix onboarding + timeout hotfix
+
+### Added
+- `scripts/install_agent_system.py`: `--install --prefix XXX` and `--sync --prefix XXX` write
+  `Ticket prefix: XXX` into destination `PROJECT.md` and `ticket_prefix` into `motor_destination_link.json`.
+- `agent_controller.py --validate`: warns when `active_profile == host-project` and `PROJECT.md`
+  lacks `Ticket prefix:` (new `host_project_prefix` warning category).
+- `tests/unit/test_install_agent_system.py`: 4 new cases for `--prefix` plumbing.
+- `tests/unit/test_validate_host_prefix.py`: 5 cases covering prefix-present, prefix-missing,
+  engine-dev skip, and forced validation.
+
+### Fixed (hotfix)
+- `bus/review_bridge.py`: timeout-exhausted retries no longer emit `REVIEW_DECISION: inspect`
+  to the bus (which mapped to HUMAN_GATE). Instead the cycle is reclassified as
+  `REVIEW_TRANSPORT_FAILED` with `failure_reason: timeout`. Semantic `inspect` is now reserved
+  exclusively for explicit Manager requests. Test `test_retry_exhausted_falls_to_inspect`
+  renamed and updated to assert `TRANSPORT_FAILED`.
+
+### Updated
+- `prompts/session_bootstrap.md`, `AGENTS.md`, `README.md`, `QUICKSTART.md`, `RELEASE_CHECKLIST.md`,
+  `CLOSURE_MODEL.md`: destination namespace convention `XXX-YYYY-NNN` with `Ticket prefix: XXX`.
+
+### Summary
+- Destination projects are now self-describing for ticket IDs via `--prefix`.
+- Validation enforces the prefix declaration on host-project workspaces.
+- Timeout failures no longer pollute the bus with spurious `inspect` events.
+
+---
+# 2026-05-26 - WP-2026-143 Idempotent --mark-ready via bus-state guard
+
+### Fixed
+- `agent_controller.py _handle_mark_ready`: added bus-state guard before the markdown guard.
+  Reads `StateMachine.derive_state_from_events()`; returns 0 (no-op) when bus state is already
+  READY_FOR_REVIEW, READY_TO_CLOSE or COMPLETED. HUMAN_GATE check also reads bus first.
+  Prevents double-emission of STATE_CHANGED→READY_FOR_REVIEW when Builder calls `--mark-ready`
+  a second time after the bus has advanced.
+- `tests/unit/test_mark_ready_idempotency.py`: 8 tests covering all guard paths.
+
+---
+# 2026-05-26 - WP-2026-142 Symmetric scope gate in --mark-ready
+
+### Added
+- `agent_controller.py check_scope_gate`: symmetric check — blocks when the intersection of
+  changed files and whitelist is empty (`covered_files = ∅`); warns when partial.
+  `_scope_gate_allows_close` updated to handle `blocked_reason` and `missing_from_diff`.
+- `tests/unit/test_scope_gate.py`: 16 tests covering parse, get_changed_files, gate cases, and
+  end-to-end mark-ready blocking.
+
+---
 # 2026-05-26 - WP-2026-141 Google eng-practices review standards alignment
 
 ### Added

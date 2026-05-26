@@ -12,6 +12,7 @@ Goal:
 - Remove ticket-specific wording from public docs.
 - Keep traceability in `.agent/`.
 - Leave the repository ready to be copied or published as a clean starter.
+- Keep the destination ticket namespace rule documented so the next project can declare its own `Ticket prefix: XXX` in `PROJECT.md`.
 
 ### Session Closeout
 
@@ -80,6 +81,7 @@ Goal:
 2. Neutralize public docs and keep history in `.agent/`.
 3. Re-run validation from the repository root.
 4. Publish or copy the repository as a reusable template.
+5. Ensure exported docs describe the destination namespace (`XXX-YYYY-NNN`) and where it is declared, without carrying over the motor's `WP-YYYY-NNN` history.
 
 ## 5. Examples
 

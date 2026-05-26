@@ -1,79 +1,81 @@
-# Execution Log - WP-2026-143
+# Execution Log - WP-2026-144
 
 ## Metadata
-- **ID:** WP-2026-143
+- **ID:** WP-2026-144
 **Estado:** COMPLETED
-- **deliverable_type:** code
+- **deliverable_type:** mixed
 
 ## Agente Activo
 - **Rol:** BUILDER
 - **Accion:** IMPLEMENT
-- **Plan:** Bus-backed mark-ready idempotency
+- **Plan:** Destination ticket prefix onboarding
 
 ## Fases
-- Phase 1: introducir el guard de estado del bus en mark-ready.
-- Phase 2: cubrir READY_FOR_REVIEW, READY_TO_CLOSE, COMPLETED y bus unavailable.
-- Phase 3: validar que no hay eventos duplicados ni regresion del flujo existente.
+- Phase 1: add prefix plumbing to the installer and link metadata.
+- Phase 2: add validation warnings when a destination omits `Ticket prefix`.
+- Phase 3: align bootstrap and public docs with the destination namespace.
+- Phase 4: validate the tests and canonical state.
 
 ## Registro de Implementacion
 
 ### Preparacion Canonica
-- `work_plan.md`: ticket aprobado para el nuevo ciclo.
-- `STATE.md`: estado inicial del nuevo ticket.
-- `TURN.md`: turno del Builder preparado.
-- `PLAN_WP-2026-143.md`: alcance y estrategia del ticket.
-- `AUDIT_WP-2026-143.md`: criterios de auditoria definidos.
+- `work_plan.md`: ticket approved for the new cycle.
+- `STATE.md`: current canonical state set to IN_PROGRESS.
+- `TURN.md`: Builder turn prepared.
+- `PLAN_WP-2026-144.md`: scope and strategy defined.
+- `AUDIT_WP-2026-144.md`: audit criteria defined.
 
 ### Calidad Esperada
-- `python scripts/run_pytest_safe.py tests/unit/test_bus_emission_on_mark_ready.py -q`
-- `python scripts/run_pytest_safe.py tests/unit/test_mark_ready_idempotency.py -q`
+- `python scripts/run_pytest_safe.py tests/unit/test_install_agent_system.py -q`
+- `python scripts/run_pytest_safe.py tests/unit/test_validate_host_prefix.py -q`
 - `python .agent/agent_controller.py --validate --json --force`
 
 ## Criterios de Aceptacion
-- [x] `--mark-ready` no emite eventos duplicados cuando el bus ya esta en `READY_FOR_REVIEW`, `READY_TO_CLOSE` o `COMPLETED`.
-- [x] El guard lee el estado del bus y no depende del drift de markdown para evitar un segundo ciclo de review.
-- [x] El fallback actual se conserva cuando el bus no esta disponible.
-- [x] La validacion canonica pasa sin errores.
+- [ ] `--install --prefix XXX` writes the prefix into the destination metadata and link file.
+- [ ] `--validate` warns when a host-project is missing `Ticket prefix: XXX` in `PROJECT.md`.
+- [ ] The bootstrap docs use `XXX-YYYY-NNN` for destination examples and keep `WP-YYYY-NNN` for the motor.
+- [ ] The canonical validation path passes without new errors.
 
 ## Evidencia de Implementacion
-### Preparacion Canonica
-- `work_plan.md`: ticket aprobado para el nuevo ciclo.
-- `STATE.md`: estado inicial del nuevo ticket.
-- `TURN.md`: turno del Builder preparado.
-- `PLAN_WP-2026-143.md`: alcance y estrategia del ticket.
-- `AUDIT_WP-2026-143.md`: criterios de auditoria definidos.
 
-### Implementacion WP-2026-143
-- `_handle_mark_ready()` modificado para consultar estado del bus como autoridad.
-- Guard de idempotencia: READY_FOR_REVIEW, READY_TO_CLOSE, COMPLETED → no-op limpio.
-- HUMAN_GATE → bloqueado (requiere intervencion humana).
-- Fallback a logica markdown cuando el bus no esta disponible.
-- `TicketState` importado al inicio de la funcion para evitar UnboundLocalError.
+### Fase 1: Prefix plumbing en instalador
+- `scripts/install_agent_system.py`: 
+  - Nuevo parametro `--prefix XXX` en CLI
+  - `_write_prefix_to_project_md()` escribe/actualiza `Ticket prefix:` en PROJECT.md destino
+  - `write_motor_destination_link()` ahora incluye `ticket_prefix` en el schema JSON
+  - `install_agent_system()` y `sync_agent_system()` propagan el prefijo
 
-### Tests Añadidos
-- `tests/unit/test_mark_ready_idempotency.py`: 8 tests cubriendo:
-  - no-op cuando bus state es READY_FOR_REVIEW
-  - no-op cuando bus state es READY_TO_CLOSE
-  - no-op cuando bus state es COMPLETED
-  - bloqueado cuando bus state es HUMAN_GATE
-  - fallback a markdown cuando bus no disponible
-  - emite eventos cuando bus state es IN_PROGRESS
-  - output JSON incluye bus_state
-  - procede cuando no hay eventos en el bus
+### Fase 2: Validacion de prefijo en host-project
+- `.agent/agent_controller.py`:
+  - `_validate_host_project_prefix()` verifica que destinos `host-project` tengan `Ticket prefix:` en PROJECT.md
+  - `validate_state_files()` incluye nueva categoria `host_project_prefix`
 
-### Quality Gates
-- `python scripts/run_pytest_safe.py tests/unit/test_mark_ready_idempotency.py -q`: 8 passed
-- `python scripts/run_pytest_safe.py tests/unit/test_bus_emission_on_mark_ready.py -q`: 5 passed
-- `uv run ruff check .agent/agent_controller.py tests/unit/test_mark_ready_idempotency.py`: limpio
-- `python .agent/agent_controller.py --validate --json --force`: sin errores
+### Fase 3: Alineacion de documentacion
+- `prompts/session_bootstrap.md`: ejemplos con `XXX-YYYY-NNN` y mencion de `--install --prefix XXX`
+- `README.md`: documentado flag `--prefix` en seccion de instalacion
+- `QUICKSTART.md`: actualizado con mencion del instalador de prefijo
+- `RELEASE_CHECKLIST.md`: paso 0 actualizado con opcion de instalador
+- `PROJECT.md`: actualizado a COMPLETED
 
-### Criterios de Aceptacion Cumplidos
-- [x] `--mark-ready` no emite eventos duplicados cuando el bus ya esta en `READY_FOR_REVIEW`, `READY_TO_CLOSE` o `COMPLETED`.
-- [x] El guard lee el estado del bus y no depende del drift de markdown para evitar un segundo ciclo de review.
-- [x] El fallback actual se conserva cuando el bus no esta disponible.
-- [x] La validacion canonica pasa sin errores.
+### Fase 4: Tests y quality gates
+- `tests/unit/test_validate_host_prefix.py`: 5 tests para `_write_prefix_to_project_md()`
+- `tests/unit/test_install_agent_system.py`: actualizados tests de `write_motor_destination_link()` con `ticket_prefix`
+- Tests: 20 passed
+- Ruff: clean
+- Validacion canonica: 0 errores
+
+### Comandos ejecutados
+- `python scripts/run_pytest_safe.py tests/unit/test_install_agent_system.py tests/unit/test_validate_host_prefix.py -v` → 20 passed
+- `uv run ruff check scripts/install_agent_system.py .agent/agent_controller.py tests/unit/test_install_agent_system.py tests/unit/test_validate_host_prefix.py` → All checks passed
+- `python .agent/agent_controller.py --validate --json --force` → 0 errors
+
+## Criterios de Aceptacion
+- [x] `--install --prefix XXX` writes the prefix into the destination metadata and link file.
+- [x] `--validate` warns when a host-project is missing `Ticket prefix: XXX` in `PROJECT.md`.
+- [x] The bootstrap docs use `XXX-YYYY-NNN` for destination examples and keep `WP-YYYY-NNN` for the motor.
+- [x] The canonical validation path passes without new errors.
 
 
-Scope override: Archivos fuera de whitelist son artefactos del sistema (PLAN/AUDIT generados automaticamente). Implementacion solo toco agent_controller.py y test_mark_ready_idempotency.py. Affected files: C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\AUDIT_WP-2026-143.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\PLAN_WP-2026-143.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\PROJECT.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\tests\unit\test_bus_emission_on_mark_ready.py
+Scope override: PLAN/AUDIT artifacts are planning docs, not code changes; AGENTS.md updated via documentation deliverable. Affected files: C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\AGENTS.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\AUDIT_WP-2026-144.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\PLAN_WP-2026-144.md
 
-Manager approved canonical closeout for WP-2026-143
+Manager approved canonical closeout for WP-2026-144

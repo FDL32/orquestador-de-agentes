@@ -419,6 +419,7 @@ def write_motor_destination_link(
     destination_root: Path,
     motor_version: str | None,
     destination_id: str | None = None,
+    ticket_prefix: str | None = None,
     dry_run: bool = False,
 ) -> None:
     """
@@ -426,13 +427,14 @@ def write_motor_destination_link(
 
     Before: Destination .agent/config/ directory exists; link file may or may not exist.
     During: Creates/overwrites motor_destination_link.json with schema fields.
-    After: Link file exists with motor_root, destination_root, motor_version, etc.
+    After: Link file exists with motor_root, destination_root, motor_version, ticket_prefix, etc.
 
     Schema:
     - motor_root: absolute or derived path to the external motor
     - destination_root: absolute path to the destination workspace
     - motor_version: technical version from .agent/.version_manifest.json
     - destination_id: stable identifier for the destination (optional, derived from path)
+    - ticket_prefix: local ticket namespace prefix (e.g., 'XXX' for 'XXX-YYYY-NNN')
     - created_at: ISO-8601 UTC timestamp of install/sync
     - manifest_version: MANIFEST.workspace contract version applied
 
@@ -442,6 +444,7 @@ def write_motor_destination_link(
         destination_root: Path to the destination project root.
         motor_version: Version string from motor's .version_manifest.json.
         destination_id: Optional stable identifier; defaults to destination_root name.
+        ticket_prefix: Optional ticket prefix for destination namespace (e.g., 'XXX').
         dry_run: If True, simulate without writing.
     """
     config_dir = project_agent / "config"
@@ -455,6 +458,7 @@ def write_motor_destination_link(
         "destination_root": str(destination_root.resolve()),
         "motor_version": motor_version or "unknown",
         "destination_id": destination_id,
+        "ticket_prefix": ticket_prefix,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "manifest_version": MANIFEST_WORKSPACE_VERSION,
     }
@@ -543,9 +547,61 @@ def _maybe_invoke_host_setup(
     return rc
 
 
+def _write_prefix_to_project_md(
+    destination_root: Path, prefix: str, dry_run: bool
+) -> None:
+    """
+    Write or update 'Ticket prefix: XXX' in destination PROJECT.md.
+
+    Before: destination_root/PROJECT.md may or may not exist; prefix is a non-empty string.
+    During: Reads PROJECT.md, adds or updates 'Ticket prefix:' line.
+    After: PROJECT.md contains 'Ticket prefix: {prefix}' near the top.
+
+    Args:
+        destination_root: Project root directory.
+        prefix: Ticket prefix string (e.g., 'XXX').
+        dry_run: If True, simulate without writing.
+    """
+    project_md = destination_root / "PROJECT.md"
+    if not project_md.exists():
+        # Create minimal PROJECT.md with prefix
+        content = f"# Project: {destination_root.name}\nTicket prefix: {prefix}\n"
+        if dry_run:
+            print(f"[DRY-RUN] Would create {project_md} with ticket prefix")
+            return
+        project_md.write_text(content, encoding="utf-8")
+        print(f"[INFO] Created {project_md} with ticket prefix")
+        return
+
+    content = project_md.read_text(encoding="utf-8")
+    lines = content.splitlines()
+
+    # Check if 'Ticket prefix:' already exists
+    prefix_line_found = False
+    new_lines = []
+    for line in lines:
+        if line.strip().startswith("Ticket prefix:"):
+            prefix_line_found = True
+            new_lines.append(f"Ticket prefix: {prefix}")
+        else:
+            new_lines.append(line)
+
+    if not prefix_line_found:
+        # Insert after first line (header)
+        new_lines.insert(1, f"Ticket prefix: {prefix}")
+
+    new_content = "\n".join(new_lines) + "\n"
+    if dry_run:
+        print(f"[DRY-RUN] Would update {project_md} with ticket prefix")
+        return
+    project_md.write_text(new_content, encoding="utf-8")
+    print(f"[INFO] Updated {project_md} with ticket prefix")
+
+
 def install_agent_system(
     template_agent: Path,
     project_agent: Path,
+    ticket_prefix: str | None = None,
     dry_run: bool = False,
     auto_yes: bool = False,
 ) -> int:
@@ -583,8 +639,13 @@ def install_agent_system(
         motor_root=motor_root,
         destination_root=destination_root,
         motor_version=motor_version,
+        ticket_prefix=ticket_prefix,
         dry_run=dry_run,
     )
+
+    # Write ticket prefix to PROJECT.md if provided
+    if ticket_prefix:
+        _write_prefix_to_project_md(destination_root, ticket_prefix, dry_run=dry_run)
 
     integrity_ok = ensure_hooks_config_integrity(project_agent, dry_run=dry_run)
 
@@ -614,6 +675,7 @@ def install_agent_system(
 def sync_agent_system(  # noqa: C901
     template_agent: Path,
     project_agent: Path,
+    ticket_prefix: str | None = None,
     dry_run: bool = False,
     strict_sync: bool = False,
     prune: bool = False,
@@ -668,8 +730,13 @@ def sync_agent_system(  # noqa: C901
         motor_root=motor_root,
         destination_root=destination_root,
         motor_version=motor_version,
+        ticket_prefix=ticket_prefix,
         dry_run=dry_run,
     )
+
+    # Update PROJECT.md with ticket prefix if provided
+    if ticket_prefix:
+        _write_prefix_to_project_md(destination_root, ticket_prefix, dry_run=dry_run)
 
     integrity_ok = ensure_hooks_config_integrity(project_agent, dry_run=dry_run)
 
@@ -737,6 +804,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path.cwd(),
         help="Project root destination (default: current directory)",
+    )
+    parser.add_argument(
+        "--prefix",
+        type=str,
+        default=None,
+        help="Ticket prefix for destination namespace (e.g., 'XXX' for 'XXX-YYYY-NNN')",
     )
     parser.add_argument(
         "--dry-run",
@@ -808,6 +881,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[INFO] Template detected: {template_root}")
     print(f"[INFO] Destination:      {dest}")
     print(f"[INFO] Mode:            {'DRY-RUN' if args.dry_run else 'LIVE'}")
+    if args.prefix:
+        print(f"[INFO] Ticket prefix:    {args.prefix}")
 
     # Keep behavior explicit: install never touches an existing destination.
     if args.install:
@@ -817,6 +892,7 @@ def main(argv: list[str] | None = None) -> int:
         return install_agent_system(
             template_agent=template_agent,
             project_agent=project_agent,
+            ticket_prefix=args.prefix,
             dry_run=args.dry_run,
             auto_yes=args.yes,
         )
@@ -827,6 +903,7 @@ def main(argv: list[str] | None = None) -> int:
     return sync_agent_system(
         template_agent=template_agent,
         project_agent=project_agent,
+        ticket_prefix=args.prefix,
         dry_run=args.dry_run,
         strict_sync=args.strict_sync,
         prune=args.prune,
