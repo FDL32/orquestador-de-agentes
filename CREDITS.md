@@ -10,6 +10,7 @@ External ideas and patterns adopted in this project.
 
 | WP | Source | Pattern | License | Adapted vs Ported |
 |----|--------|---------|---------|-------------------|
+| WP-2026-141 | [google/eng-practices](https://github.com/google/eng-practices) | Code review standards: approval principle, `Nit` convention, and small-CL vocabulary | CC-BY 3.0 | Adapted (text policy only; no code copied) |
 | WP-2026-094 | [All-Hands-AI/OpenHands](https://github.com/All-Hands-AI/OpenHands) | Post-install host setup hook pattern (`.openhands/setup.sh`) | MIT | Adapted (concept only — our impl detects `.agent/host-setup.{sh,ps1}` from destination, interactive confirmation by default, no code copied) |
 | WP-2026-085 | [code-yeongyu/oh-my-openagent](https://github.com/code-yeongyu/oh-my-openagent) | Config migration framework (_migrations tracking + timestamped backups) | Sustainable Use License v1.0 (source-available, non-commercial) | Adapted (pattern description only, no code copied) |
 | WP-2026-082 | [Aider-AI/aider](https://github.com/Aider-AI/aider) | repo-map concept | Apache-2.0 | Inspiration (graphify predates) |
