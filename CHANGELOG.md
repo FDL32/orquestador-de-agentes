@@ -1,3 +1,19 @@
+# 2026-05-26 - WP-2026-141 Google eng-practices review standards alignment
+
+### Added
+- `skills/man-review-implementation/references/review-checklist.md`: sección `## Aprobacion y Nit`
+  con criterio positivo de aprobacion (aprobar cuando mejora la salud del codigo, aunque no sea perfecto),
+  convencion `Nit` para comentarios no bloqueantes, y principio de CLs pequeños. URLs directas a
+  `standard.html`, `comments.html` y `small-cls.html` de `google.github.io/eng-practices`.
+- `AGENTS.md`: punto 4 en "Criterio de cierre" referenciando el principio de aprobacion Google.
+- `CREDITS.md`: fila de atribucion para `google/eng-practices` (CC-BY 3.0, adapted).
+
+### Summary
+- Adaptacion quirurgica: sin nueva skill ni nueva superficie. Las 3 inserciones son aditivas
+  sobre superficies existentes. Trazabilidad completa desde contrato (AGENTS.md) hasta
+  ejecucion (review-checklist.md) y atribucion (CREDITS.md).
+
+---
 # 2026-05-26 - WP-2026-140 Bus import boundary test + ruff test suite cleanup
 
 ### Added

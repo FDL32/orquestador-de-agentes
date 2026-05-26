@@ -30,9 +30,9 @@ This is a **reference** setup, not a constraint. Swap any role for another backe
 ## Current state
 
 - **Version**: `v9.14.0`
-- **Status**: Central motor release consolidated (WP-2026-113).
-- **Last work**: `WP-2026-113` — Central motor release consolidation.
-- **Tests**: 227 passing. Validation 0 errors. Ruff clean. pip-audit clean.
+- **Status**: Stable. Review cycle aligned with Google eng-practices standards (WP-2026-141).
+- **Last work**: `WP-2026-141` — Google eng-practices review standards alignment.
+- **Tests**: 255 passing. Validation 0 errors. Ruff clean. pip-audit clean.
 
 ### What changed since v9.9.0
 
@@ -51,6 +51,11 @@ This is a **reference** setup, not a constraint. Swap any role for another backe
 | WP-2026-111 | **Central motor + destination workspace**: motor lives once, destination references externally |
 | WP-2026-113 | **Central motor release consolidation**: manifiestos, documentacion e instalador alineados |
 | WP-2026-123 | **Workspace minimo del destino**: enlace motor-destino con schema explicito |
+| WP-2026-135 | **Pre-compact hook**: recuperacion selectiva de contexto antes de compactacion |
+| WP-2026-136 | **session_close_observations `--candidates`**: canal de inyeccion semantica para el bucle de autoaprendizaje del Manager |
+| WP-2026-139 | **Anti-patterns index file**: inventario canonico AP-01..AP-08 con cache y separacion indice/instrucciones |
+| WP-2026-140 | **Bus import boundary firewall**: test AST+grep que protege el seam `bus/→scripts/` (`scripts.discover_skills` unica excepcion); 255 tests, ruff limpio |
+| WP-2026-141 | **Review standards (eng-practices)**: criterio de aprobacion Google, convencion `Nit`, trazabilidad en AGENTS.md y CREDITS.md |
 
 ## Central motor architecture (WP-2026-111)
 
