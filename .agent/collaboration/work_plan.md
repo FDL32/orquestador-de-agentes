@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WP-2026-142
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Titulo:** Symmetric mark-ready scope gate
 - **Asignado a:** Builder

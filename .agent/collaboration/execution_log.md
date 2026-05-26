@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WP-2026-142
-**Estado:** READY_FOR_REVIEW
+**Estado:** COMPLETED
 - **deliverable_type:** code
 
 ## Agente Activo
@@ -62,3 +62,5 @@
 ### Notas de Scope Override
 - Scope override aplicado para PLAN/AUDIT files (artefactos de planificacion, no scope creep del Builder).
 - Files afectados: AUDIT_WP-2026-142.md, PLAN_WP-2026-142.md (untracked), test_bus_emission_on_mark_ready.py (no modificado, tests ya existian).
+
+Manager approved canonical closeout for WP-2026-142
