@@ -131,6 +131,42 @@ class TestParseMarkdownState:
         result = _parse_markdown_state(state_md_path, "WP-2026-145")
         assert result is None
 
+    def test_header_mismatch_returns_none(self, tmp_path: Path) -> None:
+        """Parser returns None when header ticket_id does not match requested ticket_id.
+
+        This is the Phase 6 fix: _parse_markdown_state must validate the ticket header
+        before trusting the state line, preventing cross-ticket state pollution.
+        """
+        state_md_path = tmp_path / "STATE.md"
+        # STATE.md has header for WP-2026-100 but we request WP-2026-145
+        state_md_path.write_text(
+            "# State - WP-2026-100\n\n"
+            "Plan Activo: WP-2026-100\n"
+            "Estado actual: COMPLETED\n",
+            encoding="utf-8",
+        )
+        # Requesting different ticket should return None (header mismatch)
+        result = _parse_markdown_state(state_md_path, "WP-2026-145")
+        assert result is None
+
+    def test_header_mismatch_does_not_trust_state_line(self, tmp_path: Path) -> None:
+        """Parser must not trust 'Estado actual:' when header belongs to different ticket.
+
+        Regression test: even if 'Estado actual: IN_PROGRESS' exists, if the header
+        is for a different ticket, the parser must reject it.
+        """
+        state_md_path = tmp_path / "STATE.md"
+        # Old ticket header with a state line that could be misleading
+        state_md_path.write_text(
+            "# State - WP-2026-099\n\n"
+            "Plan Activo: WP-2026-099\n"
+            "Estado actual: READY_FOR_REVIEW\n",
+            encoding="utf-8",
+        )
+        # Must NOT return 'READY_FOR_REVIEW' for a different ticket
+        result = _parse_markdown_state(state_md_path, "WP-2026-149")
+        assert result is None
+
 
 class TestFilterEventsForTicket:
     """Test filtering events by ticket ID."""

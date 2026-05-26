@@ -1,12 +1,12 @@
 # Project: orquestador_de_agentes
 **Version:** v9.14.0
-**State:** WP-2026-148 IN_PROGRESS (graph report summary enrichment)
+**State:** WP-2026-149 IN_PROGRESS (bus-backed STATE projection sync)
 
 ## Current Cycle
 
-- Active ticket: WP-2026-148 IN_PROGRESS (2026-05-26).
-- Mode: active - Builder enriching the graph context adapter with a report-backed summary.
-- Outcome: the adapter will stay compact and useful while surfacing `GRAPH_REPORT.md` hints without a heavy dependency stack.
+- Active ticket: WP-2026-149 IN_PROGRESS (2026-05-27).
+- Mode: active - Builder syncing STATE.md from bus-derived state idempotently.
+- Outcome: the human-readable state will stop drifting behind events.jsonl.
 
 ## Current readiness
 
