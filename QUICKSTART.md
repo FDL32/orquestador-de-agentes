@@ -3,6 +3,7 @@
 Use this file to start the template in a fresh project, relaunch the terminal-driven workflow, or begin the next planning cycle after canonical closure.
 
 > **Onboarding de agente nuevo:** si arrancas una sesion limpia con un agente que no conoce el repo, pega primero el bootstrap canonico en `prompts/session_bootstrap.md`. Eso lo orienta sobre roles, archivos canonicos y reglas sin gastar contexto cargando docs completas.
+> **Memoria existente:** antes de empezar, revisa `.agent/runtime/memory/MEMORY.md` (indice corto) y `.agent/runtime/memory/observations.jsonl` (historial completo). Si la memoria esta vacia o ausente, se construye al cerrar el primer ciclo.
 
 Namespace de tickets:
 - Motor: `WP-YYYY-NNN`
@@ -294,6 +295,12 @@ git status --short
 
 # 5. Sincronizar README/CHANGELOG si el último ticket no quedó reflejado
 # (ver sección 6 para comandos de calidad antes del commit)
+
+# 6. Generar observaciones del ciclo cerrado, si hubo aprendizaje relevante
+python scripts/session_close_observations.py --ticket WP-YYYY-NNN
+
+# 7. Consolidar memoria persistente, si el ciclo genero observaciones
+python scripts/memory_consolidate.py --apply --verbose
 ```
 
 **Criterio de sesión cerrada:**
@@ -301,3 +308,4 @@ git status --short
 - `--validate` sin errores
 - Sin `PLAN_WP-*.md` / `AUDIT_WP-*.md` en raíz
 - README `Current state` y CHANGELOG reflejan el último WP cerrado
+- Memoria actualizada: `observations.jsonl` refleja el ciclo cerrado cuando hubo aprendizajes relevantes

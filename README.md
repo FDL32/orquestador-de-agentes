@@ -102,6 +102,22 @@ The motor lives **once** in this repo. A destination project:
 4. Manager review bridge dispatches; on `DECISION: APPROVE` the canonical close cascade fires.
 5. If the bridge times out / inspects: `python .agent/agent_controller.py --manager-approve --ticket WP-XXXX --force` closes manually.
 
+## Memory bootstrap
+
+**If memory already exists**, read in this order:
+
+1. `.agent/runtime/memory/MEMORY.md` — short index (start here).
+2. `.agent/runtime/memory/observations.jsonl` — full history for depth.
+3. `.agent/runtime/memory/session_close_report.md` — last closeout summary.
+4. `graphify-out/GRAPH_REPORT.md` — compact graph snapshot (optional).
+
+**If memory is empty or missing**, seed it after the first closed cycle:
+
+```powershell
+python scripts/session_close_observations.py --ticket WP-YYYY-NNN
+python scripts/memory_consolidate.py --apply --verbose
+```
+
 ## Typical flow — installing in a new project
 
 ```bash
