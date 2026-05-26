@@ -1,19 +1,20 @@
 # Session Close Report
 
-**Generated:** 2026-05-25 14:27:28 UTC
+**Generated:** 2026-05-26 19:08:47 UTC
 
 ## Summary
 
 | Metric | Count |
 |--------|-------|
-| Observaciones generadas | 1 |
-| Pasaron filtros | 1 |
+| Observaciones generadas | 2 |
+| Pasaron filtros | 2 |
 | Rechazadas | 0 |
-| Appendeadas (no duplicadas) | 1 |
+| Appendeadas (no duplicadas) | 2 |
 
 ## Topics Cubiertos
 
-- feature-completion
+- projection-probe-debt
+- state-projection-drift
 
 ## Razones de Rechazo
 
