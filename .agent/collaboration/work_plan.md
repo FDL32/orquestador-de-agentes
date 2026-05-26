@@ -1,46 +1,45 @@
-# Work Plan - WP-2026-147
+# Work Plan - WP-2026-148
 
 ## Metadata
-- **ID:** WP-2026-147
+- **ID:** WP-2026-148
 - **Estado:** COMPLETED
 - **deliverable_type:** code
-- **Titulo:** Graph context adapter
+- **Titulo:** Graph report summary enrichment
 - **Asignado a:** Builder
 
 ## Objetivo
-Build a lightweight graph-context adapter that reads the already-generated `graphify-out/graph.json` and `GRAPH_REPORT.md` for a destination repository, then emits a short `## Project Context` block for the active ticket. The adapter should stay in Python stdlib, avoid any new graph build pipeline, and extract only the minimum context needed to cut token usage.
+Build a small follow-up for the graph context adapter that reads the existing `graphify-out/GRAPH_REPORT.md`, extracts only the compact `## Estadísticas` block, and folds that summary into the emitted `## Project Context` block without exceeding 30 lines. The goal is to make the report file useful, remove the current dead-code shape, and keep the adapter lightweight and read-only.
 
 ## Decision Arquitectonica
-- `scripts/graph_context.py` will read `graphify-out/graph.json` plus `GRAPH_REPORT.md` and turn them into a compact ticket-scoped context block.
-- The adapter will stay in Python stdlib only and reuse the existing graphify output instead of creating a new graph pipeline.
-- The output should focus on the active ticket's files, immediate neighbors, and a short summary of the relevant corpus.
-- `agent_controller.py` will optionally surface a compact `## Project Context` summary from the graph context adapter when generating work plans for destination projects.
-- The design is inspired by graph-based project understanding tools, but intentionally keeps the implementation lightweight and read-only.
+- `scripts/graph_context.py` will parse only the `## Estadísticas` section from `GRAPH_REPORT.md` and surface a brief report-backed summary inside the compact context block.
+- The adapter will stay in Python stdlib only and remain read-only.
+- The output should focus on the active ticket's files, immediate neighbors, and one concise report summary line.
+- Missing or malformed graph reports must degrade gracefully.
+- The context budget is declarative: fixed line slots are allocated by section before emitting lines, instead of trimming from the end.
 - `TURN.md` stays under controller ownership and is out of scope for this ticket.
-- No LLM-per-file analysis is introduced in this ticket.
+- No new graph build pipeline is introduced.
+- No controller changes are required for this ticket.
 - The change is about better destination understanding, not a broader runtime refactor.
 
 ## Files Likely Touched
 - `scripts/graph_context.py`
-- `.agent/agent_controller.py`
 - `tests/unit/test_graph_context.py`
 
 ## Fases
-1. Build a lightweight adapter that reads `graphify-out/graph.json` and `GRAPH_REPORT.md`.
-2. Extract a ticket-scoped `## Project Context` block with the relevant files and immediate graph neighbors.
-3. Add a minimal `agent_controller.py` hook to inject the context block when the graph output exists.
-4. Add focused unit tests for parsing, filtering, and compact output generation.
-5. Confirm the hook is optional and the ticket flow still works if no graph output exists yet.
+1. Parse `GRAPH_REPORT.md` into a compact, deterministic summary from the statistics section only.
+2. Include the report summary in the emitted `## Project Context` block while respecting the 30-line cap via pre-allocated section budgets.
+3. Keep graceful fallback behavior when the report is absent or malformed.
+4. Add focused unit tests for report-present, report-absent, and line-limit cases.
 
 ## Calidad
 - `python scripts/run_pytest_safe.py tests/unit/test_graph_context.py -q`
 - `python .agent/agent_controller.py --validate --json --force`
 
 ## Criterios de aceptacion
-- The adapter produces a compact `## Project Context` summary for the destination project.
-- The summary is derived from existing `graphify-out` artifacts, not a new graph build.
-- The adapter is deterministic and uses Python stdlib only.
+- The adapter consumes `GRAPH_REPORT.md` when available.
+- The adapter only consumes the `## Estadísticas` section and ignores the file inventory.
 - The emitted `## Project Context` block does not exceed 30 lines.
-- The optional `## Project Context` injection keeps the ticket context concise.
-- The existing ticket flow still works when no project map is available.
+- Missing or malformed report data falls back gracefully.
+- The adapter remains deterministic and uses Python stdlib only.
+- The output stays concise and ticket-scoped.
 - Canonical validation passes without new warnings or errors.
