@@ -1,12 +1,12 @@
 # Project: orquestador_de_agentes
 **Version:** v9.14.0
-**State:** WP-2026-144 COMPLETED (destination ticket prefix onboarding)
+**State:** WP-2026-145 IN_PROGRESS (deterministic STATE projection probe)
 
 ## Current Cycle
 
-- Active ticket: WP-2026-144 COMPLETED (2026-05-26).
-- Mode: completed - Builder implemented destination namespace support.
-- Outcome: local destination repos now use `XXX-YYYY-NNN` with `Ticket prefix: XXX` written by installer; motor keeps `WP-YYYY-NNN`.
+- Active ticket: WP-2026-145 IN_PROGRESS (2026-05-26).
+- Mode: active - Builder validating bus-first state reconstruction.
+- Outcome: the active ticket will prove whether `events.jsonl` can reconstruct `STATE.md` deterministically without changing the canonical write path yet.
 
 ## Current readiness
 
