@@ -1,40 +1,41 @@
-# Work Plan - WP-2026-141
+# Work Plan - WP-2026-142
 
 ## Metadata
-- **ID:** WP-2026-141
-- **Estado:** COMPLETED
-- **deliverable_type:** documentation
-- **Titulo:** Google eng-practices review standards alignment
+- **ID:** WP-2026-142
+- **Estado:** APPROVED
+- **deliverable_type:** code
+- **Titulo:** Symmetric mark-ready scope gate
 - **Asignado a:** Builder
 
 ## Objetivo
-Adaptar un subconjunto pequeno de `google/eng-practices` al ciclo documental del repositorio para hacer mas objetiva la revision, clarificar `Nit` y dejar trazabilidad en `AGENTS.md` y `CREDITS.md`.
+Endurecer `--mark-ready` para que el Builder no pueda superar el scope gate declarando archivos tocados que no aparecen en el diff real. El gate conservara el bloqueo actual por archivos fuera de scope, añadira bloqueo por cobertura cero y dejara cobertura parcial como warning.
 
 ## Decision Arquitectonica
-- El criterio de aprobacion debe favorecer la mejora de la salud del codigo, aunque el cambio no sea perfecto.
-- `Nit` debe quedar definido como comentario no bloqueante, distinto de un cambio requerido.
-- Las referencias externas deben apuntar a secciones concretas de eng-practices, no solo al repo raiz.
-- La convencion se integra en las superficies documentales ya existentes, sin crear una skill nueva.
-- El alcance se mantiene documental y no toca codigo de produccion ni runtime.
+- `check_scope_gate` comparara en ambas direcciones `Files Likely Touched` contra los archivos realmente cambiados.
+- El bloqueo actual por `changed_files - whitelist` se conserva sin cambios.
+- Si `whitelist ∩ changed_files = ∅`, el cierre se bloquea por fabricacion total.
+- Si `whitelist - changed_files ≠ ∅`, se registrara advertencia de cobertura parcial sin bloquear.
+- `changed_files is None` y whitelist vacia mantienen el comportamiento actual de paso.
 
 ## Files Likely Touched
-- `skills/man-review-implementation/references/review-checklist.md`
-- `AGENTS.md`
-- `CREDITS.md`
+- `.agent/agent_controller.py`
+- `tests/unit/test_scope_gate.py`
+- `tests/unit/test_bus_emission_on_mark_ready.py`
 
 ## Fases
-1. Redactar el criterio de aprobacion y la convencion `Nit` en la checklist de review con enlaces directos a eng-practices.
-2. Anadir la linea de trazabilidad en `AGENTS.md`.
-3. Registrar la atribucion en `CREDITS.md`.
-4. Validar el estado canonico y la consistencia documental.
+1. Extender `check_scope_gate` con cobertura simetrica y resultados diferenciados por severidad.
+2. Añadir pruebas unitarias para cobertura cero, cobertura parcial y preservacion de los casos base.
+3. Verificar el flujo end-to-end de `--mark-ready` y el evento de bus asociado.
+4. Validar con los gates locales del repositorio.
 
 ## Calidad
-- `python scripts/run_pytest_safe.py tests/test_work_plan_schema.py -q`
+- `python scripts/run_pytest_safe.py tests/unit/test_scope_gate.py -q`
+- `python scripts/run_pytest_safe.py tests/unit/test_bus_emission_on_mark_ready.py -q`
 - `python .agent/agent_controller.py --validate --json --force`
 
 ## Criterios de aceptacion
-- `review-checklist.md` contiene el principio de aprobacion y la convencion `Nit`.
-- `AGENTS.md` referencia el principio de aprobacion como criterio de cierre.
-- `CREDITS.md` incluye la atribucion a `google/eng-practices` con CC-BY 3.0.
-- El ticket sigue siendo de tipo documental.
+- `check_scope_gate` bloquea cobertura cero y sigue bloqueando archivos fuera de scope.
+- La cobertura parcial genera warning, pero no bloquea.
+- `--mark-ready` respeta el nuevo resultado del gate sin romper la emision del bus.
+- La validacion canonica pasa sin errores.
 - La validacion canonica pasa sin errores.
