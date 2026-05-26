@@ -76,6 +76,66 @@ def load_graph_report() -> str:
     return report_path.read_text(encoding="utf-8")
 
 
+def parse_report_stats(report_content: str) -> dict[str, int]:
+    """
+    Parse only the statistics section from GRAPH_REPORT.md.
+
+    The adapter intentionally ignores the project file inventory and consumes
+    only the compact statistics block so the prompt budget stays tight.
+    """
+    stats: dict[str, int] = {}
+    in_stats = False
+
+    for raw_line in report_content.splitlines():
+        line = raw_line.strip()
+        if line.startswith("## "):
+            if in_stats:
+                break
+            in_stats = bool(re.match(r"^##\s+Estad", line, flags=re.IGNORECASE))
+            continue
+
+        if not in_stats or not line.startswith("- "):
+            continue
+
+        payload = line[2:].strip().lower()
+        match = re.search(r"(\d+)", payload)
+        if not match:
+            continue
+
+        value = int(match.group(1))
+        if payload.startswith("nodos totales:"):
+            stats["total_nodes"] = value
+        elif payload.startswith("python:"):
+            stats["python_nodes"] = value
+        elif payload.startswith("markdown:"):
+            stats["markdown_nodes"] = value
+        elif payload.startswith("enlaces"):
+            stats["edges"] = value
+
+    return stats
+
+
+def format_report_summary(stats: dict[str, int]) -> str | None:
+    """Format a one-line summary from the parsed report statistics."""
+    if not stats:
+        return None
+
+    parts: list[str] = []
+    if "total_nodes" in stats:
+        parts.append(f"{stats['total_nodes']} nodes")
+    if "python_nodes" in stats and "markdown_nodes" in stats:
+        parts.append(
+            f"({stats['python_nodes']} python, {stats['markdown_nodes']} markdown)"
+        )
+    if "edges" in stats:
+        parts.append(f"{stats['edges']} links")
+
+    if not parts:
+        return None
+
+    return f"- **Graph report:** {' '.join(parts)}"
+
+
 def load_work_plan() -> str:
     """
     Load the active work_plan.md file.
@@ -131,7 +191,7 @@ def extract_files_likely_touched(work_plan_content: str) -> set[str]:
             if stripped.startswith("## "):
                 break
             if stripped.startswith("- "):
-                file_path = stripped[2:].strip()
+                file_path = stripped[2:].strip().strip("`")
                 if file_path and not file_path.startswith("#"):
                     files.add(file_path)
 
@@ -201,12 +261,21 @@ def format_file_size(size_bytes: int) -> str:
         return f"{size_bytes} B"
 
 
+def _append_line(lines: list[str], line: str, remaining_lines: int) -> int:
+    """Append a line if there is remaining budget."""
+    if remaining_lines <= 0:
+        return 0
+    lines.append(line)
+    return remaining_lines - 1
+
+
 def _format_context_section(
     lines: list[str],
     categorized: dict[str, list[tuple[str, dict[str, Any]]]],
     section_name: str,
     file_type: str,
     remaining_lines: int,
+    max_entries: int,
 ) -> int:
     """
     Format a section of files (Python or Markdown) for the context.
@@ -217,19 +286,24 @@ def _format_context_section(
     if not files or remaining_lines <= 0:
         return remaining_lines
 
-    lines.append(f"### {section_name}")
-    for file_path, info in sorted(files)[:5]:
+    remaining_lines = _append_line(lines, f"### {section_name}", remaining_lines)
+    for file_path, info in sorted(files)[:max_entries]:
+        if remaining_lines <= 0:
+            return 0
         size = info.get("size_bytes", 0)
-        lines.append(f"- `{file_path}` ({format_file_size(size)})")
-        remaining_lines -= 1
-
-    if len(files) > 5:
-        lines.append(
-            f"- ... and {len(files) - 5} more {section_name.replace(' Files', '').lower()} files"
+        remaining_lines = _append_line(
+            lines, f"- `{file_path}` ({format_file_size(size)})", remaining_lines
         )
-        remaining_lines -= 1
 
-    lines.append("")
+    if len(files) > max_entries and remaining_lines > 0:
+        more_count = len(files) - max_entries
+        remaining_lines = _append_line(
+            lines,
+            f"- ... and {more_count} more {section_name.replace(' Files', '').lower()} files",
+            remaining_lines,
+        )
+
+    remaining_lines = _append_line(lines, "", remaining_lines)
     return remaining_lines
 
 
@@ -238,47 +312,71 @@ def _build_context_lines(
     all_context_files: set[str],
     target_files: set[str],
     categorized: dict[str, list[tuple[str, dict[str, Any]]]],
+    report_summary: str | None,
     max_lines: int,
 ) -> list[str]:
     """Build the context lines list."""
     lines: list[str] = []
-    lines.append("## Project Context")
-    lines.append("")
+    remaining_lines = max_lines
+    remaining_lines = _append_line(lines, "## Project Context", remaining_lines)
+    remaining_lines = _append_line(lines, "", remaining_lines)
 
     if ticket_id:
-        lines.append(f"- **Ticket:** {ticket_id}")
+        remaining_lines = _append_line(
+            lines, f"- **Ticket:** {ticket_id}", remaining_lines
+        )
 
     total_files = len(all_context_files)
-    lines.append(f"- **Scope:** {total_files} file(s) in context")
-    lines.append("")
-
-    remaining_lines = max_lines - len(lines) - 5
+    remaining_lines = _append_line(
+        lines, f"- **Scope:** {total_files} file(s) in context", remaining_lines
+    )
+    if report_summary:
+        remaining_lines = _append_line(lines, report_summary, remaining_lines)
+    remaining_lines = _append_line(lines, "", remaining_lines)
 
     remaining_lines = _format_context_section(
-        lines, categorized, "Python Files", "python", remaining_lines
+        lines,
+        categorized,
+        "Python Files",
+        "python",
+        remaining_lines,
+        max_entries=4,
     )
 
     remaining_lines = _format_context_section(
-        lines, categorized, "Markdown Files", "markdown", remaining_lines
+        lines,
+        categorized,
+        "Markdown Files",
+        "markdown",
+        remaining_lines,
+        max_entries=3,
     )
 
-    if remaining_lines > 2 and target_files:
-        lines.append("### Ticket Scope (Files Likely Touched)")
+    if target_files and remaining_lines > 0:
+        remaining_lines = _append_line(
+            lines, "### Ticket Scope (Files Likely Touched)", remaining_lines
+        )
         for file_path in sorted(target_files):
-            if remaining_lines <= 1:
+            if remaining_lines <= 0:
                 break
-            lines.append(f"- `{file_path}`")
-            remaining_lines -= 1
+            remaining_lines = _append_line(lines, f"- `{file_path}`", remaining_lines)
 
-    while len(lines) > max_lines:
-        if lines and (
-            lines[-1].startswith("-") or lines[-1] == "" or lines[-1].startswith("###")
-        ):
-            lines.pop()
-        else:
-            break
+    if len(lines) > max_lines:
+        raise ValueError(
+            f"Generated context exceeds line budget: {len(lines)} > {max_lines}"
+        )
 
     return lines
+
+
+def _load_report_summary_from_path(report_path: Path) -> str | None:
+    """Load and compact GRAPH_REPORT.md if it exists."""
+    try:
+        report_content = report_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+    return format_report_summary(parse_report_stats(report_content))
 
 
 def generate_project_context(
@@ -310,13 +408,24 @@ def generate_project_context(
     work_plan_content = load_work_plan()
     ticket_id = extract_active_ticket_id(work_plan_content)
     target_files = extract_files_likely_touched(work_plan_content)
+    try:
+        report_content = load_graph_report()
+    except FileNotFoundError:
+        report_summary = None
+    else:
+        report_summary = format_report_summary(parse_report_stats(report_content))
 
     neighbors = get_immediate_neighbors(graph, target_files)
     all_context_files = target_files | neighbors
 
     categorized = categorize_files(nodes, all_context_files)
     lines = _build_context_lines(
-        ticket_id, all_context_files, target_files, categorized, max_lines
+        ticket_id,
+        all_context_files,
+        target_files,
+        categorized,
+        report_summary,
+        max_lines,
     )
 
     return "\n".join(lines)
@@ -357,6 +466,9 @@ def generate_context_for_destination(
     except OSError:
         return None
 
+    report_summary = _load_report_summary_from_path(
+        dest_project_root / "graphify-out" / "GRAPH_REPORT.md"
+    )
     nodes = graph.get("nodes", {})
     ticket_id = extract_active_ticket_id(work_plan_content)
     target_files = extract_files_likely_touched(work_plan_content)
@@ -365,7 +477,12 @@ def generate_context_for_destination(
     categorized = categorize_files(nodes, all_context_files)
 
     lines = _build_context_lines(
-        ticket_id, all_context_files, target_files, categorized, max_lines
+        ticket_id,
+        all_context_files,
+        target_files,
+        categorized,
+        report_summary,
+        max_lines,
     )
     return "\n".join(lines)
 

@@ -1,6 +1,6 @@
 # Session Close Report
 
-**Generated:** 2026-05-26 19:08:47 UTC
+**Generated:** 2026-05-26 23:00:00 UTC
 
 ## Summary
 
@@ -13,8 +13,8 @@
 
 ## Topics Cubiertos
 
-- projection-probe-debt
-- state-projection-drift
+- scanner_corpus_scope
+- adapter_pipeline_wp_split
 
 ## Razones de Rechazo
 

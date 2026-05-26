@@ -1,13 +1,13 @@
-# State - WP-2026-147
+# State - WP-2026-148
 
-Plan Activo: WP-2026-147
+Plan Activo: WP-2026-148
 Estado actual: IN_PROGRESS
 Rol activo: BUILDER
 
 Resumen:
-WP-2026-147 en progreso: el Builder construira un adaptador ligero que derive `## Project Context` desde `graphify-out` para el proyecto destino.
+WP-2026-148 en progreso: el Builder enriquecerá el adaptador de contexto con un resumen breve derivado de `GRAPH_REPORT.md`.
 
 Notas:
 - El alcance es code.
 - `TURN.md` sigue bajo control del controller.
-- El adaptador debe ser stdlib-only y no introducir dependencias pesadas.
+- El adaptador sigue siendo stdlib-only y no debe introducir dependencias pesadas.

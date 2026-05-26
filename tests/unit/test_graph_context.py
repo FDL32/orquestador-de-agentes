@@ -20,12 +20,14 @@ from scripts.graph_context import (
     extract_active_ticket_id,
     extract_files_likely_touched,
     format_file_size,
+    format_report_summary,
     generate_context_for_destination,
     generate_project_context,
     get_immediate_neighbors,
     load_graph,
     load_graph_report,
     load_work_plan,
+    parse_report_stats,
 )
 
 
@@ -54,7 +56,19 @@ def temp_graphify_dir(tmp_path: Path) -> Path:
     with open(graph_path, "w", encoding="utf-8") as f:
         json.dump(graph_data, f)
 
-    report_content = "# Graphify Report\n\n- Total nodes: 5\n"
+    report_content = """# Graphify Report - 2026-05-26 20:54 UTC
+
+## Estadísticas
+
+- Nodos totales: 5
+  - Python: 3
+  - Markdown: 2
+- Enlaces (referencias): 3
+
+## Archivos del Proyecto
+
+  - `file1.py` (python, 1.0 KB)
+"""
     report_path = graphify_dir / "GRAPH_REPORT.md"
     report_path.write_text(report_content, encoding="utf-8")
 
@@ -144,6 +158,67 @@ class TestLoadGraphReport:
             mock_get_dir.return_value = Path("/nonexistent")
             with pytest.raises(FileNotFoundError, match="Graph report not found"):
                 load_graph_report()
+
+
+class TestParseReportStats:
+    """Tests for report statistics parsing."""
+
+    def test_parse_stats(self, temp_project_root: Path) -> None:
+        """Test that only the statistics section is parsed."""
+        with patch("scripts.graph_context.get_graphify_dir") as mock_get_dir:
+            mock_get_dir.return_value = temp_project_root / "graphify-out"
+            report = load_graph_report()
+        stats = parse_report_stats(report)
+
+        assert stats == {
+            "total_nodes": 5,
+            "python_nodes": 3,
+            "markdown_nodes": 2,
+            "edges": 3,
+        }
+
+    def test_format_report_summary(self) -> None:
+        """Test compact summary formatting."""
+        summary = format_report_summary(
+            {
+                "total_nodes": 315,
+                "python_nodes": 173,
+                "markdown_nodes": 142,
+                "edges": 15,
+            }
+        )
+        assert (
+            summary
+            == "- **Graph report:** 315 nodes (173 python, 142 markdown) 15 links"
+        )
+
+    def test_parse_report_ignores_inventory(self) -> None:
+        """Test that file inventory is ignored by the parser."""
+        report = """# Graphify Report
+
+## Estadísticas
+
+- Nodos totales: 10
+- Enlaces (referencias): 2
+
+## Archivos del Proyecto
+- `secret.py` (python, 999 KB)
+        """
+        stats = parse_report_stats(report)
+        assert stats == {"total_nodes": 10, "edges": 2}
+
+    def test_parse_malformed_report(self) -> None:
+        """Test malformed or incomplete reports degrade gracefully."""
+        report = """# Graphify Report
+
+## Estadísticas
+
+- Total nodes: many
+- Python: a lot
+"""
+        stats = parse_report_stats(report)
+        assert stats == {}
+        assert format_report_summary(stats) is None
 
 
 class TestLoadWorkPlan:
@@ -332,8 +407,10 @@ class TestGenerateProjectContext:
 
             assert "## Project Context" in context
             assert "WP-2026-147" in context
+            assert "Graph report" in context
             assert "file1.py" in context or "file2.py" in context
             assert "doc1.md" in context
+            assert "Archivos del Proyecto" not in context
 
     def test_context_line_limit(self, temp_project_root: Path) -> None:
         """Test context respects max_lines limit."""
@@ -347,6 +424,7 @@ class TestGenerateProjectContext:
             context = generate_project_context(max_lines=10)
             lines = context.split("\n")
             assert len(lines) <= 10
+            assert "Graph report" in context
 
     def test_context_deterministic(self, temp_project_root: Path) -> None:
         """Test context generation is deterministic."""
@@ -361,6 +439,7 @@ class TestGenerateProjectContext:
             context2 = generate_project_context()
 
             assert context1 == context2
+            assert "Graph report" in context1
 
 
 class TestGenerateContextForDestination:
@@ -373,6 +452,7 @@ class TestGenerateContextForDestination:
         assert context is not None
         assert "## Project Context" in context
         assert "WP-2026-147" in context
+        assert "Graph report" in context
 
     def test_destination_missing_graph(self, tmp_path: Path) -> None:
         """Test None when graph missing in destination."""
