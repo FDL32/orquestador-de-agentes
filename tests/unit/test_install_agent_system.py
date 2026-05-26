@@ -245,6 +245,7 @@ def test_write_motor_destination_link_creates_file(tmp_path):
         destination_root=destination_root,
         motor_version="v9.14.0",
         destination_id="test-dest",
+        ticket_prefix="XXX",
         dry_run=False,
     )
 
@@ -256,6 +257,7 @@ def test_write_motor_destination_link_creates_file(tmp_path):
     assert data["destination_root"] == str(destination_root.resolve())
     assert data["motor_version"] == "v9.14.0"
     assert data["destination_id"] == "test-dest"
+    assert data["ticket_prefix"] == "XXX"
     assert "created_at" in data
     assert data["manifest_version"] == MANIFEST_WORKSPACE_VERSION
 
@@ -275,12 +277,14 @@ def test_write_motor_destination_link_default_destination_id(tmp_path):
         destination_root=destination_root,
         motor_version="v9.14.0",
         destination_id=None,
+        ticket_prefix="DEST",
         dry_run=False,
     )
 
     link_file = project_agent / "config" / "motor_destination_link.json"
     data = json.loads(link_file.read_text(encoding="utf-8"))
     assert data["destination_id"] == "my_project"
+    assert data["ticket_prefix"] == "DEST"
 
 
 def test_write_motor_destination_link_unknown_version(tmp_path):
@@ -296,12 +300,14 @@ def test_write_motor_destination_link_unknown_version(tmp_path):
         motor_root=motor_root,
         destination_root=destination_root,
         motor_version=None,
+        ticket_prefix="XXX",
         dry_run=False,
     )
 
     link_file = project_agent / "config" / "motor_destination_link.json"
     data = json.loads(link_file.read_text(encoding="utf-8"))
     assert data["motor_version"] == "unknown"
+    assert data["ticket_prefix"] == "XXX"
 
 
 def test_write_motor_destination_link_dry_run(tmp_path, capsys):

@@ -4,6 +4,10 @@ Use this file to start the template in a fresh project, relaunch the terminal-dr
 
 > **Onboarding de agente nuevo:** si arrancas una sesion limpia con un agente que no conoce el repo, pega primero el bootstrap canonico en `prompts/session_bootstrap.md`. Eso lo orienta sobre roles, archivos canonicos y reglas sin gastar contexto cargando docs completas.
 
+Namespace de tickets:
+- Motor: `WP-YYYY-NNN`
+- Destino: `XXX-YYYY-NNN` con `Ticket prefix: XXX` en el `PROJECT.md` local (el instalador lo escribe con `--install --prefix XXX`)
+
 ## 0. Reproducible launcher
 
 The recommended way to start the three canonical terminals is the repo-local launcher:
@@ -107,6 +111,7 @@ If validation is clean, the template is ready to run.
 For the current active ticket, the launcher follows `.agent/collaboration/work_plan.md`. If the repository is idle, begin the next planning cycle with:
 
 1. **Manager creates new `.agent/collaboration/work_plan.md`** with the next approved ticket
+   - En un proyecto destino, el ID debe usar el namespace local definido en `PROJECT.md` (`XXX-YYYY-NNN`), no el del motor. El instalador escribe este prefijo con `--install --prefix XXX`.
 2. **Validate clean state**: Run `python .agent\agent_controller.py --validate --json --force`
 3. **Launch terminals**: Use `.\scripts\launch_agent_terminals.ps1` for template-based startup
 

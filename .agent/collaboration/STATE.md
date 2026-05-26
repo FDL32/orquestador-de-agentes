@@ -1,13 +1,13 @@
-# State - WP-2026-143
+# State - WP-2026-144
 
-Plan Activo: WP-2026-143
-Estado actual: COMPLETED
-Rol activo: MANAGER
+Plan Activo: WP-2026-144
+Estado actual: IN_PROGRESS
+Rol activo: BUILDER
 
 Resumen:
-WP-2026-143 completado: `--mark-ready` ahora es idempotente con el bus como autoridad y evita ciclos duplicados de review.
+WP-2026-144 en progreso: el Builder implementara el namespace local de tickets para proyectos destino y la trazabilidad asociada.
 
 Notas:
-- El alcance es code.
-- El scope gate y el circuit breaker quedaron fuera de alcance.
-- El fallback markdown se conservó solo para cuando el bus no esta disponible.
+- El alcance es mixed.
+- El motor conserva `WP-YYYY-NNN`.
+- Los destinos usaran `XXX-YYYY-NNN` con `Ticket prefix: XXX` declarado en `PROJECT.md`.

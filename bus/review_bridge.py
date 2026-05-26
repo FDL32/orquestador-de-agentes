@@ -1676,6 +1676,17 @@ class ReviewBridge:
             if decision == ReviewDecision.CHANGES:
                 break
 
+        # WP-2026-144 hotfix: timeout-caused INSPECT is an infrastructure failure,
+        # not a semantic human-review request. Reclassify so the bus never sees
+        # inspect→HUMAN_GATE for a timeout; REVIEW_TRANSPORT_FAILED carries the
+        # failure_reason so callers can distinguish timeout from content inspect.
+        if decision == ReviewDecision.INSPECT and "TimeoutExpired" in (
+            final_stderr or ""
+        ):
+            decision = ReviewDecision.TRANSPORT_FAILED
+            transport_ok = False
+            transport_error = "timeout"
+
         # WP-2026-106 B1: keep the bus lightweight. Full review text lives in
         # attempt-N.md on disk; the event only carries a short forensic tail.
         # Transport failures are tracked as a separate event so they cannot be
@@ -1693,6 +1704,11 @@ class ReviewBridge:
                         "transport_error": transport_error,
                         "parse_method": parse_method,
                         "transport_ok": transport_ok,
+                        **(
+                            {"failure_reason": transport_error}
+                            if transport_error
+                            else {}
+                        ),
                     },
                 )
             except Exception as exc:

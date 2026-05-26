@@ -15,6 +15,11 @@ está contaminado, y un git nuevo no lo arrastra.
 
 ## Checklist
 
+### 0. Definir namespace del destino
+- [ ] En el `PROJECT.md` del proyecto destino, declarar `Ticket prefix: XXX`.
+- [ ] Opcional: usar el instalador con `--install --prefix XXX` para escribirlo automaticamente.
+- [ ] Confirmar que el destino usara `XXX-YYYY-NNN` para sus tickets y no el namespace `WP-YYYY-NNN` del motor.
+
 ### 1. Git nuevo desde cero
 - [ ] Crear el repo nuevo con `git init` sobre el árbol de trabajo limpio.
 - [ ] **NUNCA** `git clone` del repo viejo ni copiar la carpeta `.git/` — eso

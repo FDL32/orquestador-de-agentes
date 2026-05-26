@@ -30,8 +30,8 @@ This is a **reference** setup, not a constraint. Swap any role for another backe
 ## Current state
 
 - **Version**: `v9.14.0`
-- **Status**: Stable. Review cycle aligned with Google eng-practices standards (WP-2026-141).
-- **Last work**: `WP-2026-141` — Google eng-practices review standards alignment.
+- **Status**: Stable. Destination prefix onboarding + timeout/inspect semantic fix (WP-2026-144).
+- **Last work**: `WP-2026-144` — Destination ticket prefix onboarding + hotfix: timeout no longer emits inspect to bus.
 - **Tests**: 255 passing. Validation 0 errors. Ruff clean. pip-audit clean.
 
 ### What changed since v9.9.0
@@ -56,6 +56,9 @@ This is a **reference** setup, not a constraint. Swap any role for another backe
 | WP-2026-139 | **Anti-patterns index file**: inventario canonico AP-01..AP-08 con cache y separacion indice/instrucciones |
 | WP-2026-140 | **Bus import boundary firewall**: test AST+grep que protege el seam `bus/→scripts/` (`scripts.discover_skills` unica excepcion); 255 tests, ruff limpio |
 | WP-2026-141 | **Review standards (eng-practices)**: criterio de aprobacion Google, convencion `Nit`, trazabilidad en AGENTS.md y CREDITS.md |
+| WP-2026-142 | **Symmetric scope gate**: `--mark-ready` blocks when no whitelist file appears in diff |
+| WP-2026-143 | **Idempotent `--mark-ready`**: bus-state guard prevents double review cycle emission |
+| WP-2026-144 | **Destination prefix onboarding + timeout hotfix**: `--install --prefix XXX` writes namespace; timeout no longer emits `inspect` to bus |
 
 ## Central motor architecture (WP-2026-111)
 
@@ -68,6 +71,7 @@ The motor lives **once** in this repo. A destination project:
 5. **Chooses deliverable type per ticket**: `deliverable_type: code | documentation | research | analysis | mixed` in `work_plan.md` switches the gate dispatch and Manager review rubric.
 6. **Flips profile automatically**: `agents.json.active_profile` goes from `engine-dev` (motor repo) to `host-project` (destination) during install/sync.
 7. **Receives motor-destination link file**: `.agent/config/motor_destination_link.json` with schema (motor_root, destination_root, motor_version, destination_id, created_at, manifest_version) for portable traceability (WP-2026-123).
+8. **Uses a local ticket namespace in the destination**: the destination `PROJECT.md` declares `Ticket prefix: XXX`, and tickets in that repo use `XXX-YYYY-NNN`. The motor repo keeps `WP-YYYY-NNN`. The installer can write this prefix with `--install --prefix XXX` or `--sync --prefix XXX`.
 
 ## Version contract
 
@@ -112,6 +116,20 @@ The installer:
 4. Reports the source (host vs motor) of each discovered skill.
 5. Does NOT copy motor code (scripts/, skills/, bus/, agent_system/, core .agent/).
 6. Writes `.agent/config/motor_destination_link.json` with schema explicit for portable traceability (WP-2026-123).
+
+Before the first ticket in the destination, set the namespace in that repo's `PROJECT.md`:
+
+```text
+Ticket prefix: XXX
+```
+
+Or let the installer write it for you:
+
+```bash
+python /path/to/orquestador_de_agentes/scripts/install_agent_system.py --install --prefix XXX
+```
+
+Use that prefix for all local ticket IDs and work-plan documents in the destination. Do not reuse the motor's `WP-YYYY-NNN` namespace there.
 
 ## Common commands
 
