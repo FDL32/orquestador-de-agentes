@@ -52,3 +52,8 @@
 - [ ] AP-06 Validator evidence missing: el execution log muestra comando, salida y resultado limpio
 - [ ] AP-07 Scaffolding misclassified as code: los tickets de solo estructura se tratan como documentation
 - [ ] AP-08 Test coverage drift: cada funcion nueva del diff tiene al menos un test directo; suite global pasando no es evidencia suficiente
+
+## Aprobacion y Nit
+- [ ] Aprobar cuando el cambio mejora la salud del codigo, aunque no sea perfecto: https://google.github.io/eng-practices/review/reviewer/standard.html
+- [ ] `Nit` se usa solo para comentarios no bloqueantes, separados de cambios requeridos: https://google.github.io/eng-practices/review/reviewer/comments.html
+- [ ] Los cambios pequenos siguen siendo preferibles para acelerar la revision y reducir drift de contexto: https://google.github.io/eng-practices/review/developer/small-cls.html

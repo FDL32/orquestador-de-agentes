@@ -1,37 +1,40 @@
-# Work Plan - WP-2026-140
+# Work Plan - WP-2026-141
 
 ## Metadata
-- **ID:** WP-2026-140
-- **Estado:** APPROVED
-- **deliverable_type:** code
-- **Titulo:** Bus import boundary test for scripts dependency firewall
+- **ID:** WP-2026-141
+- **Estado:** COMPLETED
+- **deliverable_type:** documentation
+- **Titulo:** Google eng-practices review standards alignment
 - **Asignado a:** Builder
 
 ## Objetivo
-Blindar la capa `bus/` para que no cree nuevas dependencias sobre `scripts/`, preservando solo la excepcion explicitamente permitida para `scripts.discover_skills`.
+Adaptar un subconjunto pequeno de `google/eng-practices` al ciclo documental del repositorio para hacer mas objetiva la revision, clarificar `Nit` y dejar trazabilidad en `AGENTS.md` y `CREDITS.md`.
 
 ## Decision Arquitectonica
-- El boundary test analiza el arbol `bus/` y extrae las importaciones `scripts.*` de forma estaticamente segura.
-- La unica importacion permitida desde `bus/` hacia `scripts/` es `scripts.discover_skills`, porque esa es la seam existente de discovery de skills.
-- Si aparece cualquier otro `scripts.*` dentro de `bus/`, el test debe fallar con el modulo exacto y la importacion observada.
-- El ticket no cambia el codigo de produccion salvo que el boundary revele una excepcion adicional que deba formalizarse.
+- El criterio de aprobacion debe favorecer la mejora de la salud del codigo, aunque el cambio no sea perfecto.
+- `Nit` debe quedar definido como comentario no bloqueante, distinto de un cambio requerido.
+- Las referencias externas deben apuntar a secciones concretas de eng-practices, no solo al repo raiz.
+- La convencion se integra en las superficies documentales ya existentes, sin crear una skill nueva.
+- El alcance se mantiene documental y no toca codigo de produccion ni runtime.
 
 ## Files Likely Touched
-- `tests/test_bus_boundary.py`
+- `skills/man-review-implementation/references/review-checklist.md`
+- `AGENTS.md`
+- `CREDITS.md`
 
 ## Fases
-1. Implementar un test AST-based que recorra `bus/` y coleccione imports `scripts.*`.
-2. Declarar explicitamente el allowlist minimo: `scripts.discover_skills`.
-3. Hacer que el failure message identifique el modulo de `bus` y la importacion prohibida.
-4. Validar con el subset de tests, `ruff` y la validacion canonica.
+1. Redactar el criterio de aprobacion y la convencion `Nit` en la checklist de review con enlaces directos a eng-practices.
+2. Anadir la linea de trazabilidad en `AGENTS.md`.
+3. Registrar la atribucion en `CREDITS.md`.
+4. Validar el estado canonico y la consistencia documental.
 
 ## Calidad
-- `python scripts/run_pytest_safe.py tests/test_bus_boundary.py -q`
-- `ruff check tests/test_bus_boundary.py`
+- `python scripts/run_pytest_safe.py tests/test_work_plan_schema.py -q`
 - `python .agent/agent_controller.py --validate --json --force`
 
 ## Criterios de aceptacion
-- `bus/` solo mantiene la importacion permitida `scripts.discover_skills`.
-- Cualquier nuevo `scripts.*` importado desde `bus/` hace fallar el test con una traza clara.
-- El boundary no produce falsos positivos sobre imports que no pertenecen a `bus/`.
+- `review-checklist.md` contiene el principio de aprobacion y la convencion `Nit`.
+- `AGENTS.md` referencia el principio de aprobacion como criterio de cierre.
+- `CREDITS.md` incluye la atribucion a `google/eng-practices` con CC-BY 3.0.
+- El ticket sigue siendo de tipo documental.
 - La validacion canonica pasa sin errores.

@@ -238,3 +238,4 @@ Considera una tarea cerrada solo cuando:
 1. `ruff`, `pytest` y `pip-audit` pasan.
 2. El codigo nuevo usa rutas y manejo de errores correctos.
 3. Las decisiones importantes quedan consolidadas en `PROJECT.md` o `CHANGELOG.md`.
+4. La revision aplica el principio de Google de aprobar cuando el cambio mejora la salud del codigo, aun si no es perfecto: https://google.github.io/eng-practices/review/reviewer/standard.html
