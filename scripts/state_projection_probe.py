@@ -131,11 +131,18 @@ def _parse_markdown_state(state_md_path: Path, ticket_id: str) -> str | None:
         return None
 
     content = state_md_path.read_text(encoding="utf-8")
+
+    expected_header = f"# State - {ticket_id}"
+    if expected_header not in content:
+        return None
+
     for line in content.splitlines():
         line_stripped = line.strip()
-        # Look for "Estado actual: STATE"
+        # Look for "Estado actual: STATE" or "- **Estado actual:** STATE"
         if line_stripped.startswith("Estado actual:"):
             return line_stripped.split(":", 1)[1].strip()
+        if line_stripped.startswith("- **Estado actual:**"):
+            return line_stripped.split(":", 1)[1].strip().replace("*", "")
     return None
 
 

@@ -1,20 +1,22 @@
 # Session Close Report
 
-**Generated:** 2026-05-26 23:00:00 UTC
+**Generated:** 2026-05-27 00:00:00 UTC
 
 ## Summary
 
 | Metric | Count |
 |--------|-------|
-| Observaciones generadas | 2 |
-| Pasaron filtros | 2 |
+| Observaciones generadas | 4 |
+| Pasaron filtros | 4 |
 | Rechazadas | 0 |
-| Appendeadas (no duplicadas) | 2 |
+| Appendeadas (no duplicadas) | 4 |
 
 ## Topics Cubiertos
 
 - scanner_corpus_scope
 - adapter_pipeline_wp_split
+- dispatcher_global_side_effect
+- explicit_legacy_edit_missing_from_diff
 
 ## Razones de Rechazo
 

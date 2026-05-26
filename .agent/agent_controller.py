@@ -2622,17 +2622,15 @@ def _materialize_state_transition(
 
     update_turn_file(action)
 
-    # Sync STATE.md
+    # Sync STATE.md — canonical plain format (WP-2026-149)
     state_content = read_file(STATE_FILE)
     if state_content:
-        updated_state = state_content
-        # Replace the current state line
         import re
 
         updated_state = re.sub(
-            r"^- \*\*Estado actual:\*\* .+",
-            f"- **Estado actual:** {to_state}",
-            updated_state,
+            r"^(- \*\*Estado actual:\*\*|Estado actual:) .+",
+            f"Estado actual: {to_state}",
+            state_content,
             flags=re.MULTILINE,
         )
         write_file(STATE_FILE, updated_state)
@@ -3060,7 +3058,13 @@ def _handle_validate(json_output: bool) -> int:  # noqa: C901
     if scope_warnings:
         warnings.setdefault("scope", []).extend(scope_warnings)
 
-    # Check bus drift
+    # Check bus drift — heal first, then report any residual
+    try:
+        from scripts.state_projection_sync import sync_state_projection
+
+        sync_state_projection()
+    except Exception:  # noqa: S110 - sync is best-effort and must not block validate
+        pass
     drift_warnings = _check_bus_drift(plan_content, log_status)
     if drift_warnings:
         warnings.setdefault("bus_drift", []).extend(drift_warnings)
@@ -3116,6 +3120,14 @@ def _handle_main_action(
         fix_corrupted_notifications()
 
     archive_old_notifications()
+
+    # WP-2026-149: Heal STATE.md drift before determining next action
+    try:
+        from scripts.state_projection_sync import sync_state_projection
+
+        sync_state_projection()
+    except Exception:  # noqa: S110 - sync is best-effort and must not block status path
+        pass
 
     action = determine_next_action(skip_gates=skip_gates, strict_mode=strict_mode)
 
