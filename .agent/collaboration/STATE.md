@@ -1,13 +1,13 @@
-# State - WP-2026-141
+# State - WP-2026-142
 
-Plan Activo: WP-2026-141
+Plan Activo: WP-2026-142
 Estado actual: IN_PROGRESS
 Rol activo: BUILDER
 
 Resumen:
-WP-2026-141 adapta principios de `google/eng-practices` al ciclo de review: aprobacion por salud de codigo, `Nit` como comentario no bloqueante y trazabilidad documental en `AGENTS.md` y `CREDITS.md`.
+WP-2026-142 endurece `--mark-ready` para evitar fabricacion de scope: bloqueo por cobertura cero, warning por cobertura parcial y preservacion del bloqueo por cambios fuera de la whitelist.
 
 Notas:
-- El alcance es documental y no modifica codigo de produccion.
-- La referencia externa debe apuntar a secciones concretas de eng-practices.
-- El criterio de aprobacion se expresa como mejora de salud del codigo, no como bloqueo absoluto.
+- El alcance es code.
+- `events.jsonl` y el circuit breaker quedan fuera de alcance.
+- El cambio debe respetar los casos base no-git y whitelist vacia.

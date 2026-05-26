@@ -347,7 +347,10 @@ def check_scope_gate(
         return {
             "valid": True,
             "out_of_scope": set(),
+            "missing_from_diff": set(),
+            "covered_files": set(),
             "warnings": ["Repository is not git-managed"],
+            "blocked_reason": None,
         }
 
     whitelist = parse_files_likely_touched(work_plan_content)
@@ -355,12 +358,41 @@ def check_scope_gate(
         return {
             "valid": True,
             "out_of_scope": set(),
+            "missing_from_diff": set(),
+            "covered_files": set(),
             "warnings": ["No Files Likely Touched section in work_plan.md"],
+            "blocked_reason": None,
         }
 
-    out_of_scope = (changed_files - whitelist) - exclude_files
+    relevant_changed = changed_files - exclude_files
+    relevant_whitelist = whitelist - exclude_files
+    covered_files = relevant_changed & relevant_whitelist
+    missing_from_diff = relevant_whitelist - relevant_changed
+    out_of_scope = relevant_changed - relevant_whitelist
+
+    warnings = []
+    blocked_reason = None
     valid = len(out_of_scope) == 0
-    return {"valid": valid, "out_of_scope": out_of_scope, "warnings": []}
+
+    if relevant_whitelist and not covered_files:
+        valid = False
+        blocked_reason = (
+            "None of the declared Files Likely Touched entries appeared in the diff"
+        )
+    elif covered_files and missing_from_diff:
+        warnings.append(
+            "Partial scope coverage: "
+            f"{len(covered_files)} of {len(relevant_whitelist)} declared files touched"
+        )
+
+    return {
+        "valid": valid,
+        "out_of_scope": out_of_scope,
+        "missing_from_diff": missing_from_diff,
+        "covered_files": covered_files,
+        "warnings": warnings,
+        "blocked_reason": blocked_reason,
+    }
 
 
 def _load_mark_ready_context() -> tuple[str, str, str]:
@@ -371,11 +403,11 @@ def _load_mark_ready_context() -> tuple[str, str, str]:
     return plan_content, log_content, plan_id
 
 
-def _record_scope_override(scope_override: str, out_of_scope_files: set[str]) -> None:
+def _record_scope_override(scope_override: str, problem_files: set[str]) -> None:
     """Record a scope override in the execution log."""
     note = (
         f"Scope override: {scope_override}. "
-        f"Out of scope files: {', '.join(sorted(out_of_scope_files))}"
+        f"Affected files: {', '.join(sorted(problem_files))}"
     )
     update_log_status("READY_FOR_REVIEW", note)
 
@@ -390,13 +422,20 @@ def _scope_gate_allows_close(gate_result: dict, scope_override: str | None) -> b
 
     if not scope_override:
         print("[ERROR] Scope violation detected:")
+        if gate_result.get("blocked_reason"):
+            print(f"  {gate_result['blocked_reason']}")
         for file_path in sorted(gate_result["out_of_scope"]):
             print(f"  - {file_path}")
+        for file_path in sorted(gate_result.get("missing_from_diff", set())):
+            print(f"  - missing: {file_path}")
         print('Use --scope-override "reason" to proceed.')
         return False
 
     print(f"[INFO] Scope override applied: {scope_override}")
-    _record_scope_override(scope_override, gate_result["out_of_scope"])
+    problem_files = set(gate_result["out_of_scope"]) | set(
+        gate_result.get("missing_from_diff", set())
+    )
+    _record_scope_override(scope_override, problem_files)
     return True
 
 
