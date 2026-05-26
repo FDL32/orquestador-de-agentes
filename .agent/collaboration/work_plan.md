@@ -1,41 +1,47 @@
-# Work Plan - WP-2026-145
+# Work Plan - WP-2026-146
 
 ## Metadata
-- **ID:** WP-2026-145
+- **ID:** WP-2026-146
 - **Estado:** COMPLETED
-- **deliverable_type:** research
-- **Titulo:** Deterministic STATE projection probe
+- **deliverable_type:** code
+- **Titulo:** Human gate approval timeout wiring
 - **Asignado a:** Builder
 
 ## Objetivo
-Build a standalone read-only probe that reconstructs the active ticket state deterministically from `events.jsonl`, compares it against `STATE.md`, and reports any drift. The goal is to validate whether the bus can serve as single source of truth for state projection, before deciding whether to promote this into the runtime controller.
+Wire `HUMAN_GATE` escalation into the existing `ApprovalStore` so timeout handling is persistent and survives restarts instead of being recreated ad hoc in the supervisor loop. The implementation should reuse the approval-resolution contract already present in `bus/approval.py`, keep the current state machine semantics intact, and stay small enough to close in one cycle.
 
 ## Decision Arquitectonica
-- `scripts/state_projection_probe.py` will read the active ticket's events from the bus and materialize the projected state.
-- The probe will compare the derived state against `STATE.md` and report drift explicitly.
-- The probe will not mutate canonical files; it is a read-only experiment.
-- `TURN.md` stays under `agent_controller.py` ownership and is out of scope for this ticket.
-- The state machine in `bus/state_machine.py` remains the transition authority; the probe consumes it rather than reimplementing transitions.
-- Events that produce invalid transitions are logged as warnings, not exceptions; the probe continues and reports the anomaly.
-- This ticket is about validating the feasibility of bus-first state reconstruction, not integrating it into the runtime controller yet.
+- `agent_controller.py` will include timeout metadata when a ticket is escalated to `HUMAN_GATE`.
+- `bus/approval.py` already provides the persistent approval model; the ticket escalation must create an `ApprovalRequest` there instead of inventing a new timeout store.
+- `bus/supervisor.py` already calls `check_and_expire_all()` and will consume the persisted approval request on its normal loop.
+- `agents.json` should provide the timeout value alongside `manager_review.max_attempts`, with a documented fallback if the setting is absent.
+- The existing `APPROVAL_RESOLVED` -> `BLOCKED` path remains the canonical expiry contract.
+- `TURN.md` stays under controller ownership and is out of scope for this ticket.
+- No new terminal state is introduced; the timeout uses the approval resolution contract already understood by the bus.
+- The change is about bounded waiting and explicit expiry, not a broader runtime refactor.
 
 ## Files Likely Touched
-- `scripts/state_projection_probe.py`
-- `tests/unit/test_state_projection_probe.py`
+- `.agent/agent_controller.py`
+- `bus/approval.py`
+- `bus/supervisor.py`
+- `tests/unit/test_human_gate_timeout.py`
 
 ## Fases
-1. Implement a small read-only probe that derives the active ticket state from `events.jsonl`.
-2. Add unit tests for matching state, drift detection, and missing/empty bus cases.
-3. Validate the probe against the current canonical ticket history.
-4. Confirm the probe does not alter `TURN.md`, `STATE.md`, or `execution_log.md`.
+1. Add timeout metadata to the `STATE_CHANGED -> HUMAN_GATE` handoff.
+2. Create and persist an `ApprovalRequest` when the ticket is escalated to `HUMAN_GATE`.
+3. Let the supervisor expire the stored request via its existing approval timeout loop.
+4. Add unit tests for expired, non-expired, and restart-survivability cases.
+5. Confirm the timeout flow does not change the existing `resume-human-gate` behavior.
 
 ## Calidad
-- `python scripts/run_pytest_safe.py tests/unit/test_state_projection_probe.py -q`
+- `python scripts/run_pytest_safe.py tests/unit/test_human_gate_timeout.py -q`
 - `python .agent/agent_controller.py --validate --json --force`
 
 ## Criterios de aceptacion
-- The probe reconstructs the same state as `STATE.md` for the current active ticket history.
-- Drift is reported clearly when the bus-derived state and markdown state differ.
-- The probe is read-only and does not mutate canonical collaboration files.
+- `HUMAN_GATE` carries explicit timeout metadata at handoff.
+- The escalation persists an `ApprovalRequest` so the gate survives restarts.
+- An expired `HUMAN_GATE` resolves automatically through the canonical approval-resolution path.
+- A fresh `HUMAN_GATE` does not expire early.
+- The timeout value is sourced from configuration with a documented fallback.
+- The existing `resume-human-gate` path remains valid after the timeout change.
 - Canonical validation passes without new warnings or errors.
-- The probe emits a structured summary (`matched` / `drifted` / `bus_empty`) suitable for the Manager to decide whether to open a follow-up integration WP.

@@ -57,7 +57,8 @@
   "manager_review": {
     "timeout_seconds": 180,
     "max_attempts": 5,
-    "retry_backoff_multiplier": 2.0
+    "retry_backoff_multiplier": 2.0,
+    "human_gate_timeout_seconds": 86400
   },
   "skill_allowlists": {
     "BUILDER": [

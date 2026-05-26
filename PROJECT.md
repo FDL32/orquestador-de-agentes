@@ -1,12 +1,12 @@
 # Project: orquestador_de_agentes
 **Version:** v9.14.0
-**State:** WP-2026-145 IN_PROGRESS (deterministic STATE projection probe)
+**State:** WP-2026-146 IN_PROGRESS (human gate timeout and expiry)
 
 ## Current Cycle
 
-- Active ticket: WP-2026-145 IN_PROGRESS (2026-05-26).
-- Mode: active - Builder validating bus-first state reconstruction.
-- Outcome: the active ticket will prove whether `events.jsonl` can reconstruct `STATE.md` deterministically without changing the canonical write path yet.
+- Active ticket: WP-2026-146 IN_PROGRESS (2026-05-26).
+- Mode: active - Builder wiring bounded HUMAN_GATE expiry.
+- Outcome: the active ticket will prove whether the existing approval-resolution path can bound HUMAN_GATE without adding a new terminal state.
 
 ## Current readiness
 

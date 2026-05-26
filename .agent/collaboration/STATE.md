@@ -1,13 +1,13 @@
-# State - WP-2026-145
+# State - WP-2026-146
 
-Plan Activo: WP-2026-145
+Plan Activo: WP-2026-146
 Estado actual: IN_PROGRESS
 Rol activo: BUILDER
 
 Resumen:
-WP-2026-145 en progreso: el Builder construira un probe de lectura para reconstruir el estado activo desde `events.jsonl` y compararlo con `STATE.md`.
+WP-2026-146 en progreso: el Builder implementara un timeout bounded para `HUMAN_GATE` usando la ruta canonica de resolucion de approvals.
 
 Notas:
-- El alcance es research.
+- El alcance es code.
 - `TURN.md` sigue bajo control del controller.
-- El probe no debe mutar archivos canonicos.
+- El timeout no introduce un estado nuevo; reutiliza la resolucion canonica existente.
