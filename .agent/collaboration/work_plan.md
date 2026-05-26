@@ -1,47 +1,46 @@
-# Work Plan - WP-2026-146
+# Work Plan - WP-2026-147
 
 ## Metadata
-- **ID:** WP-2026-146
+- **ID:** WP-2026-147
 - **Estado:** COMPLETED
 - **deliverable_type:** code
-- **Titulo:** Human gate approval timeout wiring
+- **Titulo:** Graph context adapter
 - **Asignado a:** Builder
 
 ## Objetivo
-Wire `HUMAN_GATE` escalation into the existing `ApprovalStore` so timeout handling is persistent and survives restarts instead of being recreated ad hoc in the supervisor loop. The implementation should reuse the approval-resolution contract already present in `bus/approval.py`, keep the current state machine semantics intact, and stay small enough to close in one cycle.
+Build a lightweight graph-context adapter that reads the already-generated `graphify-out/graph.json` and `GRAPH_REPORT.md` for a destination repository, then emits a short `## Project Context` block for the active ticket. The adapter should stay in Python stdlib, avoid any new graph build pipeline, and extract only the minimum context needed to cut token usage.
 
 ## Decision Arquitectonica
-- `agent_controller.py` will include timeout metadata when a ticket is escalated to `HUMAN_GATE`.
-- `bus/approval.py` already provides the persistent approval model; the ticket escalation must create an `ApprovalRequest` there instead of inventing a new timeout store.
-- `bus/supervisor.py` already calls `check_and_expire_all()` and will consume the persisted approval request on its normal loop.
-- `agents.json` should provide the timeout value alongside `manager_review.max_attempts`, with a documented fallback if the setting is absent.
-- The existing `APPROVAL_RESOLVED` -> `BLOCKED` path remains the canonical expiry contract.
+- `scripts/graph_context.py` will read `graphify-out/graph.json` plus `GRAPH_REPORT.md` and turn them into a compact ticket-scoped context block.
+- The adapter will stay in Python stdlib only and reuse the existing graphify output instead of creating a new graph pipeline.
+- The output should focus on the active ticket's files, immediate neighbors, and a short summary of the relevant corpus.
+- `agent_controller.py` will optionally surface a compact `## Project Context` summary from the graph context adapter when generating work plans for destination projects.
+- The design is inspired by graph-based project understanding tools, but intentionally keeps the implementation lightweight and read-only.
 - `TURN.md` stays under controller ownership and is out of scope for this ticket.
-- No new terminal state is introduced; the timeout uses the approval resolution contract already understood by the bus.
-- The change is about bounded waiting and explicit expiry, not a broader runtime refactor.
+- No LLM-per-file analysis is introduced in this ticket.
+- The change is about better destination understanding, not a broader runtime refactor.
 
 ## Files Likely Touched
+- `scripts/graph_context.py`
 - `.agent/agent_controller.py`
-- `bus/approval.py`
-- `bus/supervisor.py`
-- `tests/unit/test_human_gate_timeout.py`
+- `tests/unit/test_graph_context.py`
 
 ## Fases
-1. Add timeout metadata to the `STATE_CHANGED -> HUMAN_GATE` handoff.
-2. Create and persist an `ApprovalRequest` when the ticket is escalated to `HUMAN_GATE`.
-3. Let the supervisor expire the stored request via its existing approval timeout loop.
-4. Add unit tests for expired, non-expired, and restart-survivability cases.
-5. Confirm the timeout flow does not change the existing `resume-human-gate` behavior.
+1. Build a lightweight adapter that reads `graphify-out/graph.json` and `GRAPH_REPORT.md`.
+2. Extract a ticket-scoped `## Project Context` block with the relevant files and immediate graph neighbors.
+3. Add a minimal `agent_controller.py` hook to inject the context block when the graph output exists.
+4. Add focused unit tests for parsing, filtering, and compact output generation.
+5. Confirm the hook is optional and the ticket flow still works if no graph output exists yet.
 
 ## Calidad
-- `python scripts/run_pytest_safe.py tests/unit/test_human_gate_timeout.py -q`
+- `python scripts/run_pytest_safe.py tests/unit/test_graph_context.py -q`
 - `python .agent/agent_controller.py --validate --json --force`
 
 ## Criterios de aceptacion
-- `HUMAN_GATE` carries explicit timeout metadata at handoff.
-- The escalation persists an `ApprovalRequest` so the gate survives restarts.
-- An expired `HUMAN_GATE` resolves automatically through the canonical approval-resolution path.
-- A fresh `HUMAN_GATE` does not expire early.
-- The timeout value is sourced from configuration with a documented fallback.
-- The existing `resume-human-gate` path remains valid after the timeout change.
+- The adapter produces a compact `## Project Context` summary for the destination project.
+- The summary is derived from existing `graphify-out` artifacts, not a new graph build.
+- The adapter is deterministic and uses Python stdlib only.
+- The emitted `## Project Context` block does not exceed 30 lines.
+- The optional `## Project Context` injection keeps the ticket context concise.
+- The existing ticket flow still works when no project map is available.
 - Canonical validation passes without new warnings or errors.

@@ -1,13 +1,13 @@
-# State - WP-2026-146
+# State - WP-2026-147
 
-Plan Activo: WP-2026-146
-Estado actual: COMPLETED
-Rol activo: MANAGER
+Plan Activo: WP-2026-147
+Estado actual: IN_PROGRESS
+Rol activo: BUILDER
 
 Resumen:
-WP-2026-146 completado: el timeout de `HUMAN_GATE` quedo ligado al `ApprovalStore` persistente y la expiracion canonica ya esta operativa.
+WP-2026-147 en progreso: el Builder construira un adaptador ligero que derive `## Project Context` desde `graphify-out` para el proyecto destino.
 
 Notas:
 - El alcance es code.
 - `TURN.md` sigue bajo control del controller.
-- El timeout no introduce un estado nuevo; reutiliza la resolucion canonica existente.
+- El adaptador debe ser stdlib-only y no introducir dependencias pesadas.
