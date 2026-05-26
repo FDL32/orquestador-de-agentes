@@ -261,3 +261,38 @@ Este smoke test de `WP-2026-039` ejecuta tres escenarios deterministas:
 - **Escenario C**: Cierre directo canónico sin review.
 
 Verifica alineacion canónica antes de cada lanzamiento y ausencia de residuos entre tickets.
+
+## 8. Cierre de sesión
+
+Antes de terminar una sesión de trabajo, ejecuta estos pasos para que el motor quede listo para la siguiente sesión o para ser usado como base en un nuevo proyecto.
+
+```powershell
+# 1. Archivar artefactos de planificación cerrados (PLAN/AUDIT de .agent/collaboration/)
+python scripts/archive_collaboration_artifacts.py
+
+# 2. Mover PLAN/AUDIT que hayan quedado en la raíz (el archivador no los recoge)
+python -c "
+import shutil; from pathlib import Path
+archive = Path('.agent/collaboration/_archive/plan_audit')
+archive.mkdir(parents=True, exist_ok=True)
+moved = []
+for p in list(Path('.').glob('PLAN_WP-*.md')) + list(Path('.').glob('AUDIT_WP-*.md')):
+    shutil.move(str(p), archive / p.name); moved.append(p.name)
+print('Moved:', moved if moved else 'nothing')
+"
+
+# 3. Validación canónica
+python .agent/agent_controller.py --validate --json --force
+
+# 4. Verificar git limpio
+git status --short
+
+# 5. Sincronizar README/CHANGELOG si el último ticket no quedó reflejado
+# (ver sección 6 para comandos de calidad antes del commit)
+```
+
+**Criterio de sesión cerrada:**
+- `git status` vacío
+- `--validate` sin errores
+- Sin `PLAN_WP-*.md` / `AUDIT_WP-*.md` en raíz
+- README `Current state` y CHANGELOG reflejan el último WP cerrado
