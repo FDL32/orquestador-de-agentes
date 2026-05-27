@@ -32,7 +32,7 @@ if str(_PROJECT_ROOT_BOOTSTRAP) not in sys.path:
 # in main() before the lru_cache is populated.
 _AGENT_DIR_BOOTSTRAP = _PROJECT_ROOT_BOOTSTRAP / ".agent"
 if str(_AGENT_DIR_BOOTSTRAP) not in sys.path:
-    sys.path.insert(0, str(_AGENT_DIR_BOOTSTRAP))
+    sys.path.append(str(_AGENT_DIR_BOOTSTRAP))
 
 
 from runtime.project_root import resolve_project_root  # noqa: E402
