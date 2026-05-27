@@ -12,23 +12,22 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 
-# WP-2026-122: Deferred path resolution via runtime.project_root
-try:
-    from runtime.project_root import get_agent_dir
-except ImportError:
-    # Fallback if runtime.project_root not available
-    get_agent_dir = None
+# Bootstrap: project root must be on sys.path before importing runtime.project_root.
+_PROJECT_ROOT_BOOTSTRAP = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT_BOOTSTRAP) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT_BOOTSTRAP))
 
-AGENT_DIR = (
-    get_agent_dir()
-    if get_agent_dir is not None
-    else Path(__file__).resolve().parent.parent / ".agent"
-)
+# WP-2026-122 / WP-2026-155: Centralized path resolution via runtime.project_root
+from runtime.project_root import get_agent_dir  # noqa: E402
+
+
+AGENT_DIR = get_agent_dir()
 MEMORY_DIR = AGENT_DIR / "runtime" / "memory"
 ARCHIVE_DIR = MEMORY_DIR / "archive"
 OBS = MEMORY_DIR / "observations.jsonl"

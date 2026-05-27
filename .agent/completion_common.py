@@ -13,53 +13,24 @@ from pathlib import Path
 from typing import Any
 
 
-# WP-2026-122: Deferred path resolution via runtime.project_root
-try:
-    from runtime.project_root import get_collab_dir, resolve_project_root
-except ImportError:
-    # Fallback if runtime.project_root not available
-    get_collab_dir = None
-    resolve_project_root = None
+# WP-2026-122 / WP-2026-155: Centralized path resolution via runtime.project_root
+# Setup sys.path for runtime/ imports
+
+_AGENT_DIR = Path(__file__).parent.resolve()
+_PROJECT_ROOT = _AGENT_DIR.parent
+# Insert project root FIRST so runtime/ is importable
+for _path in (str(_PROJECT_ROOT), str(_AGENT_DIR)):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
+
+from runtime.project_root import get_collab_dir, resolve_project_root  # noqa: E402
 
 
-class _LazyPath:
-    def __init__(self, resolver):
-        self._resolver = resolver
-
-    def resolve(self) -> Path:
-        return self._resolver()
-
-    def __truediv__(self, other):
-        return self.resolve() / other
-
-    def __getattr__(self, name: str):
-        return getattr(self.resolve(), name)
-
-    def __fspath__(self) -> str:
-        return str(self.resolve())
-
-    def __str__(self) -> str:
-        return str(self.resolve())
-
-
-def _collab_dir() -> Path:
-    if get_collab_dir is not None:
-        return get_collab_dir()
-    return Path(__file__).parent / "collaboration"
-
-
-def _project_root() -> Path:
-    if resolve_project_root is not None:
-        return resolve_project_root()
-    return Path(__file__).resolve().parent.parent
-
-
-# Deferred path resolution for collaboration files
-COLLAB_DIR = _LazyPath(_collab_dir)
-PROJECT_ROOT = _LazyPath(_project_root)
-WORK_PLAN = _LazyPath(lambda: _collab_dir() / "work_plan.md")
-EXEC_LOG = _LazyPath(lambda: _collab_dir() / "execution_log.md")
-REVIEW_QUEUE = _LazyPath(lambda: _collab_dir() / "review_queue.md")
+COLLAB_DIR = get_collab_dir()
+PROJECT_ROOT = resolve_project_root()
+WORK_PLAN = COLLAB_DIR / "work_plan.md"
+EXEC_LOG = COLLAB_DIR / "execution_log.md"
+REVIEW_QUEUE = COLLAB_DIR / "review_queue.md"
 
 
 def _read_text(path: Path) -> str:

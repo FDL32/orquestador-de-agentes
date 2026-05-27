@@ -24,19 +24,22 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-# WP-2026-122: Deferred path resolution via runtime.project_root
-try:
-    from runtime.project_root import get_agent_dir, resolve_project_root
-except ImportError:
-    # Fallback if runtime.project_root not available
-    get_agent_dir = None
-    resolve_project_root = None
+# Bootstrap: project root must be on sys.path before importing runtime.project_root.
+_PROJECT_ROOT_BOOTSTRAP = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT_BOOTSTRAP) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT_BOOTSTRAP))
+
+# WP-2026-122 / WP-2026-155: Centralized path resolution via runtime.project_root
+from runtime.project_root import get_agent_dir, resolve_project_root  # noqa: E402
+
+
+_PROJECT_ROOT = resolve_project_root()
+_AGENT_DIR = get_agent_dir()
 
 
 def _project_root() -> Path:
-    if resolve_project_root is not None:
-        return resolve_project_root()
-    return Path(__file__).resolve().parent.parent
+    """Return the resolved project root (cached for performance)."""
+    return _PROJECT_ROOT
 
 
 class _LazyPath:
@@ -60,9 +63,7 @@ class _LazyPath:
 
 
 PROJECT_ROOT = _LazyPath(_project_root)
-AGENT_DIR = _LazyPath(
-    lambda: get_agent_dir() if get_agent_dir is not None else _project_root() / ".agent"
-)
+AGENT_DIR = _LazyPath(lambda: _AGENT_DIR)
 RUNTIME_DIR = _LazyPath(lambda: AGENT_DIR.resolve() / "runtime" / "pytest-safe")
 LOCK_FILE = _LazyPath(lambda: RUNTIME_DIR.resolve() / "pytest.lock")
 LAST_RUN_LOG = _LazyPath(lambda: RUNTIME_DIR.resolve() / "last-run.log")
