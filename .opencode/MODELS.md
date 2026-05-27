@@ -6,9 +6,18 @@
 
 ## Current Selection
 
-`opencode-go/qwen3.5-plus` is the model wired into `.opencode/opencode.json` for the Builder.
+| Role | Model ID | Namespace | Source |
+|------|----------|-----------|--------|
+| Builder | `opencode-go/qwen3.5-plus` | OpenCode Go (paid) | `.opencode/opencode.json` |
+| Manager | `github-copilot/gpt-5.4-mini` | GitHub Copilot | `.agent/config/agents.json` `role_models.MANAGER` |
 
-The display name "Qwen3.5 Plus" is not a valid model ID. Always use the namespaced ID `opencode-go/qwen3.5-plus`.
+Builder and Manager intentionally use different namespaces. The `opencode-go/*` IDs are
+catalog identifiers for the OpenCode REST API — they are **not** accepted as `--model`
+CLI values. The CLI `--model` flag takes either bare model names or provider-qualified IDs
+such as `github-copilot/<model>`.
+
+The display name "Qwen3.5 Plus" is not a valid CLI model ID. Use `opencode-go/qwen3.5-plus`
+only in catalog-facing contexts (`.opencode/opencode.json`), never in `--model` flags.
 
 ## Launcher Integration (WP-2026-067)
 
