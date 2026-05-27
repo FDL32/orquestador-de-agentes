@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -928,7 +929,7 @@ class TestReviewPacketTransport:
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
         monkeypatch.setattr(bridge, "_get_manager_model", lambda: None)
         monkeypatch.setattr(bridge, "_supports_json_format", False)
-        monkeypatch.setattr("os.name", os_name)
+        monkeypatch.setattr("bus.review_bridge.OS_NAME", os_name)
         return bridge
 
     def test_writes_review_packet(self, tmp_path, monkeypatch):
@@ -978,6 +979,11 @@ class TestReviewPacketTransport:
         assert packet_2.exists()
         assert packet_1.read_text(encoding="utf-8") == "PROMPT 1"
         assert packet_2.read_text(encoding="utf-8") == "PROMPT 2"
+
+    def test_bridge_helper_does_not_patch_global_os_name(self, tmp_path, monkeypatch):
+        """La simulacion de plataforma debe quedar confinada al modulo de review."""
+        self._bridge(tmp_path, monkeypatch, "posix")
+        assert os.name == "nt"
 
     def test_positional_message_short_and_no_file_flag(self, tmp_path, monkeypatch):
         """El prompt posicional es corto y referencia el packet; sin --file
