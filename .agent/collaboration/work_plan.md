@@ -1,80 +1,88 @@
-# Work Plan - WP-2026-156
+# Work Plan - WP-2026-157
 
 ## Metadata
-- **ID:** WP-2026-156
+- **ID:** WP-2026-157
 - **Estado:** COMPLETED
-- **deliverable_type:** code
-- **Titulo:** Manager feedback normalization and Builder relaunch handoff
+- **deliverable_type:** mixed
+- **Titulo:** ECC capability pack - deep-research skill, AP contract and minimal EDD
 - **Asignado a:** Builder
 
 ## Objetivo
-Separar el feedback crudo del Manager del artefacto canonico legible, persistir un resumen normalizado por ticket y reinyectarlo al relanzar Builder tras `CHANGES`.
+Implantar una skill documental de investigacion previa, formalizar el contrato AP/observations sin cambiar storage y anadir un harness minimo de regresion para los flujos criticos del sistema.
 
 ## Contexto
-El review transport actual ya detecta `CHANGES`, pero el Builder necesita un artefacto legible y estable para reanudar el trabajo sin depender del stream bruto del backend. Este ticket tambien corrige la fuga de git del test de bridge para que el sandbox no lea el repo anfitrion.
+- `skills/repo-compare/` ya existe, pero compara repositorios; no produce contexto estructurado antes de abrir un ticket.
+- `skills/_shared/ap-schema.md` y `observations.jsonl` ya sostienen el patron AP en la practica; falta endurecer el contrato y validar entradas de forma automatica.
+- No existe una capa EDD minima para detectar regresiones en review bridge, guard paths, scope gate y requeue sin depender de los tests funcionales generales.
+- El output de `deep-research` debe ir a `.agent/runtime/research/` y ese path debe permanecer fuera de git.
 
 ## Decision Arquitectonica
-- `raw_review` se conserva como evidencia, nunca como input directo del Builder.
-- `normalized_review` se escribe en `.agent/collaboration/manager_feedback_WP-XXXX.md`.
-- El relanzado de Builder adjunta el feedback normalizado al prompt solo cuando existe un `CHANGES` previo.
-- El scope gate de `--mark-ready` sigue siendo estricto; los artefactos auto-generados del sistema siguen excluidos por el controlador.
-- Los tests de `manager_review_bridge` deben aislar git para no escapar del sandbox tmp_path.
+- `deep-research` sera una skill documental pura, sin logica Python de produccion.
+- El contrato AP se formaliza sobre `ap-schema.md` y `observations.jsonl` se mantiene compatible hacia atras.
+- El EDD minimo vivira en `tests/evals/` con fixtures aisladas, marker `eval` y sin subprocess real ni bus de produccion.
+- `skills/README.md` se actualizara para registrar la nueva skill.
+- `pytest.ini` solo se ajustara para registrar el marker `eval`; no se reescribira su configuracion existente.
+- `.gitignore` excluira `.agent/runtime/research/` para que los entregables de investigacion no ensucien el arbol.
+
+## Non-goals
+- No reimplantar ECC 1:1.
+- No introducir LLM-as-judge ni dependencias nuevas.
+- No cambiar el formato de `observations.jsonl`.
+- No modificar el workflow de Manager/Builder fuera de lo necesario para la nueva capacidad.
 
 ## Fases
-### Fase 0: Normalizar el feedback de review
+### Fase 1: deep-research skill
 - **Tipo:** TAREA AGENTE
-- **Archivo:** `bus/review_bridge.py`
-- **Accion:** Modificar
-- **Descripcion:** Construir `normalized_review` a partir de las secciones estructuradas del output del Manager, manteniendo `stdout`, `stderr` y `parse_method` como evidencia cruda.
-- **Riesgo:** Medio
-- **Criterio de Aceptacion:** `CHANGES` persiste un resumen legible y `APPROVE`/`INSPECT` no pierden evidencia util.
-- **Si falla:** Restaurar `feedback` a salida legible completa y mover la normalizacion a una capa separada.
-
-### Fase 1: Persistir feedback canonico por ticket
-- **Tipo:** TAREA AGENTE
-- **Archivo:** `scripts/manager_review_bridge.py`
-- **Accion:** Modificar
-- **Descripcion:** Escribir `.agent/collaboration/manager_feedback_WP-XXXX.md` con resumen normalizado, metadatos, y bloque `Raw Review`.
-- **Riesgo:** Medio
-- **Criterio de Aceptacion:** El archivo existe por ticket y contiene decision, parse_method y evidencia cruda.
-- **Si falla:** Revertir a `review_queue.md` como unico persistente y rehacer la serializacion.
-
-### Fase 2: Inyectar feedback en el relanzado de Builder
-- **Tipo:** TAREA AGENTE
-- **Archivo:** `scripts/launch_agent_terminals.ps1`
-- **Accion:** Modificar
-- **Descripcion:** Cuando exista `manager_feedback_WP-XXXX.md`, adjuntarlo al prompt de Builder en requeue.
-- **Riesgo:** Alto
-- **Criterio de Aceptacion:** Builder relanzado recibe el feedback normalizado sin alterar el prompt base cuando no hay CHANGES.
-- **Si falla:** Quitar la inyeccion y mantener el archivo solo para auditoria.
-
-### Fase 3: Aislar el test de bridge del git del host
-- **Tipo:** TAREA AGENTE
-- **Archivo:** `tests/test_manager_review_bridge.py`
-- **Accion:** Modificar
-- **Descripcion:** Evitar que `_build_review_prompt()` o sus helpers usen el git del repositorio anfitrion cuando el test corre en tmp_path.
-- **Riesgo:** Medio
-- **Criterio de Aceptacion:** Los tests del bridge solo leen el sandbox del test y no arrastran artefactos externos.
-- **Si falla:** Aislar los helpers de git con monkeypatch o stubs de alta fidelidad.
-
-### Fase 4: Validacion de handoff
-- **Tipo:** TAREA AGENTE
-- **Archivo:** `tests/test_manager_review_bridge.py`
-- **Accion:** Verificar
-- **Descripcion:** Confirmar que CHANGES normaliza feedback, persiste el artefacto canonico y reinyecta contexto en el prompt del Builder.
+- **Archivos:** `skills/deep-research/SKILL.md`, `skills/deep-research/references/research-template.md`, `skills/README.md`
+- **Accion:** Crear y registrar
+- **Descripcion:** Skill documental para producir contexto estructurado antes de abrir un WP. Flujo: leer contexto base (`PROJECT.md`, `AUDIT.md`, work plan activo), identificar gaps, buscar fuentes locales o via MCP y producir un resumen con secciones fijas `## Contexto`, `## Gaps`, `## Fuentes`, `## Recomendacion`. El output se persiste en `.agent/runtime/research/<topic>-<YYYY-MM-DD>.md`.
 - **Riesgo:** Bajo
-- **Criterio de Aceptacion:** La suite focalizada pasa y el flujo CHANGES -> requeue -> relaunch conserva feedback legible.
-- **Si falla:** Ajustar el parser de secciones, el writer de feedback o el punto de inyeccion del launcher.
+- **Criterio de Aceptacion:** `python scripts/discover_skills.py --json` detecta la skill sin errores y `skills/README.md` la registra en el catalogo.
+- **Si falla:** Reducir la skill a un `SKILL.md` minimal con workflow y referencias, y mover refinamientos a una iteracion posterior.
+
+### Fase 2: AP / observations contract
+- **Tipo:** TAREA AGENTE
+- **Archivos:** `skills/_shared/ap-schema.md`, `scripts/validate_observations.py`, `tests/unit/test_validate_observations.py`
+- **Accion:** Formalizar y validar
+- **Descripcion:** Endurecer `ap-schema.md` con campos obligatorios y opcionales, ordenar la secuencia canonica de escritura (`anti-patterns.md` -> `code-rules.md` -> `review-checklist.md` -> `observations.jsonl`) y crear un validador ligero que rechace observaciones invalidas con codigo de salida 1. Campos obligatorios: `timestamp`, `topic`, `signal`, `source`, `applies_to`, `confidence`, `domain`; `anti_pattern_id` es obligatorio cuando la observacion eleva un bug a AP.
+- **Riesgo:** Bajo
+- **Criterio de Aceptacion:** `python scripts/validate_observations.py` pasa sobre el `observations.jsonl` actual y falla de forma controlada ante una entrada invalida.
+- **Si falla:** Relajar el validador a warnings solo si el repo ya tiene entradas historicas que no se pueden corregir de inmediato.
+
+### Fase 3: EDD minimo - eval harness de regresion
+- **Tipo:** TAREA AGENTE
+- **Archivos:** `pytest.ini`, `tests/evals/__init__.py`, `tests/evals/test_eval_review_bridge.py`, `tests/evals/test_eval_guard_paths.py`, `tests/evals/test_eval_scope_gate.py`, `tests/evals/test_eval_requeue.py`
+- **Accion:** Crear
+- **Descripcion:** Cuatro modulos pytest de regression que cubren los flujos criticos del sistema con fixtures de `tmp_path` y mocks solo en los bordes externos. Los tests se marcan `@pytest.mark.eval` y no llaman a subprocess real ni al bus de produccion. Mapeo explicito: `test_eval_review_bridge.py` -> `bus/review_bridge.py::run_manager_review_cycle`; `test_eval_guard_paths.py` -> `.agent/hooks/guard_paths.py`; `test_eval_scope_gate.py` -> `agent_controller.py::_check_scope_gate`; `test_eval_requeue.py` -> `bus/supervisor.py::requeue_ticket`.
+- **Riesgo:** Medio
+- **Criterio de Aceptacion:** `pytest -m eval tests/evals/ -q` pasa los cuatro modulos, cada modulo incluye al menos un test negativo de entrada invalida y la suite safe normal sigue sin depender de ellos.
+- **Si falla:** Reducir el harness a `review_bridge` y `scope_gate` y dejar `guard_paths` / `requeue` para un ticket posterior.
 
 ## Files Likely Touched
-- `bus/review_bridge.py`
-- `scripts/manager_review_bridge.py`
-- `scripts/launch_agent_terminals.ps1`
-- `tests/test_manager_review_bridge.py`
-- `tests/test_review_bridge.py`
+- `skills/deep-research/SKILL.md` (nuevo)
+- `skills/deep-research/references/research-template.md` (nuevo)
+- `skills/README.md`
+- `skills/_shared/ap-schema.md`
+- `scripts/validate_observations.py` (nuevo)
+- `tests/unit/test_validate_observations.py` (nuevo)
+- `pytest.ini`
+- `.gitignore`
+- `tests/evals/__init__.py` (nuevo)
+- `tests/evals/test_eval_review_bridge.py` (nuevo)
+- `tests/evals/test_eval_guard_paths.py` (nuevo)
+- `tests/evals/test_eval_scope_gate.py` (nuevo)
+- `tests/evals/test_eval_requeue.py` (nuevo)
 
-## Criterios de Aceptacion Global
-- [ ] `raw_review` y `normalized_review` quedan separados por contrato.
-- [ ] El artefacto `.agent/collaboration/manager_feedback_WP-XXXX.md` se crea por ticket con metadatos utiles.
-- [ ] Builder relanzado consume el feedback normalizado cuando el Manager emite `CHANGES`.
-- [ ] Los tests del bridge no escapan del sandbox y no leen el repo anfitrion.
+## Calidad
+- `python scripts/discover_skills.py --json`
+- `python scripts/validate_observations.py`
+- `pytest -m eval tests/evals/ -q`
+- `python scripts/run_pytest_safe.py`
+- `python .agent/agent_controller.py --validate --json --force`
+
+## Criterios de aceptacion
+- `deep-research` aparece en el discovery de skills y queda registrado en `skills/README.md`.
+- `ap-schema.md` y `validate_observations.py` coinciden en el contrato y bloquean observaciones invalidas.
+- El harness `tests/evals/` detecta regresiones criticas sin tocar subprocess real ni bus de produccion.
+- La suite safe principal sigue pasando sin depender de los evals.
+- La validacion canonica pasa sin errores.

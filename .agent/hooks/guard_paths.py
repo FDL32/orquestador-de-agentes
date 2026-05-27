@@ -11,7 +11,6 @@ from contextlib import suppress
 from pathlib import Path
 
 
-# Constants
 DEFAULT_ALLOWLIST: dict[str, list[str]] = {
     "write_roots": [],
     "blocked_command_patterns": [],
@@ -120,29 +119,31 @@ def _is_allowed_write_root(
 
 
 def _is_protected_path(
-    path: str, allowlist: dict[str, list[str]], config: dict[str, object]
+    path: str,
+    allowlist: dict[str, list[str]],
+    config: dict[str, object],
+    repo_root: Path | None = None,
 ) -> tuple[bool, str]:
-    """Check if a path is protected and should be blocked.
-
-    Returns (is_blocked, reason) where reason is empty if not blocked.
-    """
+    """Check if a path is protected and should be blocked."""
     try:
         path_obj = Path(path).resolve()
     except (OSError, ValueError) as e:
         return True, f"path invalido: {e}"
 
-    # Get repo root from environment or current working directory
-    try:
-        repo_root = Path(os.getcwd()).resolve()
-    except (OSError, ValueError):
-        return True, "directorio actual no accesible"
+    if repo_root is None:
+        try:
+            repo_root = Path(os.getcwd()).resolve()
+        except (OSError, ValueError):
+            return True, "directorio actual no accesible"
+    else:
+        try:
+            repo_root = repo_root.resolve()
+        except (OSError, ValueError):
+            return True, "directorio actual no accesible"
 
-    # Check if path is outside repo - fail closed
     if not _is_within_repo(path_obj, repo_root):
         return True, "fuera del repo"
 
-    # Check protected patterns - fail closed
-    # Special check for protected filenames - fail closed
     filename = path_obj.name.lower()
     if filename in PROTECTED_FILENAMES:
         return True, f"archivo protegido: {filename}"
@@ -152,7 +153,6 @@ def _is_protected_path(
     if pattern:
         return True, f"ruta protegida por patron: {pattern}"
 
-    # Check write roots if specified - fail closed if no roots configured
     write_roots = allowlist.get("write_roots", [])
     if write_roots and not _is_allowed_write_root(path_obj, repo_root, write_roots):
         return True, f"fuera de write_roots permitidos: {write_roots}"
@@ -161,28 +161,21 @@ def _is_protected_path(
 
 
 def _is_blocked_command(command: str, config: dict[str, object]) -> tuple[bool, str]:
-    """Check if a command is blocked.
-
-    Returns (is_blocked, reason) where reason is empty if not blocked.
-    """
+    """Check if a command is blocked."""
     if not command or not isinstance(command, str):
         return True, "comando vacio o invalido"
 
-    # Path traversal patterns - fail closed
     if re.search(r"\.\./|\.\.\\", command):
         return True, "path traversal detectado"
 
-    # Protected file references - fail closed
     ref = _matches_any_pattern(command, PROTECTED_COMMAND_REFS)
     if ref:
         return True, f"referencia a datos sensibles: {ref}"
 
-    # Dangerous commands - fail closed
     pattern = _matches_any_pattern(command, DANGEROUS_COMMAND_PATTERNS)
     if pattern:
         return True, f"comando destructivo bloqueado: {pattern}"
 
-    # Custom blocked patterns from config
     blocked_patterns = config.get("blocked_command_patterns", [])
     if isinstance(blocked_patterns, list):
         for pattern in blocked_patterns:
@@ -192,16 +185,54 @@ def _is_blocked_command(command: str, config: dict[str, object]) -> tuple[bool, 
     return False, ""
 
 
-# Hook logic - read from stdin when called as script
+def evaluate_tool_request(
+    data: dict[str, object],
+    config: dict[str, object],
+    repo_root: Path | None = None,
+) -> tuple[int, str | None]:
+    """Evaluate a PreToolUse payload in-process."""
+    profile_name = config.get("strictness_profile")
+    profiles = config.get("profiles")
+
+    if profile_name is not None and profiles is not None:
+        profile_config = profiles.get(profile_name)
+        if not isinstance(profile_config, dict):
+            return (
+                2,
+                f"guard_paths: perfil '{profile_name}' no encontrado en profiles - config invalida",
+            )
+    else:
+        profile_config = {}
+
+    allowlist = {
+        "write_roots": profile_config.get("write_roots", []),
+        "blocked_command_patterns": profile_config.get("blocked_command_patterns", []),
+    }
+
+    tool_input = data.get("tool_input", {})
+    if isinstance(tool_input, dict):
+        for path in _tool_paths(tool_input):
+            blocked, reason = _is_protected_path(
+                path, allowlist, config, repo_root=repo_root
+            )
+            if blocked:
+                return 2, f"guard_paths: {reason}"
+
+        command = tool_input.get("command", "")
+        if command:
+            blocked, reason = _is_blocked_command(command, allowlist)
+            if blocked:
+                return 2, f"guard_paths: {reason}"
+
+    return 0, None
+
+
 if __name__ == "__main__":
-    # Read from stdin
     try:
         data = json.loads(sys.stdin.read())
     except json.JSONDecodeError:
         data = {}
 
-    # Load agents.json directly (do not import agents_config.py).
-    # GUARD_PATHS_CONFIG env var overrides the path — used in tests.
     _config_override = os.environ.get("GUARD_PATHS_CONFIG")
     config_path = (
         Path(_config_override)
@@ -210,47 +241,7 @@ if __name__ == "__main__":
     )
     config = _read_json(config_path)
 
-    # Resolve strictness profile — fail-closed on config corruption.
-    # Legacy configs (no strictness_profile / no profiles key) get base protection only.
-    # Configs that declare both keys must be internally consistent; mismatch → block.
-    profile_name = config.get("strictness_profile")
-    profiles = config.get("profiles")
-
-    if profile_name is not None and profiles is not None:
-        profile_config = profiles.get(profile_name)
-        if not isinstance(profile_config, dict):
-            print(
-                f"guard_paths: perfil '{profile_name}' no encontrado en profiles — config invalida",
-                file=sys.stderr,
-            )
-            sys.exit(2)
-    else:
-        profile_config = {}
-
-    # Build allowlist from profile
-    allowlist = {
-        "write_roots": profile_config.get("write_roots", []),
-        "blocked_command_patterns": profile_config.get("blocked_command_patterns", []),
-    }
-
-    # Claude Code PreToolUse sends: {"tool_name": "...", "tool_input": {...}}
-    tool_input = data.get("tool_input", {})
-    if isinstance(tool_input, dict):
-        # Check file paths (Write, Edit tools)
-        paths = _tool_paths(tool_input)
-        for path in paths:
-            blocked, reason = _is_protected_path(path, allowlist, config)
-            if blocked:
-                print(f"guard_paths: {reason}", file=sys.stderr)
-                sys.exit(2)
-
-        # Check shell commands (Bash tool sends command inside tool_input)
-        command = tool_input.get("command", "")
-        if command:
-            blocked, reason = _is_blocked_command(command, allowlist)
-            if blocked:
-                print(f"guard_paths: {reason}", file=sys.stderr)
-                sys.exit(2)
-
-    # All checks passed
-    sys.exit(0)
+    exit_code, reason = evaluate_tool_request(data, config, repo_root=Path.cwd())
+    if exit_code != 0 and reason:
+        print(reason, file=sys.stderr)
+    sys.exit(exit_code)
