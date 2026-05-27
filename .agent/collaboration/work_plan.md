@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WP-2026-155
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Titulo:** Runtime project_root contract hardening
 - **Asignado a:** Builder
