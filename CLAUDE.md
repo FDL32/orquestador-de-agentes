@@ -6,7 +6,7 @@
 
 Claude Code is a supported backend for this template and can act as Builder or Manager depending on the active ticket.
 Prefer the current code and the canonical docs over memory or stale notes.
-Current portable release: `v9.12.0`, dual-mode architecture complete (engine-agnostic, host-first skill precedence).
+Current portable release: `v9.14.1`, dual-mode architecture complete (engine-agnostic, host-first skill precedence).
 Treat this repository as standalone when editing public docs or commands; do not assume a parent workspace is available.
 
 ## Workflow
