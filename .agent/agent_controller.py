@@ -159,7 +159,6 @@ REVIEW_QUEUE = _LazyPath(lambda: get_collab_dir() / "review_queue.md")
 NOTIFICATIONS = _LazyPath(lambda: get_collab_dir() / "notifications.md")
 TURN_FILE = _LazyPath(lambda: get_collab_dir() / "TURN.md")
 STATE_FILE = _LazyPath(lambda: get_collab_dir() / "STATE.md")
-PROJECT_MAP = _LazyPath(lambda: get_context_dir() / "project_map.md")
 ARCHIVE_DIR = _LazyPath(lambda: get_collab_dir() / "archive")
 AGENTS_CONFIG_PATH = _LazyPath(lambda: get_agent_dir() / "config" / "agents.json")
 
@@ -324,7 +323,7 @@ def _exclude_files() -> set[str]:
     agent_dir = get_agent_dir()
     context_dir = get_context_dir()
     exclude_files = {str((collab_dir / f).resolve()) for f in EXCLUDE_FILES_REL}
-    exclude_files.add(str((context_dir / "project_map.md").resolve()))
+    exclude_files.add(str((context_dir / "project-map.json").resolve()))
     # Exclude bus runtime files (events.jsonl is managed by the bus, not the Builder)
     exclude_files.add(
         str((agent_dir / "runtime" / "events" / "events.jsonl").resolve())
@@ -1379,36 +1378,6 @@ def create_findings_file(plan_id: str = "N/A") -> Path:
     return findings_path
 
 
-def generate_project_map() -> str:
-    """Genera un mapa actualizado del proyecto."""
-    output = [
-        "# Mapa del Proyecto",
-        f"**Actualizado:** {datetime.now():%Y-%m-%d %H:%M:%S}",
-        "",
-        "## Estructura de Archivos",
-        "```",
-    ]
-
-    ignore = {".git", ".venv", "__pycache__", ".pytest_cache", ".ruff_cache"}
-    extensions = {".py", ".md", ".txt", ".json", ".yaml", ".yml", ".toml"}
-
-    files_found = []
-    for path in sorted(PROJECT_ROOT.rglob("*")):
-        if any(part in ignore for part in path.parts):
-            continue
-        if path.is_file() and path.suffix in extensions:
-            files_found.append(str(path.relative_to(PROJECT_ROOT)))
-
-    output.extend(files_found[:50])
-    if len(files_found) > 50:
-        output.append(f"... (+{len(files_found) - 50} archivos mas)")
-
-    output.append("```")
-    content = "\n".join(output)
-    write_file(PROJECT_MAP, content)
-    return content
-
-
 def _run_pre_action_hooks(
     plan_id: str, plan_status: str, log_status: str, action_type: str
 ) -> None:
@@ -1793,7 +1762,6 @@ def update_turn_file(action: dict) -> None:
 
 1. `{action["context_file"]}` (Contexto del rol)
 2. `{action["workflow_file"]}` (Flujo de trabajo)
-3. `.agent/context/project_map.md` (Estructura)
 
 ---
 
@@ -3214,9 +3182,9 @@ def _handle_main_action(
     if SESSION_TRACKER_AVAILABLE:
         show_recovery_hint()
 
-    # WP-2026-150: Use project scanner instead of legacy generate_project_map()
-    print("\n  Scanning project with project_scanner...")
+    # Use project scanner to generate project-map.json context artifact
     if SCANNER_AVAILABLE and scan_project:
+        print("\n  Scanning project with project_scanner...")
         try:
             context_dir = get_context_dir()
             context_dir.mkdir(parents=True, exist_ok=True)
@@ -3236,13 +3204,10 @@ def _handle_main_action(
             )
         except Exception as e:
             print(f"  [WARN] Scanner failed: {e}")
-            # Fallback to legacy
-            generate_project_map()
-            print("  [OK] Mapa actualizado (legacy)")
     else:
-        # Fallback to legacy
-        generate_project_map()
-        print("  [OK] Mapa actualizado (legacy)")
+        print(
+            "\n  [INFO] Project scanner not available; skipping project map generation"
+        )
 
     notif_errors = validate_state_files().get("notifications.md", [])
     if notif_errors:

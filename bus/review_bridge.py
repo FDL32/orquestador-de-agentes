@@ -1778,7 +1778,7 @@ class ReviewBridge:
             # IN_PROGRESS or HUMAN_GATE on the shared threshold. The bridge no
             # longer keeps a parallel local counter.
             controller = self.project_root / ".agent" / "agent_controller.py"
-            subprocess.run(
+            rc_result = subprocess.run(
                 [sys.executable, str(controller), "--request-changes", ticket_id],
                 capture_output=True,
                 text=True,
@@ -1787,6 +1787,12 @@ class ReviewBridge:
                 env=self._review_env(),
                 timeout=base_timeout,
             )
+            if rc_result.returncode != 0:
+                print(
+                    f"[manager-review-bridge] --request-changes failed (rc={rc_result.returncode}): "
+                    f"{rc_result.stderr.strip() or rc_result.stdout.strip()}",
+                    file=sys.stderr,
+                )
             # Recompute from the bus (now includes this cycle's REVIEW_DECISION).
             consecutive_changes_count = self._count_prior_changes_from_bus(ticket_id)
             if consecutive_changes_count >= max_attempts:
