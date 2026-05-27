@@ -9,6 +9,7 @@
 
 ## Objetivo
 Eliminar las derivaciones directas de `project_root` basadas en `__file__` en la capa runtime [A] y consolidar la precedencia canonica `CLI --project-root > env AGENT_PROJECT_ROOT > derivado`.
+El hardening de feedback del Manager y la reinyeccion de contexto al relanzar Builder se separan en WP-2026-156 para no mezclar hotfix de transporte con el contrato de `project_root`.
 
 ## Fases
 0. Verificar que `tests/unit/test_project_root_resolution.py` colecciona limpio.

@@ -25,7 +25,6 @@ if str(_PROJECT_ROOT_BOOTSTRAP) not in sys.path:
 
 # WP-2026-122 / WP-2026-155: Centralized path resolution via runtime.project_root
 # Precedence: AGENT_PROJECT_ROOT env > derived from module location
-from runtime.project_root import resolve_project_root  # noqa: E402
 
 
 # Add .agent to sys.path using the bootstrap root (engine-rooted, not operational).
@@ -34,6 +33,9 @@ from runtime.project_root import resolve_project_root  # noqa: E402
 _AGENT_DIR_BOOTSTRAP = _PROJECT_ROOT_BOOTSTRAP / ".agent"
 if str(_AGENT_DIR_BOOTSTRAP) not in sys.path:
     sys.path.insert(0, str(_AGENT_DIR_BOOTSTRAP))
+
+
+from runtime.project_root import resolve_project_root  # noqa: E402
 
 
 def _project_root() -> Path:
@@ -180,6 +182,8 @@ def _record_review(
     decision: str,
     feedback: str,
     source: str,
+    raw_stdout: str = "",
+    parse_method: str = "",
 ) -> None:
     review_queue = supervisor.collaboration_dir / "review_queue.md"
     notifications = supervisor.notifications_path
@@ -211,6 +215,27 @@ def _record_review(
             ]
         ),
     )
+
+    # WP-2026-155: Persist canonical normalized feedback
+    feedback_file = supervisor.collaboration_dir / f"manager_feedback_{ticket_id}.md"
+    is_parse_warning = "[PARSE_WARNING]" if not feedback.strip() else ""
+    feedback_content = [
+        f"# Manager Feedback - {ticket_id} {is_parse_warning}".strip(),
+        f"- Decision: {decision}",
+        f"- Parse method: {parse_method or 'unknown'}",
+        f"- Source: {source}",
+        f"- Timestamp: {datetime.now(timezone.utc).isoformat()}",
+        "",
+        feedback.strip()
+        or "[Feedback no pudo ser parseado en secciones estructuradas]",
+        "",
+        "## Raw Review",
+        "```text",
+        raw_stdout or "[empty stdout]",
+        "```",
+        "",
+    ]
+    feedback_file.write_text("\n".join(feedback_content), encoding="utf-8")
 
 
 def _bridge_heartbeat(
@@ -340,6 +365,8 @@ def _tick(
         decision=result.decision.value.upper(),
         feedback=result.feedback,
         source="manager backend exec review",
+        raw_stdout=result.stdout,
+        parse_method=result.parse_method,
     )
 
     bridge_state.last_processed_sequence = checkpoint_sequence

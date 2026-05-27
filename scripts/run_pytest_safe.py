@@ -283,6 +283,15 @@ def make_run_dir() -> Path:
 
 def stream_pytest(command: list[str]) -> int:
     lines: list[str] = []
+
+    # Ensure .agent is in PYTHONPATH for the subprocess
+    env = os.environ.copy()
+    agent_path = str(_PROJECT_ROOT_BOOTSTRAP / ".agent")
+    if "PYTHONPATH" in env:
+        env["PYTHONPATH"] = f"{agent_path}{os.pathsep}{env['PYTHONPATH']}"
+    else:
+        env["PYTHONPATH"] = agent_path
+
     process = subprocess.Popen(  # noqa: S603
         command,
         cwd=PROJECT_ROOT,
@@ -292,12 +301,17 @@ def stream_pytest(command: list[str]) -> int:
         encoding="utf-8",
         errors="replace",
         bufsize=1,
+        env=env,
     )
     try:
         if process.stdout is None:
             raise RuntimeError("pytest subprocess did not expose stdout")
         for line in process.stdout:
-            print(line, end="")
+            try:
+                print(line, end="")
+            except UnicodeEncodeError:
+                # Fallback to ascii replacing if terminal doesn't support utf-8 (like windows cp1252)
+                print(line.encode("ascii", "replace").decode("ascii"), end="")
             lines.append(line)
         returncode = process.wait()
     except KeyboardInterrupt:
