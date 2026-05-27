@@ -1,12 +1,12 @@
 # Project: orquestador_de_agentes
 **Version:** v9.14.0
-**State:** WP-2026-149 IN_PROGRESS (bus-backed STATE projection sync)
+**State:** WP-2026-150 IN_PROGRESS (project scanner with import map)
 
 ## Current Cycle
 
-- Active ticket: WP-2026-149 IN_PROGRESS (2026-05-27).
-- Mode: active - Builder syncing STATE.md from bus-derived state idempotently.
-- Outcome: the human-readable state will stop drifting behind events.jsonl.
+- Active ticket: WP-2026-150 IN_PROGRESS (2026-05-27).
+- Mode: active - Builder building a compact project scanner with real importMap extraction.
+- Outcome: destination projects will get token-efficient context without reading the full tree.
 
 ## Current readiness
 
