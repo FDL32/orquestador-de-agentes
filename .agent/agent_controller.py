@@ -186,6 +186,19 @@ except ImportError:
     GRAPH_CONTEXT_AVAILABLE = False
     generate_context_for_destination = None
 
+# WP-2026-150: Project scanner import (optional)
+try:
+    from scripts.project_scanner import (
+        generate_report as scanner_generate_report,
+        scan_project,
+    )
+
+    SCANNER_AVAILABLE = True
+except ImportError:
+    SCANNER_AVAILABLE = False
+    scan_project = None
+    scanner_generate_report = None
+
 
 def get_human_gate_threshold() -> int:
     """Return the consecutive-CHANGES count that escalates a ticket to HUMAN_GATE.
@@ -1526,21 +1539,28 @@ def _lookup_transition(
 
 def _inject_graph_context(instruction: str) -> str:
     """
-    Inject a compact ## Project Context block into the instruction if graphify artifacts exist.
+    Inject a compact ## Project Context block into the instruction if graphify or scanner artifacts exist.
 
     Before:
         - instruction is a plain string.
-        - GRAPH_CONTEXT_AVAILABLE determines if adapter is importable.
+        - GRAPH_CONTEXT_AVAILABLE and SCANNER_AVAILABLE determine available adapters.
 
     During:
-        - Checks for graphify-out/graph.json existence.
-        - Calls generate_context_for_destination if available.
+        - Tries scanner context first (preferred, more compact).
+        - Falls back to graphify context if scanner unavailable.
         - Prepends context block to instruction.
 
     After:
-        - Returns instruction with optional ## Project Context prepended.
-        - Returns original instruction unchanged if graph context unavailable.
+        - Returns instruction with ## Project Context prepended.
+        - Returns original instruction unchanged if both contexts unavailable.
     """
+    # Try scanner context first (preferred - WP-2026-150)
+    if SCANNER_AVAILABLE:
+        result = _inject_scanner_context(instruction)
+        if result != instruction:
+            return result
+
+    # Fallback to graphify context
     if not GRAPH_CONTEXT_AVAILABLE:
         return instruction
 
@@ -1550,6 +1570,89 @@ def _inject_graph_context(instruction: str) -> str:
             return f"{context_block}\n\n---\n\n{instruction}"
     except Exception:  # noqa: S110
         pass  # Gracefully degrade if graph context unavailable
+
+    return instruction
+
+
+def _build_scanner_context_block(project_map: dict) -> str:
+    """Build compact context block from scanner project_map."""
+    summary = project_map.get("summary", {})
+    frameworks = project_map.get("frameworks", {})
+    import_map = project_map.get("importMap", {})
+    parse_errors = project_map.get("parse_errors", [])
+
+    lines = [
+        "## Project Context",
+        "",
+        f"- **Total files:** {summary.get('total_files', 0)}",
+        f"- **Total size:** {summary.get('total_size_bytes', 0) / 1024:.1f} KB",
+    ]
+
+    # Categories
+    categories = summary.get("categories", {})
+    if categories:
+        lines.append("")
+        lines.append("**Files by category:**")
+        for cat, count in sorted(categories.items()):
+            lines.append(f"  - {cat}: {count}")
+
+    # Frameworks
+    fw_list = frameworks.get("frameworks", [])
+    tools_list = frameworks.get("tools", [])
+    if fw_list or tools_list:
+        lines.append("")
+        if fw_list:
+            lines.append(f"**Frameworks:** {', '.join(sorted(fw_list))}")
+        if tools_list:
+            lines.append(f"**Tools:** {', '.join(sorted(tools_list))}")
+
+    # Import stats
+    python_files = import_map.get("python_files", {})
+    if python_files:
+        lines.append("")
+        lines.append(f"**Python files with imports:** {len(python_files)}")
+        if parse_errors:
+            lines.append(f"**Parse errors:** {len(parse_errors)}")
+
+    return "\n".join(lines)
+
+
+def _inject_scanner_context(instruction: str) -> str:
+    """
+    Inject a compact ## Project Context block from project-map.json scanner artifact.
+
+    Before:
+        - instruction is a plain string.
+        - SCANNER_AVAILABLE determines if scanner module is importable.
+
+    During:
+        - Checks for .agent/context/project-map.json existence.
+        - Reads and parses the JSON artifact.
+        - Builds compact summary with file counts, categories, frameworks, and import stats.
+        - Prepends context block to instruction.
+
+    After:
+        - Returns instruction with ## Project Context prepended.
+        - Returns original instruction unchanged if scanner artifact unavailable.
+    """
+    if not SCANNER_AVAILABLE:
+        return instruction
+
+    try:
+        context_dir = get_context_dir()
+        scanner_output = context_dir / "project-map.json"
+
+        if not scanner_output.exists():
+            return instruction
+
+        import json
+
+        project_map = json.loads(scanner_output.read_text(encoding="utf-8"))
+        context_block = _build_scanner_context_block(project_map)
+        return f"{context_block}\n\n---\n\n{instruction}"
+
+    except Exception:  # noqa: S110
+        pass  # Gracefully degrade if scanner unavailable
 
     return instruction
 
@@ -3111,9 +3214,35 @@ def _handle_main_action(
     if SESSION_TRACKER_AVAILABLE:
         show_recovery_hint()
 
-    print("\n  Generando mapa del proyecto...")
-    generate_project_map()
-    print("  [OK] Mapa actualizado")
+    # WP-2026-150: Use project scanner instead of legacy generate_project_map()
+    print("\n  Scanning project with project_scanner...")
+    if SCANNER_AVAILABLE and scan_project:
+        try:
+            context_dir = get_context_dir()
+            context_dir.mkdir(parents=True, exist_ok=True)
+            project_map = scan_project(PROJECT_ROOT.resolve())
+
+            # Write scanner output
+            import json
+
+            output_path = context_dir / "project-map.json"
+            output_path.write_text(
+                json.dumps(project_map, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+
+            print(f"  [OK] Project map: {project_map['summary']['total_files']} files")
+            print(
+                f"       Python files with imports: {len(project_map['importMap']['python_files'])}"
+            )
+        except Exception as e:
+            print(f"  [WARN] Scanner failed: {e}")
+            # Fallback to legacy
+            generate_project_map()
+            print("  [OK] Mapa actualizado (legacy)")
+    else:
+        # Fallback to legacy
+        generate_project_map()
+        print("  [OK] Mapa actualizado (legacy)")
 
     notif_errors = validate_state_files().get("notifications.md", [])
     if notif_errors:
