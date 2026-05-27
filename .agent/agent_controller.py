@@ -323,7 +323,16 @@ def _exclude_files() -> set[str]:
     agent_dir = get_agent_dir()
     context_dir = get_context_dir()
     exclude_files = {str((collab_dir / f).resolve()) for f in EXCLUDE_FILES_REL}
+
+    # Implicit whitelist for all auto-generated collaboration artifacts
+    if collab_dir.exists():
+        for f in collab_dir.glob("*"):
+            if f.is_file():
+                exclude_files.add(str(f.resolve()))
+
     exclude_files.add(str((context_dir / "project-map.json").resolve()))
+    exclude_files.add(str((context_dir / "project_map.md").resolve()))
+
     # Exclude bus runtime files (events.jsonl is managed by the bus, not the Builder)
     exclude_files.add(
         str((agent_dir / "runtime" / "events" / "events.jsonl").resolve())

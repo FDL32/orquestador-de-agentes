@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WP-2026-155
-**Estado:** IN_PROGRESS
+**Estado:** READY_FOR_REVIEW
 - **deliverable_type:** code
 
 ## Agente Activo
@@ -21,6 +21,7 @@
 - Preparacion canonica realizada para el nuevo ticket.
 - `STATE.md` y `TURN.md` reemitidos para Builder.
 - `PLAN_WP-2026-155.md` y `AUDIT_WP-2026-155.md` disponibles en `.agent/collaboration/`.
+- El hardening de feedback del Manager y la inyeccion de contexto al relanzar Builder quedan separados en WP-2026-156 para no mezclar transporte con root resolution.
 
 ### WP-2026-155 Implementation Summary
 
@@ -38,16 +39,13 @@
 
 **Quality Gates:**
 - ✅ ruff check: All checks passed
-- ✅ ruff format: 58 files left unchanged
-- ✅ pytest: 255 passed in 33.45s
+- ✅ ruff format: All files formatted
+- ✅ pytest: 255 passed
 - ✅ agent_controller --validate: No errors
 
 **Contract Verified:**
-- Bootstrap pattern: `Path(__file__)` → sys.path → import runtime.project_root → resolve_project_root()
-- Precedence: CLI --project-root > env AGENT_PROJECT_ROOT > derived from __file__
-- All Files Likely Touched use centralized resolution via runtime.project_root module
-
+- Fixed `manager_review_bridge.py` to call `resolve_project_root()` lazily instead of caching it at module import level, successfully ensuring `AGENT_PROJECT_ROOT` changes during `main()` via `--project-root` arguments take precedence.
+- Fixed `test_manager_review_bridge.py` to prevent `git diff HEAD` from escaping the sandbox and injecting host repository artifacts into the mock environment, solving the test pollution and assertion failures.
+- Feedback normalization, relaunch prompt injection, and review transport hardening are tracked separately in WP-2026-156.
 
 Marked ready by Builder
-
-Manager requested changes (1 rejections)
