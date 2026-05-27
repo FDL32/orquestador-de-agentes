@@ -36,7 +36,7 @@ def _make_bridge(tmp_path: Path) -> tuple[ReviewBridge, EventBus, Path]:
 
 
 def _make_review_prompt_bridge(
-    tmp_path: Path, deliverable_type: str = "code"
+    tmp_path: Path, deliverable_type: str = "code", monkeypatch=None
 ) -> ReviewBridge:
     runtime_dir = tmp_path / ".agent" / "runtime" / "events"
     event_bus = EventBus(runtime_dir=runtime_dir)
@@ -108,7 +108,18 @@ def _make_review_prompt_bridge(
     )
     if observations_path.exists():
         observations_path.unlink()
-    return ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+    bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+    # WP-2026-156: Aislar git para no escapar al repo anfitrion
+    if monkeypatch is not None:
+        monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
+        monkeypatch.setattr(bridge, "_git_provenance", lambda: "[no commits]")
+        monkeypatch.setattr(
+            bridge, "_build_diff_for_files_likely_touched", lambda *args: ""
+        )
+
+    return bridge
 
 
 def _write_observations(tmp_path: Path, lines: list[str]) -> Path:
@@ -221,6 +232,12 @@ def test_manager_review_cycle_tool_error_is_transport_failed(monkeypatch, tmp_pa
     monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
     monkeypatch.setattr(
         bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW"
+    )
+    # WP-2026-156: Aislar git para no escapar al repo anfitrion
+    monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
+    monkeypatch.setattr(bridge, "_git_provenance", lambda: "[no commits]")
+    monkeypatch.setattr(
+        bridge, "_build_diff_for_files_likely_touched", lambda *args: ""
     )
 
     result = bridge.run_manager_review_cycle(
@@ -347,13 +364,20 @@ def test_bridge_heartbeat_includes_cursor_and_sequence():
     assert "updated_at=2026-05-12T17:54:37+0200" in line
 
 
-def test_build_review_prompt_includes_generated_artifacts_block(tmp_path):
+def test_build_review_prompt_includes_generated_artifacts_block(tmp_path, monkeypatch):
     from bus.event_bus import EventBus
     from bus.review_bridge import ReviewBridge
 
     runtime_dir = tmp_path / ".agent" / "runtime" / "events"
     event_bus = EventBus(runtime_dir=runtime_dir)
     bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+    # WP-2026-156: Aislar git para no escapar al repo anfitrion
+    monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
+    monkeypatch.setattr(bridge, "_git_provenance", lambda: "[no commits]")
+    monkeypatch.setattr(
+        bridge, "_build_diff_for_files_likely_touched", lambda *args: ""
+    )
 
     # We just need to verify the prompt contains the new block
     prompt = bridge._build_review_prompt(ticket_id="WP-TEST-123", dtype="code")
@@ -478,7 +502,7 @@ def test_build_review_prompt_includes_provenance_section(tmp_path, monkeypatch):
     assert sha in prompt
 
 
-def test_build_review_prompt_includes_allowed_skills_for_role(tmp_path):
+def test_build_review_prompt_includes_allowed_skills_for_role(tmp_path, monkeypatch):
     """Test that review prompt includes only skills allowed for the current role (WP-2026-128)."""
     from bus.event_bus import EventBus
     from bus.review_bridge import ReviewBridge
@@ -507,6 +531,13 @@ def test_build_review_prompt_includes_allowed_skills_for_role(tmp_path):
         event_bus=event_bus, project_root=tmp_path, skill_resolver=resolver
     )
 
+    # WP-2026-156: Aislar git para no escapar al repo anfitrion
+    monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
+    monkeypatch.setattr(bridge, "_git_provenance", lambda: "[no commits]")
+    monkeypatch.setattr(
+        bridge, "_build_diff_for_files_likely_touched", lambda *args: ""
+    )
+
     prompt = bridge._build_review_prompt(ticket_id="WP-TEST-123", dtype="code")
 
     # Should include the ALLOWED SKILLS section
@@ -516,9 +547,11 @@ def test_build_review_prompt_includes_allowed_skills_for_role(tmp_path):
 
 
 def test_build_review_prompt_includes_manager_learnings_for_code_and_preserves_static_rubric(
-    tmp_path,
+    tmp_path, monkeypatch
 ):
-    bridge = _make_review_prompt_bridge(tmp_path, deliverable_type="code")
+    bridge = _make_review_prompt_bridge(
+        tmp_path, deliverable_type="code", monkeypatch=monkeypatch
+    )
 
     observations = []
     for day in range(1, 8):
@@ -573,8 +606,10 @@ def test_build_review_prompt_includes_manager_learnings_for_code_and_preserves_s
     assert bullets[0].endswith("(WP-2026-137)")
 
 
-def test_build_review_prompt_ignores_missing_observations_file(tmp_path):
-    bridge = _make_review_prompt_bridge(tmp_path, deliverable_type="code")
+def test_build_review_prompt_ignores_missing_observations_file(tmp_path, monkeypatch):
+    bridge = _make_review_prompt_bridge(
+        tmp_path, deliverable_type="code", monkeypatch=monkeypatch
+    )
     prompt = bridge._build_review_prompt(ticket_id="WP-TEST-123", dtype="code")
 
     assert "Test anti-patterns" in prompt
@@ -624,8 +659,12 @@ def test_build_review_prompt_warns_and_omits_inventory_when_shared_file_missing(
     assert "Implementation anti-patterns" in prompt
 
 
-def test_build_review_prompt_includes_manager_learnings_for_mixed(tmp_path):
-    bridge = _make_review_prompt_bridge(tmp_path, deliverable_type="mixed")
+def test_build_review_prompt_includes_manager_learnings_for_mixed(
+    tmp_path, monkeypatch
+):
+    bridge = _make_review_prompt_bridge(
+        tmp_path, deliverable_type="mixed", monkeypatch=monkeypatch
+    )
     _write_observations(
         tmp_path,
         [

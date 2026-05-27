@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WP-2026-156
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Titulo:** Manager feedback normalization and Builder relaunch handoff
 - **Asignado a:** Builder
@@ -71,6 +71,7 @@ El review transport actual ya detecta `CHANGES`, pero el Builder necesita un art
 - `scripts/manager_review_bridge.py`
 - `scripts/launch_agent_terminals.ps1`
 - `tests/test_manager_review_bridge.py`
+- `tests/test_review_bridge.py`
 
 ## Criterios de Aceptacion Global
 - [ ] `raw_review` y `normalized_review` quedan separados por contrato.

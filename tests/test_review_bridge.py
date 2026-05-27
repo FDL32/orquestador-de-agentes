@@ -541,7 +541,7 @@ class TestDocumentationPromptWiring:
     """Regression tests: documentation type receives cross-cutting checks and learnings."""
 
     def _make_bridge(
-        self, tmp_path: Path, dtype: str = "documentation"
+        self, tmp_path: Path, dtype: str = "documentation", monkeypatch=None
     ) -> ReviewBridge:
         collab = tmp_path / ".agent" / "collaboration"
         collab.mkdir(parents=True)
@@ -553,7 +553,17 @@ class TestDocumentationPromptWiring:
             (collab / name).write_text("", encoding="utf-8")
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
-        return ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        # WP-2026-156: Aislar git para no escapar al repo anfitrion
+        if monkeypatch is not None:
+            monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
+            monkeypatch.setattr(bridge, "_git_provenance", lambda: "[no commits]")
+            monkeypatch.setattr(
+                bridge, "_build_diff_for_files_likely_touched", lambda *args: ""
+            )
+
+        return bridge
 
     def _write_observation(self, tmp_path: Path, signal: str, applies_to="all") -> None:
         obs_path = tmp_path / ".agent" / "runtime" / "memory" / "observations.jsonl"
@@ -570,43 +580,49 @@ class TestDocumentationPromptWiring:
         with obs_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record) + "\n")
 
-    def test_documentation_receives_validator_evidence_gate(self, tmp_path):
+    def test_documentation_receives_validator_evidence_gate(
+        self, tmp_path, monkeypatch
+    ):
         """documentation prompt must include the cross-cutting validator evidence gate."""
-        bridge = self._make_bridge(tmp_path)
+        bridge = self._make_bridge(tmp_path, monkeypatch=monkeypatch)
         prompt = bridge._build_review_prompt("WP-2026-TEST", "documentation")
         assert "AP-06 Validator evidence missing" in prompt
         assert "execution_log.md must contain" in prompt
 
-    def test_documentation_receives_learnings_when_applies_to_all(self, tmp_path):
+    def test_documentation_receives_learnings_when_applies_to_all(
+        self, tmp_path, monkeypatch
+    ):
         """documentation prompt includes observations scoped to 'all'."""
         self._write_observation(tmp_path, "test signal all scope", applies_to="all")
-        bridge = self._make_bridge(tmp_path)
+        bridge = self._make_bridge(tmp_path, monkeypatch=monkeypatch)
         prompt = bridge._build_review_prompt("WP-2026-TEST", "documentation")
         assert "Lecciones acumuladas de auditoria" in prompt
         assert "test signal all scope" in prompt
 
-    def test_documentation_excludes_code_only_learnings(self, tmp_path):
+    def test_documentation_excludes_code_only_learnings(self, tmp_path, monkeypatch):
         """documentation prompt must not include observations scoped to code/mixed only."""
         self._write_observation(
             tmp_path, "code-only signal", applies_to=["code", "mixed"]
         )
-        bridge = self._make_bridge(tmp_path)
+        bridge = self._make_bridge(tmp_path, monkeypatch=monkeypatch)
         prompt = bridge._build_review_prompt("WP-2026-TEST", "documentation")
         assert "code-only signal" not in prompt
 
-    def test_code_receives_learnings_scoped_to_code(self, tmp_path):
+    def test_code_receives_learnings_scoped_to_code(self, tmp_path, monkeypatch):
         """code prompt includes observations scoped to code."""
         self._write_observation(
             tmp_path, "code scoped signal", applies_to=["code", "mixed"]
         )
-        bridge = self._make_bridge(tmp_path, dtype="code")
+        bridge = self._make_bridge(tmp_path, dtype="code", monkeypatch=monkeypatch)
         prompt = bridge._build_review_prompt("WP-2026-TEST", "code")
         assert "code scoped signal" in prompt
 
-    def test_static_rubric_unmodified_when_observations_present(self, tmp_path):
+    def test_static_rubric_unmodified_when_observations_present(
+        self, tmp_path, monkeypatch
+    ):
         """Injecting observations must not alter the static rubric content."""
         self._write_observation(tmp_path, "some learning", applies_to="all")
-        bridge = self._make_bridge(tmp_path)
+        bridge = self._make_bridge(tmp_path, monkeypatch=monkeypatch)
         prompt = bridge._build_review_prompt("WP-2026-TEST", "documentation")
         assert "focus strictly on the clarity" in prompt
         assert "Lecciones acumuladas de auditoria" in prompt
@@ -627,7 +643,7 @@ class TestCanonicalAntiPatternInventory:
         ]
     )
 
-    def _make_bridge(self, tmp_path: Path) -> ReviewBridge:
+    def _make_bridge(self, tmp_path: Path, monkeypatch=None) -> ReviewBridge:
         collab = tmp_path / ".agent" / "collaboration"
         collab.mkdir(parents=True)
         (collab / "work_plan.md").write_text(
@@ -637,7 +653,17 @@ class TestCanonicalAntiPatternInventory:
         for name in ("STATE.md", "TURN.md", "execution_log.md"):
             (collab / name).write_text("", encoding="utf-8")
         event_bus = EventBus(runtime_dir=tmp_path / ".agent" / "runtime" / "events")
-        return ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        # WP-2026-156: Aislar git para no escapar al repo anfitrion
+        if monkeypatch is not None:
+            monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
+            monkeypatch.setattr(bridge, "_git_provenance", lambda: "[no commits]")
+            monkeypatch.setattr(
+                bridge, "_build_diff_for_files_likely_touched", lambda *args: ""
+            )
+
+        return bridge
 
     def test_parse_extracts_ap_id_and_name(self):
         result = ReviewBridge._parse_canonical_anti_patterns(self._AP_CONTENT)
@@ -671,8 +697,8 @@ class TestCanonicalAntiPatternInventory:
             result = bridge._load_canonical_anti_patterns()
         assert result == []
 
-    def test_render_formats_inventory_lines(self, tmp_path):
-        bridge = self._make_bridge(tmp_path)
+    def test_render_formats_inventory_lines(self, tmp_path, monkeypatch):
+        bridge = self._make_bridge(tmp_path, monkeypatch=monkeypatch)
         bridge._canonical_anti_patterns = [
             ("AP-01", "Mock drift"),
             ("AP-02", "Floor assertion"),
@@ -682,19 +708,25 @@ class TestCanonicalAntiPatternInventory:
         assert "AP-02 Floor assertion" in rendered
         assert "skills/_shared/anti-patterns.md" in rendered
 
-    def test_render_returns_empty_string_when_inventory_empty(self, tmp_path):
-        bridge = self._make_bridge(tmp_path)
+    def test_render_returns_empty_string_when_inventory_empty(
+        self, tmp_path, monkeypatch
+    ):
+        bridge = self._make_bridge(tmp_path, monkeypatch=monkeypatch)
         bridge._canonical_anti_patterns = []
         assert bridge._render_canonical_anti_pattern_inventory() == ""
 
-    def test_rubric_includes_ap_inventory_block_for_code_type(self, tmp_path):
-        bridge = self._make_bridge(tmp_path)
+    def test_rubric_includes_ap_inventory_block_for_code_type(
+        self, tmp_path, monkeypatch
+    ):
+        bridge = self._make_bridge(tmp_path, monkeypatch=monkeypatch)
         bridge._canonical_anti_patterns = [("AP-01", "Mock drift")]
         rubric = bridge._rubric_for_type("code", "WP-TEST")
         assert "AP-01 Mock drift" in rubric
 
-    def test_rubric_omits_ap_inventory_block_when_inventory_empty(self, tmp_path):
-        bridge = self._make_bridge(tmp_path)
+    def test_rubric_omits_ap_inventory_block_when_inventory_empty(
+        self, tmp_path, monkeypatch
+    ):
+        bridge = self._make_bridge(tmp_path, monkeypatch=monkeypatch)
         bridge._canonical_anti_patterns = []
         rubric = bridge._rubric_for_type("code", "WP-TEST")
         assert "Canonical anti-pattern inventory" not in rubric
