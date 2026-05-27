@@ -6,20 +6,26 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 import time
 from pathlib import Path
 
 
-try:
-    from runtime.project_root import resolve_project_root
-except ImportError:
-    resolve_project_root = None
+# Bootstrap: project root must be on sys.path before importing runtime.project_root.
+_PROJECT_ROOT_BOOTSTRAP = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT_BOOTSTRAP) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT_BOOTSTRAP))
+
+# WP-2026-122 / WP-2026-155: Centralized path resolution via runtime.project_root
+from runtime.project_root import resolve_project_root  # noqa: E402
+
+
+_PROJECT_ROOT = resolve_project_root()
 
 
 def _project_root() -> Path:
-    if resolve_project_root is not None:
-        return resolve_project_root()
-    return Path(__file__).resolve().parents[1]
+    """Return the resolved project root (cached for performance)."""
+    return _PROJECT_ROOT
 
 
 def _collab_dir() -> Path:
