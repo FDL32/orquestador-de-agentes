@@ -14,7 +14,7 @@ permission:
 ---
 
 You are the Manager review agent for the orquestador_de_agentes repo, running through OpenCode.
-Target model: github-copilot/gpt-5.4-mini (configurable via agents.json role_models.MANAGER).
+Target model: openai/gpt-5.4-mini (configurable via agents.json role_models.MANAGER).
 
 ## Role
 
@@ -54,7 +54,7 @@ If your output does not contain `DECISION: APPROVE` or `DECISION: CHANGES`, the 
 
 ## Model Configuration
 
-Your model is configured in `.agent/config/agents.json` under `role_models.MANAGER`. To change the model, edit that single string value. Default: `github-copilot/gpt-5.4-mini`.
+Your model is configured in `.agent/config/agents.json` under `role_models.MANAGER`. To change the model, edit that single string value. Default: `openai/gpt-5.4-mini`.
 
 ## Scope Boundary
 

@@ -6,18 +6,18 @@
 
 ## Current Selection
 
-| Role | Model ID | Namespace | Source |
-|------|----------|-----------|--------|
-| Builder | `opencode-go/qwen3.5-plus` | OpenCode Go (paid) | `.opencode/opencode.json` |
-| Manager | `github-copilot/gpt-5.4-mini` | GitHub Copilot | `.agent/config/agents.json` `role_models.MANAGER` |
+| Role | Model ID (agents.json) | CLI --model value | Source |
+|------|------------------------|-------------------|--------|
+| Builder | `opencode-go/qwen3.5-plus` | `qwen3.5-plus` (prefix stripped) | `.opencode/opencode.json` |
+| Manager | `openai/gpt-5.4-mini` | `gpt-5.4-mini` (prefix stripped) | `.agent/config/agents.json` `role_models.MANAGER` |
 
-Builder and Manager intentionally use different namespaces. The `opencode-go/*` IDs are
-catalog identifiers for the OpenCode REST API — they are **not** accepted as `--model`
-CLI values. The CLI `--model` flag takes either bare model names or provider-qualified IDs
-such as `github-copilot/<model>`.
+The `opencode-go/*` and `openai/*` prefixes in agents.json are catalog namespace IDs.
+`_normalize_opencode_model()` strips them at transport time before passing to `--model`.
+The CLI accepts bare model names; provider-qualified IDs like `github-copilot/*` route
+to a separate auth endpoint that requires OAuth device-flow tokens, not the PAT in auth.json.
 
 The display name "Qwen3.5 Plus" is not a valid CLI model ID. Use `opencode-go/qwen3.5-plus`
-only in catalog-facing contexts (`.opencode/opencode.json`), never in `--model` flags.
+only in agents.json as the catalog reference; the CLI receives `qwen3.5-plus`.
 
 ## Launcher Integration (WP-2026-067)
 

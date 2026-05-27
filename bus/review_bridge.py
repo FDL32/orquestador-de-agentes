@@ -7,7 +7,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import warnings
 from dataclasses import dataclass
@@ -241,47 +240,17 @@ class ReviewBridge:
             return False
 
     def _review_env(self) -> dict[str, str]:
-        """Return an environment dict for the review subprocess.
+        """Return the inherited process environment for review execution.
 
-        OpenCode on Windows calls mkdir without the recursive flag when
-        initialising its config directory. If the directory already exists
-        from a prior session the process exits immediately with EEXIST.
-        The fix: redirect HOME / USERPROFILE / XDG vars to a fresh per-run
-        scratch directory so OpenCode always starts from a clean slate.
-
-        Auth is preserved by copying auth.json from the real home before the
-        redirect, so credentials survive the isolation.
+        Before: Redirected HOME, USERPROFILE, and CODEX_HOME to .codex,
+                isolating the review in an artificial home directory.
+        During: Copies os.environ without modification, preserving the
+                natural process inheritance for OpenCode and other backends.
+        After: Returns the unmodified environment dict for subprocess execution.
         """
-        env = os.environ.copy()
-
-        scratch_root = self.project_root / ".agent" / "runtime" / "tmp"
-        scratch_root.mkdir(parents=True, exist_ok=True)
-        review_home = Path(
-            tempfile.mkdtemp(prefix="manager_review_home_", dir=str(scratch_root))
-        )
-
-        # Locate and copy auth credentials before redirecting home vars.
-        real_home = os.path.expanduser(
-            os.environ.get("USERPROFILE") or os.environ.get("HOME") or "~"
-        )
-        for auth_parts in (
-            (".local", "share", "opencode", "auth.json"),
-            (".config", "opencode", "auth.json"),
-        ):
-            auth_src = os.path.join(real_home, *auth_parts)
-            if os.path.exists(auth_src):
-                auth_dst = os.path.join(str(review_home), *auth_parts)
-                os.makedirs(os.path.dirname(auth_dst), exist_ok=True)
-                shutil.copy2(auth_src, auth_dst)
-                break
-
-        for key in ("HOME", "USERPROFILE", "CODEX_HOME"):
-            if key in env:
-                env[key] = str(review_home)
-        review_home_str = str(review_home)
-        env["XDG_CONFIG_HOME"] = os.path.join(review_home_str, ".config")
-        env["XDG_DATA_HOME"] = os.path.join(review_home_str, ".local", "share")
-        return env
+        # WP-2026-129: Preserve inherited environment; do not redirect home vars.
+        # Isolation attempts broke multi-provider auth (openai/, opencode-go/).
+        return os.environ.copy()
 
     def _get_manager_backend(self) -> str:
         """Get the backend assigned to MANAGER role from agents.json.
@@ -309,49 +278,17 @@ class ReviewBridge:
         except Exception:
             return None
 
-    # Known namespaces that OpenCode CLI accepts verbatim (provider/model format).
-    _OPENCODE_VALID_PREFIXES = ("opencode-go/", "opencode/", "github-copilot/")
-
     @staticmethod
     def _normalize_opencode_model(model: str | None) -> str | None:
-        """Normalize a role model to the identifier accepted by OpenCode.
+        """Normalize a role model to the identifier accepted by OpenCode CLI.
 
-        Valid OpenCode model IDs use the ``opencode-go/<model>``,
-        ``opencode/<model>`` or ``github-copilot/<model>`` namespaces and are
-        passed through unchanged.
-        ``openai/<model>`` is mapped to ``github-copilot/<model>`` because this
-        OpenCode installation exposes the OpenAI-backed catalog via the
-        GitHub Copilot namespace.
+        The OpenCode CLI ``--model`` flag accepts provider-qualified IDs verbatim:
+        ``opencode-go/qwen3.5-plus``, ``openai/gpt-5.4-mini``, etc.
+        Both forms were verified to work against the real CLI. No stripping needed.
         """
         if model is None:
             return None
-        normalized = model.strip()
-        if not normalized:
-            return None
-        for prefix in ReviewBridge._OPENCODE_VALID_PREFIXES:
-            if normalized.startswith(prefix):
-                return normalized
-        if normalized.startswith("openai/"):
-            bare = normalized.split("/", 1)[1].strip()
-            if bare:
-                mapped = f"github-copilot/{bare}"
-                print(
-                    f"[review_bridge] WARNING: model '{normalized}' mapped to '{mapped}'.",
-                    flush=True,
-                )
-                return mapped
-            return None
-        # Unknown provider prefix — keep the bare model name as a last resort
-        # so the caller can still try a direct catalog lookup.
-        if "/" in normalized:
-            provider, bare = normalized.split("/", 1)
-            print(
-                f"[review_bridge] WARNING: model '{normalized}' uses unknown provider"
-                f" '{provider}'. Falling back to bare model '{bare}'.",
-                flush=True,
-            )
-            normalized = bare.strip()
-        return normalized or None
+        return model.strip() or None
 
     def _get_canonical_files(self) -> list[Path]:
         """Get list of canonical collaboration files to attach to OpenCode review."""
@@ -1139,6 +1076,51 @@ class ReviewBridge:
 
         return result
 
+    def _normalize_feedback(self, stdout: str, decision: ReviewDecision) -> str:
+        """Normalize Manager review feedback into a legible summary.
+
+        Before: feedback field contained raw stdout or unstructured text.
+        During: Extracts structured sections (SUMMARY, BLOCKERS, SUGGESTIONS) for CHANGES,
+                or uses the full text for APPROVE/INSPECT, cleaning ANSI codes.
+        After: Returns normalized, legible feedback string for canonical persistence.
+        """
+        # Clean ANSI codes
+        ansi_pattern = re.compile(r"\x1b\[[0-9;]*m")
+        clean_stdout = ansi_pattern.sub("", stdout)
+
+        if decision == ReviewDecision.CHANGES:
+            structured = self._parse_changes_structure(clean_stdout)
+            parts = []
+            if structured.get("summary"):
+                parts.append(f"## SUMMARY\n{structured['summary']}")
+            if structured.get("blockers"):
+                parts.append(f"## BLOCKERS\n{structured['blockers']}")
+            if structured.get("suggestions"):
+                parts.append(f"## SUGGESTIONS\n{structured['suggestions']}")
+            if parts:
+                return "\n\n".join(parts)
+            # Fallback: return cleaned stdout if no structured sections found
+            return clean_stdout.strip()
+        elif decision == ReviewDecision.APPROVE:
+            # Extract the text before DECISION: APPROVE for a cleaner summary
+            approve_match = re.search(
+                r"(.*?)DECISION:\s*APPROVE", clean_stdout, re.IGNORECASE | re.DOTALL
+            )
+            if approve_match:
+                return approve_match.group(1).strip()
+            return clean_stdout.strip()
+        elif decision == ReviewDecision.INSPECT:
+            # Extract text before DECISION: INSPECT or return cleaned stdout
+            inspect_match = re.search(
+                r"(.*?)DECISION:\s*INSPECT", clean_stdout, re.IGNORECASE | re.DOTALL
+            )
+            if inspect_match:
+                return inspect_match.group(1).strip()
+            return clean_stdout.strip()
+        else:
+            # TRANSPORT_FAILED, UNKNOWN, etc.
+            return clean_stdout.strip()
+
     def _validate_changes_structure(self, stdout: str) -> tuple[bool, list[str]]:
         """Validate that CHANGES response has required structure.
 
@@ -1808,7 +1790,7 @@ class ReviewBridge:
                     stdout=final_stdout,
                     stderr=f"REVIEW_TRANSPORT_FAILED emit failed: {exc}",
                     exit_code=1,
-                    feedback=final_stdout.strip() or final_stderr.strip(),
+                    feedback=self._normalize_feedback(final_stdout, decision),
                     transport_ok=False,
                     transport_error=transport_error or str(exc),
                     parse_method=parse_method,
@@ -1818,7 +1800,7 @@ class ReviewBridge:
                 stdout=final_stdout,
                 stderr=final_stderr,
                 exit_code=final_exit,
-                feedback=final_stdout.strip() or final_stderr.strip(),
+                feedback=self._normalize_feedback(final_stdout, decision),
                 transport_ok=False,
                 transport_error=transport_error,
                 parse_method=parse_method,
@@ -1848,7 +1830,7 @@ class ReviewBridge:
                 stdout=final_stdout,
                 stderr=f"REVIEW_DECISION emit failed: {exc}",
                 exit_code=1,
-                feedback=final_stdout.strip() or final_stderr.strip(),
+                feedback=self._normalize_feedback(final_stdout, decision),
                 parse_method=parse_method,
             )
 
@@ -1921,12 +1903,15 @@ class ReviewBridge:
                 file=sys.stderr,
             )
 
+        # Normalize feedback from structured sections before returning
+        normalized_feedback = self._normalize_feedback(final_stdout, decision)
+
         return ReviewResult(
             decision=decision,
             stdout=final_stdout,
             stderr=final_stderr,
             exit_code=final_exit,
-            feedback=final_stdout.strip() or final_stderr.strip(),
+            feedback=normalized_feedback,
             transport_ok=transport_ok,
             transport_error=transport_error,
             parse_method=parse_method,
