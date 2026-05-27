@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import warnings
 from dataclasses import dataclass
@@ -239,16 +240,46 @@ class ReviewBridge:
             return False
 
     def _review_env(self) -> dict[str, str]:
-        """Return the inherited process environment for review execution.
+        """Return an environment dict for the review subprocess.
 
-        Before: Redirected HOME, USERPROFILE, and CODEX_HOME to .codex,
-                isolating the review in an artificial home directory.
-        During: Copies os.environ without modification, preserving the
-                natural process inheritance for OpenCode and other backends.
-        After: Returns the unmodified environment dict for subprocess execution.
+        OpenCode on Windows calls mkdir without the recursive flag when
+        initialising its config directory. If the directory already exists
+        from a prior session the process exits immediately with EEXIST.
+        The fix: redirect HOME / USERPROFILE / XDG vars to a fresh per-run
+        scratch directory so OpenCode always starts from a clean slate.
+
+        Auth is preserved by copying auth.json from the real home before the
+        redirect, so credentials survive the isolation.
         """
-        # WP-2026-129: Preserve inherited environment; do not redirect home vars
-        return os.environ.copy()
+        env = os.environ.copy()
+
+        scratch_root = self.project_root / ".agent" / "runtime" / "tmp"
+        scratch_root.mkdir(parents=True, exist_ok=True)
+        review_home = Path(
+            tempfile.mkdtemp(prefix="manager_review_home_", dir=str(scratch_root))
+        )
+
+        # Locate and copy auth credentials before redirecting home vars.
+        real_home = Path(
+            os.environ.get("USERPROFILE") or os.environ.get("HOME") or "~"
+        ).expanduser()
+        for auth_rel in (
+            Path(".local") / "share" / "opencode" / "auth.json",
+            Path(".config") / "opencode" / "auth.json",
+        ):
+            auth_src = real_home / auth_rel
+            if auth_src.exists():
+                auth_dst = review_home / auth_rel
+                auth_dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(auth_src, auth_dst)
+                break
+
+        for key in ("HOME", "USERPROFILE", "CODEX_HOME"):
+            if key in env:
+                env[key] = str(review_home)
+        env["XDG_CONFIG_HOME"] = str(review_home / ".config")
+        env["XDG_DATA_HOME"] = str(review_home / ".local" / "share")
+        return env
 
     def _get_manager_backend(self) -> str:
         """Get the backend assigned to MANAGER role from agents.json.
