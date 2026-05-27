@@ -313,6 +313,23 @@ if not isinstance(profile_config, dict):
 
 Regla: en gates de seguridad, el camino de error es siempre block, no allow. La degradación silenciosa es más peligrosa que un bloqueo explicable.
 
+### AP-12 — Review packet incomplete (untracked deliverables invisible to diff)
+
+Cuando el ticket crea archivos nuevos no rastreados o entregables que no aparecen en `git diff`, el review packet debe incluirlos explicitamente junto con el diff rastreado.
+
+❌
+```python
+# El packet se construye solo con git diff HEAD y omite los ficheros nuevos.
+review_diff = git_diff_head_only()
+```
+✅
+```python
+# Incluye tracked + untracked deliverables antes de pedir review.
+review_diff = build_review_packet(include_untracked=True)
+```
+
+Regla: si el ticket entrega archivos nuevos, el packet de review debe enumerarlos y adjuntarlos de forma explicita. Un diff sin los untracked no representa el alcance real.
+
 ### AP-08 — Test coverage drift (funciones nuevas sin tests directos)
 
 Ejecutar el suite existente y ver que pasa no es evidencia de cobertura si las funciones nuevas introducidas en el diff no aparecen en ningún test.

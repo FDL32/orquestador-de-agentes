@@ -16,7 +16,7 @@ Flujo minimo de mejora continua:
 - `session-close-observations` convierte aprendizajes en memoria
 - `review_bridge` inyecta memoria curada en revisiones futuras
 - `bui-implement-from-plan/references/code-rules.md` y `man-review-implementation` reflejan las reglas activas
-- `_shared/anti-patterns.md` mantiene el inventario canonicamente numerado AP-01..AP-07
+- `_shared/anti-patterns.md` mantiene el inventario canonicamente numerado AP-01..AP-12
 
 ## 2. Tabla operativa
 
@@ -45,6 +45,7 @@ Flujo minimo de mejora continua:
 | `repo-compare` | `shared` | `support` | `false` | `false` | Comparar proyecto local con repositorio GitHub para detectar funcionalidades de valor |
 | `secure-existing-project` | `shared` | `support` | `false` | `false` | Aplicar arquitectura de seguridad privada/publica a proyecto Python existente |
 | `scaffold-python-project` | `shared` | `setup` | `false` | `false` | Crear estructura completa de proyecto Python nuevo con seguridad integrada |
+| `deep-research` | `shared` | `support` | `false` | `false` | Skill documental para producir contexto estructurado antes de abrir un WP |
 
 ## 3. Bucle de mejora continua
 
@@ -62,7 +63,7 @@ Fuentes y destinos:
 - `session-close-observations` consolida aprendizajes al cerrar sesion
 - `review_bridge` inyecta memoria curada en el prompt del Manager
 - `code-rules.md` del Builder recoge reglas preventivas
-- `man-review-implementation` usa el inventario AP-01..AP-07 como checklist bloqueante
+- `man-review-implementation` usa el inventario AP-01..AP-12 como checklist bloqueante
 - `skills/_shared/anti-patterns.md` es la referencia compartida para Builder y Manager
 
 ## 4. Indice compacto
@@ -93,6 +94,7 @@ Fuentes y destinos:
 - `repo-compare` - support
 - `secure-existing-project` - support
 - `scaffold-python-project` - setup
+- `deep-research` - support
 
 ### Usuario
 - `grill-work-plan` - plan

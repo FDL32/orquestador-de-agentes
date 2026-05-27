@@ -68,3 +68,4 @@ tests/sandbox/probe_dirs/
 tests/sandbox/tmp*/
 .agent/runtime/memory/observations.jsonl.bak.*
 .agent/runtime/memory/CONSOLIDATION_REPORT.md
+.agent/runtime/research/

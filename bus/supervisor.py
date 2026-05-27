@@ -1046,6 +1046,30 @@ class SequentialTicketSupervisor:
             )
             return False
 
+    def requeue_ticket(self, ticket_id: str) -> bool:
+        """Advance the active ticket into a new Builder round and relaunch it."""
+        state = self.load_state()
+        if state.active_ticket != ticket_id:
+            return False
+
+        current_state = self._current_state(ticket_id)
+        if current_state in RELAUNCH_BLOCKED_STATES:
+            print(
+                f"[ticket-supervisor] Skipping Builder relaunch for {ticket_id}: "
+                f"ticket is {current_state.value}",
+                flush=True,
+            )
+            return False
+
+        state.loop_current_round += 1
+        self.save_state(state)
+        print(
+            f"[ticket-supervisor] Detected requeue for {ticket_id} "
+            f"(round {state.loop_current_round}). Relaunching Builder...",
+            flush=True,
+        )
+        return self._relaunch_builder(ticket_id)
+
     def run_once(self) -> bool:
         state = self.load_state()
 
@@ -1113,23 +1137,12 @@ class SequentialTicketSupervisor:
             ):
                 requeue_triggered = True
 
-        if requeue_triggered and state.active_ticket:
-            current_state = self._current_state(state.active_ticket)
-            if current_state in RELAUNCH_BLOCKED_STATES:
-                print(
-                    f"[ticket-supervisor] Skipping Builder relaunch for {state.active_ticket}: "
-                    f"ticket is {current_state.value}",
-                    flush=True,
-                )
-            else:
-                state.loop_current_round += 1
-                self.save_state(state)
-                changed = True
-                print(
-                    f"[ticket-supervisor] Detected requeue for {state.active_ticket} (round {state.loop_current_round}). Relaunching Builder...",
-                    flush=True,
-                )
-                self._relaunch_builder(state.active_ticket)
+        if (
+            requeue_triggered
+            and state.active_ticket
+            and self.requeue_ticket(state.active_ticket)
+        ):
+            changed = True
 
         if self.advance_if_review_ready():
             changed = True

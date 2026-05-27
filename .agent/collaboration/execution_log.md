@@ -1,79 +1,62 @@
-# Execution Log - WP-2026-156
+# Execution Log - WP-2026-157
 
 ## Metadata
-- **ID:** WP-2026-156
+- **ID:** WP-2026-157
 **Estado:** COMPLETED
-- **deliverable_type:** code
+- **deliverable_type:** mixed
 
 ## Agente Activo
 - **Rol:** BUILDER
 - **Accion:** IMPLEMENT
-- **Plan:** Manager feedback normalization and Builder relaunch handoff
+- **Plan:** ECC capability pack - deep-research skill, AP contract and minimal EDD
 
 ## Fases
-- Phase 0: normalize Manager review feedback in `bus/review_bridge.py`.
-- Phase 1: persist canonical `manager_feedback_WP-XXXX.md` in `scripts/manager_review_bridge.py`.
-- Phase 2: inject the normalized feedback into the Builder relaunch prompt from `scripts/launch_agent_terminals.ps1`.
-- Phase 3: isolate `tests/test_manager_review_bridge.py` from host git state.
-- Phase 4: validate the CHANGES -> requeue -> relaunch handoff.
+- Phase 1: crear y registrar la skill `deep-research`.
+- Phase 2: formalizar el contrato AP/observations y anadir el validador.
+- Phase 3: crear el harness minimo de regresion en `tests/evals/`.
 
 ## Registro de Implementacion
-- Preparacion canonica realizada para el nuevo ticket.
-- `PLAN_WP-2026-156.md` y `AUDIT_WP-2026-156.md` disponibles en `.agent/collaboration/`.
-- El protocolo de cierre de `WP-2026-155` quedo aprobado y separado del nuevo hotfix.
-- El objetivo operativo es hacer que el feedback del Manager sobreviva al requeue sin perder la evidencia cruda.
+- Ticket nuevo preparado para Builder con alcance ECC-inspired, pero acotado a utilidades reales del sistema.
+- La skill `deep-research` debe ser documental y no debe tocar el runtime de produccion.
+- El contrato AP se formaliza sobre `ap-schema.md` sin cambiar el formato de almacenamiento.
+- El harness EDD minimo debe permanecer aislado y opt-in.
+- `.gitignore` debe excluir `.agent/runtime/research/` para no ensuciar el working tree.
+- Cada eval file debe apuntar a un contrato concreto, no a una categoria abstracta.
 
-## Implementacion Completada
+## Calidad Esperada
+- `python scripts/discover_skills.py --json`
+- `python scripts/validate_observations.py`
+- `pytest -m eval tests/evals/ -q`
+- `python scripts/run_pytest_safe.py`
+- `python .agent/agent_controller.py --validate --json --force`
 
-### Fase 0: Normalizacion del feedback (COMPLETADA)
-- **Archivo:** `bus/review_bridge.py`
-- **Cambios:**
-  - Agregado metodo `_normalize_feedback()` que extrae secciones estructuradas (SUMMARY, BLOCKERS, SUGGESTIONS) para decisiones CHANGES.
-  - Para APPROVE/INSPECT, limpia ANSI codes y extrae el texto antes del patron DECISION:.
-  - `ReviewResult.feedback` ahora usa feedback normalizado en lugar de stdout crudo.
-  - `ReviewResult.stdout` permanece intacto como evidencia cruda.
+## Criterios de Aceptacion
+- [ ] `deep-research` aparece en el discovery de skills y queda registrado en `skills/README.md`.
+- [ ] `validate_observations.py` pasa con el `observations.jsonl` actual.
+- [ ] `pytest -m eval tests/evals/ -q` pasa con fixtures aisladas.
+- [ ] La suite safe principal sigue pasando sin depender de los evals.
+- [ ] La validacion canonica pasa sin errores.
 
-### Fase 1: Persistencia de feedback canonico (COMPLETADA)
-- **Archivo:** `scripts/manager_review_bridge.py`
-- **Estado:** Ya implementado - `_record_review()` escribe `manager_feedback_WP-XXXX.md` con:
-  - Feedback normalizado en el cuerpo principal.
-  - Bloque `Raw Review` con stdout crudo como evidencia.
-  - Metadatos: decision, parse_method, source, timestamp.
-
-### Fase 2: Inyeccion en relanzado de Builder (COMPLETADA)
-- **Archivo:** `scripts/launch_agent_terminals.ps1`
-- **Cambios:**
-  - `Get-CanonicalFilesForOpenCode()` ahora detecta y adjunta `manager_feedback_WP-XXXX.md` cuando existe.
-  - El archivo se agrega via `-f` al comando `opencode run`.
-  - Builder recibe el feedback normalizado automaticamente en requeue tras CHANGES.
-
-### Fase 3: Aislamiento de git en tests (COMPLETADA)
-- **Archivos:** `tests/test_manager_review_bridge.py`, `tests/test_review_bridge.py`
-- **Cambios:**
-  - Funcion helper `_make_review_prompt_bridge()` acepta parametro `monkeypatch` y aisla funciones de git.
-  - Tests que llaman a `_build_review_prompt()` ahora tienen monkeypatch para `_git_diff_stat`, `_git_provenance`, `_build_diff_for_files_likely_touched`.
-  - Funcion helper `_make_bridge()` en `TestDocumentationPromptWiring` y `TestCanonicalAntiPatternInventory` actualizada con aislamiento de git.
-  - Tests individuales actualizados para pasar `monkeypatch` a los helpers.
-
-### Quality Gates (COMPLETADAS)
-- **ruff check:** Todos los checks pasaron (7 errores auto-corregidos).
-- **pytest-safe:** 88 tests pasaron en 41.59s.
-  - `tests/test_manager_review_bridge.py`: 54 tests
-  - `tests/test_review_bridge.py`: 34 tests
-
-## Criterios de Aceptacion Verificados
-- [x] `raw_review` y `normalized_review` quedan separados por contrato.
-- [x] `ReviewResult.stdout` permanece intacto tras la normalizacion.
-- [x] El artefacto `.agent/collaboration/manager_feedback_WP-XXXX.md` se crea por ticket con metadatos utiles.
-- [x] Builder relanzado consume el feedback normalizado cuando el Manager emite `CHANGES`.
-- [x] Los tests del bridge no escapan del sandbox y no leen el repo anfitrion.
+## Evidencia de Implementacion
+- Fase 1 COMPLETADA: `skills/deep-research/SKILL.md`, `skills/deep-research/references/research-template.md`, `skills/README.md` actualizado.
+- Fase 2 COMPLETADA: `skills/_shared/ap-schema.md` formalizado con campos obligatorios/opcionales, `scripts/validate_observations.py` creado, `tests/unit/test_validate_observations.py` creado.
+- Fase 3 COMPLETADA: `pytest.ini` con marker `eval`, `tests/evals/__init__.py` y 4 modulos de tests creados (`test_eval_review_bridge.py`, `test_eval_guard_paths.py`, `test_eval_scope_gate.py`, `test_eval_requeue.py`).
+- Quality gates:
+  - `python scripts/validate_observations.py` -> `Validacion EXITOSA: runtime\\memory\\observations.jsonl es valido`
+  - `python -m pytest tests\\unit\\test_validate_observations.py tests\\evals\\test_eval_guard_paths.py tests\\evals\\test_eval_requeue.py -q` -> `59 passed`
+  - `python -m pytest -m eval tests\\evals\\ -q` -> `37 passed`
+  - `python scripts/run_pytest_safe.py` -> `257 passed`
+  - `python .agent/agent_controller.py --validate --json --force` -> `0 errors, 1 warning expected (BUILDER_EXIT invariant)`
+- Validacion canonica: `agent_controller --validate` pasa sin errores.
 
 
+Scope override: Files Likely Touched list includes all implemented files; scope gate detected directory paths instead of specific files. Affected files: C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\scripts\validate_observations.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\skills\deep-research, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\tests\evals, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\tests\unit\test_validate_observations.py
+Nota de alcance: los cambios en `.agent/hooks/guard_paths.py` y `bus/supervisor.py` son refactors de testabilidad necesarios para exponer `evaluate_tool_request()` y `requeue_ticket()`; el comportamiento externo se mantiene equivalente y los tests eval ejercitan esos contratos sin subprocess real ni bus de produccion.
 
-Scope override: WP-2026-156 Fase 3 requiere modificar test_review_bridge.py para aislar git en tests de _build_review_prompt, igual que test_manager_review_bridge.py. Affected files: C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\scripts\manager_review_bridge.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\tests\test_review_bridge.py
+Manager requested changes (1 rejections)
 
-Manager inspect: human review required
 
-Human resolution: resumed from HUMAN_GATE for a fresh review
+Scope override: WP-2026-157 hotfix/correcciones solicitadas por Manager y consolidacion de evidencia de review. Affected files: C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\collaboration\AUDIT_WP-2026-156.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\collaboration\PLAN_WP-2026-156.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\collaboration\_archive\plan_audit\AUDIT_WP-2026-156.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\collaboration\_archive\plan_audit\PLAN_WP-2026-156.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\hooks\guard_paths.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\bus\supervisor.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\scripts\validate_observations.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\skills\deep-research, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\tests\evals, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\tests\unit\test_validate_observations.py
 
-Manager approved canonical closeout for WP-2026-156
+
+Manager approved canonical closeout for WP-2026-157
