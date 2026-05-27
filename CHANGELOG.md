@@ -1,3 +1,47 @@
+# 2026-05-27 - v9.14.1 Session close: hardening, CHANGELOG completeness, audit cleanup
+
+### Changed
+- `skills/bui-self-audit/SKILL.md`: Added Paso 4b with three contract rules (reject speculative
+  risks, rerun tests+review after any fix, stop on 0 actionable findings). Removed duplicate
+  `run_pytest_safe.py` line in Paso 6.
+
+### Added
+- `.claude/security-patterns.json`: Per-edit pattern rules for `privada/` access, hardcoded
+  credential prefixes (`sk_live_`, `AKIA`, `xoxb-`…), and `pickle.load`. Preparation for
+  security-guidance plugin when stable CLI (≥2.1.144) is available.
+- `.claude/claude-security-guidance.md`: Project-specific guidance for model-backed security
+  reviews.
+
+---
+# 2026-05-27 - WP-2026-152 Fix --request-changes requeue deadlock + bridge stderr logging
+
+### Fixed
+- `agent_controller.py _handle_request_changes`: Added `pending_requeue` signal derived from
+  `events[-1]` to allow `--request-changes` when bus state is IN_PROGRESS due to a direct
+  `REVIEW_DECISION=changes` antecedent. Previously the guard rejected IN_PROGRESS
+  unconditionally, creating a deadlock: `_state_from_review_decision("changes")` → IN_PROGRESS
+  left no valid path for the bridge to re-queue.
+- `bus/review_bridge.py`: `subprocess.run(--request-changes)` now checks returncode and logs
+  non-zero exit to stderr. Previously captured output was silently discarded, hiding the deadlock.
+
+### Added
+- `tests/unit/test_request_changes_requeue.py`: 5 tests covering the `pending_requeue` signal,
+  generic IN_PROGRESS rejection, and UNKNOWN-state fallbacks.
+- `tests/unit/test_review_bridge_request_changes_logging.py`: 2 tests verifying stderr logging
+  and semantic neutrality of the logging change.
+
+---
+# 2026-05-27 - WP-2026-151 Retire legacy project_map path
+
+### Fixed
+- `agent_controller.py`: Removed runtime reference to `project_map.md` (legacy path). Stale
+  comment referencing removed `generate_project_map()` updated to reflect current project
+  scanner usage.
+- `tests/unit/test_controller_project_map_cleanup.py`: Replaced narrow string-match test with
+  generic non-comment-line grep so any future reintroduction of `project_map.md` in code is
+  caught automatically.
+
+---
 # 2026-05-27 - WP-2026-153 Add grill-with-docs skill
 
 ### Added

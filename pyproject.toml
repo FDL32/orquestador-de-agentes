@@ -1,6 +1,6 @@
 [project]
 name = "orquestacion-agentes"
-version = "9.14.0"
+version = "9.14.1"
 description = "Multi-agent orchestration system with Manager/Builder architecture"
 requires-python = ">=3.10,<3.14"
 authors = [

@@ -29,9 +29,9 @@ This is a **reference** setup, not a constraint. Swap any role for another backe
 
 ## Current state
 
-- **Version**: `v9.14.0`
-- **Status**: Stable. Pre-plan grilling skill added (WP-2026-153).
-- **Last work**: `WP-2026-153` — Add grill-with-docs skill for pre-plan interrogation.
+- **Version**: `v9.14.1`
+- **Status**: Stable. Session closed. Security hardening files added.
+- **Last work**: Session close — CHANGELOG completeness (WP-151/152), `.claude/` security patterns, `bui-self-audit` Paso 4b.
 - **Tests**: 255 passing. Validation 0 errors. Ruff clean. pip-audit clean.
 
 ### What changed since v9.9.0

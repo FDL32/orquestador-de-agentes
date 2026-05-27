@@ -1,0 +1,20 @@
+{
+  "patterns": [
+    {
+      "rule_name": "privada_path_access",
+      "regex": "privada[/\\\\]",
+      "reminder": "guard_paths blocks writes to privada/. Do not read or write there."
+    },
+    {
+      "rule_name": "hardcoded_token_prefix",
+      "substrings": ["sk_live_", "sk_test_", "AKIA", "xoxb-", "xoxp-"],
+      "reminder": "Hardcoded credential prefix. Load from environment variables."
+    },
+    {
+      "rule_name": "pickle_usage",
+      "substrings": ["pickle.loads", "pickle.load"],
+      "paths": ["**/src/**", "**/bus/**", "**/agent_system/**"],
+      "reminder": "pickle.load is unsafe with untrusted data. Use json or a safer format."
+    }
+  ]
+}

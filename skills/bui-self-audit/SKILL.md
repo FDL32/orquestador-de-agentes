@@ -111,6 +111,18 @@ Para tareas de nueva funcionalidad o creaciÃ³n de archivos: omitir este paso.
 
 ---
 
+### Paso 4b â Reglas de contract para review estructurado
+
+Si la tarea pasó por un review, o si el fix nació de una observación de review, endurece el cierre con estas reglas:
+
+- Rechaza edge cases irreales, riesgos especulativos y rewrites amplios.
+- Si un fix disparado por review cambia código, rerun de tests focalizados y rerun de la revisión estructurada.
+- Para en cuanto la revisión devuelve 0 findings accionables; no hagas una pasada extra solo para pulir el wording.
+
+Estas reglas refuerzan los pasos 1-4. No sustituyen la verificación tipo-específica ni la frescura documental.
+
+---
+
 ### Paso 5 â VerificaciÃ³n de frescura documental
 
 Antes de ejecutar gates de calidad, verifica que la documentaciÃ³n operativa estÃ¡ fresca y sincronizada:
@@ -127,9 +139,6 @@ Si hay drift â corrige la documentaciÃ³n antes de continuar. Frescura doc
 
 ```bash
 ruff check . --exclude .agent
-python scripts/run_pytest_safe.py
-
-# Fallback si el proyecto no incluye runner seguro
 python scripts/run_pytest_safe.py
 ```
 
