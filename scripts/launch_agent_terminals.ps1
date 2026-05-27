@@ -435,6 +435,7 @@ function Remove-StaleRuntimeArtifacts {
 
     $results = [ordered]@{
         BuilderLockRemoved = $false
+        SupervisorLockRemoved = $false
         ManagerPromptRemoved = 0
         BridgeStateRepaired = $false
         SupervisorStateRepaired = $false
@@ -463,6 +464,15 @@ function Remove-StaleRuntimeArtifacts {
     $builderLock = Repair-BuilderLockState -ProjectRoot $ProjectRoot -MaxAgeMinutes $BuilderLockTtlMinutes
     if ($null -eq $builderLock -and (Test-Path -LiteralPath (Join-Path $ProjectRoot '.agent\runtime\builder_lock.txt'))) {
         $results.BuilderLockRemoved = $true
+    }
+
+    # supervisor_lock.txt is a PID-based lock that becomes orphaned when the terminal
+    # is closed without clean shutdown. Remove unconditionally on fresh launch so that
+    # the supervisor's own acquire logic runs from a clean state.
+    $supervisorLockPath = Join-Path $ProjectRoot '.agent\runtime\supervisor_lock.txt'
+    if (Test-Path -LiteralPath $supervisorLockPath) {
+        Remove-Item -LiteralPath $supervisorLockPath -Force -ErrorAction SilentlyContinue
+        $results.SupervisorLockRemoved = $true
     }
 
     $tempDir = [System.IO.Path]::GetTempPath()
@@ -981,8 +991,8 @@ if (-not $ResumeBuilder) {
     }
 
     $artifactCleanup = Remove-StaleRuntimeArtifacts -ProjectRoot $ProjectRoot
-    if ($artifactCleanup.BuilderLockRemoved -or $artifactCleanup.ManagerPromptRemoved -gt 0 -or $artifactCleanup.BridgeStateRepaired -or $artifactCleanup.SupervisorStateRepaired) {
-        Write-Host "Limpieza de runtime: builder_lock=$($artifactCleanup.BuilderLockRemoved), prompts=$($artifactCleanup.ManagerPromptRemoved), bridge_state_reparado=$($artifactCleanup.BridgeStateRepaired), supervisor_state_reparado=$($artifactCleanup.SupervisorStateRepaired)"
+    if ($artifactCleanup.BuilderLockRemoved -or $artifactCleanup.SupervisorLockRemoved -or $artifactCleanup.ManagerPromptRemoved -gt 0 -or $artifactCleanup.BridgeStateRepaired -or $artifactCleanup.SupervisorStateRepaired) {
+        Write-Host "Limpieza de runtime: builder_lock=$($artifactCleanup.BuilderLockRemoved), supervisor_lock=$($artifactCleanup.SupervisorLockRemoved), prompts=$($artifactCleanup.ManagerPromptRemoved), bridge_state_reparado=$($artifactCleanup.BridgeStateRepaired), supervisor_state_reparado=$($artifactCleanup.SupervisorStateRepaired)"
     }
 
     # WP-2026-118: Preflight de imports criticos antes de abrir ventanas
