@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WP-2026-155
-**Estado:** READY_FOR_REVIEW
+**Estado:** COMPLETED
 - **deliverable_type:** code
 
 ## Agente Activo
@@ -49,3 +49,8 @@
 - Feedback normalization, relaunch prompt injection, and review transport hardening are tracked separately in WP-2026-156.
 
 Marked ready by Builder
+
+
+Scope override: Todos los archivos declarados en Files Likely Touched fueron tocados y commiteados en commits atomicos bad296b y 8f89f20. El scope gate compara working-tree vs HEAD y el diff esta limpio porque los cambios ya estan en HEAD.. Affected files: C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\agent_controller.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\agents_config.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\completion_checker.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\completion_common.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\hooks\stop_hook.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\runtime\memory\memory_helpers.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\session_tracker.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\runtime\ui_state_projector.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\scripts\archive_event_bus.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\scripts\builder_agent.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\scripts\check_deliverables_exist.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\scripts\local_audit.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\scripts\manager_review_bridge.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\scripts\memory_consolidate.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\scripts\run_gates_dispatch.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\scripts\run_pytest_safe.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\scripts\ticket_activity_monitor.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\scripts\ticket_supervisor.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\scripts\update_project_map.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\scripts\validate_authority.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\tests\conftest.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\tests\unit\test_project_root_resolution.py
+
+Manager approved canonical closeout for WP-2026-155

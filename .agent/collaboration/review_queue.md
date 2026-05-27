@@ -1870,3 +1870,97 @@ Options:
 {"type":"step_start","timestamp":1779894693616,"sessionID":"ses_196034e76ffeeDFNf1q2oARzaq","part":{"id":"prt_e69fdaeed001KgmPaQ9J7RHscV","messageID":"msg_e69fdaaee001o9LI1nrz1XbRGC","sessionID":"ses_196034e76ffeeDFNf1q2oARzaq","snapshot":"061fd0fb4d914007e362f2c2b2ebb240da296704","type":"step-start"}}
 {"type":"text","timestamp":1779894722494,"sessionID":"ses_196034e76ffeeDFNf1q2oARzaq","part":{"id":"prt_e69fe1ac1001WJlgrLRu5q185k","messageID":"msg_e69fdaaee001o9LI1nrz1XbRGC","sessionID":"ses_196034e76ffeeDFNf1q2oARzaq","type":"text","text":"## SUMMARY\nQuality gates are reported green, but the implementation still misses the CLI root-precedence contract and includes out-of-scope changes.\n\n## BLOCKERS\n- `scripts/manager_review_bridge.py:284-362` accepts `--project-root`, but `_PROJECT_ROOT = resolve_project_root()` is computed at import time before `main()` exports `AGENT_PROJECT_ROOT`. The flag is therefore ignored. Move root resolution until after CLI parsing or defer imports until the env var is set.\n- `scripts/launch_agent_terminals.ps1:365-385` is changed but not listed in `Files Likely Touched`, so the ticket exceeded the approved scope. Revert this change or amend the plan/whitelist before approval.\n\n## SUGGESTIONS\n- Add a regression test covering `manager_review_bridge.py --project-root ...` to prove the injected workspace wins.\n\nDECISION: CHANGES","time":{"start":1779894721217,"end":1779894722491},"metadata":{"openai":{"itemId":"msg_0e8d4de36f7e8d55016a1709917d688191ac2493b870db8aae","phase":"final_answer"}}}}
 {"type":"step_finish","timestamp":1779894722715,"sessionID":"ses_196034e76ffeeDFNf1q2oARzaq","part":{"id":"prt_e69fe2096001F9TaC71ofYwReu","reason":"stop","snapshot":"061fd0fb4d914007e362f2c2b2ebb240da296704","messageID":"msg_e69fdaaee001o9LI1nrz1XbRGC","sessionID":"ses_196034e76ffeeDFNf1q2oARzaq","type":"step-finish","tokens":{"total":60104,"input":3561,"output":189,"reasoning":3106,"cache":{"write":0,"read":53248}},"cost":0}}
+
+---
+
+### MANAGER REVIEW - 2026-05-27 19:58:33
+- **Plan ID:** WP-2026-155
+- **Decision:** TRANSPORT_FAILED
+- **Source:** manager backend exec review
+
+#### Summary
+EEXIST: file already exists, mkdir 'C:\Users\fdl\.config\opencode'
+    path: "C:\\Users\\fdl\\.config\\opencode",
+ syscall: "mkdir",
+   errno: -17,
+    code: "EEXIST"
+
+
+Bun v1.3.14 (Windows x64 baseline)
+
+---
+
+### MANAGER REVIEW - 2026-05-27 19:59:02
+- **Plan ID:** WP-2026-155
+- **Decision:** TRANSPORT_FAILED
+- **Source:** manager backend exec review
+
+#### Summary
+EEXIST: file already exists, mkdir 'C:\Users\fdl\.config\opencode'
+    path: "C:\\Users\\fdl\\.config\\opencode",
+ syscall: "mkdir",
+   errno: -17,
+    code: "EEXIST"
+
+
+Bun v1.3.14 (Windows x64 baseline)
+
+---
+
+### MANAGER REVIEW - 2026-05-27 20:00:35
+- **Plan ID:** WP-2026-155
+- **Decision:** TRANSPORT_FAILED
+- **Source:** manager backend exec review
+
+#### Summary
+Performing one time database migration, may take a few minutes...
+sqlite-migration:done
+Database migration complete.
+[91m[1mError: [0mModel not found: openai/gpt-5.4-mini. Did you mean: gpt-5.4-mini, gpt-5.4-mini-fast?
+[91m[1mError: [0m{
+  "name": "UnknownError",
+  "data": {
+    "message": "Unexpected server error. Check server logs for details.",
+    "ref": "err_1c75e373"
+  }
+}
+
+---
+
+### MANAGER REVIEW - 2026-05-27 20:04:14
+- **Plan ID:** WP-2026-155
+- **Decision:** TRANSPORT_FAILED
+- **Source:** manager backend exec review
+
+#### Summary
+Performing one time database migration, may take a few minutes...
+sqlite-migration:done
+Database migration complete.
+[91m[1mError: [0mModel not found: gpt-5.4-mini/.
+[91m[1mError: [0m{
+  "name": "UnknownError",
+  "data": {
+    "message": "Unexpected server error. Check server logs for details.",
+    "ref": "err_59a73771"
+  }
+}
+
+---
+
+### MANAGER REVIEW - 2026-05-27 20:06:24
+- **Plan ID:** WP-2026-155
+- **Decision:** TRANSPORT_FAILED
+- **Source:** manager backend exec review
+
+#### Summary
+Performing one time database migration, may take a few minutes...
+sqlite-migration:done
+Database migration complete.
+[91m[1mError: [0mModel not found: gpt-5.4-mini/.
+[91m[1mError: [0m{
+  "name": "UnknownError",
+  "data": {
+    "message": "Unexpected server error. Check server logs for details.",
+    "ref": "err_a87c514e"
+  }
+}
