@@ -251,7 +251,17 @@ class ReviewBridge:
         After: Returns an isolated environment for subprocess execution.
         """
         env = os.environ.copy()
-        scratch_home = Path(tempfile.mkdtemp(prefix="opencode-review-"))
+        tmp_root = Path(tempfile.gettempdir())
+        scratch_home = Path(tempfile.mkdtemp(prefix="opencode-review-", dir=tmp_root))
+
+        # Keep at most 10 scratch dirs; delete oldest by mtime when exceeded.
+        existing = sorted(
+            tmp_root.glob("opencode-review-*"),
+            key=lambda p: p.stat().st_mtime,
+        )
+        for old in existing[:-10]:
+            shutil.rmtree(old, ignore_errors=True)
+
         env["HOME"] = str(scratch_home)
         env["USERPROFILE"] = str(scratch_home)
         env["XDG_CONFIG_HOME"] = str(scratch_home / ".config")
