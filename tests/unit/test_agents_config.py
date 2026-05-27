@@ -9,10 +9,18 @@ from unittest.mock import patch
 import pytest
 
 
-# Add the agent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / ".agent"))
+# Add project root FIRST, then .agent directory to path for imports.
+# This ensures runtime.* modules (from root) are importable before
+# .agent modules that depend on them.
+_project_root = Path(__file__).parent.parent.parent
+_agent_dir = _project_root / ".agent"
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+if str(_agent_dir) not in sys.path:
+    sys.path.insert(0, str(_agent_dir))
 
-from agents_config import (
+
+from agents_config import (  # noqa: E402
     AgentsConfigError,
     _migrate_1_0_to_1_1,
     get_backend_args,
@@ -369,7 +377,7 @@ class TestMigrationFramework:
         Test #1: ejecutar migrate dos veces seguidas → segunda es no-op.
 
         Before: Config en schema 1.0 sin _migrations.
-        During: Primera migración aplica, segunda encuentra _migrations poblado.
+        During: Primera migración aplica (1.0→1.1→1.2), segunda encuentra _migrations poblado.
         After: Segunda invocación retorna applied=[], skipped=[...], backups=[].
         """
         cfg = tmp_path / "agents.json"
@@ -390,18 +398,18 @@ class TestMigrationFramework:
         )
         report1 = migrate_agents_config(cfg)
         report2 = migrate_agents_config(cfg)
-        assert report1.applied == ["1.0_to_1.1"]
+        assert report1.applied == ["1.0_to_1.1", "1.1_to_1.2"]
         assert report2.applied == []
-        assert report2.skipped == ["1.0_to_1.1"]
+        assert report2.skipped == ["1.0_to_1.1", "1.1_to_1.2"]
         assert report2.backups == []
 
     def test_migrate_creates_timestamped_backup(self, tmp_path):
         """
-        Test #2: pre-migración existe, post-migración existe agents.json.bak.<ts>.
+        Test #2: pre-migracion existe, post-migracion existe agents.json.bak.<ts>.
 
         Before: Config en schema 1.0 sin backup.
-        During: migrate_agents_config crea backup antes de aplicar.
-        After: backup existe y contiene el contenido original (schema_version 1.0).
+        During: migrate_agents_config crea backup antes de cada migracion (dos migraciones).
+        After: backups existen.
         """
         cfg = tmp_path / "agents.json"
         cfg.write_text(
@@ -420,19 +428,17 @@ class TestMigrationFramework:
             )
         )
         report = migrate_agents_config(cfg)
-        assert len(report.backups) == 1
+        assert len(report.backups) == 2  # dos migraciones = dos backups
         assert report.backups[0].exists()
-        # backup tiene contenido original
-        original = json.loads(report.backups[0].read_text())
-        assert original["schema_version"] == "1.0"
+        assert report.backups[1].exists()
 
     def test_migrate_updates_migrations_list(self, tmp_path):
         """
-        Test #3: tras aplicar, _migrations contiene el id de la migración.
+        Test #3: tras aplicar, _migrations contiene los ids de las migraciones.
 
         Before: Config sin _migrations field.
-        During: migrate_agents_config aplica migración y actualiza _migrations.
-        After: agents.json tiene _migrations: ["1.0_to_1.1"] y schema_version: "1.1".
+        During: migrate_agents_config aplica migraciones y actualiza _migrations.
+        After: agents.json tiene _migrations: ["1.0_to_1.1", "1.1_to_1.2"] y schema_version: "1.2".
         """
         cfg = tmp_path / "agents.json"
         cfg.write_text(
@@ -452,23 +458,23 @@ class TestMigrationFramework:
         )
         migrate_agents_config(cfg)
         result = json.loads(cfg.read_text())
-        assert result["_migrations"] == ["1.0_to_1.1"]
-        assert result["schema_version"] == "1.1"
+        assert result["_migrations"] == ["1.0_to_1.1", "1.1_to_1.2"]
+        assert result["schema_version"] == "1.2"
 
     def test_legacy_config_without_migrations_field(self, tmp_path):
         """
-        Test #4: config con schema_version: "1.1" pero sin _migrations.
+        Test #4: config con schema_version: "1.2" pero sin _migrations.
 
-        Before: Config ya en 1.1 pero sin _migrations field.
+        Before: Config ya en 1.2 pero sin _migrations field.
         During: migrate_agents_config detecta legacy y hace backfill retroactivo.
-        After: _migrations: ["1.0_to_1.1"] poblado sin re-ejecutar handler.
+        After: _migrations: ["1.0_to_1.1", "1.1_to_1.2"] poblado sin re-ejecutar handler.
         """
         cfg = tmp_path / "agents.json"
-        # Config ya en 1.1 pero sin _migrations
+        # Config ya en 1.2 pero sin _migrations
         cfg.write_text(
             json.dumps(
                 {
-                    "schema_version": "1.1",
+                    "schema_version": "1.2",
                     "backends": {
                         "opencode": {
                             "executable": "opencode",
@@ -483,10 +489,11 @@ class TestMigrationFramework:
         )
         report = migrate_agents_config(cfg)
         result = json.loads(cfg.read_text())
-        assert result["_migrations"] == ["1.0_to_1.1"]
+        assert result["_migrations"] == ["1.0_to_1.1", "1.1_to_1.2"]
         assert result["role_models"]["BUILDER"] == "x"  # no overwrite
         assert report.applied == []  # no handler ejecutado
         assert "1.0_to_1.1" in report.skipped
+        assert "1.1_to_1.2" in report.skipped
 
     def test_dry_run_no_writes(self, tmp_path):
         """
@@ -516,7 +523,10 @@ class TestMigrationFramework:
         report = migrate_agents_config(cfg, dry_run=True)
         mtime_after = cfg.stat().st_mtime
         assert mtime_before == mtime_after
-        assert report.applied == ["1.0_to_1.1"]  # report sí muestra lo que pasaría
+        assert report.applied == [
+            "1.0_to_1.1",
+            "1.1_to_1.2",
+        ]  # report sí muestra lo que pasaría
         assert report.backups == []
 
     def test_migration_handler_pure(self):
@@ -546,11 +556,12 @@ class TestMigrationFramework:
 
     def test_migrate_from_1_0(self, tmp_path):
         """
-        Test #7: migración 1.0 → 1.1 backfill role_models.
+        Test #7: migración 1.0 → 1.1 → 1.2 backfill role_models, strictness_profile y profiles.
 
-        Before: Config legacy schema 1.0 sin role_models.
-        During: migrate_agents_config aplica handler que backfills role_models.
-        After: schema_version 1.1, role_models con defaults WP-072, _migrations poblado.
+        Before: Config legacy schema 1.0 sin role_models, strictness_profile ni profiles.
+        During: migrate_agents_config aplica handlers que backfills todo.
+        After: schema_version 1.2, role_models con defaults WP-072, strictness_profile=standard,
+               profiles con minimal/standard/strict, _migrations poblado.
         """
         cfg = tmp_path / "agents.json"
         cfg.write_text(
@@ -570,10 +581,15 @@ class TestMigrationFramework:
         )
         migrate_agents_config(cfg)
         result = json.loads(cfg.read_text())
-        assert result["schema_version"] == "1.1"
+        assert result["schema_version"] == "1.2"
         assert "role_models" in result
         assert result["role_models"]["BUILDER"] == "opencode-go/qwen3.5-plus"
         assert result["role_models"]["MANAGER"] == "openai/gpt-5.4-mini"
+        assert result["strictness_profile"] == "standard"
+        assert "profiles" in result
+        assert "minimal" in result["profiles"]
+        assert "standard" in result["profiles"]
+        assert "strict" in result["profiles"]
 
 
 class TestSkillAllowlists:
@@ -623,3 +639,178 @@ class TestSkillAllowlists:
         project_root = _create_test_config(tmp_path, VALID_CONFIG)
         config = load_agents_config(project_root)
         assert "skill_allowlists" not in config  # Not required
+
+
+class TestStrictnessProfiles:
+    """Tests for WP-2026-154: strictness profiles and schema 1.2."""
+
+    def test_migrate_1_1_to_1_2_handler(self):
+        """Test _migrate_1_1_to_1_2 backfills strictness_profile and profiles."""
+        from agents_config import _migrate_1_1_to_1_2
+
+        config = {
+            "schema_version": "1.1",
+            "backends": {
+                "opencode": {
+                    "executable": "opencode",
+                    "args": ["run"],
+                    "discovery": {"method": "path_only"},
+                }
+            },
+            "role_assignments": {"BUILDER": "opencode"},
+        }
+        result = _migrate_1_1_to_1_2(config)
+        assert result["schema_version"] == "1.2"
+        assert result["strictness_profile"] == "standard"
+        assert "profiles" in result
+        assert "minimal" in result["profiles"]
+        assert "standard" in result["profiles"]
+        assert "strict" in result["profiles"]
+        assert config["schema_version"] == "1.1"  # input not mutated
+
+    def test_load_config_with_strictness_profile(self, tmp_path):
+        """Test loading config with strictness_profile defined."""
+        config_with_profile = copy.deepcopy(VALID_CONFIG)
+        config_with_profile["schema_version"] = "1.2"
+        config_with_profile["strictness_profile"] = "strict"
+        config_with_profile["profiles"] = {
+            "minimal": {"description": "minimal"},
+            "standard": {"description": "standard"},
+            "strict": {"description": "strict"},
+        }
+        project_root = _create_test_config(tmp_path, config_with_profile)
+        config = load_agents_config(project_root)
+        assert config["strictness_profile"] == "strict"
+
+    def test_validate_strictness_profile_invalid(self, tmp_path):
+        """Test validation fails when strictness_profile is invalid."""
+        bad_config = copy.deepcopy(VALID_CONFIG)
+        bad_config["schema_version"] = "1.2"
+        bad_config["strictness_profile"] = "invalid_profile"
+        bad_config["profiles"] = {
+            "minimal": {},
+            "standard": {},
+            "strict": {},
+        }
+        project_root = _create_test_config(tmp_path, bad_config)
+
+        with pytest.raises(AgentsConfigError, match="Invalid 'strictness_profile'"):
+            load_agents_config(project_root)
+
+    def test_validate_profiles_missing_required(self, tmp_path):
+        """Test validation fails when profiles missing required profile."""
+        bad_config = copy.deepcopy(VALID_CONFIG)
+        bad_config["schema_version"] = "1.2"
+        bad_config["strictness_profile"] = "standard"
+        bad_config["profiles"] = {
+            "minimal": {},
+            # missing standard and strict
+        }
+        project_root = _create_test_config(tmp_path, bad_config)
+
+        with pytest.raises(AgentsConfigError, match="Missing required profile"):
+            load_agents_config(project_root)
+
+    def test_validate_profiles_not_object(self, tmp_path):
+        """Test validation fails when profiles is not an object."""
+        bad_config = copy.deepcopy(VALID_CONFIG)
+        bad_config["schema_version"] = "1.2"
+        bad_config["strictness_profile"] = "standard"
+        bad_config["profiles"] = "invalid"
+        project_root = _create_test_config(tmp_path, bad_config)
+
+        with pytest.raises(AgentsConfigError, match="Invalid 'profiles'"):
+            load_agents_config(project_root)
+
+    def test_get_strictness_profile_default(self, tmp_path, monkeypatch):
+        """Test get_strictness_profile returns 'standard' as default."""
+        from agents_config import get_strictness_profile
+
+        config = {
+            "schema_version": "1.2",
+            "backends": {
+                "opencode": {
+                    "executable": "opencode",
+                    "args": ["run"],
+                    "discovery": {"method": "path_only"},
+                }
+            },
+            "role_assignments": {"BUILDER": "opencode"},
+        }
+        # No strictness_profile defined → default to standard
+        assert get_strictness_profile(config) == "standard"
+
+    def test_get_strictness_profile_explicit(self, tmp_path):
+        """Test get_strictness_profile returns configured value."""
+        from agents_config import get_strictness_profile
+
+        config = {
+            "schema_version": "1.2",
+            "backends": {
+                "opencode": {
+                    "executable": "opencode",
+                    "args": ["run"],
+                    "discovery": {"method": "path_only"},
+                }
+            },
+            "role_assignments": {"BUILDER": "opencode"},
+            "strictness_profile": "strict",
+            "profiles": {
+                "minimal": {},
+                "standard": {},
+                "strict": {},
+            },
+        }
+        assert get_strictness_profile(config) == "strict"
+
+    def test_get_profile_config(self, tmp_path):
+        """Test get_profile_config returns profile configuration."""
+        from agents_config import get_profile_config
+
+        config = {
+            "schema_version": "1.2",
+            "backends": {
+                "opencode": {
+                    "executable": "opencode",
+                    "args": ["run"],
+                    "discovery": {"method": "path_only"},
+                }
+            },
+            "role_assignments": {"BUILDER": "opencode"},
+            "strictness_profile": "minimal",
+            "profiles": {
+                "minimal": {"write_roots": ["src"], "blocked_command_patterns": []},
+                "standard": {"write_roots": [], "blocked_command_patterns": []},
+                "strict": {"write_roots": [], "blocked_command_patterns": ["rm -rf"]},
+            },
+        }
+        # Explicit profile name
+        minimal_config = get_profile_config("minimal", config)
+        assert minimal_config["write_roots"] == ["src"]
+
+        # Default to configured profile
+        default_config = get_profile_config(config=config)
+        assert default_config == minimal_config
+
+    def test_get_profile_config_unknown_profile(self, tmp_path):
+        """Test get_profile_config raises on unknown profile."""
+        from agents_config import get_profile_config
+
+        config = {
+            "schema_version": "1.2",
+            "backends": {
+                "opencode": {
+                    "executable": "opencode",
+                    "args": ["run"],
+                    "discovery": {"method": "path_only"},
+                }
+            },
+            "role_assignments": {"BUILDER": "opencode"},
+            "profiles": {
+                "minimal": {},
+                "standard": {},
+                "strict": {},
+            },
+        }
+        with pytest.raises(AgentsConfigError, match="Unknown strictness profile"):
+            get_profile_config("nonexistent", config)

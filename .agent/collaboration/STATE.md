@@ -1,3 +1,3 @@
-# State - WP-2026-153
+# State - WP-2026-154
 
-Estado actual: COMPLETED
+Estado actual: READY_TO_CLOSE

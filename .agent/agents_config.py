@@ -223,6 +223,49 @@ def _validate_config(config: dict, config_path: Path) -> None:
     # Check skill_allowlists (optional, retrocompatible)
     _validate_skill_allowlists(config, config_path)
 
+    # Check strictness_profile and profiles (schema 1.2+, retrocompatible)
+    _validate_strictness_profiles(config, config_path)
+
+
+def _validate_strictness_profiles(config: dict, config_path: Path) -> None:
+    """Validate the strictness_profile and profiles section (schema 1.2+, retrocompatible).
+
+    Before: strictness_profile no existía; fallback a standard.
+    During: Valida que strictness_profile sea un valor conocido (minimal, standard, strict)
+            y que profiles sea un objeto con las tres claves requeridas.
+    After: Permite configuracion vacia o omitida (retrocompatible); falla si hay
+           valores invalidos explícitamente declarados.
+    """
+    known_profiles = {"minimal", "standard", "strict"}
+
+    # strictness_profile es opcional para retrocompatibilidad; default = standard
+    if "strictness_profile" in config:
+        profile = config["strictness_profile"]
+        if profile not in known_profiles:
+            raise AgentsConfigError(
+                f"Invalid 'strictness_profile' in {config_path}: must be one of {known_profiles}, got '{profile}'"
+            )
+
+    # profiles es opcional para retrocompatibilidad
+    if "profiles" in config:
+        profiles = config["profiles"]
+        if not isinstance(profiles, dict):
+            raise AgentsConfigError(
+                f"Invalid 'profiles' in {config_path}: must be an object"
+            )
+        # Validar que las claves conocidas estén presentes si profiles existe
+        for profile_name in known_profiles:
+            if profile_name not in profiles:
+                raise AgentsConfigError(
+                    f"Missing required profile '{profile_name}' in profiles"
+                )
+        # Validar que cada perfil tenga estructura básica
+        for profile_name, profile_config in profiles.items():
+            if not isinstance(profile_config, dict):
+                raise AgentsConfigError(
+                    f"Invalid profile '{profile_name}' in profiles: must be an object"
+                )
+
 
 def _validate_backend(name: str, backend: dict, config_path: Path) -> None:
     """Validate a single backend configuration."""
@@ -389,6 +432,62 @@ def get_model_for_role(role: str, config: dict | None = None) -> str | None:
     return role_models.get(role)
 
 
+def get_strictness_profile(config: dict | None = None) -> str:
+    """
+    Get the active strictness profile name.
+
+    Returns the configured strictness_profile or 'standard' as default
+    for backward compatibility.
+
+    Args:
+        config: Optional pre-loaded configuration. If None, loads from file.
+
+    Returns:
+        The strictness profile name ('minimal', 'standard', or 'strict').
+
+    Raises:
+        AgentsConfigError: If strictness_profile is invalid.
+    """
+    if config is None:
+        config = load_agents_config()
+
+    return config.get("strictness_profile", "standard")
+
+
+def get_profile_config(
+    profile_name: str | None = None, config: dict | None = None
+) -> dict:
+    """
+    Get the configuration for a specific strictness profile.
+
+    Args:
+        profile_name: Optional profile name. If None, uses the configured
+                      strictness_profile or 'standard' as default.
+        config: Optional pre-loaded configuration. If None, loads from file.
+
+    Returns:
+        The profile configuration dictionary with keys like
+        'write_roots', 'blocked_command_patterns', etc.
+
+    Raises:
+        AgentsConfigError: If profile is unknown.
+    """
+    if config is None:
+        config = load_agents_config()
+
+    if profile_name is None:
+        profile_name = config.get("strictness_profile", "standard")
+
+    profiles = config.get("profiles", {})
+    if profile_name not in profiles:
+        raise AgentsConfigError(
+            f"Unknown strictness profile '{profile_name}'. "
+            f"Available profiles: {list(profiles.keys())}"
+        )
+
+    return profiles[profile_name]
+
+
 def _migrate_1_0_to_1_1(config: dict) -> dict:
     """
     Pure migration handler 1.0 → 1.1.
@@ -409,12 +508,53 @@ def _migrate_1_0_to_1_1(config: dict) -> dict:
     return new
 
 
+def _migrate_1_1_to_1_2(config: dict) -> dict:
+    """
+    Pure migration handler 1.1 → 1.2.
+
+    Before: Config con schema_version "1.1" sin strictness_profile ni profiles.
+    During: Backfills strictness_profile = "standard" y profiles map con
+            minimal, standard, strict si faltan.
+    After: Retorna nuevo dict con schema_version "1.2", strictness_profile
+           y profiles populated.
+    """
+    new = dict(config)
+    new["schema_version"] = "1.2"
+    if "strictness_profile" not in new:
+        new["strictness_profile"] = "standard"
+    if "profiles" not in new:
+        new["profiles"] = {
+            "minimal": {
+                "description": "Solo la superficie sensible minima",
+                "write_roots": [],
+                "blocked_command_patterns": [],
+            },
+            "standard": {
+                "description": "Replica la proteccion actual como default",
+                "write_roots": [],
+                "blocked_command_patterns": [],
+            },
+            "strict": {
+                "description": "Endurece el guard sin bloquear superficies canonicas vivas",
+                "write_roots": [],
+                "blocked_command_patterns": [],
+            },
+        }
+    return new
+
+
 MIGRATIONS: list[Migration] = [
     Migration(
         id="1.0_to_1.1",
         from_version="1.0",
         to_version="1.1",
         apply=_migrate_1_0_to_1_1,
+    ),
+    Migration(
+        id="1.1_to_1.2",
+        from_version="1.1",
+        to_version="1.2",
+        apply=_migrate_1_1_to_1_2,
     ),
     # Future migrations appended chronologically here.
 ]

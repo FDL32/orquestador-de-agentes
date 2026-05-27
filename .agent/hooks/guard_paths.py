@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Guard paths hook - minimal stub for TICKET-014 consolidation"""
+"""Guard paths hook - profile-aware security guard for PreToolUse events."""
 
 from __future__ import annotations
 
@@ -200,6 +200,57 @@ if __name__ == "__main__":
     except json.JSONDecodeError:
         data = {}
 
-    # For TICKET-014, allow all file operations (we're consolidating)
-    print(json.dumps({"continue": True}))
+    # Load agents.json directly (do not import agents_config.py).
+    # GUARD_PATHS_CONFIG env var overrides the path — used in tests.
+    _config_override = os.environ.get("GUARD_PATHS_CONFIG")
+    config_path = (
+        Path(_config_override)
+        if _config_override
+        else Path(__file__).resolve().parent.parent / "config" / "agents.json"
+    )
+    config = _read_json(config_path)
+
+    # Resolve strictness profile — fail-closed on config corruption.
+    # Legacy configs (no strictness_profile / no profiles key) get base protection only.
+    # Configs that declare both keys must be internally consistent; mismatch → block.
+    profile_name = config.get("strictness_profile")
+    profiles = config.get("profiles")
+
+    if profile_name is not None and profiles is not None:
+        profile_config = profiles.get(profile_name)
+        if not isinstance(profile_config, dict):
+            print(
+                f"guard_paths: perfil '{profile_name}' no encontrado en profiles — config invalida",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+    else:
+        profile_config = {}
+
+    # Build allowlist from profile
+    allowlist = {
+        "write_roots": profile_config.get("write_roots", []),
+        "blocked_command_patterns": profile_config.get("blocked_command_patterns", []),
+    }
+
+    # Claude Code PreToolUse sends: {"tool_name": "...", "tool_input": {...}}
+    tool_input = data.get("tool_input", {})
+    if isinstance(tool_input, dict):
+        # Check file paths (Write, Edit tools)
+        paths = _tool_paths(tool_input)
+        for path in paths:
+            blocked, reason = _is_protected_path(path, allowlist, config)
+            if blocked:
+                print(f"guard_paths: {reason}", file=sys.stderr)
+                sys.exit(2)
+
+        # Check shell commands (Bash tool sends command inside tool_input)
+        command = tool_input.get("command", "")
+        if command:
+            blocked, reason = _is_blocked_command(command, allowlist)
+            if blocked:
+                print(f"guard_paths: {reason}", file=sys.stderr)
+                sys.exit(2)
+
+    # All checks passed
     sys.exit(0)
