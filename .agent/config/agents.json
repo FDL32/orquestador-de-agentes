@@ -79,7 +79,7 @@
   },
   "role_models": {
     "BUILDER": "opencode-go/qwen3.5-plus",
-    "MANAGER": "opencode-go/qwen3.5-plus"
+    "MANAGER": "github-copilot/gpt-5.4-mini"
   },
   "manager_review": {
     "timeout_seconds": 180,
