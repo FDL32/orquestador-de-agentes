@@ -1,21 +1,20 @@
-# Execution Log - WP-2026-153
+# Execution Log - WP-2026-154
 
 ## Metadata
-- **ID:** WP-2026-153
-**Estado:** COMPLETED
-- **deliverable_type:** documentation
+- **ID:** WP-2026-154
+**Estado:** READY_FOR_REVIEW
+- **deliverable_type:** code
 
 ## Agente Activo
 - **Rol:** BUILDER
 - **Accion:** IMPLEMENT
-- **Plan:** Add grill-with-docs skill
+- **Plan:** Strictness profiles and live guard_paths activation
 
 ## Fases
-- Phase 1: create `skills/grill-work-plan/SKILL.md` with explicit triggers (`/grill-plan`, `/grill`, `grill-wp`), the ordered workflow, optional root-level `CONTEXT.md` handling, one-question-at-a-time flow, ADR criteria, and the exact completion handshake.
-- Phase 2: register the new skill in `skills/README.md`.
-- Phase 3: update `README.md`, `PROJECT.md`, and `CHANGELOG.md` so the new pre-plan grilling step is visible.
-- Phase 4: keep any `man-create-work-plan` integration optional and out of the hot path.
-- Phase 5: refresh project metadata to reflect the new active cycle.
+- Phase 0: verify `pytest --collect-only` on the target tests and fix import-path precedence in `tests/conftest.py` if needed.
+- Phase 1: add `strictness_profile` and the `profiles` map in `agents.json` with a backward-compatible migration to 1.2.
+- Phase 2: connect `guard_paths.py` to its real guard logic in `__main__`, keep the profile lookup self-contained, and make the hook speak via exit codes + stderr.
+- Phase 3: validate the new schema and runtime behavior in `agents_config.py` and the hook tests, including the strict-mode contract.
 
 ## Registro de Implementacion
 
@@ -23,40 +22,43 @@
 - `work_plan.md`: ticket approved for the new cycle.
 - `STATE.md`: current canonical state set to IN_PROGRESS.
 - `TURN.md`: Builder turn prepared.
-- `PLAN_WP-2026-153.md`: scope and strategy defined.
-- `AUDIT_WP-2026-153.md`: audit criteria defined.
+- `PLAN_WP-2026-154.md`: scope and strategy defined.
+- `AUDIT_WP-2026-154.md`: audit criteria defined.
 
 ### Calidad Esperada
-- `python skills/validate_all.py`
+- `python scripts/run_pytest_safe.py --collect-only tests/test_guard_paths.py tests/unit/test_agents_config.py`
+- `python scripts/run_pytest_safe.py tests/test_guard_paths.py tests/unit/test_agents_config.py -q`
+- `ruff check .agent/hooks/guard_paths.py .agent/agents_config.py tests/test_guard_paths.py tests/unit/test_agents_config.py`
 - `python .agent/agent_controller.py --validate --json --force`
 
 ## Criterios de Aceptacion
-- [x] The repository contains a new `skills/grill-work-plan/SKILL.md` that describes the interrogation workflow.
-- [x] The skill treats `PROJECT.md` and `MEMORY.md` as the default context inputs and keeps root-level `CONTEXT.md` optional.
-- [x] The skill emits the exact completion handshake line `> ✅ Grill completo. Términos resueltos: N. Puedes crear el WP con /plan.`
-- [x] The skill documentation includes the three ADR criteria from mattpocock.
-- [x] The skill is discoverable from `skills/README.md` and documented in the repo notes.
-- [x] No mandatory code-path integration is introduced into `man-create-work-plan`.
-- [x] Validation passes without new warnings or errors.
+- [x] `guard_paths.py` no devuelve `{"continue": True}` incondicionalmente en `__main__`.
+- [x] `guard_paths.py` usa `exit(0)` / `exit(2)` y escribe la razon de bloqueo en `stderr`.
+- [x] `guard_paths.py` lee `agents.json` directamente y no depende de `agents_config.py` para seleccionar el perfil.
+- [x] `agents.json` version 1.2 soporta `strictness_profile` y migra configs legacy a `standard`.
+- [x] `minimal`, `standard` y `strict` tienen comportamiento distinto y testeado.
+- [x] `pytest --collect-only` sobre `tests/test_guard_paths.py` y `tests/unit/test_agents_config.py` sale limpio antes de ejecutar los tests.
+- [x] `execution_log.md` y otras superficies canonicas vivas no quedan bloqueadas por defecto en modo strict.
+- [x] Los tests y la validacion canonica pasan sin regresiones.
 
 ## Evidencia de Implementacion
 
 ### Files Modified
-- `skills/grill-work-plan/SKILL.md`: Created new pre-plan interrogation skill with explicit triggers, ordered workflow, CONTEXT.md handling, one-question-at-a-time flow, ADR criteria, and completion handshake.
-- `skills/README.md`: Registered new skill in catalog table and index.
-- `README.md`: Updated skills count, current state, and changelog table.
-- `PROJECT.md`: Updated state to WP-2026-153 COMPLETED.
-- `CHANGELOG.md`: Added WP-2026-153 entry.
+- `tests/conftest.py`: Fixed import path precedence to add PROJECT_ROOT before .agent/ for runtime.* module resolution.
+- `tests/unit/test_agents_config.py`: Fixed import path precedence, updated migration tests for schema 1.2, added TestStrictnessProfiles class with 9 new tests.
+- `.agent/config/agents.json`: Upgraded to schema_version 1.2, added strictness_profile=standard and profiles map with minimal/standard/strict.
+- `.agent/agents_config.py`: Added _migrate_1_1_to_1_2 handler, _validate_strictness_profiles validator, get_strictness_profile and get_profile_config helpers.
+- `.agent/hooks/guard_paths.py`: Replaced stub __main__ with real hook logic that reads agents.json directly, loads profile config, checks tool_calls and shell_command, exits with 0 (allow) or 2 (block) with reason on stderr.
+- `tests/test_guard_paths.py`: Added TestGuardHookProfiles class with 4 new tests for hook behavior with profiles.
 
 ### Test Results
-- `python skills/validate_all.py`: 23 valid skills, 0 invalid (grill-work-plan validated successfully).
-- `python .agent/agent_controller.py --validate --json --force`: 0 errors, 0 warnings.
-- `python scripts/run_pytest_safe.py`: 255 passed in 37.34s.
+- pytest --collect-only: 83 tests collected (was 70, added 13 new tests for strictness profiles and hook behavior)
+- pytest -q: 83 passed in 0.51s
+- ruff check: 0 errors (1 auto-fixed)
+- ruff format: 3 files reformatted
 
 ### Validation Results
-- All quality gates pass: ruff clean, pytest clean, pip-audit clean.
-- New skill follows existing skill structure and conventions.
-- No new dependencies added (documentation-only skill).
+- python .agent/agent_controller.py --validate --json --force: no errors
 
 ### Read-Only Verification
 - `STATE.md`: Ready for handoff.
@@ -64,12 +66,11 @@
 - `execution_log.md`: Updated with implementation evidence.
 
 ### Implementation Notes
-- Skill is documentation-only (no Python runtime).
-- CONTEXT.md remains optional and is only introduced when it adds value as a glossary.
-- Integration with man-create-work-plan is opt-in, not mandatory.
-- Completion handshake is exact: `> ✅ Grill completo. Términos resueltos: N. Puedes crear el WP con /plan.`
+- Phase 0: Fixed import path precedence in tests/conftest.py and tests/unit/test_agents_config.py to resolve runtime.project_root correctly.
+- Phase 1: Added strictness_profile and profiles to agents.json with schema 1.2, migration 1.1→1.2 backfills standard profile.
+- Phase 2: guard_paths.py now reads agents.json directly (no agents_config.py import), loads profile config, and uses real guard logic with exit codes 0/2.
+- Phase 3: Added comprehensive tests for migration 1.1→1.2, strictness profile validation, profile helpers, and hook behavior.
+- execution_log.md and other canonical live surfaces remain unblocked by default in all profiles.
 
 
-Scope override: Added PLAN/AUDIT files and execution_log.md to whitelist. Affected files: C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\skills\grill-work-plan, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\skills\grill-work-plan\SKILL.md
-
-Manager approved canonical closeout for WP-2026-153
+Scope override: AUDIT and PLAN files are read-only audit artifacts, not implementation files. conftest.py is in Files Likely Touched whitelist.. Affected files: C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\collaboration\AUDIT_WP-2026-154.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\collaboration\PLAN_WP-2026-154.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\tests\conftest.py

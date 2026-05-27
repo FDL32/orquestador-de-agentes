@@ -17,9 +17,14 @@ TEST_RUNTIME_ROOT = PROJECT_ROOT / "tests" / "sandbox" / "test_runtime"
 SESSION_RUNTIME_ROOT = TEST_RUNTIME_ROOT / f"session_{os.getpid()}"
 
 
-# Add .agent directory to path so tests can import bus modules.
+# Add project root FIRST, then .agent directory to path so tests can import
+# both runtime.* modules (from root) and bus modules (from .agent/).
+# This fixes the import precedence issue for agents_config.py which imports
+# runtime.project_root. Insert order matters: last insert wins at position 0.
 if str(AGENT_DIR) not in sys.path:
     sys.path.insert(0, str(AGENT_DIR))
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 
 class ProjectTmpPathFactory:

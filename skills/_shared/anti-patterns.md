@@ -33,3 +33,16 @@ Este archivo es la fuente compartida de referencia para Builder y Manager.
 ## AP-08 - Test coverage drift
 - El Builder ejecuta el suite existente, ve que pasa, y declara calidad satisfecha — pero las funciones nuevas introducidas en el diff no tienen ningún test directo.
 - Efecto: el suite pasa sin probar el código nuevo; los bugs en las funciones nuevas son invisibles.
+
+## AP-09 - Protocol key assumption (implementación contra contrato asumido)
+- El Builder implementa un handler de protocolo externo usando nombres de clave supuestos en lugar de verificar el contrato real del protocolo.
+- La misma suposición errónea se propaga a los tests, que usan el mismo formato incorrecto — producción y tests se refuerzan mutuamente en el error.
+- Efecto: el handler nunca procesa nada real; funciona como no-op encubierto.
+
+## AP-10 - Test surrogate (test que prueba un sustituto, no el código real)
+- Los tests de integración crean un script o clase sintética que imita el comportamiento del código bajo test, y validan ese sustituto en lugar del módulo real.
+- Efecto: los tests pasan mientras el código real tiene bugs críticos no detectados.
+
+## AP-11 - Security gate fail-open on config error
+- Un componente de seguridad o guarda retorna "allow" cuando encuentra configuración inválida, desconocida o parcialmente migrada, en lugar de bloquear.
+- Efecto: la corrupción de config silencia la protección en lugar de activarla.

@@ -52,6 +52,9 @@
 - [ ] AP-06 Validator evidence missing: el execution log muestra comando, salida y resultado limpio
 - [ ] AP-07 Scaffolding misclassified as code: los tickets de solo estructura se tratan como documentation
 - [ ] AP-08 Test coverage drift: cada funcion nueva del diff tiene al menos un test directo; suite global pasando no es evidencia suficiente
+- [ ] AP-09 Protocol key assumption: si el diff implementa un handler de payload externo, verificar que las claves leídas coinciden con la spec real del protocolo (no nombres supuestos)
+- [ ] AP-10 Test surrogate: los tests de integración invocan el módulo/script real, no un sustituto sintético creado en tmp_path; si el test no importa ni llama al artefacto real, es un test del sustituto
+- [ ] AP-11 Security gate fail-open: cualquier guarda de seguridad que encuentre config inválida o perfil desconocido debe hacer exit(2)/raise, nunca fallback silencioso a modo permisivo
 
 ## Aprobacion y Nit
 - [ ] Aprobar cuando el cambio mejora la salud del codigo, aunque no sea perfecto: https://google.github.io/eng-practices/review/reviewer/standard.html

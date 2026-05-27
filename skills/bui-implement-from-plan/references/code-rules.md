@@ -254,6 +254,65 @@ Un ticket cuyo único entregable son directorios vacíos, `.gitkeep`, archivos d
 
 Regla: si no hay ningún archivo `.py` nuevo o modificado entre los entregables declarados, el tipo no es `code`.
 
+### AP-09 — Protocol key assumption (implementación contra contrato asumido)
+
+Cuando implementes un handler que lee un payload externo (hook, webhook, IPC), verifica el contrato real del protocolo antes de escribir cualquier código. No uses nombres de clave supuestos.
+
+❌
+```python
+# Asumido — nunca verificado contra la spec real
+tool_calls = data.get("tool_calls", [])
+shell_command = data.get("shell_command", "")
+```
+✅
+```python
+# Claude Code PreToolUse real: {"tool_name": "...", "tool_input": {...}}
+tool_input = data.get("tool_input", {})
+command = tool_input.get("command", "")
+```
+
+Regla: antes de leer cualquier clave de un payload externo, localiza la documentación o spec del protocolo y verifica el nombre exacto. Si el handler siempre sale con exit(0), probablemente está leyendo la clave equivocada.
+
+### AP-10 — Test surrogate (test que prueba un sustituto, no el código real)
+
+Los tests de integración deben invocar el módulo o script real, no un sustituto sintético creado en tmp_path que imita el comportamiento esperado.
+
+❌
+```python
+# Crea un script falso que "simula" guard_paths y lo testea
+hook_script = tmp_path / "test_hook.py"
+hook_script.write_text("... lógica imitada ...")
+result = subprocess.run([sys.executable, str(hook_script)], ...)
+```
+✅
+```python
+# Invoca el script real con el payload en formato correcto
+HOOK_SCRIPT = Path(__file__).parent.parent / ".agent" / "hooks" / "guard_paths.py"
+result = subprocess.run([sys.executable, str(HOOK_SCRIPT)], input=json.dumps(payload), ...)
+```
+
+Regla: si el test no importa ni invoca el módulo real bajo test, no es un test de integración — es un test del sustituto. Busca la ruta al artefacto real y úsala directamente.
+
+### AP-11 — Security gate fail-open on config error
+
+Cualquier componente que actúe como guarda de seguridad debe fallar cerrado (block) ante configuración inválida, perfil desconocido o ausencia de datos esperados. Nunca hacer fallback silencioso a un modo permisivo.
+
+❌
+```python
+# Fallback silencioso a "standard" aunque el perfil no exista
+profile_config = profiles.get(profile_name, profiles.get("standard", {}))
+```
+✅
+```python
+# Fail-closed: si el perfil declarado no existe, bloquear y reportar
+profile_config = profiles.get(profile_name)
+if not isinstance(profile_config, dict):
+    print(f"guard: perfil '{profile_name}' no encontrado — config invalida", file=sys.stderr)
+    sys.exit(2)
+```
+
+Regla: en gates de seguridad, el camino de error es siempre block, no allow. La degradación silenciosa es más peligrosa que un bloqueo explicable.
+
 ### AP-08 — Test coverage drift (funciones nuevas sin tests directos)
 
 Ejecutar el suite existente y ver que pasa no es evidencia de cobertura si las funciones nuevas introducidas en el diff no aparecen en ningún test.
