@@ -1,12 +1,12 @@
 # Project: orquestador_de_agentes
 **Version:** v9.14.0
-**State:** WP-2026-150 COMPLETED (project scanner with import map)
+**State:** WP-2026-152 IN_PROGRESS (repair request-changes requeue handoff)
 
 ## Current Cycle
 
-- Active ticket: none (WP-2026-150 completed on 2026-05-27).
-- Mode: idle - waiting for the next approved work plan.
-- Outcome: destination projects now have a token-efficient scanner path with real importMap extraction.
+- Active ticket: WP-2026-152 IN_PROGRESS (2026-05-27).
+- Mode: active - Builder is repairing the request-changes requeue handoff.
+- Outcome: `--request-changes` must requeue only when an immediate `REVIEW_DECISION=changes` antecedent exists; bridge stderr logging remains in place.
 
 ## Current readiness
 

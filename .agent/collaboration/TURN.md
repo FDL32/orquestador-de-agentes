@@ -1,6 +1,6 @@
 # TURNO ACTUAL
 
-**Ultima actualizacion:** 2026-05-27 09:36:28
+**Ultima actualizacion:** 2026-05-27 11:06:30
 
 ---
 
@@ -17,7 +17,7 @@
 
 ## Instruccion
 
-> Ticket WP-2026-150 closed. Create new work_plan.md for next cycle.
+> Ticket WP-2026-152 closed. Create new work_plan.md for next cycle.
 
 ---
 
@@ -25,7 +25,6 @@
 
 1. `.manager_rules` (Contexto del rol)
 2. `.agent/workflows/manager_workflow.md` (Flujo de trabajo)
-3. `.agent/context/project_map.md` (Estructura)
 
 ---
 
