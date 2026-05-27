@@ -19,47 +19,27 @@ Uso:
 from __future__ import annotations
 
 import json
+
+# WP-2026-122 / WP-2026-155: Centralized path resolution via runtime.project_root
+# Setup sys.path for runtime/ imports
+import sys
 from contextlib import suppress
 from datetime import datetime, timedelta
 from pathlib import Path
 
 
-# WP-2026-122: Deferred path resolution via runtime.project_root
-try:
-    from runtime.project_root import get_collab_dir
-except ImportError:
-    # Fallback if runtime.project_root not available
-    get_collab_dir = None
+_AGENT_DIR = Path(__file__).parent.resolve()
+_PROJECT_ROOT = _AGENT_DIR.parent
+# Insert project root FIRST so runtime/ is importable
+for _path in (str(_PROJECT_ROOT), str(_AGENT_DIR)):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
+
+from runtime.project_root import get_collab_dir  # noqa: E402
 
 
-class _LazyPath:
-    def __init__(self, resolver):
-        self._resolver = resolver
-
-    def resolve(self) -> Path:
-        return self._resolver()
-
-    def __truediv__(self, other):
-        return self.resolve() / other
-
-    def __getattr__(self, name: str):
-        return getattr(self.resolve(), name)
-
-    def __fspath__(self) -> str:
-        return str(self.resolve())
-
-    def __str__(self) -> str:
-        return str(self.resolve())
-
-
-def _collab_dir() -> Path:
-    if get_collab_dir is not None:
-        return get_collab_dir()
-    return Path(__file__).parent / "collaboration"
-
-
-COLLAB_DIR = _LazyPath(_collab_dir)
-SESSION_FILE = _LazyPath(lambda: _collab_dir() / ".session_state.json")
+COLLAB_DIR = get_collab_dir()
+SESSION_FILE = COLLAB_DIR / ".session_state.json"
 
 STALE_THRESHOLD_HOURS = 2
 MAX_FILES_TO_LIST = 10

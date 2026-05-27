@@ -1,14 +1,14 @@
 {
   "version": "1.0",
-  "generated": "2026-05-27T13:54:15.467727+00:00",
+  "generated": "2026-05-27T14:16:56.449654+00:00",
   "project_root": "C:\\Users\\fdl\\Proyectos_Python\\z_scripts\\orquestador_de_agentes",
   "summary": {
-    "total_files": 4595,
-    "total_size_bytes": 13935211,
+    "total_files": 4832,
+    "total_size_bytes": 13950907,
     "categories": {
-      "config": 341,
-      "python": 719,
-      "documentation": 1205,
+      "config": 369,
+      "python": 836,
+      "documentation": 1297,
       "other": 2314,
       "scripts": 16
     }
@@ -32,8 +32,8 @@
       },
       {
         "path": ".agent/context/project-map.json",
-        "size": 1372499,
-        "sha256": "a4c29e58a8b38ba2fd4cc0d7964a7992a0a29c052a0cb636a10d5f3e8c10bcaf"
+        "size": 1378732,
+        "sha256": "2b7c84a5037fe23dcb5911ca22ec1b4264c982b106fc8d0f1a522077910250a4"
       },
       {
         "path": ".agent/known_models.json",
@@ -56,11 +56,6 @@
         "sha256": "4d35eeabd66a6f5edabefd18eda35c055316a49ab86ab94d6f99b8d68a3083d3"
       },
       {
-        "path": ".agent/runtime/manager_bridge_state.json",
-        "size": 171,
-        "sha256": "8b538a82fe435e95eec6941d419401b32471f5b68f3b1da32621309bafcd30df"
-      },
-      {
         "path": ".agent/runtime/pytest-safe/last-run.json",
         "size": 1141,
         "sha256": "74603823e25068da6e8a0366169eaad1388e15c6e3aa99e1c15115ec0e00c016"
@@ -68,7 +63,7 @@
       {
         "path": ".agent/runtime/supervisor_state.json",
         "size": 186,
-        "sha256": "d94c847d51d327e6109157e46ab515167540363fef06828edf282daec32ea1a9"
+        "sha256": "650bc0b738eaea473d9fe68098671e5120cf7d5bcd6bc860b048158822e6f890"
       },
       {
         "path": ".agent_allowlist.json",
@@ -1716,6 +1711,151 @@
         "sha256": "24dc50f78ffbab26cea0a31817f8fb0d2aa4c3ae9aeb702600b683ba6585c5c0"
       },
       {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_check_legacy_version_conflicts0108/.version_manifest.json",
+        "size": 96,
+        "sha256": "2016a592bf7adb2909b169069a79b2142ea49126dd8b0910de51f64d3ff89de2"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_check_legacy_version_conflicts0108/project_manifest.toml",
+        "size": 53,
+        "sha256": "abde1f850bb13825bfe76ffa7cfc740ba7b77d93ddc47624f47d090d3814bd23"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_concurrent_upgrade_safety0003/project/.agent/backups/backup_20260427_120001/BACKUP_MANIFEST.json",
+        "size": 296,
+        "sha256": "3b536c8d86dd3a1dd08218a898bdc0d0745d0fa910fe09f42a90a559118c3807"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_concurrent_upgrade_safety0003/project/.agent/backups/backup_20260427_120002/BACKUP_MANIFEST.json",
+        "size": 296,
+        "sha256": "4895f1981055ceb987734bfe55922c18c5fb47ae4b3cc5bd6ad2a6e73995f8ef"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_concurrent_upgrade_safety0003/project/.agent/backups/backup_20260427_120003/BACKUP_MANIFEST.json",
+        "size": 296,
+        "sha256": "784acf1f499b024f01525085cd58db4c7ed065e2f5a005f63eb8a7bab6dc93de"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_full_lifecycle_chain0004/project/.agent/.version_manifest.json",
+        "size": 305,
+        "sha256": "26b53672276cd8e9bb1ccac1974f593d74faa4d7d146c35b691de2d882b16ef7"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_full_lifecycle_chain0004/project/.agent/backups/backup_20260527_155416/BACKUP_MANIFEST.json",
+        "size": 276,
+        "sha256": "c293b34b4b3d41600e08acabe589d59407827cf5e0a531f92ef93186f20c622f"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_hook_exits_two_on_dangerous_command0045/agents.json",
+        "size": 401,
+        "sha256": "4b73a6b03bbc272b30c38b67b0c46983b13097d426d0aa4fb1d05fb4035c4ac4"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_hook_exits_two_on_protected_path0044/agents.json",
+        "size": 401,
+        "sha256": "4b73a6b03bbc272b30c38b67b0c46983b13097d426d0aa4fb1d05fb4035c4ac4"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_hook_exits_two_on_strict_extra_pattern0046/agents.json",
+        "size": 401,
+        "sha256": "4b73a6b03bbc272b30c38b67b0c46983b13097d426d0aa4fb1d05fb4035c4ac4"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_hook_exits_zero_on_safe_write0043/agents.json",
+        "size": 401,
+        "sha256": "4b73a6b03bbc272b30c38b67b0c46983b13097d426d0aa4fb1d05fb4035c4ac4"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_hook_fails_closed_on_unknown_profile0047/agents.json",
+        "size": 140,
+        "sha256": "c824cd521a5f3dc348fd7320014f1dff7f1dfd667edb57a8beaa3220123f5c5f"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_legacy_version_alias_warning0106/project_manifest.toml",
+        "size": 83,
+        "sha256": "40d724522d5fb8613c3481d7fee59b0a797f9fc4745cc240e9ea7d239fca0730"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_load_validated_manifests0107/.version_manifest.json",
+        "size": 96,
+        "sha256": "2016a592bf7adb2909b169069a79b2142ea49126dd8b0910de51f64d3ff89de2"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_load_validated_manifests0107/project_manifest.toml",
+        "size": 53,
+        "sha256": "abde1f850bb13825bfe76ffa7cfc740ba7b77d93ddc47624f47d090d3814bd23"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_standard_blocks_piped_execution_but_minimal_does_not0048/agents.json",
+        "size": 400,
+        "sha256": "285426129ec9e640f40bdd2551d6628f4da6afb3d4bb50ef7cd55f6bf80ca7cd"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_supervisor_bootstrap_preserves_active_ticket_in_non_terminal_state0085/.agent/runtime/supervisor_state.json",
+        "size": 184,
+        "sha256": "e53663bb4831d0120cbbc8a3fe77c4c6067bbfbd1e4640e373dfb51313f42757"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_synthesis_and_event_persistence0028/.agent/runtime/council_state.json",
+        "size": 370,
+        "sha256": "aa8384fdec95800f21dc39d339f8cf3130218c1da5054c74bd52424d1f2de356"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_threshold_falls_back_on_malformed_config0015/agents.json",
+        "size": 15,
+        "sha256": "af4d4da9f58a003dd856fb633b9210fd3f6071091b6e1b27da0f5a5b95c2c5fe"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_threshold_reads_from_agents_config0013/agents.json",
+        "size": 39,
+        "sha256": "a592272f8aa9436a0b31b6b67c1eebb47d51a47aad0a8d3114e8e797ca7b6737"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_ticket_state_falls_back_to_execution_log0053/.agent/runtime/supervisor_state.json",
+        "size": 205,
+        "sha256": "ce8773f1246023ea5e75535d0562ecd1380e9055e5b679f19598a60a8e78819a"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/project/.agent/.version_manifest.json",
+        "size": 305,
+        "sha256": "8617803b689c8dc133809bd71772e7dcc638914150049e376fb9f1675969511c"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/project/.agent/backups/backup_20260527_155416/BACKUP_MANIFEST.json",
+        "size": 276,
+        "sha256": "c293b34b4b3d41600e08acabe589d59407827cf5e0a531f92ef93186f20c622f"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_validate_project_manifest_invalid_structure0103/project_manifest.toml",
+        "size": 32,
+        "sha256": "d461de472a831ac3d2e8e67d18e169ff64193d2bafc8ca991ce594bdf1a6651f"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_validate_project_manifest_valid0102/project_manifest.toml",
+        "size": 53,
+        "sha256": "abde1f850bb13825bfe76ffa7cfc740ba7b77d93ddc47624f47d090d3814bd23"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_validate_version_manifest_invalid_type0105/.version_manifest.json",
+        "size": 93,
+        "sha256": "75b713d163dc3f8805e5ee7909d2242928dff49e08b6707651afee3d485d947a"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_validate_version_manifest_valid0104/.version_manifest.json",
+        "size": 97,
+        "sha256": "580418dd03cefe8aabb78c09482551627a4d91c04db04f691504e84d53be2514"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_validate_version_manifest_without_legacy_version0109/.version_manifest.json",
+        "size": 77,
+        "sha256": "da508b1bb72d734cfc70785e8df6395b44e5a6397b6a310a0f4d7817f78419f4"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_write_state0024/.agent/runtime/council_state.json",
+        "size": 274,
+        "sha256": "fbf3326c43bccfefd1da1445c92d982f1307c4c72d1b85938315f534ecba1bf6"
+      },
+      {
         "path": "uv.toml",
         "size": 67,
         "sha256": "dab093848779569f53b5c2d39da73757af95033e74cdf7f53788cca20bbf0453"
@@ -1734,13 +1874,13 @@
       },
       {
         "path": ".agent/completion_checker.py",
-        "size": 6334,
-        "sha256": "f8b0b4ad39860806872b9d31d3f15e8a5bf7b65bf4fceedabb9447c282af3c2c"
+        "size": 5700,
+        "sha256": "57d89cef516e0e2c53434982aadf71cb086a0af8d0dc4402077b19e416637c9a"
       },
       {
         "path": ".agent/completion_common.py",
-        "size": 4116,
-        "sha256": "8a22cbcfa037698d8eb7d5f959b6319f33210cdb43211cf20c0c9972a04d5757"
+        "size": 3442,
+        "sha256": "7431ad2d5bcf04fd060ee95c8cf5b18053178d2931319b0a6f915a7a705d07f3"
       },
       {
         "path": ".agent/council/__init__.py",
@@ -1789,8 +1929,8 @@
       },
       {
         "path": ".agent/hooks/stop_hook.py",
-        "size": 2346,
-        "sha256": "6434da44d950ca09d8dc6bfb958a5de1eea3a5712e112ee0e068902cfaeb1559"
+        "size": 1655,
+        "sha256": "86b74e047acd4dc4dee646bfa679a957c5d4b5e2b20f80bed4401eb0849c0499"
       },
       {
         "path": ".agent/hooks/subagent_stop_hook.py",
@@ -1804,13 +1944,13 @@
       },
       {
         "path": ".agent/runtime/memory/memory_helpers.py",
-        "size": 2839,
-        "sha256": "9741377eb05e6e98791b53f97fdc0535f63347edf99a065515c9d6557f137bab"
+        "size": 2732,
+        "sha256": "01ce4593e025c84090c621e71d2fffdb4a0a679c2a363b17476449a878e44f22"
       },
       {
         "path": ".agent/session_tracker.py",
-        "size": 6807,
-        "sha256": "af5299a1643070de5d1352e7645fbbb88ff85858d89df891bfc8dc29fa5afaa5"
+        "size": 6422,
+        "sha256": "37020178703e2548f0a51c07aea0d3472d61f5527d1c5d83fce7c2e3e07bff2f"
       },
       {
         "path": "bus/__init__.py",
@@ -1889,8 +2029,8 @@
       },
       {
         "path": "runtime/ui_state_projector.py",
-        "size": 5793,
-        "sha256": "65c283ff59a027f5e9e08ea7941018db34746491e8af253d4b88df197eba39a7"
+        "size": 5748,
+        "sha256": "97cfb95c0664d36427dc48a390d26cf533c94026360b90f081bec45d5d8f4163"
       },
       {
         "path": "scripts/archive_collaboration_artifacts.py",
@@ -1899,8 +2039,8 @@
       },
       {
         "path": "scripts/archive_event_bus.py",
-        "size": 3654,
-        "sha256": "0ac121ac9876b314e1cdbfc098b7f8d6b70f3ce0e41801bc5d4862ec51fc4732"
+        "size": 3466,
+        "sha256": "ce26f844ec08936fcc896a320b5578e97b2769cc0256ef5c4af9aace46251b04"
       },
       {
         "path": "scripts/archive_execution_log.py",
@@ -1914,13 +2054,13 @@
       },
       {
         "path": "scripts/builder_agent.py",
-        "size": 5857,
-        "sha256": "8f482016dc34cf76b155a5a08b0aed542dc6fac0fff70bbe9881974750943872"
+        "size": 5669,
+        "sha256": "0c7c1d7bf8fd174424dde986f841ccfb6b943f753a817b2c78498c5f14259dd4"
       },
       {
         "path": "scripts/check_deliverables_exist.py",
-        "size": 6661,
-        "sha256": "dcba263e4c9b43b811ff547a939daa26645a4b4e06437cde9c165e5e470e49a6"
+        "size": 6389,
+        "sha256": "877954b11858587c8fb064ad5c4c3edc58a0adc50c1cce596beee91a172c7661"
       },
       {
         "path": "scripts/check_no_history_truncation.py",
@@ -1979,18 +2119,18 @@
       },
       {
         "path": "scripts/local_audit.py",
-        "size": 12771,
-        "sha256": "303c70160d3592f5594c8851b9660c4340bc54709382beb21b605b32f05861c2"
+        "size": 12495,
+        "sha256": "a9fc500712c58fba3f1885de988c434df3737b2381138ac175c6b40d96d4b8fe"
       },
       {
         "path": "scripts/manager_review_bridge.py",
-        "size": 13218,
-        "sha256": "b7d061fd6f1df04f55e6025ab0923c85340b59e79b3b55d90ade29f3b594fb7b"
+        "size": 13232,
+        "sha256": "4369934e925e46d70e84623d134e961f826ee0f04d4dd14d884966b8ebd8690f"
       },
       {
         "path": "scripts/memory_consolidate.py",
-        "size": 13213,
-        "sha256": "f8d246da118c938d028537ada17aa6b6a1e60da77818a4e24443de1fde37d945"
+        "size": 13023,
+        "sha256": "7c456941106a48f5285f2a329d1a966a91ac9bc77e8b15d784aa98ab054b60ef"
       },
       {
         "path": "scripts/migrate_legacy_project.py",
@@ -2019,13 +2159,13 @@
       },
       {
         "path": "scripts/run_gates_dispatch.py",
-        "size": 4326,
-        "sha256": "08401a07aacb37060943be4f5a210db8c7a391ca8f937529a11c98c5053e753c"
+        "size": 3997,
+        "sha256": "501ec793bccfa3d896fb0861985d23224c73e809ff234912a0e3876445b163ea"
       },
       {
         "path": "scripts/run_pytest_safe.py",
-        "size": 12909,
-        "sha256": "b1d6c0e67fe6fb1a68cf636dabeed45f2bbd3e3274e04079003112c1970103fe"
+        "size": 12749,
+        "sha256": "2212d317ce5df31674ef7001861736943dc22fa0a55ec5cf217a22696ac30624"
       },
       {
         "path": "scripts/sandbox/check_wp_087_deliverable.py",
@@ -2069,18 +2209,18 @@
       },
       {
         "path": "scripts/ticket_activity_monitor.py",
-        "size": 5189,
-        "sha256": "2c065acce7baa0ec96eb1a22eddca42b699e7eeaf4caa4d799e0a650f462f67f"
+        "size": 5218,
+        "sha256": "887e0c200ef55063fae233c0960ff858c7345d9563897f344db3dd0edc80e70a"
       },
       {
         "path": "scripts/ticket_supervisor.py",
-        "size": 4744,
-        "sha256": "f2928fdfbc2bfa8e071aaf08448ea1b5b3dee0cb637dc24150ee92d70cfcb0df"
+        "size": 4154,
+        "sha256": "a3f3b905024dfdcdd18ba881c655b05ea8437deb15d0c5ca47dc376cd89dbd89"
       },
       {
         "path": "scripts/update_project_map.py",
-        "size": 12937,
-        "sha256": "6f478350b83517a95507dde23bada1f7d1279612915e442f67c4602c7ee67528"
+        "size": 12400,
+        "sha256": "a646c79e8847897d29fb9769912f30494a16945b124709fc0391a0ff788eda32"
       },
       {
         "path": "scripts/upgrade.py",
@@ -4833,6 +4973,591 @@
         "sha256": "0124032b7746fc061baeda2d442b70981caa5ae9212d18d81c4bb5287c733a14"
       },
       {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_cli_integration_via_subprocess0006/test_project/.agent/runtime/memory/memory_helpers.py",
+        "size": 2839,
+        "sha256": "9741377eb05e6e98791b53f97fdc0535f63347edf99a065515c9d6557f137bab"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_cli_integration_via_subprocess0006/test_project/tools/scripts/memory_manager.py",
+        "size": 5545,
+        "sha256": "1533fe9cc1f7a967129bb61f2692f20d27aa0a2b330aa57e8415b99151f8b42d"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_concurrent_upgrade_safety0003/project/.agent/agent_controller.py",
+        "size": 1,
+        "sha256": "334359b90efed75da5f0ada1d5e6b256f4a6bd0aee7eb39c0f90182a021ffc8b"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_concurrent_upgrade_safety0003/source/.agent/agent_controller.py",
+        "size": 1,
+        "sha256": "334359b90efed75da5f0ada1d5e6b256f4a6bd0aee7eb39c0f90182a021ffc8b"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_detect_then_upgrade_workflow0001/project/.agent/agent_controller.py",
+        "size": 28,
+        "sha256": "f8da57df2ae172a64c75ff3fce3981a660b44f2b2cf2cc50b17a284f6db53823"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_detect_then_upgrade_workflow0001/source/.agent/agent_controller.py",
+        "size": 37,
+        "sha256": "5c49a343b11c6c4c341345fa030ca45b41fda7528f8e146ce2a44af16aee1a79"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_full_lifecycle_chain0004/project/.agent/agent_controller.py",
+        "size": 35,
+        "sha256": "830670198255bd6f32af778cef0711b7aa586ff51b056d7b414ac188e8964a16"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_full_lifecycle_chain0004/project/.agent/backups/backup_20260527_155416/.agent/agent_controller.py",
+        "size": 32,
+        "sha256": "670f097463c3b3b09dcb8d3f2ebbc09c470fbfce38a0945543b268758afd241b"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_full_lifecycle_chain0004/source/.agent/agent_controller.py",
+        "size": 35,
+        "sha256": "830670198255bd6f32af778cef0711b7aa586ff51b056d7b414ac188e8964a16"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_import_preflight_detects_broken_module0049/bus/__init__.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_import_preflight_detects_broken_module0049/bus/event_bus.py",
+        "size": 29,
+        "sha256": "bd3e92593924e18d153b06a8d9d2ca51f9aa557bc7c198d01e3d5333d2d21fac"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_0.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_1.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_10.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_11.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_12.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_13.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_14.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_15.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_16.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_17.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_18.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_19.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_2.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_20.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_21.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_22.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_23.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_24.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_25.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_26.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_27.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_28.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_29.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_3.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_30.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_31.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_32.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_33.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_34.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_35.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_36.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_37.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_38.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_39.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_4.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_40.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_41.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_42.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_43.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_44.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_45.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_46.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_47.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_48.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_49.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_5.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_50.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_51.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_52.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_53.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_54.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_55.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_56.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_57.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_58.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_59.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_6.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_60.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_61.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_62.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_63.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_64.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_65.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_66.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_67.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_68.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_69.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_7.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_70.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_71.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_72.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_73.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_74.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_75.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_76.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_77.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_78.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_79.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_8.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_80.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_81.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_82.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_83.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_84.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_85.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_86.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_87.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_88.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_89.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_9.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_90.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_91.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_92.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_93.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_94.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_95.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_96.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_97.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_98.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_opencode_review_cmd_length_is_safe0072/dummy_file_99.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/project/.agent/agent_controller.py",
+        "size": 40,
+        "sha256": "198ee74367c746cafff295f05df7945b3ec3e4527f2b69fb07f75c3548cbf0f9"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/project/.agent/backups/backup_20260527_155416/.agent/agent_controller.py",
+        "size": 40,
+        "sha256": "72bde0414b20efa10f48c0c6c3a94cd95c86b6cbe1cd5af8461bfa2f29ffaaef"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/project/.agent/backups/backup_20260527_155416/agent_system/refactor_kit/kit.py",
+        "size": 46,
+        "sha256": "e856b2762c99cc41d4481b6136690d8ccbef5030af14fad1f590c5f18a85a46e"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/project/agent_system/refactor_kit/kit.py",
+        "size": 46,
+        "sha256": "dea321664ec641e7ae1b7f2fa379f5ce45fd3045d513727de55c1c7a214657ab"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/source/.agent/agent_controller.py",
+        "size": 40,
+        "sha256": "198ee74367c746cafff295f05df7945b3ec3e4527f2b69fb07f75c3548cbf0f9"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/source/agent_system/refactor_kit/kit.py",
+        "size": 46,
+        "sha256": "dea321664ec641e7ae1b7f2fa379f5ce45fd3045d513727de55c1c7a214657ab"
+      },
+      {
         "path": "tests/test_agent_controller.py",
         "size": 7029,
         "sha256": "db33e10be4ecb621acbf8c2887bd1137835e60957da096f194787fe0251f1a8f"
@@ -5331,13 +6056,13 @@
       },
       {
         "path": ".agent/collaboration/execution_log.md",
-        "size": 5049,
-        "sha256": "dd608ffb4dd562d54c3ad4eaf142d24f8db231b5047238b2df023b6b3218e119"
+        "size": 885,
+        "sha256": "551db38462d746794210714f603f8f3da99cfc9f277b3658c8a54bbc73a82806"
       },
       {
         "path": ".agent/collaboration/notifications.md",
-        "size": 3425,
-        "sha256": "c19cf4a84b819efb32b2e73fc0333e3f31bcea6fe040a4ba40ccba57d1f13da6"
+        "size": 3093,
+        "sha256": "12f837cff9ea66ffe431b7dff6d71d705b3e6e57f6d036d67af2cecba6b25030"
       },
       {
         "path": ".agent/collaboration/PLAN_WP-2026-154.md",
@@ -5356,18 +6081,18 @@
       },
       {
         "path": ".agent/collaboration/STATE.md",
-        "size": 56,
-        "sha256": "e1ebc7f0cda0572246f11aaa2b60548615e9680214c9cb9b390ecc3802042e85"
+        "size": 50,
+        "sha256": "236bd81f7c28b0c2147560d18d9fb892283339eeab41483f47f776e2adfe4a94"
       },
       {
         "path": ".agent/collaboration/TURN.md",
-        "size": 659,
-        "sha256": "f1f283c90b6e8b7cfadf0c42ca2737e58e435c76c7c0170b7f910a04ecae9599"
+        "size": 569,
+        "sha256": "866ff961c8c8fc3b47a41a5cc87c46ed177703f4fe370a51abeff2fcf8ba79ae"
       },
       {
         "path": ".agent/collaboration/work_plan.md",
-        "size": 4462,
-        "sha256": "db8eb6d8025cbcc843fa716293ad56d717374ce5a47f80a36980f6cdd36d9eb4"
+        "size": 1605,
+        "sha256": "2d52154ae608c77d58f7aba34138fd48307aee6678ed232567c10115c9bf8de4"
       },
       {
         "path": ".agent/context/project_map.md",
@@ -5378,6 +6103,11 @@
         "path": ".agent/runtime/audit/AUDIT.md",
         "size": 7099,
         "sha256": "8938d9722e2f689819588a362f697f47097beb29396d3a6936badd40bb98cd4d"
+      },
+      {
+        "path": ".agent/runtime/builder_lock.txt",
+        "size": 264,
+        "sha256": "695580c8bf0e9c147dc434699eb1ef9b621d50a157544f2470d3ad7060f81861"
       },
       {
         "path": ".agent/runtime/compare/affaan-m-ECC-928076cc-2026-05-27.md",
@@ -5408,11 +6138,6 @@
         "path": ".agent/runtime/memory/session_close_report.md",
         "size": 607,
         "sha256": "38700cf72c41f1c61cce94dc5cb3fef19550ec4a5f83c5dfc7bef5c453f22497"
-      },
-      {
-        "path": ".agent/runtime/supervisor_lock.txt",
-        "size": 95,
-        "sha256": "a106b351e9de9c889ad1ffbe4ea6fd3f9eddb8d1fe5725a1070880f2f0ef8f7c"
       },
       {
         "path": ".agent/templates/human_review_report.md",
@@ -11333,6 +12058,466 @@
         "path": "tests/sandbox/test_runtime/session_8612/factory/test_scan_project_structure0007/README.md",
         "size": 6,
         "sha256": "d8b8cbbec1ed15a6679650ae561b127dc879340d3b6bb2105fc68d397489cd5e"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_bridge_uses_current_bus_state_not_snapshots0083/.agent/collaboration/work_plan.md",
+        "size": 100,
+        "sha256": "f4d8d2ae21cdb8f24288d5f154de8128faee848788c17219a25f9bcc0d41555e"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_build_review_prompt_ignores_missing_observations_file0060/.agent/collaboration/execution_log.md",
+        "size": 126,
+        "sha256": "038c9e41ee844520c560be0d67b6d2e72972e6f0c013075ee353c5bd819df9d2"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_build_review_prompt_ignores_missing_observations_file0060/.agent/collaboration/STATE.md",
+        "size": 100,
+        "sha256": "22380aab43b6e25c621c61001cb4ac115b46c5934ed694d32fc361140f25e641"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_build_review_prompt_ignores_missing_observations_file0060/.agent/collaboration/TURN.md",
+        "size": 193,
+        "sha256": "0c2aa1d05cd6d40843ea63e209608af64f41c1111489621d1021fe9daa37994e"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_build_review_prompt_ignores_missing_observations_file0060/.agent/collaboration/work_plan.md",
+        "size": 173,
+        "sha256": "c020d803f936007d69ba3955f67698e56863dfe34a587cc0bf35694b4c1e7641"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_build_review_prompt_includes_manager_learnings_for_code_and_preserves_static_rubric0059/.agent/collaboration/execution_log.md",
+        "size": 126,
+        "sha256": "038c9e41ee844520c560be0d67b6d2e72972e6f0c013075ee353c5bd819df9d2"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_build_review_prompt_includes_manager_learnings_for_code_and_preserves_static_rubric0059/.agent/collaboration/STATE.md",
+        "size": 100,
+        "sha256": "22380aab43b6e25c621c61001cb4ac115b46c5934ed694d32fc361140f25e641"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_build_review_prompt_includes_manager_learnings_for_code_and_preserves_static_rubric0059/.agent/collaboration/TURN.md",
+        "size": 193,
+        "sha256": "0c2aa1d05cd6d40843ea63e209608af64f41c1111489621d1021fe9daa37994e"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_build_review_prompt_includes_manager_learnings_for_code_and_preserves_static_rubric0059/.agent/collaboration/work_plan.md",
+        "size": 173,
+        "sha256": "c020d803f936007d69ba3955f67698e56863dfe34a587cc0bf35694b4c1e7641"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_build_review_prompt_includes_manager_learnings_for_mixed0063/.agent/collaboration/execution_log.md",
+        "size": 126,
+        "sha256": "038c9e41ee844520c560be0d67b6d2e72972e6f0c013075ee353c5bd819df9d2"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_build_review_prompt_includes_manager_learnings_for_mixed0063/.agent/collaboration/STATE.md",
+        "size": 100,
+        "sha256": "22380aab43b6e25c621c61001cb4ac115b46c5934ed694d32fc361140f25e641"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_build_review_prompt_includes_manager_learnings_for_mixed0063/.agent/collaboration/TURN.md",
+        "size": 193,
+        "sha256": "0c2aa1d05cd6d40843ea63e209608af64f41c1111489621d1021fe9daa37994e"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_build_review_prompt_includes_manager_learnings_for_mixed0063/.agent/collaboration/work_plan.md",
+        "size": 174,
+        "sha256": "47e1cbdd7a496cfd3e31477aba8894ef46d71748dddb8ee5e6ab0f7c8d29f4e1"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_build_review_prompt_loads_canonical_anti_patterns_once_per_instance0061/.agent/collaboration/execution_log.md",
+        "size": 126,
+        "sha256": "038c9e41ee844520c560be0d67b6d2e72972e6f0c013075ee353c5bd819df9d2"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_build_review_prompt_loads_canonical_anti_patterns_once_per_instance0061/.agent/collaboration/STATE.md",
+        "size": 100,
+        "sha256": "22380aab43b6e25c621c61001cb4ac115b46c5934ed694d32fc361140f25e641"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_build_review_prompt_loads_canonical_anti_patterns_once_per_instance0061/.agent/collaboration/TURN.md",
+        "size": 193,
+        "sha256": "0c2aa1d05cd6d40843ea63e209608af64f41c1111489621d1021fe9daa37994e"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_build_review_prompt_loads_canonical_anti_patterns_once_per_instance0061/.agent/collaboration/work_plan.md",
+        "size": 173,
+        "sha256": "c020d803f936007d69ba3955f67698e56863dfe34a587cc0bf35694b4c1e7641"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_build_review_prompt_warns_and_omits_inventory_when_shared_file_missing0062/.agent/collaboration/execution_log.md",
+        "size": 126,
+        "sha256": "038c9e41ee844520c560be0d67b6d2e72972e6f0c013075ee353c5bd819df9d2"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_build_review_prompt_warns_and_omits_inventory_when_shared_file_missing0062/.agent/collaboration/STATE.md",
+        "size": 100,
+        "sha256": "22380aab43b6e25c621c61001cb4ac115b46c5934ed694d32fc361140f25e641"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_build_review_prompt_warns_and_omits_inventory_when_shared_file_missing0062/.agent/collaboration/TURN.md",
+        "size": 193,
+        "sha256": "0c2aa1d05cd6d40843ea63e209608af64f41c1111489621d1021fe9daa37994e"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_build_review_prompt_warns_and_omits_inventory_when_shared_file_missing0062/.agent/collaboration/work_plan.md",
+        "size": 173,
+        "sha256": "c020d803f936007d69ba3955f67698e56863dfe34a587cc0bf35694b4c1e7641"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_cli_integration_via_subprocess0006/test_project/.agent/runtime/memory/MEMORY.md",
+        "size": 114,
+        "sha256": "79c4e0af68cc82b77c66cdaa74564457bbb9cf348b4b7a93465601c03b5a8b12"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_concurrent_upgrade_safety0003/project/AGENTS.md",
+        "size": 1,
+        "sha256": "334359b90efed75da5f0ada1d5e6b256f4a6bd0aee7eb39c0f90182a021ffc8b"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_concurrent_upgrade_safety0003/project/CLAUDE.md",
+        "size": 1,
+        "sha256": "334359b90efed75da5f0ada1d5e6b256f4a6bd0aee7eb39c0f90182a021ffc8b"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_concurrent_upgrade_safety0003/source/AGENTS.md",
+        "size": 1,
+        "sha256": "334359b90efed75da5f0ada1d5e6b256f4a6bd0aee7eb39c0f90182a021ffc8b"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_concurrent_upgrade_safety0003/source/CLAUDE.md",
+        "size": 1,
+        "sha256": "334359b90efed75da5f0ada1d5e6b256f4a6bd0aee7eb39c0f90182a021ffc8b"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_detect_then_upgrade_workflow0001/project/.agent/rules/rules.md",
+        "size": 23,
+        "sha256": "5231cb1e08e5082faada863e67794f671ca0fbe1c32708baa2cb4670e83a4ce2"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_detect_then_upgrade_workflow0001/project/agent_system/refactor_kit/kit.md",
+        "size": 34,
+        "sha256": "4d1ea8fcd06038dcf5354bb3ac0fee331a357010ffb5a513f50c995892c4033f"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_detect_then_upgrade_workflow0001/project/AGENTS.md",
+        "size": 11,
+        "sha256": "204aa1e75dc7abd78c37fb0bbf9d946d41ff6f0ce819c299be2b5f903665f8d3"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_detect_then_upgrade_workflow0001/project/CLAUDE.md",
+        "size": 11,
+        "sha256": "b2788d7144b6d2cda95eda69f4456c3666f40ecb566f82d038a10ae9a97af2d5"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_detect_then_upgrade_workflow0001/project/skills/skill1.md",
+        "size": 18,
+        "sha256": "630eb25f5d63f50689f0ebbf7cba8e188d2e4b64bd65f68363f60dac56b8b0d9"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_detect_then_upgrade_workflow0001/source/.agent/rules/rules.md",
+        "size": 32,
+        "sha256": "c8412ee7d70a0af830348966f6500c09adb9550db7d4b5314d5fa4b8e5feacee"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_detect_then_upgrade_workflow0001/source/agent_system/refactor_kit/kit.md",
+        "size": 43,
+        "sha256": "0a842ee57a7b4c8264c2b47346d42843b846178c94d7fe9138c2ab9e832e8eb3"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_detect_then_upgrade_workflow0001/source/AGENTS.md",
+        "size": 20,
+        "sha256": "e511186d13ce5a8e07e26d7d15dc3c49ce644f894f2abca9bab9f1586fec6aac"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_detect_then_upgrade_workflow0001/source/CLAUDE.md",
+        "size": 20,
+        "sha256": "18a0039459e728c817fca9a5e09d587e890e19874021dec55af1e75b6fd2e832"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_detect_then_upgrade_workflow0001/source/INTERACTION_MODES.md",
+        "size": 19,
+        "sha256": "fbcaf2c84e3085f48ab19b7dadfcbd858ea5eccaa1f09c362f8951df488a64e0"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_detect_then_upgrade_workflow0001/source/QUICKSTART.md",
+        "size": 12,
+        "sha256": "380396fd99647d5728ac683ea31134376d80d935311ebca90c294952118d1bbe"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_detect_then_upgrade_workflow0001/source/skills/skill1.md",
+        "size": 27,
+        "sha256": "fa467bcc8e4cabb1287d34e20f68d0d204906d184232ec5b799ec48e4c4efbae"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_file_without_frontmatter_skipped0019/skills/broken/SKILL.md",
+        "size": 23,
+        "sha256": "c06459b620dfec6ba01d7a5102fc843793ea9da5b6f33ac60be2e81eb431fb6b"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_full_flow_append_read_regenerate0005/.agent/runtime/memory/MEMORY.md",
+        "size": 198,
+        "sha256": "ab6c550e66ee2dcf20fe8ecdc4741c91c28b582ba334e6f735be4701992944e9"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_full_lifecycle_chain0004/project/.agent/backups/backup_20260527_155416/.agent/rules/rule.md",
+        "size": 26,
+        "sha256": "47e8ba2480376e7dc9b32384af2e038fa5ba0a98644407480d7c5be22af9012a"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_full_lifecycle_chain0004/project/.agent/backups/backup_20260527_155416/agent_system/refactor_kit/kit.md",
+        "size": 38,
+        "sha256": "767ae206762a78cb60687df5d224f5c708d3e532f83b522e84a9aaa1fc8e9a84"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_full_lifecycle_chain0004/project/.agent/backups/backup_20260527_155416/AGENTS.md",
+        "size": 15,
+        "sha256": "bf22cf97a791bab79317311775d53fb2001d50301ee3c415d11419981f1ae132"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_full_lifecycle_chain0004/project/.agent/backups/backup_20260527_155416/CLAUDE.md",
+        "size": 15,
+        "sha256": "0fc49eb960cb56063db808cc5df8c81529e39cc6ab20bab85d99f28eaa6a57ce"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_full_lifecycle_chain0004/project/.agent/backups/backup_20260527_155416/skills/skill.md",
+        "size": 21,
+        "sha256": "c76c164d2168426a432b7e0970e26c76ea4c6e4652de78e5a33b985594ac6e84"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_full_lifecycle_chain0004/project/.agent/rules/rule.md",
+        "size": 29,
+        "sha256": "6b1d277d8cc97909a8bbcd0ee411cf5c541edcdcb0566f6e2f82c642a51700a2"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_full_lifecycle_chain0004/project/agent_system/refactor_kit/kit.md",
+        "size": 41,
+        "sha256": "e73605e41a49067a21077697cca88c2f6f92e2d9fa8955ff6d7734cb472c0a4a"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_full_lifecycle_chain0004/project/AGENTS.md",
+        "size": 18,
+        "sha256": "777972320a5fd6ce28a7a14d29c3d34b2e940a8cba92307cee5dfcec60fe8867"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_full_lifecycle_chain0004/project/CLAUDE.md",
+        "size": 18,
+        "sha256": "cdb425ff93f76865bc55a21ead9d59124c0fd66ed147174b0cc8f2d70dd33c76"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_full_lifecycle_chain0004/project/skills/skill.md",
+        "size": 24,
+        "sha256": "888892c10c73b97d1ca6f924934bd121db83acb8eefa3a49cccc22c66aadef0d"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_full_lifecycle_chain0004/source/.agent/rules/rule.md",
+        "size": 29,
+        "sha256": "6b1d277d8cc97909a8bbcd0ee411cf5c541edcdcb0566f6e2f82c642a51700a2"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_full_lifecycle_chain0004/source/agent_system/refactor_kit/kit.md",
+        "size": 41,
+        "sha256": "e73605e41a49067a21077697cca88c2f6f92e2d9fa8955ff6d7734cb472c0a4a"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_full_lifecycle_chain0004/source/AGENTS.md",
+        "size": 18,
+        "sha256": "777972320a5fd6ce28a7a14d29c3d34b2e940a8cba92307cee5dfcec60fe8867"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_full_lifecycle_chain0004/source/CLAUDE.md",
+        "size": 18,
+        "sha256": "cdb425ff93f76865bc55a21ead9d59124c0fd66ed147174b0cc8f2d70dd33c76"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_full_lifecycle_chain0004/source/skills/skill.md",
+        "size": 24,
+        "sha256": "888892c10c73b97d1ca6f924934bd121db83acb8eefa3a49cccc22c66aadef0d"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_host_and_bundle_trigger_collision_detected0020/.agent/skills/host-skill/SKILL.md",
+        "size": 89,
+        "sha256": "67cfed277961758581fba5117019e504a4b85623da2fc4587dbf7db68ae7ef3c"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_host_and_bundle_trigger_collision_detected0020/skills/bundle-skill/SKILL.md",
+        "size": 93,
+        "sha256": "ea0a841e0b8e20f5ab2d51ebd46aa11ff061d5d6eaf30c4ff003e4f43e274e01"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_memory_separation_from_collaboration0007/.agent/collaboration/execution_log.md",
+        "size": 27,
+        "sha256": "69a340c7bf775b953c9d1f8df828b56244369e0ec9a10509cd8b20dec9e0f0ab"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_memory_separation_from_collaboration0007/.agent/collaboration/work_plan.md",
+        "size": 21,
+        "sha256": "430b6f2bde3ac8d2075afad280d26475b88a2965733d2d75d0a8e43cb2f39bb0"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_name_collision_detected0018/skills/a/SKILL.md",
+        "size": 76,
+        "sha256": "7a86b146e126c17754742f3feb62be61927e2f512d102d1e7fe9b3246db5fd7a"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_name_collision_detected0018/skills/b/SKILL.md",
+        "size": 76,
+        "sha256": "c8e41f6b59cfc12e554e1ef9900b04dd3c8f02d5bc3b9c793cbc02c54e70229e"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_no_collisions0016/skills/a/SKILL.md",
+        "size": 77,
+        "sha256": "f2b8b03155a89ca418bd081b178fa33bd4cfc74f8b94db1a2c3cb44361e14bf7"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_no_collisions0016/skills/b/SKILL.md",
+        "size": 77,
+        "sha256": "047e02e0c28f4fbb9aee520d6a679062761b94462d571b64bc6d1b6b22a7978c"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_read_file_existing_path0008/test.txt",
+        "size": 12,
+        "sha256": "6ae8a75555209fd6c44157c0aed8016e763ff435a19cf186f76863140143ff72"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_review_cycle_approves_before_threshold0098/.agent/collaboration/work_plan.md",
+        "size": 59,
+        "sha256": "761fea053d1845223e211a9fb1feb2f45e0641f5aad6bdfe67efcc4033aa2f7b"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_review_cycle_escalates_to_human_gate_at_threshold0097/.agent/collaboration/work_plan.md",
+        "size": 59,
+        "sha256": "761fea053d1845223e211a9fb1feb2f45e0641f5aad6bdfe67efcc4033aa2f7b"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_state_ingest_get_ticket_context0080/.agent/collaboration/work_plan.md",
+        "size": 109,
+        "sha256": "99632f8b1a08378c6507e2c68ea16bfba50914149510c3e632b0d662ede41419"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_state_ingest_get_ticket_context_fallback_to_work_plan0081/.agent/collaboration/work_plan.md",
+        "size": 100,
+        "sha256": "f4d8d2ae21cdb8f24288d5f154de8128faee848788c17219a25f9bcc0d41555e"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_supervisor_bootstrap_preserves_active_ticket_in_non_terminal_state0085/.agent/collaboration/execution_log.md",
+        "size": 60,
+        "sha256": "466d040a50da65ad282a43f12b2a6d63fcf7e6f05ca7621c2b8b645d60430cd2"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_supervisor_bootstrap_preserves_active_ticket_in_non_terminal_state0085/.agent/runtime/supervisor_lock.txt",
+        "size": 103,
+        "sha256": "e09d913233c97349e36a88fc810f5646b2fe82b05b60d6563022f4ba65b367cf"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_ticket_state_falls_back_to_execution_log0053/.agent/collaboration/execution_log.md",
+        "size": 168,
+        "sha256": "a53480d6b1ed60100a21623410acd30c43dfc1ec99117f3824bcbea3db75acb4"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_ticket_state_falls_back_to_execution_log0053/.agent/collaboration/TURN.md",
+        "size": 332,
+        "sha256": "9f9aa32bec439e496fdb3a6d378089ccbde84d313eda0e4551b3d492de4010b7"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_ticket_state_falls_back_to_execution_log0053/.agent/collaboration/work_plan.md",
+        "size": 135,
+        "sha256": "c5d31927dae0de2ddac4e81f36b1f18952f532193df9f79f92bef1014e85585a"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_trigger_collision_detected0017/skills/a/SKILL.md",
+        "size": 90,
+        "sha256": "96df8ad046c3997b5c0408b6b9cd18a641d228c8c2744885696883b46f2752db"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_trigger_collision_detected0017/skills/b/SKILL.md",
+        "size": 85,
+        "sha256": "79a6db9a704a4b6655e7c27c4e392c5ec02b51fe479bcf5087af7d69977cfb85"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/project/.agent/backups/backup_20260527_155416/.agent/rules/rules.md",
+        "size": 35,
+        "sha256": "6f50997a0079ebcc949ee9dfc8184a8e9dfd45938cbc44d883d5e6ffb4fb8460"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/project/.agent/backups/backup_20260527_155416/AGENTS.md",
+        "size": 23,
+        "sha256": "ca0ba0c1496fdad7fa21c6b6d6d11650265d5c027c9ccde55c451472b0352594"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/project/.agent/backups/backup_20260527_155416/CLAUDE.md",
+        "size": 23,
+        "sha256": "f4d4086ccc3dd83e6c22248d95e176653aa5c99233b2e565d41c7acc591b2f4a"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/project/.agent/backups/backup_20260527_155416/skills/skill1.md",
+        "size": 30,
+        "sha256": "d213b3eb840f9a9b74746ef1ddd3bff1879fb73e4ec3f93504cbe892a550250c"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/project/.agent/rules/rules.md",
+        "size": 35,
+        "sha256": "09a4384731708830c4dc97f71bf0df139171065a488bc1c58ca30adf1d96eb66"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/project/AGENTS.md",
+        "size": 23,
+        "sha256": "491071480cec149cc48319b302745c438b258cdcbc56ac1fd9452f2da219a2e8"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/project/CLAUDE.md",
+        "size": 23,
+        "sha256": "899c5731267dafb5046dd67a60ae6cc107d9a9754f9602261e95ebe44ee887a6"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/project/skills/skill1.md",
+        "size": 30,
+        "sha256": "f863bba9c42ee248dbf7ddd8a1464ba9f79edb210263668d7ef10f205459e148"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/source/.agent/rules/rules.md",
+        "size": 35,
+        "sha256": "09a4384731708830c4dc97f71bf0df139171065a488bc1c58ca30adf1d96eb66"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/source/AGENTS.md",
+        "size": 23,
+        "sha256": "491071480cec149cc48319b302745c438b258cdcbc56ac1fd9452f2da219a2e8"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/source/CLAUDE.md",
+        "size": 23,
+        "sha256": "899c5731267dafb5046dd67a60ae6cc107d9a9754f9602261e95ebe44ee887a6"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/source/QUICKSTART.md",
+        "size": 12,
+        "sha256": "380396fd99647d5728ac683ea31134376d80d935311ebca90c294952118d1bbe"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/source/skills/skill1.md",
+        "size": 30,
+        "sha256": "f863bba9c42ee248dbf7ddd8a1464ba9f79edb210263668d7ef10f205459e148"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_watcher_detects_turn_changes0030/.agent/collaboration/TURN.md",
+        "size": 334,
+        "sha256": "fc868032ddc51171029494d477e80887cf7291556bed0e0333578317464e8b2b"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_write_file_creates_new0010/new.txt",
+        "size": 11,
+        "sha256": "fe32608c9ef5b6cf7e3f946480253ff76f24f4ec0678f3d0f07f9844cbff9601"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_write_file_creates_parent_dirs0012/subdir/nested/file.txt",
+        "size": 14,
+        "sha256": "b509163964e822915ea7e822759ecae39dd696626e70b74b96de6ac7396415d0"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_8636/factory/test_write_file_overwrites_existing0011/existing.txt",
+        "size": 11,
+        "sha256": "fe32608c9ef5b6cf7e3f946480253ff76f24f4ec0678f3d0f07f9844cbff9601"
       },
       {
         "path": "UPGRADE_CLEANUP_GUIDE.md",
@@ -22925,8 +24110,8 @@
       },
       {
         "path": "scripts/launch_agent_terminals.ps1",
-        "size": 49098,
-        "sha256": "609305931127e32bd8914ce78046d699ca63c75a2c65a2595ee0a0f7c36fc0c1"
+        "size": 49773,
+        "sha256": "0b9de053d40b0d522c15dbaa513c4d2b5cda64194b65c141e5e90858e02b988c"
       },
       {
         "path": "scripts/test_manager_smoke.ps1",
@@ -23335,6 +24520,16 @@
             "package": "typing"
           },
           {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
             "name": "runtime.project_root.get_collab_dir",
             "type": "local",
             "path": "runtime/project_root.py"
@@ -23388,6 +24583,16 @@
             "name": "typing.Any",
             "type": "stdlib",
             "package": "typing"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
           },
           {
             "name": "runtime.project_root.get_collab_dir",
@@ -23700,6 +24905,16 @@
             "package": "completion_common"
           },
           {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
             "name": "runtime.project_root.get_collab_dir",
             "type": "local",
             "path": "runtime/project_root.py"
@@ -23758,6 +24973,11 @@
             "name": "pathlib.Path",
             "type": "stdlib",
             "package": "pathlib"
+          },
+          {
+            "name": "runtime.project_root.get_agent_dir",
+            "type": "local",
+            "path": "runtime/project_root.py"
           }
         ],
         "error": null
@@ -23788,6 +25008,16 @@
             "name": "datetime.timedelta",
             "type": "stdlib",
             "package": "datetime"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
           },
           {
             "name": "pathlib.Path",
@@ -24610,6 +25840,11 @@
             "path": "bus/event_bus.py"
           },
           {
+            "name": "runtime.project_root.get_agent_dir",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          },
+          {
             "name": "runtime.project_root.resolve_project_root",
             "type": "local",
             "path": "runtime/project_root.py"
@@ -24765,6 +26000,11 @@
             "package": "pathlib"
           },
           {
+            "name": "runtime.project_root.resolve_project_root",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          },
+          {
             "name": "agent_controller.WORK_PLAN",
             "type": "external",
             "package": "agent_controller"
@@ -24790,11 +26030,6 @@
             "package": "agent_controller"
           },
           {
-            "name": "runtime.project_root.resolve_project_root",
-            "type": "local",
-            "path": "runtime/project_root.py"
-          },
-          {
             "name": "subprocess",
             "type": "stdlib",
             "package": "subprocess"
@@ -24808,6 +26043,26 @@
             "name": "__future__.annotations",
             "type": "stdlib",
             "package": "__future__"
+          },
+          {
+            "name": "os",
+            "type": "stdlib",
+            "package": "os"
+          },
+          {
+            "name": "re",
+            "type": "stdlib",
+            "package": "re"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
           },
           {
             "name": "os",
@@ -25106,7 +26361,7 @@
           },
           {
             "name": "tomllib",
-            "type": "stdlib",
+            "type": "external",
             "package": "tomllib"
           },
           {
@@ -25330,6 +26585,11 @@
             "package": "pathlib"
           },
           {
+            "name": "runtime.project_root.resolve_project_root",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          },
+          {
             "name": "bus.review_bridge.ReviewBridge",
             "type": "local",
             "path": "bus/review_bridge.py"
@@ -25353,11 +26613,6 @@
             "name": "bus.time_utils.now_local",
             "type": "local",
             "path": "bus/time_utils.py"
-          },
-          {
-            "name": "runtime.project_root.resolve_project_root",
-            "type": "local",
-            "path": "runtime/project_root.py"
           },
           {
             "name": "agents_config.get_backend_for_role",
@@ -25471,7 +26726,7 @@
           },
           {
             "name": "tomllib",
-            "type": "stdlib",
+            "type": "external",
             "package": "tomllib"
           },
           {
@@ -26125,14 +27380,14 @@
             "package": "pathlib"
           },
           {
-            "name": "bus.supervisor.SequentialTicketSupervisor",
-            "type": "local",
-            "path": "bus/supervisor.py"
-          },
-          {
             "name": "runtime.project_root.resolve_project_root",
             "type": "local",
             "path": "runtime/project_root.py"
+          },
+          {
+            "name": "bus.supervisor.SequentialTicketSupervisor",
+            "type": "local",
+            "path": "bus/supervisor.py"
           }
         ],
         "error": null
@@ -27362,6 +28617,112 @@
           }
         ],
         "error": null
+      },
+      "tests/sandbox/test_runtime/session_8636/factory/test_cli_integration_via_subprocess0006/test_project/.agent/runtime/memory/memory_helpers.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "collections.Counter",
+            "type": "stdlib",
+            "package": "collections"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          }
+        ],
+        "error": null
+      },
+      "tests/sandbox/test_runtime/session_8636/factory/test_cli_integration_via_subprocess0006/test_project/tools/scripts/memory_manager.py": {
+        "imports": [
+          {
+            "name": "argparse",
+            "type": "stdlib",
+            "package": "argparse"
+          },
+          {
+            "name": "pathlib",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "datetime.datetime",
+            "type": "stdlib",
+            "package": "datetime"
+          },
+          {
+            "name": "datetime.timezone",
+            "type": "stdlib",
+            "package": "datetime"
+          },
+          {
+            "name": "memory_helpers",
+            "type": "external",
+            "package": "memory_helpers"
+          }
+        ],
+        "error": null
+      },
+      "tests/sandbox/test_runtime/session_8636/factory/test_full_lifecycle_chain0004/project/.agent/agent_controller.py": {
+        "imports": [],
+        "error": "SyntaxError: invalid syntax at line 1"
+      },
+      "tests/sandbox/test_runtime/session_8636/factory/test_full_lifecycle_chain0004/project/.agent/backups/backup_20260527_155416/.agent/agent_controller.py": {
+        "imports": [],
+        "error": "SyntaxError: invalid syntax at line 1"
+      },
+      "tests/sandbox/test_runtime/session_8636/factory/test_full_lifecycle_chain0004/source/.agent/agent_controller.py": {
+        "imports": [],
+        "error": "SyntaxError: invalid syntax at line 1"
+      },
+      "tests/sandbox/test_runtime/session_8636/factory/test_import_preflight_detects_broken_module0049/bus/event_bus.py": {
+        "imports": [
+          {
+            "name": "nonexistent_module_xyz",
+            "type": "external",
+            "package": "nonexistent_module_xyz"
+          }
+        ],
+        "error": null
+      },
+      "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/project/.agent/agent_controller.py": {
+        "imports": [],
+        "error": "SyntaxError: invalid syntax at line 1"
+      },
+      "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/project/.agent/backups/backup_20260527_155416/.agent/agent_controller.py": {
+        "imports": [],
+        "error": "SyntaxError: invalid syntax at line 1"
+      },
+      "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/project/.agent/backups/backup_20260527_155416/agent_system/refactor_kit/kit.py": {
+        "imports": [],
+        "error": "SyntaxError: invalid syntax at line 1"
+      },
+      "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/project/agent_system/refactor_kit/kit.py": {
+        "imports": [],
+        "error": "SyntaxError: invalid syntax at line 1"
+      },
+      "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/source/.agent/agent_controller.py": {
+        "imports": [],
+        "error": "SyntaxError: invalid syntax at line 1"
+      },
+      "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/source/agent_system/refactor_kit/kit.py": {
+        "imports": [],
+        "error": "SyntaxError: invalid syntax at line 1"
       },
       "tests/test_agent_controller.py": {
         "imports": [
@@ -32593,10 +33954,10 @@
     "javascript": {},
     "frameworks": [],
     "tools": [
-      "pytest",
-      "ruff",
+      "mypy",
       "uv",
-      "mypy"
+      "ruff",
+      "pytest"
     ]
   },
   "parse_errors": [
@@ -32653,6 +34014,15 @@
     "tests/sandbox/test_runtime/session_29488/factory/test_upgrade_then_rollback_workflow0002/project/.agent/backups/backup_20260525_163827/agent_system/refactor_kit/kit.py: SyntaxError: invalid syntax at line 1",
     "tests/sandbox/test_runtime/session_29488/factory/test_upgrade_then_rollback_workflow0002/project/agent_system/refactor_kit/kit.py: SyntaxError: invalid syntax at line 1",
     "tests/sandbox/test_runtime/session_29488/factory/test_upgrade_then_rollback_workflow0002/source/.agent/agent_controller.py: SyntaxError: invalid syntax at line 1",
-    "tests/sandbox/test_runtime/session_29488/factory/test_upgrade_then_rollback_workflow0002/source/agent_system/refactor_kit/kit.py: SyntaxError: invalid syntax at line 1"
+    "tests/sandbox/test_runtime/session_29488/factory/test_upgrade_then_rollback_workflow0002/source/agent_system/refactor_kit/kit.py: SyntaxError: invalid syntax at line 1",
+    "tests/sandbox/test_runtime/session_8636/factory/test_full_lifecycle_chain0004/project/.agent/agent_controller.py: SyntaxError: invalid syntax at line 1",
+    "tests/sandbox/test_runtime/session_8636/factory/test_full_lifecycle_chain0004/project/.agent/backups/backup_20260527_155416/.agent/agent_controller.py: SyntaxError: invalid syntax at line 1",
+    "tests/sandbox/test_runtime/session_8636/factory/test_full_lifecycle_chain0004/source/.agent/agent_controller.py: SyntaxError: invalid syntax at line 1",
+    "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/project/.agent/agent_controller.py: SyntaxError: invalid syntax at line 1",
+    "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/project/.agent/backups/backup_20260527_155416/.agent/agent_controller.py: SyntaxError: invalid syntax at line 1",
+    "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/project/.agent/backups/backup_20260527_155416/agent_system/refactor_kit/kit.py: SyntaxError: invalid syntax at line 1",
+    "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/project/agent_system/refactor_kit/kit.py: SyntaxError: invalid syntax at line 1",
+    "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/source/.agent/agent_controller.py: SyntaxError: invalid syntax at line 1",
+    "tests/sandbox/test_runtime/session_8636/factory/test_upgrade_then_rollback_workflow0002/source/agent_system/refactor_kit/kit.py: SyntaxError: invalid syntax at line 1"
   ]
 }

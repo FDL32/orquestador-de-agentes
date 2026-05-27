@@ -11,20 +11,17 @@ import sys
 from pathlib import Path
 
 
-# WP-2026-122: Deferred path resolution via runtime.project_root
-try:
-    from runtime.project_root import get_agent_dir, resolve_project_root
-except ImportError:
-    # Fallback if runtime.project_root not available
-    get_agent_dir = None
-    resolve_project_root = None
+# Bootstrap: project root must be on sys.path before importing runtime.project_root.
+_PROJECT_ROOT_BOOTSTRAP = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT_BOOTSTRAP) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT_BOOTSTRAP))
 
-PROJECT_ROOT = (
-    resolve_project_root()
-    if resolve_project_root is not None
-    else Path(__file__).resolve().parent.parent
-)
-AGENT_DIR = get_agent_dir() if get_agent_dir is not None else PROJECT_ROOT / ".agent"
+# WP-2026-122 / WP-2026-155: Centralized path resolution via runtime.project_root
+from runtime.project_root import get_agent_dir, resolve_project_root  # noqa: E402
+
+
+PROJECT_ROOT = resolve_project_root()
+AGENT_DIR = get_agent_dir()
 COLLAB_DIR = AGENT_DIR / "collaboration"
 RUNTIME_DIR = AGENT_DIR / "runtime"
 AUDIT_DIR = RUNTIME_DIR / "audit"

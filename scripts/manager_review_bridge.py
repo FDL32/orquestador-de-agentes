@@ -28,18 +28,17 @@ if str(_PROJECT_ROOT_BOOTSTRAP) not in sys.path:
 from runtime.project_root import resolve_project_root  # noqa: E402
 
 
-# Setup sys.path for imports using the resolved project root
-_PROJECT_ROOT = resolve_project_root()
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
-_AGENT_DIR = _PROJECT_ROOT / ".agent"
-if str(_AGENT_DIR) not in sys.path:
-    sys.path.insert(0, str(_AGENT_DIR))
+# Add .agent to sys.path using the bootstrap root (engine-rooted, not operational).
+# resolve_project_root() is NOT called here so that --project-root can win precedence
+# in main() before the lru_cache is populated.
+_AGENT_DIR_BOOTSTRAP = _PROJECT_ROOT_BOOTSTRAP / ".agent"
+if str(_AGENT_DIR_BOOTSTRAP) not in sys.path:
+    sys.path.insert(0, str(_AGENT_DIR_BOOTSTRAP))
 
 
 def _project_root() -> Path:
-    """Return the resolved project root (cached for performance)."""
-    return _PROJECT_ROOT
+    """Return the resolved project root (lazy — reads AGENT_PROJECT_ROOT each call)."""
+    return resolve_project_root()
 
 
 from bus.review_bridge import ReviewBridge  # noqa: E402
@@ -354,11 +353,12 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     if args.project_root is not None:
-        resolved = str(args.project_root.resolve())
-        if resolve_project_root is not None:
-            import os
+        import os
 
-            os.environ["AGENT_PROJECT_ROOT"] = resolved
+        from runtime.project_root import clear_cache
+
+        os.environ["AGENT_PROJECT_ROOT"] = str(args.project_root.resolve())
+        clear_cache()
     project_root = _project_root()
     supervisor = SequentialTicketSupervisor(project_root=project_root, auto_sync=True)
     review = ReviewBridge(event_bus=supervisor.event_bus, project_root=project_root)

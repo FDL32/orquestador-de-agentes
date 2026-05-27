@@ -13,19 +13,17 @@ from pathlib import Path
 
 from bus.event_bus import EventBus
 
+# WP-2026-122 / WP-2026-155: Centralized path resolution via runtime.project_root
+from runtime.project_root import get_agent_dir, resolve_project_root
 
-# WP-2026-122: Deferred path resolution via runtime.project_root
-try:
-    from runtime.project_root import resolve_project_root
-except ImportError:
-    # Fallback if runtime.project_root not available
-    resolve_project_root = None
+
+_PROJECT_ROOT = resolve_project_root()
+_AGENT_DIR = get_agent_dir()
 
 
 def _project_root() -> Path:
-    if resolve_project_root is not None:
-        return resolve_project_root()
-    return Path(__file__).resolve().parents[1]
+    """Return the resolved project root (cached for performance)."""
+    return _PROJECT_ROOT
 
 
 class UIStateProjector:
