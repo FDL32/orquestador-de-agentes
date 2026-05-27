@@ -27,7 +27,9 @@ class TestReviewEnvIsolation:
         scratch_home = tmp_path / "scratch-home"
         monkeypatch.setenv("HOME", str(source_home))
         monkeypatch.setenv("USERPROFILE", str(source_home))
-        monkeypatch.setattr(tempfile, "mkdtemp", lambda prefix: str(scratch_home))
+        monkeypatch.setattr(
+            tempfile, "mkdtemp", lambda prefix, dir=None: str(scratch_home)
+        )
 
         review_env = bridge._review_env()
 
