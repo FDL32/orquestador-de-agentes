@@ -22,6 +22,7 @@ Flujo minimo de mejora continua:
 
 | Skill | Role | Stage | writes_memory | quality_gate | Descripcion |
 |---|---|---|---|---|---|
+| `grill-work-plan` | `manager` | `plan` | `false` | `false` | Interrogacion pre-plan para resolver terminologia ambigua antes de crear un work plan |
 | `setup-agent-system` | `user` | `setup` | `false` | `false` | Instalar y configurar el sistema de agentes con flujo oficial por etapas y compatibilidad legacy Manager+Builder en un proyecto existente |
 | `man-create-work-plan` | `manager` | `plan` | `false` | `false` | Crear planes de implementacion estructurados con fases, tareas y criterios de aceptacion |
 | `man-review-implementation` | `manager` | `review` | `false` | `false` | Revisar trabajo del Builder segun el plan aprobado y criterios de calidad |
@@ -94,6 +95,7 @@ Fuentes y destinos:
 - `scaffold-python-project` - setup
 
 ### Usuario
+- `grill-work-plan` - plan
 - `setup-agent-system` - setup
 
 ## Validacion

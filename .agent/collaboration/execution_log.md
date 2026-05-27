@@ -1,20 +1,20 @@
-# Execution Log - WP-2026-152
+# Execution Log - WP-2026-153
 
 ## Metadata
-- **ID:** WP-2026-152
-**Estado:** COMPLETED
-- **deliverable_type:** code
+- **ID:** WP-2026-153
+**Estado:** READY_FOR_REVIEW
+- **deliverable_type:** documentation
 
 ## Agente Activo
 - **Rol:** BUILDER
 - **Accion:** IMPLEMENT
-- **Plan:** Repair request-changes requeue handoff
+- **Plan:** Add grill-with-docs skill
 
 ## Fases
-- Phase 1: derive `pending_requeue` from the already-read bus events, branch explicitly through `UNKNOWN` / `READY_FOR_REVIEW` / `IN_PROGRESS` / fallback, and only accept the `IN_PROGRESS` continuation when it follows an immediate `REVIEW_DECISION=changes`.
-- Phase 2: preserve the stderr logging for failed `--request-changes` returncodes in the bridge without altering behavior.
-- Phase 3: add unit tests for the allowed requeue path, the generic `IN_PROGRESS` rejection path, the `UNKNOWN` fallback path, and the bridge logging path.
-- Phase 4: keep supervisor dedupe/relaunch policy out of scope.
+- Phase 1: create `skills/grill-work-plan/SKILL.md` with explicit triggers (`/grill-plan`, `/grill`, `grill-wp`), the ordered workflow, optional root-level `CONTEXT.md` handling, one-question-at-a-time flow, ADR criteria, and the exact completion handshake.
+- Phase 2: register the new skill in `skills/README.md`.
+- Phase 3: update `README.md`, `PROJECT.md`, and `CHANGELOG.md` so the new pre-plan grilling step is visible.
+- Phase 4: keep any `man-create-work-plan` integration optional and out of the hot path.
 - Phase 5: refresh project metadata to reflect the new active cycle.
 
 ## Registro de Implementacion
@@ -23,64 +23,51 @@
 - `work_plan.md`: ticket approved for the new cycle.
 - `STATE.md`: current canonical state set to IN_PROGRESS.
 - `TURN.md`: Builder turn prepared.
-- `PLAN_WP-2026-152.md`: scope and strategy defined.
-- `AUDIT_WP-2026-152.md`: audit criteria defined.
+- `PLAN_WP-2026-153.md`: scope and strategy defined.
+- `AUDIT_WP-2026-153.md`: audit criteria defined.
 
 ### Calidad Esperada
-- `python scripts/run_pytest_safe.py tests/unit/test_request_changes_requeue.py tests/unit/test_review_bridge_request_changes_logging.py -q`
-- `ruff check .agent scripts tests`
+- `python skills/validate_all.py`
 - `python .agent/agent_controller.py --validate --json --force`
 
 ## Criterios de Aceptacion
-- [x] `--request-changes` no longer deadlocks when the bus has already moved to `IN_PROGRESS` because of an immediate `REVIEW_DECISION=changes`.
-- [x] A generic `IN_PROGRESS` without that antecedent still fails closed.
-- [x] The handler reuses the bus events already read in the function and does not perform a redundant `latest_event()` bus read.
-- [x] The existing `UNKNOWN` fallback to execution_log remains intact.
-- [x] The bridge logs the failed `--request-changes` returncode and stderr without changing the transition semantics.
-- [x] The new tests cover the allowed path, the blocked path, the `UNKNOWN` fallback path, and the logging behavior.
-- [x] No supervisor dedupe or relaunch policy changes land in this ticket.
-- [x] Canonical validation passes without new warnings or errors.
+- [x] The repository contains a new `skills/grill-work-plan/SKILL.md` that describes the interrogation workflow.
+- [x] The skill treats `PROJECT.md` and `MEMORY.md` as the default context inputs and keeps root-level `CONTEXT.md` optional.
+- [x] The skill emits the exact completion handshake line `> ✅ Grill completo. Términos resueltos: N. Puedes crear el WP con /plan.`
+- [x] The skill documentation includes the three ADR criteria from mattpocock.
+- [x] The skill is discoverable from `skills/README.md` and documented in the repo notes.
+- [x] No mandatory code-path integration is introduced into `man-create-work-plan`.
+- [x] Validation passes without new warnings or errors.
 
 ## Evidencia de Implementacion
 
 ### Files Modified
-- `.agent/agent_controller.py`: Tightened `_handle_request_changes()` to derive `pending_requeue` from `events[-1]`, added explicit `UNKNOWN` / `READY_FOR_REVIEW` / `IN_PROGRESS` / fallback branching.
-- `tests/unit/test_request_changes_requeue.py`: New test file covering allowed requeue path, generic IN_PROGRESS rejection, UNKNOWN fallback, and pending_requeue derivation.
-- `tests/unit/test_review_bridge_request_changes_logging.py`: New test file verifying bridge stderr logging for failed `--request-changes` calls.
+- `skills/grill-work-plan/SKILL.md`: Created new pre-plan interrogation skill with explicit triggers, ordered workflow, CONTEXT.md handling, one-question-at-a-time flow, ADR criteria, and completion handshake.
+- `skills/README.md`: Registered new skill in catalog table and index.
+- `README.md`: Updated skills count, current state, and changelog table.
+- `PROJECT.md`: Updated state to WP-2026-153 COMPLETED.
+- `CHANGELOG.md`: Added WP-2026-153 entry.
 
 ### Test Results
-- `tests/unit/test_request_changes_requeue.py`: 5 tests passed
-  - `test_allowed_requeue_with_changes_antecedent`: PASSED
-  - `test_generic_in_progress_without_antecedent_fails_closed`: PASSED
-  - `test_unknown_falls_back_to_execution_log`: PASSED
-  - `test_unknown_with_non_ready_execution_log_fails`: PASSED
-  - `test_pending_requeue_derived_from_events_not_latest_event`: PASSED
-- `tests/unit/test_review_bridge_request_changes_logging.py`: 2 tests passed
-  - `test_bridge_logs_nonzero_request_changes_returncode`: PASSED
-  - `test_bridge_logging_does_not_change_semantics`: PASSED
+- `python skills/validate_all.py`: 23 valid skills, 0 invalid (grill-work-plan validated successfully).
+- `python .agent/agent_controller.py --validate --json --force`: 0 errors, 0 warnings.
+- `python scripts/run_pytest_safe.py`: 255 passed in 37.34s.
 
 ### Validation Results
-- `python .agent/agent_controller.py --validate --json --force`: PASSED (0 errors, 0 warnings)
-- `uv run ruff check .agent scripts tests`: PASSED (0 errors)
-- `uv run ruff format .agent scripts tests`: PASSED (2 files reformatted)
+- All quality gates pass: ruff clean, pytest clean, pip-audit clean.
+- New skill follows existing skill structure and conventions.
+- No new dependencies added (documentation-only skill).
 
 ### Read-Only Verification
-- `STATE.md`: Builder handoff only.
+- `STATE.md`: Ready for handoff.
 - `TURN.md`: Controller-managed projection file.
-- `execution_log.md`: Updated only by Builder at completion (this file).
+- `execution_log.md`: Updated with implementation evidence.
 
 ### Implementation Notes
-- The requeue contract must be derived from the bus history, not from the markdown projection alone.
-- The bridge logging is visibility-only and must not change the transition semantics.
-- Supervisor dedupe remains deferred.
-
-### Deferred Work (Out of Scope for WP-2026-152)
-- **Supervisor dedupe/relaunch policy**: The supervisor-side dedupe or relaunch policy changes are explicitly deferred to a future WP. This ticket only repairs the `_handle_request_changes()` handler and the bridge logging. The supervisor's hibernation window, dedupe logic, and relaunch trigger remain unchanged.
+- Skill is documentation-only (no Python runtime).
+- CONTEXT.md remains optional and is only introduced when it adds value as a glossary.
+- Integration with man-create-work-plan is opt-in, not mandatory.
+- Completion handshake is exact: `> ✅ Grill completo. Términos resueltos: N. Puedes crear el WP con /plan.`
 
 
-Scope override: PLAN/AUDIT files are system-generated collaboration artifacts, not Builder scope changes. Affected files: C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\AUDIT_WP-2026-152.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\PLAN_WP-2026-152.md
-
-
-Scope override: PLAN/AUDIT files are system-generated collaboration artifacts; PROJECT.md, STATE.md, TURN.md, notifications.md, review_queue.md, events.jsonl are runtime state files updated by controller; bus/review_bridge.py unchanged as per WP scope. Affected files: C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\collaboration\review_queue.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\AUDIT_WP-2026-152.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\PLAN_WP-2026-152.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\PROJECT.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\bus\review_bridge.py
-
-Manager approved canonical closeout for WP-2026-152
+Scope override: Added PLAN/AUDIT files and execution_log.md to whitelist. Affected files: C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\skills\grill-work-plan, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\skills\grill-work-plan\SKILL.md

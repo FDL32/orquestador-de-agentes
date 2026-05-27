@@ -1,12 +1,12 @@
 # Project: orquestador_de_agentes
 **Version:** v9.14.0
-**State:** WP-2026-152 IN_PROGRESS (repair request-changes requeue handoff)
+**State:** WP-2026-153 COMPLETED (add grill-with-docs skill)
 
 ## Current Cycle
 
-- Active ticket: WP-2026-152 IN_PROGRESS (2026-05-27).
-- Mode: active - Builder is repairing the request-changes requeue handoff.
-- Outcome: `--request-changes` must requeue only when an immediate `REVIEW_DECISION=changes` antecedent exists; bridge stderr logging remains in place.
+- Active ticket: WP-2026-153 COMPLETED (2026-05-27).
+- Mode: completed - grill-with-docs skill added.
+- Outcome: pre-plan grilling is now a first-class skill with triggers `/grill-plan`, `/grill`, `grill-wp`; `PROJECT.md` and `MEMORY.md` are the default inputs, `CONTEXT.md` remains optional.
 
 ## Current readiness
 

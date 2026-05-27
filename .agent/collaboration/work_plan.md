@@ -1,49 +1,52 @@
-# Work Plan - WP-2026-152
+# Work Plan - WP-2026-153
 
 ## Metadata
-- **ID:** WP-2026-152
-- **Estado:** COMPLETED
-- **deliverable_type:** code
-- **Titulo:** Repair request-changes requeue handoff
+- **ID:** WP-2026-153
+- **Estado:** APPROVED
+- **deliverable_type:** documentation
+- **Titulo:** Add grill-with-docs skill
 - **Asignado a:** Builder
 
 ## Objetivo
-Fix the `--request-changes` handoff so the builder requeue does not deadlock when the bus has already advanced to `IN_PROGRESS` as a consequence of an immediate `REVIEW_DECISION=changes`. The handler must accept the pending requeue only when the latest relevant bus event proves that `changes` is the direct antecedent, and the bridge must keep logging non-zero `--request-changes` returncodes for visibility. The supervisor dedupe/trigger refinement is intentionally out of scope for this ticket.
+Add a pre-plan interrogation skill that resolves ambiguous terminology before a work plan is created. The skill should ask one question at a time, provide a recommended answer before the user responds, prefer codebase-derived answers when possible, and keep domain context compact by using `PROJECT.md` and `MEMORY.md` by default. `CONTEXT.md` should remain optional and only be created or updated when it adds value as a separate glossary. The skill should reduce fuzzy scopes and avoid avoidable review loops before implementation begins.
 
 ## Decision Arquitectonica
-- The bus remains the source of truth for whether a requeue is pending.
-- `_handle_request_changes()` must derive `pending_requeue` from the `events` slice already read for the bus-state derivation, using `events[-1]` when present; it must not perform a second `latest_event()` read.
-- The control flow must be explicit: `UNKNOWN` falls back to the existing execution_log path, `READY_FOR_REVIEW` proceeds normally, `IN_PROGRESS` is only accepted when `pending_requeue` is true, and all other states fail closed.
-- Generic `IN_PROGRESS` without that antecedent must still fail closed.
-- The review bridge stderr logging for failed `--request-changes` calls is observability only and must not change the transition semantics.
-- Supervisor-side dedupe or relaunch policy changes are deferred to a future WP.
+- The new skill is a prompt/documentation artifact, not a Python runtime component.
+- `PROJECT.md` and `MEMORY.md` are the default context inputs for the grilling flow.
+- `CONTEXT.md` lives at the project root, alongside `PROJECT.md`; it is optional and should only be used when it provides a useful glossary boundary.
+- The skill must support one-question-at-a-time interrogation with a recommended answer from the agent before the user replies.
+- The workflow must be explicit and ordered: read `PROJECT.md` + `MEMORY.md`, optionally read `CONTEXT.md` if it exists, derive questions from the requirement (preferring those the codebase can answer directly), loop question -> recommended answer -> user confirmation/correction, propose a `CONTEXT.md` entry only when the term is not already defined in `PROJECT.md` or `MEMORY.md`, and then emit the completion handshake.
+- The completion handshake must be exact: `> ✅ Grill completo. Términos resueltos: N. Puedes crear el WP con /plan.`
+- The skill should describe when an ADR is justified using the three mattpocock criteria: hard to revert, surprising without context, and a real trade-off.
 - No new dependencies are allowed.
-- The fix should preserve the existing canonical materialization path and not redesign the review flow.
+- Any integration into `man-create-work-plan` is intentionally deferred unless it remains optional and non-disruptive.
 
 ## Files Likely Touched
-- `.agent/agent_controller.py`
-- `bus/review_bridge.py`
-- `tests/unit/test_request_changes_requeue.py`
-- `tests/unit/test_review_bridge_request_changes_logging.py`
+- `skills/grill-work-plan/SKILL.md`
+- `skills/README.md`
+- `README.md`
+- `PROJECT.md`
+- `CHANGELOG.md`
+- `PLAN_WP-2026-153.md`
+- `AUDIT_WP-2026-153.md`
+- `.agent/collaboration/execution_log.md`
 
 ## Fases
-1. Tighten `_handle_request_changes()` so it derives `pending_requeue` from the already-read bus events, uses the explicit `UNKNOWN` / `READY_FOR_REVIEW` / `IN_PROGRESS` / fallback branching above, and only accepts the `IN_PROGRESS` continuation when the direct `REVIEW_DECISION=changes` antecedent is present.
-2. The bridge stderr logging for non-zero `--request-changes` returncodes is already implemented in `bus/review_bridge.py` as a prior hotfix. Do not re-implement it. The only deliverable for this phase is adding the test in `tests/unit/test_review_bridge_request_changes_logging.py` that verifies the logging behavior.
-3. Add unit tests that cover the allowed requeue path, the generic `IN_PROGRESS` rejection path, the `UNKNOWN` + execution_log fallback path, and the bridge logging behavior.
-4. Keep the supervisor dedupe/trigger change out of scope and document it explicitly as deferred work.
+1. Create `skills/grill-work-plan/SKILL.md` with frontmatter, explicit triggers (`/grill-plan`, `/grill`, `grill-wp`), the ordered workflow, optional `CONTEXT.md` handling at repo root, one-question-at-a-time flow, ADR criteria, and the exact completion handshake.
+2. Register the new skill in `skills/README.md` so it becomes discoverable.
+3. Refresh the repo notes (`README.md`, `PROJECT.md`, and `CHANGELOG.md`) so the new pre-plan grilling step is visible.
+4. Keep any `man-create-work-plan` integration optional and out of the hot path.
 5. Refresh project metadata so the new cycle is the active ticket.
 
 ## Calidad
-- `python scripts/run_pytest_safe.py tests/unit/test_request_changes_requeue.py tests/unit/test_review_bridge_request_changes_logging.py -q`
-- `ruff check .agent scripts tests`
+- `python skills/validate_all.py`
 - `python .agent/agent_controller.py --validate --json --force`
 
 ## Criterios de aceptacion
-- `--request-changes` no longer deadlocks when the bus has already moved to `IN_PROGRESS` because of an immediate `REVIEW_DECISION=changes`.
-- A generic `IN_PROGRESS` without that immediate antecedent still fails closed.
-- The handler reuses the bus events already read in the function and does not perform a redundant `latest_event()` bus read.
-- The handler preserves the existing `UNKNOWN` fallback to execution_log when the bus has no usable state.
-- The bridge logs the failed `--request-changes` returncode and stderr without changing the transition semantics.
-- The new tests cover the allowed path, the blocked path, the `UNKNOWN` fallback path, and the logging behavior.
-- No supervisor dedupe or relaunch policy changes land in this ticket.
-- Canonical validation passes without new warnings or errors.
+- The repository contains a new `skills/grill-work-plan/SKILL.md` that describes the interrogation workflow.
+- The skill treats `PROJECT.md` and `MEMORY.md` as the default context inputs and keeps `CONTEXT.md` optional.
+- The skill emits the exact completion handshake line `> ✅ Grill completo. Términos resueltos: N. Puedes crear el WP con /plan.`
+- The skill documentation includes the three ADR criteria from mattpocock.
+- The skill is discoverable from `skills/README.md` and documented in the repo notes.
+- No mandatory code-path integration is introduced into `man-create-work-plan`.
+- Validation passes without new warnings or errors.
