@@ -79,7 +79,7 @@
   },
   "role_models": {
     "BUILDER": "opencode-go/qwen3.5-plus",
-    "MANAGER": "openai/gpt-5.4-mini"
+    "MANAGER": "opencode-go/qwen3.5-plus"
   },
   "manager_review": {
     "timeout_seconds": 180,

@@ -16,6 +16,7 @@ from pathlib import Path
 
 from .event_bus import EventBus
 from .skill_resolver import SkillResolver, create_resolver
+from .time_utils import now_local
 from .utils import count_trailing_changes
 
 
@@ -274,6 +275,41 @@ class ReviewBridge:
             return get_model_for_role("MANAGER", config)
         except Exception:
             return None
+
+    # Known namespaces that OpenCode CLI accepts verbatim (provider/model format).
+    _OPENCODE_VALID_PREFIXES = ("opencode-go/", "opencode/")
+
+    @staticmethod
+    def _normalize_opencode_model(model: str | None) -> str | None:
+        """Normalize a role model to the identifier accepted by OpenCode.
+
+        Valid OpenCode model IDs use the ``opencode-go/<model>`` or
+        ``opencode/<model>`` namespaces and are passed through unchanged.
+        Any other provider-qualified form (``openai/``, ``github-copilot/``,
+        etc.) has its prefix stripped; the bare model name is returned, which
+        may or may not be valid — callers should ensure agents.json uses a
+        model from the known OpenCode catalog.
+        """
+        if model is None:
+            return None
+        normalized = model.strip()
+        if not normalized:
+            return None
+        for prefix in ReviewBridge._OPENCODE_VALID_PREFIXES:
+            if normalized.startswith(prefix):
+                return normalized
+        # Unknown provider prefix — strip it and warn via print so the issue
+        # is visible in the bridge log without raising.
+        if "/" in normalized:
+            provider, bare = normalized.split("/", 1)
+            print(
+                f"[review_bridge] WARNING: model '{normalized}' uses unknown provider"
+                f" '{provider}'. Stripping prefix → '{bare}'."
+                " Update agents.json to an opencode-go/* or opencode/* model.",
+                flush=True,
+            )
+            normalized = bare.strip()
+        return normalized or None
 
     def _get_canonical_files(self) -> list[Path]:
         """Get list of canonical collaboration files to attach to OpenCode review."""
@@ -817,7 +853,7 @@ class ReviewBridge:
         --file (array que consume el mensaje) y el limite de longitud de la
         CLI.
         """
-        model = self._get_manager_model()
+        model = self._normalize_opencode_model(self._get_manager_model())
 
         executable = str(manager_executable) if manager_executable else "opencode"
         if os.name == "nt" and executable == "opencode":
@@ -886,6 +922,7 @@ class ReviewBridge:
                 text=True,
                 encoding="utf-8",
                 cwd=self.project_root,
+                env=self._review_env(),
                 timeout=timeout_seconds,
                 shell=use_shell,
             )
@@ -1457,11 +1494,18 @@ class ReviewBridge:
 
         # WP-2026-118: Wrap initial emit in fail-safe
         try:
+            latest_event = self.event_bus.latest_event(ticket_id=ticket_id)
             self.event_bus.emit(
                 "MANAGER_REVIEWING",
                 ticket_id=ticket_id,
                 actor="MANAGER",
-                payload={"state": latest_state},
+                payload={
+                    "state": latest_state,
+                    "active_sequence": (
+                        latest_event.sequence_number if latest_event else 0
+                    ),
+                    "started_at": now_local().isoformat(),
+                },
             )
         except Exception as exc:
             # WP-2026-118: Fail-safe - abort cycle cleanly if bus fails at startup
