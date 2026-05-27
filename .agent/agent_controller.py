@@ -2901,6 +2901,10 @@ def _handle_request_changes(  # noqa: C901
     in agents.json (manager_review.max_attempts); see get_human_gate_threshold().
 
     WP-2026-124: Now uses bus-derived state via _materialize_state_transition.
+    WP-2026-152: Derives pending_requeue from already-read events slice (events[-1]),
+      not a second latest_event() bus read. Accepts IN_PROGRESS only when
+      REVIEW_DECISION=changes is the direct antecedent. UNKNOWN falls back to
+      execution_log path. Generic IN_PROGRESS without that antecedent fails closed.
     """
     if not ticket_id or ticket_id == "N/A":
         if json_output:
@@ -2941,7 +2945,8 @@ def _handle_request_changes(  # noqa: C901
             )
         return 1
 
-    # WP-2026-124: Check bus-derived state first
+    # WP-2026-124 + WP-2026-152: Check bus-derived state with explicit branching.
+    # Derive pending_requeue from the already-read events slice, not a second read.
     if BUS_AVAILABLE and event_bus:
         from bus.state_machine import StateMachine, TicketState
 
@@ -2952,8 +2957,25 @@ def _handle_request_changes(  # noqa: C901
             else TicketState.UNKNOWN
         )
 
-        # Fallback to execution_log.md if bus state is UNKNOWN
+        # WP-2026-152: Derive pending_requeue from events[-1] when present.
+        # Do not perform a second latest_event() bus read.
+        pending_requeue = False
+        if events:
+            latest_event = events[-1]
+            if (
+                latest_event.event_type == "REVIEW_DECISION"
+                and str((latest_event.payload or {}).get("decision", "")).lower()
+                == "changes"
+            ):
+                pending_requeue = True
+
+        # Explicit branching per WP-2026-152:
+        # - UNKNOWN: fall back to execution_log path
+        # - READY_FOR_REVIEW: proceed normally
+        # - IN_PROGRESS: only accept when pending_requeue is true (direct changes antecedent)
+        # - Other states: fail closed
         if bus_state == TicketState.UNKNOWN:
+            # Fallback to execution_log.md when bus has no usable state
             if "READY_FOR_REVIEW" not in log_status:
                 if json_output:
                     print(
@@ -2967,19 +2989,42 @@ def _handle_request_changes(  # noqa: C901
                         f"[ERROR] Ticket {ticket_id} is not in READY_FOR_REVIEW (current state: {log_status})"
                     )
                 return 1
-        elif bus_state != TicketState.READY_FOR_REVIEW:
+            # Continue with execution_log fallback path below
+        elif bus_state == TicketState.READY_FOR_REVIEW:
+            # Proceed normally - no pending_requeue check needed
+            pass
+        elif bus_state == TicketState.IN_PROGRESS:
+            # Only accept IN_PROGRESS when pending_requeue is true (direct changes antecedent)
+            if not pending_requeue:
+                if json_output:
+                    print(
+                        json.dumps(
+                            {
+                                "error": f"Ticket {ticket_id} is IN_PROGRESS without pending_requeue antecedent"
+                            },
+                            indent=2,
+                        )
+                    )
+                else:
+                    print(
+                        f"[ERROR] Ticket {ticket_id} is IN_PROGRESS without pending_requeue antecedent (generic IN_PROGRESS fails closed)"
+                    )
+                return 1
+            # Accept the requeue - continue below
+        else:
+            # All other states fail closed
             if json_output:
                 print(
                     json.dumps(
                         {
-                            "error": f"Ticket {ticket_id} bus state is {bus_state.value}, not READY_FOR_REVIEW"
+                            "error": f"Ticket {ticket_id} bus state is {bus_state.value} (fails closed)"
                         },
                         indent=2,
                     )
                 )
             else:
                 print(
-                    f"[ERROR] Ticket {ticket_id} bus state is {bus_state.value}, not READY_FOR_REVIEW"
+                    f"[ERROR] Ticket {ticket_id} bus state is {bus_state.value} (fails closed)"
                 )
             return 1
 
@@ -2995,7 +3040,8 @@ def _handle_request_changes(  # noqa: C901
         # --request-changes invoked manually without the bridge), emit one so
         # the bus stays the single source of truth. The bridge path already
         # emits it, so this is a no-op there (no duplicate).
-        latest = event_bus.latest_event(ticket_id=ticket_id)
+        # WP-2026-152: Use events[-1] already read, not a second latest_event() call.
+        latest = events[-1] if events else event_bus.latest_event(ticket_id=ticket_id)
         if (
             not latest
             or latest.event_type != "REVIEW_DECISION"
