@@ -22,6 +22,7 @@ from .utils import count_trailing_changes
 
 
 # Windows CreateProcess argv limit ~8191 chars; leave margin for other args
+OS_NAME = os.name
 ARGV_PROMPT_THRESHOLD = 8000
 MAX_RUBRIC_OBSERVATIONS = 5
 MAX_OBSERVATION_SIGNAL_CHARS = 200
@@ -220,11 +221,11 @@ class ReviewBridge:
     def _detect_json_format_support(self) -> bool:
         try:
             executable = "opencode"
-            if os.name == "nt":
+            if OS_NAME == "nt":
                 executable = "opencode.cmd"
             exe_full = shutil.which(executable) or executable
             detect_args = [exe_full, "run", "--help"]
-            use_detect_shell = os.name == "nt"
+            use_detect_shell = OS_NAME == "nt"
             result = subprocess.run(
                 subprocess.list2cmdline(detect_args)
                 if use_detect_shell
@@ -847,7 +848,7 @@ class ReviewBridge:
     ) -> tuple[str, str, int]:
         """Legacy Manager review route. Preserved for backward compatibility."""
         exe_str = str(manager_executable)
-        if os.name == "nt" and exe_str.lower().endswith(".ps1"):
+        if OS_NAME == "nt" and exe_str.lower().endswith(".ps1"):
             cmd_candidate = Path(exe_str).with_suffix(".cmd")
             bat_candidate = Path(exe_str).with_suffix(".bat")
             if cmd_candidate.exists():
@@ -856,7 +857,7 @@ class ReviewBridge:
                 exe_str = str(bat_candidate)
 
         command = [exe_str, "review", ticket_id]
-        if os.name == "nt" and exe_str.lower().endswith(".ps1"):
+        if OS_NAME == "nt" and exe_str.lower().endswith(".ps1"):
             command = [
                 "powershell.exe",
                 "-NoProfile",
@@ -897,11 +898,11 @@ class ReviewBridge:
         model = self._normalize_opencode_model(self._get_manager_model())
 
         executable = str(manager_executable) if manager_executable else "opencode"
-        if os.name == "nt" and executable == "opencode":
+        if OS_NAME == "nt" and executable == "opencode":
             executable = "opencode.cmd"
 
         exe_full = shutil.which(executable) or executable
-        if os.name == "nt" and exe_full.lower().endswith(".ps1"):
+        if OS_NAME == "nt" and exe_full.lower().endswith(".ps1"):
             cmd_candidate = Path(exe_full).with_suffix(".cmd")
             bat_candidate = Path(exe_full).with_suffix(".bat")
             if cmd_candidate.exists():
@@ -935,14 +936,14 @@ class ReviewBridge:
         cmd_args.append(review_message)
 
         use_shell = False
-        if os.name == "nt" and (
+        if OS_NAME == "nt" and (
             exe_full.lower().endswith(".cmd")
             or exe_full.lower().endswith(".bat")
             or "opencode" in exe_full.lower()
         ):
             use_shell = True
 
-        if os.name == "nt" and exe_full.lower().endswith(".ps1"):
+        if OS_NAME == "nt" and exe_full.lower().endswith(".ps1"):
             cmd_args = [
                 "powershell.exe",
                 "-NoProfile",
