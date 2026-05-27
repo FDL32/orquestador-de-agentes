@@ -30,15 +30,16 @@ This is a **reference** setup, not a constraint. Swap any role for another backe
 ## Current state
 
 - **Version**: `v9.14.0`
-- **Status**: Stable. Destination prefix onboarding + timeout/inspect semantic fix (WP-2026-144).
-- **Last work**: `WP-2026-144` — Destination ticket prefix onboarding + hotfix: timeout no longer emits inspect to bus.
+- **Status**: Stable. Pre-plan grilling skill added (WP-2026-153).
+- **Last work**: `WP-2026-153` — Add grill-with-docs skill for pre-plan interrogation.
 - **Tests**: 255 passing. Validation 0 errors. Ruff clean. pip-audit clean.
 
 ### What changed since v9.9.0
 
 | WP | Topic |
 |----|-------|
-| WP-2026-086 | Regex-based redaction module (`bus/redact.py`) for secrets/PII scrubbing on the event bus |
+| WP-2026-153 | Pre-plan grilling skill (`/grill-plan`, `/grill`, `grill-wp`) for resolving ambiguous terminology before work plan creation |
+| WP-2026-144 | Destination prefix onboarding + timeout hotfix: `--install --prefix XXX` writes namespace; timeout no longer emits `inspect` to bus |
 | WP-2026-087 | Smoke test bus agnóstico + 5-gap analysis (proved bus is domain-neutral) |
 | WP-2026-088 | `deliverable_type` field in work_plan schema (V1 informational) |
 | WP-2026-089 | Pluggable quality-gates dispatch by deliverable_type (`scripts/run_gates_dispatch.py`) |
@@ -89,7 +90,7 @@ The motor lives **once** in this repo. A destination project:
 - `.agent/config/agents.json` — backends + roles + `manager_review` tuning
 - `.agent/hooks/` — safety and validation hooks
 - `bus/` — event bus, supervisor, state machine, review bridge, redaction
-- `skills/` — bundled default skills (catalog of 19); destination can override via `.agent/skills/`
+- `skills/` — bundled default skills (catalog of 20); destination can override via `.agent/skills/`
 - `scripts/` — install, upgrade, gates dispatch, skill discovery, audits, maintenance
 - `MANIFEST.distribute` — frontera del motor central (codigo operativo)
 - `MANIFEST.workspace` — contrato del workspace destino (estado, memoria, eventos, config)

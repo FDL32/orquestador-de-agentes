@@ -1,3 +1,24 @@
+# 2026-05-27 - WP-2026-153 Add grill-with-docs skill
+
+### Added
+- `skills/grill-work-plan/SKILL.md`: Pre-plan interrogation skill with triggers `/grill-plan`, `/grill`, `grill-wp`.
+  - One-question-at-a-time flow with recommended answer before user response
+  - Default context: `PROJECT.md` and `MEMORY.md`; `CONTEXT.md` optional at repo root
+  - Codebase-first answers (grep/search before speculation)
+  - ADR criteria from mattpocock (hard to revert, surprising without context, real trade-off)
+  - Exact completion handshake: `> ✅ Grill completo. Términos resueltos: N. Puedes crear el WP con /plan.`
+- `skills/README.md`: Registered new skill in catalog table and index.
+
+### Changed
+- `README.md`: Updated skills count (19 → 20), current state, and changelog table.
+- `PROJECT.md`: Updated state to WP-2026-153 COMPLETED.
+
+### Summary
+- Pre-plan grilling reduces fuzzy scopes and avoidable review loops.
+- Skill is documentation-only (no Python runtime, no dependencies).
+- Optional integration with `man-create-work-plan` (opt-in, not blocking).
+
+---
 # 2026-05-26 - WP-2026-144 Destination ticket prefix onboarding + timeout hotfix
 
 ### Added
