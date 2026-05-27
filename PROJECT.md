@@ -1,12 +1,13 @@
 # Project: orquestador_de_agentes
-**Version:** v9.14.0
-**State:** WP-2026-153 COMPLETED (add grill-with-docs skill)
+**Version:** v9.14.1
+**State:** SESSION CLOSED (2026-05-27)
 
 ## Current Cycle
 
-- Active ticket: WP-2026-153 COMPLETED (2026-05-27).
-- Mode: completed - grill-with-docs skill added.
-- Outcome: pre-plan grilling is now a first-class skill with triggers `/grill-plan`, `/grill`, `grill-wp`; `PROJECT.md` and `MEMORY.md` are the default inputs, `CONTEXT.md` remains optional.
+- Active ticket: WP-2026-153 COMPLETED (2026-05-27). Session closed at v9.14.1.
+- CHANGELOG completed for WP-2026-151 and WP-2026-152 (entries were missing).
+- Hardening: `.claude/security-patterns.json` + `.claude/claude-security-guidance.md` added as preparation for security-guidance plugin.
+- `bui-self-audit` updated with Paso 4b contract rules and deduplication cleanup.
 
 ## Current readiness
 
