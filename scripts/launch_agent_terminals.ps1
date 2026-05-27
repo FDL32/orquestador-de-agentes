@@ -911,12 +911,18 @@ function Get-CanonicalFilesForOpenCode {
     if ($ticketId) {
         $planPath = Join-Path $ProjectRoot ".agent\collaboration\PLAN_$ticketId.md"
         $auditPath = Join-Path $ProjectRoot ".agent\collaboration\AUDIT_$ticketId.md"
+        $feedbackPath = Join-Path $ProjectRoot ".agent\collaboration\manager_feedback_$ticketId.md"
 
         if (Test-Path -LiteralPath $planPath) {
             $canonicalFiles += $planPath
         }
         if (Test-Path -LiteralPath $auditPath) {
             $canonicalFiles += $auditPath
+        }
+        # WP-2026-156: Adjuntar feedback normalizado si existe (requeue tras CHANGES)
+        if (Test-Path -LiteralPath $feedbackPath) {
+            $canonicalFiles += $feedbackPath
+            Write-Host "Feedback normalizado detectado: $feedbackPath"
         }
     }
 

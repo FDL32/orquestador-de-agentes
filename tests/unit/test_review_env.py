@@ -1,63 +1,45 @@
-"""Tests for _review_env() environment inheritance (WP-2026-129).
-
-Before: _review_env() redirected HOME, USERPROFILE, CODEX_HOME to .codex.
-After: _review_env() preserves the inherited process environment.
-"""
+"""Tests for _review_env() environment isolation (WP-2026-129)."""
 
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 
 from bus.event_bus import EventBus
 from bus.review_bridge import ReviewBridge
 
 
-class TestReviewEnvInheritance:
-    """Test that _review_env() preserves inherited environment."""
+class TestReviewEnvIsolation:
+    """Test that _review_env() isolates the review home while preserving vars."""
 
-    def test_review_env_preserves_home(self, tmp_path: Path) -> None:
-        """Test _review_env() does not redirect HOME to .codex."""
+    def test_review_env_redirects_home_vars(self, tmp_path: Path, monkeypatch) -> None:
+        """Test _review_env() redirects HOME/USERPROFILE to a scratch home."""
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
-        review_env = bridge._review_env()
-        original_home = os.environ.get("HOME")
+        source_home = tmp_path / "source-home"
+        source_auth = source_home / ".local" / "share" / "opencode" / "auth.json"
+        source_auth.parent.mkdir(parents=True, exist_ok=True)
+        source_auth.write_text('{"token": "dummy"}', encoding="utf-8")
 
-        # Should preserve original HOME, not redirect to .codex
-        assert review_env.get("HOME") == original_home
-        if original_home is not None:
-            assert ".codex" not in original_home
-
-    def test_review_env_preserves_userprofile(self, tmp_path: Path) -> None:
-        """Test _review_env() does not redirect USERPROFILE to .codex."""
-        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
-        event_bus = EventBus(runtime_dir=runtime_dir)
-        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+        scratch_home = tmp_path / "scratch-home"
+        monkeypatch.setenv("HOME", str(source_home))
+        monkeypatch.setenv("USERPROFILE", str(source_home))
+        monkeypatch.setattr(tempfile, "mkdtemp", lambda prefix: str(scratch_home))
 
         review_env = bridge._review_env()
-        original_userprofile = os.environ.get("USERPROFILE")
 
-        # Should preserve original USERPROFILE, not redirect to .codex
-        assert review_env.get("USERPROFILE") == original_userprofile
-        if original_userprofile is not None:
-            assert ".codex" not in original_userprofile
+        assert review_env["HOME"] == str(scratch_home)
+        assert review_env["USERPROFILE"] == str(scratch_home)
+        assert review_env["XDG_CONFIG_HOME"] == str(scratch_home / ".config")
+        assert review_env["XDG_DATA_HOME"] == str(scratch_home / ".local" / "share")
+        assert review_env["XDG_STATE_HOME"] == str(scratch_home / ".local" / "state")
 
-    def test_review_env_preserves_codex_home_unset(self, tmp_path: Path) -> None:
-        """Test _review_env() does not set CODEX_HOME artificially."""
-        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
-        event_bus = EventBus(runtime_dir=runtime_dir)
-        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
-
-        review_env = bridge._review_env()
-        original_codex_home = os.environ.get("CODEX_HOME")
-
-        # Should preserve original CODEX_HOME (or lack thereof)
-        assert review_env.get("CODEX_HOME") == original_codex_home
-        # If it was unset, it should remain unset
-        if original_codex_home is None:
-            assert "CODEX_HOME" not in review_env
+        copied_auth = scratch_home / ".local" / "share" / "opencode" / "auth.json"
+        assert copied_auth.exists()
+        assert copied_auth.read_text(encoding="utf-8") == '{"token": "dummy"}'
 
     def test_review_env_is_copy_not_reference(self, tmp_path: Path) -> None:
         """Test _review_env() returns a copy, not os.environ reference."""
@@ -67,20 +49,26 @@ class TestReviewEnvInheritance:
 
         review_env = bridge._review_env()
 
-        # Modifying the returned env should not affect os.environ
         review_env["TEST_VAR"] = "test_value"
         assert "TEST_VAR" not in os.environ
 
-    def test_review_env_inherits_all_process_vars(self, tmp_path: Path) -> None:
-        """Test _review_env() inherits all process environment variables."""
+    def test_review_env_inherits_non_home_process_vars(self, tmp_path: Path) -> None:
+        """Test _review_env() still preserves ordinary process environment variables."""
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
         review_env = bridge._review_env()
 
-        # All original env vars should be present
         for key, value in os.environ.items():
+            if key in {
+                "HOME",
+                "USERPROFILE",
+                "XDG_CONFIG_HOME",
+                "XDG_DATA_HOME",
+                "XDG_STATE_HOME",
+            }:
+                continue
             assert key in review_env
             assert review_env[key] == value
 
@@ -94,7 +82,6 @@ class TestManagerBackendFallback:
         event_bus = EventBus(runtime_dir=runtime_dir)
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
-        # No agents.json exists, should fallback to opencode
         backend = bridge._get_manager_backend()
         assert backend == "opencode"
 
@@ -105,6 +92,4 @@ class TestManagerBackendFallback:
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
         backend = bridge._get_manager_backend()
-
-        # Should never return 'codex' as fallback anymore
         assert backend != "codex"

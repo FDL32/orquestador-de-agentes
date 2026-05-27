@@ -1,12 +1,12 @@
 {
   "version": "1.0",
-  "generated": "2026-05-27T14:16:56.449654+00:00",
+  "generated": "2026-05-27T20:39:03.379431+00:00",
   "project_root": "C:\\Users\\fdl\\Proyectos_Python\\z_scripts\\orquestador_de_agentes",
   "summary": {
-    "total_files": 4832,
-    "total_size_bytes": 13950907,
+    "total_files": 4834,
+    "total_size_bytes": 14255448,
     "categories": {
-      "config": 369,
+      "config": 371,
       "python": 836,
       "documentation": 1297,
       "other": 2314,
@@ -23,17 +23,17 @@
       {
         "path": ".agent/collaboration/.session_state.json",
         "size": 134,
-        "sha256": "7a7f307b772aeaf503387f9c25d043fde9b789783d2b1c02449d467be35d3325"
+        "sha256": "424c86027ef8a561aafe211c9b82f8eb19c8216a596a76fc9a5af4b0254df12c"
       },
       {
         "path": ".agent/config/agents.json",
-        "size": 2560,
-        "sha256": "57662977c5bf3a327b35e806e3f385a5dd3476b7cd2b5ccd00e5ae5bb09cba5c"
+        "size": 2568,
+        "sha256": "b14d4a4ad26b1bc08eb60d03c6c7fab2066afeaffb0c3f182ad472238cd2a145"
       },
       {
         "path": ".agent/context/project-map.json",
-        "size": 1378732,
-        "sha256": "2b7c84a5037fe23dcb5911ca22ec1b4264c982b106fc8d0f1a522077910250a4"
+        "size": 1447642,
+        "sha256": "7f658d1c3f89a299fb234362b652cf6d47276db52a38afc9328931589eb43693"
       },
       {
         "path": ".agent/known_models.json",
@@ -46,6 +46,11 @@
         "sha256": "3e7476c1eec5d910658870f94cb8831105c1e1197ac86d56bde5e15f1d91a235"
       },
       {
+        "path": ".agent/runtime/approvals/store.json",
+        "size": 443,
+        "sha256": "e07dd5d02e9536afb5ab6667375d07354ba56a6211f9225dea7fb30344665558"
+      },
+      {
         "path": ".agent/runtime/audit/audit.json",
         "size": 17799,
         "sha256": "cad8fbc930d0a2aad977a29e353f91e9c1eeb14ce42f0a10d1b4bf88f4ee4c1c"
@@ -53,17 +58,22 @@
       {
         "path": ".agent/runtime/circuit_breaker.json",
         "size": 181,
-        "sha256": "4d35eeabd66a6f5edabefd18eda35c055316a49ab86ab94d6f99b8d68a3083d3"
+        "sha256": "fb4e59d70fdb0f5f86cfd8767b5f0e9b55a2e77d0ae3e21780065643b15ec4d7"
+      },
+      {
+        "path": ".agent/runtime/manager_bridge_state.json",
+        "size": 171,
+        "sha256": "c5148c0103f22d005893aea394192ffbfcff000501a957ea4f32692742326413"
       },
       {
         "path": ".agent/runtime/pytest-safe/last-run.json",
-        "size": 1141,
-        "sha256": "74603823e25068da6e8a0366169eaad1388e15c6e3aa99e1c15115ec0e00c016"
+        "size": 1151,
+        "sha256": "24c1dc81b833166331877d22e013a1867fa7edd8b45d15194f62e9d9b56693e7"
       },
       {
         "path": ".agent/runtime/supervisor_state.json",
         "size": 186,
-        "sha256": "650bc0b738eaea473d9fe68098671e5120cf7d5bcd6bc860b048158822e6f890"
+        "sha256": "356ce3ed01474fb227450ac7e0e945c3317b19cb4e5ce79d39e882cd7922702a"
       },
       {
         "path": ".agent_allowlist.json",
@@ -1864,8 +1874,8 @@
     "python": [
       {
         "path": ".agent/agent_controller.py",
-        "size": 119805,
-        "sha256": "a1443e0eaa9873404e39c50ef340c87f700114afa57fcae89b154e0ddd9fef26"
+        "size": 120098,
+        "sha256": "f265346dff22f66bb586506ea04a0792259a28e9529dfed880ce27cad4288a42"
       },
       {
         "path": ".agent/agents_config.py",
@@ -1874,13 +1884,13 @@
       },
       {
         "path": ".agent/completion_checker.py",
-        "size": 5700,
-        "sha256": "57d89cef516e0e2c53434982aadf71cb086a0af8d0dc4402077b19e416637c9a"
+        "size": 5714,
+        "sha256": "a8219c23548390d3fa387460f40fe4e9b299347d57cd7107467a93d91fb14fae"
       },
       {
         "path": ".agent/completion_common.py",
-        "size": 3442,
-        "sha256": "7431ad2d5bcf04fd060ee95c8cf5b18053178d2931319b0a6f915a7a705d07f3"
+        "size": 3421,
+        "sha256": "0e52e1fab808585d931503bf076cfec2e394a5826032a4a67dce6eee1671ac7d"
       },
       {
         "path": ".agent/council/__init__.py",
@@ -1929,8 +1939,8 @@
       },
       {
         "path": ".agent/hooks/stop_hook.py",
-        "size": 1655,
-        "sha256": "86b74e047acd4dc4dee646bfa679a957c5d4b5e2b20f80bed4401eb0849c0499"
+        "size": 1644,
+        "sha256": "1aa703cc1afecbfeaa958873276977196be665740d93a34e2d79bebec80c31c5"
       },
       {
         "path": ".agent/hooks/subagent_stop_hook.py",
@@ -1949,8 +1959,8 @@
       },
       {
         "path": ".agent/session_tracker.py",
-        "size": 6422,
-        "sha256": "37020178703e2548f0a51c07aea0d3472d61f5527d1c5d83fce7c2e3e07bff2f"
+        "size": 6412,
+        "sha256": "05d5aad4c98e8c9811214ed253b98a6b4906ad9e2c126f85fd0f00ca75d6db17"
       },
       {
         "path": "bus/__init__.py",
@@ -1979,8 +1989,8 @@
       },
       {
         "path": "bus/review_bridge.py",
-        "size": 77156,
-        "sha256": "c0e2af38f2239d725ec7d34a01195d6f9e23018ec3153ad1d94e9b15aa07288a"
+        "size": 83103,
+        "sha256": "3eb6efa15036c74d6fcebcd317f0fb2f425b9c1010e19b1f7daad7388938090b"
       },
       {
         "path": "bus/skill_resolver.py",
@@ -2030,7 +2040,7 @@
       {
         "path": "runtime/ui_state_projector.py",
         "size": 5748,
-        "sha256": "97cfb95c0664d36427dc48a390d26cf533c94026360b90f081bec45d5d8f4163"
+        "sha256": "8b1b783c949eded9a25f737970c472e20cecdb140d99c1c352e56b3b81ef9a4e"
       },
       {
         "path": "scripts/archive_collaboration_artifacts.py",
@@ -2039,8 +2049,8 @@
       },
       {
         "path": "scripts/archive_event_bus.py",
-        "size": 3466,
-        "sha256": "ce26f844ec08936fcc896a320b5578e97b2769cc0256ef5c4af9aace46251b04"
+        "size": 3761,
+        "sha256": "e74bc5af87f44005f2cbf76d68143d1c239d7a8fc5bbb74325ad67141f31ee67"
       },
       {
         "path": "scripts/archive_execution_log.py",
@@ -2054,13 +2064,13 @@
       },
       {
         "path": "scripts/builder_agent.py",
-        "size": 5669,
-        "sha256": "0c7c1d7bf8fd174424dde986f841ccfb6b943f753a817b2c78498c5f14259dd4"
+        "size": 6024,
+        "sha256": "84056ec187d517103d5172126717e864ccecc52f58986e32c51c7514af953200"
       },
       {
         "path": "scripts/check_deliverables_exist.py",
-        "size": 6389,
-        "sha256": "877954b11858587c8fb064ad5c4c3edc58a0adc50c1cce596beee91a172c7661"
+        "size": 6609,
+        "sha256": "85b10a5efcd87302db000d65d1dfc178f87c342b500d62e75825dc6efe33b8b0"
       },
       {
         "path": "scripts/check_no_history_truncation.py",
@@ -2119,18 +2129,18 @@
       },
       {
         "path": "scripts/local_audit.py",
-        "size": 12495,
-        "sha256": "a9fc500712c58fba3f1885de988c434df3737b2381138ac175c6b40d96d4b8fe"
+        "size": 12763,
+        "sha256": "3f02e20c22bca67e41af2f7b6b3118ee861647b20a55d6330a775df6a7ef059b"
       },
       {
         "path": "scripts/manager_review_bridge.py",
-        "size": 13232,
-        "sha256": "4369934e925e46d70e84623d134e961f826ee0f04d4dd14d884966b8ebd8690f"
+        "size": 14546,
+        "sha256": "8d7b80677885ea9d3a591a1429a9c2dacd4fef80b7a8a372d41ebabe9e757c71"
       },
       {
         "path": "scripts/memory_consolidate.py",
-        "size": 13023,
-        "sha256": "7c456941106a48f5285f2a329d1a966a91ac9bc77e8b15d784aa98ab054b60ef"
+        "size": 13302,
+        "sha256": "4eab2190f11a6705c83400b6e62ae54c9b9cf48d4a56cea5c81d1906c2d7afaf"
       },
       {
         "path": "scripts/migrate_legacy_project.py",
@@ -2159,13 +2169,13 @@
       },
       {
         "path": "scripts/run_gates_dispatch.py",
-        "size": 3997,
-        "sha256": "501ec793bccfa3d896fb0861985d23224c73e809ff234912a0e3876445b163ea"
+        "size": 4265,
+        "sha256": "1f462a7a897b3fb8742240914cb8da2c5a2369d7449ebaef5c7be701b7ea3e68"
       },
       {
         "path": "scripts/run_pytest_safe.py",
-        "size": 12749,
-        "sha256": "2212d317ce5df31674ef7001861736943dc22fa0a55ec5cf217a22696ac30624"
+        "size": 13570,
+        "sha256": "eb2bf41e154c1cdcc6b2edce8935288046a3c37b0af653ca454a82b8b039042a"
       },
       {
         "path": "scripts/sandbox/check_wp_087_deliverable.py",
@@ -2209,18 +2219,18 @@
       },
       {
         "path": "scripts/ticket_activity_monitor.py",
-        "size": 5218,
-        "sha256": "887e0c200ef55063fae233c0960ff858c7345d9563897f344db3dd0edc80e70a"
+        "size": 5497,
+        "sha256": "22872449b036fd03057a50269e1ed0602204de79d821fdecb63a7171a1b546ea"
       },
       {
         "path": "scripts/ticket_supervisor.py",
-        "size": 4154,
-        "sha256": "a3f3b905024dfdcdd18ba881c655b05ea8437deb15d0c5ca47dc376cd89dbd89"
+        "size": 4424,
+        "sha256": "e02646f43d86b0ee42cbf0a620e213b741f753580f278e6a12d2c15a24af4f01"
       },
       {
         "path": "scripts/update_project_map.py",
-        "size": 12400,
-        "sha256": "a646c79e8847897d29fb9769912f30494a16945b124709fc0391a0ff788eda32"
+        "size": 12668,
+        "sha256": "05f1afc7ce11059ef3a4ab7ecd839505e88638ebd2bd203d0b807cd1a8e92a33"
       },
       {
         "path": "scripts/upgrade.py",
@@ -5654,8 +5664,8 @@
       },
       {
         "path": "tests/test_manager_review_bridge.py",
-        "size": 63534,
-        "sha256": "7a94c142d150b1faee9a5eb3a3f8758a149c628d72103bf2adc21e2bd17b855e"
+        "size": 66841,
+        "sha256": "bb162e13140098dadbd18a9b2315cde63751b33dde36eb758d0852f7958ef4c3"
       },
       {
         "path": "tests/test_manifest_validator.py",
@@ -5704,8 +5714,8 @@
       },
       {
         "path": "tests/test_review_bridge.py",
-        "size": 28825,
-        "sha256": "b1d2c5f340a2e4ae212db1a60f5bdd5d3ff0e7ec11fa6fd53b571af28d5059b9"
+        "size": 30025,
+        "sha256": "2aa5346f3804c619248941c4e65f6fb675b0fecc0e5f0502ab5af3e3601aed7b"
       },
       {
         "path": "tests/test_review_cycle_e2e.py",
@@ -6045,54 +6055,54 @@
     ],
     "documentation": [
       {
-        "path": ".agent/collaboration/AUDIT_WP-2026-154.md",
-        "size": 1931,
-        "sha256": "1722ee151561b2990470a7aa1f7822d139c87808cb490b668ac260491d94a23c"
-      },
-      {
-        "path": ".agent/collaboration/AUDIT_WP-2026-155.md",
-        "size": 1772,
-        "sha256": "650f119f4a5deafd768a45d301d42247b3acf2b995fde21b2b05f1ff0c216919"
+        "path": ".agent/collaboration/AUDIT_WP-2026-156.md",
+        "size": 1732,
+        "sha256": "1b44d77086f0cc4d2ff7b9ed9ee7a84f202bde97f87cc0f00479d69ec04d7f5e"
       },
       {
         "path": ".agent/collaboration/execution_log.md",
-        "size": 885,
-        "sha256": "551db38462d746794210714f603f8f3da99cfc9f277b3658c8a54bbc73a82806"
+        "size": 4159,
+        "sha256": "9ef97d6ea75eaf9717887a3f61b7c6b641596ecb7002f4d908cda4c14d70700d"
+      },
+      {
+        "path": ".agent/collaboration/manager_feedback_WP-2026-155.md",
+        "size": 252,
+        "sha256": "87ad4ccd1dde1e0a70e64043e5c4d571196204a66a6bf13dc80c75a29c5d9452"
+      },
+      {
+        "path": ".agent/collaboration/manager_feedback_WP-2026-156.md",
+        "size": 2016,
+        "sha256": "1678189f1d1425c464a67877972230a952e2f042fad585946e3daf05a8eab268"
       },
       {
         "path": ".agent/collaboration/notifications.md",
-        "size": 3093,
-        "sha256": "12f837cff9ea66ffe431b7dff6d71d705b3e6e57f6d036d67af2cecba6b25030"
+        "size": 4178,
+        "sha256": "c034648d5e7a931c571c83ca6d393db38f105d593a7939f96fda6d0348b901dd"
       },
       {
-        "path": ".agent/collaboration/PLAN_WP-2026-154.md",
-        "size": 3001,
-        "sha256": "306adfa2af7e7380bcaf3bebbbab7e774f8dd92025997d5cb65bcad8e3ae6014"
-      },
-      {
-        "path": ".agent/collaboration/PLAN_WP-2026-155.md",
-        "size": 6265,
-        "sha256": "7a3354016538e9e02224a41149383c49eb5b87715a1454ab8f3d8d0f21ea40bc"
+        "path": ".agent/collaboration/PLAN_WP-2026-156.md",
+        "size": 6065,
+        "sha256": "91fc16d03a9b9aa778d1bfce93a1bab131aa9b2bd92877b5bb7865d11b1f7fd0"
       },
       {
         "path": ".agent/collaboration/review_queue.md",
-        "size": 3781973,
-        "sha256": "d76916733c60d485e7c583a7dabae7a543157c4bc2672fd493cbcdcc8610f6e2"
+        "size": 3996311,
+        "sha256": "57b756c7f0abbccde4e59c5c397acb88427582427add63f4f433fc3764918900"
       },
       {
         "path": ".agent/collaboration/STATE.md",
-        "size": 50,
-        "sha256": "236bd81f7c28b0c2147560d18d9fb892283339eeab41483f47f776e2adfe4a94"
+        "size": 52,
+        "sha256": "1f07a2459016c85d947e84eeaceeb56c7d62787ff37d66dcfcc0dc0b31ea371c"
       },
       {
         "path": ".agent/collaboration/TURN.md",
-        "size": 569,
-        "sha256": "866ff961c8c8fc3b47a41a5cc87c46ed177703f4fe370a51abeff2fcf8ba79ae"
+        "size": 674,
+        "sha256": "e94521d4a71d9e19d9569c6c626f9fb3183297b1b4559d90a41fe66773292270"
       },
       {
         "path": ".agent/collaboration/work_plan.md",
-        "size": 1605,
-        "sha256": "2d52154ae608c77d58f7aba34138fd48307aee6678ed232567c10115c9bf8de4"
+        "size": 4403,
+        "sha256": "96dd09801cb6863df8769ba1f9df0f8a3424ab144ef541434acac1d9c10f2ca9"
       },
       {
         "path": ".agent/context/project_map.md",
@@ -6107,7 +6117,7 @@
       {
         "path": ".agent/runtime/builder_lock.txt",
         "size": 264,
-        "sha256": "695580c8bf0e9c147dc434699eb1ef9b621d50a157544f2470d3ad7060f81861"
+        "sha256": "61fec8f39f303a2e448e8ebb1636625ef223c36ceae748d10c1dd2fef12f0f2b"
       },
       {
         "path": ".agent/runtime/compare/affaan-m-ECC-928076cc-2026-05-27.md",
@@ -6261,13 +6271,13 @@
       },
       {
         "path": ".opencode/agents/manager.md",
-        "size": 2323,
-        "sha256": "b53935555a89b44daa91e066d1c7618d42ef2fe954b5bb18f3ddf23328479ca4"
+        "size": 2339,
+        "sha256": "337fda32002f940908b81dbbeb69937522f1ecd6ab300958812385e64283c926"
       },
       {
         "path": ".opencode/MODELS.md",
-        "size": 3765,
-        "sha256": "32ac8a476b95f1d4887aeb75bd034c40bb170c1197750aba84746a3931a6929e"
+        "size": 4324,
+        "sha256": "d93a872769bdbbbbd7953accdfaecf1f8772ce4cac8c3367010171b34db0d3ef"
       },
       {
         "path": "AGENT_SECURITY.md",
@@ -24110,8 +24120,8 @@
       },
       {
         "path": "scripts/launch_agent_terminals.ps1",
-        "size": 49773,
-        "sha256": "0b9de053d40b0d522c15dbaa513c4d2b5cda64194b65c141e5e90858e02b988c"
+        "size": 50143,
+        "sha256": "6f3d509450df757365494f52584e5c82f294f056a898af7d98c80fa4ce58bd4b"
       },
       {
         "path": "scripts/test_manager_smoke.ps1",
@@ -24585,16 +24595,6 @@
             "package": "typing"
           },
           {
-            "name": "sys",
-            "type": "stdlib",
-            "package": "sys"
-          },
-          {
-            "name": "pathlib.Path",
-            "type": "stdlib",
-            "package": "pathlib"
-          },
-          {
             "name": "runtime.project_root.get_collab_dir",
             "type": "local",
             "path": "runtime/project_root.py"
@@ -24890,6 +24890,11 @@
             "package": "__future__"
           },
           {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
             "name": "pathlib.Path",
             "type": "stdlib",
             "package": "pathlib"
@@ -24903,16 +24908,6 @@
             "name": "completion_common.check_tasks_completed",
             "type": "external",
             "package": "completion_common"
-          },
-          {
-            "name": "sys",
-            "type": "stdlib",
-            "package": "sys"
-          },
-          {
-            "name": "pathlib.Path",
-            "type": "stdlib",
-            "package": "pathlib"
           },
           {
             "name": "runtime.project_root.get_collab_dir",
@@ -24995,6 +24990,11 @@
             "package": "json"
           },
           {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
             "name": "contextlib.suppress",
             "type": "stdlib",
             "package": "contextlib"
@@ -25008,16 +25008,6 @@
             "name": "datetime.timedelta",
             "type": "stdlib",
             "package": "datetime"
-          },
-          {
-            "name": "pathlib.Path",
-            "type": "stdlib",
-            "package": "pathlib"
-          },
-          {
-            "name": "sys",
-            "type": "stdlib",
-            "package": "sys"
           },
           {
             "name": "pathlib.Path",
@@ -25320,6 +25310,11 @@
             "package": "sys"
           },
           {
+            "name": "tempfile",
+            "type": "stdlib",
+            "package": "tempfile"
+          },
+          {
             "name": "time",
             "type": "stdlib",
             "package": "time"
@@ -25368,6 +25363,11 @@
             "name": "skill_resolver.create_resolver",
             "type": "external",
             "package": "skill_resolver"
+          },
+          {
+            "name": "time_utils.now_local",
+            "type": "external",
+            "package": "time_utils"
           },
           {
             "name": "utils.count_trailing_changes",
@@ -25900,6 +25900,11 @@
             "package": "json"
           },
           {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
             "name": "pathlib.Path",
             "type": "stdlib",
             "package": "pathlib"
@@ -26063,31 +26068,6 @@
             "name": "pathlib.Path",
             "type": "stdlib",
             "package": "pathlib"
-          },
-          {
-            "name": "os",
-            "type": "stdlib",
-            "package": "os"
-          },
-          {
-            "name": "re",
-            "type": "stdlib",
-            "package": "re"
-          },
-          {
-            "name": "sys",
-            "type": "stdlib",
-            "package": "sys"
-          },
-          {
-            "name": "pathlib.Path",
-            "type": "stdlib",
-            "package": "pathlib"
-          },
-          {
-            "name": "runtime.project_root.get_collab_dir",
-            "type": "local",
-            "path": "runtime/project_root.py"
           },
           {
             "name": "runtime.project_root.resolve_project_root",
@@ -26361,7 +26341,7 @@
           },
           {
             "name": "tomllib",
-            "type": "external",
+            "type": "stdlib",
             "package": "tomllib"
           },
           {
@@ -26628,6 +26608,11 @@
             "name": "os",
             "type": "stdlib",
             "package": "os"
+          },
+          {
+            "name": "runtime.project_root.clear_cache",
+            "type": "local",
+            "path": "runtime/project_root.py"
           }
         ],
         "error": null
@@ -26653,6 +26638,11 @@
             "name": "shutil",
             "type": "stdlib",
             "package": "shutil"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
           },
           {
             "name": "datetime.datetime",
@@ -26726,7 +26716,7 @@
           },
           {
             "name": "tomllib",
-            "type": "external",
+            "type": "stdlib",
             "package": "tomllib"
           },
           {
@@ -27338,6 +27328,11 @@
             "name": "re",
             "type": "stdlib",
             "package": "re"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
           },
           {
             "name": "time",
@@ -29432,6 +29427,11 @@
             "package": "json"
           },
           {
+            "name": "os",
+            "type": "stdlib",
+            "package": "os"
+          },
+          {
             "name": "subprocess",
             "type": "stdlib",
             "package": "subprocess"
@@ -29620,6 +29620,21 @@
             "name": "bus.review_bridge.ReviewBridge",
             "type": "local",
             "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.EventBus",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.ReviewBridge",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "subprocess",
+            "type": "stdlib",
+            "package": "subprocess"
           },
           {
             "name": "bus.review_bridge.EventBus",
@@ -33954,10 +33969,10 @@
     "javascript": {},
     "frameworks": [],
     "tools": [
+      "pytest",
       "mypy",
-      "uv",
       "ruff",
-      "pytest"
+      "uv"
     ]
   },
   "parse_errors": [
