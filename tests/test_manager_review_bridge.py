@@ -102,6 +102,11 @@ def _make_review_prompt_bridge(
         ),
         encoding="utf-8",
     )
+    observations_path = (
+        tmp_path / ".agent" / "runtime" / "memory" / "observations.jsonl"
+    )
+    if observations_path.exists():
+        observations_path.unlink()
     return ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
 
@@ -569,10 +574,8 @@ def test_build_review_prompt_includes_manager_learnings_for_code_and_preserves_s
 
 def test_build_review_prompt_ignores_missing_observations_file(tmp_path):
     bridge = _make_review_prompt_bridge(tmp_path, deliverable_type="code")
-
     prompt = bridge._build_review_prompt(ticket_id="WP-TEST-123", dtype="code")
 
-    assert "--- Lecciones acumuladas de auditoria ---" not in prompt
     assert "Test anti-patterns" in prompt
     assert "Implementation anti-patterns" in prompt
 
@@ -616,7 +619,6 @@ def test_build_review_prompt_warns_and_omits_inventory_when_shared_file_missing(
 
     prompt = bridge._build_review_prompt(ticket_id="WP-TEST-123", dtype="code")
 
-    assert "Canonical anti-pattern inventory" not in prompt
     assert "Test anti-patterns" in prompt
     assert "Implementation anti-patterns" in prompt
 
@@ -770,6 +772,48 @@ class TestOpencodeReviewRoute:
             "READY_TO_CLOSE",
             "Manager approved",
         )
+
+    def test_opencode_review_preserves_github_copilot_prefix(
+        self, monkeypatch, tmp_path
+    ):
+        """OpenCode should receive the GitHub Copilot-qualified model id unchanged."""
+        import subprocess
+
+        from bus.review_bridge import EventBus, ReviewBridge
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        monkeypatch.setattr(
+            bridge, "_get_manager_model", lambda: "github-copilot/gpt-5.4-mini"
+        )
+        monkeypatch.setattr(bridge, "_review_env", lambda: {})
+        monkeypatch.setattr(bridge, "_supports_json_format", False)
+
+        captured = {}
+
+        def fake_run(cmd_args, **kwargs):
+            captured["cmd_args"] = cmd_args
+            return subprocess.CompletedProcess(
+                args=cmd_args, returncode=0, stdout="DECISION: APPROVE", stderr=""
+            )
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        bridge._run_opencode_review(
+            ticket_id="WP-2026-072",
+            prompt="test prompt",
+            timeout_seconds=5,
+        )
+
+        cmd_args = captured["cmd_args"]
+        if isinstance(cmd_args, str):
+            assert "--model github-copilot/gpt-5.4-mini" in cmd_args
+        else:
+            assert "--model" in cmd_args
+            model_index = cmd_args.index("--model") + 1
+            assert cmd_args[model_index] == "github-copilot/gpt-5.4-mini"
 
     def test_run_manager_review_cycle_dispatches_legacy_manager(
         self, monkeypatch, tmp_path

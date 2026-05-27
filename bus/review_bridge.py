@@ -260,25 +260,26 @@ class ReviewBridge:
         )
 
         # Locate and copy auth credentials before redirecting home vars.
-        real_home = Path(
+        real_home = os.path.expanduser(
             os.environ.get("USERPROFILE") or os.environ.get("HOME") or "~"
-        ).expanduser()
-        for auth_rel in (
-            Path(".local") / "share" / "opencode" / "auth.json",
-            Path(".config") / "opencode" / "auth.json",
+        )
+        for auth_parts in (
+            (".local", "share", "opencode", "auth.json"),
+            (".config", "opencode", "auth.json"),
         ):
-            auth_src = real_home / auth_rel
-            if auth_src.exists():
-                auth_dst = review_home / auth_rel
-                auth_dst.parent.mkdir(parents=True, exist_ok=True)
+            auth_src = os.path.join(real_home, *auth_parts)
+            if os.path.exists(auth_src):
+                auth_dst = os.path.join(str(review_home), *auth_parts)
+                os.makedirs(os.path.dirname(auth_dst), exist_ok=True)
                 shutil.copy2(auth_src, auth_dst)
                 break
 
         for key in ("HOME", "USERPROFILE", "CODEX_HOME"):
             if key in env:
                 env[key] = str(review_home)
-        env["XDG_CONFIG_HOME"] = str(review_home / ".config")
-        env["XDG_DATA_HOME"] = str(review_home / ".local" / "share")
+        review_home_str = str(review_home)
+        env["XDG_CONFIG_HOME"] = os.path.join(review_home_str, ".config")
+        env["XDG_DATA_HOME"] = os.path.join(review_home_str, ".local", "share")
         return env
 
     def _get_manager_backend(self) -> str:
@@ -308,18 +309,18 @@ class ReviewBridge:
             return None
 
     # Known namespaces that OpenCode CLI accepts verbatim (provider/model format).
-    _OPENCODE_VALID_PREFIXES = ("opencode-go/", "opencode/")
+    _OPENCODE_VALID_PREFIXES = ("opencode-go/", "opencode/", "github-copilot/")
 
     @staticmethod
     def _normalize_opencode_model(model: str | None) -> str | None:
         """Normalize a role model to the identifier accepted by OpenCode.
 
-        Valid OpenCode model IDs use the ``opencode-go/<model>`` or
-        ``opencode/<model>`` namespaces and are passed through unchanged.
-        Any other provider-qualified form (``openai/``, ``github-copilot/``,
-        etc.) has its prefix stripped; the bare model name is returned, which
-        may or may not be valid — callers should ensure agents.json uses a
-        model from the known OpenCode catalog.
+        Valid OpenCode model IDs use the ``opencode-go/<model>``,
+        ``opencode/<model>`` or ``github-copilot/<model>`` namespaces and are
+        passed through unchanged.
+        ``openai/<model>`` is mapped to ``github-copilot/<model>`` because this
+        OpenCode installation exposes the OpenAI-backed catalog via the
+        GitHub Copilot namespace.
         """
         if model is None:
             return None
@@ -329,14 +330,23 @@ class ReviewBridge:
         for prefix in ReviewBridge._OPENCODE_VALID_PREFIXES:
             if normalized.startswith(prefix):
                 return normalized
-        # Unknown provider prefix — strip it and warn via print so the issue
-        # is visible in the bridge log without raising.
+        if normalized.startswith("openai/"):
+            bare = normalized.split("/", 1)[1].strip()
+            if bare:
+                mapped = f"github-copilot/{bare}"
+                print(
+                    f"[review_bridge] WARNING: model '{normalized}' mapped to '{mapped}'.",
+                    flush=True,
+                )
+                return mapped
+            return None
+        # Unknown provider prefix — keep the bare model name as a last resort
+        # so the caller can still try a direct catalog lookup.
         if "/" in normalized:
             provider, bare = normalized.split("/", 1)
             print(
                 f"[review_bridge] WARNING: model '{normalized}' uses unknown provider"
-                f" '{provider}'. Stripping prefix → '{bare}'."
-                " Update agents.json to an opencode-go/* or opencode/* model.",
+                f" '{provider}'. Falling back to bare model '{bare}'.",
                 flush=True,
             )
             normalized = bare.strip()
