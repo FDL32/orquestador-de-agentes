@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WP-2026-153
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** documentation
 - **Titulo:** Add grill-with-docs skill
 - **Asignado a:** Builder

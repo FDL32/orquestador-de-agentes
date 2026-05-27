@@ -30,7 +30,7 @@
 - `MANIFEST.distribute` define la frontera del motor central (codigo operativo).
 - `MANIFEST.workspace` define el contrato del workspace destino (estado, memoria, config).
 - Los comandos canonical y legacy se documentan por separado.
-- Estado actual: `v9.14.0` motor central + workspace destino (WP-2026-111).
+- Estado actual: `v9.14.1` motor central + workspace destino, sesión cerrada con hardening y CHANGELOG completo.
 - El motor vive una unica vez en `orquestador_de_agentes/`; los proyectos destino lo referencian externamente.
 
 ## MANIFEST.distribute y MANIFEST.workspace (WP-2026-111)
