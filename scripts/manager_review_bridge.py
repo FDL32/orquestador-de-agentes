@@ -18,25 +18,28 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-# WP-2026-122: Deferred path resolution via runtime.project_root
-try:
-    from runtime.project_root import resolve_project_root
-except ImportError:
-    # Fallback if runtime.project_root not available
-    resolve_project_root = None
+# Bootstrap: project root must be on sys.path before importing runtime.project_root.
+_PROJECT_ROOT_BOOTSTRAP = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT_BOOTSTRAP) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT_BOOTSTRAP))
 
-_SCRIPT_ROOT = Path(__file__).resolve().parents[1]
-if str(_SCRIPT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_SCRIPT_ROOT))
-_AGENT_DIR = _SCRIPT_ROOT / ".agent"
+# WP-2026-122 / WP-2026-155: Centralized path resolution via runtime.project_root
+# Precedence: AGENT_PROJECT_ROOT env > derived from module location
+from runtime.project_root import resolve_project_root  # noqa: E402
+
+
+# Setup sys.path for imports using the resolved project root
+_PROJECT_ROOT = resolve_project_root()
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+_AGENT_DIR = _PROJECT_ROOT / ".agent"
 if str(_AGENT_DIR) not in sys.path:
     sys.path.insert(0, str(_AGENT_DIR))
 
 
 def _project_root() -> Path:
-    if resolve_project_root is not None:
-        return resolve_project_root()
-    return _SCRIPT_ROOT
+    """Return the resolved project root (cached for performance)."""
+    return _PROJECT_ROOT
 
 
 from bus.review_bridge import ReviewBridge  # noqa: E402

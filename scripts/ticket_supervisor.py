@@ -11,46 +11,27 @@ import sys
 from pathlib import Path
 
 
-# WP-2026-122: Deferred path resolution via runtime.project_root
-try:
-    from runtime.project_root import resolve_project_root
-except ImportError:
-    # Fallback if runtime.project_root not available
-    resolve_project_root = None
+# Bootstrap: project root must be on sys.path before importing runtime.project_root.
+_PROJECT_ROOT_BOOTSTRAP = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT_BOOTSTRAP) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT_BOOTSTRAP))
+
+# WP-2026-122 / WP-2026-155: Centralized path resolution via runtime.project_root
+from runtime.project_root import resolve_project_root  # noqa: E402
+
+
+_PROJECT_ROOT = resolve_project_root()
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+_AGENT_DIR = _PROJECT_ROOT / ".agent"
+if str(_AGENT_DIR) not in sys.path:
+    sys.path.insert(0, str(_AGENT_DIR))
 
 
 def _project_root() -> Path:
-    if resolve_project_root is not None:
-        return resolve_project_root()
-    return Path(__file__).resolve().parents[1]
+    """Return the resolved project root (cached for performance)."""
+    return _PROJECT_ROOT
 
-
-class _LazyPath:
-    def __init__(self, resolver):
-        self._resolver = resolver
-
-    def resolve(self) -> Path:
-        return self._resolver()
-
-    def __getattr__(self, name: str):
-        return getattr(self.resolve(), name)
-
-    def __truediv__(self, other):
-        return self.resolve() / other
-
-    def __fspath__(self) -> str:
-        return str(self.resolve())
-
-    def __str__(self) -> str:
-        return str(self.resolve())
-
-
-PROJECT_ROOT = _LazyPath(_project_root)
-AGENT_DIR = _LazyPath(lambda: _project_root() / ".agent")
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-if str(AGENT_DIR) not in sys.path:
-    sys.path.insert(0, str(AGENT_DIR))
 
 from bus.supervisor import (  # noqa: E402
     SequentialTicketSupervisor,
@@ -98,7 +79,7 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     supervisor = SequentialTicketSupervisor(
-        project_root=PROJECT_ROOT,
+        project_root=_PROJECT_ROOT,
         auto_sync=not args.no_auto_sync,
     )
 

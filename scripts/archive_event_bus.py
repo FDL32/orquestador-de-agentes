@@ -24,24 +24,23 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
-from bus.event_bus import EventBus
+
+# Bootstrap: project root must be on sys.path before importing runtime or bus modules.
+_PROJECT_ROOT_BOOTSTRAP = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT_BOOTSTRAP) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT_BOOTSTRAP))
+
+from bus.event_bus import EventBus  # noqa: E402
+
+# WP-2026-122 / WP-2026-155: Centralized path resolution via runtime.project_root
+from runtime.project_root import resolve_project_root  # noqa: E402
 
 
-# WP-2026-122: Deferred path resolution via runtime.project_root
-try:
-    from runtime.project_root import resolve_project_root
-except ImportError:
-    # Fallback if runtime.project_root not available
-    resolve_project_root = None
-
-PROJECT_ROOT = (
-    resolve_project_root()
-    if resolve_project_root is not None
-    else Path(__file__).resolve().parents[1]
-)
-EVENTS_DIR = PROJECT_ROOT / ".agent" / "runtime" / "events"
+_PROJECT_ROOT = resolve_project_root()
+EVENTS_DIR = _PROJECT_ROOT / ".agent" / "runtime" / "events"
 
 TERMINAL_STATES = {"COMPLETED", "HUMAN_GATE"}
 
