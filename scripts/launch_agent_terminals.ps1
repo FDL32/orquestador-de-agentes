@@ -15,7 +15,8 @@ param(
     [switch]$LaunchWatcher = $false,
     [switch]$StrictLaunch = $true,
     [switch]$ResumeBuilder = $false,
-    [switch]$OnlyBuilder = $false
+    [switch]$OnlyBuilder = $false,
+    [switch]$SkipSupervisorWait = $false
 )
 
 $ErrorActionPreference = 'Stop'
@@ -1035,9 +1036,14 @@ if (-not $ResumeBuilder) {
     Write-Host "[launcher] Resume mode: waiting for stale supervisor exit..."
     $ProjectRoot = Assert-CanonicalProjectRoot -ProjectRoot $ProjectRoot
 
-    # WP-2026-160: Esperar a que el supervisor viejo libere el lock
+    # WP-2026-160: Esperar a que el supervisor viejo libere el lock.
+    # -SkipSupervisorWait se pasa cuando el relanzado es interno (llamado desde el
+    # propio supervisor via _relaunch_builder): el lock sigue activo porque el
+    # supervisor aun no ha salido, por lo que esperar causaria un deadlock.
     $supervisorLockPath = Join-Path $ProjectRoot '.agent\runtime\supervisor_lock.txt'
-    if (Test-Path -LiteralPath $supervisorLockPath) {
+    if ($SkipSupervisorWait) {
+        Write-Host "[launcher] SkipSupervisorWait: internal requeue relaunch, skipping Wait-SupervisorExit"
+    } elseif (Test-Path -LiteralPath $supervisorLockPath) {
         $waitResult = Wait-SupervisorExit -ProjectRoot $ProjectRoot -TimeoutSeconds 30
         if (-not $waitResult) {
             # Timeout: el supervisor viejo no salio limpiamente

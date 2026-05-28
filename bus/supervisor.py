@@ -1095,6 +1095,7 @@ class SequentialTicketSupervisor:
             "-LaunchBuilder",
             "-OnlyBuilder",
             "-ResumeBuilder",
+            "-SkipSupervisorWait",
         ]
         print(f"[ticket-supervisor] Executing: {' '.join(cmd)}", flush=True)
 
