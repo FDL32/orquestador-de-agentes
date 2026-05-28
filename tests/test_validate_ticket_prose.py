@@ -22,7 +22,7 @@ scripts_dir = Path(__file__).parent.parent / "scripts"
 if str(scripts_dir) not in sys.path:
     sys.path.insert(0, str(scripts_dir))
 
-from validate_ticket_prose import (
+from validate_ticket_prose import (  # noqa: E402
     ValidationResult,
     detect_audit_missing_tp_check,
     detect_diffuse_objective,
@@ -418,6 +418,18 @@ class TestValidateTicketProse:
         # Crear AUDIT con TP Check
         audit = collab_dir / "AUDIT_WP-TEST.md"
         audit.write_text("# Audit\n\n## TP Check\n- TP-01: ok\n", encoding="utf-8")
+
+        result = validate_ticket_prose(work_plan, collab_dir)
+        assert result["warning_count"] == 0
+
+    def test_completed_plan_skips_audit_missing_warning(
+        self, tmp_path: Path, clean_plan: str
+    ):
+        """Un plan COMPLETED no debe exigir un AUDIT activo para TP Check."""
+        collab_dir = tmp_path / "collab"
+        collab_dir.mkdir()
+        work_plan = collab_dir / "work_plan.md"
+        work_plan.write_text(clean_plan.replace("APPROVED", "COMPLETED"), encoding="utf-8")
 
         result = validate_ticket_prose(work_plan, collab_dir)
         assert result["warning_count"] == 0
