@@ -155,21 +155,25 @@ Si el WP no tiene origen externo (es trabajo propio del proyecto): este paso es 
 
 ### Paso 9a: Builder ejecuta preflight de entrega
 
-Antes de `--mark-ready` y antes del `git push`, ejecutar este flujo en dos fases:
+Antes de `--mark-ready` y antes del `git push`, ejecutar el comando canonico unico:
 
-1. **Pasada correctiva, solo si hace falta**
-   - `uv run pre-commit run --all-files --hook-stage pre-push`
-   - Si esta pasada muta archivos, el Builder debe parar, registrar el archivo afectado y volver a correr la validacion hasta que el arbol quede limpio.
+```powershell
+python scripts/prepush_check.py
+```
 
-2. **Preflight no mutador de confirmacion**
-   - `uv run ruff check ...`
-   - `uv run ruff format --check ...`
-   - `git status --short`
-   - Esta fase debe terminar con el arbol limpio y sin cambios nuevos.
+Este wrapper ejecuta en secuencia fija:
+1. Delivery Hygiene Check (hooks mutadores, artefactos generados, arbol limpio)
+2. Ruff Check (linting de Python)
+3. Ruff Format Check (formato de codigo)
+4. Agent Controller Validate (validacion de tickets)
+5. Git Status Check (arbol sin cambios)
+6. Validate All (skills, informacional - no bloqueante)
 
+- Si el preflight falla, el Builder debe parar, ejecutar la pasada mutadora manualmente (`uv run pre-commit run --all-files --hook-stage pre-commit`), corregir los errores reportados y volver a ejecutar el preflight hasta que todos los checks bloqueantes pasen.
 - Los artefactos generados que se reescriben con frecuencia, como `.agent/context/project-map.json`, deben estar excluidos del formateo y de los hooks que los mutan.
 - El objetivo es detectar el fallo antes del mail, no descubrirlo en GitHub Actions.
-- **Regla de parada:** si la pasada correctiva modifica archivos, no se puede ejecutar `--mark-ready` ni `git push` hasta repetir el preflight y verificar que el arbol queda limpio.
+- **Regla de parada:** si el preflight reporta errores, no se puede ejecutar `--mark-ready` ni `git push` hasta corregir y verificar que el arbol queda limpio.
+- **Comando unico:** este wrapper reemplaza la lista manual dispersa de comandos; el operador solo necesita recordar `python scripts/prepush_check.py`.
 
 ### Paso 9b: Builder ejecuta cierre de release repetible
 

@@ -1,15 +1,15 @@
 # Project: orquestador_de_agentes
 **Version:** v9.14.1
-**State:** SESSION CLOSED (2026-05-28)
+**State:** SESSION ACTIVE (2026-05-28)
 
 ## Current Cycle
 
-- Active ticket: WP-2026-164 COMPLETED (2026-05-28). Canonical closeout published.
-- Delivery hygiene loop: `delivery_hygiene_check.py` preflight + 20 tests; `.pre-commit-config.yaml`
+- Active ticket: WP-2026-165 APPROVED (2026-05-28). Builder handoff prepared for delivery preflight wrapper.
+- Delivery hygiene loop already in place: `delivery_hygiene_check.py` preflight + 20 tests;
   mutating hooks confined to `pre-commit`; `uv-lock` stage-gated.
-- Supervisor bootstrap gap fixed: `_bootstrap_requeue_if_needed()` detects unprocessed CHANGES
-  triggers on startup; `SUPERVISOR_REQUEUE_DEFERRED` event emitted when Builder lock is fresh.
-- `validate_ticket_prose.py` TP-06 detection added; two false-positive patterns corrected.
+- Delivery cycle now has a reusable one-command preflight wrapper: `python scripts/prepush_check.py`.
+- The wrapper executes in fixed sequence: delivery hygiene → ruff check → ruff format → agent_controller validate → git status.
+- `validate_ticket_prose.py` TP-06 detection remains active; the canonical TP Check format is enforced.
 
 ## Current readiness
 

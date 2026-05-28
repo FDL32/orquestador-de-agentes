@@ -25,6 +25,8 @@ Usa esta checklist antes de aprobar cualquier `work_plan.md`. Las preguntas son 
 
 - [ ] Cada criterio de aceptacion tiene un verificador literal: test, comando o asercion de archivo.
 - [ ] No hay criterios del tipo "observable", "correcto" o "estable" sin una forma concreta de comprobarlos.
+- [ ] Si una fase crea un script invocable, el plan declara flags, exit codes esperados y el comportamiento de `--help` antes de entregarlo.
+- [ ] Si una fase define una secuencia de checks, cada check se clasifica de forma explicita como `bloqueante` o `informativo`.
 - [ ] El `AUDIT_WP` replica exactamente los criterios relevantes del `PLAN_WP`.
 - [ ] El `PLAN_WP` no contiene secciones de verificacion como `## TP Check`, `## Evidencia` o `## Blockers`; esas secciones viven en el `AUDIT_WP`.
 - [ ] El `TP Check` del `AUDIT_WP` usa `TP-01:`..`TP-05:` en formato canonico y no sustituye la verificacion del plan por criterios de diseno del entregable.
@@ -37,6 +39,7 @@ Usa esta checklist antes de aprobar cualquier `work_plan.md`. Las preguntas son 
 - [ ] TP-04 Semantica blanda: no hay "si procede" ni "stale" sin definicion operativa.
 - [ ] TP-05 Paridad PLAN/AUDIT rota: el plan y el audit describen la misma secuencia y los mismos observables.
 - [ ] TP-05 Paridad PLAN/AUDIT rota: los verbos y condiciones de `Blockers` y `Fases` permanecen alineados.
+- [ ] TP-07 Alcance condicional: el plan no delega a "si existe", "si se anade" o "si aplica" una decision de alcance que deberia estar cerrada.
 
 ## Redaccion para prompts
 

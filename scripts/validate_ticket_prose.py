@@ -271,6 +271,55 @@ def detect_nonverifiable_criteria(content: str) -> list[ProseWarning]:
     return warnings
 
 
+def _extract_section(content: str, heading: str) -> str:
+    """Extrae el contenido de una seccion por su heading exacto."""
+
+    match = re.search(
+        rf"##\s*{re.escape(heading)}\s*\n(.*?)(?=\n##|\Z)",
+        content,
+        re.DOTALL | re.IGNORECASE,
+    )
+    return match.group(1) if match else ""
+
+
+def detect_scope_conditional(content: str) -> list[ProseWarning]:
+    """Detecta alcance condicional en secciones criticas del plan.
+
+    Before: Requiere contenido de work_plan.md como string.
+    During: Busca clausulas como 'si existe', 'si se anade', 'si aplica' o 'si procede'
+            en Objetivo, Fases, Criterios de aceptacion y Decision Arquitectonica.
+    After: Retorna lista de warnings con regla TP-PROSE-12.
+    """
+    warnings = []
+    conditional_pattern = re.compile(
+        r"\bsi\s+(?:existe|se\s+a[nñ]ade|aplica|procede)\b",
+        re.IGNORECASE,
+    )
+    sections = [
+        "Objetivo",
+        "Fases",
+        "Criterios de aceptacion",
+        "Decision Arquitectonica",
+    ]
+    for section_name in sections:
+        section_text = _extract_section(content, section_name)
+        if not section_text:
+            continue
+        match = conditional_pattern.search(section_text)
+        if match:
+            warnings.append(
+                ProseWarning(
+                    rule_id="TP-PROSE-12",
+                    rule_name="scope-condicional",
+                    evidence=f"{section_name}: {match.group(0)[:80]}",
+                    suggestion=(
+                        "Cierra la decision de alcance en el plan; no delegues a una clausula condicional."
+                    ),
+                )
+            )
+    return warnings
+
+
 def detect_imprecise_files_touched(content: str) -> list[ProseWarning]:
     """Detecta Files Likely Touched imprecisos (comodines o rutas vagas).
 
@@ -537,6 +586,7 @@ def validate_ticket_prose(work_plan_path: Path, collab_dir: Path) -> ValidationR
     all_warnings.extend(detect_diffuse_objective(content))
     all_warnings.extend(detect_missing_nongoals(content))
     all_warnings.extend(detect_nonverifiable_criteria(content))
+    all_warnings.extend(detect_scope_conditional(content))
     all_warnings.extend(detect_imprecise_files_touched(content))
     all_warnings.extend(detect_oversized_ticket(content))
     all_warnings.extend(detect_missing_architectural_decision(content))

@@ -1,10 +1,10 @@
 {
   "version": "1.0",
-  "generated": "2026-05-28T17:28:52.408425+00:00",
+  "generated": "2026-05-28T18:28:21.942940+00:00",
   "project_root": "C:\\Users\\fdl\\Proyectos_Python\\z_scripts\\orquestador_de_agentes",
   "summary": {
     "total_files": 4997,
-    "total_size_bytes": 19102781,
+    "total_size_bytes": 19122610,
     "categories": {
       "config": 403,
       "python": 847,
@@ -23,7 +23,7 @@
       {
         "path": ".agent/collaboration/.session_state.json",
         "size": 134,
-        "sha256": "4ced8dc9f147ece0e849b24d16e2a203e3f9c93ce0338a53024356e03361cc7d"
+        "sha256": "34874beb32cef967c3ee7f44e5f203c5bdb1464b5195be0bfd560f826f62f434"
       },
       {
         "path": ".agent/config/agents.json",
@@ -32,8 +32,8 @@
       },
       {
         "path": ".agent/context/project-map.json",
-        "size": 1546322,
-        "sha256": "c2618489a2e2c2744af9add311d6ee8e61960ec74715ec23d98b3d74911096ab"
+        "size": 1550582,
+        "sha256": "529c71ea8448a688ecd95ed3fd8fb1ccb9eb088511d8f576c29fa80f8b39aae7"
       },
       {
         "path": ".agent/known_models.json",
@@ -58,7 +58,7 @@
       {
         "path": ".agent/runtime/circuit_breaker.json",
         "size": 181,
-        "sha256": "4b2ba275855fe9236e40aa0322305bd1fb430da00bd1c8c499335c999b2b3364"
+        "sha256": "a784e763952064d25097362ef883cfa808fb450262d44816de0aee2c32e49c6f"
       },
       {
         "path": ".agent/runtime/manager_bridge_state.json",
@@ -67,13 +67,13 @@
       },
       {
         "path": ".agent/runtime/pytest-safe/last-run.json",
-        "size": 3015,
-        "sha256": "0026ad79fd89ed06976bce4b695ceaea0a6477982ee91d790a3afb886b48a68f"
+        "size": 3012,
+        "sha256": "8f939f09fc92f82054aaa8affeb26c0f9134e75b39b44a9237d8f2c2ce82ff06"
       },
       {
         "path": ".agent/runtime/supervisor_state.json",
         "size": 225,
-        "sha256": "04bd36fcb73cd7f29c3a04276c2e98b56044ba030adabade1882abe2786cbe86"
+        "sha256": "4ac4ab301130b8aa8f873472aadf0f37b84f9e90016f17381589528f3194de80"
       },
       {
         "path": ".agent_allowlist.json",
@@ -152,8 +152,8 @@
       },
       {
         "path": ".pre-commit-config.yaml",
-        "size": 2943,
-        "sha256": "56c7b8c21253a77e96f57eaf9db93073816e5dfba45244b11c68b140adf2fe48"
+        "size": 2972,
+        "sha256": "308fc4872b8a49ba68278992fecc81ee38654ccda2e0fe9d90ce9c152f77c5c2"
       },
       {
         "path": ".refactor/phases/01_analysis.json",
@@ -2164,8 +2164,8 @@
       },
       {
         "path": "bus/supervisor.py",
-        "size": 56621,
-        "sha256": "7963cef6c53e0c0f9436bbc247d5153cf2ffd068bc06b9ffe9ff4ea6b3cd402b"
+        "size": 60732,
+        "sha256": "a777b1a2cfbea739f355bfd23ff7ef255fe3a355b2dc3cf209756bac9d8cffc4"
       },
       {
         "path": "bus/time_utils.py",
@@ -2259,8 +2259,8 @@
       },
       {
         "path": "scripts/delivery_hygiene_check.py",
-        "size": 11881,
-        "sha256": "2cec02fe374ba50da1663b5f9864ced0dc3af3b55b11d7e7fc4d2b19c60435b6"
+        "size": 12033,
+        "sha256": "de48a146042a9761f18b9e785be90aa6d7820ec4927dd621835349f4dc541da3"
       },
       {
         "path": "scripts/detect_agent_system_version.py",
@@ -5824,8 +5824,8 @@
       },
       {
         "path": "tests/test_delivery_hygiene_check.py",
-        "size": 15708,
-        "sha256": "f2a248b3aa82cdf6917b88c2229b87cbbd5114a777ca6a2431404c3fc8cd7ce4"
+        "size": 15653,
+        "sha256": "3433f8f97aaf7ba309559524528d1e2f7e208ae826099bd4b0ed06ef2b36f0e8"
       },
       {
         "path": "tests/test_encoding_edge_cases.py",
@@ -5954,8 +5954,8 @@
       },
       {
         "path": "tests/test_supervisor.py",
-        "size": 123928,
-        "sha256": "49e5239dc2eb3e5304abc753eaf27ab3d2b2b5ff6efdc3af75e1e0bdf40e04ec"
+        "size": 135008,
+        "sha256": "7f46a1821e3cd8bdc7726c66c22ab22c621d7d706b8c799cf9296b3838cc1ed6"
       },
       {
         "path": "tests/test_ui_state.py",
@@ -6276,8 +6276,8 @@
       },
       {
         "path": ".agent/collaboration/execution_log.md",
-        "size": 2594,
-        "sha256": "93c18fec9cb2a78595380c3adfc31cb5a69635ed365e2e240357b116496e3089"
+        "size": 2920,
+        "sha256": "389a6693b9b70617f34798cd55fb5283f5b3a7b8f9150dd99d07cb52949a3128"
       },
       {
         "path": ".agent/collaboration/manager_feedback_WP-2026-155.md",
@@ -6326,8 +6326,8 @@
       },
       {
         "path": ".agent/collaboration/notifications.md",
-        "size": 3169,
-        "sha256": "2b686ac6a2b797b8ce81252017eb24f6a188299f47030013b7d0da4a94d6d27d"
+        "size": 3022,
+        "sha256": "fdb82a7f5f686d24cf6d0592e9b021c4b0ac827c6e27a4e209d488812fddc2cf"
       },
       {
         "path": ".agent/collaboration/PLAN_WP-2026-164.md",
@@ -6341,18 +6341,18 @@
       },
       {
         "path": ".agent/collaboration/STATE.md",
-        "size": 53,
-        "sha256": "e08774930134eaadce6cf5d8232ffb1910d81d5ae152ffc4542b3d2d56d317eb"
+        "size": 51,
+        "sha256": "daceb43b53b8e423d6e6b2f06018602539ac3c76a13204e144c5a70a4b89f763"
       },
       {
         "path": ".agent/collaboration/TURN.md",
         "size": 663,
-        "sha256": "e4ae2d1ce8d0d6279072fec086f50d9ed7c2877392cfdc60aa8b9583774007b7"
+        "sha256": "d7ca6323305a3df63f56c876e41c71a34f1330bc93e9aa5b73b43d2c5c90118c"
       },
       {
         "path": ".agent/collaboration/work_plan.md",
-        "size": 5080,
-        "sha256": "8b55483f33d978c897b4d8bd66a0b9d5bcc42817a2c2035ac06fdfb8100afdac"
+        "size": 5158,
+        "sha256": "54da88cfb94b6bc31c4503181e9262e35edd17586c4d0038726b4d3598ddb83c"
       },
       {
         "path": ".agent/context/project_map.md",
@@ -32765,6 +32765,46 @@
             "name": "bus.supervisor.SequentialTicketSupervisor",
             "type": "local",
             "path": "bus/supervisor.py"
+          },
+          {
+            "name": "bus.supervisor.SequentialTicketSupervisor",
+            "type": "local",
+            "path": "bus/supervisor.py"
+          },
+          {
+            "name": "bus.supervisor.SupervisorState",
+            "type": "local",
+            "path": "bus/supervisor.py"
+          },
+          {
+            "name": "bus.supervisor.SequentialTicketSupervisor",
+            "type": "local",
+            "path": "bus/supervisor.py"
+          },
+          {
+            "name": "bus.supervisor.SupervisorState",
+            "type": "local",
+            "path": "bus/supervisor.py"
+          },
+          {
+            "name": "bus.supervisor.SequentialTicketSupervisor",
+            "type": "local",
+            "path": "bus/supervisor.py"
+          },
+          {
+            "name": "bus.supervisor.SupervisorState",
+            "type": "local",
+            "path": "bus/supervisor.py"
+          },
+          {
+            "name": "bus.supervisor.SequentialTicketSupervisor",
+            "type": "local",
+            "path": "bus/supervisor.py"
+          },
+          {
+            "name": "bus.supervisor.SupervisorState",
+            "type": "local",
+            "path": "bus/supervisor.py"
           }
         ],
         "error": null
@@ -35639,9 +35679,9 @@
     "javascript": {},
     "frameworks": [],
     "tools": [
-      "mypy",
-      "pytest",
       "uv",
+      "pytest",
+      "mypy",
       "ruff"
     ]
   },
