@@ -33,6 +33,18 @@ python .agent/agent_controller.py
 ```
 Debe indicar `ROL ACTIVO: MANAGER` y acciÃ³n `CREATE_PLAN`.
 
+### Paso 0b: Cargar lecciones de cierre
+
+Antes de analizar el requerimiento, leer si existe:
+- `.agent/runtime/memory/closeout_lessons.md`
+
+Usar ese contexto para:
+- evitar repetir errores de tickets previos
+- reutilizar learnings aprobados como generalizables
+- respetar learnings que siguen siendo locales al proyecto
+
+Si el archivo no existe, continuar sin bloquear.
+
 ### Paso 1: Analizar Requerimiento
 
 Entender del usuario:
@@ -237,6 +249,7 @@ El handoff al Builder genera/actualiza, sin omitir ninguno:
 
 - `references/plan-quality-checklist.md` - Checklist de calidad para planes y audits
 - `../../_shared/ticket-anti-patterns.md` - Catalogo TP compartido para prompts de Manager y Builder
+- `../man-session-closeout/SKILL.md` - Cierre de sesion y puente de learnings
 
 ## TP Check obligatorio
 
@@ -251,6 +264,7 @@ Regla de aprobacion:
 - Si el plan y el audit no coinciden en secuencia, archivos o criterios, el ticket no pasa a `APPROVED`.
 - Si el texto usa semantica blanda sin definir el mecanismo, se corrige antes del handoff.
 - Si el ticket introduce una nueva gate de calidad, aplica ese gate manualmente sobre el propio `AUDIT_WP` antes de confiar en automatizacion futura.
+- Si existe `.agent/runtime/memory/closeout_lessons.md`, usalo como contexto antes de redactar un nuevo plan.
 
 ## Constraints
 

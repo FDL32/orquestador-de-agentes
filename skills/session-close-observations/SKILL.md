@@ -93,6 +93,13 @@ Generar un resumen de cierre:
 - Cuantas fueron descartadas y por que
 - Topics cubiertos en este ciclo
 
+### Paso 6: Transferir al cierre de sesion del Manager
+
+Cuando el cierre de observaciones detecte learnings que tambien deben clasificarse por alcance:
+- referenciar `man-session-closeout`
+- pasar el contexto curado al siguiente paso de cierre
+- evitar mezclar la memoria tecnica con el canal de salida humana del motor
+
 ## Schema de Observacion
 
 | Campo | Tipo | Requerido | Descripcion |
@@ -123,6 +130,7 @@ La skill no tiene output directo en stdout. Su efecto es:
 - `references/filter-rules.md` - Reglas de filtrado y curacion
 - `../memory-consolidate/SKILL.md` - Consolidacion posterior
 - `../project-finalize/SKILL.md` - Integracion en cierre de proyecto
+- `../man-session-closeout/SKILL.md` - Clasificacion de learnings de cierre y puente humano
 
 ## Constraints
 
