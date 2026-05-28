@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WP-2026-159
-**Estado:** READY_FOR_REVIEW
+**Estado:** COMPLETED
 - **deliverable_type:** code
 
 ## Agente Activo
@@ -80,3 +80,5 @@ Scope override: Archivos de archivado WP-2026-158 no relacionados con WP-2026-15
 Manager requested changes (2 rejections)
 
 Scope override: in-scope WP-2026-159 files already committed; remaining diff is excluded collaboration/runtime hotfix artifacts. Affected files: C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\bus\supervisor.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\tests\test_supervisor.py
+
+Manager approved canonical closeout for WP-2026-159

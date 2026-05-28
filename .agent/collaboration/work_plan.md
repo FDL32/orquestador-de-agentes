@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WP-2026-159
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Titulo:** Reactive Builder relaunch after CHANGES
 - **Asignado a:** Builder
