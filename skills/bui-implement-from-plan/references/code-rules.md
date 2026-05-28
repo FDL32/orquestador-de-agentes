@@ -330,6 +330,43 @@ review_diff = build_review_packet(include_untracked=True)
 
 Regla: si el ticket entrega archivos nuevos, el packet de review debe enumerarlos y adjuntarlos de forma explicita. Un diff sin los untracked no representa el alcance real.
 
+### AP-13 — Supervisor process serves stale code after hot-patch
+
+El proceso supervisor carga sus módulos al arrancar. Si se despliega un fix en disco mientras el proceso sigue corriendo, el proceso ejecuta el código anterior indefinidamente.
+
+❌
+```bash
+# Se corrige bus/supervisor.py. El proceso supervisor en background ignora el cambio.
+# BUILDER_RELAUNCH_ATTEMPTED nunca aparece en el bus tras REVIEW_DECISION -> changes.
+```
+✅
+```bash
+# Después de cualquier cambio en bus/supervisor.py: verificar que no hay supervisor_lock.txt
+# y reiniciar el proceso antes de asumir que el fix está activo.
+Test-Path .agent/runtime/supervisor_lock.txt  # debe devolver False antes de relanzar
+```
+
+Regla: cualquier ticket que toque `bus/supervisor.py` debe incluir en los criterios de aceptación que el proceso supervisor se reinicia y que el nuevo comportamiento es observable en el bus (p.ej. `BUILDER_RELAUNCH_ATTEMPTED` con el `outcome` esperado). Un test que pase no es evidencia suficiente si el proceso en memoria sigue siendo el antiguo.
+
+### AP-14 — Closeout prompt con nombres de parámetros dispara alucinación de CLI
+
+Cuando un prompt de cierre de agente enumera los parámetros de una función interna, el agente en sesión nueva (sin historial de conversación) construye un flag CLI inventado combinando esos nombres en lugar de usar el comando canónico.
+
+❌
+```
+# Prompt que dispara la alucinación — menciona los tres parámetros de _emit_builder_exit():
+"Emite BUILDER_EXIT en el bus con ticket_id, exit_reason y completion_summary antes de cerrar."
+# El agente fabrica: --emit-exit builder --ticket-id ... --exit-reason ... --completion-summary ...
+```
+✅
+```
+# Prompt que deja un único camino de acción:
+"Ejecuta python .agent/agent_controller.py --mark-ready --json --force al final.
+Este comando emite automáticamente BUILDER_EXIT. No uses ningún otro comando para cerrar."
+```
+
+Regla: en instrucciones de cierre de agente, dar únicamente el comando canónico completo. No mencionar nombres de parámetros internos ni efectos secundarios que el agente pueda intentar producir manualmente. Aplica a cualquier archivo leído por un agente en sesión nueva: `.opencode/agents/builder.md`, prompts del launcher, y cualquier regla de cierre en templates.
+
 ### AP-08 — Test coverage drift (funciones nuevas sin tests directos)
 
 Ejecutar el suite existente y ver que pasa no es evidencia de cobertura si las funciones nuevas introducidas en el diff no aparecen en ningún test.

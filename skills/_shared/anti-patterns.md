@@ -49,3 +49,11 @@ Este archivo es la fuente compartida de referencia para Builder y Manager.
 ## AP-12 - Review packet incomplete (untracked deliverables invisible to diff)
 - El review packet se construye solo a partir de `git diff` y oculta archivos nuevos no rastreados, por lo que el Manager revisa un alcance incompleto.
 - Efecto: se producen falsos positivos de scope o revisiones incompletas aunque el trabajo real exista en disco.
+
+## AP-13 - Supervisor process serves stale code after hot-patch
+- Cualquier proceso de larga vida (supervisor, daemon, watcher) carga sus modulos al arrancar. Un fix desplegado en disco mientras el proceso sigue vivo no tiene efecto hasta que el proceso se reinicia.
+- Efecto: el bug persiste en produccion aunque el archivo corregido este en disco; el comportamiento observable en el bus o en los logs no cambia hasta el reinicio del proceso.
+
+## AP-14 - Closeout prompt con nombres de parametros dispara alucinacion de CLI
+- Un prompt de cierre de agente que menciona los parametros internos de una funcion (p.ej. `ticket_id`, `exit_reason`, `completion_summary`) lleva al agente en sesion nueva a construir un flag CLI inventado combinando esos nombres.
+- Efecto: el agente ejecuta un comando inexistente (p.ej. `--emit-exit builder --ticket-id ... --exit-reason ...`) y el ticket no se cierra.

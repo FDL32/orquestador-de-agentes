@@ -56,6 +56,8 @@
 - [ ] AP-10 Test surrogate: los tests de integración invocan el módulo/script real, no un sustituto sintético creado en tmp_path; si el test no importa ni llama al artefacto real, es un test del sustituto
 - [ ] AP-11 Security gate fail-open: cualquier guarda de seguridad que encuentre config inválida o perfil desconocido debe hacer exit(2)/raise, nunca fallback silencioso a modo permisivo
 - [ ] AP-12 Review packet incomplete: si el ticket crea archivos nuevos o entregables no rastreados, el packet de review los enumera y adjunta explicitamente; un diff rastreado incompleto no representa el alcance real
+- [ ] AP-13 Supervisor stale process: si el ticket toca `bus/supervisor.py`, verificar que el proceso supervisor se reinició y que el nuevo comportamiento es observable en el bus (p.ej. `BUILDER_RELAUNCH_ATTEMPTED` con el outcome esperado); un test que pase no es evidencia suficiente si el proceso en memoria es el antiguo
+- [ ] AP-14 Closeout prompt hallucination: si el ticket modifica prompts de cierre de agente (launcher, `.opencode/agents/`, templates), verificar que las instrucciones dan únicamente el comando canónico completo sin mencionar nombres de parámetros internos que el agente pueda interpretar como flags CLI
 
 ## Aprobacion y Nit
 - [ ] Aprobar cuando el cambio mejora la salud del codigo, aunque no sea perfecto: https://google.github.io/eng-practices/review/reviewer/standard.html
