@@ -101,3 +101,39 @@ def test_launcher_multi_root_precedence() -> None:
     assert "ProjectRoot resuelto desde AGENT_PROJECT_ROOT" in content
     assert "ProjectRoot resuelto desde motor_destination_link.json" in content
     assert "ProjectRoot resuelto desde fallback local" in content
+
+
+def test_launcher_resume_builder_waits_for_supervisor_exit() -> None:
+    """WP-2026-160: -ResumeBuilder debe esperar a que el supervisor viejo libere el lock."""
+    content = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    # Funcion de espera del supervisor
+    assert "function Wait-SupervisorExit" in content
+    assert "supervisor_lock.txt" in content
+    assert "TimeoutSeconds" in content
+
+    # Rama -ResumeBuilder con espera
+    assert "Resume mode: waiting for stale supervisor exit" in content
+    assert "Wait-SupervisorExit -ProjectRoot" in content
+    assert "Cannot guarantee fresh supervisor" in content
+
+    # El launcher arranca supervisor fresco en ResumeBuilder
+    assert "Will launch fresh supervisor before Builder" in content
+    assert "$LaunchSupervisor = $true" in content
+
+
+def test_launcher_resume_builder_fail_closed_on_timeout() -> None:
+    """WP-2026-160: -ResumeBuilder debe fallar cerrado si el supervisor no sale a tiempo."""
+    content = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    # Fail-closed con exit code no cero
+    assert "exit 1" in content
+    assert "stale supervisor did not exit within timeout" in content
+
+
+def test_launcher_resume_builder_sets_restart_reason_env() -> None:
+    """WP-2026-160: -ResumeBuilder debe exportar SUPERVISOR_RESTART_REASON para que el supervisor fresco emita SUPERVISOR_RESTARTED."""
+    content = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert "SUPERVISOR_RESTART_REASON" in content
+    assert '"resume-builder"' in content

@@ -1,6 +1,6 @@
 # TURNO ACTUAL
 
-**Ultima actualizacion:** 2026-05-28 12:20:00
+**Ultima actualizacion:** 2026-05-28 12:48:40
 
 ---
 
@@ -8,23 +8,23 @@
 
 | Campo | Valor |
 |-------|-------|
-| **ROL** | **BUILDER** |
-| **Plan ID** | WP-2026-160 |
-| **Tipo** | TAREA AGENTE |
-| **Accion** | IMPLEMENT |
+| **ROL** | **MANAGER** |
+| **Plan ID** | N/A |
+| **Tipo** | IMPLEMENTATION |
+| **Accion** | CREATE_PLAN |
 
 ---
 
 ## Instruccion
 
-> Requeued to Builder: ensure -ResumeBuilder leaves a fresh supervisor before opening Builder.
+> Ticket WP-2026-160 closed. Create new work_plan.md for next cycle.
 
 ---
 
 ## Archivos a Leer
 
-1. `.builder_rules` (Contexto del rol)
-2. `.agent/workflows/builder_workflow.md` (Flujo de trabajo)
+1. `.manager_rules` (Contexto del rol)
+2. `.agent/workflows/manager_workflow.md` (Flujo de trabajo)
 
 ---
 
@@ -32,8 +32,8 @@
 
 | Archivo | Estado |
 |---------|--------|
-| work_plan.md | APPROVED |
-| execution_log.md | IN_PROGRESS |
+| work_plan.md | COMPLETED |
+| execution_log.md | COMPLETED |
 
 ---
 
