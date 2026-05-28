@@ -1,74 +1,64 @@
-# Execution Log - WP-2026-161
+# Execution Log - WP-2026-162
 
 ## Metadata
-- **ID:** WP-2026-161
-**Estado:** COMPLETED
-- **deliverable_type:** documentation
+- **ID:** WP-2026-162
+- **Estado:** IN_PROGRESS
+- **deliverable_type:** code
 
 ## Agente Activo
 - **Rol:** BUILDER
 - **Accion:** IMPLEMENT
-- **Plan:** Ticket Quality & Improvement Loop - fase documental
+- **Plan:** Ticket Quality & Improvement Loop - fase automatizada
 
 ## Fases
-- Phase 1: crear el catalogo TP compartido para tickets.
-- Phase 2: crear la checklist de calidad y exigir TP Check en el audit.
-- Phase 3: registrar observaciones manuales de calidad derivadas de WP-2026-160.
+- Phase 1: crear el validador mecanico de prosa de ticket.
+- Phase 2: integrar warnings de ticket prose en `--validate`.
+- Phase 3: completar la cobertura end-to-end con casos limpio y defectuoso.
 
 ## Registro de Implementacion
-- Ticket dedicado a mejorar el proceso de creacion de tickets, no el runtime.
-- El catalogo TP debe incluir WHY, senal y ejemplo NO/SI.
-- La checklist debe ser verifiable y apta para prompts.
-- El audit debe incluir `## TP Check` y usar la misma terminologia que el plan.
-- Las observaciones de WP-2026-160 deben quedar registradas en memoria estructurada.
+- Ticket dedicado a automatizar el chequeo de calidad de tickets, no a cambiar el flujo de cierre.
+- El validador debe emitir warnings, no bloquear por defectos de prosa.
+- `--validate` debe seguir devolviendo exit code 0 cuando solo haya warnings.
+- La cobertura debe demostrar el camino limpio y el camino defectuoso.
 
 ## Evidencia de Implementacion
 
-### Fase 1: Catalogo TP completado
-- Archivo: `skills/_shared/ticket-anti-patterns.md`
-- Contenido: TP-01 a TP-05 con descripcion, `**Por que rompe al Builder:**`, `**Señal de detección:**` y ejemplos `❌` / `✅`.
-- Verificacion: archivo existe con 74 lineas, formato canonico completo.
+### Fase 1: Validador mecanico pendiente
+- Archivo esperado: `scripts/validate_ticket_prose.py`
+- Archivo de tests esperado: `tests/test_validate_ticket_prose.py`
+- Contenido esperado: deteccion de throat-clearing, prosa vaga, pasivo impreciso, extremos lazy y TP-P estructurales.
+- Verificacion esperada: warnings con regla, evidencia y sugerencia.
 
-### Fase 2: Checklist y TP Check en SKILL.md
-- Archivo: `skills/man-create-work-plan/references/plan-quality-checklist.md`
-  - Contenido: checklist con preguntas verificables para Objetivo, Alcance, Secuencia, Verificabilidad, TP Check y Redaccion.
-- Archivo: `skills/man-create-work-plan/SKILL.md`
-  - Seccion `## TP Check obligatorio` añadida (lineas 241-254).
-  - Referencias actualizadas: incluye `references/plan-quality-checklist.md` y `../../_shared/ticket-anti-patterns.md`.
-  - El TP Check aparece como paso 0 en la checklist de handoff canonico.
+### Fase 2: Integracion en `--validate` pendiente
+- Archivo esperado: `.agent/agent_controller.py`
+- Archivo de tests esperado: `tests/test_agent_controller.py`
+- Contenido esperado: warnings de `ticket_prose` en la salida JSON y consola, sin convertir warnings en errores.
+- Verificacion esperada: `python .agent/agent_controller.py --validate --json --force` con warnings en un plan defectuoso y exit code 0.
 
-### Fase 3: Observaciones de WP-2026-160 en memoria
-- Archivo: `.agent/runtime/memory/observations.jsonl`
-- Observaciones registradas (lineas 38-40):
-  - `ticket-contradiction-sequence`: secuencia contradictoria en WP-2026-160.
-  - `ticket-unverifiable-acceptance`: criterio sin verificador literal.
-  - `ticket-plan-audit-parity-gap`: paridad PLAN/AUDIT rota.
-- Validacion: `python scripts/validate_observations.py` pasa sin errores.
+### Fase 3: Cobertura end-to-end pendiente
+- Archivo esperado: `tests/test_validate_ticket_prose.py`
+- Archivo esperado: `tests/test_agent_controller.py`
+- Contenido esperado: un caso limpio y un caso defectuoso.
+- Verificacion esperada: warnings no bloquean `mark-ready`.
 
 ## Quality Gates Ejecutados
-- `python scripts/validate_observations.py` -> EXITOSO
+- `python scripts/validate_ticket_prose.py` -> pendiente de ejecucion
 - `python .agent/agent_controller.py --validate --json --force` -> pendiente de ejecucion
+- `python -m pytest tests/test_validate_ticket_prose.py tests/test_agent_controller.py -q` -> pendiente de ejecucion
 
 ## Evidencia Esperada
-- `skills/_shared/ticket-anti-patterns.md`
-- `skills/man-create-work-plan/references/plan-quality-checklist.md`
-- `skills/man-create-work-plan/SKILL.md`
-- `.agent/runtime/memory/observations.jsonl`
+- `scripts/validate_ticket_prose.py`
+- `tests/test_validate_ticket_prose.py`
+- `.agent/agent_controller.py`
+- `tests/test_agent_controller.py`
+- `.agent/collaboration/work_plan.md`
+- `.agent/collaboration/execution_log.md`
 
 ## Calidad
-- `python scripts/validate_observations.py`
+- `python scripts/validate_ticket_prose.py`
 - `python .agent/agent_controller.py --validate --json --force`
+- `python -m pytest tests/test_validate_ticket_prose.py tests/test_agent_controller.py -q`
 
 ## Estado de Control
 - Handoff preparado para Builder.
 - Ticket pendiente de implantar y revisar.
-
-
-Scope override: Archivos del whitelist ya estaban implementados en sesion previa; solo se actualizo execution_log.md con evidencia de implementacion completada. Affected files: C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\runtime\memory\observations.jsonl, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\skills\_shared\ticket-anti-patterns.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\skills\man-create-work-plan\SKILL.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\skills\man-create-work-plan\references\plan-quality-checklist.md
-
-Manager requested changes (1 rejections)
-
-Scope override: WP-2026-161 already committed and pushed; finalize ticket state sync after builder verification. Affected files: C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\runtime\memory\observations.jsonl, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\skills\_shared\ticket-anti-patterns.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\skills\man-create-work-plan\SKILL.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\skills\man-create-work-plan\references\plan-quality-checklist.md
-
-
-Manager approved canonical closeout for WP-2026-161
