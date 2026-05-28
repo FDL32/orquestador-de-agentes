@@ -62,15 +62,17 @@ def detect_throat_clearing(content: str) -> list[ProseWarning]:
     ]
     for pattern in patterns:
         matches = re.finditer(pattern, content, re.IGNORECASE)
-        for match in matches:
-            warnings.append(
+        warnings.extend(
+            [
                 ProseWarning(
                     rule_id="TP-PROSE-01",
                     rule_name="throat-clearing",
                     evidence=match.group(0)[:80],
                     suggestion="Ve directo al grano. Elimina el preambulo y empieza con el objetivo concreto.",
                 )
-            )
+                for match in matches
+            ]
+        )
     return warnings
 
 
@@ -122,15 +124,17 @@ def detect_imprecise_passive(content: str) -> list[ProseWarning]:
     ]
     for pattern in patterns:
         matches = re.finditer(pattern, content, re.IGNORECASE)
-        for match in matches:
-            warnings.append(
+        warnings.extend(
+            [
                 ProseWarning(
                     rule_id="TP-PROSE-03",
                     rule_name="pasivo-impreciso",
                     evidence=match.group(0)[:80],
                     suggestion="Usa voz activa y especifica el agente: 'Builder implementa X', 'Manager revisa Y'.",
                 )
-            )
+                for match in matches
+            ]
+        )
     return warnings
 
 
@@ -151,15 +155,17 @@ def detect_lazy_extremes(content: str) -> list[ProseWarning]:
     ]
     for pattern in patterns:
         matches = re.finditer(pattern, content, re.IGNORECASE)
-        for match in matches:
-            warnings.append(
+        warnings.extend(
+            [
                 ProseWarning(
                     rule_id="TP-PROSE-04",
                     rule_name="extremos-lazy",
                     evidence=match.group(0)[:80],
                     suggestion="Se especifico: enumera los elementos concretos en lugar de usar terminos vagos.",
                 )
-            )
+                for match in matches
+            ]
+        )
     return warnings
 
 
@@ -451,6 +457,9 @@ def validate_ticket_prose(work_plan_path: Path, collab_dir: Path) -> ValidationR
         )
 
     content = work_plan_path.read_text(encoding="utf-8")
+    is_completed_plan = bool(
+        re.search(r"##\s*Metadata\s*\n.*?\-\s*\*\*Estado:\*\*\s*COMPLETED", content, re.DOTALL | re.IGNORECASE)
+    )
 
     all_warnings: list[ProseWarning] = []
 
@@ -467,8 +476,9 @@ def validate_ticket_prose(work_plan_path: Path, collab_dir: Path) -> ValidationR
     all_warnings.extend(detect_missing_architectural_decision(content))
     all_warnings.extend(detect_ghost_dependency(content))
 
-    # Verificacion estructural de AUDIT
-    all_warnings.extend(detect_audit_missing_tp_check(collab_dir))
+    # Verificacion estructural de AUDIT solo para planes activos.
+    if not is_completed_plan:
+        all_warnings.extend(detect_audit_missing_tp_check(collab_dir))
 
     return ValidationResult(
         warnings=all_warnings,

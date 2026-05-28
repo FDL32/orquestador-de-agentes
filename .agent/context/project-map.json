@@ -1,14 +1,14 @@
 {
   "version": "1.0",
-  "generated": "2026-05-28T12:47:15.938819+00:00",
+  "generated": "2026-05-28T14:15:59.103755+00:00",
   "project_root": "C:\\Users\\fdl\\Proyectos_Python\\z_scripts\\orquestador_de_agentes",
   "summary": {
-    "total_files": 4984,
-    "total_size_bytes": 18259961,
+    "total_files": 4985,
+    "total_size_bytes": 18601922,
     "categories": {
       "config": 400,
-      "python": 843,
-      "documentation": 1391,
+      "python": 845,
+      "documentation": 1390,
       "other": 2333,
       "scripts": 17
     }
@@ -23,7 +23,7 @@
       {
         "path": ".agent/collaboration/.session_state.json",
         "size": 134,
-        "sha256": "0f04b6061d14b9bc14cce71b4cbda6e2db93538fdb19e06e1a2ab9f4fcc0c18a"
+        "sha256": "bbc2c6cf600bdab0d3d12ae1a1497a3d781607cfe3c697f77054e105f759a04b"
       },
       {
         "path": ".agent/config/agents.json",
@@ -32,8 +32,8 @@
       },
       {
         "path": ".agent/context/project-map.json",
-        "size": 1502536,
-        "sha256": "6e0a0d0a73b86430c15d84d9b150c255eebbdaaeedbee62209a698c4d534a3fe"
+        "size": 1538688,
+        "sha256": "c8983e33dcceea0aacd2773c1b97471f60792e29fbea1a78a80b895a27218a7e"
       },
       {
         "path": ".agent/known_models.json",
@@ -58,22 +58,22 @@
       {
         "path": ".agent/runtime/circuit_breaker.json",
         "size": 181,
-        "sha256": "883dcf350a93d9f5054921dff64f9b63955a58da20b4ed8daea9fdad70575a21"
+        "sha256": "14c098301f7020a8fb0749780a95cb7c5d4db4efbff61f03c9ccfd5663044133"
       },
       {
         "path": ".agent/runtime/manager_bridge_state.json",
         "size": 171,
-        "sha256": "0129c511e7a73d9181a217d73b66ded96765a3e77d9a219744d569b5d8311dc3"
+        "sha256": "730ad8981896029f4982f345402da0a7fcd8409f61452a7f001a5de3a571fbb1"
       },
       {
         "path": ".agent/runtime/pytest-safe/last-run.json",
         "size": 3015,
-        "sha256": "bc5b6363a335c43e5e31464fd0176887b5ef52beb5fa5b04c19f53bbac0faa4f"
+        "sha256": "6a6c35309417cf143619c50b69cd68d223e1d8b9a29e5a306775be2254903b26"
       },
       {
         "path": ".agent/runtime/supervisor_state.json",
         "size": 225,
-        "sha256": "7f3c463e78d8b233b51b67a6cd3fd499e3e9a824c3ec3ed73ed9b33d6643d22d"
+        "sha256": "c9471a5ce429864e03179780a8834608432e1aaf4a9d091f7589c5f834d529e9"
       },
       {
         "path": ".agent_allowlist.json",
@@ -2019,8 +2019,8 @@
     "python": [
       {
         "path": ".agent/agent_controller.py",
-        "size": 120098,
-        "sha256": "f265346dff22f66bb586506ea04a0792259a28e9529dfed880ce27cad4288a42"
+        "size": 120759,
+        "sha256": "da5c26175c7c23f6bf66447452f97b954d3a6ab963f34a84e4dc86f7caaba306"
       },
       {
         "path": ".agent/agents_config.py",
@@ -2401,6 +2401,11 @@
         "path": "scripts/validate_observations.py",
         "size": 11374,
         "sha256": "3e77d5475c5e52ac324c85d87b385eec61f4061a93b905d252154114516d728d"
+      },
+      {
+        "path": "scripts/validate_ticket_prose.py",
+        "size": 20506,
+        "sha256": "105917202872744a1bdea9ae3ed2f53f5c862681a5cebff62d4b2235abe5d2b6"
       },
       {
         "path": "skills/__init__.py",
@@ -5744,8 +5749,8 @@
       },
       {
         "path": "tests/test_agent_controller.py",
-        "size": 7029,
-        "sha256": "db33e10be4ecb621acbf8c2887bd1137835e60957da096f194787fe0251f1a8f"
+        "size": 11457,
+        "sha256": "2786685e426fc994b41d4db61564aa378d8698d6cff61b3c3ccbd11dc91b0d39"
       },
       {
         "path": "tests/test_agent_readme_references.py",
@@ -5941,6 +5946,11 @@
         "path": "tests/test_validate_authority.py",
         "size": 2992,
         "sha256": "5594d3d103a5ef2c9ae765165bad658c11a9259c86bc2dc9ccc3b32a02c195b5"
+      },
+      {
+        "path": "tests/test_validate_ticket_prose.py",
+        "size": 18987,
+        "sha256": "05ce6132f19d4877f13821678a922b45a3f73a1d4b1f62bc1ef55cdadaeecb83"
       },
       {
         "path": "tests/test_wp_2026_127.py",
@@ -6235,14 +6245,9 @@
     ],
     "documentation": [
       {
-        "path": ".agent/collaboration/AUDIT_WP-2026-161.md",
-        "size": 2366,
-        "sha256": "b92d1bd3dd2e84f6fc0ebe3eb690f9020774420cfb450073fd753e35f765514b"
-      },
-      {
         "path": ".agent/collaboration/execution_log.md",
-        "size": 4091,
-        "sha256": "729d721b7d0c853754e3d23ae4ea5c6bb9e35c81162e20d09eaa4f09eccd6b56"
+        "size": 3335,
+        "sha256": "993b05867c4bac38a47364c78529cd05f93910f91fec421460a066c29de5b0aa"
       },
       {
         "path": ".agent/collaboration/manager_feedback_WP-2026-155.md",
@@ -6280,34 +6285,34 @@
         "sha256": "d748edc1c8a461ca235337b4574a403370c46dbd76faa06629794791d6ce4a16"
       },
       {
-        "path": ".agent/collaboration/notifications.md",
-        "size": 3457,
-        "sha256": "698affad48851a79482d444c3cbf1b56f51a8a8dc139f3025e1d5a8edcf05c63"
+        "path": ".agent/collaboration/manager_feedback_WP-2026-162.md",
+        "size": 225455,
+        "sha256": "a3f4feb44e8c26d0d6b0b9695a92d3fce94a15628314dd7e4f1f885ebb99c7e9"
       },
       {
-        "path": ".agent/collaboration/PLAN_WP-2026-161.md",
-        "size": 5504,
-        "sha256": "359ae25c4070b2388f15811c58056a61f3488dba4b56220827508360fa6f16a7"
+        "path": ".agent/collaboration/notifications.md",
+        "size": 3310,
+        "sha256": "cf5a84786eef3abb1d17be1929b92c39533e2a0c845c824df0cbacd440a82671"
       },
       {
         "path": ".agent/collaboration/review_queue.md",
-        "size": 5367955,
-        "sha256": "dc0a6c69316109f0b324843164de59440e7ebd6fd7c05532464b1eab5fb17544"
+        "size": 5411097,
+        "sha256": "05117be476e398a4258e562f7c4ae8044101f477e6b137ee36361b598a370391"
       },
       {
         "path": ".agent/collaboration/STATE.md",
-        "size": 58,
-        "sha256": "43b4238051de2dcfc27959a47a8c442962800c7190912b5becbcecdc050f6adc"
+        "size": 56,
+        "sha256": "b440b943356f4538b11c894b06ac4063892059b3ef6d0b836af3ffbf86a0984b"
       },
       {
         "path": ".agent/collaboration/TURN.md",
-        "size": 657,
-        "sha256": "fbd8863cc1d28dc7ad2060def0713b55d5dbaa3b11608d2236eabf235aa237ee"
+        "size": 663,
+        "sha256": "17c5971cb8161c6e6362617b5c3519f80babcadf5bdfb805235ec638d91d851a"
       },
       {
         "path": ".agent/collaboration/work_plan.md",
-        "size": 4885,
-        "sha256": "799df7b7fd7420daf18a1a3c6ca71601b4d608ae7735117ee47dd0e059bd4acc"
+        "size": 5719,
+        "sha256": "b9a9a0eab69c8e90b362270dcb94951da5dc9b3c187faa3e746733be622b40de"
       },
       {
         "path": ".agent/context/project_map.md",
@@ -6322,7 +6327,7 @@
       {
         "path": ".agent/runtime/builder_lock.txt",
         "size": 264,
-        "sha256": "d4c7f7d9831016456b5fc2433b68e7c105a3abcb6c3a9cb71648010251236a82"
+        "sha256": "7f496d6b2b3909ed2bdbadfd80483801f57d126b930bc7ac52df0b9a4458887e"
       },
       {
         "path": ".agent/runtime/compare/affaan-m-ECC-928076cc-2026-05-27.md",
@@ -6746,8 +6751,8 @@
       },
       {
         "path": "skills/man-create-work-plan/references/plan-quality-checklist.md",
-        "size": 2401,
-        "sha256": "c8b881bb73999070357a3097b16550097ca42ca1625b0f8478f5331ba258683f"
+        "size": 2816,
+        "sha256": "dcb369842c74df9269a4050c7dd50c83f1147b0855252904d82814523f1c2a8a"
       },
       {
         "path": "skills/man-create-work-plan/references/plan-template.md",
@@ -6761,8 +6766,8 @@
       },
       {
         "path": "skills/man-create-work-plan/SKILL.md",
-        "size": 8333,
-        "sha256": "04dcabedbb9c4b83f0c9ad88099ccea3fc206c87c225a4435bc185012d586cf0"
+        "size": 8483,
+        "sha256": "ac8961b8da813f157cdfba91529e743f05072b6bfb152a7bb4b664ff1016503a"
       },
       {
         "path": "skills/man-resolve-escalation/references/escalation-levels.md",
@@ -25175,6 +25180,11 @@
             "path": "bus/state_machine.py"
           },
           {
+            "name": "scripts.validate_ticket_prose.validate_ticket_prose",
+            "type": "local",
+            "path": "scripts/validate_ticket_prose.py"
+          },
+          {
             "name": "scripts.state_projection_sync.sync_state_projection",
             "type": "local",
             "path": "scripts/state_projection_sync.py"
@@ -28442,6 +28452,41 @@
         ],
         "error": null
       },
+      "scripts/validate_ticket_prose.py": {
+        "imports": [
+          {
+            "name": "argparse",
+            "type": "stdlib",
+            "package": "argparse"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "re",
+            "type": "stdlib",
+            "package": "re"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "typing.TypedDict",
+            "type": "stdlib",
+            "package": "typing"
+          }
+        ],
+        "error": null
+      },
       "skills/refactor-manager/goose_integration.py": {
         "imports": [
           {
@@ -29795,6 +29840,31 @@
             "name": "json",
             "type": "stdlib",
             "package": "json"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "io.StringIO",
+            "type": "stdlib",
+            "package": "io"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "types.ModuleType",
+            "type": "stdlib",
+            "package": "types"
+          },
+          {
+            "name": "io.StringIO",
+            "type": "stdlib",
+            "package": "io"
           }
         ],
         "error": null
@@ -32629,6 +32699,126 @@
         ],
         "error": null
       },
+      "tests/test_validate_ticket_prose.py": {
+        "imports": [
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "unittest.mock.patch",
+            "type": "stdlib",
+            "package": "unittest"
+          },
+          {
+            "name": "pytest",
+            "type": "external",
+            "package": "pytest"
+          },
+          {
+            "name": "validate_ticket_prose.ValidationResult",
+            "type": "external",
+            "package": "validate_ticket_prose"
+          },
+          {
+            "name": "validate_ticket_prose.detect_audit_missing_tp_check",
+            "type": "external",
+            "package": "validate_ticket_prose"
+          },
+          {
+            "name": "validate_ticket_prose.detect_diffuse_objective",
+            "type": "external",
+            "package": "validate_ticket_prose"
+          },
+          {
+            "name": "validate_ticket_prose.detect_ghost_dependency",
+            "type": "external",
+            "package": "validate_ticket_prose"
+          },
+          {
+            "name": "validate_ticket_prose.detect_imprecise_files_touched",
+            "type": "external",
+            "package": "validate_ticket_prose"
+          },
+          {
+            "name": "validate_ticket_prose.detect_imprecise_passive",
+            "type": "external",
+            "package": "validate_ticket_prose"
+          },
+          {
+            "name": "validate_ticket_prose.detect_lazy_extremes",
+            "type": "external",
+            "package": "validate_ticket_prose"
+          },
+          {
+            "name": "validate_ticket_prose.detect_missing_architectural_decision",
+            "type": "external",
+            "package": "validate_ticket_prose"
+          },
+          {
+            "name": "validate_ticket_prose.detect_missing_nongoals",
+            "type": "external",
+            "package": "validate_ticket_prose"
+          },
+          {
+            "name": "validate_ticket_prose.detect_nonverifiable_criteria",
+            "type": "external",
+            "package": "validate_ticket_prose"
+          },
+          {
+            "name": "validate_ticket_prose.detect_oversized_ticket",
+            "type": "external",
+            "package": "validate_ticket_prose"
+          },
+          {
+            "name": "validate_ticket_prose.detect_throat_clearing",
+            "type": "external",
+            "package": "validate_ticket_prose"
+          },
+          {
+            "name": "validate_ticket_prose.detect_vague_declarative",
+            "type": "external",
+            "package": "validate_ticket_prose"
+          },
+          {
+            "name": "validate_ticket_prose.format_output",
+            "type": "external",
+            "package": "validate_ticket_prose"
+          },
+          {
+            "name": "validate_ticket_prose.validate_ticket_prose",
+            "type": "external",
+            "package": "validate_ticket_prose"
+          },
+          {
+            "name": "validate_ticket_prose.main",
+            "type": "external",
+            "package": "validate_ticket_prose"
+          },
+          {
+            "name": "validate_ticket_prose.main",
+            "type": "external",
+            "package": "validate_ticket_prose"
+          },
+          {
+            "name": "io.StringIO",
+            "type": "stdlib",
+            "package": "io"
+          }
+        ],
+        "error": null
+      },
       "tests/test_wp_2026_127.py": {
         "imports": [
           {
@@ -35269,9 +35459,9 @@
     "javascript": {},
     "frameworks": [],
     "tools": [
-      "pytest",
-      "mypy",
       "uv",
+      "mypy",
+      "pytest",
       "ruff"
     ]
   },

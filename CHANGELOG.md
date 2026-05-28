@@ -1,3 +1,26 @@
+# 2026-05-28 - WP-2026-162 Canonical closeout: ticket prose validator automation
+
+### Added
+- `scripts/validate_ticket_prose.py`: standalone validator for ticket prose quality with 11
+  deterministic detections plus `audit-missing-tp-check`.
+- `tests/test_validate_ticket_prose.py`: direct coverage for clean/defect fixtures and the
+  structural audit check.
+- `tests/test_agent_controller.py`: integration coverage for `warnings.ticket_prose` in
+  `--validate`.
+
+### Changed
+- `.agent/agent_controller.py`: `_handle_validate()` now exposes ticket prose warnings in the
+  canonical JSON output without changing the exit code for warnings only.
+- `skills/man-create-work-plan/SKILL.md`: added the mandatory `TP Check` gate for the Manager.
+- `skills/man-create-work-plan/references/plan-quality-checklist.md`: added mechanical quality
+  checks for ticket plans and explicit prompt-safe examples.
+- `skills/_shared/ticket-anti-patterns.md`: added the ticket anti-pattern catalog used by the
+  new plan-quality flow.
+
+### Closed
+- `WP-2026-162`: implemented the ticket quality loop automation and closed it canonically.
+
+---
 # 2026-05-27 - v9.14.1 Session close: hardening, CHANGELOG completeness, audit cleanup
 
 ### Changed
