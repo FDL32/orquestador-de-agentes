@@ -1,3 +1,3 @@
-# State - WP-2026-160
+# State - WP-2026-161
 
-Estado actual: READY_TO_CLOSE
+Estado actual: IN_PROGRESS

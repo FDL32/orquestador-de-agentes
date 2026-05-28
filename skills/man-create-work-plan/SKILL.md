@@ -234,6 +234,22 @@ El handoff al Builder genera/actualiza, sin omitir ninguno:
 - `.agent/templates/work_plan_template.md` - Template completo del sistema
 - `.agent/rules/manager/` - Restricciones del rol
 
+- `references/plan-quality-checklist.md` - Checklist de calidad para planes y audits
+- `../../_shared/ticket-anti-patterns.md` - Catalogo TP compartido para prompts de Manager y Builder
+
+## TP Check obligatorio
+
+Antes de aprobar cualquier `work_plan.md`, el Manager debe rellenar en `AUDIT_WP-XXXX.md` una seccion `## TP Check` usando:
+
+1. `../../_shared/ticket-anti-patterns.md` como catalogo de referencia.
+2. `references/plan-quality-checklist.md` como checklist de aprobacion.
+3. Evidencia literal para cada check: seccion, linea, test, comando o diff.
+
+Regla de aprobacion:
+- Si un TP aplica y no puede cerrarse con una linea concreta, el plan sigue en borrador.
+- Si el plan y el audit no coinciden en secuencia, archivos o criterios, el ticket no pasa a `APPROVED`.
+- Si el texto usa semantica blanda sin definir el mecanismo, se corrige antes del handoff.
+
 ## Constraints
 
 - **NO** asignar tareas del usuario (ðŸ‘¤) al Builder
