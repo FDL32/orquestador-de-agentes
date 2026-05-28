@@ -14,7 +14,7 @@ repos:
       - id: check-ast
         exclude: ^tests/sandbox/
       - id: end-of-file-fixer
-        exclude: '^(\.agent/runtime/|\.agent/collaboration/|tests/sandbox/|.*\.svg$|\.agent/context/project_map\.md$)'
+        exclude: '^(\.agent/runtime/|\.agent/collaboration/|tests/sandbox/|.*\.svg$|\.agent/context/project_map\.md$|\.agent/context/project-map\.json$)'
       - id: mixed-line-ending
         args: [--fix=lf]
         exclude: '^(\.agent/runtime/|\.agent/collaboration/|tests/sandbox/|.*\.ps1$|.*\.cmd$|.*\.bat$|\.agent/context/project_map\.md$|\.claude/settings\.json$)'
