@@ -4314,3 +4314,65 @@ def test_watchdog_skips_when_watermark_covers_sequence(tmp_path, monkeypatch):
     assert popen_calls == [], (
         "Popen must NOT be called when watermark covers the sequence"
     )
+
+
+def test_watchdog_popen_detach_flags(tmp_path, monkeypatch):
+    """Popen receives the correct OS-level detach flag for the current platform.
+
+    On Windows: creationflags must include DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP.
+    On POSIX: start_new_session must be True (and creationflags must be absent).
+    """
+    import subprocess as _subprocess
+
+    supervisor = _make_watchdog_supervisor(tmp_path)
+    ticket_id = "WP-2026-166"
+
+    supervisor.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="BUILDER",
+        payload={"from_state": "IN_PROGRESS", "to_state": "READY_FOR_REVIEW"},
+    )
+
+    state = supervisor.load_state()
+    state.active_ticket = ticket_id
+    state.last_manager_stale_trigger_sequence = 0
+    supervisor.save_state(state)
+
+    from datetime import timedelta
+
+    old_hb = (datetime.now(tz=timezone.utc) - timedelta(seconds=700)).isoformat()
+    (supervisor.runtime_dir / "manager_bridge_state.json").write_text(
+        f'{{"heartbeat_at": "{old_hb}", "last_processed_sequence": 0}}',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(supervisor.event_bus, "emit", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        supervisor, "_current_state", lambda tid: TicketState.READY_FOR_REVIEW
+    )
+
+    captured_kwargs: list[dict] = []
+
+    def fake_popen(cmd, **kwargs):
+        captured_kwargs.append(kwargs)
+        return MagicMock()
+
+    monkeypatch.setattr(_subprocess, "Popen", fake_popen)
+
+    state = supervisor.load_state()
+    supervisor._bootstrap_watchdog_manager_if_needed(state, ticket_id)
+
+    assert len(captured_kwargs) == 1, "Popen must be called exactly once"
+    kw = captured_kwargs[0]
+
+    if sys.platform == "win32":
+        assert "creationflags" in kw, "Windows must pass creationflags"
+        assert kw["creationflags"] & _subprocess.DETACHED_PROCESS
+        assert kw["creationflags"] & _subprocess.CREATE_NEW_PROCESS_GROUP
+        assert "start_new_session" not in kw
+    else:
+        assert kw.get("start_new_session") is True, (
+            "POSIX must pass start_new_session=True"
+        )
+        assert "creationflags" not in kw
