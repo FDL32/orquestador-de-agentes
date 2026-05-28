@@ -2,27 +2,6 @@
 
 ---
 
-### MANAGER_HANDOFF - 2026-05-28 12:55:00
-- **Plan ID:** WP-2026-161
-- **Decision:** APPROVED
-- **Source:** manager create plan
-
----
-
-### MANAGER_REVIEW - 2026-05-26 21:50:38
-- **Plan ID:** WP-2026-146
-- **Decision:** APPROVE
-- **Source:** manager backend exec review
-
----
-
-### MANAGER_REVIEW - 2026-05-26 23:38:19
-- **Plan ID:** WP-2026-147
-- **Decision:** APPROVE
-- **Source:** manager backend exec review
-
----
-
 ### MANAGER_REVIEW - 2026-05-27 01:06:45
 - **Plan ID:** WP-2026-149
 - **Decision:** APPROVE
@@ -149,8 +128,6 @@
 
 ---
 
----
-
 ### MANAGER_REVIEW - 2026-05-28 12:36:05
 - **Plan ID:** WP-2026-160
 - **Decision:** APPROVE
@@ -162,3 +139,5 @@
 - **Plan ID:** WP-2026-161
 - **Decision:** CHANGES
 - **Source:** manager backend exec review
+
+---
