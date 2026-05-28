@@ -1290,19 +1290,50 @@ class SequentialTicketSupervisor:
             changed = True
         return changed or event_activity
 
-    def run_reactive(self, timeout_seconds: float = 300.0):
+    @staticmethod
+    def _timeout_from_env(name: str, default: float) -> float:
         import os
-        import time
 
-        def _timeout_from_env(name: str, default: float) -> float:
-            raw = os.environ.get(name)
-            if raw is None or not raw.strip():
-                return default
-            try:
-                value = float(raw)
-            except (TypeError, ValueError):
-                return default
-            return value if value > 0 else default
+        raw = os.environ.get(name)
+        if raw is None or not raw.strip():
+            return default
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return default
+        return value if value > 0 else default
+
+    def _emit_supervisor_restarted_if_requested(self) -> None:
+        import os
+
+        restart_reason = os.environ.get("SUPERVISOR_RESTART_REASON", "").strip()
+        if not restart_reason:
+            return
+
+        state = self.load_state()
+        self.event_bus.emit(
+            "SUPERVISOR_RESTARTED",
+            ticket_id=state.active_ticket or "",
+            actor="SUPERVISOR",
+            payload={"round": state.loop_current_round, "reason": restart_reason},
+        )
+
+    def _should_stop_run_reactive(
+        self,
+        *,
+        start_time: float,
+        last_activity: float,
+        idle_timeout: float,
+        max_runtime: float,
+        now: float,
+    ) -> bool:
+        return (
+            (max_runtime > 0 and now - start_time >= max_runtime)
+            or (idle_timeout > 0 and now - last_activity >= idle_timeout)
+        )
+
+    def run_reactive(self, timeout_seconds: float = 300.0):
+        import time
 
         # Acquire lock via bootstrap - if rejected, another instance is running
         if self.bootstrap() is False:
@@ -1310,20 +1341,12 @@ class SequentialTicketSupervisor:
 
         # WP-2026-160: If launched after a cooperative restart, emit SUPERVISOR_RESTARTED
         # so the bus has an observable signal that the fresh supervisor is active.
-        restart_reason = os.environ.get("SUPERVISOR_RESTART_REASON", "").strip()
-        if restart_reason:
-            _state = self.load_state()
-            self.event_bus.emit(
-                "SUPERVISOR_RESTARTED",
-                ticket_id=_state.active_ticket or "",
-                actor="SUPERVISOR",
-                payload={"round": _state.loop_current_round, "reason": restart_reason},
-            )
+        self._emit_supervisor_restarted_if_requested()
 
-        idle_timeout = _timeout_from_env(
+        idle_timeout = self._timeout_from_env(
             "TICKET_SUPERVISOR_IDLE_TIMEOUT_SECONDS", timeout_seconds
         )
-        max_runtime = _timeout_from_env("TICKET_SUPERVISOR_MAX_RUNTIME_SECONDS", 3600.0)
+        max_runtime = self._timeout_from_env("TICKET_SUPERVISOR_MAX_RUNTIME_SECONDS", 3600.0)
         start_time = time.time()
         last_activity = start_time
         changed = False
@@ -1331,10 +1354,13 @@ class SequentialTicketSupervisor:
         self._requeue_triggered_this_session = False
         try:
             while True:
-                now = time.time()
-                if max_runtime > 0 and now - start_time >= max_runtime:
-                    break
-                if idle_timeout > 0 and now - last_activity >= idle_timeout:
+                if self._should_stop_run_reactive(
+                    start_time=start_time,
+                    last_activity=last_activity,
+                    idle_timeout=idle_timeout,
+                    max_runtime=max_runtime,
+                    now=time.time(),
+                ):
                     break
                 if self.run_once():
                     changed = True
