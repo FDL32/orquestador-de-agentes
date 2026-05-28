@@ -1,14 +1,14 @@
 {
   "version": "1.0",
-  "generated": "2026-05-28T14:15:59.103755+00:00",
+  "generated": "2026-05-28T17:28:52.408425+00:00",
   "project_root": "C:\\Users\\fdl\\Proyectos_Python\\z_scripts\\orquestador_de_agentes",
   "summary": {
-    "total_files": 4985,
-    "total_size_bytes": 18601922,
+    "total_files": 4997,
+    "total_size_bytes": 19102781,
     "categories": {
-      "config": 400,
-      "python": 845,
-      "documentation": 1390,
+      "config": 403,
+      "python": 847,
+      "documentation": 1397,
       "other": 2333,
       "scripts": 17
     }
@@ -23,7 +23,7 @@
       {
         "path": ".agent/collaboration/.session_state.json",
         "size": 134,
-        "sha256": "bbc2c6cf600bdab0d3d12ae1a1497a3d781607cfe3c697f77054e105f759a04b"
+        "sha256": "4ced8dc9f147ece0e849b24d16e2a203e3f9c93ce0338a53024356e03361cc7d"
       },
       {
         "path": ".agent/config/agents.json",
@@ -32,8 +32,8 @@
       },
       {
         "path": ".agent/context/project-map.json",
-        "size": 1538688,
-        "sha256": "c8983e33dcceea0aacd2773c1b97471f60792e29fbea1a78a80b895a27218a7e"
+        "size": 1546322,
+        "sha256": "c2618489a2e2c2744af9add311d6ee8e61960ec74715ec23d98b3d74911096ab"
       },
       {
         "path": ".agent/known_models.json",
@@ -58,22 +58,22 @@
       {
         "path": ".agent/runtime/circuit_breaker.json",
         "size": 181,
-        "sha256": "14c098301f7020a8fb0749780a95cb7c5d4db4efbff61f03c9ccfd5663044133"
+        "sha256": "4b2ba275855fe9236e40aa0322305bd1fb430da00bd1c8c499335c999b2b3364"
       },
       {
         "path": ".agent/runtime/manager_bridge_state.json",
         "size": 171,
-        "sha256": "730ad8981896029f4982f345402da0a7fcd8409f61452a7f001a5de3a571fbb1"
+        "sha256": "90a72b779466c939f0abee824e307f7952e48ac4f9251d2d433cc90c949d88da"
       },
       {
         "path": ".agent/runtime/pytest-safe/last-run.json",
         "size": 3015,
-        "sha256": "6a6c35309417cf143619c50b69cd68d223e1d8b9a29e5a306775be2254903b26"
+        "sha256": "0026ad79fd89ed06976bce4b695ceaea0a6477982ee91d790a3afb886b48a68f"
       },
       {
         "path": ".agent/runtime/supervisor_state.json",
         "size": 225,
-        "sha256": "c9471a5ce429864e03179780a8834608432e1aaf4a9d091f7589c5f834d529e9"
+        "sha256": "04bd36fcb73cd7f29c3a04276c2e98b56044ba030adabade1882abe2786cbe86"
       },
       {
         "path": ".agent_allowlist.json",
@@ -152,8 +152,8 @@
       },
       {
         "path": ".pre-commit-config.yaml",
-        "size": 2351,
-        "sha256": "1f996a5ce680c42fe9362d4fe6fba97b5f1e1b220e4cc2f9cb5ce003d21c6568"
+        "size": 2943,
+        "sha256": "56c7b8c21253a77e96f57eaf9db93073816e5dfba45244b11c68b140adf2fe48"
       },
       {
         "path": ".refactor/phases/01_analysis.json",
@@ -1851,6 +1851,21 @@
         "sha256": "a592272f8aa9436a0b31b6b67c1eebb47d51a47aad0a8d3114e8e797ca7b6737"
       },
       {
+        "path": "tests/sandbox/test_runtime/session_3468/opencode-review-12kwk4cc/.local/share/opencode/auth.json",
+        "size": 2299,
+        "sha256": "400dbd979069face7baf448fd125fe62a39277c1621cc03532b6c76ed570b133"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/opencode-review-853_0bk8/.local/share/opencode/auth.json",
+        "size": 2299,
+        "sha256": "400dbd979069face7baf448fd125fe62a39277c1621cc03532b6c76ed570b133"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/opencode-review-hw82o5nz/.local/share/opencode/auth.json",
+        "size": 2299,
+        "sha256": "400dbd979069face7baf448fd125fe62a39277c1621cc03532b6c76ed570b133"
+      },
+      {
         "path": "tests/sandbox/test_runtime/session_8612/factory/test_detect_package_json0005/package.json",
         "size": 79,
         "sha256": "e926f35597c39f97ee258cb2ed0d1493ee8cd5e07c3cdb8c5eaa072be63aefd8"
@@ -2149,8 +2164,8 @@
       },
       {
         "path": "bus/supervisor.py",
-        "size": 55982,
-        "sha256": "fb8111ab341891956e2a70990d608f4b0bfe454ee88f856ece85b33046d29cfe"
+        "size": 56621,
+        "sha256": "7963cef6c53e0c0f9436bbc247d5153cf2ffd068bc06b9ffe9ff4ea6b3cd402b"
       },
       {
         "path": "bus/time_utils.py",
@@ -2241,6 +2256,11 @@
         "path": "scripts/compress_canonical.py",
         "size": 11885,
         "sha256": "8663411be4172acb5cee0c112b133ed41aa5e4104499a83613dc2b6cb61805e6"
+      },
+      {
+        "path": "scripts/delivery_hygiene_check.py",
+        "size": 11881,
+        "sha256": "2cec02fe374ba50da1663b5f9864ced0dc3af3b55b11d7e7fc4d2b19c60435b6"
       },
       {
         "path": "scripts/detect_agent_system_version.py",
@@ -2404,8 +2424,8 @@
       },
       {
         "path": "scripts/validate_ticket_prose.py",
-        "size": 20506,
-        "sha256": "105917202872744a1bdea9ae3ed2f53f5c862681a5cebff62d4b2235abe5d2b6"
+        "size": 22894,
+        "sha256": "346c6df6f49d3b4b3cd9c4b8b0fc63ec617bdfabe2773b00e528beb9780fb03d"
       },
       {
         "path": "skills/__init__.py",
@@ -5749,8 +5769,8 @@
       },
       {
         "path": "tests/test_agent_controller.py",
-        "size": 11457,
-        "sha256": "2786685e426fc994b41d4db61564aa378d8698d6cff61b3c3ccbd11dc91b0d39"
+        "size": 11639,
+        "sha256": "2e55b695dcc228271e32bdbb63a0430cf1ad65fa976f8cff0e04a603eb0ac380"
       },
       {
         "path": "tests/test_agent_readme_references.py",
@@ -5801,6 +5821,11 @@
         "path": "tests/test_council_broker.py",
         "size": 6573,
         "sha256": "51a457f51fdb7af4c5087e37214386bbd3976d5bfb4eeb4f3b32e3a9b83b0ecc"
+      },
+      {
+        "path": "tests/test_delivery_hygiene_check.py",
+        "size": 15708,
+        "sha256": "f2a248b3aa82cdf6917b88c2229b87cbbd5114a777ca6a2431404c3fc8cd7ce4"
       },
       {
         "path": "tests/test_encoding_edge_cases.py",
@@ -5929,8 +5954,8 @@
       },
       {
         "path": "tests/test_supervisor.py",
-        "size": 122214,
-        "sha256": "cba714399ba23eba9190e404df087fddacecf4a971fb010dd6732b7f2e30dea1"
+        "size": 123928,
+        "sha256": "49e5239dc2eb3e5304abc753eaf27ab3d2b2b5ff6efdc3af75e1e0bdf40e04ec"
       },
       {
         "path": "tests/test_ui_state.py",
@@ -5949,8 +5974,8 @@
       },
       {
         "path": "tests/test_validate_ticket_prose.py",
-        "size": 18987,
-        "sha256": "05ce6132f19d4877f13821678a922b45a3f73a1d4b1f62bc1ef55cdadaeecb83"
+        "size": 22160,
+        "sha256": "2346708b6907bf24fc778f4167bfdeb67ed87e7a93fa0401d1d1ac526bdc5b1b"
       },
       {
         "path": "tests/test_wp_2026_127.py",
@@ -6245,9 +6270,14 @@
     ],
     "documentation": [
       {
+        "path": ".agent/collaboration/AUDIT_WP-2026-164.md",
+        "size": 2644,
+        "sha256": "f63fd5f70fb5b7ad9f7765d376d63b133e2fa5e27037fe0b0268972c507e1760"
+      },
+      {
         "path": ".agent/collaboration/execution_log.md",
-        "size": 3335,
-        "sha256": "993b05867c4bac38a47364c78529cd05f93910f91fec421460a066c29de5b0aa"
+        "size": 2594,
+        "sha256": "93c18fec9cb2a78595380c3adfc31cb5a69635ed365e2e240357b116496e3089"
       },
       {
         "path": ".agent/collaboration/manager_feedback_WP-2026-155.md",
@@ -6290,29 +6320,39 @@
         "sha256": "a3f4feb44e8c26d0d6b0b9695a92d3fce94a15628314dd7e4f1f885ebb99c7e9"
       },
       {
+        "path": ".agent/collaboration/manager_feedback_WP-2026-164.md",
+        "size": 286510,
+        "sha256": "10ee87b85fe6127d250fcb8e4d6dc45db63d1f7d20d037da45955b5cf3a38e35"
+      },
+      {
         "path": ".agent/collaboration/notifications.md",
-        "size": 3310,
-        "sha256": "cf5a84786eef3abb1d17be1929b92c39533e2a0c845c824df0cbacd440a82671"
+        "size": 3169,
+        "sha256": "2b686ac6a2b797b8ce81252017eb24f6a188299f47030013b7d0da4a94d6d27d"
+      },
+      {
+        "path": ".agent/collaboration/PLAN_WP-2026-164.md",
+        "size": 5505,
+        "sha256": "e9874846ed10ec791fed477492957ccb8a9ec976626d205088079273b04688d5"
       },
       {
         "path": ".agent/collaboration/review_queue.md",
-        "size": 5411097,
-        "sha256": "05117be476e398a4258e562f7c4ae8044101f477e6b137ee36361b598a370391"
+        "size": 5554411,
+        "sha256": "5066b62f34519e3c520fcea0b88acdadb7aeae2b20395722d04623be8527e281"
       },
       {
         "path": ".agent/collaboration/STATE.md",
-        "size": 56,
-        "sha256": "b440b943356f4538b11c894b06ac4063892059b3ef6d0b836af3ffbf86a0984b"
+        "size": 53,
+        "sha256": "e08774930134eaadce6cf5d8232ffb1910d81d5ae152ffc4542b3d2d56d317eb"
       },
       {
         "path": ".agent/collaboration/TURN.md",
         "size": 663,
-        "sha256": "17c5971cb8161c6e6362617b5c3519f80babcadf5bdfb805235ec638d91d851a"
+        "sha256": "e4ae2d1ce8d0d6279072fec086f50d9ed7c2877392cfdc60aa8b9583774007b7"
       },
       {
         "path": ".agent/collaboration/work_plan.md",
-        "size": 5719,
-        "sha256": "b9a9a0eab69c8e90b362270dcb94951da5dc9b3c187faa3e746733be622b40de"
+        "size": 5080,
+        "sha256": "8b55483f33d978c897b4d8bd66a0b9d5bcc42817a2c2035ac06fdfb8100afdac"
       },
       {
         "path": ".agent/context/project_map.md",
@@ -6327,7 +6367,7 @@
       {
         "path": ".agent/runtime/builder_lock.txt",
         "size": 264,
-        "sha256": "7f496d6b2b3909ed2bdbadfd80483801f57d126b930bc7ac52df0b9a4458887e"
+        "sha256": "1058e084342371cabe3380a8600a9ea5e0ced55eb603107ae5feaa85bf9095e7"
       },
       {
         "path": ".agent/runtime/compare/affaan-m-ECC-928076cc-2026-05-27.md",
@@ -6536,8 +6576,8 @@
       },
       {
         "path": "CHANGELOG.md",
-        "size": 103741,
-        "sha256": "65271762dae17552d8cabad511ae645bb257146834402957fb66eed3f5b36f54"
+        "size": 104863,
+        "sha256": "994d290aa7822cecad57ac48e7ed7e990ac549038084d6b7c0bfe5f0914dc32b"
       },
       {
         "path": "CLAUDE.md",
@@ -6611,8 +6651,8 @@
       },
       {
         "path": "PROJECT.md",
-        "size": 1080,
-        "sha256": "39029226ba4ff88e29fb6eaffa04d6773aa5db2ddf5e50786e2a12b36b387b0f"
+        "size": 1235,
+        "sha256": "0b2619a42da3ea951d903f4746c3a63df125f711b12839582a302a0fe1f6a8c7"
       },
       {
         "path": "prompts/refactor_bootstrap.md",
@@ -6656,8 +6696,8 @@
       },
       {
         "path": "skills/_shared/ticket-anti-patterns.md",
-        "size": 5162,
-        "sha256": "970e4874a4f2318c2ee1d7e1b39bd94ea1d65152376e51bb18afc1e585f09b60"
+        "size": 6450,
+        "sha256": "ed06054fffbcc2c439c86925b75dcd12e2ac2b7f34a9f6e5be9764c50ec82c0e"
       },
       {
         "path": "skills/bui-implement-from-plan/references/code-rules.md",
@@ -6751,8 +6791,8 @@
       },
       {
         "path": "skills/man-create-work-plan/references/plan-quality-checklist.md",
-        "size": 2816,
-        "sha256": "dcb369842c74df9269a4050c7dd50c83f1147b0855252904d82814523f1c2a8a"
+        "size": 2974,
+        "sha256": "db67a12ecfa15c5de1b67143a25fea17c55237f7451a7b2ebcc6cde721386955"
       },
       {
         "path": "skills/man-create-work-plan/references/plan-template.md",
@@ -6766,8 +6806,8 @@
       },
       {
         "path": "skills/man-create-work-plan/SKILL.md",
-        "size": 8483,
-        "sha256": "ac8961b8da813f157cdfba91529e743f05072b6bfb152a7bb4b664ff1016503a"
+        "size": 9042,
+        "sha256": "238b1783e87ff248b8f8dd599286f3da76e6a11bbc27f34243a2817859d2b79c"
       },
       {
         "path": "skills/man-resolve-escalation/references/escalation-levels.md",
@@ -6795,6 +6835,26 @@
         "sha256": "7adeff6c5176e7c0c834c0fff11cc0e34eec0979d70c39729e0f5b6752b8a3cd"
       },
       {
+        "path": "skills/man-session-closeout/references/closeout-lessons-format.md",
+        "size": 1057,
+        "sha256": "cd7730bed37ff95a6fde0bdaf84fe21197aba65fa518baefa28ddb2bff93ccf0"
+      },
+      {
+        "path": "skills/man-session-closeout/references/scope-taxonomy.md",
+        "size": 1467,
+        "sha256": "84e45983bae92fe0d637568d8ab703c096e1258d60a1346d64355a4f4ad28784"
+      },
+      {
+        "path": "skills/man-session-closeout/references/upstream-learnings-format.md",
+        "size": 1309,
+        "sha256": "b664eb247fd58222cc35ccb2a354b9f2441235fc16c1ccfdebec06dda52bae2b"
+      },
+      {
+        "path": "skills/man-session-closeout/SKILL.md",
+        "size": 4005,
+        "sha256": "626f78071dfe0051da6df6c473fed3ee61f92fbd5f141292c08da0800653ef35"
+      },
+      {
         "path": "skills/memory-consolidate/SKILL.md",
         "size": 5184,
         "sha256": "da7cc044ee66c348f3a5d7b8a1a30db2e8313c3bdf414a105082930a5feda778"
@@ -6816,13 +6876,13 @@
       },
       {
         "path": "skills/project-finalize/SKILL.md",
-        "size": 10317,
-        "sha256": "7e5e6951dded1fa4997be5831981b6015e8e1bc449cb38b796a9352e44be7243"
+        "size": 12017,
+        "sha256": "68791869339deeff75ab0a23935c63c90e184011427ce43914dc4fecc5b57f0b"
       },
       {
         "path": "skills/README.md",
-        "size": 6882,
-        "sha256": "c32a818e8a8a881607df30635915ee4ded38d25a69f4a35473c1762ace0bfca3"
+        "size": 7251,
+        "sha256": "b2ff4894eb7bb55540bd67f449d5d4a05a2393b2c01bd224e670c9e156b22f41"
       },
       {
         "path": "skills/refactor-manager/EXECUTION_PROMPT.md",
@@ -6901,8 +6961,8 @@
       },
       {
         "path": "skills/session-close-observations/SKILL.md",
-        "size": 5922,
-        "sha256": "7f0a928b2f60a9c5108af3fbf4138c9716b31dab33d1a05a9406ce24eecf3807"
+        "size": 6335,
+        "sha256": "446024bf9560ef2c9b224e685a4cad83c3b94fe9ed60521075bfb3d789bbe367"
       },
       {
         "path": "skills/setup-agent-system/references/quickstart-checklist.md",
@@ -26982,6 +27042,46 @@
         ],
         "error": null
       },
+      "scripts/delivery_hygiene_check.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "argparse",
+            "type": "stdlib",
+            "package": "argparse"
+          },
+          {
+            "name": "re",
+            "type": "stdlib",
+            "package": "re"
+          },
+          {
+            "name": "subprocess",
+            "type": "stdlib",
+            "package": "subprocess"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "typing.NamedTuple",
+            "type": "stdlib",
+            "package": "typing"
+          }
+        ],
+        "error": null
+      },
       "scripts/detect_agent_system_version.py": {
         "imports": [
           {
@@ -30224,6 +30324,71 @@
         ],
         "error": null
       },
+      "tests/test_delivery_hygiene_check.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "subprocess",
+            "type": "stdlib",
+            "package": "subprocess"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "pytest",
+            "type": "external",
+            "package": "pytest"
+          },
+          {
+            "name": "scripts.delivery_hygiene_check.GENERATED_ARTIFACT_PATHS",
+            "type": "local",
+            "path": "scripts/delivery_hygiene_check.py"
+          },
+          {
+            "name": "scripts.delivery_hygiene_check.MUTATING_HOOKS",
+            "type": "local",
+            "path": "scripts/delivery_hygiene_check.py"
+          },
+          {
+            "name": "scripts.delivery_hygiene_check.HygieneResult",
+            "type": "local",
+            "path": "scripts/delivery_hygiene_check.py"
+          },
+          {
+            "name": "scripts.delivery_hygiene_check.check_generated_artifacts_excluded",
+            "type": "local",
+            "path": "scripts/delivery_hygiene_check.py"
+          },
+          {
+            "name": "scripts.delivery_hygiene_check.check_git_tree_clean",
+            "type": "local",
+            "path": "scripts/delivery_hygiene_check.py"
+          },
+          {
+            "name": "scripts.delivery_hygiene_check.check_mutating_hooks_in_pre_push",
+            "type": "local",
+            "path": "scripts/delivery_hygiene_check.py"
+          },
+          {
+            "name": "scripts.delivery_hygiene_check.load_pre_commit_config",
+            "type": "local",
+            "path": "scripts/delivery_hygiene_check.py"
+          },
+          {
+            "name": "scripts.delivery_hygiene_check.run_delivery_hygiene_check",
+            "type": "local",
+            "path": "scripts/delivery_hygiene_check.py"
+          }
+        ],
+        "error": null
+      },
       "tests/test_encoding_edge_cases.py": {
         "imports": [
           {
@@ -32577,6 +32742,16 @@
             "path": "bus/supervisor.py"
           },
           {
+            "name": "bus.supervisor.SupervisorState",
+            "type": "local",
+            "path": "bus/supervisor.py"
+          },
+          {
+            "name": "bus.supervisor.SequentialTicketSupervisor",
+            "type": "local",
+            "path": "bus/supervisor.py"
+          },
+          {
             "name": "bus.supervisor.SequentialTicketSupervisor",
             "type": "local",
             "path": "bus/supervisor.py"
@@ -32728,6 +32903,11 @@
           },
           {
             "name": "validate_ticket_prose.ValidationResult",
+            "type": "external",
+            "package": "validate_ticket_prose"
+          },
+          {
+            "name": "validate_ticket_prose.detect_audit_malformed_tp_check",
             "type": "external",
             "package": "validate_ticket_prose"
           },
@@ -35459,9 +35639,9 @@
     "javascript": {},
     "frameworks": [],
     "tools": [
-      "uv",
       "mypy",
       "pytest",
+      "uv",
       "ruff"
     ]
   },

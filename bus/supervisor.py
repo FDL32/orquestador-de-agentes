@@ -716,6 +716,85 @@ class SequentialTicketSupervisor:
                 state.last_action = "RECONCILED"
                 self.save_state(state)
 
+    def _bootstrap_requeue_if_needed(
+        self, state: SupervisorState, ticket_id: str
+    ) -> None:
+        """Requeue Builder during bootstrap if a CHANGES trigger was consumed by sequence reconciliation.
+
+        Before: bootstrap advanced last_processed_sequence past a REVIEW_DECISION(changes)
+                event, leaving last_requeue_trigger_sequence=0 and run_once() unable to see
+                the trigger (new_events is empty on restart).
+        During: Reads REVIEW_DECISION/LOOP_DECISION events for the active ticket, finds the
+                latest CHANGES decision, compares its sequence against last_requeue_trigger_sequence,
+                verifies the ticket is still IN_PROGRESS, then checks _builder_alive() before
+                acting. If Builder lock is fresh (alive or stale without BUILDER_EXIT), skips
+                without updating the watermark so the next restart can retry once the lock expires.
+                Only REVIEW_DECISION/LOOP_DECISION events trigger requeue — not STATE_CHANGED —
+                to avoid spurious requeues on initial ticket start.
+        After: If requeue is actually launched, last_requeue_trigger_sequence is updated to the
+               trigger sequence so a subsequent bootstrap does not double-requeue. If Builder is
+               alive (lock fresh) or launch fails, the watermark is left unchanged so the next
+               restart retries after the 15-min lock TTL expires.
+        """
+        state = self.load_state()
+
+        requeue_trigger_seq = 0
+        for event in self.event_bus.read_events(ticket_id=ticket_id):
+            is_changes = (
+                event.event_type
+                in (
+                    "LOOP_DECISION",
+                    "REVIEW_DECISION",
+                )
+                and str((event.payload or {}).get("decision", "")).upper() == "CHANGES"
+            )
+            if is_changes and event.sequence_number > requeue_trigger_seq:
+                requeue_trigger_seq = event.sequence_number
+
+        if not (
+            requeue_trigger_seq > 0
+            and requeue_trigger_seq > state.last_requeue_trigger_sequence
+        ):
+            return
+
+        if self._current_state(ticket_id) != TicketState.IN_PROGRESS:
+            return
+
+        # If Builder lock is fresh, either Builder is truly alive (no action needed)
+        # or the lock is stale without a BUILDER_EXIT event (mtime fallback <15 min).
+        # In both cases, skip the requeue without updating the watermark so the next
+        # bootstrap retries once the lock expires via the 15-min TTL.
+        if self._builder_alive():
+            print(
+                f"[supervisor] bootstrap: Builder lock is fresh for {ticket_id}, "
+                "deferring requeue until lock expires.",
+                flush=True,
+            )
+            self.event_bus.emit(
+                "SUPERVISOR_REQUEUE_DEFERRED",
+                ticket_id=ticket_id,
+                actor="SUPERVISOR",
+                payload={
+                    "trigger_sequence": requeue_trigger_seq,
+                    "reason": "builder_lock_fresh",
+                    "watermark": state.last_requeue_trigger_sequence,
+                },
+            )
+            return
+
+        print(
+            f"[supervisor] bootstrap: unprocessed CHANGES trigger at seq={requeue_trigger_seq} "
+            f"for {ticket_id}. Firing requeue.",
+            flush=True,
+        )
+        # Update watermark only when Builder was actually launched (not skipped_alive).
+        # requeue_ticket() now calls _relaunch_builder() which no longer returns
+        # skipped_alive=True here because we pre-checked _builder_alive() above.
+        if self.requeue_ticket(ticket_id):
+            state = self.load_state()
+            state.last_requeue_trigger_sequence = requeue_trigger_seq
+            self.save_state(state)
+
     def _bootstrap_clear_terminal_ticket(
         self, state: SupervisorState, ticket_id: str
     ) -> None:
@@ -796,6 +875,11 @@ class SequentialTicketSupervisor:
 
         # Reconcile last_processed_sequence with bus reality
         self._bootstrap_reconcile_sequence(state)
+
+        # Requeue Builder if a CHANGES trigger was consumed by sequence reconciliation
+        ticket_id = state.active_ticket or target_ticket
+        if ticket_id:
+            self._bootstrap_requeue_if_needed(state, ticket_id)
 
         # Clear active_ticket if execution_log and bus confirm terminal state
         ticket_id = state.active_ticket or target_ticket

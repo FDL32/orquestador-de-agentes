@@ -24,6 +24,7 @@ if str(scripts_dir) not in sys.path:
 
 from validate_ticket_prose import (  # noqa: E402
     ValidationResult,
+    detect_audit_malformed_tp_check,
     detect_audit_missing_tp_check,
     detect_diffuse_objective,
     detect_ghost_dependency,
@@ -151,7 +152,32 @@ def plan_with_audit_tp_check(tmp_path: Path) -> tuple[Path, Path]:
     work_plan = collab_dir / "work_plan.md"
     work_plan.write_text("# Plan\n\n## Metadata\n- **ID:** TEST\n", encoding="utf-8")
     audit = collab_dir / "AUDIT_WP-TEST.md"
-    audit.write_text("# Audit\n\n## TP Check\n- TP-01: verificado\n", encoding="utf-8")
+    audit.write_text(
+        "# Audit\n\n## TP Check\n"
+        "- TP-01: verificado - ok\n"
+        "- TP-02: verificado - ok\n"
+        "- TP-03: verificado - ok\n"
+        "- TP-04: verificado - ok\n"
+        "- TP-05: verificado - ok\n",
+        encoding="utf-8",
+    )
+    return work_plan, collab_dir
+
+
+@pytest.fixture
+def plan_with_audit_malformed_tp_check(tmp_path: Path) -> tuple[Path, Path]:
+    """Crea work_plan.md y AUDIT con TP Check no canonico."""
+    collab_dir = tmp_path / "collab"
+    collab_dir.mkdir()
+    work_plan = collab_dir / "work_plan.md"
+    work_plan.write_text("# Plan\n\n## Metadata\n- **ID:** TEST\n", encoding="utf-8")
+    audit = collab_dir / "AUDIT_WP-TEST.md"
+    audit.write_text(
+        "# Audit\n\n## TP Check\n"
+        "- Flujo de propuesta: verificado.\n"
+        "- Clasificacion de alcance: verificado.\n",
+        encoding="utf-8",
+    )
     return work_plan, collab_dir
 
 
@@ -392,6 +418,26 @@ class TestDetectAuditMissingTpCheck:
         assert len(warnings) == 0
 
 
+class TestDetectAuditMalformedTpCheck:
+    """Tests para detect_audit_malformed_tp_check."""
+
+    def test_detects_non_canonical_tp_check(
+        self, plan_with_audit_malformed_tp_check: tuple
+    ):
+        """Emite warning cuando el TP Check no usa TP-01..TP-05."""
+        _, collab_dir = plan_with_audit_malformed_tp_check
+        warnings = detect_audit_malformed_tp_check(collab_dir)
+        assert len(warnings) == 1
+        assert warnings[0]["rule_id"] == "TP-STRUCT-02"
+        assert warnings[0]["rule_name"] == "audit-malformed-tp-check"
+
+    def test_no_warning_with_canonical_tp_check(self, plan_with_audit_tp_check: tuple):
+        """No emite warning cuando el TP Check es canonico."""
+        _, collab_dir = plan_with_audit_tp_check
+        warnings = detect_audit_malformed_tp_check(collab_dir)
+        assert len(warnings) == 0
+
+
 # ============================================================================
 # TESTS DE VALIDADOR PRINCIPAL
 # ============================================================================
@@ -417,10 +463,28 @@ class TestValidateTicketProse:
         work_plan.write_text(clean_plan, encoding="utf-8")
         # Crear AUDIT con TP Check
         audit = collab_dir / "AUDIT_WP-TEST.md"
-        audit.write_text("# Audit\n\n## TP Check\n- TP-01: ok\n", encoding="utf-8")
+        audit.write_text(
+            "# Audit\n\n## TP Check\n"
+            "- TP-01: verificado - ok\n"
+            "- TP-02: verificado - ok\n"
+            "- TP-03: verificado - ok\n"
+            "- TP-04: verificado - ok\n"
+            "- TP-05: verificado - ok\n",
+            encoding="utf-8",
+        )
 
         result = validate_ticket_prose(work_plan, collab_dir)
         assert result["warning_count"] == 0
+
+    def test_active_plan_detects_malformed_tp_check(
+        self, tmp_path: Path, clean_plan: str, plan_with_audit_malformed_tp_check: tuple
+    ):
+        """Un plan activo detecta TP Check no canonico."""
+        work_plan, collab_dir = plan_with_audit_malformed_tp_check
+        work_plan.write_text(clean_plan, encoding="utf-8")
+
+        result = validate_ticket_prose(work_plan, collab_dir)
+        assert any(w["rule_id"] == "TP-STRUCT-02" for w in result["warnings"])
 
     def test_completed_plan_skips_audit_missing_warning(
         self, tmp_path: Path, clean_plan: str
@@ -522,7 +586,15 @@ class TestMainIntegration:
         work_plan = collab_dir / "work_plan.md"
         work_plan.write_text(clean_plan, encoding="utf-8")
         audit = collab_dir / "AUDIT_WP-TEST.md"
-        audit.write_text("# Audit\n\n## TP Check\n- TP-01: ok\n", encoding="utf-8")
+        audit.write_text(
+            "# Audit\n\n## TP Check\n"
+            "- TP-01: verificado - ok\n"
+            "- TP-02: verificado - ok\n"
+            "- TP-03: verificado - ok\n"
+            "- TP-04: verificado - ok\n"
+            "- TP-05: verificado - ok\n",
+            encoding="utf-8",
+        )
 
         with patch.object(
             sys,

@@ -2,6 +2,7 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0
     hooks:
+      # Verificaciones no mutadoras (disponibles en pre-commit y pre-push)
       - id: check-yaml
         exclude: ^tests/sandbox/
       - id: check-json
@@ -13,14 +14,18 @@ repos:
       - id: check-executables-have-shebangs
       - id: check-ast
         exclude: ^tests/sandbox/
+      # Hooks mutadores: SOLO pre-commit, excluyen artefactos generados
       - id: end-of-file-fixer
-        exclude: '^(\.agent/runtime/|\.agent/collaboration/|tests/sandbox/|.*\.svg$|\.agent/context/project_map\.md$|\.agent/context/project-map\.json$)'
+        stages: [pre-commit]
+        exclude: '^(\.agent/runtime/|\.agent/collaboration/|tests/sandbox/|.*\.svg$|\.agent/context/project_map\.md$|\.agent/context/project-map\.json$|\.agent/context/|\.agent/runtime/events/)'
       - id: mixed-line-ending
+        stages: [pre-commit]
         args: [--fix=lf]
-        exclude: '^(\.agent/runtime/|\.agent/collaboration/|tests/sandbox/|.*\.ps1$|.*\.cmd$|.*\.bat$|\.agent/context/project_map\.md$|\.claude/settings\.json$)'
+        exclude: '^(\.agent/runtime/|\.agent/collaboration/|tests/sandbox/|.*\.ps1$|.*\.cmd$|.*\.bat$|\.agent/context/project_map\.md$|\.claude/settings\.json$|\.agent/context/|\.agent/runtime/events/)'
       - id: trailing-whitespace
+        stages: [pre-commit]
         args: [--markdown-linebreak-ext=md]
-        exclude: '^(\.agent/runtime/|\.agent/collaboration/|tests/sandbox/)'
+        exclude: '^(\.agent/runtime/|\.agent/collaboration/|tests/sandbox/|\.agent/context/|\.agent/runtime/events/)'
 
   - repo: local
     hooks:
@@ -32,17 +37,20 @@ repos:
         pass_filenames: true
         types: [python]
 
+      # ruff-format es mutador: SOLO pre-commit
       - id: ruff-format
         name: ruff format
         entry: uv run ruff format
         language: system
         pass_filenames: true
+        stages: [pre-commit]
         types: [python]
 
   - repo: https://github.com/astral-sh/uv-pre-commit
     rev: 0.11.3
     hooks:
       - id: uv-lock
+        stages: [pre-commit]
 
   - repo: local
     hooks:
@@ -54,6 +62,7 @@ repos:
         pass_filenames: false
         stages: [pre-commit]
 
+      # pip-audit: verificacion no mutadora, solo pre-push y manual
       - id: pip-audit
         name: pip-audit (CVE Detection)
         entry: uv run pip-audit
@@ -61,6 +70,7 @@ repos:
         pass_filenames: false
         stages: [pre-push, manual]
 
+      # vulture: verificacion no mutadora, solo manual
       - id: vulture
         name: vulture - dead code detection
         entry: uv run vulture bus/ runtime/ scripts/ skills/ tools/ --min-confidence 80 --exclude whitelists,.agent,.cache,.claude,.codex,.opencode,.tmp,.uv-cache,.ruff_cache,tests

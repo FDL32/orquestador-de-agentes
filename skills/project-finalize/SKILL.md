@@ -153,6 +153,24 @@ Si el WP no tiene origen externo (es trabajo propio del proyecto): este paso es 
 - Verificar documentacion contra comandos, rutas y outputs reales
 - Registrar evidencia final en `execution_log.md`
 
+### Paso 9a: Builder ejecuta preflight de entrega
+
+Antes de `--mark-ready` y antes del `git push`, ejecutar este flujo en dos fases:
+
+1. **Pasada correctiva, solo si hace falta**
+   - `uv run pre-commit run --all-files --hook-stage pre-push`
+   - Si esta pasada muta archivos, el Builder debe parar, registrar el archivo afectado y volver a correr la validacion hasta que el arbol quede limpio.
+
+2. **Preflight no mutador de confirmacion**
+   - `uv run ruff check ...`
+   - `uv run ruff format --check ...`
+   - `git status --short`
+   - Esta fase debe terminar con el arbol limpio y sin cambios nuevos.
+
+- Los artefactos generados que se reescriben con frecuencia, como `.agent/context/project-map.json`, deben estar excluidos del formateo y de los hooks que los mutan.
+- El objetivo es detectar el fallo antes del mail, no descubrirlo en GitHub Actions.
+- **Regla de parada:** si la pasada correctiva modifica archivos, no se puede ejecutar `--mark-ready` ni `git push` hasta repetir el preflight y verificar que el arbol queda limpio.
+
 ### Paso 9b: Builder ejecuta cierre de release repetible
 
 - Ejecutar cierre atómico: `python .agent/agent_controller.py --mark-ready --json --force`
@@ -253,3 +271,4 @@ Si el proyecto termina o cambia de manos, dejar explicito:
 - **SIEMPRE** dejar explicito el estado de mantenimiento al cerrar
 - **SIEMPRE** pedir aprobacion humana para bump, tag, release o archivado
 - **SIEMPRE** verificar que la documentacion describe el estado real del repo
+- **SIEMPRE** ejecutar el preflight de entrega antes del `--mark-ready` y del push final
