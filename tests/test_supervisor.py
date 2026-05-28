@@ -3562,6 +3562,59 @@ def test_run_once_requeue_watermark_persists_across_calls(tmp_path, monkeypatch)
     )
 
 
+def test_run_reactive_emits_supervisor_idle_once_when_no_active_ticket(
+    tmp_path, monkeypatch
+):
+    """SUPERVISOR_IDLE should be emitted once for bootstrap-only idle sessions."""
+    from bus.supervisor import SequentialTicketSupervisor, SupervisorState
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    supervisor.save_state(
+        SupervisorState(
+            active_ticket=None,
+            loop_current_round=0,
+            last_requeue_trigger_sequence=0,
+        )
+    )
+
+    monkeypatch.setattr(supervisor, "bootstrap", lambda: True)
+    monkeypatch.setattr(supervisor, "run_once", lambda: False)
+    monkeypatch.setattr(supervisor, "_release_supervisor_lock", lambda: None)
+
+    events: list[tuple[str, str, dict]] = []
+
+    def capture_emit(event_type, *, ticket_id, actor, payload=None, **_kwargs):
+        events.append((event_type, ticket_id, payload or {}))
+        return None
+
+    monkeypatch.setattr(supervisor.event_bus, "emit", capture_emit)
+    monkeypatch.setattr("time.sleep", lambda _seconds: None)
+    times = iter([0.0, 0.0, 301.0])
+    monkeypatch.setattr("time.time", lambda: next(times))
+
+    result = supervisor.run_reactive(timeout_seconds=300.0)
+
+    assert result is False
+    assert events == [
+        (
+            "SUPERVISOR_IDLE",
+            "__bootstrap__",
+            {"reason": "no active ticket after bootstrap"},
+        )
+    ]
+
+
 # =============================================================================
 # Tests WP-2026-160: Restart supervisor on Builder relaunch
 # =============================================================================

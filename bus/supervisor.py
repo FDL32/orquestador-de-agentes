@@ -1343,6 +1343,21 @@ class SequentialTicketSupervisor:
         # so the bus has an observable signal that the fresh supervisor is active.
         self._emit_supervisor_restarted_if_requested()
 
+        # Emit SUPERVISOR_IDLE once if no active ticket after bootstrap.
+        # This is a bootstrap-level signal, not a ticket-scoped event.
+        state_after_bootstrap = self.load_state()
+        if not state_after_bootstrap.active_ticket:
+            print(
+                "[supervisor] idle: no active ticket. Waiting for Manager to create a new plan.",
+                flush=True,
+            )
+            self.event_bus.emit(
+                "SUPERVISOR_IDLE",
+                ticket_id="__bootstrap__",
+                actor="SUPERVISOR",
+                payload={"reason": "no active ticket after bootstrap"},
+            )
+
         idle_timeout = self._timeout_from_env(
             "TICKET_SUPERVISOR_IDLE_TIMEOUT_SECONDS", timeout_seconds
         )
