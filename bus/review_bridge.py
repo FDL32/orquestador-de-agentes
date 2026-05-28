@@ -1623,6 +1623,29 @@ class ReviewBridge:
         auditable error instead of crashing with raw traceback.
         """
         latest_state = self.state_ingest._latest_state(ticket_id)
+        supervisor_closed_event = self.event_bus.latest_event(
+            ticket_id=ticket_id, event_type="SUPERVISOR_CLOSED"
+        )
+        if supervisor_closed_event is not None:
+            if latest_state != "COMPLETED":
+                self.event_bus.emit(
+                    "STATE_CHANGED",
+                    ticket_id=ticket_id,
+                    actor="SUPERVISOR",
+                    payload={
+                        "from_state": latest_state,
+                        "to_state": "COMPLETED",
+                        "reason": "Reconciled after terminal closeout",
+                        "source": "manager-review-guard",
+                    },
+                )
+            return ReviewResult(
+                decision=ReviewDecision.INSPECT,
+                stdout="",
+                stderr=f"Ticket {ticket_id} ya está cerrado (SUPERVISOR_CLOSED).",
+                exit_code=1,
+                feedback="Review bridge bloqueado: ticket ya tiene SUPERVISOR_CLOSED.",
+            )
         if latest_state != "READY_FOR_REVIEW":
             return ReviewResult(
                 decision=ReviewDecision.INSPECT,

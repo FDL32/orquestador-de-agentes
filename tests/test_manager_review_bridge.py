@@ -904,6 +904,65 @@ class TestOpencodeReviewRoute:
             "Manager approved",
         )
 
+    def test_run_manager_review_cycle_blocked_when_supervisor_closed(
+        self, monkeypatch, tmp_path
+    ):
+        """SUPERVISOR_CLOSED must short-circuit review and reconcile terminal state."""
+        from bus.review_bridge import EventBus, ReviewBridge, ReviewDecision
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        (collab / "work_plan.md").write_text(
+            "# WP\n- **deliverable_type:** code\n- **ID:** WP-2026-072\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(
+            bridge.state_ingest, "_latest_state", lambda _: "READY_TO_CLOSE"
+        )
+        monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
+
+        event_bus.emit(
+            event_type="SUPERVISOR_CLOSED",
+            ticket_id="WP-2026-072",
+            actor="SUPERVISOR",
+            payload={
+                "source": "manager-approve",
+                "reason": "Canonical closeout completed",
+            },
+        )
+
+        called = {"review": False}
+
+        def fake_run_opencode_review(**kwargs):
+            called["review"] = True
+            return "DECISION: APPROVE", "", 0
+
+        monkeypatch.setattr(bridge, "_run_opencode_review", fake_run_opencode_review)
+
+        class DummySupervisor:
+            def transition_ticket(self, *args, **kwargs):
+                raise AssertionError("Supervisor transition should not be called")
+
+        result = bridge.run_manager_review_cycle(
+            ticket_id="WP-2026-072",
+            supervisor=DummySupervisor(),
+            timeout_seconds=5,
+        )
+
+        latest_state_event = event_bus.latest_event(
+            ticket_id="WP-2026-072", event_type="STATE_CHANGED"
+        )
+
+        assert result.decision == ReviewDecision.INSPECT
+        assert called["review"] is False
+        assert latest_state_event is not None
+        assert latest_state_event.payload["to_state"] == "COMPLETED"
+
     def test_opencode_review_cmd_length_is_safe(self, monkeypatch, tmp_path):
         """Test the constructed command line respects the Windows CMD limit (~8k chars) by using a prompt file."""
         import subprocess
