@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WP-2026-164
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Titulo:** Delivery Hygiene Loop - pre-push no mutating preflight
 - **Asignado a:** Builder
