@@ -1,6 +1,6 @@
 # Catalogo Canonico de Anti-Patrones de Ticket
 
-Fuente compartida para Builder y Manager. Cada entrada debe leerse como una regla de redaccion para tickets y audits: nombre corto, por que rompe al agente, como detectarlo y un ejemplo malo/bueno.
+Fuente compartida para Builder y Manager. Cada entrada debe leerse como una regla de redaccion para tickets y audits: nombre corto, por que rompe al agente, como detectarlo y un ejemplo malo/bueno. El formato de ejemplos `NO/SI` sigue el patron de `code-rules.md`: corto, directo y apto para pegar en prompts sin ambiguedad.
 
 ## TP-01 - Contradiccion secuencial
 
@@ -52,18 +52,23 @@ Fuente compartida para Builder y Manager. Cada entrada debe leerse como una regl
 
 ## TP-05 - Paridad PLAN/AUDIT rota
 
-- **Descripcion:** El plan y el audit no describen exactamente la misma secuencia, los mismos archivos o los mismos criterios de aceptacion.
+- **Descripcion:** El plan y el audit no describen exactamente la misma secuencia, los mismos archivos o los mismos criterios de aceptacion. Incluye tambien la paridad interna del propio AUDIT: sus Blockers, Evidencia esperada y TP Check deben usar los mismos verbos y condiciones que las Fases del PLAN.
 - **Por que rompe al Builder:** El Builder puede satisfacer una superficie y fallar la otra; el Manager termina revisando dos contratos distintos.
-- **Senal de deteccion:** Un criterio aparece en `PLAN_WP` pero no en `AUDIT_WP`, o el audit introduce una condicion extra no presente en el plan.
+- **Senal de deteccion:** Un criterio aparece en `PLAN_WP` pero no en `AUDIT_WP`, o el audit introduce una condicion extra no presente en el plan. Tambien: un Blocker del AUDIT usa un verbo distinto al de la Fase correspondiente ("añadir" cuando la Fase dice "verificar y completar").
 
 ❌ Ejemplo malo:
-> El plan exige `SUPERVISOR_RESTARTED`, pero el audit solo pide "trazabilidad del reinicio" sin decir que evento o payload buscar.
+> El plan exige `SUPERVISOR_RESTARTED`, pero el audit solo pide "trazabilidad del reinicio" sin decir que evento o payload buscar. O: el Blocker dice "anadir tres observaciones" cuando la Fase ya fue corregida a "verificar y completar".
 
 ✅ Ejemplo bueno:
-> El plan y el audit piden la misma secuencia: salida cooperativa del supervisor viejo, espera del launcher, arranque fresco y evento `SUPERVISOR_RESTARTED` con `{"round": N, "reason": "resume-builder"}`.
+> El plan y el audit piden la misma secuencia: salida cooperativa del supervisor viejo, espera del launcher, arranque fresco y evento `SUPERVISOR_RESTARTED` con `{"round": N, "reason": "resume-builder"}`. Y el Blocker del AUDIT usa exactamente el mismo verbo que la Fase del PLAN.
+
+**Nota sobre gates de aprobacion:** si una gate de calidad (como el TP Check) aparece como seccion suelta al final del documento en lugar de como paso explícito numerado antes del flujo de ejecucion, el agente la trata como opcional. Las gates deben preceder al flujo, no seguirlo.
 
 ## Uso
 
-- Copia estas entradas en el `## TP Check` del `AUDIT_WP-XXXX.md`.
+- Usa estas entradas como referencia al redactar el `## TP Check` del `AUDIT_WP-XXXX.md`.
+- Formato abreviado esperado en el audit:
+  - `TP-01: verificado con una secuencia unica; no hay acciones opuestas sobre el mismo recurso.`
+  - `TP-02: grep/test/comando literal identificado y adjuntado como evidencia.`
 - Si un TP aplica, el plan debe corregirse antes de aprobarse.
 - Si el TP no aplica, explicalo en una sola linea verificable, no con lenguaje vago.
