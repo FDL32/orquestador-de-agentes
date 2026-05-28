@@ -878,8 +878,8 @@ Mantente en el runtime bus-first y evita editar .agent/collaboration/TURN.md, .a
 Ejecuta ruff y pytest-safe sobre lo tocado.
 
 CIERRE OBLIGATORIO:
-Emite BUILDER_EXIT en el bus con ticket_id, exit_reason y completion_summary antes de cerrar.
 Ejecuta python .agent/agent_controller.py --mark-ready --json --force al final.
+Este comando emite automaticamente BUILDER_EXIT al bus. No uses ningun otro comando para cerrar.
 "@
     return $prompt
 }

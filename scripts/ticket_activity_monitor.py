@@ -135,7 +135,7 @@ def _print_snapshot(ticket_id: str, events: list[dict[str, object]]) -> None:
     print(f"Eventos       : {len(events)}")
     print(f"Ultimo evento : {latest_ts}")
     print("-" * 72)
-    for event in events[-12:]:
+    for event in events:
         print(_format_line(event))
     print("=" * 72)
 
