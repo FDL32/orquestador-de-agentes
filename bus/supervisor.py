@@ -895,6 +895,8 @@ class SequentialTicketSupervisor:
             kwargs["creationflags"] = (
                 subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
             )
+        else:
+            kwargs["start_new_session"] = True
         try:
             subprocess.Popen(cmd, **kwargs)  # noqa: S603
             state = self.load_state()
