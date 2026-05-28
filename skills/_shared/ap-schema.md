@@ -29,7 +29,7 @@ Plantilla compartida para registrar anti-patrones de forma consistente entre Bui
   "source": "human_audit_WP-XXXX | session-YYYY-MM-DD",
   "applies_to": "code | mixed | docs | all",
   "confidence": 0.95,
-  "domain": "security-gates | integration-tests | protocol-handlers | bus-architecture | review-quality | config-schema | testing"
+  "domain": "security-gates | integration-tests | protocol-handlers | bus-architecture | review-quality | config-schema | testing | delivery-hygiene"
 }
 ```
 
@@ -41,7 +41,7 @@ Plantilla compartida para registrar anti-patrones de forma consistente entre Bui
 - `source` (string): origen de la observacion (`human_audit_WP-XXXX`, `session-YYYY-MM-DD`, etc.).
 - `applies_to` (string): donde impacta la observacion (`code`, `mixed`, `docs`, `all`).
 - `confidence` (float): valor entre `0.0` y `1.0` que indica certeza del hallazgo.
-- `domain` (string): categoria estable del dominio (ver valores permitidos arriba).
+- `domain` (string): categoria estable del dominio (ver valores permitidos arriba, incluyendo `delivery-hygiene`).
 
 ### Campos opcionales
 

@@ -63,3 +63,7 @@
 - [ ] Aprobar cuando el cambio mejora la salud del codigo, aunque no sea perfecto: https://google.github.io/eng-practices/review/reviewer/standard.html
 - [ ] `Nit` se usa solo para comentarios no bloqueantes, separados de cambios requeridos: https://google.github.io/eng-practices/review/reviewer/comments.html
 - [ ] Los cambios pequenos siguen siendo preferibles para acelerar la revision y reducir drift de contexto: https://google.github.io/eng-practices/review/developer/small-cls.html
+
+## Delivery hygiene
+- [ ] AP-D01 Scope cleanup destructivo: Builder no usa `git checkout`, `git reset` ni `git revert` sobre archivos fuera de `Files Likely Touched`; si detecta discrepancia, la reporta en `execution_log.md` y pide actualizacion de scope.
+- [ ] AP-D02 Artefacto generado sin proteccion: artefactos generados o de runtime (`.agent/context/project-map.json`, `events.jsonl`) quedan excluidos de hooks mutadores y no se reescriben en `pre-push`.

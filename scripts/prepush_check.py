@@ -9,8 +9,8 @@ Before (Pre-condiciones):
 During (Proceso y Recursos):
     - Ejecuta en secuencia fija:
       (1) delivery_hygiene_check.run_delivery_hygiene_check()
-      (2) ruff check .
-      (3) ruff format --check .
+      (2) uv run ruff check .
+      (3) uv run ruff format --check .
       (4) agent_controller --validate --json --force
       (5) git status --short
     - Ejecuta skills/validate_all.py de forma informacional (no bloqueante).
@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+from contextlib import suppress
 from pathlib import Path
 from typing import NamedTuple
 
@@ -46,6 +47,15 @@ class CheckResult(NamedTuple):
     passed: bool
     output: str
     is_blocking: bool = True
+
+
+def _configure_stdio() -> None:
+    """Configura stdout/stderr para no fallar por encoding en Windows."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            with suppress(ValueError, OSError):
+                reconfigure(encoding="utf-8", errors="replace")
 
 
 def run_subprocess_check(
@@ -147,7 +157,7 @@ def run_ruff_check(project_root: Path) -> CheckResult:
         CheckResult con el estado del check de ruff.
     """
     return run_subprocess_check(
-        cmd=["ruff", "check", "."],
+        cmd=["uv", "run", "ruff", "check", "."],
         name="Ruff Check",
         project_root=project_root,
     )
@@ -163,7 +173,7 @@ def run_ruff_format_check(project_root: Path) -> CheckResult:
         CheckResult con el estado del check de formato.
     """
     return run_subprocess_check(
-        cmd=["ruff", "format", "--check", "."],
+        cmd=["uv", "run", "ruff", "format", "--check", "."],
         name="Ruff Format Check",
         project_root=project_root,
     )
@@ -272,6 +282,8 @@ def run_preflight_check(
     Returns:
         Exit code: 0 si todos los checks bloqueantes pasan, 1 si alguno falla.
     """
+    _configure_stdio()
+
     if project_root is None:
         project_root = Path.cwd()
 
@@ -337,6 +349,8 @@ def run_preflight_check(
 
 def main() -> int:
     """Punto de entrada CLI."""
+    _configure_stdio()
+
     parser = argparse.ArgumentParser(
         description="Pre-push Check - canonical delivery preflight wrapper",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -350,8 +364,8 @@ Ejemplos:
 
 Secuencia de checks (todos bloqueantes excepto validate_all):
   1. Delivery Hygiene Check (hooks mutadores, artefactos, arbol limpio)
-  2. Ruff Check (linting de Python)
-  3. Ruff Format Check (formato de codigo)
+  2. Ruff Check via `uv run ruff` (linting de Python)
+  3. Ruff Format Check via `uv run ruff` (formato de codigo)
   4. Agent Controller Validate (validacion de tickets)
   5. Git Status Check (arbol sin cambios)
   6. Validate All (skills, informacional)

@@ -4,7 +4,7 @@
 
 ## Current Cycle
 
-- Active ticket: WP-2026-165 APPROVED (2026-05-28). Builder handoff prepared for delivery preflight wrapper.
+- Last ticket: WP-2026-165 COMPLETED (2026-05-28). Delivery preflight wrapper published and canonical closeout applied.
 - Delivery hygiene loop already in place: `delivery_hygiene_check.py` preflight + 20 tests;
   mutating hooks confined to `pre-commit`; `uv-lock` stage-gated.
 - Delivery cycle now has a reusable one-command preflight wrapper: `python scripts/prepush_check.py`.
@@ -13,7 +13,7 @@
 
 ## Current readiness
 
-- The repository remains ready for terminal-driven execution.
+- The repository is idle and ready for the next planning cycle.
 
 ## Source of truth
 
