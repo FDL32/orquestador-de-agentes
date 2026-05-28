@@ -46,6 +46,7 @@ class SupervisorState:
     last_processed_sequence: int = 0
     loop_current_round: int = 0
     loop_max_rounds: int = 0
+    last_requeue_trigger_sequence: int = 0
     _revision: int | None = field(default=None, repr=False, compare=False)
 
 
@@ -391,6 +392,9 @@ class SequentialTicketSupervisor:
             last_processed_sequence=int(data.get("last_processed_sequence", 0)),
             loop_current_round=int(data.get("loop_current_round", 0)),
             loop_max_rounds=int(data.get("loop_max_rounds", 0)),
+            last_requeue_trigger_sequence=int(
+                data.get("last_requeue_trigger_sequence", 0)
+            ),
             _revision=revision,
         )
 
@@ -942,15 +946,70 @@ class SequentialTicketSupervisor:
         except OSError:
             return False
 
-    def _relaunch_builder(self, ticket_id: str) -> bool:
-        """Relaunch Builder via launcher. Returns True if successful or skipped (alive), False on failure."""
-        import os
-        import shutil
+    def _run_launcher_subprocess(self, cmd: list[str]) -> tuple[int, str, str]:
+        """Execute the launcher subprocess and return (exit_code, stdout, stderr).
+
+        Before: _relaunch_builder called subprocess.run directly, making it untestable.
+        During: Spawns the launcher via subprocess.run with 60s timeout, captures output.
+        After: Returns exit code and captured stdout/stderr for inspection and logging.
+
+        This seam enables tests to monkeypatch the subprocess boundary without
+        depending on PYTEST_CURRENT_TEST global blocking.
+        """
         import subprocess
+
+        try:
+            result = subprocess.run(  # noqa: S603
+                cmd,
+                cwd=self.project_root,
+                capture_output=True,
+                text=True,
+                check=False,  # Don't raise; we handle exit codes explicitly
+                timeout=60,
+            )
+            return result.returncode, result.stdout, result.stderr
+        except subprocess.TimeoutExpired as exc:
+            # Return timeout signature
+            return -1, "", f"launcher timed out after 60s: {exc}"
+        except Exception as exc:
+            # Return exception signature
+            return -1, "", f"ERROR executing launcher: {exc}"
+
+    def _persist_relaunch_log(self, stdout: str, stderr: str) -> None:
+        """Persist launcher stdout/stderr to .agent/runtime/logs/launcher_last.log.
+
+        Before: Launcher output was only printed to stderr, not persisted.
+        During: Writes stdout and stderr to a rotating log file for observability.
+        After: Log file exists with last relaunch output for post-mortem analysis.
+        """
+        logs_dir = self.runtime_dir / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        log_path = logs_dir / "launcher_last.log"
+        content = f"=== STDOUT ===\n{stdout}\n\n=== STDERR ===\n{stderr}\n"
+        log_path.write_text(content, encoding="utf-8")
+
+    def _relaunch_builder(self, ticket_id: str) -> bool:
+        """Relaunch Builder via launcher. Returns True if successful or skipped (alive), False on failure.
+
+        Before: Relaunch logic was monolithic and unobservable.
+        During: Extracts subprocess spawn to _run_launcher_subprocess seam, persists
+                output to logs, and emits BUILDER_RELAUNCH_ATTEMPTED event with outcome.
+        After: Each relaunch attempt is observable via event bus and log file, with
+               outcome distinguished: success, skipped_alive, launcher_failed, timeout.
+
+        Event payload (BUILDER_RELAUNCH_ATTEMPTED):
+        {
+            "round": N,
+            "outcome": "success|skipped_alive|launcher_failed|timeout",
+            "exit_code": int|null,
+            "stderr_tail": str|null
+        }
+        """
+        import shutil
         import sys
 
-        if "pytest" in sys.modules or "PYTEST_CURRENT_TEST" in os.environ:
-            return False
+        state = self.load_state()
+        current_round = state.loop_current_round
 
         # Capa 2: Check liveness before relaunch
         if self._builder_alive():
@@ -958,6 +1017,21 @@ class SequentialTicketSupervisor:
                 f"[ticket-supervisor] Builder alive (lock fresh), skipping relaunch for {ticket_id}",
                 file=sys.stderr,
                 flush=True,
+            )
+            # Persist observable outcome for skipped_alive
+            self._persist_relaunch_log(
+                "", f"Builder alive, skipped relaunch for {ticket_id}"
+            )
+            self.event_bus.emit(
+                "BUILDER_RELAUNCH_ATTEMPTED",
+                ticket_id=ticket_id,
+                actor="SUPERVISOR",
+                payload={
+                    "round": current_round,
+                    "outcome": "skipped_alive",
+                    "exit_code": None,
+                    "stderr_tail": "Builder alive, skipped",
+                },
             )
             return True  # no es error, Builder vivo manejará el requeue
 
@@ -968,6 +1042,17 @@ class SequentialTicketSupervisor:
                 file=sys.stderr,
                 flush=True,
             )
+            self.event_bus.emit(
+                "BUILDER_RELAUNCH_ATTEMPTED",
+                ticket_id=ticket_id,
+                actor="SUPERVISOR",
+                payload={
+                    "round": current_round,
+                    "outcome": "launcher_failed",
+                    "exit_code": -1,
+                    "stderr_tail": f"Launcher not found: {launcher_path}",
+                },
+            )
             return False
 
         pwsh = shutil.which("pwsh") or shutil.which("powershell")
@@ -976,6 +1061,17 @@ class SequentialTicketSupervisor:
                 "[ticket-supervisor] ERROR: PowerShell executable not found",
                 file=sys.stderr,
                 flush=True,
+            )
+            self.event_bus.emit(
+                "BUILDER_RELAUNCH_ATTEMPTED",
+                ticket_id=ticket_id,
+                actor="SUPERVISOR",
+                payload={
+                    "round": current_round,
+                    "outcome": "launcher_failed",
+                    "exit_code": -1,
+                    "stderr_tail": "PowerShell executable not found",
+                },
             )
             return False
 
@@ -1001,48 +1097,78 @@ class SequentialTicketSupervisor:
             "-ResumeBuilder",
         ]
         print(f"[ticket-supervisor] Executing: {' '.join(cmd)}", flush=True)
-        try:
-            subprocess.run(  # noqa: S603
-                cmd,
-                cwd=self.project_root,
-                capture_output=True,
-                text=True,
-                check=True,
-                timeout=60,
-            )
-            return True
-        except subprocess.CalledProcessError as exc:
-            # Capa 1: diagnóstico stdout/stderr
+
+        # Use the injectable seam for subprocess execution
+        exit_code, stdout, stderr = self._run_launcher_subprocess(cmd)
+
+        # Persist output to log file for observability
+        self._persist_relaunch_log(stdout, stderr)
+
+        # Determine outcome and emit event
+        if exit_code == 0:
             print(
-                f"[ticket-supervisor] launcher failed exit={exc.returncode}",
-                file=sys.stderr,
+                f"[ticket-supervisor] Builder relaunch succeeded for {ticket_id}",
                 flush=True,
             )
-            if exc.stdout:
-                print(
-                    f"  stdout (last 500): {exc.stdout[-500:]}",
-                    file=sys.stderr,
-                    flush=True,
-                )
-            if exc.stderr:
-                print(
-                    f"  stderr (last 500): {exc.stderr[-500:]}",
-                    file=sys.stderr,
-                    flush=True,
-                )
-            return False
-        except subprocess.TimeoutExpired:
+            self.event_bus.emit(
+                "BUILDER_RELAUNCH_ATTEMPTED",
+                ticket_id=ticket_id,
+                actor="SUPERVISOR",
+                payload={
+                    "round": current_round,
+                    "outcome": "success",
+                    "exit_code": exit_code,
+                    "stderr_tail": stderr[-200:] if stderr else None,
+                },
+            )
+            return True
+        elif exit_code == -1 and "timed out" in stderr:
             print(
                 "[ticket-supervisor] launcher timed out after 60s",
                 file=sys.stderr,
                 flush=True,
             )
+            self.event_bus.emit(
+                "BUILDER_RELAUNCH_ATTEMPTED",
+                ticket_id=ticket_id,
+                actor="SUPERVISOR",
+                payload={
+                    "round": current_round,
+                    "outcome": "timeout",
+                    "exit_code": exit_code,
+                    "stderr_tail": stderr[-200:] if stderr else None,
+                },
+            )
             return False
-        except Exception as exc:
+        else:
+            # Capa 1: diagnóstico stdout/stderr
             print(
-                f"[ticket-supervisor] ERROR relaunching builder: {exc}",
+                f"[ticket-supervisor] launcher failed exit={exit_code}",
                 file=sys.stderr,
                 flush=True,
+            )
+            if stdout:
+                print(
+                    f"  stdout (last 500): {stdout[-500:]}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            if stderr:
+                print(
+                    f"  stderr (last 500): {stderr[-500:]}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            self.event_bus.emit(
+                "BUILDER_RELAUNCH_ATTEMPTED",
+                ticket_id=ticket_id,
+                actor="SUPERVISOR",
+                payload={
+                    "round": current_round,
+                    "outcome": "launcher_failed",
+                    "exit_code": exit_code,
+                    "stderr_tail": stderr[-200:] if stderr else None,
+                },
             )
             return False
 
@@ -1121,11 +1247,11 @@ class SequentialTicketSupervisor:
         state = self.load_state()
         event_activity = state.last_processed_sequence > previous_sequence
 
-        requeue_triggered = False
+        requeue_trigger_sequence = 0
         for event in new_events:
-            if event.ticket_id == state.active_ticket and (
+            is_changes = event.ticket_id == state.active_ticket and (
                 (
-                    event.event_type == "LOOP_DECISION"
+                    event.event_type in ("LOOP_DECISION", "REVIEW_DECISION")
                     and str((event.payload or {}).get("decision", "")).upper()
                     == "CHANGES"
                 )
@@ -1134,8 +1260,14 @@ class SequentialTicketSupervisor:
                     and str((event.payload or {}).get("to_state", "")).upper()
                     == "IN_PROGRESS"
                 )
-            ):
-                requeue_triggered = True
+            )
+            if is_changes and event.sequence_number > requeue_trigger_sequence:
+                requeue_trigger_sequence = event.sequence_number
+
+        requeue_triggered = (
+            requeue_trigger_sequence > 0
+            and requeue_trigger_sequence > state.last_requeue_trigger_sequence
+        )
 
         if (
             requeue_triggered
@@ -1143,6 +1275,11 @@ class SequentialTicketSupervisor:
             and self.requeue_ticket(state.active_ticket)
         ):
             changed = True
+            # Persist watermark so a repeated CHANGES event for the same
+            # sequence does not trigger a second requeue on the next cycle.
+            persisted = self.load_state()
+            persisted.last_requeue_trigger_sequence = requeue_trigger_sequence
+            self.save_state(persisted)
 
         if self.advance_if_review_ready():
             changed = True
