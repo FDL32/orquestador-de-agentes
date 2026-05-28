@@ -3560,3 +3560,203 @@ def test_run_once_requeue_watermark_persists_across_calls(tmp_path, monkeypatch)
     assert state3.last_requeue_trigger_sequence > watermark1, (
         "Watermark updated for new event"
     )
+
+
+# =============================================================================
+# Tests WP-2026-160: Restart supervisor on Builder relaunch
+# =============================================================================
+
+
+def test_run_reactive_exits_after_requeue(tmp_path, monkeypatch):
+    """WP-2026-160: run_reactive debe romper el bucle tras un requeue exitoso."""
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    _write_work_plan(collaboration_dir / "work_plan.md")
+    _write_execution_log(collaboration_dir / "execution_log.md")
+    _write_turn(collaboration_dir / "TURN.md")
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    # Setup state with active ticket
+    supervisor.save_state(
+        SupervisorState(
+            active_ticket="WP-2026-160",
+            loop_current_round=1,
+            last_requeue_trigger_sequence=0,
+        )
+    )
+
+    # Emit CHANGES event to trigger requeue
+    supervisor.event_bus.emit(
+        "REVIEW_DECISION",
+        ticket_id="WP-2026-160",
+        actor="MANAGER",
+        payload={"decision": "CHANGES", "feedback": "needs work"},
+    )
+
+    # Mock _relaunch_builder to return success
+    relaunch_calls = []
+    monkeypatch.setattr(
+        supervisor,
+        "_relaunch_builder",
+        lambda ticket_id: relaunch_calls.append(ticket_id) or True,
+    )
+
+    # Mock time functions for quick exit
+    times = iter([0.0, 0.1, 0.2, 0.3, 1.0, 1.1, 1.2])
+    monkeypatch.setattr("time.time", lambda: next(times))
+    monkeypatch.setattr("time.sleep", lambda _seconds: None)
+
+    # Mock bootstrap to return True (lock acquired)
+    monkeypatch.setattr(supervisor, "bootstrap", lambda: True)
+
+    # run_reactive should exit after requeue
+    result = supervisor.run_reactive(timeout_seconds=10.0)
+
+    assert result is True
+    assert len(relaunch_calls) == 1, "Should have triggered one requeue"
+    # Verify the flag was set
+    assert getattr(supervisor, "_requeue_triggered_this_session", False) is True
+
+
+def test_run_once_sets_requeue_flag(tmp_path, monkeypatch):
+    """WP-2026-160: run_once debe setear _requeue_triggered_this_session tras requeue exitoso."""
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    _write_work_plan(collaboration_dir / "work_plan.md")
+    _write_execution_log(collaboration_dir / "execution_log.md")
+    _write_turn(collaboration_dir / "TURN.md")
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    supervisor.save_state(
+        SupervisorState(
+            active_ticket="WP-2026-160",
+            loop_current_round=1,
+            last_requeue_trigger_sequence=0,
+        )
+    )
+
+    supervisor.event_bus.emit(
+        "REVIEW_DECISION",
+        ticket_id="WP-2026-160",
+        actor="MANAGER",
+        payload={"decision": "CHANGES", "feedback": "needs work"},
+    )
+
+    # Mock _relaunch_builder to return success
+    monkeypatch.setattr(supervisor, "_relaunch_builder", lambda ticket_id: True)
+
+    # Run once should trigger requeue and set flag
+    result = supervisor.run_once()
+
+    assert result is True
+    assert getattr(supervisor, "_requeue_triggered_this_session", False) is True
+
+
+def test_run_once_no_requeue_flag_false(tmp_path, monkeypatch):
+    """WP-2026-160: run_once sin requeue debe dejar _requeue_triggered_this_session en False."""
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    _write_work_plan(collaboration_dir / "work_plan.md")
+    _write_execution_log(collaboration_dir / "execution_log.md")
+    _write_turn(collaboration_dir / "TURN.md")
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    supervisor.save_state(
+        SupervisorState(
+            active_ticket="WP-2026-160",
+            loop_current_round=1,
+            last_requeue_trigger_sequence=0,
+        )
+    )
+
+    # No CHANGES event - just normal activity
+    supervisor.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id="WP-2026-160",
+        actor="BUILDER",
+        payload={"from_state": "IN_PROGRESS", "to_state": "READY_FOR_REVIEW"},
+    )
+
+    # Run once without requeue
+    result = supervisor.run_once()
+
+    assert result is True  # Changed due to event activity
+    assert getattr(supervisor, "_requeue_triggered_this_session", False) is False
+
+
+def test_run_reactive_emits_supervisor_restarted_when_env_set(tmp_path, monkeypatch):
+    """WP-2026-160: run_reactive debe emitir SUPERVISOR_RESTARTED si SUPERVISOR_RESTART_REASON esta en el entorno."""
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    _write_work_plan(collaboration_dir / "work_plan.md")
+    _write_execution_log(collaboration_dir / "execution_log.md")
+    _write_turn(collaboration_dir / "TURN.md")
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    supervisor.save_state(
+        SupervisorState(
+            active_ticket="WP-2026-160",
+            loop_current_round=2,
+            last_requeue_trigger_sequence=0,
+        )
+    )
+
+    monkeypatch.setenv("SUPERVISOR_RESTART_REASON", "resume-builder")
+    monkeypatch.setattr(supervisor, "bootstrap", lambda: True)
+    monkeypatch.setattr(supervisor, "_release_supervisor_lock", lambda: None)
+
+    # Make the loop exit immediately via idle timeout
+    times = iter([0.0, 400.0])
+    monkeypatch.setattr("time.time", lambda: next(times))
+    monkeypatch.setattr("time.sleep", lambda _: None)
+
+    supervisor.run_reactive(timeout_seconds=1.0)
+
+    events = supervisor.event_bus.read_events()
+    restarted = [e for e in events if e.event_type == "SUPERVISOR_RESTARTED"]
+    assert len(restarted) == 1, "Should emit exactly one SUPERVISOR_RESTARTED"
+    assert restarted[0].payload == {"round": 2, "reason": "resume-builder"}

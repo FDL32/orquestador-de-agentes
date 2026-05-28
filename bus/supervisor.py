@@ -1269,17 +1269,22 @@ class SequentialTicketSupervisor:
             and requeue_trigger_sequence > state.last_requeue_trigger_sequence
         )
 
+        requeue_success = False
         if (
             requeue_triggered
             and state.active_ticket
             and self.requeue_ticket(state.active_ticket)
         ):
             changed = True
+            requeue_success = True
             # Persist watermark so a repeated CHANGES event for the same
             # sequence does not trigger a second requeue on the next cycle.
             persisted = self.load_state()
             persisted.last_requeue_trigger_sequence = requeue_trigger_sequence
             self.save_state(persisted)
+
+        # WP-2026-160: Signal requeue success for cooperative exit
+        self._requeue_triggered_this_session = requeue_success
 
         if self.advance_if_review_ready():
             changed = True
@@ -1303,6 +1308,18 @@ class SequentialTicketSupervisor:
         if self.bootstrap() is False:
             return False  # Lock rejected, another supervisor is active
 
+        # WP-2026-160: If launched after a cooperative restart, emit SUPERVISOR_RESTARTED
+        # so the bus has an observable signal that the fresh supervisor is active.
+        restart_reason = os.environ.get("SUPERVISOR_RESTART_REASON", "").strip()
+        if restart_reason:
+            _state = self.load_state()
+            self.event_bus.emit(
+                "SUPERVISOR_RESTARTED",
+                ticket_id=_state.active_ticket or "",
+                actor="SUPERVISOR",
+                payload={"round": _state.loop_current_round, "reason": restart_reason},
+            )
+
         idle_timeout = _timeout_from_env(
             "TICKET_SUPERVISOR_IDLE_TIMEOUT_SECONDS", timeout_seconds
         )
@@ -1310,6 +1327,8 @@ class SequentialTicketSupervisor:
         start_time = time.time()
         last_activity = start_time
         changed = False
+        # WP-2026-160: Reset requeue flag at session start
+        self._requeue_triggered_this_session = False
         try:
             while True:
                 now = time.time()
@@ -1320,6 +1339,17 @@ class SequentialTicketSupervisor:
                 if self.run_once():
                     changed = True
                     last_activity = time.time()
+                # WP-2026-160: Salida cooperativa tras requeue exitoso.
+                # El launcher espera a que el lock desaparezca antes de arrancar
+                # un supervisor fresco. Romper el bucle permite que el bloque
+                # finally libere el lock de forma limpia.
+                if getattr(self, "_requeue_triggered_this_session", False):
+                    print(
+                        "[supervisor] Exiting run_reactive loop after successful requeue "
+                        "to allow launcher to start fresh supervisor",
+                        flush=True,
+                    )
+                    break
                 time.sleep(1.0)
         finally:
             # Always release lock on exit (normal or exceptional)

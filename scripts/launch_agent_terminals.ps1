@@ -610,6 +610,33 @@ function Repair-StartupSupervisorState {
     return $alignment
 }
 
+function Wait-SupervisorExit {
+    param(
+        [Parameter(Mandatory)] [string]$ProjectRoot,
+        [int]$TimeoutSeconds = 30
+    )
+
+    $supervisorLockPath = Join-Path $ProjectRoot '.agent\runtime\supervisor_lock.txt'
+    $startTime = Get-Date
+
+    Write-Host "[launcher] Waiting for supervisor lock to be released..."
+
+    while ($true) {
+        if (-not (Test-Path -LiteralPath $supervisorLockPath)) {
+            Write-Host "[launcher] Supervisor lock released successfully"
+            return $true
+        }
+
+        $elapsed = (Get-Date) - $startTime
+        if ($elapsed.TotalSeconds -gt $TimeoutSeconds) {
+            Write-Error "[launcher] Timeout waiting for supervisor exit (${TimeoutSeconds}s). Lock still present: $supervisorLockPath"
+            return $false
+        }
+
+        Start-Sleep -Milliseconds 500
+    }
+}
+
 function Assert-StartupAlignment {
     param([Parameter(Mandatory)] [string]$ProjectRoot)
 
@@ -1004,12 +1031,37 @@ if (-not $ResumeBuilder) {
     # WP-2026-118: Preflight de imports criticos antes de abrir ventanas
     Invoke-ImportPreflight -ProjectRoot $ProjectRoot
 } else {
-    Write-Host "[launcher] Resume mode: skipping aggressive cleanup + strict preflight"
+    # WP-2026-160: -ResumeBuilder debe garantizar un supervisor fresco
+    Write-Host "[launcher] Resume mode: waiting for stale supervisor exit..."
     $ProjectRoot = Assert-CanonicalProjectRoot -ProjectRoot $ProjectRoot
+
+    # WP-2026-160: Esperar a que el supervisor viejo libere el lock
+    $supervisorLockPath = Join-Path $ProjectRoot '.agent\runtime\supervisor_lock.txt'
+    if (Test-Path -LiteralPath $supervisorLockPath) {
+        $waitResult = Wait-SupervisorExit -ProjectRoot $ProjectRoot -TimeoutSeconds 30
+        if (-not $waitResult) {
+            # Timeout: el supervisor viejo no salio limpiamente
+            Write-Error "[launcher] Cannot guarantee fresh supervisor: stale supervisor did not exit within timeout"
+            exit 1
+        }
+    } else {
+        Write-Host "[launcher] No stale supervisor lock found; proceeding with fresh start"
+    }
+
     # Resume path still needs alignment metadata (ticket id, active role) to
     # spawn Builder against the right ticket. Use the pure read function
     # (no repair, no cleanup) so $alignment is defined downstream.
     $alignment = Get-StartupAlignment -ProjectRoot $ProjectRoot
+
+    # WP-2026-160: Ahora el launcher arranca un supervisor fresco antes de Builder
+    # usando el mismo patron de arranque normal. Solo Supervisor + Builder en requeue.
+    $LaunchSupervisor = $true
+    $LaunchBridge = $false
+    $LaunchMonitor = $false
+    $LaunchWatcher = $false
+    # WP-2026-160: Signal the fresh supervisor to emit SUPERVISOR_RESTARTED at startup
+    $env:SUPERVISOR_RESTART_REASON = "resume-builder"
+    Write-Host "[launcher] Will launch fresh supervisor before Builder"
 }
 
 # Leer work_plan.md para {{work_plan}}
