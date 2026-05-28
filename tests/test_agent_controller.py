@@ -203,3 +203,111 @@ class TestHumanGateThreshold:
             agent_controller.get_human_gate_threshold()
             == agent_controller.HUMAN_GATE_REJECTION_FALLBACK
         )
+
+
+class TestTicketProseIntegration:
+    """WP-2026-162: Ticket prose validation integration in _handle_validate."""
+
+    def test_validate_includes_ticket_prose_warnings(self, tmp_path, monkeypatch):
+        """_handle_validate includes ticket_prose warnings when validator available."""
+        # Mock validate_ticket_prose to return warnings
+        mock_result = {
+            "warnings": [
+                {
+                    "rule_id": "TP-PROSE-01",
+                    "rule_name": "throat-clearing",
+                    "evidence": "test",
+                    "suggestion": "fix",
+                }
+            ],
+            "warning_count": 1,
+        }
+
+        def mock_validate(work_plan_path, collab_dir):
+            return mock_result
+
+        # Patch WORK_PLAN and get_collab_dir
+        fake_work_plan = tmp_path / "work_plan.md"
+        fake_work_plan.write_text("# Plan\n", encoding="utf-8")
+        fake_collab = tmp_path / "collab"
+        fake_collab.mkdir()
+
+        monkeypatch.setattr(agent_controller, "WORK_PLAN", fake_work_plan)
+        monkeypatch.setattr(agent_controller, "get_collab_dir", lambda: fake_collab)
+
+        # Mock the validate_state_files and other dependencies to return empty
+        monkeypatch.setattr(agent_controller, "validate_state_files", lambda: {})
+        monkeypatch.setattr(agent_controller, "_collect_deliverable_type_warnings", lambda x: {})
+        monkeypatch.setattr(agent_controller, "read_file", lambda x: "")
+        monkeypatch.setattr(agent_controller, "get_status", lambda x, y: "APPROVED")
+        monkeypatch.setattr(agent_controller, "_check_scope_for_validate", lambda x, y: ([], []))
+        monkeypatch.setattr(agent_controller, "_check_bus_drift", lambda x, y: [])
+        monkeypatch.setattr(agent_controller, "_check_invariants", lambda x, y, z: {"errors": [], "warnings": []})
+
+        # Patch the import
+        import sys
+
+        mock_module = type(
+            "MockModule",
+            (),
+            {"validate_ticket_prose": staticmethod(mock_validate)},
+        )()
+        monkeypatch.setitem(sys.modules, "scripts.validate_ticket_prose", mock_module)
+
+        # Capture stdout
+        from io import StringIO
+
+        captured = StringIO()
+        old_stdout = sys.stdout
+        sys.stdout = captured
+
+        try:
+            exit_code = agent_controller._handle_validate(json_output=True)
+        finally:
+            sys.stdout = old_stdout
+
+        # Exit code should be 0 (warnings don't block)
+        assert exit_code == 0
+        output = captured.getvalue()
+        assert "ticket_prose" in output or "TP-PROSE" in output
+
+    def test_validate_graceful_degrade_without_validator(self, tmp_path, monkeypatch):
+        """_handle_validate works even if validator not available."""
+        # Mock the validate_ticket_prose import to raise ImportError
+        import sys
+        from types import ModuleType
+
+        # Create a mock module that raises ImportError when validate_ticket_prose is accessed
+        def mock_validate(*args, **kwargs):
+            raise ImportError("Validator not available")
+
+        mock_module = ModuleType("scripts.validate_ticket_prose")
+        mock_module.validate_ticket_prose = mock_validate
+        monkeypatch.setitem(sys.modules, "scripts.validate_ticket_prose", mock_module)
+
+        # Mock file reads
+        monkeypatch.setattr(
+            agent_controller,
+            "read_file",
+            lambda x: "# Plan\n\n## Metadata\n- **ID:** TEST\n- **Estado:** APPROVED\n",
+        )
+        monkeypatch.setattr(agent_controller, "validate_state_files", lambda: {})
+        monkeypatch.setattr(agent_controller, "_collect_deliverable_type_warnings", lambda x: {})
+        monkeypatch.setattr(agent_controller, "get_status", lambda x, y: "APPROVED")
+        monkeypatch.setattr(agent_controller, "_check_scope_for_validate", lambda x, y: ([], []))
+        monkeypatch.setattr(agent_controller, "_check_bus_drift", lambda x, y: [])
+        monkeypatch.setattr(agent_controller, "_check_invariants", lambda x, y, z: {"errors": [], "warnings": []})
+
+        from io import StringIO
+
+        captured = StringIO()
+        old_stdout = sys.stdout
+        sys.stdout = captured
+
+        try:
+            exit_code = agent_controller._handle_validate(json_output=True)
+        finally:
+            sys.stdout = old_stdout
+
+        # Should still work and return 0
+        assert exit_code == 0
