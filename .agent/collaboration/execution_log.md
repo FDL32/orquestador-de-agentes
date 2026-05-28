@@ -1,68 +1,82 @@
-# Execution Log - WP-2026-158
+# Execution Log - WP-2026-159
 
 ## Metadata
-- **ID:** WP-2026-158
-**Estado:** COMPLETED
+- **ID:** WP-2026-159
+**Estado:** READY_FOR_REVIEW
 - **deliverable_type:** code
 
 ## Agente Activo
 - **Rol:** BUILDER
 - **Accion:** IMPLEMENT
-- **Plan:** Review packet completeness and diff filtering
+- **Plan:** Reactive Builder relaunch after CHANGES
 
 ## Fases
-- Phase 1: hacer visibles los entregables nuevos no rastreados en el review packet.
-- Phase 2: anadir metadata minima de `filter_mode` y `severity`.
+- Phase 0: instrumentar cada intento de relanzado para hacer observable el motivo real de skip/fallo/success.
+- Phase 1: aplicar el fix dirigido segun el diagnostico de la instrumentacion.
+- Phase 2: smoke path reactivo estable.
 
 ## Registro de Implementacion
-- Ticket preparado para Builder con alcance de bus/review packet.
-- El packet actual no debe seguir ocultar archivos `??` en el diff.
-- La metadata de filtrado debe ser ligera y legible, inspirada en reviewdog, sin tocar el contrato de decision.
-- El bus no debe depender de `agent_controller`; si necesita untracked, lo resuelve localmente.
-- Los tests deben usar `tmp_path` y aislar el repo anfitrion.
+- Ticket preparado para Builder para probar el bus end-to-end en el ciclo reactivo.
+- `requeue_ticket()` sigue siendo la unica autoridad para incrementar `loop_current_round` y lanzar Builder.
+- Los estados terminales deben fallar cerrado.
+- El modo reactivo debe permanecer vivo tras relanzar.
+- Los tests deben usar `tmp_path` y mocks, sin subprocess real.
 
-## Fases Completadas
-### Fase 1: untracked deliverables visibles en el packet
-- Añadido helper `_get_untracked_files()` en `bus/review_bridge.py` que obtiene archivos `??` desde `git status --porcelain -z`.
-- Añadido helper `_is_deliverable_path()` que filtra ruido (.agent/collaboration/, .agent/runtime/, __pycache__, etc.).
-- Añadida sección `--- Untracked Deliverables ---` en `_build_review_prompt()` después del diff.
+### Fase 0: Instrumentacion completada
+- `_run_launcher_subprocess(cmd)` extraido como seam inyectable para testabilidad sin depender de `PYTEST_CURRENT_TEST`.
+- `_persist_relaunch_log(stdout, stderr)` guarda output en `.agent/runtime/logs/launcher_last.log`.
+- Evento `BUILDER_RELAUNCH_ATTEMPTED` emitido con payload: `{"round": N, "outcome": "success|skipped_alive|launcher_failed|timeout", "exit_code": int|null, "stderr_tail": str|null}`.
+- Tests: `test_run_launcher_subprocess_success`, `test_run_launcher_subprocess_timeout`, `test_run_launcher_subprocess_exception`, `test_persist_relaunch_log_writes_file`, `test_relaunch_emits_event_skipped_alive`, `test_relaunch_emits_event_launcher_failed`, `test_relaunch_emits_event_success`, `test_relaunch_emits_event_timeout`, `test_relaunch_launcher_not_found_emits_event`, `test_relaunch_powershell_not_found_emits_event`, `test_relaunch_seam_allows_monkeypatch_without_pytest_check`.
 
-### Fase 2: metadata minima de filter mode y severidad
-- Añadida metadata `filter_mode` con valores `diff_context` (default) y `added` (cuando hay untracked).
-- Añadida metadata `severity` con valores `info` (sin untracked) y `warn` (con untracked).
-- Metadata visible en sección `--- Packet Metadata ---` al inicio del prompt.
+### Fase 1: Fix dirigido completado
+- `last_requeue_trigger_sequence` añadido a `SupervisorState` como watermark persistido.
+- `run_once()` implementa logica para detectar nuevo `CHANGES` y evitar doble requeue usando watermark.
+- `RELAUNCH_BLOCKED_STATES` bloquea relanzado en `HUMAN_GATE`, `READY_TO_CLOSE`, `COMPLETED`.
+- Tests: `test_supervisor_preserves_loop_round_after_changes`, `test_supervisor_skips_relaunch_on_human_gate`, `test_run_once_triggers_requeue_on_review_decision_changes`, `test_run_once_watermark_prevents_double_requeue`, `test_run_once_requeue_watermark_persists_across_calls`.
 
-## Quality Gates Evidence
-- `ruff check bus scripts tests`: All checks passed!
-- `ruff format bus scripts tests`: 1 file reformatted (tests/test_manager_review_bridge.py)
-- `python -m pytest tests/test_manager_review_bridge.py tests/test_review_bridge.py -q`: 95 passed in 42.56s
-- `python -m pytest tests/test_manager_review_bridge.py::TestUntrackedDeliverables -q`: 7 passed in 3.78s
-- `python scripts/run_pytest_safe.py`: 303 passed in 25.96s
-- `python .agent/agent_controller.py --validate --json --force`: errors empty; warning expected: `BUILDER_EXIT exists but ticket not in READY_FOR_REVIEW/COMPLETED`
+### Fase 2: Smoke path reactivo estable
+- `test_run_reactive_smoke_with_requeue_polling`: Verifica loop mantiene polling despues de requeue y respeta timeout/idle timeout.
+- Tests existentes reforzados: `test_run_reactive_uses_idle_timeout_reset`, `test_run_reactive_releases_lock_on_exit`.
 
-## Calidad Esperada
-- `python -m pytest tests/test_manager_review_bridge.py tests/test_review_bridge.py -q`
-- `ruff check bus scripts tests`
+## Criterios de Aceptacion
+- [x] La instrumentacion permite distinguir `skipped_alive`, `launcher_failed`, `timeout` y `success`.
+- [x] Un `CHANGES` nuevo relanza Builder automaticamente una sola vez.
+- [x] Un segundo `CHANGES` repetido no duplica relanzado ni incrementa el round indebidamente.
+- [x] Los estados terminales siguen fallando cerrado.
+- [x] El modo `--reactive` permanece vivo despues del relanzado.
+- [x] La validacion canonica y la suite safe siguen pasando.
+
+## Evidencia Esperada
+- `python -m pytest tests/test_supervisor.py -q`
+- `python scripts/ticket_supervisor.py --reactive --timeout 1`
 - `python scripts/run_pytest_safe.py`
 - `python .agent/agent_controller.py --validate --json --force`
 
-## Criterios de Aceptacion
-- [x] El review packet incluye una seccion explicita de entregables no rastreados.
-- [x] El packet publica `filter_mode` y, si aplica, `severity`.
-- [x] Los tests cubren repo temporal con archivos `??`.
-- [x] La suite safe principal sigue pasando.
-- [x] La validacion canonica pasa sin errores.
+## Quality Gates Results (2026-05-28)
+- `ruff check .`: All checks passed!
+- `python scripts/run_pytest_safe.py`: 319 passed in 44.72s
+- `python .agent/agent_controller.py --validate --json --force`: 0 errors (validacion completada)
 
-## Evidencia Esperada
-- Fase 1 y 2 completadas con tests que prueban diff rastreado + untracked.
-- Quality gates verdes en `pytest`, `pytest-safe`, `ruff` y `agent_controller --validate`.
+## Criterios de Aceptacion - Evidencia
+- [x] La instrumentacion permite distinguir `skipped_alive`, `launcher_failed`, `timeout` y `success`.
+  - **Evidencia:** Tests `test_relaunch_emits_event_*` en `tests/test_supervisor.py` verifican payload de `BUILDER_RELAUNCH_ATTEMPTED` con outcome distinto para cada caso.
+- [x] Un `CHANGES` nuevo relanza Builder automaticamente una sola vez.
+  - **Evidencia:** Test `test_run_once_triggers_requeue_on_review_decision_changes` verifica que `run_once()` llama a `requeue_ticket()` una sola vez ante nuevo `CHANGES`.
+- [x] Un segundo `CHANGES` repetido no duplica relanzado ni incrementa el round indebidamente.
+  - **Evidencia:** Test `test_run_once_watermark_prevents_double_requeue` verifica que watermark `last_requeue_trigger_sequence` bloquea segundo relanzado con mismo sequence.
+- [x] Los estados terminales siguen fallando cerrado.
+  - **Evidencia:** `RELAUNCH_BLOCKED_STATES = {HUMAN_GATE, READY_TO_CLOSE, COMPLETED}` + test `test_supervisor_skips_relaunch_on_human_gate`.
+- [x] El modo `--reactive` permanece vivo despues del relanzado.
+  - **Evidencia:** Test `test_run_reactive_smoke_with_requeue_polling` verifica loop continua polling tras requeue hasta timeout.
+- [x] La validacion canonica y la suite safe siguen pasando.
+  - **Evidencia:** `ruff check .`: All checks passed! | `pytest-safe`: 319 passed | `agent_controller --validate`: 0 errors
 
-
-Scope override: test_review_bridge.py no necesita cambios; tests añadidos en test_manager_review_bridge.py cubren WP-2026-158. Affected files: C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\runtime\pytest-safe, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\tests\test_review_bridge.py
+Marked ready by Builder (2026-05-28)
 
 Manager requested changes (1 rejections)
 
+Scope override: Archivos de archivado WP-2026-158 no relacionados con WP-2026-159. Files Likely Touched respetados: bus/supervisor.py, tests/test_supervisor.py. Affected files: C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\collaboration\AUDIT_WP-2026-158.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\collaboration\PLAN_WP-2026-158.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\collaboration\_archive\plan_audit\AUDIT_WP-2026-158.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\collaboration\_archive\plan_audit\PLAN_WP-2026-158.md
 
-Scope override: test_review_bridge.py no necesita cambios; los archivos 157/158 son artefactos de transición del cierre y del arranque del siguiente ticket. Affected files: C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\collaboration\AUDIT_WP-2026-157.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\collaboration\PLAN_WP-2026-157.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\collaboration\_archive\plan_audit\AUDIT_WP-2026-157.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\collaboration\_archive\plan_audit\PLAN_WP-2026-157.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\tests\test_review_bridge.py
+Manager requested changes (2 rejections)
 
-Manager approved canonical closeout for WP-2026-158
+Scope override: in-scope WP-2026-159 files already committed; remaining diff is excluded collaboration/runtime hotfix artifacts. Affected files: C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\bus\supervisor.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\tests\test_supervisor.py

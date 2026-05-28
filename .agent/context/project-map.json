@@ -1,16 +1,16 @@
 {
   "version": "1.0",
-  "generated": "2026-05-27T20:39:03.379431+00:00",
+  "generated": "2026-05-28T09:02:26.844948+00:00",
   "project_root": "C:\\Users\\fdl\\Proyectos_Python\\z_scripts\\orquestador_de_agentes",
   "summary": {
-    "total_files": 4834,
-    "total_size_bytes": 14255448,
+    "total_files": 4983,
+    "total_size_bytes": 17612934,
     "categories": {
-      "config": 371,
-      "python": 836,
-      "documentation": 1297,
-      "other": 2314,
-      "scripts": 16
+      "config": 403,
+      "python": 843,
+      "documentation": 1387,
+      "other": 2333,
+      "scripts": 17
     }
   },
   "files": {
@@ -23,17 +23,17 @@
       {
         "path": ".agent/collaboration/.session_state.json",
         "size": 134,
-        "sha256": "424c86027ef8a561aafe211c9b82f8eb19c8216a596a76fc9a5af4b0254df12c"
+        "sha256": "4f588a058d44fe2754aff7c68d9519c865b33eda1ad3e5d3c4fe32b34b28d8be"
       },
       {
         "path": ".agent/config/agents.json",
-        "size": 2568,
-        "sha256": "b14d4a4ad26b1bc08eb60d03c6c7fab2066afeaffb0c3f182ad472238cd2a145"
+        "size": 2560,
+        "sha256": "57662977c5bf3a327b35e806e3f385a5dd3476b7cd2b5ccd00e5ae5bb09cba5c"
       },
       {
         "path": ".agent/context/project-map.json",
-        "size": 1447642,
-        "sha256": "7f658d1c3f89a299fb234362b652cf6d47276db52a38afc9328931589eb43693"
+        "size": 1448206,
+        "sha256": "ad94b10e51954cb3f98c723b5bfcbdaa52bed09e7afe04957db0d5640dec90ed"
       },
       {
         "path": ".agent/known_models.json",
@@ -58,22 +58,22 @@
       {
         "path": ".agent/runtime/circuit_breaker.json",
         "size": 181,
-        "sha256": "fb4e59d70fdb0f5f86cfd8767b5f0e9b55a2e77d0ae3e21780065643b15ec4d7"
+        "sha256": "16e0cc8d94a3fbd6dc664cce923a011918bdc90f1e112321a90fc7b8b377b421"
       },
       {
         "path": ".agent/runtime/manager_bridge_state.json",
         "size": 171,
-        "sha256": "c5148c0103f22d005893aea394192ffbfcff000501a957ea4f32692742326413"
+        "sha256": "8e241a49aa70bc4b1829f9389f6b24ff687e4d7b0277a829c6601bf62801f435"
       },
       {
         "path": ".agent/runtime/pytest-safe/last-run.json",
-        "size": 1151,
-        "sha256": "24c1dc81b833166331877d22e013a1867fa7edd8b45d15194f62e9d9b56693e7"
+        "size": 2882,
+        "sha256": "fce2549c7d6bc4e8a46ee9adbe1299b0623f34745b66c36ec2730933c523b404"
       },
       {
         "path": ".agent/runtime/supervisor_state.json",
         "size": 186,
-        "sha256": "356ce3ed01474fb227450ac7e0e945c3317b19cb4e5ce79d39e882cd7922702a"
+        "sha256": "4a213700e6fb3d3d1960a864d63da883ff856f20b6c21a27584dc22489faf9d0"
       },
       {
         "path": ".agent_allowlist.json",
@@ -161,14 +161,34 @@
         "sha256": "76e132169be89e34897523035cb6964e39b2d5c933dc2305187c42834ecc3d11"
       },
       {
+        "path": ".tmp/opencode-smoke/.local/share/opencode/auth.json",
+        "size": 2299,
+        "sha256": "400dbd979069face7baf448fd125fe62a39277c1621cc03532b6c76ed570b133"
+      },
+      {
+        "path": ".tmp/opencode-smoke/.local/share/opencode/storage/session_diff/ses_194bce84cffe5UwT5ZMqlYjlGF.json",
+        "size": 2,
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "path": ".tmp/opencode-smoke-manager/.local/share/opencode/auth.json",
+        "size": 2299,
+        "sha256": "400dbd979069face7baf448fd125fe62a39277c1621cc03532b6c76ed570b133"
+      },
+      {
+        "path": ".tmp/opencode-smoke-manager/.local/share/opencode/storage/session_diff/ses_194bce7e6ffeV7VcER3g7r5PP1.json",
+        "size": 2,
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
         "path": "pyproject.toml",
         "size": 1909,
         "sha256": "0a2af2f3a681778d1542c5f5a17f5df5f1a49ea690c5db0f23bc31235c5d046d"
       },
       {
         "path": "pytest.ini",
-        "size": 426,
-        "sha256": "2a5ec16a2c33150de697c8db8948dc568e12e6e561b3b85bcde245762d43da01"
+        "size": 505,
+        "sha256": "48d6ad8ea3105144a8b0ed4886fb1fc115b212483bf219d4a677d8d36a5ff083"
       },
       {
         "path": "skills/refactor-manager/goose-skill.json",
@@ -1706,6 +1726,146 @@
         "sha256": "fbf3326c43bccfefd1da1445c92d982f1307c4c72d1b85938315f534ecba1bf6"
       },
       {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_bootstrap_bus_precedence_over_turn_divergence0042/.agent/runtime/supervisor_state.json",
+        "size": 184,
+        "sha256": "cba837605bbb8f3d77144ee5e415cf909c2a690b8281d74a6bbee1e990a92d74"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_bootstrap_bus_requeue_repeated_changes0043/.agent/runtime/supervisor_state.json",
+        "size": 184,
+        "sha256": "78be73144f38458f3fa474759676a7cb2aad47f8bafe3c1d67e611bf3d220e70"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_bootstrap_fallback_to_turn_when_bus_has_no_active0044/.agent/runtime/supervisor_state.json",
+        "size": 184,
+        "sha256": "27aaabccf4009c92bce7fe87af9f18ccdb4faee3cdfff001d6975db24903ccb8"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_bootstrap_reconciled_deduplication0064/.agent/runtime/supervisor_state.json",
+        "size": 184,
+        "sha256": "acc2a02accdaccd2561a9abe97b29a9fc6460ea878af4a99d5c69241c9879581"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_bootstrap_reconciled_different_pair_emits0065/.agent/runtime/supervisor_state.json",
+        "size": 184,
+        "sha256": "5e57b00eca035d9282a3094758ba5caeebfe52ce0e2824207ae14f92cd73462e"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_bootstrap_reconciles_active_ticket_none_when_bus_terminal0058/.agent/runtime/supervisor_state.json",
+        "size": 184,
+        "sha256": "fc506f8f88c69cb706fbe2e4ff59e5eca5bfcbc6638916adace9faca041dfcc0"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_bootstrap_reconciles_last_processed_sequence_with_bus0054/.agent/runtime/supervisor_state.json",
+        "size": 184,
+        "sha256": "de39252ec2e21cd877ceb9ccb7a410ba05c03d913defd1c8f3d77eb2b4618b27"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_bootstrap_reconciles_loop_round_from_bus0055/.agent/runtime/supervisor_state.json",
+        "size": 184,
+        "sha256": "f6b4990dc508372ade5a58753dd01305e776978653f14a9fd71a43c4b7988a8b"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_bootstrap_recovery0023/.agent/runtime/supervisor_state.json",
+        "size": 183,
+        "sha256": "5674523b05861ed05c71ad115e89b7f4bcf726a9e6fee635a2348c7ca0a4d04a"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_process_new_events_advances_sequence_normal0057/.agent/runtime/supervisor_state.json",
+        "size": 165,
+        "sha256": "6b49a6c938f7dc0b1dedf1bbdb088bae71f4d8036e1ad82780299d706b6d70c5"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_process_new_events_reconciles_sequence_down0056/.agent/runtime/supervisor_state.json",
+        "size": 165,
+        "sha256": "6b49a6c938f7dc0b1dedf1bbdb088bae71f4d8036e1ad82780299d706b6d70c5"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_state_machine_e2e_flow0019/.agent/runtime/supervisor_state.json",
+        "size": 193,
+        "sha256": "af00ca06d95d0244fbff479db7e1a4348aa2c33f4ac6f4c3de3bc6dc356ff604"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_advances_on_review_turn0013/.agent/runtime/supervisor_state.json",
+        "size": 204,
+        "sha256": "9e4a9b74daef78cc5f890901a76d2f6e9707170225d41bad6bea98f510fd3f54"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_blocks_close_without_quality_gates0014/.agent/runtime/supervisor_state.json",
+        "size": 182,
+        "sha256": "6a8af1cd3fa32dca6f45763fbf9fdfc18ebc8f13f3c1e48d449e3e2284cc2cb4"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_bootstrap_does_not_skip_ready_for_review_to_completed0015/.agent/runtime/supervisor_state.json",
+        "size": 184,
+        "sha256": "599be461dd3a4013b95a68b13adac7fd990b3f73d0a9ac091a994f9df6193697"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_bootstrap_emits_reconciled_only_for_stale_state0029/.agent/runtime/supervisor_state.json",
+        "size": 183,
+        "sha256": "e6a9bf8f333fc9134075429835c8f63f387184aaefd9ae68267b2ad869c6e2d8"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_bootstrap_reconciles_stale_state_with_work_plan0028/.agent/runtime/supervisor_state.json",
+        "size": 207,
+        "sha256": "2c4e807498f119d0718fa5b10e66a135fd76e883cbc86b3e1091bd82214ceb7f"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_does_not_promote_ready_for_review_from_execution_log0018/.agent/runtime/supervisor_state.json",
+        "size": 205,
+        "sha256": "ce8773f1246023ea5e75535d0562ecd1380e9055e5b679f19598a60a8e78819a"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_preserves_loop_round_after_changes0025/.agent/runtime/supervisor_state.json",
+        "size": 182,
+        "sha256": "dac0542fb2941e97254cd38fc0ce311c5a529549890051e7d9cde5bf64a7aad8"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_processes_state_changed_events0017/.agent/runtime/supervisor_state.json",
+        "size": 165,
+        "sha256": "6b49a6c938f7dc0b1dedf1bbdb088bae71f4d8036e1ad82780299d706b6d70c5"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_skips_relaunch_on_human_gate0026/.agent/runtime/supervisor_state.json",
+        "size": 183,
+        "sha256": "083477b9645a57bacd6272001fb40f06c0f605e60f2bb8f45ba9339307cf6b43"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_state_reconciliation_e2e0059/.agent/runtime/supervisor_state.json",
+        "size": 184,
+        "sha256": "b8a8dde04f6da3ab044918b9e9ca01678130fb6f6f2872a6e3835f81db1904ca"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_tracks_processed_events0016/.agent/runtime/supervisor_state.json",
+        "size": 165,
+        "sha256": "6b49a6c938f7dc0b1dedf1bbdb088bae71f4d8036e1ad82780299d706b6d70c5"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_threshold_falls_back_on_malformed_config0075/agents.json",
+        "size": 15,
+        "sha256": "af4d4da9f58a003dd856fb633b9210fd3f6071091b6e1b27da0f5a5b95c2c5fe"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_threshold_reads_from_agents_config0073/agents.json",
+        "size": 39,
+        "sha256": "a592272f8aa9436a0b31b6b67c1eebb47d51a47aad0a8d3114e8e797ca7b6737"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/opencode-review-12kwk4cc/.local/share/opencode/auth.json",
+        "size": 2299,
+        "sha256": "400dbd979069face7baf448fd125fe62a39277c1621cc03532b6c76ed570b133"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/opencode-review-853_0bk8/.local/share/opencode/auth.json",
+        "size": 2299,
+        "sha256": "400dbd979069face7baf448fd125fe62a39277c1621cc03532b6c76ed570b133"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/opencode-review-hw82o5nz/.local/share/opencode/auth.json",
+        "size": 2299,
+        "sha256": "400dbd979069face7baf448fd125fe62a39277c1621cc03532b6c76ed570b133"
+      },
+      {
         "path": "tests/sandbox/test_runtime/session_8612/factory/test_detect_package_json0005/package.json",
         "size": 79,
         "sha256": "e926f35597c39f97ee258cb2ed0d1493ee8cd5e07c3cdb8c5eaa072be63aefd8"
@@ -1914,8 +2074,8 @@
       },
       {
         "path": ".agent/hooks/guard_paths.py",
-        "size": 7815,
-        "sha256": "4b04f97ae7c4979da74564657da3bb96492e9c489924ce6e5fbba8284352d1d4"
+        "size": 7009,
+        "sha256": "b462e82f1b9a7c276bfbc0434b531d098add6c591092415153ce226371d996ff"
       },
       {
         "path": ".agent/hooks/native_post_tool_hook.py",
@@ -1989,8 +2149,8 @@
       },
       {
         "path": "bus/review_bridge.py",
-        "size": 83103,
-        "sha256": "3eb6efa15036c74d6fcebcd317f0fb2f425b9c1010e19b1f7daad7388938090b"
+        "size": 85977,
+        "sha256": "21220f8360aea2615fd49da719d971b8c723d5d7e7cfdb0a40e599e4185ff282"
       },
       {
         "path": "bus/skill_resolver.py",
@@ -2004,8 +2164,8 @@
       },
       {
         "path": "bus/supervisor.py",
-        "size": 47662,
-        "sha256": "0f556c04565d779cdb66ae993b3ec0b13cc21358789e68c8d578dc867de7aea4"
+        "size": 53822,
+        "sha256": "b0d8518dbaac8a6ec7a6e504c8438eec51a45dafcf6787e41999d9248bd5055d"
       },
       {
         "path": "bus/time_utils.py",
@@ -2174,8 +2334,8 @@
       },
       {
         "path": "scripts/run_pytest_safe.py",
-        "size": 13570,
-        "sha256": "eb2bf41e154c1cdcc6b2edce8935288046a3c37b0af653ca454a82b8b039042a"
+        "size": 13651,
+        "sha256": "18c91d1fd532c5721c1ace2603569f4e0936c8712245e49e3bb254b97d0729c3"
       },
       {
         "path": "scripts/sandbox/check_wp_087_deliverable.py",
@@ -2219,8 +2379,8 @@
       },
       {
         "path": "scripts/ticket_activity_monitor.py",
-        "size": 5497,
-        "sha256": "22872449b036fd03057a50269e1ed0602204de79d821fdecb63a7171a1b546ea"
+        "size": 5491,
+        "sha256": "76c77dcb04ed8827af221d1a98e0f28207f45424d738dd3366ad40fa9c40e2dc"
       },
       {
         "path": "scripts/ticket_supervisor.py",
@@ -2251,6 +2411,11 @@
         "path": "scripts/validate_authority.py",
         "size": 3972,
         "sha256": "2fefe63f1c0a337ae2e7d08c3c518bd947f92dc9573a71dcccc3e18bdebf1abe"
+      },
+      {
+        "path": "scripts/validate_observations.py",
+        "size": 11374,
+        "sha256": "3e77d5475c5e52ac324c85d87b385eec61f4061a93b905d252154114516d728d"
       },
       {
         "path": "skills/__init__.py",
@@ -2296,6 +2461,31 @@
         "path": "tests/debug/debug_bus_state.py",
         "size": 1142,
         "sha256": "d5ba826ca12bf39f8a57f2efbe7d701ec7b607c607884134e969d28b03a7d2db"
+      },
+      {
+        "path": "tests/evals/__init__.py",
+        "size": 189,
+        "sha256": "8cf2bc0f21b16d264e3f61a5eb115bb2042d123c0cc0a298dc6c781bea2d5416"
+      },
+      {
+        "path": "tests/evals/test_eval_guard_paths.py",
+        "size": 2931,
+        "sha256": "cdb24cedb75ab0d69a3268ff4212c4c571d85ef9197c6ff8300129cadfac192d"
+      },
+      {
+        "path": "tests/evals/test_eval_requeue.py",
+        "size": 7991,
+        "sha256": "5a73deefaa3745d1a885bfdbed96df76475875aceedfb6b7ba569eff4528d6c5"
+      },
+      {
+        "path": "tests/evals/test_eval_review_bridge.py",
+        "size": 8120,
+        "sha256": "5c46a7132c02a564f1116e60775073bc7e2cc56f7b1b64b62a50f021102f33f1"
+      },
+      {
+        "path": "tests/evals/test_eval_scope_gate.py",
+        "size": 6534,
+        "sha256": "8120797e67a108b516bc8b82c306fd22473e02f52aa6f8639da41cff7f4f17de"
       },
       {
         "path": "tests/integration/test_lifecycle_integration.py",
@@ -5664,8 +5854,8 @@
       },
       {
         "path": "tests/test_manager_review_bridge.py",
-        "size": 66841,
-        "sha256": "bb162e13140098dadbd18a9b2315cde63751b33dde36eb758d0852f7958ef4c3"
+        "size": 76538,
+        "sha256": "4649dcd12ec567bf1ad5f5861980817b84744a97e1f8fad0c2cd63a885d93553"
       },
       {
         "path": "tests/test_manifest_validator.py",
@@ -5714,8 +5904,8 @@
       },
       {
         "path": "tests/test_review_bridge.py",
-        "size": 30025,
-        "sha256": "2aa5346f3804c619248941c4e65f6fb675b0fecc0e5f0502ab5af3e3601aed7b"
+        "size": 30109,
+        "sha256": "36a375e163a1409b5866f11751e40ecb97f8f8244685207e979aa7bfa8368ca7"
       },
       {
         "path": "tests/test_review_cycle_e2e.py",
@@ -5749,8 +5939,8 @@
       },
       {
         "path": "tests/test_supervisor.py",
-        "size": 88941,
-        "sha256": "91099f2ff03ba279caa74630bebe250918f1c78895e530e4eafd8934ff9ef7dc"
+        "size": 115288,
+        "sha256": "a4cb57ba7846a2f129d6983575a47ab95e8e476215d77ea101fa8fa03826f15a"
       },
       {
         "path": "tests/test_ui_state.py",
@@ -5974,8 +6164,8 @@
       },
       {
         "path": "tests/unit/test_review_env.py",
-        "size": 4731,
-        "sha256": "9cb56c7881af3dbf2cba8e9fe7423456527257a44b278779cf04446041778abe"
+        "size": 4089,
+        "sha256": "a84beeb41bdf4fe5a01b21209e428c7bf101ee8a6b8dae34c385021f7bfd46c2"
       },
       {
         "path": "tests/unit/test_review_strategy_selection.py",
@@ -6038,6 +6228,11 @@
         "sha256": "c9c36f63b05832099b94e45dafeaa4da78df909d45bef3af934137c1563d2b29"
       },
       {
+        "path": "tests/unit/test_validate_observations.py",
+        "size": 13726,
+        "sha256": "f7ad228f325af39cee82bcffa4a6efdf2089cc97df74e9edfcf565345bd8da23"
+      },
+      {
         "path": "tests/unit/test_windows_safe_temp_runtime.py",
         "size": 1025,
         "sha256": "8da8964cea67ec97789a106682599ee542aa68934d9a7d4a3785c16da874bd97"
@@ -6055,14 +6250,14 @@
     ],
     "documentation": [
       {
-        "path": ".agent/collaboration/AUDIT_WP-2026-156.md",
-        "size": 1732,
-        "sha256": "1b44d77086f0cc4d2ff7b9ed9ee7a84f202bde97f87cc0f00479d69ec04d7f5e"
+        "path": ".agent/collaboration/AUDIT_WP-2026-159.md",
+        "size": 1523,
+        "sha256": "1a741f99406bd88791c254fa777071f3f1819e7add88afd0e160ea5884ca259b"
       },
       {
         "path": ".agent/collaboration/execution_log.md",
-        "size": 4159,
-        "sha256": "9ef97d6ea75eaf9717887a3f61b7c6b641596ecb7002f4d908cda4c14d70700d"
+        "size": 5886,
+        "sha256": "233260fdd2b3bd2dd8872844b37f2caafca773d5345620fa588928c0d1e72bd2"
       },
       {
         "path": ".agent/collaboration/manager_feedback_WP-2026-155.md",
@@ -6075,34 +6270,49 @@
         "sha256": "1678189f1d1425c464a67877972230a952e2f042fad585946e3daf05a8eab268"
       },
       {
-        "path": ".agent/collaboration/notifications.md",
-        "size": 4178,
-        "sha256": "c034648d5e7a931c571c83ca6d393db38f105d593a7939f96fda6d0348b901dd"
+        "path": ".agent/collaboration/manager_feedback_WP-2026-157.md",
+        "size": 318524,
+        "sha256": "830970ee24d43331377b6aab9481a447d1c47351f9014d6705d4f63bb891aa7b"
       },
       {
-        "path": ".agent/collaboration/PLAN_WP-2026-156.md",
-        "size": 6065,
-        "sha256": "91fc16d03a9b9aa778d1bfce93a1bab131aa9b2bd92877b5bb7865d11b1f7fd0"
+        "path": ".agent/collaboration/manager_feedback_WP-2026-158.md",
+        "size": 188760,
+        "sha256": "160521f120bd33d68143739f02353f925dbb4084e19c94c24b7d82520508fb0b"
+      },
+      {
+        "path": ".agent/collaboration/manager_feedback_WP-2026-159.md",
+        "size": 1387420,
+        "sha256": "31ea3abf0ed7124bbbc8615d73909fe020da08db2a44b8dbd6620b688d194cd8"
+      },
+      {
+        "path": ".agent/collaboration/notifications.md",
+        "size": 3757,
+        "sha256": "3f66298de8ab2d417fec40831dd7c325f870dc2fd60273b4837f004edbabc6fe"
+      },
+      {
+        "path": ".agent/collaboration/PLAN_WP-2026-159.md",
+        "size": 6599,
+        "sha256": "11534d7124cae6e475700cf87538484c5f1e63a9475181313911063c850479f7"
       },
       {
         "path": ".agent/collaboration/review_queue.md",
-        "size": 3996311,
-        "sha256": "57b756c7f0abbccde4e59c5c397acb88427582427add63f4f433fc3764918900"
+        "size": 5213217,
+        "sha256": "4325b6a5914bc41d56fc1419c14af04401eb20361b047c6f0f6d96e94a38cc6b"
       },
       {
         "path": ".agent/collaboration/STATE.md",
-        "size": 52,
-        "sha256": "1f07a2459016c85d947e84eeaceeb56c7d62787ff37d66dcfcc0dc0b31ea371c"
+        "size": 53,
+        "sha256": "38302c902afb32e4ad9047933a5693a91b77a9769d8346c1f115568c728e3b27"
       },
       {
         "path": ".agent/collaboration/TURN.md",
-        "size": 674,
-        "sha256": "e94521d4a71d9e19d9569c6c626f9fb3183297b1b4559d90a41fe66773292270"
+        "size": 663,
+        "sha256": "d47400c541435c4fd081e9501a91a9239d5973a0cf47b1ba05f99f7dd8818367"
       },
       {
         "path": ".agent/collaboration/work_plan.md",
-        "size": 4403,
-        "sha256": "96dd09801cb6863df8769ba1f9df0f8a3424ab144ef541434acac1d9c10f2ca9"
+        "size": 6599,
+        "sha256": "11534d7124cae6e475700cf87538484c5f1e63a9475181313911063c850479f7"
       },
       {
         "path": ".agent/context/project_map.md",
@@ -6117,12 +6327,17 @@
       {
         "path": ".agent/runtime/builder_lock.txt",
         "size": 264,
-        "sha256": "61fec8f39f303a2e448e8ebb1636625ef223c36ceae748d10c1dd2fef12f0f2b"
+        "sha256": "773ab57dcbae05f6a01bb3386591233eb48df3732378f1fd42bf57bb061d0834"
       },
       {
         "path": ".agent/runtime/compare/affaan-m-ECC-928076cc-2026-05-27.md",
         "size": 6945,
         "sha256": "5329a7b65a93868174d2373467da968cadcb7fee01ab6ae9831e61617f47e718"
+      },
+      {
+        "path": ".agent/runtime/compare/cc-switch-awesome-harness-reviewdog-2026-05-28.md",
+        "size": 3183,
+        "sha256": "7be1a84287721ea9ec5017db2de0db0ec5d9c2e830c134584aa7a2cb17217be9"
       },
       {
         "path": ".agent/runtime/compare/openclaw-agent-skills-7b6ca5b2078af2746d1c4424fe90211901b997ae-2026-05-27.md",
@@ -6271,13 +6486,13 @@
       },
       {
         "path": ".opencode/agents/manager.md",
-        "size": 2339,
-        "sha256": "337fda32002f940908b81dbbeb69937522f1ecd6ab300958812385e64283c926"
+        "size": 2323,
+        "sha256": "b53935555a89b44daa91e066d1c7618d42ef2fe954b5bb18f3ddf23328479ca4"
       },
       {
         "path": ".opencode/MODELS.md",
-        "size": 4324,
-        "sha256": "d93a872769bdbbbbd7953accdfaecf1f8772ce4cac8c3367010171b34db0d3ef"
+        "size": 4438,
+        "sha256": "896e9d1647f78c0f0802b7b313616de80816dcd659498b8266b030aea8d59f04"
       },
       {
         "path": "AGENT_SECURITY.md",
@@ -6431,18 +6646,18 @@
       },
       {
         "path": "skills/_shared/anti-patterns.md",
-        "size": 2850,
-        "sha256": "019bc414d386185769aba31c50ac22976e59b0db4e79e22c1d3dcc4d68c09e3f"
+        "size": 2915,
+        "sha256": "06ac532eac1077fbf76e0f9f25ace50bd439bc820fa91ee8c43798c584b9d768"
       },
       {
         "path": "skills/_shared/ap-schema.md",
-        "size": 2283,
-        "sha256": "28cf9a1079042823cdf0f4c7358e83ddd15e18a93dbe7acee22e32cb007178b1"
+        "size": 3071,
+        "sha256": "23e4766f5955ceba3c241bd6f017af756c2d4cb79c1071c754779fb576d2befe"
       },
       {
         "path": "skills/bui-implement-from-plan/references/code-rules.md",
-        "size": 11680,
-        "sha256": "081f3bad5363013eba767d2958e20ef98183ea74890095e0de8e8c8edbc67a9b"
+        "size": 12385,
+        "sha256": "b871c6d06c258302c2d3b72bc52c74c44a9fb46dfaa4042ed1b158f84b78526d"
       },
       {
         "path": "skills/bui-implement-from-plan/references/log-format.md",
@@ -6505,6 +6720,16 @@
         "sha256": "d2f883f75e49c65650da73dec19aeee8283cfffb141cb482923e2e6ea129d2a8"
       },
       {
+        "path": "skills/deep-research/references/research-template.md",
+        "size": 3372,
+        "sha256": "8f004a30e7734f52a41280633d2691ca68b08ed5cb6c7cf962acba04be2761a6"
+      },
+      {
+        "path": "skills/deep-research/SKILL.md",
+        "size": 4278,
+        "sha256": "270c6983313f53677ef82da98a4b9d942ab60f58a89feac59195cc6aba62ecf6"
+      },
+      {
         "path": "skills/graphify/SKILL.md",
         "size": 5516,
         "sha256": "066d7307f37f0858967c3c1c30269810a228606893ddee3573d935cd164a25bb"
@@ -6546,8 +6771,8 @@
       },
       {
         "path": "skills/man-review-implementation/references/review-checklist.md",
-        "size": 3429,
-        "sha256": "f3eb4f853a6435c3d2a7c96bc0a0b5c2343de90ced306b27db8d9a76bb23f2d0"
+        "size": 3647,
+        "sha256": "15b9122e9891975b508a00f67f591af5288a9d4b56064bdc09a286c0e74998d4"
       },
       {
         "path": "skills/man-review-implementation/references/verdict-format.md",
@@ -6586,8 +6811,8 @@
       },
       {
         "path": "skills/README.md",
-        "size": 6715,
-        "sha256": "2a13134e612d9a1ba99692b52c8abd3385ceaa29896f3902acacc5d553bc4ba1"
+        "size": 6882,
+        "sha256": "c32a818e8a8a881607df30635915ee4ded38d25a69f4a35473c1762ace0bfca3"
       },
       {
         "path": "skills/refactor-manager/EXECUTION_PROMPT.md",
@@ -12055,6 +12280,426 @@
         "sha256": "fe32608c9ef5b6cf7e3f946480253ff76f24f4ec0678f3d0f07f9844cbff9601"
       },
       {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_bootstrap_bus_precedence_over_turn_divergence0042/.agent/collaboration/TURN.md",
+        "size": 191,
+        "sha256": "3feccd6e55c62ab372b7d6a253230babf0d79aec9607bc6a062acf0914e59eca"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_bootstrap_bus_precedence_over_turn_divergence0042/.agent/runtime/supervisor_lock.txt",
+        "size": 94,
+        "sha256": "e1a228a33b0ac411de86b80bdced6e3b9541eff4128f9343faa6818ad91c283f"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_bootstrap_bus_requeue_repeated_changes0043/.agent/collaboration/TURN.md",
+        "size": 140,
+        "sha256": "fa0e7bf3e28aef0cf9b59b9969009acb7f82bc16108e9d4a94bb4ae5e546e4c5"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_bootstrap_bus_requeue_repeated_changes0043/.agent/runtime/supervisor_lock.txt",
+        "size": 94,
+        "sha256": "d814cf893036ccb0a0b90b1ccee3ca20516a77e00772a7e45ea80aaf8d5ea93c"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_bootstrap_fallback_to_turn_when_bus_has_no_active0044/.agent/collaboration/TURN.md",
+        "size": 140,
+        "sha256": "c00546f0e3c0b0197420c126f81f8a68ea1ffbf624b71ab53417c0ccc812f354"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_bootstrap_fallback_to_turn_when_bus_has_no_active0044/.agent/runtime/supervisor_lock.txt",
+        "size": 94,
+        "sha256": "e88878443b62de4eac138d961581e6ff71f4d25f847863b5d431c3ac67ed7541"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_bootstrap_reconciled_deduplication0064/.agent/collaboration/TURN.md",
+        "size": 140,
+        "sha256": "560b714341871559d874c08e1974c71fb55839555bf4483e1f170e4002780584"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_bootstrap_reconciled_different_pair_emits0065/.agent/collaboration/TURN.md",
+        "size": 140,
+        "sha256": "5bf5617d17edfb14a69d748da8085557c2e259fc0f898c226bd995129f77156b"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_bootstrap_reconciles_active_ticket_none_when_bus_terminal0058/.agent/collaboration/execution_log.md",
+        "size": 86,
+        "sha256": "42e7bd8a7c9335630c74a36df49bc9597a04cd6f6e7f957047cbce6b79b07446"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_bootstrap_reconciles_active_ticket_none_when_bus_terminal0058/.agent/runtime/supervisor_lock.txt",
+        "size": 103,
+        "sha256": "6965da9a1cd48aed5fa30b8f13061566c046913b9766b454d674e0ac3d943776"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_bootstrap_reconciles_last_processed_sequence_with_bus0054/.agent/runtime/supervisor_lock.txt",
+        "size": 103,
+        "sha256": "64a1f7358f2cbb3bc666a8ce6d2ee3314cee5f9f15d0a8e73bc28ef90762891b"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_bootstrap_reconciles_loop_round_from_bus0055/.agent/runtime/supervisor_lock.txt",
+        "size": 103,
+        "sha256": "8cc7854346944a72529464c6cb47b8f99fc6fef445c0fe14c8cab78eaf262cc3"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_bootstrap_recovery0023/.agent/collaboration/TURN.md",
+        "size": 327,
+        "sha256": "e78a93cd0ff404985b801e4af2ce5410e7a3dfc7401ba823f6fa7662f6b323d5"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_bootstrap_recovery0023/.agent/runtime/supervisor_lock.txt",
+        "size": 94,
+        "sha256": "d3b8a9098f0f8cf7628710f50edea91d7325107c3e9ce17288a72e99cff4e313"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_builder_alive_bus_only_no_pid_fallback0045/.agent/runtime/builder_lock.txt",
+        "size": 299,
+        "sha256": "e7e70156260e4bdfa08535b19d76f4606a7be6433409bd4452c4bb0e2adb94ed"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_builder_alive_fallback_mtime0034/.agent/runtime/builder_lock.txt",
+        "size": 24,
+        "sha256": "ef655f6b1b67c0c7168ffbe740cf8b8f4b34de97db37c2e8f13be7f17f7101e3"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_builder_alive_mtime_fallback_only0046/.agent/runtime/builder_lock.txt",
+        "size": 89,
+        "sha256": "f7f02d32f9ffe568fbb5b713a4b8a54b881788e21ff7da4acc0c68dc5d8ad616"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_builder_alive_pid_dead0032/.agent/runtime/builder_lock.txt",
+        "size": 39,
+        "sha256": "07cd5ed22fdd3f1ab6a10c2f4da7538ddd55ad831c65a2cba555bc768d5f16f2"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_builder_alive_pid_exists0031/.agent/runtime/builder_lock.txt",
+        "size": 245,
+        "sha256": "448ab4a1b865213ed64d9f63f40b11c4263d336cb23f28e4cab59b7cfb17603d"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_builder_alive_requeues_when_exited_with_alive_pid0038/.agent/runtime/builder_lock.txt",
+        "size": 310,
+        "sha256": "0f5ad3e4e9b339f83ddb39f81dd8b4fd10f717838539ec8803ec4d1f8f52e56b"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_builder_alive_stale_lock_no_exit_event0047/.agent/runtime/builder_lock.txt",
+        "size": 39,
+        "sha256": "07cd5ed22fdd3f1ab6a10c2f4da7538ddd55ad831c65a2cba555bc768d5f16f2"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_builder_alive_wrapper_pid_dead_builder0049/.agent/runtime/builder_lock.txt",
+        "size": 299,
+        "sha256": "457cd8a9f49a0434b63a19100528eb41f95d67fb2258e4409b2f0971a133beba"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_can_builder_act_blocks_during_review0020/.agent/collaboration/execution_log.md",
+        "size": 254,
+        "sha256": "35ced66a5eaedae4703aade3f4c4fc37dcfeffe8e74b5d42b77ad1acc7391b62"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_can_builder_act_blocks_during_review0020/.agent/collaboration/work_plan.md",
+        "size": 223,
+        "sha256": "bccbc5a3f89d6967264eadad3d78fcf4d45e1bedf2084e46c7ab1aff99b0ed34"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_execution_log_status_reads_correct_ticket0024/.agent/collaboration/execution_log.md",
+        "size": 284,
+        "sha256": "04d3cb18dc444d226bacaed299cdb517af6e2e231b4373b62a1ff206869706ab"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_file_without_frontmatter_skipped0082/skills/broken/SKILL.md",
+        "size": 23,
+        "sha256": "c06459b620dfec6ba01d7a5102fc843793ea9da5b6f33ac60be2e81eb431fb6b"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_host_and_bundle_trigger_collision_detected0083/.agent/skills/host-skill/SKILL.md",
+        "size": 89,
+        "sha256": "67cfed277961758581fba5117019e504a4b85623da2fc4587dbf7db68ae7ef3c"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_host_and_bundle_trigger_collision_detected0083/skills/bundle-skill/SKILL.md",
+        "size": 93,
+        "sha256": "ea0a841e0b8e20f5ab2d51ebd46aa11ff061d5d6eaf30c4ff003e4f43e274e01"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_name_collision_detected0081/skills/a/SKILL.md",
+        "size": 76,
+        "sha256": "7a86b146e126c17754742f3feb62be61927e2f512d102d1e7fe9b3246db5fd7a"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_name_collision_detected0081/skills/b/SKILL.md",
+        "size": 76,
+        "sha256": "c8e41f6b59cfc12e554e1ef9900b04dd3c8f02d5bc3b9c793cbc02c54e70229e"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_no_collisions0079/skills/a/SKILL.md",
+        "size": 77,
+        "sha256": "f2b8b03155a89ca418bd081b178fa33bd4cfc74f8b94db1a2c3cb44361e14bf7"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_no_collisions0079/skills/b/SKILL.md",
+        "size": 77,
+        "sha256": "047e02e0c28f4fbb9aee520d6a679062761b94462d571b64bc6d1b6b22a7978c"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_read_file_existing_path0068/test.txt",
+        "size": 12,
+        "sha256": "6ae8a75555209fd6c44157c0aed8016e763ff435a19cf186f76863140143ff72"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_recover_active_ticket_from_turn0021/.agent/collaboration/TURN.md",
+        "size": 327,
+        "sha256": "e78a93cd0ff404985b801e4af2ce5410e7a3dfc7401ba823f6fa7662f6b323d5"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_run_reactive_uses_idle_timeout_reset0027/.agent/collaboration/execution_log.md",
+        "size": 254,
+        "sha256": "35ced66a5eaedae4703aade3f4c4fc37dcfeffe8e74b5d42b77ad1acc7391b62"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_run_reactive_uses_idle_timeout_reset0027/.agent/collaboration/TURN.md",
+        "size": 327,
+        "sha256": "3eef31da7837a5858f270cba8c5854be497bf2fce90be77b380ebec51ff8c125"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_run_reactive_uses_idle_timeout_reset0027/.agent/collaboration/work_plan.md",
+        "size": 223,
+        "sha256": "bccbc5a3f89d6967264eadad3d78fcf4d45e1bedf2084e46c7ab1aff99b0ed34"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_state_machine_e2e_flow0019/.agent/collaboration/execution_log.md",
+        "size": 254,
+        "sha256": "35ced66a5eaedae4703aade3f4c4fc37dcfeffe8e74b5d42b77ad1acc7391b62"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_state_machine_e2e_flow0019/.agent/collaboration/TURN.md",
+        "size": 327,
+        "sha256": "3eef31da7837a5858f270cba8c5854be497bf2fce90be77b380ebec51ff8c125"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_state_machine_e2e_flow0019/.agent/collaboration/work_plan.md",
+        "size": 633,
+        "sha256": "35bf4a7c15b6c22afded991b881a55edb7aad837e07d0a4a10f388b5379fd67a"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_advances_on_review_turn0013/.agent/collaboration/execution_log.md",
+        "size": 254,
+        "sha256": "35ced66a5eaedae4703aade3f4c4fc37dcfeffe8e74b5d42b77ad1acc7391b62"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_advances_on_review_turn0013/.agent/collaboration/TURN.md",
+        "size": 327,
+        "sha256": "3eef31da7837a5858f270cba8c5854be497bf2fce90be77b380ebec51ff8c125"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_advances_on_review_turn0013/.agent/collaboration/work_plan.md",
+        "size": 633,
+        "sha256": "35bf4a7c15b6c22afded991b881a55edb7aad837e07d0a4a10f388b5379fd67a"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_blocks_close_without_quality_gates0014/.agent/collaboration/execution_log.md",
+        "size": 163,
+        "sha256": "b17b44c509344debb7fe67c80f5d6b556b1c4b9fead864837b9cd5373d93525a"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_blocks_close_without_quality_gates0014/.agent/collaboration/TURN.md",
+        "size": 334,
+        "sha256": "a92aa98c42265d1809743b9f51677f9e20c9ea085e473bfc3489691e9a61519f"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_blocks_close_without_quality_gates0014/.agent/collaboration/work_plan.md",
+        "size": 633,
+        "sha256": "35bf4a7c15b6c22afded991b881a55edb7aad837e07d0a4a10f388b5379fd67a"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_bootstrap_does_not_skip_ready_for_review_to_completed0015/.agent/collaboration/execution_log.md",
+        "size": 263,
+        "sha256": "341b2b19af9fbba2d7b61ac4ae5aef75269d65626223320f45a0537a2ec622fc"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_bootstrap_does_not_skip_ready_for_review_to_completed0015/.agent/collaboration/TURN.md",
+        "size": 318,
+        "sha256": "b855bc1040359ebb9bf9464f69b4c67605b8b6bdd1e21af4ac4ad241f5175169"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_bootstrap_does_not_skip_ready_for_review_to_completed0015/.agent/collaboration/work_plan.md",
+        "size": 633,
+        "sha256": "35bf4a7c15b6c22afded991b881a55edb7aad837e07d0a4a10f388b5379fd67a"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_bootstrap_does_not_skip_ready_for_review_to_completed0015/.agent/runtime/supervisor_lock.txt",
+        "size": 103,
+        "sha256": "8c72ffb36d4c67381197617bbaa17b39c76f97efc4a9565988d52cfcc88362bd"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_bootstrap_emits_reconciled_only_for_stale_state0029/.agent/collaboration/execution_log.md",
+        "size": 254,
+        "sha256": "35ced66a5eaedae4703aade3f4c4fc37dcfeffe8e74b5d42b77ad1acc7391b62"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_bootstrap_emits_reconciled_only_for_stale_state0029/.agent/collaboration/TURN.md",
+        "size": 327,
+        "sha256": "7a8630e83f054c6197da78cfc00d4010cc97b3fc2a3beb031624e2517d9c50e2"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_bootstrap_emits_reconciled_only_for_stale_state0029/.agent/collaboration/work_plan.md",
+        "size": 223,
+        "sha256": "bccbc5a3f89d6967264eadad3d78fcf4d45e1bedf2084e46c7ab1aff99b0ed34"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_bootstrap_emits_reconciled_only_for_stale_state0029/.agent/runtime/supervisor_lock.txt",
+        "size": 94,
+        "sha256": "ec93978f0e7452d39605cde02bcb9cff04452033c928c0a0b07e54a0095f81b7"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_bootstrap_reconciles_stale_state_with_work_plan0028/.agent/collaboration/execution_log.md",
+        "size": 254,
+        "sha256": "35ced66a5eaedae4703aade3f4c4fc37dcfeffe8e74b5d42b77ad1acc7391b62"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_bootstrap_reconciles_stale_state_with_work_plan0028/.agent/collaboration/TURN.md",
+        "size": 327,
+        "sha256": "243e5b6926211777b9d18da74adaf9f2c52d927cdd070e0cb2593fa59fb44bfd"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_bootstrap_reconciles_stale_state_with_work_plan0028/.agent/collaboration/work_plan.md",
+        "size": 223,
+        "sha256": "bccbc5a3f89d6967264eadad3d78fcf4d45e1bedf2084e46c7ab1aff99b0ed34"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_bootstrap_reconciles_stale_state_with_work_plan0028/.agent/runtime/supervisor_lock.txt",
+        "size": 103,
+        "sha256": "de5e052dc0ed5672b7c1dc044cf928c2230f1cd97e851e04122d7d32e140b8d0"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_does_not_promote_ready_for_review_from_execution_log0018/.agent/collaboration/execution_log.md",
+        "size": 197,
+        "sha256": "eeadc01c1506a4e63428a69f57ab7df80ebf1488fa612c2642eca000893804e6"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_does_not_promote_ready_for_review_from_execution_log0018/.agent/collaboration/TURN.md",
+        "size": 332,
+        "sha256": "9f9aa32bec439e496fdb3a6d378089ccbde84d313eda0e4551b3d492de4010b7"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_does_not_promote_ready_for_review_from_execution_log0018/.agent/collaboration/work_plan.md",
+        "size": 223,
+        "sha256": "bccbc5a3f89d6967264eadad3d78fcf4d45e1bedf2084e46c7ab1aff99b0ed34"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_does_not_promote_ready_for_review_from_execution_log0018/.agent/runtime/supervisor_lock.txt",
+        "size": 103,
+        "sha256": "8eb0e7b4109c570e3e4f5dd29036b16dc1407394df5655ea29c3a141846aa812"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_preserves_loop_round_after_changes0025/.agent/collaboration/execution_log.md",
+        "size": 254,
+        "sha256": "35ced66a5eaedae4703aade3f4c4fc37dcfeffe8e74b5d42b77ad1acc7391b62"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_preserves_loop_round_after_changes0025/.agent/collaboration/TURN.md",
+        "size": 332,
+        "sha256": "85adf69f83825522b62f280b704c673fca2b8cb07738a09518ccedd856f6240c"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_preserves_loop_round_after_changes0025/.agent/collaboration/work_plan.md",
+        "size": 223,
+        "sha256": "bccbc5a3f89d6967264eadad3d78fcf4d45e1bedf2084e46c7ab1aff99b0ed34"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_processes_state_changed_events0017/.agent/collaboration/execution_log.md",
+        "size": 254,
+        "sha256": "35ced66a5eaedae4703aade3f4c4fc37dcfeffe8e74b5d42b77ad1acc7391b62"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_processes_state_changed_events0017/.agent/collaboration/TURN.md",
+        "size": 327,
+        "sha256": "3eef31da7837a5858f270cba8c5854be497bf2fce90be77b380ebec51ff8c125"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_processes_state_changed_events0017/.agent/collaboration/work_plan.md",
+        "size": 223,
+        "sha256": "bccbc5a3f89d6967264eadad3d78fcf4d45e1bedf2084e46c7ab1aff99b0ed34"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_seeds_missing_queue_entries0012/.agent/collaboration/execution_log.md",
+        "size": 254,
+        "sha256": "35ced66a5eaedae4703aade3f4c4fc37dcfeffe8e74b5d42b77ad1acc7391b62"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_seeds_missing_queue_entries0012/.agent/collaboration/TURN.md",
+        "size": 327,
+        "sha256": "3eef31da7837a5858f270cba8c5854be497bf2fce90be77b380ebec51ff8c125"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_seeds_missing_queue_entries0012/.agent/collaboration/work_plan.md",
+        "size": 633,
+        "sha256": "35bf4a7c15b6c22afded991b881a55edb7aad837e07d0a4a10f388b5379fd67a"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_skips_relaunch_on_human_gate0026/.agent/collaboration/execution_log.md",
+        "size": 254,
+        "sha256": "35ced66a5eaedae4703aade3f4c4fc37dcfeffe8e74b5d42b77ad1acc7391b62"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_skips_relaunch_on_human_gate0026/.agent/collaboration/TURN.md",
+        "size": 332,
+        "sha256": "85adf69f83825522b62f280b704c673fca2b8cb07738a09518ccedd856f6240c"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_skips_relaunch_on_human_gate0026/.agent/collaboration/work_plan.md",
+        "size": 223,
+        "sha256": "bccbc5a3f89d6967264eadad3d78fcf4d45e1bedf2084e46c7ab1aff99b0ed34"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_state_reconciliation_e2e0059/.agent/runtime/supervisor_lock.txt",
+        "size": 103,
+        "sha256": "249e4d457ec795d561c70b5f7ce3f40a625af64ff4b54689f86ee1819b125e43"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_tracks_processed_events0016/.agent/collaboration/execution_log.md",
+        "size": 254,
+        "sha256": "35ced66a5eaedae4703aade3f4c4fc37dcfeffe8e74b5d42b77ad1acc7391b62"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_tracks_processed_events0016/.agent/collaboration/TURN.md",
+        "size": 327,
+        "sha256": "3eef31da7837a5858f270cba8c5854be497bf2fce90be77b380ebec51ff8c125"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_supervisor_tracks_processed_events0016/.agent/collaboration/work_plan.md",
+        "size": 223,
+        "sha256": "bccbc5a3f89d6967264eadad3d78fcf4d45e1bedf2084e46c7ab1aff99b0ed34"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_trigger_collision_detected0080/skills/a/SKILL.md",
+        "size": 90,
+        "sha256": "96df8ad046c3997b5c0408b6b9cd18a641d228c8c2744885696883b46f2752db"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_trigger_collision_detected0080/skills/b/SKILL.md",
+        "size": 85,
+        "sha256": "79a6db9a704a4b6655e7c27c4e392c5ec02b51fe479bcf5087af7d69977cfb85"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_watcher_detects_turn_changes0002/.agent/collaboration/TURN.md",
+        "size": 334,
+        "sha256": "fc868032ddc51171029494d477e80887cf7291556bed0e0333578317464e8b2b"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_write_file_creates_new0070/new.txt",
+        "size": 11,
+        "sha256": "fe32608c9ef5b6cf7e3f946480253ff76f24f4ec0678f3d0f07f9844cbff9601"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_write_file_creates_parent_dirs0072/subdir/nested/file.txt",
+        "size": 14,
+        "sha256": "b509163964e822915ea7e822759ecae39dd696626e70b74b96de6ac7396415d0"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_write_file_overwrites_existing0071/existing.txt",
+        "size": 11,
+        "sha256": "fe32608c9ef5b6cf7e3f946480253ff76f24f4ec0678f3d0f07f9844cbff9601"
+      },
+      {
         "path": "tests/sandbox/test_runtime/session_8612/factory/test_detect_requirements0003/requirements.txt",
         "size": 36,
         "sha256": "3c38dd4f304990f41a7d53a8b685b7a8dc1214a1c73a870f608156b0dcfcd4e3"
@@ -12567,6 +13212,96 @@
         "sha256": "e67c6ed1a1597dab2d9387d08066c8550cd48f194a3318a0b5de6841062b4cf3"
       },
       {
+        "path": ".tmp/opencode-smoke/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/config",
+        "size": 259,
+        "sha256": "aabbb6ae6e0aac79fd86b0fd278931d357bcaa95f1de33bbe10c6014ae727558"
+      },
+      {
+        "path": ".tmp/opencode-smoke/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/description",
+        "size": 73,
+        "sha256": "85ab6c163d43a17ea9cf7788308bca1466f1b0a8d1cc92e26e9bf63da4062aee"
+      },
+      {
+        "path": ".tmp/opencode-smoke/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/HEAD",
+        "size": 21,
+        "sha256": "28d25bf82af4c0e2b72f50959b2beb859e3e60b9630a5e8c603dad4ddb2b6e80"
+      },
+      {
+        "path": ".tmp/opencode-smoke/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/index",
+        "size": 48340,
+        "sha256": "0e6276255e3e927bb95097c44d1e9d45b4b30f29c147b46436cbe40cc9061707"
+      },
+      {
+        "path": ".tmp/opencode-smoke/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/info/exclude",
+        "size": 278,
+        "sha256": "350e62e704bc803a04ba9738c2be6906e5878a3aa5596881ac537addb92f7a7d"
+      },
+      {
+        "path": ".tmp/opencode-smoke/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/info/refs",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": ".tmp/opencode-smoke/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/objects/info/packs",
+        "size": 54,
+        "sha256": "18e8b31648a27a2ad83da8bd889f4adad926c6829721396990024b67a40a4a03"
+      },
+      {
+        "path": ".tmp/opencode-smoke/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/packed-refs",
+        "size": 46,
+        "sha256": "6110899c7adc374885f9552bddfb76fa28a7f7ca3c05fb8b74471a457e1e57c8"
+      },
+      {
+        "path": ".tmp/opencode-smoke/.local/share/opencode/storage/migration",
+        "size": 1,
+        "sha256": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35"
+      },
+      {
+        "path": ".tmp/opencode-smoke-manager/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/config",
+        "size": 259,
+        "sha256": "aabbb6ae6e0aac79fd86b0fd278931d357bcaa95f1de33bbe10c6014ae727558"
+      },
+      {
+        "path": ".tmp/opencode-smoke-manager/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/description",
+        "size": 73,
+        "sha256": "85ab6c163d43a17ea9cf7788308bca1466f1b0a8d1cc92e26e9bf63da4062aee"
+      },
+      {
+        "path": ".tmp/opencode-smoke-manager/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/HEAD",
+        "size": 21,
+        "sha256": "28d25bf82af4c0e2b72f50959b2beb859e3e60b9630a5e8c603dad4ddb2b6e80"
+      },
+      {
+        "path": ".tmp/opencode-smoke-manager/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/index",
+        "size": 48340,
+        "sha256": "0e6276255e3e927bb95097c44d1e9d45b4b30f29c147b46436cbe40cc9061707"
+      },
+      {
+        "path": ".tmp/opencode-smoke-manager/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/info/exclude",
+        "size": 278,
+        "sha256": "350e62e704bc803a04ba9738c2be6906e5878a3aa5596881ac537addb92f7a7d"
+      },
+      {
+        "path": ".tmp/opencode-smoke-manager/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/info/refs",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": ".tmp/opencode-smoke-manager/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/objects/info/packs",
+        "size": 54,
+        "sha256": "18e8b31648a27a2ad83da8bd889f4adad926c6829721396990024b67a40a4a03"
+      },
+      {
+        "path": ".tmp/opencode-smoke-manager/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/packed-refs",
+        "size": 46,
+        "sha256": "6110899c7adc374885f9552bddfb76fa28a7f7ca3c05fb8b74471a457e1e57c8"
+      },
+      {
+        "path": ".tmp/opencode-smoke-manager/.local/share/opencode/storage/migration",
+        "size": 1,
+        "sha256": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35"
+      },
+      {
         "path": "skills/bui-self-audit/references/.gitkeep",
         "size": 0,
         "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -12575,6 +13310,11 @@
         "path": "skills/bui-write-deliverable/references/.gitkeep",
         "size": 55,
         "sha256": "d6d033e1ee7ef35f71addc19c7b217532c5cc1c885c0e0779197fb591b4427c9"
+      },
+      {
+        "path": "skills/deep-research/references/.gitkeep",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       {
         "path": "skills/graphify/references/.gitkeep",
@@ -24179,6 +24919,11 @@
         "sha256": "7a3fce234aa3a0bc788fd271b7ed5b233cd8a0e4fa9622896a52a424d4f906bf"
       },
       {
+        "path": "tests/sandbox/test_runtime/session_3468/factory/test_relaunch_uses_resume_flag0035/scripts/launch_agent_terminals.ps1",
+        "size": 15,
+        "sha256": "7a3fce234aa3a0bc788fd271b7ed5b233cd8a0e4fa9622896a52a424d4f906bf"
+      },
+      {
         "path": "validate_template.bat",
         "size": 2027,
         "sha256": "059a8b7732ca1f9ddadf6adb67d302abbe931ed471f74716a945317d4cc0d6bf"
@@ -25640,19 +26385,14 @@
             "package": "time"
           },
           {
-            "name": "os",
+            "name": "subprocess",
             "type": "stdlib",
-            "package": "os"
+            "package": "subprocess"
           },
           {
             "name": "shutil",
             "type": "stdlib",
             "package": "shutil"
-          },
-          {
-            "name": "subprocess",
-            "type": "stdlib",
-            "package": "subprocess"
           },
           {
             "name": "sys",
@@ -27647,6 +28387,51 @@
         ],
         "error": null
       },
+      "scripts/validate_observations.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "re",
+            "type": "stdlib",
+            "package": "re"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "datetime.datetime",
+            "type": "stdlib",
+            "package": "datetime"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "typing.Any",
+            "type": "stdlib",
+            "package": "typing"
+          },
+          {
+            "name": "argparse",
+            "type": "stdlib",
+            "package": "argparse"
+          }
+        ],
+        "error": null
+      },
       "skills/refactor-manager/goose_integration.py": {
         "imports": [
           {
@@ -27793,6 +28578,221 @@
             "name": "pathlib.Path",
             "type": "stdlib",
             "package": "pathlib"
+          }
+        ],
+        "error": null
+      },
+      "tests/evals/test_eval_guard_paths.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "importlib.util",
+            "type": "stdlib",
+            "package": "importlib"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "pytest",
+            "type": "external",
+            "package": "pytest"
+          }
+        ],
+        "error": null
+      },
+      "tests/evals/test_eval_requeue.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "pytest",
+            "type": "external",
+            "package": "pytest"
+          },
+          {
+            "name": "bus.event_bus.EventBus",
+            "type": "local",
+            "path": "bus/event_bus.py"
+          },
+          {
+            "name": "bus.state_machine.StateMachine",
+            "type": "local",
+            "path": "bus/state_machine.py"
+          },
+          {
+            "name": "bus.state_machine.TicketState",
+            "type": "local",
+            "path": "bus/state_machine.py"
+          },
+          {
+            "name": "bus.supervisor.SequentialTicketSupervisor",
+            "type": "local",
+            "path": "bus/supervisor.py"
+          },
+          {
+            "name": "bus.supervisor.SupervisorState",
+            "type": "local",
+            "path": "bus/supervisor.py"
+          },
+          {
+            "name": "bus.supervisor.NON_TERMINAL_STATES",
+            "type": "local",
+            "path": "bus/supervisor.py"
+          },
+          {
+            "name": "bus.supervisor.RELAUNCH_BLOCKED_STATES",
+            "type": "local",
+            "path": "bus/supervisor.py"
+          },
+          {
+            "name": "bus.state_machine.StateMachine",
+            "type": "local",
+            "path": "bus/state_machine.py"
+          },
+          {
+            "name": "bus.state_machine.TicketState",
+            "type": "local",
+            "path": "bus/state_machine.py"
+          },
+          {
+            "name": "bus.exceptions.ConcurrentStateError",
+            "type": "local",
+            "path": "bus/exceptions.py"
+          }
+        ],
+        "error": null
+      },
+      "tests/evals/test_eval_review_bridge.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "unittest.mock.patch",
+            "type": "stdlib",
+            "package": "unittest"
+          },
+          {
+            "name": "pytest",
+            "type": "external",
+            "package": "pytest"
+          },
+          {
+            "name": "bus.event_bus.EventBus",
+            "type": "local",
+            "path": "bus/event_bus.py"
+          },
+          {
+            "name": "bus.review_bridge.ReviewBridge",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.TicketContext",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          }
+        ],
+        "error": null
+      },
+      "tests/evals/test_eval_scope_gate.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "pytest",
+            "type": "external",
+            "package": "pytest"
+          },
+          {
+            "name": "agent_controller.parse_files_likely_touched",
+            "type": "external",
+            "package": "agent_controller"
+          },
+          {
+            "name": "agent_controller.parse_files_likely_touched",
+            "type": "external",
+            "package": "agent_controller"
+          },
+          {
+            "name": "agent_controller.parse_files_likely_touched",
+            "type": "external",
+            "package": "agent_controller"
+          },
+          {
+            "name": "agent_controller.parse_files_likely_touched",
+            "type": "external",
+            "package": "agent_controller"
+          },
+          {
+            "name": "agent_controller.check_scope_gate",
+            "type": "external",
+            "package": "agent_controller"
+          },
+          {
+            "name": "agent_controller.check_scope_gate",
+            "type": "external",
+            "package": "agent_controller"
+          },
+          {
+            "name": "agent_controller.check_scope_gate",
+            "type": "external",
+            "package": "agent_controller"
+          },
+          {
+            "name": "agent_controller.check_scope_gate",
+            "type": "external",
+            "package": "agent_controller"
+          },
+          {
+            "name": "agent_controller.check_scope_gate",
+            "type": "external",
+            "package": "agent_controller"
+          },
+          {
+            "name": "agent_controller.check_scope_gate",
+            "type": "external",
+            "package": "agent_controller"
+          },
+          {
+            "name": "agent_controller.check_scope_gate",
+            "type": "external",
+            "package": "agent_controller"
           }
         ],
         "error": null
@@ -29657,6 +30657,21 @@
             "path": "bus/review_bridge.py"
           },
           {
+            "name": "bus.review_bridge.EventBus",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.ReviewBridge",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.ReviewDecision",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
             "name": "subprocess",
             "type": "stdlib",
             "package": "subprocess"
@@ -29903,6 +30918,76 @@
           },
           {
             "name": "bus.review_bridge",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.EventBus",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.ReviewBridge",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.EventBus",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.ReviewBridge",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.EventBus",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.ReviewBridge",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.EventBus",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.ReviewBridge",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.EventBus",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.ReviewBridge",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.EventBus",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.ReviewBridge",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.EventBus",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.ReviewBridge",
             "type": "local",
             "path": "bus/review_bridge.py"
           },
@@ -31320,6 +32405,91 @@
             "name": "contextlib",
             "type": "stdlib",
             "package": "contextlib"
+          },
+          {
+            "name": "subprocess",
+            "type": "stdlib",
+            "package": "subprocess"
+          },
+          {
+            "name": "bus.supervisor.SequentialTicketSupervisor",
+            "type": "local",
+            "path": "bus/supervisor.py"
+          },
+          {
+            "name": "subprocess",
+            "type": "stdlib",
+            "package": "subprocess"
+          },
+          {
+            "name": "bus.supervisor.SequentialTicketSupervisor",
+            "type": "local",
+            "path": "bus/supervisor.py"
+          },
+          {
+            "name": "bus.supervisor.SequentialTicketSupervisor",
+            "type": "local",
+            "path": "bus/supervisor.py"
+          },
+          {
+            "name": "bus.supervisor.SequentialTicketSupervisor",
+            "type": "local",
+            "path": "bus/supervisor.py"
+          },
+          {
+            "name": "bus.supervisor.SequentialTicketSupervisor",
+            "type": "local",
+            "path": "bus/supervisor.py"
+          },
+          {
+            "name": "bus.supervisor.SequentialTicketSupervisor",
+            "type": "local",
+            "path": "bus/supervisor.py"
+          },
+          {
+            "name": "bus.supervisor.SequentialTicketSupervisor",
+            "type": "local",
+            "path": "bus/supervisor.py"
+          },
+          {
+            "name": "bus.supervisor.SequentialTicketSupervisor",
+            "type": "local",
+            "path": "bus/supervisor.py"
+          },
+          {
+            "name": "bus.supervisor.SequentialTicketSupervisor",
+            "type": "local",
+            "path": "bus/supervisor.py"
+          },
+          {
+            "name": "shutil",
+            "type": "stdlib",
+            "package": "shutil"
+          },
+          {
+            "name": "bus.supervisor.SequentialTicketSupervisor",
+            "type": "local",
+            "path": "bus/supervisor.py"
+          },
+          {
+            "name": "bus.supervisor.SequentialTicketSupervisor",
+            "type": "local",
+            "path": "bus/supervisor.py"
+          },
+          {
+            "name": "bus.supervisor.SequentialTicketSupervisor",
+            "type": "local",
+            "path": "bus/supervisor.py"
+          },
+          {
+            "name": "bus.supervisor.SequentialTicketSupervisor",
+            "type": "local",
+            "path": "bus/supervisor.py"
+          },
+          {
+            "name": "bus.supervisor.SupervisorState",
+            "type": "local",
+            "path": "bus/supervisor.py"
           }
         ],
         "error": null
@@ -33392,6 +34562,11 @@
             "package": "os"
           },
           {
+            "name": "tempfile",
+            "type": "stdlib",
+            "package": "tempfile"
+          },
+          {
             "name": "pathlib.Path",
             "type": "stdlib",
             "package": "pathlib"
@@ -33889,6 +35064,101 @@
         ],
         "error": null
       },
+      "tests/unit/test_validate_observations.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "typing.Any",
+            "type": "stdlib",
+            "package": "typing"
+          },
+          {
+            "name": "validate_observations.validate_applies_to",
+            "type": "external",
+            "package": "validate_observations"
+          },
+          {
+            "name": "validate_observations.validate_confidence",
+            "type": "external",
+            "package": "validate_observations"
+          },
+          {
+            "name": "validate_observations.validate_domain",
+            "type": "external",
+            "package": "validate_observations"
+          },
+          {
+            "name": "validate_observations.validate_observation",
+            "type": "external",
+            "package": "validate_observations"
+          },
+          {
+            "name": "validate_observations.validate_signal",
+            "type": "external",
+            "package": "validate_observations"
+          },
+          {
+            "name": "validate_observations.validate_source",
+            "type": "external",
+            "package": "validate_observations"
+          },
+          {
+            "name": "validate_observations.validate_surface",
+            "type": "external",
+            "package": "validate_observations"
+          },
+          {
+            "name": "validate_observations.validate_timestamp",
+            "type": "external",
+            "package": "validate_observations"
+          },
+          {
+            "name": "validate_observations.validate_topic",
+            "type": "external",
+            "package": "validate_observations"
+          },
+          {
+            "name": "validate_observations.validate_file",
+            "type": "external",
+            "package": "validate_observations"
+          },
+          {
+            "name": "validate_observations.validate_file",
+            "type": "external",
+            "package": "validate_observations"
+          },
+          {
+            "name": "validate_observations.validate_file",
+            "type": "external",
+            "package": "validate_observations"
+          },
+          {
+            "name": "validate_observations.validate_file",
+            "type": "external",
+            "package": "validate_observations"
+          }
+        ],
+        "error": null
+      },
       "tests/unit/test_windows_safe_temp_runtime.py": {
         "imports": [
           {
@@ -33969,10 +35239,10 @@
     "javascript": {},
     "frameworks": [],
     "tools": [
-      "pytest",
-      "mypy",
       "ruff",
-      "uv"
+      "mypy",
+      "uv",
+      "pytest"
     ]
   },
   "parse_errors": [

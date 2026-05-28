@@ -1,68 +1,82 @@
-# Work Plan - WP-2026-158
+# Work Plan - WP-2026-159
 
 ## Metadata
-- **ID:** WP-2026-158
-- **Estado:** COMPLETED
+- **ID:** WP-2026-159
+- **Estado:** APPROVED
 - **deliverable_type:** code
-- **Titulo:** Review packet completeness and diff filtering
+- **Titulo:** Reactive Builder relaunch after CHANGES
 - **Asignado a:** Builder
 
 ## Objetivo
-Hacer que el review packet del Manager represente el alcance real del ticket, incluyendo entregables nuevos no rastreados, y anadir un metadato minimo de filtrado/severidad inspirado en reviewdog.
+Endurecer el ciclo reactivo del supervisor para que un `CHANGES` del Manager relance Builder de forma automatica, idempotente y terminal-safe, primero haciendo observable cada intento de relanzado y despues aplicando solo el fix que el diagnostico confirme.
 
 ## Contexto
-- `AP-12` ya formaliza el riesgo: un review packet construido solo desde `git diff` oculta entregables nuevos no rastreados.
-- `bus/review_bridge.py` ya construye el packet de review y hoy prioriza `git diff` y provenance, pero no expone una seccion explicita para archivos `??`.
-- `agent_controller.get_changed_files()` ya sabe leer staged, unstaged y untracked desde `git status --porcelain -z`, asi que el contrato de untracked ya existe en el sistema.
-- `reviewdog` aporta un patron util: packet estructurado, filtro por contexto y niveles de severidad. Aqui se quiere una version minima, no una clonacion completa.
-- El flujo `APPROVE / CHANGES / INSPECT` debe permanecer intacto.
+- `bus/supervisor.py` ya dispone de `requeue_ticket()` y `_relaunch_builder()`, y `run_once()` ya detecta `CHANGES`/`IN_PROGRESS`.
+- Nunca hemos conseguido verificar con claridad si el fallo esta en la deteccion del requeue, en la liveness del Builder, en el launcher o en una carrera de actualizacion de archivos; por eso primero hace falta instrumentacion.
+- `scripts/ticket_supervisor.py --reactive` es la entrada canonica del loop reactivo y ya es invocada por `scripts/launch_agent_terminals.ps1`.
+- El primer problema no es el fix final sino la testabilidad: hoy `_relaunch_builder()` corta demasiado pronto para que Fase 0 pueda observar `skipped_alive`, `launcher_failed`, `timeout` o `success` con evidencia real.
+- El objetivo de este ticket es probar el bus end-to-end con un ciclo reactivo fiable, sin redisenar el launcher ni el bridge de review.
 
 ## Decision Arquitectonica
-- El review packet seguira usando `git diff` como evidencia principal, pero anadira una seccion explicita `Untracked Deliverables` o equivalente con los archivos detectados por `git status`.
-- El packet publicara un `filter_mode` minimo con valores acotados, por ejemplo `diff_context`, `added` y `nofilter`.
-- El packet publicara una severidad minima (`info`, `warn`, `blocker`) solo como metadata legible, sin cambiar el contrato de decision.
-- El bus no debe depender de `agent_controller`; si necesita untracked, lo obtendra con un helper local o una lectura local de `git status`.
-- No se introduce ninguna dependencia nueva ni un sistema completo de anotaciones tipo reviewdog.
+- Fase 0: instrumentacion primero. Extraer el spawn real del launcher a un seam injectable, por ejemplo `_run_launcher_subprocess(cmd)`, para que `tests/test_supervisor.py` pueda spy/monkeypatchar el boundary sin depender de `PYTEST_CURRENT_TEST` como bloqueo global.
+- Fase 0: persistir cada intento de relanzado con un evento `BUILDER_RELAUNCH_ATTEMPTED` y payload fijo: `{"round": N, "outcome": "success|skipped_alive|launcher_failed|timeout", "exit_code": int|null, "stderr_tail": str|null}`.
+- Fase 0: guardar stdout/stderr del launcher en `.agent/runtime/logs/launcher_last.log` para hacer observable el fallo sin leer la consola.
+- Fase 1: fix dirigido. Una vez observada la causa real, aplicar solo la correccion necesaria en `bus/supervisor.py` y sus tests.
+- `requeue_ticket()` sigue siendo la unica via que incrementa `loop_current_round` y lanza Builder.
+- `run_once()` sigue siendo la autoridad para nuevos eventos del bus y debe disparar la requeue una sola vez por antecedente nuevo de `CHANGES`, usando un watermark persistido del ultimo trigger procesado para evitar doble requeue si el mismo ciclo genera mas de un `CHANGES`.
+- Los estados terminales (`READY_TO_CLOSE`, `COMPLETED`, `HUMAN_GATE`) deben fallar cerrado: no relanzan Builder.
+- `run_reactive()` debe seguir vivo tras la requeue y continuar el polling hasta timeout o max runtime.
 
 ## Non-goals
-- No reemplazar `git diff` por completo.
-- No copiar reviewdog 1:1.
-- No cambiar el contrato de decision `APPROVE / CHANGES / INSPECT`.
-- No tocar el workflow de Builder/Manager mas alla de lo necesario para el packet.
+- No crear un watcher/daemon nuevo.
+- No tocar `bus/review_bridge.py`.
+- No cambiar el contrato de `launch_agent_terminals.ps1`.
+- No introducir historial acumulado de feedback.
+- No meter reintentos, backoff o polling extra hasta que la instrumentacion confirme que son necesarios.
+- No mover la decision de requeue al launcher.
 
 ## Fases
-### Fase 1: untracked deliverables visibles en el packet
+### Fase 0: instrumentacion del relanzado
 - **Tipo:** TAREA AGENTE
-- **Archivos:** `bus/review_bridge.py`, `tests/test_manager_review_bridge.py`
-- **Accion:** Crear
-- **Descripcion:** Anadir una seccion explicita en el review packet para entregables nuevos no rastreados. El helper debe detectar `??` desde `git status --porcelain -z` en el root del proyecto y renderizar esa informacion junto al diff existente. El packet debe seguir incluyendo provenance y diff, pero ya no puede ocultar archivos nuevos que no aparezcan en `git diff`.
+- **Archivos:** `bus/supervisor.py`, `tests/test_supervisor.py`
+- **Accion:** Instrumentar
+- **Descripcion:** Registrar cada intento de requeue y relanzado del Builder con estado observable. La implementacion debe extraer el spawn real a un seam injectable (`_run_launcher_subprocess()` o equivalente) y persistir en logs o eventos del bus el resultado de `_relaunch_builder()`, distinguiendo claramente entre `skipped_alive`, `launcher_failed`, `timeout` y `success`.
 - **Riesgo:** Medio
-- **Criterio de Aceptacion:** Un repo temporal con un archivo `??` y sin diff rastreado lo sigue mostrando en el review packet bajo una seccion explicita de untracked deliverables.
-- **Si falla:** Reducir a una sola seccion `Untracked Deliverables` sin metadata adicional, pero nunca volver a ocultar los archivos nuevos.
+- **Criterio de Aceptacion:** Un test de supervisor puede afirmar, sin leer stdout manualmente, si el relanzado fue omitido, fallido, timeouteado o exitoso, y puede hacerlo via monkeypatch del seam sin depender de `PYTEST_CURRENT_TEST` para saltarse la ruta.
+- **Si falla:** Mantener la instrumentacion minima en bus/eventos o log persistente, aunque el resto del fix se difiera.
 
-### Fase 2: metadata minima de filter mode y severidad
+### Fase 1: fix dirigido segun diagnostico
 - **Tipo:** TAREA AGENTE
-- **Archivos:** `bus/review_bridge.py`, `tests/test_review_bridge.py`, `tests/test_manager_review_bridge.py`
-- **Accion:** Anadir metadata y tests
-- **Descripcion:** Anadir al packet una metadata legible de `filter_mode` y `severity`. El modo por defecto debe ser `diff_context`; cuando haya entregables no rastreados visibles, el packet puede marcarse como `added`. La severidad debe reflejar el tipo de evidencia sin alterar el contrato de decision.
+- **Archivos:** `bus/supervisor.py`, `tests/test_supervisor.py`
+- **Accion:** Endurecer
+- **Descripcion:** Aplicar solo el fix que la instrumentacion confirme. La logica debe seguir en `requeue_ticket()`/`run_once()`, con estados terminales fail-closed y sin mover la autoridad a otro modulo. Si el problema resulta ser liveness, lock stale, fallo del launcher o doble requeue por `CHANGES` repetido, corregir ese punto concreto sin agregar features no diagnosticadas.
+- **Riesgo:** Medio
+- **Criterio de Aceptacion:** Un `CHANGES` nuevo relanza Builder automaticamente una sola vez; un segundo `CHANGES` repetido no duplica relanzado ni incrementa el round indebidamente; estados terminales no requeuean Builder; el watermark persistido evita procesar dos veces el mismo antecedente.
+- **Si falla:** Mantener solo el guard minimo que deje de reactivar Builder en estados terminales y posponer el resto a un ticket posterior.
+
+### Fase 2: smoke path reactivo estable
+- **Tipo:** TAREA AGENTE
+- **Archivos:** `tests/test_supervisor.py`
+- **Accion:** Anadir cobertura
+- **Descripcion:** Cubrir el flujo `ticket_supervisor.py --reactive`/`run_reactive()` con mocks y `tmp_path`, verificando que el supervisor bootstrappea, detecta actividad, relanza Builder y sigue iterando despues del relanzado hasta que vence el timeout/idle timeout, sin depender de subprocess real ni de terminales interactivas.
 - **Riesgo:** Bajo
-- **Criterio de Aceptacion:** Los tests cubren al menos un caso con solo diff rastreado y otro con entregable no rastreado, y en ambos el contrato `APPROVE / CHANGES / INSPECT` sigue intacto.
-- **Si falla:** Conservar solo `filter_mode` sin severidad, pero mantener la seccion explicita de untracked deliverables.
+- **Criterio de Aceptacion:** El smoke test reactivo demuestra que el loop mantiene el polling despues del relanzado, que no sale inmediatamente tras el requeue, y que respeta el timeout/idle timeout.
+- **Si falla:** Conservar la cobertura de `run_once()` y limitar el smoke a la deteccion de requeue.
 
 ## Files Likely Touched
-- `bus/review_bridge.py`
-- `tests/test_manager_review_bridge.py`
-- `tests/test_review_bridge.py`
+- `bus/supervisor.py`
+- `tests/test_supervisor.py`
 
 ## Calidad
-- `python -m pytest tests/test_manager_review_bridge.py tests/test_review_bridge.py -q`
+- `python -m pytest tests/test_supervisor.py -q`
+- `python scripts/ticket_supervisor.py --reactive --timeout 1`
 - `python scripts/run_pytest_safe.py`
 - `python .agent/agent_controller.py --validate --json --force`
-- `ruff check bus scripts tests`
 
 ## Criterios de aceptacion
-- El review packet ya no oculta entregables nuevos no rastreados.
-- El packet publica una metadata minima de `filter_mode` y `severity` sin cambiar la decision.
-- Los tests demuestran que un repo temporal con archivos `??` aparece en el packet.
-- La suite safe principal sigue pasando.
-- La validacion canonica pasa sin errores.
+- La instrumentacion permite distinguir de forma verificable entre `skipped_alive`, `launcher_failed`, `timeout` y `success`.
+- Un `CHANGES` nuevo en el bus relanza Builder automaticamente una sola vez.
+- Un segundo `CHANGES` repetido no provoca doble relanzado ni corrompe `loop_current_round`.
+- Los estados terminales siguen fallando cerrado.
+- El modo `--reactive` permanece vivo despues del relanzado.
+- La validacion canonica y la suite safe siguen pasando.
