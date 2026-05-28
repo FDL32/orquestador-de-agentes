@@ -250,6 +250,7 @@ Regla de aprobacion:
 - Si un TP aplica y no puede cerrarse con una linea concreta, el plan sigue en borrador.
 - Si el plan y el audit no coinciden en secuencia, archivos o criterios, el ticket no pasa a `APPROVED`.
 - Si el texto usa semantica blanda sin definir el mecanismo, se corrige antes del handoff.
+- Si el ticket introduce una nueva gate de calidad, aplica ese gate manualmente sobre el propio `AUDIT_WP` antes de confiar en automatizacion futura.
 
 ## Constraints
 

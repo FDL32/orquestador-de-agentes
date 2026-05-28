@@ -26,6 +26,7 @@ Usa esta checklist antes de aprobar cualquier `work_plan.md`. Las preguntas son 
 - [ ] Cada criterio de aceptacion tiene un verificador literal: test, comando o asercion de archivo.
 - [ ] No hay criterios del tipo "observable", "correcto" o "estable" sin una forma concreta de comprobarlos.
 - [ ] El `AUDIT_WP` replica exactamente los criterios relevantes del `PLAN_WP`.
+- [ ] El `PLAN_WP` no contiene secciones de verificacion como `## TP Check`, `## Evidencia` o `## Blockers`; esas secciones viven en el `AUDIT_WP`.
 
 ## TP Check
 
@@ -34,6 +35,7 @@ Usa esta checklist antes de aprobar cualquier `work_plan.md`. Las preguntas son 
 - [ ] TP-03 Deriva de ambito implicita: los archivos tocados estan enumerados sin comodines.
 - [ ] TP-04 Semantica blanda: no hay "si procede" ni "stale" sin definicion operativa.
 - [ ] TP-05 Paridad PLAN/AUDIT rota: el plan y el audit describen la misma secuencia y los mismos observables.
+- [ ] TP-05 Paridad PLAN/AUDIT rota: los verbos y condiciones de `Blockers` y `Fases` permanecen alineados.
 
 ## Redaccion para prompts
 
@@ -45,3 +47,4 @@ Usa esta checklist antes de aprobar cualquier `work_plan.md`. Las preguntas son 
 
 - [ ] Si cualquier casilla clave falla, el plan no se aprueba y se corrige antes del handoff.
 - [ ] Si todas las casillas clave pasan, el plan puede pasar a `APPROVED`.
+- [ ] Si el ticket introduce una nueva gate de calidad, el Manager la aplica manualmente sobre su propio `AUDIT_WP` antes de confiar en automatizacion futura.
