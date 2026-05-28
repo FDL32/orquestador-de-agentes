@@ -1808,3 +1808,179 @@ class TestHumanGateEscalation:
 
         config = bridge._load_review_config()
         assert config["max_attempts"] == 5
+
+
+# =============================================================================
+# Tests WP-2026-158: Review Packet Completeness and Diff Filtering
+# =============================================================================
+
+
+class TestUntrackedDeliverables:
+    """Tests for WP-2026-158: untracked deliverables visibility in review packet."""
+
+    def test_get_untracked_files_returns_empty_when_no_untracked(
+        self, tmp_path, monkeypatch
+    ):
+        """Test _get_untracked_files returns empty list when no ?? files."""
+        from bus.review_bridge import EventBus, ReviewBridge
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        # Mock git status to return empty
+        monkeypatch.setattr(
+            "subprocess.run",
+            lambda *args, **kwargs: type(
+                "R", (), {"returncode": 0, "stdout": "", "stderr": ""}
+            )(),
+        )
+
+        untracked = bridge._get_untracked_files()
+        assert untracked == []
+
+    def test_get_untracked_files_detects_deliverable_files(self, tmp_path, monkeypatch):
+        """Test _get_untracked_files detects ?? files as deliverables."""
+        from bus.review_bridge import EventBus, ReviewBridge
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        # Mock git status to return untracked files
+        monkeypatch.setattr(
+            "subprocess.run",
+            lambda *args, **kwargs: type(
+                "R",
+                (),
+                {
+                    "returncode": 0,
+                    "stdout": "?? new_feature.py\0?? tests/test_feature.py\0",
+                    "stderr": "",
+                },
+            )(),
+        )
+
+        untracked = bridge._get_untracked_files()
+        assert "new_feature.py" in untracked
+        assert "tests/test_feature.py" in untracked
+
+    def test_get_untracked_files_filters_agent_collaboration(
+        self, tmp_path, monkeypatch
+    ):
+        """Test _get_untracked_files excludes .agent/collaboration/ noise."""
+        from bus.review_bridge import EventBus, ReviewBridge
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        # Mock git status with mix of deliverables and noise
+        monkeypatch.setattr(
+            "subprocess.run",
+            lambda *args, **kwargs: type(
+                "R",
+                (),
+                {
+                    "returncode": 0,
+                    "stdout": "?? .agent/collaboration/notes.md\0?? feature.py\0?? .agent/runtime/tmp.log\0",
+                    "stderr": "",
+                },
+            )(),
+        )
+
+        untracked = bridge._get_untracked_files()
+        assert ".agent/collaboration/notes.md" not in untracked
+        assert ".agent/runtime/tmp.log" not in untracked
+        assert "feature.py" in untracked
+
+    def test_is_deliverable_path_excludes_patterns(self, tmp_path):
+        """Test _is_deliverable_path correctly filters known patterns."""
+        from bus.review_bridge import EventBus, ReviewBridge
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        # Should be excluded
+        assert bridge._is_deliverable_path(".agent/collaboration/foo.md") is False
+        assert bridge._is_deliverable_path(".agent/runtime/tmp.log") is False
+        assert bridge._is_deliverable_path("__pycache__/module.pyc") is False
+        assert bridge._is_deliverable_path("module.pyc") is False
+        assert bridge._is_deliverable_path(".ruff_cache/data.json") is False
+
+        # Should be included
+        assert bridge._is_deliverable_path("new_feature.py") is True
+        assert bridge._is_deliverable_path("tests/test_feature.py") is True
+        assert bridge._is_deliverable_path("docs/new_doc.md") is True
+
+    def test_build_review_prompt_includes_untracked_section(
+        self, tmp_path, monkeypatch
+    ):
+        """Test _build_review_prompt includes Untracked Deliverables section."""
+        from bus.review_bridge import EventBus, ReviewBridge
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        # Mock git methods to isolate untracked logic
+        monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
+        monkeypatch.setattr(bridge, "_git_provenance", lambda: "[no commits]")
+        monkeypatch.setattr(
+            bridge, "_build_diff_for_files_likely_touched", lambda *args: ""
+        )
+        monkeypatch.setattr(bridge, "_get_untracked_files", lambda: ["new_feature.py"])
+
+        prompt = bridge._build_review_prompt(ticket_id="WP-TEST-158", dtype="code")
+
+        assert "--- Untracked Deliverables ---" in prompt
+        assert "new_feature.py" in prompt
+
+    def test_build_review_prompt_includes_packet_metadata(self, tmp_path, monkeypatch):
+        """Test _build_review_prompt includes filter_mode and severity metadata."""
+        from bus.review_bridge import EventBus, ReviewBridge
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        # Mock git methods
+        monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
+        monkeypatch.setattr(bridge, "_git_provenance", lambda: "[no commits]")
+        monkeypatch.setattr(
+            bridge, "_build_diff_for_files_likely_touched", lambda *args: ""
+        )
+        monkeypatch.setattr(bridge, "_get_untracked_files", lambda: ["new_feature.py"])
+
+        prompt = bridge._build_review_prompt(ticket_id="WP-TEST-158", dtype="code")
+
+        assert "--- Packet Metadata ---" in prompt
+        assert "filter_mode: added" in prompt
+        assert "severity: warn" in prompt
+        assert "untracked_count: 1" in prompt
+
+    def test_build_review_prompt_diff_context_mode_when_no_untracked(
+        self, tmp_path, monkeypatch
+    ):
+        """Test filter_mode is diff_context when no untracked files."""
+        from bus.review_bridge import EventBus, ReviewBridge
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        # Mock git methods with no untracked
+        monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
+        monkeypatch.setattr(bridge, "_git_provenance", lambda: "[no commits]")
+        monkeypatch.setattr(
+            bridge, "_build_diff_for_files_likely_touched", lambda *args: ""
+        )
+        monkeypatch.setattr(bridge, "_get_untracked_files", lambda: [])
+
+        prompt = bridge._build_review_prompt(ticket_id="WP-TEST-158", dtype="code")
+
+        assert "--- Packet Metadata ---" in prompt
+        assert "filter_mode: diff_context" in prompt
+        assert "severity: info" in prompt
+        assert "untracked_count: 0" in prompt
