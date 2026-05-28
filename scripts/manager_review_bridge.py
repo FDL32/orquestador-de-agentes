@@ -407,13 +407,19 @@ def main() -> int:
             flush=True,
         )
         while True:
+            # Refresh heartbeat before _tick() so long reviews (up to timeout seconds)
+            # do not appear stale to the supervisor watchdog during the review cycle.
+            bridge_state = _load_state()
+            _refresh_heartbeat(bridge_state)
+            _save_state(bridge_state)
             ticked = _tick(
                 supervisor=supervisor,
                 review=review,
                 manager_path=args.backend_path,
                 timeout=args.timeout,
             )
-            # WP-2026-166: Refresh heartbeat in EVERY watch tick (not only when idle)
+            # Refresh heartbeat again after _tick() so the supervisor sees a live
+            # bridge immediately after the review completes.
             bridge_state = _load_state()
             _refresh_heartbeat(bridge_state)
             _save_state(bridge_state)
