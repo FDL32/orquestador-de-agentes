@@ -2,41 +2,6 @@
 
 ---
 
-### MANAGER_REVIEW - 2026-05-26 12:47:56
-- **Plan ID:** WP-2026-142
-- **Decision:** APPROVE
-- **Source:** manager backend exec review
-
----
-
-### MANAGER_REVIEW - 2026-05-26 12:53:07
-- **Plan ID:** WP-2026-142
-- **Decision:** APPROVE
-- **Source:** manager backend exec review
-
----
-
-### MANAGER_REVIEW - 2026-05-26 13:29:15
-- **Plan ID:** WP-2026-143
-- **Decision:** APPROVE
-- **Source:** manager backend exec review
-
----
-
-### MANAGER_REVIEW - 2026-05-26 17:27:22
-- **Plan ID:** WP-2026-144
-- **Decision:** APPROVE
-- **Source:** manager backend exec review
-
----
-
-### MANAGER_REVIEW - 2026-05-26 20:29:42
-- **Plan ID:** WP-2026-145
-- **Decision:** APPROVE
-- **Source:** manager backend exec review
-
----
-
 ### MANAGER_REVIEW - 2026-05-26 21:50:38
 - **Plan ID:** WP-2026-146
 - **Decision:** APPROVE
@@ -142,8 +107,6 @@
 
 ---
 
----
-
 ### MANAGER_REVIEW - 2026-05-28 00:44:23
 - **Plan ID:** WP-2026-157
 - **Decision:** CHANGES
@@ -162,3 +125,19 @@
 - **Plan ID:** WP-2026-158
 - **Decision:** APPROVE
 - **Source:** manager backend exec review
+
+---
+
+### MANAGER_REVIEW - 2026-05-28 10:07:25
+- **Plan ID:** WP-2026-159
+- **Decision:** CHANGES
+- **Source:** manager backend exec review
+
+---
+
+### MANAGER_REVIEW - 2026-05-28 10:43:57
+- **Plan ID:** WP-2026-159
+- **Decision:** CHANGES
+- **Source:** manager backend exec review
+
+---
