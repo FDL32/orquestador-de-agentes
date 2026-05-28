@@ -20,7 +20,7 @@ Implement only the active ticket in `.agent/collaboration/work_plan.md`.
 Treat `Files Likely Touched` as a hard whitelist for the ticket.
 Do not widen scope, do not edit files outside the repo, and keep the work grounded in the canonical collaboration state.
 The hard scope gate in `--mark-ready` will enforce this whitelist mechanically.
-Close only when the bus emits `BUILDER_EXIT` for the active ticket with `ticket_id`, `exit_reason` and `completion_summary`.
+Close only via `python .agent/agent_controller.py --mark-ready --json --force`. That command emits `BUILDER_EXIT` automatically. Never call any other command to emit BUILDER_EXIT manually.
 
 Operating rules:
 - Read `.agent/collaboration/TURN.md`, `.agent/collaboration/work_plan.md`, `.agent/collaboration/execution_log.md`, `.agent/collaboration/STATE.md`, and `PROJECT.md` before editing.
