@@ -27,6 +27,7 @@ Usa esta checklist antes de aprobar cualquier `work_plan.md`. Las preguntas son 
 - [ ] No hay criterios del tipo "observable", "correcto" o "estable" sin una forma concreta de comprobarlos.
 - [ ] El `AUDIT_WP` replica exactamente los criterios relevantes del `PLAN_WP`.
 - [ ] El `PLAN_WP` no contiene secciones de verificacion como `## TP Check`, `## Evidencia` o `## Blockers`; esas secciones viven en el `AUDIT_WP`.
+- [ ] El `TP Check` del `AUDIT_WP` usa `TP-01:`..`TP-05:` en formato canonico y no sustituye la verificacion del plan por criterios de diseno del entregable.
 
 ## TP Check
 

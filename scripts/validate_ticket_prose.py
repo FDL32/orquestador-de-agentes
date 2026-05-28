@@ -436,6 +436,62 @@ def detect_audit_missing_tp_check(collab_dir: Path) -> list[ProseWarning]:
     return warnings
 
 
+def _extract_tp_check_section(content: str) -> str | None:
+    """Extrae la seccion TP Check de un AUDIT.
+
+    Before: Requiere contenido completo del AUDIT.
+    During: Busca la seccion `## TP Check` y devuelve su contenido.
+    After: Retorna el texto de la seccion o None si no existe.
+    """
+    match = re.search(
+        r"##\s*TP\s*Check\s*\n(.*?)(?=\n##|\Z)", content, re.DOTALL | re.IGNORECASE
+    )
+    if not match:
+        return None
+    return match.group(1)
+
+
+def detect_audit_malformed_tp_check(collab_dir: Path) -> list[ProseWarning]:
+    """Detecta TP Check no canonico en el AUDIT.
+
+    Before: Requiere directorio de colaboracion con archivos AUDIT_WP-*.md.
+    During: Verifica que el TP Check use los items TP-01..TP-05 en formato canonico.
+    After: Retorna lista de warnings con regla TP-STRUCT-02.
+    """
+    warnings = []
+    audit_files = list(collab_dir.glob("AUDIT_WP-*.md"))
+    if not audit_files:
+        return warnings
+
+    required_prefixes = [
+        "TP-01:",
+        "TP-02:",
+        "TP-03:",
+        "TP-04:",
+        "TP-05:",
+    ]
+
+    for audit_file in audit_files:
+        content = audit_file.read_text(encoding="utf-8")
+        tp_check = _extract_tp_check_section(content)
+        if tp_check is None:
+            continue
+
+        missing_prefixes = [
+            prefix for prefix in required_prefixes if prefix not in tp_check
+        ]
+        if missing_prefixes:
+            warnings.append(
+                ProseWarning(
+                    rule_id="TP-STRUCT-02",
+                    rule_name="audit-malformed-tp-check",
+                    evidence=f"{audit_file.name}: faltan {', '.join(missing_prefixes)} en la seccion TP Check",
+                    suggestion="Redacta el TP Check con el formato canonico TP-01..TP-05 y una linea de verificacion por cada TP.",
+                )
+            )
+    return warnings
+
+
 # ============================================================================
 # VALIDADOR PRINCIPAL
 # ============================================================================
@@ -489,6 +545,7 @@ def validate_ticket_prose(work_plan_path: Path, collab_dir: Path) -> ValidationR
     # Verificacion estructural de AUDIT solo para planes activos.
     if not is_completed_plan:
         all_warnings.extend(detect_audit_missing_tp_check(collab_dir))
+        all_warnings.extend(detect_audit_malformed_tp_check(collab_dir))
 
     return ValidationResult(
         warnings=all_warnings,

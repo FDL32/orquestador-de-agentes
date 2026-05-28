@@ -3813,3 +3813,340 @@ def test_run_reactive_emits_supervisor_restarted_when_env_set(tmp_path, monkeypa
     restarted = [e for e in events if e.event_type == "SUPERVISOR_RESTARTED"]
     assert len(restarted) == 1, "Should emit exactly one SUPERVISOR_RESTARTED"
     assert restarted[0].payload == {"round": 2, "reason": "resume-builder"}
+
+
+def test_bootstrap_requeue_if_needed_fires_when_changes_unprocessed(
+    tmp_path, monkeypatch
+):
+    """bootstrap detects an unprocessed CHANGES trigger and requeues Builder directly.
+
+    Scenario: Supervisor restarts after a REVIEW_DECISION(changes) was emitted.
+    _bootstrap_reconcile_sequence() advanced last_processed_sequence to the latest
+    event (past the CHANGES trigger), so run_once() would never see it in new_events.
+    Expected: reconcile_state() detects the gap via _bootstrap_requeue_if_needed()
+    and fires requeue before run_once() even runs.
+    """
+    from bus.supervisor import SequentialTicketSupervisor, SupervisorState
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    ticket_id = "WP-2026-164"
+
+    # Emit the exact event sequence that causes the bug:
+    # initial start → Builder done → Manager: changes → Supervisor: IN_PROGRESS
+    supervisor.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="SUPERVISOR",
+        payload={"from_state": "N/A", "to_state": "IN_PROGRESS", "reason": "Start"},
+    )
+    supervisor.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="BUILDER",
+        payload={
+            "from_state": "IN_PROGRESS",
+            "to_state": "READY_FOR_REVIEW",
+            "reason": "Done",
+        },
+    )
+    supervisor.event_bus.emit(
+        "REVIEW_DECISION",
+        ticket_id=ticket_id,
+        actor="MANAGER",
+        payload={"decision": "changes", "feedback": "Fix it"},
+    )
+    supervisor.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="SUPERVISOR",
+        payload={
+            "from_state": "READY_FOR_REVIEW",
+            "to_state": "IN_PROGRESS",
+            "reason": "Requeue",
+        },
+    )
+
+    # Simulate the consumed-trigger bug: bootstrap already advanced
+    # last_processed_sequence to the latest event, but requeue never fired.
+    all_events = supervisor.event_bus.read_events()
+    latest_seq = all_events[-1].sequence_number
+    supervisor.save_state(
+        SupervisorState(
+            active_ticket=ticket_id,
+            loop_current_round=1,
+            last_processed_sequence=latest_seq,
+            last_requeue_trigger_sequence=0,
+        )
+    )
+
+    relaunch_calls: list[str] = []
+
+    def fake_relaunch(t: str) -> bool:
+        relaunch_calls.append(t)
+        return True
+
+    monkeypatch.setattr(supervisor, "_relaunch_builder", fake_relaunch)
+
+    supervisor.bootstrap()
+
+    assert relaunch_calls == [ticket_id], (
+        "bootstrap must requeue Builder when CHANGES is unprocessed"
+    )
+    state = supervisor.load_state()
+    assert state.last_requeue_trigger_sequence > 0, (
+        "watermark must be updated after bootstrap requeue"
+    )
+    assert state.loop_current_round == 2, "round must increment on bootstrap requeue"
+
+
+def test_bootstrap_requeue_if_needed_defers_when_builder_lock_fresh(
+    tmp_path, monkeypatch
+):
+    """bootstrap defers requeue when builder_lock.txt is fresh (alive or stale without BUILDER_EXIT).
+
+    Scenario: Stale builder_lock.txt exists (<15 min, no BUILDER_EXIT) and
+    _builder_alive() returns True via mtime fallback. bootstrap must NOT update
+    the watermark so the next restart can retry after the lock expires.
+    """
+    from bus.supervisor import SequentialTicketSupervisor, SupervisorState
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    ticket_id = "WP-2026-166"
+
+    supervisor.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="SUPERVISOR",
+        payload={"from_state": "N/A", "to_state": "IN_PROGRESS", "reason": "Start"},
+    )
+    supervisor.event_bus.emit(
+        "REVIEW_DECISION",
+        ticket_id=ticket_id,
+        actor="MANAGER",
+        payload={"decision": "changes", "feedback": "Fix it"},
+    )
+    supervisor.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="SUPERVISOR",
+        payload={
+            "from_state": "READY_FOR_REVIEW",
+            "to_state": "IN_PROGRESS",
+            "reason": "Requeue",
+        },
+    )
+
+    all_events = supervisor.event_bus.read_events()
+    latest_seq = all_events[-1].sequence_number
+    supervisor.save_state(
+        SupervisorState(
+            active_ticket=ticket_id,
+            loop_current_round=1,
+            last_processed_sequence=latest_seq,
+            last_requeue_trigger_sequence=0,
+        )
+    )
+
+    # Simulate a fresh builder_lock.txt (stale without BUILDER_EXIT)
+    monkeypatch.setattr(supervisor, "_builder_alive", lambda: True)
+
+    relaunch_calls: list[str] = []
+
+    def fake_relaunch(t: str) -> bool:
+        relaunch_calls.append(t)
+        return True
+
+    monkeypatch.setattr(supervisor, "_relaunch_builder", fake_relaunch)
+
+    supervisor.bootstrap()
+
+    assert relaunch_calls == [], "bootstrap must not launch Builder when lock is fresh"
+    state = supervisor.load_state()
+    assert state.last_requeue_trigger_sequence == 0, (
+        "watermark must stay at 0 so next bootstrap retries after lock expires"
+    )
+    deferred = [
+        e
+        for e in supervisor.event_bus.read_events()
+        if e.event_type == "SUPERVISOR_REQUEUE_DEFERRED"
+    ]
+    assert len(deferred) == 1, "bootstrap must emit exactly one defer event"
+    assert deferred[0].payload["reason"] == "builder_lock_fresh"
+
+
+def test_bootstrap_requeue_if_needed_defer_then_retry(tmp_path, monkeypatch):
+    """bootstrap defers on a fresh lock, then retries on the next bootstrap."""
+    from bus.supervisor import SequentialTicketSupervisor, SupervisorState
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    ticket_id = "WP-2026-167"
+
+    supervisor.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="SUPERVISOR",
+        payload={"from_state": "N/A", "to_state": "IN_PROGRESS", "reason": "Start"},
+    )
+    supervisor.event_bus.emit(
+        "REVIEW_DECISION",
+        ticket_id=ticket_id,
+        actor="MANAGER",
+        payload={"decision": "changes", "feedback": "Fix it"},
+    )
+
+    all_events = supervisor.event_bus.read_events()
+    latest_seq = all_events[-1].sequence_number
+    supervisor.save_state(
+        SupervisorState(
+            active_ticket=ticket_id,
+            loop_current_round=1,
+            last_processed_sequence=latest_seq,
+            last_requeue_trigger_sequence=0,
+        )
+    )
+
+    relaunch_calls: list[str] = []
+
+    def fake_relaunch(t: str) -> bool:
+        relaunch_calls.append(t)
+        return True
+
+    # First bootstrap: Builder still alive, so requeue is deferred.
+    monkeypatch.setattr(supervisor, "_builder_alive", lambda: True)
+    monkeypatch.setattr(supervisor, "_relaunch_builder", fake_relaunch)
+    supervisor.bootstrap()
+
+    deferred = [
+        e
+        for e in supervisor.event_bus.read_events()
+        if e.event_type == "SUPERVISOR_REQUEUE_DEFERRED"
+    ]
+    assert len(deferred) == 1, "first bootstrap must defer exactly once"
+    assert relaunch_calls == [], "first bootstrap must not relaunch Builder"
+
+    state_after_defer = supervisor.load_state()
+    assert state_after_defer.last_requeue_trigger_sequence == 0, (
+        "watermark must remain unset after defer"
+    )
+
+    # Second bootstrap: lock is gone, so requeue should fire.
+    monkeypatch.setattr(supervisor, "_builder_alive", lambda: False)
+    supervisor.bootstrap()
+
+    assert relaunch_calls == [ticket_id], "second bootstrap must relaunch Builder"
+    state_after_retry = supervisor.load_state()
+    assert state_after_retry.last_requeue_trigger_sequence > 0, (
+        "watermark must update after successful retry"
+    )
+
+
+def test_bootstrap_requeue_if_needed_skips_when_watermark_already_set(
+    tmp_path, monkeypatch
+):
+    """bootstrap does NOT requeue if last_requeue_trigger_sequence already covers the CHANGES event.
+
+    This prevents double-requeue on a second bootstrap call after the first
+    bootstrap already handled the CHANGES trigger.
+    """
+    from bus.supervisor import SequentialTicketSupervisor, SupervisorState
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    ticket_id = "WP-2026-165"
+
+    supervisor.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="SUPERVISOR",
+        payload={"from_state": "N/A", "to_state": "IN_PROGRESS", "reason": "Start"},
+    )
+    supervisor.event_bus.emit(
+        "REVIEW_DECISION",
+        ticket_id=ticket_id,
+        actor="MANAGER",
+        payload={"decision": "changes", "feedback": "Fix it"},
+    )
+    supervisor.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="SUPERVISOR",
+        payload={
+            "from_state": "READY_FOR_REVIEW",
+            "to_state": "IN_PROGRESS",
+            "reason": "Requeue",
+        },
+    )
+
+    all_events = supervisor.event_bus.read_events()
+    latest_seq = all_events[-1].sequence_number
+    # Find the REVIEW_DECISION sequence
+    changes_seq = next(
+        e.sequence_number for e in all_events if e.event_type == "REVIEW_DECISION"
+    )
+    supervisor.save_state(
+        SupervisorState(
+            active_ticket=ticket_id,
+            loop_current_round=2,
+            last_processed_sequence=latest_seq,
+            last_requeue_trigger_sequence=changes_seq,  # watermark already covers it
+        )
+    )
+
+    relaunch_calls: list[str] = []
+
+    def fake_relaunch(t: str) -> bool:
+        relaunch_calls.append(t)
+        return True
+
+    monkeypatch.setattr(supervisor, "_relaunch_builder", fake_relaunch)
+
+    supervisor.bootstrap()
+
+    assert relaunch_calls == [], (
+        "bootstrap must NOT requeue when watermark already covers the CHANGES event"
+    )
+    state = supervisor.load_state()
+    assert state.loop_current_round == 2, "round must not change"
