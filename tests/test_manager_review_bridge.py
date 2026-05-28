@@ -1021,8 +1021,9 @@ class TestReviewPacketTransport:
 
     def test_bridge_helper_does_not_patch_global_os_name(self, tmp_path, monkeypatch):
         """La simulacion de plataforma debe quedar confinada al modulo de review."""
+        original_os_name = os.name
         self._bridge(tmp_path, monkeypatch, "posix")
-        assert os.name == "nt"
+        assert os.name == original_os_name
 
     def test_positional_message_short_and_no_file_flag(self, tmp_path, monkeypatch):
         """El prompt posicional es corto y referencia el packet; sin --file
