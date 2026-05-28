@@ -184,6 +184,15 @@ Si el WP no tiene origen externo (es trabajo propio del proyecto): este paso es 
 - Este paso es **obligatorio** antes de consolidar memoria en cierres de sesion largos
 - **Skill relacionada**: `session-close-observations`
 
+### Paso 9d.5: Manager clasifica learnings de cierre
+
+- Si el cierre genero learnings que deben separarse por alcance, ejecutar `man-session-closeout`
+- Revisar `closeout_lessons.md` y la cola de learnings upstream antes de consolidar memoria
+- Clasificar cada learning como `local`, `generalizable` o `dudoso`
+- Aplicar TTL de 3 WPs a los items `dudoso`
+- Preparar el puente humano hacia el siguiente ciclo de planificacion
+- **Skill relacionada**: `man-session-closeout`
+
 ### Paso 9e: Builder ejecuta consolidación de memoria (opcional)
 
 - Ejecutar `python scripts/memory_consolidate.py --verbose` (dry-run primero)
@@ -233,6 +242,7 @@ Si el proyecto termina o cambia de manos, dejar explicito:
 - `../bui-run-quality-gates/SKILL.md` - Quality gates finales
 - `../man-review-implementation/SKILL.md` - Revision final del Manager
 - `../session-close-observations/SKILL.md` - Generar observaciones de cierre
+- `../man-session-closeout/SKILL.md` - Clasificar learnings de cierre y preparar el puente humano
 - `../memory-consolidate/SKILL.md` - Consolidacion de memoria
 
 ## Constraints
