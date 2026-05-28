@@ -196,6 +196,7 @@ olvidar `PLAN_WP-*.md` y `AUDIT_WP-*.md`.
 
 Checklist obligatorio, en orden:
 
+0. `TP Check` en `AUDIT_WP` — verificar contra `../../_shared/ticket-anti-patterns.md` antes de aprobar el `work_plan`.
 1. `work_plan.md` — contenido completo + `Estado: APPROVED`.
 2. `PLAN_WP-XXXX.md` — estrategia tecnica del ticket (en `.agent/collaboration/`).
 3. `AUDIT_WP-XXXX.md` — criterios que el Manager verificara en el review.
