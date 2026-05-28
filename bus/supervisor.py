@@ -37,6 +37,9 @@ RELAUNCH_BLOCKED_STATES = frozenset(
     }
 )
 
+# Seconds without a bridge heartbeat before the watchdog considers it stale.
+MANAGER_STALE_TIMEOUT = 600
+
 
 @dataclass(slots=True)
 class SupervisorState:
@@ -47,6 +50,7 @@ class SupervisorState:
     loop_current_round: int = 0
     loop_max_rounds: int = 0
     last_requeue_trigger_sequence: int = 0
+    last_manager_stale_trigger_sequence: int = 0
     _revision: int | None = field(default=None, repr=False, compare=False)
 
 
@@ -394,6 +398,9 @@ class SequentialTicketSupervisor:
             loop_max_rounds=int(data.get("loop_max_rounds", 0)),
             last_requeue_trigger_sequence=int(
                 data.get("last_requeue_trigger_sequence", 0)
+            ),
+            last_manager_stale_trigger_sequence=int(
+                data.get("last_manager_stale_trigger_sequence", 0)
             ),
             _revision=revision,
         )
@@ -795,6 +802,110 @@ class SequentialTicketSupervisor:
             state.last_requeue_trigger_sequence = requeue_trigger_seq
             self.save_state(state)
 
+    def _load_manager_bridge_state(self) -> dict | None:
+        """Read manager_bridge_state.json; return None if missing or unparseable."""
+        path = self.runtime_dir / "manager_bridge_state.json"
+        if not path.exists():
+            return None
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+
+    def _is_manager_bridge_stale(self) -> bool:
+        """Return True if the bridge heartbeat is absent or older than MANAGER_STALE_TIMEOUT.
+
+        Before: manager_bridge_state.json may not exist or heartbeat_at may be empty.
+        During: Reads heartbeat_at field; compares against current UTC time.
+        After: Returns True (stale) when no heartbeat or age > MANAGER_STALE_TIMEOUT seconds.
+        """
+        bridge = self._load_manager_bridge_state()
+        if not bridge:
+            return True
+        heartbeat_at = bridge.get("heartbeat_at", "")
+        if not heartbeat_at:
+            return True
+        try:
+            from datetime import timezone
+
+            hb = datetime.fromisoformat(str(heartbeat_at))
+            age = (datetime.now(tz=timezone.utc) - hb).total_seconds()
+            return age > MANAGER_STALE_TIMEOUT
+        except Exception:
+            return True
+
+    def _bootstrap_watchdog_manager_if_needed(
+        self, state: SupervisorState, ticket_id: str
+    ) -> None:
+        """Relaunch the manager review bridge if ticket is READY_FOR_REVIEW and bridge is stale.
+
+        Before: ticket_id is READY_FOR_REVIEW in the bus; bridge heartbeat may be absent/old.
+        During: Finds the latest STATE_CHANGED → READY_FOR_REVIEW sequence, compares against
+                last_manager_stale_trigger_sequence watermark, verifies bridge staleness, emits
+                MANAGER_STALE, and spawns manager_review_bridge.py --watch as a detached process.
+        After: If relaunched, last_manager_stale_trigger_sequence is updated so subsequent
+               reconcile() calls do not double-fire the watchdog for the same RFR event.
+        """
+        import subprocess
+
+        latest_rfr_seq = 0
+        for event in self.event_bus.read_events(ticket_id=ticket_id):
+            if (
+                event.event_type == "STATE_CHANGED"
+                and str((event.payload or {}).get("to_state", "")) == "READY_FOR_REVIEW"
+                and event.sequence_number > latest_rfr_seq
+            ):
+                latest_rfr_seq = event.sequence_number
+
+        if not (
+            latest_rfr_seq > 0
+            and latest_rfr_seq > state.last_manager_stale_trigger_sequence
+        ):
+            return
+
+        if self._current_state(ticket_id) != TicketState.READY_FOR_REVIEW:
+            return
+
+        if not self._is_manager_bridge_stale():
+            return
+
+        self.event_bus.emit(
+            "MANAGER_STALE",
+            ticket_id=ticket_id,
+            actor="SUPERVISOR",
+            payload={
+                "trigger_sequence": latest_rfr_seq,
+                "reason": "bridge_heartbeat_stale",
+            },
+        )
+        print(
+            f"[supervisor] watchdog: bridge stale for {ticket_id} "
+            f"(rfr_seq={latest_rfr_seq}). Relaunching manager_review_bridge.",
+            flush=True,
+        )
+        cmd = [
+            sys.executable,
+            str(self.project_root / "scripts" / "manager_review_bridge.py"),
+            "--watch",
+            "--project-root",
+            str(self.project_root),
+        ]
+        kwargs: dict = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = (
+                subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            )
+        try:
+            subprocess.Popen(cmd, **kwargs)  # noqa: S603
+            state = self.load_state()
+            state.last_manager_stale_trigger_sequence = latest_rfr_seq
+            self.save_state(state)
+        except Exception as exc:
+            print(
+                f"[supervisor] watchdog: failed to relaunch bridge: {exc}",
+                file=sys.stderr,
+            )
+
     def _bootstrap_clear_terminal_ticket(
         self, state: SupervisorState, ticket_id: str
     ) -> None:
@@ -880,6 +991,11 @@ class SequentialTicketSupervisor:
         ticket_id = state.active_ticket or target_ticket
         if ticket_id:
             self._bootstrap_requeue_if_needed(state, ticket_id)
+
+        # Watchdog: relaunch manager review bridge if ticket is stale in READY_FOR_REVIEW
+        ticket_id = state.active_ticket or target_ticket
+        if ticket_id:
+            self._bootstrap_watchdog_manager_if_needed(state, ticket_id)
 
         # Clear active_ticket if execution_log and bus confirm terminal state
         ticket_id = state.active_ticket or target_ticket

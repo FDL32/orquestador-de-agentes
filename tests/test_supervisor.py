@@ -3588,6 +3588,7 @@ def test_run_reactive_emits_supervisor_idle_once_when_no_active_ticket(
         )
     )
 
+    monkeypatch.delenv("SUPERVISOR_RESTART_REASON", raising=False)
     monkeypatch.setattr(supervisor, "bootstrap", lambda: True)
     monkeypatch.setattr(supervisor, "run_once", lambda: False)
     monkeypatch.setattr(supervisor, "_release_supervisor_lock", lambda: None)
@@ -4150,3 +4151,166 @@ def test_bootstrap_requeue_if_needed_skips_when_watermark_already_set(
     )
     state = supervisor.load_state()
     assert state.loop_current_round == 2, "round must not change"
+
+
+# =============================================================================
+# Tests WP-2026-166: Manager watchdog for stale READY_FOR_REVIEW
+# =============================================================================
+
+
+def _make_watchdog_supervisor(tmp_path):
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+    return SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+
+def test_watchdog_fires_when_bridge_stale(tmp_path, monkeypatch):
+    """Stale bridge → MANAGER_STALE emitted, Popen called, watermark updated."""
+    import subprocess as _subprocess
+
+    supervisor = _make_watchdog_supervisor(tmp_path)
+    ticket_id = "WP-2026-166"
+
+    # Emit STATE_CHANGED → READY_FOR_REVIEW so the watchdog has a trigger sequence.
+    supervisor.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="BUILDER",
+        payload={"from_state": "IN_PROGRESS", "to_state": "READY_FOR_REVIEW"},
+    )
+    events_after_emit = supervisor.event_bus.read_events(ticket_id=ticket_id)
+    rfr_seq = events_after_emit[-1].sequence_number
+
+    # Set up state with watermark below the trigger.
+    state = supervisor.load_state()
+    state.active_ticket = ticket_id
+    state.last_manager_stale_trigger_sequence = 0
+    supervisor.save_state(state)
+
+    # Bridge state: heartbeat_at is old (> MANAGER_STALE_TIMEOUT).
+    from datetime import timedelta
+
+    old_hb = (datetime.now(tz=timezone.utc) - timedelta(seconds=700)).isoformat()
+    (supervisor.runtime_dir / "manager_bridge_state.json").write_text(
+        f'{{"heartbeat_at": "{old_hb}", "last_processed_sequence": 0}}',
+        encoding="utf-8",
+    )
+
+    emitted_events: list[str] = []
+
+    def fake_emit(event_type, *, ticket_id, actor, payload=None, **_kw):
+        emitted_events.append(event_type)
+
+    monkeypatch.setattr(supervisor.event_bus, "emit", fake_emit)
+
+    popen_calls: list = []
+
+    def fake_popen(cmd, **kwargs):
+        popen_calls.append(cmd)
+        mock = MagicMock()
+        return mock
+
+    monkeypatch.setattr(_subprocess, "Popen", fake_popen)
+
+    # _current_state must return READY_FOR_REVIEW.
+    monkeypatch.setattr(
+        supervisor, "_current_state", lambda tid: TicketState.READY_FOR_REVIEW
+    )
+
+    state = supervisor.load_state()
+    supervisor._bootstrap_watchdog_manager_if_needed(state, ticket_id)
+
+    assert "MANAGER_STALE" in emitted_events, "watchdog must emit MANAGER_STALE"
+    assert len(popen_calls) == 1, "Popen must be called once to relaunch bridge"
+    assert "--watch" in popen_calls[0]
+
+    reloaded = supervisor.load_state()
+    assert reloaded.last_manager_stale_trigger_sequence == rfr_seq, (
+        "watermark must advance to rfr_seq after relaunch"
+    )
+
+
+def test_watchdog_skips_when_bridge_fresh(tmp_path, monkeypatch):
+    """Fresh bridge heartbeat → watchdog must NOT fire."""
+    import subprocess as _subprocess
+
+    supervisor = _make_watchdog_supervisor(tmp_path)
+    ticket_id = "WP-2026-166"
+
+    supervisor.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="BUILDER",
+        payload={"from_state": "IN_PROGRESS", "to_state": "READY_FOR_REVIEW"},
+    )
+
+    state = supervisor.load_state()
+    state.active_ticket = ticket_id
+    state.last_manager_stale_trigger_sequence = 0
+    supervisor.save_state(state)
+
+    # Fresh heartbeat.
+    fresh_hb = datetime.now(tz=timezone.utc).isoformat()
+    (supervisor.runtime_dir / "manager_bridge_state.json").write_text(
+        f'{{"heartbeat_at": "{fresh_hb}", "last_processed_sequence": 0}}',
+        encoding="utf-8",
+    )
+
+    popen_calls: list = []
+    monkeypatch.setattr(_subprocess, "Popen", lambda cmd, **kw: popen_calls.append(cmd))
+    monkeypatch.setattr(
+        supervisor, "_current_state", lambda tid: TicketState.READY_FOR_REVIEW
+    )
+
+    state = supervisor.load_state()
+    supervisor._bootstrap_watchdog_manager_if_needed(state, ticket_id)
+
+    assert popen_calls == [], "Popen must NOT be called when bridge is fresh"
+
+    reloaded = supervisor.load_state()
+    assert reloaded.last_manager_stale_trigger_sequence == 0, (
+        "watermark must not advance when bridge is alive"
+    )
+
+
+def test_watchdog_skips_when_watermark_covers_sequence(tmp_path, monkeypatch):
+    """Watermark already at RFR sequence → watchdog must not double-fire."""
+    import subprocess as _subprocess
+
+    supervisor = _make_watchdog_supervisor(tmp_path)
+    ticket_id = "WP-2026-166"
+
+    supervisor.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="BUILDER",
+        payload={"from_state": "IN_PROGRESS", "to_state": "READY_FOR_REVIEW"},
+    )
+    events_after_emit = supervisor.event_bus.read_events(ticket_id=ticket_id)
+    rfr_seq = events_after_emit[-1].sequence_number
+
+    # Watermark already covers the trigger.
+    state = supervisor.load_state()
+    state.active_ticket = ticket_id
+    state.last_manager_stale_trigger_sequence = rfr_seq
+    supervisor.save_state(state)
+
+    popen_calls: list = []
+    monkeypatch.setattr(_subprocess, "Popen", lambda cmd, **kw: popen_calls.append(cmd))
+    monkeypatch.setattr(
+        supervisor, "_current_state", lambda tid: TicketState.READY_FOR_REVIEW
+    )
+
+    state = supervisor.load_state()
+    supervisor._bootstrap_watchdog_manager_if_needed(state, ticket_id)
+
+    assert popen_calls == [], (
+        "Popen must NOT be called when watermark covers the sequence"
+    )

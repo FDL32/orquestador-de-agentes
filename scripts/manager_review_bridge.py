@@ -57,6 +57,7 @@ class BridgeState:
     last_ticket_id: str | None = None
     last_ticket_state: str = ""
     updated_at: str = ""
+    heartbeat_at: str = ""
 
     def to_dict(self) -> dict[str, str | None]:
         return {
@@ -64,6 +65,7 @@ class BridgeState:
             "last_ticket_id": self.last_ticket_id,
             "last_ticket_state": self.last_ticket_state,
             "updated_at": self.updated_at,
+            "heartbeat_at": self.heartbeat_at,
         }
 
     @classmethod
@@ -73,6 +75,7 @@ class BridgeState:
             last_ticket_id=data.get("last_ticket_id") or None,
             last_ticket_state=str(data.get("last_ticket_state", "")),
             updated_at=str(data.get("updated_at", "")),
+            heartbeat_at=str(data.get("heartbeat_at", "")),
         )
 
 
@@ -120,6 +123,11 @@ def _save_state(state: BridgeState) -> None:
         json.dumps(state.to_dict(), indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
+
+
+def _refresh_heartbeat(state: BridgeState) -> None:
+    """Stamp heartbeat_at with current UTC time so supervisor can detect a live bridge."""
+    state.heartbeat_at = datetime.now(tz=timezone.utc).isoformat()
 
 
 def _append_block(path: Path, block: str) -> None:
@@ -405,11 +413,14 @@ def main() -> int:
                 manager_path=args.backend_path,
                 timeout=args.timeout,
             )
+            # WP-2026-166: Refresh heartbeat in EVERY watch tick (not only when idle)
+            bridge_state = _load_state()
+            _refresh_heartbeat(bridge_state)
+            _save_state(bridge_state)
             if not ticked:
                 active_ticket, current_state, latest_sequence = _ticket_state(
                     supervisor
                 )
-                bridge_state = _load_state()
                 print(
                     _bridge_heartbeat(
                         prefix="waiting",
