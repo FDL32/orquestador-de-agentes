@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WP-2026-164
-**Estado:** IN_PROGRESS
+**Estado:** COMPLETED
 - **deliverable_type:** code
 
 ## Agente Activo
@@ -32,12 +32,20 @@
 - `uv run ruff format --check .`
 - `python -m pytest tests/test_delivery_hygiene_check.py tests/test_supervisor.py -q`
 
+## Evidencia Verificada
+- `uv run ruff check .` -> `All checks passed!`
+- `python scripts/run_pytest_safe.py` -> `330 passed in 27.14s`
+- `.pre-commit-config.yaml` actualizado para que `uv-lock` quede restringido a `stages: [pre-commit]` y no mutar en `pre-push`.
+
 ## Estado de Control
 - Plan aprobado.
-- Bus en `IN_PROGRESS`.
-- Listo para que Builder implemente.
+- Bus en `READY_FOR_REVIEW`.
+- Listo para review del Manager.
 
 
 Scope override: Archivos fuera del whitelist son superficies vivas (.agent/collaboration/, .agent/runtime/) o formato automatico de ruff (skills/, scripts/validate_ticket_prose.py, tests/test_validate_ticket_prose.py). Archivos del ticket (.pre-commit-config.yaml, scripts/delivery_hygiene_check.py, tests/test_delivery_hygiene_check.py) estan en el whitelist.. Affected files: C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\runtime\memory\observations.jsonl, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\scripts\validate_ticket_prose.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\skills\_shared\ticket-anti-patterns.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\skills\man-create-work-plan\references\plan-quality-checklist.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\skills\project-finalize\SKILL.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\tests\test_supervisor.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\tests\test_validate_ticket_prose.py
 
 Manager requested changes (1 rejections)
+
+
+Manager approved canonical closeout for WP-2026-164
