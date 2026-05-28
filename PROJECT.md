@@ -4,13 +4,12 @@
 
 ## Current Cycle
 
-- Active ticket: WP-2026-162 COMPLETED (2026-05-28). Canonical closeout published.
-- Ticket quality loop automation added: `ticket-anti-patterns.md`, `plan-quality-checklist.md`,
-  `validate_ticket_prose.py`, and `warnings.ticket_prose` in `--validate`.
-- CHANGELOG updated with the WP-2026-162 closeout entry.
-- Hardening: `.claude/security-patterns.json` + `.claude/claude-security-guidance.md` added as
-  preparation for security-guidance plugin.
-- `bui-self-audit` updated with Paso 4b contract rules and deduplication cleanup.
+- Active ticket: WP-2026-164 COMPLETED (2026-05-28). Canonical closeout published.
+- Delivery hygiene loop: `delivery_hygiene_check.py` preflight + 20 tests; `.pre-commit-config.yaml`
+  mutating hooks confined to `pre-commit`; `uv-lock` stage-gated.
+- Supervisor bootstrap gap fixed: `_bootstrap_requeue_if_needed()` detects unprocessed CHANGES
+  triggers on startup; `SUPERVISOR_REQUEUE_DEFERRED` event emitted when Builder lock is fresh.
+- `validate_ticket_prose.py` TP-06 detection added; two false-positive patterns corrected.
 
 ## Current readiness
 
