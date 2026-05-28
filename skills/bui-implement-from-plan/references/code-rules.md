@@ -375,3 +375,15 @@ Ejecutar el suite existente y ver que pasa no es evidencia de cobertura si las f
 ✅ Cada función nueva introducida en el diff tiene al menos un test que la invoca directamente, incluyendo el path de fallback si aplica.
 
 Regla: antes de declarar READY_FOR_REVIEW, verifica que cada `def` nuevo o `method` nuevo aparezca al menos una vez como llamada directa en `test_*.py`. Si no aparece, el test no existe.
+
+## Delivery hygiene - scope safety y artefactos generados
+
+Si durante la implementacion aparece un archivo fuera de `Files Likely Touched`, **NO** lo revivas ni lo borres con `git checkout`, `git reset` o `git revert`.
+
+**NO:** limpiar un archivo no declarado para "dejar el arbol limpio".
+**SI:** anotar la discrepancia de scope en `execution_log.md` y pedir al Manager una actualizacion explicita del plan.
+
+Los artefactos generados o de runtime deben quedar excluidos de hooks mutadores. Si un hook los toca en `pre-push`, el Builder debe parar y reportarlo, no aceptar una reescritura silenciosa.
+
+**NO:** dejar que `end-of-file-fixer` o `ruff format` muten `.agent/context/project-map.json` o `events.jsonl` durante `pre-push`.
+**SI:** verificar esos archivos de forma no mutadora y mantener el scope de entrega congelado antes del handoff.

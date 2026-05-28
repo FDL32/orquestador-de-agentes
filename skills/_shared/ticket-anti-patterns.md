@@ -97,6 +97,34 @@ Fuente compartida para Builder y Manager. Cada entrada debe leerse como una regl
 
 Detectado automaticamente por `validate_ticket_prose.py` como `TP-PROSE-12`.
 
+## AP-D01 - Destructive scope cleanup
+
+- **Descripcion:** Builder revierte, borra o resetea archivos que no estan en `Files Likely Touched` usando `git checkout`, `git reset`, `git revert` u otra operacion destructiva.
+- **Por que rompe al Builder:** destruye trabajo ajeno y convierte una discrepancia de scope en una perdida de estado dificil de auditar.
+- **Senal de deteccion:** el diff muestra eliminaciones o reversiones fuera del whitelist del plan, o el log menciona limpieza destructiva sobre archivos no declarados.
+
+âŒ Ejemplo malo:
+> "Builder hace `git checkout -- skills/_shared/ticket-anti-patterns.md` porque sobraba en su scope."
+
+âœ… Ejemplo bueno:
+> "Builder deja el archivo intacto, anota la discrepancia en `execution_log.md` y pide al Manager una actualizacion explicita del scope."
+
+Detectado por el review checklist y por el Manager leyendo el `git diff` cuando la discrepancia aparece en el flujo de entrega.
+
+## AP-D02 - Unprotected generated artifact
+
+- **Descripcion:** Un artefacto generado o de runtime que no esta excluido de hooks mutadores se reescribe en `pre-push` y rompe la entrega.
+- **Por que rompe al Builder:** el push falla por mutacion de archivos que no deberian participar en el formateo o en el fijado de finales de linea.
+- **Senal de deteccion:** un hook mutador toca `.agent/context/project-map.json`, `events.jsonl` u otro artefacto generado declarado como runtime.
+
+âŒ Ejemplo malo:
+> "`pre-push` ejecuta `end-of-file-fixer` sobre `.agent/context/project-map.json` y modifica el arbol."
+
+âœ… Ejemplo bueno:
+> "Los artefactos generados quedan excluidos de hooks mutadores; el preflight solo los verifica de forma no mutadora."
+
+Detectado automaticamente por `delivery_hygiene_check.py`.
+
 ## Uso
 
 - Usa estas entradas como referencia al redactar el `## TP Check` del `AUDIT_WP-XXXX.md`.

@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WP-2026-165
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** mixed
 - **Titulo:** Delivery preflight wrapper - canonical push readiness
 - **Asignado a:** Builder
@@ -17,6 +17,7 @@ Convertir la rutina manual de pre-push en un comando canónico y reutilizable qu
 - El wrapper debe detectar antes del push los mismos problemas que ya vimos: hooks mutadores en `pre-push`, artefactos generados reescritos, arbol sucio y checks de calidad que fallan.
 - `.agent/context/project-map.json` es un artefacto generado de runtime; puede regenerarse en bootstrap, pero no forma parte del entregable ni del flujo mutador por defecto.
 - Este ticket tambien recupera el aprendizaje de planificacion TP-07 / TP-PROSE-12 para que el mismo commit deje trazabilidad completa entre catalogo, checklist y detector.
+- Este ticket formaliza tambien los anti-patrones de delivery AP-D01 / AP-D02 para que Builder y Manager compartan el mismo lenguaje sobre scope safety y artefactos generados.
 
 ## Decision Arquitectonica
 - El wrapper es exclusivamente de verificacion. No muta el arbol en ningun camino.
@@ -58,11 +59,11 @@ Convertir la rutina manual de pre-push en un comando canónico y reutilizable qu
 
 ### Fase 3: documentacion del ciclo de delivery
 - **Tipo:** TAREA AGENTE
-- **Archivos:** `skills/project-finalize/SKILL.md`, `PROJECT.md`, `QUICKSTART.md`
+- **Archivos:** `skills/project-finalize/SKILL.md`, `PROJECT.md`, `QUICKSTART.md`, `skills/_shared/ticket-anti-patterns.md`, `skills/bui-implement-from-plan/references/code-rules.md`, `skills/man-review-implementation/references/review-checklist.md`, `skills/_shared/ap-schema.md`
 - **Accion:** Modificar
-- **Descripcion:** Referenciar el wrapper como comando canonico del preflight de entrega y explicar cuando usarlo, que hace si falla y que no sustituye al push remoto ni a los checks de GitHub Actions.
+- **Descripcion:** Referenciar el wrapper como comando canonico del preflight de entrega y explicar cuando usarlo, que hace si falla y que no sustituye al push remoto ni a los checks de GitHub Actions. Formalizar AP-D01 / AP-D02 en el catalogo, la regla del Builder, la checklist del Manager y la taxonomia compartida de observaciones.
 - **Riesgo:** Bajo
-- **Criterio de Aceptacion:** La documentacion del ciclo de delivery nombra un unico comando canonico y deja claro el orden: preflight local, correccion si hace falta, confirmacion limpia y solo entonces push.
+- **Criterio de Aceptacion:** La documentacion del ciclo de delivery nombra un unico comando canonico y deja claro el orden: preflight local, correccion si hace falta, confirmacion limpia y solo entonces push. AP-D01 / AP-D02 quedan trazados en el catalogo, la regla del Builder y la checklist del Manager.
 - **Si falla:** Mantener la documentacion en `project-finalize` y diferir `PROJECT.md` / `QUICKSTART.md` para un ajuste posterior.
 
 ## Files Likely Touched
@@ -75,6 +76,10 @@ Convertir la rutina manual de pre-push en un comando canónico y reutilizable qu
 - `skills/project-finalize/SKILL.md`
 - `PROJECT.md`
 - `QUICKSTART.md`
+- `skills/_shared/ticket-anti-patterns.md`
+- `skills/bui-implement-from-plan/references/code-rules.md`
+- `skills/man-review-implementation/references/review-checklist.md`
+- `skills/_shared/ap-schema.md`
 
 ## Calidad
 - `python scripts/prepush_check.py --help`
