@@ -312,7 +312,13 @@ def detect_oversized_ticket(content: str) -> list[ProseWarning]:
     if files_match:
         files_text = files_match.group(1)
         # Contar lineas que parecen archivos (empiezan con - y contienen ruta)
-        file_count = len([line for line in files_text.split("\n") if line.strip().startswith("-") and "`" in line])
+        file_count = len(
+            [
+                line
+                for line in files_text.split("\n")
+                if line.strip().startswith("-") and "`" in line
+            ]
+        )
         if file_count > 10:
             warnings.append(
                 ProseWarning(
@@ -458,7 +464,11 @@ def validate_ticket_prose(work_plan_path: Path, collab_dir: Path) -> ValidationR
 
     content = work_plan_path.read_text(encoding="utf-8")
     is_completed_plan = bool(
-        re.search(r"##\s*Metadata\s*\n.*?\-\s*\*\*Estado:\*\*\s*COMPLETED", content, re.DOTALL | re.IGNORECASE)
+        re.search(
+            r"##\s*Metadata\s*\n.*?\-\s*\*\*Estado:\*\*\s*COMPLETED",
+            content,
+            re.DOTALL | re.IGNORECASE,
+        )
     )
 
     all_warnings: list[ProseWarning] = []
@@ -497,7 +507,9 @@ def format_output(result: ValidationResult, json_output: bool) -> str:
         return json.dumps(result, indent=2, ensure_ascii=False)
 
     lines = []
-    lines.append(f"Ticket Prose Validator - {result['warning_count']} warnings encontrados")
+    lines.append(
+        f"Ticket Prose Validator - {result['warning_count']} warnings encontrados"
+    )
     lines.append("=" * 60)
 
     if not result["warnings"]:

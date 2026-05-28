@@ -429,12 +429,16 @@ class TestValidateTicketProse:
         collab_dir = tmp_path / "collab"
         collab_dir.mkdir()
         work_plan = collab_dir / "work_plan.md"
-        work_plan.write_text(clean_plan.replace("APPROVED", "COMPLETED"), encoding="utf-8")
+        work_plan.write_text(
+            clean_plan.replace("APPROVED", "COMPLETED"), encoding="utf-8"
+        )
 
         result = validate_ticket_prose(work_plan, collab_dir)
         assert result["warning_count"] == 0
 
-    def test_defective_plan_multiple_warnings(self, tmp_path: Path, defective_plan: str):
+    def test_defective_plan_multiple_warnings(
+        self, tmp_path: Path, defective_plan: str
+    ):
         """Plan defectuoso genera multiples warnings."""
         collab_dir = tmp_path / "collab"
         collab_dir.mkdir()
