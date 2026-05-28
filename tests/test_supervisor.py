@@ -830,6 +830,127 @@ def test_supervisor_skips_relaunch_on_human_gate(tmp_path, monkeypatch):
     assert relaunch_calls == []
 
 
+def test_run_once_triggers_requeue_on_review_decision_changes(tmp_path, monkeypatch):
+    """REVIEW_DECISION with decision=CHANGES must trigger requeue, not just LOOP_DECISION."""
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+    _write_work_plan(collaboration_dir / "work_plan.md")
+    _write_execution_log(collaboration_dir / "execution_log.md")
+    _write_turn(
+        collaboration_dir / "TURN.md",
+        role="BUILDER",
+        plan_id="WP-2026-041",
+        action="IMPLEMENT",
+        plan_status="APPROVED",
+        log_status="READY_FOR_REVIEW",
+    )
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+    supervisor.save_state(
+        SupervisorState(
+            active_ticket="WP-2026-041",
+            completed_tickets=[],
+            last_action="ACTIVATE",
+            loop_current_round=1,
+            loop_max_rounds=3,
+        )
+    )
+
+    supervisor.event_bus.emit(
+        "REVIEW_DECISION",
+        ticket_id="WP-2026-041",
+        actor="MANAGER",
+        payload={"decision": "changes", "feedback": "fix the tests"},
+    )
+
+    relaunch_calls: list[str] = []
+    monkeypatch.setattr(
+        supervisor,
+        "_relaunch_builder",
+        lambda ticket_id: relaunch_calls.append(ticket_id) or True,
+    )
+
+    changed = supervisor.run_once()
+    assert changed is True
+
+    state = supervisor.load_state()
+    assert state.loop_current_round == 2, (
+        "round must increment after REVIEW_DECISION CHANGES"
+    )
+    assert relaunch_calls == ["WP-2026-041"], "Builder must be relaunched"
+    assert state.last_requeue_trigger_sequence > 0, "watermark must be persisted"
+
+
+def test_run_once_watermark_prevents_double_requeue(tmp_path, monkeypatch):
+    """A repeated REVIEW_DECISION with the same (already-seen) sequence must not trigger a second requeue."""
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+    _write_work_plan(collaboration_dir / "work_plan.md")
+    _write_execution_log(collaboration_dir / "execution_log.md")
+    _write_turn(
+        collaboration_dir / "TURN.md",
+        role="BUILDER",
+        plan_id="WP-2026-041",
+        action="IMPLEMENT",
+        plan_status="APPROVED",
+        log_status="READY_FOR_REVIEW",
+    )
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+    supervisor.save_state(
+        SupervisorState(
+            active_ticket="WP-2026-041",
+            completed_tickets=[],
+            last_action="ACTIVATE",
+            loop_current_round=1,
+            loop_max_rounds=3,
+        )
+    )
+
+    supervisor.event_bus.emit(
+        "REVIEW_DECISION",
+        ticket_id="WP-2026-041",
+        actor="MANAGER",
+        payload={"decision": "CHANGES", "feedback": "needs work"},
+    )
+
+    relaunch_calls: list[str] = []
+    monkeypatch.setattr(
+        supervisor,
+        "_relaunch_builder",
+        lambda ticket_id: relaunch_calls.append(ticket_id) or True,
+    )
+
+    # First run_once: should trigger requeue
+    supervisor.run_once()
+    assert len(relaunch_calls) == 1
+    state = supervisor.load_state()
+    watermark = state.last_requeue_trigger_sequence
+    assert watermark > 0
+
+    # Second run_once with same events (no new events added): watermark blocks requeue
+    supervisor.run_once()
+    assert len(relaunch_calls) == 1, (
+        "watermark must prevent second requeue for same CHANGES"
+    )
+    state2 = supervisor.load_state()
+    assert state2.loop_current_round == 2, "round must not increment a second time"
+
+
 def test_run_reactive_uses_idle_timeout_reset(tmp_path, monkeypatch):
     """run_reactive should reset its timeout when activity is observed."""
     collaboration_dir = tmp_path / ".agent" / "collaboration"
@@ -2766,3 +2887,676 @@ def test_run_loop_releases_lock_on_exception(tmp_path, monkeypatch):
     # Lock should be released despite exception
     assert not supervisor.supervisor_lock_path.exists()
     assert supervisor._lock_fd is None
+
+
+# =============================================================================
+# Tests WP-2026-159: Instrumentacion del relanzado (Fase 0)
+# =============================================================================
+
+
+def test_run_launcher_subprocess_success(tmp_path, monkeypatch):
+    """Test _run_launcher_subprocess returns exit code and output on success."""
+    import subprocess
+
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    # Mock subprocess.run to simulate success
+    def mock_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(
+            cmd, returncode=0, stdout="Launcher OK", stderr=""
+        )
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    cmd = ["fake_cmd", "arg1"]
+    exit_code, stdout, stderr = supervisor._run_launcher_subprocess(cmd)
+
+    assert exit_code == 0
+    assert stdout == "Launcher OK"
+    assert stderr == ""
+
+
+def test_run_launcher_subprocess_timeout(tmp_path, monkeypatch):
+    """Test _run_launcher_subprocess returns timeout signature on TimeoutExpired."""
+    import subprocess
+
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    # Mock subprocess.run to simulate timeout
+    def mock_run(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, 60)
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    cmd = ["fake_cmd", "arg1"]
+    exit_code, stdout, stderr = supervisor._run_launcher_subprocess(cmd)
+
+    assert exit_code == -1
+    assert stdout == ""
+    assert "timed out" in stderr
+
+
+def test_run_launcher_subprocess_exception(tmp_path, monkeypatch):
+    """Test _run_launcher_subprocess returns exception signature on error."""
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    # Mock subprocess.run to simulate exception
+    def mock_run(cmd, **kwargs):
+        raise FileNotFoundError("Command not found")
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    cmd = ["fake_cmd", "arg1"]
+    exit_code, stdout, stderr = supervisor._run_launcher_subprocess(cmd)
+
+    assert exit_code == -1
+    assert stdout == ""
+    assert "ERROR" in stderr
+
+
+def test_persist_relaunch_log_writes_file(tmp_path):
+    """Test _persist_relaunch_log writes stdout/stderr to log file."""
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    supervisor._persist_relaunch_log("STDOUT_OUTPUT", "STDERR_OUTPUT")
+
+    log_path = runtime_dir / "logs" / "launcher_last.log"
+    assert log_path.exists()
+
+    content = log_path.read_text(encoding="utf-8")
+    assert "=== STDOUT ===" in content
+    assert "STDOUT_OUTPUT" in content
+    assert "=== STDERR ===" in content
+    assert "STDERR_OUTPUT" in content
+
+
+def test_relaunch_emits_event_skipped_alive(tmp_path, monkeypatch):
+    """Test _relaunch_builder emits BUILDER_RELAUNCH_ATTEMPTED with skipped_alive."""
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    # Set loop_current_round for the event
+    supervisor.save_state(
+        SupervisorState(
+            active_ticket="WP-TEST",
+            loop_current_round=2,
+        )
+    )
+
+    # Mock _builder_alive to return True (skip relaunch)
+    monkeypatch.setattr(supervisor, "_builder_alive", lambda: True)
+
+    result = supervisor._relaunch_builder("WP-TEST")
+
+    assert result is True
+
+    # Verify event was emitted
+    events = supervisor.event_bus.read_events(
+        ticket_id="WP-TEST", event_type="BUILDER_RELAUNCH_ATTEMPTED"
+    )
+    assert len(events) == 1
+    payload = events[0].payload
+    assert payload["round"] == 2
+    assert payload["outcome"] == "skipped_alive"
+    assert payload["exit_code"] is None
+    assert "Builder alive" in payload["stderr_tail"]
+
+    # Verify log was persisted
+    log_path = runtime_dir / "logs" / "launcher_last.log"
+    assert log_path.exists()
+
+
+def test_relaunch_emits_event_launcher_failed(tmp_path, monkeypatch):
+    """Test _relaunch_builder emits BUILDER_RELAUNCH_ATTEMPTED with launcher_failed."""
+
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    # Create fake launcher
+    launcher_path = tmp_path / "scripts" / "launch_agent_terminals.ps1"
+    launcher_path.parent.mkdir(parents=True)
+    launcher_path.write_text("# fake launcher", encoding="utf-8")
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    # Set loop_current_round for the event
+    supervisor.save_state(
+        SupervisorState(
+            active_ticket="WP-TEST",
+            loop_current_round=3,
+        )
+    )
+
+    # Mock _builder_alive to return False (proceed to launch)
+    monkeypatch.setattr(supervisor, "_builder_alive", lambda: False)
+
+    # Mock _run_launcher_subprocess to simulate failure
+    monkeypatch.setattr(
+        supervisor,
+        "_run_launcher_subprocess",
+        lambda cmd: (1, "", "Launcher error output"),
+    )
+
+    result = supervisor._relaunch_builder("WP-TEST")
+
+    assert result is False
+
+    # Verify event was emitted
+    events = supervisor.event_bus.read_events(
+        ticket_id="WP-TEST", event_type="BUILDER_RELAUNCH_ATTEMPTED"
+    )
+    assert len(events) == 1
+    payload = events[0].payload
+    assert payload["round"] == 3
+    assert payload["outcome"] == "launcher_failed"
+    assert payload["exit_code"] == 1
+    assert payload["stderr_tail"] == "Launcher error output"
+
+    # Verify log was persisted
+    log_path = runtime_dir / "logs" / "launcher_last.log"
+    assert log_path.exists()
+
+
+def test_relaunch_emits_event_success(tmp_path, monkeypatch):
+    """Test _relaunch_builder emits BUILDER_RELAUNCH_ATTEMPTED with success."""
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    # Create fake launcher
+    launcher_path = tmp_path / "scripts" / "launch_agent_terminals.ps1"
+    launcher_path.parent.mkdir(parents=True)
+    launcher_path.write_text("# fake launcher", encoding="utf-8")
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    # Set loop_current_round for the event
+    supervisor.save_state(
+        SupervisorState(
+            active_ticket="WP-TEST",
+            loop_current_round=1,
+        )
+    )
+
+    # Mock _builder_alive to return False (proceed to launch)
+    monkeypatch.setattr(supervisor, "_builder_alive", lambda: False)
+
+    # Mock _run_launcher_subprocess to simulate success
+    monkeypatch.setattr(
+        supervisor,
+        "_run_launcher_subprocess",
+        lambda cmd: (0, "Launcher OK", ""),
+    )
+
+    result = supervisor._relaunch_builder("WP-TEST")
+
+    assert result is True
+
+    # Verify event was emitted
+    events = supervisor.event_bus.read_events(
+        ticket_id="WP-TEST", event_type="BUILDER_RELAUNCH_ATTEMPTED"
+    )
+    assert len(events) == 1
+    payload = events[0].payload
+    assert payload["round"] == 1
+    assert payload["outcome"] == "success"
+    assert payload["exit_code"] == 0
+    assert payload["stderr_tail"] is None
+
+    # Verify log was persisted
+    log_path = runtime_dir / "logs" / "launcher_last.log"
+    assert log_path.exists()
+
+
+def test_relaunch_emits_event_timeout(tmp_path, monkeypatch):
+    """Test _relaunch_builder emits BUILDER_RELAUNCH_ATTEMPTED with timeout."""
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    # Create fake launcher
+    launcher_path = tmp_path / "scripts" / "launch_agent_terminals.ps1"
+    launcher_path.parent.mkdir(parents=True)
+    launcher_path.write_text("# fake launcher", encoding="utf-8")
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    # Set loop_current_round for the event
+    supervisor.save_state(
+        SupervisorState(
+            active_ticket="WP-TEST",
+            loop_current_round=4,
+        )
+    )
+
+    # Mock _builder_alive to return False (proceed to launch)
+    monkeypatch.setattr(supervisor, "_builder_alive", lambda: False)
+
+    # Mock _run_launcher_subprocess to simulate timeout
+    monkeypatch.setattr(
+        supervisor,
+        "_run_launcher_subprocess",
+        lambda cmd: (-1, "", "launcher timed out after 60s"),
+    )
+
+    result = supervisor._relaunch_builder("WP-TEST")
+
+    assert result is False
+
+    # Verify event was emitted
+    events = supervisor.event_bus.read_events(
+        ticket_id="WP-TEST", event_type="BUILDER_RELAUNCH_ATTEMPTED"
+    )
+    assert len(events) == 1
+    payload = events[0].payload
+    assert payload["round"] == 4
+    assert payload["outcome"] == "timeout"
+    assert payload["exit_code"] == -1
+    assert "timed out" in payload["stderr_tail"]
+
+
+def test_relaunch_launcher_not_found_emits_event(tmp_path, monkeypatch):
+    """Test _relaunch_builder emits event when launcher file is missing."""
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    # Set loop_current_round for the event
+    supervisor.save_state(
+        SupervisorState(
+            active_ticket="WP-TEST",
+            loop_current_round=1,
+        )
+    )
+
+    # Mock _builder_alive to return False (proceed to launch)
+    monkeypatch.setattr(supervisor, "_builder_alive", lambda: False)
+
+    # Ensure launcher doesn't exist
+    launcher_path = tmp_path / "scripts" / "launch_agent_terminals.ps1"
+    if launcher_path.exists():
+        launcher_path.unlink()
+
+    result = supervisor._relaunch_builder("WP-TEST")
+
+    assert result is False
+
+    # Verify event was emitted
+    events = supervisor.event_bus.read_events(
+        ticket_id="WP-TEST", event_type="BUILDER_RELAUNCH_ATTEMPTED"
+    )
+    assert len(events) == 1
+    payload = events[0].payload
+    assert payload["round"] == 1
+    assert payload["outcome"] == "launcher_failed"
+    assert payload["exit_code"] == -1
+    assert "Launcher not found" in payload["stderr_tail"]
+
+
+def test_relaunch_powershell_not_found_emits_event(tmp_path, monkeypatch):
+    """Test _relaunch_builder emits event when PowerShell is not found."""
+    import shutil
+
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    # Create fake launcher
+    launcher_path = tmp_path / "scripts" / "launch_agent_terminals.ps1"
+    launcher_path.parent.mkdir(parents=True)
+    launcher_path.write_text("# fake launcher", encoding="utf-8")
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    # Set loop_current_round for the event
+    supervisor.save_state(
+        SupervisorState(
+            active_ticket="WP-TEST",
+            loop_current_round=1,
+        )
+    )
+
+    # Mock _builder_alive to return False (proceed to launch)
+    monkeypatch.setattr(supervisor, "_builder_alive", lambda: False)
+
+    # Mock shutil.which to return None (PowerShell not found)
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+
+    result = supervisor._relaunch_builder("WP-TEST")
+
+    assert result is False
+
+    # Verify event was emitted
+    events = supervisor.event_bus.read_events(
+        ticket_id="WP-TEST", event_type="BUILDER_RELAUNCH_ATTEMPTED"
+    )
+    assert len(events) == 1
+    payload = events[0].payload
+    assert payload["round"] == 1
+    assert payload["outcome"] == "launcher_failed"
+    assert payload["exit_code"] == -1
+    assert "PowerShell executable not found" in payload["stderr_tail"]
+
+
+def test_relaunch_seam_allows_monkeypatch_without_pytest_check(tmp_path, monkeypatch):
+    """Test that _run_launcher_subprocess seam allows testing without PYTEST_CURRENT_TEST blocking.
+
+    This verifies the key design decision: the seam enables tests to control
+    subprocess behavior without depending on the old PYTEST_CURRENT_TEST global check.
+    """
+
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    # Ensure we're NOT blocking via PYTEST_CURRENT_TEST
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+
+    # Mock the seam directly - this is the key testability improvement
+    call_args = []
+
+    def mock_run_launcher(cmd):
+        call_args.append(cmd)
+        return (0, "mocked output", "")
+
+    monkeypatch.setattr(supervisor, "_run_launcher_subprocess", mock_run_launcher)
+    monkeypatch.setattr(supervisor, "_builder_alive", lambda: False)
+
+    # Create fake launcher
+    launcher_path = tmp_path / "scripts" / "launch_agent_terminals.ps1"
+    launcher_path.parent.mkdir(parents=True)
+    launcher_path.write_text("# fake launcher", encoding="utf-8")
+
+    result = supervisor._relaunch_builder("WP-TEST")
+
+    assert result is True
+    assert len(call_args) == 1
+    # Verify the seam was called with the expected command
+    assert "launch_agent_terminals.ps1" in str(call_args[0])
+
+
+# =============================================================================
+# Tests WP-2026-159: Smoke path reactivo estable (Fase 2)
+# =============================================================================
+
+
+def test_run_reactive_smoke_with_requeue_polling(tmp_path, monkeypatch):
+    """Smoke test: run_reactive maintains polling after requeue, respects timeout/idle timeout.
+
+    This test verifies the full reactive cycle:
+    1. Supervisor bootstraps and acquires lock
+    2. Detects CHANGES event and triggers requeue
+    3. Continues polling after requeue (does not exit immediately)
+    4. Respects idle timeout when no activity is observed
+    """
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    # Bootstrap must return True for run_reactive to proceed
+    monkeypatch.setattr(supervisor, "bootstrap", lambda: True)
+
+    # Track run_once calls and simulate requeue on second call
+    run_once_calls = []
+    requeue_triggered = False
+
+    def fake_run_once():
+        nonlocal requeue_triggered
+        call_idx = len(run_once_calls)
+        run_once_calls.append(call_idx)
+
+        # Simulate activity for first 3 calls, then idle
+        if call_idx == 1:
+            # Trigger requeue on second call
+            requeue_triggered = True
+            return True
+        return call_idx < 3  # Activity continues until call 3
+
+    monkeypatch.setattr(supervisor, "run_once", fake_run_once)
+
+    # Set short timeouts for test
+    monkeypatch.setenv("TICKET_SUPERVISOR_IDLE_TIMEOUT_SECONDS", "2")
+    monkeypatch.setenv("TICKET_SUPERVISOR_MAX_RUNTIME_SECONDS", "10")
+
+    # Mock time to simulate passage: 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5
+    # This should trigger idle timeout after 2 seconds of inactivity
+    times = iter(
+        [
+            0.0,
+            0.0,  # start_time, last_activity init
+            1.0,
+            1.0,  # call 0: activity
+            2.0,
+            2.0,  # call 1: requeue + activity
+            3.0,
+            3.0,  # call 2: activity
+            4.0,
+            4.0,  # call 3: no activity, but within idle timeout
+            5.0,
+            5.0,  # call 4: no activity, but within idle timeout
+            7.0,
+            7.0,  # call 5: idle timeout triggered (>2s since last activity at 3.0)
+        ]
+    )
+    monkeypatch.setattr("time.time", lambda: next(times))
+    monkeypatch.setattr("time.sleep", lambda _seconds: None)
+
+    changed = supervisor.run_reactive(timeout_seconds=10.0)
+
+    # Verify run_once was called multiple times (polling continued after requeue)
+    assert len(run_once_calls) >= 3, "run_once must be called at least 3 times"
+
+    # Verify requeue was triggered
+    assert requeue_triggered, "requeue must be triggered during polling"
+
+    # Verify loop exited (changed should be True since we had activity)
+    assert changed is True
+
+    # Verify lock was released
+    assert not supervisor.supervisor_lock_path.exists()
+    assert supervisor._lock_fd is None
+
+
+def test_run_once_requeue_watermark_persists_across_calls(tmp_path, monkeypatch):
+    """Test that last_requeue_trigger_sequence watermark persists and prevents double requeue.
+
+    This verifies the watermark mechanism works correctly across multiple run_once calls
+    when the same CHANGES event is present.
+    """
+    from bus.supervisor import SequentialTicketSupervisor, SupervisorState
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    supervisor.save_state(
+        SupervisorState(
+            active_ticket="WP-2026-159",
+            loop_current_round=1,
+            last_requeue_trigger_sequence=0,
+        )
+    )
+
+    # Emit a single CHANGES event
+    supervisor.event_bus.emit(
+        "REVIEW_DECISION",
+        ticket_id="WP-2026-159",
+        actor="MANAGER",
+        payload={"decision": "CHANGES", "feedback": "needs work"},
+    )
+
+    relaunch_calls = []
+    monkeypatch.setattr(
+        supervisor,
+        "_relaunch_builder",
+        lambda ticket_id: relaunch_calls.append(ticket_id) or True,
+    )
+
+    # First run_once: should trigger requeue
+    changed1 = supervisor.run_once()
+    assert changed1 is True
+    assert len(relaunch_calls) == 1, "First call should trigger requeue"
+
+    state1 = supervisor.load_state()
+    assert state1.loop_current_round == 2
+    watermark1 = state1.last_requeue_trigger_sequence
+    assert watermark1 > 0, "Watermark must be persisted after first requeue"
+
+    # Second run_once: same events, watermark should block requeue
+    changed2 = supervisor.run_once()
+    assert len(relaunch_calls) == 1, (
+        "Second call should NOT trigger requeue (watermark)"
+    )
+    assert changed2 is False  # No new activity
+
+    state2 = supervisor.load_state()
+    assert state2.loop_current_round == 2, "Round must not increment twice"
+    assert state2.last_requeue_trigger_sequence == watermark1, "Watermark unchanged"
+
+    # Third run_once: emit NEW CHANGES event with higher sequence
+    supervisor.event_bus.emit(
+        "REVIEW_DECISION",
+        ticket_id="WP-2026-159",
+        actor="MANAGER",
+        payload={"decision": "CHANGES", "feedback": "still needs work"},
+    )
+
+    changed3 = supervisor.run_once()
+    assert changed3 is True
+    assert len(relaunch_calls) == 2, "New CHANGES event should trigger second requeue"
+
+    state3 = supervisor.load_state()
+    assert state3.loop_current_round == 3, "Round increments for new CHANGES"
+    assert state3.last_requeue_trigger_sequence > watermark1, (
+        "Watermark updated for new event"
+    )
