@@ -1,6 +1,6 @@
 # TURNO ACTUAL
 
-**Ultima actualizacion:** 2026-05-28 14:59:00
+**Ultima actualizacion:** 2026-05-28 15:45:52
 
 ---
 
@@ -8,23 +8,23 @@
 
 | Campo | Valor |
 |-------|-------|
-| **ROL** | **BUILDER** |
-| **Plan ID** | **WP-2026-162** |
-| **Tipo** | **TAREA AGENTE** |
-| **Accion** | **IMPLEMENT** |
+| **ROL** | **MANAGER** |
+| **Plan ID** | WP-2026-162 |
+| **Tipo** | TAREA AGENTE |
+| **Accion** | REVIEW_WORK |
 
 ---
 
 ## Instruccion
 
-> Implementa WP-2026-162 segun work_plan.md.
+> Builder completo WP-2026-162. Revisa el trabajo.
 
 ---
 
 ## Archivos a Leer
 
-1. `.builder_rules` (Contexto del rol)
-2. `.agent/workflows/builder_workflow.md` (Flujo de trabajo)
+1. `.manager_rules` (Contexto del rol)
+2. `.agent/workflows/manager_workflow.md` (Flujo de trabajo)
 
 ---
 
@@ -32,8 +32,8 @@
 
 | Archivo | Estado |
 |---------|--------|
-| work_plan.md | COMPLETED |
-| execution_log.md | COMPLETED |
+| work_plan.md | APPROVED |
+| execution_log.md | READY_FOR_REVIEW |
 
 ---
 

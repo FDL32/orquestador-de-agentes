@@ -3164,7 +3164,7 @@ def _handle_validate(json_output: bool) -> int:  # noqa: C901
     """Handle --validate flag.
 
     Aggregates many independent validators (state files, scope, bus drift,
-    deliverable_type). Each branch is simple; the function is intentionally
+    deliverable_type, ticket_prose). Each branch is simple; the function is intentionally
     a thin coordinator. Splitting it further would harm readability.
     """
     errors = validate_state_files()
@@ -3176,6 +3176,21 @@ def _handle_validate(json_output: bool) -> int:  # noqa: C901
 
     log_content = read_file(EXEC_LOG)
     log_status = get_status(log_content, "**Estado:**")
+
+    # WP-2026-162: Ticket prose validation
+    try:
+        from scripts.validate_ticket_prose import validate_ticket_prose
+
+        prose_result = validate_ticket_prose(WORK_PLAN, get_collab_dir())
+        if prose_result["warnings"]:
+            # Convert ProseWarning dicts to strings for consistent warning format
+            prose_warnings = [
+                f"[{w['rule_id']}] {w['rule_name']}: {w['suggestion']}"
+                for w in prose_result["warnings"]
+            ]
+            warnings.setdefault("ticket_prose", []).extend(prose_warnings)
+    except ImportError:
+        pass  # Gracefully degrade if validator not available
 
     # Check scope violations
     scope_errors, scope_warnings = _check_scope_for_validate(plan_content, log_status)
