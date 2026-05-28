@@ -1,6 +1,6 @@
 # TURNO ACTUAL
 
-**Ultima actualizacion:** 2026-05-28 14:48:17
+**Ultima actualizacion:** 2026-05-28 14:59:00
 
 ---
 
@@ -8,23 +8,23 @@
 
 | Campo | Valor |
 |-------|-------|
-| **ROL** | **MANAGER** |
-| **Plan ID** | N/A |
-| **Tipo** | IMPLEMENTATION |
-| **Accion** | CREATE_PLAN |
+| **ROL** | **BUILDER** |
+| **Plan ID** | **WP-2026-162** |
+| **Tipo** | **TAREA AGENTE** |
+| **Accion** | **IMPLEMENT** |
 
 ---
 
 ## Instruccion
 
-> Ticket WP-2026-161 closed. Create new work_plan.md for next cycle.
+> Implementa WP-2026-162 segun work_plan.md.
 
 ---
 
 ## Archivos a Leer
 
-1. `.manager_rules` (Contexto del rol)
-2. `.agent/workflows/manager_workflow.md` (Flujo de trabajo)
+1. `.builder_rules` (Contexto del rol)
+2. `.agent/workflows/builder_workflow.md` (Flujo de trabajo)
 
 ---
 
