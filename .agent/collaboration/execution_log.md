@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WP-2026-161
-**Estado:** IN_PROGRESS
+**Estado:** READY_FOR_REVIEW
 - **deliverable_type:** documentation
 
 ## Agente Activo
@@ -67,3 +67,5 @@
 Scope override: Archivos del whitelist ya estaban implementados en sesion previa; solo se actualizo execution_log.md con evidencia de implementacion completada. Affected files: C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\runtime\memory\observations.jsonl, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\skills\_shared\ticket-anti-patterns.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\skills\man-create-work-plan\SKILL.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\skills\man-create-work-plan\references\plan-quality-checklist.md
 
 Manager requested changes (1 rejections)
+
+Scope override: WP-2026-161 already committed and pushed; finalize ticket state sync after builder verification. Affected files: C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\runtime\memory\observations.jsonl, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\skills\_shared\ticket-anti-patterns.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\skills\man-create-work-plan\SKILL.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\skills\man-create-work-plan\references\plan-quality-checklist.md

@@ -1,6 +1,6 @@
 # TURNO ACTUAL
 
-**Ultima actualizacion:** 2026-05-28 14:08:24
+**Ultima actualizacion:** 2026-05-28 14:40:46
 
 ---
 
@@ -8,23 +8,23 @@
 
 | Campo | Valor |
 |-------|-------|
-| **ROL** | **BUILDER** |
+| **ROL** | **MANAGER** |
 | **Plan ID** | WP-2026-161 |
 | **Tipo** | TAREA AGENTE |
-| **Accion** | IMPLEMENT |
+| **Accion** | REVIEW_WORK |
 
 ---
 
 ## Instruccion
 
-> Requeued to Builder: Manager requested changes (1 rejections)
+> Builder completo WP-2026-161. Revisa el trabajo.
 
 ---
 
 ## Archivos a Leer
 
-1. `.builder_rules` (Contexto del rol)
-2. `.agent/workflows/builder_workflow.md` (Flujo de trabajo)
+1. `.manager_rules` (Contexto del rol)
+2. `.agent/workflows/manager_workflow.md` (Flujo de trabajo)
 
 ---
 
@@ -33,7 +33,7 @@
 | Archivo | Estado |
 |---------|--------|
 | work_plan.md | APPROVED |
-| execution_log.md | IN_PROGRESS |
+| execution_log.md | READY_FOR_REVIEW |
 
 ---
 
