@@ -1,6 +1,6 @@
 # TURNO ACTUAL
 
-**Ultima actualizacion:** 2026-05-28 12:55:00
+**Ultima actualizacion:** 2026-05-28 14:08:24
 
 ---
 
@@ -17,13 +17,13 @@
 
 ## Instruccion
 
-> Implementa WP-2026-161 segun work_plan.md.
+> Requeued to Builder: Manager requested changes (1 rejections)
 
 ---
 
 ## Archivos a Leer
 
-1. `.manager_rules` (Contexto del rol)
+1. `.builder_rules` (Contexto del rol)
 2. `.agent/workflows/builder_workflow.md` (Flujo de trabajo)
 
 ---

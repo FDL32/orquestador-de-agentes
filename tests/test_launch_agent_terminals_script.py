@@ -137,3 +137,12 @@ def test_launcher_resume_builder_sets_restart_reason_env() -> None:
 
     assert "SUPERVISOR_RESTART_REASON" in content
     assert '"resume-builder"' in content
+
+
+def test_launcher_skip_supervisor_wait_flag_exists() -> None:
+    """Hotfix WP-2026-160: -SkipSupervisorWait debe existir como parametro y saltarse Wait-SupervisorExit en el relanzado interno."""
+    content = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert "SkipSupervisorWait" in content
+    assert "SkipSupervisorWait: internal requeue relaunch" in content
+    assert "$SkipSupervisorWait" in content
