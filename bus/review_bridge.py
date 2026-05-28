@@ -484,6 +484,77 @@ class ReviewBridge:
         except Exception as e:
             return f"[Error fetching git provenance: {e}]"
 
+    def _get_untracked_files(self) -> list[str]:
+        """Get list of untracked files (??) from git status, filtered for deliverables.
+
+        Before: Requires a valid git repository at project_root.
+        During: Runs git status --porcelain -z, parses ?? entries, filters out
+                generated artifacts (.agent/collaboration/, .agent/runtime/, .git/).
+        After: Returns list of relative paths for untracked deliverables only.
+        """
+        try:
+            git_bin = shutil.which("git") or "git"
+            result = subprocess.run(
+                [git_bin, "status", "--porcelain", "-z"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                cwd=self.project_root,
+                timeout=10,
+            )
+            if result.returncode != 0:
+                return []
+
+            untracked: list[str] = []
+            entries = result.stdout.split("\0")
+            for entry in entries:
+                if not entry:
+                    continue
+                # Format: "?? path" when status is untracked
+                if entry.startswith("?? "):
+                    path = entry[3:]  # Skip "?? "
+                    # Filter out generated artifacts and noise
+                    if self._is_deliverable_path(path):
+                        untracked.append(path)
+            return untracked
+        except Exception:
+            return []
+
+    def _is_deliverable_path(self, path: str) -> bool:
+        """Check if an untracked path is a real deliverable (not generated noise).
+
+        Before: Requires a relative path string from git status.
+        During: Checks against exclusion patterns for .agent/, __pycache__, etc.
+        After: Returns True if path should appear in review packet as deliverable.
+        """
+        # Exclude generated artifacts and runtime noise
+        exclude_patterns = [
+            ".agent/collaboration/",
+            ".agent/runtime/",
+            ".agent/runtime/memory/",
+            ".agent/runtime/reviews/",
+            ".agent/runtime/review_packets/",
+            ".agent/runtime/tmp/",
+            ".git/",
+            "__pycache__/",
+            ".pyc",
+            ".pyo",
+            ".ruff_cache/",
+            ".cache/",
+            ".uv-cache/",
+            ".venv/",
+            "node_modules/",
+            "*.pyc",
+        ]
+        path_lower = path.lower()
+        for pattern in exclude_patterns:
+            if pattern.startswith("*"):
+                if path_lower.endswith(pattern[1:]):
+                    return False
+            elif pattern in path_lower:
+                return False
+        return True
+
     def _observations_path(self) -> Path:
         return (
             self.project_root / ".agent" / "runtime" / "memory" / "observations.jsonl"
@@ -743,8 +814,26 @@ class ReviewBridge:
                 )
             )
 
+        # WP-2026-158: Untracked deliverables section
+        untracked = self._get_untracked_files()
+        if untracked:
+            sections.append(("Untracked Deliverables", "\n".join(untracked)))
+
+        # WP-2026-158: Compute filter_mode and severity metadata
+        filter_mode = "added" if untracked else "diff_context"
+        # Severity: info for diff_context, warn when untracked deliverables exist
+        severity = "warn" if untracked else "info"
+
         # Compose
         parts = [self._rubric_for_type(dtype, ticket_id)]
+
+        # WP-2026-158: Add packet metadata header
+        parts.append(
+            f"\n--- Packet Metadata ---\n"
+            f"filter_mode: {filter_mode}\n"
+            f"severity: {severity}\n"
+            f"untracked_count: {len(untracked)}\n"
+        )
 
         # Cross-cutting: validator evidence gate (all types)
         parts.append(

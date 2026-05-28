@@ -1,88 +1,68 @@
-# Work Plan - WP-2026-157
+# Work Plan - WP-2026-158
 
 ## Metadata
-- **ID:** WP-2026-157
+- **ID:** WP-2026-158
 - **Estado:** COMPLETED
-- **deliverable_type:** mixed
-- **Titulo:** ECC capability pack - deep-research skill, AP contract and minimal EDD
+- **deliverable_type:** code
+- **Titulo:** Review packet completeness and diff filtering
 - **Asignado a:** Builder
 
 ## Objetivo
-Implantar una skill documental de investigacion previa, formalizar el contrato AP/observations sin cambiar storage y anadir un harness minimo de regresion para los flujos criticos del sistema.
+Hacer que el review packet del Manager represente el alcance real del ticket, incluyendo entregables nuevos no rastreados, y anadir un metadato minimo de filtrado/severidad inspirado en reviewdog.
 
 ## Contexto
-- `skills/repo-compare/` ya existe, pero compara repositorios; no produce contexto estructurado antes de abrir un ticket.
-- `skills/_shared/ap-schema.md` y `observations.jsonl` ya sostienen el patron AP en la practica; falta endurecer el contrato y validar entradas de forma automatica.
-- No existe una capa EDD minima para detectar regresiones en review bridge, guard paths, scope gate y requeue sin depender de los tests funcionales generales.
-- El output de `deep-research` debe ir a `.agent/runtime/research/` y ese path debe permanecer fuera de git.
+- `AP-12` ya formaliza el riesgo: un review packet construido solo desde `git diff` oculta entregables nuevos no rastreados.
+- `bus/review_bridge.py` ya construye el packet de review y hoy prioriza `git diff` y provenance, pero no expone una seccion explicita para archivos `??`.
+- `agent_controller.get_changed_files()` ya sabe leer staged, unstaged y untracked desde `git status --porcelain -z`, asi que el contrato de untracked ya existe en el sistema.
+- `reviewdog` aporta un patron util: packet estructurado, filtro por contexto y niveles de severidad. Aqui se quiere una version minima, no una clonacion completa.
+- El flujo `APPROVE / CHANGES / INSPECT` debe permanecer intacto.
 
 ## Decision Arquitectonica
-- `deep-research` sera una skill documental pura, sin logica Python de produccion.
-- El contrato AP se formaliza sobre `ap-schema.md` y `observations.jsonl` se mantiene compatible hacia atras.
-- El EDD minimo vivira en `tests/evals/` con fixtures aisladas, marker `eval` y sin subprocess real ni bus de produccion.
-- `skills/README.md` se actualizara para registrar la nueva skill.
-- `pytest.ini` solo se ajustara para registrar el marker `eval`; no se reescribira su configuracion existente.
-- `.gitignore` excluira `.agent/runtime/research/` para que los entregables de investigacion no ensucien el arbol.
+- El review packet seguira usando `git diff` como evidencia principal, pero anadira una seccion explicita `Untracked Deliverables` o equivalente con los archivos detectados por `git status`.
+- El packet publicara un `filter_mode` minimo con valores acotados, por ejemplo `diff_context`, `added` y `nofilter`.
+- El packet publicara una severidad minima (`info`, `warn`, `blocker`) solo como metadata legible, sin cambiar el contrato de decision.
+- El bus no debe depender de `agent_controller`; si necesita untracked, lo obtendra con un helper local o una lectura local de `git status`.
+- No se introduce ninguna dependencia nueva ni un sistema completo de anotaciones tipo reviewdog.
 
 ## Non-goals
-- No reimplantar ECC 1:1.
-- No introducir LLM-as-judge ni dependencias nuevas.
-- No cambiar el formato de `observations.jsonl`.
-- No modificar el workflow de Manager/Builder fuera de lo necesario para la nueva capacidad.
+- No reemplazar `git diff` por completo.
+- No copiar reviewdog 1:1.
+- No cambiar el contrato de decision `APPROVE / CHANGES / INSPECT`.
+- No tocar el workflow de Builder/Manager mas alla de lo necesario para el packet.
 
 ## Fases
-### Fase 1: deep-research skill
+### Fase 1: untracked deliverables visibles en el packet
 - **Tipo:** TAREA AGENTE
-- **Archivos:** `skills/deep-research/SKILL.md`, `skills/deep-research/references/research-template.md`, `skills/README.md`
-- **Accion:** Crear y registrar
-- **Descripcion:** Skill documental para producir contexto estructurado antes de abrir un WP. Flujo: leer contexto base (`PROJECT.md`, `AUDIT.md`, work plan activo), identificar gaps, buscar fuentes locales o via MCP y producir un resumen con secciones fijas `## Contexto`, `## Gaps`, `## Fuentes`, `## Recomendacion`. El output se persiste en `.agent/runtime/research/<topic>-<YYYY-MM-DD>.md`.
-- **Riesgo:** Bajo
-- **Criterio de Aceptacion:** `python scripts/discover_skills.py --json` detecta la skill sin errores y `skills/README.md` la registra en el catalogo.
-- **Si falla:** Reducir la skill a un `SKILL.md` minimal con workflow y referencias, y mover refinamientos a una iteracion posterior.
-
-### Fase 2: AP / observations contract
-- **Tipo:** TAREA AGENTE
-- **Archivos:** `skills/_shared/ap-schema.md`, `scripts/validate_observations.py`, `tests/unit/test_validate_observations.py`
-- **Accion:** Formalizar y validar
-- **Descripcion:** Endurecer `ap-schema.md` con campos obligatorios y opcionales, ordenar la secuencia canonica de escritura (`anti-patterns.md` -> `code-rules.md` -> `review-checklist.md` -> `observations.jsonl`) y crear un validador ligero que rechace observaciones invalidas con codigo de salida 1. Campos obligatorios: `timestamp`, `topic`, `signal`, `source`, `applies_to`, `confidence`, `domain`; `anti_pattern_id` es obligatorio cuando la observacion eleva un bug a AP.
-- **Riesgo:** Bajo
-- **Criterio de Aceptacion:** `python scripts/validate_observations.py` pasa sobre el `observations.jsonl` actual y falla de forma controlada ante una entrada invalida.
-- **Si falla:** Relajar el validador a warnings solo si el repo ya tiene entradas historicas que no se pueden corregir de inmediato.
-
-### Fase 3: EDD minimo - eval harness de regresion
-- **Tipo:** TAREA AGENTE
-- **Archivos:** `pytest.ini`, `tests/evals/__init__.py`, `tests/evals/test_eval_review_bridge.py`, `tests/evals/test_eval_guard_paths.py`, `tests/evals/test_eval_scope_gate.py`, `tests/evals/test_eval_requeue.py`
+- **Archivos:** `bus/review_bridge.py`, `tests/test_manager_review_bridge.py`
 - **Accion:** Crear
-- **Descripcion:** Cuatro modulos pytest de regression que cubren los flujos criticos del sistema con fixtures de `tmp_path` y mocks solo en los bordes externos. Los tests se marcan `@pytest.mark.eval` y no llaman a subprocess real ni al bus de produccion. Mapeo explicito: `test_eval_review_bridge.py` -> `bus/review_bridge.py::run_manager_review_cycle`; `test_eval_guard_paths.py` -> `.agent/hooks/guard_paths.py`; `test_eval_scope_gate.py` -> `agent_controller.py::_check_scope_gate`; `test_eval_requeue.py` -> `bus/supervisor.py::requeue_ticket`.
+- **Descripcion:** Anadir una seccion explicita en el review packet para entregables nuevos no rastreados. El helper debe detectar `??` desde `git status --porcelain -z` en el root del proyecto y renderizar esa informacion junto al diff existente. El packet debe seguir incluyendo provenance y diff, pero ya no puede ocultar archivos nuevos que no aparezcan en `git diff`.
 - **Riesgo:** Medio
-- **Criterio de Aceptacion:** `pytest -m eval tests/evals/ -q` pasa los cuatro modulos, cada modulo incluye al menos un test negativo de entrada invalida y la suite safe normal sigue sin depender de ellos.
-- **Si falla:** Reducir el harness a `review_bridge` y `scope_gate` y dejar `guard_paths` / `requeue` para un ticket posterior.
+- **Criterio de Aceptacion:** Un repo temporal con un archivo `??` y sin diff rastreado lo sigue mostrando en el review packet bajo una seccion explicita de untracked deliverables.
+- **Si falla:** Reducir a una sola seccion `Untracked Deliverables` sin metadata adicional, pero nunca volver a ocultar los archivos nuevos.
+
+### Fase 2: metadata minima de filter mode y severidad
+- **Tipo:** TAREA AGENTE
+- **Archivos:** `bus/review_bridge.py`, `tests/test_review_bridge.py`, `tests/test_manager_review_bridge.py`
+- **Accion:** Anadir metadata y tests
+- **Descripcion:** Anadir al packet una metadata legible de `filter_mode` y `severity`. El modo por defecto debe ser `diff_context`; cuando haya entregables no rastreados visibles, el packet puede marcarse como `added`. La severidad debe reflejar el tipo de evidencia sin alterar el contrato de decision.
+- **Riesgo:** Bajo
+- **Criterio de Aceptacion:** Los tests cubren al menos un caso con solo diff rastreado y otro con entregable no rastreado, y en ambos el contrato `APPROVE / CHANGES / INSPECT` sigue intacto.
+- **Si falla:** Conservar solo `filter_mode` sin severidad, pero mantener la seccion explicita de untracked deliverables.
 
 ## Files Likely Touched
-- `skills/deep-research/SKILL.md` (nuevo)
-- `skills/deep-research/references/research-template.md` (nuevo)
-- `skills/README.md`
-- `skills/_shared/ap-schema.md`
-- `scripts/validate_observations.py` (nuevo)
-- `tests/unit/test_validate_observations.py` (nuevo)
-- `pytest.ini`
-- `.gitignore`
-- `tests/evals/__init__.py` (nuevo)
-- `tests/evals/test_eval_review_bridge.py` (nuevo)
-- `tests/evals/test_eval_guard_paths.py` (nuevo)
-- `tests/evals/test_eval_scope_gate.py` (nuevo)
-- `tests/evals/test_eval_requeue.py` (nuevo)
+- `bus/review_bridge.py`
+- `tests/test_manager_review_bridge.py`
+- `tests/test_review_bridge.py`
 
 ## Calidad
-- `python scripts/discover_skills.py --json`
-- `python scripts/validate_observations.py`
-- `pytest -m eval tests/evals/ -q`
+- `python -m pytest tests/test_manager_review_bridge.py tests/test_review_bridge.py -q`
 - `python scripts/run_pytest_safe.py`
 - `python .agent/agent_controller.py --validate --json --force`
+- `ruff check bus scripts tests`
 
 ## Criterios de aceptacion
-- `deep-research` aparece en el discovery de skills y queda registrado en `skills/README.md`.
-- `ap-schema.md` y `validate_observations.py` coinciden en el contrato y bloquean observaciones invalidas.
-- El harness `tests/evals/` detecta regresiones criticas sin tocar subprocess real ni bus de produccion.
-- La suite safe principal sigue pasando sin depender de los evals.
+- El review packet ya no oculta entregables nuevos no rastreados.
+- El packet publica una metadata minima de `filter_mode` y `severity` sin cambiar la decision.
+- Los tests demuestran que un repo temporal con archivos `??` aparece en el packet.
+- La suite safe principal sigue pasando.
 - La validacion canonica pasa sin errores.
