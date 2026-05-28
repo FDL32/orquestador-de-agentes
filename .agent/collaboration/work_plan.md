@@ -35,10 +35,10 @@ Implementar el validador mecanico de prosa de ticket y exponer sus warnings en `
 - **Tipo:** TAREA AGENTE
 - **Archivos:** `scripts/validate_ticket_prose.py`, `tests/test_validate_ticket_prose.py`
 - **Accion:** Crear
-- **Descripcion:** Implementar un validador determinista que lea `work_plan.md` (o un path alternativo), detecte los patrones de prosa y los TP-P estructurales mas mecanicos, y devuelva warnings con regla, evidencia y sugerencia. Debe cubrir al menos: throat-clearing, declarativo vago, pasivo impreciso, extremos lazy, objetivo difuso, non-goals ausentes, criterio no verificable, Files Likely Touched imprecisos, ticket sobredimensionado, decision arquitectonica ausente y dependencia fantasma.
+- **Descripcion:** Implementar un validador determinista que lea `work_plan.md` (o un path alternativo), detecte los patrones de prosa y los TP-P estructurales obligatorios, y devuelva warnings con regla, evidencia y sugerencia. Las detecciones obligatorias son: throat-clearing, declarativo vago, pasivo impreciso, extremos lazy, objetivo difuso, non-goals ausentes, criterio no verificable, Files Likely Touched imprecisos, ticket sobredimensionado, decision arquitectonica ausente y dependencia fantasma. Adicionalmente, el validador debe comprobar que existe un `AUDIT_WP-*.md` en `.agent/collaboration/` y que contiene una seccion `## TP Check`; si no la tiene, emite un warning estructural `audit-missing-tp-check`.
 - **Riesgo:** Bajo
-- **Criterio de Aceptacion:** Un fixture defectuoso genera warnings con IDs y sugerencias; un fixture limpio no genera warnings; el script sale con exit code 0 en ambos casos.
-- **Si falla:** Reducir el detector a las cuatro reglas de prosa mas deterministas y a los TP-P mas faciles de comprobar.
+- **Criterio de Aceptacion:** Cada regla de deteccion tiene al menos un test directo que la dispara y otro que no la dispara; un fixture defectuoso genera warnings con IDs y sugerencias; un fixture limpio no genera warnings; un AUDIT sin `## TP Check` genera el warning `audit-missing-tp-check`; el script sale con exit code 0 en todos los casos.
+- **Si falla:** Reducir el detector a las cuatro reglas de prosa mas deterministas (throat-clearing, declarativo vago, pasivo impreciso, extremos lazy) mas la comprobacion de AUDIT estructural, que es la mas valiosa.
 
 ### Fase 2: integracion en `--validate`
 - **Tipo:** TAREA AGENTE
@@ -46,7 +46,7 @@ Implementar el validador mecanico de prosa de ticket y exponer sus warnings en `
 - **Accion:** Modificar
 - **Descripcion:** Integrar el validador de prosa en `_handle_validate()` para que los warnings aparezcan en la salida JSON y en consola bajo una clave dedicada (`warnings.ticket_prose`), preservando la semantica actual: warnings no bloquean, errores si. Mantener `--force` sin cambios funcionales.
 - **Riesgo:** Medio
-- **Criterio de Aceptacion:** `python .agent/agent_controller.py --validate --json --force` muestra warnings de ticket prose cuando el `work_plan.md` es defectuoso y sigue devolviendo exit code 0 si no hay errores reales.
+- **Criterio de Aceptacion:** `python .agent/agent_controller.py --validate --json --force` muestra `warnings.ticket_prose` cuando el `work_plan.md` activo contiene uno o mas patrones detectables y sigue devolviendo exit code 0 si no hay errores reales.
 - **Si falla:** Mantener el validador standalone y posponer la integracion para un ticket posterior.
 
 ### Fase 3: cobertura end-to-end
@@ -55,7 +55,7 @@ Implementar el validador mecanico de prosa de ticket y exponer sus warnings en `
 - **Accion:** Añadir
 - **Descripcion:** Completar la cobertura con un test para un plan defectuoso que produzca warnings y un test para un plan limpio que no produzca warnings. La cobertura debe demostrar que los warnings no bloquean `mark-ready`.
 - **Riesgo:** Medio
-- **Criterio de Aceptacion:** Los tests de la Fase 1 y Fase 2 pasan en CI y demuestran el camino limpio y el camino con warnings.
+- **Criterio de Aceptacion:** Cada funcion de deteccion de Fase 1 aparece invocada directamente en al menos un test (no solo a traves del fixture general); existe un test para plan limpio sin warnings y uno para AUDIT sin `## TP Check` que dispara `audit-missing-tp-check`.
 - **Si falla:** Limitar la cobertura a nivel de unidad y dejar el smoke end-to-end para un WP posterior.
 
 ## Files Likely Touched
