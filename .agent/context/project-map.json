@@ -1,14 +1,14 @@
 {
   "version": "1.0",
-  "generated": "2026-05-28T09:02:26.844948+00:00",
+  "generated": "2026-05-28T12:47:15.938819+00:00",
   "project_root": "C:\\Users\\fdl\\Proyectos_Python\\z_scripts\\orquestador_de_agentes",
   "summary": {
-    "total_files": 4983,
-    "total_size_bytes": 17612934,
+    "total_files": 4984,
+    "total_size_bytes": 18259961,
     "categories": {
-      "config": 403,
+      "config": 400,
       "python": 843,
-      "documentation": 1387,
+      "documentation": 1391,
       "other": 2333,
       "scripts": 17
     }
@@ -23,7 +23,7 @@
       {
         "path": ".agent/collaboration/.session_state.json",
         "size": 134,
-        "sha256": "4f588a058d44fe2754aff7c68d9519c865b33eda1ad3e5d3c4fe32b34b28d8be"
+        "sha256": "0f04b6061d14b9bc14cce71b4cbda6e2db93538fdb19e06e1a2ab9f4fcc0c18a"
       },
       {
         "path": ".agent/config/agents.json",
@@ -32,8 +32,8 @@
       },
       {
         "path": ".agent/context/project-map.json",
-        "size": 1448206,
-        "sha256": "ad94b10e51954cb3f98c723b5bfcbdaa52bed09e7afe04957db0d5640dec90ed"
+        "size": 1502536,
+        "sha256": "6e0a0d0a73b86430c15d84d9b150c255eebbdaaeedbee62209a698c4d534a3fe"
       },
       {
         "path": ".agent/known_models.json",
@@ -58,22 +58,22 @@
       {
         "path": ".agent/runtime/circuit_breaker.json",
         "size": 181,
-        "sha256": "16e0cc8d94a3fbd6dc664cce923a011918bdc90f1e112321a90fc7b8b377b421"
+        "sha256": "883dcf350a93d9f5054921dff64f9b63955a58da20b4ed8daea9fdad70575a21"
       },
       {
         "path": ".agent/runtime/manager_bridge_state.json",
         "size": 171,
-        "sha256": "8e241a49aa70bc4b1829f9389f6b24ff687e4d7b0277a829c6601bf62801f435"
+        "sha256": "0129c511e7a73d9181a217d73b66ded96765a3e77d9a219744d569b5d8311dc3"
       },
       {
         "path": ".agent/runtime/pytest-safe/last-run.json",
-        "size": 2882,
-        "sha256": "fce2549c7d6bc4e8a46ee9adbe1299b0623f34745b66c36ec2730933c523b404"
+        "size": 3015,
+        "sha256": "bc5b6363a335c43e5e31464fd0176887b5ef52beb5fa5b04c19f53bbac0faa4f"
       },
       {
         "path": ".agent/runtime/supervisor_state.json",
-        "size": 186,
-        "sha256": "4a213700e6fb3d3d1960a864d63da883ff856f20b6c21a27584dc22489faf9d0"
+        "size": 225,
+        "sha256": "7f3c463e78d8b233b51b67a6cd3fd499e3e9a824c3ec3ed73ed9b33d6643d22d"
       },
       {
         "path": ".agent_allowlist.json",
@@ -1851,21 +1851,6 @@
         "sha256": "a592272f8aa9436a0b31b6b67c1eebb47d51a47aad0a8d3114e8e797ca7b6737"
       },
       {
-        "path": "tests/sandbox/test_runtime/session_3468/opencode-review-12kwk4cc/.local/share/opencode/auth.json",
-        "size": 2299,
-        "sha256": "400dbd979069face7baf448fd125fe62a39277c1621cc03532b6c76ed570b133"
-      },
-      {
-        "path": "tests/sandbox/test_runtime/session_3468/opencode-review-853_0bk8/.local/share/opencode/auth.json",
-        "size": 2299,
-        "sha256": "400dbd979069face7baf448fd125fe62a39277c1621cc03532b6c76ed570b133"
-      },
-      {
-        "path": "tests/sandbox/test_runtime/session_3468/opencode-review-hw82o5nz/.local/share/opencode/auth.json",
-        "size": 2299,
-        "sha256": "400dbd979069face7baf448fd125fe62a39277c1621cc03532b6c76ed570b133"
-      },
-      {
         "path": "tests/sandbox/test_runtime/session_8612/factory/test_detect_package_json0005/package.json",
         "size": 79,
         "sha256": "e926f35597c39f97ee258cb2ed0d1493ee8cd5e07c3cdb8c5eaa072be63aefd8"
@@ -2164,8 +2149,8 @@
       },
       {
         "path": "bus/supervisor.py",
-        "size": 53822,
-        "sha256": "b0d8518dbaac8a6ec7a6e504c8438eec51a45dafcf6787e41999d9248bd5055d"
+        "size": 55982,
+        "sha256": "fb8111ab341891956e2a70990d608f4b0bfe454ee88f856ece85b33046d29cfe"
       },
       {
         "path": "bus/time_utils.py",
@@ -5844,8 +5829,8 @@
       },
       {
         "path": "tests/test_launch_agent_terminals_script.py",
-        "size": 4103,
-        "sha256": "4d9c76c44c178ebe4056c5d270556bfe1a5cb398b307677e53ba39fe2058964d"
+        "size": 6021,
+        "sha256": "12e01479cd42017d11989fbe0b6a2b6b8173e10be58b065bb73023ef4b99e461"
       },
       {
         "path": "tests/test_launcher_preflight.py",
@@ -5939,8 +5924,8 @@
       },
       {
         "path": "tests/test_supervisor.py",
-        "size": 115288,
-        "sha256": "a4cb57ba7846a2f129d6983575a47ab95e8e476215d77ea101fa8fa03826f15a"
+        "size": 122214,
+        "sha256": "cba714399ba23eba9190e404df087fddacecf4a971fb010dd6732b7f2e30dea1"
       },
       {
         "path": "tests/test_ui_state.py",
@@ -6250,14 +6235,14 @@
     ],
     "documentation": [
       {
-        "path": ".agent/collaboration/AUDIT_WP-2026-159.md",
-        "size": 1523,
-        "sha256": "1a741f99406bd88791c254fa777071f3f1819e7add88afd0e160ea5884ca259b"
+        "path": ".agent/collaboration/AUDIT_WP-2026-161.md",
+        "size": 2366,
+        "sha256": "b92d1bd3dd2e84f6fc0ebe3eb690f9020774420cfb450073fd753e35f765514b"
       },
       {
         "path": ".agent/collaboration/execution_log.md",
-        "size": 5886,
-        "sha256": "233260fdd2b3bd2dd8872844b37f2caafca773d5345620fa588928c0d1e72bd2"
+        "size": 4091,
+        "sha256": "729d721b7d0c853754e3d23ae4ea5c6bb9e35c81162e20d09eaa4f09eccd6b56"
       },
       {
         "path": ".agent/collaboration/manager_feedback_WP-2026-155.md",
@@ -6285,34 +6270,44 @@
         "sha256": "31ea3abf0ed7124bbbc8615d73909fe020da08db2a44b8dbd6620b688d194cd8"
       },
       {
-        "path": ".agent/collaboration/notifications.md",
-        "size": 3757,
-        "sha256": "3f66298de8ab2d417fec40831dd7c325f870dc2fd60273b4837f004edbabc6fe"
+        "path": ".agent/collaboration/manager_feedback_WP-2026-160.md",
+        "size": 204703,
+        "sha256": "94c0506003c8771f7f4d937b6183a022f6fb8bdefa8590b893f8e50082f9eeda"
       },
       {
-        "path": ".agent/collaboration/PLAN_WP-2026-159.md",
-        "size": 6599,
-        "sha256": "11534d7124cae6e475700cf87538484c5f1e63a9475181313911063c850479f7"
+        "path": ".agent/collaboration/manager_feedback_WP-2026-161.md",
+        "size": 218072,
+        "sha256": "d748edc1c8a461ca235337b4574a403370c46dbd76faa06629794791d6ce4a16"
+      },
+      {
+        "path": ".agent/collaboration/notifications.md",
+        "size": 3457,
+        "sha256": "698affad48851a79482d444c3cbf1b56f51a8a8dc139f3025e1d5a8edcf05c63"
+      },
+      {
+        "path": ".agent/collaboration/PLAN_WP-2026-161.md",
+        "size": 5504,
+        "sha256": "359ae25c4070b2388f15811c58056a61f3488dba4b56220827508360fa6f16a7"
       },
       {
         "path": ".agent/collaboration/review_queue.md",
-        "size": 5213217,
-        "sha256": "4325b6a5914bc41d56fc1419c14af04401eb20361b047c6f0f6d96e94a38cc6b"
+        "size": 5367955,
+        "sha256": "dc0a6c69316109f0b324843164de59440e7ebd6fd7c05532464b1eab5fb17544"
       },
       {
         "path": ".agent/collaboration/STATE.md",
-        "size": 53,
-        "sha256": "38302c902afb32e4ad9047933a5693a91b77a9769d8346c1f115568c728e3b27"
+        "size": 58,
+        "sha256": "43b4238051de2dcfc27959a47a8c442962800c7190912b5becbcecdc050f6adc"
       },
       {
         "path": ".agent/collaboration/TURN.md",
-        "size": 663,
-        "sha256": "d47400c541435c4fd081e9501a91a9239d5973a0cf47b1ba05f99f7dd8818367"
+        "size": 657,
+        "sha256": "fbd8863cc1d28dc7ad2060def0713b55d5dbaa3b11608d2236eabf235aa237ee"
       },
       {
         "path": ".agent/collaboration/work_plan.md",
-        "size": 6599,
-        "sha256": "11534d7124cae6e475700cf87538484c5f1e63a9475181313911063c850479f7"
+        "size": 4885,
+        "sha256": "799df7b7fd7420daf18a1a3c6ca71601b4d608ae7735117ee47dd0e059bd4acc"
       },
       {
         "path": ".agent/context/project_map.md",
@@ -6327,7 +6322,7 @@
       {
         "path": ".agent/runtime/builder_lock.txt",
         "size": 264,
-        "sha256": "773ab57dcbae05f6a01bb3386591233eb48df3732378f1fd42bf57bb061d0834"
+        "sha256": "d4c7f7d9831016456b5fc2433b68e7c105a3abcb6c3a9cb71648010251236a82"
       },
       {
         "path": ".agent/runtime/compare/affaan-m-ECC-928076cc-2026-05-27.md",
@@ -6481,8 +6476,8 @@
       },
       {
         "path": ".opencode/agents/builder.md",
-        "size": 2135,
-        "sha256": "22f1c1634032698b0fa3399387f97a5aec8a3e9eadcd139233de36733825e432"
+        "size": 2199,
+        "sha256": "0f1e5f80cda4ce54f05e6a43a533ddaada432b9e635882358af59a4340d5cdb7"
       },
       {
         "path": ".opencode/agents/manager.md",
@@ -6646,8 +6641,8 @@
       },
       {
         "path": "skills/_shared/anti-patterns.md",
-        "size": 2915,
-        "sha256": "06ac532eac1077fbf76e0f9f25ace50bd439bc820fa91ee8c43798c584b9d768"
+        "size": 3814,
+        "sha256": "a01ee9c96dfba88f39fc2f8d54029078041795f308ed46c882033b417990d86b"
       },
       {
         "path": "skills/_shared/ap-schema.md",
@@ -6655,9 +6650,14 @@
         "sha256": "23e4766f5955ceba3c241bd6f017af756c2d4cb79c1071c754779fb576d2befe"
       },
       {
+        "path": "skills/_shared/ticket-anti-patterns.md",
+        "size": 5162,
+        "sha256": "970e4874a4f2318c2ee1d7e1b39bd94ea1d65152376e51bb18afc1e585f09b60"
+      },
+      {
         "path": "skills/bui-implement-from-plan/references/code-rules.md",
-        "size": 12385,
-        "sha256": "b871c6d06c258302c2d3b72bc52c74c44a9fb46dfaa4042ed1b158f84b78526d"
+        "size": 14673,
+        "sha256": "a17cd9f6b875b9844cc496b9dca8d4b5c9b23d2c0ed8c3c03a8315e592e26c6b"
       },
       {
         "path": "skills/bui-implement-from-plan/references/log-format.md",
@@ -6745,6 +6745,11 @@
         "sha256": "e66d4df9ef8af6cefd7f2fbf868f352308ea2d0222950506433375a2dcad7571"
       },
       {
+        "path": "skills/man-create-work-plan/references/plan-quality-checklist.md",
+        "size": 2401,
+        "sha256": "c8b881bb73999070357a3097b16550097ca42ca1625b0f8478f5331ba258683f"
+      },
+      {
         "path": "skills/man-create-work-plan/references/plan-template.md",
         "size": 2446,
         "sha256": "8bfa68fc7252d73c083a1a88aa69addc02d02e86edf8a3f031c0a092676645f0"
@@ -6756,8 +6761,8 @@
       },
       {
         "path": "skills/man-create-work-plan/SKILL.md",
-        "size": 7346,
-        "sha256": "ee235496e7256c12f1cd2c69b14b5b5431be3f43d7c7be2854604da98a23dd7d"
+        "size": 8333,
+        "sha256": "04dcabedbb9c4b83f0c9ad88099ccea3fc206c87c225a4435bc185012d586cf0"
       },
       {
         "path": "skills/man-resolve-escalation/references/escalation-levels.md",
@@ -6771,8 +6776,8 @@
       },
       {
         "path": "skills/man-review-implementation/references/review-checklist.md",
-        "size": 3647,
-        "sha256": "15b9122e9891975b508a00f67f591af5288a9d4b56064bdc09a286c0e74998d4"
+        "size": 4280,
+        "sha256": "d2993835663ada3f0cc03bc60beb770511e246d3da215bef0940458e7810cad9"
       },
       {
         "path": "skills/man-review-implementation/references/verdict-format.md",
@@ -24860,8 +24865,8 @@
       },
       {
         "path": "scripts/launch_agent_terminals.ps1",
-        "size": 50143,
-        "sha256": "6f3d509450df757365494f52584e5c82f294f056a898af7d98c80fa4ce58bd4b"
+        "size": 52676,
+        "sha256": "eb89a4bc4fbdc0587eda42e31127361fddeae0b3fa612421a73e979bab21ce96"
       },
       {
         "path": "scripts/test_manager_smoke.ps1",
@@ -26398,6 +26403,11 @@
             "name": "sys",
             "type": "stdlib",
             "package": "sys"
+          },
+          {
+            "name": "os",
+            "type": "stdlib",
+            "package": "os"
           },
           {
             "name": "os",
@@ -32490,6 +32500,26 @@
             "name": "bus.supervisor.SupervisorState",
             "type": "local",
             "path": "bus/supervisor.py"
+          },
+          {
+            "name": "bus.supervisor.SequentialTicketSupervisor",
+            "type": "local",
+            "path": "bus/supervisor.py"
+          },
+          {
+            "name": "bus.supervisor.SequentialTicketSupervisor",
+            "type": "local",
+            "path": "bus/supervisor.py"
+          },
+          {
+            "name": "bus.supervisor.SequentialTicketSupervisor",
+            "type": "local",
+            "path": "bus/supervisor.py"
+          },
+          {
+            "name": "bus.supervisor.SequentialTicketSupervisor",
+            "type": "local",
+            "path": "bus/supervisor.py"
           }
         ],
         "error": null
@@ -35239,10 +35269,10 @@
     "javascript": {},
     "frameworks": [],
     "tools": [
-      "ruff",
+      "pytest",
       "mypy",
       "uv",
-      "pytest"
+      "ruff"
     ]
   },
   "parse_errors": [
