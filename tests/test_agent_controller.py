@@ -237,12 +237,20 @@ class TestTicketProseIntegration:
 
         # Mock the validate_state_files and other dependencies to return empty
         monkeypatch.setattr(agent_controller, "validate_state_files", lambda: {})
-        monkeypatch.setattr(agent_controller, "_collect_deliverable_type_warnings", lambda x: {})
+        monkeypatch.setattr(
+            agent_controller, "_collect_deliverable_type_warnings", lambda x: {}
+        )
         monkeypatch.setattr(agent_controller, "read_file", lambda x: "")
         monkeypatch.setattr(agent_controller, "get_status", lambda x, y: "APPROVED")
-        monkeypatch.setattr(agent_controller, "_check_scope_for_validate", lambda x, y: ([], []))
+        monkeypatch.setattr(
+            agent_controller, "_check_scope_for_validate", lambda x, y: ([], [])
+        )
         monkeypatch.setattr(agent_controller, "_check_bus_drift", lambda x, y: [])
-        monkeypatch.setattr(agent_controller, "_check_invariants", lambda x, y, z: {"errors": [], "warnings": []})
+        monkeypatch.setattr(
+            agent_controller,
+            "_check_invariants",
+            lambda x, y, z: {"errors": [], "warnings": []},
+        )
 
         # Patch the import
         import sys
@@ -292,11 +300,19 @@ class TestTicketProseIntegration:
             lambda x: "# Plan\n\n## Metadata\n- **ID:** TEST\n- **Estado:** APPROVED\n",
         )
         monkeypatch.setattr(agent_controller, "validate_state_files", lambda: {})
-        monkeypatch.setattr(agent_controller, "_collect_deliverable_type_warnings", lambda x: {})
+        monkeypatch.setattr(
+            agent_controller, "_collect_deliverable_type_warnings", lambda x: {}
+        )
         monkeypatch.setattr(agent_controller, "get_status", lambda x, y: "APPROVED")
-        monkeypatch.setattr(agent_controller, "_check_scope_for_validate", lambda x, y: ([], []))
+        monkeypatch.setattr(
+            agent_controller, "_check_scope_for_validate", lambda x, y: ([], [])
+        )
         monkeypatch.setattr(agent_controller, "_check_bus_drift", lambda x, y: [])
-        monkeypatch.setattr(agent_controller, "_check_invariants", lambda x, y, z: {"errors": [], "warnings": []})
+        monkeypatch.setattr(
+            agent_controller,
+            "_check_invariants",
+            lambda x, y, z: {"errors": [], "warnings": []},
+        )
 
         from io import StringIO
 
