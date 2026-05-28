@@ -1,77 +1,93 @@
-# Work Plan - WP-2026-164
+# Work Plan - WP-2026-165
 
 ## Metadata
-- **ID:** WP-2026-164
-- **Estado:** COMPLETED
-- **deliverable_type:** code
-- **Titulo:** Delivery Hygiene Loop - pre-push no mutating preflight
+- **ID:** WP-2026-165
+- **Estado:** APPROVED
+- **deliverable_type:** mixed
+- **Titulo:** Delivery preflight wrapper - canonical push readiness
 - **Asignado a:** Builder
 
 ## Objetivo
-Reducir los fallos repetidos de entrega separando de forma explicita los hooks mutadores de los hooks de verificacion, excluyendo los artefactos generados que se reescriben en cada sincronizacion y dejando un preflight no mutador que valide el arbol antes del `git push`.
+Convertir la rutina manual de pre-push en un comando canónico y reutilizable que permita saber, antes de `git push`, si el arbol esta realmente listo. El wrapper debe agrupar la higiene de entrega ya acordada, devolver diagnosticos accionables y evitar que el operador dependa de recordar una lista larga de comandos.
 
 ## Contexto
-- En esta sesion ya se vieron fallos de push por hooks que mutaban archivos durante `pre-push`.
-- `.agent/context/project-map.json` es un artefacto generado que no debe ser tratado como fuente editable por hooks de whitespace o formato.
-- `project-finalize` ya documenta un preflight de entrega; ahora falta materializarlo en el tooling para que no dependa de la memoria del operador.
-- El objetivo es que el fallo se vea antes de subir nada y no como sorpresa de GitHub Actions o del siguiente intento de push.
+- En la sesion previa ya se estabilizo la higiene de entrega: `delivery_hygiene_check.py`, hooks mutadores confinados a `pre-commit` y `uv-lock` limitado a `pre-commit`.
+- Aun asi, la validacion previa al push sigue estando repartida entre tres comandos manuales adicionales y eso sigue creando friccion operativa.
+- El flujo de `project-finalize` ya documenta el preflight de entrega; lo que falta es una entrada unica y reusable para el dia a dia.
+- El wrapper debe detectar antes del push los mismos problemas que ya vimos: hooks mutadores en `pre-push`, artefactos generados reescritos, arbol sucio y checks de calidad que fallan.
+- `.agent/context/project-map.json` es un artefacto generado de runtime; puede regenerarse en bootstrap, pero no forma parte del entregable ni del flujo mutador por defecto.
+- Este ticket tambien recupera el aprendizaje de planificacion TP-07 / TP-PROSE-12 para que el mismo commit deje trazabilidad completa entre catalogo, checklist y detector.
 
 ## Decision Arquitectonica
-- Los hooks mutadores se ejecutan solo en `pre-commit`.
-- `pre-push` queda para verificaciones no mutadoras y comprobaciones de entrega.
-- El repo debe disponer de un chequeo de entrega que valide que el arbol queda limpio tras la pasada correctiva.
-- Los artefactos generados de contexto o sincronizacion deben quedar excluidos del formateo y del fix automatico.
+- El wrapper es exclusivamente de verificacion. No muta el arbol en ningun camino.
+- Contrato CLI fijo: `python scripts/prepush_check.py` (verificacion, exit 0/1) y `python scripts/prepush_check.py --help`.
+- No existe modo de reparacion en este WP. Si el preflight falla, el operador corre la pasada mutadora manualmente (`ruff format .` o `pre-commit run --hook-stage pre-commit`) y vuelve a llamar al wrapper.
+- La secuencia de checks es: `delivery_hygiene_check.py` → `ruff check` → `ruff format --check` → `agent_controller --validate --json --force` → `git status --short`. Cada uno debe pasar para exit 0.
+- `python skills/validate_all.py` se ejecuta pero es informacional: imprime el resultado y no bloquea el exit code del wrapper.
+- La deteccion de higiene de entrega se reutiliza desde `scripts/delivery_hygiene_check.py`; no se reescribe esa logica.
+- `pre-push` sigue siendo solo de verificacion; los mutadores se quedan en `pre-commit`.
+- La documentacion del flujo de entrega debe referenciar un comando canonico unico, no una lista que el operador tenga que reconstruir a mano.
+- El aprendizaje recuperado de TP-07 debe quedar documentado y probado en el mismo ticket para no perderlo otra vez por una reconciliacion del builder.
 
 ## Non-goals
-- No crear un nuevo sistema de mejora continua de tickets.
-- No tocar `man-session-closeout`.
-- No cambiar el criterio de cierre canonico salvo la parte de entrega.
-- No promover AP-D formales en este ticket.
-- No convertir el preflight de entrega en un gate oculto que bloquee por heuristicas ambiguas.
+- No implementar modo de reparacion automatica en este WP (queda para un ticket posterior).
+- No cambiar el ciclo de cierre canonico de tickets.
+- No tocar supervisor, bus o la logica de review.
+- No añadir nuevos topics de mejora continua.
+- No convertir el wrapper en un auto-push.
+- No reabrir el problema de scope de `delivery_hygiene_check.py`.
 
 ## Fases
 
-### Fase 1: separar mutadores y verificadores en el flujo de pre-commit
+### Fase 1: crear el wrapper de preflight de entrega
 - **Tipo:** TAREA AGENTE
-- **Archivos:** `.pre-commit-config.yaml`
-- **Accion:** Modificar
-- **Descripcion:** Reorganizar los hooks para que `end-of-file-fixer`, `mixed-line-ending`, `trailing-whitespace` y `ruff format` vivan solo en `pre-commit`, mientras que `pre-push` conserve unicamente verificaciones no mutadoras. Mantener la exclusion de `.agent/context/project-map.json` y de otros artefactos generados que no deben reescribirse en entrega.
-- **Riesgo:** Medio
-- **Criterio de Aceptacion:** Un `pre-push` no muta archivos; si hay que corregir formato, la correccion ocurre antes en `pre-commit`; `project-map.json` y artefactos equivalentes no vuelven a ser tocados por hooks de whitespace o formato.
-- **Si falla:** Mantener `pre-push` como verificacion pura y sacar todo hook mutador de esa fase, incluso si eso obliga a simplificar temporalmente la configuracion.
-
-### Fase 2: crear el chequeo de higiene de entrega
-- **Tipo:** TAREA AGENTE
-- **Archivos:** `scripts/delivery_hygiene_check.py`, `tests/test_delivery_hygiene_check.py`
+- **Archivos:** `scripts/prepush_check.py`
 - **Accion:** Crear
-- **Descripcion:** Implementar un chequeo determinista que valide que el arbol queda limpio tras la pasada correctiva, detecte hooks mutadores en `pre-push`, confirme que los artefactos generados estan excluidos y devuelva un diagnostico accionable antes del `git push`.
+- **Descripcion:** Implementar `scripts/prepush_check.py` con CLI `python scripts/prepush_check.py` (verify-only, exit 0/1) y `--help`. Secuencia fija: (1) llama a `run_delivery_hygiene_check()` de `delivery_hygiene_check.py`; (2) `ruff check .`; (3) `ruff format --check .`; (4) `agent_controller --validate --json --force`; (5) `git status --short` — falla si hay salida. Adicionalmente ejecuta `python skills/validate_all.py` e imprime su resultado sin bloquear el exit code. El wrapper nunca muta el arbol.
 - **Riesgo:** Medio
-- **Criterio de Aceptacion:** El chequeo falla con un mensaje claro si detecta mutadores en `pre-push` o artefactos generados tocados por hooks; un arbol limpio pasa; un caso de prueba con mutacion detectada produce el diagnostico esperado.
-- **Si falla:** Limitar el chequeo a detectar solo mutadores en `pre-push` y arbol sucio, dejando las exclusiones avanzadas para un ticket posterior.
+- **Criterio de Aceptacion:** `python scripts/prepush_check.py` existe, imprime estado de cada check con etiqueta OK/FAIL, devuelve exit 0 solo si los cinco checks bloqueantes pasan, y `git status --short` no muestra cambios tras su ejecucion.
+- **Si falla:** Eliminar la llamada a `agent_controller --validate` y limitarla a higiene + ruff + git status.
 
-### Fase 3: cobertura de entrega y comportamiento observable
+### Fase 2: cobertura de tests para el preflight
 - **Tipo:** TAREA AGENTE
-- **Archivos:** `tests/test_delivery_hygiene_check.py`, `tests/test_supervisor.py`
-- **Accion:** Anadir
-- **Descripcion:** Completar la cobertura con tests para un flujo limpio de entrega, un flujo con hook mutador que obliga a corregir antes del push y un caso donde el supervisor anuncia de forma clara un estado idle cuando no hay ticket activo.
+- **Archivos:** `tests/test_prepush_check.py`
+- **Accion:** Crear
+- **Descripcion:** Tests para tres caminos: (a) camino limpio — los cinco checks pasan, exit 0, arbol sin cambios; (b) camino con arbol sucio — `git status --short` devuelve output, exit 1; (c) camino con mutador en pre-push detectado por `delivery_hygiene_check` — exit 1. Usar `monkeypatch`/`tmp_path` para aislar llamadas a subprocess y git.
+- **Riesgo:** Medio
+- **Criterio de Aceptacion:** Los tres caminos tienen cobertura explicita; ningun test muta el sistema de archivos real; los tres pasan con `pytest tests/test_prepush_check.py -q`.
+
+### Fase 3: documentacion del ciclo de delivery
+- **Tipo:** TAREA AGENTE
+- **Archivos:** `skills/project-finalize/SKILL.md`, `PROJECT.md`, `QUICKSTART.md`
+- **Accion:** Modificar
+- **Descripcion:** Referenciar el wrapper como comando canonico del preflight de entrega y explicar cuando usarlo, que hace si falla y que no sustituye al push remoto ni a los checks de GitHub Actions.
 - **Riesgo:** Bajo
-- **Criterio de Aceptacion:** La cobertura demuestra que el preflight detecta mutaciones antes de empujar, que el arbol limpio deja pasar la entrega y que la observabilidad del supervisor no se mezcla con el ticket activo.
-- **Si falla:** Mantener la cobertura de unidad del chequeo de entrega y posponer los escenarios de integracion para un ticket posterior.
+- **Criterio de Aceptacion:** La documentacion del ciclo de delivery nombra un unico comando canonico y deja claro el orden: preflight local, correccion si hace falta, confirmacion limpia y solo entonces push.
+- **Si falla:** Mantener la documentacion en `project-finalize` y diferir `PROJECT.md` / `QUICKSTART.md` para un ajuste posterior.
 
 ## Files Likely Touched
-- `.pre-commit-config.yaml`
-- `scripts/delivery_hygiene_check.py`
-- `tests/test_delivery_hygiene_check.py`
-- `tests/test_supervisor.py`
+- `scripts/prepush_check.py`
+- `tests/test_prepush_check.py`
+- `scripts/validate_ticket_prose.py`
+- `tests/test_validate_ticket_prose.py`
+- `skills/_shared/ticket-anti-patterns.md`
+- `skills/man-create-work-plan/references/plan-quality-checklist.md`
+- `skills/project-finalize/SKILL.md`
+- `PROJECT.md`
+- `QUICKSTART.md`
 
 ## Calidad
-- `uv run pre-commit run --all-files --hook-stage pre-push`
-- `uv run ruff check .`
-- `uv run ruff format --check .`
-- `python -m pytest tests/test_delivery_hygiene_check.py tests/test_supervisor.py -q`
+- `python scripts/prepush_check.py --help`
+- `python scripts/prepush_check.py`
+- `python -m pytest tests/test_prepush_check.py -q`
+- `python -m pytest tests/test_validate_ticket_prose.py -q`
+- `python skills/validate_all.py`
+- `python .agent/agent_controller.py --validate --json --force`
 
 ## Criterios de aceptacion
-- Los hooks mutadores quedan fuera de `pre-push`.
-- El chequeo de higiene de entrega detecta mutaciones y arbol sucio antes del push.
-- Los artefactos generados relevantes quedan excluidos del formateo automatico.
-- El flujo de entrega deja de depender de un segundo intento por mutaciones evitables.
+- `python scripts/prepush_check.py` existe y devuelve exit 0/1 con diagnostico legible por check.
+- El wrapper no muta el arbol en ningun camino de ejecucion.
+- `pytest tests/test_prepush_check.py -q` pasa cubriendo los tres caminos: limpio, arbol sucio, mutador en pre-push.
+- `pytest tests/test_validate_ticket_prose.py -q` pasa cubriendo TP-07 / TP-PROSE-12.
+- La documentacion del ciclo de delivery en `project-finalize/SKILL.md`, `PROJECT.md` y `QUICKSTART.md` nombra `python scripts/prepush_check.py` como el comando unico de preflight.
+- El flujo de entrega queda: preflight local → correccion manual si falla → preflight de nuevo → push.

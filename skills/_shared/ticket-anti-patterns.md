@@ -83,6 +83,20 @@ Fuente compartida para Builder y Manager. Cada entrada debe leerse como una regl
 > - TP-04: verificado - no aparece lenguaje blando en el flujo critico.
 > - TP-05: verificado - PLAN y AUDIT describen las mismas fases, archivos y criterios de parada.
 
+## TP-07 - Alcance condicional
+
+- **Descripcion:** El plan usa clausulas condicionales como "si existe", "si se anade", "si aplica" o "si procede" para decidir alcance, en lugar de cerrar la decision en el ticket.
+- **Por que rompe al Builder:** El Builder queda autorizado a incluir o excluir trabajo segun su interpretacion, y el plan deja de fijar el contrato de entrega.
+- **Senal de deteccion:** Aparicion de "si existe", "si se anade", "si aplica", "si procede" o formulaciones equivalentes dentro de `Objetivo`, `Fases`, `Criterios` o `Decision Arquitectonica`.
+
+âŒ Ejemplo malo:
+> "Si existe modo de reparacion, anadir un flag adicional."
+
+âœ… Ejemplo bueno:
+> "El wrapper expone `--verify` como ruta por defecto y `--repair` como modo explicito separado; ambos estan definidos en la fase y en los criterios de aceptacion."
+
+Detectado automaticamente por `validate_ticket_prose.py` como `TP-PROSE-12`.
+
 ## Uso
 
 - Usa estas entradas como referencia al redactar el `## TP Check` del `AUDIT_WP-XXXX.md`.

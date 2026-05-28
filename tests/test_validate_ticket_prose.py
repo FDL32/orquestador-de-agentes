@@ -35,6 +35,7 @@ from validate_ticket_prose import (  # noqa: E402
     detect_missing_nongoals,
     detect_nonverifiable_criteria,
     detect_oversized_ticket,
+    detect_scope_conditional,
     detect_throat_clearing,
     detect_vague_declarative,
     format_output,
@@ -306,6 +307,30 @@ El sistema funciona correctamente y es robusto.
     def test_no_nonverifiable_with_command(self, clean_plan: str):
         """No detecta cuando hay comando citado."""
         warnings = detect_nonverifiable_criteria(clean_plan)
+        assert len(warnings) == 0
+
+
+class TestDetectScopeConditional:
+    """Tests para detect_scope_conditional."""
+
+    def test_detects_scope_conditional(self):
+        """Detecta alcance condicional en secciones criticas."""
+        content = """## Objetivo
+Si existe modo de reparacion, anadir un flag adicional.
+
+## Fases
+### Fase 1: preparar wrapper
+
+## Criterios de aceptacion
+Si aplica, documentar el comando.
+"""
+        warnings = detect_scope_conditional(content)
+        assert len(warnings) >= 2
+        assert all(w["rule_id"] == "TP-PROSE-12" for w in warnings)
+
+    def test_no_scope_conditional(self, clean_plan: str):
+        """No detecta cuando el alcance esta cerrado."""
+        warnings = detect_scope_conditional(clean_plan)
         assert len(warnings) == 0
 
 

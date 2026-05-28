@@ -242,6 +242,28 @@ Use the current ticket, then update:
 
 > Comandos de instalación y sincronización: ver [AGENTS.md sección "Comandos principales"](AGENTS.md#comandos-principales). Esta sección cubre solo los comandos del ciclo diario (validate, tests, lint).
 
+### Preflight de entrega (antes de git push)
+
+```powershell
+python scripts/prepush_check.py
+```
+
+Este comando canonico ejecuta en secuencia fija:
+1. Delivery Hygiene Check (hooks mutadores, artefactos generados, arbol limpio)
+2. Ruff Check (linting de Python)
+3. Ruff Format Check (formato de codigo)
+4. Agent Controller Validate (validacion de tickets)
+5. Git Status Check (arbol sin cambios)
+6. Validate All (skills, informacional - no bloqueante)
+
+Si el preflight falla:
+- Ejecute la pasada mutadora manualmente: `uv run pre-commit run --all-files --hook-stage pre-commit`
+- Corrija los errores reportados
+- Vuelva a ejecutar `python scripts/prepush_check.py` hasta que todos los checks bloqueantes pasen
+- Solo entonces proceda con `git push`
+
+### Quality gates diarios
+
 ```powershell
 python scripts/run_pytest_safe.py
 ruff check .
