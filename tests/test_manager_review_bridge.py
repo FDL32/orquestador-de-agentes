@@ -7,9 +7,15 @@ from pathlib import Path
 
 import pytest
 from bus.event_bus import EventBus
+from bus.exceptions import ConcurrentStateError
 from bus.review_bridge import ReviewBridge, ReviewDecision
 from bus.supervisor import SequentialTicketSupervisor, SupervisorState
-from scripts.manager_review_bridge import BridgeState, _bridge_heartbeat, _ticket_state
+from scripts.manager_review_bridge import (
+    BridgeState,
+    _bridge_heartbeat,
+    _tick,
+    _ticket_state,
+)
 
 
 class DummySupervisor:
@@ -1346,8 +1352,8 @@ class TestSupervisorNonTerminalStates:
 
         collaboration_dir = tmp_path / ".agent" / "collaboration"
         runtime_dir = tmp_path / ".agent" / "runtime"
-        collaboration_dir.mkdir(parents=True)
-        runtime_dir.mkdir(parents=True)
+        collaboration_dir.mkdir(parents=True, exist_ok=True)
+        runtime_dir.mkdir(parents=True, exist_ok=True)
 
         # Create execution_log showing COMPLETED (but bus says READY_FOR_REVIEW)
         (collaboration_dir / "execution_log.md").write_text(
@@ -2043,3 +2049,271 @@ class TestUntrackedDeliverables:
         assert "filter_mode: diff_context" in prompt
         assert "severity: info" in prompt
         assert "untracked_count: 0" in prompt
+
+
+# =============================================================================
+# Tests WP-2026-170: Fix ConcurrentStateError (reconcile_state removed from _tick)
+# =============================================================================
+
+
+def _make_supervisor(tmp_path: Path) -> SequentialTicketSupervisor:
+    """Helper: build a SequentialTicketSupervisor with standard dirs."""
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True, exist_ok=True)
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    return SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+
+def _write_work_plan_rfr(path: Path, ticket_id: str) -> None:
+    """Write work_plan.md so _ticket_state can derive a ticket."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(
+            [
+                "# Work Plan",
+                "",
+                f"## {ticket_id}: Test",
+                "",
+                "### Metadata",
+                f"- **ID:** {ticket_id}",
+                "- **Estado:** APPROVED",
+                "- **deliverable_type:** code",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_execution_log_rfr(path: Path, status: str) -> None:
+    """Write execution_log.md with a given status line."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(
+            [
+                "# Execution Log",
+                "",
+                "## Project summary",
+                "",
+                "- **Estado:** " + status,
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_tick_does_not_call_reconcile_state(tmp_path, monkeypatch):
+    """Test that _tick() does NOT invoke supervisor.reconcile_state().
+
+    WP-2026-170: the bridge must stop writing supervisor_state.json during
+    its tick.  Spying on reconcile_state verifies it is never called.
+    """
+    supervisor = _make_supervisor(tmp_path)
+
+    # Spy on reconcile_state — count calls
+    reconcile_calls = 0
+    original_reconcile = supervisor.reconcile_state
+
+    def spy_reconcile():
+        nonlocal reconcile_calls
+        reconcile_calls += 1
+        return original_reconcile()
+
+    monkeypatch.setattr(supervisor, "reconcile_state", spy_reconcile)
+
+    # No active ticket → _tick() returns False after the (removed) reconcile
+    supervisor.save_state(SupervisorState(active_ticket=None))
+
+    from bus.review_bridge import ReviewBridge
+
+    review = ReviewBridge(event_bus=supervisor.event_bus, project_root=tmp_path)
+
+    result = _tick(
+        supervisor=supervisor,
+        review=review,
+        manager_path=None,
+        timeout=5,
+    )
+
+    # _tick returns False because no active ticket (not the point)
+    assert result is False
+    # reconcile_state must NOT have been called
+    assert reconcile_calls == 0, "reconcile_state must NOT be called from _tick()"
+
+
+def _mock_bridge_state_path(monkeypatch, tmp_path: Path) -> Path:
+    """Monkeypatch _state_path so bridge state reads/writes are isolated per test.
+
+    Without this, _load_state() / _save_state() read the real project's
+    manager_bridge_state.json, causing cross-test contamination.
+    """
+    bridge_state_path = tmp_path / ".agent" / "runtime" / "manager_bridge_state.json"
+    bridge_state_path.parent.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        "scripts.manager_review_bridge._state_path",
+        lambda: bridge_state_path,
+    )
+    return bridge_state_path
+
+
+def test_tick_detects_ready_for_review_without_reconcile(tmp_path, monkeypatch):
+    """Test that _tick() still detects READY_FOR_REVIEW after removing reconcile_state.
+
+    WP-2026-170: the bridge must keep detecting READY_FOR_REVIEW via the
+    bus even though it no longer calls reconcile_state().
+    """
+    _mock_bridge_state_path(monkeypatch, tmp_path)
+
+    supervisor = _make_supervisor(tmp_path)
+    ticket_id = "WP-2026-170"
+
+    # Write collaboration artifacts that _ticket_state reads
+    _write_work_plan_rfr(supervisor.collaboration_dir / "work_plan.md", ticket_id)
+    _write_execution_log_rfr(
+        supervisor.collaboration_dir / "execution_log.md", "READY_FOR_REVIEW"
+    )
+
+    # Persist active ticket
+    supervisor.save_state(
+        SupervisorState(active_ticket=ticket_id, completed_tickets=[])
+    )
+
+    # Bus state: emit events so derive_state_from_events yields READY_FOR_REVIEW
+    supervisor.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="BUILDER",
+        payload={
+            "from_state": "IN_PROGRESS",
+            "to_state": "READY_FOR_REVIEW",
+            "reason": "Ready",
+        },
+    )
+    # Also emit a preceding event so sequence_number > 0
+    supervisor.event_bus.emit(
+        "TURN_CHANGED",
+        ticket_id=ticket_id,
+        actor="CONTROLLER",
+        payload={"action": "IMPLEMENT"},
+    )
+
+    # Mock _resolve_manager_executable so we don't need a real backend
+    fake_exe = tmp_path / "fake_manager.exe"
+    fake_exe.write_text("")
+    monkeypatch.setattr(
+        "scripts.manager_review_bridge._resolve_manager_executable",
+        lambda *a: fake_exe,
+    )
+
+    from bus.review_bridge import ReviewBridge, ReviewDecision, ReviewResult
+
+    review = ReviewBridge(event_bus=supervisor.event_bus, project_root=tmp_path)
+
+    # Mock the review cycle to return APPROVE without spawning a subprocess
+    monkeypatch.setattr(
+        review,
+        "run_manager_review_cycle",
+        lambda **kw: ReviewResult(
+            decision=ReviewDecision.APPROVE,
+            feedback="LGTM",
+            stdout="",
+            parse_method="test",
+            transport_ok=True,
+        ),
+    )
+
+    # Spy on reconcile_state — raise if called (it must not be)
+    monkeypatch.setattr(
+        supervisor,
+        "reconcile_state",
+        lambda: (_ for _ in ()).throw(AssertionError("must not be called")),
+    )
+
+    result = _tick(
+        supervisor=supervisor,
+        review=review,
+        manager_path=fake_exe,
+        timeout=5,
+    )
+
+    # _tick should successfully process the READY_FOR_REVIEW ticket
+    assert result is True, "_tick() must process a READY_FOR_REVIEW ticket"
+
+
+def test_tick_no_concurrent_state_error(tmp_path, monkeypatch):
+    """Test that omitting reconcile_state() from _tick() does not
+    produce ConcurrentStateError.
+
+    WP-2026-170: since reconcile_state() is the only path inside _tick()
+    that writes supervisor_state.json, removing it eliminates the race
+    condition with the supervisor process.
+    """
+    _mock_bridge_state_path(monkeypatch, tmp_path)
+
+    supervisor = _make_supervisor(tmp_path)
+    ticket_id = "WP-2026-170-CE"
+
+    _write_work_plan_rfr(supervisor.collaboration_dir / "work_plan.md", ticket_id)
+    _write_execution_log_rfr(
+        supervisor.collaboration_dir / "execution_log.md", "READY_FOR_REVIEW"
+    )
+
+    supervisor.save_state(
+        SupervisorState(active_ticket=ticket_id, completed_tickets=[])
+    )
+
+    # Emit bus events for READY_FOR_REVIEW
+    supervisor.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="BUILDER",
+        payload={
+            "from_state": "IN_PROGRESS",
+            "to_state": "READY_FOR_REVIEW",
+            "reason": "Ready",
+        },
+    )
+
+    # Mock the expensive parts
+    fake_exe = tmp_path / "fake_manager.exe"
+    fake_exe.write_text("")
+    monkeypatch.setattr(
+        "scripts.manager_review_bridge._resolve_manager_executable",
+        lambda *a: fake_exe,
+    )
+
+    from bus.review_bridge import ReviewBridge, ReviewDecision, ReviewResult
+
+    review = ReviewBridge(event_bus=supervisor.event_bus, project_root=tmp_path)
+    monkeypatch.setattr(
+        review,
+        "run_manager_review_cycle",
+        lambda **kw: ReviewResult(
+            decision=ReviewDecision.APPROVE,
+            feedback="LGTM",
+            stdout="",
+            parse_method="test",
+            transport_ok=True,
+        ),
+    )
+
+    # The critical assertion: _tick must NOT raise ConcurrentStateError
+    # because it no longer writes supervisor_state.json
+    try:
+        result = _tick(
+            supervisor=supervisor,
+            review=review,
+            manager_path=fake_exe,
+            timeout=5,
+        )
+    except ConcurrentStateError:
+        pytest.fail(
+            "_tick() raised ConcurrentStateError — reconcile_state should not be called"
+        )
+
+    assert result is True

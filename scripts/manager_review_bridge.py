@@ -333,7 +333,10 @@ def _tick(
     manager_path: Path | None,
     timeout: int,
 ) -> bool:
-    supervisor.reconcile_state()
+    # WP-2026-170: Bridge must NOT call reconcile_state() here — that is
+    # the supervisor's job during its own cycle. The bridge only reads the
+    # bus to detect READY_FOR_REVIEW; writing supervisor_state.json from
+    # the bridge process produces ConcurrentStateError.
     ticket_id, current_state, latest_sequence = _ticket_state(supervisor)
     if not ticket_id:
         return False
