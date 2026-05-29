@@ -502,7 +502,7 @@ def _migrate_1_0_to_1_1(config: dict) -> dict:
     new["schema_version"] = "1.1"
     if "role_models" not in new:
         new["role_models"] = {
-            "BUILDER": "opencode-go/mimo-v2.5",
+            "BUILDER": "opencode-go/deepseek-v4-flash",
             "MANAGER": "openai/gpt-5.4-mini",
         }
     return new

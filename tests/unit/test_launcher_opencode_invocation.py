@@ -64,7 +64,7 @@ def test_opencode_branch_reads_model_from_config(opencode_branch: str) -> None:
     assert "$opencodeConfig.model" in opencode_branch, (
         "model must be read from .opencode/opencode.json"
     )
-    assert "opencode-go/mimo-v2.5" not in opencode_branch, (
+    assert "opencode-go/deepseek-v4-flash" not in opencode_branch, (
         "model must not be hardcoded in the launcher"
     )
 

@@ -11,7 +11,7 @@ A **domain-agnostic central motor** that automates work by making one agent gene
 | Role | Responsibility | Default backend |
 |---|---|---|
 | **Supervisor** | Generates plans, derives tickets, coordinates the cycle | Claude Code |
-| **Builder** | Implements tickets, runs gates, emits `BUILDER_EXIT` | OpenCode → MiMo V2.5 (`opencode-go/mimo-v2.5`) |
+| **Builder** | Implements tickets, runs gates, emits `BUILDER_EXIT` | OpenCode → DeepSeek V4 Flash (`opencode-go/deepseek-v4-flash`) |
 | **Manager** | Reviews Builder output with a deliverable-type-aware rubric; emits `APPROVE` / `CHANGES` | OpenCode → OpenAI (`openai/gpt-5.4-mini`, routed natively since WP-072) |
 
 Backends are pluggable per role in `.agent/config/agents.json` (`role_assignments` + `role_models`).

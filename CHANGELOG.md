@@ -1,18 +1,19 @@
-# 2026-05-29 - Builder model migration: Qwen3.5 Plus → MiMo-V2.5
+# 2026-05-29 - Builder model migration: Qwen3.5 Plus → DeepSeek V4 Flash
 
 ### Changed
-- `.opencode/opencode.json`: Builder model changed from `opencode-go/qwen3.5-plus` to `opencode-go/mimo-v2.5`.
-- `.agent/config/agents.json`: `role_models.BUILDER` updated to `opencode-go/mimo-v2.5`.
-- `.agent/agents_config.py`: migration default updated to `opencode-go/mimo-v2.5`.
-- `.opencode/MODELS.md`: catalog updated to reflect MiMo-V2.5 as current Builder default.
+- `.opencode/opencode.json`: Builder model changed from `opencode-go/qwen3.5-plus` to `opencode-go/deepseek-v4-flash`.
+- `.agent/config/agents.json`: `role_models.BUILDER` updated to `opencode-go/deepseek-v4-flash`.
+- `.agent/agents_config.py`: migration default updated to `opencode-go/deepseek-v4-flash`.
+- `.opencode/MODELS.md`: catalog updated to reflect DeepSeek V4 Flash as current Builder default.
 - `README.md`: Builder backend reference updated.
 - `prompts/session_bootstrap.md`: Builder model reference updated.
+- `bus/review_bridge.py`: docstring example updated.
 - `tests/unit/test_agents_config.py`: all hardcoded model references updated.
 - `tests/unit/test_launcher_opencode_invocation.py`: hardcoded model assertion updated.
 
 ### Rationale
-- MiMo-V2.5 is ~5% cheaper than Qwen3.5 Plus with comparable Python/code capability.
-- Qwen3.5 Plus server errors (`err_a8807a88`, HTTP 500) prompted the migration.
+- Qwen3.5 Plus server errors (`err_a8807a88`, HTTP 500) prompted initial migration to MiMo-V2.5.
+- MiMo-V2.5 was an intermediate step; DeepSeek V4 Flash has stronger coding benchmarks and the highest rate limit in the paid catalog (31,650 req/5h).
 
 ---
 # 2026-05-29 - WP-2026-166 Canonical closeout: manager watchdog for stale READY_FOR_REVIEW

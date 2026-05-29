@@ -77,7 +77,7 @@ VALID_CONFIG_WITH_MODELS = {
     },
     "role_assignments": {"BUILDER": "opencode", "MANAGER": "kilo"},
     "role_models": {
-        "BUILDER": "opencode-go/mimo-v2.5",
+        "BUILDER": "opencode-go/deepseek-v4-flash",
         "MANAGER": "opencode-go/deepseek-v4-flash",
     },
 }
@@ -324,7 +324,7 @@ class TestGetModelForRole:
         """Test getting BUILDER model when role_models is present."""
         mock_load.return_value = VALID_CONFIG_WITH_MODELS
         model = get_model_for_role("BUILDER")
-        assert model == "opencode-go/mimo-v2.5"
+        assert model == "opencode-go/deepseek-v4-flash"
 
     @patch("agents_config.load_agents_config")
     def test_get_model_without_override(self, mock_load):
@@ -337,7 +337,7 @@ class TestGetModelForRole:
     def test_get_model_partial_override(self, mock_load):
         """Test getting model returns None for role without override."""
         config_partial = copy.deepcopy(VALID_CONFIG_WITH_MODELS)
-        config_partial["role_models"] = {"BUILDER": "opencode-go/mimo-v2.5"}
+        config_partial["role_models"] = {"BUILDER": "opencode-go/deepseek-v4-flash"}
         # MANAGER not in role_models
         mock_load.return_value = config_partial
         model = get_model_for_role("MANAGER")
@@ -583,7 +583,7 @@ class TestMigrationFramework:
         result = json.loads(cfg.read_text())
         assert result["schema_version"] == "1.2"
         assert "role_models" in result
-        assert result["role_models"]["BUILDER"] == "opencode-go/mimo-v2.5"
+        assert result["role_models"]["BUILDER"] == "opencode-go/deepseek-v4-flash"
         assert result["role_models"]["MANAGER"] == "openai/gpt-5.4-mini"
         assert result["strictness_profile"] == "standard"
         assert "profiles" in result
