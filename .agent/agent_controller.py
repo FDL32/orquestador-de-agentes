@@ -2345,7 +2345,6 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
     tag_name = f"checkpoint/review-{plan_id}"
 
     # Check current checkpoint state
-    tag_exists = False
     tag_aligned = False
     try:
         result = subprocess.run(
@@ -2355,7 +2354,6 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
             cwd=project_root,
         )
         if result.returncode == 0:
-            tag_exists = True
             tag_commit = result.stdout.strip()
             head_result = subprocess.run(
                 ["git", "rev-parse", "HEAD"],
@@ -2414,7 +2412,6 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
             print(f"[OK] Committed: {commit_msg}")
 
         # After a new commit, the tag always needs refresh
-        tag_exists = False  # Force tag creation
         needs_tag = True
     else:
         needs_tag = not tag_aligned
@@ -2422,18 +2419,10 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
     # --- Step 2: Create/refresh checkpoint M3 tag ---
     if needs_tag:
         try:
-            # Delete existing tag if present (use git tag -d, ignore failure)
-            if tag_exists:
-                subprocess.run(
-                    ["git", "tag", "-d", tag_name],
-                    capture_output=True,
-                    text=True,
-                    cwd=project_root,
-                )
-
+            # Use -f (force) to handle both fresh creation and refresh
             tag_msg = f"Checkpoint M3 for {plan_id}"
             tag_result = subprocess.run(
-                ["git", "tag", "-a", tag_name, "-m", tag_msg],
+                ["git", "tag", "-a", "-f", tag_name, "-m", tag_msg],
                 capture_output=True,
                 text=True,
                 cwd=project_root,
@@ -2448,10 +2437,7 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
                 return 1
 
             if not json_output:
-                if tag_exists:
-                    print(f"[OK] Refreshed tag: {tag_name}")
-                else:
-                    print(f"[OK] Created tag: {tag_name}")
+                print(f"[OK] Created/refreshed tag: {tag_name}")
         except FileNotFoundError:
             print(
                 "[ERROR] git not available for tag operation",
