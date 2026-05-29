@@ -25,7 +25,7 @@ Lee en este orden, sin omitir ninguno:
 ## Resumen breve del sistema
 
 - **Runtime activo:** `orquestador_de_agentes/` (repo portable).
-- **Roles:** Manager (OpenCode via `scripts/manager_review_bridge.py`, modelo configurable en `.agent/config/agents.json`) y Builder (OpenCode, modelo `opencode-go/qwen3.5-plus`).
+- **Roles:** Manager (OpenCode via `scripts/manager_review_bridge.py`, modelo configurable en `.agent/config/agents.json`) y Builder (OpenCode, modelo `opencode-go/mimo-v2.5`).
 - **Bus canonico:** `.agent/runtime/events/events.jsonl` (append-only, autoridad absoluta).
 - **Proyecciones:** `TURN.md`, `STATE.md`, `work_plan.md`, `execution_log.md` se derivan del bus.
 - **Namespaces de tickets:** motor `WP-YYYY-NNN`; destino `XXX-YYYY-NNN` con `Ticket prefix: XXX` declarado en el `PROJECT.md` local del destino.

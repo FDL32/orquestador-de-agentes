@@ -78,7 +78,7 @@
     "SUPERVISOR": "default"
   },
   "role_models": {
-    "BUILDER": "opencode-go/qwen3.5-plus",
+    "BUILDER": "opencode-go/mimo-v2.5",
     "MANAGER": "openai/gpt-5.4-mini"
   },
   "manager_review": {
