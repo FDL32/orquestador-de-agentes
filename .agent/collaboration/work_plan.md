@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WP-2026-172
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Titulo:** Prevent Builder relaunch on HANDOFF_BLOCKED and tolerate PROJECT.md as live surface
 - **Asignado a:** Builder
