@@ -67,3 +67,10 @@
 ## Delivery hygiene
 - [ ] AP-D01 Scope cleanup destructivo: Builder no usa `git checkout`, `git reset` ni `git revert` sobre archivos fuera de `Files Likely Touched`; si detecta discrepancia, la reporta en `execution_log.md` y pide actualizacion de scope.
 - [ ] AP-D02 Artefacto generado sin proteccion: artefactos generados o de runtime (`.agent/context/project-map.json`, `events.jsonl`) quedan excluidos de hooks mutadores y no se reescriben en `pre-push`.
+- [ ] AP-D03 Handoff sin ancla de recuperacion: Builder creo M3 (`checkpoint/review-<ticket>`) explicitamente antes de `--mark-ready`; el guard de handoff paso sin bloquear por falta de checkpoint; si hubo discrepancias de scope, se usaron checkpoints en lugar de limpieza destructiva.
+
+## Handoff limpio - comprobaciones pre-review
+- [ ] No hay eventos `HANDOFF_BLOCKED` en el bus para este ticket (o si los hay, fueron resueltos explicitamente).
+- [ ] El arbol estaba limpio al momento del handoff (sin cambios no commiteados fuera de superficies vivas).
+- [ ] Checkpoint M3 existe y es verificable (`git rev-parse checkpoint/review-<ticket>`).
+- [ ] Scope discrepancy (si hubo) se reporto como observacion no bloqueante, no como limpieza destructiva.

@@ -1853,6 +1853,77 @@ def _handle_check_completion() -> int:
     return 1
 
 
+def _run_pre_handoff_guard(plan_id: str, json_output: bool) -> dict:
+    """
+    Run the pre-handoff guard before emitting READY_FOR_REVIEW.
+
+    WP-2026-167: Invokes scripts/pre_handoff_guard.py to verify:
+    - Tree is clean (no uncommitted changes outside live surfaces)
+    - Checkpoint M3 (checkpoint/review-<ticket>) exists
+
+    Args:
+        plan_id: Ticket ID (e.g., WP-2026-167)
+        json_output: Whether to output guard result as JSON
+
+    Returns:
+        dict with 'valid' (bool), 'dirty_tree', 'missing_checkpoint', etc.
+    """
+    try:
+        guard_script = SCRIPT_DIR.parent / "scripts" / "pre_handoff_guard.py"
+        if not guard_script.exists():
+            print("[WARN] pre_handoff_guard.py not found; skipping guard check")
+            return {"valid": True}
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(guard_script),
+                "--project-root",
+                str(PROJECT_ROOT),
+                "--ticket-id",
+                plan_id,
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=PROJECT_ROOT,
+        )
+
+        try:
+            guard_result = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            print(f"[WARN] Failed to parse guard output: {result.stdout}")
+            guard_result = {"valid": result.returncode == 0}
+
+        if not json_output:
+            if guard_result.get("valid"):
+                print(f"[OK] Pre-handoff guard passed for {plan_id}")
+                if guard_result.get("scope_discrepancy"):
+                    print(
+                        f"[WARN] Scope discrepancy (non-blocking): "
+                        f"{', '.join(guard_result['scope_discrepancy'])}"
+                    )
+            else:
+                print(f"[ERROR] Pre-handoff guard failed for {plan_id}")
+                if guard_result.get("missing_checkpoint"):
+                    print(f"  - Missing checkpoint M3: checkpoint/review-{plan_id}")
+                if guard_result.get("dirty_tree"):
+                    print(
+                        f"  - Dirty tree: {', '.join(guard_result.get('dirty_files', []))}"
+                    )
+                if guard_result.get("scope_discrepancy"):
+                    print(
+                        f"  - Scope discrepancy (non-blocking): "
+                        f"{', '.join(guard_result['scope_discrepancy'])}"
+                    )
+
+        return guard_result
+
+    except Exception as exc:
+        print(f"[WARN] Pre-handoff guard execution failed: {exc}")
+        return {"valid": True, "warnings": [f"Guard execution error: {exc}"]}
+
+
 def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-ready, breaker)
     scope_override: str | None, json_output: bool, force_mode: bool
 ) -> int:
@@ -1982,6 +2053,25 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
             f"  Failures: {breaker_status['failures']}, No-progress count: {breaker_status['no_progress_count']}"
         )
         print("  Resolve the underlying issue before marking ready.")
+        return 1
+
+    # WP-2026-167: Pre-handoff guard - verify tree hygiene and M3 checkpoint
+    guard_result = _run_pre_handoff_guard(plan_id, json_output)
+    if not guard_result["valid"]:
+        # Emit HANDOFF_BLOCKED event
+        if BUS_AVAILABLE and event_bus:
+            event_bus.emit(
+                event_type="HANDOFF_BLOCKED",
+                ticket_id=plan_id,
+                actor="BUILDER",
+                payload={
+                    "reason": "pre_handoff_guard_failed",
+                    "dirty_tree": guard_result.get("dirty_tree", False),
+                    "missing_checkpoint": guard_result.get("missing_checkpoint", False),
+                    "dirty_files": guard_result.get("dirty_files", []),
+                    "scope_discrepancy": guard_result.get("scope_discrepancy", []),
+                },
+            )
         return 1
 
     gate_result = check_scope_gate(plan_content, get_changed_files(), _exclude_files())

@@ -387,3 +387,24 @@ Los artefactos generados o de runtime deben quedar excluidos de hooks mutadores.
 
 **NO:** dejar que `end-of-file-fixer` o `ruff format` muten `.agent/context/project-map.json` o `events.jsonl` durante `pre-push`.
 **SI:** verificar esos archivos de forma no mutadora y mantener el scope de entrega congelado antes del handoff.
+
+## Checkpoints semanticos - M3 requerido antes de handoff
+
+El Builder debe crear el checkpoint M3 (`checkpoint/review-<ticket>`) de forma explicita antes de ejecutar `--mark-ready`. El guard de handoff bloquea si M3 no existe.
+
+**Comando:**
+```bash
+python scripts/create_checkpoint.py --milestone M3 --ticket-id WP-2026-XXX
+```
+
+**Checkpoints disponibles:**
+- `M0`: `checkpoint/base-<ticket>` - Inicio del ticket
+- `M1`: `checkpoint/design-<ticket>` - Diseño aprobado
+- `M2`: `checkpoint/implementation-<ticket>` - Implementacion completa
+- `M3`: `checkpoint/review-<ticket>` - Listo para review (**REQUERIDO** antes de `--mark-ready`)
+- `M4`: `checkpoint/closed-<ticket>` - Ticket cerrado
+
+**NO:** intentar auto-crear M3 desde `--mark-ready`; el checkpoint debe ser una ancla real creada de forma explicita.
+**SI:** crear M3 como paso manual verificable antes del handoff; el guard validara su existencia.
+
+El script emite `BUILDER_MILESTONE` al bus con `{milestone, tag, sha}` para trazabilidad. Si la tag ya existe, hace skip con aviso y no falla.
