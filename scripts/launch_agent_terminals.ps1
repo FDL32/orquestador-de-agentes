@@ -1111,7 +1111,7 @@ if ($useExternalController) {
 
 # Bootstrap bus event for active ticket to prevent bridge UNKNOWN state
 $venvPython = Resolve-VenvPython -Root $ProjectRoot
-$bootstrapResult = & $venvPython $controllerPath --bootstrap-ticket --json 2>&1
+$bootstrapResult = & $venvPython $controllerPath --bootstrap-ticket --json --project-root $ProjectRoot 2>&1
 $bootstrapExitCode = $LASTEXITCODE
 $bootstrapResultText = ($bootstrapResult | Out-String).Trim()
 Write-Host "Bus bootstrap: $bootstrapResultText"
