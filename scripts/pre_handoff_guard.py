@@ -34,6 +34,7 @@ LIVE_SURFACES_REL = {
     ".agent/collaboration/notifications.md",
     ".agent/collaboration/review_queue.md",
     ".agent/collaboration/work_plan.md",
+    ".agent/runtime/memory/session_close_report.md",
     ".agent/collaboration/archive/",
     ".agent/collaboration/_archive/",
     ".agent/runtime/events/events.jsonl",
