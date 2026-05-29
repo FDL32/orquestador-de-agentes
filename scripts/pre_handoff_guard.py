@@ -34,9 +34,9 @@ LIVE_SURFACES_REL = {
     ".agent/collaboration/notifications.md",
     ".agent/collaboration/review_queue.md",
     ".agent/collaboration/work_plan.md",
-    ".agent/runtime/memory/session_close_report.md",
     ".agent/collaboration/archive/",
     ".agent/collaboration/_archive/",
+    ".agent/runtime/memory/session_close_report.md",
     ".agent/runtime/events/events.jsonl",
     ".agent/runtime/store.json",
     ".agent/runtime/builder_lock.txt",
@@ -45,6 +45,13 @@ LIVE_SURFACES_REL = {
     ".agent/runtime/events/",
     ".agent/runtime/approvals/",
     ".agent/context/project-map.json",
+}
+
+# Patrones glob de archivos excluidos del workspace (AGENTS.md: Excluidos del workspace)
+# Estos archivos son historicos/transitorios y no deben bloquear el handoff.
+WORKSPACE_EXCLUDED_PREFIXES = {
+    ".agent/collaboration/PLAN_WP-",
+    ".agent/collaboration/AUDIT_WP-",
 }
 
 # Directorios completos de superficies vivas (para excluir todo el arbol)
@@ -141,6 +148,16 @@ def get_live_surfaces_absolute(project_root: Path) -> tuple[set[str], set[str]]:
         live_dirs.add(str(full_path.resolve()))
 
     return live_files, live_dirs
+
+
+def is_workspace_excluded(rel_path: str) -> bool:
+    """Verificar si un path relativo coincide con patrones excluidos del workspace.
+
+    Archivos como PLAN_WP-*.md y AUDIT_WP-*.md estan explicitamente excluidos
+    del workspace segun AGENTS.md y no deben bloquear el handoff.
+    """
+    normalized = rel_path.replace("\\", "/")
+    return any(normalized.startswith(prefix) for prefix in WORKSPACE_EXCLUDED_PREFIXES)
 
 
 def is_in_live_surface_dir(file_path: str, live_dirs: set[str]) -> bool:
@@ -370,6 +387,14 @@ def run_guard(project_root: Path, ticket_id: str) -> dict:
         # Es superficie viva? → ignorar
         if f in live_files or is_in_live_surface_dir(f, live_dirs):
             continue
+
+        # Es workspace excluded (PLAN_WP-*.md, AUDIT_WP-*.md)? → ignorar
+        try:
+            rel = str(Path(f).relative_to(project_root))
+            if is_workspace_excluded(rel):
+                continue
+        except ValueError:
+            pass
 
         dirty_files.add(f)
 
