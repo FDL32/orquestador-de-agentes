@@ -1,71 +1,92 @@
-# Work Plan - WP-2026-166
+# Work Plan - WP-2026-167
 
 ## Metadata
-- **ID:** WP-2026-166
-- **Estado:** COMPLETED
-- **deliverable_type:** code
-- **Titulo:** Manager watchdog - stale READY_FOR_REVIEW relaunch
+- **ID:** WP-2026-167
+- **Estado:** APPROVED
+- **deliverable_type:** mixed
+- **Titulo:** Builder handoff safety - guard, checkpoints y recovery protocol
 - **Asignado a:** Builder
 
 ## Objetivo
-Detectar cuando un ticket se queda en `READY_FOR_REVIEW` sin consumo del Manager durante una ventana fija de 600 segundos y relanzar el review bridge de forma observable.
+Cerrar el gap contractual que causo WP-2026-165: el sistema no verifica programaticamente que el arbol este limpio antes de emitir `READY_FOR_REVIEW`, no tiene anclas de recuperacion, y no tiene un protocolo formal para cuando Builder se pierde.
 
 ## Contexto
-- WP-2026-165 cerro limpio, pero el historial mostro un caso real: un ticket puede quedarse en `READY_FOR_REVIEW` sin que aparezca `MANAGER_REVIEWING` si el proceso de review se cae o se queda congelado.
-- `scripts/manager_review_bridge.py` ya mantiene `manager_bridge_state.json`, pero hoy solo lo actualiza cuando completa reviews; hace falta un latido del watch loop para diferenciar proceso vivo de proceso muerto.
-- El supervisor ya tiene watchdog de Builder (`SUPERVISOR_REQUEUE_DEFERRED` + watermark). Este ticket replica el patron para el lado del Manager.
-- La solucion debe ser bus-first y no depender de intervencion manual para desbloquear el review.
+- WP-2026-165 perdio trabajo porque el Builder interpreto archivos no commiteados como scope externo y los borro con `git checkout`.
+- `delivery_hygiene_check.py` y `prepush_check.py` ya verifican higiene de entrega antes del push remoto, pero el gap esta en el handoff interno Builder -> Manager.
+- Superficies vivas del sistema (`TURN.md`, `STATE.md`, `execution_log.md`, `events.jsonl`, `store.json`, `project-map.json`, `notifications.md`, `review_queue.md`) son escritas por el propio runtime y deben ignorarse de forma explicita para evitar falsos positivos.
+- El protocolo de recuperacion debe usar `git status` y `git reflog` como anclas, no limpieza destructiva.
+- `worktree` por ticket queda fuera de alcance en este ticket.
 
 ## Decision Arquitectonica
-- `scripts/manager_review_bridge.py` refresca un campo `heartbeat_at` en formato ISO timestamp en cada tick del modo `--watch` para actuar como heartbeat.
-- `bus/supervisor.py` detecta tickets en `READY_FOR_REVIEW` cuya ultima actividad de review excede `MANAGER_STALE_TIMEOUT = 600` segundos y cuyo `heartbeat_at` del bridge esta viejo; si ocurre, emite `MANAGER_STALE` y lanza un nuevo `scripts/manager_review_bridge.py --watch --project-root <root>` en un proceso independiente.
-- El supervisor usa un watermark `last_manager_stale_trigger_sequence` (o equivalente) para no repetir el relanzado para el mismo trigger.
-- El relanzado del review bridge no pasa por el launcher general para no tocar ventanas de Builder/Supervisor que ya estan vivas.
-- El relanzado independiente del bridge en Windows usa `subprocess.Popen` con `stdout=subprocess.DEVNULL`, `stderr=subprocess.DEVNULL` y `creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP`.
-- No se cambia el formato de decisiones del Manager ni el flujo de `ReviewBridge`.
+- `scripts/pre_handoff_guard.py` se invoca desde `.agent/agent_controller.py` en `_handle_mark_ready()` antes de `_sync_mark_ready_targets()` y antes de emitir `STATE_CHANGED -> READY_FOR_REVIEW`.
+- El guard ejecuta `git status --porcelain` y excluye las superficies vivas y los archivos ya ignorados por `.gitignore`.
+- Si el arbol esta sucio, el guard devuelve exit 1 + JSON diagnostico; `.agent/agent_controller.py` emite `HANDOFF_BLOCKED` con ese JSON.
+- Si hay archivos fuera de `Files Likely Touched`, el guard los reporta como `scope_discrepancy` en el payload, pero nunca los borra ni los revierte.
+- El checkpoint M3 (`checkpoint/review-<ticket>`) debe existir antes de `--mark-ready`; no se auto-crea desde el handoff.
+- `scripts/create_checkpoint.py` crea checkpoints semanticos M0-M4 y emite `BUILDER_MILESTONE` con `{milestone, sha, tag, ticket_id}`.
+- Si la tag de checkpoint ya existe, el script hace skip con aviso y no falla.
+- La base del diff de scope es `git diff --name-only $(git rev-parse checkpoint/base-<ticket> 2>/dev/null || git merge-base HEAD main)`.
+- El protocolo de recuperacion vive en `.agent/rules/builder/recovery.md` y usa `git status`, `git reflog` y `git checkout <tag-o-hash>` como ruta primaria para volver al ultimo ancla conocido bueno. Si `git checkout` no esta disponible, usar `git switch --detach <tag-o-hash>`.
+- No se implementa `worktree` en este ticket.
 
 ## Non-goals
+- No correr `pytest` ni `ruff` dentro del guard; eso ya lo cubre el preflight de entrega.
+- No auto-crear el checkpoint M3 desde `--mark-ready`.
 - No tocar `scripts/launch_agent_terminals.ps1`.
-- No cambiar Builder ni su relanzado.
-- No modificar el prompt ni el parser de `ReviewBridge`.
-- No anadir nuevos estados del ticket en la maquina de estados.
-- No introducir un gate manual nuevo en el review.
-- No depender de procesos externos fuera del repositorio.
+- No cambiar la logica del Manager ni del bus de review.
+- No introducir `worktree` por ticket en este WP.
+- No cambiar el cierre canonico de tickets.
 
 ## Fases
 
-### Fase 1: heartbeat del bridge y watchdog del supervisor
+### Fase 1: guard de handoff
 - **Tipo:** TAREA AGENTE
-- **Archivos:** `scripts/manager_review_bridge.py`, `bus/supervisor.py`
+- **Archivos:** `scripts/pre_handoff_guard.py`, `.agent/agent_controller.py`, `tests/test_pre_handoff_guard.py`
 - **Accion:** Modificar
-- **Descripcion:** Refrescar el estado persistido del review bridge en cada tick de `--watch` para que actue como heartbeat y anadir en el supervisor un watchdog que detecte tickets en `READY_FOR_REVIEW` con heartbeat del bridge viejo. Cuando el trigger sea stale, el supervisor emite `MANAGER_STALE` y lanza un nuevo `scripts/manager_review_bridge.py --watch --project-root <root>` como proceso independiente. El trigger debe ser unico por secuencia para evitar relanzados repetidos.
+- **Descripcion:** Crear un guard programatico de handoff que se ejecute antes de emitir `READY_FOR_REVIEW`. La insercion va en `_handle_mark_ready()` antes de `_sync_mark_ready_targets()`. El guard debe validar el arbol limpio, ignorar superficies vivas, detectar discrepancias de scope sin destruccion y bloquear el handoff si falta el checkpoint M3 o si el arbol esta sucio. `scripts/pre_handoff_guard.py` solo devuelve exit 1 + JSON; la emision de `HANDOFF_BLOCKED` la hace `.agent/agent_controller.py`.
 - **Riesgo:** Medio
-- **Criterio de Aceptacion:** Si un ticket permanece en `READY_FOR_REVIEW` sin consumo del Manager y el heartbeat del bridge esta expirado, el supervisor emite `MANAGER_STALE` y relanza el review bridge una sola vez para ese trigger. Si el heartbeat esta fresco, no hay relanzado duplicado.
-- **Si falla:** Mantener la emision de `MANAGER_STALE` pero diferir la relanzada automatica del bridge a un ticket posterior.
+- **Criterio de Aceptacion:** `--mark-ready` con arbol sucio bloquea con exit 1 y emite `HANDOFF_BLOCKED`; `--mark-ready` con arbol limpio y M3 existente conserva el comportamiento actual; `scope_discrepancy` se reporta como observacion no bloqueante; las superficies vivas no producen falsos positivos.
+- **Si falla:** Mantener el comportamiento actual de `--mark-ready` y dejar el guard para un ticket posterior.
 
-### Fase 2: cobertura de tests para el watchdog
+### Fase 2: checkpoints semanticos
 - **Tipo:** TAREA AGENTE
-- **Archivos:** `tests/test_supervisor.py`, `tests/test_manager_review_bridge.py`
+- **Archivos:** `scripts/create_checkpoint.py`, `tests/test_create_checkpoint.py`, `skills/bui-implement-from-plan/references/code-rules.md`
 - **Accion:** Modificar
-- **Descripcion:** Tests para cuatro caminos: (a) heartbeat del bridge se refresca en cada tick de watch; (b) watchdog detecta `READY_FOR_REVIEW` stale y emite `MANAGER_STALE` + relanzado; (c) bridge fresco suprime el relanzado duplicado; (d) `Popen` recibe el contrato de detach correcto en Windows y POSIX mediante parametrizacion, y el guard de estado no `READY_FOR_REVIEW` queda cubierto. Usar `monkeypatch`/`tmp_path` para aislar subprocess, timestamps y archivos de estado; si hace falta, extraer un fixture comun para reducir repeticion.
+- **Descripcion:** Crear una utilidad de checkpoint que produzca commits/tags anotadas M0-M4. Builder debe crear M3 explicitamente antes de `--mark-ready`; si M3 falta, el guard bloquea. El comando debe emitir `BUILDER_MILESTONE` con milestone, tag y SHA verificable.
 - **Riesgo:** Medio
-- **Criterio de Aceptacion:** Los cuatro caminos tienen cobertura explicita; ningun test lanza procesos reales; `pytest tests/test_supervisor.py tests/test_manager_review_bridge.py -q` pasa.
-- **Si falla:** Conservar la logica de watchdog y dejar la cobertura de heartbeat para un ajuste posterior.
+- **Criterio de Aceptacion:** `scripts/create_checkpoint.py` crea checkpoints anotados, imprime SHA y deja trazabilidad en el bus; el plan y `code-rules.md` exigen M3 antes del handoff; si la tag ya existe, el script hace skip con aviso y no falla.
+- **Si falla:** Dejar el checkpoint como paso manual documentado, sin forzar auto-creacion desde `--mark-ready`.
+
+### Fase 3: protocolo de recuperacion
+- **Tipo:** TAREA AGENTE
+- **Archivos:** `.agent/rules/builder/recovery.md`, `skills/_shared/ticket-anti-patterns.md`, `skills/man-review-implementation/references/review-checklist.md`
+- **Accion:** Crear + Modificar
+- **Descripcion:** Crear el directorio `.agent/rules/builder/` si no existe y documentar un protocolo de recuperacion literal con comandos: parar, `git status`, `git reflog`, volver al ultimo ancla estable con `git checkout <tag-o-hash>` y reanudar desde el ultimo checkpoint. Si `git checkout` no esta disponible en la version de Git instalada, usar `git switch --detach <tag-o-hash>` como alternativa equivalente. Anadir AP-D03 al catalogo y una comprobacion explicita de handoff limpio en la review checklist.
+- **Riesgo:** Bajo
+- **Criterio de Aceptacion:** `recovery.md` existe y describe los pasos con comandos literales; AP-D03 esta en el catalogo; la checklist del Manager pregunta por `HANDOFF_BLOCKED` y handoff limpio.
+- **Si falla:** Mantener la documentacion de recuperacion como regla externa y no introducir logica nueva.
 
 ## Files Likely Touched
-- `scripts/manager_review_bridge.py`
-- `bus/supervisor.py`
-- `tests/test_supervisor.py`
-- `tests/test_manager_review_bridge.py`
+- `scripts/pre_handoff_guard.py`
+- `scripts/create_checkpoint.py`
+- `tests/test_pre_handoff_guard.py`
+- `tests/test_create_checkpoint.py`
+- `.agent/agent_controller.py`
+- `.agent/rules/builder/recovery.md`
+- `skills/_shared/ticket-anti-patterns.md`
+- `skills/bui-implement-from-plan/references/code-rules.md`
+- `skills/man-review-implementation/references/review-checklist.md`
 
 ## Calidad
-- `python -m pytest tests/test_supervisor.py tests/test_manager_review_bridge.py -q`
-- `uv run ruff check bus/supervisor.py scripts/manager_review_bridge.py tests/test_supervisor.py tests/test_manager_review_bridge.py`
+- `python scripts/pre_handoff_guard.py --project-root . --ticket-id WP-2026-167`
+- `python scripts/run_pytest_safe.py tests/test_pre_handoff_guard.py tests/test_create_checkpoint.py`
+- `uv run ruff check .agent/agent_controller.py scripts/pre_handoff_guard.py scripts/create_checkpoint.py tests/test_pre_handoff_guard.py tests/test_create_checkpoint.py`
 - `python scripts/validate_ticket_prose.py --json`
 - `python .agent/agent_controller.py --validate --json --force`
 
 ## Criterios de aceptacion
-- El watchdog del supervisor emite `MANAGER_STALE` cuando el ticket activo sigue en `READY_FOR_REVIEW` y el bridge esta stale tras 600 segundos.
-- El review bridge refresca `heartbeat_at` en cada tick de `--watch`.
-- El relanzado del bridge es observable y no duplica el trigger ya procesado.
-- Los tests cubren heartbeat fresco, heartbeat stale, relanzado unico, detach cross-platform y el guard de estado no `READY_FOR_REVIEW`.
+- `--mark-ready` bloquea cuando el arbol esta sucio o cuando falta el checkpoint M3.
+- Las superficies vivas del runtime no generan falsos positivos en el guard.
+- `scope_discrepancy` se reporta sin limpieza destructiva si aparecen archivos fuera de scope.
+- `BUILDER_MILESTONE` queda registrado con milestone, tag y SHA.
+- El protocolo de recuperacion y la review checklist referencian el mismo contrato de handoff limpio.

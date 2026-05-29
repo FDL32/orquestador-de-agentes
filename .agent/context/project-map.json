@@ -1,14 +1,14 @@
 {
   "version": "1.0",
-  "generated": "2026-05-28T20:55:45.082367+00:00",
+  "generated": "2026-05-29T08:40:46.359427+00:00",
   "project_root": "C:\\Users\\fdl\\Proyectos_Python\\z_scripts\\orquestador_de_agentes",
   "summary": {
-    "total_files": 4996,
-    "total_size_bytes": 19861999,
+    "total_files": 5005,
+    "total_size_bytes": 21507933,
     "categories": {
       "config": 400,
-      "python": 849,
-      "documentation": 1397,
+      "python": 853,
+      "documentation": 1402,
       "other": 2333,
       "scripts": 17
     }
@@ -23,7 +23,7 @@
       {
         "path": ".agent/collaboration/.session_state.json",
         "size": 134,
-        "sha256": "c2e7d21a1fb7915ef050d5f111a866ee2c3eed832a8823165033fff3ab9df37d"
+        "sha256": "d1b11bbeefc095dddc30f10f850d74b2980af73cce4cf6e70fe8efc0708a63bd"
       },
       {
         "path": ".agent/config/agents.json",
@@ -32,8 +32,8 @@
       },
       {
         "path": ".agent/context/project-map.json",
-        "size": 1551850,
-        "sha256": "63b711a951c4eb53d923097914c8ed16e18859e0d0343b9d0693f03ba09bc53f"
+        "size": 1555126,
+        "sha256": "2e6794952b0676efc7aefadca90c17c28ed959e9439b4d91a8cefc01bbd0e9e2"
       },
       {
         "path": ".agent/known_models.json",
@@ -47,8 +47,8 @@
       },
       {
         "path": ".agent/runtime/approvals/store.json",
-        "size": 443,
-        "sha256": "e07dd5d02e9536afb5ab6667375d07354ba56a6211f9225dea7fb30344665558"
+        "size": 486,
+        "sha256": "788107ddfad3a334a02a8a73d9ab46e569ed58de7c512e618bfa5953a5455cbf"
       },
       {
         "path": ".agent/runtime/audit/audit.json",
@@ -58,22 +58,22 @@
       {
         "path": ".agent/runtime/circuit_breaker.json",
         "size": 181,
-        "sha256": "9e6f5f891d2b19a2a6c42b2854195b7e0b9e7f17bb606ce7db81f6513f61de25"
+        "sha256": "fed2332bd7db9bd9610c1c58cc1184bdff9ceb15083e023e34243518b0241b0b"
       },
       {
         "path": ".agent/runtime/manager_bridge_state.json",
-        "size": 171,
-        "sha256": "2c951d86554dbbf6d2fcd48b390dead314c8c949002a286a05965160347684e1"
+        "size": 224,
+        "sha256": "5c41c0f748fa888cd36129920a14f34b701cf95bb45d468298f39b6bce691c97"
       },
       {
         "path": ".agent/runtime/pytest-safe/last-run.json",
-        "size": 3012,
-        "sha256": "e3b2e0c14da8dc220096f52403dc3e229a465560d42f3b15f0baa9a0f01d3bc0"
+        "size": 1129,
+        "sha256": "56e10ae70278f1c898916f0ff9379fcdce2a76d991265aa597bdefbe07b4d3ea"
       },
       {
         "path": ".agent/runtime/supervisor_state.json",
-        "size": 227,
-        "sha256": "c48fdbde73652c801c6bba1cc1f5c0d527c7b180a9a7fe178d8725714fee00fc"
+        "size": 271,
+        "sha256": "d4fbaec3cc4183a9359d52d99aa3a41aaf553b506371e50f68ad84ee0ae9bfa0"
       },
       {
         "path": ".agent_allowlist.json",
@@ -2019,8 +2019,8 @@
     "python": [
       {
         "path": ".agent/agent_controller.py",
-        "size": 120759,
-        "sha256": "da5c26175c7c23f6bf66447452f97b954d3a6ab963f34a84e4dc86f7caaba306"
+        "size": 124280,
+        "sha256": "2e0f655ed1d5ba6b4baaed734f13bb7a1253727ad86fd2e64a40542a84cbfc19"
       },
       {
         "path": ".agent/agents_config.py",
@@ -2149,8 +2149,8 @@
       },
       {
         "path": "bus/supervisor.py",
-        "size": 60732,
-        "sha256": "a777b1a2cfbea739f355bfd23ff7ef255fe3a355b2dc3cf209756bac9d8cffc4"
+        "size": 65467,
+        "sha256": "ac7b3b15ee5b9eb79d523269f76a91a22016912343b552846ff7da74bfd3fd7e"
       },
       {
         "path": "bus/time_utils.py",
@@ -2243,6 +2243,11 @@
         "sha256": "8663411be4172acb5cee0c112b133ed41aa5e4104499a83613dc2b6cb61805e6"
       },
       {
+        "path": "scripts/create_checkpoint.py",
+        "size": 8923,
+        "sha256": "27162e9f4607595216c270eb5cb078e8b68e715bb900cebe6bd6aae7fc92f621"
+      },
+      {
         "path": "scripts/delivery_hygiene_check.py",
         "size": 12033,
         "sha256": "de48a146042a9761f18b9e785be90aa6d7820ec4927dd621835349f4dc541da3"
@@ -2284,8 +2289,8 @@
       },
       {
         "path": "scripts/manager_review_bridge.py",
-        "size": 14546,
-        "sha256": "8d7b80677885ea9d3a591a1429a9c2dacd4fef80b7a8a372d41ebabe9e757c71"
+        "size": 15411,
+        "sha256": "8daabf87f080cf5630278da8e6de9fd7ea48ee77832ef279790812f06d5c3cb3"
       },
       {
         "path": "scripts/memory_consolidate.py",
@@ -2308,9 +2313,14 @@
         "sha256": "c5c7c09e7364390741bca61bbe0b3e9ae75bed429e5d2c746910b32c201433d1"
       },
       {
+        "path": "scripts/pre_handoff_guard.py",
+        "size": 13826,
+        "sha256": "979464156c4048f3c944c017b4805dfbe0461716eb83375394ea04ea0fdeb3c4"
+      },
+      {
         "path": "scripts/prepush_check.py",
-        "size": 11520,
-        "sha256": "f3304ab21c523eccc6c3f023f05fd6b668091fc2aff08a31f5cbacd65794f1cc"
+        "size": 12033,
+        "sha256": "a379afe933950065b3462854bd992167e43f10cbfcbb3ffef68fa42bf0c79d58"
       },
       {
         "path": "scripts/project_scanner.py",
@@ -2414,8 +2424,8 @@
       },
       {
         "path": "scripts/validate_ticket_prose.py",
-        "size": 25261,
-        "sha256": "df71a77c808201debc9b35b862abb6c50ecaef2d93612c7ced17562ef94150a7"
+        "size": 25320,
+        "sha256": "4a629d336890eb8e1792e186cb371ad5ec2cf3350fe467b203d06a0be611469d"
       },
       {
         "path": "skills/__init__.py",
@@ -5813,6 +5823,11 @@
         "sha256": "51a457f51fdb7af4c5087e37214386bbd3976d5bfb4eeb4f3b32e3a9b83b0ecc"
       },
       {
+        "path": "tests/test_create_checkpoint.py",
+        "size": 9569,
+        "sha256": "1ec580cb5ba534eef6d650c420f1347051be2627a45179315abefcf623c04cab"
+      },
+      {
         "path": "tests/test_delivery_hygiene_check.py",
         "size": 15653,
         "sha256": "3433f8f97aaf7ba309559524528d1e2f7e208ae826099bd4b0ed06ef2b36f0e8"
@@ -5876,6 +5891,11 @@
         "path": "tests/test_pre_commit_hooks.py",
         "size": 4381,
         "sha256": "eb1b19711f1cdf8aba7e944b6e904c8929f4a5bb36a2b0c555636e86bb610979"
+      },
+      {
+        "path": "tests/test_pre_handoff_guard.py",
+        "size": 13826,
+        "sha256": "088308799661e16a8e2b61a5e4206ab327ee398dca47b6d1247aab9af8d4161d"
       },
       {
         "path": "tests/test_prepush_check.py",
@@ -5949,8 +5969,8 @@
       },
       {
         "path": "tests/test_supervisor.py",
-        "size": 135008,
-        "sha256": "7f46a1821e3cd8bdc7726c66c22ab22c621d7d706b8c799cf9296b3838cc1ed6"
+        "size": 146120,
+        "sha256": "7b5a62045b849cea42c1e5c6e8f7f62c0c79828c2f0bc3c0cdc470a3bcb01738"
       },
       {
         "path": "tests/test_ui_state.py",
@@ -5969,8 +5989,8 @@
       },
       {
         "path": "tests/test_validate_ticket_prose.py",
-        "size": 23570,
-        "sha256": "119850b471eb84b090b32d7bc258cede7420944af57cb84bb1e899a6335868e7"
+        "size": 23610,
+        "sha256": "b6dab1422bcff7a81e53727b91737c5f9105277b83444e0d781e70b5e60aabf8"
       },
       {
         "path": "tests/test_wp_2026_127.py",
@@ -6265,14 +6285,14 @@
     ],
     "documentation": [
       {
-        "path": ".agent/collaboration/AUDIT_WP-2026-165.md",
-        "size": 2918,
-        "sha256": "1898ef6b7c01a2af79dc52ae6cbf74a5f54c10f3ee13c89668f5b921914b88bb"
+        "path": ".agent/collaboration/AUDIT_WP-2026-167.md",
+        "size": 3145,
+        "sha256": "a45408da4f1ed95f0df6ca4db48c7a308fd270e0313221644ab5f9687f95eb09"
       },
       {
         "path": ".agent/collaboration/execution_log.md",
-        "size": 6637,
-        "sha256": "8c9649fe3e3e21923fb401522ecacaa1f26f269ea930df71c6c96e33cd91a9e4"
+        "size": 3162,
+        "sha256": "35938538e1d72033adfa61e07589b98e1acc66b03f8f1e1495757b2eab5e3de0"
       },
       {
         "path": ".agent/collaboration/manager_feedback_WP-2026-155.md",
@@ -6325,34 +6345,54 @@
         "sha256": "e375028e8e62a290a13d62f2f0801a78415e16af67c8a5ac1d65f34f4df8d3d2"
       },
       {
+        "path": ".agent/collaboration/manager_feedback_WP-2026-166.md",
+        "size": 377774,
+        "sha256": "d7511b335a130f3384e13ca42f1ae9aeef17ae0394fa748f3f639746701c0d1a"
+      },
+      {
+        "path": ".agent/collaboration/manager_feedback_WP-2026-167.md",
+        "size": 790038,
+        "sha256": "56a3917693c764cb2543f574b3e5f0c13b9352c57d5876dbed955d3e46e08935"
+      },
+      {
         "path": ".agent/collaboration/notifications.md",
-        "size": 3463,
-        "sha256": "e5d6b8b0a4965db61adbb541b3572e4fcac1f040735adb73811c62bc4c0d25b6"
+        "size": 3316,
+        "sha256": "dbdb1c3a3d521861ddc6f83905d6b54c85d56c1dc212bfa4c656c9471e4784c9"
+      },
+      {
+        "path": ".agent/collaboration/PLAN_WP-2026-167.md",
+        "size": 10276,
+        "sha256": "48c9caf82f78d28f8d5b72b636b7acc1416a454b313b9a68bc5df60c3bbf042b"
       },
       {
         "path": ".agent/collaboration/review_queue.md",
-        "size": 5961067,
-        "sha256": "f0f1d294a7c0c6c1473c0d6526659ff7726355b6724d5ad189f4b88cbd14dd0d"
+        "size": 6356145,
+        "sha256": "bd71056acda93c90cf8f2f32a45bd44f87f133d6bd27c02207fe467cf435b0ce"
       },
       {
         "path": ".agent/collaboration/STATE.md",
-        "size": 58,
-        "sha256": "0a9801f7fc5366c9281d9adfcb77fc675ae539fda87b4e3f72d238db73b48bbb"
+        "size": 53,
+        "sha256": "23adbb56fbe39d3b935b969c6fe07fd438bb3090637d41ca8ac48c6e6ef09f89"
       },
       {
         "path": ".agent/collaboration/TURN.md",
-        "size": 657,
-        "sha256": "a8dae0d5adf9bdc98a84c77e2d8c6ec37c2d6e7b6ddfb499ab705b286e4139d4"
+        "size": 663,
+        "sha256": "0d4bb60e1b2bcc5992c145569cc9a5b52a17fbcabd0609deb5d614ac6fa3a689"
       },
       {
         "path": ".agent/collaboration/work_plan.md",
-        "size": 7792,
-        "sha256": "d1fa0cad251095d3d53a5fee332a5d87ed4db879870c9b501f785ff50d1f7709"
+        "size": 7557,
+        "sha256": "024911b543ea71c6d19e24e0a25c4ba61fe5a4c94b2d3c1f0cd74aade0c61c93"
       },
       {
         "path": ".agent/context/project_map.md",
         "size": 3125,
         "sha256": "43427dbee2bf41c5e5dcf45262711c5e2404a28cfdd6615f135271d5bb13fa47"
+      },
+      {
+        "path": ".agent/rules/builder/recovery.md",
+        "size": 4374,
+        "sha256": "71eb1dbf5cd2e383874da1a7751b28aaf21227dbfce0fbfa91960b4b75f68295"
       },
       {
         "path": ".agent/runtime/audit/AUDIT.md",
@@ -6362,7 +6402,7 @@
       {
         "path": ".agent/runtime/builder_lock.txt",
         "size": 264,
-        "sha256": "529c78f7ba7c1732e87f620a84e672fae3615ab83f8737290e0487908e910753"
+        "sha256": "79d16e055f752829e875769a13d13afa7a85e33862ab3d5f0bc7902e91b36db9"
       },
       {
         "path": ".agent/runtime/compare/affaan-m-ECC-928076cc-2026-05-27.md",
@@ -6398,6 +6438,11 @@
         "path": ".agent/runtime/memory/session_close_report.md",
         "size": 607,
         "sha256": "38700cf72c41f1c61cce94dc5cb3fef19550ec4a5f83c5dfc7bef5c453f22497"
+      },
+      {
+        "path": ".agent/runtime/supervisor_lock.txt",
+        "size": 104,
+        "sha256": "a9c47f17adb7a0bf9ecd16c57327f8b1831540e67eb50ccb59d5433bfc5e6580"
       },
       {
         "path": ".agent/templates/human_review_report.md",
@@ -6571,8 +6616,8 @@
       },
       {
         "path": "CHANGELOG.md",
-        "size": 104863,
-        "sha256": "994d290aa7822cecad57ac48e7ed7e990ac549038084d6b7c0bfe5f0914dc32b"
+        "size": 105546,
+        "sha256": "1d6eca19262a6c6cc950207052567c2b6f3b3a29b443bcc0e1859aaf9be0313f"
       },
       {
         "path": "CLAUDE.md",
@@ -6646,8 +6691,8 @@
       },
       {
         "path": "PROJECT.md",
-        "size": 1312,
-        "sha256": "0f702092d797fc0cdbbac4963c56991b469c6f3ccc1b857e71b416dad539852a"
+        "size": 1278,
+        "sha256": "23f38bcb9dab26747b371a0f77a0d9961c405514bd2d8662681a5f27d8e2cb40"
       },
       {
         "path": "prompts/refactor_bootstrap.md",
@@ -6691,13 +6736,13 @@
       },
       {
         "path": "skills/_shared/ticket-anti-patterns.md",
-        "size": 9211,
-        "sha256": "a5f3b9e268c52693c1d3ffac4156014cd7d556ffc89f8ad88cf4a69dab95c612"
+        "size": 10152,
+        "sha256": "92633eff3f5478435799b350f27b7d868236a2c0809d36d16b85295d5fdd9705"
       },
       {
         "path": "skills/bui-implement-from-plan/references/code-rules.md",
-        "size": 15520,
-        "sha256": "d5031c383c55eee6d26c3488bdf2e1dad25c477ee664b6c367291a75c6de800c"
+        "size": 16573,
+        "sha256": "0eaf44aa14173e24464e48f8b24367d122e9243cdf0b8ce152334c11aea81f4f"
       },
       {
         "path": "skills/bui-implement-from-plan/references/log-format.md",
@@ -6816,8 +6861,8 @@
       },
       {
         "path": "skills/man-review-implementation/references/review-checklist.md",
-        "size": 4741,
-        "sha256": "b5fbe8b83e5e27ef8cf4cc8d333f69799b2ae87784a73032fd1ddab9389eeb00"
+        "size": 5495,
+        "sha256": "2be1ae04118c9470d928d383032c10116977d2647b3b68d7e6afae046fe4f324"
       },
       {
         "path": "skills/man-review-implementation/references/verdict-format.md",
@@ -26435,6 +26480,11 @@
             "package": "json"
           },
           {
+            "name": "subprocess",
+            "type": "stdlib",
+            "package": "subprocess"
+          },
+          {
             "name": "os",
             "type": "stdlib",
             "package": "os"
@@ -26488,6 +26538,11 @@
             "name": "time",
             "type": "stdlib",
             "package": "time"
+          },
+          {
+            "name": "datetime.timezone",
+            "type": "stdlib",
+            "package": "datetime"
           },
           {
             "name": "sys",
@@ -27033,6 +27088,41 @@
             "name": "pathlib.Path",
             "type": "stdlib",
             "package": "pathlib"
+          }
+        ],
+        "error": null
+      },
+      "scripts/create_checkpoint.py": {
+        "imports": [
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "subprocess",
+            "type": "stdlib",
+            "package": "subprocess"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "argparse",
+            "type": "stdlib",
+            "package": "argparse"
+          },
+          {
+            "name": "bus.event_bus.EventBus",
+            "type": "local",
+            "path": "bus/event_bus.py"
           }
         ],
         "error": null
@@ -27687,6 +27777,36 @@
         ],
         "error": null
       },
+      "scripts/pre_handoff_guard.py": {
+        "imports": [
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "subprocess",
+            "type": "stdlib",
+            "package": "subprocess"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "argparse",
+            "type": "stdlib",
+            "package": "argparse"
+          }
+        ],
+        "error": null
+      },
       "scripts/prepush_check.py": {
         "imports": [
           {
@@ -27708,6 +27828,11 @@
             "name": "sys",
             "type": "stdlib",
             "package": "sys"
+          },
+          {
+            "name": "contextlib.suppress",
+            "type": "stdlib",
+            "package": "contextlib"
           },
           {
             "name": "pathlib.Path",
@@ -30374,6 +30499,36 @@
         ],
         "error": null
       },
+      "tests/test_create_checkpoint.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "subprocess",
+            "type": "stdlib",
+            "package": "subprocess"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          }
+        ],
+        "error": null
+      },
       "tests/test_delivery_hygiene_check.py": {
         "imports": [
           {
@@ -31489,6 +31644,36 @@
         ],
         "error": null
       },
+      "tests/test_pre_handoff_guard.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "subprocess",
+            "type": "stdlib",
+            "package": "subprocess"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          }
+        ],
+        "error": null
+      },
       "tests/test_prepush_check.py": {
         "imports": [
           {
@@ -32287,6 +32472,11 @@
             "package": "unittest"
           },
           {
+            "name": "pytest",
+            "type": "external",
+            "package": "pytest"
+          },
+          {
             "name": "bus.state_machine.StateMachine",
             "type": "local",
             "path": "bus/state_machine.py"
@@ -32920,6 +33110,46 @@
             "name": "bus.supervisor.SupervisorState",
             "type": "local",
             "path": "bus/supervisor.py"
+          },
+          {
+            "name": "subprocess",
+            "type": "stdlib",
+            "package": "subprocess"
+          },
+          {
+            "name": "datetime.timedelta",
+            "type": "stdlib",
+            "package": "datetime"
+          },
+          {
+            "name": "subprocess",
+            "type": "stdlib",
+            "package": "subprocess"
+          },
+          {
+            "name": "subprocess",
+            "type": "stdlib",
+            "package": "subprocess"
+          },
+          {
+            "name": "subprocess",
+            "type": "stdlib",
+            "package": "subprocess"
+          },
+          {
+            "name": "datetime.timedelta",
+            "type": "stdlib",
+            "package": "datetime"
+          },
+          {
+            "name": "subprocess",
+            "type": "stdlib",
+            "package": "subprocess"
+          },
+          {
+            "name": "datetime.timedelta",
+            "type": "stdlib",
+            "package": "datetime"
           }
         ],
         "error": null
@@ -35800,9 +36030,9 @@
     "frameworks": [],
     "tools": [
       "mypy",
+      "pytest",
       "ruff",
-      "uv",
-      "pytest"
+      "uv"
     ]
   },
   "parse_errors": [

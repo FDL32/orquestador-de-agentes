@@ -1,6 +1,6 @@
-﻿# TURNO ACTUAL
+# TURNO ACTUAL
 
-**Ultima actualizacion:** 2026-05-29 08:20:23
+**Ultima actualizacion:** 2026-05-29 10:15:24
 
 ---
 
@@ -8,23 +8,23 @@
 
 | Campo | Valor |
 |-------|-------|
-| **ROL** | **MANAGER** |
-| **Plan ID** | N/A |
-| **Tipo** | **IMPLEMENTATION** |
-| **Accion** | **CREATE_PLAN** |
+| **ROL** | **BUILDER** |
+| **Plan ID** | WP-2026-167 |
+| **Tipo** | TAREA AGENTE |
+| **Accion** | IMPLEMENT |
 
 ---
 
 ## Instruccion
 
-> Ticket WP-2026-166 closed. Create new work_plan.md for next cycle.
+> Requeued to Builder: Manager requested changes (1 rejections)
 
 ---
 
 ## Archivos a Leer
 
-1. `.manager_rules` (Contexto del rol)
-2. `.agent/workflows/manager_workflow.md` (Flujo de trabajo)
+1. `.builder_rules` (Contexto del rol)
+2. `.agent/workflows/builder_workflow.md` (Flujo de trabajo)
 
 ---
 
@@ -32,8 +32,8 @@
 
 | Archivo | Estado |
 |---------|--------|
-| work_plan.md | COMPLETED |
-| execution_log.md | COMPLETED |
+| work_plan.md | APPROVED |
+| execution_log.md | IN_PROGRESS |
 
 ---
 
