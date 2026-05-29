@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WP-2026-172
-- **Estado:** READY_FOR_REVIEW
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 
 ## Agente Activo
@@ -18,7 +18,7 @@
 ## Registro de Implementacion
 - `PROJECT.md` se trata como una superficie viva del ciclo y no debe ensuciar el handoff por si solo.
 - `HANDOFF_BLOCKED` indica que el Builder llego al contrato de entrega pero quedo bloqueado por higiene, no que haya caido.
-- El supervisor debe distinguir bloqueo de contrato de un crash o timeout real antes de relanzar.
+- El supervisor distingue bloqueo de contrato de un crash o timeout real antes de relanzar.
 
 ## Evidencia
 - Phase 1: `PROJECT.md` añadido a `LIVE_SURFACES_REL` en `scripts/pre_handoff_guard.py`.
@@ -30,6 +30,3 @@
 - `python scripts/run_pytest_safe.py tests/test_pre_handoff_guard.py tests/test_supervisor.py`
 - `uv run ruff check scripts/pre_handoff_guard.py bus/supervisor.py tests/test_pre_handoff_guard.py tests/test_supervisor.py`
 - `python .agent/agent_controller.py --validate --json --force`
-
-
-Scope override: WP-2026-172 code is already committed in 40ad6bb; current diff only contains closeout projections and live-surface alignment. Affected files: C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\bus\supervisor.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\scripts\pre_handoff_guard.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\tests\test_pre_handoff_guard.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\tests\test_supervisor.py
