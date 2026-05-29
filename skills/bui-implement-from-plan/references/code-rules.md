@@ -397,6 +397,8 @@ Regla: antes de declarar READY_FOR_REVIEW, verifica que cada `def` nuevo o `meth
 
 ## Delivery hygiene - scope safety y artefactos generados
 
+`PROJECT.md` es una superficie viva gestionada exclusivamente por el ciclo Manager/Builder al cerrar tickets. No incluirlo en `Files Likely Touched` salvo que el ticket tenga intención explícita de modificarlo. Si aparece sucio durante la implementación sin estar declarado en el plan, **no commitearlo** — reportar la discrepancia en `execution_log.md` y bloquear el handoff hasta que el Manager actualice el scope explícitamente.
+
 Si durante la implementacion aparece un archivo fuera de `Files Likely Touched`, **NO** lo revivas ni lo borres con `git checkout`, `git reset` o `git revert`.
 
 **NO:** limpiar un archivo no declarado para "dejar el arbol limpio".

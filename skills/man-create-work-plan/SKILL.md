@@ -190,6 +190,7 @@ Checklist antes de aprobar:
 - [ ] Criterios de aceptaciÃ³n son medibles
 - [ ] Trade-offs documentados (si aplica)
 - [ ] Ninguna fase tiene campos duplicados (p.ej. dos lineas `Descripcion:` en la misma fase); si se actualizo un campo, borrar la version anterior antes de aprobar
+- [ ] No hay contradiccion entre `Descripcion` y `Criterios de Aceptacion` de la misma fase; si difieren, reconciliarlos explicitamente antes de aprobar — nunca asumir que uno manda sobre el otro sin corregir el texto
 
 Cambiar estado: `ðŸŸ¡ IN_PLANNING` â†’ `ðŸŸ¢ APPROVED`
 
