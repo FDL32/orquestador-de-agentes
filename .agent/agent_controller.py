@@ -2474,14 +2474,14 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
         return 1
 
     dirty_entries = []
-    if status_result.stdout.strip():
-        for line_raw in status_result.stdout.strip().split("\n"):
+    if status_result.stdout:
+        for line_raw in status_result.stdout.splitlines():
             line = line_raw.strip()
-            if not line or len(line) < 3:
+            if not line or len(line_raw) < 3:
                 continue
-            # Extract path from unstripped raw line:
-            # git porcelain "XY <path>" — strip() removes leading status space,
-            # shifting character positions and losing path prefix (e.g. ".agent").
+            # Extract path from raw line preserving git porcelain "XY <path>" format.
+            # Using splitlines() avoids strip() eating the leading status space
+            # on the first line of multi-line output.
             path = line_raw[3:].strip()
             abs_path = str((project_root / path).resolve())
             if not _is_live_surface(abs_path, project_root, live_files, live_dirs):
