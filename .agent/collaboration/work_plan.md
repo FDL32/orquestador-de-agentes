@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WP-2026-170
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Titulo:** Fix ConcurrentStateError en supervisor/review bridge
 - **Asignado a:** Builder
