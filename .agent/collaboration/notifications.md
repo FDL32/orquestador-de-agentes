@@ -2,20 +2,6 @@
 
 ---
 
-### MANAGER_REVIEW - 2026-05-27 19:58:33
-- **Plan ID:** WP-2026-155
-- **Decision:** TRANSPORT_FAILED
-- **Source:** manager backend exec review
-
----
-
-### MANAGER_REVIEW - 2026-05-27 19:59:02
-- **Plan ID:** WP-2026-155
-- **Decision:** TRANSPORT_FAILED
-- **Source:** manager backend exec review
-
----
-
 ### MANAGER_REVIEW - 2026-05-27 20:00:35
 - **Plan ID:** WP-2026-155
 - **Decision:** TRANSPORT_FAILED
@@ -142,9 +128,30 @@
 
 ---
 
----
-
 ### MANAGER_REVIEW - 2026-05-29 13:58:34
 - **Plan ID:** WP-2026-169
+- **Decision:** CHANGES
+- **Source:** manager backend exec review
+
+---
+
+### MANAGER_REVIEW - 2026-05-29 17:15:42
+- **Plan ID:** WP-2026-173
+- **Decision:** CHANGES
+- **Source:** manager backend exec review
+
+---
+
+---
+
+### MANAGER_REVIEW - 2026-05-29 17:21:47
+- **Plan ID:** WP-2026-173
+- **Decision:** CHANGES
+- **Source:** manager backend exec review
+
+---
+
+### MANAGER_REVIEW - 2026-05-29 17:33:37
+- **Plan ID:** WP-2026-173
 - **Decision:** CHANGES
 - **Source:** manager backend exec review

@@ -2345,6 +2345,7 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
     tag_name = f"checkpoint/review-{plan_id}"
 
     # Check current checkpoint state
+    tag_exists = False
     tag_aligned = False
     try:
         result = subprocess.run(
@@ -2354,6 +2355,7 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
             cwd=project_root,
         )
         if result.returncode == 0:
+            tag_exists = True
             tag_commit = result.stdout.strip()
             head_result = subprocess.run(
                 ["git", "rev-parse", "HEAD"],
@@ -2419,10 +2421,25 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
     # --- Step 2: Create/refresh checkpoint M3 tag ---
     if needs_tag:
         try:
-            # Use -f (force) to handle both fresh creation and refresh
             tag_msg = f"Checkpoint M3 for {plan_id}"
+            if tag_exists:
+                delete_result = subprocess.run(
+                    ["git", "tag", "-d", tag_name],
+                    capture_output=True,
+                    text=True,
+                    cwd=project_root,
+                )
+                if delete_result.returncode != 0:
+                    err = delete_result.stderr.strip() or delete_result.stdout.strip()
+                    print(
+                        f"[ERROR] Failed to delete tag {tag_name}:\n{err}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    return 1
+
             tag_result = subprocess.run(
-                ["git", "tag", "-a", "-f", tag_name, "-m", tag_msg],
+                ["git", "tag", "-a", tag_name, "-m", tag_msg],
                 capture_output=True,
                 text=True,
                 cwd=project_root,

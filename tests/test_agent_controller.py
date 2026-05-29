@@ -662,6 +662,45 @@ class TestPreHandoff:
         assert tag_created[0], "Tag was not created"
         assert "Created/refreshed tag" in output
 
+    def test_no_changes_tag_misaligned_delete_then_recreate(self, monkeypatch):
+        """No changes + existing misaligned tag → delete then recreate."""
+        self._setup_basic_mocks(monkeypatch, set(), set())
+
+        calls = []
+
+        def git_mock(cmd, *args, **kwargs):
+            cmd_str = " ".join(cmd)
+            calls.append(cmd_str)
+            if "rev-parse" in cmd_str and "checkpoint" in cmd_str and "^{}" in cmd_str:
+                return MagicMock(returncode=0, stdout="oldsha\n", stderr="")
+            if "rev-parse HEAD" in cmd_str:
+                return MagicMock(returncode=0, stdout="newsha\n", stderr="")
+            if len(cmd) >= 3 and cmd[:3] == ["git", "tag", "-d"]:
+                return MagicMock(returncode=0, stdout="Deleted tag\n", stderr="")
+            if len(cmd) >= 3 and cmd[:3] == ["git", "tag", "-a"]:
+                return MagicMock(returncode=0, stdout="", stderr="")
+            if len(cmd) >= 2 and cmd[:2] == ["git", "status"]:
+                return MagicMock(returncode=0, stdout="", stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(agent_controller.subprocess, "run", git_mock)
+
+        code, output = self._capture_output(
+            lambda: agent_controller._handle_pre_handoff(json_output=False)
+        )
+
+        assert code == 0, f"Expected 0, got {code}. Output: {output}"
+        assert any("git tag -d checkpoint/review-WP-2026-173" in c for c in calls), (
+            output
+        )
+        assert any("git tag -a checkpoint/review-WP-2026-173" in c for c in calls), (
+            output
+        )
+        assert next(i for i, c in enumerate(calls) if "git tag -d" in c) < next(
+            i for i, c in enumerate(calls) if "git tag -a" in c
+        ), output
+        assert "Created/refreshed tag" in output
+
     def test_hook_failure_propagates_stderr(self, monkeypatch):
         """Pre-commit hook failure → stderr propagated, exit != 0."""
         project_root = agent_controller.PROJECT_ROOT.resolve()

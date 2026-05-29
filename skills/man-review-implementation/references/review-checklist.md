@@ -58,6 +58,7 @@
 - [ ] AP-12 Review packet incomplete: si el ticket crea archivos nuevos o entregables no rastreados, el packet de review los enumera y adjunta explicitamente; un diff rastreado incompleto no representa el alcance real
 - [ ] AP-13 Supervisor stale process: si el ticket toca `bus/supervisor.py`, verificar que el proceso supervisor se reinició y que el nuevo comportamiento es observable en el bus (p.ej. `BUILDER_RELAUNCH_ATTEMPTED` con el outcome esperado); un test que pase no es evidencia suficiente si el proceso en memoria es el antiguo
 - [ ] AP-14 Closeout prompt hallucination: si el ticket modifica prompts de cierre de agente (launcher, `.opencode/agents/`, templates), verificar que las instrucciones dan únicamente el comando canónico completo sin mencionar nombres de parámetros internos que el agente pueda interpretar como flags CLI
+- [ ] AP-15 Explicit sequence substitution: si el plan especifica una secuencia de pasos exacta para una operación crítica (p.ej. `git tag -d` + `git tag -a`), verificar que el código implementa esa secuencia en ese orden; rechazar si se sustituyó por un equivalente más corto (p.ej. `git tag -f`) aunque el resultado observable sea idéntico
 
 ## Aprobacion y Nit
 - [ ] Aprobar cuando el cambio mejora la salud del codigo, aunque no sea perfecto: https://google.github.io/eng-practices/review/reviewer/standard.html

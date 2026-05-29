@@ -57,3 +57,7 @@ Este archivo es la fuente compartida de referencia para Builder y Manager.
 ## AP-14 - Closeout prompt con nombres de parametros dispara alucinacion de CLI
 - Un prompt de cierre de agente que menciona los parametros internos de una funcion (p.ej. `ticket_id`, `exit_reason`, `completion_summary`) lleva al agente en sesion nueva a construir un flag CLI inventado combinando esos nombres.
 - Efecto: el agente ejecuta un comando inexistente (p.ej. `--emit-exit builder --ticket-id ... --exit-reason ...`) y el ticket no se cierra.
+
+## AP-15 - Explicit sequence substitution
+- El plan especifica una secuencia de pasos exacta para una operacion critica (p.ej. `git tag -d` + `git tag -a`). El Builder la sustituye por un equivalente mas corto que produce el mismo resultado observable (p.ej. `git tag -f`) sin seguir el orden declarado.
+- Efecto: el Manager rechaza por incumplimiento de la decision arquitectonica aunque la funcionalidad sea correcta; el ticket acumula ciclos de CHANGES evitables.
