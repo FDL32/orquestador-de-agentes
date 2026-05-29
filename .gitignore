@@ -70,3 +70,4 @@ tests/sandbox/tmp*/
 .agent/runtime/memory/CONSOLIDATION_REPORT.md
 .agent/runtime/research/
 .agent/backups/
+.agent/config/motor_destination_link.json
