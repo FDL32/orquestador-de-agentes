@@ -348,6 +348,25 @@ Test-Path .agent/runtime/supervisor_lock.txt  # debe devolver False antes de rel
 
 Regla: cualquier ticket que toque `bus/supervisor.py` debe incluir en los criterios de aceptación que el proceso supervisor se reinicia y que el nuevo comportamiento es observable en el bus (p.ej. `BUILDER_RELAUNCH_ATTEMPTED` con el `outcome` esperado). Un test que pase no es evidencia suficiente si el proceso en memoria sigue siendo el antiguo.
 
+### AP-15 — Explicit sequence substitution
+
+El plan declara una secuencia de operaciones paso a paso para una operación crítica. El Builder la sustituye por un comando equivalente más corto que produce el mismo resultado observable pero no sigue el orden declarado.
+
+❌
+```python
+# Plan dice: git tag -d + git tag -a. Builder usa:
+subprocess.run(["git", "tag", "-a", "-f", tag_name, "-m", msg])
+# Funciona igual, pero viola la decisión arquitectónica explícita.
+```
+✅
+```python
+# Seguir el orden exacto del plan:
+subprocess.run(["git", "tag", "-d", tag_name])
+subprocess.run(["git", "tag", "-a", tag_name, "-m", msg])
+```
+
+Regla: si el plan especifica una secuencia de pasos (A luego B), implementar exactamente esa secuencia. No sustituir por un flag o comando equivalente aunque el resultado final sea idéntico. La secuencia es parte de la decisión arquitectónica, no un detalle de implementación libre.
+
 ### AP-14 — Closeout prompt con nombres de parámetros dispara alucinación de CLI
 
 Cuando un prompt de cierre de agente enumera los parámetros de una función interna, el agente en sesión nueva (sin historial de conversación) construye un flag CLI inventado combinando esos nombres en lugar de usar el comando canónico.

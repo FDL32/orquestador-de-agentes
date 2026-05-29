@@ -83,6 +83,10 @@ def _state_path() -> Path:
     return _project_root() / ".agent" / "runtime" / "manager_bridge_state.json"
 
 
+def _checkpoint_path() -> Path:
+    return _project_root() / ".agent" / "runtime" / "bridge_checkpoint.json"
+
+
 def _resolve_manager_executable(explicit: Path | None) -> Path:
     if explicit is not None:
         if explicit.exists():
@@ -111,8 +115,16 @@ def _resolve_manager_executable(explicit: Path | None) -> Path:
 def _load_state() -> BridgeState:
     path = _state_path()
     if not path.exists():
-        return BridgeState()
-    return BridgeState.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        state = BridgeState()
+    else:
+        state = BridgeState.from_dict(json.loads(path.read_text(encoding="utf-8")))
+    # Durable checkpoint (bridge_checkpoint.json) takes precedence if it holds
+    # a higher sequence than the heartbeat state file. This prevents reprocessing
+    # events after supervisor restarts.
+    checkpoint_seq = _load_checkpoint()
+    if checkpoint_seq > state.last_processed_sequence:
+        state.last_processed_sequence = checkpoint_seq
+    return state
 
 
 def _save_state(state: BridgeState) -> None:
@@ -121,6 +133,38 @@ def _save_state(state: BridgeState) -> None:
     state.updated_at = datetime.now(tz=timezone.utc).isoformat()
     path.write_text(
         json.dumps(state.to_dict(), indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def _load_checkpoint() -> int:
+    """Load last_processed_sequence from the durable checkpoint file.
+
+    Returns the sequence number, or 0 if the file is missing or corrupt.
+    """
+    path = _checkpoint_path()
+    if not path.exists():
+        return 0
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return int(data.get("last_processed_sequence", 0))
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return 0
+
+
+def _save_checkpoint(state: BridgeState) -> None:
+    """Persist last_processed_sequence to the durable checkpoint file.
+
+    Must be called AFTER _save_state() to keep heartbeat and cursor in sync.
+    """
+    path = _checkpoint_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {"last_processed_sequence": state.last_processed_sequence},
+            indent=2,
+            ensure_ascii=False,
+        ),
         encoding="utf-8",
     )
 
@@ -383,6 +427,7 @@ def _tick(
     bridge_state.last_ticket_id = ticket_id
     bridge_state.last_ticket_state = current_state.value
     _save_state(bridge_state)
+    _save_checkpoint(bridge_state)
     return True
 
 

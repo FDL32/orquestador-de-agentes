@@ -189,6 +189,7 @@ Checklist antes de aprobar:
 - [ ] Todas las tareas tienen riesgo asignado
 - [ ] Criterios de aceptaciÃ³n son medibles
 - [ ] Trade-offs documentados (si aplica)
+- [ ] Ninguna fase tiene campos duplicados (p.ej. dos lineas `Descripcion:` en la misma fase); si se actualizo un campo, borrar la version anterior antes de aprobar
 
 Cambiar estado: `ðŸŸ¡ IN_PLANNING` â†’ `ðŸŸ¢ APPROVED`
 

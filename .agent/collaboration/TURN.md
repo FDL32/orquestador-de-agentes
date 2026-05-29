@@ -1,6 +1,6 @@
 # TURNO ACTUAL
 
-**Ultima actualizacion:** 2026-05-29 16:03:01
+**Ultima actualizacion:** 2026-05-29 18:10:00
 
 ---
 
@@ -9,22 +9,22 @@
 | Campo | Valor |
 |-------|-------|
 | **ROL** | **BUILDER** |
-| **Plan ID** | **WP-2026-173** |
-| **Tipo** | **IMPLEMENTATION** |
-| **Accion** | **IMPLEMENT** |
+| **Plan ID** | WP-2026-174 |
+| **Tipo** | TAREA AGENTE |
+| **Accion** | IMPLEMENT |
 
 ---
 
 ## Instruccion
 
-> Implementa WP-2026-173. Lee `.agent/collaboration/work_plan.md`, `.agent/collaboration/execution_log.md`, `.agent/collaboration/STATE.md` y `PROJECT.md` antes de tocar nada. No cambies el alcance.
+> Implementa WP-2026-174. Lee work_plan.md, execution_log.md y PROJECT.md antes de tocar nada.
 
 ---
 
 ## Archivos a Leer
 
 1. `.manager_rules` (Contexto del rol)
-2. `.agent/workflows/builder_workflow.md` (Flujo de trabajo)
+2. `.agent/workflows/manager_workflow.md` (Flujo de trabajo)
 
 ---
 

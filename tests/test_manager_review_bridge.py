@@ -10,9 +10,16 @@ from bus.event_bus import EventBus
 from bus.exceptions import ConcurrentStateError
 from bus.review_bridge import ReviewBridge, ReviewDecision
 from bus.supervisor import SequentialTicketSupervisor, SupervisorState
+from runtime.project_root import clear_cache
 from scripts.manager_review_bridge import (
     BridgeState,
     _bridge_heartbeat,
+    _checkpoint_path,
+    _load_checkpoint,
+    _load_state,
+    _save_checkpoint,
+    _save_state,
+    _state_path,
     _tick,
     _ticket_state,
 )
@@ -2147,16 +2154,24 @@ def test_tick_does_not_call_reconcile_state(tmp_path, monkeypatch):
 
 
 def _mock_bridge_state_path(monkeypatch, tmp_path: Path) -> Path:
-    """Monkeypatch _state_path so bridge state reads/writes are isolated per test.
+    """Monkeypatch _state_path and _checkpoint_path so bridge state reads/writes
+    are isolated per test.
 
     Without this, _load_state() / _save_state() read the real project's
-    manager_bridge_state.json, causing cross-test contamination.
+    manager_bridge_state.json / bridge_checkpoint.json, causing cross-test
+    contamination.
     """
     bridge_state_path = tmp_path / ".agent" / "runtime" / "manager_bridge_state.json"
     bridge_state_path.parent.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(
         "scripts.manager_review_bridge._state_path",
         lambda: bridge_state_path,
+    )
+    # WP-2026-174: also isolate the durable checkpoint path per test
+    checkpoint_path = tmp_path / ".agent" / "runtime" / "bridge_checkpoint.json"
+    monkeypatch.setattr(
+        "scripts.manager_review_bridge._checkpoint_path",
+        lambda: checkpoint_path,
     )
     return bridge_state_path
 
@@ -2317,3 +2332,139 @@ def test_tick_no_concurrent_state_error(tmp_path, monkeypatch):
         )
 
     assert result is True
+
+
+# =============================================================================
+# Tests WP-2026-174: Durable checkpoint for manager review bridge
+# =============================================================================
+
+
+def _setup_project_root(tmp_path):
+    """Set AGENT_PROJECT_ROOT to tmp_path and clear the cache."""
+    import os
+
+    os.environ["AGENT_PROJECT_ROOT"] = str(tmp_path)
+    clear_cache()
+
+
+def test_checkpoint_persists_after_review(tmp_path):
+    """Checkpoint file is created with correct sequence after a review."""
+    _setup_project_root(tmp_path)
+
+    state = BridgeState(last_processed_sequence=42)
+    _save_checkpoint(state)
+
+    cp_path = _checkpoint_path()
+    assert cp_path.exists()
+    data = json.loads(cp_path.read_text(encoding="utf-8"))
+    assert data["last_processed_sequence"] == 42
+
+    seq = _load_checkpoint()
+    assert seq == 42
+
+
+def test_checkpoint_roundtrip_preserves_sequence(tmp_path):
+    """Checkpoint survives a full save/load roundtrip."""
+    _setup_project_root(tmp_path)
+
+    state = BridgeState(last_processed_sequence=99)
+    _save_checkpoint(state)
+    assert _load_checkpoint() == 99
+
+    state.last_processed_sequence = 150
+    _save_checkpoint(state)
+    assert _load_checkpoint() == 150
+
+
+def test_checkpoint_missing_falls_back_to_state(tmp_path):
+    """When checkpoint is missing, _load_state uses the heartbeat state file."""
+    _setup_project_root(tmp_path)
+
+    state = BridgeState(last_processed_sequence=30)
+    _save_state(state)
+
+    cp_path = _checkpoint_path()
+    if cp_path.exists():
+        cp_path.unlink()
+
+    loaded = _load_state()
+    assert loaded.last_processed_sequence == 30
+
+
+def test_checkpoint_corrupt_falls_back_to_state(tmp_path):
+    """When checkpoint is corrupt, _load_state uses the heartbeat state file."""
+    _setup_project_root(tmp_path)
+
+    state = BridgeState(last_processed_sequence=30)
+    _save_state(state)
+
+    cp_path = _checkpoint_path()
+    cp_path.write_text("not valid json {{{", encoding="utf-8")
+
+    loaded = _load_state()
+    assert loaded.last_processed_sequence == 30
+
+
+def test_checkpoint_takes_max_when_greater_than_state(tmp_path):
+    """When checkpoint has a higher sequence than the state file, the
+    bridge must use the greater value (defensive merge)."""
+    _setup_project_root(tmp_path)
+
+    state = BridgeState(last_processed_sequence=10)
+    _save_state(state)
+
+    cp_state = BridgeState(last_processed_sequence=50)
+    _save_checkpoint(cp_state)
+
+    loaded = _load_state()
+    assert loaded.last_processed_sequence == 50
+
+
+def test_checkpoint_uses_state_when_higher(tmp_path):
+    """When the state file has a higher sequence than the checkpoint,
+    _load_state uses the state file value (heartbeat compatibility)."""
+    _setup_project_root(tmp_path)
+
+    state = BridgeState(last_processed_sequence=80)
+    _save_state(state)
+
+    cp_state = BridgeState(last_processed_sequence=20)
+    _save_checkpoint(cp_state)
+
+    loaded = _load_state()
+    assert loaded.last_processed_sequence == 80
+
+
+def test_checkpoint_arranca_en_cero_si_ambas_superficies_faltan(tmp_path):
+    """When both checkpoint and state file are missing, _load_state
+    returns a default BridgeState with last_processed_sequence=0."""
+    _setup_project_root(tmp_path)
+
+    st_path = _state_path()
+    if st_path.exists():
+        st_path.unlink()
+    cp_path = _checkpoint_path()
+    if cp_path.exists():
+        cp_path.unlink()
+
+    loaded = _load_state()
+    assert loaded.last_processed_sequence == 0
+    assert loaded.last_ticket_id is None
+
+
+def test_checkpoint_prevents_reprocessing_on_restart(tmp_path):
+    """After a review, on next startup with checkpoint present, the bridge
+    skips already-consumed events because _load_state returns the checkpoint
+    sequence. If a ticket's latest_sequence <= checkpoint, _tick returns
+    False."""
+    _setup_project_root(tmp_path)
+
+    # Simulate previous session: checkpoint at seq 42, state file at seq 5
+    state = BridgeState(last_processed_sequence=5)
+    _save_state(state)
+    cp_state = BridgeState(last_processed_sequence=42)
+    _save_checkpoint(cp_state)
+
+    # On restart, _load_state must pick seq 42
+    loaded = _load_state()
+    assert loaded.last_processed_sequence == 42
