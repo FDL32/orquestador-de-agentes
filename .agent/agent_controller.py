@@ -2405,9 +2405,9 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
             cwd=project_root,
         )
         if commit_result.returncode != 0:
-            # Propagate stderr as-is for hook failures
+            # Propagate raw stderr verbatim for hook failures
             err = commit_result.stderr.strip() or commit_result.stdout.strip()
-            print(f"[ERROR] git commit failed:\n{err}", flush=True)
+            print(err, file=sys.stderr, flush=True)
             return commit_result.returncode
 
         if not json_output:
