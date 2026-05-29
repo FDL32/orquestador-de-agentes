@@ -1,14 +1,14 @@
 # Project: orquestador_de_agentes
 **Version:** v9.14.1
-**State:** SESSION ACTIVE (2026-05-28)
+**State:** SESSION ACTIVE (2026-05-29)
 
 ## Current Cycle
 
-- Last ticket: WP-2026-165 COMPLETED (2026-05-28). Delivery preflight wrapper published and canonical closeout applied.
+- Last ticket: WP-2026-166 COMPLETED (2026-05-29). Manager watchdog for stale READY_FOR_REVIEW relaunch published and canonical closeout applied.
 - Delivery hygiene loop already in place: `delivery_hygiene_check.py` preflight + 20 tests;
   mutating hooks confined to `pre-commit`; `uv-lock` stage-gated.
 - Delivery cycle now has a reusable one-command preflight wrapper: `python scripts/prepush_check.py`.
-- The wrapper executes in fixed sequence: delivery hygiene → ruff check → ruff format → agent_controller validate → git status.
+- The wrapper executes in fixed sequence: delivery hygiene -> ruff check -> ruff format -> agent_controller validate -> git status.
 - `validate_ticket_prose.py` TP-06 detection remains active; the canonical TP Check format is enforced.
 
 ## Current readiness
