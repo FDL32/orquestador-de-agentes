@@ -310,7 +310,7 @@ class ReviewBridge:
         """Normalize a role model to the identifier accepted by OpenCode CLI.
 
         The OpenCode CLI ``--model`` flag accepts provider-qualified IDs verbatim:
-        ``opencode-go/mimo-v2.5``, ``openai/gpt-5.4-mini``, etc.
+        ``opencode-go/deepseek-v4-flash``, ``openai/gpt-5.4-mini``, etc.
         Both forms were verified to work against the real CLI. No stripping needed.
         """
         if model is None:
