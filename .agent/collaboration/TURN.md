@@ -1,6 +1,6 @@
 # TURNO ACTUAL
 
-**Ultima actualizacion:** 2026-05-29 18:10:00
+**Ultima actualizacion:** 2026-05-29 19:00:00
 
 ---
 
@@ -9,7 +9,7 @@
 | Campo | Valor |
 |-------|-------|
 | **ROL** | **BUILDER** |
-| **Plan ID** | WP-2026-174 |
+| **Plan ID** | WP-2026-175 |
 | **Tipo** | TAREA AGENTE |
 | **Accion** | IMPLEMENT |
 
@@ -17,14 +17,14 @@
 
 ## Instruccion
 
-> Implementa WP-2026-174. Lee work_plan.md, execution_log.md y PROJECT.md antes de tocar nada.
+> Canonical session closeout for WP-2026-174. Cierra la sesion actual de forma canonica y deja el siguiente ciclo listo.
 
 ---
 
 ## Archivos a Leer
 
 1. `.manager_rules` (Contexto del rol)
-2. `.agent/workflows/manager_workflow.md` (Flujo de trabajo)
+2. `.agent/workflows/builder_workflow.md` (Flujo de trabajo)
 
 ---
 
