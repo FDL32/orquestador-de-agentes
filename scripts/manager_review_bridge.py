@@ -117,7 +117,10 @@ def _load_state() -> BridgeState:
     if not path.exists():
         state = BridgeState()
     else:
-        state = BridgeState.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        try:
+            state = BridgeState.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        except (json.JSONDecodeError, ValueError, TypeError):
+            state = BridgeState()
     # Durable checkpoint (bridge_checkpoint.json) takes precedence if it holds
     # a higher sequence than the heartbeat state file. This prevents reprocessing
     # events after supervisor restarts.
