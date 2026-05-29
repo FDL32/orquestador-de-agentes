@@ -138,16 +138,25 @@ def is_in_allowlist(rel_path: Path, allowlist: set[str]) -> bool:
     Returns:
         True if path is allowed, False otherwise.
     """
-    path_str = ".agent/" + rel_path.as_posix()
+    normalized = rel_path.as_posix()
+    candidates = {normalized}
+    if normalized.startswith(".agent/"):
+        candidates.add(normalized)
+    else:
+        candidates.add(f".agent/{normalized}")
 
     # Exact match
-    if path_str in allowlist:
-        return True
+    for candidate in candidates:
+        if candidate in allowlist:
+            return True
 
     # Directory prefix match (e.g., 'skills/' matches 'skills/test.py')
-    for allowed in allowlist:
-        if allowed.endswith("/") and path_str.startswith(allowed):
-            return True
+    for candidate in candidates:
+        for allowed in allowlist:
+            if allowed.endswith("/") and candidate.startswith(allowed):
+                return True
+            if allowed.startswith(candidate.rstrip("/") + "/"):
+                return True
 
     return False
 
@@ -201,7 +210,7 @@ def ensure_parent_dirs(path: Path, dry_run: bool) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def copy_tree(
+def copy_tree(  # noqa: C901 - allowlist-aware sync needs explicit branch handling
     source: Path, dest: Path, dry_run: bool = False, allowlist: set[str] | None = None
 ) -> list[Path]:
     """
@@ -234,10 +243,11 @@ def copy_tree(
 
         # Check allowlist if provided
         if allowlist is not None and not is_in_allowlist(rel, allowlist):
-            raise RuntimeError(
-                f"Contract violation: '{rel.as_posix()}' is outside the allowlist. "
-                "The destination workspace must not include unauthorized motor/legacy code."
-            )
+            if dry_run:
+                print(f"[DRY-RUN] Would skip unauthorized path: {rel.as_posix()}")
+            else:
+                print(f"[SKIP] Unauthorized path outside allowlist: {rel.as_posix()}")
+            continue
 
         dst_item = dest / item.name
 
@@ -354,6 +364,9 @@ def ensure_hooks_config_integrity(agent_dir: Path, dry_run: bool = False) -> boo
     """
     hooks_config = agent_dir / HOOKS_CONFIG_REL
     payload = read_json(hooks_config)
+    if payload is None and dry_run and not hooks_config.exists():
+        print(f"[DRY-RUN] hooks_config.json would be created at {hooks_config}")
+        return True
 
     # Check 1: Valid JSON and dict
     if not payload or not isinstance(payload, dict):

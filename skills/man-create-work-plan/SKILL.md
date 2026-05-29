@@ -195,6 +195,7 @@ Checklist antes de aprobar:
 - [ ] Si un comando se usa en dos modos distintos (p.ej. `--dry-run` vs ejecucion real, `--force` vs sin flag), la Descripcion especifica explicitamente cual es la accion de la fase y cual es la comprobacion previa, en ese orden; si el plan usa `--dry-run`, la fase real debe existir como paso separado — dry-run nunca sustituye la ejecucion real ni cuenta como validacion de cierre
 - [ ] Si `work_plan.md` y `PLAN_WP-*.md` coexisten, el resumen corto no puede contradecir al largo en ningun punto operativo (comandos, flags, orden de pasos); si difieren, el largo (work_plan.md) manda y el corto debe regenerarse antes de aprobar
 - [ ] Si una fase depende de actualizar `PROJECT.md` o `CHANGELOG.md` manualmente, la Descripcion especifica quien lo actualiza (Builder/Manager) y con que criterio o contenido minimo; la ambiguedad aqui produce fases declaradas completas sin que los archivos se hayan tocado
+- [ ] El estado de `STATE.md` y `execution_log.md` debe usar el enum valido del controller para cierre o avance (`APPROVED`, `IN_PROGRESS`, `READY_FOR_REVIEW`, `COMPLETED`, etc.); `IDLE` solo sirve como sentinel de workspace sin ticket activo y no debe usarse para cerrar un ticket del motor
 
 Cambiar estado: `ðŸŸ¡ IN_PLANNING` â†’ `ðŸŸ¢ APPROVED`
 

@@ -7,6 +7,7 @@ from pathlib import Path
 from scripts.install_agent_system import (
     _detect_host_setup,
     _maybe_invoke_host_setup,
+    copy_tree,
     detect_destination_residues,
     ensure_hooks_config_integrity,
     flip_profile_in_destination,
@@ -86,6 +87,18 @@ def test_ensure_hooks_config_integrity_validates(tmp_path):
     assert data["version"] == "1.0"  # Original schema version, unchanged
 
 
+def test_ensure_hooks_config_integrity_dry_run_allows_missing_file(tmp_path, capsys):
+    """Dry-run should not fail when hooks_config.json would be created by sync."""
+    agent_dir = tmp_path / ".agent"
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    (agent_dir / "config").mkdir(parents=True, exist_ok=True)
+
+    ok = ensure_hooks_config_integrity(agent_dir, dry_run=True)
+
+    assert ok is True
+    assert "would be created" in capsys.readouterr().out
+
+
 def test_install_agent_system_flips_profile(tmp_path):
     """Verify that flip_profile_in_destination flips active_profile from engine-dev to host-project."""
 
@@ -104,6 +117,43 @@ def test_install_agent_system_flips_profile(tmp_path):
 
     data = json.loads(agents_json.read_text(encoding="utf-8"))
     assert data["active_profile"] == "host-project"
+
+
+def test_copy_tree_allows_container_directories_when_descendants_are_allowlisted(
+    tmp_path,
+):
+    """Top-level .agent container should be accepted when nested allowlisted paths exist."""
+    source = tmp_path / "source"
+    dest = tmp_path / "dest"
+    source.mkdir()
+    (source / ".agent" / "collaboration").mkdir(parents=True, exist_ok=True)
+    (source / ".agent" / "collaboration" / "work_plan.md").write_text(
+        "# plan\n", encoding="utf-8"
+    )
+
+    allowlist = {".agent/collaboration/work_plan.md"}
+
+    copied = copy_tree(source, dest, dry_run=True, allowlist=allowlist)
+
+    assert any(rel.as_posix() == ".agent" for rel in copied)
+
+
+def test_copy_tree_skips_unauthorized_paths_outside_allowlist(tmp_path):
+    """Unauthorized source files should be skipped instead of aborting sync."""
+    source = tmp_path / "source"
+    dest = tmp_path / "dest"
+    source.mkdir()
+    (source / "agents_config.py").write_text("print('motor')\n", encoding="utf-8")
+    (source / ".agent" / "collaboration").mkdir(parents=True, exist_ok=True)
+    (source / ".agent" / "collaboration" / "work_plan.md").write_text(
+        "# plan\n", encoding="utf-8"
+    )
+
+    allowlist = {".agent/collaboration/work_plan.md"}
+
+    copied = copy_tree(source, dest, dry_run=True, allowlist=allowlist)
+
+    assert all(rel.as_posix() != "agents_config.py" for rel in copied)
 
 
 # =============================================================================
