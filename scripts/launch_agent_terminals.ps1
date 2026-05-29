@@ -1120,11 +1120,11 @@ if ($useExternalController) {
     Write-Host "Motor controller externo: $controllerPath para workspace $ProjectRoot"
 } else {
     $closeCommand = "python .agent/agent_controller.py --pre-handoff; python .agent/agent_controller.py --mark-ready --json --force"
-    $controllerPath = Join-Path $ProjectRoot '.agent\agent_controller.py'
+    $controllerPath = Join-Path $script:_MotorCodeRoot '.agent\agent_controller.py'
 }
 
 # Bootstrap bus event for active ticket to prevent bridge UNKNOWN state
-$venvPython = Resolve-VenvPython -Root $ProjectRoot
+$venvPython = Resolve-VenvPython -Root $script:_MotorCodeRoot
 $bootstrapResult = & $venvPython $controllerPath --bootstrap-ticket --json --project-root $ProjectRoot 2>&1
 $bootstrapExitCode = $LASTEXITCODE
 $bootstrapResultText = ($bootstrapResult | Out-String).Trim()
@@ -1218,8 +1218,8 @@ if ($LaunchBuilder) {
             if ($builderBackend -eq 'opencode') {
                 # WP-2026-122: Export AGENT_PROJECT_ROOT for child processes
                 $env:AGENT_PROJECT_ROOT = (Resolve-Path -LiteralPath $ProjectRoot).Path
-                # Read model from .opencode/opencode.json config
-                $opencodeConfigPath = Join-Path $ProjectRoot '.opencode\opencode.json'
+                # Read model from .opencode/opencode.json config (lives in motor, not workspace)
+                $opencodeConfigPath = Join-Path $script:_MotorCodeRoot '.opencode\opencode.json'
                 if (-not (Test-Path -LiteralPath $opencodeConfigPath)) {
                     throw "OpenCode config not found: $opencodeConfigPath"
                 }
