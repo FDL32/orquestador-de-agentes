@@ -7,7 +7,7 @@
 Claude Code is a supported backend for this template and can act as Builder or Manager depending on the active ticket.
 Prefer the current code and the canonical docs over memory or stale notes.
 Current portable release: `v9.14.1`, dual-mode architecture complete (engine-agnostic, host-first skill precedence).
-Treat this repository as standalone when editing public docs or commands; do not assume a parent workspace is available.
+This repository is the motor (code-only). The active workspace lives in an external project directory pointed to by `AGENT_PROJECT_ROOT` or `--project-root` (e.g. `z_scripts/` for motor development, or a destination project for deployments). Do not read or write `.agent/collaboration/` in this repo unless explicitly operating in standalone/test mode.
 
 ## Workflow
 

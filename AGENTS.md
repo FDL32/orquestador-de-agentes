@@ -18,7 +18,7 @@
 - `agent_system/`: codigo base de apoyo incluido con la plantilla.
 - `scripts/`: utilidades de instalacion, upgrade, rollback y validacion.
 - `skills/`: micro-habilidades reutilizables.
-- `.agent/collaboration/`: estado operacional canonico.
+- `.agent/collaboration/`: estado operacional canonico — vive en el WORKSPACE del proyecto activo (p.ej. `z_scripts/.agent/collaboration/`), no en el motor. El motor es code-only; apuntar al workspace correcto via `AGENT_PROJECT_ROOT` o `--project-root`.
 - `.agent/runtime/memory/`: memoria persistente por proyecto.
 - `.agent/council/`: broker de consejo y auditoria paralela.
 - `REPOSITORY_STRUCTURE.md`: mapa interno publicable del repositorio.
