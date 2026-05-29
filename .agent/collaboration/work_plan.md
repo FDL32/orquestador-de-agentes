@@ -1,65 +1,75 @@
-# Work Plan - WP-2026-170
+# Work Plan - WP-2026-172
 
 ## Metadata
-- **ID:** WP-2026-170
-- **Estado:** COMPLETED
+- **ID:** WP-2026-172
+- **Estado:** APPROVED
 - **deliverable_type:** code
-- **Titulo:** Fix ConcurrentStateError en supervisor/review bridge
+- **Titulo:** Prevent Builder relaunch on HANDOFF_BLOCKED and tolerate PROJECT.md as live surface
 - **Asignado a:** Builder
 
 ## Objetivo
-Eliminar la reconciliacion de estado mutable desde `_tick()` del review bridge para evitar la carrera OCC con `supervisor_state.json`, manteniendo la deteccion de `READY_FOR_REVIEW`.
+Evitar el relanzado automatico del Builder cuando el trigger de requeue ya fue seguido por un `HANDOFF_BLOCKED`, y tratar `PROJECT.md` como superficie viva tolerada por el pre-handoff guard para que el cierre del ciclo no genere falsos positivos de arbol sucio.
 
 ## Contexto
-- `scripts/manager_review_bridge.py` llama a `supervisor.reconcile_state()` dentro del tick del bridge.
-- `bus/supervisor.py` tambien escribe `supervisor_state.json`, asi que ambos procesos compiten por la misma superficie de estado.
-- El bridge ya obtiene el ticket activo y el estado de trabajo desde el bus, por lo que no necesita reconciliar el supervisor en cada iteracion.
-- El fix debe ser quirurgico: solo eliminar la llamada en `_tick()` y conservar las llamadas de bootstrap en `main()`.
+- `scripts/pre_handoff_guard.py` considera superficies vivas del runtime, pero `PROJECT.md` aun puede ensuciar el handoff cuando el Builder lo actualiza como parte del cierre del ciclo.
+- `bus/supervisor.py` relanza Builder de forma automatica cuando detecta requeue, pero no distingue con suficiente precision entre un bloqueo de contrato (`HANDOFF_BLOCKED`) y un crash o timeout real.
+- El trigger de requeue puede aparecer antes del `HANDOFF_BLOCKED`; la supresion debe mirar eventos posteriores al trigger, no solo el ultimo evento visible.
 
 ## Decision Arquitectonica
-- `scripts/manager_review_bridge.py` deja de llamar `supervisor.reconcile_state()` dentro de `_tick()`.
-- Las llamadas de inicializacion en `main()` antes de `--watch` y `--once` permanecen intactas.
-- No se introduce un helper read-only nuevo: `_ticket_state()` ya obtiene lo necesario del bus.
-- No se toca el algoritmo OCC de `write_artifact_atomic()` ni se amplian retries.
+- `scripts/pre_handoff_guard.py` añade `PROJECT.md` a `LIVE_SURFACES_REL` para que el guard no lo considere dirty_tree durante `--mark-ready`.
+- `bus/supervisor.py` debe comprobar, antes de confirmar el relanzado, si existe algun `HANDOFF_BLOCKED` con `sequence_number > requeue_trigger_sequence`; si existe, suprime el relanzado en ambas rutas de requeue (`run_once()` y `_bootstrap_requeue_if_needed()`).
+- El supervisor sigue relanzando ante timeout, lock stale o ausencia de evidencia de cierre, pero no cuando el Builder ya emitio `HANDOFF_BLOCKED` posterior al trigger.
+- No se modifica el contrato de `--mark-ready`; solo se ajusta la tolerancia de superficie viva y la politica de relanzado.
+- No se introducen nuevos estados de ticket ni nuevas dependencias.
 
 ## Non-goals
-- No cambiar el contrato de estados del bus.
-- No modificar el algoritmo de concurrencia de `bus/supervisor.py`.
-- No ocultar el problema aumentando retries o timeouts.
-- No introducir nuevas dependencias.
+- No cambiar el contrato de `--mark-ready` ni su secuencia de eventos.
+- No tocar la logica de OCC de `write_artifact_atomic()`.
+- No relajar la deteccion de dirty_tree mas alla de `PROJECT.md` como superficie viva.
+- No introducir reintentos extra ni timeouts mayores.
 
 ## Fases
 
-### Fase 1: fix quirurgico del bridge
+### Fase 1: superficie viva PROJECT.md
 - **Tipo:** TAREA AGENTE
-- **Archivos:** `scripts/manager_review_bridge.py`
+- **Archivos:** `scripts/pre_handoff_guard.py`
 - **Accion:** Modificar
-- **Descripcion:** Eliminar la llamada a `supervisor.reconcile_state()` de `_tick()` y conservar las llamadas de bootstrap en `main()`.
-- **Riesgo:** Medio
-- **Criterio de Aceptacion:** `_tick()` no escribe `supervisor_state.json` y el bridge sigue detectando `READY_FOR_REVIEW`.
-- **Si falla:** Restaurar la llamada solo en `main()` y dejar el tick sin reconciliacion.
+- **Descripcion:** Añadir `PROJECT.md` a `LIVE_SURFACES_REL` para que el guard lo tolere como superficie viva durante el handoff. El archivo sigue actualizandose como parte del ciclo, pero no debe bloquear `--mark-ready` por dirty_tree cuando sea la unica diferencia relevante.
+- **Riesgo:** Bajo
+- **Criterio de Aceptacion:** Un cambio aislado en `PROJECT.md` no dispara `dirty_tree` en el pre-handoff guard si el resto del arbol esta limpio.
+- **Si falla:** Revertir la tolerancia de `PROJECT.md` y mantener el comportamiento actual.
 
-### Fase 2: tests mecanicos de concurrencia
+### Fase 2: relaunch condicional del supervisor
 - **Tipo:** TAREA AGENTE
-- **Archivos:** `tests/test_manager_review_bridge.py`, `tests/test_supervisor.py`
+- **Archivos:** `bus/supervisor.py`
 - **Accion:** Modificar
-- **Descripcion:** Cubrir tres casos: `_tick()` no llama `reconcile_state()`, `_tick()` sigue detectando `READY_FOR_REVIEW` y el flujo mockeado no levanta `ConcurrentStateError`.
+- **Descripcion:** Ajustar la logica de requeue en `run_once()` y en `_bootstrap_requeue_if_needed()` para que el supervisor no dispare `BUILDER_RELAUNCH_ATTEMPTED` cuando exista algun `HANDOFF_BLOCKED` con `sequence_number > requeue_trigger_sequence`. El relanzado debe quedar reservado para crash, timeout o ausencia de evidencia de cierre, no para bloqueo de contrato. Si se suprime el relanzado, emitir un evento diagnostico que deje trazabilidad del bloqueo posterior al trigger.
 - **Riesgo:** Medio
-- **Criterio de Aceptacion:** Los tests verifican la ausencia de llamada al reconcile y la preservacion de la deteccion de estado.
-- **Si falla:** Mantener el fix y ajustar solo la cobertura de tests.
+- **Criterio de Aceptacion:** Un ticket que termina en `HANDOFF_BLOCKED` posterior al trigger de requeue no genera relanzado automatico; un timeout o ausencia de actividad relevante sigue pudiendo relanzar Builder.
+- **Si falla:** Mantener el comportamiento actual de relanzado y diferir la discriminacion de `HANDOFF_BLOCKED` a un ticket posterior.
+
+### Fase 3: cobertura mecanica
+- **Tipo:** TAREA AGENTE
+- **Archivos:** `tests/test_pre_handoff_guard.py`, `tests/test_supervisor.py`
+- **Accion:** Modificar
+- **Descripcion:** Cubrir dos escenarios: (1) `PROJECT.md` cambia pero el guard no debe bloquear; (2) un `HANDOFF_BLOCKED` posterior al trigger no debe disparar relanzado automatico, mientras que un caso de timeout/crash sigue relanzando. Los tests deben verificar tambien que el flujo valido sigue intacto.
+- **Riesgo:** Medio
+- **Criterio de Aceptacion:** Los tests reproducen la tolerancia de `PROJECT.md` y la exclusion de relanzado tras `HANDOFF_BLOCKED`.
+- **Si falla:** Conservar el fix principal y limitar la cobertura a uno de los dos comportamientos.
 
 ## Files Likely Touched
-- `scripts/manager_review_bridge.py`
-- `tests/test_manager_review_bridge.py`
+- `scripts/pre_handoff_guard.py`
+- `bus/supervisor.py`
+- `tests/test_pre_handoff_guard.py`
 - `tests/test_supervisor.py`
 
 ## Calidad
-- `python scripts/run_pytest_safe.py tests/test_manager_review_bridge.py tests/test_supervisor.py`
-- `uv run ruff check scripts/manager_review_bridge.py tests/test_manager_review_bridge.py tests/test_supervisor.py`
+- `python scripts/run_pytest_safe.py tests/test_pre_handoff_guard.py tests/test_supervisor.py`
+- `uv run ruff check scripts/pre_handoff_guard.py bus/supervisor.py tests/test_pre_handoff_guard.py tests/test_supervisor.py`
 - `python .agent/agent_controller.py --validate --json --force`
 
 ## Criterios de aceptacion
-- El bridge y el supervisor pueden correr simultaneamente sin `ConcurrentStateError`.
-- El bridge sigue detectando `READY_FOR_REVIEW`.
-- `_tick()` no llama `supervisor.reconcile_state()`.
-- Los tests mecanicos cubren la ausencia de reconcile y la deteccion correcta del estado.
+- `PROJECT.md` se trata como superficie viva tolerada por el pre-handoff guard.
+- `HANDOFF_BLOCKED` posterior al trigger de requeue no provoca relanzado automatico del Builder.
+- `BUILDER_RELAUNCH_ATTEMPTED` sigue ocurriendo solo ante escenarios de crash/timeout o falta de evidencia de cierre.
+- Los tests cubren la superficie viva y la exclusion de relanzado.
