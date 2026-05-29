@@ -125,6 +125,20 @@ Detectado por el review checklist y por el Manager leyendo el `git diff` cuando 
 
 Detectado automaticamente por `delivery_hygiene_check.py`.
 
+## AP-D03 - Handoff sin ancla de recuperacion
+
+- **Descripcion:** Builder intenta hacer handoff sin checkpoint M3 o sin protocolo de recuperacion documental.
+- **Por que rompe al Builder:** si el arbol queda en estado inconsistente, no hay forma segura de volver a un punto conocido sin riesgo de perder trabajo.
+- **Senal de deteccion:** `--mark-ready` falla por falta de M3; `git status` muestra archivos fuera de scope sin ancla de recuperacion; Builder usa `git checkout` destructivo en lugar de checkpoints.
+
+âŒ Ejemplo malo:
+> "Builder ejecuta `--mark-ready` sin M3 y cuando el arbol se ensucia, usa `git checkout --hard` para limpiar, perdiendo trabajo ajeno."
+
+âœ… Ejemplo bueno:
+> "Builder crea M3 explicitamente con `create_checkpoint.py --milestone M3` antes de `--mark-ready`; si el arbol se ensucia, sigue el protocolo de recuperacion con `git checkout checkpoint/review-<ticket>`."
+
+Detectado por el guard de handoff (`pre_handoff_guard.py`) que bloquea si M3 falta. Ver `.agent/rules/builder/recovery.md`.
+
 ## Uso
 
 - Usa estas entradas como referencia al redactar el `## TP Check` del `AUDIT_WP-XXXX.md`.
