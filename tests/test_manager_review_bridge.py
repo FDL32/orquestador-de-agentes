@@ -2339,6 +2339,20 @@ def test_tick_no_concurrent_state_error(tmp_path, monkeypatch):
 # =============================================================================
 
 
+@pytest.fixture(autouse=False)
+def _restore_project_root():
+    """Restore AGENT_PROJECT_ROOT and clear the module cache after each checkpoint test."""
+    import os
+
+    original = os.environ.get("AGENT_PROJECT_ROOT")
+    yield
+    if original is None:
+        os.environ.pop("AGENT_PROJECT_ROOT", None)
+    else:
+        os.environ["AGENT_PROJECT_ROOT"] = original
+    clear_cache()
+
+
 def _setup_project_root(tmp_path):
     """Set AGENT_PROJECT_ROOT to tmp_path and clear the cache."""
     import os
@@ -2347,6 +2361,7 @@ def _setup_project_root(tmp_path):
     clear_cache()
 
 
+@pytest.mark.usefixtures("_restore_project_root")
 def test_checkpoint_persists_after_review(tmp_path):
     """Checkpoint file is created with correct sequence after a review."""
     _setup_project_root(tmp_path)
@@ -2363,6 +2378,7 @@ def test_checkpoint_persists_after_review(tmp_path):
     assert seq == 42
 
 
+@pytest.mark.usefixtures("_restore_project_root")
 def test_checkpoint_roundtrip_preserves_sequence(tmp_path):
     """Checkpoint survives a full save/load roundtrip."""
     _setup_project_root(tmp_path)
@@ -2376,6 +2392,7 @@ def test_checkpoint_roundtrip_preserves_sequence(tmp_path):
     assert _load_checkpoint() == 150
 
 
+@pytest.mark.usefixtures("_restore_project_root")
 def test_checkpoint_missing_falls_back_to_state(tmp_path):
     """When checkpoint is missing, _load_state uses the heartbeat state file."""
     _setup_project_root(tmp_path)
@@ -2391,6 +2408,7 @@ def test_checkpoint_missing_falls_back_to_state(tmp_path):
     assert loaded.last_processed_sequence == 30
 
 
+@pytest.mark.usefixtures("_restore_project_root")
 def test_checkpoint_corrupt_falls_back_to_state(tmp_path):
     """When checkpoint is corrupt, _load_state uses the heartbeat state file."""
     _setup_project_root(tmp_path)
@@ -2405,6 +2423,7 @@ def test_checkpoint_corrupt_falls_back_to_state(tmp_path):
     assert loaded.last_processed_sequence == 30
 
 
+@pytest.mark.usefixtures("_restore_project_root")
 def test_checkpoint_takes_max_when_greater_than_state(tmp_path):
     """When checkpoint has a higher sequence than the state file, the
     bridge must use the greater value (defensive merge)."""
@@ -2420,6 +2439,7 @@ def test_checkpoint_takes_max_when_greater_than_state(tmp_path):
     assert loaded.last_processed_sequence == 50
 
 
+@pytest.mark.usefixtures("_restore_project_root")
 def test_checkpoint_uses_state_when_higher(tmp_path):
     """When the state file has a higher sequence than the checkpoint,
     _load_state uses the state file value (heartbeat compatibility)."""
@@ -2435,6 +2455,7 @@ def test_checkpoint_uses_state_when_higher(tmp_path):
     assert loaded.last_processed_sequence == 80
 
 
+@pytest.mark.usefixtures("_restore_project_root")
 def test_checkpoint_arranca_en_cero_si_ambas_superficies_faltan(tmp_path):
     """When both checkpoint and state file are missing, _load_state
     returns a default BridgeState with last_processed_sequence=0."""
@@ -2452,6 +2473,7 @@ def test_checkpoint_arranca_en_cero_si_ambas_superficies_faltan(tmp_path):
     assert loaded.last_ticket_id is None
 
 
+@pytest.mark.usefixtures("_restore_project_root")
 def test_checkpoint_prevents_reprocessing_on_restart(tmp_path):
     """After a review, on next startup with checkpoint present, the bridge
     skips already-consumed events because _load_state returns the checkpoint
