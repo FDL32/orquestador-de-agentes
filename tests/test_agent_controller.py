@@ -327,3 +327,162 @@ class TestTicketProseIntegration:
 
         # Should still work and return 0
         assert exit_code == 0
+
+
+class TestSessionClose:
+    """WP-2026-169: Test --session-close handler delegation and idempotency."""
+
+    def test_session_close_already_completed(self, monkeypatch):
+        """When STATE.md already COMPLETED and no --force, exit 0 silently."""
+
+        def mock_read(path):
+            return "Estado actual: COMPLETED\n"
+
+        monkeypatch.setattr(agent_controller, "read_file", mock_read)
+
+        code = agent_controller._handle_session_close(
+            dry_run=False,
+            skip_slow=False,
+            ticket=None,
+            tickets=None,
+            force_mode=False,
+            json_output=False,
+        )
+        assert code == 0
+
+    def test_session_close_dry_run(self, monkeypatch):
+        """--dry-run delegates and returns exit code without syncing state."""
+        mock_run = MagicMock(
+            return_value=MagicMock(returncode=0, stdout="[DRY-RUN] ok\n", stderr="")
+        )
+        monkeypatch.setattr(agent_controller.subprocess, "run", mock_run)
+
+        def mock_read(path):
+            return "Estado actual: IN_PROGRESS\n"
+
+        monkeypatch.setattr(agent_controller, "read_file", mock_read)
+
+        code = agent_controller._handle_session_close(
+            dry_run=True,
+            skip_slow=False,
+            ticket=None,
+            tickets=None,
+            force_mode=False,
+            json_output=False,
+        )
+        assert code == 0
+        # Verify subprocess received --dry-run flag
+        assert mock_run.called
+        args = mock_run.call_args[0][0]
+        assert "--dry-run" in args
+
+    def test_session_close_dry_run_passes_ticket(self, monkeypatch):
+        """--session-close --dry-run --ticket WP-2026-168 passes the flag."""
+        mock_run = MagicMock(
+            return_value=MagicMock(returncode=0, stdout="[DRY-RUN] ok\n", stderr="")
+        )
+        monkeypatch.setattr(agent_controller.subprocess, "run", mock_run)
+
+        def mock_read(path):
+            return "Estado actual: IN_PROGRESS\n"
+
+        monkeypatch.setattr(agent_controller, "read_file", mock_read)
+
+        code = agent_controller._handle_session_close(
+            dry_run=True,
+            skip_slow=False,
+            ticket="WP-2026-168",
+            tickets=None,
+            force_mode=False,
+            json_output=False,
+        )
+        assert code == 0
+        args = mock_run.call_args[0][0]
+        assert "--ticket" in args
+        assert "WP-2026-168" in args
+
+    def test_session_close_real_syncs_state(self, monkeypatch):
+        """Real close delegates and syncs STATE.md to COMPLETED."""
+        written = {}
+
+        def mock_write(path, content):
+            written[str(path)] = content
+
+        def mock_read(path):
+            return "# State\nEstado actual: IN_PROGRESS\n"
+
+        monkeypatch.setattr(agent_controller, "write_file", mock_write)
+        monkeypatch.setattr(agent_controller, "read_file", mock_read)
+
+        mock_run = MagicMock(
+            return_value=MagicMock(
+                returncode=0, stdout="[OK] Session close completed\n", stderr=""
+            )
+        )
+        monkeypatch.setattr(agent_controller.subprocess, "run", mock_run)
+
+        code = agent_controller._handle_session_close(
+            dry_run=False,
+            skip_slow=False,
+            ticket=None,
+            tickets=None,
+            force_mode=False,
+            json_output=False,
+        )
+        assert code == 0
+        # Verify STATE.md was synced to COMPLETED
+        assert any("COMPLETED" in v for v in written.values())
+
+    def test_session_close_force_overrides_idempotency(self, monkeypatch):
+        """--force overrides already-completed guard and runs session close."""
+        written = {}
+
+        def mock_write(path, content):
+            written[str(path)] = content
+
+        def mock_read(path):
+            return "Estado actual: COMPLETED\n"
+
+        monkeypatch.setattr(agent_controller, "write_file", mock_write)
+        monkeypatch.setattr(agent_controller, "read_file", mock_read)
+
+        mock_run = MagicMock(
+            return_value=MagicMock(
+                returncode=0, stdout="[OK] Session close completed\n", stderr=""
+            )
+        )
+        monkeypatch.setattr(agent_controller.subprocess, "run", mock_run)
+
+        code = agent_controller._handle_session_close(
+            dry_run=False,
+            skip_slow=False,
+            ticket=None,
+            tickets=None,
+            force_mode=True,
+            json_output=False,
+        )
+        assert code == 0
+        assert mock_run.called
+
+    def test_session_close_script_not_found(self, monkeypatch):
+        """When session_closeout.py is missing, exit with error."""
+        monkeypatch.setattr(
+            agent_controller,
+            "PROJECT_ROOT",
+            Path("/nonexistent"),
+        )
+
+        def mock_read(path):
+            return "Estado actual: IN_PROGRESS\n"
+
+        monkeypatch.setattr(agent_controller, "read_file", mock_read)
+
+        code = agent_controller._handle_session_close(
+            dry_run=False,
+            skip_slow=False,
+            ticket=None,
+            tickets=None,
+            force_mode=False,
+            json_output=False,
+        )
+        assert code == 1

@@ -1,50 +1,37 @@
-# Execution Log - WP-2026-167
+# Execution Log - WP-2026-169
 
 ## Metadata
-- **ID:** WP-2026-167
-**Estado:** COMPLETED
+- **ID:** WP-2026-169
+- **Estado:** IN_PROGRESS
 - **deliverable_type:** mixed
 
 ## Agente Activo
 - **Rol:** BUILDER
 - **Accion:** IMPLEMENT
-- **Plan:** Builder handoff safety - guard, checkpoints y recovery protocol
+- **Plan:** Session close loop bridge - `--session-close` en agent_controller
 
 ## Fases
-- Phase 1: guard de handoff.
-- Phase 2: checkpoints semanticos.
-- Phase 3: protocolo de recuperacion.
+- Phase 1: CLI y delegacion canonica.
+- Phase 2: docs y tests del wrapper.
 
 ## Registro de Implementacion
-- Este ticket cierra el gap contractual que permitio que Builder perdiera trabajo ajeno en WP-2026-165.
-- El handoff debe fallar cerrado cuando el arbol este sucio o falte el checkpoint M3.
-- Las superficies vivas del runtime deben ignorarse expresamente para no generar falsos positivos.
-- El recovery protocol debe ser documental y repetible con `git status` y `git reflog`.
+- WP-2026-168 quedo cerrado canonically con el orquestador de cierre ya entregado.
+- El siguiente paso es cerrar el loop desde el controlador para que `--session-close` sea la ruta canonica visible.
+- El wrapper debe reusar `scripts/session_closeout.py` y no duplicar la pipeline de cierre.
+- La sincronizacion post-cierre se hara en la misma ruta del handler, solo en cierre real.
+- La revision de alcance ajusto el ticket a `mixed`, elimino `scripts/session_closeout.py` de Files Likely Touched y dejo la documentacion de cierre en scope.
+- `tests/test_agent_controller.py` existe en el arbol y se modifica, no se crea desde cero.
 
 ## Evidencia
-- `scripts/pre_handoff_guard.py`: guard programatico que verifica arbol limpio y M3 antes de handoff.
-- `scripts/create_checkpoint.py`: utilidad para crear checkpoints semanticos M0-M4 con tags anotadas.
-- `tests/test_pre_handoff_guard.py`: 7 tests pasando (guard clean tree, missing M3, dirty tree, live surfaces, scope discrepancy, non-git repo, gitignored files).
-- `tests/test_create_checkpoint.py`: 7 tests pasando (create M3, all milestones, skip existing, invalid milestone, non-git repo, human readable, event payload).
-- `.agent/agent_controller.py`: invoca guard en `_handle_mark_ready()` antes de `_sync_mark_ready_targets()`; emite `HANDOFF_BLOCKED` si guard falla.
-- `.agent/rules/builder/recovery.md`: protocolo de recuperacion con comandos literales (`git status`, `git reflog`, `git checkout <tag>`).
-- `skills/_shared/ticket-anti-patterns.md`: AP-D03 añadido (Handoff sin ancla de recuperacion).
-- `skills/bui-implement-from-plan/references/code-rules.md`: seccion de checkpoints semanticos con M3 requerido.
-- `skills/man-review-implementation/references/review-checklist.md`: check de handoff limpio y AP-D03.
-- Quality gates: ruff OK, pytest OK (14/14 tests), validate_ticket_prose OK, agent_controller --validate OK.
+- **Fase 1**: `_handle_session_close()` and `_sync_state_after_session_close()` added to `.agent/agent_controller.py`.
+- **Fase 1**: `--session-close` wired into `main()` with flag parsing for `--dry-run`, `--skip-slow`, `--ticket`, `--tickets`.
+- **Fase 2**: 6 tests added in `TestSessionClose` class covering dry-run delegation, idempotency, force override, ticket passing, and script-not-found error.
+- **Fase 2**: Docs updated: `PROJECT.md` (cycle completed), `README.md` (Common commands + Typical flow), `QUICKSTART.md` (section 6 + section 8 restructured), `CHANGELOG.md` (new entry).
+- **Quality**: `ruff` clean, 22/22 pytest passed, `--validate` 0 errors.
+- **End-to-end**: `--session-close --dry-run` runs correctly, report written, state unchanged.
 
 ## Calidad esperada
-- `python scripts/pre_handoff_guard.py --project-root . --ticket-id WP-2026-167`
-- `python scripts/run_pytest_safe.py tests/test_pre_handoff_guard.py tests/test_create_checkpoint.py`
-- `uv run ruff check .agent/agent_controller.py scripts/pre_handoff_guard.py scripts/create_checkpoint.py tests/test_pre_handoff_guard.py tests/test_create_checkpoint.py`
-- `python scripts/validate_ticket_prose.py --json`
+- `python scripts/run_pytest_safe.py tests/test_agent_controller.py`
+- `uv run ruff check .agent/agent_controller.py tests/test_agent_controller.py`
+- `python .agent/agent_controller.py --session-close --project-root . --dry-run`
 - `python .agent/agent_controller.py --validate --json --force`
-
-
-Scope override: Archivos nuevos del ticket: .agent/rules/builder/recovery.md (Fase 3), .agent/runtime/approvals/store.json (runtime event store), PROJECT.md (no modificado intencionalmente). Affected files: C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\rules, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\rules\builder\recovery.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\runtime\approvals\store.json, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\PROJECT.md
-
-Manager requested changes (1 rejections)
-
-Scope override: Implementation already committed in 8be38c6; closing handoff snapshot. Affected files: C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\agent_controller.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\rules\builder\recovery.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\scripts\create_checkpoint.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\scripts\pre_handoff_guard.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\skills\_shared\ticket-anti-patterns.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\skills\bui-implement-from-plan\references\code-rules.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\skills\man-review-implementation\references\review-checklist.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\tests\test_create_checkpoint.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\tests\test_pre_handoff_guard.py
-
-Manager approved canonical closeout for WP-2026-167

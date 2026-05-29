@@ -275,6 +275,20 @@ Prefer `scripts/run_pytest_safe.py` for normal Windows runs. Use raw `pytest` on
 
 El comando `--health` proporciona un resumen operativo derivado de manifests y estado canónico.
 
+### Session close (canonical entrypoint)
+
+Al final de una sesión de trabajo, usa el controlador directamente en lugar de invocar scripts sueltos:
+
+```powershell
+python .agent/agent_controller.py --session-close --project-root .
+```
+
+Este comando:
+- Delega en `scripts/session_closeout.py` (prepush_check, audit, observaciones, memoria, archivado).
+- Reusa los flags `--dry-run`, `--skip-slow`, `--ticket`, `--tickets`.
+- Es idempotente: si `STATE.md` ya muestra `COMPLETED` sin `--force`, termina sin relanzar el cierre.
+- Sincroniza `STATE.md` a `COMPLETED` tras un cierre real, dejando el bus y las proyecciones listos para el siguiente ciclo.
+
 ## 7. Multi-Ticket Integration Smoke
 
 Para validar la seguridad multi-ticket y que tickets consecutivos no arrastran estado:
@@ -293,6 +307,24 @@ Verifica alineacion canónica antes de cada lanzamiento y ausencia de residuos e
 ## 8. Cierre de sesión
 
 Antes de terminar una sesión de trabajo, ejecuta estos pasos para que el motor quede listo para la siguiente sesión o para ser usado como base en un nuevo proyecto.
+
+### Ruta canónica (recomendada)
+
+Desde el controlador central, en un solo comando:
+
+```powershell
+python .agent/agent_controller.py --session-close --project-root .
+```
+
+Este comando ejecuta la pipeline completa de cierre (prepush_check, audit local, validación de ticket prose, observaciones por ticket, consolidación de memoria, archivado de artefactos y verificación de portabilidad) y sincroniza `STATE.md` a `COMPLETED`. Es idempotente: si la sesión ya está cerrada, sale con exit 0 sin relanzar la pipeline a menos que se use `--force`.
+
+Flags adicionales:
+- `--dry-run` — previsualiza el cierre sin ejecutar pasos destructivos.
+- `--skip-slow` — salta observaciones por ticket y consolidación de memoria.
+- `--ticket WP-YYYY-NNN` — cierra un ticket específico.
+- `--tickets WP-A,WP-B` — cierra múltiples tickets específicos.
+
+### Ruta manual (pasos individuales)
 
 ```powershell
 # 1. Archivar artefactos de planificación cerrados (PLAN/AUDIT de .agent/collaboration/)

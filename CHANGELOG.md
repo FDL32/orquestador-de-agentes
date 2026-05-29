@@ -1,3 +1,19 @@
+# 2026-05-29 - WP-2026-169 Session close loop bridge -- `--session-close` en agent_controller
+
+### Added
+- `.agent/agent_controller.py`: new `--session-close` flag that delegates to `scripts/session_closeout.py` and syncs post-close state projections.
+- `.agent/agent_controller.py`: `_handle_session_close()` handler with idempotency guard (skips if STATE.md already COMPLETED without --force).
+- `.agent/agent_controller.py`: `_sync_state_after_session_close()` helper for post-close projection sync.
+- `tests/test_agent_controller.py`: TestSessionClose class covering dry-run delegation, idempotency, force override, ticket passing, and script-not-found error.
+- `QUICKSTART.md`: section 6 now includes `--session-close` as canonical session close command; section 8 restructured with canonical route first.
+- `README.md`: Common commands include `--session-close`; Typical flow step 6 references it.
+- `PROJECT.md`: current cycle updated to reflect WP-2026-169 completion.
+
+### Closed
+- `WP-2026-169`: implemented and closed canonically as the session close loop bridge.
+
+---
+
 # 2026-05-29 - Builder model migration: Qwen3.5 Plus → DeepSeek V4 Flash
 
 ### Changed

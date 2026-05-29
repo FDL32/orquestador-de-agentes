@@ -1,92 +1,76 @@
-# Work Plan - WP-2026-167
+# Work Plan - WP-2026-169
 
 ## Metadata
-- **ID:** WP-2026-167
-- **Estado:** COMPLETED
+- **ID:** WP-2026-169
+- **Estado:** APPROVED
 - **deliverable_type:** mixed
-- **Titulo:** Builder handoff safety - guard, checkpoints y recovery protocol
+- **Titulo:** Session close loop bridge - `--session-close` en agent_controller
 - **Asignado a:** Builder
 
 ## Objetivo
-Cerrar el gap contractual que causo WP-2026-165: el sistema no verifica programaticamente que el arbol este limpio antes de emitir `READY_FOR_REVIEW`, no tiene anclas de recuperacion, y no tiene un protocolo formal para cuando Builder se pierde.
+Cerrar el loop de `session-close -> WP-B` exponiendo `--session-close` en `.agent/agent_controller.py` para invocar el orquestador de cierre, sincronizar las proyecciones canonicas post-cierre y dejar el siguiente ciclo listo sin pasos manuales entre el cierre y la creacion del nuevo plan.
 
 ## Contexto
-- WP-2026-165 perdio trabajo porque el Builder interpreto archivos no commiteados como scope externo y los borro con `git checkout`.
-- `delivery_hygiene_check.py` y `prepush_check.py` ya verifican higiene de entrega antes del push remoto, pero el gap esta en el handoff interno Builder -> Manager.
-- Superficies vivas del sistema (`TURN.md`, `STATE.md`, `execution_log.md`, `events.jsonl`, `store.json`, `project-map.json`, `notifications.md`, `review_queue.md`) son escritas por el propio runtime y deben ignorarse de forma explicita para evitar falsos positivos.
-- El protocolo de recuperacion debe usar `git status` y `git reflog` como anclas, no limpieza destructiva.
-- `worktree` por ticket queda fuera de alcance en este ticket.
+- WP-2026-168 ya entrego `scripts/session_closeout.py` como orquestador standalone.
+- Hoy el cierre canonico sigue requiriendo lanzar el script aparte y luego alinear proyecciones a mano.
+- El nuevo entrypoint debe ser el unico punto de entrada canonico para cierre de sesion desde el controlador.
+- El wrapper debe preservar la logica existente del orquestador y no duplicar pasos.
+- La integracion debe mantener la semantica de `--dry-run`, `--skip-slow` y la seleccion de tickets.
+- El cierre debe dejar el bus y las proyecciones listos para el siguiente ciclo del Manager.
 
 ## Decision Arquitectonica
-- `scripts/pre_handoff_guard.py` se invoca desde `.agent/agent_controller.py` en `_handle_mark_ready()` antes de `_sync_mark_ready_targets()` y antes de emitir `STATE_CHANGED -> READY_FOR_REVIEW`.
-- El guard ejecuta `git status --porcelain` y excluye las superficies vivas y los archivos ya ignorados por `.gitignore`.
-- Si el arbol esta sucio, el guard devuelve exit 1 + JSON diagnostico; `.agent/agent_controller.py` emite `HANDOFF_BLOCKED` con ese JSON.
-- Si hay archivos fuera de `Files Likely Touched`, el guard los reporta como `scope_discrepancy` en el payload, pero nunca los borra ni los revierte.
-- El checkpoint M3 (`checkpoint/review-<ticket>`) debe existir antes de `--mark-ready`; no se auto-crea desde el handoff.
-- `scripts/create_checkpoint.py` crea checkpoints semanticos M0-M4 y emite `BUILDER_MILESTONE` con `{milestone, sha, tag, ticket_id}`.
-- Si la tag de checkpoint ya existe, el script hace skip con aviso y no falla.
-- La base del diff de scope es `git diff --name-only $(git rev-parse checkpoint/base-<ticket> 2>/dev/null || git merge-base HEAD main)`.
-- El protocolo de recuperacion vive en `.agent/rules/builder/recovery.md` y usa `git status`, `git reflog` y `git checkout <tag-o-hash>` como ruta primaria para volver al ultimo ancla conocido bueno. Si `git checkout` no esta disponible, usar `git switch --detach <tag-o-hash>`.
-- No se implementa `worktree` en este ticket.
+- `.agent/agent_controller.py` anade un flag `--session-close`.
+- El handler delega en `scripts/session_closeout.py` y reusa sus flags `--project-root`, `--dry-run`, `--skip-slow`, `--ticket` y `--tickets`.
+- Tras un cierre real, el controlador sincroniza la proyeccion de estado en la misma ruta de ejecucion para dejar `STATE.md` y las superficies canonicas listas para el siguiente ciclo.
+- La salida del comando debe ser estructurada y no esconder errores del orquestador.
+- No se reimplementa la pipeline de cierre dentro del controlador.
+- El entrypoint debe permanecer idempotente si el cierre ya fue completado: si `STATE.md` ya refleja un estado terminal (`COMPLETED`) y no se pasa `--force`, el handler imprime aviso y sale con exit 0 sin relanzar el cierre.
 
 ## Non-goals
-- No correr `pytest` ni `ruff` dentro del guard; eso ya lo cubre el preflight de entrega.
-- No auto-crear el checkpoint M3 desde `--mark-ready`.
-- No tocar `scripts/launch_agent_terminals.ps1`.
-- No cambiar la logica del Manager ni del bus de review.
-- No introducir `worktree` por ticket en este WP.
-- No cambiar el cierre canonico de tickets.
+- No rehacer `scripts/session_closeout.py`.
+- No cambiar la logica de archivado o memoria ya validada.
+- No introducir dependencias nuevas.
+- No alterar la cascada de `--manager-approve`.
+- No cambiar el modelo de turno de Manager/Builder.
+- No forzar un nuevo ticket automatico si el Manager no ha creado uno.
 
 ## Fases
 
-### Fase 1: guard de handoff
+### Fase 1: CLI y delegacion canonica
 - **Tipo:** TAREA AGENTE
-- **Archivos:** `scripts/pre_handoff_guard.py`, `.agent/agent_controller.py`, `tests/test_pre_handoff_guard.py`
+- **Archivos:** `.agent/agent_controller.py`, `tests/test_agent_controller.py`
 - **Accion:** Modificar
-- **Descripcion:** Crear un guard programatico de handoff que se ejecute antes de emitir `READY_FOR_REVIEW`. La insercion va en `_handle_mark_ready()` antes de `_sync_mark_ready_targets()`. El guard debe validar el arbol limpio, ignorar superficies vivas, detectar discrepancias de scope sin destruccion y bloquear el handoff si falta el checkpoint M3 o si el arbol esta sucio. `scripts/pre_handoff_guard.py` solo devuelve exit 1 + JSON; la emision de `HANDOFF_BLOCKED` la hace `.agent/agent_controller.py`.
+- **Descripcion:** Anadir `--session-close` al parser y hacer que el handler invoque `scripts/session_closeout.py` con los flags soportados. El comando debe respetar `--dry-run`, `--skip-slow`, `--ticket` y `--tickets`, y devolver el exit code del orquestador sin envolver errores. Cuando no sea `--dry-run`, el handler debe hacer la sincronizacion de estado post-cierre en la misma ruta de ejecucion.
 - **Riesgo:** Medio
-- **Criterio de Aceptacion:** `--mark-ready` con arbol sucio bloquea con exit 1 y emite `HANDOFF_BLOCKED`; `--mark-ready` con arbol limpio y M3 existente conserva el comportamiento actual; `scope_discrepancy` se reporta como observacion no bloqueante; las superficies vivas no producen falsos positivos.
-- **Si falla:** Mantener el comportamiento actual de `--mark-ready` y dejar el guard para un ticket posterior.
+- **Criterio de Aceptacion:** `--session-close` existe, invoca el orquestador correcto, no duplica la logica de cierre y sincroniza el estado real despues del cierre.
+- **Si falla:** Mantener el cierre manual y dejar el wrapper para un ticket posterior.
 
-### Fase 2: checkpoints semanticos
+### Fase 2: docs y tests del wrapper
 - **Tipo:** TAREA AGENTE
-- **Archivos:** `scripts/create_checkpoint.py`, `tests/test_create_checkpoint.py`, `skills/bui-implement-from-plan/references/code-rules.md`
+- **Archivos:** `tests/test_agent_controller.py`, `PROJECT.md`, `README.md`, `QUICKSTART.md`, `CHANGELOG.md`
 - **Accion:** Modificar
-- **Descripcion:** Crear una utilidad de checkpoint que produzca commits/tags anotadas M0-M4. Builder debe crear M3 explicitamente antes de `--mark-ready`; si M3 falta, el guard bloquea. El comando debe emitir `BUILDER_MILESTONE` con milestone, tag y SHA verificable.
-- **Riesgo:** Medio
-- **Criterio de Aceptacion:** `scripts/create_checkpoint.py` crea checkpoints anotados, imprime SHA y deja trazabilidad en el bus; el plan y `code-rules.md` exigen M3 antes del handoff; si la tag ya existe, el script hace skip con aviso y no falla.
-- **Si falla:** Dejar el checkpoint como paso manual documentado, sin forzar auto-creacion desde `--mark-ready`.
-
-### Fase 3: protocolo de recuperacion
-- **Tipo:** TAREA AGENTE
-- **Archivos:** `.agent/rules/builder/recovery.md`, `skills/_shared/ticket-anti-patterns.md`, `skills/man-review-implementation/references/review-checklist.md`
-- **Accion:** Crear + Modificar
-- **Descripcion:** Crear el directorio `.agent/rules/builder/` si no existe y documentar un protocolo de recuperacion literal con comandos: parar, `git status`, `git reflog`, volver al ultimo ancla estable con `git checkout <tag-o-hash>` y reanudar desde el ultimo checkpoint. Si `git checkout` no esta disponible en la version de Git instalada, usar `git switch --detach <tag-o-hash>` como alternativa equivalente. Anadir AP-D03 al catalogo y una comprobacion explicita de handoff limpio en la review checklist.
+- **Descripcion:** Cubrir el nuevo flag en `tests/test_agent_controller.py` y actualizar la documentacion para que `--session-close` sea visible como ruta canonica. En `README.md`, actualizar la seccion `Common commands` y la ruta de `Typical flow` para mencionar el cierre desde el controlador. En `QUICKSTART.md`, actualizar la seccion `6. Comandos diarios` para incluir `python .agent/agent_controller.py --session-close --project-root .` junto al ciclo diario. En `PROJECT.md`, reflejar el nuevo ciclo activo. En `CHANGELOG.md`, anadir la entrada del puente de cierre.
 - **Riesgo:** Bajo
-- **Criterio de Aceptacion:** `recovery.md` existe y describe los pasos con comandos literales; AP-D03 esta en el catalogo; la checklist del Manager pregunta por `HANDOFF_BLOCKED` y handoff limpio.
-- **Si falla:** Mantener la documentacion de recuperacion como regla externa y no introducir logica nueva.
+- **Criterio de Aceptacion:** La documentacion apunta al nuevo entrypoint, y los tests cubren delegacion, dry-run e idempotencia terminal.
+- **Si falla:** Conservar el CLI y posponer solo la actualizacion documental.
 
 ## Files Likely Touched
-- `scripts/pre_handoff_guard.py`
-- `scripts/create_checkpoint.py`
-- `tests/test_pre_handoff_guard.py`
-- `tests/test_create_checkpoint.py`
 - `.agent/agent_controller.py`
-- `.agent/rules/builder/recovery.md`
-- `skills/_shared/ticket-anti-patterns.md`
-- `skills/bui-implement-from-plan/references/code-rules.md`
-- `skills/man-review-implementation/references/review-checklist.md`
+- `tests/test_agent_controller.py`
+- `PROJECT.md`
+- `README.md`
+- `QUICKSTART.md`
+- `CHANGELOG.md`
 
 ## Calidad
-- `python scripts/pre_handoff_guard.py --project-root . --ticket-id WP-2026-167`
-- `python scripts/run_pytest_safe.py tests/test_pre_handoff_guard.py tests/test_create_checkpoint.py`
-- `uv run ruff check .agent/agent_controller.py scripts/pre_handoff_guard.py scripts/create_checkpoint.py tests/test_pre_handoff_guard.py tests/test_create_checkpoint.py`
-- `python scripts/validate_ticket_prose.py --json`
+- `python scripts/run_pytest_safe.py tests/test_agent_controller.py`
+- `uv run ruff check .agent/agent_controller.py tests/test_agent_controller.py`
+- `python .agent/agent_controller.py --session-close --project-root . --dry-run`
 - `python .agent/agent_controller.py --validate --json --force`
 
 ## Criterios de aceptacion
-- `--mark-ready` bloquea cuando el arbol esta sucio o cuando falta el checkpoint M3.
-- Las superficies vivas del runtime no generan falsos positivos en el guard.
-- `scope_discrepancy` se reporta sin limpieza destructiva si aparecen archivos fuera de scope.
-- `BUILDER_MILESTONE` queda registrado con milestone, tag y SHA.
-- El protocolo de recuperacion y la review checklist referencian el mismo contrato de handoff limpio.
+- `--session-close` existe en `agent_controller.py` y delega en `scripts/session_closeout.py`.
+- El handler sincroniza el estado real solo cuando el cierre no es dry-run.
+- Si `STATE.md` ya es terminal y no se pasa `--force`, el handler sale con exit 0 sin relanzar el cierre.
+- La documentacion apunta al nuevo entrypoint como ruta canonica.
+- `tests/test_agent_controller.py` cubre delegacion, dry-run e idempotencia.

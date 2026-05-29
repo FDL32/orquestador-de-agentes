@@ -102,6 +102,7 @@ The motor lives **once** in this repo. A destination project:
 3. Builder implements, then `python .agent/agent_controller.py --mark-ready --json --force` emits `BUILDER_EXIT` + `STATE_CHANGED → READY_FOR_REVIEW`.
 4. Manager review bridge dispatches; on `DECISION: APPROVE` the canonical close cascade fires.
 5. If the bridge times out / inspects: `python .agent/agent_controller.py --manager-approve --ticket WP-XXXX --force` closes manually.
+6. At end of session: `python .agent/agent_controller.py --session-close --project-root .` runs the canonical session closeout pipeline (prepush check, audit, memory consolidation, archival) and syncs state for the next cycle.
 
 ## Memory bootstrap
 
@@ -165,6 +166,9 @@ python scripts/check_skill_collisions.py
 # Memory & audit
 python scripts/memory_consolidate.py --apply
 python scripts/local_audit.py
+
+# Session closeout (canonical entrypoint for end-of-session)
+python .agent/agent_controller.py --session-close --project-root .
 
 # Config migration (idempotent)
 python .agent/agents_config.py --migrate [--dry-run]
