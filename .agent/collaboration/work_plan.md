@@ -1,70 +1,71 @@
-# Work Plan - WP-2026-174
+# Work Plan - WP-2026-175
 
 ## Metadata
-- **ID:** WP-2026-174
+- **ID:** WP-2026-175
 - **Estado:** APPROVED
-- **deliverable_type:** code
-- **Titulo:** Persist manager review bridge checkpoint across supervisor restarts
+- **deliverable_type:** documentation
+- **Titulo:** Canonical session closeout and cycle rollover
 - **Asignado a:** Builder
 
 ## Objetivo
-Evitar que el manager review bridge vuelva a procesar eventos ya consumidos cuando el supervisor se reinicia. Para ello, el bridge debe usar un checkpoint duradero propio para `last_processed_sequence` en lugar de depender solo del estado de heartbeat del bridge.
+Cerrar canónicamente la sesión actual tras WP-2026-174, consolidar el reporte de cierre, archivar los artefactos transitorios y dejar el repositorio listo para arrancar el siguiente ciclo sin drift.
 
 ## Contexto
-- El bridge ya persiste `manager_bridge_state.json`, pero ese archivo está ligado al heartbeat operativo y puede ser reparado o limpiado por los flujos de arranque.
-- El incidente observado muestra que el watermark del bridge no es suficientemente estable para sobrevivir a ciertos reinicios del supervisor.
-- La solucion debe separar telemetria viva de cursor duradero.
-- No se va a tocar `bus/supervisor.py`; este ticket solo endurece la persistencia del bridge.
-- La nueva persistencia duradera debe vivir en `.agent/runtime/bridge_checkpoint.json`, junto al resto del runtime del bridge.
+- El repo ya dispone de la ruta canónica de cierre de sesión a través de `python .agent/agent_controller.py --session-close --project-root .`.
+- `scripts/session_closeout.py` ya implementa el orquestador de cierre; este ticket reutiliza esa entrada canónica en vez de recrear lógica.
+- En sesiones anteriores el problema no fue la ausencia del cierre, sino dejar proyecciones y artefactos residuales sin consolidar.
+- El cierre debe dejar explícitamente `PROJECT.md`, `STATE.md`, `TURN.md` y el reporte de cierre alineados con la realidad del bus.
 
 ## Decision Arquitectonica
-- `scripts/manager_review_bridge.py` añade un checkpoint duradero separado del heartbeat, por ejemplo `bridge_checkpoint.json`, para guardar `last_processed_sequence`.
-- El checkpoint se carga al iniciar el bridge y se actualiza tras procesar una review satisfactoriamente.
-- La carga inicial debe combinar dos fuentes: `bridge_checkpoint.json` y el `last_processed_sequence` que ya exista en `manager_bridge_state.json`, escogiendo el mayor valor disponible para evitar reprocesar eventos cuando solo una de las dos superficies exista.
-- `manager_bridge_state.json` sigue existiendo para heartbeat y metadatos de vida del bridge, pero deja de ser la fuente de verdad del watermark.
-- Si `bridge_checkpoint.json` falta o esta corrupto, el bridge usa el valor que pueda rescatar de `manager_bridge_state.json`; solo si ambas superficies faltan o son inutilizables arranca en cero sin romper el flujo.
-- Si el supervisor se reinicia y el checkpoint duradero sigue presente, el bridge no debe reprocesar eventos ya consumidos.
-- El checkpoint duradero se escribe despues de que `_save_state()` haya completado, nunca antes, para que el cursor y el heartbeat no queden desincronizados.
-- El bridge sigue escribiendo `last_processed_sequence` en `manager_bridge_state.json` como superficie viva de compatibilidad, pero esa escritura deja de ser la fuente de verdad del watermark.
+- El ticket reutiliza el flujo canónico existente de cierre de sesión y no introduce un segundo orquestador.
+- El cierre debe ser idempotente: si la sesión ya está cerrada, el flujo sale con éxito sin reescribir de más.
+- `--session-close` genera el reporte de cierre y deja las proyecciones de runtime listas para el siguiente ciclo.
+- `PROJECT.md` y `CHANGELOG.md` se actualizan explícitamente en un paso posterior del ticket para reflejar el cierre canónico.
+- No se introduce código nuevo en este ticket.
 
 ## Non-goals
-- No cambiar la logica de `bus/supervisor.py`.
-- No cambiar el protocolo de `READY_FOR_REVIEW`.
-- No alterar el flujo de aprobacion del Manager.
+- No cambiar la lógica de `scripts/session_closeout.py`.
+- No tocar `bus/supervisor.py`.
 - No introducir nuevas dependencias.
+- No abrir un nuevo ticket técnico en esta fase.
 
 ## Fases
 
-### Fase 1: checkpoint duradero del bridge
+### Fase 1: ejecutar y validar el cierre canónico
 - **Tipo:** TAREA AGENTE
-- **Archivos:** `scripts/manager_review_bridge.py`
+- **Archivos:** `STATE.md`, `.agent/collaboration/TURN.md`, `.agent/collaboration/execution_log.md`, `.agent/runtime/memory/session_close_report.md`
 - **Accion:** Modificar
-- **Descripcion:** Introducir un checkpoint duradero propio del bridge para `last_processed_sequence`, con carga al arranque y persistencia tras cada review procesada. El heartbeat del bridge puede seguir viviendo en `manager_bridge_state.json`, pero el cursor de consumo debe guardarse en `.agent/runtime/bridge_checkpoint.json`. Al arrancar, el bridge debe tomar el maximo entre el checkpoint duradero y el watermark que pudiera existir en `manager_bridge_state.json`. Si el checkpoint falta o esta corrupto, el bridge debe usar la otra fuente disponible; solo si ambas faltan o son inutilizables arranca en cero. El checkpoint duradero se escribe despues de `_save_state()`, nunca antes.
-- **Riesgo:** Medio
-- **Criterio de Aceptacion:** El bridge conserva el watermark entre reinicios del supervisor y no re-procesa un `READY_FOR_REVIEW` ya consumido. Si el checkpoint duradero es mayor que `manager_bridge_state.json`, el bridge usa el valor mayor. Si el checkpoint falta, el bridge puede rescatar el valor del heartbeat si existe.
-- **Si falla:** Mantener el comportamiento actual y limitar el cambio a la lectura del checkpoint duradero.
+- **Descripcion:** Ejecutar la ruta canónica de cierre de sesión con `python .agent/agent_controller.py --session-close --project-root .` y confirmar que el reporte de cierre se genera. Usar `python .agent/agent_controller.py --session-close --project-root . --dry-run` solo como comprobación previa, no como sustituto del cierre. El flujo real debe ser idempotente y no reintroducir drift entre bus, reporte y estado canónico. Verificar explícitamente que ejecutar el cierre real dos veces seguidas devuelve exit 0 en ambas ejecuciones y que la segunda no introduce cambios canónicos adicionales.
+- **Riesgo:** Bajo
+- **Criterio de Aceptacion:** El cierre deja las proyecciones runtime coherentes, el reporte de cierre queda emitido y una segunda ejecución del cierre devuelve exit 0 sin modificar el estado canónico.
+- **Si falla:** Conservar el cierre actual pero exigir validación manual antes de cambiar el estado canónico.
 
-### Fase 2: cobertura mecanica
+### Fase 2: consolidar cierre y preparar el siguiente ciclo
 - **Tipo:** TAREA AGENTE
-- **Archivos:** `tests/test_manager_review_bridge.py`
+- **Archivos:** `PROJECT.md`, `CHANGELOG.md`, `.agent/collaboration/work_plan.md`, `.agent/collaboration/execution_log.md`
 - **Accion:** Modificar
-- **Descripcion:** Cubrir al menos cuatro casos: persistencia del checkpoint tras una review, arranque con checkpoint existente que evita reprocesar eventos viejos, arranque seguro cuando el checkpoint falta o esta corrupto, y caso defensivo donde `bridge_checkpoint.json` contiene una secuencia mayor que `manager_bridge_state.json` y el bridge debe conservar el mayor valor.
-- **Riesgo:** Medio
-- **Criterio de Aceptacion:** Los tests demuestran que el watermark del bridge sobreviva al reinicio del supervisor y que el flujo sigue detectando `READY_FOR_REVIEW` correctamente.
-- **Si falla:** Conservar la persistencia actual del bridge y limitar la cobertura al camino feliz.
+- **Descripcion:** Actualizar manualmente `PROJECT.md` y `CHANGELOG.md` con la entrada de cierre de la sesión. Ejecutar `python scripts/archive_collaboration_artifacts.py` para mover los artefactos cerrados a `_archive/plan_audit/` y dejar preparado el siguiente ciclo sin residuos operativos del ticket anterior.
+- **Riesgo:** Bajo
+- **Criterio de Aceptacion:** `PROJECT.md` refleja el cierre canónico, `CHANGELOG.md` deja trazado el cierre de sesión y el ticket cerrado no permanece como ciclo activo.
+- **Si falla:** Mantener el cierre canónico y posponer el archivo del histórico a una pasada posterior.
 
 ## Files Likely Touched
-- `scripts/manager_review_bridge.py`
-- `tests/test_manager_review_bridge.py`
+- `PROJECT.md`
+- `CHANGELOG.md`
+- `.agent/collaboration/STATE.md`
+- `.agent/collaboration/TURN.md`
+- `.agent/collaboration/work_plan.md`
+- `.agent/collaboration/execution_log.md`
+- `.agent/runtime/memory/session_close_report.md`
 
 ## Calidad
-- `python scripts/run_pytest_safe.py tests/test_manager_review_bridge.py`
-- `uv run ruff check scripts/manager_review_bridge.py tests/test_manager_review_bridge.py`
+- `python .agent/agent_controller.py --session-close --project-root . --dry-run`
+- `python .agent/agent_controller.py --session-close --project-root .` (cierre real)
+- `python .agent/agent_controller.py --session-close --project-root .` (segunda ejecucion — debe devolver exit 0 sin cambios canonicos)
 - `python .agent/agent_controller.py --validate --json --force`
 
 ## Criterios de aceptacion
-- El checkpoint duradero del bridge se conserva tras reinicios del supervisor.
-- El bridge no reprocesa eventos ya consumidos cuando vuelve a arrancar.
-- El arranque sigue siendo seguro si el checkpoint falta o esta corrupto.
-- Si ambas superficies existen, el bridge toma el mayor `last_processed_sequence` disponible.
-- La persistencia viva del bridge sigue separada de la telemetria de heartbeat.
+- La sesión actual queda cerrada canónicamente y el reporte de cierre se emite.
+- `PROJECT.md`, `STATE.md` y `TURN.md` reflejan el estado terminal coherente.
+- `CHANGELOG.md` deja trazado el cierre de sesión.
+- El flujo de cierre es idempotente y no reabre drift si se repite.

@@ -1,36 +1,39 @@
 # Session Close Report
 
-**Generated:** 2026-05-29 11:59:26 UTC
-**Dry Run:** Yes
+**Generated:** 2026-05-29 17:04:34 UTC
+**Dry Run:** No
 **Skip Slow:** No
 
 ## Session Window
 
-- **Start:** from last report (2026-05-29 11:08:52 UTC)
-- **End:** 2026-05-29 11:59:26 UTC
+- **Start:** from last report (2026-05-29 17:04:05 UTC)
+- **End:** 2026-05-29 17:04:34 UTC
 
 ## Tickets
 
-- WP-2026-169
+- WP-2026-175
 
 ## Steps
 
 | # | Step | Status | Blocking | Detail |
 |---|------|--------|----------|--------|
-| 1 | resolve_tickets | PASS | No | Source: detected in session window. Tickets: ['WP-2026-169'] |
-| 2 | prepush_check | SKIP | Yes | Skipped in dry-run mode |
-| 3 | local_audit | SKIP | No | Skipped in dry-run mode |
-| 4 | validate_ticket_prose | SKIP | No | Skipped in dry-run mode |
-| 5 | observations:WP-2026-169 | SKIP | No | Skipped in dry-run mode |
-| 6 | memory_consolidate | SKIP | No | Skipped in dry-run mode |
-| 7 | archive_collaboration | SKIP | No | Skipped in dry-run mode |
-| 8 | archive_execution_log | SKIP | No | Skipped in dry-run mode |
-| 9 | archive_event_bus | SKIP | No | Skipped in dry-run mode |
-| 10 | manifest_check | PASS | No | MANIFEST.distribute exists |
-| 11 | portability_paths | PASS | No | No absolute workspace paths found |
-| 12 | git_clean | SKIP | No | Skipped in dry-run mode |
+| 1 | resolve_tickets | PASS | No | Source: fallback from work_plan.md active ticket. Tickets: ['WP-2026-175'] |
+| 2 | prepush_check | FAIL | Yes | Quality gate failed (exit 1): md
+       M .agent/collaboration/work_plan.md
+       M .agent/runtime/events/events.jsonl
+      ... y 11 lineas mas
 
-## Overall: PASS
+[OK] Validate All (informacional) (informacional)
+
+============================================================
+PREFLIGHT BLOQUEADO: corrija los problemas antes de push
+Ejecute la pasada mutadora manualmente si hace falta:
+  uv run pre-commit run --all-files --hook-stage pre-commit
+Luego vuelva a ejecutar este preflight
+============================================================
+ |
+
+## Overall: FAIL
 
 ## Manual Recommendations
 

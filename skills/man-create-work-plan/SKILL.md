@@ -191,6 +191,10 @@ Checklist antes de aprobar:
 - [ ] Trade-offs documentados (si aplica)
 - [ ] Ninguna fase tiene campos duplicados (p.ej. dos lineas `Descripcion:` en la misma fase); si se actualizo un campo, borrar la version anterior antes de aprobar
 - [ ] No hay contradiccion entre `Descripcion` y `Criterios de Aceptacion` de la misma fase; si difieren, reconciliarlos explicitamente antes de aprobar — nunca asumir que uno manda sobre el otro sin corregir el texto
+- [ ] Todo criterio verificable de una fase tiene su comando o accion correspondiente en la seccion `Calidad`; si un criterio de aceptacion no aparece ahi, el Manager puede aprobarlo sin haberlo verificado
+- [ ] Si un comando se usa en dos modos distintos (p.ej. `--dry-run` vs ejecucion real, `--force` vs sin flag), la Descripcion especifica explicitamente cual es la accion de la fase y cual es la comprobacion previa, en ese orden; si el plan usa `--dry-run`, la fase real debe existir como paso separado — dry-run nunca sustituye la ejecucion real ni cuenta como validacion de cierre
+- [ ] Si `work_plan.md` y `PLAN_WP-*.md` coexisten, el resumen corto no puede contradecir al largo en ningun punto operativo (comandos, flags, orden de pasos); si difieren, el largo (work_plan.md) manda y el corto debe regenerarse antes de aprobar
+- [ ] Si una fase depende de actualizar `PROJECT.md` o `CHANGELOG.md` manualmente, la Descripcion especifica quien lo actualiza (Builder/Manager) y con que criterio o contenido minimo; la ambiguedad aqui produce fases declaradas completas sin que los archivos se hayan tocado
 
 Cambiar estado: `ðŸŸ¡ IN_PLANNING` â†’ `ðŸŸ¢ APPROVED`
 

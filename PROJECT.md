@@ -4,19 +4,20 @@
 
 ## Current Cycle
 
-- Active ticket: WP-2026-174 IN_PROGRESS (2026-05-29). Persist manager review bridge checkpoint across supervisor restarts.
+- Active ticket: WP-2026-175 IN_PROGRESS (2026-05-29). Canonical session closeout and cycle rollover.
+- Last ticket: WP-2026-174 COMPLETED (2026-05-29). Persist manager review bridge checkpoint across supervisor restarts.
 - Last ticket: WP-2026-173 COMPLETED (2026-05-29). Add pre-handoff helper to stage commit and checkpoint before mark-ready.
 - Last ticket: WP-2026-170 COMPLETED (2026-05-29). Fix ConcurrentStateError in supervisor/review bridge.
 - Last ticket: WP-2026-169 COMPLETED (2026-05-29). Session close loop bridge - `--session-close` en agent_controller.
 - Last ticket: WP-2026-168 COMPLETED (2026-05-29). Session closeout orchestrator - audit, memory, archive.
 - Previous ticket: WP-2026-167 COMPLETED (2026-05-29). Builder handoff safety - guard, checkpoints y recovery protocol.
 - Delivery hygiene loop already in place: `delivery_hygiene_check.py` preflight + `prepush_check.py`.
-- New cycle focuses on a durable manager review checkpoint so the bridge does not replay already-processed events after supervisor restarts.
+- New cycle focuses on closing the current session canonically and leaving the next cycle ready to start without drift.
 - `validate_ticket_prose.py` TP-06 / TP-07 detection remains active; the canonical TP Check format is still enforced.
 
 ## Current readiness
 
-- The repository is in the WP-2026-174 implementation cycle.
+- The repository is in the WP-2026-175 implementation cycle.
 
 ## Source of truth
 
