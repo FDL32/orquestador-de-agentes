@@ -23,6 +23,16 @@
 - `.agent/council/`: broker de consejo y auditoria paralela.
 - `REPOSITORY_STRUCTURE.md`: mapa interno publicable del repositorio.
 
+## Glosario de nomenclatura (Modelo B)
+
+| Termino | Ruta canonica | Descripcion |
+|---|---|---|
+| **Motor** | `C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes` | Codigo ejecutable portable. Code-only: no tiene estado operativo propio. Se comparte entre todos los proyectos. |
+| **Workspace del motor** | `C:\Users\fdl\Proyectos_Python\z_scripts` | Espacio de trabajo para desarrollar el motor. Contiene `.agent/` con tickets, memoria y configuracion propios del desarrollo del motor. Tambien llamado "workspace de z_scripts". |
+| **Workspace de destino** | `<proyecto>/` donde `.agent/` es el workspace | Espacio de trabajo de cada proyecto que usa el motor. Tiene su propio `.agent/collaboration/`, `.agent/runtime/memory/` y `backlog.md`. Nunca comparte estado con el motor ni con otros destinos. |
+
+Regla: el motor siempre se invoca con `AGENT_PROJECT_ROOT` apuntando al workspace activo (motor o destino). Sin esa variable, el motor usa el modo code-only y bloquea escrituras operativas.
+
 ## Contrato de version y portabilidad
 
 - `pyproject.toml` define la version del paquete portable.
