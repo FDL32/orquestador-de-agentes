@@ -197,19 +197,50 @@ def get_changed_files(project_root: Path) -> set[str]:
         return set()
 
 
-def check_checkpoint_m3_exists(project_root: Path, ticket_id: str) -> bool:
-    """Verificar si el checkpoint M3 (review-<ticket>) existe como tag."""
+def check_checkpoint_alignment(project_root: Path, ticket_id: str) -> tuple[bool, bool]:
+    """Check checkpoint M3 alignment.
+
+    Verifica si el tag checkpoint/review-<ticket> existe y si apunta
+    al mismo commit que HEAD.
+
+    Returns:
+        tuple[bool, bool]: (missing_checkpoint, checkpoint_misaligned)
+            - (True, False): tag no existe
+            - (False, True): tag existe pero apunta a otro commit
+            - (False, False): tag existe y esta alineado con HEAD
+    """
     tag_name = f"checkpoint/review-{ticket_id}"
     try:
+        # Check if tag exists and get its commit hash
         result = subprocess.run(
-            ["git", "rev-parse", tag_name],
+            ["git", "rev-parse", f"{tag_name}^{{}}"],
             capture_output=True,
             text=True,
             cwd=project_root,
         )
-        return result.returncode == 0
+        if result.returncode != 0:
+            return (True, False)  # missing checkpoint
+
+        tag_commit = result.stdout.strip()
+
+        # Get HEAD commit hash
+        head_result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            cwd=project_root,
+        )
+        if head_result.returncode != 0:
+            return (False, True)  # cannot determine HEAD, treat as misaligned
+
+        head_commit = head_result.stdout.strip()
+
+        if tag_commit != head_commit:
+            return (False, True)  # checkpoint misaligned
+
+        return (False, False)  # aligned
     except FileNotFoundError:
-        return False
+        return (True, False)
 
 
 def parse_files_likely_touched(project_root: Path) -> set[str]:
@@ -277,6 +308,7 @@ def run_guard(project_root: Path, ticket_id: str) -> dict:
             - valid: bool (True si handoff permitido)
             - dirty_tree: bool (True si arbol sucio)
             - missing_checkpoint: bool (True si falta M3)
+            - checkpoint_misaligned: bool (True si M3 existe pero no apunta a HEAD)
             - dirty_files: list[str] (archivos que ensucian el arbol)
             - scope_discrepancy: list[str] (archivos fuera de scope, no bloqueante)
             - checkpoint_tag: str | None (tag del checkpoint M3 si existe)
@@ -285,17 +317,24 @@ def run_guard(project_root: Path, ticket_id: str) -> dict:
         "valid": True,
         "dirty_tree": False,
         "missing_checkpoint": False,
+        "checkpoint_misaligned": False,
         "dirty_files": [],
         "scope_discrepancy": [],
         "checkpoint_tag": None,
         "ticket_id": ticket_id,
     }
 
-    # 1. Verificar checkpoint M3
-    m3_exists = check_checkpoint_m3_exists(project_root, ticket_id)
-    if not m3_exists:
+    # 1. Verificar checkpoint M3 alignment
+    missing_checkpoint, checkpoint_misaligned = check_checkpoint_alignment(
+        project_root, ticket_id
+    )
+    if missing_checkpoint:
         result["valid"] = False
         result["missing_checkpoint"] = True
+    elif checkpoint_misaligned:
+        result["valid"] = False
+        result["checkpoint_misaligned"] = True
+        result["checkpoint_tag"] = f"checkpoint/review-{ticket_id}"
     else:
         result["checkpoint_tag"] = f"checkpoint/review-{ticket_id}"
 
@@ -388,6 +427,7 @@ def main() -> int:
             "valid": True,
             "dirty_tree": False,
             "missing_checkpoint": False,
+            "checkpoint_misaligned": False,
             "dirty_files": [],
             "scope_discrepancy": [],
             "checkpoint_tag": None,
@@ -415,6 +455,20 @@ def main() -> int:
             print(f"[ERROR] Handoff guard failed for {ticket_id}")
             if result["missing_checkpoint"]:
                 print(f"  - Missing checkpoint M3: checkpoint/review-{ticket_id}")
+                print(
+                    f"    Fix: git commit && git tag -a checkpoint/review-{ticket_id}"
+                    f' -m "Checkpoint M3 for {ticket_id}"'
+                )
+            if result.get("checkpoint_misaligned"):
+                print(
+                    f"  - Checkpoint M3 misaligned: checkpoint/review-{ticket_id}"
+                    f" does not point to HEAD"
+                )
+                print(
+                    f"    Fix: git tag -d checkpoint/review-{ticket_id}"
+                    f" && git tag -a checkpoint/review-{ticket_id}"
+                    f' -m "Checkpoint M3 for {ticket_id}"'
+                )
             if result["dirty_tree"]:
                 print(f"  - Dirty tree: {', '.join(result['dirty_files'])}")
             if result["scope_discrepancy"]:
