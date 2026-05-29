@@ -660,7 +660,7 @@ class TestPreHandoff:
 
         assert code == 0, f"Expected 0, got {code}. Output: {output}"
         assert tag_created[0], "Tag was not created"
-        assert "Created tag" in output
+        assert "Created/refreshed tag" in output
 
     def test_hook_failure_propagates_stderr(self, monkeypatch):
         """Pre-commit hook failure → stderr propagated, exit != 0."""
