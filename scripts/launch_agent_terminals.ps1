@@ -1242,7 +1242,10 @@ if ($LaunchBuilder) {
                 # which was the WP-2026-067 regression that prevented Builder startup.
                 $promptLiteral = ConvertTo-SingleQuotedLiteral $builderPrompt
                 $modelLiteral = ConvertTo-SingleQuotedLiteral $model
-                $rootLiteral = ConvertTo-SingleQuotedLiteral $ProjectRoot
+                # WP-2026-176: --dir must point to the motor so OpenCode can find
+                # .opencode/agents/builder.md. The workspace (ProjectRoot) is passed
+                # to the agent via AGENT_PROJECT_ROOT, not via --dir.
+                $rootLiteral = ConvertTo-SingleQuotedLiteral $script:_MotorCodeRoot
 
                 $fileFlags = @()
                 foreach ($file in $canonicalFiles) {
