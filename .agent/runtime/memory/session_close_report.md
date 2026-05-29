@@ -1,13 +1,13 @@
 # Session Close Report
 
-**Generated:** 2026-05-29 17:04:34 UTC
+**Generated:** 2026-05-29 17:05:27 UTC
 **Dry Run:** No
 **Skip Slow:** No
 
 ## Session Window
 
-- **Start:** from last report (2026-05-29 17:04:05 UTC)
-- **End:** 2026-05-29 17:04:34 UTC
+- **Start:** from last report (2026-05-29 17:04:34 UTC)
+- **End:** 2026-05-29 17:05:27 UTC
 
 ## Tickets
 
@@ -18,22 +18,19 @@
 | # | Step | Status | Blocking | Detail |
 |---|------|--------|----------|--------|
 | 1 | resolve_tickets | PASS | No | Source: fallback from work_plan.md active ticket. Tickets: ['WP-2026-175'] |
-| 2 | prepush_check | FAIL | Yes | Quality gate failed (exit 1): md
-       M .agent/collaboration/work_plan.md
-       M .agent/runtime/events/events.jsonl
-      ... y 11 lineas mas
+| 2 | prepush_check | PASS | Yes | All blocking quality checks passed |
+| 3 | local_audit | PASS | No | Local audit snapshot captured |
+| 4 | validate_ticket_prose | WARN | No | Ticket prose validated, 4 warning(s) |
+| 5 | observations:WP-2026-175 | PASS | No | Observations processed for WP-2026-175 |
+| 6 | memory_consolidate | PASS | No | Memory consolidated successfully |
+| 7 | archive_collaboration | PASS | No | Collaboration artifacts archived |
+| 8 | archive_execution_log | PASS | No | Execution log archived |
+| 9 | archive_event_bus | PASS | No | Event bus terminal tickets archived |
+| 10 | manifest_check | PASS | No | MANIFEST.distribute exists |
+| 11 | portability_paths | PASS | No | No absolute workspace paths found |
+| 12 | git_clean | WARN | No | Tree dirty with 6 unexpected file(s): ['D .agent/collaboration/AUDIT_WP-2026-174.md', ' D .agent/collaboration/PLAN_WP-2026-174.md', ' M .agent/runtime/events/events.jsonl'] |
 
-[OK] Validate All (informacional) (informacional)
-
-============================================================
-PREFLIGHT BLOQUEADO: corrija los problemas antes de push
-Ejecute la pasada mutadora manualmente si hace falta:
-  uv run pre-commit run --all-files --hook-stage pre-commit
-Luego vuelva a ejecutar este preflight
-============================================================
- |
-
-## Overall: FAIL
+## Overall: WARN
 
 ## Manual Recommendations
 

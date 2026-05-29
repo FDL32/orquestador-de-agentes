@@ -1,3 +1,17 @@
+# 2026-05-29 - WP-2026-175 Canonical session closeout and cycle rollover
+
+### Closed
+- Session closed canonically via `--session-close` pipeline.
+- Observations generated for WP-2026-175.
+- Memory consolidated.
+- Collaboration artifacts archived (PLAN/AUDIT WP-2026-174 moved to `_archive/plan_audit/`).
+- Event bus terminal tickets archived.
+- STATE.md transitioned to COMPLETED.
+- PROJECT.md and CHANGELOG.md updated to reflect session close.
+- Repository left ready for the next cycle without drift.
+
+---
+
 # 2026-05-29 - WP-2026-169 Session close loop bridge -- `--session-close` en agent_controller
 
 ### Added
