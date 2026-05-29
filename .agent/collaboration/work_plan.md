@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WP-2026-169
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** mixed
 - **Titulo:** Session close loop bridge - `--session-close` en agent_controller
 - **Asignado a:** Builder
