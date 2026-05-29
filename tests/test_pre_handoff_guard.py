@@ -524,6 +524,60 @@ class TestPreHandoffGuard:
         assert output["valid"] is True
         assert "warnings" in output
 
+    def test_guard_ignores_project_md_live_surface(self, tmp_path: Path) -> None:
+        """Guard should not flag PROJECT.md changes as dirty tree.
+
+        WP-2026-172: PROJECT.md is a live surface that gets updated during
+        the operational cycle and should not block --mark-ready.
+        """
+        repo = tmp_path / "repo"
+        init_git_repo(repo)
+
+        # Create and commit PROJECT.md
+        (repo / "PROJECT.md").write_text("# Project\ntest content\n")
+        subprocess.run(
+            ["git", "add", "PROJECT.md"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "Add PROJECT.md"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+
+        # Create M3 checkpoint
+        create_checkpoint_tag(repo, "checkpoint/review-WP-2026-172")
+
+        # Modify PROJECT.md (simulating operational cycle update)
+        (repo / "PROJECT.md").write_text(
+            "# Project\n**Version:** v9.14.1\n**State:** UPDATED\n"
+        )
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT_PATH),
+                "--project-root",
+                str(repo),
+                "--ticket-id",
+                "WP-2026-172",
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=repo,
+        )
+
+        # Should pass because PROJECT.md is a live surface
+        assert result.returncode == 0
+        output = json.loads(result.stdout)
+        assert output["valid"] is True
+        assert output["dirty_tree"] is False
+        assert output["checkpoint_misaligned"] is False
+
     def test_guard_ignores_gitignored_files(self, tmp_path: Path) -> None:
         """Guard should ignore files that are in .gitignore."""
         repo = tmp_path / "repo"

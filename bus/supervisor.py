@@ -789,6 +789,31 @@ class SequentialTicketSupervisor:
             )
             return
 
+        # WP-2026-172: Suppress relaunch if a HANDOFF_BLOCKED event exists after
+        # the requeue trigger. The Builder reached the delivery contract but was
+        # blocked by hygiene; this is not a crash or timeout.
+        blocking_seq = self._has_handoff_blocked_after_sequence(
+            ticket_id, requeue_trigger_seq
+        )
+        if blocking_seq > 0:
+            print(
+                f"[supervisor] bootstrap: HANDOFF_BLOCKED at seq={blocking_seq} after "
+                f"trigger seq={requeue_trigger_seq} for {ticket_id}. "
+                "Suppressing relaunch.",
+                flush=True,
+            )
+            self.event_bus.emit(
+                "RELAUNCH_SUPPRESSED",
+                ticket_id=ticket_id,
+                actor="SUPERVISOR",
+                payload={
+                    "reason": "handoff_blocked",
+                    "trigger_sequence": requeue_trigger_seq,
+                    "blocking_sequence": blocking_seq,
+                },
+            )
+            return
+
         print(
             f"[supervisor] bootstrap: unprocessed CHANGES trigger at seq={requeue_trigger_seq} "
             f"for {ticket_id}. Firing requeue.",
@@ -1100,6 +1125,28 @@ class SequentialTicketSupervisor:
             return check_result.returncode == 0 and str(pid) in check_result.stdout
         except (subprocess.TimeoutExpired, FileNotFoundError):
             return False
+
+    def _has_handoff_blocked_after_sequence(
+        self, ticket_id: str, trigger_sequence: int
+    ) -> int:
+        """Return highest HANDOFF_BLOCKED sequence > trigger_sequence, or 0.
+
+        Before: No check existed for HANDOFF_BLOCKED events relative to requeue triggers.
+        During: Scans bus events for HANDOFF_BLOCKED emitted by BUILDEr/CONTROLLER after
+                the requeue trigger sequence. An event is relevant if its sequence_number
+                exceeds the requeue_trigger_sequence passed in.
+        After: Returns the highest blocking sequence (>0) if any HANDOFF_BLOCKED event
+               exists after the trigger, or 0 if no such event blocks the requeue.
+        """
+        max_seq = 0
+        for event in self.event_bus.read_events(ticket_id=ticket_id):
+            if (
+                event.event_type == "HANDOFF_BLOCKED"
+                and event.sequence_number > trigger_sequence
+                and event.sequence_number > max_seq
+            ):
+                max_seq = event.sequence_number
+        return max_seq
 
     def _builder_alive(self) -> bool:
         """Return True if Builder is alive based on bus events and lock mtime.
@@ -1473,18 +1520,38 @@ class SequentialTicketSupervisor:
         )
 
         requeue_success = False
-        if (
-            requeue_triggered
-            and state.active_ticket
-            and self.requeue_ticket(state.active_ticket)
-        ):
-            changed = True
-            requeue_success = True
-            # Persist watermark so a repeated CHANGES event for the same
-            # sequence does not trigger a second requeue on the next cycle.
-            persisted = self.load_state()
-            persisted.last_requeue_trigger_sequence = requeue_trigger_sequence
-            self.save_state(persisted)
+        if requeue_triggered and state.active_ticket:
+            # WP-2026-172: Suppress relaunch if a HANDOFF_BLOCKED event exists after
+            # the requeue trigger. The Builder reached the delivery contract but was
+            # blocked by hygiene; this is not a crash or timeout.
+            blocking_seq = self._has_handoff_blocked_after_sequence(
+                state.active_ticket, requeue_trigger_sequence
+            )
+            if blocking_seq > 0:
+                print(
+                    f"[supervisor] run_once: HANDOFF_BLOCKED at seq={blocking_seq} after "
+                    f"trigger seq={requeue_trigger_sequence} for {state.active_ticket}. "
+                    "Suppressing relaunch.",
+                    flush=True,
+                )
+                self.event_bus.emit(
+                    "RELAUNCH_SUPPRESSED",
+                    ticket_id=state.active_ticket,
+                    actor="SUPERVISOR",
+                    payload={
+                        "reason": "handoff_blocked",
+                        "trigger_sequence": requeue_trigger_sequence,
+                        "blocking_sequence": blocking_seq,
+                    },
+                )
+            elif self.requeue_ticket(state.active_ticket):
+                changed = True
+                requeue_success = True
+                # Persist watermark so a repeated CHANGES event for the same
+                # sequence does not trigger a second requeue on the next cycle.
+                persisted = self.load_state()
+                persisted.last_requeue_trigger_sequence = requeue_trigger_sequence
+                self.save_state(persisted)
 
         # WP-2026-160: Signal requeue success for cooperative exit
         self._requeue_triggered_this_session = requeue_success
