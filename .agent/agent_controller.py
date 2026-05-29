@@ -2475,11 +2475,14 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
 
     dirty_entries = []
     if status_result.stdout.strip():
-        for line in status_result.stdout.strip().split("\n"):
-            line = line.strip()
+        for line_raw in status_result.stdout.strip().split("\n"):
+            line = line_raw.strip()
             if not line or len(line) < 3:
                 continue
-            path = line[3:].strip()
+            # Extract path from unstripped raw line:
+            # git porcelain "XY <path>" — strip() removes leading status space,
+            # shifting character positions and losing path prefix (e.g. ".agent").
+            path = line_raw[3:].strip()
             abs_path = str((project_root / path).resolve())
             if not _is_live_surface(abs_path, project_root, live_files, live_dirs):
                 dirty_entries.append(path)
