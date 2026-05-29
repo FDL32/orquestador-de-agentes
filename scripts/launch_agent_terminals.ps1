@@ -81,6 +81,12 @@ if (-not $ProjectRoot) {
 
 Set-StrictMode -Version Latest
 
+# WP-2026-176: Motor code root — always derived from this script's location.
+# Code files (agents_config.py, bus/, .agent/) live in the motor, not in the workspace.
+# Defined here so all functions can reference it via $script:_MotorCodeRoot.
+$_scriptDirForMotor = if ($PSScriptRoot) { $PSScriptRoot } elseif ($PSCommandPath) { Split-Path -Parent $PSCommandPath } else { $null }
+$script:_MotorCodeRoot = if ($_scriptDirForMotor) { (Resolve-Path (Join-Path $_scriptDirForMotor '..')).Path } else { $ProjectRoot }
+
 # OnlyBuilder: when invoked from supervisor requeue (subprocess), force-disable
 # the other launchers. Avoids the PowerShell 5.1 SwitchParameter cast issue
 # where `-LaunchSupervisor:$false` or `:0` arrive as strings via argv and fail
@@ -793,8 +799,8 @@ function Resolve-BackendExecutable {
 function Get-BackendFromConfig {
     param([Parameter(Mandatory)] [string]$Role)
 
-    $venvPython = Resolve-VenvPython -Root $ProjectRoot
-    $agentsConfigPath = Join-Path $ProjectRoot '.agent\agents_config.py'
+    $venvPython = Resolve-VenvPython -Root $script:_MotorCodeRoot
+    $agentsConfigPath = Join-Path $script:_MotorCodeRoot '.agent\agents_config.py'
 
     try {
         $backend = & $venvPython $agentsConfigPath get_backend_for_role $Role 2>&1
@@ -811,8 +817,8 @@ function Get-BackendFromConfig {
 function Get-BackendExecutableName {
     param([Parameter(Mandatory)] [string]$BackendName)
 
-    $venvPython = Resolve-VenvPython -Root $ProjectRoot
-    $agentsConfigPath = Join-Path $ProjectRoot '.agent\agents_config.py'
+    $venvPython = Resolve-VenvPython -Root $script:_MotorCodeRoot
+    $agentsConfigPath = Join-Path $script:_MotorCodeRoot '.agent\agents_config.py'
 
     try {
         $exe = & $venvPython $agentsConfigPath get_executable $BackendName 2>&1
@@ -829,8 +835,8 @@ function Get-BackendExecutableName {
 function Get-BackendArgs {
     param([Parameter(Mandatory)] [string]$BackendName)
 
-    $venvPython = Resolve-VenvPython -Root $ProjectRoot
-    $agentsConfigPath = Join-Path $ProjectRoot '.agent\agents_config.py'
+    $venvPython = Resolve-VenvPython -Root $script:_MotorCodeRoot
+    $agentsConfigPath = Join-Path $script:_MotorCodeRoot '.agent\agents_config.py'
 
     try {
         $args = & $venvPython $agentsConfigPath get_args $BackendName 2>&1
@@ -847,8 +853,8 @@ function Get-BackendArgs {
 function Get-BackendDiscoveryMethod {
     param([Parameter(Mandatory)] [string]$BackendName)
 
-    $venvPython = Resolve-VenvPython -Root $ProjectRoot
-    $agentsConfigPath = Join-Path $ProjectRoot '.agent\agents_config.py'
+    $venvPython = Resolve-VenvPython -Root $script:_MotorCodeRoot
+    $agentsConfigPath = Join-Path $script:_MotorCodeRoot '.agent\agents_config.py'
 
     try {
         $method = & $venvPython $agentsConfigPath get_discovery $BackendName 2>&1
