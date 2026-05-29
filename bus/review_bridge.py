@@ -185,6 +185,44 @@ class ReviewBridge:
         match = re.search(r"\|\s*\*\*ROL\*\*\s*\|\s*\*\*([A-Z]+)\*\*\s*\|", content)
         return match.group(1) if match else "BUILDER"
 
+    def _resolve_motor_root(self) -> Path | None:
+        """Resolve motor root from workspace's motor_destination_link.json.
+
+        WP-2026-176: The workspace may carry motor_destination_link.json in its
+        .agent/config/ directory pointing to the external motor repository.
+        When present, the motor controller should be used instead of a local one.
+
+        Returns:
+            Absolute Path to the motor root, or None if the link file is missing
+            or malformed.
+        """
+        link_path = (
+            self.project_root / ".agent" / "config" / "motor_destination_link.json"
+        )
+        if not link_path.exists():
+            return None
+        try:
+            data = json.loads(link_path.read_text(encoding="utf-8"))
+            motor_root = data.get("motor_root")
+            if motor_root and Path(motor_root).exists():
+                return Path(motor_root).resolve()
+        except (json.JSONDecodeError, OSError):
+            pass
+        return None
+
+    def _resolve_motor_controller(self) -> Path | None:
+        """Resolve agent_controller.py from external motor root, or None.
+
+        Returns:
+            Absolute Path to the motor's agent_controller.py, or None if the
+            motor root cannot be resolved or the controller does not exist there.
+        """
+        motor_root = self._resolve_motor_root()
+        if motor_root is None:
+            return None
+        controller = motor_root / ".agent" / "agent_controller.py"
+        return controller if controller.exists() else None
+
     @staticmethod
     def _looks_like_opencode_help(stdout: str, stderr: str) -> bool:
         """Detect an OpenCode help banner instead of model output.
@@ -1984,9 +2022,27 @@ class ReviewBridge:
             # --request-changes counts CHANGES from the bus and transitions to
             # IN_PROGRESS or HUMAN_GATE on the shared threshold. The bridge no
             # longer keeps a parallel local counter.
-            controller = self.project_root / ".agent" / "agent_controller.py"
+            # WP-2026-176: Resolve controller from external motor if workspace
+            # carries motor_destination_link.json; pass --project-root accordingly.
+            motor_controller = self._resolve_motor_controller()
+            if motor_controller is not None:
+                changes_cmd = [
+                    sys.executable,
+                    str(motor_controller),
+                    "--request-changes",
+                    ticket_id,
+                    "--project-root",
+                    str(self.project_root),
+                ]
+            else:
+                changes_cmd = [
+                    sys.executable,
+                    str(self.project_root / ".agent" / "agent_controller.py"),
+                    "--request-changes",
+                    ticket_id,
+                ]
             rc_result = subprocess.run(
-                [sys.executable, str(controller), "--request-changes", ticket_id],
+                changes_cmd,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -2015,15 +2071,29 @@ class ReviewBridge:
         elif decision == ReviewDecision.INSPECT:
             # WP-2026-124: inspect now triggers the canonical materialization route
             # via CLI, same as changes. This ensures STATE_CHANGED is emitted.
-            controller = self.project_root / ".agent" / "agent_controller.py"
-            subprocess.run(
-                [
+            # WP-2026-176: Resolve controller from external motor if workspace
+            # carries motor_destination_link.json; pass --project-root accordingly.
+            motor_controller = self._resolve_motor_controller()
+            if motor_controller is not None:
+                escalate_cmd = [
                     sys.executable,
-                    str(controller),
+                    str(motor_controller),
                     "--escalate-human-gate",
                     "--ticket",
                     ticket_id,
-                ],
+                    "--project-root",
+                    str(self.project_root),
+                ]
+            else:
+                escalate_cmd = [
+                    sys.executable,
+                    str(self.project_root / ".agent" / "agent_controller.py"),
+                    "--escalate-human-gate",
+                    "--ticket",
+                    ticket_id,
+                ]
+            subprocess.run(
+                escalate_cmd,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",

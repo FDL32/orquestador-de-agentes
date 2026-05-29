@@ -48,6 +48,94 @@ def _make_bridge(tmp_path: Path) -> tuple[ReviewBridge, EventBus, Path]:
     return bridge, event_bus, legacy_manager_exe
 
 
+# =============================================================================
+# Tests WP-2026-176: Motor controller resolution in review bridge
+# =============================================================================
+
+
+def test_resolve_motor_root_no_link(tmp_path):
+    """_resolve_motor_root returns None when no motor_destination_link.json exists."""
+    bridge, _, _ = _make_bridge(tmp_path)
+    result = bridge._resolve_motor_root()
+    assert result is None
+
+
+def test_resolve_motor_root_with_valid_link(tmp_path):
+    """_resolve_motor_root reads motor_root from workspace config link."""
+    bridge, _, _ = _make_bridge(tmp_path)
+    config_dir = tmp_path / ".agent" / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    link = config_dir / "motor_destination_link.json"
+    motor_root = tmp_path / "external_motor"
+    motor_root.mkdir(parents=True, exist_ok=True)
+    link.write_text(json.dumps({"motor_root": str(motor_root)}), encoding="utf-8")
+    result = bridge._resolve_motor_root()
+    assert result is not None
+    assert result == motor_root.resolve()
+
+
+def test_resolve_motor_root_with_unreachable_motor(tmp_path, monkeypatch):
+    """_resolve_motor_root returns None when motor_root path does not exist."""
+    bridge, _, _ = _make_bridge(tmp_path)
+    config_dir = tmp_path / ".agent" / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    link = config_dir / "motor_destination_link.json"
+    # Use a guaranteed non-existent path on any platform
+    nonexistent = tmp_path / "definitely_not_existing_987654321"
+    link.write_text(json.dumps({"motor_root": str(nonexistent)}), encoding="utf-8")
+    result = bridge._resolve_motor_root()
+    assert result is None
+
+
+def test_resolve_motor_controller_no_link(tmp_path):
+    """_resolve_motor_controller falls back when no link file exists."""
+    bridge, _, _ = _make_bridge(tmp_path)
+    result = bridge._resolve_motor_controller()
+    assert result is None
+
+
+def test_resolve_motor_controller_finds_controller(tmp_path):
+    """_resolve_motor_controller returns the motor controller path when link exists."""
+    bridge, _, _ = _make_bridge(tmp_path)
+    config_dir = tmp_path / ".agent" / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    motor_root = tmp_path / "motor_repo"
+    motor_root.mkdir(parents=True, exist_ok=True)
+    controller = motor_root / ".agent" / "agent_controller.py"
+    controller.parent.mkdir(parents=True, exist_ok=True)
+    controller.write_text("# controller stub\n", encoding="utf-8")
+    link = config_dir / "motor_destination_link.json"
+    link.write_text(json.dumps({"motor_root": str(motor_root)}), encoding="utf-8")
+    result = bridge._resolve_motor_controller()
+    assert result is not None
+    assert result == controller.resolve()
+
+
+def test_resolve_motor_controller_missing_controller(tmp_path):
+    """_resolve_motor_controller returns None when controller does not exist at motor root."""
+    bridge, _, _ = _make_bridge(tmp_path)
+    config_dir = tmp_path / ".agent" / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    motor_root = tmp_path / "motor_repo_no_controller"
+    motor_root.mkdir(parents=True, exist_ok=True)
+    # No agent_controller.py in the motor root
+    link = config_dir / "motor_destination_link.json"
+    link.write_text(json.dumps({"motor_root": str(motor_root)}), encoding="utf-8")
+    result = bridge._resolve_motor_controller()
+    assert result is None
+
+
+def test_resolve_motor_controller_invalid_json(tmp_path):
+    """_resolve_motor_controller returns None on malformed link JSON."""
+    bridge, _, _ = _make_bridge(tmp_path)
+    config_dir = tmp_path / ".agent" / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    link = config_dir / "motor_destination_link.json"
+    link.write_text("not valid json", encoding="utf-8")
+    result = bridge._resolve_motor_controller()
+    assert result is None
+
+
 def _make_review_prompt_bridge(
     tmp_path: Path, deliverable_type: str = "code", monkeypatch=None
 ) -> ReviewBridge:
@@ -141,6 +229,9 @@ def _write_observations(tmp_path: Path, lines: list[str]) -> Path:
     path = memory_dir / "observations.jsonl"
     path.write_text("\n".join(lines), encoding="utf-8")
     return path
+
+
+# =============================================================================
 
 
 def test_manager_review_cycle_approves(monkeypatch, tmp_path):
