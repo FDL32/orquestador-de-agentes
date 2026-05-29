@@ -1,13 +1,13 @@
 # Session Close Report
 
-**Generated:** 2026-05-29 11:08:52 UTC
+**Generated:** 2026-05-29 11:59:26 UTC
 **Dry Run:** Yes
 **Skip Slow:** No
 
 ## Session Window
 
-- **Start:** from last report (2026-05-29 11:08:30 UTC)
-- **End:** 2026-05-29 11:08:52 UTC
+- **Start:** from last report (2026-05-29 11:08:52 UTC)
+- **End:** 2026-05-29 11:59:26 UTC
 
 ## Tickets
 
@@ -17,7 +17,7 @@
 
 | # | Step | Status | Blocking | Detail |
 |---|------|--------|----------|--------|
-| 1 | resolve_tickets | PASS | No | Source: fallback from work_plan.md active ticket. Tickets: ['WP-2026-169'] |
+| 1 | resolve_tickets | PASS | No | Source: detected in session window. Tickets: ['WP-2026-169'] |
 | 2 | prepush_check | SKIP | Yes | Skipped in dry-run mode |
 | 3 | local_audit | SKIP | No | Skipped in dry-run mode |
 | 4 | validate_ticket_prose | SKIP | No | Skipped in dry-run mode |
