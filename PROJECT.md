@@ -4,7 +4,7 @@
 
 ## Current Cycle
 
-- Active ticket: WP-2026-170 IN_PROGRESS (2026-05-29). Fix ConcurrentStateError in supervisor/review bridge.
+- Active ticket: WP-2026-170 READY_FOR_REVIEW (2026-05-29). Fix ConcurrentStateError in supervisor/review bridge.
 - Last ticket: WP-2026-169 COMPLETED (2026-05-29). Session close loop bridge - `--session-close` en agent_controller.
 - Last ticket: WP-2026-168 COMPLETED (2026-05-29). Session closeout orchestrator - audit, memory, archive.
 - Previous ticket: WP-2026-167 COMPLETED (2026-05-29). Builder handoff safety - guard, checkpoints y recovery protocol.
@@ -14,7 +14,7 @@
 
 ## Current readiness
 
-- The repository is in the WP-2026-170 implementation cycle.
+- The repository is in the WP-2026-170 review cycle.
 
 ## Source of truth
 

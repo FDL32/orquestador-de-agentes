@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WP-2026-170
-- **Estado:** IN_PROGRESS
+- **Estado:** READY_FOR_REVIEW
 - **deliverable_type:** code
 
 ## Agente Activo
@@ -20,7 +20,10 @@
 - El objetivo es eliminar la carrera OCC sobre `supervisor_state.json` sin tocar el algoritmo de escritura atomica.
 
 ## Evidencia
-- Pendiente de Builder.
+- Implementacion cerrada en `20e22df` (`fix: remove supervisor reconciliation from bridge tick`).
+- `python scripts/run_pytest_safe.py tests/test_manager_review_bridge.py tests/test_supervisor.py` -> 155/155 passed.
+- `uv run ruff check scripts/manager_review_bridge.py tests/test_manager_review_bridge.py tests/test_supervisor.py` -> exit 0, All checks passed.
+- `python .agent/agent_controller.py --validate --json --force` -> exit 0, no errors.
 
 ## Calidad
 - `python scripts/run_pytest_safe.py tests/test_manager_review_bridge.py tests/test_supervisor.py`
