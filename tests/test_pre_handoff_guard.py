@@ -56,9 +56,6 @@ class TestPreHandoffGuard:
         repo = tmp_path / "repo"
         init_git_repo(repo)
 
-        # Create M3 checkpoint
-        create_checkpoint_tag(repo, "checkpoint/review-WP-2026-167")
-
         # Create work_plan.md with Files Likely Touched
         collab_dir = repo / ".agent" / "collaboration"
         collab_dir.mkdir(parents=True, exist_ok=True)
@@ -81,6 +78,9 @@ class TestPreHandoffGuard:
             capture_output=True,
         )
 
+        # Create M3 checkpoint on HEAD after all commits
+        create_checkpoint_tag(repo, "checkpoint/review-WP-2026-167")
+
         result = subprocess.run(
             [
                 sys.executable,
@@ -101,6 +101,7 @@ class TestPreHandoffGuard:
         assert output["valid"] is True
         assert output["dirty_tree"] is False
         assert output["missing_checkpoint"] is False
+        assert output["checkpoint_misaligned"] is False
 
     def test_guard_fails_missing_m3(self, tmp_path: Path) -> None:
         """Guard should fail when M3 checkpoint is missing."""
@@ -134,6 +135,74 @@ class TestPreHandoffGuard:
         output = json.loads(result.stdout)
         assert output["valid"] is False
         assert output["missing_checkpoint"] is True
+        assert output["checkpoint_misaligned"] is False
+
+    def test_guard_fails_misaligned_checkpoint(self, tmp_path: Path) -> None:
+        """Guard should fail when M3 checkpoint exists but does not point to HEAD."""
+        repo = tmp_path / "repo"
+        init_git_repo(repo)
+
+        # Create M3 checkpoint on current HEAD (initial commit)
+        create_checkpoint_tag(repo, "checkpoint/review-WP-2026-167")
+
+        # Make a new commit so the checkpoint tag no longer points to HEAD
+        (repo / "new_file.txt").write_text("new content")
+        subprocess.run(
+            ["git", "add", "new_file.txt"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "Second commit"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+
+        # Create work_plan.md
+        collab_dir = repo / ".agent" / "collaboration"
+        collab_dir.mkdir(parents=True, exist_ok=True)
+        work_plan = collab_dir / "work_plan.md"
+        work_plan.write_text(
+            "# Work Plan\n\n## Files Likely Touched\n- `src/module.py`\n"
+        )
+
+        # Commit work_plan so tree is clean
+        subprocess.run(
+            ["git", "add", ".agent"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "Add .agent directory"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT_PATH),
+                "--project-root",
+                str(repo),
+                "--ticket-id",
+                "WP-2026-167",
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=repo,
+        )
+
+        assert result.returncode == 1
+        output = json.loads(result.stdout)
+        assert output["valid"] is False
+        assert output["missing_checkpoint"] is False
+        assert output["checkpoint_misaligned"] is True
+        assert output["checkpoint_tag"] == "checkpoint/review-WP-2026-167"
 
     def test_guard_fails_dirty_tree(self, tmp_path: Path) -> None:
         """Guard should fail when tree has uncommitted changes."""
@@ -244,9 +313,6 @@ class TestPreHandoffGuard:
         repo = tmp_path / "repo"
         init_git_repo(repo)
 
-        # Create M3 checkpoint
-        create_checkpoint_tag(repo, "checkpoint/review-WP-2026-167")
-
         # Create live surface files
         collab_dir = repo / ".agent" / "collaboration"
         collab_dir.mkdir(parents=True, exist_ok=True)
@@ -267,6 +333,9 @@ class TestPreHandoffGuard:
             check=True,
             capture_output=True,
         )
+
+        # Create M3 checkpoint on HEAD after all commits
+        create_checkpoint_tag(repo, "checkpoint/review-WP-2026-167")
 
         # Modify them (should be ignored by guard)
         (collab_dir / "TURN.md").write_text("# Turn updated")
@@ -292,13 +361,12 @@ class TestPreHandoffGuard:
         output = json.loads(result.stdout)
         assert output["valid"] is True
         assert output["dirty_tree"] is False
+        assert output["checkpoint_misaligned"] is False
 
     def test_guard_ignores_session_close_report(self, tmp_path: Path) -> None:
         """Guard should ignore the runtime session close report."""
         repo = tmp_path / "repo"
         init_git_repo(repo)
-
-        create_checkpoint_tag(repo, "checkpoint/review-WP-2026-167")
 
         collab_dir = repo / ".agent" / "collaboration"
         collab_dir.mkdir(parents=True, exist_ok=True)
@@ -324,6 +392,9 @@ class TestPreHandoffGuard:
             capture_output=True,
         )
 
+        # Create M3 checkpoint on HEAD after all commits
+        create_checkpoint_tag(repo, "checkpoint/review-WP-2026-167")
+
         (report_dir / "session_close_report.md").write_text(
             "# Session Close Report\n\n**Generated:** 2026-05-29 12:40:00 UTC\n",
             encoding="utf-8",
@@ -348,6 +419,7 @@ class TestPreHandoffGuard:
         output = json.loads(result.stdout)
         assert output["valid"] is True
         assert output["dirty_tree"] is False
+        assert output["checkpoint_misaligned"] is False
 
     def test_guard_reports_scope_discrepancy_non_blocking(self, tmp_path: Path) -> None:
         """Guard should report scope discrepancy in addition to blocking dirty tree."""
@@ -457,9 +529,6 @@ class TestPreHandoffGuard:
         repo = tmp_path / "repo"
         init_git_repo(repo)
 
-        # Create M3 checkpoint
-        create_checkpoint_tag(repo, "checkpoint/review-WP-2026-167")
-
         # Create .gitignore
         (repo / ".gitignore").write_text("*.log\n__pycache__/\n")
 
@@ -476,6 +545,9 @@ class TestPreHandoffGuard:
             check=True,
             capture_output=True,
         )
+
+        # Create M3 checkpoint on HEAD after all commits
+        create_checkpoint_tag(repo, "checkpoint/review-WP-2026-167")
 
         # Create ignored files
         (repo / "debug.log").write_text("log content")
@@ -503,3 +575,4 @@ class TestPreHandoffGuard:
         output = json.loads(result.stdout)
         assert output["valid"] is True
         assert output["dirty_tree"] is False
+        assert output["checkpoint_misaligned"] is False
