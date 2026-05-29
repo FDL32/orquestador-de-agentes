@@ -486,3 +486,247 @@ class TestSessionClose:
             json_output=False,
         )
         assert code == 1
+
+
+class TestPreHandoff:
+    """WP-2026-173: --pre-handoff helper to stage commit and checkpoint.
+
+    Test suite covers at least five cases:
+    - happy path: commit + tag + clean tree
+    - idempotent: no changes + tag already aligned
+    - tag-only: no changes but tag missing → create tag without commit
+    - hook failure: pre-commit hook fails → stderr propagated
+    - dirty tree: tree still dirty after ops → error
+    """
+
+    _PLAN_ID = "WP-2026-173"
+    _PLAN_CONTENT = f"""# Work Plan
+
+## Metadata
+- **ID:** {_PLAN_ID}
+- **Estado:** APPROVED
+
+## Files Likely Touched
+- src/file1.py
+- src/file2.py
+"""
+
+    @staticmethod
+    def _make_git_mock(overrides=None):
+        """Create a subprocess.run mock for git commands.
+
+        Args:
+            overrides: dict of pattern -> (returncode, stdout, stderr)
+                       to override specific command responses.
+        """
+        default_overrides = overrides or {}
+
+        def mock_run(cmd, *args, **kwargs):
+            cmd_str = " ".join(cmd)
+
+            # Check overrides first
+            for pattern, result in default_overrides.items():
+                if pattern in cmd_str:
+                    rc, out, err = result
+                    return MagicMock(returncode=rc, stdout=out, stderr=err)
+
+            # Default handlers
+            if "rev-parse" in cmd_str and "checkpoint" in cmd_str and "^{}" in cmd_str:
+                return MagicMock(returncode=1, stdout="", stderr="")
+            if "rev-parse HEAD" in cmd_str:
+                return MagicMock(returncode=0, stdout="abc123\n", stderr="")
+            if len(cmd) >= 2 and cmd[:2] == ["git", "add"]:
+                return MagicMock(returncode=0, stdout="", stderr="")
+            if len(cmd) >= 2 and cmd[:2] == ["git", "commit"]:
+                return MagicMock(
+                    returncode=0, stdout="[main abc123] commit\n", stderr=""
+                )
+            if len(cmd) >= 3 and cmd[1] == "tag" and cmd[2] in ("-a", "-d"):
+                return MagicMock(returncode=0, stdout="", stderr="")
+            if len(cmd) >= 2 and cmd[:2] == ["git", "status"]:
+                return MagicMock(returncode=0, stdout="", stderr="")
+
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        return mock_run
+
+    def _setup_basic_mocks(self, monkeypatch, changed_files, whitelist_files):
+        """Set up common mocks for pre_handoff tests.
+
+        Args:
+            monkeypatch: pytest monkeypatch fixture.
+            changed_files: set of absolute paths for get_changed_files.
+            whitelist_files: set of absolute paths for parse_files_likely_touched.
+        """
+        monkeypatch.setattr(
+            agent_controller,
+            "read_file",
+            lambda x: self._PLAN_CONTENT if "work_plan" in str(x).lower() else "",
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "parse_files_likely_touched",
+            lambda x: whitelist_files,
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "get_changed_files",
+            lambda: changed_files,
+        )
+
+    def _capture_output(self, func):
+        """Run func capturing stdout+stderr, return (exit_code, combined_text)."""
+        from io import StringIO
+
+        captured_out = StringIO()
+        captured_err = StringIO()
+        old_stdout = sys.stdout
+        old_stderr = sys.stderr
+        sys.stdout = captured_out
+        sys.stderr = captured_err
+        try:
+            code = func()
+        finally:
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
+        combined = captured_out.getvalue() + captured_err.getvalue()
+        return code, combined
+
+    def test_happy_path_commit_tag_clean(self, monkeypatch):
+        """Happy path: commit + tag + clean tree → exit 0."""
+        project_root = agent_controller.PROJECT_ROOT.resolve()
+        file1 = str(project_root / "src" / "file1.py")
+        file2 = str(project_root / "src" / "file2.py")
+        whitelist = {file1, file2}
+
+        self._setup_basic_mocks(monkeypatch, whitelist, whitelist)
+
+        git_mock = self._make_git_mock()
+        monkeypatch.setattr(agent_controller.subprocess, "run", git_mock)
+
+        code, output = self._capture_output(
+            lambda: agent_controller._handle_pre_handoff(json_output=False)
+        )
+
+        assert code == 0, f"Expected 0, got {code}. Output: {output}"
+        assert "Pre-handoff complete" in output
+
+    def test_idempotent_no_changes_tag_aligned(self, monkeypatch):
+        """No changes + tag aligned → idempotent exit 0."""
+        self._setup_basic_mocks(monkeypatch, set(), set())
+
+        # Override: tag exists and aligns with HEAD
+        def git_mock(cmd, *args, **kwargs):
+            cmd_str = " ".join(cmd)
+            if "rev-parse" in cmd_str and "checkpoint" in cmd_str and "^{}" in cmd_str:
+                return MagicMock(returncode=0, stdout="abc123\n", stderr="")
+            if "rev-parse HEAD" in cmd_str:
+                return MagicMock(returncode=0, stdout="abc123\n", stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(agent_controller.subprocess, "run", git_mock)
+
+        code, output = self._capture_output(
+            lambda: agent_controller._handle_pre_handoff(json_output=False)
+        )
+
+        assert code == 0, f"Expected 0, got {code}. Output: {output}"
+        assert "already aligned" in output
+
+    def test_no_changes_tag_missing_create_only(self, monkeypatch):
+        """No changes + tag missing → create tag without commit."""
+        self._setup_basic_mocks(monkeypatch, set(), set())
+
+        tag_created = [False]
+
+        def git_mock(cmd, *args, **kwargs):
+            cmd_str = " ".join(cmd)
+            if "rev-parse" in cmd_str and "checkpoint" in cmd_str and "^{}" in cmd_str:
+                return MagicMock(returncode=1, stdout="", stderr="")
+            if len(cmd) >= 2 and cmd[1] == "tag" and cmd[2] == "-a":
+                tag_created[0] = True
+                return MagicMock(returncode=0, stdout="", stderr="")
+            if len(cmd) >= 2 and cmd[:2] == ["git", "status"]:
+                return MagicMock(returncode=0, stdout="", stderr="")
+            if "rev-parse HEAD" in cmd_str:
+                return MagicMock(returncode=0, stdout="abc123\n", stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(agent_controller.subprocess, "run", git_mock)
+
+        code, output = self._capture_output(
+            lambda: agent_controller._handle_pre_handoff(json_output=False)
+        )
+
+        assert code == 0, f"Expected 0, got {code}. Output: {output}"
+        assert tag_created[0], "Tag was not created"
+        assert "Created tag" in output
+
+    def test_hook_failure_propagates_stderr(self, monkeypatch):
+        """Pre-commit hook failure → stderr propagated, exit != 0."""
+        project_root = agent_controller.PROJECT_ROOT.resolve()
+        file1 = str(project_root / "src" / "file1.py")
+        whitelist = {file1}
+        fake_stderr = (
+            "pre-commit hook failed\nAborting commit due to pre-commit hook.\n"
+        )
+
+        self._setup_basic_mocks(monkeypatch, whitelist, whitelist)
+
+        def git_mock(cmd, *args, **kwargs):
+            cmd_str = " ".join(cmd)
+            if "rev-parse" in cmd_str and "checkpoint" in cmd_str and "^{}" in cmd_str:
+                return MagicMock(returncode=1, stdout="", stderr="")
+            if len(cmd) >= 2 and cmd[:2] == ["git", "add"]:
+                return MagicMock(returncode=0, stdout="", stderr="")
+            if len(cmd) >= 2 and cmd[:2] == ["git", "commit"]:
+                return MagicMock(returncode=1, stdout="", stderr=fake_stderr)
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(agent_controller.subprocess, "run", git_mock)
+
+        code, output = self._capture_output(
+            lambda: agent_controller._handle_pre_handoff(json_output=False)
+        )
+
+        assert code != 0, f"Expected non-zero, got {code}. Output: {output}"
+        assert "pre-commit hook failed" in output, f"Missing error in output: {output}"
+
+    def test_dirty_tree_after_ops(self, monkeypatch):
+        """Dirty tree after commit + tag → error exit 1."""
+        project_root = agent_controller.PROJECT_ROOT.resolve()
+        file1 = str(project_root / "src" / "file1.py")
+        whitelist = {file1}
+
+        self._setup_basic_mocks(monkeypatch, whitelist, whitelist)
+
+        # Override status to report a dirty file
+        def git_mock(cmd, *args, **kwargs):
+            cmd_str = " ".join(cmd)
+            if "rev-parse" in cmd_str and "checkpoint" in cmd_str and "^{}" in cmd_str:
+                return MagicMock(returncode=1, stdout="", stderr="")
+            if len(cmd) >= 2 and cmd[:2] == ["git", "add"]:
+                return MagicMock(returncode=0, stdout="", stderr="")
+            if len(cmd) >= 2 and cmd[:2] == ["git", "commit"]:
+                return MagicMock(
+                    returncode=0, stdout="[main abc123] commit\n", stderr=""
+                )
+            if len(cmd) >= 3 and cmd[1] == "tag" and cmd[2] == "-a":
+                return MagicMock(returncode=0, stdout="", stderr="")
+            if len(cmd) >= 2 and cmd[:2] == ["git", "status"]:
+                # Simulate an untracked non-live file
+                return MagicMock(
+                    returncode=0,
+                    stdout="?? untracked_output.txt\n",
+                    stderr="",
+                )
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(agent_controller.subprocess, "run", git_mock)
+
+        code, output = self._capture_output(
+            lambda: agent_controller._handle_pre_handoff(json_output=False)
+        )
+
+        assert code != 0, f"Expected non-zero, got {code}. Output: {output}"
+        assert "Tree still dirty" in output
