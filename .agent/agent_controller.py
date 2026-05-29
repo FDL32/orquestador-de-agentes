@@ -2181,6 +2181,338 @@ def _handle_bootstrap_ticket(json_output: bool) -> int:
     return 0
 
 
+# ============================================================================
+# PRE-HANDOFF HELPER (WP-2026-173)
+# ============================================================================
+
+
+_LIVE_SURFACES_REL = {
+    ".agent/collaboration/TURN.md",
+    ".agent/collaboration/STATE.md",
+    ".agent/collaboration/execution_log.md",
+    ".agent/collaboration/notifications.md",
+    ".agent/collaboration/review_queue.md",
+    ".agent/collaboration/work_plan.md",
+    ".agent/collaboration/archive/",
+    ".agent/collaboration/_archive/",
+    ".agent/runtime/memory/session_close_report.md",
+    ".agent/runtime/events/events.jsonl",
+    ".agent/runtime/store.json",
+    ".agent/runtime/builder_lock.txt",
+    ".agent/runtime/circuit_breaker.json",
+    ".agent/runtime/supervisor_lock.txt",
+    ".agent/runtime/events/",
+    ".agent/runtime/approvals/",
+    ".agent/context/project-map.json",
+    "PROJECT.md",
+}
+
+_WORKSPACE_EXCLUDED_PREFIXES = {
+    ".agent/collaboration/PLAN_WP-",
+    ".agent/collaboration/AUDIT_WP-",
+}
+
+_LIVE_SURFACE_DIRS = {
+    ".agent/collaboration/archive",
+    ".agent/collaboration/_archive",
+    ".agent/runtime/events",
+    ".agent/runtime/approvals",
+}
+
+
+def _build_live_surface_sets(
+    project_root: Path,
+) -> tuple[set[str], set[str]]:
+    """Build absolute path sets for live surfaces.
+
+    Returns:
+        tuple[set[str], set[str]]: (live_files, live_dirs)
+    """
+    live_files: set[str] = set()
+    live_dirs: set[str] = set()
+
+    for rel_path in _LIVE_SURFACES_REL:
+        full_path = (project_root / rel_path).resolve()
+        if rel_path.endswith("/"):
+            live_dirs.add(str(full_path))
+        else:
+            live_files.add(str(full_path))
+
+    for rel_dir in _LIVE_SURFACE_DIRS:
+        live_dirs.add(str((project_root / rel_dir).resolve()))
+
+    # Include all files under archive/ and _archive/plan_audit/
+    for sub in ("archive", "_archive/plan_audit"):
+        d = project_root / ".agent" / "collaboration" / sub
+        if d.exists():
+            for f in d.glob("*"):
+                live_files.add(str(f.resolve()))
+
+    return live_files, live_dirs
+
+
+def _is_live_surface(
+    file_abs: str,
+    project_root: Path,
+    live_files: set[str],
+    live_dirs: set[str],
+) -> bool:
+    """Check if an absolute path belongs to a live surface."""
+    if file_abs in live_files:
+        return True
+    p = Path(file_abs)
+    # Check if file is in a live surface directory
+    for d in live_dirs:
+        if _path_is_under(p, Path(d)):
+            return True
+    # Check workspace excluded prefixes
+    try:
+        rel = str(p.relative_to(project_root)).replace("\\", "/")
+        return any(rel.startswith(prefix) for prefix in _WORKSPACE_EXCLUDED_PREFIXES)
+    except ValueError:
+        return False
+
+
+def _path_is_under(child: Path, parent: Path) -> bool:
+    """Return True if child is under parent directory."""
+    try:
+        child.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
+    """Handle --pre-handoff flag.
+
+    Prepares the Builder handoff by:
+    1. Parsing Files Likely Touched from work_plan.md
+    2. Staging and committing delivery changes (if any)
+    3. Creating/refreshing checkpoint M3 tag (checkpoint/review-<ticket>)
+    4. Verifying the tree is clean (excluding live surfaces)
+
+    Idempotent: if no delivery changes and checkpoint is already aligned with
+    HEAD, exits cleanly without any action.
+
+    Before: Requires an active plan in work_plan.md with a ticket ID.
+    During: Runs git add, git commit (if changes), git tag operations, and
+            git status --porcelain for final verification.
+            Live surfaces (TURN.md, STATE.md, execution_log.md, events.jsonl,
+            etc.) are excluded from dirty tree detection.
+    After: Returns 0 on success, 1 on failure. On failure, prints diagnostic
+           info. On success, the tree is ready for --mark-ready.
+    """
+    plan_content = read_file(WORK_PLAN)
+    if not plan_content:
+        print("[ERROR] No work_plan.md found.", file=sys.stderr, flush=True)
+        return 1
+
+    plan_id = get_plan_id(plan_content)
+    if not plan_id or plan_id == "N/A":
+        print("[ERROR] No active plan found.", file=sys.stderr, flush=True)
+        return 1
+
+    # Check that we are in a git repository
+    project_root = PROJECT_ROOT.resolve()
+    git_dir = project_root / ".git"
+    if not git_dir.exists():
+        print(
+            "[ERROR] Not a git repository. Pre-handoff requires git.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 1
+
+    # Build live surface sets
+    live_files, live_dirs = _build_live_surface_sets(project_root)
+
+    # Parse Files Likely Touched (inline, already in this module)
+    files_likely_touched = parse_files_likely_touched(plan_content)
+
+    # Get changed files and filter out live surfaces
+    changed_files = get_changed_files() or set()
+    delivery_changes = {
+        f
+        for f in changed_files
+        if not _is_live_surface(f, project_root, live_files, live_dirs)
+    }
+
+    # Determine files to stage: intersection of whitelist and delivery changes
+    files_to_stage = set()
+    if files_likely_touched and delivery_changes:
+        files_to_stage = files_likely_touched & delivery_changes
+
+    tag_name = f"checkpoint/review-{plan_id}"
+
+    # Check current checkpoint state
+    tag_exists = False
+    tag_aligned = False
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", f"{tag_name}^{{}}"],
+            capture_output=True,
+            text=True,
+            cwd=project_root,
+        )
+        if result.returncode == 0:
+            tag_exists = True
+            tag_commit = result.stdout.strip()
+            head_result = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                cwd=project_root,
+            )
+            tag_aligned = (
+                head_result.returncode == 0 and tag_commit == head_result.stdout.strip()
+            )
+    except FileNotFoundError:
+        print("[ERROR] git not available.", file=sys.stderr, flush=True)
+        return 1
+
+    needs_commit = bool(files_to_stage)
+
+    # --- Step 1: Commit (if needed) ---
+    if needs_commit:
+        # Convert absolute paths to relative for git add
+        rel_files = {
+            str(Path(f).relative_to(project_root))
+            for f in files_to_stage
+            if _path_is_under(Path(f), project_root)
+        }
+
+        if rel_files:
+            add_result = subprocess.run(
+                ["git", "add", "--", *sorted(rel_files)],
+                capture_output=True,
+                text=True,
+                cwd=project_root,
+            )
+            if add_result.returncode != 0:
+                err = add_result.stderr.strip() or add_result.stdout.strip()
+                print(
+                    f"[ERROR] git add failed:\n{err}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                return 1
+
+        commit_msg = f"chore({plan_id}): pre-handoff checkpoint"
+        commit_result = subprocess.run(
+            ["git", "commit", "-m", commit_msg],
+            capture_output=True,
+            text=True,
+            cwd=project_root,
+        )
+        if commit_result.returncode != 0:
+            # Propagate stderr as-is for hook failures
+            err = commit_result.stderr.strip() or commit_result.stdout.strip()
+            print(f"[ERROR] git commit failed:\n{err}", flush=True)
+            return commit_result.returncode
+
+        if not json_output:
+            print(f"[OK] Committed: {commit_msg}")
+
+        # After a new commit, the tag always needs refresh
+        tag_exists = False  # Force tag creation
+        needs_tag = True
+    else:
+        needs_tag = not tag_aligned
+
+    # --- Step 2: Create/refresh checkpoint M3 tag ---
+    if needs_tag:
+        try:
+            # Delete existing tag if present (use git tag -d, ignore failure)
+            if tag_exists:
+                subprocess.run(
+                    ["git", "tag", "-d", tag_name],
+                    capture_output=True,
+                    text=True,
+                    cwd=project_root,
+                )
+
+            tag_msg = f"Checkpoint M3 for {plan_id}"
+            tag_result = subprocess.run(
+                ["git", "tag", "-a", tag_name, "-m", tag_msg],
+                capture_output=True,
+                text=True,
+                cwd=project_root,
+            )
+            if tag_result.returncode != 0:
+                err = tag_result.stderr.strip() or tag_result.stdout.strip()
+                print(
+                    f"[ERROR] Failed to create tag {tag_name}:\n{err}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                return 1
+
+            if not json_output:
+                if tag_exists:
+                    print(f"[OK] Refreshed tag: {tag_name}")
+                else:
+                    print(f"[OK] Created tag: {tag_name}")
+        except FileNotFoundError:
+            print(
+                "[ERROR] git not available for tag operation",
+                file=sys.stderr,
+                flush=True,
+            )
+            return 1
+
+    # --- Idempotent no-op case: no changes + tag already aligned ---
+    if not needs_commit and tag_aligned:
+        if not json_output:
+            print(
+                f"[OK] No delivery changes. Checkpoint {tag_name}"
+                " already aligned with HEAD."
+            )
+        else:
+            print(json.dumps({"status": "idempotent", "plan_id": plan_id}, indent=2))
+        return 0
+
+    # --- Step 3: Final verification - tree must be clean ---
+    try:
+        status_result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            cwd=project_root,
+        )
+    except FileNotFoundError:
+        print(
+            "[ERROR] git not available for final status check",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 1
+
+    dirty_entries = []
+    if status_result.stdout.strip():
+        for line in status_result.stdout.strip().split("\n"):
+            line = line.strip()
+            if not line or len(line) < 3:
+                continue
+            path = line[3:].strip()
+            abs_path = str((project_root / path).resolve())
+            if not _is_live_surface(abs_path, project_root, live_files, live_dirs):
+                dirty_entries.append(path)
+
+    if dirty_entries:
+        print(
+            f"[ERROR] Tree still dirty after pre-handoff: {', '.join(dirty_entries)}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 1
+
+    if not json_output:
+        print(f"[OK] Pre-handoff complete for {plan_id}. Tree is clean.")
+    else:
+        print(json.dumps({"status": "success", "plan_id": plan_id}, indent=2))
+    return 0
+
+
 def _check_bus_drift(plan_content: str, log_status: str) -> list[str]:
     """Check for drift between Markdown state and bus events."""
     warnings = []
@@ -3591,6 +3923,10 @@ def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
     # Check for --resume-human-gate (salida canonica de HUMAN_GATE)
     if "--resume-human-gate" in sys.argv:
         return _handle_resume_human_gate(ticket_id, json_output)
+
+    # Check for --pre-handoff (WP-2026-173)
+    if "--pre-handoff" in sys.argv:
+        return _handle_pre_handoff(json_output)
 
     # Parse --session-close specific flags
     session_skip_slow = "--skip-slow" in sys.argv

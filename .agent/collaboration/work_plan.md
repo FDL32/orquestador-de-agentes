@@ -1,75 +1,72 @@
-# Work Plan - WP-2026-172
+# Work Plan - WP-2026-173
 
 ## Metadata
-- **ID:** WP-2026-172
-- **Estado:** COMPLETED
+- **ID:** WP-2026-173
+- **Estado:** APPROVED
 - **deliverable_type:** code
-- **Titulo:** Prevent Builder relaunch on HANDOFF_BLOCKED and tolerate PROJECT.md as live surface
+- **Titulo:** Add pre-handoff helper to stage commit and checkpoint before mark-ready
 - **Asignado a:** Builder
 
 ## Objetivo
-Evitar el relanzado automatico del Builder cuando el trigger de requeue ya fue seguido por un `HANDOFF_BLOCKED`, y tratar `PROJECT.md` como superficie viva tolerada por el pre-handoff guard para que el cierre del ciclo no genere falsos positivos de arbol sucio.
+Convertir el cierre manual de 3 pasos en un unico comando atomico antes de `--mark-ready`: preparar los cambios del ticket, crear el commit, refrescar el checkpoint M3 y dejar el arbol limpio o fallar con un mensaje claro.
 
 ## Contexto
-- `scripts/pre_handoff_guard.py` considera superficies vivas del runtime, pero `PROJECT.md` aun puede ensuciar el handoff cuando el Builder lo actualiza como parte del cierre del ciclo.
-- `bus/supervisor.py` relanza Builder de forma automatica cuando detecta requeue, pero no distingue con suficiente precision entre un bloqueo de contrato (`HANDOFF_BLOCKED`) y un crash o timeout real.
-- El trigger de requeue puede aparecer antes del `HANDOFF_BLOCKED`; la supresion debe mirar eventos posteriores al trigger, no solo el ultimo evento visible.
+- Hoy el guard detecta cuando el Builder llega a `--mark-ready` sin commit ni checkpoint, pero eso sigue siendo una deteccion reactiva.
+- El flujo repetido de 171 y 172 muestra que el proceso necesita una herramienta proactiva que obligue el orden correcto antes de la entrega.
+- No se va a depender de `scripts/create_checkpoint.py`; el helper debe crear o refrescar el tag M3 inline usando el mismo patron de `git rev-parse checkpoint/review-<ticket>^{}` + `git tag -d` + `git tag -a` que ya usa `scripts/pre_handoff_guard.py`.
+- El helper debe stagear los archivos a partir de `Files Likely Touched` declarados en `work_plan.md`, leyendo ese bloque directamente con logica inline equivalente al parser del guard, sin importar `parse_files_likely_touched()` desde `scripts/pre_handoff_guard.py`.
+- La nueva accion debe quedarse en `agent_controller.py` para aprovechar el contrato ya existente de flags y proyecciones.
 
 ## Decision Arquitectonica
-- `scripts/pre_handoff_guard.py` añade `PROJECT.md` a `LIVE_SURFACES_REL` para que el guard no lo considere dirty_tree durante `--mark-ready`.
-- `bus/supervisor.py` debe comprobar, antes de confirmar el relanzado, si existe algun `HANDOFF_BLOCKED` con `sequence_number > requeue_trigger_sequence`; si existe, suprime el relanzado en ambas rutas de requeue (`run_once()` y `_bootstrap_requeue_if_needed()`).
-- El supervisor sigue relanzando ante timeout, lock stale o ausencia de evidencia de cierre, pero no cuando el Builder ya emitio `HANDOFF_BLOCKED` posterior al trigger.
-- No se modifica el contrato de `--mark-ready`; solo se ajusta la tolerancia de superficie viva y la politica de relanzado.
-- No se introducen nuevos estados de ticket ni nuevas dependencias.
+- `agent_controller.py` añade un flag `--pre-handoff` que ejecuta una secuencia atomica previa a `--mark-ready`.
+- La secuencia separa dos pasos independientes:
+  - Paso commit: si hay cambios de entrega, stagearlos segun `Files Likely Touched` y crear el commit con mensaje estandar `chore(<ticket>): pre-handoff checkpoint`.
+  - Paso tag: crear o refrescar siempre `checkpoint/review-<ticket>` inline con `git rev-parse checkpoint/review-<ticket>^{}` + `git tag -d` + `git tag -a`, exista o no exista un commit nuevo.
+- Si no hay cambios de entrega y el checkpoint ya esta alineado con HEAD, el comando debe salir idempotente con exito y sin hacer nada.
+- Si no hay cambios de entrega pero el checkpoint falta o apunta a otro commit, el comando debe saltar el commit y solo crear/refrescar el tag.
+- Si el checkpoint M3 no existe, el helper debe crearlo inline con `git tag -a checkpoint/review-<ticket> -m "Checkpoint M3 for <ticket>"`.
+- Si `git commit` falla por hooks de pre-commit, el helper debe propagar el exit code y stderr del proceso git tal cual al usuario, sin envolver o ocultar el error.
+- El comando no debe tocar `scripts/pre_handoff_guard.py` ni el contrato de `--mark-ready`; solo prepara el estado correcto para que el guard pase.
 
 ## Non-goals
-- No cambiar el contrato de `--mark-ready` ni su secuencia de eventos.
-- No tocar la logica de OCC de `write_artifact_atomic()`.
-- No relajar la deteccion de dirty_tree mas alla de `PROJECT.md` como superficie viva.
-- No introducir reintentos extra ni timeouts mayores.
+- No cambiar la logica del pre-handoff guard.
+- No tocar `bus/supervisor.py`.
+- No ampliar el scope de `--mark-ready`.
+- No introducir nuevas dependencias.
 
 ## Fases
 
-### Fase 1: superficie viva PROJECT.md
+### Fase 1: comando pre-handoff
 - **Tipo:** TAREA AGENTE
-- **Archivos:** `scripts/pre_handoff_guard.py`
+- **Archivos:** `.agent/agent_controller.py`
 - **Accion:** Modificar
-- **Descripcion:** Añadir `PROJECT.md` a `LIVE_SURFACES_REL` para que el guard lo tolere como superficie viva durante el handoff. El archivo sigue actualizandose como parte del ciclo, pero no debe bloquear `--mark-ready` por dirty_tree cuando sea la unica diferencia relevante.
-- **Riesgo:** Bajo
-- **Criterio de Aceptacion:** Un cambio aislado en `PROJECT.md` no dispara `dirty_tree` en el pre-handoff guard si el resto del arbol esta limpio.
-- **Si falla:** Revertir la tolerancia de `PROJECT.md` y mantener el comportamiento actual.
-
-### Fase 2: relaunch condicional del supervisor
-- **Tipo:** TAREA AGENTE
-- **Archivos:** `bus/supervisor.py`
-- **Accion:** Modificar
-- **Descripcion:** Ajustar la logica de requeue en `run_once()` y en `_bootstrap_requeue_if_needed()` para que el supervisor no dispare `BUILDER_RELAUNCH_ATTEMPTED` cuando exista algun `HANDOFF_BLOCKED` con `sequence_number > requeue_trigger_sequence`. El relanzado debe quedar reservado para crash, timeout o ausencia de evidencia de cierre, no para bloqueo de contrato. Si se suprime el relanzado, emitir un evento diagnostico que deje trazabilidad del bloqueo posterior al trigger.
+- **Descripcion:** Añadir `--pre-handoff` como comando previo a `--mark-ready`. Debe localizar cambios de entrega, leer `Files Likely Touched` desde `work_plan.md` con logica inline equivalente al parser del guard, hacer `git add` de esos archivos, crear un commit con mensaje estandar `chore(<ticket>): pre-handoff checkpoint`, crear o refrescar `checkpoint/review-<ticket>` inline usando `git rev-parse checkpoint/review-<ticket>^{}` y `git tag -d / git tag -a`, y verificar que `git status --porcelain` queda limpio excluyendo las mismas superficies vivas que usa el guard antes de devolver exito.
 - **Riesgo:** Medio
-- **Criterio de Aceptacion:** Un ticket que termina en `HANDOFF_BLOCKED` posterior al trigger de requeue no genera relanzado automatico; un timeout o ausencia de actividad relevante sigue pudiendo relanzar Builder.
-- **Si falla:** Mantener el comportamiento actual de relanzado y diferir la discriminacion de `HANDOFF_BLOCKED` a un ticket posterior.
+- **Criterio de Aceptacion:** `--pre-handoff` deja el arbol listo para `--mark-ready`, devuelve exito idempotente cuando ya no hay cambios y el tag esta alineado, o falla con un error claro si el tag no puede crearse o si los hooks del commit fallan.
+- **Si falla:** Mantener el flujo manual actual y limitar el comando a un helper de diagnostico.
 
-### Fase 3: cobertura mecanica
+### Fase 2: cobertura mecanica
 - **Tipo:** TAREA AGENTE
-- **Archivos:** `tests/test_pre_handoff_guard.py`, `tests/test_supervisor.py`
+- **Archivos:** `tests/test_agent_controller.py`
 - **Accion:** Modificar
-- **Descripcion:** Cubrir dos escenarios: (1) `PROJECT.md` cambia pero el guard no debe bloquear; (2) un `HANDOFF_BLOCKED` posterior al trigger no debe disparar relanzado automatico, mientras que un caso de timeout/crash sigue relanzando. Los tests deben verificar tambien que el flujo valido sigue intacto.
+- **Descripcion:** Cubrir al menos cinco casos: camino feliz con commit + tag + arbol limpio, ausencia total de cambios con tag ya alineado e idempotencia, ausencia de cambios con tag faltante o desalineado donde solo se refresca el tag, fallo de hook/pre-commit propagando stderr, y fallo de verificacion final con arbol sucio despues de filtrar superficies vivas equivalentes a las del guard.
 - **Riesgo:** Medio
-- **Criterio de Aceptacion:** Los tests reproducen la tolerancia de `PROJECT.md` y la exclusion de relanzado tras `HANDOFF_BLOCKED`.
-- **Si falla:** Conservar el fix principal y limitar la cobertura a uno de los dos comportamientos.
+- **Criterio de Aceptacion:** Los tests verifican la secuencia atomica del helper y los mensajes de error clave.
+- **Si falla:** Conservar el helper basico y limitar la cobertura a la secuencia feliz y un caso de error.
 
 ## Files Likely Touched
-- `scripts/pre_handoff_guard.py`
-- `bus/supervisor.py`
-- `tests/test_pre_handoff_guard.py`
-- `tests/test_supervisor.py`
+- `.agent/agent_controller.py`
+- `tests/test_agent_controller.py`
 
 ## Calidad
-- `python scripts/run_pytest_safe.py tests/test_pre_handoff_guard.py tests/test_supervisor.py`
-- `uv run ruff check scripts/pre_handoff_guard.py bus/supervisor.py tests/test_pre_handoff_guard.py tests/test_supervisor.py`
+- `python scripts/run_pytest_safe.py tests/test_agent_controller.py`
+- `uv run ruff check .agent/agent_controller.py tests/test_agent_controller.py`
 - `python .agent/agent_controller.py --validate --json --force`
 
 ## Criterios de aceptacion
-- `PROJECT.md` se trata como superficie viva tolerada por el pre-handoff guard.
-- `HANDOFF_BLOCKED` posterior al trigger de requeue no provoca relanzado automatico del Builder.
-- `BUILDER_RELAUNCH_ATTEMPTED` sigue ocurriendo solo ante escenarios de crash/timeout o falta de evidencia de cierre.
-- Los tests cubren la superficie viva y la exclusion de relanzado.
+- `--pre-handoff` deja el Builder listo para `--mark-ready` con commit y checkpoint M3 alineados.
+- El comando usa `Files Likely Touched` como fuente de verdad para stagear.
+- El comando considera superficies vivas al verificar el arbol limpio al final.
+- El comando devuelve exito idempotente si no hay cambios de entrega y el checkpoint ya esta alineado.
+- El comando propaga el stderr real de fallos de `git commit` causados por hooks.
+- Los tests cubren el camino feliz, la idempotencia sin cambios y los fallos de preflight/cierre.
