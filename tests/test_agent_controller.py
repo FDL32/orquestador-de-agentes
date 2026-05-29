@@ -855,12 +855,17 @@ class TestMotorCodeOnlyGuard:
         test_argv = ["agent_controller.py", "--mark-ready", "--json"]
         monkeypatch.setattr(sys, "argv", test_argv)
 
-        # Patch _ensure_runtime_dirs and _get_event_bus to be safe
-        monkeypatch.setattr(agent_controller, "_ensure_runtime_dirs", lambda: None)
-        monkeypatch.setattr(agent_controller, "_get_event_bus", lambda: None)
+        ensure_mock = MagicMock(
+            side_effect=AssertionError("_ensure_runtime_dirs called")
+        )
+        bus_mock = MagicMock(side_effect=AssertionError("_get_event_bus called"))
+        monkeypatch.setattr(agent_controller, "_ensure_runtime_dirs", ensure_mock)
+        monkeypatch.setattr(agent_controller, "_get_event_bus", bus_mock)
 
         exit_code = agent_controller.main()
         assert exit_code == 1
+        ensure_mock.assert_not_called()
+        bus_mock.assert_not_called()
 
     def test_main_allows_non_mutating_flags(self, monkeypatch):
         """Motor code-only guard allows --validate even without AGENT_PROJECT_ROOT."""

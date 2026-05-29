@@ -3879,9 +3879,6 @@ def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
             project_root_value = sys.argv[idx + 1]
             os.environ["AGENT_PROJECT_ROOT"] = str(Path(project_root_value).resolve())
 
-    _ensure_runtime_dirs()
-    _get_event_bus()
-
     # WP-2026-176: Motor code-only guard. Block write operations when no
     # external workspace is configured (no AGENT_PROJECT_ROOT / --project-root).
     # Read-only operations (--validate, --json, --archive, etc.) are NOT blocked.
@@ -3911,6 +3908,9 @@ def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
             flush=True,
         )
         return 1
+
+    _ensure_runtime_dirs()
+    _get_event_bus()
 
     skip_gates = "--skip-gates" in sys.argv
     json_output = "--json" in sys.argv

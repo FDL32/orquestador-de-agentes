@@ -162,6 +162,7 @@ def test_launcher_external_controller_close_command() -> None:
         "resolvedMotorRoot\\.agent\\agent_controller.py --mark-ready --json --force --project-root"
         in content
     )
+    assert "--bootstrap-ticket --json --project-root $ProjectRoot" in content
 
 
 def test_launcher_skip_supervisor_wait_flag_exists() -> None:
