@@ -33,6 +33,15 @@
 
 Regla: el motor siempre se invoca con `AGENT_PROJECT_ROOT` apuntando al workspace activo (motor o destino). Sin esa variable, el motor usa el modo code-only y bloquea escrituras operativas.
 
+### Distincion critica: `.agent/collaboration/` del motor vs del workspace
+
+| Ubicacion | Rol | Contenido |
+|---|---|---|
+| `orquestador_de_agentes/.agent/collaboration/` | **Plantilla / referencia** | Archivos placeholder o en estado COMPLETED/IDLE. Sirven de molde para nuevos destinos. No contienen tickets activos del motor: el desarrollo del motor ocurre en el workspace del motor (`z_scripts/.agent/`). |
+| `<workspace>/.agent/collaboration/` | **Estado operativo activo** | `work_plan.md`, `execution_log.md`, `TURN.md`, `STATE.md`, `backlog.md` con el ticket real en curso. Aqui viven los planes y el estado canonico del proyecto activo. |
+
+**Nunca usar `orquestador_de_agentes/.agent/collaboration/` como workspace operativo.** Si el controller detecta escrituras operativas ahi sin `AGENT_PROJECT_ROOT`, el guard anti-drift las bloquea.
+
 ## Contrato de version y portabilidad
 
 - `pyproject.toml` define la version del paquete portable.
