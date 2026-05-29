@@ -11,7 +11,7 @@ A **domain-agnostic central motor** that automates work by making one agent gene
 | Role | Responsibility | Default backend |
 |---|---|---|
 | **Supervisor** | Generates plans, derives tickets, coordinates the cycle | Claude Code |
-| **Builder** | Implements tickets, runs gates, emits `BUILDER_EXIT` | OpenCode → Qwen 3.5 (`opencode-go/qwen3.5-plus`) |
+| **Builder** | Implements tickets, runs gates, emits `BUILDER_EXIT` | OpenCode → MiMo V2.5 (`opencode-go/mimo-v2.5`) |
 | **Manager** | Reviews Builder output with a deliverable-type-aware rubric; emits `APPROVE` / `CHANGES` | OpenCode → OpenAI (`openai/gpt-5.4-mini`, routed natively since WP-072) |
 
 Backends are pluggable per role in `.agent/config/agents.json` (`role_assignments` + `role_models`).
@@ -22,7 +22,7 @@ The author's working configuration on Windows:
 
 - **Supervisor**: Claude Code (chat-driven planning + terminal control)
 - **Manager**: OpenCode routed to OpenAI Codex / GPT (`openai/gpt-5.4-mini`)
-- **Builder**: OpenCode routed to Qwen 3.5 Plus via the [opencode.ai/go](https://opencode.ai/go) plan
+- **Builder**: OpenCode routed to MiMo V2.5 via the [opencode.ai/go](https://opencode.ai/go) plan
 - **Approximate cost**: ~50 EUR/month (Anthropic + opencode-go bundle)
 
 This is a **reference** setup, not a constraint. Swap any role for another backend by editing `agents.json`. The bus, state machine and review bridge are backend-agnostic.
