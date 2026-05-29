@@ -21,6 +21,7 @@
 # =============================================================================
 
 # Collaboration - superficies vivas (NO archivar)
+.agent/BACKUP_VERIFIED.md
 .agent/collaboration/work_plan.md
 .agent/collaboration/TURN.md
 .agent/collaboration/STATE.md
@@ -30,9 +31,16 @@
 .agent/collaboration/review_queue.md
 
 # Runtime - solo lo estructural, no transitorio
+.agent/.version_manifest.json
 .agent/runtime/events/events.jsonl
 .agent/runtime/memory/observations.jsonl
 .agent/runtime/memory/MEMORY.md
+
+# Contexto del workspace
+.agent/context/project-map.json
+
+# Configuracion del sistema
+.agent/config/hooks_config.json
 
 # Configuracion del proyecto destino
 .agent/config/agents.json
