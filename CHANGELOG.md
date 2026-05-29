@@ -1,3 +1,14 @@
+# 2026-05-29 - WP-2026-166 Canonical closeout: manager watchdog for stale READY_FOR_REVIEW
+
+### Added
+- `scripts/manager_review_bridge.py`: heartbeat `heartbeat_at` refreshed in watch mode so the supervisor can distinguish a live bridge from a stale one.
+- `bus/supervisor.py`: watchdog for stale `READY_FOR_REVIEW` relaunch with `MANAGER_STALE_TIMEOUT = 600`, watermark deduplication, and detached relaunch on Windows and POSIX.
+- `tests/test_supervisor.py`: cross-platform detach coverage, stale/fresh/no-op guards, and direct staleness edge cases.
+
+### Closed
+- `WP-2026-166`: implemented and closed canonically as the Manager watchdog for stale `READY_FOR_REVIEW` relaunch.
+
+---
 # 2026-05-28 - WP-2026-162 Canonical closeout: ticket prose validator automation
 
 ### Added
