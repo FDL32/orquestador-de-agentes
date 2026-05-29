@@ -1184,7 +1184,8 @@ if ($LaunchBridge) {
     $managerBackend = Get-BackendFromConfig -Role 'MANAGER'
     $managerExe = Resolve-BackendExecutable -BackendName $managerBackend -OverridePath $ManagerBackendPath
     $managerExeLiteral = ConvertTo-SingleQuotedLiteral $managerExe
-    Start-AgentWindow -Title 'Review Bridge' -Command "& $venvPythonLiteral $bridgeScriptLiteral --watch --backend-path $managerExeLiteral"
+    $projectRootLiteral = ConvertTo-SingleQuotedLiteral $ProjectRoot
+    Start-AgentWindow -Title 'Review Bridge' -Command "& $venvPythonLiteral $bridgeScriptLiteral --watch --backend-path $managerExeLiteral --project-root $projectRootLiteral"
     Write-Host "Review Bridge: lanzado"
 }
 
