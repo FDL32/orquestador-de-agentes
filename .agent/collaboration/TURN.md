@@ -1,6 +1,6 @@
 # TURNO ACTUAL
 
-**Ultima actualizacion:** 2026-05-29 14:28:57
+**Ultima actualizacion:** 2026-05-29 14:56:09
 
 ---
 
@@ -8,23 +8,23 @@
 
 | Campo | Valor |
 |-------|-------|
-| **ROL** | **MANAGER** |
-| **Plan ID** | N/A |
-| **Tipo** | IMPLEMENTATION |
-| **Accion** | CREATE_PLAN |
+| **ROL** | **BUILDER** |
+| **Plan ID** | **WP-2026-170** |
+| **Tipo** | **IMPLEMENTATION** |
+| **Accion** | **IMPLEMENT** |
 
 ---
 
 ## Instruccion
 
-> Ticket WP-2026-169 closed. Create new work_plan.md for next cycle.
+> Implementa WP-2026-170. Lee `.agent/collaboration/work_plan.md`, `.agent/collaboration/execution_log.md`, `.agent/collaboration/STATE.md` y `PROJECT.md` antes de tocar nada. No cambies el alcance.
 
 ---
 
 ## Archivos a Leer
 
 1. `.manager_rules` (Contexto del rol)
-2. `.agent/workflows/manager_workflow.md` (Flujo de trabajo)
+2. `.agent/workflows/builder_workflow.md` (Flujo de trabajo)
 
 ---
 
@@ -32,8 +32,8 @@
 
 | Archivo | Estado |
 |---------|--------|
-| work_plan.md | COMPLETED |
-| execution_log.md | COMPLETED |
+| work_plan.md | IN_PROGRESS |
+| execution_log.md | IN_PROGRESS |
 
 ---
 

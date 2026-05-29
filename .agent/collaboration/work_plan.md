@@ -1,76 +1,65 @@
-# Work Plan - WP-2026-169
+# Work Plan - WP-2026-170
 
 ## Metadata
-- **ID:** WP-2026-169
-- **Estado:** COMPLETED
-- **deliverable_type:** mixed
-- **Titulo:** Session close loop bridge - `--session-close` en agent_controller
+- **ID:** WP-2026-170
+- **Estado:** IN_PROGRESS
+- **deliverable_type:** code
+- **Titulo:** Fix ConcurrentStateError en supervisor/review bridge
 - **Asignado a:** Builder
 
 ## Objetivo
-Cerrar el loop de `session-close -> WP-B` exponiendo `--session-close` en `.agent/agent_controller.py` para invocar el orquestador de cierre, sincronizar las proyecciones canonicas post-cierre y dejar el siguiente ciclo listo sin pasos manuales entre el cierre y la creacion del nuevo plan.
+Eliminar la reconciliacion de estado mutable desde `_tick()` del review bridge para evitar la carrera OCC con `supervisor_state.json`, manteniendo la deteccion de `READY_FOR_REVIEW`.
 
 ## Contexto
-- WP-2026-168 ya entrego `scripts/session_closeout.py` como orquestador standalone.
-- Hoy el cierre canonico sigue requiriendo lanzar el script aparte y luego alinear proyecciones a mano.
-- El nuevo entrypoint debe ser el unico punto de entrada canonico para cierre de sesion desde el controlador.
-- El wrapper debe preservar la logica existente del orquestador y no duplicar pasos.
-- La integracion debe mantener la semantica de `--dry-run`, `--skip-slow` y la seleccion de tickets.
-- El cierre debe dejar el bus y las proyecciones listos para el siguiente ciclo del Manager.
+- `scripts/manager_review_bridge.py` llama a `supervisor.reconcile_state()` dentro del tick del bridge.
+- `bus/supervisor.py` tambien escribe `supervisor_state.json`, asi que ambos procesos compiten por la misma superficie de estado.
+- El bridge ya obtiene el ticket activo y el estado de trabajo desde el bus, por lo que no necesita reconciliar el supervisor en cada iteracion.
+- El fix debe ser quirurgico: solo eliminar la llamada en `_tick()` y conservar las llamadas de bootstrap en `main()`.
 
 ## Decision Arquitectonica
-- `.agent/agent_controller.py` anade un flag `--session-close`.
-- El handler delega en `scripts/session_closeout.py` y reusa sus flags `--project-root`, `--dry-run`, `--skip-slow`, `--ticket` y `--tickets`.
-- Tras un cierre real, el controlador sincroniza la proyeccion de estado en la misma ruta de ejecucion para dejar `STATE.md` y las superficies canonicas listas para el siguiente ciclo.
-- La salida del comando debe ser estructurada y no esconder errores del orquestador.
-- No se reimplementa la pipeline de cierre dentro del controlador.
-- El entrypoint debe permanecer idempotente si el cierre ya fue completado: si `STATE.md` ya refleja un estado terminal (`COMPLETED`) y no se pasa `--force`, el handler imprime aviso y sale con exit 0 sin relanzar el cierre.
+- `scripts/manager_review_bridge.py` deja de llamar `supervisor.reconcile_state()` dentro de `_tick()`.
+- Las llamadas de inicializacion en `main()` antes de `--watch` y `--once` permanecen intactas.
+- No se introduce un helper read-only nuevo: `_ticket_state()` ya obtiene lo necesario del bus.
+- No se toca el algoritmo OCC de `write_artifact_atomic()` ni se amplian retries.
 
 ## Non-goals
-- No rehacer `scripts/session_closeout.py`.
-- No cambiar la logica de archivado o memoria ya validada.
-- No introducir dependencias nuevas.
-- No alterar la cascada de `--manager-approve`.
-- No cambiar el modelo de turno de Manager/Builder.
-- No forzar un nuevo ticket automatico si el Manager no ha creado uno.
+- No cambiar el contrato de estados del bus.
+- No modificar el algoritmo de concurrencia de `bus/supervisor.py`.
+- No ocultar el problema aumentando retries o timeouts.
+- No introducir nuevas dependencias.
 
 ## Fases
 
-### Fase 1: CLI y delegacion canonica
+### Fase 1: fix quirurgico del bridge
 - **Tipo:** TAREA AGENTE
-- **Archivos:** `.agent/agent_controller.py`, `tests/test_agent_controller.py`
+- **Archivos:** `scripts/manager_review_bridge.py`
 - **Accion:** Modificar
-- **Descripcion:** Anadir `--session-close` al parser y hacer que el handler invoque `scripts/session_closeout.py` con los flags soportados. El comando debe respetar `--dry-run`, `--skip-slow`, `--ticket` y `--tickets`, y devolver el exit code del orquestador sin envolver errores. Cuando no sea `--dry-run`, el handler debe hacer la sincronizacion de estado post-cierre en la misma ruta de ejecucion.
+- **Descripcion:** Eliminar la llamada a `supervisor.reconcile_state()` de `_tick()` y conservar las llamadas de bootstrap en `main()`.
 - **Riesgo:** Medio
-- **Criterio de Aceptacion:** `--session-close` existe, invoca el orquestador correcto, no duplica la logica de cierre y sincroniza el estado real despues del cierre.
-- **Si falla:** Mantener el cierre manual y dejar el wrapper para un ticket posterior.
+- **Criterio de Aceptacion:** `_tick()` no escribe `supervisor_state.json` y el bridge sigue detectando `READY_FOR_REVIEW`.
+- **Si falla:** Restaurar la llamada solo en `main()` y dejar el tick sin reconciliacion.
 
-### Fase 2: docs y tests del wrapper
+### Fase 2: tests mecanicos de concurrencia
 - **Tipo:** TAREA AGENTE
-- **Archivos:** `tests/test_agent_controller.py`, `PROJECT.md`, `README.md`, `QUICKSTART.md`, `CHANGELOG.md`
+- **Archivos:** `tests/test_manager_review_bridge.py`, `tests/test_supervisor.py`
 - **Accion:** Modificar
-- **Descripcion:** Cubrir el nuevo flag en `tests/test_agent_controller.py` y actualizar la documentacion para que `--session-close` sea visible como ruta canonica. En `README.md`, actualizar la seccion `Common commands` y la ruta de `Typical flow` para mencionar el cierre desde el controlador. En `QUICKSTART.md`, actualizar la seccion `6. Comandos diarios` para incluir `python .agent/agent_controller.py --session-close --project-root .` junto al ciclo diario. En `PROJECT.md`, reflejar el nuevo ciclo activo. En `CHANGELOG.md`, anadir la entrada del puente de cierre.
-- **Riesgo:** Bajo
-- **Criterio de Aceptacion:** La documentacion apunta al nuevo entrypoint, y los tests cubren delegacion, dry-run e idempotencia terminal.
-- **Si falla:** Conservar el CLI y posponer solo la actualizacion documental.
+- **Descripcion:** Cubrir tres casos: `_tick()` no llama `reconcile_state()`, `_tick()` sigue detectando `READY_FOR_REVIEW` y el flujo mockeado no levanta `ConcurrentStateError`.
+- **Riesgo:** Medio
+- **Criterio de Aceptacion:** Los tests verifican la ausencia de llamada al reconcile y la preservacion de la deteccion de estado.
+- **Si falla:** Mantener el fix y ajustar solo la cobertura de tests.
 
 ## Files Likely Touched
-- `.agent/agent_controller.py`
-- `tests/test_agent_controller.py`
-- `PROJECT.md`
-- `README.md`
-- `QUICKSTART.md`
-- `CHANGELOG.md`
+- `scripts/manager_review_bridge.py`
+- `tests/test_manager_review_bridge.py`
+- `tests/test_supervisor.py`
 
 ## Calidad
-- `python scripts/run_pytest_safe.py tests/test_agent_controller.py`
-- `uv run ruff check .agent/agent_controller.py tests/test_agent_controller.py`
-- `python .agent/agent_controller.py --session-close --project-root . --dry-run`
+- `python scripts/run_pytest_safe.py tests/test_manager_review_bridge.py tests/test_supervisor.py`
+- `uv run ruff check scripts/manager_review_bridge.py tests/test_manager_review_bridge.py tests/test_supervisor.py`
 - `python .agent/agent_controller.py --validate --json --force`
 
 ## Criterios de aceptacion
-- `--session-close` existe en `agent_controller.py` y delega en `scripts/session_closeout.py`.
-- El handler sincroniza el estado real solo cuando el cierre no es dry-run.
-- Si `STATE.md` ya es terminal y no se pasa `--force`, el handler sale con exit 0 sin relanzar el cierre.
-- La documentacion apunta al nuevo entrypoint como ruta canonica.
-- `tests/test_agent_controller.py` cubre delegacion, dry-run e idempotencia.
+- El bridge y el supervisor pueden correr simultaneamente sin `ConcurrentStateError`.
+- El bridge sigue detectando `READY_FOR_REVIEW`.
+- `_tick()` no llama `supervisor.reconcile_state()`.
+- Los tests mecanicos cubren la ausencia de reconcile y la deteccion correcta del estado.
