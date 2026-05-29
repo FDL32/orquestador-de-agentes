@@ -4,6 +4,7 @@ import sys
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
+import pytest
 from bus.state_machine import StateMachine, TicketState
 from bus.supervisor import SequentialTicketSupervisor, SupervisorState
 
@@ -4316,13 +4317,33 @@ def test_watchdog_skips_when_watermark_covers_sequence(tmp_path, monkeypatch):
     )
 
 
-def test_watchdog_popen_detach_flags(tmp_path, monkeypatch):
-    """Popen receives the correct OS-level detach flag for the current platform.
+@pytest.mark.parametrize(
+    "fake_platform,expected_key,absent_key",
+    [
+        ("win32", "creationflags", "start_new_session"),
+        ("linux", "start_new_session", "creationflags"),
+    ],
+)
+def test_watchdog_popen_detach_flags(
+    tmp_path, monkeypatch, fake_platform, expected_key, absent_key
+):
+    """Popen receives the correct OS-level detach kwarg for each platform.
 
-    On Windows: creationflags must include DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP.
-    On POSIX: start_new_session must be True (and creationflags must be absent).
+    Parametrized over win32 and linux so both branches are exercised on any CI host.
+    Windows-only subprocess constants are stubbed when running on POSIX.
     """
     import subprocess as _subprocess
+    from datetime import timedelta
+
+    # Windows-only constants may be absent on POSIX; provide stubs so the
+    # production code can evaluate the creationflags bitmask expression.
+    if not hasattr(_subprocess, "DETACHED_PROCESS"):
+        monkeypatch.setattr(_subprocess, "DETACHED_PROCESS", 8)
+    if not hasattr(_subprocess, "CREATE_NEW_PROCESS_GROUP"):
+        monkeypatch.setattr(_subprocess, "CREATE_NEW_PROCESS_GROUP", 512)
+
+    # Force the platform seen by supervisor's _bootstrap_watchdog_manager_if_needed.
+    monkeypatch.setattr(sys, "platform", fake_platform)
 
     supervisor = _make_watchdog_supervisor(tmp_path)
     ticket_id = "WP-2026-166"
@@ -4338,8 +4359,6 @@ def test_watchdog_popen_detach_flags(tmp_path, monkeypatch):
     state.active_ticket = ticket_id
     state.last_manager_stale_trigger_sequence = 0
     supervisor.save_state(state)
-
-    from datetime import timedelta
 
     old_hb = (datetime.now(tz=timezone.utc) - timedelta(seconds=700)).isoformat()
     (supervisor.runtime_dir / "manager_bridge_state.json").write_text(
@@ -4366,13 +4385,76 @@ def test_watchdog_popen_detach_flags(tmp_path, monkeypatch):
     assert len(captured_kwargs) == 1, "Popen must be called exactly once"
     kw = captured_kwargs[0]
 
-    if sys.platform == "win32":
-        assert "creationflags" in kw, "Windows must pass creationflags"
+    assert expected_key in kw, f"{fake_platform}: must pass {expected_key}"
+    assert absent_key not in kw, f"{fake_platform}: must NOT pass {absent_key}"
+
+    if fake_platform == "win32":
         assert kw["creationflags"] & _subprocess.DETACHED_PROCESS
         assert kw["creationflags"] & _subprocess.CREATE_NEW_PROCESS_GROUP
-        assert "start_new_session" not in kw
     else:
-        assert kw.get("start_new_session") is True, (
-            "POSIX must pass start_new_session=True"
-        )
-        assert "creationflags" not in kw
+        assert kw["start_new_session"] is True
+
+
+def test_watchdog_skips_when_ticket_not_ready_for_review(tmp_path, monkeypatch):
+    """Stale bridge + ticket in IN_PROGRESS → watchdog must be a no-op."""
+    import subprocess as _subprocess
+    from datetime import timedelta
+
+    supervisor = _make_watchdog_supervisor(tmp_path)
+    ticket_id = "WP-2026-166"
+
+    supervisor.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="BUILDER",
+        payload={"from_state": "IN_PROGRESS", "to_state": "READY_FOR_REVIEW"},
+    )
+
+    state = supervisor.load_state()
+    state.active_ticket = ticket_id
+    state.last_manager_stale_trigger_sequence = 0
+    supervisor.save_state(state)
+
+    old_hb = (datetime.now(tz=timezone.utc) - timedelta(seconds=700)).isoformat()
+    (supervisor.runtime_dir / "manager_bridge_state.json").write_text(
+        f'{{"heartbeat_at": "{old_hb}", "last_processed_sequence": 0}}',
+        encoding="utf-8",
+    )
+
+    popen_calls: list = []
+    monkeypatch.setattr(_subprocess, "Popen", lambda cmd, **kw: popen_calls.append(cmd))
+    # Ticket is IN_PROGRESS, not READY_FOR_REVIEW — watchdog guard must block here.
+    monkeypatch.setattr(
+        supervisor, "_current_state", lambda tid: TicketState.IN_PROGRESS
+    )
+
+    state = supervisor.load_state()
+    supervisor._bootstrap_watchdog_manager_if_needed(state, ticket_id)
+
+    assert popen_calls == [], "Popen must NOT fire when ticket is not READY_FOR_REVIEW"
+
+
+def test_is_manager_bridge_stale_no_file(tmp_path):
+    """Absent bridge state file → stale (True)."""
+    supervisor = _make_watchdog_supervisor(tmp_path)
+    assert supervisor._is_manager_bridge_stale() is True
+
+
+def test_is_manager_bridge_stale_empty_heartbeat(tmp_path):
+    """Bridge file present but heartbeat_at is empty string → stale (True)."""
+    supervisor = _make_watchdog_supervisor(tmp_path)
+    (supervisor.runtime_dir / "manager_bridge_state.json").write_text(
+        '{"heartbeat_at": "", "last_processed_sequence": 0}',
+        encoding="utf-8",
+    )
+    assert supervisor._is_manager_bridge_stale() is True
+
+
+def test_is_manager_bridge_stale_malformed_heartbeat(tmp_path):
+    """Bridge file present but heartbeat_at is not a valid ISO timestamp → stale (True)."""
+    supervisor = _make_watchdog_supervisor(tmp_path)
+    (supervisor.runtime_dir / "manager_bridge_state.json").write_text(
+        '{"heartbeat_at": "not-a-valid-timestamp", "last_processed_sequence": 0}',
+        encoding="utf-8",
+    )
+    assert supervisor._is_manager_bridge_stale() is True
