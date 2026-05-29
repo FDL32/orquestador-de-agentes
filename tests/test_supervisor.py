@@ -4338,9 +4338,9 @@ def test_watchdog_popen_detach_flags(
     # Windows-only constants may be absent on POSIX; provide stubs so the
     # production code can evaluate the creationflags bitmask expression.
     if not hasattr(_subprocess, "DETACHED_PROCESS"):
-        monkeypatch.setattr(_subprocess, "DETACHED_PROCESS", 8)
+        monkeypatch.setattr(_subprocess, "DETACHED_PROCESS", 8, raising=False)
     if not hasattr(_subprocess, "CREATE_NEW_PROCESS_GROUP"):
-        monkeypatch.setattr(_subprocess, "CREATE_NEW_PROCESS_GROUP", 512)
+        monkeypatch.setattr(_subprocess, "CREATE_NEW_PROCESS_GROUP", 512, raising=False)
 
     # Force the platform seen by supervisor's _bootstrap_watchdog_manager_if_needed.
     monkeypatch.setattr(sys, "platform", fake_platform)
