@@ -1037,7 +1037,9 @@ if (-not $ResumeBuilder) {
     }
 
     # WP-2026-118: Preflight de imports criticos antes de abrir ventanas
-    Invoke-ImportPreflight -ProjectRoot $ProjectRoot -MotorRoot $resolvedMotorRoot
+    $preflightScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $PSCommandPath }
+    $preflightMotorRoot = (Resolve-Path (Join-Path $preflightScriptDir '..')).Path
+    Invoke-ImportPreflight -ProjectRoot $ProjectRoot -MotorRoot $preflightMotorRoot
 } else {
     # WP-2026-160: -ResumeBuilder debe garantizar un supervisor fresco
     Write-Host "[launcher] Resume mode: waiting for stale supervisor exit..."
