@@ -4458,3 +4458,357 @@ def test_is_manager_bridge_stale_malformed_heartbeat(tmp_path):
         encoding="utf-8",
     )
     assert supervisor._is_manager_bridge_stale() is True
+
+
+# =============================================================================
+# Tests WP-2026-172: HANDOFF_BLOCKED suppression + PROJECT.md live surface
+# =============================================================================
+
+
+def test_run_once_suppresses_relaunch_on_handoff_blocked(tmp_path, monkeypatch):
+    """run_once must suppress relaunch when HANDOFF_BLOCKED exists after trigger.
+
+    WP-2026-172: HANDOFF_BLOCKED after requeue trigger → RELAUNCH_SUPPRESSED emitted,
+    no BUILDER_RELAUNCH_ATTEMPTED, no requeue_ticket call.
+    """
+    from bus.supervisor import SequentialTicketSupervisor, SupervisorState
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+    _write_work_plan(collaboration_dir / "work_plan.md")
+    _write_execution_log(collaboration_dir / "execution_log.md")
+    _write_turn(
+        collaboration_dir / "TURN.md",
+        role="BUILDER",
+        plan_id="WP-2026-172",
+        action="IMPLEMENT",
+        plan_status="APPROVED",
+        log_status="IN_PROGRESS",
+    )
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+    supervisor.save_state(
+        SupervisorState(
+            active_ticket="WP-2026-172",
+            loop_current_round=1,
+            last_requeue_trigger_sequence=0,
+        )
+    )
+
+    # Emit CHANGES trigger event
+    supervisor.event_bus.emit(
+        "REVIEW_DECISION",
+        ticket_id="WP-2026-172",
+        actor="MANAGER",
+        payload={"decision": "CHANGES", "feedback": "needs work"},
+    )
+
+    # Emit HANDOFF_BLOCKED after the trigger (higher sequence)
+    supervisor.event_bus.emit(
+        "HANDOFF_BLOCKED",
+        ticket_id="WP-2026-172",
+        actor="BUILDER",
+        payload={"reason": "pre_handoff_guard_failed", "dirty_tree": True},
+    )
+
+    # Track calls
+    relaunch_calls: list[str] = []
+    monkeypatch.setattr(
+        supervisor,
+        "_relaunch_builder",
+        lambda ticket_id: relaunch_calls.append(ticket_id) or True,
+    )
+
+    result = supervisor.run_once()
+
+    # Should process events but NOT relaunch
+    assert result is True  # Event activity occurred
+    assert relaunch_calls == [], (
+        "run_once must NOT relaunch when HANDOFF_BLOCKED exists after trigger"
+    )
+
+    # Verify RELAUNCH_SUPPRESSED was emitted
+    suppressed = [
+        e
+        for e in supervisor.event_bus.read_events()
+        if e.event_type == "RELAUNCH_SUPPRESSED"
+    ]
+    assert len(suppressed) == 1, "Exactly one RELAUNCH_SUPPRESSED must be emitted"
+    payload = suppressed[0].payload
+    assert payload["reason"] == "handoff_blocked"
+    assert payload["trigger_sequence"] > 0
+    assert payload["blocking_sequence"] > payload["trigger_sequence"]
+
+    # Verify no BUILDER_RELAUNCH_ATTEMPTED was emitted
+    launch_attempts = [
+        e
+        for e in supervisor.event_bus.read_events()
+        if e.event_type == "BUILDER_RELAUNCH_ATTEMPTED"
+    ]
+    assert len(launch_attempts) == 0, (
+        "BUILDER_RELAUNCH_ATTEMPTED must NOT be emitted when suppressed"
+    )
+
+    # Watermark should NOT be updated (no requeue happened)
+    state = supervisor.load_state()
+    assert state.last_requeue_trigger_sequence == 0, (
+        "watermark must stay at 0 when relaunch is suppressed"
+    )
+    assert state.loop_current_round == 1, "round must not increment when suppressed"
+
+
+def test_run_once_relaunches_on_timeout_without_handoff_blocked(tmp_path, monkeypatch):
+    """run_once must still relaunch on timeout/crash when no HANDOFF_BLOCKED exists.
+
+    WP-2026-172: crash/timeout scenario without HANDOFF_BLOCKED must preserve
+    existing requeue behavior.
+    """
+    from bus.supervisor import SequentialTicketSupervisor, SupervisorState
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+    _write_work_plan(collaboration_dir / "work_plan.md")
+    _write_execution_log(collaboration_dir / "execution_log.md")
+    _write_turn(
+        collaboration_dir / "TURN.md",
+        role="BUILDER",
+        plan_id="WP-2026-172",
+        action="IMPLEMENT",
+        plan_status="APPROVED",
+        log_status="IN_PROGRESS",
+    )
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+    supervisor.save_state(
+        SupervisorState(
+            active_ticket="WP-2026-172",
+            loop_current_round=1,
+            last_requeue_trigger_sequence=0,
+        )
+    )
+
+    # Emit CHANGES trigger (no HANDOFF_BLOCKED after it)
+    supervisor.event_bus.emit(
+        "REVIEW_DECISION",
+        ticket_id="WP-2026-172",
+        actor="MANAGER",
+        payload={"decision": "CHANGES", "feedback": "needs work"},
+    )
+
+    relaunch_calls: list[str] = []
+    monkeypatch.setattr(
+        supervisor,
+        "_relaunch_builder",
+        lambda ticket_id: relaunch_calls.append(ticket_id) or True,
+    )
+
+    result = supervisor.run_once()
+
+    # Must still trigger requeue (existing behavior preserved)
+    assert result is True
+    assert relaunch_calls == ["WP-2026-172"], (
+        "run_once must still relaunch when no HANDOFF_BLOCKED exists"
+    )
+
+    # Verify NO RELAUNCH_SUPPRESSED was emitted
+    suppressed = [
+        e
+        for e in supervisor.event_bus.read_events()
+        if e.event_type == "RELAUNCH_SUPPRESSED"
+    ]
+    assert len(suppressed) == 0, (
+        "RELAUNCH_SUPPRESSED must NOT be emitted in normal crash/timeout scenario"
+    )
+
+    # Watermark must be updated after successful requeue
+    state = supervisor.load_state()
+    assert state.last_requeue_trigger_sequence > 0, (
+        "watermark must update after successful requeue"
+    )
+    assert state.loop_current_round == 2, "round must increment on requeue"
+
+
+def test_bootstrap_requeue_suppresses_on_handoff_blocked(tmp_path, monkeypatch):
+    """_bootstrap_requeue_if_needed must suppress relaunch when HANDOFF_BLOCKED
+    exists after the trigger sequence.
+
+    WP-2026-172: Bootstrap path also checks HANDOFF_BLOCKED before requeueing.
+    """
+    from bus.supervisor import SequentialTicketSupervisor, SupervisorState
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    ticket_id = "WP-2026-172"
+
+    # Emit initial start
+    supervisor.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="SUPERVISOR",
+        payload={"from_state": "N/A", "to_state": "IN_PROGRESS", "reason": "Start"},
+    )
+    # Emit CHANGES trigger
+    supervisor.event_bus.emit(
+        "REVIEW_DECISION",
+        ticket_id=ticket_id,
+        actor="MANAGER",
+        payload={"decision": "changes", "feedback": "Fix it"},
+    )
+    # Emit HANDOFF_BLOCKED after the trigger (higher sequence)
+    supervisor.event_bus.emit(
+        "HANDOFF_BLOCKED",
+        ticket_id=ticket_id,
+        actor="BUILDER",
+        payload={"reason": "pre_handoff_guard_failed", "dirty_tree": True},
+    )
+
+    all_events = supervisor.event_bus.read_events()
+    latest_seq = all_events[-1].sequence_number
+
+    # Set up state as if bootstrap reconciled sequence already
+    supervisor.save_state(
+        SupervisorState(
+            active_ticket=ticket_id,
+            loop_current_round=1,
+            last_processed_sequence=latest_seq,
+            last_requeue_trigger_sequence=0,
+        )
+    )
+
+    # Mock _builder_alive to return False (Builder not alive, would normally proceed)
+    monkeypatch.setattr(supervisor, "_builder_alive", lambda: False)
+
+    relaunch_calls: list[str] = []
+    monkeypatch.setattr(
+        supervisor,
+        "_relaunch_builder",
+        lambda t: relaunch_calls.append(t) or True,
+    )
+
+    # Run bootstrap requeue check directly
+    state = supervisor.load_state()
+    supervisor._bootstrap_requeue_if_needed(state, ticket_id)
+
+    # Must NOT relaunch because HANDOFF_BLOCKED exists after trigger
+    assert relaunch_calls == [], (
+        "bootstrap must NOT relaunch when HANDOFF_BLOCKED exists after trigger"
+    )
+
+    # Verify RELAUNCH_SUPPRESSED was emitted
+    suppressed = [
+        e
+        for e in supervisor.event_bus.read_events()
+        if e.event_type == "RELAUNCH_SUPPRESSED"
+    ]
+    assert len(suppressed) == 1, "Exactly one RELAUNCH_SUPPRESSED must be emitted"
+    payload = suppressed[0].payload
+    assert payload["reason"] == "handoff_blocked"
+    assert payload["trigger_sequence"] > 0
+    assert payload["blocking_sequence"] > payload["trigger_sequence"]
+
+    # Watermark must NOT be updated
+    state_after = supervisor.load_state()
+    assert state_after.last_requeue_trigger_sequence == 0, (
+        "watermark must not be updated when relaunch is suppressed in bootstrap"
+    )
+
+
+def test_has_handoff_blocked_after_sequence_returns_zero_when_none(tmp_path):
+    """_has_handoff_blocked_after_sequence returns 0 when no HANDOFF_BLOCKED exists."""
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    result = supervisor._has_handoff_blocked_after_sequence("WP-2026-172", 0)
+    assert result == 0
+
+
+def test_has_handoff_blocked_after_sequence_finds_blocking(tmp_path):
+    """_has_handoff_blocked_after_sequence returns highest blocking seq when present."""
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    ticket_id = "WP-2026-172"
+
+    # Emit normal events at seq 1
+    supervisor.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="SUPERVISOR",
+        payload={"from_state": "N/A", "to_state": "IN_PROGRESS"},
+    )
+    # Emit HANDOFF_BLOCKED at seq 2 (after trigger at seq 1)
+    supervisor.event_bus.emit(
+        "HANDOFF_BLOCKED",
+        ticket_id=ticket_id,
+        actor="BUILDER",
+        payload={"reason": "blocked"},
+    )
+    # Emit another HANDOFF_BLOCKED at seq 3
+    supervisor.event_bus.emit(
+        "HANDOFF_BLOCKED",
+        ticket_id=ticket_id,
+        actor="BUILDER",
+        payload={"reason": "blocked again"},
+    )
+
+    # Check with trigger at seq 1: should find seq 3 (highest)
+    result = supervisor._has_handoff_blocked_after_sequence(ticket_id, 1)
+    assert result == 3, "Should return highest HANDOFF_BLOCKED sequence > trigger"
+
+    # Check with trigger at seq 2: should find seq 3
+    result = supervisor._has_handoff_blocked_after_sequence(ticket_id, 2)
+    assert result == 3, "Should find HANDOFF_BLOCKED at seq 3"
+
+    # Check with trigger at seq 3: should find 0 (none after)
+    result = supervisor._has_handoff_blocked_after_sequence(ticket_id, 3)
+    assert result == 0, "Should return 0 when no HANDOFF_BLOCKED after trigger"
+
+    # Check with trigger at seq 0: should find seq 3
+    result = supervisor._has_handoff_blocked_after_sequence(ticket_id, 0)
+    assert result == 3, "Should find highest HANDOFF_BLOCKED"

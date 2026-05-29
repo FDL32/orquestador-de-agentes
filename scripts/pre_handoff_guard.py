@@ -27,6 +27,9 @@ from pathlib import Path
 
 # Superficies vivas del runtime que NO deben generar falsos positivos
 # Incluye archivos individuales y directorios completos
+# PROJECT.md es superficie viva tolerada (WP-2026-172): se actualiza como
+# parte del ciclo operativo y no debe bloquear --mark-ready como dirty_tree
+# cuando sea la unica diferencia relevante.
 LIVE_SURFACES_REL = {
     ".agent/collaboration/TURN.md",
     ".agent/collaboration/STATE.md",
@@ -45,6 +48,7 @@ LIVE_SURFACES_REL = {
     ".agent/runtime/events/",
     ".agent/runtime/approvals/",
     ".agent/context/project-map.json",
+    "PROJECT.md",
 }
 
 # Patrones glob de archivos excluidos del workspace (AGENTS.md: Excluidos del workspace)
