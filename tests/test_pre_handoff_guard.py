@@ -293,6 +293,62 @@ class TestPreHandoffGuard:
         assert output["valid"] is True
         assert output["dirty_tree"] is False
 
+    def test_guard_ignores_session_close_report(self, tmp_path: Path) -> None:
+        """Guard should ignore the runtime session close report."""
+        repo = tmp_path / "repo"
+        init_git_repo(repo)
+
+        create_checkpoint_tag(repo, "checkpoint/review-WP-2026-167")
+
+        collab_dir = repo / ".agent" / "collaboration"
+        collab_dir.mkdir(parents=True, exist_ok=True)
+        work_plan = collab_dir / "work_plan.md"
+        work_plan.write_text(
+            "# Work Plan\n\n## Files Likely Touched\n- `src/module.py`\n"
+        )
+
+        report_dir = repo / ".agent" / "runtime" / "memory"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        (report_dir / "session_close_report.md").write_text("# Session Close Report")
+
+        subprocess.run(
+            ["git", "add", ".agent"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "Add agent scaffolding"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+
+        (report_dir / "session_close_report.md").write_text(
+            "# Session Close Report\n\n**Generated:** 2026-05-29 12:40:00 UTC\n",
+            encoding="utf-8",
+        )
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT_PATH),
+                "--project-root",
+                str(repo),
+                "--ticket-id",
+                "WP-2026-167",
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=repo,
+        )
+
+        assert result.returncode == 0
+        output = json.loads(result.stdout)
+        assert output["valid"] is True
+        assert output["dirty_tree"] is False
+
     def test_guard_reports_scope_discrepancy_non_blocking(self, tmp_path: Path) -> None:
         """Guard should report scope discrepancy in addition to blocking dirty tree."""
         repo = tmp_path / "repo"

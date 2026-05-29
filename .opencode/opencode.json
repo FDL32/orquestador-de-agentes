@@ -1,6 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "default_agent": "builder",
-  "model": "opencode-go/mimo-v2.5",
+  "model": "opencode-go/deepseek-v4-flash",
   "share": "manual"
 }

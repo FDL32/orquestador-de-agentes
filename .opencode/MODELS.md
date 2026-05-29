@@ -8,7 +8,7 @@
 
 | Role | Model ID (agents.json) | CLI --model value | Source |
 |------|------------------------|-------------------|--------|
-| Builder | `opencode-go/mimo-v2.5` | `mimo-v2.5` (prefix stripped) | `.opencode/opencode.json` |
+| Builder | `opencode-go/deepseek-v4-flash` | `deepseek-v4-flash` (prefix stripped) | `.opencode/opencode.json` |
 | Manager | `openai/gpt-5.4-mini` | `gpt-5.4-mini` (prefix stripped) | `.agent/config/agents.json` `role_models.MANAGER` |
 
 The `opencode-go/*` and `openai/*` prefixes in agents.json are catalog namespace IDs.
@@ -16,8 +16,8 @@ The `opencode-go/*` and `openai/*` prefixes in agents.json are catalog namespace
 The CLI accepts bare model names; provider-qualified IDs like `github-copilot/*` route
 to a separate auth endpoint that requires OAuth device-flow tokens, not the PAT in auth.json.
 
-The display name "MiMo-V2.5" is not a valid CLI model ID. Use `opencode-go/mimo-v2.5`
-only in agents.json as the catalog reference; the CLI receives `mimo-v2.5`.
+The display name "DeepSeek V4 Flash" is not a valid CLI model ID. Use `opencode-go/deepseek-v4-flash`
+only in agents.json as the catalog reference; the CLI receives `deepseek-v4-flash`.
 
 ## Launcher Integration (WP-2026-067)
 
@@ -43,7 +43,7 @@ opencode run "<msg>" --agent builder --model <model> --dir <root> -f <canonicals
 **Model selection:**
 - Read from `.opencode/opencode.json` (`model` field)
 - Never hardcoded in the launcher
-- Current default: `opencode-go/mimo-v2.5`
+- Current default: `opencode-go/deepseek-v4-flash`
 
 This eliminates the manual paste step that was required in WP-2026-066 and earlier.
 
@@ -91,7 +91,7 @@ Server-side limits per credential, captured 2026-05-15. The Builder hits 429 / h
 | GLM-5 | 1,150 | 2,880 | 5,750 |
 | Kimi K2.5 | 1,850 | 4,630 | 9,250 |
 | Kimi K2.6 | 1,150 | 2,880 | 5,750 |
-| **MiMo-V2.5** (current Builder, ≤256K) | **2,150** | **5,450** | **10,900** |
+| **DeepSeek V4 Flash** (current Builder, ≤256K) | **31,650** | **79,050** | **158,150** |
 | MiMo-V2.5-Pro | 1,290 | 3,225 | 6,450 |
 | MiniMax M2.7 | 3,400 | 8,500 | 17,000 |
 | MiniMax M2.5 | 6,300 | 15,900 | 31,800 |
@@ -105,6 +105,6 @@ Free tier (`opencode/*`) limits not documented here.
 ## Notes
 
 - The two namespaces are separate: `opencode/*` is the free tier, `opencode-go/*` is the paid tier. They are not interchangeable.
-- "MiMo-V2.5" (paid) lives only under `opencode-go/`. Chosen as Builder default for cost efficiency (~5% cheaper than Qwen3.5 Plus with comparable Python capability).
+- "DeepSeek V4 Flash" (paid) lives only under `opencode-go/`. Chosen as Builder default for higher throughput on coding-heavy tickets.
 - This catalog can change between CLI versions. Re-run `opencode models` after upgrading OpenCode.
 - Qwen3.5 Plus has the most generous quota of the high-tier models — chosen as Builder default partly for that reason.
