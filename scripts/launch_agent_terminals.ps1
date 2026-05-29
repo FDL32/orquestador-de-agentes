@@ -661,13 +661,19 @@ function Assert-StartupAlignment {
 }
 
 function Invoke-ImportPreflight {
-    param([Parameter(Mandatory)] [string]$ProjectRoot)
+    param(
+        [Parameter(Mandatory)] [string]$ProjectRoot,
+        [string]$MotorRoot = ""
+    )
 
     # WP-2026-118: Preflight ligero de imports criticos antes de abrir ventanas.
     # Solo valida que los modulos del bus y agent_controller importen sin error.
     # No ejecuta gates pesadas (ruff/pytest) en el arranque.
+    # WP-2026-176: Con workspace externo, el codigo del motor esta en MotorRoot,
+    # no en ProjectRoot. Se usa MotorRoot para imports y venv cuando esta disponible.
 
-    $venvPython = Resolve-VenvPython -Root $ProjectRoot
+    $codeRoot = if ($MotorRoot -ne "" -and (Test-Path -LiteralPath $MotorRoot)) { $MotorRoot } else { $ProjectRoot }
+    $venvPython = Resolve-VenvPython -Root $codeRoot
     $criticalModules = @(
         'bus.event_bus',
         'bus.review_bridge',
@@ -676,7 +682,7 @@ function Invoke-ImportPreflight {
 
     $failedImports = @()
     foreach ($module in $criticalModules) {
-        $result = & $venvPython -c "import sys; sys.path.insert(0, r'$ProjectRoot\.agent'); sys.path.insert(0, r'$ProjectRoot'); __import__('$module')" 2>&1
+        $result = & $venvPython -c "import sys; sys.path.insert(0, r'$codeRoot\.agent'); sys.path.insert(0, r'$codeRoot'); __import__('$module')" 2>&1
         $exitCode = $LASTEXITCODE
 
         if ($exitCode -ne 0) {
@@ -1031,7 +1037,7 @@ if (-not $ResumeBuilder) {
     }
 
     # WP-2026-118: Preflight de imports criticos antes de abrir ventanas
-    Invoke-ImportPreflight -ProjectRoot $ProjectRoot
+    Invoke-ImportPreflight -ProjectRoot $ProjectRoot -MotorRoot $resolvedMotorRoot
 } else {
     # WP-2026-160: -ResumeBuilder debe garantizar un supervisor fresco
     Write-Host "[launcher] Resume mode: waiting for stale supervisor exit..."
