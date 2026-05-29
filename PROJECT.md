@@ -4,16 +4,15 @@
 
 ## Current Cycle
 
-- Last ticket: WP-2026-166 COMPLETED (2026-05-29). Manager watchdog for stale READY_FOR_REVIEW relaunch published and canonical closeout applied.
-- Delivery hygiene loop already in place: `delivery_hygiene_check.py` preflight + 20 tests;
-  mutating hooks confined to `pre-commit`; `uv-lock` stage-gated.
-- Delivery cycle now has a reusable one-command preflight wrapper: `python scripts/prepush_check.py`.
-- The wrapper executes in fixed sequence: delivery hygiene -> ruff check -> ruff format -> agent_controller validate -> git status.
-- `validate_ticket_prose.py` TP-06 detection remains active; the canonical TP Check format is enforced.
+- Active ticket: WP-2026-167 IN_PROGRESS (2026-05-29). Builder handoff safety - guard, checkpoints y recovery protocol.
+- Last ticket: WP-2026-166 COMPLETED (2026-05-29). Manager watchdog for stale READY_FOR_REVIEW relaunch.
+- Delivery hygiene loop already in place: `delivery_hygiene_check.py` preflight + `prepush_check.py`.
+- New cycle focuses on handoff safety: pre-handoff guard, semantic checkpoints and recovery protocol.
+- `validate_ticket_prose.py` TP-06 / TP-07 detection remains active; the canonical TP Check format is still enforced.
 
 ## Current readiness
 
-- The repository is idle and ready for the next planning cycle.
+- The repository is in the WP-2026-167 implementation cycle.
 
 ## Source of truth
 
