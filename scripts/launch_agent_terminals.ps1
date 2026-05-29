@@ -1151,20 +1151,22 @@ if ($bootstrapJson.PSObject.Properties['status'] -and $bootstrapJson.status -eq 
 }
 
 if ($LaunchSupervisor) {
-    $venvPython = Resolve-VenvPython -Root $ProjectRoot
+    $venvPython = Resolve-VenvPython -Root $script:_MotorCodeRoot
     $venvPythonLiteral = ConvertTo-SingleQuotedLiteral $venvPython
+    $supervisorScriptLiteral = ConvertTo-SingleQuotedLiteral (Join-Path $script:_MotorCodeRoot 'scripts\ticket_supervisor.py')
     # WP-2026-122: Export AGENT_PROJECT_ROOT for child processes
     $env:AGENT_PROJECT_ROOT = (Resolve-Path -LiteralPath $ProjectRoot).Path
-    Start-AgentWindow -Title 'Supervisor' -Command "& $venvPythonLiteral scripts\ticket_supervisor.py --reactive"
+    Start-AgentWindow -Title 'Supervisor' -Command "& $venvPythonLiteral $supervisorScriptLiteral --reactive"
     Write-Host "Supervisor: lanzado con ticket_supervisor.py --reactive"
 }
 
 if ($LaunchWatcher) {
-    $venvPython = Resolve-VenvPython -Root $ProjectRoot
+    $venvPython = Resolve-VenvPython -Root $script:_MotorCodeRoot
     $venvPythonLiteral = ConvertTo-SingleQuotedLiteral $venvPython
-    $watcherPath = Join-Path $ProjectRoot 'scripts\requeue_watcher.py'
+    $watcherPath = Join-Path $script:_MotorCodeRoot 'scripts\requeue_watcher.py'
     if (Test-Path -LiteralPath $watcherPath) {
-        Start-AgentWindow -Title 'Requeue Watcher' -Command "& $venvPythonLiteral scripts\requeue_watcher.py --project-root . --poll-interval 5 --max-age 30"
+        $watcherScriptLiteral = ConvertTo-SingleQuotedLiteral $watcherPath
+        Start-AgentWindow -Title 'Requeue Watcher' -Command "& $venvPythonLiteral $watcherScriptLiteral --project-root . --poll-interval 5 --max-age 30"
         Write-Host "Requeue Watcher: lanzado para vigilar eventos de requeue"
     }
     else {
@@ -1173,24 +1175,26 @@ if ($LaunchWatcher) {
 }
 
 if ($LaunchBridge) {
-    $venvPython = Resolve-VenvPython -Root $ProjectRoot
+    $venvPython = Resolve-VenvPython -Root $script:_MotorCodeRoot
     $venvPythonLiteral = ConvertTo-SingleQuotedLiteral $venvPython
+    $bridgeScriptLiteral = ConvertTo-SingleQuotedLiteral (Join-Path $script:_MotorCodeRoot 'scripts\manager_review_bridge.py')
     # WP-2026-122: Export AGENT_PROJECT_ROOT for child processes
     $env:AGENT_PROJECT_ROOT = (Resolve-Path -LiteralPath $ProjectRoot).Path
     # Get Manager backend from config
     $managerBackend = Get-BackendFromConfig -Role 'MANAGER'
     $managerExe = Resolve-BackendExecutable -BackendName $managerBackend -OverridePath $ManagerBackendPath
     $managerExeLiteral = ConvertTo-SingleQuotedLiteral $managerExe
-    Start-AgentWindow -Title 'Review Bridge' -Command "& $venvPythonLiteral scripts\manager_review_bridge.py --watch --backend-path $managerExeLiteral"
+    Start-AgentWindow -Title 'Review Bridge' -Command "& $venvPythonLiteral $bridgeScriptLiteral --watch --backend-path $managerExeLiteral"
     Write-Host "Review Bridge: lanzado"
 }
 
 if ($LaunchMonitor) {
-    $venvPython = Resolve-VenvPython -Root $ProjectRoot
+    $venvPython = Resolve-VenvPython -Root $script:_MotorCodeRoot
     $venvPythonLiteral = ConvertTo-SingleQuotedLiteral $venvPython
+    $monitorScriptLiteral = ConvertTo-SingleQuotedLiteral (Join-Path $script:_MotorCodeRoot 'scripts\ticket_activity_monitor.py')
     # WP-2026-122: Export AGENT_PROJECT_ROOT for child processes
     $env:AGENT_PROJECT_ROOT = (Resolve-Path -LiteralPath $ProjectRoot).Path
-    Start-AgentWindow -Title 'Ticket Activity Monitor' -Command "& $venvPythonLiteral scripts\ticket_activity_monitor.py"
+    Start-AgentWindow -Title 'Ticket Activity Monitor' -Command "& $venvPythonLiteral $monitorScriptLiteral"
     Write-Host "Ticket Activity Monitor: lanzado para el ticket activo"
 }
 
