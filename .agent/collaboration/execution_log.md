@@ -1,33 +1,35 @@
-# Execution Log - WP-2026-171
+# Execution Log - WP-2026-172
 
 ## Metadata
-- **ID:** WP-2026-171
-- **Estado:** IN_PROGRESS
+- **ID:** WP-2026-172
+- **Estado:** READY_FOR_REVIEW
 - **deliverable_type:** code
 
 ## Agente Activo
 - **Rol:** BUILDER
 - **Accion:** IMPLEMENT
-- **Plan:** Builder handoff checkpoint association enforcement
+- **Plan:** Prevent Builder relaunch on HANDOFF_BLOCKED and tolerate PROJECT.md as live surface
 
 ## Fases
-- Phase 1: asociacion checkpoint-commit.
-- Phase 2: cobertura mecanica.
+- Phase 1: superficie viva PROJECT.md.
+- Phase 2: relaunch condicional del supervisor.
+- Phase 3: cobertura mecanica.
 
 ## Registro de Implementacion
-- El handoff debe fallar cerrado si el checkpoint M3 no existe o no corresponde al commit de entrega.
-- El mensaje de rechazo debe decirle al Builder que haga commit y refresque el checkpoint antes de reintentar.
-- El guard de pre-handoff sigue siendo la autoridad, pero el cierre debe expresar el error de forma preventiva y accionable.
+- `PROJECT.md` se trata como una superficie viva del ciclo y no debe ensuciar el handoff por si solo.
+- `HANDOFF_BLOCKED` indica que el Builder llego al contrato de entrega pero quedo bloqueado por higiene, no que haya caido.
+- El supervisor debe distinguir bloqueo de contrato de un crash o timeout real antes de relanzar.
 
 ## Evidencia
-- Phase 1: Refactored `check_checkpoint_m3_exists()` into `check_checkpoint_alignment(project_root, ticket_id) -> tuple[bool, bool]` that returns `(missing_checkpoint, checkpoint_misaligned)`.
-- Phase 1: Added `checkpoint_misaligned: bool` to `run_guard()` result dict and non-git-repo fallback.
-- Phase 1: Error messages in `main()` now distinguish missing tag (`git commit && git tag -a ...`) from misaligned tag (`git tag -d ... && git tag -a ...`).
-- Phase 2: Added `test_guard_fails_misaligned_checkpoint` covering the scenario where checkpoint tag exists but doesn't point to HEAD.
-- Phase 2: Updated all existing tests that create checkpoint tags to ensure they create the tag after all commits (so the tag stays aligned with HEAD).
-- All 10 tests pass (ruff + pytest).
+- Phase 1: `PROJECT.md` añadido a `LIVE_SURFACES_REL` en `scripts/pre_handoff_guard.py`.
+- Phase 2: `_has_handoff_blocked_after_sequence()` añadido y usado en `run_once()` / `_bootstrap_requeue_if_needed()` para emitir `RELAUNCH_SUPPRESSED` cuando corresponde.
+- Phase 3: tests nuevos en `test_supervisor.py` y `test_pre_handoff_guard.py`.
+- Quality gates: ruff OK, pytest 106/106, validation OK.
 
 ## Calidad
-- `python scripts/run_pytest_safe.py tests/test_pre_handoff_guard.py tests/test_agent_controller.py`
-- `uv run ruff check scripts/pre_handoff_guard.py .agent/agent_controller.py tests/test_pre_handoff_guard.py tests/test_agent_controller.py`
+- `python scripts/run_pytest_safe.py tests/test_pre_handoff_guard.py tests/test_supervisor.py`
+- `uv run ruff check scripts/pre_handoff_guard.py bus/supervisor.py tests/test_pre_handoff_guard.py tests/test_supervisor.py`
 - `python .agent/agent_controller.py --validate --json --force`
+
+
+Scope override: WP-2026-172 code is already committed in 40ad6bb; current diff only contains closeout projections and live-surface alignment. Affected files: C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\bus\supervisor.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\scripts\pre_handoff_guard.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\tests\test_pre_handoff_guard.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\tests\test_supervisor.py
