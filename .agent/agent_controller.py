@@ -51,6 +51,7 @@ from runtime.project_root import (  # noqa: E402
     get_agent_dir,
     get_collab_dir,
     get_context_dir,
+    is_motor_code_only,
     resolve_project_root,
 )
 
@@ -2465,6 +2466,10 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
 
     # --- Idempotent no-op case: no changes + tag already aligned ---
     if not needs_commit and tag_aligned:
+        # A successful pre-handoff is the recovery point for a previously open
+        # breaker: once the tree is clean and the checkpoint is aligned, the
+        # Builder can proceed to --mark-ready on the next step.
+        _reset_circuit_breaker(plan_id)
         if not json_output:
             print(
                 f"[OK] No delivery changes. Checkpoint {tag_name}"
@@ -2511,6 +2516,10 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
             flush=True,
         )
         return 1
+
+    # The recovery path is complete: clear any open breaker so the next step
+    # can execute the canonical --mark-ready closeout.
+    _reset_circuit_breaker(plan_id)
 
     if not json_output:
         print(f"[OK] Pre-handoff complete for {plan_id}. Tree is clean.")
@@ -3872,6 +3881,36 @@ def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
 
     _ensure_runtime_dirs()
     _get_event_bus()
+
+    # WP-2026-176: Motor code-only guard. Block write operations when no
+    # external workspace is configured (no AGENT_PROJECT_ROOT / --project-root).
+    # Read-only operations (--validate, --json, --archive, etc.) are NOT blocked.
+    _code_only_blocked_flags = frozenset(
+        {
+            "--mark-ready",
+            "--pre-handoff",
+            "--request-changes",
+            "--manager-approve",
+            "--session-close",
+            "--bootstrap-ticket",
+            "--escalate-human-gate",
+            "--resume-human-gate",
+        }
+    )
+    if is_motor_code_only() and any(
+        flag in sys.argv for flag in _code_only_blocked_flags
+    ):
+        print(
+            "[ERROR] Motor code-only mode: write operations require an external\n"
+            "        workspace. Use --project-root <workspace> or set the\n"
+            "        AGENT_PROJECT_ROOT environment variable to point to an\n"
+            "        external project workspace (e.g., z_scripts/).\n"
+            "        Read-only operations (--validate, --json, --archive) still\n"
+            "        work without it.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 1
 
     skip_gates = "--skip-gates" in sys.argv
     json_output = "--json" in sys.argv

@@ -905,9 +905,10 @@ Registra evidencia clara en .agent/collaboration/execution_log.md.
 Mantente en el runtime bus-first y evita editar .agent/collaboration/TURN.md, .agent/collaboration/STATE.md o .agent/collaboration/execution_log.md a mano.
 Ejecuta ruff y pytest-safe sobre lo tocado.
 
-CIERRE OBLIGATORIO:
-Ejecuta python .agent/agent_controller.py --mark-ready --json --force al final.
-Este comando emite automaticamente BUILDER_EXIT al bus. No uses ningun otro comando para cerrar.
+CIERRE OBLIGATORIO (dos pasos, en orden):
+1. Ejecuta python .agent/agent_controller.py --pre-handoff para stagear, commitear y crear el checkpoint M3.
+2. Ejecuta python .agent/agent_controller.py --mark-ready --json --force para emitir BUILDER_EXIT.
+Usa --pre-handoff primero; --mark-ready sin el solo sera bloqueado por el guard.
 "@
     return $prompt
 }
@@ -1076,14 +1077,40 @@ $workPlanContent = Get-Content -LiteralPath $workPlanPath -Raw
 
 # Variables comunes
 $ticketId = $alignment.WorkPlanId
-$closeCommand = "python .agent/agent_controller.py --mark-ready --json --force"
 $role = $alignment.ActiveRole
 # Get backend from centralized config instead of hardcoding
 $backend = Get-BackendFromConfig -Role $role
 
+# WP-2026-176: Resolve motor root for external controller support.
+# Derive from script location first (the launcher lives in the motor repo),
+# then override from workspace's motor_destination_link.json if present.
+$launcherScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $PSCommandPath }
+$resolvedMotorRoot = (Resolve-Path (Join-Path $launcherScriptDir '..')).Path
+$workspaceMotorLink = Join-Path $ProjectRoot '.agent\config\motor_destination_link.json'
+if (Test-Path -LiteralPath $workspaceMotorLink) {
+    try {
+        $link = Get-Content -LiteralPath $workspaceMotorLink -Raw | ConvertFrom-Json
+        if ($null -ne $link.motor_root -and (Test-Path -LiteralPath $link.motor_root)) {
+            $resolvedMotorRoot = (Resolve-Path -LiteralPath $link.motor_root).Path
+        }
+    }
+    catch {
+        Write-Warning "motor_destination_link.json in workspace not readable; using default motor root"
+    }
+}
+# If motor root differs from ProjectRoot, use external controller with --project-root
+$useExternalController = (Resolve-Path -LiteralPath $resolvedMotorRoot).Path -ne (Resolve-Path -LiteralPath $ProjectRoot).Path
+if ($useExternalController) {
+    $closeCommand = "python $resolvedMotorRoot\.agent\agent_controller.py --pre-handoff --project-root $ProjectRoot; python $resolvedMotorRoot\.agent\agent_controller.py --mark-ready --json --force --project-root $ProjectRoot"
+    $controllerPath = Join-Path $resolvedMotorRoot '.agent\agent_controller.py'
+    Write-Host "Motor controller externo: $controllerPath para workspace $ProjectRoot"
+} else {
+    $closeCommand = "python .agent/agent_controller.py --pre-handoff; python .agent/agent_controller.py --mark-ready --json --force"
+    $controllerPath = Join-Path $ProjectRoot '.agent\agent_controller.py'
+}
+
 # Bootstrap bus event for active ticket to prevent bridge UNKNOWN state
 $venvPython = Resolve-VenvPython -Root $ProjectRoot
-$controllerPath = Join-Path $ProjectRoot '.agent\agent_controller.py'
 $bootstrapResult = & $venvPython $controllerPath --bootstrap-ticket --json 2>&1
 $bootstrapExitCode = $LASTEXITCODE
 $bootstrapResultText = ($bootstrapResult | Out-String).Trim()

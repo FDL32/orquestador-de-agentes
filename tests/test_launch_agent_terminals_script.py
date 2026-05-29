@@ -139,6 +139,31 @@ def test_launcher_resume_builder_sets_restart_reason_env() -> None:
     assert '"resume-builder"' in content
 
 
+def test_launcher_external_controller_resolution() -> None:
+    """WP-2026-176: El launcher resuelve el motor root desde motor_destination_link.json del workspace."""
+    content = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert "resolvedMotorRoot" in content
+    assert "workspaceMotorLink" in content
+    assert "motor_destination_link.json" in content
+    assert "useExternalController" in content
+    assert "Motor controller externo" in content
+
+
+def test_launcher_external_controller_close_command() -> None:
+    """WP-2026-176: El closeCommand incluye --project-root cuando usa controller externo."""
+    content = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert (
+        "resolvedMotorRoot\\.agent\\agent_controller.py --pre-handoff --project-root"
+        in content
+    )
+    assert (
+        "resolvedMotorRoot\\.agent\\agent_controller.py --mark-ready --json --force --project-root"
+        in content
+    )
+
+
 def test_launcher_skip_supervisor_wait_flag_exists() -> None:
     """Hotfix WP-2026-160: -SkipSupervisorWait debe existir como parametro y saltarse Wait-SupervisorExit en el relanzado interno."""
     content = SCRIPT_PATH.read_text(encoding="utf-8")

@@ -155,3 +155,28 @@ def clear_cache() -> None:
     get_runtime_dir.cache_clear()
     get_context_dir.cache_clear()
     get_scripts_dir.cache_clear()
+
+
+def is_motor_code_only() -> bool:
+    """
+    Check if running in motor code-only mode (no external workspace).
+
+    A mode is "motor code-only" when the controller is running from the motor
+    repo directly without AGENT_PROJECT_ROOT / --project-root pointing to an
+    external workspace.  This guard prevents accidental write operations against
+    the motor's own .agent/ while it is being used as a reusable code-only engine.
+
+    Before: No state required; reads os.environ and filesystem.
+    During: Checks AGENT_PROJECT_ROOT env var; falls back to checking whether
+            the resolved project root contains agent_controller.py (motor marker).
+    After: Returns True if running in motor code-only mode, False otherwise.
+
+    Returns:
+        True if running without external workspace (motor code-only).
+    """
+    if os.environ.get("AGENT_PROJECT_ROOT", "").strip():
+        return False
+    # Check if the resolved root IS the motor repo by looking for the
+    # motor marker (agent_controller.py in the expected .agent/ location).
+    motor_marker = resolve_project_root() / ".agent" / "agent_controller.py"
+    return motor_marker.exists()

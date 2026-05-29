@@ -14,6 +14,7 @@ request_*, get_rejection_*, publish_*) can be restored when those
 functions are implemented.
 """
 
+import json
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -611,6 +612,44 @@ class TestPreHandoff:
         assert code == 0, f"Expected 0, got {code}. Output: {output}"
         assert "Pre-handoff complete" in output
 
+    def test_happy_path_resets_circuit_breaker(self, monkeypatch, tmp_path):
+        """Successful pre-handoff should clear an OPEN circuit breaker."""
+        project_root = agent_controller.PROJECT_ROOT.resolve()
+        file1 = str(project_root / "src" / "file1.py")
+        file2 = str(project_root / "src" / "file2.py")
+        whitelist = {file1, file2}
+
+        self._setup_basic_mocks(monkeypatch, whitelist, whitelist)
+
+        git_mock = self._make_git_mock()
+        monkeypatch.setattr(agent_controller.subprocess, "run", git_mock)
+
+        breaker_path = tmp_path / "runtime" / "circuit_breaker.json"
+        breaker_path.parent.mkdir(parents=True, exist_ok=True)
+        breaker_path.write_text(
+            json.dumps(
+                {
+                    "state": "OPEN",
+                    "failures": 4,
+                    "no_progress_count": 2,
+                    "reason": "previous handoff block",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(agent_controller, "CIRCUIT_BREAKER_PATH", breaker_path)
+
+        code, output = self._capture_output(
+            lambda: agent_controller._handle_pre_handoff(json_output=False)
+        )
+
+        assert code == 0, f"Expected 0, got {code}. Output: {output}"
+        breaker = agent_controller._read_circuit_breaker()
+        assert breaker["state"] == "CLOSED"
+        assert breaker["failures"] == 0
+        assert breaker["no_progress_count"] == 0
+
     def test_idempotent_no_changes_tag_aligned(self, monkeypatch):
         """No changes + tag aligned → idempotent exit 0."""
         self._setup_basic_mocks(monkeypatch, set(), set())
@@ -769,3 +808,102 @@ class TestPreHandoff:
 
         assert code != 0, f"Expected non-zero, got {code}. Output: {output}"
         assert "Tree still dirty" in output
+
+
+# =============================================================================
+# Tests WP-2026-176: Motor code-only guard
+# =============================================================================
+
+
+class TestMotorCodeOnlyGuard:
+    """Tests for motor code-only guard blocking write operations."""
+
+    def test_is_motor_code_only_true(self, monkeypatch):
+        """is_motor_code_only returns True when no AGENT_PROJECT_ROOT and marker exists."""
+        monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+
+        from runtime.project_root import is_motor_code_only
+
+        # The actual motor repo has agent_controller.py, so this should be True
+        # when run from the motor repo and AGENT_PROJECT_ROOT is not set
+        result = is_motor_code_only()
+        # Note: In test context, this may be False if tests run with AGENT_PROJECT_ROOT
+        # or if the test filesystem differs. The marker check is reliable.
+        from runtime.project_root import resolve_project_root
+
+        marker = resolve_project_root() / ".agent" / "agent_controller.py"
+        expected = marker.exists()
+        assert result == expected
+
+    def test_is_motor_code_only_false_with_env(self, monkeypatch):
+        """is_motor_code_only returns False when AGENT_PROJECT_ROOT is set."""
+        monkeypatch.setenv(
+            "AGENT_PROJECT_ROOT", str(Path("/tmp/fake_workspace").resolve())
+        )
+
+        from runtime.project_root import is_motor_code_only
+
+        result = is_motor_code_only()
+        assert result is False
+
+    def test_main_blocks_mutating_flags(self, monkeypatch):
+        """Motor code-only guard blocks --mark-ready when no AGENT_PROJECT_ROOT."""
+        monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+        monkeypatch.setattr(agent_controller, "is_motor_code_only", lambda: True)
+
+        # Simulate argv with --mark-ready
+        test_argv = ["agent_controller.py", "--mark-ready", "--json"]
+        monkeypatch.setattr(sys, "argv", test_argv)
+
+        # Patch _ensure_runtime_dirs and _get_event_bus to be safe
+        monkeypatch.setattr(agent_controller, "_ensure_runtime_dirs", lambda: None)
+        monkeypatch.setattr(agent_controller, "_get_event_bus", lambda: None)
+
+        exit_code = agent_controller.main()
+        assert exit_code == 1
+
+    def test_main_allows_non_mutating_flags(self, monkeypatch):
+        """Motor code-only guard allows --validate even without AGENT_PROJECT_ROOT."""
+        monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+        monkeypatch.setattr(agent_controller, "is_motor_code_only", lambda: True)
+
+        # Simulate argv with --validate (should not be blocked)
+        test_argv = ["agent_controller.py", "--validate", "--json"]
+        monkeypatch.setattr(sys, "argv", test_argv)
+
+        # Patch _ensure_runtime_dirs and _get_event_bus to be safe
+        monkeypatch.setattr(agent_controller, "_ensure_runtime_dirs", lambda: None)
+        monkeypatch.setattr(agent_controller, "_get_event_bus", lambda: None)
+
+        # We need to also patch the validate handler to return 0, since it reads
+        # files from the real filesystem and will fail.
+        monkeypatch.setattr(agent_controller, "_handle_validate", lambda json_output: 0)
+
+        exit_code = agent_controller.main()
+        assert exit_code == 0
+
+    def test_main_blocks_pre_handoff(self, monkeypatch):
+        """Motor code-only guard blocks --pre-handoff without AGENT_PROJECT_ROOT."""
+        monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+        monkeypatch.setattr(agent_controller, "is_motor_code_only", lambda: True)
+
+        test_argv = ["agent_controller.py", "--pre-handoff"]
+        monkeypatch.setattr(sys, "argv", test_argv)
+        monkeypatch.setattr(agent_controller, "_ensure_runtime_dirs", lambda: None)
+        monkeypatch.setattr(agent_controller, "_get_event_bus", lambda: None)
+
+        exit_code = agent_controller.main()
+        assert exit_code == 1
+
+    def test_main_blocks_session_close(self, monkeypatch):
+        """Motor code-only guard blocks --session-close without AGENT_PROJECT_ROOT."""
+        monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+        monkeypatch.setattr(agent_controller, "is_motor_code_only", lambda: True)
+
+        test_argv = ["agent_controller.py", "--session-close"]
+        monkeypatch.setattr(sys, "argv", test_argv)
+        monkeypatch.setattr(agent_controller, "_ensure_runtime_dirs", lambda: None)
+        monkeypatch.setattr(agent_controller, "_get_event_bus", lambda: None)
+
+        exit_code = agent_controller.main()
+        assert exit_code == 1
