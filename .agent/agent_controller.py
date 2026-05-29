@@ -3335,6 +3335,118 @@ def _handle_archive() -> int:
     return 0
 
 
+def _sync_state_after_session_close() -> None:
+    """Sync STATE.md to COMPLETED after a real session close.
+
+    Before: STATE.md exists with some state.
+    During: Replaces the 'Estado actual:' line with 'COMPLETED'.
+    After: STATE.md reflects terminal state for the next cycle.
+    """
+    state_content = read_file(STATE_FILE)
+    if not state_content:
+        return
+
+    import re
+
+    updated = re.sub(
+        r"^(- \*\*Estado actual:\*\*|Estado actual:) .+",
+        "Estado actual: COMPLETED",
+        state_content,
+        flags=re.MULTILINE,
+    )
+    if updated != state_content:
+        write_file(STATE_FILE, updated)
+
+
+def _handle_session_close(  # noqa: C901 - delegation handler with flag building
+    dry_run: bool,
+    skip_slow: bool,
+    ticket: str | None,
+    tickets: str | None,
+    force_mode: bool,
+    json_output: bool,
+) -> int:
+    """Handle --session-close flag by delegating to scripts/session_closeout.py.
+
+    Before:
+        - scripts/session_closeout.py must exist in scripts/.
+        - STATE.md may be in any state.
+
+    During:
+        - Checks idempotency: if STATE.md already COMPLETED and no --force, skip.
+        - Delegates to session_closeout.py with replicated flags.
+        - If real close (not dry-run) succeeds, syncs STATE.md to COMPLETED.
+
+    After:
+        - Returns exit code from session_closeout.py (0=success, 1=failure).
+        - If already completed, exits 0 without running anything.
+    """
+    # Idempotency check: if STATE.md already terminal and no --force, skip
+    state_content = read_file(STATE_FILE)
+    if not force_mode and state_content and "COMPLETED" in state_content:
+        if json_output:
+            print(
+                json.dumps({"status": "already_completed", "plan_id": "N/A"}, indent=2)
+            )
+        else:
+            print(
+                "[INFO] Session already completed. Use --force to re-run session close."
+            )
+        return 0
+
+    # Find session_closeout.py
+    script_path = PROJECT_ROOT / "scripts" / "session_closeout.py"
+    if not script_path.exists():
+        print("[ERROR] scripts/session_closeout.py not found.", file=sys.stderr)
+        return 1
+
+    # Build command with flags
+    cmd = [
+        sys.executable,
+        str(script_path),
+        "--project-root",
+        str(PROJECT_ROOT),
+    ]
+    if dry_run:
+        cmd.append("--dry-run")
+    if skip_slow:
+        cmd.append("--skip-slow")
+    if ticket:
+        cmd.extend(["--ticket", ticket])
+    if tickets:
+        cmd.extend(["--tickets", tickets])
+
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, cwd=PROJECT_ROOT, timeout=600
+        )
+        # Print stdout/stderr from the orchestrator
+        if result.stdout:
+            print(result.stdout, end="")
+        if result.stderr:
+            print(result.stderr, file=sys.stderr, end="")
+
+        if result.returncode != 0:
+            return result.returncode
+
+        # Post-close sync: only for real close (not dry-run)
+        if not dry_run:
+            _sync_state_after_session_close()
+
+        if json_output:
+            print(json.dumps({"status": "completed", "exit_code": 0}, indent=2))
+        else:
+            action = "dry-run" if dry_run else "close"
+            print(f"[OK] Session {action} completed.")
+        return 0
+    except subprocess.TimeoutExpired:
+        print("[ERROR] Session close timed out after 600s.", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"[ERROR] Session close failed: {exc}", file=sys.stderr)
+        return 1
+
+
 def _handle_main_action(
     skip_gates: bool, strict_mode: bool, json_output: bool, reset_turn_mode: bool
 ) -> int:
@@ -3479,6 +3591,26 @@ def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
     # Check for --resume-human-gate (salida canonica de HUMAN_GATE)
     if "--resume-human-gate" in sys.argv:
         return _handle_resume_human_gate(ticket_id, json_output)
+
+    # Parse --session-close specific flags
+    session_skip_slow = "--skip-slow" in sys.argv
+    session_tickets = None
+    if "--tickets" in sys.argv:
+        idx = sys.argv.index("--tickets")
+        if idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("--"):
+            session_tickets = sys.argv[idx + 1]
+
+    # Check for --session-close
+    if "--session-close" in sys.argv:
+        session_dry_run = "--dry-run" in sys.argv
+        return _handle_session_close(
+            dry_run=session_dry_run,
+            skip_slow=session_skip_slow,
+            ticket=ticket_id,
+            tickets=session_tickets,
+            force_mode=force_mode,
+            json_output=json_output,
+        )
 
     # Check for specific flag handlers
     for flag, handler in FLAG_HANDLERS.items():

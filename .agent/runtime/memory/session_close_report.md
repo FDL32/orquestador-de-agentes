@@ -1,29 +1,40 @@
 # Session Close Report
 
-**Generated:** 2026-05-27 00:00:00 UTC
+**Generated:** 2026-05-29 11:08:52 UTC
+**Dry Run:** Yes
+**Skip Slow:** No
 
-## Summary
+## Session Window
 
-| Metric | Count |
-|--------|-------|
-| Observaciones generadas | 4 |
-| Pasaron filtros | 4 |
-| Rechazadas | 0 |
-| Appendeadas (no duplicadas) | 4 |
+- **Start:** from last report (2026-05-29 11:08:30 UTC)
+- **End:** 2026-05-29 11:08:52 UTC
 
-## Topics Cubiertos
+## Tickets
 
-- scanner_corpus_scope
-- adapter_pipeline_wp_split
-- dispatcher_global_side_effect
-- explicit_legacy_edit_missing_from_diff
+- WP-2026-169
 
-## Razones de Rechazo
+## Steps
 
-- Ninguna
+| # | Step | Status | Blocking | Detail |
+|---|------|--------|----------|--------|
+| 1 | resolve_tickets | PASS | No | Source: fallback from work_plan.md active ticket. Tickets: ['WP-2026-169'] |
+| 2 | prepush_check | SKIP | Yes | Skipped in dry-run mode |
+| 3 | local_audit | SKIP | No | Skipped in dry-run mode |
+| 4 | validate_ticket_prose | SKIP | No | Skipped in dry-run mode |
+| 5 | observations:WP-2026-169 | SKIP | No | Skipped in dry-run mode |
+| 6 | memory_consolidate | SKIP | No | Skipped in dry-run mode |
+| 7 | archive_collaboration | SKIP | No | Skipped in dry-run mode |
+| 8 | archive_execution_log | SKIP | No | Skipped in dry-run mode |
+| 9 | archive_event_bus | SKIP | No | Skipped in dry-run mode |
+| 10 | manifest_check | PASS | No | MANIFEST.distribute exists |
+| 11 | portability_paths | PASS | No | No absolute workspace paths found |
+| 12 | git_clean | SKIP | No | Skipped in dry-run mode |
 
-## Next Steps
+## Overall: PASS
 
-1. Review `.agent/runtime/memory/observations.jsonl` for new entries
-2. Run `python scripts/memory_consolidate.py --verbose` if session is long
-3. Continue with project-finalize Paso 9d
+## Manual Recommendations
+
+The following checks are recommended but not automated in this pipeline:
+
+- `code-audit` — Deep code quality analysis (run manually if significant Python changes)
+- `bui-self-audit` — Self-audit of builder output (run manually for complex tickets)
