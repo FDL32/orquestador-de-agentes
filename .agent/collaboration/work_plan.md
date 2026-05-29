@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WP-2026-167
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** mixed
 - **Titulo:** Builder handoff safety - guard, checkpoints y recovery protocol
 - **Asignado a:** Builder

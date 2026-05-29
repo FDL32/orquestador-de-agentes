@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WP-2026-167
-**Estado:** IN_PROGRESS
+**Estado:** COMPLETED
 - **deliverable_type:** mixed
 
 ## Agente Activo
@@ -44,3 +44,7 @@
 Scope override: Archivos nuevos del ticket: .agent/rules/builder/recovery.md (Fase 3), .agent/runtime/approvals/store.json (runtime event store), PROJECT.md (no modificado intencionalmente). Affected files: C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\rules, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\rules\builder\recovery.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\runtime\approvals\store.json, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\PROJECT.md
 
 Manager requested changes (1 rejections)
+
+Scope override: Implementation already committed in 8be38c6; closing handoff snapshot. Affected files: C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\agent_controller.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\.agent\rules\builder\recovery.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\scripts\create_checkpoint.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\scripts\pre_handoff_guard.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\skills\_shared\ticket-anti-patterns.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\skills\bui-implement-from-plan\references\code-rules.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\skills\man-review-implementation\references\review-checklist.md, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\tests\test_create_checkpoint.py, C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes\tests\test_pre_handoff_guard.py
+
+Manager approved canonical closeout for WP-2026-167
