@@ -578,13 +578,12 @@ def _write_prefix_to_project_md(
     """
     project_md = destination_root / "PROJECT.md"
     if not project_md.exists():
-        # Create minimal PROJECT.md with prefix
-        content = f"# Project: {destination_root.name}\nTicket prefix: {prefix}\n"
+        # File should have been created by copy_project_template() — skip silently.
         if dry_run:
-            print(f"[DRY-RUN] Would create {project_md} with ticket prefix")
-            return
-        project_md.write_text(content, encoding="utf-8")
-        print(f"[INFO] Created {project_md} with ticket prefix")
+            print(
+                f"[DRY-RUN] Would update {project_md} with ticket prefix"
+                f" (file does not exist yet)"
+            )
         return
 
     content = project_md.read_text(encoding="utf-8")
@@ -751,6 +750,60 @@ def copy_repomix_config(
     return True
 
 
+def copy_project_template(
+    template_root: Path,
+    destination_root: Path,
+    prefix: str | None = None,
+    dry_run: bool = False,
+) -> bool:
+    """
+    Copy PROJECT_TEMPLATE.md to destination as PROJECT.md (only if not exists).
+
+    Before: template_root/agent_system/templates/PROJECT_TEMPLATE.md exists;
+            destination_root is a valid path.
+    During: Reads template, optionally substitutes ``Ticket prefix: XXX``
+            placeholder with the provided prefix. Never overwrites an existing
+            PROJECT.md at destination.
+    After: destination_root/PROJECT.md exists with template content.
+
+    Args:
+        template_root: Path to the motor central repository root.
+        destination_root: Path to the destination project root.
+        prefix: Optional ticket prefix to substitute (replaces ``XXX``).
+        dry_run: If True, simulate without writing.
+
+    Returns:
+        True if copied (or would copy), False if skipped (already exists
+        or template missing).
+    """
+    source = template_root / "agent_system" / "templates" / "PROJECT_TEMPLATE.md"
+    dest = destination_root / "PROJECT.md"
+
+    if not source.exists():
+        print(f"[WARN] PROJECT_TEMPLATE.md not found at {source}")
+        return False
+
+    if dest.exists():
+        print(f"[SKIP] {dest} already exists — not overwriting")
+        return False
+
+    if dry_run:
+        print(f"[DRY-RUN] Would copy PROJECT_TEMPLATE.md to {dest}")
+        if prefix:
+            print(f"[DRY-RUN] Would substitute Ticket prefix with: {prefix}")
+        return True
+
+    content = source.read_text(encoding="utf-8")
+    if prefix:
+        content = content.replace("Ticket prefix: XXX", f"Ticket prefix: {prefix}")
+
+    dest.write_text(content, encoding="utf-8")
+    print(f"[INFO] Created {dest} from PROJECT_TEMPLATE.md")
+    if prefix:
+        print(f"[INFO] Set Ticket prefix to: {prefix}")
+    return True
+
+
 def install_agent_system(
     template_agent: Path,
     project_agent: Path,
@@ -794,6 +847,11 @@ def install_agent_system(
         motor_version=motor_version,
         ticket_prefix=ticket_prefix,
         dry_run=dry_run,
+    )
+
+    # Copy PROJECT_TEMPLATE.md as PROJECT.md (only if not exists)
+    copy_project_template(
+        template_root, destination_root, prefix=ticket_prefix, dry_run=dry_run
     )
 
     # Write ticket prefix to PROJECT.md if provided
@@ -891,6 +949,11 @@ def sync_agent_system(  # noqa: C901
         motor_version=motor_version,
         ticket_prefix=ticket_prefix,
         dry_run=dry_run,
+    )
+
+    # Copy PROJECT_TEMPLATE.md as PROJECT.md (only if not exists)
+    copy_project_template(
+        template_root, destination_root, prefix=ticket_prefix, dry_run=dry_run
     )
 
     # Update PROJECT.md with ticket prefix if provided
