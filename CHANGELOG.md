@@ -1,3 +1,24 @@
+# 2026-05-30 - WP-2026-177 Fixes: supervisor launcher path + OpenCode workspace permissions
+
+### Fixed
+- `bus/supervisor.py`: `_resolve_launcher_path()` — nuevo método que lee `motor_destination_link.json`
+  para resolver la ruta del launcher desde el motor en vez del workspace (Model B). Sustituye el bloque
+  inline de 13 líneas que causaba C901 y que no se ejecutaba en el supervisor antiguo.
+- `scripts/launch_agent_terminals.ps1`: `Set-OpenCodeExternalPermission()` — inyecta en tiempo de
+  arranque el permiso `external_directory` para el workspace en `.opencode/opencode.json`, sin rutas
+  hardcodeadas en el repositorio. La ruta correcta se lee de `motor_destination_link.json` (campo
+  `destination_root`) vía el parámetro `$ProjectRoot`. Si el motor no tiene workspace externo (modo
+  standalone), la función no hace nada.
+
+### Architecture note — Model B + OpenCode permissions
+El motor (`orquestador_de_agentes/`) es portable: ninguna ruta del destino puede estar commiteada.
+`motor_destination_link.json` es el único contrato de vinculación motor↔workspace. El launcher lo
+lee para: (1) resolver la ruta del launcher (supervisor requeue), (2) inyectar el permiso
+`external_directory` de OpenCode antes de abrir la ventana del builder. Al instalar el motor en un
+proyecto nuevo, el instalador actualiza `motor_destination_link.json`; el resto se adapta automáticamente.
+
+---
+
 # 2026-05-29 - WP-2026-175 Canonical session closeout and cycle rollover
 
 ### Closed
