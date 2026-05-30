@@ -41,57 +41,6 @@ function Resolve-DestinationRoot {
     return $null
 }
 
-function Set-OpenCodeExternalPermission {
-    <#
-    .SYNOPSIS
-        Inyecta el permiso external_directory del workspace en .opencode/opencode.json.
-    .DESCRIPTION
-        El motor es portable: opencode.json no debe contener rutas hardcodeadas.
-        Esta funcion escribe el permiso correcto en tiempo de arranque a partir de
-        $WorkspaceRoot (resuelto desde motor_destination_link.json o --project-root).
-        Si el motor no tiene workspace externo (ProjectRoot == motor), no hace nada.
-        Sustituye cualquier regla external_directory previa para el mismo workspace.
-    #>
-    param(
-        [Parameter(Mandatory)] [string]$ConfigPath,
-        [Parameter(Mandatory)] [string]$WorkspaceRoot,
-        [Parameter(Mandatory)] [string]$MotorRoot
-    )
-
-    # Solo actuar cuando el workspace es externo al motor
-    $resolvedWorkspaceObj = Resolve-Path -LiteralPath $WorkspaceRoot -ErrorAction SilentlyContinue
-    $resolvedMotorObj     = Resolve-Path -LiteralPath $MotorRoot     -ErrorAction SilentlyContinue
-    $resolvedWorkspace = if ($resolvedWorkspaceObj) { $resolvedWorkspaceObj.Path } else { $null }
-    $resolvedMotor     = if ($resolvedMotorObj)     { $resolvedMotorObj.Path     } else { $null }
-    if ([string]::IsNullOrWhiteSpace($resolvedWorkspace) -or $resolvedWorkspace -eq $resolvedMotor) {
-        return
-    }
-
-    try {
-        $config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
-    } catch {
-        Write-Warning "Set-OpenCodeExternalPermission: no se pudo leer $ConfigPath - omitiendo"
-        return
-    }
-
-    $newRule = [PSCustomObject]@{
-        permission = "external_directory"
-        pattern    = "$resolvedWorkspace\*"
-        action     = "allow"
-    }
-
-    # Conservar reglas existentes que no sean la entrada previa de este workspace
-    $kept = @()
-    if ($config.PSObject.Properties['permissions'] -and $null -ne $config.permissions) {
-        $kept = @($config.permissions | Where-Object {
-            -not ($_.permission -eq 'external_directory' -and $_.pattern -like "$resolvedWorkspace*")
-        })
-    }
-
-    $config | Add-Member -Force -NotePropertyName 'permissions' -NotePropertyValue ($kept + $newRule)
-    $config | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $ConfigPath -Encoding UTF8 -NoNewline
-    Write-Host "OpenCode: permiso external_directory -> $resolvedWorkspace"
-}
 
 # Resolve ProjectRoot AFTER param binding (here $PSScriptRoot, $PSCommandPath
 # and $MyInvocation.MyCommand.Path are reliably populated).
@@ -980,12 +929,15 @@ Usa --pre-handoff primero; --mark-ready sin el solo sera bloqueado por el guard.
 function Get-CanonicalFilesForOpenCode {
     param([Parameter(Mandatory)] [string]$ProjectRoot)
 
-    # Ficheros canonicos base que siempre se adjuntan
+    # Ficheros canonicos base que siempre se adjuntan.
+    # Rutas absolutas desde $ProjectRoot: en Model B el workspace esta fuera del
+    # motor; pasar rutas absolutas garantiza que OpenCode los embebe en el prompt
+    # via -f sin necesidad de acceso de tool al directorio externo.
     $canonicalFiles = @(
-        '.agent\collaboration\work_plan.md',
-        '.agent\collaboration\TURN.md',
-        '.agent\collaboration\execution_log.md',
-        '.agent\collaboration\STATE.md'
+        (Join-Path $ProjectRoot '.agent\collaboration\work_plan.md'),
+        (Join-Path $ProjectRoot '.agent\collaboration\TURN.md'),
+        (Join-Path $ProjectRoot '.agent\collaboration\execution_log.md'),
+        (Join-Path $ProjectRoot '.agent\collaboration\STATE.md')
     )
 
     # Verificar si existen PLAN_<ticket>.md y AUDIT_<ticket>.md
@@ -1281,9 +1233,6 @@ if ($LaunchBuilder) {
                 if ([string]::IsNullOrWhiteSpace($model)) {
                     throw "OpenCode config does not specify a model."
                 }
-
-                # Inject workspace external_directory permission (portable: no hardcoded paths in repo)
-                Set-OpenCodeExternalPermission -ConfigPath $opencodeConfigPath -WorkspaceRoot $ProjectRoot -MotorRoot $script:_MotorCodeRoot
 
                 # Compose prompt from active ticket
                 $builderPrompt = Get-OpenCodeBuilderPrompt -TicketId $ticketId -ProjectRoot $ProjectRoot
