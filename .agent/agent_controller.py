@@ -812,6 +812,126 @@ def _release_builder_lock(plan_id: str) -> None:
     if existing and existing.get("ticket_id") == plan_id:
         with contextlib.suppress(OSError):
             BUILDER_LOCK_PATH.unlink()
+    # WP-2026-180: Clean up builder session file on lock release.
+    _cleanup_builder_session(plan_id)
+
+
+_BUILDER_SESSION_PATH = _LazyPath(
+    lambda: get_agent_dir() / "runtime" / "builder_session.json"
+)
+
+
+def _cleanup_builder_session(plan_id: str) -> None:
+    """Remove builder_session.json if it exists for a given ticket.
+
+    Before: builder_session.json may or may not exist.
+    During: Checks if the file exists and matches the given plan_id.
+    After: File is removed if it matched or if no plan_id filtering needed.
+    """
+    import contextlib
+
+    path = _BUILDER_SESSION_PATH.resolve()
+    if not path.exists():
+        return
+    if plan_id:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if data.get("ticket_id") != plan_id:
+                return  # Belongs to a different ticket; leave it alone
+        except (OSError, json.JSONDecodeError):
+            pass
+    with contextlib.suppress(OSError):
+        path.unlink()
+
+
+def _capture_builder_session(plan_id: str, current_round: int) -> dict | None:
+    """Capture the OpenCode session ID from the local SQLite DB.
+
+    Before: The Builder must have been launched with --title '<plan_id>-R<round>'.
+    During: Queries the OpenCode SQLite session database for a session matching
+            the title, extracts the session ID, and persists it to
+            .agent/runtime/builder_session.json.
+    After: Returns session info dict on success, None on failure.
+           On failure, any stale builder_session.json is NOT removed (deliberate:
+           caller decides fallback behaviour).
+    """
+    import sqlite3
+
+    # Determine OpenCode DB path (platform-specific)
+    home_path = Path.home()
+    db_candidates = [
+        home_path / ".local" / "share" / "opencode" / "opencode.db",
+        Path(os.environ.get("LOCALAPPDATA", "")) / "opencode" / "opencode.db",
+        Path(os.environ.get("APPDATA", "")) / "opencode" / "opencode.db",
+        home_path / ".opencode" / "opencode.db",
+    ]
+
+    db_path: Path | None = None
+    for candidate in db_candidates:
+        if candidate.exists():
+            db_path = candidate
+            break
+
+    if not db_path:
+        print(
+            "[WARN] OpenCode DB not found; cannot capture builder session ID",
+            flush=True,
+        )
+        return None
+
+    title = f"{plan_id}-R{current_round}"
+    try:
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id FROM session WHERE title = ? ORDER BY time_updated DESC LIMIT 1",
+            (title,),
+        )
+        row = cursor.fetchone()
+        conn.close()
+
+        if not row:
+            print(
+                f"[WARN] No OpenCode session found with title '{title}'",
+                flush=True,
+            )
+            return None
+
+        session_id: str = row[0]
+        now_iso = datetime.now(timezone.utc).isoformat()
+        session_data = {
+            "session_id": session_id,
+            "ticket_id": plan_id,
+            "started_at": now_iso,
+            "round": current_round,
+            "title": title,
+        }
+
+        # Write to builder_session.json
+        session_path = _BUILDER_SESSION_PATH.resolve()
+        session_path.parent.mkdir(parents=True, exist_ok=True)
+        session_path.write_text(
+            json.dumps(session_data, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        print(
+            f"[OK] Captured OpenCode session {session_id} for '{title}'",
+            flush=True,
+        )
+        return session_data
+
+    except sqlite3.OperationalError as exc:
+        print(
+            f"[WARN] OpenCode DB query failed (schema mismatch?): {exc}",
+            flush=True,
+        )
+        return None
+    except Exception as exc:
+        print(
+            f"[WARN] Failed to capture OpenCode session: {exc}",
+            flush=True,
+        )
+        return None
 
 
 def _emit_builder_exit(plan_id: str, exit_reason: str, completion_summary: str) -> None:
@@ -2520,6 +2640,12 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
     # The recovery path is complete: clear any open breaker so the next step
     # can execute the canonical --mark-ready closeout.
     _reset_circuit_breaker(plan_id)
+
+    # WP-2026-180: Capture OpenCode session ID after successful pre-handoff.
+    # Read the round from builder_lock.txt to compose the session title.
+    lock_data = _read_builder_lock()
+    current_round = (lock_data or {}).get("round", 1)
+    _capture_builder_session(plan_id, current_round)
 
     if not json_output:
         print(f"[OK] Pre-handoff complete for {plan_id}. Tree is clean.")
