@@ -56,7 +56,7 @@ class UIStateProjector:
         if self.turn_path.exists():
             content = self.turn_path.read_text(encoding="utf-8")
             match = re.search(
-                r"\|\s*\*\*Plan ID\*\*\s*\|\s*(WP-\d{4}-[A-Za-z0-9]+|NINGUNO)\s*\|",
+                r"\|\s*\*\*(?:Plan|Ticket)\s*ID\*\*\s*\|\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+|NINGUNO)\s*\|",
                 content,
             )
             if match:
@@ -67,7 +67,7 @@ class UIStateProjector:
         return "NINGUNO"
 
     def _get_plan_info(self) -> dict[str, str]:
-        plan_id = "WP-2026-027"
+        plan_id = "WT-2026-027"
         status = "COMPLETED"
         objective = "supervisor terminal-driven"
         return {

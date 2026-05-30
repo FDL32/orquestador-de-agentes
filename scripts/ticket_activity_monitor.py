@@ -55,9 +55,11 @@ def _active_ticket_from_work_plan() -> str | None:
         return None
     content = work_plan_path.read_text(encoding="utf-8")
     for line in content.splitlines():
-        # Match "- **Plan activo:** WP-YYYY-XXX" and extract ticket ID robustly
+        # Match "- **Plan activo:** WP-YYYY-XXX" or "- **Ticket activo:** WT-YYYY-XXX"
         match = re.search(
-            r"Plan\s+activo.*?:\s*(WP-\d{4}-[A-Za-z0-9]+)", line, re.IGNORECASE
+            r"(?:Plan|Ticket)\s+activo.*?:\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+)",
+            line,
+            re.IGNORECASE,
         )
         if match:
             ticket = match.group(1).strip().lstrip("*").rstrip("*").strip()

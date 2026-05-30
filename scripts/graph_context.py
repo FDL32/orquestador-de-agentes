@@ -159,11 +159,14 @@ def extract_active_ticket_id(work_plan_content: str) -> str | None:
     During: Searches for WP-YYYY-NNN pattern in metadata section.
     After: Returns ticket ID (e.g., 'WP-2026-147') or None if not found.
     """
-    match = re.search(r"\*\*ID:\*\*\s*(WP-\d{4}-\d{3})", work_plan_content)
+    match = re.search(r"\*\*ID:\*\*\s*((?:WP|WT)-\d{4}-\d{3})", work_plan_content)
     if match:
         return match.group(1)
 
-    match = re.search(r"#\s*Work Plan\s*-\s*(WP-\d{4}-\d{3})", work_plan_content)
+    match = re.search(
+        r"#\s*(?:Work\s+)?(?:Plan|Ticket)\s*-\s*((?:WP|WT)-\d{4}-\d{3})",
+        work_plan_content,
+    )
     if match:
         return match.group(1)
 

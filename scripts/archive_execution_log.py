@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 
-SECTION_RE = re.compile(r"(?m)^###\s+WP-\d{4}-\d{3}\b.*$")
+SECTION_RE = re.compile(r"(?m)^###\s+(?:WP|WT)-\d{4}-\d{3}\b.*$")
 
 
 def _find_sections(text: str) -> list[tuple[int, int, str]]:

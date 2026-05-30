@@ -20,9 +20,9 @@ import shutil
 from pathlib import Path
 
 
-# Patterns to match PLAN and AUDIT files
-PLAN_RE = re.compile(r"^PLAN_WP-(\d{4})-(\d{3})\.md$")
-AUDIT_RE = re.compile(r"^AUDIT_WP-(\d{4})-(\d{3})\.md$")
+# Patterns to match PLAN and AUDIT files (dual WP/WT prefix)
+PLAN_RE = re.compile(r"^PLAN_(WP|WT)-(\d{4})-(\d{3})\.md$")
+AUDIT_RE = re.compile(r"^AUDIT_(WP|WT)-(\d{4})-(\d{3})\.md$")
 
 # Files that must always remain in the active collaboration surface
 ACTIVE_ONLY_FILES = {
@@ -35,12 +35,12 @@ ACTIVE_ONLY_FILES = {
 
 
 def parse_wp_number(filename: str) -> str | None:
-    """Extract WP number from filename (e.g., 'PLAN_WP-2026-100.md' -> 'WP-2026-100')."""
+    """Extract ticket ID from filename (e.g., 'PLAN_WP-2026-100.md' -> 'WP-2026-100')."""
     for pattern in (PLAN_RE, AUDIT_RE):
         match = pattern.match(filename)
         if match:
-            year, num = match.groups()
-            return f"WP-{year}-{num}"
+            prefix, year, num = match.groups()
+            return f"{prefix}-{year}-{num}"
     return None
 
 
@@ -51,8 +51,8 @@ def get_active_wp(collaboration_dir: Path) -> str | None:
         return None
 
     text = work_plan.read_text(encoding="utf-8")
-    # Look for "- **ID:** WP-YYYY-NNN" or "**ID:** WP-YYYY-NNN" patterns
-    match = re.search(r"(?m)-?\s*\*\*ID:\*\*\s*(WP-\d{4}-\d{3})", text)
+    # Look for "- **ID:** WP-YYYY-NNN" or "**ID:** WT-YYYY-NNN" patterns
+    match = re.search(r"(?m)-?\s*\*\*ID:\*\*\s*((?:WP|WT)-\d{4}-\d{3})", text)
     if match:
         return match.group(1)
     return None

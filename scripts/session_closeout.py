@@ -60,7 +60,7 @@ WORK_PLAN_REL = Path(".agent") / "collaboration" / "work_plan.md"
 SCRIPTS_DIR = "scripts"
 
 # Ticket regex pattern
-TICKET_RE = re.compile(r"WP-\d{4}-\d{3}")
+TICKET_RE = re.compile(r"(?:WP|WT)-\d{4}-\d{3}")
 
 
 # ---------------------------------------------------------------------------
@@ -272,7 +272,7 @@ def _resolve_active_ticket(project_root: Path) -> str | None:
         content = wp_path.read_text(encoding="utf-8")
     except OSError:
         return None
-    m = re.search(r"-?\s*\*\*ID:\*\*\s*(WP-\d{4}-\d{3})", content)
+    m = re.search(r"-?\s*\*\*ID:\*\*\s*((?:WP|WT)-\d{4}-\d{3})", content)
     if m:
         return m.group(1)
     return None
@@ -1069,13 +1069,13 @@ def main() -> int:
         "--ticket",
         type=str,
         default=None,
-        help="Explicit ticket ID to audit (e.g., WP-2026-168)",
+        help="Explicit ticket ID to audit (e.g., WT-2026-168)",
     )
     parser.add_argument(
         "--tickets",
         type=str,
         default=None,
-        help="Comma-separated ticket IDs to audit (e.g., WP-2026-168,WP-2026-167)",
+        help="Comma-separated ticket IDs to audit (e.g., WT-2026-168,WT-2026-167)",
     )
 
     args = parser.parse_args()
