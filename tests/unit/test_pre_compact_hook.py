@@ -274,6 +274,7 @@ class TestMainHook:
         with (
             patch.object(sys, "stdin", stdin_mock),
             patch.object(sys, "stdout", stdout_mock),
+            patch.object(hook, "get_compact_context", return_value=""),
             patch.object(hook, "load_observations_safe", return_value=[]),
             patch.object(hook, "extract_keywords_from_work_plan", return_value=[]),
             pytest.raises(SystemExit) as exc_info,
@@ -286,7 +287,7 @@ class TestMainHook:
         assert "input" in result
 
     def test_main_with_memory(self):
-        """Test main con memoria relevante."""
+        """Test main con memoria relevante (fallback L1 path)."""
         stdin_mock = StringIO("{}")
         stdout_mock = StringIO()
 
@@ -302,6 +303,7 @@ class TestMainHook:
         with (
             patch.object(sys, "stdin", stdin_mock),
             patch.object(sys, "stdout", stdout_mock),
+            patch.object(hook, "get_compact_context", return_value=""),
             patch.object(hook, "load_observations_safe", return_value=observations),
             patch.object(
                 hook, "extract_keywords_from_work_plan", return_value=["context"]
@@ -316,6 +318,30 @@ class TestMainHook:
         assert "additionalContext" in result
         assert "**Memoria relevante**:" in result["additionalContext"]
 
+    def test_main_with_loader_context(self):
+        """Test main usa loader context cuando get_compact_context() no es vacio."""
+        stdin_mock = StringIO("{}")
+        stdout_mock = StringIO()
+
+        with (
+            patch.object(sys, "stdin", stdin_mock),
+            patch.object(sys, "stdout", stdout_mock),
+            patch.object(
+                hook,
+                "get_compact_context",
+                return_value="# L3 Profile\nActive: testing",
+            ),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            hook.main()
+        assert exc_info.value.code == 0
+
+        result = json.loads(stdout_mock.getvalue())
+        assert result["continue"] is True
+        assert "additionalContext" in result
+        assert "**Memoria del proyecto (L2+L3)**" in result["additionalContext"]
+        assert "L3 Profile" in result["additionalContext"]
+
     def test_main_without_memory(self):
         """Test main sin memoria (no se incluye additionalContext)."""
         stdin_mock = StringIO("{}")
@@ -324,6 +350,7 @@ class TestMainHook:
         with (
             patch.object(sys, "stdin", stdin_mock),
             patch.object(sys, "stdout", stdout_mock),
+            patch.object(hook, "get_compact_context", return_value=""),
             patch.object(hook, "load_observations_safe", return_value=[]),
             patch.object(hook, "extract_keywords_from_work_plan", return_value=[]),
             pytest.raises(SystemExit) as exc_info,
@@ -343,6 +370,7 @@ class TestMainHook:
         with (
             patch.object(sys, "stdin", stdin_mock),
             patch.object(sys, "stdout", stdout_mock),
+            patch.object(hook, "get_compact_context", return_value=""),
             patch.object(hook, "load_observations_safe", return_value=[]),
             patch.object(hook, "extract_keywords_from_work_plan", return_value=[]),
             pytest.raises(SystemExit) as exc_info,

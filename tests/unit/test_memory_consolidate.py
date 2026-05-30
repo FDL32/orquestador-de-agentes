@@ -10,6 +10,8 @@ import pytest
 from scripts.memory_consolidate import (
     MEMORY_MD_LINE_CAP,
     dedupe,
+    generate_memory_profile_md,
+    generate_memory_rules_md,
     is_noise,
     parse_entries,
     regen_memory_md,
@@ -271,3 +273,169 @@ def test_regen_memory_md_line_cap() -> None:
     assert "# MEMORY" in content
     assert "Regenerated:" in content
     assert "Total observations: 100" in content
+
+
+# =============================================================================
+# Tests WP-2026-178: L2 memory rules generation
+# =============================================================================
+
+
+def test_generate_memory_rules_md_empty() -> None:
+    """Empty entries produce L2 header with no rules."""
+    content = generate_memory_rules_md([])
+    assert "# Memory Rules (L2)" in content
+    assert "Total rules: 0" in content
+    assert "No rules extracted yet" in content
+
+
+def test_generate_memory_rules_md_with_rules() -> None:
+    """Entries with rule-like signals produce parseable L2 rules."""
+    entries = [
+        {
+            "signal": "When refactoring a method return type from None to bool, "
+            "always use 'is False' guards in callers rather than truthiness (AP-05).",
+            "topic": "testing",
+            "source_ticket": "WP-2026-137",
+            "timestamp": "2026-05-25T10:00:00Z",
+            "source": "human_audit",
+        },
+        {
+            "signal": "Security gates must fail closed (exit 2 / raise) on invalid "
+            "or unknown config. Silent permissive fallback is dangerous (AP-11).",
+            "topic": "security",
+            "source_ticket": "WP-2026-154",
+            "timestamp": "2026-05-27T10:00:00Z",
+            "source": "human_audit",
+            "domain": "security-gates",
+        },
+        {
+            "signal": "Short signal",  # Too short, should be skipped
+            "topic": "general",
+            "timestamp": "2026-05-25T10:00:00Z",
+            "source": "builder",
+        },
+    ]
+    content = generate_memory_rules_md(entries)
+
+    # L2 header present
+    assert "# Memory Rules (L2)" in content
+    assert "Total rules: 2" in content  # Short signal filtered out
+
+    # Parseable domain sections
+    assert "## Domain: Security Gates" in content
+    assert "## Domain: Testing" in content
+
+    # Rule IDs present
+    assert "### R-001:" in content
+    assert "### R-002:" in content
+
+    # Source tickets present
+    assert "WP-2026-154" in content
+    assert "WP-2026-137" in content
+
+    # Short signal excluded
+    assert "Short signal" not in content
+
+
+def test_generate_memory_rules_md_deterministic() -> None:
+    """Two runs on same data produce identical L2 rules."""
+    entries = [
+        {
+            "signal": "Always use 'is False' guards when return type changes from None to bool. "
+            "This avoids silent breakage with monkeypatched mocks in tests.",
+            "topic": "testing",
+            "source_ticket": "WP-2026-137",
+            "timestamp": "2026-05-25T10:00:00Z",
+            "source": "human_audit",
+        },
+        {
+            "signal": "Security gates must fail closed. Silent fallback on unknown "
+            "config is more dangerous than explicit block.",
+            "topic": "security",
+            "source_ticket": "WP-2026-154",
+            "timestamp": "2026-05-27T10:00:00Z",
+            "source": "human_audit",
+            "domain": "security-gates",
+        },
+    ]
+    content1 = generate_memory_rules_md(entries)
+    content2 = generate_memory_rules_md(entries)
+    assert content1 == content2
+
+
+def test_generate_memory_rules_md_allows_explicit_domain() -> None:
+    """Entries with explicit 'domain' field qualify even without rule keywords."""
+    entries = [
+        {
+            "signal": "A longer signal that has no rule keywords but carries a domain. "
+            "Domain fields make any entry rule-eligible regardless of style.",
+            "topic": "architecture",
+            "domain": "bus-architecture",
+            "source_ticket": "WP-2026-178",
+            "timestamp": "2026-05-30T10:00:00Z",
+            "source": "test",
+        },
+    ]
+    content = generate_memory_rules_md(entries)
+    assert "Total rules: 1" in content
+    assert "## Domain: Bus Architecture" in content
+
+
+# =============================================================================
+# Tests WP-2026-178: L3 memory profile generation
+# =============================================================================
+
+
+def test_generate_memory_profile_md_empty() -> None:
+    """Empty entries produce L3 header with zero counts."""
+    content = generate_memory_profile_md([])
+    assert "# Memory Profile (L3)" in content
+    assert "Total observations: 0" in content
+    assert "Active Domains" in content
+
+
+def test_generate_memory_profile_md_with_entries() -> None:
+    """Entries produce profile with domains, tickets, and recent signals."""
+    entries = [
+        {
+            "signal": "First rule about testing.",
+            "topic": "testing",
+            "source_ticket": "WP-2026-100",
+            "timestamp": "2026-05-25T10:00:00Z",
+            "source": "audit",
+        },
+        {
+            "signal": "Security finding with longer signal text.",
+            "topic": "security",
+            "domain": "security-gates",
+            "source_ticket": "WP-2026-154",
+            "timestamp": "2026-05-27T10:00:00Z",
+            "source": "audit",
+        },
+        {
+            "signal": "Architecture decision recorded.",
+            "topic": "architecture",
+            "source_ticket": "WP-2026-175",
+            "timestamp": "2026-05-29T10:00:00Z",
+            "source": "session-close",
+        },
+    ]
+    content = generate_memory_profile_md(entries)
+
+    # Header
+    assert "# Memory Profile (L3)" in content
+    assert "Total observations: 3" in content
+
+    # Active Domains section
+    assert "## Active Domains" in content
+
+    # Active Tickets Referenced section
+    assert "## Active Tickets Referenced" in content
+    assert "WP-2026-100" in content
+    assert "WP-2026-154" in content
+    assert "WP-2026-175" in content
+
+    # Recent Signals section
+    assert "## Recent Signals" in content
+    # Most recent entry should appear
+    assert "Architecture decision recorded" in content or "session-close" in content

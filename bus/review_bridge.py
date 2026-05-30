@@ -16,6 +16,7 @@ from enum import Enum
 from pathlib import Path
 
 from .event_bus import EventBus
+from .memory_loader import get_review_context
 from .skill_resolver import SkillResolver, create_resolver
 from .time_utils import now_local
 from .utils import count_trailing_changes
@@ -803,6 +804,34 @@ class ReviewBridge:
         observations.sort(key=lambda item: item[0], reverse=True)
         return observations[:MAX_RUBRIC_OBSERVATIONS]
 
+    def _render_loader_rules(self, dtype: str = "all") -> str:
+        """Load L2 domain rules from the memory loader as primary memory source.
+
+        WP-2026-178: Uses memory_loader.get_review_context() to load L2 rules
+        by domain relevance as the first choice for review memory context.
+        Falls back to empty string (caller will use legacy L1 observations).
+
+        Before: Requires dtype string for domain relevance filtering.
+        During: Maps dtype to relevant domains via DOMAIN_DTYPE_MAP, loads
+                L2 rules for matched domains from the memory loader.
+        After: Returns a formatted markdown block with domain rules,
+               or empty string if no L2 rules are available.
+        """
+        if dtype == "all":
+            return ""
+
+        relevant_domains = self._relevant_domains_for_dtype(dtype)
+        parts: list[str] = []
+        for domain in sorted(relevant_domains):
+            domain_rules = get_review_context(domain=domain)
+            if domain_rules:
+                parts.append(domain_rules)
+
+        if not parts:
+            return ""
+
+        return "\n--- Memory Rules (L2, from memory_loader) ---\n" + "\n\n".join(parts)
+
     def _render_manager_review_learnings(self, dtype: str = "all") -> str:
         observations = self._load_manager_review_observations(dtype=dtype)
         if not observations:
@@ -965,6 +994,11 @@ class ReviewBridge:
             "(3) a numeric outcome where applicable (e.g. '0 invalid skills', '253 passed', "
             "'All checks passed'). Declared validator + absent or ambiguous evidence: BLOCKER."
         )
+
+        # WP-2026-178: L2 memory rules from the loader (domain-organized, first priority)
+        loader_rules = self._render_loader_rules(dtype=dtype)
+        if loader_rules:
+            parts.append(loader_rules)
 
         # Dynamic learnings — all types, scoped by dtype
         learnings = self._render_manager_review_learnings(dtype=dtype)

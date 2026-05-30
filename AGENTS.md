@@ -173,12 +173,16 @@ Formato: tabla compacta `| WP | Source | Pattern | License | Adapted vs Ported |
 
 ## Memoria por proyecto
 
-- `.agent/runtime/memory/observations.jsonl` guarda observaciones persistentes.
-- `.agent/runtime/memory/MEMORY.md` es un indice humano acotado, con tope de 80 lineas.
-- La historia completa y la busqueda profunda viven en `observations.jsonl`, no en `MEMORY.md`.
-- La regla vive aqui para evitar drift; actualiza esta seccion si cambia el cap o el marcador de truncado.
-- Regenera el indice solo de forma explicita.
-- `scripts/memory_consolidate.py` declara `MEMORY_MD_LINE_CAP = 80` y trunca el indice con un marcador visible cuando se supera el limite.
+La memoria del proyecto sigue una jerarquia de tres niveles (L3 -> L2 -> L1),
+centralizada en `bus/memory_loader.py` para bootstrap, review bridge y pre-compact hook:
+
+- **L3 — `memory_profile.md`** (generado por `memory_consolidate.py --apply`): Perfil breve del proyecto con dominios activos, tickets referenciados y senales recientes. Cargado primero por `memory_loader.get_bootstrap_context()`.
+- **L2 — `memory_rules.md`** (generado por `memory_consolidate.py --apply`): Reglas deterministas organizadas por dominio, con IDs estables (R-XXX). Cargado por `memory_loader.get_review_context(domain)` para el review bridge.
+- **L1 — `observations.jsonl`**: Fuente de evidencia canonica. Contiene todas las observaciones persistentes. `memory_loader.recall_observations()` ofrece acceso directo con filtro opcional por keyword.
+- `MEMORY.md` es un indice humano acotado, con tope de 80 lineas. No es una fuente primaria.
+- `scripts/memory_consolidate.py` declara `MEMORY_MD_LINE_CAP = 80` y trunca el indice con un marcador visible cuando se supera el limite. Ademas genera L2 y L3 con `--apply`.
+- `bus/memory_loader.py` es la unica puerta de entrada: `get_bootstrap_context()` (L3 -> L2 -> L1), `get_review_context(domain)` (L2 por dominio), `get_compact_context()` (L3+L2).<｜｜DSML｜｜parameter name="endString" string="true">
+## deliverable_type (work_plan schema, V2)
 
 ## deliverable_type (work_plan schema, V2)
 
