@@ -1237,6 +1237,25 @@ class SequentialTicketSupervisor:
         content = f"=== STDOUT ===\n{stdout}\n\n=== STDERR ===\n{stderr}\n"
         log_path.write_text(content, encoding="utf-8")
 
+    def _resolve_launcher_path(self) -> Path:
+        """Return launcher path, preferring motor root when Model B link is present."""
+        import json as _json
+
+        motor_root = self.project_root
+        link = self.project_root / ".agent" / "config" / "motor_destination_link.json"
+        if link.exists():
+            try:
+                data = _json.loads(link.read_text(encoding="utf-8"))
+                candidate = Path(data.get("motor_root", ""))
+                if candidate.exists():
+                    motor_root = candidate
+            except Exception as exc:
+                print(
+                    f"[ticket-supervisor] motor_destination_link read error: {exc}",
+                    flush=True,
+                )
+        return motor_root / "scripts" / "launch_agent_terminals.ps1"
+
     def _relaunch_builder(self, ticket_id: str) -> bool:
         """Relaunch Builder via launcher. Returns True if successful or skipped (alive), False on failure.
 
@@ -1284,7 +1303,7 @@ class SequentialTicketSupervisor:
             )
             return True  # no es error, Builder vivo manejará el requeue
 
-        launcher_path = self.project_root / "scripts" / "launch_agent_terminals.ps1"
+        launcher_path = self._resolve_launcher_path()
         if not launcher_path.exists():
             print(
                 f"[ticket-supervisor] ERROR: Launcher not found at {launcher_path}",
