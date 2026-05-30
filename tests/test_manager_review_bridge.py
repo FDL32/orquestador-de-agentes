@@ -54,6 +54,14 @@ def _make_bridge(tmp_path: Path) -> tuple[ReviewBridge, EventBus, Path]:
     return bridge, event_bus, legacy_manager_exe
 
 
+@pytest.fixture(autouse=True)
+def _mock_repomix_for_tests(monkeypatch):
+    """WT-2026-182: Evitar warnings y ralentización en CI por npx repomix."""
+    monkeypatch.setattr(
+        "bus.review_bridge.ReviewBridge._ensure_repomix_context", lambda self: None
+    )
+
+
 # =============================================================================
 # Tests WP-2026-176: Motor controller resolution in review bridge
 # =============================================================================
