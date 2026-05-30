@@ -2,6 +2,17 @@
 
 Central motor for multi-agent orchestration. Operational code lives once here; destination projects keep only their `.agent/` workspace (state, memory, events, config) and reference the motor externally.
 
+## Motor vs Workspace
+
+- This repository is the reusable motor only. It owns orchestration code, hooks, review transport, and install/sync tooling.
+- It does not own active ticket state for any project.
+- Active collaboration state always lives in the `.agent/` of the project being operated on.
+- `orquestador_de_agentes/.agent/` is the motor development workspace when working on the motor itself.
+- `z_scripts/.agent/` is the canonical workspace for the `z_scripts` project.
+- Any other destination project gets its own `<project>/.agent/` with the same collaboration structure.
+- Use `AGENT_PROJECT_ROOT` or the workspace `motor_destination_link.json` to select the current workspace.
+- Do not mix motor-side collaboration history with project-side collaboration history.
+
 ## What this is
 
 A **domain-agnostic central motor** that automates work by making one agent generate plans, another implement them, and a third review the result. The motor lives once in this repo; destination projects prepare a workspace (`.agent/`) and reference the motor externally. No copying of operational code.

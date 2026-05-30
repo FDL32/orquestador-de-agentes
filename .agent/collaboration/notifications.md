@@ -2,20 +2,6 @@
 
 ---
 
-### MANAGER_REVIEW - 2026-05-28 08:33:36
-- **Plan ID:** WP-2026-158
-- **Decision:** CHANGES
-- **Source:** manager backend exec review
-
----
-
-### MANAGER_REVIEW - 2026-05-28 08:51:43
-- **Plan ID:** WP-2026-158
-- **Decision:** APPROVE
-- **Source:** manager backend exec review
-
----
-
 ### MANAGER_REVIEW - 2026-05-28 10:07:25
 - **Plan ID:** WP-2026-159
 - **Decision:** CHANGES
@@ -142,8 +128,6 @@
 
 ---
 
----
-
 ### MANAGER_REVIEW - 2026-05-30 00:21:32
 - **Plan ID:** WP-2026-176
 - **Decision:** CHANGES
@@ -155,3 +139,5 @@
 - **Plan ID:** WP-2026-176
 - **Decision:** CHANGES
 - **Source:** manager backend exec review
+
+---

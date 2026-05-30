@@ -35,8 +35,24 @@ MEMORY_DIR = AGENT_DIR / "runtime" / "memory"
 OBS_FILE = MEMORY_DIR / "observations.jsonl"
 REPORT_FILE = MEMORY_DIR / "session_close_report.md"
 
-# Valid categories per work_plan.md
+# Valid categories per work_plan.md (legacy)
 VALID_CATEGORIES = {"convention", "decision", "fact", "pattern"}
+
+# Canonical domains per ap-schema.md
+VALID_DOMAINS = {
+    "security-gates",
+    "integration-tests",
+    "protocol-handlers",
+    "bus-architecture",
+    "review-quality",
+    "config-schema",
+    "testing",
+    "delivery-hygiene",
+    "builder-contract",
+}
+
+# Valid impact values
+VALID_IMPACTS = {"low", "medium", "high"}
 
 # Minimum signal length
 MIN_SIGNAL_LEN = 30
@@ -75,47 +91,75 @@ def is_noise(signal: str) -> bool:
     return False
 
 
-def validate_schema(entry: dict[str, Any]) -> tuple[bool, list[str]]:
-    """Validate observation schema.
+def _validate_canonical_format(entry: dict[str, Any], errors: list[str]) -> None:
+    """Validate canonical-format fields (domain, confidence, applies_to, impact)."""
+    domain_required = ["domain", "confidence", "applies_to", "source_ticket"]
+    missing_domain = [f for f in domain_required if f not in entry]
+    errors.extend(f"Campo requerido ausente: {field}" for field in missing_domain)
 
-    Before: Requires observation dict.
-    During: Checks required fields and types.
-    After: Returns (is_valid, list_of_errors).
-    """
-    errors = []
-    required_fields = [
-        "timestamp",
-        "signal",
-        "category",
-        "source_ticket",
-        "topic",
-        "source",
-    ]
+    if "domain" in entry and entry["domain"] not in VALID_DOMAINS:
+        errors.append(
+            f"Dominio invalido: {entry['domain']} (validos: {sorted(VALID_DOMAINS)})"
+        )
 
-    # Check required fields
-    missing = [f for f in required_fields if f not in entry]
-    errors.extend(f"Campo requerido ausente: {field}" for field in missing)
+    if "confidence" in entry:
+        conf = entry["confidence"]
+        if not isinstance(conf, (int, float)) or not (0.0 <= conf <= 1.0):
+            errors.append(f"confidence debe ser numero entre 0.0 y 1.0, got {conf}")
 
-    if errors:
-        return False, errors
+    if "impact" in entry and entry["impact"] not in VALID_IMPACTS:
+        errors.append(
+            f"Impacto invalido: {entry['impact']} (validos: {sorted(VALID_IMPACTS)})"
+        )
 
-    # Validate category
-    if entry["category"] not in VALID_CATEGORIES:
+
+def _validate_legacy_format(entry: dict[str, Any], errors: list[str]) -> None:
+    """Validate legacy-format fields (category, source_ticket)."""
+    extra_required = ["category", "source_ticket"]
+    missing_extra = [f for f in extra_required if f not in entry]
+    errors.extend(f"Campo requerido ausente: {field}" for field in missing_extra)
+
+    if "category" in entry and entry["category"] not in VALID_CATEGORIES:
         errors.append(
             f"Categoria invalida: {entry['category']} (validas: {VALID_CATEGORIES})"
         )
 
-    # Validate signal length
+
+def validate_schema(entry: dict[str, Any]) -> tuple[bool, list[str]]:
+    """Validate observation schema.
+
+    Before: Requires observation dict.
+    During: Checks required fields and types. Accepts both canonical schema
+            (domain-based) and legacy schema (category-based).
+    After: Returns (is_valid, list_of_errors).
+    """
+    errors = []
+
+    common_required = ["timestamp", "signal", "topic", "source"]
+    missing = [f for f in common_required if f not in entry]
+    errors.extend(f"Campo requerido ausente: {field}" for field in missing)
+
+    has_domain = "domain" in entry
+    has_category = "category" in entry
+
+    if has_domain:
+        _validate_canonical_format(entry, errors)
+    elif has_category:
+        _validate_legacy_format(entry, errors)
+    else:
+        errors.append("Debe tener 'category' (legacy) o 'domain' (canonico)")
+
+    if errors:
+        return False, errors
+
     if len(entry["signal"].strip()) < MIN_SIGNAL_LEN:
         errors.append(
             f"Signal muy corto: {len(entry['signal'])} chars (min {MIN_SIGNAL_LEN})"
         )
 
-    # Validate signal is not noise
     if is_noise(entry["signal"]):
         errors.append("Signal es ruido (Tool X called pattern o muy corto)")
 
-    # Validate timestamp format
     try:
         parse_timestamp(entry["timestamp"])
     except Exception:
@@ -128,30 +172,53 @@ def is_duplicate(entry: dict[str, Any], existing: list[dict[str, Any]]) -> bool:
     """Check if entry is duplicate of existing observation.
 
     Before: Requires new entry and list of existing observations.
-    During: Compares signal+category+topic within 24h window.
+    During: Compares signal+topic within 24h window. For legacy entries (category-based)
+            also matches by category; for canonical entries (domain-based) also matches
+            by domain. Mixed-schema entries (canonical vs legacy) are never duplicates.
     After: Returns True if duplicate, False if unique.
     """
     new_signal = entry.get("signal", "")
     new_category = entry.get("category", "")
+    new_domain = entry.get("domain", "")
     new_topic = entry.get("topic", "")
     new_ts = parse_timestamp(entry.get("timestamp", ""))
 
     for existing_entry in existing:
         existing_signal = existing_entry.get("signal", "")
         existing_category = existing_entry.get("category", "")
+        existing_domain = existing_entry.get("domain", "")
         existing_topic = existing_entry.get("topic", "")
         existing_ts = parse_timestamp(existing_entry.get("timestamp", ""))
 
-        # Exact match on signal+category+topic
-        if (
-            new_signal == existing_signal
-            and new_category == existing_category
-            and new_topic == existing_topic
+        # Signal and topic must match first
+        if new_signal != existing_signal or new_topic != existing_topic:
+            continue
+
+        # Determine dedup key: for legacy entries use category, for canonical use domain
+        if new_category and existing_category:
+            # Both are legacy — match by category
+            if new_category != existing_category:
+                continue
+        elif new_domain and existing_domain:
+            # Both are canonical — match by domain
+            if new_domain != existing_domain:
+                continue
+        elif (
+            not new_category
+            and not new_domain
+            and not existing_category
+            and not existing_domain
         ):
-            # Check if within 24h window
-            hours_diff = abs((new_ts - existing_ts).total_seconds()) / 3600
-            if hours_diff <= 24:
-                return True
+            # Neither has category nor domain — match by signal+topic only
+            pass
+        else:
+            # Mixed schemas (canonical vs legacy) — not a duplicate
+            continue
+
+        # Check if within 24h window
+        hours_diff = abs((new_ts - existing_ts).total_seconds()) / 3600
+        if hours_diff <= 24:
+            return True
 
     return False
 
@@ -332,19 +399,24 @@ def extract_candidates_from_ticket(ticket_id: str) -> list[dict[str, Any]]:
         # Extract ticket metadata
         if f"ID:** {ticket_id}" in content or f"ID: {ticket_id}" in content:
             # Extract deliverable_type if present
-            deliverable_match = re.search(r"deliverable_type:\s*(\w+)", content)
+            deliverable_match = re.search(r"\*\*deliverable_type:\*\*\s*(\w+)", content)
+            if not deliverable_match:
+                deliverable_match = re.search(r"deliverable_type:\s*(\w+)", content)
             deliverable = deliverable_match.group(1) if deliverable_match else "unknown"
 
             # Extract title
             title_match = re.search(r"Titulo:\s*(.+)", content)
             title = title_match.group(1).strip() if title_match else "Unknown"
 
-            # Generate observation for ticket completion
+            # Generate canonical observation for ticket completion
             candidates.append(
                 {
                     "timestamp": now.isoformat(),
                     "signal": f"Ticket {ticket_id} completado: {title} (deliverable_type={deliverable})",
-                    "category": "fact",
+                    "domain": "delivery-hygiene",
+                    "confidence": 0.9,
+                    "applies_to": deliverable,
+                    "impact": "medium",
                     "source_ticket": ticket_id,
                     "topic": "ticket-completion",
                     "source": "session-close",
@@ -357,7 +429,10 @@ def extract_candidates_from_ticket(ticket_id: str) -> list[dict[str, Any]]:
                 {
                     "timestamp": now.isoformat(),
                     "signal": f"Decisiones arquitectonicas documentadas en {ticket_id}",
-                    "category": "decision",
+                    "domain": "bus-architecture",
+                    "confidence": 0.85,
+                    "applies_to": "code",
+                    "impact": "medium",
                     "source_ticket": ticket_id,
                     "topic": "architecture",
                     "source": "session-close",
