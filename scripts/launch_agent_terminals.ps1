@@ -70,7 +70,7 @@ function Set-OpenCodeExternalPermission {
     try {
         $config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
     } catch {
-        Write-Warning "Set-OpenCodeExternalPermission: no se pudo leer $ConfigPath — omitiendo"
+        Write-Warning "Set-OpenCodeExternalPermission: no se pudo leer $ConfigPath - omitiendo"
         return
     }
 
