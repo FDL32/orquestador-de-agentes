@@ -27,6 +27,21 @@ ARGV_PROMPT_THRESHOLD = 8000
 MAX_RUBRIC_OBSERVATIONS = 5
 MAX_OBSERVATION_SIGNAL_CHARS = 200
 
+# Domain-to-deliverable_type relevance mapping (WP-2026-177)
+# Maps each domain to the set of deliverable_types it applies to.
+# Canonical entries use 'domain'; legacy entries use topic='manager-review-rubric'.
+DOMAIN_DTYPE_MAP: dict[str, set[str]] = {
+    "review-quality": {"code", "mixed", "documentation", "research", "analysis"},
+    "delivery-hygiene": {"code", "mixed"},
+    "builder-contract": {"code", "mixed"},
+    "testing": {"code", "mixed"},
+    "security-gates": {"code", "mixed"},
+    "integration-tests": {"code", "mixed"},
+    "protocol-handlers": {"code", "mixed"},
+    "bus-architecture": {"code", "mixed"},
+    "config-schema": {"code", "mixed"},
+}
+
 
 class ReviewDecision(str, Enum):
     APPROVE = "approve"
@@ -673,20 +688,97 @@ class ReviewBridge:
     @staticmethod
     def _observation_matches_dtype(record: dict, dtype: str) -> bool:
         """Return True if the observation applies to the given deliverable_type."""
+        if dtype == "all":
+            return True
         applies_to = record.get("applies_to")
         if applies_to is None or applies_to == "all":
             return True
         targets = applies_to if isinstance(applies_to, list) else [applies_to]
         return dtype in targets or "all" in targets
 
+    @staticmethod
+    def _parse_observation_record(raw_line: str) -> dict | None:
+        """Parse a single JSONL line into a validated dict, or None."""
+        line = raw_line.strip()
+        if not line:
+            return None
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            return None
+        return record if isinstance(record, dict) else None
+
+    @staticmethod
+    def _record_to_observation_tuple(
+        record: dict,
+    ) -> tuple[datetime, str, str] | None:
+        """Extract (timestamp, signal, source_ticket) from a record, or None."""
+        signal = ReviewBridge._truncate_observation_signal(record.get("signal", ""))
+        if not signal:
+            return None
+        timestamp = ReviewBridge._parse_observation_timestamp(record.get("timestamp"))
+        source_ticket = str(record.get("source_ticket", "")).strip() or "unknown"
+        return (timestamp, signal, source_ticket)
+
+    def _relevant_domains_for_dtype(self, dtype: str) -> set[str]:
+        """Compute the set of domain names relevant to a given deliverable_type."""
+        if dtype == "all":
+            return set()
+        domains: set[str] = set()
+        for domain, dtypes in DOMAIN_DTYPE_MAP.items():
+            if dtype in dtypes:
+                domains.add(domain)
+        return domains
+
+    def _load_manager_review_observations_by_domain(
+        self, dtype: str = "all"
+    ) -> list[tuple[datetime, str, str]]:
+        """Load observations by domain relevance to deliverable_type.
+
+        WP-2026-177: Primary route for canonical entries that carry a 'domain'
+        field. Returns observations whose domain is relevant to dtype.
+        """
+        path = self._observations_path()
+        if not path.exists():
+            return []
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except Exception:
+            return []
+
+        relevant_domains = self._relevant_domains_for_dtype(dtype)
+        observations: list[tuple[datetime, str, str]] = []
+        for raw_line in lines:
+            record = self._parse_observation_record(raw_line)
+            if record is None:
+                continue
+            domain = record.get("domain")
+            if not domain:
+                continue
+            if dtype != "all" and domain not in relevant_domains:
+                continue
+            if not self._observation_matches_dtype(record, dtype):
+                continue
+            obs = self._record_to_observation_tuple(record)
+            if obs:
+                observations.append(obs)
+
+        observations.sort(key=lambda item: item[0], reverse=True)
+        return observations[:MAX_RUBRIC_OBSERVATIONS]
+
     def _load_manager_review_observations(
         self, dtype: str = "all"
     ) -> list[tuple[datetime, str, str]]:
-        """Load manager-review-rubric observations filtered by deliverable_type scope.
+        """Load observations by domain relevance with legacy fallback.
 
-        Absent applies_to = all types (legacy compat). "all" = all types.
-        List or string value = include only when dtype matches.
+        WP-2026-177: Primary route is domain-based (canonical entries).
+        Falls back to topic='manager-review-rubric' for legacy entries
+        when no domain-based results are found.
         """
+        domain_observations = self._load_manager_review_observations_by_domain(dtype)
+        if domain_observations:
+            return domain_observations
+
         path = self._observations_path()
         if not path.exists():
             return []
@@ -697,25 +789,16 @@ class ReviewBridge:
 
         observations: list[tuple[datetime, str, str]] = []
         for raw_line in lines:
-            line = raw_line.strip()
-            if not line:
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(record, dict):
+            record = self._parse_observation_record(raw_line)
+            if record is None:
                 continue
             if record.get("topic") != "manager-review-rubric":
                 continue
             if not self._observation_matches_dtype(record, dtype):
                 continue
-            signal = self._truncate_observation_signal(record.get("signal", ""))
-            if not signal:
-                continue
-            timestamp = self._parse_observation_timestamp(record.get("timestamp"))
-            source_ticket = str(record.get("source_ticket", "")).strip() or "unknown"
-            observations.append((timestamp, signal, source_ticket))
+            obs = self._record_to_observation_tuple(record)
+            if obs:
+                observations.append(obs)
 
         observations.sort(key=lambda item: item[0], reverse=True)
         return observations[:MAX_RUBRIC_OBSERVATIONS]

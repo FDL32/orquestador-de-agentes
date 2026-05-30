@@ -2564,6 +2564,204 @@ def test_checkpoint_arranca_en_cero_si_ambas_superficies_faltan(tmp_path):
     assert loaded.last_ticket_id is None
 
 
+# =============================================================================
+# Tests WP-2026-177: Domain-based observation loading in review bridge
+# =============================================================================
+
+
+def test_load_manager_review_observations_by_domain_returns_domain_matches(
+    tmp_path, monkeypatch
+):
+    """_load_manager_review_observations_by_domain returns entries matching dtype domain."""
+    bridge = _make_review_prompt_bridge(
+        tmp_path, deliverable_type="code", monkeypatch=monkeypatch
+    )
+    _write_observations(
+        tmp_path,
+        [
+            json.dumps(
+                {
+                    "timestamp": "2026-05-30T10:00:00+00:00",
+                    "domain": "delivery-hygiene",
+                    "confidence": 0.9,
+                    "applies_to": "code",
+                    "signal": "Ticket completion hygiene",
+                    "source_ticket": "WP-2026-177",
+                    "topic": "ticket-completion",
+                    "source": "session-close",
+                }
+            ),
+            json.dumps(
+                {
+                    "timestamp": "2026-05-29T10:00:00+00:00",
+                    "domain": "review-quality",
+                    "confidence": 0.85,
+                    "applies_to": "code",
+                    "signal": "Review quality finding",
+                    "source_ticket": "WP-2026-176",
+                    "topic": "code-quality",
+                    "source": "session-close",
+                }
+            ),
+            json.dumps(
+                {
+                    "timestamp": "2026-05-28T10:00:00+00:00",
+                    "domain": "config-schema",
+                    "confidence": 0.75,
+                    "applies_to": "docs",
+                    "signal": "Config schema update",
+                    "source_ticket": "WP-2026-175",
+                    "topic": "config",
+                    "source": "session-close",
+                }
+            ),
+        ],
+    )
+
+    # dtype="code" should match delivery-hygiene and review-quality, not config-schema
+    results = bridge._load_manager_review_observations_by_domain(dtype="code")
+    assert len(results) >= 2
+    signals = [r[1] for r in results]
+    assert "Ticket completion hygiene" in signals
+    assert "Review quality finding" in signals
+    assert "Config schema update" not in signals
+
+
+def test_load_manager_review_observations_by_domain_all_dtype(tmp_path, monkeypatch):
+    """_load_manager_review_observations_by_domain with dtype='all' returns all."""
+    bridge = _make_review_prompt_bridge(
+        tmp_path, deliverable_type="code", monkeypatch=monkeypatch
+    )
+    _write_observations(
+        tmp_path,
+        [
+            json.dumps(
+                {
+                    "timestamp": "2026-05-30T10:00:00+00:00",
+                    "domain": "delivery-hygiene",
+                    "confidence": 0.9,
+                    "applies_to": "code",
+                    "signal": "Hygiene finding",
+                    "source_ticket": "WP-2026-177",
+                    "topic": "ticket-completion",
+                    "source": "session-close",
+                }
+            ),
+            json.dumps(
+                {
+                    "timestamp": "2026-05-29T10:00:00+00:00",
+                    "domain": "config-schema",
+                    "confidence": 0.75,
+                    "applies_to": "docs",
+                    "signal": "Config finding",
+                    "source_ticket": "WP-2026-175",
+                    "topic": "config",
+                    "source": "session-close",
+                }
+            ),
+        ],
+    )
+
+    results = bridge._load_manager_review_observations_by_domain(dtype="all")
+    assert len(results) == 2
+
+
+def test_load_manager_review_observations_falls_back_to_legacy_when_no_domain(
+    tmp_path, monkeypatch
+):
+    """_load_manager_review_observations falls back to topic-based when no domain entries."""
+    bridge = _make_review_prompt_bridge(
+        tmp_path, deliverable_type="code", monkeypatch=monkeypatch
+    )
+    _write_observations(
+        tmp_path,
+        [
+            json.dumps(
+                {
+                    "timestamp": "2026-05-25T10:00:00+00:00",
+                    "topic": "manager-review-rubric",
+                    "signal": "Legacy rubric finding",
+                    "source_ticket": "WP-2026-100",
+                    "source": "audit",
+                }
+            ),
+        ],
+    )
+
+    results = bridge._load_manager_review_observations(dtype="code")
+    assert len(results) == 1
+    assert results[0][1] == "Legacy rubric finding"
+
+
+def test_load_manager_review_observations_returns_domain_before_legacy(
+    tmp_path, monkeypatch
+):
+    """_load_manager_review_observations prefers domain entries over legacy topic."""
+    bridge = _make_review_prompt_bridge(
+        tmp_path, deliverable_type="code", monkeypatch=monkeypatch
+    )
+    _write_observations(
+        tmp_path,
+        [
+            json.dumps(
+                {
+                    "timestamp": "2026-05-30T10:00:00+00:00",
+                    "domain": "delivery-hygiene",
+                    "confidence": 0.9,
+                    "applies_to": "code",
+                    "signal": "Canonical domain finding",
+                    "source_ticket": "WP-2026-177",
+                    "topic": "ticket-completion",
+                    "source": "session-close",
+                }
+            ),
+            json.dumps(
+                {
+                    "timestamp": "2026-05-25T10:00:00+00:00",
+                    "topic": "manager-review-rubric",
+                    "signal": "Legacy finding (should not appear)",
+                    "source_ticket": "WP-2026-100",
+                    "source": "audit",
+                }
+            ),
+        ],
+    )
+
+    results = bridge._load_manager_review_observations(dtype="code")
+    assert len(results) == 1
+    assert results[0][1] == "Canonical domain finding"
+
+
+def test_domain_dtype_map_code_includes_base_domains(tmp_path, monkeypatch):
+    """DOMAIN_DTYPE_MAP maps domains to applicable dtypes (code in review-quality)."""
+    from bus.review_bridge import DOMAIN_DTYPE_MAP
+
+    review_quality_dtypes = DOMAIN_DTYPE_MAP.get("review-quality", set())
+    assert "code" in review_quality_dtypes
+    assert "mixed" in review_quality_dtypes
+
+
+def test_domain_dtype_map_docs_includes_review_quality(tmp_path, monkeypatch):
+    """DOMAIN_DTYPE_MAP maps review-quality to include documentation."""
+    from bus.review_bridge import DOMAIN_DTYPE_MAP
+
+    delivery_dtypes = DOMAIN_DTYPE_MAP.get("delivery-hygiene", set())
+    assert "code" in delivery_dtypes
+    assert "mixed" in delivery_dtypes
+    assert "documentation" not in delivery_dtypes
+
+
+def test_load_manager_review_observations_empty_when_no_observations_file(
+    tmp_path, monkeypatch
+):
+    """_load_manager_review_observations_by_domain returns empty list when file missing."""
+    bridge = _make_review_prompt_bridge(
+        tmp_path, deliverable_type="code", monkeypatch=monkeypatch
+    )
+    results = bridge._load_manager_review_observations_by_domain(dtype="code")
+    assert results == []
+
+
 @pytest.mark.usefixtures("_restore_project_root")
 def test_checkpoint_prevents_reprocessing_on_restart(tmp_path):
     """After a review, on next startup with checkpoint present, the bridge
