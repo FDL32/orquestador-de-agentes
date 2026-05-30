@@ -321,13 +321,16 @@ def test_generate_memory_rules_md_with_rules() -> None:
     assert "# Memory Rules (L2)" in content
     assert "Total rules: 2" in content  # Short signal filtered out
 
-    # Parseable domain sections
-    assert "## Domain: security-gates" in content
-    assert "## Domain: testing" in content
+    # Wing header present (default wing: project)
+    assert "## Wing: project" in content
 
-    # Rule IDs present
-    assert "### R-001:" in content
-    assert "### R-002:" in content
+    # Parseable domain sections under wings
+    assert "### Domain: security-gates" in content
+    assert "### Domain: testing" in content
+
+    # Rule IDs present (H4 under H3 domain)
+    assert "#### R-001:" in content
+    assert "#### R-002:" in content
 
     # Source tickets present
     assert "WP-2026-154" in content
@@ -378,7 +381,8 @@ def test_generate_memory_rules_md_allows_explicit_domain() -> None:
     ]
     content = generate_memory_rules_md(entries)
     assert "Total rules: 1" in content
-    assert "## Domain: bus-architecture" in content
+    assert "## Wing: engine" in content  # topic 'architecture' maps to engine wing
+    assert "### Domain: bus-architecture" in content
 
 
 # =============================================================================

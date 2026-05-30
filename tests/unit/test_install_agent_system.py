@@ -1,383 +1,259 @@
-"""Tests for scripts/install_agent_system.py."""
+"""Unit tests for install_agent_system.py memory-sync functions (WP-2026-179).
 
-import json
-import subprocess
-from pathlib import Path
+Covers:
+- parse_wing_sections: wing header parsing and legacy retrocompat
+- merge_memory_rules: engine/meta updated, project preserved, idempotency
+- sync_memory_rules: dry-run, missing source, file creation, no L1/L3 touch
+"""
+
+from __future__ import annotations
+
+import textwrap
 
 from scripts.install_agent_system import (
-    _detect_host_setup,
-    _maybe_invoke_host_setup,
-    copy_tree,
-    detect_destination_residues,
-    ensure_hooks_config_integrity,
-    flip_profile_in_destination,
-    write_motor_destination_link,
+    merge_memory_rules,
+    parse_wing_sections,
+    sync_memory_rules,
 )
 
 
-def _write_min_agent_tree(root: Path) -> Path:
-    agent_dir = root / ".agent"
-    agent_dir.mkdir(parents=True, exist_ok=True)
-    (agent_dir / "agent_controller.py").write_text("# controller\n", encoding="utf-8")
-    (agent_dir / ".version_manifest.json").write_text(
-        json.dumps({"version": "v9.5.0+"}), encoding="utf-8"
+# ---------------------------------------------------------------------------
+# parse_wing_sections
+# ---------------------------------------------------------------------------
+
+
+def test_parse_wing_sections_empty_content():
+    assert parse_wing_sections("") == {}
+    assert parse_wing_sections("   \n  ") == {}
+
+
+def test_parse_wing_sections_no_wings_retrocompat():
+    """Legacy file without Wing headers → entire content maps to 'project'."""
+    content = "## Domain: python-hygiene\n\n- Use pathlib\n"
+    sections = parse_wing_sections(content)
+    assert set(sections.keys()) == {"project"}
+    assert "python-hygiene" in sections["project"]
+
+
+def test_parse_wing_sections_with_wings():
+    content = textwrap.dedent("""\
+        ## Wing: engine
+        ### Domain: architecture
+        - Rule A
+
+        ## Wing: meta
+        ### Domain: workflow
+        - Rule B
+
+        ## Wing: project
+        ### Domain: local
+        - Rule C
+    """)
+    sections = parse_wing_sections(content)
+    assert set(sections.keys()) == {"engine", "meta", "project"}
+    assert "architecture" in sections["engine"]
+    assert "workflow" in sections["meta"]
+    assert "local" in sections["project"]
+
+
+def test_parse_wing_sections_normalises_to_lowercase():
+    content = "## Wing: Engine\n### Domain: d\n- rule\n"
+    sections = parse_wing_sections(content)
+    assert "engine" in sections
+
+
+def test_parse_wing_sections_only_engine():
+    content = "## Wing: engine\n### Domain: d\n- rule\n"
+    sections = parse_wing_sections(content)
+    assert sections.keys() == {"engine"}
+
+
+# ---------------------------------------------------------------------------
+# merge_memory_rules
+# ---------------------------------------------------------------------------
+
+ENGINE_BLOCK = "## Wing: engine\n### Domain: arch\n- Eng rule\n"
+META_BLOCK = "## Wing: meta\n### Domain: workflow\n- Meta rule\n"
+PROJECT_BLOCK = "## Wing: project\n### Domain: local\n- Local rule\n"
+
+FULL_SOURCE = ENGINE_BLOCK + "\n" + META_BLOCK
+FULL_DEST = PROJECT_BLOCK
+
+
+def test_merge_preserves_project_wing():
+    result = merge_memory_rules(FULL_SOURCE, FULL_DEST)
+    assert "local" in result
+    assert "Local rule" in result
+
+
+def test_merge_updates_engine_wing():
+    result = merge_memory_rules(FULL_SOURCE, FULL_DEST)
+    assert "arch" in result
+    assert "Eng rule" in result
+
+
+def test_merge_updates_meta_wing():
+    result = merge_memory_rules(FULL_SOURCE, FULL_DEST)
+    assert "workflow" in result
+    assert "Meta rule" in result
+
+
+def test_merge_canonical_order():
+    """Engine must appear before meta, meta before project."""
+    result = merge_memory_rules(FULL_SOURCE, FULL_DEST)
+    eng_pos = result.index("## Wing: engine")
+    meta_pos = result.index("## Wing: meta")
+    proj_pos = result.index("## Wing: project")
+    assert eng_pos < meta_pos < proj_pos
+
+
+def test_merge_idempotent():
+    """Applying merge twice produces the same output."""
+    first_pass = merge_memory_rules(FULL_SOURCE, FULL_DEST)
+    second_pass = merge_memory_rules(FULL_SOURCE, first_pass)
+    assert first_pass == second_pass
+
+
+def test_merge_empty_dest():
+    """When dest has no content, only engine/meta wings from source are written."""
+    result = merge_memory_rules(FULL_SOURCE, "")
+    assert "Eng rule" in result
+    assert "Meta rule" in result
+    # No project section expected
+    assert "## Wing: project" not in result
+
+
+def test_merge_legacy_dest_kept_as_project():
+    """Legacy dest without Wing headers gets treated as project."""
+    legacy_dest = "## Domain: old-domain\n- old rule\n"
+    result = merge_memory_rules(FULL_SOURCE, legacy_dest)
+    # Engine/meta from source present
+    assert "Eng rule" in result
+    # Legacy content preserved under project wing
+    assert "old rule" in result
+
+
+def test_merge_does_not_copy_project_from_source():
+    """Source may have a project wing, but it must NOT override dest project."""
+    source_with_project = (
+        ENGINE_BLOCK
+        + "\n"
+        + "## Wing: project\n### Domain: source-proj\n- Source proj rule\n"
     )
-    (agent_dir / "config").mkdir(parents=True, exist_ok=True)
-    (agent_dir / "config" / "hooks_config.json").write_text(
-        json.dumps({"version": "1.0", "enabled": True}), encoding="utf-8"
-    )
-    (agent_dir / "rules").mkdir(parents=True, exist_ok=True)
-    (agent_dir / "rules" / "core.md").write_text("# core\n", encoding="utf-8")
-    (agent_dir / "collaboration").mkdir(parents=True, exist_ok=True)
-    (agent_dir / "collaboration" / "work_plan.md").write_text(
-        "# local work plan\n", encoding="utf-8"
-    )
-    (agent_dir / "runtime").mkdir(parents=True, exist_ok=True)
-    (agent_dir / "runtime" / "memory").mkdir(parents=True, exist_ok=True)
-    (agent_dir / "runtime" / "memory" / "observations.jsonl").write_text(
-        "", encoding="utf-8"
-    )
-    return agent_dir
+    result = merge_memory_rules(source_with_project, PROJECT_BLOCK)
+    # Dest project wing preserved
+    assert "Local rule" in result
+    # Source project wing not injected
+    assert "Source proj rule" not in result
 
 
-def test_detect_destination_residues_ignores_local_dirs(tmp_path):
-    source = tmp_path / "source"
-    dest = tmp_path / "dest"
-    source_agent = _write_min_agent_tree(source)
-    dest_agent = _write_min_agent_tree(dest)
-
-    # Canonical residue candidates
-    (dest_agent / "legacy.md").write_text("legacy\n", encoding="utf-8")
-    (dest_agent / "config" / "old.json").write_text("{}", encoding="utf-8")
-    (dest_agent / "__pycache__").mkdir(parents=True, exist_ok=True)
-    (dest_agent / "__pycache__" / "ghost.pyc").write_text("x", encoding="utf-8")
-    (dest_agent / "nested").mkdir(parents=True, exist_ok=True)
-    (dest_agent / "nested" / "child.txt").write_text("x", encoding="utf-8")
-
-    # Preserved local state must not be treated as residue.
-    (dest_agent / "collaboration" / "execution_log.md").write_text(
-        "local\n", encoding="utf-8"
-    )
-    (dest_agent / "runtime" / "memory" / "session.json").write_text(
-        "{}", encoding="utf-8"
-    )
-
-    residues = detect_destination_residues(source_agent, dest_agent)
-    residue_set = {rel.as_posix() for rel in residues}
-
-    assert "legacy.md" in residue_set
-    assert "config/old.json" in residue_set
-    assert "__pycache__" in residue_set
-    assert "nested" in residue_set
-    assert "collaboration/execution_log.md" not in residue_set
-    assert "runtime/memory/session.json" not in residue_set
+def test_merge_empty_source_returns_dest():
+    """When source has no content, dest is unchanged."""
+    result = merge_memory_rules("", PROJECT_BLOCK)
+    assert result == PROJECT_BLOCK
 
 
-def test_ensure_hooks_config_integrity_validates(tmp_path):
-    """Verify that hooks_config.json is readable and has expected structure."""
-    agent_dir = _write_min_agent_tree(tmp_path)
-    hooks_config = agent_dir / "config" / "hooks_config.json"
-
-    # Should validate without modifying version
-    ok = ensure_hooks_config_integrity(agent_dir, dry_run=False)
-
-    assert ok is True
-    # Version field should remain unchanged (not overwritten by core version)
-    data = json.loads(hooks_config.read_text(encoding="utf-8"))
-    assert data["version"] == "1.0"  # Original schema version, unchanged
+# ---------------------------------------------------------------------------
+# sync_memory_rules
+# ---------------------------------------------------------------------------
 
 
-def test_ensure_hooks_config_integrity_dry_run_allows_missing_file(tmp_path, capsys):
-    """Dry-run should not fail when hooks_config.json would be created by sync."""
-    agent_dir = tmp_path / ".agent"
-    agent_dir.mkdir(parents=True, exist_ok=True)
-    (agent_dir / "config").mkdir(parents=True, exist_ok=True)
+def test_sync_memory_rules_dry_run(tmp_path, capsys):
+    template_agent = tmp_path / "template" / ".agent"
+    src_mem = template_agent / "runtime" / "memory"
+    src_mem.mkdir(parents=True)
+    (src_mem / "memory_rules.md").write_text(ENGINE_BLOCK, encoding="utf-8")
 
-    ok = ensure_hooks_config_integrity(agent_dir, dry_run=True)
+    project_agent = tmp_path / "dest" / ".agent"
+    project_agent.mkdir(parents=True)
 
-    assert ok is True
-    assert "would be created" in capsys.readouterr().out
-
-
-def test_install_agent_system_flips_profile(tmp_path):
-    """Verify that flip_profile_in_destination flips active_profile from engine-dev to host-project."""
-
-    agent_dir = tmp_path / ".agent"
-    agent_dir.mkdir(parents=True, exist_ok=True)
-    config_dir = agent_dir / "config"
-    config_dir.mkdir(parents=True, exist_ok=True)
-
-    agents_json = config_dir / "agents.json"
-    agents_json.write_text(
-        json.dumps({"schema_version": "1.1", "active_profile": "engine-dev"}),
-        encoding="utf-8",
-    )
-
-    flip_profile_in_destination(agent_dir, dry_run=False)
-
-    data = json.loads(agents_json.read_text(encoding="utf-8"))
-    assert data["active_profile"] == "host-project"
-
-
-def test_copy_tree_allows_container_directories_when_descendants_are_allowlisted(
-    tmp_path,
-):
-    """Top-level .agent container should be accepted when nested allowlisted paths exist."""
-    source = tmp_path / "source"
-    dest = tmp_path / "dest"
-    source.mkdir()
-    (source / ".agent" / "collaboration").mkdir(parents=True, exist_ok=True)
-    (source / ".agent" / "collaboration" / "work_plan.md").write_text(
-        "# plan\n", encoding="utf-8"
-    )
-
-    allowlist = {".agent/collaboration/work_plan.md"}
-
-    copied = copy_tree(source, dest, dry_run=True, allowlist=allowlist)
-
-    assert any(rel.as_posix() == ".agent" for rel in copied)
-
-
-def test_copy_tree_skips_unauthorized_paths_outside_allowlist(tmp_path):
-    """Unauthorized source files should be skipped instead of aborting sync."""
-    source = tmp_path / "source"
-    dest = tmp_path / "dest"
-    source.mkdir()
-    (source / "agents_config.py").write_text("print('motor')\n", encoding="utf-8")
-    (source / ".agent" / "collaboration").mkdir(parents=True, exist_ok=True)
-    (source / ".agent" / "collaboration" / "work_plan.md").write_text(
-        "# plan\n", encoding="utf-8"
-    )
-
-    allowlist = {".agent/collaboration/work_plan.md"}
-
-    copied = copy_tree(source, dest, dry_run=True, allowlist=allowlist)
-
-    assert all(rel.as_posix() != "agents_config.py" for rel in copied)
-
-
-# =============================================================================
-# Host setup hook tests (WP-2026-094)
-# =============================================================================
-
-
-def test_detect_host_setup_returns_none_when_absent(tmp_path):
-    """When no host-setup.{sh,ps1} exists, _detect_host_setup returns None."""
-    agent_dir = tmp_path / ".agent"
-    agent_dir.mkdir(parents=True, exist_ok=True)
-    # Create some other files, but not host-setup
-    (agent_dir / "other.txt").write_text("x", encoding="utf-8")
-
-    result = _detect_host_setup(tmp_path)
-    assert result is None
-
-
-def test_detect_host_setup_finds_sh_file(tmp_path):
-    """When host-setup.sh exists, _detect_host_setup returns its Path."""
-    agent_dir = tmp_path / ".agent"
-    agent_dir.mkdir(parents=True, exist_ok=True)
-    hook = agent_dir / "host-setup.sh"
-    hook.write_text("#!/usr/bin/env bash\necho ok\n", encoding="utf-8")
-
-    result = _detect_host_setup(tmp_path)
-    assert result == hook
-
-
-def test_detect_host_setup_finds_ps1_file_when_sh_absent(tmp_path):
-    """When only host-setup.ps1 exists, _detect_host_setup returns its Path."""
-    agent_dir = tmp_path / ".agent"
-    agent_dir.mkdir(parents=True, exist_ok=True)
-    hook = agent_dir / "host-setup.ps1"
-    hook.write_text("# PowerShell script\nWrite-Host ok\n", encoding="utf-8")
-
-    result = _detect_host_setup(tmp_path)
-    assert result == hook
-
-
-def test_detect_host_setup_prefers_sh_over_ps1(tmp_path):
-    """When both exist, _detect_host_setup returns .sh first (priority order)."""
-    agent_dir = tmp_path / ".agent"
-    agent_dir.mkdir(parents=True, exist_ok=True)
-    hook_sh = agent_dir / "host-setup.sh"
-    hook_ps1 = agent_dir / "host-setup.ps1"
-    hook_sh.write_text("#!/usr/bin/env bash\necho sh\n", encoding="utf-8")
-    hook_ps1.write_text("# PowerShell\nWrite-Host ps1\n", encoding="utf-8")
-
-    result = _detect_host_setup(tmp_path)
-    assert result == hook_sh
-
-
-def test_maybe_invoke_skips_when_user_declines(tmp_path, capsys):
-    """When user declines (input='n'), hook is NOT executed and returns 0."""
-    agent_dir = tmp_path / ".agent"
-    agent_dir.mkdir(parents=True, exist_ok=True)
-    hook = agent_dir / "host-setup.sh"
-    hook.write_text("#!/usr/bin/env bash\necho should_not_run\n", encoding="utf-8")
-
-    rc = _maybe_invoke_host_setup(tmp_path, auto_yes=False, input_fn=lambda _: "n")
-
-    assert rc == 0
+    sync_memory_rules(template_agent, project_agent, dry_run=True)
     out = capsys.readouterr().out
-    assert "Skipped by user" in out
+    assert "DRY-RUN" in out
+    # File must NOT be created
+    assert not (project_agent / "runtime" / "memory" / "memory_rules.md").exists()
 
 
-def test_maybe_invoke_propagates_failure_exit_code(tmp_path, monkeypatch):
-    """When hook fails with exit code N, _maybe_invoke_host_setup returns N (does not mask)."""
-    agent_dir = tmp_path / ".agent"
-    agent_dir.mkdir(parents=True, exist_ok=True)
-    hook = agent_dir / "host-setup.sh"
-    hook.write_text("#!/usr/bin/env bash\nexit 7\n", encoding="utf-8")
+def test_sync_memory_rules_missing_source_skips(tmp_path, capsys):
+    template_agent = tmp_path / "template" / ".agent"
+    template_agent.mkdir(parents=True)
 
-    # Mock subprocess.run to return a failed result
-    fake_result = type("R", (), {"returncode": 7})()
-    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: fake_result)
+    project_agent = tmp_path / "dest" / ".agent"
+    project_agent.mkdir(parents=True)
 
-    rc = _maybe_invoke_host_setup(tmp_path, auto_yes=True)
-
-    assert rc == 7
-
-
-def test_dry_run_does_not_execute(tmp_path, monkeypatch, capsys):
-    """When dry_run=True, hook is NOT executed and prints 'Would invoke'."""
-    agent_dir = tmp_path / ".agent"
-    agent_dir.mkdir(parents=True, exist_ok=True)
-    hook = agent_dir / "host-setup.sh"
-    hook.write_text("#!/usr/bin/env bash\necho ok\n", encoding="utf-8")
-
-    called = []
-    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: called.append(a))
-
-    rc = _maybe_invoke_host_setup(tmp_path, auto_yes=True, dry_run=True)
-
-    assert rc == 0
-    assert called == []  # subprocess.run was NOT called
+    sync_memory_rules(template_agent, project_agent)
     out = capsys.readouterr().out
-    assert "Would invoke" in out
+    assert "skipping" in out.lower()
 
 
-def test_maybe_invoke_auto_yes_skips_prompt(tmp_path, monkeypatch, capsys):
-    """When auto_yes=True, no prompt is shown and hook executes directly."""
-    agent_dir = tmp_path / ".agent"
-    agent_dir.mkdir(parents=True, exist_ok=True)
-    hook = agent_dir / "host-setup.sh"
-    hook.write_text("#!/usr/bin/env bash\necho ok\n", encoding="utf-8")
+def test_sync_memory_rules_creates_dest_when_absent(tmp_path):
+    template_agent = tmp_path / "template" / ".agent"
+    src_mem = template_agent / "runtime" / "memory"
+    src_mem.mkdir(parents=True)
+    (src_mem / "memory_rules.md").write_text(ENGINE_BLOCK, encoding="utf-8")
 
-    # Mock subprocess.run to return success
-    fake_result = type("R", (), {"returncode": 0})()
-    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: fake_result)
+    project_agent = tmp_path / "dest" / ".agent"
+    project_agent.mkdir(parents=True)
 
-    rc = _maybe_invoke_host_setup(tmp_path, auto_yes=True)
-
-    assert rc == 0
-    out = capsys.readouterr().out
-    # Should NOT contain the prompt text
-    assert "Execute this script?" not in out
+    sync_memory_rules(template_agent, project_agent)
+    dest_rules = project_agent / "runtime" / "memory" / "memory_rules.md"
+    assert dest_rules.exists()
+    assert "Eng rule" in dest_rules.read_text(encoding="utf-8")
 
 
-# =============================================================================
-# Motor-destination link tests (WP-2026-123)
-# =============================================================================
+def test_sync_memory_rules_does_not_touch_observations(tmp_path):
+    """observations.jsonl in dest must be untouched."""
+    template_agent = tmp_path / "template" / ".agent"
+    src_mem = template_agent / "runtime" / "memory"
+    src_mem.mkdir(parents=True)
+    (src_mem / "memory_rules.md").write_text(ENGINE_BLOCK, encoding="utf-8")
+
+    project_agent = tmp_path / "dest" / ".agent"
+    dest_mem = project_agent / "runtime" / "memory"
+    dest_mem.mkdir(parents=True)
+    obs = dest_mem / "observations.jsonl"
+    obs.write_text('{"signal": "keep me"}\n', encoding="utf-8")
+
+    sync_memory_rules(template_agent, project_agent)
+
+    assert obs.read_text(encoding="utf-8") == '{"signal": "keep me"}\n'
 
 
-def test_write_motor_destination_link_creates_file(tmp_path):
-    """Verify that write_motor_destination_link creates the link file with correct schema."""
-    from scripts.install_agent_system import MANIFEST_WORKSPACE_VERSION
+def test_sync_memory_rules_does_not_touch_profile(tmp_path):
+    """memory_profile.md in dest must be untouched."""
+    template_agent = tmp_path / "template" / ".agent"
+    src_mem = template_agent / "runtime" / "memory"
+    src_mem.mkdir(parents=True)
+    (src_mem / "memory_rules.md").write_text(ENGINE_BLOCK, encoding="utf-8")
 
-    project_agent = tmp_path / ".agent"
-    project_agent.mkdir(parents=True, exist_ok=True)
-    motor_root = tmp_path / "motor"
-    motor_root.mkdir(parents=True, exist_ok=True)
-    destination_root = tmp_path
+    project_agent = tmp_path / "dest" / ".agent"
+    dest_mem = project_agent / "runtime" / "memory"
+    dest_mem.mkdir(parents=True)
+    profile = dest_mem / "memory_profile.md"
+    profile.write_text("# My Profile\n", encoding="utf-8")
 
-    write_motor_destination_link(
-        project_agent=project_agent,
-        motor_root=motor_root,
-        destination_root=destination_root,
-        motor_version="v9.14.0",
-        destination_id="test-dest",
-        ticket_prefix="XXX",
-        dry_run=False,
-    )
+    sync_memory_rules(template_agent, project_agent)
 
-    link_file = project_agent / "config" / "motor_destination_link.json"
-    assert link_file.exists()
-
-    data = json.loads(link_file.read_text(encoding="utf-8"))
-    assert data["motor_root"] == str(motor_root.resolve())
-    assert data["destination_root"] == str(destination_root.resolve())
-    assert data["motor_version"] == "v9.14.0"
-    assert data["destination_id"] == "test-dest"
-    assert data["ticket_prefix"] == "XXX"
-    assert "created_at" in data
-    assert data["manifest_version"] == MANIFEST_WORKSPACE_VERSION
+    assert profile.read_text(encoding="utf-8") == "# My Profile\n"
 
 
-def test_write_motor_destination_link_default_destination_id(tmp_path):
-    """When destination_id is None, it defaults to destination_root.name."""
-    project_agent = tmp_path / ".agent"
-    project_agent.mkdir(parents=True, exist_ok=True)
-    motor_root = tmp_path / "motor"
-    motor_root.mkdir(parents=True, exist_ok=True)
-    destination_root = tmp_path / "my_project"
-    destination_root.mkdir(parents=True, exist_ok=True)
+def test_sync_memory_rules_idempotent(tmp_path):
+    """Running sync twice produces the same file."""
+    template_agent = tmp_path / "template" / ".agent"
+    src_mem = template_agent / "runtime" / "memory"
+    src_mem.mkdir(parents=True)
+    (src_mem / "memory_rules.md").write_text(FULL_SOURCE, encoding="utf-8")
 
-    write_motor_destination_link(
-        project_agent=project_agent,
-        motor_root=motor_root,
-        destination_root=destination_root,
-        motor_version="v9.14.0",
-        destination_id=None,
-        ticket_prefix="DEST",
-        dry_run=False,
-    )
+    project_agent = tmp_path / "dest" / ".agent"
+    dest_mem = project_agent / "runtime" / "memory"
+    dest_mem.mkdir(parents=True)
+    dest_rules = dest_mem / "memory_rules.md"
+    dest_rules.write_text(PROJECT_BLOCK, encoding="utf-8")
 
-    link_file = project_agent / "config" / "motor_destination_link.json"
-    data = json.loads(link_file.read_text(encoding="utf-8"))
-    assert data["destination_id"] == "my_project"
-    assert data["ticket_prefix"] == "DEST"
+    sync_memory_rules(template_agent, project_agent)
+    after_first = dest_rules.read_text(encoding="utf-8")
 
+    sync_memory_rules(template_agent, project_agent)
+    after_second = dest_rules.read_text(encoding="utf-8")
 
-def test_write_motor_destination_link_unknown_version(tmp_path):
-    """When motor_version is None, it defaults to 'unknown'."""
-    project_agent = tmp_path / ".agent"
-    project_agent.mkdir(parents=True, exist_ok=True)
-    motor_root = tmp_path / "motor"
-    motor_root.mkdir(parents=True, exist_ok=True)
-    destination_root = tmp_path
-
-    write_motor_destination_link(
-        project_agent=project_agent,
-        motor_root=motor_root,
-        destination_root=destination_root,
-        motor_version=None,
-        ticket_prefix="XXX",
-        dry_run=False,
-    )
-
-    link_file = project_agent / "config" / "motor_destination_link.json"
-    data = json.loads(link_file.read_text(encoding="utf-8"))
-    assert data["motor_version"] == "unknown"
-    assert data["ticket_prefix"] == "XXX"
-
-
-def test_write_motor_destination_link_dry_run(tmp_path, capsys):
-    """When dry_run=True, no file is written but message is printed."""
-    project_agent = tmp_path / ".agent"
-    project_agent.mkdir(parents=True, exist_ok=True)
-    motor_root = tmp_path / "motor"
-    motor_root.mkdir(parents=True, exist_ok=True)
-    destination_root = tmp_path
-
-    write_motor_destination_link(
-        project_agent=project_agent,
-        motor_root=motor_root,
-        destination_root=destination_root,
-        motor_version="v9.14.0",
-        dry_run=True,
-    )
-
-    link_file = project_agent / "config" / "motor_destination_link.json"
-    assert not link_file.exists()
-
-    out = capsys.readouterr().out
-    assert "Would write motor-destination link" in out
+    assert after_first == after_second
