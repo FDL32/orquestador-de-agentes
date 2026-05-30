@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     # Default deferred to after param-binding because $PSScriptRoot,
     # $PSCommandPath, and $MyInvocation.MyCommand.Path can all be empty/null
@@ -82,7 +82,7 @@ if (-not $ProjectRoot) {
 
 Set-StrictMode -Version Latest
 
-# WP-2026-176: Motor code root — always derived from this script's location.
+# WP-2026-176: Motor code root â€” always derived from this script's location.
 # Code files (agents_config.py, bus/, .agent/) live in the motor, not in the workspace.
 # Defined here so all functions can reference it via $script:_MotorCodeRoot.
 $_scriptDirForMotor = if ($PSScriptRoot) { $PSScriptRoot } elseif ($PSCommandPath) { Split-Path -Parent $PSCommandPath } else { $null }
@@ -91,7 +91,7 @@ $script:_MotorCodeRoot = if ($_scriptDirForMotor) { (Resolve-Path (Join-Path $_s
 # OnlyBuilder: when invoked from supervisor requeue (subprocess), force-disable
 # the other launchers. Avoids the PowerShell 5.1 SwitchParameter cast issue
 # where `-LaunchSupervisor:$false` or `:0` arrive as strings via argv and fail
-# to bind. This switch is additive — interactive launching unaffected.
+# to bind. This switch is additive â€” interactive launching unaffected.
 if ($OnlyBuilder) {
     $LaunchSupervisor = $false
     $LaunchBridge = $false
@@ -154,7 +154,7 @@ function Assert-CanonicalProjectRoot {
     foreach ($relative in $requiredPaths) {
         $absolute = Join-Path $resolvedRoot $relative
         if (-not (Test-Path -LiteralPath $absolute)) {
-            throw "Falta el artefacto canónico requerido: $relative"
+            throw "Falta el artefacto canÃ³nico requerido: $relative"
         }
     }
 
@@ -179,10 +179,10 @@ function Get-PlanIdFromWorkPlanContent {
     param([Parameter(Mandatory)] [string]$Content)
 
     $patterns = @(
-        '\*\*Plan activo:\*\*\s*(WP-\d{4}-[A-Za-z0-9]+)',
-        '\*\*ID:\*\*\s*(WP-\d{4}-[A-Za-z0-9]+)',
-        '^\s*##\s*(WP-\d{4}-[A-Za-z0-9]+)\s*:',
-        '(WP-\d{4}-[A-Za-z0-9]+)'
+        '\*\*Plan activo:\*\*\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+)',
+        '\*\*ID:\*\*\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+)',
+        '^\s*##\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+)\s*:',
+        '((?:WP|WT)-\d{4}-[A-Za-z0-9]+)'
     )
 
     foreach ($pattern in $patterns) {
@@ -201,11 +201,11 @@ function Get-PlanIdFromStateContent {
     param([Parameter(Mandatory)] [string]$Content)
 
     $patterns = @(
-        '-\s*\*\*Plan Activo:\*\*\s*(WP-\d{4}-[A-Za-z0-9]+)',
-        '-\s*\*\*ID:\*\*\s*(WP-\d{4}-[A-Za-z0-9]+)',
-        '\*\*Plan Activo:\*\*\s*(WP-\d{4}-[A-Za-z0-9]+)',
-        '\*\*ID:\*\*\s*(WP-\d{4}-[A-Za-z0-9]+)',
-        '(WP-\d{4}-[A-Za-z0-9]+)'
+        '-\s*\*\*Plan Activo:\*\*\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+)',
+        '-\s*\*\*ID:\*\*\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+)',
+        '\*\*Plan Activo:\*\*\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+)',
+        '\*\*ID:\*\*\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+)',
+        '((?:WP|WT)-\d{4}-[A-Za-z0-9]+)'
     )
 
     foreach ($pattern in $patterns) {
@@ -223,7 +223,7 @@ function Get-PlanIdFromStateContent {
 function Get-OptionalPlanIdFromTurnContent {
     param([Parameter(Mandatory)] [string]$Content)
 
-    $planIdPattern = 'WP-\d{4}-[A-Za-z0-9]+'
+    $planIdPattern = '(?:WP|WT)-\d{4}-[A-Za-z0-9]+'
     $pattern = "\|\s*\*\*Plan ID\*\*\s*\|\s*\*{0,2}($planIdPattern)\*{0,2}\s*\|"
     if ($Content -match $pattern) {
         return $Matches[1]
@@ -262,8 +262,8 @@ function Get-CurrentBuilderRound {
     try {
         $state = Get-Content -LiteralPath $supervisorStatePath -Raw | ConvertFrom-Json
         $round = [int](Get-OptionalPropertyValue -Object $state -Names @('loop_current_round'))
-        # Para Builder inicial, si round=0 (no requeue aún), es BR1
-        # Si round=1, significa que ya hubo un requeue, así que próximo Builder es BR2, etc.
+        # Para Builder inicial, si round=0 (no requeue aÃºn), es BR1
+        # Si round=1, significa que ya hubo un requeue, asÃ­ que prÃ³ximo Builder es BR2, etc.
         return [Math]::Max(1, $round + 1)
     }
     catch {
@@ -292,7 +292,7 @@ function Read-BuilderLockState {
                 TicketId     = Get-OptionalPropertyValue -Object $state -Names @('ticket_id', 'ticketId')
                 ProjectRoot  = Get-OptionalPropertyValue -Object $state -Names @('project_root', 'projectRoot')
                 StartedAt    = Get-OptionalPropertyValue -Object $state -Names @('started_at', 'startedAt')
-                # WP-2026-117: PID eliminado del contrato del lock - no usar como señal de vida
+                # WP-2026-117: PID eliminado del contrato del lock - no usar como seÃ±al de vida
                 Role         = Get-OptionalPropertyValue -Object $state -Names @('role')
                 Backend      = Get-OptionalPropertyValue -Object $state -Names @('backend')
                 Round        = Get-OptionalPropertyValue -Object $state -Names @('round')
@@ -525,7 +525,7 @@ function Get-StartupAlignment {
     $turnContent = Get-Content -LiteralPath $turnPath -Raw
     $stateContent = Get-Content -LiteralPath $statePath -Raw
 
-    $planIdPattern = 'WP-\d{4}-[A-Za-z0-9]+'
+    $planIdPattern = '(?:WP|WT)-\d{4}-[A-Za-z0-9]+'
     $workPlanId = Get-PlanIdFromWorkPlanContent -Content $workPlanContent
     $turnPlanId = Get-OptionalPlanIdFromTurnContent -Content $turnContent
     if ($null -eq $turnPlanId) {

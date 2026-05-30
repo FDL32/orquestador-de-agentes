@@ -2330,7 +2330,9 @@ _LIVE_SURFACES_REL = {
 
 _WORKSPACE_EXCLUDED_PREFIXES = {
     ".agent/collaboration/PLAN_WP-",
+    ".agent/collaboration/PLAN_WT-",
     ".agent/collaboration/AUDIT_WP-",
+    ".agent/collaboration/AUDIT_WT-",
 }
 
 _LIVE_SURFACE_DIRS = {
@@ -3037,7 +3039,7 @@ def _handle_manager_approve(  # noqa: C901 - flag handler intentionally branches
         if json_output:
             print(json.dumps({"error": "No ticket_id provided"}, indent=2))
         else:
-            print("[ERROR] No ticket_id provided. Use --ticket WP-XXXX")
+            print("[ERROR] No ticket_id provided. Use --ticket WT-XXXX or WP-XXXX")
         return 1
 
     # Load current state
@@ -3294,7 +3296,7 @@ def _handle_escalate_human_gate(ticket_id: str, json_output: bool) -> int:
         if json_output:
             print(json.dumps({"error": "No ticket_id provided"}, indent=2))
         else:
-            print("[ERROR] No ticket_id provided. Use --ticket WP-XXXX")
+            print("[ERROR] No ticket_id provided. Use --ticket WT-XXXX or WP-XXXX")
         return 1
 
     plan_content = read_file(WORK_PLAN)
@@ -3361,7 +3363,7 @@ def _handle_resume_human_gate(ticket_id: str, json_output: bool) -> int:
         if json_output:
             print(json.dumps({"error": "No ticket_id provided"}, indent=2))
         else:
-            print("[ERROR] No ticket_id provided. Use --ticket WP-XXXX")
+            print("[ERROR] No ticket_id provided. Use --ticket WT-XXXX or WP-XXXX")
         return 1
 
     current_plan_id = get_plan_id(read_file(WORK_PLAN))
@@ -3482,7 +3484,7 @@ def _handle_request_changes(  # noqa: C901
         if json_output:
             print(json.dumps({"error": "No ticket_id provided"}, indent=2))
         else:
-            print("[ERROR] No ticket_id provided. Use --ticket WP-XXXX")
+            print("[ERROR] No ticket_id provided. Use --ticket WT-XXXX or WP-XXXX")
         return 1
 
     plan_content = read_file(WORK_PLAN)
