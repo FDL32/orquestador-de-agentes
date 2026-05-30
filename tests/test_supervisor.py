@@ -107,8 +107,8 @@ def test_supervisor_seeds_missing_queue_entries(tmp_path):
 
     content = (collaboration_dir / "work_plan.md").read_text(encoding="utf-8")
     assert "WP-2026-024" in content
-    assert "WP-2026-025" in content
-    assert "WP-2026-026" in content
+    assert "WT-2026-025" in content
+    assert "WT-2026-026" in content
 
 
 def test_supervisor_advances_on_review_turn(tmp_path):
@@ -166,7 +166,7 @@ def test_supervisor_advances_on_review_turn(tmp_path):
 
     state = supervisor.load_state()
     assert "WP-2026-024" in state.completed_tickets
-    assert state.active_ticket == "WP-2026-025"
+    assert state.active_ticket == "WT-2026-025"
 
     events = supervisor.event_bus.read_events()
     event_types = [event.event_type for event in events]
@@ -176,7 +176,7 @@ def test_supervisor_advances_on_review_turn(tmp_path):
     assert "STATE_CHANGED" in event_types
 
     plan_content = (collaboration_dir / "work_plan.md").read_text(encoding="utf-8")
-    assert "WP-2026-025" in plan_content
+    assert "WT-2026-025" in plan_content
 
 
 def test_supervisor_blocks_close_without_quality_gates(tmp_path):
@@ -4812,3 +4812,151 @@ def test_has_handoff_blocked_after_sequence_finds_blocking(tmp_path):
     # Check with trigger at seq 0: should find seq 3
     result = supervisor._has_handoff_blocked_after_sequence(ticket_id, 0)
     assert result == 3, "Should find highest HANDOFF_BLOCKED"
+
+
+# ======================================================================
+# WT-2026-181: Dual WP-/WT- prefix regression tests
+# ======================================================================
+
+
+class TestDualPrefixSupervisor:
+    """Verify the supervisor accepts both WP- and WT- prefixes."""
+
+    def test_next_ticket_id_from_wp(self, tmp_path):
+        """_next_ticket_id generates next ID from WP- ticket, emits WT-."""
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        bus_dir = tmp_path / ".agent" / "runtime" / "events"
+        bus_dir.mkdir(parents=True)
+        supervisor = SequentialTicketSupervisor(project_root=tmp_path)
+        result = supervisor._next_ticket_id("WP-2026-100")
+        assert result == "WT-2026-101", f"Expected WT-2026-101, got {result}"
+
+    def test_next_ticket_id_from_wt(self, tmp_path):
+        """_next_ticket_id generates next ID from WT- ticket."""
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        bus_dir = tmp_path / ".agent" / "runtime" / "events"
+        bus_dir.mkdir(parents=True)
+        supervisor = SequentialTicketSupervisor(project_root=tmp_path)
+        result = supervisor._next_ticket_id("WT-2026-100")
+        assert result == "WT-2026-101", f"Expected WT-2026-101, got {result}"
+
+    def test_next_ticket_id_invalid_returns_none(self, tmp_path):
+        """_next_ticket_id returns None for invalid ticket IDs."""
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        bus_dir = tmp_path / ".agent" / "runtime" / "events"
+        bus_dir.mkdir(parents=True)
+        supervisor = SequentialTicketSupervisor(project_root=tmp_path)
+        assert supervisor._next_ticket_id("INVALID-123") is None
+        assert supervisor._next_ticket_id("") is None
+
+    def test_ticket_sort_key_wp(self, tmp_path):
+        """_ticket_sort_key sorts WP- tickets correctly."""
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        bus_dir = tmp_path / ".agent" / "runtime" / "events"
+        bus_dir.mkdir(parents=True)
+        supervisor = SequentialTicketSupervisor(project_root=tmp_path)
+        key = supervisor._ticket_sort_key("WP-2026-100")
+        assert key[0] == 2026
+        assert key[1] == 100
+
+    def test_ticket_sort_key_wt(self, tmp_path):
+        """_ticket_sort_key sorts WT- tickets correctly."""
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        bus_dir = tmp_path / ".agent" / "runtime" / "events"
+        bus_dir.mkdir(parents=True)
+        supervisor = SequentialTicketSupervisor(project_root=tmp_path)
+        key = supervisor._ticket_sort_key("WT-2026-100")
+        assert key[0] == 2026
+        assert key[1] == 100
+
+    def test_ticket_sort_key_wp_wt_mixed(self, tmp_path):
+        """_ticket_sort_key produces consistent ordering for mixed WP/WT tickets."""
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        bus_dir = tmp_path / ".agent" / "runtime" / "events"
+        bus_dir.mkdir(parents=True)
+        supervisor = SequentialTicketSupervisor(project_root=tmp_path)
+        key_wp = supervisor._ticket_sort_key("WP-2026-100")
+        key_wt = supervisor._ticket_sort_key("WT-2026-100")
+        assert key_wp == key_wt, (
+            "WP and WT tickets with same year+num should have same sort key"
+        )
+
+    def test_recover_active_ticket_from_turn_wp(self, tmp_path):
+        """recover_active_ticket() reads WP- ticket from TURN.md."""
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        turn = collab / "TURN.md"
+        turn.write_text(
+            "| **Plan ID** | WP-2026-100 |\n",
+            encoding="utf-8",
+        )
+        bus_dir = tmp_path / ".agent" / "runtime" / "events"
+        bus_dir.mkdir(parents=True)
+        supervisor = SequentialTicketSupervisor(project_root=tmp_path)
+        result = supervisor.recover_active_ticket()
+        assert result == "WP-2026-100", f"Expected WP-2026-100, got {result}"
+
+    def test_recover_active_ticket_from_turn_wt(self, tmp_path):
+        """recover_active_ticket() reads WT- ticket from TURN.md."""
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        turn = collab / "TURN.md"
+        turn.write_text(
+            "| **Plan ID** | WT-2026-100 |\n",
+            encoding="utf-8",
+        )
+        bus_dir = tmp_path / ".agent" / "runtime" / "events"
+        bus_dir.mkdir(parents=True)
+        supervisor = SequentialTicketSupervisor(project_root=tmp_path)
+        result = supervisor.recover_active_ticket()
+        assert result == "WT-2026-100", f"Expected WT-2026-100, got {result}"
+
+    def test_recover_active_ticket_from_work_plan_wp(self, tmp_path):
+        """recover_active_ticket() reads WP- ticket from work_plan.md."""
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        wp = collab / "work_plan.md"
+        wp.write_text(
+            "# Work Plan - WP-2026-100\n\n## Metadata\n- **ID:** WP-2026-100\n"
+        )
+        bus_dir = tmp_path / ".agent" / "runtime" / "events"
+        bus_dir.mkdir(parents=True)
+        supervisor = SequentialTicketSupervisor(project_root=tmp_path)
+        result = supervisor.recover_active_ticket()
+        assert result == "WP-2026-100", f"Expected WP-2026-100, got {result}"
+
+    def test_recover_active_ticket_from_work_plan_wt(self, tmp_path):
+        """recover_active_ticket() reads WT- ticket from work_plan.md."""
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        wp = collab / "work_plan.md"
+        wp.write_text(
+            "# Work Plan - WT-2026-100\n\n## Metadata\n- **ID:** WT-2026-100\n"
+        )
+        bus_dir = tmp_path / ".agent" / "runtime" / "events"
+        bus_dir.mkdir(parents=True)
+        supervisor = SequentialTicketSupervisor(project_root=tmp_path)
+        result = supervisor.recover_active_ticket()
+        assert result == "WT-2026-100", f"Expected WT-2026-100, got {result}"
+
+    def test_ensure_ticket_queue_extracts_both_prefixes(self, tmp_path):
+        """ensure_ticket_queue() extracts both WP- and WT- tickets from work_plan."""
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        wp = collab / "work_plan.md"
+        wp.write_text(
+            "# Work Plan\n\n"
+            "## WP-2026-100: First ticket\n\n### Metadata\n- **ID:** WP-2026-100\n\n"
+            "## WT-2026-101: Second ticket\n\n### Metadata\n- **ID:** WT-2026-101\n"
+        )
+        bus_dir = tmp_path / ".agent" / "runtime" / "events"
+        bus_dir.mkdir(parents=True)
+        supervisor = SequentialTicketSupervisor(project_root=tmp_path)
+        # ensure_ticket_queue should not crash with mixed prefixes
+        supervisor.ensure_ticket_queue()

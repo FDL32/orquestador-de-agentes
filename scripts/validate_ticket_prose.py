@@ -453,14 +453,16 @@ def detect_audit_missing_tp_check(collab_dir: Path) -> list[ProseWarning]:
     """
     warnings = []
     # Buscar AUDIT del ticket activo
-    audit_files = list(collab_dir.glob("AUDIT_WP-*.md"))
+    audit_files = list(collab_dir.glob("AUDIT_WP-*.md")) + list(
+        collab_dir.glob("AUDIT_WT-*.md")
+    )
     if not audit_files:
         warnings.append(
             ProseWarning(
                 rule_id="TP-STRUCT-01",
                 rule_name="audit-missing-tp-check",
-                evidence="No se encontro AUDIT_WP-*.md en .agent/collaboration/",
-                suggestion="Crea un AUDIT_WP-*.md con seccion '## TP Check' que verifique los 5 TP-P.",
+                evidence="No se encontro AUDIT_WP-*.md ni AUDIT_WT-*.md en .agent/collaboration/",
+                suggestion="Crea un AUDIT_WP-*.md o AUDIT_WT-*.md con seccion '## TP Check' que verifique los 5 TP-P.",
             )
         )
         return warnings
@@ -478,7 +480,7 @@ def detect_audit_missing_tp_check(collab_dir: Path) -> list[ProseWarning]:
             ProseWarning(
                 rule_id="TP-STRUCT-01",
                 rule_name="audit-missing-tp-check",
-                evidence="AUDIT_WP-*.md existe pero no contiene seccion '## TP Check'",
+                evidence="AUDIT_WP-*.md o AUDIT_WT-*.md existe pero no contiene seccion '## TP Check'",
                 suggestion="Anade '## TP Check' al AUDIT con verificacion de TP-01 a TP-05.",
             )
         )
@@ -508,7 +510,9 @@ def detect_audit_malformed_tp_check(collab_dir: Path) -> list[ProseWarning]:
     After: Retorna lista de warnings con regla TP-STRUCT-02.
     """
     warnings = []
-    audit_files = list(collab_dir.glob("AUDIT_WP-*.md"))
+    audit_files = list(collab_dir.glob("AUDIT_WP-*.md")) + list(
+        collab_dir.glob("AUDIT_WT-*.md")
+    )
     if not audit_files:
         return warnings
 

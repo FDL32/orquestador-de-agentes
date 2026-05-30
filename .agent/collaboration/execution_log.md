@@ -1,15 +1,39 @@
-# Execution Log - WP-2026-179
+﻿# Execution Log WT-2026-181
 
-## Metadata
-- **ID:** WP-2026-179
-- **Estado:** IN_PROGRESS
-- **deliverable_type:** code
+**Estado:** IN_PROGRESS
 
-## Calidad
-- ruff check: All checks passed (scripts/install_agent_system.py, scripts/memory_consolidate.py, bus/memory_loader.py)
-- pytest: 25 passed (test_install_agent_system.py, test_memory_loader_wing.py)
+## Comandos Canonicos
+- Check final: python .agent/agent_controller.py --validate --json --force
+- Cierre obligatorio: python .agent/agent_controller.py --pre-handoff --project-root <workspace>
 
-## Fases completadas
-- Phase 1: Formalización de Wing en memory_consolidate.py + _infer_wing usa campo explícito primero. ✅
-- Phase 2: sync_memory_rules / parse_wing_sections / merge_memory_rules en install_agent_system.py. ✅
-- Phase 3: tests unitarios cubriendo TP-02 (no-regresión), TP-03 (merge), TP-04 (L1/L3 intocables), TP-05 (retrocompat). ✅
+## Fases
+- Phase 0: Inventario Exhaustivo. ✅
+- Phase 1: Soporte dual en Parsers y Validadores. ✅
+- Phase 2: Actualización de Generadores y Plantillas. ✅
+- Phase 3: Pruebas de Regresión y Retrocompatibilidad. ✅
+
+## Registro de Implementacion
+
+### Phase 0 - Inventario
+- Searched 40+ files for WP- occurrences across motor codebase
+- Classified ~45 items into 4 categories (A: parsers, B: generators, C: tests, D: docs)
+- Saved inventory to .session/wp_inventory.md
+
+### Phase 1 - Regex dual support
+- Updated 11 source files with (?:WP|WT)- dual regex patterns
+- bus/supervisor.py (15+ patterns), bus/review_bridge.py (3 patterns)
+- All scripts/*.py files with WP- extraction logic
+- runtime/ui_state_projector.py, .agent/agent_controller.py
+
+### Phase 2 - Generators emit WT-
+- supervisor.py: ensure_ticket_queue and _next_ticket_id now emit WT-
+- archive_collaboration_artifacts.py: parse_wp_number returns original prefix
+
+### Phase 3 - Regression tests
+- Added 22 new tests across 3 test files
+- All 22 pass, ruff clean
+
+## Evidencia
+- Ruff: All checks passed
+- Tests: 22/22 passed
+- Inventory: .session/wp_inventory.md

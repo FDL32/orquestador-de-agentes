@@ -52,8 +52,8 @@ def extract_ticket_id(content: str) -> str:
     """Extract ticket ID from work_plan.md content."""
     ticket = "UNKNOWN"
     for line in content.splitlines()[:60]:
-        if "WP-" in line:
-            m = re.search(r"(WP-\d{4}-[A-Za-z0-9]+)", line)
+        if "WP-" in line or "WT-" in line:
+            m = re.search(r"((?:WP|WT)-\d{4}-[A-Za-z0-9]+)", line)
             if m:
                 ticket = m.group(1)
                 break
