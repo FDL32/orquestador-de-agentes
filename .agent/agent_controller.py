@@ -3990,11 +3990,13 @@ def _handle_main_action(
 FLAG_HANDLERS = {
     "--recover": _handle_recover,
     "--check-completion": _handle_check_completion,
-    "--validate": _handle_validate,
     "--archive": _handle_archive,
     "--manager-approve": _handle_manager_approve,
     "--request-changes": _handle_request_changes,
 }
+# --validate is dispatched via direct call (not FLAG_HANDLERS) so that
+# monkeypatching agent_controller._handle_validate in tests works correctly.
+# A dict entry captures the function object at import time, bypassing patches.
 
 
 def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
@@ -4128,12 +4130,13 @@ def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
             json_output=json_output,
         )
 
+    # Check for --validate via direct call (see FLAG_HANDLERS comment above)
+    if "--validate" in sys.argv:
+        return _handle_validate(json_output)
+
     # Check for specific flag handlers
     for flag, handler in FLAG_HANDLERS.items():
         if flag in sys.argv:
-            # Pass json_output to validate handler if needed
-            if flag == "--validate":
-                return handler(json_output)
             # Pass ticket_id to manager-approve handler
             if flag in ("--manager-approve", "--request-changes"):
                 return handler(ticket_id, json_output, force_mode)
