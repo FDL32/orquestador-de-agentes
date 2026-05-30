@@ -212,21 +212,40 @@ def get_review_context(domain: str | None = None) -> str:
     return rules
 
 
+def _has_wing_headers(rules_text: str) -> bool:
+    """Check if the rules text uses the new Wing format (H2 Wing headers).
+
+    Before: Requires the full text of memory_rules.md.
+    During: Scans for ``## Wing:`` pattern.
+    After: Returns True if Wing format detected, False otherwise.
+    """
+    return bool(re.search(r"^## Wing:\s+", rules_text, re.MULTILINE | re.IGNORECASE))
+
+
 def _filter_rules_by_domain(rules_text: str, domain: str) -> str:
     """Filter memory_rules.md content to only include sections for a given domain.
 
     Before: Requires the full text of memory_rules.md and a domain string.
-    During: Uses regex to find the ``## Domain: <domain>`` section and extract
-            its content until the next ``## Domain:`` or end of file.
+    During: Detects format (legacy H2 vs Wing H2/H3). Uses regex to find the
+            matching ``## Domain: <domain>`` (legacy) or ``### Domain: <domain>``
+            (Wing format) section and extract its content until the next Domain
+            header or end of file.
     After: Returns the filtered section text, or empty string if domain not found.
+            Retrocompat: if no Wing headers present, assumes legacy H2 format.
     """
     domain_lower = domain.lower()
     lines = rules_text.splitlines()
+
+    # Detect format: Wing uses H3 (###), legacy uses H2 (##)
+    has_wing = _has_wing_headers(rules_text)
+    domain_pattern = r"^### Domain:\s*(.+)$" if has_wing else r"^## Domain:\s*(.+)$"
+    domain_re = re.compile(domain_pattern, re.IGNORECASE)
+
     result_lines: list[str] = []
     in_target = False
 
     for line in lines:
-        domain_match = re.match(r"^## Domain:\s*(.+)$", line, re.IGNORECASE)
+        domain_match = domain_re.match(line)
         if domain_match:
             if in_target:
                 break

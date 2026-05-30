@@ -222,6 +222,59 @@ def regen_memory_md(entries: list[dict[str, Any]], stats: dict[str, int]) -> str
     return content
 
 
+def _infer_wing(entry: dict[str, Any]) -> str:
+    """Determine wing classification from observation metadata.
+
+    Before: Requires an observation dict.
+    During: Checks explicit 'wing' field first. If missing, inspects source,
+            topic, and domain for keywords that indicate engine or meta wings.
+    After: Returns one of 'engine', 'meta', or 'project' (default).
+    """
+    explicit_wing = entry.get("wing")
+    if explicit_wing and isinstance(explicit_wing, str) and explicit_wing.strip():
+        return explicit_wing.strip().lower()
+
+    source = (entry.get("source") or "").lower()
+    topic = (entry.get("topic") or "").lower()
+    domain = (entry.get("domain") or "").lower()
+    combined = f"{source} {topic} {domain}"
+
+    # engine wing: system-level code, tools, architecture
+    if any(
+        kw in combined
+        for kw in [
+            "agent_controller",
+            "memory_loader",
+            "memory_consolidate",
+            "install_agent",
+            "bus/",
+            "script",
+            "motor",
+            "architecture",
+        ]
+    ):
+        return "engine"
+
+    # meta wing: collaboration, workflow, process
+    if any(
+        kw in combined
+        for kw in [
+            "collaborat",
+            "workflow",
+            "ticket",
+            "review",
+            "supervisor",
+            "process",
+            "work_plan",
+            "execution_log",
+            "turn",
+        ]
+    ):
+        return "meta"
+
+    return "project"
+
+
 def _extract_rules_from_entries(
     entries: list[dict[str, Any]], max_rules: int = MAX_L2_RULES
 ) -> list[dict[str, Any]]:
@@ -230,8 +283,9 @@ def _extract_rules_from_entries(
     Before: Requires a list of consolidated observation dicts.
     During: Filters observations that carry explicit 'domain' or have
             'topic' values resembling patterns/rules. Groups by domain.
+            Assigns a 'wing' via _infer_wing() for hierarchical grouping.
     After: Returns a deduplicated, deterministically sorted list of
-           rule dicts with 'domain', 'signal', 'rule_id', 'source_ticket'.
+           rule dicts with 'domain', 'signal', 'rule_id', 'source_ticket', 'wing'.
     """
     seen_signals: set[str] = set()
     rules: list[dict[str, Any]] = []
@@ -276,6 +330,7 @@ def _extract_rules_from_entries(
                 "domain": str(domain),
                 "signal": signal,
                 "source_ticket": entry.get("source_ticket", "unknown"),
+                "wing": _infer_wing(entry),
             }
         )
         if len(rules) >= max_rules:
@@ -294,8 +349,9 @@ def generate_memory_rules_md(entries: list[dict[str, Any]]) -> str:
 
     Before: Requires a list of consolidated observation dicts.
     During: Extracts rule-like entries via _extract_rules_from_entries(),
-            groups by domain, and renders a parseable markdown document
-            with ``## Domain: <name>`` section headers.
+            groups by wing (engine/meta/project) then by domain, and renders
+            a parseable markdown document with ``## Wing: <wing>`` and
+            ``### Domain: <slug>`` section headers.
     After: Returns a markdown string with deterministic rule IDs and
            a header documenting generation timestamp and stats.
     """
@@ -307,31 +363,38 @@ def generate_memory_rules_md(entries: list[dict[str, Any]]) -> str:
         f"Total rules: {len(rules)}",
         "",
         "Rules derived deterministically from observations.jsonl. "
-        "Each rule carries an ID (R-XXX), domain, source ticket, and signal text.",
+        "Each rule carries an ID (R-XXX), domain, wing, source ticket, and signal text.",
         "",
     ]
 
-    # Group by domain
-    domain_groups: dict[str, list[dict[str, Any]]] = {}
+    # Group by wing then domain
+    wing_groups: dict[str, dict[str, list[dict[str, Any]]]] = {}
     for rule in rules:
+        wing = rule.get("wing", "project")
         domain = rule["domain"]
-        if domain not in domain_groups:
-            domain_groups[domain] = []
-        domain_groups[domain].append(rule)
+        if wing not in wing_groups:
+            wing_groups[wing] = {}
+        if domain not in wing_groups[wing]:
+            wing_groups[wing][domain] = []
+        wing_groups[wing][domain].append(rule)
 
-    for domain in sorted(domain_groups.keys()):
-        domain_rules = domain_groups[domain]
-        lines.append(f"## Domain: {domain}")
+    for wing in sorted(wing_groups.keys()):
+        lines.append(f"## Wing: {wing}")
         lines.append("")
-        for rule in domain_rules:
-            lines.append(f"### {rule['rule_id']}: {rule['signal'][:80].rstrip()}")
+        domains = wing_groups[wing]
+        for domain in sorted(domains.keys()):
+            domain_rules = domains[domain]
+            lines.append(f"### Domain: {domain}")
             lines.append("")
-            lines.append(rule["signal"])
-            lines.append("")
-            if rule["source_ticket"] != "unknown":
-                lines.append(f"*Source: {rule['source_ticket']}*")
+            for rule in domain_rules:
+                lines.append(f"#### {rule['rule_id']}: {rule['signal'][:80].rstrip()}")
                 lines.append("")
-        lines.append("")
+                lines.append(rule["signal"])
+                lines.append("")
+                if rule["source_ticket"] != "unknown":
+                    lines.append(f"*Source: {rule['source_ticket']}*")
+                    lines.append("")
+            lines.append("")
 
     if not rules:
         lines.append(

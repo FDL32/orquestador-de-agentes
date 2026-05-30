@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -611,6 +612,107 @@ def _write_prefix_to_project_md(
     print(f"[INFO] Updated {project_md} with ticket prefix")
 
 
+# ---------------------------------------------------------------------------
+# Memory rules sync (Fase 2 — WP-2026-179)
+# ---------------------------------------------------------------------------
+
+
+def parse_wing_sections(content: str) -> dict[str, str]:
+    """Parse memory_rules.md content into sections keyed by Wing name.
+
+    Before: Receives full text of a memory_rules.md file (may be empty).
+    During: Looks for ``## Wing: <name>`` H2 headers. If none found, treats
+            the entire content as belonging to wing 'project' for
+            retrocompatibility with legacy files without Wing headers.
+    After: Returns dict mapping lowercase wing name -> section text
+           (including its ``## Wing:`` header).
+    """
+    if not content.strip():
+        return {}
+
+    wing_re = re.compile(r"^## Wing:\s*(.+)$", re.MULTILINE)
+    matches = list(wing_re.finditer(content))
+
+    if not matches:
+        # Retrocompat: no Wing headers → assume all content is 'project'
+        return {"project": content}
+
+    sections: dict[str, str] = {}
+    for i, match in enumerate(matches):
+        wing = match.group(1).strip().lower()
+        start = match.start()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(content)
+        sections[wing] = content[start:end].rstrip()
+
+    return sections
+
+
+def merge_memory_rules(source_content: str, dest_content: str) -> str:
+    """Merge portable wings (engine/meta) from source into dest, preserving project.
+
+    Before: source_content is the motor's memory_rules.md; dest_content is the
+            destination's (may be empty or legacy).
+    During: Extracts engine/meta from source and project from dest. Renders a
+            new file with canonical wing order: engine -> meta -> project.
+            Idempotent: applying twice produces the same output.
+    After: Returns merged markdown string ready to write to disk.
+    """
+    source_sections = parse_wing_sections(source_content)
+    dest_sections = parse_wing_sections(dest_content)
+
+    merged: dict[str, str] = {}
+    for wing in ("engine", "meta"):
+        if wing in source_sections:
+            merged[wing] = source_sections[wing]
+
+    if "project" in dest_sections:
+        merged["project"] = dest_sections["project"]
+
+    if not merged:
+        return dest_content
+
+    parts = [merged[w] for w in ("engine", "meta", "project") if w in merged]
+    return "\n\n".join(parts) + "\n"
+
+
+def sync_memory_rules(
+    template_agent: Path,
+    project_agent: Path,
+    dry_run: bool = False,
+) -> None:
+    """Sync portable memory rules (engine/meta wings) from motor to destination.
+
+    Before: template_agent and project_agent are valid ``.agent/`` directories.
+    During: Reads motor's runtime/memory/memory_rules.md, extracts engine/meta
+            wings, merges with destination's memory_rules.md preserving its
+            project wing. Does NOT touch observations.jsonl or memory_profile.md.
+    After: destination's memory_rules.md contains updated engine/meta rules
+           alongside its original project rules.
+    """
+    source_rules = template_agent / "runtime" / "memory" / "memory_rules.md"
+    dest_rules = project_agent / "runtime" / "memory" / "memory_rules.md"
+
+    if not source_rules.exists():
+        print("[INFO] Motor has no memory_rules.md — skipping memory sync.")
+        return
+
+    source_content = source_rules.read_text(encoding="utf-8")
+    dest_content = dest_rules.read_text(encoding="utf-8") if dest_rules.exists() else ""
+
+    merged = merge_memory_rules(source_content, dest_content)
+
+    if dry_run:
+        print(
+            f"[DRY-RUN] Would sync memory_rules.md (engine/meta wings): "
+            f"{source_rules} -> {dest_rules}"
+        )
+        return
+
+    dest_rules.parent.mkdir(parents=True, exist_ok=True)
+    dest_rules.write_text(merged, encoding="utf-8")
+    print(f"[INFO] Synced portable memory rules to {dest_rules}")
+
+
 def install_agent_system(
     template_agent: Path,
     project_agent: Path,
@@ -659,6 +761,9 @@ def install_agent_system(
     # Write ticket prefix to PROJECT.md if provided
     if ticket_prefix:
         _write_prefix_to_project_md(destination_root, ticket_prefix, dry_run=dry_run)
+
+    # Sync portable memory rules (engine/meta wings) from motor
+    sync_memory_rules(template_agent, project_agent, dry_run=dry_run)
 
     integrity_ok = ensure_hooks_config_integrity(project_agent, dry_run=dry_run)
 
@@ -750,6 +855,9 @@ def sync_agent_system(  # noqa: C901
     # Update PROJECT.md with ticket prefix if provided
     if ticket_prefix:
         _write_prefix_to_project_md(destination_root, ticket_prefix, dry_run=dry_run)
+
+    # Sync portable memory rules (engine/meta wings) from motor
+    sync_memory_rules(template_agent, project_agent, dry_run=dry_run)
 
     integrity_ok = ensure_hooks_config_integrity(project_agent, dry_run=dry_run)
 
