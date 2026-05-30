@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
 from bus.event_bus import EventBus
 from bus.review_bridge import ReviewBridge, ReviewDecision
 
@@ -11,6 +12,14 @@ def _make_bridge(tmp_path):
     bus = EventBus(runtime_dir=runtime)
     bridge = ReviewBridge(event_bus=bus, project_root=tmp_path)
     return bridge, bus
+
+
+@pytest.fixture(autouse=True)
+def _mock_repomix_for_tests(monkeypatch):
+    """WT-2026-182: Evitar warnings y ralentización en CI por npx repomix."""
+    monkeypatch.setattr(
+        "bus.review_bridge.ReviewBridge._ensure_repomix_context", lambda self: None
+    )
 
 
 def _write_canonical(tmp_path, name, content):
@@ -492,6 +501,10 @@ def test_review_attempt_bus_payload_is_lightweight(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
     monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
+    monkeypatch.setattr(
+        "bus.review_bridge.subprocess.run",
+        lambda *a, **k: type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})(),
+    )
 
     changes_with_blockers = (
         "## SUMMARY\nIssues.\n"
