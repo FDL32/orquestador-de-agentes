@@ -38,6 +38,11 @@ NOISE_PREFIXES = ("Tool ",)
 MIN_SIGNAL_LEN = 30
 DEDUPE_WINDOW_HOURS = 24
 MEMORY_MD_LINE_CAP = 80
+MEMORY_RULES_MD = MEMORY_DIR / "memory_rules.md"
+MEMORY_PROFILE_MD = MEMORY_DIR / "memory_profile.md"
+MAX_L2_RULES = 30
+MAX_L3_DOMAINS = 8
+MAX_L3_OBSERVATIONS_PROFILE = 10
 
 
 def is_noise(signal: str) -> bool:
@@ -217,6 +222,216 @@ def regen_memory_md(entries: list[dict[str, Any]], stats: dict[str, int]) -> str
     return content
 
 
+def _extract_rules_from_entries(
+    entries: list[dict[str, Any]], max_rules: int = MAX_L2_RULES
+) -> list[dict[str, Any]]:
+    """Extract rule-like observations grouped by domain.
+
+    Before: Requires a list of consolidated observation dicts.
+    During: Filters observations that carry explicit 'domain' or have
+            'topic' values resembling patterns/rules. Groups by domain.
+    After: Returns a deduplicated, deterministically sorted list of
+           rule dicts with 'domain', 'signal', 'rule_id', 'source_ticket'.
+    """
+    seen_signals: set[str] = set()
+    rules: list[dict[str, Any]] = []
+
+    for entry in entries:
+        signal = (entry.get("signal") or "").strip()
+        if not signal or signal in seen_signals:
+            continue
+
+        # Only promote entries that carry a rule-like signal (longer than 60 chars
+        # and not a pure factual statement). Factual statements are shorter or
+        # lack a prescriptive tone.
+        if len(signal) < 60:
+            continue
+
+        # Score rule-likeness: looks for pattern/rule/avoid/always/never/rule/blocker
+        signal_lower = signal.lower()
+        rule_keywords = (
+            "rule",
+            "pattern",
+            "avoid",
+            "always",
+            "never",
+            "blocker",
+            "when a",
+            "if the",
+            "must be",
+            "should",
+        )
+        rule_likeness = sum(1 for kw in rule_keywords if kw in signal_lower)
+
+        # Minimal rule-likeness threshold: at least one keyword match or
+        # the entry has an explicit domain/anti_pattern_id field.
+        has_domain = bool(entry.get("domain") or entry.get("anti_pattern_id"))
+        if not has_domain and rule_likeness < 1:
+            continue
+
+        seen_signals.add(signal)
+        domain = entry.get("domain") or entry.get("topic", "general")
+        rules.append(
+            {
+                "domain": str(domain).replace("_", " ").replace("-", " ").title(),
+                "signal": signal,
+                "source_ticket": entry.get("source_ticket", "unknown"),
+            }
+        )
+        if len(rules) >= max_rules:
+            break
+
+    # Sort deterministically by (domain, signal)
+    rules.sort(key=lambda r: (r["domain"], r["signal"]))
+    # Assign stable rule IDs
+    for i, rule in enumerate(rules, 1):
+        rule["rule_id"] = f"R-{i:03d}"
+    return rules
+
+
+def generate_memory_rules_md(entries: list[dict[str, Any]]) -> str:
+    """Generate memory_rules.md (L2) from consolidated entries.
+
+    Before: Requires a list of consolidated observation dicts.
+    During: Extracts rule-like entries via _extract_rules_from_entries(),
+            groups by domain, and renders a parseable markdown document
+            with ``## Domain: <name>`` section headers.
+    After: Returns a markdown string with deterministic rule IDs and
+           a header documenting generation timestamp and stats.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    rules = _extract_rules_from_entries(entries)
+
+    lines = [
+        "# Memory Rules (L2)",
+        "",
+        f"Generated: {now}",
+        f"Total rules: {len(rules)}",
+        "",
+        "Rules derived deterministically from observations.jsonl. "
+        "Each rule carries an ID (R-XXX), domain, source ticket, and signal text.",
+        "",
+    ]
+
+    # Group by domain
+    domain_groups: dict[str, list[dict[str, Any]]] = {}
+    for rule in rules:
+        domain = rule["domain"]
+        if domain not in domain_groups:
+            domain_groups[domain] = []
+        domain_groups[domain].append(rule)
+
+    for domain in sorted(domain_groups.keys()):
+        domain_rules = domain_groups[domain]
+        lines.append(f"## Domain: {domain}")
+        lines.append("")
+        for rule in domain_rules:
+            lines.append(f"### {rule['rule_id']}: {rule['signal'][:80].rstrip()}")
+            lines.append("")
+            lines.append(rule["signal"])
+            lines.append("")
+            if rule["source_ticket"] != "unknown":
+                lines.append(f"*Source: {rule['source_ticket']}*")
+                lines.append("")
+        lines.append("")
+
+    if not rules:
+        lines.append(
+            "No rules extracted yet. Accumulate more observations to generate rules."
+        )
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def generate_memory_profile_md(entries: list[dict[str, Any]]) -> str:
+    """Generate memory_profile.md (L3) from consolidated entries.
+
+    Before: Requires a list of consolidated observation dicts.
+    During: Compiles active domains, top patterns, and summary stats
+            from the most recent observations.
+    After: Returns a brief markdown profile string suitable for bootstrap
+           and pre-compact consumption (L3 priority).
+    """
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Count domains from observations
+    domain_counts: dict[str, int] = {}
+    topic_counts: dict[str, int] = {}
+    tickets_seen: set[str] = set()
+
+    for entry in entries:
+        domain = entry.get("domain") or entry.get("topic", "general")
+        domain_counts[str(domain)] = domain_counts.get(str(domain), 0) + 1
+        topic = entry.get("topic", "general")
+        topic_counts[str(topic)] = topic_counts.get(str(topic), 0) + 1
+        ticket = entry.get("source_ticket", "")
+        if ticket:
+            tickets_seen.add(ticket)
+
+    # Sort domains by count descending, take top N
+    top_domains = sorted(domain_counts.items(), key=lambda x: -x[1])[:MAX_L3_DOMAINS]
+    # topic_counts computed but profile prioritizes domain aggregation
+    _ = sorted(topic_counts.items(), key=lambda x: -x[1])[:MAX_L3_DOMAINS]
+
+    # Take most recent observations as "active signals"
+    sorted_entries = sorted(
+        entries,
+        key=lambda e: parse_timestamp(e.get("timestamp", "")),
+        reverse=True,
+    )
+    recent_signals = sorted_entries[:MAX_L3_OBSERVATIONS_PROFILE]
+
+    lines = [
+        "# Memory Profile (L3)",
+        "",
+        f"Generated: {now}",
+        f"Total observations: {len(entries)}",
+        "",
+        "High-level profile of project memory for quick context loading. "
+        "This is the first memory tier loaded (before L2 rules and L1 raw observations).",
+        "",
+        "## Active Domains",
+        "",
+    ]
+    for domain, count in top_domains:
+        lines.append(f"- {domain}: {count} observations")
+    lines.append("")
+
+    if tickets_seen:
+        lines.append("## Active Tickets Referenced")
+        lines.append("")
+        lines.extend(f"- {ticket}" for ticket in sorted(tickets_seen))
+        lines.append("")
+
+    lines.append("## Recent Signals")
+    lines.append("")
+    for entry in recent_signals:
+        signal = (entry.get("signal") or "")[:150]
+        topic = entry.get("topic", "general")
+        source = entry.get("source", "unknown")
+        lines.append(f"- [{topic}] {signal} ({source})")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+def _regenerate_l2_l3(
+    recent: list[dict[str, Any]],
+    verbose: bool,
+) -> None:
+    """Regenerate memory_rules.md (L2) and memory_profile.md (L3)."""
+    rules_md = generate_memory_rules_md(recent)
+    MEMORY_RULES_MD.write_text(rules_md, encoding="utf-8")
+    if verbose:
+        print(f"Regenerated {MEMORY_RULES_MD}")
+
+    profile_md = generate_memory_profile_md(recent)
+    MEMORY_PROFILE_MD.write_text(profile_md, encoding="utf-8")
+    if verbose:
+        print(f"Regenerated {MEMORY_PROFILE_MD}")
+
+
 def write_report(stats: dict[str, Any], dry_run: bool = True) -> None:
     """Write CONSOLIDATION_REPORT.md."""
     now = datetime.now(timezone.utc).isoformat()
@@ -243,6 +458,8 @@ def write_report(stats: dict[str, Any], dry_run: bool = True) -> None:
         "3. **Dedupe**: Removed duplicates within 24h window",
         "4. **Archive**: Moved entries older than 30 days to archive/",
         "5. **Regenerate**: MEMORY.md regenerated from consolidated entries",
+        "6. **Generate L2**: memory_rules.md regenerated from rule-like entries",
+        "7. **Generate L3**: memory_profile.md regenerated as brief project profile",
         "",
     ]
 
@@ -259,6 +476,8 @@ def write_report(stats: dict[str, Any], dry_run: bool = True) -> None:
                 f"- `observations.jsonl`: Replaced with {stats['kept']} entries",
                 "- `observations.jsonl.bak.*`: Backup created",
                 "- `MEMORY.md`: Regenerated",
+                "- `memory_rules.md`: Regenerated (L2 rules)",
+                "- `memory_profile.md`: Regenerated (L3 profile)",
             ]
         )
         if stats["archived"] > 0:
@@ -359,6 +578,8 @@ def _apply_consolidation(
 
     if verbose:
         print(f"Regenerated {MEMORY_MD}")
+
+    _regenerate_l2_l3(recent, verbose)
 
     print(
         f"\n[APPLIED] Kept {len(recent)} entries, dropped {stats['dropped']}, deduped {stats['deduped']}, archived {stats['archived']}"

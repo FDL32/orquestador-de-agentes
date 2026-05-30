@@ -19,6 +19,13 @@ from pathlib import Path
 from typing import Any
 
 
+# WP-2026-178: Ensure project root is on sys.path for memory loader import.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+from bus.memory_loader import get_compact_context  # noqa: E402
+
+
 # Derive AGENT_DIR from __file__ to avoid depending on cwd
 AGENT_DIR = Path(__file__).resolve().parent.parent
 MEMORY_DIR = AGENT_DIR / "runtime" / "memory"
@@ -308,17 +315,19 @@ def main() -> None:
     except (json.JSONDecodeError, Exception):
         input_data = {}
 
-    # Load observations safely (never fails)
-    observations = load_observations_safe()
+    # WP-2026-178: Prefer L2+L3 compact context from the memory loader.
+    # Falls back to keyword-based L1 ranking when loader returns empty.
+    compact_context = get_compact_context()
 
-    # Extract keywords from work_plan
-    keywords = extract_keywords_from_work_plan()
-
-    # Rank observations by recency and keyword matching
-    ranked_obs = rank_observations(observations, keywords)
-
-    # Build additionalContext with "Memoria relevante" section
-    additional_context = format_memory_section(ranked_obs)
+    if compact_context:
+        # Loader returned structured L2/L3 content; use it directly.
+        additional_context = f"**Memoria del proyecto (L2+L3)**:\n\n{compact_context}"
+    else:
+        # Fallback: keyword-based L1 ranking from observations.jsonl
+        observations = load_observations_safe()
+        keywords = extract_keywords_from_work_plan()
+        ranked_obs = rank_observations(observations, keywords)
+        additional_context = format_memory_section(ranked_obs)
 
     # Always continue - this hook is for context projection only
     continue_flag = True

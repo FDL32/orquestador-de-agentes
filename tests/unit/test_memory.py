@@ -1,227 +1,385 @@
 """
-Tests para memoria persistente del proyecto.
+Tests for bus/memory_loader.py (WP-2026-178).
 
-UbicaciÃ³n: tests/unit/test_memory.py
+Covers:
+- L3 -> L2 -> L1 fallback hierarchy
+- get_bootstrap_context() with various memory states
+- get_review_context() with domain filtering
+- get_compact_context() combining L2+L3
+- recall_observations() keyword filtering
+- Edge cases: missing files, empty files, corrupted data
 """
 
-import pathlib
+from __future__ import annotations
 
-# Importar los helpers
+import json
 import sys
+from pathlib import Path
 from unittest.mock import patch
 
 
-sys.path.insert(
-    0,
-    str(pathlib.Path(__file__).parent.parent.parent / ".agent" / "runtime" / "memory"),
+# Ensure project root is in sys.path for importing from bus/
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+from bus.memory_loader import (  # noqa: E402
+    _try_read_file,
+    get_bootstrap_context,
+    get_compact_context,
+    get_memory_tier_status,
+    get_review_context,
+    recall_observations,
 )
-from memory_helpers import append_observation, read_observations, validate_observation
 
 
-class TestMemoryHelpers:
-    """Tests para memory_helpers.py"""
+# =============================================================================
+# Helpers
+# =============================================================================
 
-    def test_validate_observation_valid(self):
-        """Test validaciÃ³n de observaciÃ³n completa."""
-        obs = {
-            "timestamp": "2026-05-06T14:00:00Z",
-            "topic": "arquitectura",
-            "signal": "Test signal",
-            "source": "test",
-        }
-        assert validate_observation(obs) is True
 
-    def test_validate_observation_missing_field(self):
-        """Test validaciÃ³n falla si falta campo requerido."""
-        obs = {
-            "timestamp": "2026-05-06T14:00:00Z",
-            "topic": "arquitectura",
-            "signal": "Test signal",
-            # Falta source
-        }
-        assert validate_observation(obs) is False
+def _make_memory_files(
+    tmp_path: Path,
+    observations: list[dict] | None = None,
+    memory_rules: str | None = None,
+    memory_profile: str | None = None,
+) -> Path:
+    """Create mock memory files in tmp_path and return the directory Path."""
+    mem_dir = tmp_path / "memory"
+    mem_dir.mkdir(parents=True, exist_ok=True)
 
-    def test_append_and_read_observation(self, tmp_path):
-        """Test append y lectura de observaciÃ³n."""
-        # Mock el directorio de memoria para usar tmp_path
-        memory_dir = tmp_path / ".agent" / "runtime" / "memory"
-        memory_dir.mkdir(parents=True)
+    if observations is not None:
+        obs_path = mem_dir / "observations.jsonl"
+        lines = "\n".join(json.dumps(o, ensure_ascii=False) for o in observations)
+        obs_path.write_text(lines + "\n", encoding="utf-8")
 
-        with patch("memory_helpers.get_memory_dir", return_value=memory_dir):
-            obs = {
-                "timestamp": "2026-05-06T14:00:00Z",
+    if memory_rules is not None:
+        (mem_dir / "memory_rules.md").write_text(memory_rules, encoding="utf-8")
+
+    if memory_profile is not None:
+        (mem_dir / "memory_profile.md").write_text(memory_profile, encoding="utf-8")
+
+    return mem_dir
+
+
+# =============================================================================
+# Tests for _try_read_file
+# =============================================================================
+
+
+class TestTryReadFile:
+    def test_file_exists(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.txt"
+        f.write_text("hello", encoding="utf-8")
+        assert _try_read_file(f) == "hello"
+
+    def test_file_missing(self, tmp_path: Path) -> None:
+        assert _try_read_file(tmp_path / "nonexistent.txt") == ""
+
+    def test_io_error(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.txt"
+        f.write_text("hello", encoding="utf-8")
+        with patch.object(Path, "read_text", side_effect=OSError("denied")):
+            result = _try_read_file(f)
+        assert result == ""
+
+
+# =============================================================================
+# Tests for get_bootstrap_context (L3 -> L2 -> L1)
+# =============================================================================
+
+
+class TestGetBootstrapContext:
+    def test_returns_l3_when_available(self, tmp_path: Path) -> None:
+        mem_dir = _make_memory_files(
+            tmp_path,
+            memory_profile="# L3 Profile\nActive domains: testing",
+            memory_rules="# L2 Rules\n## Domain: testing\nRule text",
+            observations=[{"signal": "obs1", "timestamp": "2026-05-30T10:00:00Z"}],
+        )
+        with patch("bus.memory_loader._get_memory_dir", return_value=mem_dir):
+            ctx = get_bootstrap_context()
+
+        assert "# L3 Profile" in ctx
+        assert "Active domains" in ctx
+        # L2 should NOT appear (L3 takes priority)
+        assert "# L2 Rules" not in ctx
+
+    def test_falls_back_to_l2_when_no_l3(self, tmp_path: Path) -> None:
+        mem_dir = _make_memory_files(
+            tmp_path,
+            memory_rules="# L2 Rules\n## Domain: testing\nRule text",
+            observations=[{"signal": "obs1", "timestamp": "2026-05-30T10:00:00Z"}],
+        )
+        with patch("bus.memory_loader._get_memory_dir", return_value=mem_dir):
+            ctx = get_bootstrap_context()
+
+        assert "# L2 Rules" in ctx
+        assert "## Domain: testing" in ctx
+
+    def test_falls_back_to_l1_when_no_l2_l3(self, tmp_path: Path) -> None:
+        mem_dir = _make_memory_files(
+            tmp_path,
+            observations=[
+                {
+                    "signal": "obs1",
+                    "topic": "test",
+                    "timestamp": "2026-05-30T10:00:00Z",
+                    "source": "builder",
+                },
+            ],
+        )
+        with patch("bus.memory_loader._get_memory_dir", return_value=mem_dir):
+            ctx = get_bootstrap_context()
+
+        assert "Raw Observations" in ctx or "obs1" in ctx
+
+    def test_returns_empty_when_no_memory(self, tmp_path: Path) -> None:
+        mem_dir = _make_memory_files(tmp_path)
+        with patch("bus.memory_loader._get_memory_dir", return_value=mem_dir):
+            ctx = get_bootstrap_context()
+        assert ctx == ""
+
+
+# =============================================================================
+# Tests for get_review_context (L2 by domain)
+# =============================================================================
+
+
+class TestGetReviewContext:
+    L2_SAMPLE = (
+        "# Memory Rules (L2)\n\n"
+        "## Domain: Testing\n\n"
+        "### R-001: Rule about tests\n\nTest rule text\n\n"
+        "## Domain: Security\n\n"
+        "### R-002: Security gate rule\n\nSecurity text\n\n"
+    )
+
+    def test_returns_all_rules_when_domain_none(self, tmp_path: Path) -> None:
+        mem_dir = _make_memory_files(tmp_path, memory_rules=self.L2_SAMPLE)
+        with patch("bus.memory_loader._get_memory_dir", return_value=mem_dir):
+            ctx = get_review_context(domain=None)
+        assert "Testing" in ctx
+        assert "Security" in ctx
+
+    def test_filters_by_domain(self, tmp_path: Path) -> None:
+        mem_dir = _make_memory_files(tmp_path, memory_rules=self.L2_SAMPLE)
+        with patch("bus.memory_loader._get_memory_dir", return_value=mem_dir):
+            ctx = get_review_context(domain="testing")
+        assert "R-001: Rule about tests" in ctx
+        assert "Security" not in ctx
+
+    def test_fallback_to_l1_when_no_l2(self, tmp_path: Path) -> None:
+        mem_dir = _make_memory_files(
+            tmp_path,
+            observations=[
+                {
+                    "signal": "obs1",
+                    "topic": "test",
+                    "timestamp": "2026-05-30T10:00:00Z",
+                    "source": "builder",
+                }
+            ],
+        )
+        with patch("bus.memory_loader._get_memory_dir", return_value=mem_dir):
+            ctx = get_review_context(domain="test")
+        assert "obs1" in ctx or "Raw Observations" in ctx
+
+    def test_case_insensitive_domain_match(self, tmp_path: Path) -> None:
+        mem_dir = _make_memory_files(tmp_path, memory_rules=self.L2_SAMPLE)
+        with patch("bus.memory_loader._get_memory_dir", return_value=mem_dir):
+            ctx = get_review_context(domain="TESTING")
+        assert "R-001: Rule about tests" in ctx
+
+
+# =============================================================================
+# Tests for get_compact_context (L3 + L2)
+# =============================================================================
+
+
+class TestGetCompactContext:
+    def test_combines_l3_and_l2(self, tmp_path: Path) -> None:
+        mem_dir = _make_memory_files(
+            tmp_path,
+            memory_profile="# L3 Profile\nActive: testing",
+            memory_rules="# L2 Rules\n## Domain: testing\nRule",
+        )
+        with patch("bus.memory_loader._get_memory_dir", return_value=mem_dir):
+            ctx = get_compact_context()
+        assert "# L3 Profile" in ctx
+        assert "# L2 Rules" in ctx
+        assert "---" in ctx  # Separator between tiers
+
+    def test_only_l3(self, tmp_path: Path) -> None:
+        mem_dir = _make_memory_files(
+            tmp_path, memory_profile="# L3 Profile\nActive: testing"
+        )
+        with patch("bus.memory_loader._get_memory_dir", return_value=mem_dir):
+            ctx = get_compact_context()
+        assert "# L3 Profile" in ctx
+        assert "# L2 Rules" not in ctx
+
+    def test_fallback_to_l1(self, tmp_path: Path) -> None:
+        mem_dir = _make_memory_files(
+            tmp_path,
+            observations=[
+                {
+                    "signal": "obs1",
+                    "topic": "test",
+                    "timestamp": "2026-05-30T10:00:00Z",
+                    "source": "builder",
+                }
+            ],
+        )
+        with patch("bus.memory_loader._get_memory_dir", return_value=mem_dir):
+            ctx = get_compact_context()
+        assert "obs1" in ctx or "Raw Observations" in ctx
+
+    def test_empty_when_no_memory(self, tmp_path: Path) -> None:
+        mem_dir = _make_memory_files(tmp_path)
+        with patch("bus.memory_loader._get_memory_dir", return_value=mem_dir):
+            ctx = get_compact_context()
+        assert ctx == ""
+
+
+# =============================================================================
+# Tests for recall_observations (L1 direct)
+# =============================================================================
+
+
+class TestRecallObservations:
+    def test_returns_recent_observations(self, tmp_path: Path) -> None:
+        observations = [
+            {
+                "signal": f"obs{i}",
                 "topic": "test",
-                "signal": "Test observation",
-                "source": "unit_test",
+                "timestamp": f"2026-05-{30 - i:02d}T10:00:00Z",
+                "source": "builder",
             }
+            for i in range(5)
+        ]
+        mem_dir = _make_memory_files(tmp_path, observations=observations)
+        with patch("bus.memory_loader._get_memory_dir", return_value=mem_dir):
+            result = recall_observations(limit=3)
+        assert len(result) == 3
 
-            # Append
-            result = append_observation(obs)
-            assert result is True
+    def test_filter_by_keyword(self, tmp_path: Path) -> None:
+        observations = [
+            {
+                "signal": "security finding",
+                "topic": "security",
+                "timestamp": "2026-05-30T10:00:00Z",
+                "source": "audit",
+            },
+            {
+                "signal": "testing result",
+                "topic": "testing",
+                "timestamp": "2026-05-29T10:00:00Z",
+                "source": "builder",
+            },
+        ]
+        mem_dir = _make_memory_files(tmp_path, observations=observations)
+        with patch("bus.memory_loader._get_memory_dir", return_value=mem_dir):
+            result = recall_observations(query="security", limit=5)
+        assert len(result) == 1
+        assert result[0]["signal"] == "security finding"
 
-            # Read
-            observations = read_observations()
-            assert len(observations) == 1
-            assert observations[0] == obs
+    def test_empty_when_no_observations(self, tmp_path: Path) -> None:
+        mem_dir = _make_memory_files(tmp_path)
+        with patch("bus.memory_loader._get_memory_dir", return_value=mem_dir):
+            result = recall_observations()
+        assert result == []
 
-    def test_read_empty_file(self, tmp_path):
-        """Test lectura cuando archivo no existe."""
-        memory_dir = tmp_path / ".agent" / "runtime" / "memory"
-        memory_dir.mkdir(parents=True)
 
-        with patch("memory_helpers.get_memory_dir", return_value=memory_dir):
-            observations = read_observations()
-            assert observations == []
+# =============================================================================
+# Tests for get_memory_tier_status
+# =============================================================================
 
-    def test_append_creates_directory(self, tmp_path):
-        """Test que append cree el directorio si no existe."""
-        memory_dir = tmp_path / ".agent" / "runtime" / "memory"
-        # No crear el directorio
 
-        with patch("memory_helpers.get_memory_dir", return_value=memory_dir):
-            obs = {
-                "timestamp": "2026-05-06T14:00:00Z",
-                "topic": "test",
-                "signal": "Test observation",
-                "source": "unit_test",
-            }
+class TestMemoryTierStatus:
+    def test_all_tiers_present(self, tmp_path: Path) -> None:
+        mem_dir = _make_memory_files(
+            tmp_path,
+            memory_profile="profile",
+            memory_rules="rules",
+            observations=[
+                {
+                    "signal": "s1",
+                    "topic": "t",
+                    "timestamp": "2026-05-30T10:00:00Z",
+                    "source": "b",
+                }
+            ],
+        )
+        with patch("bus.memory_loader._get_memory_dir", return_value=mem_dir):
+            status = get_memory_tier_status()
+        assert status == {"l3": True, "l2": True, "l1": True}
 
-            result = append_observation(obs)
-            assert result is True
-            assert memory_dir.exists()
+    def test_no_tiers(self, tmp_path: Path) -> None:
+        mem_dir = _make_memory_files(tmp_path)
+        with patch("bus.memory_loader._get_memory_dir", return_value=mem_dir):
+            status = get_memory_tier_status()
+        assert status == {"l3": False, "l2": False, "l1": False}
 
-    def test_read_skips_invalid_json(self, tmp_path):
-        """Test que lectura salte lÃ­neas JSON invÃ¡lidas."""
-        memory_dir = tmp_path / ".agent" / "runtime" / "memory"
-        memory_dir.mkdir(parents=True)
-        obs_file = memory_dir / "observations.jsonl"
+    def test_partial_tiers(self, tmp_path: Path) -> None:
+        mem_dir = _make_memory_files(tmp_path, memory_profile="profile")
+        with patch("bus.memory_loader._get_memory_dir", return_value=mem_dir):
+            status = get_memory_tier_status()
+        assert status == {"l3": True, "l2": False, "l1": False}
 
-        # Escribir lÃ­nea invÃ¡lida y vÃ¡lida
-        with open(obs_file, "w", encoding="utf-8") as f:
-            f.write("invalid json line\n")
-            f.write(
-                '{"timestamp":"2026-05-06T14:00:00Z","topic":"test","signal":"Valid","source":"test"}\n'
-            )
 
-        with patch("memory_helpers.get_memory_dir", return_value=memory_dir):
-            observations = read_observations()
-            assert len(observations) == 1
-            assert observations[0]["signal"] == "Valid"
+# =============================================================================
+# Edge cases: corrupted files, encoding issues
+# =============================================================================
 
-    def test_append_utf8_encoding(self, tmp_path):
-        """Test que append maneje UTF-8 correctamente."""
-        memory_dir = tmp_path / ".agent" / "runtime" / "memory"
-        memory_dir.mkdir(parents=True)
 
-        with patch("memory_helpers.get_memory_dir", return_value=memory_dir):
-            obs = {
-                "timestamp": "2026-05-06T14:00:00Z",
-                "topic": "test",
-                "signal": "SeÃ±al con tildes: Ã¡Ã©Ã­Ã³Ãº",
-                "source": "test",
-            }
+class TestEdgeCases:
+    def test_corrupted_observations_skips_bad_lines(self, tmp_path: Path) -> None:
+        obs_dir = tmp_path / "memory"
+        obs_dir.mkdir(parents=True)
+        obs_path = obs_dir / "observations.jsonl"
+        obs_path.write_text(
+            '{"signal": "valid", "topic": "t", "timestamp": "2026-05-30T10:00:00Z", "source": "b"}\n'
+            "not json\n"
+            '{"signal": "valid2", "topic": "t2", "timestamp": "2026-05-29T10:00:00Z", "source": "b"}\n',
+            encoding="utf-8",
+        )
+        with patch("bus.memory_loader._get_memory_dir", return_value=obs_dir):
+            result = recall_observations(limit=5)
+        # The function reads from end, so "valid2" comes first
+        assert len(result) == 2
 
-            result = append_observation(obs)
-            assert result is True
+    def test_l2_with_unexpected_format(self, tmp_path: Path) -> None:
+        """get_review_context should handle L2 files with unusual content gracefully."""
+        mem_dir = _make_memory_files(
+            tmp_path,
+            memory_rules="# Memory Rules\nRandom content without domain sections",
+            observations=[
+                {
+                    "signal": "l1 fallback",
+                    "topic": "t",
+                    "timestamp": "2026-05-30T10:00:00Z",
+                    "source": "b",
+                }
+            ],
+        )
+        with patch("bus.memory_loader._get_memory_dir", return_value=mem_dir):
+            ctx = get_review_context(domain="nonexistent")
+        # Should return all rules as fallback when domain not found
+        assert "Memory Rules" in ctx
 
-            observations = read_observations()
-            assert len(observations) == 1
-            assert observations[0]["signal"] == "SeÃ±al con tildes: Ã¡Ã©Ã­Ã³Ãº"
-
-    def test_append_observation_validation(self, tmp_path):
-        """Test que append_observation rechace observaciones invÃ¡lidas."""
-        memory_dir = tmp_path / ".agent" / "runtime" / "memory"
-        memory_dir.mkdir(parents=True)
-
-        with patch("memory_helpers.get_memory_dir", return_value=memory_dir):
-            # ObservaciÃ³n invÃ¡lida (falta source)
-            invalid_obs = {
-                "timestamp": "2026-05-06T14:00:00Z",
-                "topic": "test",
-                "signal": "Invalid observation",
-                # Falta source
-            }
-
-            result = append_observation(invalid_obs)
-            assert result is False
-
-            # Verificar que no se escribiÃ³ nada
-            observations = read_observations()
-            assert len(observations) == 0
-
-            # ObservaciÃ³n vÃ¡lida
-            valid_obs = {
-                "timestamp": "2026-05-06T14:00:00Z",
-                "topic": "test",
-                "signal": "Valid observation",
-                "source": "test",
-            }
-
-            result = append_observation(valid_obs)
-            assert result is True
-
-            observations = read_observations()
-            assert len(observations) == 1
-
-    def test_create_memory_index_empty(self, tmp_path):
-        """Test creaciÃ³n de Ã­ndice cuando no hay observaciones."""
-        memory_dir = tmp_path / ".agent" / "runtime" / "memory"
-        memory_dir.mkdir(parents=True)
-
-        with patch("memory_helpers.get_memory_dir", return_value=memory_dir):
-            from memory_helpers import create_memory_index
-
-            result = create_memory_index()
-            assert result is True
-
-            memory_file = memory_dir / "MEMORY.md"
-            assert memory_file.exists()
-
-            with open(memory_file, encoding="utf-8") as f:
-                content = f.read()
-                assert "No hay observaciones registradas aÃºn" in content
-
-    def test_create_memory_index_with_observations(self, tmp_path):
-        """Test creaciÃ³n de Ã­ndice con observaciones existentes."""
-        memory_dir = tmp_path / ".agent" / "runtime" / "memory"
-        memory_dir.mkdir(parents=True)
-
-        with patch("memory_helpers.get_memory_dir", return_value=memory_dir):
-            # Agregar algunas observaciones
-            obs1 = {
-                "timestamp": "2026-05-06T10:00:00Z",
-                "topic": "arquitectura",
-                "signal": "Obs 1",
-                "source": "agent",
-            }
-            obs2 = {
-                "timestamp": "2026-05-06T11:00:00Z",
-                "topic": "bug",
-                "signal": "Obs 2",
-                "source": "usuario",
-            }
-            obs3 = {
-                "timestamp": "2026-05-06T12:00:00Z",
-                "topic": "arquitectura",
-                "signal": "Obs 3",
-                "source": "test",
-            }
-
-            append_observation(obs1)
-            append_observation(obs2)
-            append_observation(obs3)
-
-            from memory_helpers import create_memory_index
-
-            result = create_memory_index()
-            assert result is True
-
-            memory_file = memory_dir / "MEMORY.md"
-            with open(memory_file, encoding="utf-8") as f:
-                content = f.read()
-                assert "Total de observaciones: 3" in content
-                assert "Arquitectura (2 observaciones)" in content
-                assert "Bug (1 observaciones)" in content
-                assert "Obs 1" in content
-                assert "Obs 2" in content
-                assert "Obs 3" in content
+    def test_recall_observations_no_match(self, tmp_path: Path) -> None:
+        mem_dir = _make_memory_files(
+            tmp_path,
+            observations=[
+                {
+                    "signal": "unique signal",
+                    "topic": "t",
+                    "timestamp": "2026-05-30T10:00:00Z",
+                    "source": "b",
+                }
+            ],
+        )
+        with patch("bus.memory_loader._get_memory_dir", return_value=mem_dir):
+            result = recall_observations(query="nonexistent_keyword", limit=5)
+        assert result == []

@@ -18,7 +18,7 @@ Lee en este orden, sin omitir ninguno:
 2. `QUICKSTART.md` (como arrancar el flujo terminal-driven).
 3. `PROJECT.md` y `CHANGELOG.md` (estado del proyecto, decisiones).
 4. `.agent/collaboration/TURN.md`, `STATE.md`, `work_plan.md`, `execution_log.md` (estado canonico).
-5. `.agent/runtime/memory/MEMORY.md` y `.agent/runtime/memory/observations.jsonl` (memoria persistente del proyecto).
+5. `.agent/runtime/memory/` — memoria persistente del proyecto. Jerarquia de carga (la aplica `bus/memory_loader.py`): L3 (`memory_profile.md`) primero (perfil breve), luego L2 (`memory_rules.md`) si hace falta (reglas por dominio), y finalmente L1 (`observations.jsonl`) como fallback acotado. La entrada principal sigue siendo `observations.jsonl` como fuente de evidencia canonica; `MEMORY.md` sigue existiendo como indice humano.
 
 **Lectura bajo demanda (no en cada arranque):** si necesitas ubicar un subsistema o entender el arbol de carpetas, lee `REPOSITORY_STRUCTURE.md`. No lo cargues por defecto: solo cuando la tarea lo requiera.
 

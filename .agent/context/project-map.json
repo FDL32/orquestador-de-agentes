@@ -1,10 +1,10 @@
 {
   "version": "1.0",
-  "generated": "2026-05-30T00:30:41.645892+00:00",
+  "generated": "2026-05-30T01:08:20.742333+00:00",
   "project_root": "C:\\Users\\fdl\\Proyectos_Python\\z_scripts\\orquestador_de_agentes",
   "summary": {
     "total_files": 5531,
-    "total_size_bytes": 55645633,
+    "total_size_bytes": 55652676,
     "categories": {
       "config": 513,
       "python": 991,
@@ -203,7 +203,7 @@
       {
         "path": ".agent/collaboration/.session_state.json",
         "size": 134,
-        "sha256": "0e762213de05e33eb6df4486af48c8e37ca0fec3f7167662a5b1118c2b02893f"
+        "sha256": "bf3d6273576a6cc49e8acacbee88b06d49b04f85033dca0f1257466dd549b80c"
       },
       {
         "path": ".agent/config/agents.json",
@@ -222,8 +222,8 @@
       },
       {
         "path": ".agent/context/project-map.json",
-        "size": 1760024,
-        "sha256": "f8d6be1e5e3d6f529c850e271a3cef7455f3f76c42bd04c9596ac0d64fef1f18"
+        "size": 1761163,
+        "sha256": "ce3b4863eacd4a4fe462ba0a757f29ea92f9fc23b44bb264c10b24a12a8e3750"
       },
       {
         "path": ".agent/known_models.json",
@@ -253,7 +253,7 @@
       {
         "path": ".agent/runtime/circuit_breaker.json",
         "size": 181,
-        "sha256": "22d63784a693c77c32c8a2162459e1838c5eda991b860d030f859df11ba5f124"
+        "sha256": "49975cd7b13cd9ef6697482d36018496cf2239f1f57cfeb1fec70da55b1533a0"
       },
       {
         "path": ".agent/runtime/manager_bridge_state.json",
@@ -327,8 +327,8 @@
       },
       {
         "path": ".opencode/opencode.json",
-        "size": 146,
-        "sha256": "669118b5ecf2d9c875b756e05dc6add91dcadc63df8d3f5e6ce7a4bff3943b24"
+        "size": 149,
+        "sha256": "3a86f4e62867b5c441043269d58a827e017ee7cd3a021e5cfe05ef79291580f6"
       },
       {
         "path": ".opencode/package-lock.json",
@@ -3099,8 +3099,8 @@
       },
       {
         "path": "scripts/session_close_observations.py",
-        "size": 18514,
-        "sha256": "781185543ebf82923c170f6b24bfec051e8d65e144cceb298aa4b81883f98627"
+        "size": 19525,
+        "sha256": "55342b561248d33df99c2ed2ff28956970efbf610a725acf3c5a7d474f460015"
       },
       {
         "path": "scripts/session_closeout.py",
@@ -7484,8 +7484,8 @@
       },
       {
         "path": "tests/unit/test_session_close_observations.py",
-        "size": 18349,
-        "sha256": "af14f2047f8f1745f1dae84337a6a78ec3ab68e01162f2e8fdbb5fbb3dbf04ee"
+        "size": 22230,
+        "sha256": "a675f2c39900bd4b458b95800e48dc77ce1e8ac9453638ae765d3ab3670b04b2"
       },
       {
         "path": "tests/unit/test_skill_discovery.py",
@@ -7519,8 +7519,8 @@
       },
       {
         "path": "tests/unit/test_validate_observations.py",
-        "size": 20560,
-        "sha256": "cd57cba2029fa79829cfc95bc66ef5edf363854fa68d7088b28ea96f60cbf710"
+        "size": 20540,
+        "sha256": "38af91ee12645b1cf4fe90d148527d30c7eeb53996cbf3550aa8b4483eeabea6"
       },
       {
         "path": "tests/unit/test_windows_safe_temp_runtime.py",
@@ -8241,8 +8241,8 @@
       },
       {
         "path": "CHANGELOG.md",
-        "size": 108233,
-        "sha256": "aca63f4114618c64c7714fb6c7c6b2556c2cff21883c3e927f54a70aa8903d4e"
+        "size": 109638,
+        "sha256": "b72dcca8627b46297f76e7711a0bf9671dc84f74420b8f300d73af5c899a89a2"
       },
       {
         "path": "CLAUDE.md",
@@ -8331,13 +8331,13 @@
       },
       {
         "path": "QUICKSTART.md",
-        "size": 21651,
-        "sha256": "386181c42b549792a18dad8126179d7c1b47516351e5b5adb0c47505f85fa186"
+        "size": 21249,
+        "sha256": "91c9fdabe65d92cde5694f2acdc7efe8d3a57ead2a60e4653fd11bbc546093f6"
       },
       {
         "path": "README.md",
-        "size": 12233,
-        "sha256": "ce60ed6b222e4d61a332a3762dbb1f9a71e746fd203d375b988dd76ef910fcf5"
+        "size": 12028,
+        "sha256": "8ab3196c1bbac7dbf8baaa770abd9be28b0d9562ca272338baf0c868985b0fc5"
       },
       {
         "path": "RELEASE_CHECKLIST.md",
@@ -8356,8 +8356,8 @@
       },
       {
         "path": "skills/_shared/ap-schema.md",
-        "size": 4165,
-        "sha256": "dba0651d383075cbea67043b7e9856fbda8fd38699e21f74e119bd55ad5baa04"
+        "size": 4059,
+        "sha256": "7cde54bd7592720bd1daacec76d1960b4e14c0b077a9580fc5dac3404bbc807e"
       },
       {
         "path": "skills/_shared/ticket-anti-patterns.md",
@@ -27570,8 +27570,8 @@
       },
       {
         "path": "scripts/launch_agent_terminals.ps1",
-        "size": 56557,
-        "sha256": "c7d5f559a1eb0653241cacacdabe3d69ee600a68792c8c0fc4834c67476082e3"
+        "size": 56894,
+        "sha256": "0aea4e1f256aa5143bd496e82c59b0380e2661477d34328927eee2359f8fe31d"
       },
       {
         "path": "scripts/test_manager_smoke.ps1",
@@ -40720,8 +40720,8 @@
     "frameworks": [],
     "tools": [
       "pytest",
-      "ruff",
       "uv",
+      "ruff",
       "mypy"
     ]
   },
