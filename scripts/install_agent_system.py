@@ -713,6 +713,44 @@ def sync_memory_rules(
     print(f"[INFO] Synced portable memory rules to {dest_rules}")
 
 
+def copy_repomix_config(
+    template_root: Path,
+    destination_root: Path,
+    dry_run: bool = False,
+) -> bool:
+    """
+    Copy repomix.config.json template to destination workspace root.
+
+    Before: template_root/agent_system/templates/repomix.config.json exists;
+            destination_root is a valid path.
+    During: Copies the template to destination_root/repomix.config.json.
+            If template is missing, logs a warning and returns False.
+    After: destination_root/repomix.config.json exists if template was found.
+
+    Args:
+        template_root: Path to the motor central repository root.
+        destination_root: Path to the destination project root.
+        dry_run: If True, simulate without writing.
+
+    Returns:
+        True if copied successfully (or dry-run), False if template missing.
+    """
+    source = template_root / "agent_system" / "templates" / "repomix.config.json"
+    dest = destination_root / "repomix.config.json"
+
+    if not source.exists():
+        print(f"[WARN] repomix.config.json template not found at {source}")
+        return False
+
+    if dry_run:
+        print(f"[DRY-RUN] Would copy repomix.config.json to {dest}")
+        return True
+
+    shutil.copy2(source, dest)
+    print(f"[INFO] Copied repomix.config.json to {dest}")
+    return True
+
+
 def install_agent_system(
     template_agent: Path,
     project_agent: Path,
@@ -764,6 +802,9 @@ def install_agent_system(
 
     # Sync portable memory rules (engine/meta wings) from motor
     sync_memory_rules(template_agent, project_agent, dry_run=dry_run)
+
+    # Copy repomix.config.json to destination workspace root
+    copy_repomix_config(template_root, destination_root, dry_run=dry_run)
 
     integrity_ok = ensure_hooks_config_integrity(project_agent, dry_run=dry_run)
 
@@ -858,6 +899,9 @@ def sync_agent_system(  # noqa: C901
 
     # Sync portable memory rules (engine/meta wings) from motor
     sync_memory_rules(template_agent, project_agent, dry_run=dry_run)
+
+    # Copy repomix.config.json to destination workspace root (idempotent)
+    copy_repomix_config(template_root, destination_root, dry_run=dry_run)
 
     integrity_ok = ensure_hooks_config_integrity(project_agent, dry_run=dry_run)
 

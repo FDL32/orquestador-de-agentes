@@ -49,7 +49,14 @@ Antes de empezar:
    - Si `generated_at > 24h`: ejecutar `python scripts/local_audit.py --quick`.
    - Si el entorno no permite shell: pedir al usuario que lo ejecute.
 2. Cargar AUDIT.md completo como contexto Fase 0.
-3. Validar URL GitHub proporcionada: `https://github.com/<owner>/<repo>`.
+3. **Repomix Context (WT-2026-182):** Ejecutar opcionalmente
+   `npx repomix --style xml --compress --config repomix.config.json --output .session/repomix_local.xml`
+   desde la raíz del proyecto local. Si tiene éxito, cargar el XML comprimido como contexto
+   adicional del proyecto local (firmas de funciones, estructura de directorios).
+   - Si `npx` no está disponible o falla, continuar sin repomix (no bloqueante).
+   - Para el repositorio remoto, clonar a un directorio temporal y ejecutar repomix allí,
+     guardando el resultado como `.session/repomix_remote.xml`.
+4. Validar URL GitHub proporcionada: `https://github.com/<owner>/<repo>`.
    - Si no se proporciona: pedir al usuario.
 
 ## Fase 1: Filtro rápido (scoring 0-5)

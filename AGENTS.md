@@ -16,11 +16,15 @@
 ## Rutas importantes
 
 - `agent_system/`: codigo base de apoyo incluido con la plantilla.
+  - `agent_system/templates/repomix.config.json`: plantilla de configuracion de Repomix.
 - `scripts/`: utilidades de instalacion, upgrade, rollback y validacion.
 - `skills/`: micro-habilidades reutilizables.
 - `.agent/collaboration/`: estado operacional canonico — vive en el WORKSPACE del proyecto activo (p.ej. `z_scripts/.agent/collaboration/`), no en el motor. El motor es code-only; apuntar al workspace correcto via `AGENT_PROJECT_ROOT` o `--project-root`.
 - `.agent/runtime/memory/`: memoria persistente por proyecto.
+- `.agent/context/repomix.xml`: contexto comprimido del workspace generado por Repomix (bootstrapping).
 - `.agent/council/`: broker de consejo y auditoria paralela.
+- `.session/repomix_local.xml`: contexto local comprimido para comparacion acelerada (repo-compare skill).
+- `.session/repomix_remote.xml`: contexto remoto comprimido para comparacion acelerada (repo-compare skill).
 - `REPOSITORY_STRUCTURE.md`: mapa interno publicable del repositorio.
 
 ## Glosario de nomenclatura (Modelo B)
