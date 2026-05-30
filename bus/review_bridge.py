@@ -111,7 +111,7 @@ class TicketStateIngest:
         if not work_plan.exists():
             return None
         content = work_plan.read_text(encoding="utf-8")
-        match = re.search(r"\*\*ID:\*\*\s*(WP-\d{4}-\d+)", content)
+        match = re.search(r"\*\*ID:\*\*\s*((?:WP|WT)-\d{4}-\d+)", content)
         return match.group(1) if match else None
 
     def _read_deliverable_type(self) -> str:
@@ -396,8 +396,8 @@ class ReviewBridge:
         if not work_plan.exists():
             return None
         content = work_plan.read_text(encoding="utf-8")
-        # Look for **- ID:** WP-XXXX-XXX pattern
-        match = re.search(r"\*\*ID:\*\*\s*(WP-\d{4}-\d+)", content)
+        # Look for **- ID:** WP-XXXX-XXX or WT-XXXX-XXX pattern
+        match = re.search(r"\*\*ID:\*\*\s*((?:WP|WT)-\d{4}-\d+)", content)
         if match:
             return match.group(1)
         return None
@@ -436,7 +436,7 @@ class ReviewBridge:
 
     def _extract_ticket_section(self, ticket_id: str) -> str:
         content = self.state_ingest._read_canonical("execution_log.md")
-        pattern = rf"### {re.escape(ticket_id)}.*?(?=\n### WP-|\Z)"
+        pattern = rf"### {re.escape(ticket_id)}.*?(?=\n### (?:WP|WT)-|\Z)"
         match = re.search(pattern, content, re.DOTALL)
         return (
             match.group(0)

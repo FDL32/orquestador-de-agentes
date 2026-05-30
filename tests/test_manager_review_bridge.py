@@ -2779,3 +2779,74 @@ def test_checkpoint_prevents_reprocessing_on_restart(tmp_path):
     # On restart, _load_state must pick seq 42
     loaded = _load_state()
     assert loaded.last_processed_sequence == 42
+
+
+# ======================================================================
+# WT-2026-181: Dual WP-/WT- prefix regression tests
+# ======================================================================
+
+
+class TestDualPrefixBridge:
+    """Verify the manager review bridge accepts both WP- and WT- prefixes."""
+
+    def test_bridge_get_active_ticket_wp(self, tmp_path):
+        """ReviewBridge._get_active_ticket_id() extracts WP- ID from work_plan.md."""
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        wp = collab / "work_plan.md"
+        wp.write_text("# Work Plan\n- **ID:** WP-2026-100\n- **Estado:** APPROVED\n")
+        bridge, _, _ = _make_bridge(tmp_path)
+        # Re-read the written work_plan content
+        result = bridge._get_active_ticket_id()
+        assert result == "WP-2026-100", f"Expected WP-2026-100, got {result}"
+
+    def test_bridge_get_active_ticket_wt(self, tmp_path):
+        """ReviewBridge._get_active_ticket_id() extracts WT- ID from work_plan.md."""
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        wp = collab / "work_plan.md"
+        wp.write_text("# Work Plan\n- **ID:** WT-2026-100\n- **Estado:** APPROVED\n")
+        bridge, _, _ = _make_bridge(tmp_path)
+        result = bridge._get_active_ticket_id()
+        assert result == "WT-2026-100", f"Expected WT-2026-100, got {result}"
+
+    def test_bridge_extract_ticket_section_boundary_wp(self, tmp_path, monkeypatch):
+        """_extract_ticket_section boundary handles next ### WP- section."""
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        elog = collab / "execution_log.md"
+        elog.write_text(
+            "# Execution Log\n\n"
+            "### WT-2026-181: Dual prefix\n**Estado:** IN_PROGRESS\n\n"
+            "### WP-2026-100: Old ticket\n**Estado:** COMPLETED\n\n"
+        )
+        # The boundary regex (?=\n### (?:WP|WT)-|\Z) should match WT- boundary
+        import re
+
+        content = elog.read_text(encoding="utf-8")
+        ticket_id = "WT-2026-181"
+        pattern = rf"### {re.escape(ticket_id)}.*?(?=\n### (?:WP|WT)-|\Z)"
+        match = re.search(pattern, content, re.DOTALL)
+        assert match is not None, "Section boundary regex should match WT- ticket"
+        assert "WT-2026-181" in match.group(0)
+
+    def test_bridge_extract_ticket_section_boundary_wp_next(self, tmp_path):
+        """_extract_ticket_section boundary handles next ### WT- section."""
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        elog = collab / "execution_log.md"
+        elog.write_text(
+            "# Execution Log\n\n"
+            "### WP-2026-100: Old ticket\n**Estado:** COMPLETED\n\n"
+            "### WT-2026-181: New ticket\n**Estado:** IN_PROGRESS\n\n"
+        )
+        import re
+
+        content = elog.read_text(encoding="utf-8")
+        ticket_id = "WP-2026-100"
+        pattern = rf"### {re.escape(ticket_id)}.*?(?=\n### (?:WP|WT)-|\Z)"
+        match = re.search(pattern, content, re.DOTALL)
+        assert match is not None, (
+            "Section boundary regex should match WP- ticket with WT- next"
+        )
+        assert "WP-2026-100" in match.group(0)

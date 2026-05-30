@@ -912,3 +912,49 @@ class TestMotorCodeOnlyGuard:
 
         exit_code = agent_controller.main()
         assert exit_code == 1
+
+
+# ======================================================================
+# WT-2026-181: Dual WP-/WT- prefix regression tests
+# ======================================================================
+
+
+class TestDualPrefixParsing:
+    """Verify parsers accept both WP- and WT- prefixes identically."""
+
+    def test_get_plan_id_extracts_wp(self):
+        """get_plan_id() extracts WP-2026-XXX correctly."""
+        content = "# Work Plan\n- **ID:** WP-2026-100\n- **Estado:** APPROVED\n"
+        assert agent_controller.get_plan_id(content) == "WP-2026-100"
+
+    def test_get_plan_id_extracts_wt(self):
+        """get_plan_id() extracts WT-2026-XXX correctly."""
+        content = "# Work Plan\n- **ID:** WT-2026-100\n- **Estado:** APPROVED\n"
+        assert agent_controller.get_plan_id(content) == "WT-2026-100"
+
+    def test_get_plan_id_extracts_wp_from_plan_id_label(self):
+        """get_plan_id() handles **Plan ID:** label with WP- prefix."""
+        content = "# Work Plan\n- **Plan ID:** WP-2026-100\n"
+        assert agent_controller.get_plan_id(content) == "WP-2026-100"
+
+    def test_get_plan_id_extracts_wt_from_plan_id_label(self):
+        """get_plan_id() handles **Plan ID:** label with WT- prefix."""
+        content = "# Work Plan\n- **Plan ID:** WT-2026-100\n"
+        assert agent_controller.get_plan_id(content) == "WT-2026-100"
+
+    def test_get_plan_id_returns_na_for_missing(self):
+        """get_plan_id() returns N/A when no ID is present."""
+        content = "# Work Plan\n- **Estado:** PENDING\n"
+        assert agent_controller.get_plan_id(content) == "N/A"
+
+    def test_validation_accepts_wp_ticket_in_work_plan(self, monkeypatch):
+        """get_plan_id() extracts WP- from work_plan content and returns dict result."""
+        wp_content = "# Work Plan\n- **ID:** WP-2026-100\n- **Estado:** APPROVED\n- **deliverable_type:** code\n"
+        plan_id = agent_controller.get_plan_id(wp_content)
+        assert plan_id == "WP-2026-100"
+
+    def test_validation_accepts_wt_ticket_in_work_plan(self, monkeypatch):
+        """get_plan_id() extracts WT- from work_plan content."""
+        wp_content = "# Work Plan\n- **ID:** WT-2026-100\n- **Estado:** APPROVED\n- **deliverable_type:** code\n"
+        plan_id = agent_controller.get_plan_id(wp_content)
+        assert plan_id == "WT-2026-100"
