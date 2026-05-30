@@ -35,6 +35,7 @@
 .agent/runtime/events/events.jsonl
 .agent/runtime/memory/observations.jsonl
 .agent/runtime/memory/MEMORY.md
+.agent/runtime/memory/closeout_lessons.md
 
 # Contexto del workspace
 .agent/context/project-map.json
