@@ -38,6 +38,12 @@ class DummySupervisor:
     ) -> None:
         self.transitions.append((ticket_id, new_state, reason))
 
+    def _is_supervisor_lock_stale(self) -> bool:
+        return False
+
+    def requeue_ticket(self, ticket_id: str) -> bool:
+        return True
+
 
 def _make_bridge(tmp_path: Path) -> tuple[ReviewBridge, EventBus, Path]:
     runtime_dir = tmp_path / ".agent" / "runtime" / "events"
@@ -1868,6 +1874,12 @@ class TestHumanGateEscalation:
             def transition_ticket(self, *args, **kwargs):
                 pass
 
+            def _is_supervisor_lock_stale(self):
+                return False
+
+            def requeue_ticket(self, ticket_id):
+                return True
+
         report = (
             tmp_path
             / ".agent"
@@ -1948,6 +1960,12 @@ class TestHumanGateEscalation:
         class DummySupervisor:
             def transition_ticket(self, ticket_id, new_state, reason):
                 transitions.append((ticket_id, new_state, reason))
+
+            def _is_supervisor_lock_stale(self):
+                return False
+
+            def requeue_ticket(self, ticket_id):
+                return True
 
         result = None
         for _ in range(3):
@@ -2850,3 +2868,98 @@ class TestDualPrefixBridge:
             "Section boundary regex should match WP- ticket with WT- next"
         )
         assert "WP-2026-100" in match.group(0)
+
+
+# =============================================================================
+# Tests WT-2026-183: Resiliencia ante Supervisor muerto en CHANGES
+# =============================================================================
+
+
+class TestChangesResilienceSupervisorDead:
+    """WT-2026-183: bridge relaunches Builder when Supervisor has done cooperative exit."""
+
+    def _make_changes_bridge(self, tmp_path, monkeypatch):
+        bridge, event_bus, legacy_exe = _make_bridge(tmp_path)
+
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True, exist_ok=True)
+        (collab / "work_plan.md").write_text(
+            "# Work Ticket - WT-2026-183\n\n## Metadata\n- **ID:** WT-2026-183\n"
+            "- **Estado:** APPROVED\n- **deliverable_type:** code\n",
+            encoding="utf-8",
+        )
+
+        def fake_run(cmd, **kwargs):
+            return __import__("subprocess").CompletedProcess(
+                cmd,
+                0,
+                stdout=(
+                    "## SUMMARY\nNeeds fixes.\n## BLOCKERS\n- Missing test\n"
+                    "## SUGGESTIONS\n- Add test\nDECISION: CHANGES"
+                ),
+                stderr="",
+            )
+
+        monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
+        monkeypatch.setattr(
+            bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW"
+        )
+        monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "legacy_manager")
+        monkeypatch.setattr(bridge, "_resolve_motor_controller", lambda: None)
+        return bridge, event_bus, legacy_exe
+
+    def test_requeue_called_when_supervisor_dead(self, tmp_path, monkeypatch):
+        """Builder is relaunched directly when _is_supervisor_lock_stale() is True."""
+        bridge, _, legacy_exe = self._make_changes_bridge(tmp_path, monkeypatch)
+
+        requeue_calls = []
+
+        class DeadSupervisor:
+            def transition_ticket(self, **kwargs):
+                pass
+
+            def _is_supervisor_lock_stale(self):
+                return True
+
+            def requeue_ticket(self, ticket_id):
+                requeue_calls.append(ticket_id)
+
+        result = bridge.run_manager_review_cycle(
+            ticket_id="WT-2026-183",
+            supervisor=DeadSupervisor(),
+            manager_executable=legacy_exe,
+            timeout_seconds=5,
+        )
+
+        assert result.decision.value == "changes"
+        assert requeue_calls == ["WT-2026-183"], (
+            "requeue_ticket must be called with the ticket_id when Supervisor is dead"
+        )
+
+    def test_requeue_not_called_when_supervisor_alive(self, tmp_path, monkeypatch):
+        """Builder is NOT relaunched by the bridge when Supervisor daemon is alive."""
+        bridge, _, legacy_exe = self._make_changes_bridge(tmp_path, monkeypatch)
+
+        requeue_calls = []
+
+        class AliveSupervisor:
+            def transition_ticket(self, **kwargs):
+                pass
+
+            def _is_supervisor_lock_stale(self):
+                return False
+
+            def requeue_ticket(self, ticket_id):
+                requeue_calls.append(ticket_id)
+
+        result = bridge.run_manager_review_cycle(
+            ticket_id="WT-2026-183",
+            supervisor=AliveSupervisor(),
+            manager_executable=legacy_exe,
+            timeout_seconds=5,
+        )
+
+        assert result.decision.value == "changes"
+        assert requeue_calls == [], (
+            "requeue_ticket must NOT be called when Supervisor daemon is alive"
+        )
