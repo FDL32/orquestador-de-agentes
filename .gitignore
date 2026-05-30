@@ -40,6 +40,7 @@ tests/.test_workspace/
 .agent/runtime/review_packets/
 .agent/runtime/events/logs/
 .agent/collaboration/.session_state.json
+.agent/context/
 
 # Runtime local del CLI Goose (perfil, logs, config local del motor externo)
 .agent/runtime/goose/

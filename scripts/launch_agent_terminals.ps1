@@ -988,7 +988,7 @@ function Get-CanonicalFilesForOpenCode {
     # Run repomix with 15s timeout via background job to avoid blocking the launcher
     $repomixJob = Start-Job -ScriptBlock {
         param($OutPath, $ConfigArg)
-        $result = & npx repomix --style xml --compress --output $OutPath $ConfigArg 2>&1
+        $result = & npx -y repomix --style xml --compress --output $OutPath $ConfigArg 2>&1
         return $result
     } -ArgumentList $repomixOutputPath, $configArg
 

@@ -390,6 +390,52 @@ class ReviewBridge:
                 files.append(audit_file)
         return [f for f in files if f.exists()]
 
+    def _ensure_repomix_context(self, timeout: int = 15) -> Path | None:
+        """Return path to repomix.xml context file, generating it if needed.
+
+        Non-blocking: returns None on any failure so the review continues.
+        Uses npx -y to avoid interactive prompts in unattended environments.
+        """
+        out_path = self.project_root / ".agent" / "context" / "repomix.xml"
+        if out_path.exists():
+            return out_path
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path = self.project_root / "repomix.config.json"
+        cmd = [
+            "npx",
+            "-y",
+            "repomix",
+            "--style",
+            "xml",
+            "--compress",
+            "--output",
+            str(out_path),
+        ]
+        if config_path.exists():
+            cmd.extend(["--config", str(config_path)])
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                cwd=self.project_root,
+                timeout=timeout,
+            )
+            if result.returncode == 0 and out_path.exists():
+                return out_path
+        except Exception:
+            warnings.warn(
+                "[repomix] Failed to generate context for Manager; continuing without it.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return None
+        warnings.warn(
+            "[repomix] Failed to generate context for Manager; continuing without it.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return None
+
     def _get_active_ticket_id(self) -> str | None:
         """Read active ticket ID from work_plan.md."""
         work_plan = self.project_root / ".agent" / "collaboration" / "work_plan.md"
@@ -1141,6 +1187,9 @@ class ReviewBridge:
             cmd_args.extend(["--model", model])
         if self._supports_json_format:
             cmd_args.extend(["--format", "json"])
+        repomix_path = self._ensure_repomix_context()
+        if repomix_path:
+            cmd_args.extend(["-f", str(repomix_path)])
         cmd_args.append(review_message)
 
         use_shell = False
