@@ -9,9 +9,6 @@ canónica para el motor del agente.
 - **Propósito:** {{project_purpose}}
 Ticket prefix: XXX
 
-> **ATENCIÓN:** Reemplaza `XXX` por el prefijo real (ej. `MI_PROY`).
-> El motor necesita esta línea exacta para validar tickets.
-
 ## Stack Tecnológico
 
 - **Runtime:** {{runtime}}
