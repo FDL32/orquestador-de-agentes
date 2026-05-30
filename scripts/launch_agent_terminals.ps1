@@ -1262,7 +1262,30 @@ if ($LaunchBuilder) {
                 # --port 0 makes opencode run spawn its own local server before executing.
                 # Required since v1.15.x: without a running server the CLI fails with
                 # "InstanceRef not provided" when launched from Start-Process (no TTY).
-                $command = "& $builderExeLiteral run $promptLiteral --agent builder --model $modelLiteral --dir $rootLiteral --port 0 $fileFlagsString"
+                # WP-2026-180: Inject deterministic --title for session ID capture on pre-handoff.
+                $sessionTitle = "$ticketId-R$currentRound"
+                $sessionTitleLiteral = ConvertTo-SingleQuotedLiteral $sessionTitle
+                # WP-2026-180: On resume, read builder_session.json for session reuse.
+                $sessionId = ""
+                if ($ResumeBuilder) {
+                    $sessionJsonPath = Join-Path $ProjectRoot '.agent\runtime\builder_session.json'
+                    if (Test-Path -LiteralPath $sessionJsonPath) {
+                        try {
+                            $sessionData = Get-Content -LiteralPath $sessionJsonPath -Raw | ConvertFrom-Json
+                            if ($sessionData.ticket_id -eq $ticketId -and -not [string]::IsNullOrWhiteSpace($sessionData.session_id)) {
+                                $sessionId = $sessionData.session_id
+                                Write-Host "[launcher] Reusing session $sessionId for $ticketId"
+                            } else {
+                                Write-Host "[launcher] builder_session.json found but ticket or session_id mismatch; falling back to clean session"
+                            }
+                        }
+                        catch {
+                            Write-Host "[launcher] builder_session.json corrupt; falling back to clean session"
+                        }
+                    }
+                }
+                $sessionFlag = if ($sessionId) { "--session $sessionId" } else { "" }
+                $command = "& $builderExeLiteral run $promptLiteral --agent builder --model $modelLiteral --dir $rootLiteral --port 0 --title $sessionTitleLiteral $sessionFlag $fileFlagsString"
                 $builderProcess = Start-AgentWindow -Title $windowTitle -Command $command
                 Write-Host "Builder: lanzado para rol $activeRole con backend OpenCode (opencode run con prompt compuesto)"
             }
