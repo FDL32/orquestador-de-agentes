@@ -1,15 +1,15 @@
 {
   "version": "1.0",
-  "generated": "2026-05-29T21:51:16.199202+00:00",
+  "generated": "2026-05-30T00:30:41.645892+00:00",
   "project_root": "C:\\Users\\fdl\\Proyectos_Python\\z_scripts\\orquestador_de_agentes",
   "summary": {
-    "total_files": 5324,
-    "total_size_bytes": 23491143,
+    "total_files": 5531,
+    "total_size_bytes": 55645633,
     "categories": {
-      "config": 463,
-      "python": 955,
-      "documentation": 1549,
-      "other": 2334,
+      "config": 513,
+      "python": 991,
+      "documentation": 1620,
+      "other": 2384,
       "scripts": 23
     }
   },
@@ -21,9 +21,189 @@
         "sha256": "b142c55eb3caa5a3a0743b171c6a790474182a1f419f20680b7205f6c862f59b"
       },
       {
+        "path": ".agent/backups/backup_20260529_223313/.agent/.version_manifest.json",
+        "size": 320,
+        "sha256": "b142c55eb3caa5a3a0743b171c6a790474182a1f419f20680b7205f6c862f59b"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/collaboration/.session_state.json",
+        "size": 134,
+        "sha256": "1d5b9c883312039ec5061c1caf5b224a9afc52809e70ffbcd50922f692dcf580"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/config/agents.json",
+        "size": 2565,
+        "sha256": "cc60b0f0e518c5c0becd8e8dbb2c483f77bd2b3e538749f464b0a2c2e106db54"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/context/project-map.json",
+        "size": 1657798,
+        "sha256": "df75eac142ac397e0c19522c858a21955e2ba16ccd159d6d4ae72074a654d049"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/known_models.json",
+        "size": 77,
+        "sha256": "58b636790bd3126fca504b5b835c98a165c3e3e430371b2e5cd9ffa6a049a7e1"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/project_manifest.toml",
+        "size": 286,
+        "sha256": "3e7476c1eec5d910658870f94cb8831105c1e1197ac86d56bde5e15f1d91a235"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/runtime/approvals/store.json",
+        "size": 486,
+        "sha256": "788107ddfad3a334a02a8a73d9ab46e569ed58de7c512e618bfa5953a5455cbf"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/runtime/audit/audit.json",
+        "size": 17799,
+        "sha256": "cad8fbc930d0a2aad977a29e353f91e9c1eeb14ce42f0a10d1b4bf88f4ee4c1c"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/runtime/bridge_checkpoint.json",
+        "size": 38,
+        "sha256": "4ae31ee922f0a6fa3c5370cc8cb4b35da28a406715e297b77f1ea17e283f633a"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/runtime/circuit_breaker.json",
+        "size": 181,
+        "sha256": "ef75f6bb19a9117f7f6c16cc864ccb23a4d07dbdaf8713b3eb8e36f8a7fc69f9"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/runtime/manager_bridge_state.json",
+        "size": 226,
+        "sha256": "048b76ac4eb9a29d587d11ede09ecd40b9ffc566deb01921a249c743493888fd"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/runtime/pytest-safe/last-run.json",
+        "size": 3015,
+        "sha256": "e67c67183ca7e688c4af8ec720c044ea04a68343d9e7c1f25f7b2bd13a9cace2"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/runtime/supervisor_state.json",
+        "size": 270,
+        "sha256": "60cde1132e8ca7bcccfb61c27ef41de144bb1312c93ffad2449066049590f9c6"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/BACKUP_MANIFEST.json",
+        "size": 497,
+        "sha256": "db160c508d2dea595b98a5554bc030b88150e700d8d39dfb5fb225931cb2317e"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/.version_manifest.json",
+        "size": 320,
+        "sha256": "b142c55eb3caa5a3a0743b171c6a790474182a1f419f20680b7205f6c862f59b"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/collaboration/.session_state.json",
+        "size": 134,
+        "sha256": "1d5b9c883312039ec5061c1caf5b224a9afc52809e70ffbcd50922f692dcf580"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/config/agents.json",
+        "size": 2565,
+        "sha256": "cc60b0f0e518c5c0becd8e8dbb2c483f77bd2b3e538749f464b0a2c2e106db54"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/context/project-map.json",
+        "size": 1657798,
+        "sha256": "df75eac142ac397e0c19522c858a21955e2ba16ccd159d6d4ae72074a654d049"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/known_models.json",
+        "size": 77,
+        "sha256": "58b636790bd3126fca504b5b835c98a165c3e3e430371b2e5cd9ffa6a049a7e1"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/project_manifest.toml",
+        "size": 286,
+        "sha256": "3e7476c1eec5d910658870f94cb8831105c1e1197ac86d56bde5e15f1d91a235"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/approvals/store.json",
+        "size": 486,
+        "sha256": "788107ddfad3a334a02a8a73d9ab46e569ed58de7c512e618bfa5953a5455cbf"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/audit/audit.json",
+        "size": 17799,
+        "sha256": "cad8fbc930d0a2aad977a29e353f91e9c1eeb14ce42f0a10d1b4bf88f4ee4c1c"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/bridge_checkpoint.json",
+        "size": 38,
+        "sha256": "4ae31ee922f0a6fa3c5370cc8cb4b35da28a406715e297b77f1ea17e283f633a"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/circuit_breaker.json",
+        "size": 181,
+        "sha256": "ef75f6bb19a9117f7f6c16cc864ccb23a4d07dbdaf8713b3eb8e36f8a7fc69f9"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/manager_bridge_state.json",
+        "size": 226,
+        "sha256": "4cf1e90c1c2b636009a64cc3fc86c4f9e183b3826b0141f4f388a7362079d004"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/pytest-safe/last-run.json",
+        "size": 3015,
+        "sha256": "e67c67183ca7e688c4af8ec720c044ea04a68343d9e7c1f25f7b2bd13a9cace2"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/supervisor_state.json",
+        "size": 270,
+        "sha256": "60cde1132e8ca7bcccfb61c27ef41de144bb1312c93ffad2449066049590f9c6"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/manager_review_home_3av_pcva/.local/share/opencode/storage/session_diff/ses_1955ad38bffeyhsJc1xrZd3PNF.json",
+        "size": 2,
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/manager_review_home_bn4b5m74/.local/state/opencode/locks/78f2c929bb25b1a697dd6bd10fb2aabee932a640.lock/meta.json",
+        "size": 127,
+        "sha256": "a03ba0b7bfda56e68a5effab7d38001d983a618cd95aaeab35bcbc0ca7397039"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/manager_review_home_dzlb5yba/.local/share/opencode/storage/session_diff/ses_1955dc44bffe1vMdEJZ34dshbe.json",
+        "size": 2,
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/manager_review_home_jk2g8473/.local/state/opencode/locks/d556e2a324d5f4ad3f1b4b97345d78a1ec9abe9e.lock/meta.json",
+        "size": 127,
+        "sha256": "f45598926c96d6c1b6e3a12cd27a338a3522acf5c0b1f4d4a3a30061c1614125"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/manager_review_home_tisoj0qi/.local/state/opencode/locks/409e88a07bc40c11318a7a040498a448b3deae74.lock/meta.json",
+        "size": 126,
+        "sha256": "5b9a3167407af6fd3c74faeee15c333e06455a59e10062c9807a3ba653d53571"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/storage/session_diff/ses_1951cc544ffenrcGp7MStXAOYc.json",
+        "size": 2,
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/storage/session_diff/ses_195240ac7ffejK8l0ayhaIi5Y0.json",
+        "size": 2,
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/storage/session_diff/ses_1955ff563ffepd4kT6BfHro40N.json",
+        "size": 2,
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/state/opencode/locks/cd6b860626e3fc0bc3569ed65b8d1c72fa721476.lock/meta.json",
+        "size": 127,
+        "sha256": "cb40e1fc8bc53ac3f4f1e236c393cee7291a4b253bcd62680ce4df6b301e5ec8"
+      },
+      {
         "path": ".agent/collaboration/.session_state.json",
         "size": 134,
-        "sha256": "48fcc7e1eaf324938f50a21ba698626ced0812f2fa087b6bb9c6a9a3373055bb"
+        "sha256": "0e762213de05e33eb6df4486af48c8e37ca0fec3f7167662a5b1118c2b02893f"
       },
       {
         "path": ".agent/config/agents.json",
@@ -31,9 +211,19 @@
         "sha256": "cc60b0f0e518c5c0becd8e8dbb2c483f77bd2b3e538749f464b0a2c2e106db54"
       },
       {
+        "path": ".agent/config/hooks_config.json",
+        "size": 42,
+        "sha256": "faad8d4c97e4122dad62098f225081b6265a68590476375faf1a148f11c20b5c"
+      },
+      {
+        "path": ".agent/config/motor_destination_link.json",
+        "size": 252,
+        "sha256": "6ba181e8247292f17cb91c819a6f686f8f23fe3d1e7a6e281ef5e3f9505d3e43"
+      },
+      {
         "path": ".agent/context/project-map.json",
-        "size": 1572780,
-        "sha256": "07b5f75c4ed4c935bf689d40dcafd1bb19e66fb2b191c63a6f3ee1343e2e4068"
+        "size": 1760024,
+        "sha256": "f8d6be1e5e3d6f529c850e271a3cef7455f3f76c42bd04c9596ac0d64fef1f18"
       },
       {
         "path": ".agent/known_models.json",
@@ -58,27 +248,22 @@
       {
         "path": ".agent/runtime/bridge_checkpoint.json",
         "size": 38,
-        "sha256": "7010b4fc65202db1453062200ec65fa12d1bd88409247a758e75c79b8727d7b6"
+        "sha256": "4ae31ee922f0a6fa3c5370cc8cb4b35da28a406715e297b77f1ea17e283f633a"
       },
       {
         "path": ".agent/runtime/circuit_breaker.json",
         "size": 181,
-        "sha256": "a92a66f818b811099c24525cea1b3cf1a1e7b51ff5dc7126a8d4ee7932c923c4"
+        "sha256": "22d63784a693c77c32c8a2162459e1838c5eda991b860d030f859df11ba5f124"
       },
       {
         "path": ".agent/runtime/manager_bridge_state.json",
         "size": 226,
-        "sha256": "20d51e3e8be9127d4af3163713629e0f5a53f706b5b529d05ea4a02517aff827"
+        "sha256": "582d5554738d3e66b32a787f7c95ae262483aa54e4c70ab9befea9f3dbaefbb3"
       },
       {
         "path": ".agent/runtime/pytest-safe/last-run.json",
-        "size": 2882,
-        "sha256": "68d1352779feeaaa4e958f0fb1159d77b2fb18cc0b29bc204ebd45d0cf8c2aa9"
-      },
-      {
-        "path": ".agent/runtime/supervisor_state.json",
-        "size": 270,
-        "sha256": "a32a67fa4c98dcbb96da45760c88c779dca708e7463b79d17d14281a233c7f66"
+        "size": 1054,
+        "sha256": "8e17fd96dc1e42d514469a9b5f747053e0c53c754368ec2a4ccb11239c19f3f7"
       },
       {
         "path": ".agent_allowlist.json",
@@ -2041,6 +2226,56 @@
         "sha256": "5d1e71131759e1a479bda4c5ac2e2b229efed419387c6ec0ba3de2ad5c216398"
       },
       {
+        "path": "tests/sandbox/test_runtime/session_34284/opencode-review-197fnaro/.local/share/opencode/auth.json",
+        "size": 2299,
+        "sha256": "400dbd979069face7baf448fd125fe62a39277c1621cc03532b6c76ed570b133"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_34284/opencode-review-4cnw6_b1/.local/share/opencode/auth.json",
+        "size": 2299,
+        "sha256": "400dbd979069face7baf448fd125fe62a39277c1621cc03532b6c76ed570b133"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_34284/opencode-review-52wi3z03/.local/share/opencode/auth.json",
+        "size": 2299,
+        "sha256": "400dbd979069face7baf448fd125fe62a39277c1621cc03532b6c76ed570b133"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_34284/opencode-review-8tpdgott/.local/share/opencode/auth.json",
+        "size": 2299,
+        "sha256": "400dbd979069face7baf448fd125fe62a39277c1621cc03532b6c76ed570b133"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_34284/opencode-review-dr3s9zxj/.local/share/opencode/auth.json",
+        "size": 2299,
+        "sha256": "400dbd979069face7baf448fd125fe62a39277c1621cc03532b6c76ed570b133"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_34284/opencode-review-ikr8fzp4/.local/share/opencode/auth.json",
+        "size": 2299,
+        "sha256": "400dbd979069face7baf448fd125fe62a39277c1621cc03532b6c76ed570b133"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_34284/opencode-review-lo1rxh9s/.local/share/opencode/auth.json",
+        "size": 2299,
+        "sha256": "400dbd979069face7baf448fd125fe62a39277c1621cc03532b6c76ed570b133"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_34284/opencode-review-m7zzn95k/.local/share/opencode/auth.json",
+        "size": 2299,
+        "sha256": "400dbd979069face7baf448fd125fe62a39277c1621cc03532b6c76ed570b133"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_34284/opencode-review-uuz85so4/.local/share/opencode/auth.json",
+        "size": 2299,
+        "sha256": "400dbd979069face7baf448fd125fe62a39277c1621cc03532b6c76ed570b133"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_34284/opencode-review-ysmdf9x7/.local/share/opencode/auth.json",
+        "size": 2299,
+        "sha256": "400dbd979069face7baf448fd125fe62a39277c1621cc03532b6c76ed570b133"
+      },
+      {
         "path": "tests/sandbox/test_runtime/session_3468/factory/test_bootstrap_bus_precedence_over_turn_divergence0042/.agent/runtime/supervisor_state.json",
         "size": 184,
         "sha256": "cba837605bbb8f3d77144ee5e415cf909c2a690b8281d74a6bbee1e990a92d74"
@@ -2164,6 +2399,21 @@
         "path": "tests/sandbox/test_runtime/session_3468/factory/test_threshold_reads_from_agents_config0073/agents.json",
         "size": 39,
         "sha256": "a592272f8aa9436a0b31b6b67c1eebb47d51a47aad0a8d3114e8e797ca7b6737"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/opencode-review-12kwk4cc/.local/share/opencode/auth.json",
+        "size": 2299,
+        "sha256": "400dbd979069face7baf448fd125fe62a39277c1621cc03532b6c76ed570b133"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/opencode-review-853_0bk8/.local/share/opencode/auth.json",
+        "size": 2299,
+        "sha256": "400dbd979069face7baf448fd125fe62a39277c1621cc03532b6c76ed570b133"
+      },
+      {
+        "path": "tests/sandbox/test_runtime/session_3468/opencode-review-hw82o5nz/.local/share/opencode/auth.json",
+        "size": 2299,
+        "sha256": "400dbd979069face7baf448fd125fe62a39277c1621cc03532b6c76ed570b133"
       },
       {
         "path": "tests/sandbox/test_runtime/session_8612/factory/test_detect_package_json0005/package.json",
@@ -2334,13 +2584,193 @@
     "python": [
       {
         "path": ".agent/agent_controller.py",
-        "size": 140518,
-        "sha256": "911efa6ed4ef2830b435ebbf1fa95b87801ecec55a67a37246a39224c01eeb00"
+        "size": 141741,
+        "sha256": "2c15fc2ae53108a1d0233edeb2a381ef154d97d6a64d55143fb315ae99795d32"
       },
       {
         "path": ".agent/agents_config.py",
         "size": 24624,
         "sha256": "dc07eace0707fc527bd7dec0fe88acf1aefacb5776b6f8ea6a150a54bed38d85"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/agent_controller.py",
+        "size": 141741,
+        "sha256": "2c15fc2ae53108a1d0233edeb2a381ef154d97d6a64d55143fb315ae99795d32"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/agents_config.py",
+        "size": 24624,
+        "sha256": "dc07eace0707fc527bd7dec0fe88acf1aefacb5776b6f8ea6a150a54bed38d85"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/completion_checker.py",
+        "size": 5714,
+        "sha256": "a8219c23548390d3fa387460f40fe4e9b299347d57cd7107467a93d91fb14fae"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/completion_common.py",
+        "size": 3421,
+        "sha256": "0e52e1fab808585d931503bf076cfec2e394a5826032a4a67dce6eee1671ac7d"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/council/__init__.py",
+        "size": 78,
+        "sha256": "701bdf4d9f5d94922f39653a8d11b3157ce957b387f7cf2f83aa7a1f30653a5f"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/council/audit_rules.py",
+        "size": 1435,
+        "sha256": "ffd9aebff0d214d229df9612d11d5dfefaaadb17bb40676a1f4f3c9de64d4586"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/council/council_broker.py",
+        "size": 3851,
+        "sha256": "9f9416eb51a7828afe232c610343810d19ca2946d3bd86223642a8669a61c2aa"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/council/verdict.py",
+        "size": 790,
+        "sha256": "9f7cf48a44c470daed2da11edf15055eb9f0eaafb99950847874960a7dabba5f"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/hooks/guard_paths.py",
+        "size": 7009,
+        "sha256": "b462e82f1b9a7c276bfbc0434b531d098add6c591092415153ce226371d996ff"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/hooks/native_post_tool_hook.py",
+        "size": 1673,
+        "sha256": "08fd9ebe5d6574a12cdea32e1d2434f661ca1ce60e2254e0546b84d927c6678a"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/hooks/native_stop_hook.py",
+        "size": 579,
+        "sha256": "81bac3d53a3c8dc00dd3b07824c6ab3454a3ad98d000e9f760db8bb483ef9657"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/hooks/post_tool_hook.py",
+        "size": 1787,
+        "sha256": "24a53813a378ff9920352a357a423d9b5cd3535cf44e76ba933e2dcd7e54ee56"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/hooks/pre_compact_hook.py",
+        "size": 10566,
+        "sha256": "9e9a1bba97bd8a542281fea0d7135276f0425ceed0db24ac82fa1b9a2591b324"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/hooks/stop_hook.py",
+        "size": 1644,
+        "sha256": "1aa703cc1afecbfeaa958873276977196be665740d93a34e2d79bebec80c31c5"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/hooks/subagent_stop_hook.py",
+        "size": 601,
+        "sha256": "caec925442d6d1a8a510e9716f58289d55755866ffb3826223bed977f55f87d2"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/runtime/__init__.py",
+        "size": 19,
+        "sha256": "476801578f00a76c37e61730dc940ed527891c874fbc3e147354878f981ec383"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/runtime/memory/memory_helpers.py",
+        "size": 2732,
+        "sha256": "01ce4593e025c84090c621e71d2fffdb4a0a679c2a363b17476449a878e44f22"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/session_tracker.py",
+        "size": 6412,
+        "sha256": "05d5aad4c98e8c9811214ed253b98a6b4906ad9e2c126f85fd0f00ca75d6db17"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/agent_controller.py",
+        "size": 141741,
+        "sha256": "2c15fc2ae53108a1d0233edeb2a381ef154d97d6a64d55143fb315ae99795d32"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/agents_config.py",
+        "size": 24624,
+        "sha256": "dc07eace0707fc527bd7dec0fe88acf1aefacb5776b6f8ea6a150a54bed38d85"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/completion_checker.py",
+        "size": 5714,
+        "sha256": "a8219c23548390d3fa387460f40fe4e9b299347d57cd7107467a93d91fb14fae"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/completion_common.py",
+        "size": 3421,
+        "sha256": "0e52e1fab808585d931503bf076cfec2e394a5826032a4a67dce6eee1671ac7d"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/council/__init__.py",
+        "size": 78,
+        "sha256": "701bdf4d9f5d94922f39653a8d11b3157ce957b387f7cf2f83aa7a1f30653a5f"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/council/audit_rules.py",
+        "size": 1435,
+        "sha256": "ffd9aebff0d214d229df9612d11d5dfefaaadb17bb40676a1f4f3c9de64d4586"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/council/council_broker.py",
+        "size": 3851,
+        "sha256": "9f9416eb51a7828afe232c610343810d19ca2946d3bd86223642a8669a61c2aa"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/council/verdict.py",
+        "size": 790,
+        "sha256": "9f7cf48a44c470daed2da11edf15055eb9f0eaafb99950847874960a7dabba5f"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/hooks/guard_paths.py",
+        "size": 7009,
+        "sha256": "b462e82f1b9a7c276bfbc0434b531d098add6c591092415153ce226371d996ff"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/hooks/native_post_tool_hook.py",
+        "size": 1673,
+        "sha256": "08fd9ebe5d6574a12cdea32e1d2434f661ca1ce60e2254e0546b84d927c6678a"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/hooks/native_stop_hook.py",
+        "size": 579,
+        "sha256": "81bac3d53a3c8dc00dd3b07824c6ab3454a3ad98d000e9f760db8bb483ef9657"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/hooks/post_tool_hook.py",
+        "size": 1787,
+        "sha256": "24a53813a378ff9920352a357a423d9b5cd3535cf44e76ba933e2dcd7e54ee56"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/hooks/pre_compact_hook.py",
+        "size": 10566,
+        "sha256": "9e9a1bba97bd8a542281fea0d7135276f0425ceed0db24ac82fa1b9a2591b324"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/hooks/stop_hook.py",
+        "size": 1644,
+        "sha256": "1aa703cc1afecbfeaa958873276977196be665740d93a34e2d79bebec80c31c5"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/hooks/subagent_stop_hook.py",
+        "size": 601,
+        "sha256": "caec925442d6d1a8a510e9716f58289d55755866ffb3826223bed977f55f87d2"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/__init__.py",
+        "size": 19,
+        "sha256": "476801578f00a76c37e61730dc940ed527891c874fbc3e147354878f981ec383"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/memory/memory_helpers.py",
+        "size": 2732,
+        "sha256": "01ce4593e025c84090c621e71d2fffdb4a0a679c2a363b17476449a878e44f22"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/session_tracker.py",
+        "size": 6412,
+        "sha256": "05d5aad4c98e8c9811214ed253b98a6b4906ad9e2c126f85fd0f00ca75d6db17"
       },
       {
         "path": ".agent/completion_checker.py",
@@ -2449,8 +2879,8 @@
       },
       {
         "path": "bus/review_bridge.py",
-        "size": 85982,
-        "sha256": "f8061a32a0054d9eb213684a7a4785a9991137f3a5f11e8239ca0c71f8346aab"
+        "size": 92070,
+        "sha256": "fbffe46f90516d189ef7cae74e1a16150c193433d050e9253184510eb0749a91"
       },
       {
         "path": "bus/skill_resolver.py",
@@ -2464,8 +2894,8 @@
       },
       {
         "path": "bus/supervisor.py",
-        "size": 68684,
-        "sha256": "0c101085341f6b4c9a61081438f9a438ae009e47c3188dde50a1d623a0278113"
+        "size": 69463,
+        "sha256": "7b1a9dfd773a71c96016c910baecb529ca7f227bf5a92f02dc26dc7a5fe169b9"
       },
       {
         "path": "bus/time_utils.py",
@@ -2489,8 +2919,8 @@
       },
       {
         "path": "runtime/project_root.py",
-        "size": 5052,
-        "sha256": "5616a5749596b006833461165a3881e07588775f4e4dd6cc4e8c14afb310467d"
+        "size": 6214,
+        "sha256": "702fb5f0d6b3400ba2c2ada696bfa995301126227cdb2c4f9bdedcd6b72b1e79"
       },
       {
         "path": "runtime/status_bar_indicator.py",
@@ -2594,8 +3024,8 @@
       },
       {
         "path": "scripts/install_agent_system.py",
-        "size": 30845,
-        "sha256": "4744ab0bd4a33fe3bc9722f744e5818eb8630d88c1c4b567017649b771c788c4"
+        "size": 31422,
+        "sha256": "a62fa820eda87d468f2aabd5ae6c570330a0a9045171e04305e5a129bbfa91cb"
       },
       {
         "path": "scripts/local_audit.py",
@@ -2669,8 +3099,8 @@
       },
       {
         "path": "scripts/session_close_observations.py",
-        "size": 16242,
-        "sha256": "a196003fa8686866a10a9864fd85f245e58c3dd9b7c1c3d488569efa02b5da9f"
+        "size": 18514,
+        "sha256": "781185543ebf82923c170f6b24bfec051e8d65e144cceb298aa4b81883f98627"
       },
       {
         "path": "scripts/session_closeout.py",
@@ -2739,8 +3169,8 @@
       },
       {
         "path": "scripts/validate_observations.py",
-        "size": 11374,
-        "sha256": "3e77d5475c5e52ac324c85d87b385eec61f4061a93b905d252154114516d728d"
+        "size": 13726,
+        "sha256": "7164f7af79402a2902bd9236607032cfe5bbbe23dfa775543e20c48b64d8d8fe"
       },
       {
         "path": "scripts/validate_ticket_prose.py",
@@ -6589,8 +7019,8 @@
       },
       {
         "path": "tests/test_agent_controller.py",
-        "size": 30143,
-        "sha256": "40793de9b3668cf21c059a8c0799d99729a431758c11571786eccba026c47dfa"
+        "size": 34941,
+        "sha256": "31a1eabe6242d11769e4246fef5de547899f6d86ecad243de46bea8b9469b356"
       },
       {
         "path": "tests/test_agent_readme_references.py",
@@ -6684,8 +7114,8 @@
       },
       {
         "path": "tests/test_launch_agent_terminals_script.py",
-        "size": 6021,
-        "sha256": "12e01479cd42017d11989fbe0b6a2b6b8173e10be58b065bb73023ef4b99e461"
+        "size": 7030,
+        "sha256": "bd0aafee431ede155c9aae7786a6be2c8c7530a1644ca8b9bcb4235f4275a332"
       },
       {
         "path": "tests/test_launcher_preflight.py",
@@ -6694,8 +7124,8 @@
       },
       {
         "path": "tests/test_manager_review_bridge.py",
-        "size": 90800,
-        "sha256": "d53eb47172537daa0bfd6ade1af976b12cddd1e61eb53145cf110fae9e2c4399"
+        "size": 101995,
+        "sha256": "1f90cd6916b81e5a72e2dfed1fcca737dfde470ebc4380a2174e162bdf25fde5"
       },
       {
         "path": "tests/test_manifest_validator.py",
@@ -6929,8 +7359,8 @@
       },
       {
         "path": "tests/unit/test_install_agent_system.py",
-        "size": 12583,
-        "sha256": "9c9a3b7e38d7d4eb0d286782d3b1acfe95308f30fe52a71816fb0d81c262cf70"
+        "size": 14427,
+        "sha256": "a12347c2ffda31495f8a16af6fa6e153254ab5fb3ebc585486b3e9e133d59e4f"
       },
       {
         "path": "tests/unit/test_invariant_order.py",
@@ -7054,8 +7484,8 @@
       },
       {
         "path": "tests/unit/test_session_close_observations.py",
-        "size": 13736,
-        "sha256": "3435e7a177f34500a6343d1d22e50c874aef14522cd97ed60bd48dd89bc29a10"
+        "size": 18349,
+        "sha256": "af14f2047f8f1745f1dae84337a6a78ec3ab68e01162f2e8fdbb5fbb3dbf04ee"
       },
       {
         "path": "tests/unit/test_skill_discovery.py",
@@ -7089,8 +7519,8 @@
       },
       {
         "path": "tests/unit/test_validate_observations.py",
-        "size": 13726,
-        "sha256": "f7ad228f325af39cee82bcffa4a6efdf2089cc97df74e9edfcf565345bd8da23"
+        "size": 20560,
+        "sha256": "cd57cba2029fa79829cfc95bc66ef5edf363854fa68d7088b28ea96f60cbf710"
       },
       {
         "path": "tests/unit/test_windows_safe_temp_runtime.py",
@@ -7110,14 +7540,364 @@
     ],
     "documentation": [
       {
-        "path": ".agent/collaboration/AUDIT_WP-2026-175.md",
-        "size": 872,
-        "sha256": "032dda353ca63cffe83bedffeec060e1540dd97ba2408480f22d3894858e2b97"
+        "path": ".agent/backups/backup_20260529_223313/.agent/collaboration/execution_log.md",
+        "size": 7072,
+        "sha256": "74e3c740d83bcd23b7173702ac7928c9934f43898d68ea03540c86f088197945"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/collaboration/manager_feedback_WP-2026-155.md",
+        "size": 252,
+        "sha256": "87ad4ccd1dde1e0a70e64043e5c4d571196204a66a6bf13dc80c75a29c5d9452"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/collaboration/manager_feedback_WP-2026-156.md",
+        "size": 2016,
+        "sha256": "1678189f1d1425c464a67877972230a952e2f042fad585946e3daf05a8eab268"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/collaboration/manager_feedback_WP-2026-157.md",
+        "size": 318524,
+        "sha256": "830970ee24d43331377b6aab9481a447d1c47351f9014d6705d4f63bb891aa7b"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/collaboration/manager_feedback_WP-2026-158.md",
+        "size": 188760,
+        "sha256": "160521f120bd33d68143739f02353f925dbb4084e19c94c24b7d82520508fb0b"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/collaboration/manager_feedback_WP-2026-159.md",
+        "size": 1387420,
+        "sha256": "31ea3abf0ed7124bbbc8615d73909fe020da08db2a44b8dbd6620b688d194cd8"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/collaboration/manager_feedback_WP-2026-160.md",
+        "size": 204703,
+        "sha256": "94c0506003c8771f7f4d937b6183a022f6fb8bdefa8590b893f8e50082f9eeda"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/collaboration/manager_feedback_WP-2026-161.md",
+        "size": 218072,
+        "sha256": "d748edc1c8a461ca235337b4574a403370c46dbd76faa06629794791d6ce4a16"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/collaboration/manager_feedback_WP-2026-162.md",
+        "size": 225455,
+        "sha256": "a3f4feb44e8c26d0d6b0b9695a92d3fce94a15628314dd7e4f1f885ebb99c7e9"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/collaboration/manager_feedback_WP-2026-164.md",
+        "size": 286510,
+        "sha256": "10ee87b85fe6127d250fcb8e4d6dc45db63d1f7d20d037da45955b5cf3a38e35"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/collaboration/manager_feedback_WP-2026-165.md",
+        "size": 299466,
+        "sha256": "e375028e8e62a290a13d62f2f0801a78415e16af67c8a5ac1d65f34f4df8d3d2"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/collaboration/manager_feedback_WP-2026-166.md",
+        "size": 377774,
+        "sha256": "d7511b335a130f3384e13ca42f1ae9aeef17ae0394fa748f3f639746701c0d1a"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/collaboration/manager_feedback_WP-2026-167.md",
+        "size": 790038,
+        "sha256": "56a3917693c764cb2543f574b3e5f0c13b9352c57d5876dbed955d3e46e08935"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/collaboration/manager_feedback_WP-2026-169.md",
+        "size": 204676,
+        "sha256": "c0b00077636c2c9e108e000c15ca491cb04c01aaa10ae996c5ff014b8dbc7582"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/collaboration/manager_feedback_WP-2026-173.md",
+        "size": 313318,
+        "sha256": "7bfacc694be77c807de0aa972b79bdb3c1526c873075bddaffa531e46ad50169"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/collaboration/manager_feedback_WP-2026-174.md",
+        "size": 291272,
+        "sha256": "9ae4d99c737a5f2d105dde652ed5c3064670b8a745e766204d5b156944714591"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/collaboration/manager_feedback_WP-2026-175.md",
+        "size": 139020,
+        "sha256": "1945406e07f17964a463d70d49ab6b4c3538a1f70ffc054ceb6e091d139280d3"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/collaboration/manager_feedback_WP-2026-176.md",
+        "size": 466658,
+        "sha256": "15413d191830547c81b5cf9511cd7c6edf89bfe62a4bbfaa66bf4c04f828ed7b"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/collaboration/notifications.md",
+        "size": 3271,
+        "sha256": "c3a75c30e2021c003087c87d7d7d750d392cbef6e5e67d1e77f4fe3e5bcb61eb"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/collaboration/review_queue.md",
+        "size": 7693133,
+        "sha256": "2beedbb2ccf4dd2a5024c366a2e8946d04da02ac7a0ebb40a5a1dd53e8e74fde"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/collaboration/STATE.md",
+        "size": 53,
+        "sha256": "21d9df19fcf6e51a51f1dd699fced1d31a89a98ffdda25a0f69823b6d33a3f12"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/collaboration/TURN.md",
+        "size": 663,
+        "sha256": "1371f2b15939d29f125903aacaca4625180e313a36e13b0a24f87e3646723095"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/collaboration/work_plan.md",
+        "size": 9429,
+        "sha256": "5f00049c388ad26cda2928b63d16f4e124902a53392921e5884399a7c4550944"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/context/project_map.md",
+        "size": 3125,
+        "sha256": "43427dbee2bf41c5e5dcf45262711c5e2404a28cfdd6615f135271d5bb13fa47"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/rules/builder/recovery.md",
+        "size": 4374,
+        "sha256": "71eb1dbf5cd2e383874da1a7751b28aaf21227dbfce0fbfa91960b4b75f68295"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/runtime/audit/AUDIT.md",
+        "size": 7099,
+        "sha256": "8938d9722e2f689819588a362f697f47097beb29396d3a6936badd40bb98cd4d"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/runtime/builder_lock.txt",
+        "size": 264,
+        "sha256": "9a64d16164d3361ed6e80898313eba9f0dac991560777a1c314ffc623040188a"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/runtime/compare/affaan-m-ECC-928076cc-2026-05-27.md",
+        "size": 6945,
+        "sha256": "5329a7b65a93868174d2373467da968cadcb7fee01ab6ae9831e61617f47e718"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/runtime/compare/cc-switch-awesome-harness-reviewdog-2026-05-28.md",
+        "size": 3183,
+        "sha256": "7be1a84287721ea9ec5017db2de0db0ec5d9c2e830c134584aa7a2cb17217be9"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/runtime/compare/openclaw-agent-skills-7b6ca5b2078af2746d1c4424fe90211901b997ae-2026-05-27.md",
+        "size": 5095,
+        "sha256": "a32f5fc30f41764ec08348030d4459b1df5aa5beb71e8e690a6cab74540d66ba"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/runtime/deliverables/WP-2026-121-project-root-audit.md",
+        "size": 10663,
+        "sha256": "ee335c9de497da309e51843aceb828f6fc0691b16d051f91a5ac09e0b3f283a1"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/runtime/memory/CONSOLIDATION_REPORT.md",
+        "size": 722,
+        "sha256": "45ae05a707aa5c79f204998e9a5bc6bd1079af04bff2e8715d3d58f1c77ca32b"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/runtime/memory/MEMORY.md",
+        "size": 4071,
+        "sha256": "1f5a4c84be81acb6edc08b34eb4b8b3ccb4b8c6a4c76b9834b4bb229aea09839"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/runtime/memory/session_close_report.md",
+        "size": 1725,
+        "sha256": "0f1ec81f9bb35c4bf1aadb572d2d72f48ef118ec27b436e01743ed1d1583e282"
+      },
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/templates/human_review_report.md",
+        "size": 339,
+        "sha256": "87ec8f2132ce3175e25f9383766ace1deff806de52b8759af47c018f29c17d9f"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/collaboration/execution_log.md",
+        "size": 7072,
+        "sha256": "74e3c740d83bcd23b7173702ac7928c9934f43898d68ea03540c86f088197945"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/collaboration/manager_feedback_WP-2026-155.md",
+        "size": 252,
+        "sha256": "87ad4ccd1dde1e0a70e64043e5c4d571196204a66a6bf13dc80c75a29c5d9452"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/collaboration/manager_feedback_WP-2026-156.md",
+        "size": 2016,
+        "sha256": "1678189f1d1425c464a67877972230a952e2f042fad585946e3daf05a8eab268"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/collaboration/manager_feedback_WP-2026-157.md",
+        "size": 318524,
+        "sha256": "830970ee24d43331377b6aab9481a447d1c47351f9014d6705d4f63bb891aa7b"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/collaboration/manager_feedback_WP-2026-158.md",
+        "size": 188760,
+        "sha256": "160521f120bd33d68143739f02353f925dbb4084e19c94c24b7d82520508fb0b"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/collaboration/manager_feedback_WP-2026-159.md",
+        "size": 1387420,
+        "sha256": "31ea3abf0ed7124bbbc8615d73909fe020da08db2a44b8dbd6620b688d194cd8"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/collaboration/manager_feedback_WP-2026-160.md",
+        "size": 204703,
+        "sha256": "94c0506003c8771f7f4d937b6183a022f6fb8bdefa8590b893f8e50082f9eeda"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/collaboration/manager_feedback_WP-2026-161.md",
+        "size": 218072,
+        "sha256": "d748edc1c8a461ca235337b4574a403370c46dbd76faa06629794791d6ce4a16"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/collaboration/manager_feedback_WP-2026-162.md",
+        "size": 225455,
+        "sha256": "a3f4feb44e8c26d0d6b0b9695a92d3fce94a15628314dd7e4f1f885ebb99c7e9"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/collaboration/manager_feedback_WP-2026-164.md",
+        "size": 286510,
+        "sha256": "10ee87b85fe6127d250fcb8e4d6dc45db63d1f7d20d037da45955b5cf3a38e35"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/collaboration/manager_feedback_WP-2026-165.md",
+        "size": 299466,
+        "sha256": "e375028e8e62a290a13d62f2f0801a78415e16af67c8a5ac1d65f34f4df8d3d2"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/collaboration/manager_feedback_WP-2026-166.md",
+        "size": 377774,
+        "sha256": "d7511b335a130f3384e13ca42f1ae9aeef17ae0394fa748f3f639746701c0d1a"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/collaboration/manager_feedback_WP-2026-167.md",
+        "size": 790038,
+        "sha256": "56a3917693c764cb2543f574b3e5f0c13b9352c57d5876dbed955d3e46e08935"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/collaboration/manager_feedback_WP-2026-169.md",
+        "size": 204676,
+        "sha256": "c0b00077636c2c9e108e000c15ca491cb04c01aaa10ae996c5ff014b8dbc7582"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/collaboration/manager_feedback_WP-2026-173.md",
+        "size": 313318,
+        "sha256": "7bfacc694be77c807de0aa972b79bdb3c1526c873075bddaffa531e46ad50169"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/collaboration/manager_feedback_WP-2026-174.md",
+        "size": 291272,
+        "sha256": "9ae4d99c737a5f2d105dde652ed5c3064670b8a745e766204d5b156944714591"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/collaboration/manager_feedback_WP-2026-175.md",
+        "size": 139020,
+        "sha256": "1945406e07f17964a463d70d49ab6b4c3538a1f70ffc054ceb6e091d139280d3"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/collaboration/manager_feedback_WP-2026-176.md",
+        "size": 466658,
+        "sha256": "15413d191830547c81b5cf9511cd7c6edf89bfe62a4bbfaa66bf4c04f828ed7b"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/collaboration/notifications.md",
+        "size": 3271,
+        "sha256": "c3a75c30e2021c003087c87d7d7d750d392cbef6e5e67d1e77f4fe3e5bcb61eb"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/collaboration/review_queue.md",
+        "size": 7693133,
+        "sha256": "2beedbb2ccf4dd2a5024c366a2e8946d04da02ac7a0ebb40a5a1dd53e8e74fde"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/collaboration/STATE.md",
+        "size": 53,
+        "sha256": "21d9df19fcf6e51a51f1dd699fced1d31a89a98ffdda25a0f69823b6d33a3f12"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/collaboration/TURN.md",
+        "size": 663,
+        "sha256": "1371f2b15939d29f125903aacaca4625180e313a36e13b0a24f87e3646723095"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/collaboration/work_plan.md",
+        "size": 9429,
+        "sha256": "5f00049c388ad26cda2928b63d16f4e124902a53392921e5884399a7c4550944"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/context/project_map.md",
+        "size": 3125,
+        "sha256": "43427dbee2bf41c5e5dcf45262711c5e2404a28cfdd6615f135271d5bb13fa47"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/rules/builder/recovery.md",
+        "size": 4374,
+        "sha256": "71eb1dbf5cd2e383874da1a7751b28aaf21227dbfce0fbfa91960b4b75f68295"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/audit/AUDIT.md",
+        "size": 7099,
+        "sha256": "8938d9722e2f689819588a362f697f47097beb29396d3a6936badd40bb98cd4d"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/builder_lock.txt",
+        "size": 264,
+        "sha256": "9a64d16164d3361ed6e80898313eba9f0dac991560777a1c314ffc623040188a"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/compare/affaan-m-ECC-928076cc-2026-05-27.md",
+        "size": 6945,
+        "sha256": "5329a7b65a93868174d2373467da968cadcb7fee01ab6ae9831e61617f47e718"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/compare/cc-switch-awesome-harness-reviewdog-2026-05-28.md",
+        "size": 3183,
+        "sha256": "7be1a84287721ea9ec5017db2de0db0ec5d9c2e830c134584aa7a2cb17217be9"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/compare/openclaw-agent-skills-7b6ca5b2078af2746d1c4424fe90211901b997ae-2026-05-27.md",
+        "size": 5095,
+        "sha256": "a32f5fc30f41764ec08348030d4459b1df5aa5beb71e8e690a6cab74540d66ba"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/deliverables/WP-2026-121-project-root-audit.md",
+        "size": 10663,
+        "sha256": "ee335c9de497da309e51843aceb828f6fc0691b16d051f91a5ac09e0b3f283a1"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/memory/CONSOLIDATION_REPORT.md",
+        "size": 722,
+        "sha256": "45ae05a707aa5c79f204998e9a5bc6bd1079af04bff2e8715d3d58f1c77ca32b"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/memory/MEMORY.md",
+        "size": 4071,
+        "sha256": "1f5a4c84be81acb6edc08b34eb4b8b3ccb4b8c6a4c76b9834b4bb229aea09839"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/memory/session_close_report.md",
+        "size": 1725,
+        "sha256": "0f1ec81f9bb35c4bf1aadb572d2d72f48ef118ec27b436e01743ed1d1583e282"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/templates/human_review_report.md",
+        "size": 339,
+        "sha256": "87ec8f2132ce3175e25f9383766ace1deff806de52b8759af47c018f29c17d9f"
+      },
+      {
+        "path": ".agent/collaboration/AUDIT_WP-2026-176.md",
+        "size": 1433,
+        "sha256": "c5d2521c663ca0b70e2649a1d85b66b62e9f53353f95c4a12ea2a89d19797175"
       },
       {
         "path": ".agent/collaboration/execution_log.md",
-        "size": 1655,
-        "sha256": "a2229e60980afcee15d2233787f773a9f815a2cee7ba8e0e068dcd44cd7d1c95"
+        "size": 578,
+        "sha256": "46d016c88fb51a05ddedbe5ae86344284ef0d3c71d12f06012c43c0feab0a85e"
       },
       {
         "path": ".agent/collaboration/manager_feedback_WP-2026-155.md",
@@ -7200,34 +7980,34 @@
         "sha256": "1945406e07f17964a463d70d49ab6b4c3538a1f70ffc054ceb6e091d139280d3"
       },
       {
-        "path": ".agent/collaboration/notifications.md",
-        "size": 2977,
-        "sha256": "2a7ac243862a7b7bbc0b20cbdb6376518b3323cfcdb100a3d07ea669d0d0f814"
+        "path": ".agent/collaboration/manager_feedback_WP-2026-176.md",
+        "size": 466658,
+        "sha256": "15413d191830547c81b5cf9511cd7c6edf89bfe62a4bbfaa66bf4c04f828ed7b"
       },
       {
-        "path": ".agent/collaboration/PLAN_WP-2026-175.md",
-        "size": 1645,
-        "sha256": "76d9d555df0224c44ef01539d8b92f3b1d9532415a6d1021fe1e184b574fbb3b"
+        "path": ".agent/collaboration/notifications.md",
+        "size": 2977,
+        "sha256": "16597220677fb7971e73ebfc1bfaca80c5f77bcfd4bca660c2c30fd0dca80095"
       },
       {
         "path": ".agent/collaboration/review_queue.md",
-        "size": 7191068,
-        "sha256": "a543999851ab7b86cf976910af5cd6d89ba317f51bc43e05ce737d5552253d6e"
+        "size": 7693133,
+        "sha256": "2beedbb2ccf4dd2a5024c366a2e8946d04da02ac7a0ebb40a5a1dd53e8e74fde"
       },
       {
         "path": ".agent/collaboration/STATE.md",
-        "size": 855,
-        "sha256": "57605db5332d65e177edf80885fd9ca9b0d49a14670b9326e2a75985d6b19f19"
+        "size": 51,
+        "sha256": "8026683b7346c9585f3e53796a64314ee4bcc206bf6dac662388390d34fe7ebb"
       },
       {
         "path": ".agent/collaboration/TURN.md",
-        "size": 961,
-        "sha256": "f1c401a516e907040df8e505fbebb546556486388f5413bc0faa9e64c2f490c8"
+        "size": 663,
+        "sha256": "e3907e6c2490fd7c499985619e4eb877b100dadf1f2336517f9a3dca69fc6c9f"
       },
       {
         "path": ".agent/collaboration/work_plan.md",
-        "size": 8837,
-        "sha256": "81c8b2e56f1297185e1fffe37ef9c4805c7cb9ea3457ec066022280f5b7fc3c8"
+        "size": 1376,
+        "sha256": "6a1a4b1727e27993543aff25127babb07e7305c332bfa50db6a315f4657b64dc"
       },
       {
         "path": ".agent/context/project_map.md",
@@ -7243,11 +8023,6 @@
         "path": ".agent/runtime/audit/AUDIT.md",
         "size": 7099,
         "sha256": "8938d9722e2f689819588a362f697f47097beb29396d3a6936badd40bb98cd4d"
-      },
-      {
-        "path": ".agent/runtime/builder_lock.txt",
-        "size": 264,
-        "sha256": "c35d61dd226e2de47ba66fda600ccf4af47967c6197de47a55d7e52ed6890a71"
       },
       {
         "path": ".agent/runtime/compare/affaan-m-ECC-928076cc-2026-05-27.md",
@@ -7270,6 +8045,11 @@
         "sha256": "ee335c9de497da309e51843aceb828f6fc0691b16d051f91a5ac09e0b3f283a1"
       },
       {
+        "path": ".agent/runtime/memory/closeout_lessons.md",
+        "size": 1625,
+        "sha256": "becedd5810560c3ec8f0aba63363f16fc158dad7fd80fdd8312291565d799fc9"
+      },
+      {
         "path": ".agent/runtime/memory/CONSOLIDATION_REPORT.md",
         "size": 722,
         "sha256": "45ae05a707aa5c79f204998e9a5bc6bd1079af04bff2e8715d3d58f1c77ca32b"
@@ -7283,6 +8063,11 @@
         "path": ".agent/runtime/memory/session_close_report.md",
         "size": 1725,
         "sha256": "0f1ec81f9bb35c4bf1aadb572d2d72f48ef118ec27b436e01743ed1d1583e282"
+      },
+      {
+        "path": ".agent/runtime/supervisor_lock.txt",
+        "size": 95,
+        "sha256": "56bb332997ecafdf9ef5e767bb3fd17cb81225de600d3acf7487b66dfb19a796"
       },
       {
         "path": ".agent/templates/human_review_report.md",
@@ -7401,8 +8186,8 @@
       },
       {
         "path": ".opencode/agents/builder.md",
-        "size": 2602,
-        "sha256": "e83ee05cd5c368cdf588dcadcbb37516421097b59dd8acc0f6748397b1a4c2c9"
+        "size": 2240,
+        "sha256": "e71406663adff2ee630b6ca017593642c4e7de9e5c4fd7b996bcbd44d500e0f0"
       },
       {
         "path": ".opencode/agents/manager.md",
@@ -7421,8 +8206,8 @@
       },
       {
         "path": "AGENTS.md",
-        "size": 16576,
-        "sha256": "53fdc11a4ac47727227f0fbf47c0e5ff1ca7dd12fac2da43e4506fa03c01ecb2"
+        "size": 18633,
+        "sha256": "35f192365ff94817917fdb0d27799b93dab679844f76ab01d6b2d539ab2b446b"
       },
       {
         "path": "AUDIT_WP-2026-147.md",
@@ -7461,8 +8246,8 @@
       },
       {
         "path": "CLAUDE.md",
-        "size": 1634,
-        "sha256": "a759dfabdbd7b5680b2431a7b89867d0f197c36b2939ac38ec14a06a95ac2183"
+        "size": 1866,
+        "sha256": "8dd51fdbe56150b666cefca40a21059b0a1d750c4a90a73641716b4edd49af52"
       },
       {
         "path": "CLOSURE_MODEL.md",
@@ -7541,18 +8326,18 @@
       },
       {
         "path": "prompts/session_bootstrap.md",
-        "size": 6579,
-        "sha256": "007bb7ea458fbe644fc13a48d51b5bae8b367ec2f56abd876e4dbdaa9acd60fb"
+        "size": 6576,
+        "sha256": "48e893ccb0174cf9b1746db53fc76407868f0d11c24c09c8029f4d896507014a"
       },
       {
         "path": "QUICKSTART.md",
-        "size": 20194,
-        "sha256": "c1e1300763143b60a972f250869af139e9e28946e06e96a1811acf624b8613fd"
+        "size": 21651,
+        "sha256": "386181c42b549792a18dad8126179d7c1b47516351e5b5adb0c47505f85fa186"
       },
       {
         "path": "README.md",
-        "size": 11251,
-        "sha256": "8d440228c3629e8a34cf52039b4e0ed00ed4a29c6df1216327021568051a5aff"
+        "size": 12233,
+        "sha256": "ce60ed6b222e4d61a332a3762dbb1f9a71e746fd203d375b988dd76ef910fcf5"
       },
       {
         "path": "RELEASE_CHECKLIST.md",
@@ -7571,8 +8356,8 @@
       },
       {
         "path": "skills/_shared/ap-schema.md",
-        "size": 3121,
-        "sha256": "59e290b8b0bba79eab8e1a4fd925a15c9b98434b843de49596f804c7257deca4"
+        "size": 4165,
+        "sha256": "dba0651d383075cbea67043b7e9856fbda8fd38699e21f74e119bd55ad5baa04"
       },
       {
         "path": "skills/_shared/ticket-anti-patterns.md",
@@ -7591,8 +8376,8 @@
       },
       {
         "path": "skills/bui-implement-from-plan/SKILL.md",
-        "size": 6653,
-        "sha256": "86bc15b637e4ca04b6a800e2bc47019768aa6175b4df137648ccf0d1ba5da187"
+        "size": 5960,
+        "sha256": "d556b02a8a659c1038370d93a02fc9a2990ff7eb37dd95fb44ed47c27531b98e"
       },
       {
         "path": "skills/bui-run-quality-gates/references/common-fixes.md",
@@ -7601,8 +8386,8 @@
       },
       {
         "path": "skills/bui-run-quality-gates/SKILL.md",
-        "size": 1435,
-        "sha256": "80bb7fb2491f181beb466e3ac2df75a81bf9a954695d273127d25363d9864707"
+        "size": 1327,
+        "sha256": "8374f70a8dfdbdc2c068c864c980c03188c2e21dcabcbfe0fa8f7eed93376600"
       },
       {
         "path": "skills/bui-self-audit/SKILL.md",
@@ -7686,8 +8471,8 @@
       },
       {
         "path": "skills/man-create-work-plan/SKILL.md",
-        "size": 10542,
-        "sha256": "2f65fc13bb5cf124a344f76a07ab1688cea136206eaebd611aa6b0535d09c20b"
+        "size": 10834,
+        "sha256": "c36af1b4c533862e83ce203e39dd1ff1f9e6c47611de4e25c09828aefc11127c"
       },
       {
         "path": "skills/man-resolve-escalation/references/escalation-levels.md",
@@ -14856,6 +15641,256 @@
       }
     ],
     "other": [
+      {
+        "path": ".agent/backups/backup_20260529_223313/.agent/runtime/deliverables/.gitkeep",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/deliverables/.gitkeep",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/manager_review_home_3av_pcva/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/config",
+        "size": 205,
+        "sha256": "31c624eb2981e575203ac7b86a3da8874d80eaa1b36acee49367223a4750d7cc"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/manager_review_home_3av_pcva/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/description",
+        "size": 73,
+        "sha256": "85ab6c163d43a17ea9cf7788308bca1466f1b0a8d1cc92e26e9bf63da4062aee"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/manager_review_home_3av_pcva/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/HEAD",
+        "size": 21,
+        "sha256": "28d25bf82af4c0e2b72f50959b2beb859e3e60b9630a5e8c603dad4ddb2b6e80"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/manager_review_home_3av_pcva/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/info/exclude",
+        "size": 240,
+        "sha256": "6671fe83b7a07c8932ee89164d1f2793b2318058eb8b98dc5c06ee0a5a3b0ec1"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/manager_review_home_3av_pcva/.local/share/opencode/storage/migration",
+        "size": 1,
+        "sha256": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/manager_review_home_bn4b5m74/.local/state/opencode/locks/78f2c929bb25b1a697dd6bd10fb2aabee932a640.lock/heartbeat",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/manager_review_home_dzlb5yba/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/config",
+        "size": 205,
+        "sha256": "31c624eb2981e575203ac7b86a3da8874d80eaa1b36acee49367223a4750d7cc"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/manager_review_home_dzlb5yba/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/description",
+        "size": 73,
+        "sha256": "85ab6c163d43a17ea9cf7788308bca1466f1b0a8d1cc92e26e9bf63da4062aee"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/manager_review_home_dzlb5yba/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/HEAD",
+        "size": 21,
+        "sha256": "28d25bf82af4c0e2b72f50959b2beb859e3e60b9630a5e8c603dad4ddb2b6e80"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/manager_review_home_dzlb5yba/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/info/exclude",
+        "size": 240,
+        "sha256": "6671fe83b7a07c8932ee89164d1f2793b2318058eb8b98dc5c06ee0a5a3b0ec1"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/manager_review_home_dzlb5yba/.local/share/opencode/storage/migration",
+        "size": 1,
+        "sha256": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/manager_review_home_jk2g8473/.local/state/opencode/locks/d556e2a324d5f4ad3f1b4b97345d78a1ec9abe9e.lock/heartbeat",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/manager_review_home_tisoj0qi/.local/state/opencode/locks/409e88a07bc40c11318a7a040498a448b3deae74.lock/heartbeat",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/config",
+        "size": 259,
+        "sha256": "aabbb6ae6e0aac79fd86b0fd278931d357bcaa95f1de33bbe10c6014ae727558"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/description",
+        "size": 73,
+        "sha256": "85ab6c163d43a17ea9cf7788308bca1466f1b0a8d1cc92e26e9bf63da4062aee"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/HEAD",
+        "size": 21,
+        "sha256": "28d25bf82af4c0e2b72f50959b2beb859e3e60b9630a5e8c603dad4ddb2b6e80"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/index",
+        "size": 48082,
+        "sha256": "c8e9a3b231a51b2d83e645b1c8a15e65cf157452dc911a71380ee4ee423d8ee4"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/info/exclude",
+        "size": 278,
+        "sha256": "350e62e704bc803a04ba9738c2be6906e5878a3aa5596881ac537addb92f7a7d"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/info/refs",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/objects/0a/0e15cea0d436eab85e53d8d4ebf818083b2261",
+        "size": 41519,
+        "sha256": "151800bb152810f4f6702e866983d32aca39ffc1280d7ed7658b06ce7428632e"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/objects/0b/ad3565e0c8a74e7e38d5be77fafbf3623715a0",
+        "size": 607,
+        "sha256": "450f507918d2f8786de5023e2a39f26b6e9348cc549beeae67870e4876c60b42"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/objects/0d/4080a7e665fa988bfac7941be2cfa64da41a31",
+        "size": 56,
+        "sha256": "f53df2fe3dca7e16cf40f49c598de8859c495f5cbe03cd365aa94a908d89d184"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/objects/19/96c0368cb8306d10d9f7ea083a6ef3928f7a0a",
+        "size": 154,
+        "sha256": "fe3b00b335e55676206cdb95e2a29a98abca55d35aeafd8692e2f2fa3d6ab214"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/objects/27/9e6a316f203575891c2b5b40d0178708cd3256",
+        "size": 606,
+        "sha256": "67c38e147fc6203070f59754ede129d159c028f2557dc9e4d9679c9dfe2e87a0"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/objects/30/a7a35f3eb229feb5d55cb4c1d02d72d2c09c46",
+        "size": 124,
+        "sha256": "a6aecbcf406b2a41cbba3205cc2497d6120f57d80247c9469dbf0d2195dcc4da"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/objects/45/f234f2f3df100b359b9d39cd2441f275f1da64",
+        "size": 1869,
+        "sha256": "a345231e00dd02994acbc59536012f0989c2b2c30d1fa2db36813bb530f09094"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/objects/46/3504975a5de93960f8fafd10d13fc492d49449",
+        "size": 936,
+        "sha256": "f1311011fd8b34f5b9cad73b7fe9149f35e61a213b03af16b7255f5d2d11931e"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/objects/4c/2f09edb2ff62ccc578a7d6f83c099804395195",
+        "size": 13589,
+        "sha256": "ce3e08055927ec80ef8fed9adfce75afbfe7f5942422ab398cc1c0c02c35d5fc"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/objects/66/b3f9ca946954f5da55a6a0e4f8bdc5be34c36a",
+        "size": 1147,
+        "sha256": "c6c9f4df01e58dbc6f97940a0c38705d2c052edeef47002a5d8772d36ef6909e"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/objects/77/e27916e367e10927f2b71e90880fdf86239dd3",
+        "size": 919,
+        "sha256": "1a8d4c3cda827a0495fda3b4f3fd75e036653bfa7258571f8c21c5799a2e39ed"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/objects/78/b1504ae9d7485ac8f82dcbe732eacde2a5d934",
+        "size": 86,
+        "sha256": "63670a77f9c1d0c790c7907e599982d8a30f92ec83a31e15a292a3be44b8d1dd"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/objects/7e/fc0ffb38afb0d5d30fe52f90b8063214c7c2bb",
+        "size": 1927,
+        "sha256": "a21412d5e885519f0b10815fbe723ee4c1fead47e98973c3c5511018b379096c"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/objects/86/fa2204ca9bb4998b2d7c52953269d3291886cf",
+        "size": 1929,
+        "sha256": "9d3fdb03382abc54f06df44bb9a9ccaa07b03815ea4078aefbcb2b7b3112dc46"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/objects/a6/cc5bcf9b3ea71699c0008e9feda8224220a2bb",
+        "size": 56,
+        "sha256": "26547eca7811f220cccb83a8a58d8fea4d54a99f59c01f0a2321c5f9ae4a9c0f"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/objects/aa/d4e9471f3f3e5c8c0d8a42d8d2ed4f8024a47d",
+        "size": 85,
+        "sha256": "c20a39c78f46dba13434976b3e8cbf8dd13100df855427484150a051809698f7"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/objects/bf/f038f9f29ab5d96b52b0fafe3d5152a04bbab8",
+        "size": 23103,
+        "sha256": "4c9764434f2d7e8970f3ee0931857dc602805e301ca7b7813e628b342e563e10"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/objects/c5/9285f7cd21cbcc07cc66f849788f96e6e8d476",
+        "size": 1141,
+        "sha256": "c199c9a7ee6a1150cfaf1833086cd4b8df3cb97bfb8d6009545361a1076b45de"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/objects/c8/1838ff960d0e1ede56cbdbd9fc00ec6af37338",
+        "size": 1867,
+        "sha256": "67d1c1d283ce04c49357165e1e0b8f58124c818411d534e99a10567b3c768aa1"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/objects/d5/06e3a98f553498e02d65d2195544404023040f",
+        "size": 125,
+        "sha256": "da4b323766d6c24054c1a9e4f252c81307e8eee9109ec8fade477af7574dfcc4"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/objects/d5/868c57c7fa7c4dca9b9d138d71a126aaab9406",
+        "size": 423,
+        "sha256": "fbab8e55fc35c97c56b96cce3b0a06c8a8514dad3b272fbb56084e99bcabe0e1"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/objects/da/c0a5ad538ab95c9092e6138404630afc090972",
+        "size": 423,
+        "sha256": "dd25c0f2afe559591ce76588adba8b844d2e47ca47ca3374e83bf80ba8fa0d38"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/objects/e8/7b51b9b23be4c09e8b4ff549f6bae36fa5d706",
+        "size": 13579,
+        "sha256": "960292d8dfae4770fe06fdb76321218f4cbda4202ad1d63e4234e7afc69c6277"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/objects/f6/d43da50963c17033ca6845084805eb8f60c15f",
+        "size": 57,
+        "sha256": "2882764a203047254e00ff9eb40b3715fb49ccf9406af75b8b5e4a92ee61cc13"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/objects/f7/cec43cda87aaaaec3cf6dcc3525dcb709424a0",
+        "size": 23070,
+        "sha256": "f953b690d1c9557475e5e651d5e13edd40d7f9d559d721fd84d829579754df87"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/objects/info/packs",
+        "size": 54,
+        "sha256": "3ef38017ebc8100e5954d3bea96cdc19126e97237b16f6cc5f276d7a745e4c6d"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/snapshot/0b6f0d418777cac14714d6540d7893180cb320b7/73f26a070ffd9260bfaf4098aaef68570f89722f/packed-refs",
+        "size": 46,
+        "sha256": "6110899c7adc374885f9552bddfb76fa28a7f7ca3c05fb8b74471a457e1e57c8"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/share/opencode/storage/migration",
+        "size": 1,
+        "sha256": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35"
+      },
+      {
+        "path": ".agent/backups/backup_20260530_003240/.agent/runtime/tmp/opencode_home_test/.local/state/opencode/locks/cd6b860626e3fc0bc3569ed65b8d1c72fa721476.lock/heartbeat",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
       {
         "path": ".agent/runtime/deliverables/.gitkeep",
         "size": 0,
@@ -26535,8 +27570,8 @@
       },
       {
         "path": "scripts/launch_agent_terminals.ps1",
-        "size": 52860,
-        "sha256": "190644191f19bc126431b6b85bb994b5f1d582b548a273c7db5c5d816649ff52"
+        "size": 56557,
+        "sha256": "c7d5f559a1eb0653241cacacdabe3d69ee600a68792c8c0fc4834c67476082e3"
       },
       {
         "path": "scripts/test_manager_smoke.ps1",
@@ -26706,6 +27741,11 @@
           },
           {
             "name": "runtime.project_root.get_context_dir",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          },
+          {
+            "name": "runtime.project_root.is_motor_code_only",
             "type": "local",
             "path": "runtime/project_root.py"
           },
@@ -26956,6 +27996,1696 @@
           },
           {
             "name": "runtime.project_root.get_agent_dir",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260529_223313/.agent/agent_controller.py": {
+        "imports": [
+          {
+            "name": "codecs",
+            "type": "stdlib",
+            "package": "codecs"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "os",
+            "type": "stdlib",
+            "package": "os"
+          },
+          {
+            "name": "re",
+            "type": "stdlib",
+            "package": "re"
+          },
+          {
+            "name": "subprocess",
+            "type": "stdlib",
+            "package": "subprocess"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "datetime.datetime",
+            "type": "stdlib",
+            "package": "datetime"
+          },
+          {
+            "name": "datetime.timezone",
+            "type": "stdlib",
+            "package": "datetime"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "runtime.project_root.get_agent_dir",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          },
+          {
+            "name": "runtime.project_root.get_collab_dir",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          },
+          {
+            "name": "runtime.project_root.get_context_dir",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          },
+          {
+            "name": "runtime.project_root.is_motor_code_only",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          },
+          {
+            "name": "runtime.project_root.resolve_project_root",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          },
+          {
+            "name": "hooks.registry",
+            "type": "external",
+            "package": "hooks"
+          },
+          {
+            "name": "hooks.post_tool_hook.post_tool_hook",
+            "type": "external",
+            "package": "hooks"
+          },
+          {
+            "name": "hooks.pre_action_hook.pre_action_hook",
+            "type": "external",
+            "package": "hooks"
+          },
+          {
+            "name": "hooks.stop_hook.stop_hook",
+            "type": "external",
+            "package": "hooks"
+          },
+          {
+            "name": "session_tracker.recover_session",
+            "type": "external",
+            "package": "session_tracker"
+          },
+          {
+            "name": "session_tracker.save_session",
+            "type": "external",
+            "package": "session_tracker"
+          },
+          {
+            "name": "session_tracker.show_recovery_hint",
+            "type": "external",
+            "package": "session_tracker"
+          },
+          {
+            "name": "completion_checker.check_completion",
+            "type": "external",
+            "package": "completion_checker"
+          },
+          {
+            "name": "completion_checker.show_completion_report",
+            "type": "external",
+            "package": "completion_checker"
+          },
+          {
+            "name": "bus.event_bus.EventBus",
+            "type": "local",
+            "path": "bus/event_bus.py"
+          },
+          {
+            "name": "bus.utils.count_trailing_changes",
+            "type": "local",
+            "path": "bus/utils.py"
+          },
+          {
+            "name": "bus.approval.ApprovalPolicy",
+            "type": "local",
+            "path": "bus/approval.py"
+          },
+          {
+            "name": "bus.approval.ApprovalReason",
+            "type": "local",
+            "path": "bus/approval.py"
+          },
+          {
+            "name": "bus.approval.ApprovalStatus",
+            "type": "local",
+            "path": "bus/approval.py"
+          },
+          {
+            "name": "bus.approval.ApprovalStore",
+            "type": "local",
+            "path": "bus/approval.py"
+          },
+          {
+            "name": "scripts.graph_context.generate_context_for_destination",
+            "type": "local",
+            "path": "scripts/graph_context.py"
+          },
+          {
+            "name": "scripts.project_scanner.generate_report",
+            "type": "local",
+            "path": "scripts/project_scanner.py"
+          },
+          {
+            "name": "scripts.project_scanner.scan_project",
+            "type": "local",
+            "path": "scripts/project_scanner.py"
+          },
+          {
+            "name": "contextlib",
+            "type": "stdlib",
+            "package": "contextlib"
+          },
+          {
+            "name": "uuid",
+            "type": "stdlib",
+            "package": "uuid"
+          },
+          {
+            "name": "bus.state_machine.TicketState",
+            "type": "local",
+            "path": "bus/state_machine.py"
+          },
+          {
+            "name": "bus.state_machine.StateMachine",
+            "type": "local",
+            "path": "bus/state_machine.py"
+          },
+          {
+            "name": "bus.state_machine.TicketState",
+            "type": "local",
+            "path": "bus/state_machine.py"
+          },
+          {
+            "name": "bus.state_machine.StateMachine",
+            "type": "local",
+            "path": "bus/state_machine.py"
+          },
+          {
+            "name": "re",
+            "type": "stdlib",
+            "package": "re"
+          },
+          {
+            "name": "bus.state_machine.StateMachine",
+            "type": "local",
+            "path": "bus/state_machine.py"
+          },
+          {
+            "name": "bus.state_machine.TicketState",
+            "type": "local",
+            "path": "bus/state_machine.py"
+          },
+          {
+            "name": "importlib.util",
+            "type": "stdlib",
+            "package": "importlib"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "bus.state_machine.StateMachine",
+            "type": "local",
+            "path": "bus/state_machine.py"
+          },
+          {
+            "name": "re",
+            "type": "stdlib",
+            "package": "re"
+          },
+          {
+            "name": "bus.state_machine.StateMachine",
+            "type": "local",
+            "path": "bus/state_machine.py"
+          },
+          {
+            "name": "bus.state_machine.TicketState",
+            "type": "local",
+            "path": "bus/state_machine.py"
+          },
+          {
+            "name": "scripts.validate_ticket_prose.validate_ticket_prose",
+            "type": "local",
+            "path": "scripts/validate_ticket_prose.py"
+          },
+          {
+            "name": "scripts.state_projection_sync.sync_state_projection",
+            "type": "local",
+            "path": "scripts/state_projection_sync.py"
+          },
+          {
+            "name": "scripts.state_projection_sync.sync_state_projection",
+            "type": "local",
+            "path": "scripts/state_projection_sync.py"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260529_223313/.agent/agents_config.py": {
+        "imports": [
+          {
+            "name": "argparse",
+            "type": "stdlib",
+            "package": "argparse"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "shutil",
+            "type": "stdlib",
+            "package": "shutil"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "collections.abc.Callable",
+            "type": "stdlib",
+            "package": "collections"
+          },
+          {
+            "name": "dataclasses.dataclass",
+            "type": "stdlib",
+            "package": "dataclasses"
+          },
+          {
+            "name": "datetime.datetime",
+            "type": "stdlib",
+            "package": "datetime"
+          },
+          {
+            "name": "datetime.timezone",
+            "type": "stdlib",
+            "package": "datetime"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "typing.Any",
+            "type": "stdlib",
+            "package": "typing"
+          },
+          {
+            "name": "runtime.project_root.get_agent_dir",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260529_223313/.agent/completion_checker.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "subprocess",
+            "type": "stdlib",
+            "package": "subprocess"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "typing.Any",
+            "type": "stdlib",
+            "package": "typing"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "runtime.project_root.get_collab_dir",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          },
+          {
+            "name": "runtime.project_root.resolve_project_root",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "re",
+            "type": "stdlib",
+            "package": "re"
+          },
+          {
+            "name": "re",
+            "type": "stdlib",
+            "package": "re"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260529_223313/.agent/completion_common.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "subprocess",
+            "type": "stdlib",
+            "package": "subprocess"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "typing.Any",
+            "type": "stdlib",
+            "package": "typing"
+          },
+          {
+            "name": "runtime.project_root.get_collab_dir",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          },
+          {
+            "name": "runtime.project_root.resolve_project_root",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260529_223313/.agent/council/__init__.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260529_223313/.agent/council/audit_rules.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "dataclasses.dataclass",
+            "type": "stdlib",
+            "package": "dataclasses"
+          },
+          {
+            "name": "typing.Any",
+            "type": "stdlib",
+            "package": "typing"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260529_223313/.agent/council/council_broker.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "uuid",
+            "type": "stdlib",
+            "package": "uuid"
+          },
+          {
+            "name": "datetime.datetime",
+            "type": "stdlib",
+            "package": "datetime"
+          },
+          {
+            "name": "datetime.timezone",
+            "type": "stdlib",
+            "package": "datetime"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "typing.Any",
+            "type": "stdlib",
+            "package": "typing"
+          },
+          {
+            "name": "council.verdict.CouncilDecision",
+            "type": "external",
+            "package": "council"
+          },
+          {
+            "name": "council.verdict.CouncilReport",
+            "type": "external",
+            "package": "council"
+          },
+          {
+            "name": "council.verdict.Event",
+            "type": "external",
+            "package": "council"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260529_223313/.agent/council/verdict.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "dataclasses.dataclass",
+            "type": "stdlib",
+            "package": "dataclasses"
+          },
+          {
+            "name": "enum.Enum",
+            "type": "stdlib",
+            "package": "enum"
+          },
+          {
+            "name": "typing.Any",
+            "type": "stdlib",
+            "package": "typing"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260529_223313/.agent/hooks/guard_paths.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "os",
+            "type": "stdlib",
+            "package": "os"
+          },
+          {
+            "name": "re",
+            "type": "stdlib",
+            "package": "re"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "contextlib.suppress",
+            "type": "stdlib",
+            "package": "contextlib"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260529_223313/.agent/hooks/native_post_tool_hook.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "datetime.datetime",
+            "type": "stdlib",
+            "package": "datetime"
+          },
+          {
+            "name": "datetime.timezone",
+            "type": "stdlib",
+            "package": "datetime"
+          },
+          {
+            "name": "hooks.post_tool_hook.post_tool_hook",
+            "type": "external",
+            "package": "hooks"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260529_223313/.agent/hooks/native_stop_hook.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260529_223313/.agent/hooks/post_tool_hook.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "contextlib.suppress",
+            "type": "stdlib",
+            "package": "contextlib"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "typing.Any",
+            "type": "stdlib",
+            "package": "typing"
+          },
+          {
+            "name": "memory_helpers.append_observation",
+            "type": "external",
+            "package": "memory_helpers"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260529_223313/.agent/hooks/pre_compact_hook.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "re",
+            "type": "stdlib",
+            "package": "re"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "typing.Any",
+            "type": "stdlib",
+            "package": "typing"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260529_223313/.agent/hooks/stop_hook.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "completion_common.check_execution_summary",
+            "type": "external",
+            "package": "completion_common"
+          },
+          {
+            "name": "completion_common.check_tasks_completed",
+            "type": "external",
+            "package": "completion_common"
+          },
+          {
+            "name": "runtime.project_root.get_collab_dir",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          },
+          {
+            "name": "runtime.project_root.resolve_project_root",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          },
+          {
+            "name": "completion_common.check_quality_gates",
+            "type": "external",
+            "package": "completion_common"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260529_223313/.agent/hooks/subagent_stop_hook.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260529_223313/.agent/runtime/memory/memory_helpers.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "collections.Counter",
+            "type": "stdlib",
+            "package": "collections"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "runtime.project_root.get_agent_dir",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260529_223313/.agent/session_tracker.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "contextlib.suppress",
+            "type": "stdlib",
+            "package": "contextlib"
+          },
+          {
+            "name": "datetime.datetime",
+            "type": "stdlib",
+            "package": "datetime"
+          },
+          {
+            "name": "datetime.timedelta",
+            "type": "stdlib",
+            "package": "datetime"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "runtime.project_root.get_collab_dir",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260530_003240/.agent/agent_controller.py": {
+        "imports": [
+          {
+            "name": "codecs",
+            "type": "stdlib",
+            "package": "codecs"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "os",
+            "type": "stdlib",
+            "package": "os"
+          },
+          {
+            "name": "re",
+            "type": "stdlib",
+            "package": "re"
+          },
+          {
+            "name": "subprocess",
+            "type": "stdlib",
+            "package": "subprocess"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "datetime.datetime",
+            "type": "stdlib",
+            "package": "datetime"
+          },
+          {
+            "name": "datetime.timezone",
+            "type": "stdlib",
+            "package": "datetime"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "runtime.project_root.get_agent_dir",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          },
+          {
+            "name": "runtime.project_root.get_collab_dir",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          },
+          {
+            "name": "runtime.project_root.get_context_dir",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          },
+          {
+            "name": "runtime.project_root.is_motor_code_only",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          },
+          {
+            "name": "runtime.project_root.resolve_project_root",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          },
+          {
+            "name": "hooks.registry",
+            "type": "external",
+            "package": "hooks"
+          },
+          {
+            "name": "hooks.post_tool_hook.post_tool_hook",
+            "type": "external",
+            "package": "hooks"
+          },
+          {
+            "name": "hooks.pre_action_hook.pre_action_hook",
+            "type": "external",
+            "package": "hooks"
+          },
+          {
+            "name": "hooks.stop_hook.stop_hook",
+            "type": "external",
+            "package": "hooks"
+          },
+          {
+            "name": "session_tracker.recover_session",
+            "type": "external",
+            "package": "session_tracker"
+          },
+          {
+            "name": "session_tracker.save_session",
+            "type": "external",
+            "package": "session_tracker"
+          },
+          {
+            "name": "session_tracker.show_recovery_hint",
+            "type": "external",
+            "package": "session_tracker"
+          },
+          {
+            "name": "completion_checker.check_completion",
+            "type": "external",
+            "package": "completion_checker"
+          },
+          {
+            "name": "completion_checker.show_completion_report",
+            "type": "external",
+            "package": "completion_checker"
+          },
+          {
+            "name": "bus.event_bus.EventBus",
+            "type": "local",
+            "path": "bus/event_bus.py"
+          },
+          {
+            "name": "bus.utils.count_trailing_changes",
+            "type": "local",
+            "path": "bus/utils.py"
+          },
+          {
+            "name": "bus.approval.ApprovalPolicy",
+            "type": "local",
+            "path": "bus/approval.py"
+          },
+          {
+            "name": "bus.approval.ApprovalReason",
+            "type": "local",
+            "path": "bus/approval.py"
+          },
+          {
+            "name": "bus.approval.ApprovalStatus",
+            "type": "local",
+            "path": "bus/approval.py"
+          },
+          {
+            "name": "bus.approval.ApprovalStore",
+            "type": "local",
+            "path": "bus/approval.py"
+          },
+          {
+            "name": "scripts.graph_context.generate_context_for_destination",
+            "type": "local",
+            "path": "scripts/graph_context.py"
+          },
+          {
+            "name": "scripts.project_scanner.generate_report",
+            "type": "local",
+            "path": "scripts/project_scanner.py"
+          },
+          {
+            "name": "scripts.project_scanner.scan_project",
+            "type": "local",
+            "path": "scripts/project_scanner.py"
+          },
+          {
+            "name": "contextlib",
+            "type": "stdlib",
+            "package": "contextlib"
+          },
+          {
+            "name": "uuid",
+            "type": "stdlib",
+            "package": "uuid"
+          },
+          {
+            "name": "bus.state_machine.TicketState",
+            "type": "local",
+            "path": "bus/state_machine.py"
+          },
+          {
+            "name": "bus.state_machine.StateMachine",
+            "type": "local",
+            "path": "bus/state_machine.py"
+          },
+          {
+            "name": "bus.state_machine.TicketState",
+            "type": "local",
+            "path": "bus/state_machine.py"
+          },
+          {
+            "name": "bus.state_machine.StateMachine",
+            "type": "local",
+            "path": "bus/state_machine.py"
+          },
+          {
+            "name": "re",
+            "type": "stdlib",
+            "package": "re"
+          },
+          {
+            "name": "bus.state_machine.StateMachine",
+            "type": "local",
+            "path": "bus/state_machine.py"
+          },
+          {
+            "name": "bus.state_machine.TicketState",
+            "type": "local",
+            "path": "bus/state_machine.py"
+          },
+          {
+            "name": "importlib.util",
+            "type": "stdlib",
+            "package": "importlib"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "bus.state_machine.StateMachine",
+            "type": "local",
+            "path": "bus/state_machine.py"
+          },
+          {
+            "name": "re",
+            "type": "stdlib",
+            "package": "re"
+          },
+          {
+            "name": "bus.state_machine.StateMachine",
+            "type": "local",
+            "path": "bus/state_machine.py"
+          },
+          {
+            "name": "bus.state_machine.TicketState",
+            "type": "local",
+            "path": "bus/state_machine.py"
+          },
+          {
+            "name": "scripts.validate_ticket_prose.validate_ticket_prose",
+            "type": "local",
+            "path": "scripts/validate_ticket_prose.py"
+          },
+          {
+            "name": "scripts.state_projection_sync.sync_state_projection",
+            "type": "local",
+            "path": "scripts/state_projection_sync.py"
+          },
+          {
+            "name": "scripts.state_projection_sync.sync_state_projection",
+            "type": "local",
+            "path": "scripts/state_projection_sync.py"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260530_003240/.agent/agents_config.py": {
+        "imports": [
+          {
+            "name": "argparse",
+            "type": "stdlib",
+            "package": "argparse"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "shutil",
+            "type": "stdlib",
+            "package": "shutil"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "collections.abc.Callable",
+            "type": "stdlib",
+            "package": "collections"
+          },
+          {
+            "name": "dataclasses.dataclass",
+            "type": "stdlib",
+            "package": "dataclasses"
+          },
+          {
+            "name": "datetime.datetime",
+            "type": "stdlib",
+            "package": "datetime"
+          },
+          {
+            "name": "datetime.timezone",
+            "type": "stdlib",
+            "package": "datetime"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "typing.Any",
+            "type": "stdlib",
+            "package": "typing"
+          },
+          {
+            "name": "runtime.project_root.get_agent_dir",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260530_003240/.agent/completion_checker.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "subprocess",
+            "type": "stdlib",
+            "package": "subprocess"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "typing.Any",
+            "type": "stdlib",
+            "package": "typing"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "runtime.project_root.get_collab_dir",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          },
+          {
+            "name": "runtime.project_root.resolve_project_root",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "re",
+            "type": "stdlib",
+            "package": "re"
+          },
+          {
+            "name": "re",
+            "type": "stdlib",
+            "package": "re"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260530_003240/.agent/completion_common.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "subprocess",
+            "type": "stdlib",
+            "package": "subprocess"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "typing.Any",
+            "type": "stdlib",
+            "package": "typing"
+          },
+          {
+            "name": "runtime.project_root.get_collab_dir",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          },
+          {
+            "name": "runtime.project_root.resolve_project_root",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260530_003240/.agent/council/__init__.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260530_003240/.agent/council/audit_rules.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "dataclasses.dataclass",
+            "type": "stdlib",
+            "package": "dataclasses"
+          },
+          {
+            "name": "typing.Any",
+            "type": "stdlib",
+            "package": "typing"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260530_003240/.agent/council/council_broker.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "uuid",
+            "type": "stdlib",
+            "package": "uuid"
+          },
+          {
+            "name": "datetime.datetime",
+            "type": "stdlib",
+            "package": "datetime"
+          },
+          {
+            "name": "datetime.timezone",
+            "type": "stdlib",
+            "package": "datetime"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "typing.Any",
+            "type": "stdlib",
+            "package": "typing"
+          },
+          {
+            "name": "council.verdict.CouncilDecision",
+            "type": "external",
+            "package": "council"
+          },
+          {
+            "name": "council.verdict.CouncilReport",
+            "type": "external",
+            "package": "council"
+          },
+          {
+            "name": "council.verdict.Event",
+            "type": "external",
+            "package": "council"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260530_003240/.agent/council/verdict.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "dataclasses.dataclass",
+            "type": "stdlib",
+            "package": "dataclasses"
+          },
+          {
+            "name": "enum.Enum",
+            "type": "stdlib",
+            "package": "enum"
+          },
+          {
+            "name": "typing.Any",
+            "type": "stdlib",
+            "package": "typing"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260530_003240/.agent/hooks/guard_paths.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "os",
+            "type": "stdlib",
+            "package": "os"
+          },
+          {
+            "name": "re",
+            "type": "stdlib",
+            "package": "re"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "contextlib.suppress",
+            "type": "stdlib",
+            "package": "contextlib"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260530_003240/.agent/hooks/native_post_tool_hook.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "datetime.datetime",
+            "type": "stdlib",
+            "package": "datetime"
+          },
+          {
+            "name": "datetime.timezone",
+            "type": "stdlib",
+            "package": "datetime"
+          },
+          {
+            "name": "hooks.post_tool_hook.post_tool_hook",
+            "type": "external",
+            "package": "hooks"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260530_003240/.agent/hooks/native_stop_hook.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260530_003240/.agent/hooks/post_tool_hook.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "contextlib.suppress",
+            "type": "stdlib",
+            "package": "contextlib"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "typing.Any",
+            "type": "stdlib",
+            "package": "typing"
+          },
+          {
+            "name": "memory_helpers.append_observation",
+            "type": "external",
+            "package": "memory_helpers"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260530_003240/.agent/hooks/pre_compact_hook.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "re",
+            "type": "stdlib",
+            "package": "re"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "typing.Any",
+            "type": "stdlib",
+            "package": "typing"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260530_003240/.agent/hooks/stop_hook.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "completion_common.check_execution_summary",
+            "type": "external",
+            "package": "completion_common"
+          },
+          {
+            "name": "completion_common.check_tasks_completed",
+            "type": "external",
+            "package": "completion_common"
+          },
+          {
+            "name": "runtime.project_root.get_collab_dir",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          },
+          {
+            "name": "runtime.project_root.resolve_project_root",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          },
+          {
+            "name": "completion_common.check_quality_gates",
+            "type": "external",
+            "package": "completion_common"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260530_003240/.agent/hooks/subagent_stop_hook.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260530_003240/.agent/runtime/memory/memory_helpers.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "collections.Counter",
+            "type": "stdlib",
+            "package": "collections"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "runtime.project_root.get_agent_dir",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          }
+        ],
+        "error": null
+      },
+      ".agent/backups/backup_20260530_003240/.agent/session_tracker.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "contextlib.suppress",
+            "type": "stdlib",
+            "package": "contextlib"
+          },
+          {
+            "name": "datetime.datetime",
+            "type": "stdlib",
+            "package": "datetime"
+          },
+          {
+            "name": "datetime.timedelta",
+            "type": "stdlib",
+            "package": "datetime"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "runtime.project_root.get_collab_dir",
             "type": "local",
             "path": "runtime/project_root.py"
           },
@@ -28110,6 +30840,11 @@
             "package": "subprocess"
           },
           {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
             "name": "shutil",
             "type": "stdlib",
             "package": "shutil"
@@ -28886,7 +31621,7 @@
           },
           {
             "name": "tomllib",
-            "type": "stdlib",
+            "type": "external",
             "package": "tomllib"
           },
           {
@@ -29261,7 +31996,7 @@
           },
           {
             "name": "tomllib",
-            "type": "stdlib",
+            "type": "external",
             "package": "tomllib"
           },
           {
@@ -31815,6 +34550,21 @@
             "name": "io.StringIO",
             "type": "stdlib",
             "package": "io"
+          },
+          {
+            "name": "runtime.project_root.is_motor_code_only",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          },
+          {
+            "name": "runtime.project_root.resolve_project_root",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          },
+          {
+            "name": "runtime.project_root.is_motor_code_only",
+            "type": "local",
+            "path": "runtime/project_root.py"
           }
         ],
         "error": null
@@ -32775,6 +35525,16 @@
             "name": "os",
             "type": "stdlib",
             "package": "os"
+          },
+          {
+            "name": "bus.review_bridge.DOMAIN_DTYPE_MAP",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.DOMAIN_DTYPE_MAP",
+            "type": "local",
+            "path": "bus/review_bridge.py"
           },
           {
             "name": "bus.review_bridge.EventBus",
@@ -36232,6 +38992,11 @@
             "path": "scripts/install_agent_system.py"
           },
           {
+            "name": "scripts.install_agent_system.copy_tree",
+            "type": "local",
+            "path": "scripts/install_agent_system.py"
+          },
+          {
             "name": "scripts.install_agent_system.detect_destination_residues",
             "type": "local",
             "path": "scripts/install_agent_system.py"
@@ -37540,6 +40305,11 @@
             "name": "scripts.session_close_observations",
             "type": "local",
             "path": "scripts/session_close_observations.py"
+          },
+          {
+            "name": "scripts.session_close_observations",
+            "type": "local",
+            "path": "scripts/session_close_observations.py"
           }
         ],
         "error": null
@@ -37792,12 +40562,22 @@
             "package": "validate_observations"
           },
           {
+            "name": "validate_observations.validate_category",
+            "type": "external",
+            "package": "validate_observations"
+          },
+          {
             "name": "validate_observations.validate_confidence",
             "type": "external",
             "package": "validate_observations"
           },
           {
             "name": "validate_observations.validate_domain",
+            "type": "external",
+            "package": "validate_observations"
+          },
+          {
+            "name": "validate_observations.validate_impact",
             "type": "external",
             "package": "validate_observations"
           },
@@ -37813,6 +40593,11 @@
           },
           {
             "name": "validate_observations.validate_source",
+            "type": "external",
+            "package": "validate_observations"
+          },
+          {
+            "name": "validate_observations.validate_source_ticket",
             "type": "external",
             "package": "validate_observations"
           },
@@ -37934,10 +40719,10 @@
     "javascript": {},
     "frameworks": [],
     "tools": [
-      "mypy",
-      "uv",
       "pytest",
-      "ruff"
+      "ruff",
+      "uv",
+      "mypy"
     ]
   },
   "parse_errors": [

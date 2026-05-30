@@ -46,7 +46,11 @@ VALID_DOMAINS = {
     "review-quality",
     "config-schema",
     "testing",
+    "delivery-hygiene",
+    "builder-contract",
 }
+VALID_IMPACTS = {"low", "medium", "high"}
+VALID_CATEGORIES = {"convention", "decision", "fact", "pattern"}
 
 # Patron para timestamp ISO-8601
 ISO8601_PATTERN = re.compile(
@@ -128,6 +132,37 @@ def validate_domain(value: Any) -> str | None:
         return "domain debe ser string"
     if value not in VALID_DOMAINS:
         return f"domain '{value}' debe ser uno de: {', '.join(sorted(VALID_DOMAINS))}"
+    return None
+
+
+def validate_impact(value: Any) -> str | None:
+    """Validate impact field (optional enum: low|medium|high)."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return "impact debe ser string"
+    if value not in VALID_IMPACTS:
+        return f"impact '{value}' debe ser uno de: {', '.join(sorted(VALID_IMPACTS))}"
+    return None
+
+
+def validate_category(value: Any) -> str | None:
+    """Validate category field (legacy enum)."""
+    if not isinstance(value, str):
+        return "category debe ser string"
+    if value not in VALID_CATEGORIES:
+        return (
+            f"category '{value}' debe ser uno de: {', '.join(sorted(VALID_CATEGORIES))}"
+        )
+    return None
+
+
+def validate_source_ticket(value: Any) -> str | None:
+    """Validate source_ticket field."""
+    if not isinstance(value, str):
+        return "source_ticket debe ser string"
+    if not value.strip():
+        return "source_ticket no puede estar vacio"
     return None
 
 
@@ -226,6 +261,11 @@ def _validate_optional_schema_fields(
         if error:
             errors.append(f"linea {line_num}: {error}")
 
+    if "impact" in record and record["impact"] is not None:
+        error = validate_impact(record["impact"])
+        if error:
+            errors.append(f"linea {line_num}: {error}")
+
     if "anti_pattern_id" in record or _requires_anti_pattern_id(record):
         error = validate_anti_pattern_id(
             record.get("anti_pattern_id"),
@@ -244,7 +284,8 @@ def validate_observation(
     """
     Validate a single observation record.
 
-    Returns list of error messages (empty if valid).
+    Accepts both canonical schema (domain-based) and legacy schema
+    (category-based) entries. Returns list of error messages (empty if valid).
     """
     errors = []
 
@@ -259,19 +300,48 @@ def validate_observation(
         errors,
     )
 
-    # Strict mode validates the new AP schema in full.
     if strict:
-        _validate_fields(
-            record,
-            line_num,
-            {
-                "topic": validate_topic,
-                "applies_to": validate_applies_to,
-                "confidence": validate_confidence,
-                "domain": validate_domain,
-            },
-            errors,
-        )
+        has_domain = "domain" in record
+        has_category = "category" in record
+
+        if has_domain:
+            _validate_fields(
+                record,
+                line_num,
+                {
+                    "topic": validate_topic,
+                    "domain": validate_domain,
+                    "confidence": validate_confidence,
+                    "applies_to": validate_applies_to,
+                    "source_ticket": validate_source_ticket,
+                },
+                errors,
+            )
+        elif has_category:
+            _validate_fields(
+                record,
+                line_num,
+                {
+                    "topic": validate_topic,
+                    "category": validate_category,
+                    "source_ticket": validate_source_ticket,
+                },
+                errors,
+            )
+        else:
+            _validate_fields(
+                record,
+                line_num,
+                {
+                    "topic": validate_topic,
+                    "domain": validate_domain,
+                    "confidence": validate_confidence,
+                    "applies_to": validate_applies_to,
+                    "source_ticket": validate_source_ticket,
+                },
+                errors,
+            )
+
         _validate_optional_schema_fields(record, line_num, errors)
 
     return errors

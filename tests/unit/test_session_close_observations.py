@@ -173,6 +173,129 @@ def test_is_duplicate_outside_window() -> None:
     assert is_duplicate(candidate, existing) is False
 
 
+# =============================================================================
+# Tests WP-2026-177: Domain-based dedup for canonical entries
+# =============================================================================
+
+
+def test_is_duplicate_canonical_exact_match() -> None:
+    """Canonical entry duplicate within 24h should be detected by domain match."""
+    now = datetime.now(timezone.utc)
+    existing = [
+        {
+            "timestamp": now.isoformat(),
+            "signal": "Canonical observation signal",
+            "domain": "delivery-hygiene",
+            "confidence": 0.9,
+            "applies_to": "code",
+            "source_ticket": "WP-2026-177",
+            "topic": "test-canonical",
+            "source": "session-close",
+        }
+    ]
+
+    candidate = {
+        "timestamp": (now + timedelta(hours=1)).isoformat(),
+        "signal": "Canonical observation signal",
+        "domain": "delivery-hygiene",
+        "confidence": 0.9,
+        "applies_to": "code",
+        "source_ticket": "WP-2026-177",
+        "topic": "test-canonical",
+        "source": "session-close",
+    }
+
+    assert is_duplicate(candidate, existing) is True
+
+
+def test_is_duplicate_canonical_different_domain() -> None:
+    """Canonical entry with different domain should not be duplicate."""
+    now = datetime.now(timezone.utc)
+    existing = [
+        {
+            "timestamp": now.isoformat(),
+            "signal": "Canonical observation signal",
+            "domain": "delivery-hygiene",
+            "confidence": 0.9,
+            "applies_to": "code",
+            "source_ticket": "WP-2026-177",
+            "topic": "test-canonical",
+            "source": "session-close",
+        }
+    ]
+
+    candidate = {
+        "timestamp": (now + timedelta(hours=1)).isoformat(),
+        "signal": "Canonical observation signal",
+        "domain": "review-quality",
+        "confidence": 0.85,
+        "applies_to": "code",
+        "source_ticket": "WP-2026-176",
+        "topic": "test-canonical",
+        "source": "session-close",
+    }
+
+    assert is_duplicate(candidate, existing) is False
+
+
+def test_is_duplicate_canonical_vs_legacy_not_duplicate() -> None:
+    """Canonical and legacy entries with same signal+topic are not duplicates."""
+    now = datetime.now(timezone.utc)
+    existing = [
+        {
+            "timestamp": now.isoformat(),
+            "signal": "Mixed observation signal",
+            "category": "fact",
+            "source_ticket": "WP-2026-100",
+            "topic": "test-mixed",
+            "source": "session-close",
+        }
+    ]
+
+    candidate = {
+        "timestamp": (now + timedelta(hours=1)).isoformat(),
+        "signal": "Mixed observation signal",
+        "domain": "delivery-hygiene",
+        "confidence": 0.9,
+        "applies_to": "code",
+        "source_ticket": "WP-2026-177",
+        "topic": "test-mixed",
+        "source": "session-close",
+    }
+
+    assert is_duplicate(candidate, existing) is False
+
+
+def test_is_duplicate_canonical_outside_window() -> None:
+    """Canonical duplicate outside 24h window should not be detected."""
+    now = datetime.now(timezone.utc)
+    existing = [
+        {
+            "timestamp": now.isoformat(),
+            "signal": "Canonical observation signal",
+            "domain": "delivery-hygiene",
+            "confidence": 0.9,
+            "applies_to": "code",
+            "source_ticket": "WP-2026-177",
+            "topic": "test-canonical",
+            "source": "session-close",
+        }
+    ]
+
+    candidate = {
+        "timestamp": (now + timedelta(hours=48)).isoformat(),
+        "signal": "Canonical observation signal",
+        "domain": "delivery-hygiene",
+        "confidence": 0.9,
+        "applies_to": "code",
+        "source_ticket": "WP-2026-177",
+        "topic": "test-canonical",
+        "source": "session-close",
+    }
+
+    assert is_duplicate(candidate, existing) is False
+
+
 def test_process_candidates_filters_invalid() -> None:
     """Process should filter out invalid candidates."""
     candidates = [
@@ -429,3 +552,130 @@ def test_main_empty_candidates_exits_zero(
     exit_code = sco.main()
 
     assert exit_code == 0
+
+
+# =============================================================================
+# Tests WP-2026-177: Canonical schema support
+# =============================================================================
+
+
+def test_validate_schema_canonical_valid() -> None:
+    """validate_schema accepts valid canonical entry with domain, confidence, applies_to."""
+    entry = {
+        "timestamp": "2026-05-30T12:00:00Z",
+        "signal": "This is a valid canonical observation with enough length",
+        "domain": "delivery-hygiene",
+        "confidence": 0.9,
+        "applies_to": "code",
+        "impact": "medium",
+        "source_ticket": "WP-2026-177",
+        "topic": "test-canonical",
+        "source": "session-close",
+    }
+    is_valid, errors = validate_schema(entry)
+    assert is_valid is True
+    assert errors == []
+
+
+def test_validate_schema_canonical_invalid_domain() -> None:
+    """validate_schema rejects canonical entry with invalid domain."""
+    entry = {
+        "timestamp": "2026-05-30T12:00:00Z",
+        "signal": "This is a valid canonical observation with enough length",
+        "domain": "nonexistent",
+        "confidence": 0.9,
+        "applies_to": "code",
+        "source_ticket": "WP-2026-177",
+        "topic": "test",
+        "source": "session-close",
+    }
+    is_valid, errors = validate_schema(entry)
+    assert is_valid is False
+    assert any("Dominio invalido" in e for e in errors)
+
+
+def test_validate_schema_canonical_missing_domain_fields() -> None:
+    """validate_schema rejects canonical entry missing required domain fields."""
+    entry = {
+        "timestamp": "2026-05-30T12:00:00Z",
+        "signal": "This is a valid observation with enough length",
+        "domain": "delivery-hygiene",
+        # Missing: confidence, applies_to, source_ticket
+        "topic": "test",
+        "source": "session-close",
+    }
+    is_valid, errors = validate_schema(entry)
+    assert is_valid is False
+    assert any("Campo requerido ausente" in e for e in errors)
+
+
+def test_validate_schema_canonical_invalid_impact() -> None:
+    """validate_schema rejects canonical entry with invalid impact."""
+    entry = {
+        "timestamp": "2026-05-30T12:00:00Z",
+        "signal": "This is a valid observation with enough length",
+        "domain": "delivery-hygiene",
+        "confidence": 0.9,
+        "applies_to": "code",
+        "impact": "critical",
+        "source_ticket": "WP-2026-177",
+        "topic": "test",
+        "source": "session-close",
+    }
+    is_valid, errors = validate_schema(entry)
+    assert is_valid is False
+    assert any("Impacto invalido" in e for e in errors)
+
+
+def test_extract_candidates_writes_canonical(monkeypatch, tmp_path: Path) -> None:
+    """extract_candidates_from_ticket writes canonical format with domain, confidence, applies_to."""
+    import scripts.session_close_observations as sco
+
+    collab_dir = tmp_path / "collaboration"
+    collab_dir.mkdir(parents=True, exist_ok=True)
+    fake_plan = collab_dir / "work_plan.md"
+    fake_plan.write_text(
+        "# Work Plan - WP-2026-177\n"
+        "## Metadata\n"
+        "- **ID:** WP-2026-177\n"
+        "- **deliverable_type:** code\n"
+        "- **Titulo:** Unificar schema memoria + bridge por domain\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(sco, "AGENT_DIR", tmp_path)
+
+    candidates = sco.extract_candidates_from_ticket("WP-2026-177")
+    assert len(candidates) >= 1
+
+    ticket_entry = next(
+        (c for c in candidates if c.get("topic") == "ticket-completion"), None
+    )
+    assert ticket_entry is not None
+    assert "domain" in ticket_entry
+    assert "confidence" in ticket_entry
+    assert "applies_to" in ticket_entry
+    assert "impact" in ticket_entry
+    assert ticket_entry["domain"] == "delivery-hygiene"
+    assert ticket_entry["applies_to"] == "code"
+
+    arch_entry = next((c for c in candidates if c.get("topic") == "architecture"), None)
+    if arch_entry:
+        assert arch_entry["domain"] == "bus-architecture"
+        assert "confidence" in arch_entry
+        assert arch_entry["applies_to"] == "code"
+
+
+def test_validate_schema_legacy_still_valid() -> None:
+    """validate_schema still accepts legacy entries with category (backward compat)."""
+    entry = {
+        "timestamp": "2026-05-25T12:00:00Z",
+        "signal": "This is a valid legacy observation with enough length",
+        "category": "fact",
+        "source_ticket": "WP-2026-132",
+        "topic": "test",
+        "source": "session-close",
+    }
+    is_valid, errors = validate_schema(entry)
+    assert is_valid is True
+    assert errors == []

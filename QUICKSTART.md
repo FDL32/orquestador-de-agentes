@@ -9,6 +9,37 @@ Namespace de tickets:
 - Motor: `WP-YYYY-NNN`
 - Destino: `XXX-YYYY-NNN` con `Ticket prefix: XXX` en el `PROJECT.md` local (el instalador lo escribe con `--install --prefix XXX`)
 
+## Motor vs Workspace
+
+The motor is the code in `orquestador_de_agentes/`. It is code-only and does not own the active ticket state.
+
+The active workspace is always the `.agent/` of the project you are operating on:
+- `z_scripts/.agent/` for the `z_scripts` project
+- `<destino>/.agent/` for any destination project
+
+Inside each workspace, `collaboration/` is the live operational surface for that project:
+- `work_plan.md`
+- `execution_log.md`
+- `TURN.md`
+- `STATE.md`
+- `review_queue.md`
+- `backlog.md`
+- `notifications.md`
+
+Rule of separation:
+- Never treat `orquestador_de_agentes/.agent/collaboration/` as the source of truth for an active project ticket.
+- Always route the ticket to the workspace selected by `AGENT_PROJECT_ROOT` or by the workspace's `motor_destination_link.json`.
+- When changing projects, regenerate the workspace-specific link and keep collaboration state local to that project.
+
+Common switching pattern:
+
+```powershell
+$env:AGENT_PROJECT_ROOT = "C:\Users\fdl\Proyectos_Python\z_scripts"
+python orquestador_de_agentes\.agent\agent_controller.py --validate --json --force
+```
+
+To operate on another destination, replace `AGENT_PROJECT_ROOT` with that project's root. The collaboration files under that project's `.agent/` stay local to that project.
+
 ## 0. Reproducible launcher
 
 The recommended way to start the three canonical terminals is the repo-local launcher:
@@ -113,6 +144,7 @@ For the current active ticket, the launcher follows `.agent/collaboration/work_p
 
 1. **Manager creates new `.agent/collaboration/work_plan.md`** with the next approved ticket
    - En un proyecto destino, el ID debe usar el namespace local definido en `PROJECT.md` (`XXX-YYYY-NNN`), no el del motor. El instalador escribe este prefijo con `--install --prefix XXX`.
+   - Cada proyecto mantiene su propio `.agent/collaboration/`; no copies planes entre motor y destino.
 2. **Validate clean state**: Run `python .agent\agent_controller.py --validate --json --force`
 3. **Launch terminals**: Use `.\scripts\launch_agent_terminals.ps1` for template-based startup
 
@@ -178,6 +210,11 @@ No reescribas el ticket entero.
 - **Builder**: Implements approved tickets following `.agent/collaboration/work_plan.md`, registers evidence in `.agent/collaboration/execution_log.md`, executes quality gates, and performs mandatory closure protocol.
 - **Supervisor**: Orchestrates the sequential queue via terminal-driven workflow, synchronizes `.agent/collaboration/TURN.md`, `.agent/collaboration/execution_log.md`, and `.agent/collaboration/notifications.md`, advances the queue when appropriate.
 - **Review Bridge**: Launches Manager review automatically when tickets reach READY_FOR_REVIEW, handles APPROVE/CHANGES decisions with deterministic flow.
+
+Important:
+- These surfaces belong to the active workspace, not to the motor repository itself.
+- If you are working in `z_scripts`, the canonical files are `z_scripts/.agent/collaboration/*`.
+- If you are working in another destination, use that destination's `.agent/collaboration/*`.
 
 ## 3b. Flujo operativo para Builder
 
@@ -327,7 +364,7 @@ Flags adicionales:
 ### Ruta manual (pasos individuales)
 
 ```powershell
-# 1. Archivar artefactos de planificación cerrados (PLAN/AUDIT de .agent/collaboration/)
+# 1. Archivar artefactos de planificación cerrados (PLAN/AUDIT del workspace activo)
 python scripts/archive_collaboration_artifacts.py
 
 # 2. Mover PLAN/AUDIT que hayan quedado en la raíz (el archivador no los recoge)
@@ -347,7 +384,7 @@ python .agent/agent_controller.py --validate --json --force
 # 4. Verificar git limpio
 git status --short
 
-# 5. Sincronizar README/CHANGELOG si el último ticket no quedó reflejado
+# 5. Sincronizar README/CHANGELOG del proyecto activo si el último ticket no quedó reflejado
 # (ver sección 6 para comandos de calidad antes del commit)
 
 # 6. Generar observaciones del ciclo cerrado, si hubo aprendizaje relevante

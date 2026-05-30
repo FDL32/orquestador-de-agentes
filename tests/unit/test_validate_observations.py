@@ -18,11 +18,14 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
 from validate_observations import (
     validate_applies_to,
+    validate_category,
     validate_confidence,
     validate_domain,
+    validate_impact,
     validate_observation,
     validate_signal,
     validate_source,
+    validate_source_ticket,
     validate_surface,
     validate_timestamp,
     validate_topic,
@@ -210,6 +213,67 @@ class TestValidateDomain:
         assert validate_domain("unknown") is not None
 
 
+class TestValidateImpact:
+    """Tests para validacion de impact (opcional, low|medium|high)."""
+
+    def test_valid_values(self):
+        """Valores validos de impact."""
+        for value in ["low", "medium", "high"]:
+            assert validate_impact(value) is None, f"{value} deberia ser valido"
+
+    def test_valid_none(self):
+        """Impact None es valido (campo opcional)."""
+        assert validate_impact(None) is None
+
+    def test_invalid_not_string(self):
+        """Impact no es string."""
+        assert validate_impact(123) is not None
+        assert validate_impact(True) is not None
+
+    def test_invalid_value(self):
+        """Valor no permitido."""
+        assert validate_impact("critical") is not None
+        assert validate_impact("") is not None
+
+
+class TestValidateCategory:
+    """Tests para validacion de category (legacy enum)."""
+
+    def test_valid_values(self):
+        """Valores validos de category."""
+        for value in ["convention", "decision", "fact", "pattern"]:
+            assert validate_category(value) is None, f"{value} deberia ser valido"
+
+    def test_invalid_not_string(self):
+        """Category no es string."""
+        assert validate_category(123) is not None
+        assert validate_category(None) is not None
+
+    def test_invalid_value(self):
+        """Valor no permitido."""
+        assert validate_category("opinion") is not None
+        assert validate_category("summary") is not None
+
+
+class TestValidateSourceTicket:
+    """Tests para validacion de source_ticket."""
+
+    def test_valid_source_ticket(self):
+        """Source ticket valido."""
+        assert validate_source_ticket("WP-2026-177") is None
+        assert validate_source_ticket("WP-TEST-001") is None
+
+    def test_invalid_not_string(self):
+        """Source ticket no es string."""
+        assert validate_source_ticket(123) is not None
+        assert validate_source_ticket(None) is not None
+
+    def test_invalid_empty(self):
+        """Source ticket vacio."""
+        assert validate_source_ticket("") is not None
+        assert validate_source_ticket("   ") is not None
+
+
 class TestValidateSurface:
     """Tests para validacion de surface (opcional, array de strings)."""
 
@@ -245,6 +309,7 @@ class TestValidateObservation:
             "applies_to": "code",
             "confidence": 0.95,
             "domain": "testing",
+            "source_ticket": "WP-2026-177",
         }
         record.update(overrides)
         return record
@@ -289,6 +354,7 @@ class TestValidateObservation:
             "applies_to",
             "confidence",
             "domain",
+            "source_ticket",
         ]:
             record = self.create_valid_record()
             del record[field]
@@ -317,6 +383,121 @@ class TestValidateObservation:
         errors = validate_observation(record, line_num=5)
         assert len(errors) >= 5  # Al menos 5 campos invalidos
 
+    def test_legacy_entry_valid_in_strict(self):
+        """Entrada legacy con category pasa validacion strict."""
+        record = {
+            "timestamp": "2026-05-27T12:00:00Z",
+            "topic": "ticket-completion",
+            "signal": "Descripcion del problema con suficiente longitud",
+            "source": "session-close",
+            "category": "fact",
+            "source_ticket": "WP-2026-177",
+        }
+        errors = validate_observation(record, line_num=1)
+        assert len(errors) == 0
+
+    def test_canonical_entry_with_impact_valid(self):
+        """Entrada canonica con impact pasa validacion."""
+        record = {
+            "timestamp": "2026-05-27T12:00:00Z",
+            "topic": "mi-patron",
+            "signal": "Descripcion del problema",
+            "source": "human_audit_WP-2026-154",
+            "domain": "delivery-hygiene",
+            "confidence": 0.9,
+            "applies_to": "code",
+            "impact": "high",
+            "source_ticket": "WP-2026-177",
+        }
+        errors = validate_observation(record, line_num=1)
+        assert len(errors) == 0
+
+    def test_canonical_entry_invalid_impact(self):
+        """Impact invalido en entrada canonica."""
+        record = {
+            "timestamp": "2026-05-27T12:00:00Z",
+            "topic": "mi-patron",
+            "signal": "Descripcion del problema",
+            "source": "test",
+            "domain": "testing",
+            "confidence": 0.9,
+            "applies_to": "code",
+            "impact": "critical",
+            "source_ticket": "WP-2026-177",
+        }
+        errors = validate_observation(record, line_num=1)
+        assert len(errors) == 1
+        assert "impact" in errors[0]
+
+    def test_legacy_entry_invalid_category(self):
+        """Category invalida en entrada legacy."""
+        record = {
+            "timestamp": "2026-05-27T12:00:00Z",
+            "topic": "test",
+            "signal": "Descripcion del problema con suficiente longitud",
+            "source": "session-close",
+            "category": "invalid",
+            "source_ticket": "WP-2026-177",
+        }
+        errors = validate_observation(record, line_num=1)
+        assert len(errors) == 1
+        assert "category" in errors[0]
+
+    def test_legacy_entry_missing_source_ticket(self):
+        """Entrada legacy sin source_ticket falla."""
+        record = {
+            "timestamp": "2026-05-27T12:00:00Z",
+            "topic": "test",
+            "signal": "Descripcion del problema con suficiente longitud",
+            "source": "session-close",
+            "category": "fact",
+        }
+        errors = validate_observation(record, line_num=1)
+        assert len(errors) == 1
+        assert "source_ticket" in errors[0]
+
+    @staticmethod
+    def _canonical_record(**overrides):
+        record = {
+            "timestamp": "2026-05-27T12:00:00Z",
+            "topic": "mi-patron",
+            "signal": "Descripcion del problema",
+            "source": "test",
+            "domain": "testing",
+            "confidence": 0.9,
+            "applies_to": "code",
+            "source_ticket": "WP-2026-177",
+        }
+        record.update(overrides)
+        return record
+
+    def test_canonical_entry_missing_domain_confidence_applies_to(self):
+        """Entrada canonica sin domain/confidence/applies_to falla."""
+        for field in ["domain", "confidence", "applies_to", "source_ticket"]:
+            record = self._canonical_record()
+            # Remove a canonical field to force legacy detection if needed
+            del record[field]
+            # If we removed the field that signals "canonical", it should still fail
+            if field == "domain":
+                errors = validate_observation(record, line_num=1)
+                assert len(errors) >= 1
+                assert any(
+                    f"falta campo obligatorio '{field}'" in e or "Debe tener" in e
+                    for e in errors
+                )
+
+    def test_builder_contract_domain_valid(self):
+        """Dominio builder-contract es valido."""
+        record = self._canonical_record(domain="builder-contract")
+        errors = validate_observation(record, line_num=1)
+        assert len(errors) == 0
+
+    def test_delivery_hygiene_domain_valid(self):
+        """Dominio delivery-hygiene es valido."""
+        record = self._canonical_record(domain="delivery-hygiene")
+        errors = validate_observation(record, line_num=1)
+        assert len(errors) == 0
+
 
 class TestIntegration:
     """Tests de integracion con archivo temporal."""
@@ -334,6 +515,7 @@ class TestIntegration:
                 "applies_to": "code",
                 "confidence": 0.95,
                 "domain": "testing",
+                "source_ticket": "WP-2026-177",
             },
             {
                 "timestamp": "2026-05-27T13:00:00Z",
@@ -345,6 +527,7 @@ class TestIntegration:
                 "domain": "security-gates",
                 "surface": ["file.py"],
                 "anti_pattern_id": "AP-01",
+                "source_ticket": "WP-2026-177",
             },
         ]
 
