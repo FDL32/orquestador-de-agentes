@@ -838,6 +838,41 @@ def _step_manifest_check(project_root: Path) -> StepResult:
     )
 
 
+def _step_cleanup_builder_session(project_root: Path, dry_run: bool) -> StepResult:
+    """Remove builder_session.json if it exists.
+
+    Before: builder_session.json may exist in .agent/runtime/.
+    During: Unconditionally removes the file.
+    After: builder_session.json no longer exists; ticket context is clean.
+    """
+    if dry_run:
+        return StepResult(
+            name="cleanup_builder_session",
+            status="SKIP",
+            detail="Skipped in dry-run mode",
+        )
+    session_path = project_root / ".agent" / "runtime" / "builder_session.json"
+    if session_path.exists():
+        try:
+            session_path.unlink()
+            return StepResult(
+                name="cleanup_builder_session",
+                status="PASS",
+                detail="builder_session.json removed",
+            )
+        except OSError as exc:
+            return StepResult(
+                name="cleanup_builder_session",
+                status="WARN",
+                detail=f"Could not remove builder_session.json: {exc}",
+            )
+    return StepResult(
+        name="cleanup_builder_session",
+        status="SKIP",
+        detail="builder_session.json already absent",
+    )
+
+
 def _step_git_clean(project_root: Path, dry_run: bool) -> StepResult:
     """Verify git status --short is clean (except expected runtime files).
 
@@ -977,12 +1012,15 @@ def run_closeout(
             )
         )
 
-    # --- Step 8: Archival ---
+    # --- Step 8: Clean up builder session ---
+    report.steps.append(_step_cleanup_builder_session(project_root, dry_run))
+
+    # --- Step 9: Archival ---
     report.steps.append(_step_archive_collaboration(project_root, dry_run))
     report.steps.append(_step_archive_execution_log(project_root, dry_run))
     report.steps.append(_step_archive_event_bus(project_root, dry_run))
 
-    # --- Step 9: Portability checks ---
+    # --- Step 10: Portability checks ---
     report.steps.append(_step_manifest_check(project_root))
     report.steps.append(_check_portability(project_root))
     report.steps.append(_step_git_clean(project_root, dry_run))
