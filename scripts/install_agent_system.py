@@ -801,6 +801,10 @@ def copy_project_template(
     print(f"[INFO] Created {dest} from PROJECT_TEMPLATE.md")
     if prefix:
         print(f"[INFO] Set Ticket prefix to: {prefix}")
+    else:
+        print(
+            "[HINT] Edit PROJECT.md and replace 'Ticket prefix: XXX' with your actual prefix."
+        )
     return True
 
 
