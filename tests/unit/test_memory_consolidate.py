@@ -322,8 +322,8 @@ def test_generate_memory_rules_md_with_rules() -> None:
     assert "Total rules: 2" in content  # Short signal filtered out
 
     # Parseable domain sections
-    assert "## Domain: Security Gates" in content
-    assert "## Domain: Testing" in content
+    assert "## Domain: security-gates" in content
+    assert "## Domain: testing" in content
 
     # Rule IDs present
     assert "### R-001:" in content
@@ -378,7 +378,7 @@ def test_generate_memory_rules_md_allows_explicit_domain() -> None:
     ]
     content = generate_memory_rules_md(entries)
     assert "Total rules: 1" in content
-    assert "## Domain: Bus Architecture" in content
+    assert "## Domain: bus-architecture" in content
 
 
 # =============================================================================

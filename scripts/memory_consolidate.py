@@ -273,7 +273,7 @@ def _extract_rules_from_entries(
         domain = entry.get("domain") or entry.get("topic", "general")
         rules.append(
             {
-                "domain": str(domain).replace("_", " ").replace("-", " ").title(),
+                "domain": str(domain),
                 "signal": signal,
                 "source_ticket": entry.get("source_ticket", "unknown"),
             }
@@ -299,13 +299,11 @@ def generate_memory_rules_md(entries: list[dict[str, Any]]) -> str:
     After: Returns a markdown string with deterministic rule IDs and
            a header documenting generation timestamp and stats.
     """
-    now = datetime.now(timezone.utc).isoformat()
     rules = _extract_rules_from_entries(entries)
 
     lines = [
         "# Memory Rules (L2)",
         "",
-        f"Generated: {now}",
         f"Total rules: {len(rules)}",
         "",
         "Rules derived deterministically from observations.jsonl. "
@@ -353,8 +351,6 @@ def generate_memory_profile_md(entries: list[dict[str, Any]]) -> str:
     After: Returns a brief markdown profile string suitable for bootstrap
            and pre-compact consumption (L3 priority).
     """
-    now = datetime.now(timezone.utc).isoformat()
-
     # Count domains from observations
     domain_counts: dict[str, int] = {}
     topic_counts: dict[str, int] = {}
@@ -385,7 +381,6 @@ def generate_memory_profile_md(entries: list[dict[str, Any]]) -> str:
     lines = [
         "# Memory Profile (L3)",
         "",
-        f"Generated: {now}",
         f"Total observations: {len(entries)}",
         "",
         "High-level profile of project memory for quick context loading. "
