@@ -95,6 +95,12 @@ def test_retry_succeeds_on_second_attempt(tmp_path, monkeypatch):
         def transition_ticket(self, *args, **kwargs):
             pass
 
+        def _is_supervisor_lock_stale(self):
+            return False
+
+        def requeue_ticket(self, ticket_id):
+            return True
+
     result = bridge.run_manager_review_cycle(
         ticket_id="WP-X", supervisor=DummySupervisor()
     )
@@ -126,6 +132,12 @@ def test_retry_exhausted_timeout_becomes_transport_failed(tmp_path, monkeypatch)
     class DummySupervisor:
         def transition_ticket(self, *args, **kwargs):
             pass
+
+        def _is_supervisor_lock_stale(self):
+            return False
+
+        def requeue_ticket(self, ticket_id):
+            return True
 
     result = bridge.run_manager_review_cycle(
         ticket_id="WP-X", supervisor=DummySupervisor()
@@ -178,6 +190,12 @@ def test_decision_changes_does_not_retry_for_timeout(tmp_path, monkeypatch):
         def transition_ticket(self, ticket_id, new_state, reason):
             transitions.append((ticket_id, new_state, reason))
 
+        def _is_supervisor_lock_stale(self):
+            return False
+
+        def requeue_ticket(self, ticket_id):
+            return True
+
     result = bridge.run_manager_review_cycle(
         ticket_id="WP-X", supervisor=DummySupervisor()
     )
@@ -208,6 +226,12 @@ def test_forensic_event_emitted_per_attempt(tmp_path, monkeypatch):
     class DummySupervisor:
         def transition_ticket(self, *args, **kwargs):
             pass
+
+        def _is_supervisor_lock_stale(self):
+            return False
+
+        def requeue_ticket(self, ticket_id):
+            return True
 
     bridge.run_manager_review_cycle(ticket_id="WP-X", supervisor=DummySupervisor())
     events = bus.read_events(ticket_id="WP-X", event_type="MANAGER_REVIEW_ATTEMPT")
@@ -275,6 +299,12 @@ def test_review_attempt_persistence_creates_file(tmp_path, monkeypatch):
         def transition_ticket(self, *args, **kwargs):
             pass
 
+        def _is_supervisor_lock_stale(self):
+            return False
+
+        def requeue_ticket(self, ticket_id):
+            return True
+
     bridge.run_manager_review_cycle(ticket_id="WP-X", supervisor=DummySupervisor())
 
     # Check attempt file was created
@@ -315,6 +345,12 @@ def test_review_emits_lightweight_event_with_log_path(tmp_path, monkeypatch):
     class DummySupervisor:
         def transition_ticket(self, *args, **kwargs):
             pass
+
+        def _is_supervisor_lock_stale(self):
+            return False
+
+        def requeue_ticket(self, ticket_id):
+            return True
 
     bridge.run_manager_review_cycle(ticket_id="WP-X", supervisor=DummySupervisor())
 
@@ -380,6 +416,12 @@ def test_human_gate_escalation_at_5_changes(tmp_path, monkeypatch):
     class DummySupervisor:
         def transition_ticket(self, *args, **kwargs):
             pass
+
+        def _is_supervisor_lock_stale(self):
+            return False
+
+        def requeue_ticket(self, ticket_id):
+            return True
 
     review_dir = tmp_path / ".agent" / "runtime" / "reviews" / "WP-X"
     report_file = review_dir / "human_review_report.md"
@@ -467,6 +509,12 @@ def test_review_attempt_bus_payload_is_lightweight(tmp_path, monkeypatch):
     class DummySupervisor:
         def transition_ticket(self, *args, **kwargs):
             pass
+
+        def _is_supervisor_lock_stale(self):
+            return False
+
+        def requeue_ticket(self, ticket_id):
+            return True
 
     # Run 5 times to trigger HUMAN_GATE
     for _ in range(5):
