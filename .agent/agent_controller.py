@@ -4004,6 +4004,13 @@ def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
         if idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("--"):
             project_root_value = sys.argv[idx + 1]
             os.environ["AGENT_PROJECT_ROOT"] = str(Path(project_root_value).resolve())
+            # Invalidate lru_cache on resolve_project_root: the cache may have
+            # been populated during module import (before argv parsing) using the
+            # motor path. Clearing it ensures all subsequent calls return the
+            # workspace path set above.
+            from runtime.project_root import clear_cache as _clear_project_root_cache
+
+            _clear_project_root_cache()
 
     # WP-2026-176: Motor code-only guard. Block write operations when no
     # external workspace is configured (no AGENT_PROJECT_ROOT / --project-root).
