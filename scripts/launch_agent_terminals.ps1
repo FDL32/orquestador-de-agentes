@@ -41,6 +41,58 @@ function Resolve-DestinationRoot {
     return $null
 }
 
+function Set-OpenCodeExternalPermission {
+    <#
+    .SYNOPSIS
+        Inyecta el permiso external_directory del workspace en .opencode/opencode.json.
+    .DESCRIPTION
+        El motor es portable: opencode.json no debe contener rutas hardcodeadas.
+        Esta funcion escribe el permiso correcto en tiempo de arranque a partir de
+        $WorkspaceRoot (resuelto desde motor_destination_link.json o --project-root).
+        Si el motor no tiene workspace externo (ProjectRoot == motor), no hace nada.
+        Sustituye cualquier regla external_directory previa para el mismo workspace.
+    #>
+    param(
+        [Parameter(Mandatory)] [string]$ConfigPath,
+        [Parameter(Mandatory)] [string]$WorkspaceRoot,
+        [Parameter(Mandatory)] [string]$MotorRoot
+    )
+
+    # Solo actuar cuando el workspace es externo al motor
+    $resolvedWorkspaceObj = Resolve-Path -LiteralPath $WorkspaceRoot -ErrorAction SilentlyContinue
+    $resolvedMotorObj     = Resolve-Path -LiteralPath $MotorRoot     -ErrorAction SilentlyContinue
+    $resolvedWorkspace = if ($resolvedWorkspaceObj) { $resolvedWorkspaceObj.Path } else { $null }
+    $resolvedMotor     = if ($resolvedMotorObj)     { $resolvedMotorObj.Path     } else { $null }
+    if ([string]::IsNullOrWhiteSpace($resolvedWorkspace) -or $resolvedWorkspace -eq $resolvedMotor) {
+        return
+    }
+
+    try {
+        $config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+    } catch {
+        Write-Warning "Set-OpenCodeExternalPermission: no se pudo leer $ConfigPath — omitiendo"
+        return
+    }
+
+    $newRule = [PSCustomObject]@{
+        permission = "external_directory"
+        pattern    = "$resolvedWorkspace\*"
+        action     = "allow"
+    }
+
+    # Conservar reglas existentes que no sean la entrada previa de este workspace
+    $kept = @()
+    if ($config.PSObject.Properties['permissions'] -and $null -ne $config.permissions) {
+        $kept = @($config.permissions | Where-Object {
+            -not ($_.permission -eq 'external_directory' -and $_.pattern -like "$resolvedWorkspace*")
+        })
+    }
+
+    $config | Add-Member -Force -NotePropertyName 'permissions' -NotePropertyValue ($kept + $newRule)
+    $config | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $ConfigPath -Encoding UTF8 -NoNewline
+    Write-Host "OpenCode: permiso external_directory -> $resolvedWorkspace"
+}
+
 # Resolve ProjectRoot AFTER param binding (here $PSScriptRoot, $PSCommandPath
 # and $MyInvocation.MyCommand.Path are reliably populated).
 # Precedencia canonica: --project-root > AGENT_PROJECT_ROOT > motor_destination_link.json > fallback local
@@ -1229,6 +1281,9 @@ if ($LaunchBuilder) {
                 if ([string]::IsNullOrWhiteSpace($model)) {
                     throw "OpenCode config does not specify a model."
                 }
+
+                # Inject workspace external_directory permission (portable: no hardcoded paths in repo)
+                Set-OpenCodeExternalPermission -ConfigPath $opencodeConfigPath -WorkspaceRoot $ProjectRoot -MotorRoot $script:_MotorCodeRoot
 
                 # Compose prompt from active ticket
                 $builderPrompt = Get-OpenCodeBuilderPrompt -TicketId $ticketId -ProjectRoot $ProjectRoot
