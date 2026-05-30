@@ -971,6 +971,43 @@ function Get-CanonicalFilesForOpenCode {
         }
     }
 
+    # WT-2026-182: Repomix context bootstrapping (X-ray vision)
+    # Generates compressed project context using repomix for agent session bootstrap.
+    # This is a best-effort step: if repomix fails or times out, the session
+    # continues with the standard canonical files only.
+    $repomixOutputPath = Join-Path $ProjectRoot '.agent\context\repomix.xml'
+    $repomixDir = Split-Path -Parent $repomixOutputPath
+    if (-not (Test-Path -LiteralPath $repomixDir)) {
+        New-Item -ItemType Directory -Path $repomixDir -Force -ErrorAction SilentlyContinue | Out-Null
+    }
+
+    # Check if repomix config exists in workspace root
+    $repomixConfigPath = Join-Path $ProjectRoot 'repomix.config.json'
+    $configArg = if (Test-Path -LiteralPath $repomixConfigPath) { "--config $(ConvertTo-SingleQuotedLiteral $repomixConfigPath)" } else { "" }
+
+    # Run repomix with 15s timeout via background job to avoid blocking the launcher
+    $repomixJob = Start-Job -ScriptBlock {
+        param($OutPath, $ConfigArg)
+        $result = & npx repomix --style xml --compress --output $OutPath $ConfigArg 2>&1
+        return $result
+    } -ArgumentList $repomixOutputPath, $configArg
+
+    $repomixCompleted = $repomixJob | Wait-Job -Timeout 15
+    if ($null -eq $repomixCompleted) {
+        # Timeout: stop the job and continue without repomix
+        $repomixJob | Stop-Job -ErrorAction SilentlyContinue | Out-Null
+        Write-Warning "[repomix] Timed out after 15s; skipping context injection"
+    } else {
+        $null = $repomixJob | Receive-Job -ErrorAction SilentlyContinue
+        $repomixJob | Remove-Job -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $repomixOutputPath) {
+            $canonicalFiles += $repomixOutputPath
+            Write-Host "[repomix] Context generated: $repomixOutputPath"
+        } else {
+            Write-Warning "[repomix] Failed to generate context; continuing without repomix"
+        }
+    }
+
     return $canonicalFiles
 }
 

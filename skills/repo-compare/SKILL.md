@@ -29,9 +29,25 @@ Usa `.agent/runtime/audit/AUDIT.md` como **Fase 0 autoritativa** del contexto lo
 - Si el repo target es privado (MCP GitHub solo lee públicos).
 - Si el usuario solo quiere una búsqueda puntual de código (usar `mcp__github__search_code` directo).
 
+## Repomix Acceleration (WT-2026-182)
+
+Para acelerar la comparación, el skill puede usar `repomix` con `--compress` para generar
+vistas comprimidas del proyecto local y (opcionalmente) del remoto, reduciendo el consumo
+de tokens y eliminando la exploración manual.
+
+- **Local:** Ejecutar `npx repomix --style xml --compress --output .session/repomix_local.xml`
+  desde la raíz del proyecto. El resultado contendrá firmas de funciones y estructura
+  de directorios sin implementaciones (modo compress).
+- **Remoto:** Clonar el repositorio remoto a un directorio temporal, ejecutar repomix
+  en él y guardar el resultado en `.session/repomix_remote.xml`. Luego limpiar el clon.
+- **Config:** El proyecto debe tener un `repomix.config.json` en la raíz (provisionado
+  por `install_agent_system.py`) para personalizar patrones de ignorado y formato.
+- **Fallback:** Si `npx repomix` no está disponible o falla, continuar con el flujo
+  tradicional (AUDIT.md + MCP GitHub).
+
 ## Workflow (5 pasos)
 
-### Paso 1: Preflight AUDIT
+### Paso 1: Preflight AUDIT & Repomix Context
 - Verificar `.agent/runtime/audit/AUDIT.md`:
   - Si falta o `generated_at > 24h`: intentar ejecutar `python scripts/local_audit.py --quick` automáticamente.
   - Si el entorno no permite shell: pedir al usuario que lo ejecute.

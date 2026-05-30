@@ -19,6 +19,20 @@
 
 - The repository session has been closed canonically. Ready for the next cycle startup.
 
+## Repomix Context Integration (WT-2026-182)
+
+The system integrates `repomix` as a compressed context layer for agent bootstrapping:
+
+- **Bootstrapping:** On session start, `launch_agent_terminals.ps1` runs `npx repomix --compress`
+  to generate `.agent/context/repomix.xml`, which is injected as an explicit context file for
+  the Builder agent (via `-f` flag). Gives agents instant "X-ray vision" of the workspace.
+- **Config:** A `repomix.config.json` template is provisioned to the workspace root by
+  `install_agent_system.py` (from `agent_system/templates/repomix.config.json`).
+- **Repo-Compare:** The `skills/repo-compare/` skill uses repomix locally (`.session/repomix_local.xml`)
+  and optionally for remote repos (`.session/repomix_remote.xml`) to accelerate comparisons.
+- **Failure tolerance:** If `npx repomix` fails or times out (>15s), the session continues
+  without the compressed context — no blocking.
+
 ## Source of truth
 
 > See `[AGENTS.md](AGENTS.md)` for the canonical runtime paths and operational contract.
