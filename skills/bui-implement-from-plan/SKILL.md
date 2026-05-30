@@ -144,8 +144,17 @@ En `work_plan.md`:
 
 Si todas las tareas de la fase estÃ¡n `[x]`:
 1. Ejecutar **Quality Gates completos**
-2. Si pasan â†’ Continuar con siguiente fase
-3. Si fallan â†’ Corregir antes de continuar
+2. Si pasan → Continuar con siguiente fase
+3. Si fallan → Corregir antes de continuar
+
+### Paso 10: Cierre Canonico (solo al completar el plan entero)
+
+Cuando TODAS las fases estÃ¡n completadas y los quality gates pasan:
+```bash
+python .agent/agent_controller.py --pre-handoff --project-root <workspace> --json --force
+python .agent/agent_controller.py --mark-ready --project-root <workspace> --json --force
+```
+**Este paso es obligatorio.** Sin el `--mark-ready`, el bus no recibe `BUILDER_EXIT` y el Manager nunca revisa.
 
 ## EscalaciÃ³n
 
@@ -178,9 +187,13 @@ Si todas las tareas de la fase estÃ¡n `[x]`:
 
 ### Al Completar Plan
 - Todas las fases completadas
-- Estado cambiado a `ðŸŸ£ READY_FOR_REVIEW`
 - Resumen final en `execution_log.md`
-- NotificaciÃ³n en `notifications.md`
+- Ejecutar cierre canonico (OBLIGATORIO, en este orden):
+```bash
+python .agent/agent_controller.py --pre-handoff --project-root <workspace> --json --force
+python .agent/agent_controller.py --mark-ready --project-root <workspace> --json --force
+```
+- Estado cambiado a `READY_FOR_REVIEW` por el controller (no manualmente)
 
 ## References
 
