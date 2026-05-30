@@ -2222,18 +2222,24 @@ class ReviewBridge:
                     f"{rc_result.stderr.strip() or rc_result.stdout.strip()}",
                     file=sys.stderr,
                 )
+            # Recompute from the bus (now includes this cycle's REVIEW_DECISION).
+            consecutive_changes_count = self._count_prior_changes_from_bus(ticket_id)
             # WT-2026-183: if the Supervisor did a cooperative exit, nobody is
             # listening for the IN_PROGRESS state on the bus — relaunch Builder
             # directly from the bridge so the requeue is never silently lost.
-            if supervisor._is_supervisor_lock_stale():
+            # Guard: skip when HUMAN_GATE threshold is reached; requeue_ticket
+            # would abort via RELAUNCH_BLOCKED_STATES anyway, but this avoids
+            # the spurious log line before the HUMAN_GATE report is generated.
+            if (
+                consecutive_changes_count < max_attempts
+                and supervisor._is_supervisor_lock_stale()
+            ):
                 print(
                     "[review_bridge] Supervisor daemon absent after --request-changes; "
                     "relaunching Builder directly.",
                     flush=True,
                 )
                 supervisor.requeue_ticket(ticket_id)
-            # Recompute from the bus (now includes this cycle's REVIEW_DECISION).
-            consecutive_changes_count = self._count_prior_changes_from_bus(ticket_id)
             if consecutive_changes_count >= max_attempts:
                 report_path = self._generate_human_review_report(
                     ticket_id=ticket_id,
