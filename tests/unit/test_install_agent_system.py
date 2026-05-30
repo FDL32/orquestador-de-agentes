@@ -1,16 +1,20 @@
-"""Unit tests for install_agent_system.py memory-sync functions (WP-2026-179).
+"""Unit tests for install_agent_system.py.
 
 Covers:
 - parse_wing_sections: wing header parsing and legacy retrocompat
 - merge_memory_rules: engine/meta updated, project preserved, idempotency
 - sync_memory_rules: dry-run, missing source, file creation, no L1/L3 touch
+- copy_project_template: guard (no overwrite), prefix substitution, dry-run,
+  missing template
 """
 
 from __future__ import annotations
 
 import textwrap
+from pathlib import Path
 
 from scripts.install_agent_system import (
+    copy_project_template,
     merge_memory_rules,
     parse_wing_sections,
     sync_memory_rules,
@@ -257,3 +261,108 @@ def test_sync_memory_rules_idempotent(tmp_path):
     after_second = dest_rules.read_text(encoding="utf-8")
 
     assert after_first == after_second
+
+
+# ---------------------------------------------------------------------------
+# copy_project_template
+# ---------------------------------------------------------------------------
+
+
+def _write_template(tmp_path: Path, content: str | None = None) -> Path:
+    """Helper: create a PROJECT_TEMPLATE.md in a templates/ dir under tmp_path."""
+    template_dir = tmp_path / "agent_system" / "templates"
+    template_dir.mkdir(parents=True)
+    tpl = template_dir / "PROJECT_TEMPLATE.md"
+    if content is None:
+        content = (
+            "# PROJECT.md — Project Manifest\n"
+            "Ticket prefix: XXX\n"
+            "\n"
+            "## Stack\n"
+            "- Python\n"
+        )
+    tpl.write_text(content, encoding="utf-8")
+    return tpl
+
+
+TEMPLATE_WITH_PREFIX = (
+    "# PROJECT.md — Project Manifest\nTicket prefix: XXX\n\n## Stack\n- Python\n"
+)
+
+
+def test_copy_project_template_creates_file(tmp_path):
+    """Template is copied to destination as PROJECT.md when not present."""
+    _write_template(tmp_path, TEMPLATE_WITH_PREFIX)
+    dest = tmp_path / "dest"
+    dest.mkdir()
+
+    result = copy_project_template(
+        template_root=tmp_path, destination_root=dest, prefix=None
+    )
+
+    assert result is True
+    project_md = dest / "PROJECT.md"
+    assert project_md.exists()
+    assert "Ticket prefix: XXX" in project_md.read_text(encoding="utf-8")
+
+
+def test_copy_project_template_guard_no_overwrite(tmp_path):
+    """Existing PROJECT.md must NOT be overwritten (guard)."""
+    _write_template(tmp_path, TEMPLATE_WITH_PREFIX)
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    project_md = dest / "PROJECT.md"
+    original_content = "# My Custom Project\nTicket prefix: CUSTOM\n"
+    project_md.write_text(original_content, encoding="utf-8")
+
+    result = copy_project_template(
+        template_root=tmp_path, destination_root=dest, prefix="NEW"
+    )
+
+    assert result is False
+    assert project_md.read_text(encoding="utf-8") == original_content
+
+
+def test_copy_project_template_prefix_substitution(tmp_path):
+    """--prefix WT substitutes Ticket prefix placeholder in deposited file."""
+    _write_template(tmp_path, TEMPLATE_WITH_PREFIX)
+    dest = tmp_path / "dest"
+    dest.mkdir()
+
+    result = copy_project_template(
+        template_root=tmp_path, destination_root=dest, prefix="MYPROJ"
+    )
+
+    assert result is True
+    content = (dest / "PROJECT.md").read_text(encoding="utf-8")
+    assert "Ticket prefix: MYPROJ" in content
+    assert "Ticket prefix: XXX" not in content
+
+
+def test_copy_project_template_dry_run_does_not_write(tmp_path):
+    """Dry-run must not create PROJECT.md."""
+    _write_template(tmp_path, TEMPLATE_WITH_PREFIX)
+    dest = tmp_path / "dest"
+    dest.mkdir()
+
+    result = copy_project_template(
+        template_root=tmp_path, destination_root=dest, prefix="WT", dry_run=True
+    )
+
+    assert result is True
+    assert not (dest / "PROJECT.md").exists()
+
+
+def test_copy_project_template_missing_template(tmp_path, capsys):
+    """Missing template file logs a warning and returns False."""
+    dest = tmp_path / "dest"
+    dest.mkdir()
+
+    result = copy_project_template(
+        template_root=tmp_path, destination_root=dest, prefix="WT"
+    )
+
+    assert result is False
+    out = capsys.readouterr().out
+    assert "WARN" in out
+    assert "PROJECT_TEMPLATE.md not found" in out
