@@ -41,6 +41,29 @@ RELAUNCH_BLOCKED_STATES = frozenset(
 MANAGER_STALE_TIMEOUT = 600
 
 
+def _bus_cleanup_builder_session(runtime_dir: Path) -> None:
+    """Remove builder_session.json from the runtime directory.
+
+    Before: builder_session.json may or may not exist.
+    During: Unconditionally removes the file, suppressing any OSError.
+    After: builder_session.json no longer exists in the runtime directory.
+
+    This is called by the supervisor before a clean requeue to ensure
+    the next Builder launch starts without attempting to reuse a stale
+    or corrupt session ID.
+    """
+    import contextlib as _contextlib
+
+    session_path = runtime_dir / "builder_session.json"
+    if session_path.exists():
+        with _contextlib.suppress(OSError):
+            session_path.unlink()
+            print(
+                f"[supervisor] Purged stale builder_session.json in {runtime_dir}",
+                flush=True,
+            )
+
+
 @dataclass(slots=True)
 class SupervisorState:
     active_ticket: str | None = None
@@ -819,6 +842,12 @@ class SequentialTicketSupervisor:
             f"for {ticket_id}. Firing requeue.",
             flush=True,
         )
+        # WP-2026-180: Purge stale builder session before clean requeue.
+        # The builder_session.json captured from a previous round may contain
+        # a session ID that is now stale/corrupt. Removing it ensures the
+        # next builder launch falls through to a clean session.
+        _bus_cleanup_builder_session(self.runtime_dir)
+
         # Update watermark only when Builder was actually launched (not skipped_alive).
         # requeue_ticket() now calls _relaunch_builder() which no longer returns
         # skipped_alive=True here because we pre-checked _builder_alive() above.
@@ -1302,6 +1331,11 @@ class SequentialTicketSupervisor:
                 },
             )
             return True  # no es error, Builder vivo manejará el requeue
+
+        # WP-2026-180: Purge stale session before clean relaunch.
+        # Builder is dead (checked above); remove any captured session ID
+        # so the next launch starts with a clean session.
+        _bus_cleanup_builder_session(self.runtime_dir)
 
         launcher_path = self._resolve_launcher_path()
         if not launcher_path.exists():
