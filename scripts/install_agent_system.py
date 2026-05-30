@@ -808,6 +808,40 @@ def copy_project_template(
     return True
 
 
+def copy_knowledge_docs(
+    template_root: Path, project_agent: Path, dry_run: bool = False
+) -> None:
+    """Copy glossary and microagents from motor to destination workspace."""
+    import shutil
+
+    # 1. Copy glossary.md
+    source_glossary = template_root / "agent_system" / "templates" / "glossary.md"
+    dest_glossary = project_agent / "glossary.md"
+
+    if source_glossary.exists() and not dest_glossary.exists():
+        if dry_run:
+            print(f"[DRY-RUN] Would copy glossary.md to {dest_glossary}")
+        else:
+            dest_glossary.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_glossary, dest_glossary)
+            print(f"[INFO] Created {dest_glossary} from template")
+
+    # 2. Copy microagents
+    source_microagents = template_root / "agent_system" / "templates" / "microagents"
+    dest_microagents = project_agent / "microagents"
+
+    if source_microagents.exists():
+        for doc in source_microagents.glob("*.md"):
+            dest_doc = dest_microagents / doc.name
+            if not dest_doc.exists():
+                if dry_run:
+                    print(f"[DRY-RUN] Would copy microagent {doc.name} to {dest_doc}")
+                else:
+                    dest_microagents.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(doc, dest_doc)
+                    print(f"[INFO] Created {dest_doc} from template")
+
+
 def install_agent_system(
     template_agent: Path,
     project_agent: Path,
@@ -861,6 +895,9 @@ def install_agent_system(
     # Write ticket prefix to PROJECT.md if provided
     if ticket_prefix:
         _write_prefix_to_project_md(destination_root, ticket_prefix, dry_run=dry_run)
+
+    # Copy knowledge docs (glossary, microagents)
+    copy_knowledge_docs(template_root, project_agent, dry_run=dry_run)
 
     # Sync portable memory rules (engine/meta wings) from motor
     sync_memory_rules(template_agent, project_agent, dry_run=dry_run)
@@ -963,6 +1000,9 @@ def sync_agent_system(  # noqa: C901
     # Update PROJECT.md with ticket prefix if provided
     if ticket_prefix:
         _write_prefix_to_project_md(destination_root, ticket_prefix, dry_run=dry_run)
+
+    # Copy knowledge docs (glossary, microagents)
+    copy_knowledge_docs(template_root, project_agent, dry_run=dry_run)
 
     # Sync portable memory rules (engine/meta wings) from motor
     sync_memory_rules(template_agent, project_agent, dry_run=dry_run)

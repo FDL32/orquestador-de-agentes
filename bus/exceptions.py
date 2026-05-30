@@ -157,6 +157,7 @@ class EmptySkillCatalogError(Exception):
         if skills_dir:
             message += f" (skills_dir: {skills_dir})"
         message += (
-            ". Check that skills/ directory exists and contains valid SKILL.md files."
+            ". Check that skills/ directory contains valid SKILL.md files, "
+            "or add knowledge docs to .agent/microagents/."
         )
         super().__init__(message)
