@@ -2971,3 +2971,119 @@ class TestChangesResilienceSupervisorDead:
         assert requeue_calls == [], (
             "requeue_ticket must NOT be called when Supervisor daemon is alive"
         )
+
+
+# =============================================================================
+# Tests WT-2026-189: Guard anti doble lanzamiento de Builder tras CHANGES
+# =============================================================================
+
+
+class TestAntiDoubleRelaunchGuard:
+    """WT-2026-189: Guard idempotente contra doble relaunch de Builder.
+
+    El bridge no debe llamar a requeue_ticket() si el Supervisor ya emitió
+    BUILDER_RELAUNCH_ATTEMPTED después del REVIEW_DECISION: changes.
+    """
+
+    def _make_changes_bridge(self, tmp_path, monkeypatch):
+        """Helper: create bridge configured for CHANGES path."""
+        bridge, event_bus, legacy_exe = _make_bridge(tmp_path)
+
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True, exist_ok=True)
+        (collab / "work_plan.md").write_text(
+            "# Work Ticket - WT-2026-189\n\n## Metadata\n- **ID:** WT-2026-189\n"
+            "- **Estado:** APPROVED\n- **deliverable_type:** code\n",
+            encoding="utf-8",
+        )
+
+        def fake_run(cmd, **kwargs):
+            return __import__("subprocess").CompletedProcess(
+                cmd,
+                0,
+                stdout=(
+                    "## SUMMARY\nNeeds fixes.\n## BLOCKERS\n- Missing test\n"
+                    "## SUGGESTIONS\n- Add test\nDECISION: CHANGES"
+                ),
+                stderr="",
+            )
+
+        monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
+        monkeypatch.setattr(
+            bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW"
+        )
+        monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "legacy_manager")
+        monkeypatch.setattr(bridge, "_resolve_motor_controller", lambda: None)
+        return bridge, event_bus, legacy_exe
+
+    def test_review_bridge_does_not_double_relaunch_when_supervisor_already_relaunched(
+        self, tmp_path, monkeypatch
+    ):
+        """requeue_ticket NO debe llamarse si ya existe BUILDER_RELAUNCH_ATTEMPTED
+        posterior al REVIEW_DECISION: changes emitido por este ciclo."""
+        bridge, event_bus, legacy_exe = self._make_changes_bridge(tmp_path, monkeypatch)
+        ticket_id = "WT-2026-189"
+
+        requeue_calls = []
+
+        class SupervisorThatAlreadyRelaunched:
+            def transition_ticket(self, **kwargs):
+                pass
+
+            def _is_supervisor_lock_stale(self):
+                # Simulate Supervisor race: emit BUILDER_RELAUNCH_ATTEMPTED
+                # AFTER REVIEW_DECISION but BEFORE the bridge calls requeue_ticket.
+                event_bus.emit(
+                    "BUILDER_RELAUNCH_ATTEMPTED",
+                    ticket_id=ticket_id,
+                    actor="SUPERVISOR",
+                    payload={"success": True},
+                )
+                return True
+
+            def requeue_ticket(self, tid):
+                requeue_calls.append(tid)
+
+        result = bridge.run_manager_review_cycle(
+            ticket_id=ticket_id,
+            supervisor=SupervisorThatAlreadyRelaunched(),
+            manager_executable=legacy_exe,
+            timeout_seconds=5,
+        )
+
+        assert result.decision.value == "changes"
+        assert requeue_calls == [], (
+            "requeue_ticket NO debe llamarse cuando el Supervisor ya relanzó Builder"
+        )
+
+    def test_review_bridge_relaunches_when_no_builder_relaunch_event_exists_after_changes(
+        self, tmp_path, monkeypatch
+    ):
+        """requeue_ticket SÍ debe llamarse cuando NO existe BUILDER_RELAUNCH_ATTEMPTED
+        posterior al REVIEW_DECISION: changes."""
+        bridge, _, legacy_exe = self._make_changes_bridge(tmp_path, monkeypatch)
+        ticket_id = "WT-2026-189"
+
+        requeue_calls = []
+
+        class SupervisorWithoutRelaunch:
+            def transition_ticket(self, **kwargs):
+                pass
+
+            def _is_supervisor_lock_stale(self):
+                return True
+
+            def requeue_ticket(self, tid):
+                requeue_calls.append(tid)
+
+        result = bridge.run_manager_review_cycle(
+            ticket_id=ticket_id,
+            supervisor=SupervisorWithoutRelaunch(),
+            manager_executable=legacy_exe,
+            timeout_seconds=5,
+        )
+
+        assert result.decision.value == "changes"
+        assert requeue_calls == [ticket_id], (
+            "requeue_ticket DEBE llamarse cuando no hay relaunch previo del Supervisor"
+        )
