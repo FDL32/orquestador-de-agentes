@@ -204,40 +204,30 @@ class ReviewBridge:
     def _resolve_motor_root(self) -> Path | None:
         """Resolve motor root from workspace's motor_destination_link.json.
 
-        WP-2026-176: The workspace may carry motor_destination_link.json in its
+        WP-2026-176: Thin compatibility wrapper that delegates to motor_link.
+        The workspace may carry motor_destination_link.json in its
         .agent/config/ directory pointing to the external motor repository.
-        When present, the motor controller should be used instead of a local one.
 
         Returns:
             Absolute Path to the motor root, or None if the link file is missing
             or malformed.
         """
-        link_path = (
-            self.project_root / ".agent" / "config" / "motor_destination_link.json"
-        )
-        if not link_path.exists():
-            return None
-        try:
-            data = json.loads(link_path.read_text(encoding="utf-8"))
-            motor_root = data.get("motor_root")
-            if motor_root and Path(motor_root).exists():
-                return Path(motor_root).resolve()
-        except (json.JSONDecodeError, OSError):
-            pass
-        return None
+        from runtime.motor_link import resolve_motor_root as _resolve
+
+        return _resolve(self.project_root)
 
     def _resolve_motor_controller(self) -> Path | None:
         """Resolve agent_controller.py from external motor root, or None.
+
+        Thin compatibility wrapper that delegates to motor_link.
 
         Returns:
             Absolute Path to the motor's agent_controller.py, or None if the
             motor root cannot be resolved or the controller does not exist there.
         """
-        motor_root = self._resolve_motor_root()
-        if motor_root is None:
-            return None
-        controller = motor_root / ".agent" / "agent_controller.py"
-        return controller if controller.exists() else None
+        from runtime.motor_link import resolve_motor_controller as _resolve
+
+        return _resolve(self.project_root)
 
     @staticmethod
     def _looks_like_opencode_help(stdout: str, stderr: str) -> bool:

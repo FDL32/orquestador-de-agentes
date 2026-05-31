@@ -47,6 +47,12 @@ TERMINAL_STATES = {"COMPLETED", "HUMAN_GATE"}
 # Directories to scan for absolute workspace paths (portability check)
 PORTABILITY_SCAN_DIRS = ("docs", "markdowns", "skills", ".agent/rules")
 
+# Additional specific entries to scan (files beyond the directories above)
+PORTABILITY_SCAN_EXTRA = ("README.md", "PROJECT.md")
+
+# Glob patterns to scan for hardcoded paths (combined with directories)
+PORTABILITY_SCAN_GLOBS = ("*.py", "*.ps1", "*.md", "MANIFEST*")
+
 # Report path (relative to project_root)
 REPORT_REL = Path(".agent") / "runtime" / "memory" / "session_close_report.md"
 
@@ -114,11 +120,21 @@ def _run_script(
     """Run a script from the scripts/ directory relative to project_root.
 
     Before: script_name must be a filename in scripts/.
-    During: Constructs [sys.executable, scripts/<name>, *args] and runs it
-            with cwd=project_root, capturing stdout/stderr as text.
+    During: Resolves script path via motor_link (Model B) first; falls back to
+            local project_root/scripts/<name>. Constructs [sys.executable,
+            script_path, *args] and runs it with cwd=project_root,
+            capturing stdout/stderr as text.
     After: Returns CompletedProcess. Caller handles exceptions.
     """
-    script_path = project_root / SCRIPTS_DIR / script_name
+    try:
+        from runtime.motor_link import resolve_motor_script
+
+        motor_path = resolve_motor_script(project_root, script_name)
+        script_path = (
+            motor_path if motor_path else project_root / SCRIPTS_DIR / script_name
+        )
+    except ImportError:
+        script_path = project_root / SCRIPTS_DIR / script_name
     cmd = [sys.executable, str(script_path), *args]
     return subprocess.run(  # noqa: S603 - controlled script execution
         cmd,
@@ -333,32 +349,128 @@ def _get_ticket_close_timestamps(
 # ---------------------------------------------------------------------------
 
 
+def _scan_file_for_absolute_paths(
+    file_path: Path, project_root: Path, home_str: str, root_str: str
+) -> list[str]:
+    """Scan a single file for absolute path references.
+
+    Before: file_path exists and is readable.
+    During: Reads file content, checks each line for home or project root paths.
+    After: Returns list of "rel_path:line_number" matches.
+    """
+    matches: list[str] = []
+    try:
+        content = file_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return matches
+    for i, line in enumerate(content.splitlines(), 1):
+        line_lower = line.replace("\\", "/").lower()
+        if home_str in line_lower or root_str in line_lower:
+            rel = file_path.relative_to(project_root)
+            matches.append(f"{rel}:{i}")
+    return matches
+
+
+def _scan_scan_dir_for_markdown(
+    project_root: Path, dir_name: str, home_str: str, root_str: str
+) -> list[str]:
+    """Scan a single directory recursively for *.md files with absolute paths."""
+    scan_dir = project_root / dir_name
+    if not scan_dir.exists():
+        return []
+    matches: list[str] = []
+    for md_file in scan_dir.rglob("*.md"):
+        matches.extend(
+            _scan_file_for_absolute_paths(md_file, project_root, home_str, root_str)
+        )
+    return matches
+
+
+def _scan_extra_files(
+    project_root: Path, extra_names: tuple[str, ...], home_str: str, root_str: str
+) -> list[str]:
+    """Scan explicit file names at project root for absolute paths."""
+    matches: list[str] = []
+    for extra_name in extra_names:
+        extra_path = project_root / extra_name
+        if extra_path.exists() and extra_path.is_file():
+            matches.extend(
+                _scan_file_for_absolute_paths(
+                    extra_path, project_root, home_str, root_str
+                )
+            )
+    return matches
+
+
+def _scan_globs_in_dirs(
+    project_root: Path,
+    dir_names: tuple[str, ...],
+    globs: tuple[str, ...],
+    home_str: str,
+    root_str: str,
+) -> list[str]:
+    """Scan directories with glob patterns for absolute paths."""
+    matches: list[str] = []
+    for scan_dir_name in dir_names:
+        scan_dir = project_root / scan_dir_name
+        if not scan_dir.exists():
+            continue
+        for pattern in globs:
+            for matched_file in scan_dir.rglob(pattern):
+                if matched_file.is_file():
+                    matches.extend(
+                        _scan_file_for_absolute_paths(
+                            matched_file, project_root, home_str, root_str
+                        )
+                    )
+    return matches
+
+
 def _check_portability(project_root: Path) -> StepResult:
     """Check for absolute workspace paths in portable files.
 
     Before: project_root is valid.
-    During: Scans docs/, markdowns/, skills/, .agent/rules/ for absolute paths
-            derived from Path.home() or project_root.resolve().
+    During: Scans docs/, markdowns/, skills/, scripts/, bus/, .agent/rules/
+            for absolute paths derived from Path.home() or project_root.resolve().
+            Also scans *.py, *.ps1, *.md, MANIFEST* globs and explicit files
+            like README.md, PROJECT.md.
     After: Returns StepResult with WARN if matches found, PASS otherwise.
     """
     home_str = str(Path.home()).replace("\\", "/").lower()
     root_str = str(project_root.resolve()).replace("\\", "/").lower()
 
     matches: list[str] = []
+
+    # Scan directories recursively for markdown
     for dir_name in PORTABILITY_SCAN_DIRS:
-        scan_dir = project_root / dir_name
-        if not scan_dir.exists():
-            continue
-        for md_file in scan_dir.rglob("*.md"):
-            try:
-                content = md_file.read_text(encoding="utf-8")
-            except OSError:
-                continue
-            for i, line in enumerate(content.splitlines(), 1):
-                line_lower = line.replace("\\", "/").lower()
-                if home_str in line_lower or root_str in line_lower:
-                    rel = md_file.relative_to(project_root)
-                    matches.append(f"{rel}:{i}")
+        matches.extend(
+            _scan_scan_dir_for_markdown(project_root, dir_name, home_str, root_str)
+        )
+
+    # Scan extra explicit files
+    matches.extend(
+        _scan_extra_files(project_root, PORTABILITY_SCAN_EXTRA, home_str, root_str)
+    )
+
+    # Scan scripts/ and bus/ directories with glob patterns
+    matches.extend(
+        _scan_globs_in_dirs(
+            project_root,
+            ("scripts", "bus"),
+            PORTABILITY_SCAN_GLOBS,
+            home_str,
+            root_str,
+        )
+    )
+
+    # Scan MANIFEST* files at root
+    for manifest_file in project_root.glob("MANIFEST*"):
+        if manifest_file.is_file():
+            matches.extend(
+                _scan_file_for_absolute_paths(
+                    manifest_file, project_root, home_str, root_str
+                )
+            )
 
     if matches:
         detail = f"Absolute paths found in {len(matches)} file(s): " + ", ".join(

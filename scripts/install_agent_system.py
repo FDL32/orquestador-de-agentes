@@ -35,7 +35,7 @@ from pathlib import Path
 
 # Paths
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-TEMPLATE_ROOT = REPO_ROOT / "orquestador_de_agentes"
+TEMPLATE_ROOT = Path(__file__).resolve().parent.parent
 TEMPLATE_AGENT = TEMPLATE_ROOT / ".agent"
 PROJECT_AGENT = REPO_ROOT / ".agent"
 
@@ -886,8 +886,6 @@ def copy_knowledge_docs(
     template_root: Path, project_agent: Path, dry_run: bool = False
 ) -> None:
     """Copy glossary and microagents from motor to destination workspace."""
-    import shutil
-
     # 1. Copy glossary.md
     source_glossary = template_root / "agent_system" / "templates" / "glossary.md"
     dest_glossary = project_agent / "glossary.md"
@@ -1000,7 +998,7 @@ def install_agent_system(
         print("[install] Host setup failed; aborting install.", file=sys.stderr)
         return rc
 
-    print(f"\n[SUCCESS] Agent System installed at {PROJECT_AGENT}")
+    print(f"\n[SUCCESS] Agent System installed at {project_agent}")
     return 0
 
 
