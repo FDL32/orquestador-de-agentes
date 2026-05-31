@@ -3,6 +3,11 @@
 # Este manifiesto define el contrato del workspace de proyecto destino
 # que recibe el motor central desde orquestador_de_agentes.
 #
+# NOTA DE CONTRATO: MANIFEST.workspace gobierna EXCLUSIVAMENTE la copia
+# (copy_tree()). NO participa en la poda de residuos
+# (detect_destination_residues()), que usa INSTALLER_MANAGED_PATHS y
+# LOCAL_DIRS independientemente.
+#
 # Reglas:
 # - El workspace destino conserva SOLO estado, memoria, eventos y configuracion del proyecto.
 # - El motor central vive en el repo fuente unico (orquestador_de_agentes).
@@ -21,7 +26,6 @@
 # =============================================================================
 
 # Collaboration - superficies vivas (NO archivar)
-.agent/BACKUP_VERIFIED.md
 .agent/collaboration/work_plan.md
 .agent/collaboration/TURN.md
 .agent/collaboration/STATE.md

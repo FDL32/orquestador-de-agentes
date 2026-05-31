@@ -40,7 +40,14 @@ TEMPLATE_AGENT = TEMPLATE_ROOT / ".agent"
 PROJECT_AGENT = REPO_ROOT / ".agent"
 
 # Directories to preserve in the project instance.
+# LOCAL_DIRS: data belonging to the user, never synchronized from the motor.
 LOCAL_DIRS = {"collaboration", "runtime"}
+
+# Paths deposited once by the installer; afterwards they belong to the destination.
+# INSTALLER_MANAGED_PATHS: deposited once, then owned by destination.
+# --sync will NOT prune or overwrite them.
+# Contrast with LOCAL_DIRS (never synced at all).
+INSTALLER_MANAGED_PATHS: frozenset[str] = frozenset({"glossary.md", "microagents"})
 
 # Generated / transient directories that should not be part of canonical sync.
 IGNORED_NAMES = {"__pycache__", ".ruff_cache", ".tmp"}
@@ -191,9 +198,23 @@ def compact_paths(paths: Iterable[Path]) -> list[Path]:
 
 
 def detect_destination_residues(source: Path, dest: Path) -> list[Path]:
+    """
+    Detect entries in dest that do not exist in source (potential residues).
+
+    Before: source and dest are valid directory paths; INSTALLER_MANAGED_PATHS
+            and LOCAL_DIRS constants exist.
+    During: Canonical entries are collected from both directories. Preserved
+            (LOCAL_DIRS) and installer-managed (INSTALLER_MANAGED_PATHS) entries
+            are excluded before computing the diff. LOCAL_DIRS paths are never
+            synced; INSTALLER_MANAGED_PATHS were deposited once and belong to
+            the destination.
+    After: Returns sorted, compacted list of residue relative paths.
+    """
     source_entries = set(iter_canonical_entries(source, include_ignored=False))
     dest_entries = set(iter_canonical_entries(dest, include_ignored=True))
     residues = dest_entries - source_entries
+    # Filter out installer-managed paths (deposited once, belong to destination)
+    residues = {r for r in residues if r.parts[0] not in INSTALLER_MANAGED_PATHS}
     return compact_paths(residues)
 
 
@@ -211,6 +232,51 @@ def ensure_parent_dirs(path: Path, dry_run: bool) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
+def _copy_allowlisted_dir(
+    source_dir: Path,
+    dest_dir: Path,
+    source_root: Path,
+    dest_root: Path,
+    allowlist: set[str],
+    dry_run: bool,
+) -> list[Path]:
+    """Recursively copy files from source_dir checking each child against allowlist.
+
+    Before: source_dir exists and passes the first-level allowlist check.
+            dest_dir parent directories exist.
+    During: Walks all children of source_dir. For each, verifies against allowlist
+            via is_in_allowlist(). Skips preserved/ignored paths and non-allowlisted
+            children with a [SKIP] message. Creates parent dirs as needed.
+    After: Returns list of all relative paths whose files were copied.
+    """
+    copied: list[Path] = []
+    for disk_path in source_dir.rglob("*"):
+        child_rel = disk_path.relative_to(source_root)
+        if is_preserved(child_rel) or is_ignored(child_rel):
+            continue
+        if not is_in_allowlist(child_rel, allowlist):
+            if dry_run:
+                print(f"[DRY-RUN] Would skip unauthorized path: {child_rel.as_posix()}")
+            else:
+                print(
+                    f"[SKIP] Unauthorized path outside allowlist: {child_rel.as_posix()}"
+                )
+            continue
+        if disk_path.is_dir():
+            if not dry_run:
+                (dest_root / child_rel).mkdir(parents=True, exist_ok=True)
+            continue
+        # It is a file (and is allowlisted)
+        if dry_run:
+            copied.append(child_rel)
+            continue
+        dst_child = dest_root / child_rel
+        dst_child.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(disk_path, dst_child)
+        copied.append(child_rel)
+    return copied
+
+
 def copy_tree(  # noqa: C901 - allowlist-aware sync needs explicit branch handling
     source: Path, dest: Path, dry_run: bool = False, allowlist: set[str] | None = None
 ) -> list[Path]:
@@ -219,7 +285,10 @@ def copy_tree(  # noqa: C901 - allowlist-aware sync needs explicit branch handli
 
     Before: source directory exists; allowlist may be None (copy all non-ignored).
     During: Iterates source items, skips preserved/ignored paths, checks allowlist.
-    After: Returns list of copied relative paths; raises if non-allowlisted path found.
+            When allowlist is provided, directories are walked recursively to verify
+            each child individually against the allowlist. Non-allowlisted children
+            are skipped with a [SKIP] message (no RuntimeError raised).
+    After: Returns list of copied relative paths.
 
     Args:
         source: Source directory root.
@@ -229,9 +298,6 @@ def copy_tree(  # noqa: C901 - allowlist-aware sync needs explicit branch handli
 
     Returns:
         List of relative paths that were copied.
-
-    Raises:
-        RuntimeError: If a path outside the allowlist would be copied.
     """
     copied: list[Path] = []
     if not source.exists():
@@ -259,13 +325,21 @@ def copy_tree(  # noqa: C901 - allowlist-aware sync needs explicit branch handli
 
             if dst_item.exists() and dst_item.is_file():
                 dst_item.unlink()
-            shutil.copytree(
-                item,
-                dst_item,
-                dirs_exist_ok=True,
-                ignore=shutil.ignore_patterns(*IGNORED_NAMES),
-            )
-            copied.append(rel)
+
+            if allowlist is not None:
+                # Recursive per-file allowlist validation
+                children = _copy_allowlisted_dir(
+                    item, dst_item, source, dest, allowlist, dry_run
+                )
+                copied.extend(children)
+            else:
+                shutil.copytree(
+                    item,
+                    dst_item,
+                    dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns(*IGNORED_NAMES),
+                )
+                copied.append(rel)
             continue
 
         if dry_run:
