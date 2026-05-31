@@ -79,7 +79,7 @@
   },
   "role_models": {
     "BUILDER": "opencode-go/deepseek-v4-flash",
-    "MANAGER": "openai/gpt-5.4-mini"
+    "MANAGER": "openai/gpt-5.5"
   },
   "manager_review": {
     "timeout_seconds": 180,

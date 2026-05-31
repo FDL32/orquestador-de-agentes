@@ -351,8 +351,14 @@ class TestSessionClose:
         )
         assert code == 0
 
-    def test_session_close_dry_run(self, monkeypatch):
+    def test_session_close_dry_run(self, monkeypatch, tmp_path):
         """--dry-run delegates and returns exit code without syncing state."""
+        # Create mock scripts/session_closeout.py in temp dir
+        script_dir = tmp_path / "scripts"
+        script_dir.mkdir()
+        (script_dir / "session_closeout.py").write_text("")
+        monkeypatch.setattr(agent_controller, "PROJECT_ROOT", tmp_path)
+
         mock_run = MagicMock(
             return_value=MagicMock(returncode=0, stdout="[DRY-RUN] ok\n", stderr="")
         )
@@ -377,8 +383,14 @@ class TestSessionClose:
         args = mock_run.call_args[0][0]
         assert "--dry-run" in args
 
-    def test_session_close_dry_run_passes_ticket(self, monkeypatch):
+    def test_session_close_dry_run_passes_ticket(self, monkeypatch, tmp_path):
         """--session-close --dry-run --ticket WP-2026-168 passes the flag."""
+        # Create mock scripts/session_closeout.py in temp dir
+        script_dir = tmp_path / "scripts"
+        script_dir.mkdir()
+        (script_dir / "session_closeout.py").write_text("")
+        monkeypatch.setattr(agent_controller, "PROJECT_ROOT", tmp_path)
+
         mock_run = MagicMock(
             return_value=MagicMock(returncode=0, stdout="[DRY-RUN] ok\n", stderr="")
         )
@@ -402,8 +414,14 @@ class TestSessionClose:
         assert "--ticket" in args
         assert "WP-2026-168" in args
 
-    def test_session_close_real_syncs_state(self, monkeypatch):
+    def test_session_close_real_syncs_state(self, monkeypatch, tmp_path):
         """Real close delegates and syncs STATE.md to COMPLETED."""
+        # Create mock scripts/session_closeout.py in temp dir
+        script_dir = tmp_path / "scripts"
+        script_dir.mkdir()
+        (script_dir / "session_closeout.py").write_text("")
+        monkeypatch.setattr(agent_controller, "PROJECT_ROOT", tmp_path)
+
         written = {}
 
         def mock_write(path, content):
@@ -434,8 +452,14 @@ class TestSessionClose:
         # Verify STATE.md was synced to COMPLETED
         assert any("COMPLETED" in v for v in written.values())
 
-    def test_session_close_force_overrides_idempotency(self, monkeypatch):
+    def test_session_close_force_overrides_idempotency(self, monkeypatch, tmp_path):
         """--force overrides already-completed guard and runs session close."""
+        # Create mock scripts/session_closeout.py in temp dir
+        script_dir = tmp_path / "scripts"
+        script_dir.mkdir()
+        (script_dir / "session_closeout.py").write_text("")
+        monkeypatch.setattr(agent_controller, "PROJECT_ROOT", tmp_path)
+
         written = {}
 
         def mock_write(path, content):
@@ -574,6 +598,17 @@ class TestPreHandoff:
             "get_changed_files",
             lambda: changed_files,
         )
+        # Ensure .git exists for pre_handoff git directory check
+        project_root = agent_controller.PROJECT_ROOT.resolve()
+        git_path = project_root / ".git"
+        original_exists = Path.exists
+
+        def _patched_exists(self_path):
+            if str(self_path) == str(git_path):
+                return True
+            return original_exists(self_path)
+
+        monkeypatch.setattr(Path, "exists", _patched_exists)
 
     def _capture_output(self, func):
         """Run func capturing stdout+stderr, return (exit_code, combined_text)."""
@@ -1076,3 +1111,313 @@ class TestManagerApproveStateCleanup:
 
         assert not mgr.exists()
         assert not sup.exists()
+
+
+# ======================================================================
+# WT-2026-188: _handle_manager_approve integration tests
+# These tests call _handle_manager_approve directly to prove the full flow,
+# not just the isolated helpers.
+# ======================================================================
+
+
+class TestHandleManagerApproveIntegration:
+    """WT-2026-188: _handle_manager_approve exercises full closeout flow.
+
+    Proves that the handler:
+    - Blocks on generic checkpoint commits
+    - Blocks on wrong ticket ID in commit
+    - Blocks on missing ticket ID in commit
+    - Calls _clear_auxiliary_states on successful approve
+    """
+
+    _TICKET = "WT-2026-188"
+
+    _WORK_PLAN = (
+        "# Work Ticket - WT-2026-188\n"
+        "## Metadata\n"
+        "- **ID:** WT-2026-188\n"
+        "- **Estado:** APPROVED\n"
+        "- **deliverable_type:** code\n"
+    )
+
+    _EXEC_LOG_READY = "# Execution Log WT-2026-188\n\n**Estado:** READY_FOR_REVIEW\n"
+
+    def _setup(self, monkeypatch, tmp_path, commit_msg: str):
+        """Patch minimal scaffolding so _handle_manager_approve can run."""
+        monkeypatch.setattr(
+            agent_controller,
+            "read_file",
+            lambda p: (
+                self._WORK_PLAN if "work_plan" in str(p) else self._EXEC_LOG_READY
+            ),
+        )
+        monkeypatch.setattr(agent_controller, "BUS_AVAILABLE", False)
+        monkeypatch.setattr(agent_controller, "event_bus", None)
+        monkeypatch.setattr(
+            agent_controller, "_sync_markdowns_to_completed", lambda tid: None
+        )
+        monkeypatch.setattr(
+            agent_controller, "_reset_circuit_breaker", lambda tid: None
+        )
+        monkeypatch.setattr(agent_controller, "_release_builder_lock", lambda tid: None)
+        monkeypatch.setattr(
+            agent_controller, "_emit_manager_approve_cascade", lambda bus, tid: None
+        )
+        # Patch commit check to return the supplied message
+        monkeypatch.setattr(
+            agent_controller,
+            "_check_last_commit",
+            lambda root, tid: agent_controller._validate_closeout_commit_message(
+                commit_msg, tid
+            ),
+        )
+        # Wire real state files into tmp_path
+        mgr = tmp_path / "manager_bridge_state.json"
+        sup = tmp_path / "supervisor_state.json"
+        mgr.write_text('{"seq": 1}', encoding="utf-8")
+        sup.write_text('{"active_ticket": "WT-2026-188"}', encoding="utf-8")
+        monkeypatch.setattr(agent_controller, "_MANAGER_BRIDGE_STATE_PATH", mgr)
+        monkeypatch.setattr(agent_controller, "_SUPERVISOR_STATE_PATH", sup)
+        return mgr, sup
+
+    def test_blocks_on_generic_checkpoint_commit(self, monkeypatch, tmp_path):
+        """_handle_manager_approve returns 1 for a checkpoint commit with correct ID."""
+        self._setup(monkeypatch, tmp_path, "chore(WT-2026-188): pre-handoff checkpoint")
+        rc = agent_controller._handle_manager_approve(self._TICKET, False, False)
+        assert rc == 1, "Expected block on generic checkpoint commit"
+
+    def test_blocks_on_wrong_ticket_id_in_commit(self, monkeypatch, tmp_path):
+        """_handle_manager_approve returns 1 when commit references a different ticket."""
+        self._setup(
+            monkeypatch, tmp_path, "feat(WT-2026-187): improve closeout validation"
+        )
+        rc = agent_controller._handle_manager_approve(self._TICKET, False, False)
+        assert rc == 1, "Expected block on wrong ticket ID in commit"
+
+    def test_blocks_on_missing_ticket_id_in_commit(self, monkeypatch, tmp_path):
+        """_handle_manager_approve returns 1 when commit has no ticket ID."""
+        self._setup(monkeypatch, tmp_path, "fix: minor cleanup")
+        rc = agent_controller._handle_manager_approve(self._TICKET, False, False)
+        assert rc == 1, "Expected block on commit without ticket ID"
+
+    def test_clears_auxiliary_states_on_approve(self, monkeypatch, tmp_path):
+        """_handle_manager_approve deletes both state files on successful close."""
+        mgr, sup = self._setup(
+            monkeypatch,
+            tmp_path,
+            "feat(WT-2026-188): validate canonical closeout commit hygiene",
+        )
+        assert mgr.exists() and sup.exists()
+        rc = agent_controller._handle_manager_approve(self._TICKET, False, False)
+        assert rc == 0, f"Expected success, got rc={rc}"
+        assert not mgr.exists(), "manager_bridge_state.json must be deleted on approve"
+        assert not sup.exists(), "supervisor_state.json must be deleted on approve"
+
+
+# ======================================================================
+# WT-2026-188 Phase 4: Builder ready evidence gate tests
+# ======================================================================
+
+
+class TestImplementationEvidenceGate:
+    """WP-2026-188 Phase 4: _check_implementation_evidence pure function tests.
+
+    Tests the four required scenarios:
+    - Rejects when only .agent/collaboration/ files changed
+    - Rejects when execution_log.md has only boilerplate
+    - Rejects when Files Likely Touched not in diff (best-effort)
+    - Accepts when real file changed and log has evidence
+    """
+
+    _PLAN_ID = "WT-2026-188"
+    # Minimal plan content with Files Likely Touched
+    _PLAN_WITH_FILES = """# Work Plan
+
+## Metadata
+- **ID:** WT-2026-188
+- **Estado:** APPROVED
+- **deliverable_type:** code
+
+## Files Likely Touched
+- `src/module.py`
+- `tests/test_module.py`
+"""
+
+    _PLAN_WITHOUT_FILES = """# Work Plan
+
+## Metadata
+- **ID:** WT-2026-188
+- **Estado:** APPROVED
+"""
+
+    # Non-boilerplate execution log content
+    _LOG_WITH_EVIDENCE = """# Execution Log
+
+**Estado:** IN_PROGRESS
+
+- Implemented closeout commit validation
+- Added `_check_implementation_evidence` function
+- Ran quality gates: ruff, pytest
+"""
+
+    # Boilerplate-only log
+    _LOG_BOILERPLATE = """# Execution Log
+
+**Estado:** IN_PROGRESS
+
+Marked ready by Builder
+
+Marked ready by Builder
+"""
+
+    @staticmethod
+    def _make_git_mock(changed_files: list[str]) -> MagicMock:
+        """Create a subprocess.run mock that returns specific git diff output.
+
+        Args:
+            changed_files: list of file paths to return from git diff --name-only
+        """
+        mock_stdout = "\n".join(changed_files)
+
+        def mock_run(cmd, *args, **kwargs):
+            cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+            if "diff --name-only" in cmd_str and "--cached" not in cmd_str:
+                return MagicMock(returncode=0, stdout=mock_stdout, stderr="")
+            if "diff --cached --name-only" in cmd_str:
+                return MagicMock(returncode=0, stdout="", stderr="")
+            if "log -1 --name-only" in cmd_str:
+                return MagicMock(returncode=0, stdout="", stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        return MagicMock(side_effect=mock_run)
+
+    def test_rejects_when_only_collaboration_files_changed(self, monkeypatch):
+        """Evidence gate rejects when only .agent/collaboration/ files changed."""
+        # Simulate git diff showing only collaboration files
+        git_mock = self._make_git_mock(
+            [
+                ".agent/collaboration/execution_log.md",
+                ".agent/collaboration/notifications.md",
+            ]
+        )
+        monkeypatch.setattr(agent_controller.subprocess, "run", git_mock)
+
+        # Mock work_plan and execution_log reads
+        monkeypatch.setattr(
+            agent_controller,
+            "read_file",
+            lambda x: (
+                self._LOG_WITH_EVIDENCE
+                if "execution_log.md" in str(x)
+                else self._PLAN_WITHOUT_FILES
+            ),
+        )
+
+        errors = agent_controller._check_implementation_evidence(self._PLAN_ID)
+        # Should reject: no implementation files outside collaboration
+        assert any("No implementation evidence" in err for err in errors), (
+            f"Expected no-implementation-evidence error, got: {errors}"
+        )
+
+    def test_rejects_when_execution_log_has_only_boilerplate(self, monkeypatch):
+        """Evidence gate rejects when execution_log.md has only boilerplate."""
+        # Simulate git diff showing a real file change
+        git_mock = self._make_git_mock(
+            [
+                "src/module.py",
+            ]
+        )
+        monkeypatch.setattr(agent_controller.subprocess, "run", git_mock)
+
+        # Mock work_plan and execution_log reads - boilerplate log
+        monkeypatch.setattr(
+            agent_controller,
+            "read_file",
+            lambda x: (
+                self._LOG_BOILERPLATE
+                if "execution_log.md" in str(x)
+                else self._PLAN_WITHOUT_FILES
+            ),
+        )
+
+        errors = agent_controller._check_implementation_evidence(self._PLAN_ID)
+        # Should reject: log has only boilerplate
+        assert any("boilerplate" in err.lower() for err in errors), (
+            f"Expected boilerplate error, got: {errors}"
+        )
+
+    def test_rejects_when_files_likely_touched_not_in_diff(self, monkeypatch):
+        """Evidence gate rejects (best-effort) when Files Likely Touched not in diff."""
+        # Simulate git diff showing files NOT in Files Likely Touched
+        git_mock = self._make_git_mock(
+            [
+                "unrelated/other.py",
+            ]
+        )
+        monkeypatch.setattr(agent_controller.subprocess, "run", git_mock)
+
+        # Mock reads: work_plan has Files Likely Touched section, log has evidence
+
+        def mock_read(path):
+            name = str(path).replace("\\", "/")
+            if "execution_log.md" in name:
+                return self._LOG_WITH_EVIDENCE
+            if "work_plan.md" in name:
+                return self._PLAN_WITH_FILES
+            return ""
+
+        monkeypatch.setattr(agent_controller, "read_file", mock_read)
+        monkeypatch.setattr(
+            agent_controller,
+            "parse_files_likely_touched",
+            lambda x: {
+                "src/module.py",
+                "tests/test_module.py",
+            },
+        )
+
+        errors = agent_controller._check_implementation_evidence(self._PLAN_ID)
+        # Should produce Files Likely Touched mismatch error (best-effort)
+        assert any("Files Likely Touched" in err for err in errors), (
+            f"Expected Files Likely Touched error, got: {errors}"
+        )
+
+    def test_accepts_when_real_file_changed_and_log_has_evidence(self, monkeypatch):
+        """Evidence gate accepts when real file changed and log has evidence."""
+        # Simulate git diff showing a real implementation file
+        git_mock = self._make_git_mock(
+            [
+                "src/module.py",
+            ]
+        )
+        monkeypatch.setattr(agent_controller.subprocess, "run", git_mock)
+
+        # Mock reads: work_plan with files, log with evidence
+        def mock_read(path):
+            name = str(path).replace("\\", "/")
+            if "execution_log.md" in name:
+                return self._LOG_WITH_EVIDENCE
+            if "work_plan.md" in name:
+                return self._PLAN_WITH_FILES
+            return ""
+
+        monkeypatch.setattr(agent_controller, "read_file", mock_read)
+        monkeypatch.setattr(
+            agent_controller,
+            "parse_files_likely_touched",
+            lambda x: {
+                "src/module.py",
+                "tests/test_module.py",
+            },
+        )
+
+        errors = agent_controller._check_implementation_evidence(self._PLAN_ID)
+        # All checks should pass
+        assert errors == [], f"Expected no errors, got: {errors}"
+
+    def test_gate_is_unconditional(self, monkeypatch):
+        """Evidence gate is never bypassed: rejects even when no diff exists."""
+        monkeypatch.setattr(agent_controller, "_collect_git_diff_files", lambda: [])
+        monkeypatch.setattr(agent_controller, "read_file", lambda name: "")
+        errors = agent_controller._check_implementation_evidence(self._PLAN_ID)
+        assert errors, "Evidence gate must reject when there is no real implementation"

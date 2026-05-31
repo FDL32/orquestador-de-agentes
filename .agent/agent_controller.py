@@ -391,8 +391,18 @@ def parse_files_likely_touched(work_plan_content: str) -> set[str]:
 
 
 def get_changed_files() -> set[str] | None:
-    """Get all changed files: staged, unstaged, untracked. None if not git repo."""
-    if not (PROJECT_ROOT / ".git").exists():
+    """Get all changed files: staged, unstaged, untracked. None if not git repo.
+
+    In Model B the motor code lives in its own git repo (_MOTOR_ROOT) separate
+    from PROJECT_ROOT (workspace). Falls back to _MOTOR_ROOT when PROJECT_ROOT
+    has no .git so the scope gate works without the "not git-managed" warning.
+    """
+    git_root = (
+        PROJECT_ROOT
+        if (PROJECT_ROOT / ".git").exists()
+        else (_MOTOR_ROOT if (_MOTOR_ROOT / ".git").exists() else None)
+    )
+    if git_root is None:
         return None
     try:
         # Use -z for null-byte separated output to handle paths with spaces and renames safely
@@ -400,7 +410,7 @@ def get_changed_files() -> set[str] | None:
             ["git", "status", "--porcelain", "-z"],
             capture_output=True,
             text=True,
-            cwd=PROJECT_ROOT,
+            cwd=git_root,
         )
         changed = set()
         # Split by null byte, each entry is: "XY path" where XY is 2-char status
@@ -432,7 +442,7 @@ def get_changed_files() -> set[str] | None:
         # resolve to absolute paths
         resolved = set()
         for f in changed:
-            path = (PROJECT_ROOT / f).resolve()
+            path = (git_root / f).resolve()
             resolved.add(str(path))
         return resolved
     except FileNotFoundError:
@@ -1053,9 +1063,10 @@ def _auto_archive_closed_artifacts() -> None:
         # Import the archive script as a module
         import importlib.util
 
+        # Script lives in the motor, not in the workspace (Model B)
         archive_spec = importlib.util.spec_from_file_location(
             "archive_collaboration_artifacts",
-            PROJECT_ROOT / "scripts" / "archive_collaboration_artifacts.py",
+            _MOTOR_ROOT / "scripts" / "archive_collaboration_artifacts.py",
         )
         if archive_spec and archive_spec.loader:
             archive_mod = importlib.util.module_from_spec(archive_spec)
@@ -1293,6 +1304,160 @@ def _clear_auxiliary_states(ticket_id: str) -> None:
             with contextlib.suppress(OSError):
                 path.unlink()
                 print(f"[OK] Cleared auxiliary state: {name}")
+
+
+def _run_git_diff_cmd(args: list[str], cwd: Path | None = None) -> set[str]:
+    """Run a git diff/log command and return the set of file paths.
+
+    Args:
+        args: Command list starting with "git".
+        cwd: Directory to run git from. Defaults to PROJECT_ROOT.
+
+    Returns:
+        Set of normalized file paths (forward slashes). Empty on error.
+    """
+    try:
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            cwd=cwd or PROJECT_ROOT,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            return {
+                line.strip().replace("\\", "/")
+                for line in result.stdout.strip().split("\n")
+                if line.strip()
+            }
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    return set()
+
+
+# Motor root: directory containing this controller file (orquestador_de_agentes/)
+_MOTOR_ROOT: Path = Path(__file__).resolve().parent.parent
+
+
+def _collect_git_diff_files() -> set[str]:
+    """Collect files from git diff (unstaged + staged + last commit).
+
+    In Model B the motor code lives in its own git repo separate from PROJECT_ROOT.
+    We check both roots and merge results so the evidence gate works regardless
+    of which repo the changes landed in.
+
+    Returns:
+        Set of normalized file paths (forward slashes). Empty if git unavailable.
+        Never raises.
+    """
+    files: set[str] = set()
+    for root in {PROJECT_ROOT, _MOTOR_ROOT}:
+        files |= _run_git_diff_cmd(["git", "diff", "--name-only"], cwd=root)
+        files |= _run_git_diff_cmd(["git", "diff", "--cached", "--name-only"], cwd=root)
+
+    # If working tree is clean in both roots, check last commits
+    if not files:
+        for root in {PROJECT_ROOT, _MOTOR_ROOT}:
+            files |= _run_git_diff_cmd(
+                ["git", "log", "-1", "--name-only", "--format="], cwd=root
+            )
+
+    return files
+
+
+def _check_log_has_evidence() -> bool:
+    """Check execution_log.md for non-boilerplate evidence.
+
+    Before:
+        - EXEC_LOG must be accessible.
+
+    During:
+        - Reads execution_log.md and filters out boilerplate lines.
+
+    After:
+        - Returns True if non-boilerplate evidence exists.
+        - Returns False if log is empty, missing, or has only boilerplate.
+        - Never raises: read errors are caught and return False.
+    """
+    try:
+        log_content = read_file(EXEC_LOG)
+        if not log_content:
+            return False
+        lines = log_content.strip().split("\n")
+        evidence_lines = [
+            line.strip()
+            for line in lines
+            if line.strip()
+            and "Marked ready by Builder" not in line
+            and not line.strip().startswith("#")
+            and not line.strip().startswith("**")
+            and not line.strip().startswith("---")
+            and not line.strip().startswith("[")
+        ]
+        return bool(evidence_lines)
+    except Exception:
+        return False
+
+
+def _check_implementation_evidence(plan_id: str) -> list[str]:
+    """WP-2026-188 Phase 4: Check implementation evidence before --mark-ready.
+
+    Before:
+        - plan_id must be valid (non-empty string).
+        - WORK_PLAN and EXEC_LOG must be accessible.
+        - git must be available (best-effort if not).
+
+    During:
+        - Checks git diff (unstaged, staged, last commit) for files outside
+          .agent/collaboration/.
+        - Checks execution_log.md for non-boilerplate evidence.
+        - Best-effort: checks if Files Likely Touched appear in git changes.
+        - NOT bypassable via --force or --scope-override: the gate is unconditional.
+
+    After:
+        - Returns list of error strings (empty = all checks pass).
+        - Never raises: all exceptions are caught and reported as strings.
+    """
+    errors: list[str] = []
+
+    # 1. Check git diff for files outside .agent/collaboration/
+    try:
+        all_files = _collect_git_diff_files()
+        has_real = any(not f.startswith(".agent/collaboration/") for f in all_files)
+        if not has_real:
+            errors.append(
+                "No implementation evidence: git diff shows no files changed "
+                "outside .agent/collaboration/"
+            )
+    except Exception as exc:
+        errors.append(f"Git check error (non-blocking): {exc}")
+
+    # 2. Check execution_log.md for non-boilerplate evidence
+    has_evidence = _check_log_has_evidence()
+    if not has_evidence:
+        errors.append(
+            "No implementation evidence in execution_log.md (only boilerplate content)"
+        )
+
+    # 3. Best-effort: check Files Likely Touched
+    try:
+        plan_content = read_file(WORK_PLAN)
+        if plan_content:
+            likely_files = parse_files_likely_touched(plan_content)
+            if likely_files and all_files:
+                likely_basenames = {Path(f).name for f in likely_files}
+                matched = any(
+                    Path(f).name in likely_basenames or f in likely_files
+                    for f in all_files
+                )
+                if not matched:
+                    errors.append(
+                        "No Files Likely Touched match git changes (best-effort)"
+                    )
+    except Exception:  # noqa: S110 - best-effort check, silent on parse failure
+        pass
+
+    return errors
 
 
 def _validate_work_plan() -> list[str]:
@@ -2299,6 +2464,22 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
             f"  Failures: {breaker_status['failures']}, No-progress count: {breaker_status['no_progress_count']}"
         )
         print("  Resolve the underlying issue before marking ready.")
+        return 1
+
+    # WP-2026-188 Phase 4: Builder ready evidence gate (unconditional — not bypassable)
+    evidence_errors = _check_implementation_evidence(plan_id)
+    if evidence_errors:
+        for err in evidence_errors:
+            if json_output:
+                print(json.dumps({"error": err, "plan_id": plan_id}, indent=2))
+            else:
+                print(f"[ERROR] {err}")
+        print(
+            "[ERROR] --mark-ready blocked: no implementation evidence found for "
+            f"{plan_id}. Complete the implementation before marking ready.",
+            file=sys.stderr,
+            flush=True,
+        )
         return 1
 
     # WP-2026-167: Pre-handoff guard - verify tree hygiene and M3 checkpoint
