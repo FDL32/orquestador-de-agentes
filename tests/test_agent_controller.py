@@ -958,3 +958,121 @@ class TestDualPrefixParsing:
         wp_content = "# Work Plan\n- **ID:** WT-2026-100\n- **Estado:** APPROVED\n- **deliverable_type:** code\n"
         plan_id = agent_controller.get_plan_id(wp_content)
         assert plan_id == "WT-2026-100"
+
+
+# ======================================================================
+# WT-2026-188: Closeout commit validation and state cleanup tests
+# ======================================================================
+
+
+class TestCloseoutCommitValidation:
+    """WT-2026-188: Validate closeout commit message.
+
+    Tests the pure _validate_closeout_commit_message() helper.
+    """
+
+    _ACTIVE_ID = "WT-2026-188"
+
+    def test_manager_approve_rejects_generic_checkpoint_commit_message(self):
+        """Checkpoint with correct ID is rejected (generic pre-handoff)."""
+        valid, reason = agent_controller._validate_closeout_commit_message(
+            "chore(WT-2026-188): pre-handoff checkpoint", self._ACTIVE_ID
+        )
+        assert not valid
+        # The commit contains both "pre-handoff" and "checkpoint"; either may
+        # be reported first depending on iteration order
+        assert any(kw in reason.lower() for kw in ("checkpoint", "pre-handoff"))
+
+    def test_manager_approve_rejects_commit_message_with_wrong_ticket_id(self):
+        """Message referencing a valid but different ticket ID is rejected."""
+        valid, reason = agent_controller._validate_closeout_commit_message(
+            "feat(WT-2026-187): improve closeout validation", self._ACTIVE_ID
+        )
+        assert not valid, f"Expected invalid, got reason: {reason}"
+        # Must detect that WT-2026-187 != WT-2026-188
+        assert "WT-2026-187" in reason
+
+    def test_manager_approve_rejects_commit_message_without_ticket_id(self):
+        """Message without any ticket ID is rejected."""
+        valid, _reason = agent_controller._validate_closeout_commit_message(
+            "fix: minor cleanup", self._ACTIVE_ID
+        )
+        assert not valid
+
+    def test_manager_approve_accepts_commit_message_with_active_ticket_id(self):
+        """Message with correct ID and descriptive content is accepted."""
+        valid, reason = agent_controller._validate_closeout_commit_message(
+            "feat(WT-2026-188): validate canonical closeout commit hygiene",
+            self._ACTIVE_ID,
+        )
+        assert valid, f"Expected valid, got: {reason}"
+
+    def test_manager_approve_accepts_canonical_closeout_message_with_active_ticket_id(
+        self,
+    ):
+        """Canonical format 'TICKET-ID: msg' (no Conventional Commits) is accepted."""
+        valid, reason = agent_controller._validate_closeout_commit_message(
+            "WT-2026-188: canonical closeout", self._ACTIVE_ID
+        )
+        assert valid, f"Expected valid, got: {reason}"
+
+
+class TestManagerApproveStateCleanup:
+    """WT-2026-188: --manager-approve clears auxiliary state files."""
+
+    def test_manager_approve_clears_manager_bridge_state(self, tmp_path, monkeypatch):
+        """manager_bridge_state.json is removed after closeout."""
+        state_file = tmp_path / "manager_bridge_state.json"
+        state_file.write_text('{"last_processed_sequence": 42}', encoding="utf-8")
+        monkeypatch.setattr(agent_controller, "_MANAGER_BRIDGE_STATE_PATH", state_file)
+        monkeypatch.setattr(
+            agent_controller,
+            "_SUPERVISOR_STATE_PATH",
+            tmp_path / "supervisor_state.json",
+        )
+        assert state_file.exists()
+        agent_controller._clear_auxiliary_states("WT-2026-188")
+        assert not state_file.exists()
+
+    def test_manager_approve_clears_supervisor_state(self, tmp_path, monkeypatch):
+        """supervisor_state.json is removed after closeout."""
+        state_file = tmp_path / "supervisor_state.json"
+        state_file.write_text('{"active_ticket": "WT-2026-188"}', encoding="utf-8")
+        monkeypatch.setattr(agent_controller, "_SUPERVISOR_STATE_PATH", state_file)
+        monkeypatch.setattr(
+            agent_controller,
+            "_MANAGER_BRIDGE_STATE_PATH",
+            tmp_path / "manager_bridge_state.json",
+        )
+        assert state_file.exists()
+        agent_controller._clear_auxiliary_states("WT-2026-188")
+        assert not state_file.exists()
+
+    def test_clear_does_not_fail_on_missing(self, tmp_path, monkeypatch):
+        """Clearing non-existent state files is a no-op (no exception)."""
+        monkeypatch.setattr(
+            agent_controller,
+            "_MANAGER_BRIDGE_STATE_PATH",
+            tmp_path / "nonexistent_mgr.json",
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "_SUPERVISOR_STATE_PATH",
+            tmp_path / "nonexistent_sup.json",
+        )
+        # Should not raise even if files don't exist
+        agent_controller._clear_auxiliary_states("WT-2026-188")
+
+    def test_clear_removes_both_files(self, tmp_path, monkeypatch):
+        """Both auxiliary state files are removed by a single call."""
+        mgr = tmp_path / "manager_bridge_state.json"
+        sup = tmp_path / "supervisor_state.json"
+        mgr.write_text("{}", encoding="utf-8")
+        sup.write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(agent_controller, "_MANAGER_BRIDGE_STATE_PATH", mgr)
+        monkeypatch.setattr(agent_controller, "_SUPERVISOR_STATE_PATH", sup)
+
+        agent_controller._clear_auxiliary_states("WT-2026-188")
+
+        assert not mgr.exists()
+        assert not sup.exists()

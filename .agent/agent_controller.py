@@ -163,6 +163,14 @@ STATE_FILE = _LazyPath(lambda: get_collab_dir() / "STATE.md")
 ARCHIVE_DIR = _LazyPath(lambda: get_collab_dir() / "archive")
 AGENTS_CONFIG_PATH = _LazyPath(lambda: get_agent_dir() / "config" / "agents.json")
 
+# Auxiliary state files (cleared on ticket closeout)
+_MANAGER_BRIDGE_STATE_PATH = _LazyPath(
+    lambda: get_agent_dir() / "runtime" / "manager_bridge_state.json"
+)
+_SUPERVISOR_STATE_PATH = _LazyPath(
+    lambda: get_agent_dir() / "runtime" / "supervisor_state.json"
+)
+
 # Archive configuration
 MAX_NOTIFICATIONS_SIZE_KB = 50
 MAX_NOTIFICATION_ENTRIES = 20
@@ -1168,6 +1176,123 @@ def _check_deliverable_type(content: str) -> list[str]:
             f"Expected one of: {sorted(_VALID_DELIVERABLE_TYPES)}"
         ]
     return []
+
+
+# Keywords that indicate a generic/checkpoint commit (not a meaningful closeout)
+_CHECKPOINT_KEYWORDS = frozenset({"checkpoint", "pre-handoff", "wip", "interim"})
+
+
+def _validate_closeout_commit_message(msg: str, active_id: str) -> tuple[bool, str]:
+    """Validate that a commit message is appropriate for ticket closeout.
+
+    Before:
+        - msg is a git commit message string.
+        - active_id is the active ticket ID (e.g., WT-2026-188).
+
+    During:
+        - Checks for checkpoint keywords that indicate a generic commit.
+        - Extracts all ticket IDs (WT-XXXX / WP-XXXX) from the message.
+        - Validates that the active ticket ID is referenced.
+
+    After:
+        - Returns (True, "") if the message is valid for closeout.
+        - Returns (False, reason_string) if invalid.
+
+    Rules:
+        1. Generic checkpoint commits (containing 'checkpoint', 'pre-handoff',
+           'wip', 'interim') are rejected regardless of ticket ID.
+        2. Commits without any ticket ID are rejected.
+        3. Commits referencing a different ticket ID than active_id are rejected.
+        4. Commits with active_id and meaningful content are accepted.
+    """
+    if not msg or not active_id:
+        return False, "Empty message or ticket ID"
+
+    msg_lower = msg.lower()
+    # Check for checkpoint keywords first (generic commits are always rejected)
+    for keyword in _CHECKPOINT_KEYWORDS:
+        if keyword in msg_lower:
+            return (
+                False,
+                f"Commit appears to be a '{keyword}' commit, "
+                f"not a meaningful closeout message",
+            )
+
+    # Extract all ticket IDs from message (e.g., WT-2026-188 or WP-2026-100)
+    ticket_ids = re.findall(r"(?:WT|WP)-\d+(?:-\d+)*", msg)
+
+    if not ticket_ids:
+        return False, "Commit message does not reference any ticket ID"
+
+    if active_id not in ticket_ids:
+        found = ", ".join(ticket_ids)
+        return (
+            False,
+            f"Commit references [{found}] but active ticket is {active_id}",
+        )
+
+    return True, ""
+
+
+def _check_last_commit(project_root: Path, active_id: str) -> tuple[bool, str]:
+    """Get the last commit message and validate it for closeout.
+
+    Before:
+        - project_root must be a git repository with at least one commit.
+        - active_id is the active ticket ID.
+
+    During:
+        - Runs 'git log -1 --format=%s' to get the latest commit message.
+        - Delegates to _validate_closeout_commit_message() for validation.
+
+    After:
+        - Returns (True, "") if valid for closeout.
+        - Returns (False, reason_string) if invalid or git unavailable.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "log", "-1", "--format=%s"],
+            capture_output=True,
+            text=True,
+            cwd=project_root,
+        )
+        if result.returncode != 0:
+            return False, f"Failed to get last commit: {result.stderr.strip()}"
+
+        msg = result.stdout.strip()
+        if not msg:
+            return False, "No commit message found"
+
+        return _validate_closeout_commit_message(msg, active_id)
+    except FileNotFoundError:
+        return False, "Git not available"
+
+
+def _clear_auxiliary_states(ticket_id: str) -> None:
+    """Clear auxiliary state files after ticket closeout.
+
+    Before:
+        - manager_bridge_state.json and/or supervisor_state.json may exist
+          with stale cursors from the current or a previous ticket.
+
+    During:
+        - Unlinks each file if it exists. Does NOT touch other runtime state.
+        - Idempotent: safe to call even if files don't exist.
+
+    After:
+        - Both auxiliary state files are removed (if they existed).
+        - The next supervisor/bridge restart starts fresh.
+    """
+    import contextlib
+
+    for path, name in [
+        (_MANAGER_BRIDGE_STATE_PATH.resolve(), "manager_bridge_state.json"),
+        (_SUPERVISOR_STATE_PATH.resolve(), "supervisor_state.json"),
+    ]:
+        if path.exists():
+            with contextlib.suppress(OSError):
+                path.unlink()
+                print(f"[OK] Cleared auxiliary state: {name}")
 
 
 def _validate_work_plan() -> list[str]:
@@ -3129,12 +3254,33 @@ def _handle_manager_approve(  # noqa: C901 - flag handler intentionally branches
             )
         return 1
 
+    # WP-2026-188: Validate last commit message for closeout hygiene
+    # Block generic checkpoints, wrong/missing ticket IDs unless --force
+    if not force_mode:
+        commit_valid, commit_reason = _check_last_commit(
+            PROJECT_ROOT.resolve(), ticket_id
+        )
+        if not commit_valid:
+            warn_parts = [
+                f"[WARN] Last commit validation failed: {commit_reason}",
+                f"[WARN] The last commit should reference ticket {ticket_id}",
+                "[WARN] with a meaningful message (not a generic checkpoint).",
+                "[WARN] Use --force to approve anyway.",
+            ]
+            warn_msg = "\n".join(warn_parts)
+            print(warn_msg, file=sys.stderr, flush=True)
+            return 1
+
     # Emit canonical closeout cascade
     if BUS_AVAILABLE and event_bus:
         _emit_manager_approve_cascade(event_bus, ticket_id)
 
     # Sync markdowns to COMPLETED
     _sync_markdowns_to_completed(ticket_id)
+
+    # WP-2026-188: Clear auxiliary state files (bridge + supervisor cursors)
+    # so the next ticket cycle starts with a clean slate
+    _clear_auxiliary_states(ticket_id)
 
     # Reset circuit breaker on successful completion
     _reset_circuit_breaker(ticket_id)
