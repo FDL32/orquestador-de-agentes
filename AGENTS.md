@@ -75,20 +75,23 @@ Los archivos `MANIFEST.distribute` y `MANIFEST.workspace` en la raiz del reposit
 
 ## Comandos principales
 
+When running from a Model B destination workspace (where the motor lives externally),
+append `--project-root <destino>` to commands that operate on project state.
+
 - Instalacion inicial: `python scripts/install_agent_system.py --install`
 - Sincronizacion estricta: `python scripts/install_agent_system.py --sync`
 - Sincronizacion interactiva: `python scripts/install_agent_system.py --sync --prune`
 - Vista previa: `python scripts/install_agent_system.py --sync --dry-run`
-- Estado del sistema: `python .agent/agent_controller.py`
-- Auditoria local: `python scripts/local_audit.py`
-- Memoria consolidada: `python scripts/memory_consolidate.py [--apply|--dry-run]`
-- Migrar config: `python .agent/agents_config.py --migrate [--dry-run]`
+- Estado del sistema: `python .agent/agent_controller.py [--project-root <workspace>]`
+- Auditoria local: `python scripts/local_audit.py [--project-root <workspace>]`
+- Memoria consolidada: `python scripts/memory_consolidate.py [--apply|--dry-run] [--project-root <workspace>]`
+- Migrar config: `python .agent/agents_config.py --migrate [--dry-run] [--project-root <workspace>]`
 - Comparar con repo GitHub: skill `/repo-compare`
-- Interaccion por terminal: `python scripts/ticket_supervisor.py --reactive`
-- Tests: `python scripts/run_pytest_safe.py`
+- Interaccion por terminal: `python scripts/ticket_supervisor.py --reactive [--project-root <workspace>]`
+- Tests: `python scripts/run_pytest_safe.py [--project-root <workspace>]`
 - Calidad: `ruff check . && ruff format .`
 - Auditoria de dependencias: `uv run pip-audit .`
-- Archivar colaboracion: `python scripts/archive_collaboration_artifacts.py [--dry-run]`
+- Archivar colaboracion: `python scripts/archive_collaboration_artifacts.py [--dry-run] [--project-root <workspace>]`
 
 ## Convenciones
 

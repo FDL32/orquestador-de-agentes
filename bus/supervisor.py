@@ -1267,22 +1267,16 @@ class SequentialTicketSupervisor:
         log_path.write_text(content, encoding="utf-8")
 
     def _resolve_launcher_path(self) -> Path:
-        """Return launcher path, preferring motor root when Model B link is present."""
-        import json as _json
+        """Return launcher path, preferring motor root when Model B link is present.
 
-        motor_root = self.project_root
-        link = self.project_root / ".agent" / "config" / "motor_destination_link.json"
-        if link.exists():
-            try:
-                data = _json.loads(link.read_text(encoding="utf-8"))
-                candidate = Path(data.get("motor_root", ""))
-                if candidate.exists():
-                    motor_root = candidate
-            except Exception as exc:
-                print(
-                    f"[ticket-supervisor] motor_destination_link read error: {exc}",
-                    flush=True,
-                )
+        Delegates to motor_link.resolve_motor_root() for consolidated resolution.
+        """
+        try:
+            from runtime.motor_link import resolve_motor_root as _resolve_motor_root
+
+            motor_root = _resolve_motor_root(self.project_root) or self.project_root
+        except ImportError:
+            motor_root = self.project_root
         return motor_root / "scripts" / "launch_agent_terminals.ps1"
 
     def _relaunch_builder(self, ticket_id: str) -> bool:

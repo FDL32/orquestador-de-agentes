@@ -182,19 +182,37 @@ def run_ruff_format_check(project_root: Path) -> CheckResult:
 def run_agent_controller_validate(project_root: Path) -> CheckResult:
     """Ejecuta agent_controller --validate --json --force.
 
+    Resuelve el controller via motor_link (Model B). Si no hay motor link,
+    usa .agent/agent_controller.py local como fallback.
+
     Args:
         project_root: Raiz del proyecto donde ejecutar el controller.
 
     Returns:
         CheckResult con el estado de la validacion del controller.
     """
+    controller_path = None
+    try:
+        from runtime.motor_link import resolve_motor_controller
+
+        resolved = resolve_motor_controller(project_root)
+        if resolved:
+            controller_path = str(resolved)
+    except ImportError:
+        pass
+
+    if controller_path is None:
+        controller_path = ".agent/agent_controller.py"
+
     return run_subprocess_check(
         cmd=[
             sys.executable,
-            ".agent/agent_controller.py",
+            controller_path,
             "--validate",
             "--json",
             "--force",
+            "--project-root",
+            str(project_root),
         ],
         name="Agent Controller Validate",
         project_root=project_root,
