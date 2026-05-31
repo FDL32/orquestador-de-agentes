@@ -1,14 +1,14 @@
 {
   "version": "1.0",
-  "generated": "2026-05-30T01:08:20.742333+00:00",
+  "generated": "2026-05-30T20:26:56.082658+00:00",
   "project_root": "C:\\Users\\fdl\\Proyectos_Python\\z_scripts\\orquestador_de_agentes",
   "summary": {
-    "total_files": 5531,
-    "total_size_bytes": 55652676,
+    "total_files": 5535,
+    "total_size_bytes": 55745184,
     "categories": {
       "config": 513,
-      "python": 991,
-      "documentation": 1620,
+      "python": 994,
+      "documentation": 1621,
       "other": 2384,
       "scripts": 23
     }
@@ -203,7 +203,7 @@
       {
         "path": ".agent/collaboration/.session_state.json",
         "size": 134,
-        "sha256": "bf3d6273576a6cc49e8acacbee88b06d49b04f85033dca0f1257466dd549b80c"
+        "sha256": "a4e4bcf8e351ba04841b1fc7ac582b2fdfc5fcbb07d7f975709fe64bb699d85f"
       },
       {
         "path": ".agent/config/agents.json",
@@ -223,7 +223,7 @@
       {
         "path": ".agent/context/project-map.json",
         "size": 1761163,
-        "sha256": "ce3b4863eacd4a4fe462ba0a757f29ea92f9fc23b44bb264c10b24a12a8e3750"
+        "sha256": "942242dfb44463e090004ce112567cdd98bad2e8959be1977d13725123c91606"
       },
       {
         "path": ".agent/known_models.json",
@@ -262,8 +262,8 @@
       },
       {
         "path": ".agent/runtime/pytest-safe/last-run.json",
-        "size": 1054,
-        "sha256": "8e17fd96dc1e42d514469a9b5f747053e0c53c754368ec2a4ccb11239c19f3f7"
+        "size": 1179,
+        "sha256": "07f6cf0e640d5d8974a73c71446c5641c86e03871e31d1adbd57d82610ec1197"
       },
       {
         "path": ".agent_allowlist.json",
@@ -2584,8 +2584,8 @@
     "python": [
       {
         "path": ".agent/agent_controller.py",
-        "size": 141741,
-        "sha256": "2c15fc2ae53108a1d0233edeb2a381ef154d97d6a64d55143fb315ae99795d32"
+        "size": 146705,
+        "sha256": "4f81363446a5ce231f05136e5b1e1e324c30e94c772c505913708b166974ba3b"
       },
       {
         "path": ".agent/agents_config.py",
@@ -2824,8 +2824,8 @@
       },
       {
         "path": ".agent/hooks/pre_compact_hook.py",
-        "size": 10566,
-        "sha256": "9e9a1bba97bd8a542281fea0d7135276f0425ceed0db24ac82fa1b9a2591b324"
+        "size": 11111,
+        "sha256": "66506623571b6a0ed03cf59c2a9e9a1c6ebc22895acd052855114faa24070c6b"
       },
       {
         "path": ".agent/hooks/stop_hook.py",
@@ -2854,8 +2854,8 @@
       },
       {
         "path": "bus/__init__.py",
-        "size": 497,
-        "sha256": "a69f5d5052373e709dd8f1e0d4baaed640f248f85311f888ae1ef7f4e78b53f2"
+        "size": 796,
+        "sha256": "13254967175dd33ab4749c349a93cf7c941eaf11dd3759d905449450b94644a9"
       },
       {
         "path": "bus/approval.py",
@@ -2873,14 +2873,19 @@
         "sha256": "5bfee98cef389260493e2e4cd8a17f79572df93faf768c5f97ee04847d79aedf"
       },
       {
+        "path": "bus/memory_loader.py",
+        "size": 10748,
+        "sha256": "2f567e2bb9de4a191a963fda0d46574b58691bbd6ea8e596436e4d9707a2172a"
+      },
+      {
         "path": "bus/redact.py",
         "size": 1920,
         "sha256": "db3402750b6fb1764ddfaeb5fbe1b475139332560993251266328e31fd0ee9ca"
       },
       {
         "path": "bus/review_bridge.py",
-        "size": 92070,
-        "sha256": "fbffe46f90516d189ef7cae74e1a16150c193433d050e9253184510eb0749a91"
+        "size": 93564,
+        "sha256": "bb24b1005d1257abc86f895ba7b81139cf028155bcc6c1bd81d86ac7a6a58b65"
       },
       {
         "path": "bus/skill_resolver.py",
@@ -2894,8 +2899,8 @@
       },
       {
         "path": "bus/supervisor.py",
-        "size": 69463,
-        "sha256": "7b1a9dfd773a71c96016c910baecb529ca7f227bf5a92f02dc26dc7a5fe169b9"
+        "size": 71059,
+        "sha256": "fd8cf0e3cea7b5f8ecd18b467ab50cb063d5aa7dc21f9d6cf003713790f4ba0b"
       },
       {
         "path": "bus/time_utils.py",
@@ -2929,13 +2934,13 @@
       },
       {
         "path": "runtime/ui_state_projector.py",
-        "size": 5748,
-        "sha256": "8b1b783c949eded9a25f737970c472e20cecdb140d99c1c352e56b3b81ef9a4e"
+        "size": 5768,
+        "sha256": "7546c2f125ce5b414b9a25a26c9df6e30cb6c014910fed94cf3231bb34076bd0"
       },
       {
         "path": "scripts/archive_collaboration_artifacts.py",
-        "size": 6941,
-        "sha256": "7c199fae8fdb7604d7bafa9800952fa7607a6b36bacaf279c3698465449d58b1"
+        "size": 6992,
+        "sha256": "6f4e09ac9bc3fb2d80273fc68800be6f2265ff24a7d6e1b8ffef3ea5d17988c1"
       },
       {
         "path": "scripts/archive_event_bus.py",
@@ -2944,8 +2949,8 @@
       },
       {
         "path": "scripts/archive_execution_log.py",
-        "size": 3406,
-        "sha256": "bbe7c76399d6d52c5f0350cde3f0dfc3fc260bd317c314f859f7fed408bb6e24"
+        "size": 3413,
+        "sha256": "3b281a5be529f21fb8d77d94ebd776bd18c86b3d45742746e49b648675dfe3f6"
       },
       {
         "path": "scripts/build_llms.py",
@@ -3019,13 +3024,13 @@
       },
       {
         "path": "scripts/graph_context.py",
-        "size": 16317,
-        "sha256": "56fddfc6ee59954416440b8b4e6514e413f82a162c3effecd218baec3dccbbfd"
+        "size": 16372,
+        "sha256": "45f1b9fe67164e13ac8be3ad7f68b7e953ca4fdaa358bba286117faf9a8459d0"
       },
       {
         "path": "scripts/install_agent_system.py",
-        "size": 31422,
-        "sha256": "a62fa820eda87d468f2aabd5ae6c570330a0a9045171e04305e5a129bbfa91cb"
+        "size": 37220,
+        "sha256": "bf74a84ed72fec31855589d55db1e9c8d546d38a0ab69a53b36076907ad7a4b8"
       },
       {
         "path": "scripts/local_audit.py",
@@ -3039,8 +3044,8 @@
       },
       {
         "path": "scripts/memory_consolidate.py",
-        "size": 13302,
-        "sha256": "4eab2190f11a6705c83400b6e62ae54c9b9cf48d4a56cea5c81d1906c2d7afaf"
+        "size": 23126,
+        "sha256": "7d94f5dc9d30b3318015a2e80c40ee0e67a386813d63dc578b016f7846fef691"
       },
       {
         "path": "scripts/migrate_legacy_project.py",
@@ -3104,8 +3109,8 @@
       },
       {
         "path": "scripts/session_closeout.py",
-        "size": 35408,
-        "sha256": "8d5f8700b0636e9483d4cfdc1767e61cb3df94a96b002e8ade1ead1ecb07c517"
+        "size": 36756,
+        "sha256": "11122c4e8e7563b8e23bf19c96087f60967108a051039fb143a8e56333eb76c3"
       },
       {
         "path": "scripts/state_projection_probe.py",
@@ -3134,8 +3139,8 @@
       },
       {
         "path": "scripts/ticket_activity_monitor.py",
-        "size": 5491,
-        "sha256": "76c77dcb04ed8827af221d1a98e0f28207f45424d738dd3366ad40fa9c40e2dc"
+        "size": 5541,
+        "sha256": "27403bc44c7c14be759c1f11c262737cc43368cbe37f027f0c8ce2b347a4de44"
       },
       {
         "path": "scripts/ticket_supervisor.py",
@@ -3164,8 +3169,8 @@
       },
       {
         "path": "scripts/validate_authority.py",
-        "size": 3972,
-        "sha256": "2fefe63f1c0a337ae2e7d08c3c518bd947f92dc9573a71dcccc3e18bdebf1abe"
+        "size": 3996,
+        "sha256": "c20ae7c2db631e34738f65126b3ad4ef1c19f6b5166cb0bb349cd55e72b399c8"
       },
       {
         "path": "scripts/validate_observations.py",
@@ -3174,8 +3179,8 @@
       },
       {
         "path": "scripts/validate_ticket_prose.py",
-        "size": 24639,
-        "sha256": "e94a756b09898f35d703cd888f4d0adcff4bf8ddab34e3cbe6715cb80e1f6140"
+        "size": 24798,
+        "sha256": "947c703892ca8038737a29ab53dda27cf6de09081ea25942c4d81b6ea90a1982"
       },
       {
         "path": "skills/__init__.py",
@@ -3254,8 +3259,8 @@
       },
       {
         "path": "tests/integration/test_memory_integration.py",
-        "size": 6502,
-        "sha256": "145dab048d0470d514a0b8dfa6d736c53ff1ef7ec5a5f44ac4412f4fd42bcac0"
+        "size": 3799,
+        "sha256": "5b1a24357e5d22e85561b7c7b264e9ce27e5cf236fb6d3648b0338df8bccade8"
       },
       {
         "path": "tests/sandbox/check_events.py",
@@ -7019,8 +7024,8 @@
       },
       {
         "path": "tests/test_agent_controller.py",
-        "size": 34941,
-        "sha256": "31a1eabe6242d11769e4246fef5de547899f6d86ecad243de46bea8b9469b356"
+        "size": 37261,
+        "sha256": "3f3510b44e40750d19f6459d13b76527777791090f717b6d5e98758383510d0f"
       },
       {
         "path": "tests/test_agent_readme_references.py",
@@ -7124,8 +7129,8 @@
       },
       {
         "path": "tests/test_manager_review_bridge.py",
-        "size": 101995,
-        "sha256": "1f90cd6916b81e5a72e2dfed1fcca737dfde470ebc4380a2174e162bdf25fde5"
+        "size": 105259,
+        "sha256": "2a274443ee4ab53184b0c2fb2e69be9722917d771d15d7a965f55b9bac5771f7"
       },
       {
         "path": "tests/test_manifest_validator.py",
@@ -7224,8 +7229,8 @@
       },
       {
         "path": "tests/test_supervisor.py",
-        "size": 158268,
-        "sha256": "f6e0f9d1277996cd9cf4716c29a0de3ed93b8329c117a1393296582dfb8cbf0b"
+        "size": 165232,
+        "sha256": "203f5d4c536fd79590ce1096024c2ceed2322f97e3f6ad75c06e98d68fc62c3c"
       },
       {
         "path": "tests/test_ui_state.py",
@@ -7359,13 +7364,18 @@
       },
       {
         "path": "tests/unit/test_install_agent_system.py",
-        "size": 14427,
-        "sha256": "a12347c2ffda31495f8a16af6fa6e153254ab5fb3ebc585486b3e9e133d59e4f"
+        "size": 8917,
+        "sha256": "de18439bd6c61e0514019fbadd709ee337f8389f3aa1da1d3532c696a019e017"
       },
       {
         "path": "tests/unit/test_invariant_order.py",
         "size": 8295,
         "sha256": "8236d749aab83441ad53d7388d8232f1b43f4a34c12975ca690d4137642a80bb"
+      },
+      {
+        "path": "tests/unit/test_launch_session.py",
+        "size": 17345,
+        "sha256": "e32330f288c3a37285f87c46cee5d0d88a417a416250d78b518d333e94f31d46"
       },
       {
         "path": "tests/unit/test_launcher_bootstrap_error_paths.py",
@@ -7399,13 +7409,18 @@
       },
       {
         "path": "tests/unit/test_memory.py",
-        "size": 8118,
-        "sha256": "24986fc82e13c5448e1adde8107fcdd736550a83ca9a3533a152adf274b152f2"
+        "size": 14617,
+        "sha256": "f2727416d5f3d928a21441e5815216d4166ee24b310eca809df04cc702dc043a"
       },
       {
         "path": "tests/unit/test_memory_consolidate.py",
-        "size": 9096,
-        "sha256": "75595aa84aa9ff8f4e609c5bce440e735af0bed9759dfd23b7d50ae261798401"
+        "size": 15296,
+        "sha256": "e4f9c3c57f7d9eb864fd14ac5927bd1c01f44c93fff7d71232dde191aa17ecaa"
+      },
+      {
+        "path": "tests/unit/test_memory_loader_wing.py",
+        "size": 5338,
+        "sha256": "22b39cc4df3eae9bafc92956dd26413580ffd6b6c6fba25099f3d90a45c550f6"
       },
       {
         "path": "tests/unit/test_migrate_legacy_project.py",
@@ -7424,8 +7439,8 @@
       },
       {
         "path": "tests/unit/test_pre_compact_hook.py",
-        "size": 14698,
-        "sha256": "997a84fd82fd0bbbdfdbe3a365615c4b4bc6a3f89256394a289a7bb4b71aae37"
+        "size": 15897,
+        "sha256": "31303e5cc448ff3d04ed0159d3dd7a4157497a0ee627530c051e2405f182eef4"
       },
       {
         "path": "tests/unit/test_project_root_resolution.py",
@@ -7896,8 +7911,8 @@
       },
       {
         "path": ".agent/collaboration/execution_log.md",
-        "size": 578,
-        "sha256": "46d016c88fb51a05ddedbe5ae86344284ef0d3c71d12f06012c43c0feab0a85e"
+        "size": 1424,
+        "sha256": "5768dc3326aa00360b52ffc37fb63660fa54ac6955a511fbb703aec93645c738"
       },
       {
         "path": ".agent/collaboration/manager_feedback_WP-2026-155.md",
@@ -8200,14 +8215,19 @@
         "sha256": "f08524b0fcdb16fab43d9e36920244b8c9162ec92f51b98cdf7cc1aeb0d4b7ea"
       },
       {
+        "path": ".session/wp_inventory.md",
+        "size": 5519,
+        "sha256": "9a70762ebc0d187f5606c2cbae79fec9df03ae5fd5242984fe2a08ae5273c5a2"
+      },
+      {
         "path": "AGENT_SECURITY.md",
         "size": 1504,
         "sha256": "c06e7667187087f0b3900ee377e262550155652834e01319eafc99ae494e35bf"
       },
       {
         "path": "AGENTS.md",
-        "size": 18633,
-        "sha256": "35f192365ff94817917fdb0d27799b93dab679844f76ab01d6b2d539ab2b446b"
+        "size": 19871,
+        "sha256": "3fc9c4e212a331ff18fe847ce35ed14db8be3f42baea6734a03c528857766251"
       },
       {
         "path": "AUDIT_WP-2026-147.md",
@@ -8316,8 +8336,8 @@
       },
       {
         "path": "PROJECT.md",
-        "size": 1884,
-        "sha256": "8e23aee6c3a904a55a2ccf8fe7ab32dd101ed1735669ed799d1c8088ef330db7"
+        "size": 2809,
+        "sha256": "8e4d68f39173c8ed8c34153e00ed8e15bf4d4f4844d96d24124d8a01d79936bb"
       },
       {
         "path": "prompts/refactor_bootstrap.md",
@@ -8326,8 +8346,8 @@
       },
       {
         "path": "prompts/session_bootstrap.md",
-        "size": 6576,
-        "sha256": "48e893ccb0174cf9b1746db53fc76407868f0d11c24c09c8029f4d896507014a"
+        "size": 6805,
+        "sha256": "19bf2a11e3a73f8523c48a2a0b544c3c5a69f224c9eae62c50da52edd43a447b"
       },
       {
         "path": "QUICKSTART.md",
@@ -8375,9 +8395,9 @@
         "sha256": "7e6b54dd654ff2c7f8d0a415fd422798a1a355c0e384554d18b67bf39bc010ee"
       },
       {
-        "path": "skills/bui-implement-from-plan/SKILL.md",
-        "size": 5960,
-        "sha256": "d556b02a8a659c1038370d93a02fc9a2990ff7eb37dd95fb44ed47c27531b98e"
+        "path": "skills/bui-implement-from-plan/skill.md",
+        "size": 6425,
+        "sha256": "1a0255d6101903447f694f85c5316fdbac9532fb1eef449c321bcee214e1869d"
       },
       {
         "path": "skills/bui-run-quality-gates/references/common-fixes.md",
@@ -8566,8 +8586,8 @@
       },
       {
         "path": "skills/repo-compare/PROMPT_TEMPLATE.md",
-        "size": 8340,
-        "sha256": "90c6e5a03bc842f6c5cb9ca9f3f3509b35305e1b9eb49d42761223d2918540db"
+        "size": 8919,
+        "sha256": "7cd60d2d08b657abf8e0889f97c822848c90754e7529af40b705214646d1552e"
       },
       {
         "path": "skills/repo-compare/references/filter-criteria.md",
@@ -8581,8 +8601,8 @@
       },
       {
         "path": "skills/repo-compare/SKILL.md",
-        "size": 5467,
-        "sha256": "6665c685bd37b7db067f9e3ea4436298254f3e0a2073fe9e72b6b0f96aa39534"
+        "size": 6462,
+        "sha256": "61cf3b5027f5d66a9a4145b1f8ddd8dea890e0a54500e36c22518b4be2418c2b"
       },
       {
         "path": "skills/scaffold-python-project/references/gitignore-template.md",
@@ -27570,8 +27590,8 @@
       },
       {
         "path": "scripts/launch_agent_terminals.ps1",
-        "size": 56894,
-        "sha256": "0aea4e1f256aa5143bd496e82c59b0380e2661477d34328927eee2359f8fe31d"
+        "size": 60583,
+        "sha256": "9fd798b198b83df88114ddee60dc27e9314b5d77047352e7192a6a96f897a24f"
       },
       {
         "path": "scripts/test_manager_smoke.ps1",
@@ -27850,6 +27870,16 @@
             "package": "contextlib"
           },
           {
+            "name": "contextlib",
+            "type": "stdlib",
+            "package": "contextlib"
+          },
+          {
+            "name": "sqlite3",
+            "type": "stdlib",
+            "package": "sqlite3"
+          },
+          {
             "name": "uuid",
             "type": "stdlib",
             "package": "uuid"
@@ -27938,6 +27968,11 @@
             "name": "json",
             "type": "stdlib",
             "package": "json"
+          },
+          {
+            "name": "runtime.project_root.clear_cache",
+            "type": "local",
+            "path": "runtime/project_root.py"
           }
         ],
         "error": null
@@ -30068,6 +30103,11 @@
             "name": "typing.Any",
             "type": "stdlib",
             "package": "typing"
+          },
+          {
+            "name": "bus.memory_loader.get_compact_context",
+            "type": "local",
+            "path": "bus/memory_loader.py"
           }
         ],
         "error": null
@@ -30228,6 +30268,31 @@
             "name": "event_bus.EventRecord",
             "type": "external",
             "package": "event_bus"
+          },
+          {
+            "name": "memory_loader.get_bootstrap_context",
+            "type": "external",
+            "package": "memory_loader"
+          },
+          {
+            "name": "memory_loader.get_compact_context",
+            "type": "external",
+            "package": "memory_loader"
+          },
+          {
+            "name": "memory_loader.get_memory_tier_status",
+            "type": "external",
+            "package": "memory_loader"
+          },
+          {
+            "name": "memory_loader.get_review_context",
+            "type": "external",
+            "package": "memory_loader"
+          },
+          {
+            "name": "memory_loader.recall_observations",
+            "type": "external",
+            "package": "memory_loader"
           },
           {
             "name": "review_bridge.ReviewBridge",
@@ -30442,6 +30507,41 @@
         ],
         "error": null
       },
+      "bus/memory_loader.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "re",
+            "type": "stdlib",
+            "package": "re"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "typing.Any",
+            "type": "stdlib",
+            "package": "typing"
+          },
+          {
+            "name": "runtime.project_root.get_agent_dir",
+            "type": "local",
+            "path": "runtime/project_root.py"
+          }
+        ],
+        "error": null
+      },
       "bus/redact.py": {
         "imports": [
           {
@@ -30543,6 +30643,11 @@
             "name": "event_bus.EventBus",
             "type": "external",
             "package": "event_bus"
+          },
+          {
+            "name": "memory_loader.get_review_context",
+            "type": "external",
+            "package": "memory_loader"
           },
           {
             "name": "skill_resolver.SkillResolver",
@@ -30748,6 +30853,11 @@
             "name": "state_machine.TicketState",
             "type": "external",
             "package": "state_machine"
+          },
+          {
+            "name": "contextlib",
+            "type": "stdlib",
+            "package": "contextlib"
           },
           {
             "name": "hashlib",
@@ -31621,7 +31731,7 @@
           },
           {
             "name": "tomllib",
-            "type": "external",
+            "type": "stdlib",
             "package": "tomllib"
           },
           {
@@ -31693,6 +31803,11 @@
             "name": "json",
             "type": "stdlib",
             "package": "json"
+          },
+          {
+            "name": "re",
+            "type": "stdlib",
+            "package": "re"
           },
           {
             "name": "shutil",
@@ -31996,7 +32111,7 @@
           },
           {
             "name": "tomllib",
-            "type": "external",
+            "type": "stdlib",
             "package": "tomllib"
           },
           {
@@ -33560,19 +33675,14 @@
       "tests/integration/test_memory_integration.py": {
         "imports": [
           {
-            "name": "pathlib",
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "pathlib.Path",
             "type": "stdlib",
             "package": "pathlib"
-          },
-          {
-            "name": "subprocess",
-            "type": "stdlib",
-            "package": "subprocess"
-          },
-          {
-            "name": "sys",
-            "type": "stdlib",
-            "package": "sys"
           },
           {
             "name": "unittest.mock.patch",
@@ -33580,24 +33690,14 @@
             "package": "unittest"
           },
           {
-            "name": "memory_helpers.append_observation",
-            "type": "external",
-            "package": "memory_helpers"
+            "name": "bus.memory_loader",
+            "type": "local",
+            "path": "bus/memory_loader.py"
           },
           {
-            "name": "memory_helpers.create_memory_index",
-            "type": "external",
-            "package": "memory_helpers"
-          },
-          {
-            "name": "memory_helpers.read_observations",
-            "type": "external",
-            "package": "memory_helpers"
-          },
-          {
-            "name": "shutil",
-            "type": "stdlib",
-            "package": "shutil"
+            "name": "scripts.memory_consolidate",
+            "type": "local",
+            "path": "scripts/memory_consolidate.py"
           }
         ],
         "error": null
@@ -35985,6 +36085,16 @@
             "name": "bus.review_bridge.ReviewBridge",
             "type": "local",
             "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "re",
+            "type": "stdlib",
+            "package": "re"
+          },
+          {
+            "name": "re",
+            "type": "stdlib",
+            "package": "re"
           }
         ],
         "error": null
@@ -38967,57 +39077,27 @@
       "tests/unit/test_install_agent_system.py": {
         "imports": [
           {
-            "name": "json",
+            "name": "__future__.annotations",
             "type": "stdlib",
-            "package": "json"
+            "package": "__future__"
           },
           {
-            "name": "subprocess",
+            "name": "textwrap",
             "type": "stdlib",
-            "package": "subprocess"
+            "package": "textwrap"
           },
           {
-            "name": "pathlib.Path",
-            "type": "stdlib",
-            "package": "pathlib"
-          },
-          {
-            "name": "scripts.install_agent_system._detect_host_setup",
+            "name": "scripts.install_agent_system.merge_memory_rules",
             "type": "local",
             "path": "scripts/install_agent_system.py"
           },
           {
-            "name": "scripts.install_agent_system._maybe_invoke_host_setup",
+            "name": "scripts.install_agent_system.parse_wing_sections",
             "type": "local",
             "path": "scripts/install_agent_system.py"
           },
           {
-            "name": "scripts.install_agent_system.copy_tree",
-            "type": "local",
-            "path": "scripts/install_agent_system.py"
-          },
-          {
-            "name": "scripts.install_agent_system.detect_destination_residues",
-            "type": "local",
-            "path": "scripts/install_agent_system.py"
-          },
-          {
-            "name": "scripts.install_agent_system.ensure_hooks_config_integrity",
-            "type": "local",
-            "path": "scripts/install_agent_system.py"
-          },
-          {
-            "name": "scripts.install_agent_system.flip_profile_in_destination",
-            "type": "local",
-            "path": "scripts/install_agent_system.py"
-          },
-          {
-            "name": "scripts.install_agent_system.write_motor_destination_link",
-            "type": "local",
-            "path": "scripts/install_agent_system.py"
-          },
-          {
-            "name": "scripts.install_agent_system.MANIFEST_WORKSPACE_VERSION",
+            "name": "scripts.install_agent_system.sync_memory_rules",
             "type": "local",
             "path": "scripts/install_agent_system.py"
           }
@@ -39085,6 +39165,56 @@
             "name": "agent_controller._check_builder_exit_order",
             "type": "external",
             "package": "agent_controller"
+          }
+        ],
+        "error": null
+      },
+      "tests/unit/test_launch_session.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
+          },
+          {
+            "name": "tempfile",
+            "type": "stdlib",
+            "package": "tempfile"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "typing.Any",
+            "type": "stdlib",
+            "package": "typing"
+          },
+          {
+            "name": "typing.ClassVar",
+            "type": "stdlib",
+            "package": "typing"
+          },
+          {
+            "name": "pytest",
+            "type": "external",
+            "package": "pytest"
+          },
+          {
+            "name": "sys",
+            "type": "stdlib",
+            "package": "sys"
+          },
+          {
+            "name": "scripts.session_closeout",
+            "type": "local",
+            "path": "scripts/session_closeout.py"
           }
         ],
         "error": null
@@ -39367,9 +39497,14 @@
       "tests/unit/test_memory.py": {
         "imports": [
           {
-            "name": "pathlib",
+            "name": "__future__.annotations",
             "type": "stdlib",
-            "package": "pathlib"
+            "package": "__future__"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
           },
           {
             "name": "sys",
@@ -39377,34 +39512,44 @@
             "package": "sys"
           },
           {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
             "name": "unittest.mock.patch",
             "type": "stdlib",
             "package": "unittest"
           },
           {
-            "name": "memory_helpers.append_observation",
-            "type": "external",
-            "package": "memory_helpers"
+            "name": "bus.memory_loader._try_read_file",
+            "type": "local",
+            "path": "bus/memory_loader.py"
           },
           {
-            "name": "memory_helpers.read_observations",
-            "type": "external",
-            "package": "memory_helpers"
+            "name": "bus.memory_loader.get_bootstrap_context",
+            "type": "local",
+            "path": "bus/memory_loader.py"
           },
           {
-            "name": "memory_helpers.validate_observation",
-            "type": "external",
-            "package": "memory_helpers"
+            "name": "bus.memory_loader.get_compact_context",
+            "type": "local",
+            "path": "bus/memory_loader.py"
           },
           {
-            "name": "memory_helpers.create_memory_index",
-            "type": "external",
-            "package": "memory_helpers"
+            "name": "bus.memory_loader.get_memory_tier_status",
+            "type": "local",
+            "path": "bus/memory_loader.py"
           },
           {
-            "name": "memory_helpers.create_memory_index",
-            "type": "external",
-            "package": "memory_helpers"
+            "name": "bus.memory_loader.get_review_context",
+            "type": "local",
+            "path": "bus/memory_loader.py"
+          },
+          {
+            "name": "bus.memory_loader.recall_observations",
+            "type": "local",
+            "path": "bus/memory_loader.py"
           }
         ],
         "error": null
@@ -39452,6 +39597,16 @@
             "path": "scripts/memory_consolidate.py"
           },
           {
+            "name": "scripts.memory_consolidate.generate_memory_profile_md",
+            "type": "local",
+            "path": "scripts/memory_consolidate.py"
+          },
+          {
+            "name": "scripts.memory_consolidate.generate_memory_rules_md",
+            "type": "local",
+            "path": "scripts/memory_consolidate.py"
+          },
+          {
             "name": "scripts.memory_consolidate.is_noise",
             "type": "local",
             "path": "scripts/memory_consolidate.py"
@@ -39490,6 +39645,51 @@
             "name": "scripts.memory_consolidate",
             "type": "local",
             "path": "scripts/memory_consolidate.py"
+          }
+        ],
+        "error": null
+      },
+      "tests/unit/test_memory_loader_wing.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "textwrap",
+            "type": "stdlib",
+            "package": "textwrap"
+          },
+          {
+            "name": "pathlib.Path",
+            "type": "stdlib",
+            "package": "pathlib"
+          },
+          {
+            "name": "bus.memory_loader",
+            "type": "local",
+            "path": "bus/memory_loader.py"
+          },
+          {
+            "name": "bus.memory_loader",
+            "type": "local",
+            "path": "bus/memory_loader.py"
+          },
+          {
+            "name": "bus.memory_loader",
+            "type": "local",
+            "path": "bus/memory_loader.py"
+          },
+          {
+            "name": "bus.memory_loader",
+            "type": "local",
+            "path": "bus/memory_loader.py"
+          },
+          {
+            "name": "bus.memory_loader",
+            "type": "local",
+            "path": "bus/memory_loader.py"
           }
         ],
         "error": null
@@ -40719,9 +40919,9 @@
     "javascript": {},
     "frameworks": [],
     "tools": [
+      "ruff",
       "pytest",
       "uv",
-      "ruff",
       "mypy"
     ]
   },
