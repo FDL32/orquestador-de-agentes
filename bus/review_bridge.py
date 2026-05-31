@@ -2167,6 +2167,16 @@ class ReviewBridge:
                 parse_method=parse_method,
             )
 
+        # WT-2026-189: Capture review_decision_seq immediately after emitting REVIEW_DECISION
+        review_decision_seq = max(
+            (
+                event.sequence_number
+                for event in self.event_bus.read_events(ticket_id=ticket_id)
+                if event.event_type == "REVIEW_DECISION"
+            ),
+            default=0,
+        )
+
         if decision == ReviewDecision.APPROVE:
             supervisor.transition_ticket(
                 ticket_id=ticket_id,
@@ -2224,12 +2234,26 @@ class ReviewBridge:
                 consecutive_changes_count < max_attempts
                 and supervisor._is_supervisor_lock_stale()
             ):
-                print(
-                    "[review_bridge] Supervisor daemon absent after --request-changes; "
-                    "relaunching Builder directly.",
-                    flush=True,
-                )
-                supervisor.requeue_ticket(ticket_id)
+                # WT-2026-189: Guard anti double relaunch — skip requeue_ticket if
+                # Supervisor already emitted BUILDER_RELAUNCH_ATTEMPTED after this
+                # REVIEW_DECISION.
+                if any(
+                    event.sequence_number > review_decision_seq
+                    for event in self.event_bus.read_events(ticket_id=ticket_id)
+                    if event.event_type == "BUILDER_RELAUNCH_ATTEMPTED"
+                ):
+                    print(
+                        "[review_bridge] BUILDER_RELAUNCH_ATTEMPTED already exists after "
+                        "REVIEW_DECISION; skipping requeue_ticket to avoid double relaunch.",
+                        flush=True,
+                    )
+                else:
+                    print(
+                        "[review_bridge] Supervisor daemon absent after --request-changes; "
+                        "relaunching Builder directly.",
+                        flush=True,
+                    )
+                    supervisor.requeue_ticket(ticket_id)
             if consecutive_changes_count >= max_attempts:
                 report_path = self._generate_human_review_report(
                     ticket_id=ticket_id,
