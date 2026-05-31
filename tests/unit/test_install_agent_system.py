@@ -15,6 +15,8 @@ from pathlib import Path
 
 from scripts.install_agent_system import (
     copy_project_template,
+    copy_tree,
+    detect_destination_residues,
     merge_memory_rules,
     parse_wing_sections,
     sync_memory_rules,
@@ -366,3 +368,179 @@ def test_copy_project_template_missing_template(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "WARN" in out
     assert "PROJECT_TEMPLATE.md not found" in out
+
+
+# ---------------------------------------------------------------------------
+# INSTALLER_MANAGED_PATHS / detect_destination_residues
+# ---------------------------------------------------------------------------
+
+
+def _create_minimal_agent_dir(base: Path) -> Path:
+    """Helper: create a minimal .agent/ directory with one canonical file."""
+    agent = base / ".agent"
+    config = agent / "config"
+    config.mkdir(parents=True)
+    (config / "hooks_config.json").write_text(
+        '{"version": "1", "enabled": true}', encoding="utf-8"
+    )
+    return agent
+
+
+def test_sync_twice_preserves_glossary(tmp_path):
+    """glossary.md (installer-managed) must survive detect_destination_residues."""
+    source_agent = _create_minimal_agent_dir(tmp_path / "source")
+    dest_agent = _create_minimal_agent_dir(tmp_path / "dest")
+    # Add glossary.md only in dest (simulating first install)
+    (dest_agent / "glossary.md").write_text("# Glossary\n", encoding="utf-8")
+
+    residues = detect_destination_residues(source_agent, dest_agent)
+    residue_names = {r.as_posix() for r in residues}
+    assert "glossary.md" not in residue_names, (
+        f"glossary.md should be filtered by INSTALLER_MANAGED_PATHS, "
+        f"got residues: {residue_names}"
+    )
+
+
+def test_sync_twice_preserves_microagents(tmp_path):
+    """microagents/ directory (installer-managed) must survive detect_destination_residues."""
+    source_agent = _create_minimal_agent_dir(tmp_path / "source")
+    dest_agent = _create_minimal_agent_dir(tmp_path / "dest")
+    # Add microagents/ only in dest (simulating first install)
+    micro = dest_agent / "microagents"
+    micro.mkdir(parents=True)
+    (micro / "onboarding.md").write_text("# Onboarding\n", encoding="utf-8")
+
+    residues = detect_destination_residues(source_agent, dest_agent)
+    residue_names = {r.as_posix() for r in residues}
+    assert "microagents" not in residue_names, (
+        f"microagents should be filtered by INSTALLER_MANAGED_PATHS, "
+        f"got residues: {residue_names}"
+    )
+    assert "microagents/onboarding.md" not in residue_names, (
+        f"microagents/onboarding.md should be filtered, got residues: {residue_names}"
+    )
+
+
+def test_sync_preserves_user_modified_glossary(tmp_path):
+    """Existing glossary with user modifications must not be touched by detect_destination_residues."""
+    source_agent = _create_minimal_agent_dir(tmp_path / "source")
+    dest_agent = _create_minimal_agent_dir(tmp_path / "dest")
+    # Simulate user-modified glossary
+    user_content = "# My Custom Glossary\nModified by user\n"
+    (dest_agent / "glossary.md").write_text(user_content, encoding="utf-8")
+
+    residues = detect_destination_residues(source_agent, dest_agent)
+    assert "glossary.md" not in {r.as_posix() for r in residues}
+    # The actual file content must not be changed by a sync
+    assert (dest_agent / "glossary.md").read_text(encoding="utf-8") == user_content, (
+        "User-modified glossary content must be preserved"
+    )
+
+
+def test_sync_prunes_real_unknown_residue(tmp_path):
+    """A genuinely unknown file in dest (not installer-managed) IS detected as residue."""
+    source_agent = _create_minimal_agent_dir(tmp_path / "source")
+    dest_agent = _create_minimal_agent_dir(tmp_path / "dest")
+    # Add a genuinely unknown cache file to dest
+    (dest_agent / "some_random_cache.tmp").write_text("garbage", encoding="utf-8")
+
+    residues = detect_destination_residues(source_agent, dest_agent)
+    residue_names = {r.as_posix() for r in residues}
+    assert "some_random_cache.tmp" in residue_names, (
+        f"Unknown residue should be detected, got residues: {residue_names}"
+    )
+
+
+def test_sync_dry_run_reports_without_deleting(tmp_path):
+    """Dry-run mode reports residues but does not delete them."""
+    source_agent = _create_minimal_agent_dir(tmp_path / "source")
+    dest_agent = _create_minimal_agent_dir(tmp_path / "dest")
+    # Add a residue
+    (dest_agent / "unknown.tmp").write_text("data", encoding="utf-8")
+
+    from scripts.install_agent_system import prune_residues
+
+    residues = detect_destination_residues(source_agent, dest_agent)
+    assert "unknown.tmp" in {r.as_posix() for r in residues}
+
+    # Dry-run: should report but NOT delete
+    pruned = prune_residues(dest_agent, residues, dry_run=True, interactive=False)
+    # The pruning report should include the file
+    pruned_names = {r.as_posix() for r in pruned}
+    assert "unknown.tmp" in pruned_names
+    # But the file must still exist
+    assert (dest_agent / "unknown.tmp").exists(), "Dry-run must not delete files"
+
+
+# ---------------------------------------------------------------------------
+# copy_tree — recursive allowlist
+# ---------------------------------------------------------------------------
+
+
+def test_copy_tree_does_not_copy_unallowlisted_child(tmp_path):
+    """A child file not in the allowlist must NOT be copied even inside an allowed dir."""
+    source = tmp_path / "source"
+    config_dir = source / "config"
+    config_dir.mkdir(parents=True)
+    (config_dir / "allowed.json").write_text("{}", encoding="utf-8")
+    (config_dir / "secret.json").write_text("{}", encoding="utf-8")
+
+    dest = tmp_path / "dest"
+    dest.mkdir()
+
+    allowlist = {".agent/config/allowed.json"}
+    copied = copy_tree(source, dest, allowlist=allowlist)
+
+    copied_names = {r.as_posix() for r in copied}
+    # allowed.json should be copied
+    assert "config/allowed.json" in copied_names, (
+        f"allowed.json should be copied, got: {copied_names}"
+    )
+    # secret.json must NOT be copied (not in allowlist)
+    assert "config/secret.json" not in copied_names, (
+        f"secret.json should NOT be copied, got: {copied_names}"
+    )
+    assert not (dest / "config" / "secret.json").exists(), (
+        "secret.json must not exist in destination"
+    )
+    # allowed.json should exist in dest
+    assert (dest / "config" / "allowed.json").exists()
+
+
+def test_copy_tree_copies_allowlisted_file(tmp_path):
+    """An explicitly allowlisted file at root level IS copied."""
+    source = tmp_path / "source"
+    (source / "config").mkdir(parents=True)
+    (source / "config" / "hooks_config.json").write_text(
+        '{"version": "1"}', encoding="utf-8"
+    )
+
+    dest = tmp_path / "dest"
+    dest.mkdir()
+
+    allowlist = {".agent/config/hooks_config.json"}
+    copied = copy_tree(source, dest, allowlist=allowlist)
+
+    copied_names = {r.as_posix() for r in copied}
+    assert "config/hooks_config.json" in copied_names
+    assert (dest / "config" / "hooks_config.json").exists()
+
+
+def test_copy_tree_copies_allowlisted_nested_child(tmp_path):
+    """An allowlisted file nested inside subdirectories IS copied."""
+    source = tmp_path / "source"
+    deep = source / "a" / "b" / "c"
+    deep.mkdir(parents=True)
+    (deep / "deep_file.json").write_text("{}", encoding="utf-8")
+
+    dest = tmp_path / "dest"
+    dest.mkdir()
+
+    allowlist = {".agent/a/b/c/deep_file.json"}
+    copied = copy_tree(source, dest, allowlist=allowlist)
+
+    copied_names = {r.as_posix() for r in copied}
+    assert "a/b/c/deep_file.json" in copied_names, (
+        f"Nested allowlisted file should be copied, got: {copied_names}"
+    )
+    assert (dest / "a" / "b" / "c" / "deep_file.json").exists()
