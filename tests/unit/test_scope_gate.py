@@ -13,6 +13,8 @@ _AGENT_DIR = _PROJECT_ROOT / ".agent"
 if str(_AGENT_DIR) not in sys.path:
     sys.path.insert(0, str(_AGENT_DIR))
 
+_MOTOR_ROOT = _PROJECT_ROOT.resolve()
+
 from agent_controller import (  # noqa: E402
     _exclude_files,
     _handle_mark_ready,
@@ -37,13 +39,13 @@ class TestParseFilesLikelyTouched:
 - "file4.json"
 
 ## Next Section
-"""
+        """
         files = parse_files_likely_touched(content)
         expected = {
-            str((Path.cwd() / "file1.py").resolve()),
-            str((Path.cwd() / "file2.md").resolve()),
-            str((Path.cwd() / "file3.txt").resolve()),
-            str((Path.cwd() / "file4.json").resolve()),
+            str((_MOTOR_ROOT / "file1.py").resolve()),
+            str((_MOTOR_ROOT / "file2.md").resolve()),
+            str((_MOTOR_ROOT / "file3.txt").resolve()),
+            str((_MOTOR_ROOT / "file4.json").resolve()),
         }
         assert files == expected
 
@@ -75,10 +77,10 @@ class TestParseFilesLikelyTouched:
 file5.py
 
 ## Next
-"""
+        """
         files = parse_files_likely_touched(content)
         expected = {
-            str((Path.cwd() / f"file{i}.{ext}").resolve())
+            str((_MOTOR_ROOT / f"file{i}.{ext}").resolve())
             for i, ext in [(1, "py"), (2, "md"), (3, "txt"), (4, "json"), (5, "py")]
         }
         assert files == expected
@@ -169,7 +171,7 @@ class TestCheckScopeGate:
     def test_check_scope_gate_in_scope(self):
         """Test files within scope."""
         content = "## Files Likely Touched\n- file.py"
-        changed = {str(Path.cwd() / "file.py")}
+        changed = {str((_MOTOR_ROOT / "file.py").resolve())}
         result = check_scope_gate(content, changed, set())
         assert result["valid"] is True
         assert result["out_of_scope"] == set()
@@ -179,7 +181,7 @@ class TestCheckScopeGate:
         content = "## Files Likely Touched\n- file.py"
         result = check_scope_gate(content, set(), set())
         assert result["valid"] is False
-        assert str(Path.cwd() / "file.py") in result["missing_from_diff"]
+        assert str((_MOTOR_ROOT / "file.py").resolve()) in result["missing_from_diff"]
         assert "None of the declared Files Likely Touched entries" in str(
             result["blocked_reason"]
         )
@@ -191,10 +193,10 @@ class TestCheckScopeGate:
 - file.py
 - other.py
 """
-        changed = {str(Path.cwd() / "file.py")}
+        changed = {str((_MOTOR_ROOT / "file.py").resolve())}
         result = check_scope_gate(content, changed, set())
         assert result["valid"] is True
-        assert str(Path.cwd() / "other.py") in result["missing_from_diff"]
+        assert str((_MOTOR_ROOT / "other.py").resolve()) in result["missing_from_diff"]
         assert any(
             "Partial scope coverage" in warning for warning in result["warnings"]
         )
@@ -202,16 +204,22 @@ class TestCheckScopeGate:
     def test_check_scope_gate_out_of_scope(self):
         """Test files out of scope."""
         content = "## Files Likely Touched\n- allowed.py"
-        changed = {str(Path.cwd() / "allowed.py"), str(Path.cwd() / "forbidden.py")}
+        changed = {
+            str((_MOTOR_ROOT / "allowed.py").resolve()),
+            str((_MOTOR_ROOT / "forbidden.py").resolve()),
+        }
         result = check_scope_gate(content, changed, set())
         assert result["valid"] is False
-        assert str(Path.cwd() / "forbidden.py") in result["out_of_scope"]
+        assert str((_MOTOR_ROOT / "forbidden.py").resolve()) in result["out_of_scope"]
 
     def test_check_scope_gate_exclude_files(self):
         """Test excluded files are ignored."""
         content = "## Files Likely Touched\n- allowed.py"
-        changed = {str(Path.cwd() / "allowed.py"), str(Path.cwd() / "excluded.py")}
-        exclude = {str(Path.cwd() / "excluded.py")}
+        changed = {
+            str((_MOTOR_ROOT / "allowed.py").resolve()),
+            str((_MOTOR_ROOT / "excluded.py").resolve()),
+        }
+        exclude = {str((_MOTOR_ROOT / "excluded.py").resolve())}
         result = check_scope_gate(content, changed, exclude)
         assert result["valid"] is True
         assert result["out_of_scope"] == set()

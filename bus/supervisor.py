@@ -839,8 +839,26 @@ class SequentialTicketSupervisor:
         ):
             return
 
-        if self._current_state(ticket_id) != TicketState.IN_PROGRESS:
+        # WT-2026-197: allow requeue when state is READY_FOR_REVIEW but CHANGES was never
+        # acknowledged by Builder (crash during BUILDER_RELAUNCH_ATTEMPTED). The condition
+        # requeue_trigger_seq > state.last_processed_sequence acts as a proxy for
+        # "Builder has not responded to the CHANGES yet" without requiring an explicit
+        # BUILDER_EXIT scan — if Builder had exited normally the watermark would have advanced.
+        current_ticket_state = self._current_state(ticket_id)
+        state_ok = current_ticket_state == TicketState.IN_PROGRESS or (
+            current_ticket_state == TicketState.READY_FOR_REVIEW
+            and requeue_trigger_seq > 0
+            and requeue_trigger_seq > state.last_processed_sequence
+        )
+        if not state_ok:
             return
+        if current_ticket_state == TicketState.READY_FOR_REVIEW:
+            print(
+                f"[supervisor] bootstrap: spurious READY_FOR_REVIEW detected for {ticket_id} "
+                f"after CHANGES at seq={requeue_trigger_seq} — crash during relaunch suspected. "
+                "Forcing Builder requeue.",
+                flush=True,
+            )
 
         # If Builder lock is fresh, either Builder is truly alive (no action needed)
         # or the lock is stale without a BUILDER_EXIT event (mtime fallback <15 min).
