@@ -1030,7 +1030,7 @@ function Fill-TemplateVariables {
         [Parameter(Mandatory)] [string]$TemplateContent,
         [Parameter(Mandatory)] [string]$TicketId,
         [Parameter(Mandatory)] [string]$WorkPlan,
-        [Parameter(Mandatory)] [string]$CloseCommand,
+        [string]$CloseCommand = "",
         [Parameter(Mandatory)] [string]$Role,
         [Parameter(Mandatory)] [string]$Backend
     )
@@ -1196,8 +1196,7 @@ if ($useExternalController) {
     $closeMarkReady  = "python .agent/agent_controller.py --mark-ready --json --force"
     $controllerPath  = Join-Path $script:_MotorCodeRoot '.agent\agent_controller.py'
 }
-# $closeCommand kept for template injection (non-OpenCode backends read it via Fill-TemplateVariables)
-$closeCommand = "$closePreHandoff; $closeMarkReady"
+
 
 # Bootstrap bus event for active ticket to prevent bridge UNKNOWN state
 $venvPython = Resolve-VenvPython -Root $script:_MotorCodeRoot
@@ -1366,7 +1365,7 @@ if ($LaunchBuilder) {
                 if ([string]::IsNullOrWhiteSpace($BuilderPrompt)) {
                     $templateName = "builder_$builderBackend"
                     $templateContent = Get-TemplateContent -ProjectRoot $ProjectRoot -TemplateName $templateName
-                    $filledPrompt = Fill-TemplateVariables -TemplateContent $templateContent -TicketId $ticketId -WorkPlan $workPlanContent -CloseCommand $closeCommand -Role $role -Backend $builderBackend
+                    $filledPrompt = Fill-TemplateVariables -TemplateContent $templateContent -TicketId $ticketId -WorkPlan $workPlanContent -Role $role -Backend $builderBackend
                     $builderPromptLiteral = ConvertTo-SingleQuotedLiteral $filledPrompt
                     $builderProcess = Start-AgentWindow -Title $windowTitle -Command (Add-BuilderCloseout "& $builderExeLiteral run --auto $builderPromptLiteral" $closePreHandoff $closeMarkReady)
                 }

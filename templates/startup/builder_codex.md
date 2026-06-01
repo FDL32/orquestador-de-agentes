@@ -4,4 +4,3 @@ Completion contract:
 - When the implementation is done, write one short final completion message only once.
 - Do not repeat the final answer, do not loop, and do not reprint boxed summaries.
 - If a tool fails, report the failure once, stop, and do not keep generating completion text.
-- After the single final message, run {{close_command}} and end immediately.
