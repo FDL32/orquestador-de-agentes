@@ -90,8 +90,13 @@ class TestCanProveClose:
         ]
         assert _can_prove_close("WP-2026-155", events) is True
 
-    def test_state_changed_to_human_gate(self) -> None:
-        """STATE_CHANGED to HUMAN_GATE proves close."""
+    def test_state_changed_to_human_gate_does_not_prove_close(self) -> None:
+        """STATE_CHANGED to HUMAN_GATE does NOT prove close.
+
+        HUMAN_GATE is an escalation state, not final closure.
+        Archiving manager_feedback_* on HUMAN_GATE would violate the contract:
+        feedback must be preserved when close cannot be proven.
+        """
         events = [
             _make_event(
                 "STATE_CHANGED",
@@ -99,7 +104,7 @@ class TestCanProveClose:
                 {"from_state": "READY_TO_CLOSE", "to_state": "HUMAN_GATE"},
             ),
         ]
-        assert _can_prove_close("WP-2026-155", events) is True
+        assert _can_prove_close("WP-2026-155", events) is False
 
     def test_state_changed_to_ready_to_close(self) -> None:
         """STATE_CHANGED to READY_TO_CLOSE (manager-approve) proves close."""

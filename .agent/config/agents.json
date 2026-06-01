@@ -1,6 +1,9 @@
 {
   "schema_version": "1.2",
-  "_migrations": ["1.0_to_1.1", "1.1_to_1.2"],
+  "_migrations": [
+    "1.0_to_1.1",
+    "1.1_to_1.2"
+  ],
   "active_profile": "engine-dev",
   "strictness_profile": "standard",
   "profiles": {
@@ -32,7 +35,10 @@
   "backends": {
     "kilo": {
       "executable": "kilo.exe",
-      "args": ["run", "--auto"],
+      "args": [
+        "run",
+        "--auto"
+      ],
       "discovery": {
         "method": "vscode_extension",
         "extension_glob": "kilocode.kilo-code-*",
@@ -42,7 +48,9 @@
     },
     "codex": {
       "executable": "codex.cmd",
-      "args": ["exec"],
+      "args": [
+        "exec"
+      ],
       "discovery": {
         "method": "path_only",
         "extension_glob": "openai.chatgpt-*",
@@ -52,14 +60,18 @@
     },
     "opencode": {
       "executable": "opencode",
-      "args": ["run"],
+      "args": [
+        "run"
+      ],
       "discovery": {
         "method": "path_only"
       }
     },
     "claude": {
       "executable": "claude",
-      "args": ["-p"],
+      "args": [
+        "-p"
+      ],
       "discovery": {
         "method": "path_only"
       }
@@ -83,7 +95,7 @@
   },
   "manager_review": {
     "timeout_seconds": 180,
-    "max_attempts": 999,
+    "max_attempts": 8,
     "retry_backoff_multiplier": 2.0,
     "human_gate_timeout_seconds": 86400
   },
