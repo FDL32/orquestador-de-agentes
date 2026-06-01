@@ -695,6 +695,27 @@ class SequentialTicketSupervisor:
         numeric_suffix = int(suffix) if suffix.isdigit() else -1
         return (year, numeric_suffix, suffix)
 
+    def _is_approved_zombie_ready_to_close(self, ticket_id: str) -> bool:
+        """Return True if ticket is a zombie: READY_TO_CLOSE but approved and never closed.
+
+        Before: ticket_id is in READY_TO_CLOSE state per bus.
+        During: Checks for REVIEW_DECISION(approve) and absence of SUPERVISOR_CLOSED.
+                A ticket that has been approved but whose Supervisor died before emitting
+                SUPERVISOR_CLOSED is stuck in READY_TO_CLOSE indefinitely.
+        After: Returns True only for the zombie pattern; False for legitimate
+               READY_TO_CLOSE tickets still awaiting approval.
+
+        WT-2026-194: prevents zombie from blocking reconcile_state() on restart.
+        """
+        events = self.event_bus.read_events(ticket_id=ticket_id)
+        has_approve = any(
+            e.event_type == "REVIEW_DECISION"
+            and str((e.payload or {}).get("decision", "")).lower() == "approve"
+            for e in events
+        )
+        has_closed = any(e.event_type == "SUPERVISOR_CLOSED" for e in events)
+        return has_approve and not has_closed
+
     def _bus_active_non_terminal_ticket(self) -> str | None:
         """Find the active non-terminal ticket from the event bus.
 
@@ -702,6 +723,7 @@ class SequentialTicketSupervisor:
         During: Scans all tickets in the bus, derives their current state, and
                 returns the highest-authority ticket in a non-terminal state
                 (READY_FOR_REVIEW, READY_TO_CLOSE, IN_PROGRESS, BLOCKED, HUMAN_GATE).
+                Excludes READY_TO_CLOSE tickets that are approved zombies (WT-2026-194).
         After: Returns the bus-authoritative active ticket or None if no active ticket.
         """
         all_events = self.event_bus.read_events()
@@ -715,7 +737,13 @@ class SequentialTicketSupervisor:
                 seen_tickets[tid] = StateMachine.derive_state_from_events(ticket_events)
 
         active_tickets = [
-            tid for tid, tstate in seen_tickets.items() if tstate in NON_TERMINAL_STATES
+            tid
+            for tid, tstate in seen_tickets.items()
+            if tstate in NON_TERMINAL_STATES
+            and not (
+                tstate == TicketState.READY_TO_CLOSE
+                and self._is_approved_zombie_ready_to_close(tid)
+            )
         ]
         if not active_tickets:
             return None
@@ -1006,7 +1034,24 @@ class SequentialTicketSupervisor:
         state = self.load_state()
 
         # BUS-FIRST: Check if there's an active non-terminal ticket in the bus
+        # (zombie READY_TO_CLOSE tickets are already excluded by _bus_active_non_terminal_ticket)
         bus_active = self._bus_active_non_terminal_ticket()
+
+        # Defense-in-depth (WT-2026-194): if bus_active is still a READY_TO_CLOSE zombie
+        # that slipped through, and work_plan.md has a newer ticket, prefer work_plan.
+        if bus_active:
+            wp_ticket = self._work_plan_active_ticket()
+            if (
+                wp_ticket
+                and wp_ticket != bus_active
+                and self._ticket_sort_key(wp_ticket) > self._ticket_sort_key(bus_active)
+            ):
+                print(
+                    f"[supervisor] zombie guard: {bus_active} superseded by {wp_ticket} in work_plan; ignoring bus zombie",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                bus_active = None
 
         # Fallback chain: bus (non-terminal) -> TURN.md -> work_plan.md -> state
         if bus_active:

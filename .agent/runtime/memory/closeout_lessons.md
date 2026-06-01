@@ -27,4 +27,7 @@ y puede bloquear el cierre o producir un falso APPROVE sobre estado inconsistent
 `review_queue.md` es escrita por `manager_review_bridge.py` en cada review.
 Editarla manualmente durante el cierre rompe la trazabilidad del ciclo y puede
 causar que el bridge duplique o pierda entradas en la siguiente review.
-**Regla:** no tocar `review_queue.md` durante cierres manuales; dejarla como historial del ciclo completo.
+**Regla:** no editar `review_queue.md` manualmente. Esta permitida la rotacion
+automatica offline gestionada por el motor en `session_closeout.py` durante
+`--session-close`, que preserva cabecera, ticket activo y 10 entradas recientes.
+El podado manual queda terminantemente prohibido (ver WT-2026-190).
