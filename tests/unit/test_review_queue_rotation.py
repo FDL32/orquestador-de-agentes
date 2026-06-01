@@ -140,9 +140,7 @@ class TestIsLockAlive:
     def test_lock_with_recent_mtime_fallback(self, tmp_path: Path) -> None:
         """When lock has no started_at but recent mtime, returns True."""
         lock_path = tmp_path / "lock.txt"
-        lock_path.write_text(
-            json.dumps({"ticket_id": "WT-2026-190"}), encoding="utf-8"
-        )
+        lock_path.write_text(json.dumps({"ticket_id": "WT-2026-190"}), encoding="utf-8")
         # File was just created; mtime should be within TTL
         assert _is_lock_alive(lock_path) is True
 
