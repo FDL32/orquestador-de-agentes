@@ -15,6 +15,11 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 
+from .blocker_signature import (
+    blocker_lines_from_signature,
+    compute_blocker_overlap,
+    extract_signatures_from_feedback,
+)
 from .event_bus import EventBus
 from .memory_loader import get_review_context
 from .skill_resolver import SkillResolver, create_resolver
@@ -879,6 +884,189 @@ class ReviewBridge:
             lines.append(f"- [{date}] {signal} ({source_ticket})")
         return "\n".join(lines)
 
+    def _adaptive_state_path(self) -> Path:
+        """Return path to the manager bridge state (shared with bridge heartbeat)."""
+        return self.project_root / ".agent" / "runtime" / "manager_bridge_state.json"
+
+    def _load_adaptive_state(self, ticket_id: str) -> dict:
+        """Load adaptive review state for a given ticket.
+
+        Before: Requires a valid ticket_id.
+        During: Reads manager_bridge_state.json, extracts adaptive_review[ticket_id].
+        After: Returns a dict with keys matching the canonical schema, or empty dict.
+        """
+        path = self._adaptive_state_path()
+        if not path.exists():
+            return {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            adaptive = data.get("adaptive_review", {})
+            return adaptive.get(ticket_id, {})
+        except (json.JSONDecodeError, ValueError, TypeError, OSError):
+            return {}
+
+    def _save_adaptive_state(self, ticket_id: str, state_update: dict) -> None:
+        """Save/merge adaptive review state for a ticket.
+
+        Before: Requires ticket_id and state_update dict.
+        During: Reads existing file, merges adaptive_review[ticket_id] with update,
+                writes back atomically (overwrite).
+        After: manager_bridge_state.json contains updated adaptive_review section.
+
+        Schema (WT-2026-196):
+            adaptive_review: {
+                "<ticket_id>": {
+                    "last_review_sequence": int,
+                    "last_git_head": str | null,
+                    "blocker_signatures": [str, ...],
+                    "repeated_blockers": [str, ...],
+                    "diagnostic_mode": bool,
+                    "changed_files_since_previous_review": [str, ...] | {"status": "unknown", ...}
+                }
+            }
+        """
+        path = self._adaptive_state_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        except (json.JSONDecodeError, ValueError, TypeError):
+            data = {}
+        if "adaptive_review" not in data:
+            data["adaptive_review"] = {}
+        existing = data["adaptive_review"].get(ticket_id, {})
+        existing.update(state_update)
+        data["adaptive_review"][ticket_id] = existing
+        path.write_text(
+            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+
+    def _get_current_git_head(self) -> str | None:
+        """Return current git HEAD SHA, or None if git is unavailable."""
+        try:
+            git_bin = shutil.which("git") or "git"
+            result = subprocess.run(
+                [git_bin, "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                cwd=self.project_root,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+        except Exception:  # noqa: S110
+            pass
+        return None
+
+    def _compute_changed_files(self, last_git_head: str | None) -> list[str] | dict:  # noqa: C901
+        """Compute files changed since the given git HEAD.
+
+        Before: Requires last_git_head (SHA string) or None.
+        During: Runs ``git diff --name-only <last>..HEAD`` plus unstaged diff and
+                untracked status. Deduplicates and sorts alphabetically.
+        After: Returns sorted list of relative paths with forward-slash separators,
+                or ``{"status": "unknown", "reason": "<reason>"}`` if git is unavailable.
+
+        Formato exacto (WT-2026-196 contrato):
+            - Si Git disponible: lista JSON de rutas relativas, normalizadas con /,
+              sin duplicados, ordenadas alfabeticamente.
+            - Si Git no disponible: ``{"status": "unknown", "reason": "<motivo>"}``.
+        """
+        if last_git_head is None:
+            git_head_current = self._get_current_git_head()
+            if git_head_current is None:
+                return {
+                    "status": "unknown",
+                    "reason": "git is unavailable or not a repository",
+                }
+            return []  # First review in this ticket, no previous HEAD
+
+        try:
+            git_bin = shutil.which("git") or "git"
+            files: set[str] = set()
+
+            # Committed changes since last_git_head
+            result = subprocess.run(
+                [git_bin, "diff", "--name-only", f"{last_git_head}..HEAD"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                cwd=self.project_root,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                for line in result.stdout.strip().splitlines():
+                    fname = line.strip()
+                    if fname:
+                        files.add(fname.replace("\\", "/"))
+
+            # Unstaged changes (working tree)
+            result = subprocess.run(
+                [git_bin, "diff", "--name-only"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                cwd=self.project_root,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                for line in result.stdout.strip().splitlines():
+                    fname = line.strip()
+                    if fname:
+                        files.add(fname.replace("\\", "/"))
+
+            # Untracked files
+            result = subprocess.run(
+                [git_bin, "status", "--porcelain", "-z"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                cwd=self.project_root,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                entries = result.stdout.split("\0")
+                for entry in entries:
+                    if entry and entry.startswith("?? "):
+                        fname = entry[3:].strip()
+                        if fname:
+                            files.add(fname.replace("\\", "/"))
+
+            if not files:
+                return []
+            return sorted(files)
+        except Exception as exc:
+            return {"status": "unknown", "reason": f"git error: {exc}"}
+
+    def _compute_repeated_blockers(
+        self,
+        previous_signatures: list[str],
+        current_feedback: str,
+    ) -> tuple[list[str], bool]:
+        """Compute repeated blockers and whether diagnostic mode should activate.
+
+        Before: Requires previous_signatures list and current feedback text.
+        During: Parses current feedback for blockers, computes signatures, finds
+                intersection between previous and current signatures.
+        After: Returns (repeated_signatures_list, should_activate_diagnostic).
+
+        Diagnostic mode activates when:
+        - A blocker signature reappears in consecutive reviews (REPEATED_BLOCKER).
+        - The overlap ratio (by signature) exceeds 50%.
+        """
+        current_sigs = extract_signatures_from_feedback(current_feedback)
+        if not previous_signatures or not current_sigs:
+            return [], False
+
+        prev_set = set(previous_signatures)
+        repeated = list(prev_set & current_sigs)
+        if not repeated:
+            return [], False
+
+        overlap = compute_blocker_overlap(prev_set, current_sigs)
+        should_diagnose = bool(repeated) or (overlap > 0.5)
+        return repeated, should_diagnose
+
     def _rubric_for_type(self, dtype: str, ticket_id: str) -> str:
         scaffolding_precheck = (
             "AP-07 Scaffolding misclassified as code precheck: if the majority of Files Likely Touched are "
@@ -953,7 +1141,12 @@ class ReviewBridge:
                 f"Check acceptance criteria and Files Likely Touched."
             )
 
-    def _build_review_prompt(self, ticket_id: str, dtype: str) -> str:
+    def _build_review_prompt(  # noqa: C901
+        self,
+        ticket_id: str,
+        dtype: str,
+        adaptive_context: dict | None = None,
+    ) -> str:
         # P1-2: work_plan, STATE, TURN (intocables)
         sections = [
             (name, self.state_ingest._read_canonical(name))
@@ -1061,6 +1254,72 @@ class ReviewBridge:
             "- archive_collaboration_artifacts.py\n"
             "- .session_state.json\n"
         )
+
+        # WT-2026-196: Inject DIAGNOSTIC_MODE section when repeated blockers detected
+        if adaptive_context and adaptive_context.get("diagnostic_mode"):
+            repeated_blockers = adaptive_context.get("repeated_blockers", [])
+            changed_files = adaptive_context.get(
+                "changed_files_since_previous_review", []
+            )
+            last_feedback = adaptive_context.get("last_feedback", "")
+            diag_parts = [
+                "\n--- DIAGNOSTIC MODE ---\n"
+                "The following BLOCKERS have been REPEATED since the previous review:\n"
+            ]
+            if repeated_blockers:
+                diag_parts.extend(
+                    f"REPEATED BLOCKER: {line}"
+                    for sig in repeated_blockers
+                    for line in blocker_lines_from_signature(sig)
+                )
+            else:
+                diag_parts.append(
+                    "REPEATED BLOCKER: (overlap detected, see BLOCKERS section)"
+                )
+            diag_parts.append("")
+            if isinstance(changed_files, list):
+                if changed_files:
+                    diag_parts.append(
+                        "Changed files since previous review: "
+                        + ", ".join(changed_files)
+                    )
+                else:
+                    diag_parts.append(
+                        "Changed files since previous review: (none detected)"
+                    )
+            else:
+                status = (
+                    changed_files.get("status", "unknown")
+                    if isinstance(changed_files, dict)
+                    else "unknown"
+                )
+                reason = (
+                    changed_files.get("reason", "")
+                    if isinstance(changed_files, dict)
+                    else ""
+                )
+                diag_parts.append(
+                    f"Changed files since previous review: status={status}"
+                    + (f" ({reason})" if reason else "")
+                )
+            diag_parts.append("")
+            diag_parts.append(
+                "REQUIRED ACTIONS (diagnostic mode):\n"
+                "1. Re-read the exact affected code in the files listed under BLOCKERS.\n"
+                "2. Check whether the Builder modified the affected files since the previous review "
+                "(use the 'Changed files' list above).\n"
+                "3. If the affected file WAS touched, explain why the bug persists despite the change.\n"
+                "4. If the affected file was NOT touched, note that the Builder did not attempt the fix.\n"
+                "5. Propose a concrete solution: specify the exact function, condition, or logic change needed.\n"
+                "6. Propose a minimal test that would catch this specific blocker.\n"
+                "7. Include a textual patch-plan if the change is small and safe.\n"
+            )
+            if last_feedback:
+                diag_parts.append(
+                    f"\nLast review feedback for reference:\n{last_feedback[:2000]}"
+                )
+            parts.append("\n".join(diag_parts))
+
         parts.append(
             "\n--- INSTRUCTIONS ---\n"
             "This review is advisory. It informs but does not replace the human operator's judgment.\n\n"
@@ -1454,7 +1713,7 @@ class ReviewBridge:
 
         return len(missing) == 0, missing
 
-    def _generate_human_review_report(
+    def _generate_human_review_report(  # noqa: C901
         self,
         ticket_id: str,
         review_attempts: list[dict],
@@ -1523,7 +1782,64 @@ class ReviewBridge:
                 f"duration={payload.get('duration_seconds', 'N/A')}s"
             )
 
+        # WT-2026-196: Include repeated blocker summary from adaptive state
+        repeated_blockers_report = ""
+        changed_files_report = ""
+        last_proposal = ""
+        adaptive_state = self._load_adaptive_state(ticket_id)
+        if adaptive_state:
+            repeated_sigs = adaptive_state.get("repeated_blockers", [])
+            if repeated_sigs:
+                repeated_lines = [
+                    "## Repeated BLOCKERS",
+                    "",
+                    "The following BLOCKERS reappeared in consecutive reviews:",
+                ]
+                repeated_lines.extend(
+                    f"- {line}"
+                    for sig in repeated_sigs
+                    for line in blocker_lines_from_signature(sig)
+                )
+                repeated_blockers_report = "\n".join(repeated_lines) + "\n\n"
+
+            chg = adaptive_state.get("changed_files_since_previous_review", [])
+            if isinstance(chg, list):
+                if chg:
+                    changed_files_report = (
+                        "## Files touched since previous review\n\n"
+                        + "\n".join(f"- {f}" for f in chg)
+                        + "\n\n"
+                    )
+                else:
+                    changed_files_report = (
+                        "## Files touched since previous review\n\n"
+                        "(none detected — Builder may not have modified the affected files)\n\n"
+                    )
+            elif isinstance(chg, dict):
+                changed_files_report = (
+                    "## File change tracking\n\n"
+                    f"Status: {chg.get('status', 'unknown')}\n"
+                    f"Reason: {chg.get('reason', 'N/A')}\n\n"
+                )
+
+            last_feedback = adaptive_state.get("last_feedback", "")
+            if last_feedback:
+                last_proposal = (
+                    f"## Last Manager proposal\n\n{last_feedback[:2000]}\n\n"
+                )
+
         # Fill template
+        notes_lines = [
+            "This report was auto-generated when the review budget was exhausted. Human review required.",
+            "",
+        ]
+        if repeated_blockers_report:
+            notes_lines.insert(0, repeated_blockers_report)
+        if changed_files_report:
+            notes_lines.insert(0, changed_files_report)
+        if last_proposal:
+            notes_lines.insert(0, last_proposal)
+
         report_content = (
             template.replace("{{ticket_id}}", ticket_id)
             .replace("{{generated_at}}", datetime.now(timezone.utc).isoformat())
@@ -1532,7 +1848,12 @@ class ReviewBridge:
             .replace("{{last_decision}}", last_decision.value.upper())
             .replace(
                 "{{escalation_reason}}",
-                f"Reached {len(review_attempts)} consecutive CHANGES decisions (threshold: 5)",
+                f"Reached {len(review_attempts)} consecutive CHANGES decisions (threshold: 5)"
+                + (
+                    f". Repeated blockers detected: {len(adaptive_state.get('repeated_blockers', []))}"
+                    if adaptive_state.get("repeated_blockers")
+                    else ""
+                ),
             )
             .replace(
                 "{{blockers}}",
@@ -1542,7 +1863,8 @@ class ReviewBridge:
             )
             .replace(
                 "{{notes}}",
-                "This report was auto-generated when the review budget was exhausted. Human review required.",
+                "\n".join(notes_lines).strip()
+                or "This report was auto-generated when the review budget was exhausted. Human review required.",
             )
         )
 
@@ -1891,7 +2213,26 @@ class ReviewBridge:
         multiplier = cfg["retry_backoff_multiplier"]
 
         dtype = self.state_ingest._read_deliverable_type()
-        prompt = self._build_review_prompt(ticket_id, dtype)
+
+        # WT-2026-196: Load adaptive review state from previous cycle
+        adaptive_state = self._load_adaptive_state(ticket_id)
+        previous_signatures = adaptive_state.get("blocker_signatures", [])
+        diagnostic_mode = bool(previous_signatures)
+        adaptive_context: dict | None = None
+        if previous_signatures:
+            current_git_head = self._get_current_git_head()
+            changed_files = self._compute_changed_files(
+                adaptive_state.get("last_git_head")
+            )
+            adaptive_context = {
+                "diagnostic_mode": diagnostic_mode,
+                "repeated_blockers": [],
+                "changed_files_since_previous_review": changed_files,
+                "last_feedback": adaptive_state.get("last_feedback", ""),
+            }
+        prompt = self._build_review_prompt(
+            ticket_id, dtype, adaptive_context=adaptive_context
+        )
 
         # Dispatch based on backend assigned to MANAGER role
         backend = self._get_manager_backend()
@@ -2264,6 +2605,7 @@ class ReviewBridge:
                     f"[manager-review-bridge] HUMAN_GATE: report at {report_path}",
                     file=sys.stderr,
                 )
+
         elif decision == ReviewDecision.INSPECT:
             # WP-2026-124: inspect now triggers the canonical materialization route
             # via CLI, same as changes. This ensures STATE_CHANGED is emitted.
@@ -2305,6 +2647,39 @@ class ReviewBridge:
         ):
             print(
                 f"[manager-review-bridge] WARNING: INSPECT fallback due to stderr: {final_stderr.strip()}",
+                file=sys.stderr,
+            )
+
+        # WT-2026-196: Save adaptive review state for all decisions
+        # so the next cycle can detect repeated blockers.
+        try:
+            current_blocker_sigs = sorted(
+                extract_signatures_from_feedback(final_stdout)
+            )
+            current_git_head = self._get_current_git_head()
+            prev_sigs = (
+                adaptive_state.get("blocker_signatures", []) if adaptive_state else []
+            )
+            repeated, should_diag = self._compute_repeated_blockers(
+                prev_sigs, final_stdout
+            )
+            changed_files = self._compute_changed_files(
+                adaptive_state.get("last_git_head") if adaptive_state else None
+            )
+            normalized = self._normalize_feedback(final_stdout, decision)
+            adaptive_update: dict = {
+                "last_review_sequence": review_decision_seq,
+                "last_git_head": current_git_head,
+                "blocker_signatures": current_blocker_sigs,
+                "repeated_blockers": repeated,
+                "diagnostic_mode": should_diag,
+                "changed_files_since_previous_review": changed_files,
+                "last_feedback": normalized,
+            }
+            self._save_adaptive_state(ticket_id, adaptive_update)
+        except Exception as exc:
+            print(
+                f"[manager-review-bridge] WARNING: Failed to save adaptive state: {exc}",
                 file=sys.stderr,
             )
 
