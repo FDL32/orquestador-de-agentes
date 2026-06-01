@@ -1,6 +1,7 @@
 # ruff: noqa: S603
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -488,27 +489,17 @@ class ReviewBridge:
     def _git_diff_stat(self) -> str:
         try:
             git_bin = shutil.which("git") or "git"
+            base, warning = self._resolve_review_base(git_bin, ticket_id=None)
             result = subprocess.run(
-                [git_bin, "diff", "--stat", "origin/main...HEAD"],
+                [git_bin, "diff", "--stat", f"{base}..HEAD"],
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
                 cwd=self.project_root,
                 timeout=10,
             )
-            if result.returncode == 0:
-                return result.stdout or "[git diff --stat empty]"
-            result = subprocess.run(
-                [git_bin, "diff", "--stat", "HEAD"],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                cwd=self.project_root,
-                timeout=10,
-            )
-            return "[WARNING: origin/main not reachable, using HEAD fallback]\n" + (
-                result.stdout or "[git diff --stat empty]"
-            )
+            prefix = f"{warning}\n" if warning else ""
+            return prefix + (result.stdout or "[git diff --stat empty]")
         except Exception as e:
             return f"[Error fetching git diff --stat: {e}]"
 
@@ -517,26 +508,19 @@ class ReviewBridge:
     ) -> str:
         try:
             git_bin = shutil.which("git") or "git"
+            base, warning_prefix = self._resolve_review_base(
+                git_bin, ticket_id=ticket_id
+            )
             result = subprocess.run(
-                [git_bin, "diff", "origin/main...HEAD"],
+                [git_bin, "diff", f"{base}..HEAD"],
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
                 cwd=self.project_root,
                 timeout=15,
             )
-            warning_prefix = ""
-            if result.returncode != 0:
-                result = subprocess.run(
-                    [git_bin, "diff", "HEAD"],
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    cwd=self.project_root,
-                    timeout=15,
-                )
-                warning_prefix = "[WARNING: origin/main not reachable, using git diff HEAD fallback]\n"
-            diff = warning_prefix + (result.stdout or "")
+            prefix = f"{warning_prefix}\n" if warning_prefix else ""
+            diff = prefix + (result.stdout or "")
             diff_bytes = diff.encode("utf-8")
             if len(diff_bytes) <= budget_bytes:
                 return diff
@@ -548,11 +532,12 @@ class ReviewBridge:
     def _git_provenance(self) -> str:
         try:
             git_bin = shutil.which("git") or "git"
+            base, warning = self._resolve_review_base(git_bin, ticket_id=None)
             result = subprocess.run(
                 [
                     git_bin,
                     "log",
-                    "origin/main..HEAD",
+                    f"{base}..HEAD",
                     "--format=%H %ai %an",
                     "--no-merges",
                     "-1",
@@ -563,21 +548,98 @@ class ReviewBridge:
                 cwd=self.project_root,
                 timeout=10,
             )
-            if result.returncode == 0:
-                return result.stdout.strip() or "[no new commits since origin/main]"
-            # Remote genuinely unreachable — fall back to latest HEAD commit
+            line = result.stdout.strip() or "[no commits found]"
+            return f"{warning} {line}".strip() if warning else line
+        except Exception as e:
+            return f"[Error fetching git provenance: {e}]"
+
+    def _resolve_review_base(
+        self, git_bin: str, ticket_id: str | None = None
+    ) -> tuple[str, str]:
+        """Resolve the best base commit/range anchor for review diffs.
+
+        Order of preference:
+        1. merge-base(origin/main, HEAD)
+        2. continuous trailing commit streak whose subject contains ticket_id
+        3. HEAD^
+
+        Returns:
+            (base_ref, warning_prefix) where warning_prefix is empty on the
+            primary path and descriptive on fallbacks.
+        """
+        result = None
+        with contextlib.suppress(Exception):
             result = subprocess.run(
-                [git_bin, "log", "HEAD", "--format=%H %ai %an", "--no-merges", "-1"],
+                [git_bin, "merge-base", "origin/main", "HEAD"],
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
                 cwd=self.project_root,
                 timeout=10,
             )
-            line = result.stdout.strip() or "[no commits found]"
-            return f"[WARNING: origin/main not reachable] {line}"
-        except Exception as e:
-            return f"[Error fetching git provenance: {e}]"
+        if result is not None and result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip(), ""
+
+        if ticket_id:
+            ticket_range = self._fallback_ticket_base_from_log(git_bin, ticket_id)
+            if ticket_range:
+                return (
+                    ticket_range,
+                    "[WARNING: origin/main not reachable, using ticket commit range fallback]",
+                )
+
+        return "HEAD^", "[WARNING: origin/main not reachable, using HEAD^ fallback]"
+
+    def _fallback_ticket_base_from_log(
+        self, git_bin: str, ticket_id: str
+    ) -> str | None:
+        """Infer ticket commit base from the latest contiguous commit streak."""
+        try:
+            result = subprocess.run(
+                [git_bin, "log", "--format=%H%x09%s", "--no-merges", "-200"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                cwd=self.project_root,
+                timeout=10,
+            )
+            if result.returncode != 0 or not result.stdout.strip():
+                return None
+
+            ticket_upper = ticket_id.upper()
+            streak: list[str] = []
+            boundary_sha: str | None = None
+            for raw in result.stdout.splitlines():
+                sha, _, subject = raw.partition("\t")
+                if not sha:
+                    continue
+                if ticket_upper in subject.upper():
+                    streak.append(sha)
+                    continue
+                if streak:
+                    boundary_sha = sha
+                    break
+                return None
+
+            if not streak:
+                return None
+            if boundary_sha:
+                return boundary_sha
+
+            oldest = streak[-1]
+            parent = subprocess.run(
+                [git_bin, "rev-parse", f"{oldest}^"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                cwd=self.project_root,
+                timeout=10,
+            )
+            if parent.returncode == 0 and parent.stdout.strip():
+                return parent.stdout.strip()
+            return None
+        except Exception:
+            return None
 
     def _get_untracked_files(self) -> list[str]:
         """Get list of untracked files (??) from git status, filtered for deliverables.
@@ -863,10 +925,12 @@ class ReviewBridge:
 
         relevant_domains = self._relevant_domains_for_dtype(dtype)
         parts: list[str] = []
+        seen_blocks: set[str] = set()
         for domain in sorted(relevant_domains):
             domain_rules = get_review_context(domain=domain)
-            if domain_rules:
+            if domain_rules and domain_rules not in seen_blocks:
                 parts.append(domain_rules)
+                seen_blocks.add(domain_rules)
 
         if not parts:
             return ""
