@@ -83,7 +83,7 @@
   },
   "manager_review": {
     "timeout_seconds": 180,
-    "max_attempts": 5,
+    "max_attempts": 999,
     "retry_backoff_multiplier": 2.0,
     "human_gate_timeout_seconds": 86400
   },

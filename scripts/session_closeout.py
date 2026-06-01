@@ -1205,6 +1205,21 @@ def _step_rotate_review_queue(project_root: Path, dry_run: bool) -> StepResult: 
             archived_entries.remove(active_entry)
 
     if not archived_entries:
+        # Even when nothing needs archiving, check if the kept content exceeds the
+        # size advisory threshold (AUDIT criterion TP-06).
+        kept_content = header + "\n"
+        for entry in keep_entries:
+            kept_content += "---\n\n" + entry + "\n\n"
+        kept_size_bytes = len(kept_content.encode("utf-8"))
+        if kept_size_bytes > SIZE_WARN_THRESHOLD:
+            return StepResult(
+                name="rotate_review_queue",
+                status="WARN",
+                detail=(
+                    f"Fewer entries than KEEP_ENTRIES; nothing to archive. "
+                    f"WARNING: kept entries exceed {SIZE_WARN_THRESHOLD // 1024} KB"
+                ),
+            )
         return StepResult(
             name="rotate_review_queue",
             status="SKIP",
@@ -1411,12 +1426,16 @@ def _step_archive_manager_feedback(  # noqa: C901 - multiple condition checks
             try:
                 archive_dir.mkdir(parents=True, exist_ok=True)
                 dest = archive_dir / fb_path.name
-                # Skip if already archived
                 if dest.exists():
-                    archived.append(f"{fb_path.name} (already archived)")
-                    continue
-                shutil.move(str(fb_path), str(dest))
-                archived.append(fb_path.name)
+                    # Idempotent: archive copy already exists; remove the live copy
+                    # so it does not remain in the active collaboration surface.
+                    fb_path.unlink()
+                    archived.append(
+                        f"{fb_path.name} (live copy removed; archive exists)"
+                    )
+                else:
+                    shutil.move(str(fb_path), str(dest))
+                    archived.append(fb_path.name)
             except OSError as exc:
                 kept.append(f"{fb_path.name} (move failed: {exc})")
         else:
