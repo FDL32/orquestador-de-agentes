@@ -3819,8 +3819,18 @@ def test_run_reactive_emits_supervisor_idle_once_when_no_active_ticket(
 # =============================================================================
 
 
-def test_run_reactive_exits_after_requeue(tmp_path, monkeypatch):
-    """WP-2026-160: run_reactive debe romper el bucle tras un requeue exitoso."""
+def test_run_reactive_stays_alive_after_requeue(tmp_path, monkeypatch):
+    """WT-2026-202: run_reactive no debe romper el bucle tras un requeue builder-only.
+
+    WP-2026-160 salia del loop para dejar al launcher arrancar un supervisor fresco.
+    WT-2026-200 elimino esa premisa: el requeue usa -OnlyBuilder y no abre supervisor.
+    El supervisor debe quedarse como watcher del Builder.
+
+    Prueba de comportamiento: time.sleep se llama al final de cada iteracion, despues
+    del flag check. Con el codigo viejo el break ocurria antes de llegar a sleep
+    (sleep_calls == []). Con el nuevo codigo el loop continua y alcanza sleep
+    (sleep_calls >= 1), lo que prueba que el loop siguio vivo tras el requeue.
+    """
     from bus.supervisor import SequentialTicketSupervisor
 
     collaboration_dir = tmp_path / ".agent" / "collaboration"
@@ -3839,7 +3849,6 @@ def test_run_reactive_exits_after_requeue(tmp_path, monkeypatch):
         auto_sync=False,
     )
 
-    # Setup state with active ticket
     supervisor.save_state(
         SupervisorState(
             active_ticket="WP-2026-160",
@@ -3848,7 +3857,6 @@ def test_run_reactive_exits_after_requeue(tmp_path, monkeypatch):
         )
     )
 
-    # Emit CHANGES event to trigger requeue
     supervisor.event_bus.emit(
         "REVIEW_DECISION",
         ticket_id="WP-2026-160",
@@ -3856,7 +3864,6 @@ def test_run_reactive_exits_after_requeue(tmp_path, monkeypatch):
         payload={"decision": "CHANGES", "feedback": "needs work"},
     )
 
-    # Mock _relaunch_builder to return success
     relaunch_calls = []
     monkeypatch.setattr(
         supervisor,
@@ -3864,21 +3871,28 @@ def test_run_reactive_exits_after_requeue(tmp_path, monkeypatch):
         lambda ticket_id, *a, **kw: relaunch_calls.append(ticket_id) or True,
     )
 
-    # Mock time functions for quick exit
-    times = iter([0.0, 0.1, 0.2, 0.3, 1.0, 1.1, 1.2])
+    # Iter 1: requeue fires (last_activity updated). Iter 2: idle. Exit via idle timeout.
+    # time.time() calls: start(0.0), check(0.1), activity(0.2), check(0.3), exit-check(15.0)
+    times = iter([0.0, 0.1, 0.2, 0.3, 15.0])
     monkeypatch.setattr("time.time", lambda: next(times))
-    monkeypatch.setattr("time.sleep", lambda _seconds: None)
 
-    # Mock bootstrap to return True (lock acquired)
+    # Track sleep calls: sleep is reached only if the loop does NOT break early.
+    sleep_calls: list = []
+    monkeypatch.setattr("time.sleep", lambda _seconds: sleep_calls.append(1))
+
     monkeypatch.setattr(supervisor, "bootstrap", lambda: True)
 
-    # run_reactive should exit after requeue
     result = supervisor.run_reactive(timeout_seconds=10.0)
 
     assert result is True
-    assert len(relaunch_calls) == 1, "Should have triggered one requeue"
-    # Verify the flag was set
-    assert getattr(supervisor, "_requeue_triggered_this_session", False) is True
+    assert len(relaunch_calls) == 1, "Exactly one requeue must have fired"
+    # Flag must be reset (not left True): run_reactive resets it, run_once sets it.
+    assert getattr(supervisor, "_requeue_triggered_this_session", False) is False
+    # Behavioral proof: loop continued past the requeue iteration.
+    # With the old break, sleep was never reached (sleep_calls == []).
+    assert len(sleep_calls) >= 1, (
+        "Loop must reach time.sleep after requeue — no early break"
+    )
 
 
 def test_run_once_sets_requeue_flag(tmp_path, monkeypatch):

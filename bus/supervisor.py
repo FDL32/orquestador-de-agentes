@@ -2207,17 +2207,16 @@ class SequentialTicketSupervisor:
                 if self.run_once():
                     changed = True
                     last_activity = time.time()
-                # WP-2026-160: Salida cooperativa tras requeue exitoso.
-                # El launcher espera a que el lock desaparezca antes de arrancar
-                # un supervisor fresco. Romper el bucle permite que el bloque
-                # finally libere el lock de forma limpia.
+                # WT-2026-202: Requeue usa -OnlyBuilder; el launcher no arranca supervisor fresco.
+                # Resetear el flag y quedarse como watcher del Builder.
+                # WP-2026-160 asumia que el launcher siempre abria un supervisor nuevo tras
+                # el requeue; esa premisa fue eliminada en WT-2026-200.
                 if getattr(self, "_requeue_triggered_this_session", False):
+                    self._requeue_triggered_this_session = False
                     print(
-                        "[supervisor] Exiting run_reactive loop after successful requeue "
-                        "to allow launcher to start fresh supervisor",
+                        "[supervisor] Builder-only requeue: staying alive as watcher",
                         flush=True,
                     )
-                    break
                 time.sleep(1.0)
         finally:
             # Always release lock on exit (normal or exceptional)
