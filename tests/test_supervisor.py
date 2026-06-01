@@ -5151,3 +5151,245 @@ class TestDualPrefixSupervisor:
         supervisor = SequentialTicketSupervisor(project_root=tmp_path)
         # ensure_ticket_queue should not crash with mixed prefixes
         supervisor.ensure_ticket_queue()
+
+
+# ---------------------------------------------------------------------------
+# WT-2026-197: Supervisor post-restart sin Builder tras CHANGES
+# ---------------------------------------------------------------------------
+
+
+def _make_supervisor_wt197(tmp_path):
+    """Helper: create a supervisor with collaboration + runtime dirs."""
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+    (collaboration_dir / "work_plan.md").write_text(
+        "# Work Ticket - WT-2026-197\n\n## Metadata\n- **ID:** WT-2026-197\n",
+        encoding="utf-8",
+    )
+    (collaboration_dir / "execution_log.md").write_text(
+        "# Execution Log WT-2026-197\n\n**Estado:** IN_PROGRESS\n",
+        encoding="utf-8",
+    )
+    return SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+
+def test_wt197_bootstrap_requeues_builder_on_spurious_ready_for_review(
+    tmp_path, monkeypatch
+):
+    """WT-2026-197: Supervisor reinicia con READY_FOR_REVIEW espurio (crash durante
+    BUILDER_RELAUNCH_ATTEMPTED tras CHANGES) → debe forzar requeue de Builder.
+
+    Scenario:
+      seq1  REVIEW_DECISION(changes)
+      seq2  BUILDER_RELAUNCH_ATTEMPTED          ← crash aquí
+      seq3  STATE_CHANGED → READY_FOR_REVIEW    ← estado proyectado espurio
+
+    last_processed_sequence = 0 (crash; watermark no avanzó)
+    last_requeue_trigger_sequence = 0
+
+    Expect: requeue_ticket() llamado; NO se despacha al Manager.
+    """
+    sup = _make_supervisor_wt197(tmp_path)
+    ticket_id = "WT-2026-197"
+
+    # Build bus state simulating the crash scenario
+    sup.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="SUPERVISOR",
+        payload={
+            "from_state": "IN_PROGRESS",
+            "to_state": "READY_FOR_REVIEW",
+            "reason": "builder ready",
+        },
+    )
+    sup.event_bus.emit(
+        "REVIEW_DECISION",
+        ticket_id=ticket_id,
+        actor="MANAGER",
+        payload={"decision": "changes", "feedback": "fix the guard"},
+    )
+    sup.event_bus.emit(
+        "BUILDER_RELAUNCH_ATTEMPTED",
+        ticket_id=ticket_id,
+        actor="SUPERVISOR",
+        payload={"reason": "changes_decision"},
+    )
+    # Crash here — bus left in READY_FOR_REVIEW (no IN_PROGRESS transition was written)
+    sup.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="SUPERVISOR",
+        payload={
+            "from_state": "READY_FOR_REVIEW",
+            "to_state": "READY_FOR_REVIEW",
+            "reason": "spurious",
+        },
+    )
+
+    # Persisted state: watermarks at 0 (crash, nothing was committed)
+    sup.save_state(
+        SupervisorState(
+            active_ticket=ticket_id,
+            last_processed_sequence=0,
+            last_requeue_trigger_sequence=0,
+        )
+    )
+
+    requeue_calls = []
+    monkeypatch.setattr(
+        sup, "requeue_ticket", lambda tid: requeue_calls.append(tid) or True
+    )
+    # _builder_alive must return False so the requeue is not deferred
+    monkeypatch.setattr(sup, "_builder_alive", lambda: False)
+    # Watchdog must be no-op to isolate the test
+    monkeypatch.setattr(sup, "_bootstrap_watchdog_manager_if_needed", lambda s, t: None)
+
+    sup._bootstrap_requeue_if_needed(sup.load_state(), ticket_id)
+
+    assert requeue_calls == [ticket_id], (
+        "Expected requeue_ticket() to be called once for the spurious READY_FOR_REVIEW scenario"
+    )
+
+
+def test_wt197_bootstrap_does_not_requeue_on_legitimate_ready_for_review(
+    tmp_path, monkeypatch
+):
+    """WT-2026-197: Supervisor reinicia con READY_FOR_REVIEW legítimo
+    (Builder respondió al CHANGES y emitió BUILDER_EXIT; watermark avanzó) →
+    debe despachar al Manager, no relanzar Builder.
+
+    Scenario:
+      seq1  REVIEW_DECISION(changes)
+      seq2  BUILDER_EXIT                        ← Builder respondió normalmente
+      seq3  STATE_CHANGED → READY_FOR_REVIEW    ← Builder hizo mark-ready en el segundo ciclo
+
+    last_processed_sequence ≥ seq1 (watermark avanzó)
+    last_requeue_trigger_sequence = seq1 (ya procesado)
+
+    Expect: requeue_ticket() NO llamado.
+    """
+    sup = _make_supervisor_wt197(tmp_path)
+    ticket_id = "WT-2026-197"
+
+    sup.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="SUPERVISOR",
+        payload={
+            "from_state": "IN_PROGRESS",
+            "to_state": "READY_FOR_REVIEW",
+            "reason": "builder ready",
+        },
+    )
+    changes_event = sup.event_bus.emit(
+        "REVIEW_DECISION",
+        ticket_id=ticket_id,
+        actor="MANAGER",
+        payload={"decision": "changes", "feedback": "fix the guard"},
+    )
+    changes_seq = changes_event.sequence_number if changes_event else 2
+
+    sup.event_bus.emit(
+        "BUILDER_EXIT",
+        ticket_id=ticket_id,
+        actor="BUILDER",
+        payload={"exit_code": 0},
+    )
+    sup.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="BUILDER",
+        payload={
+            "from_state": "IN_PROGRESS",
+            "to_state": "READY_FOR_REVIEW",
+            "reason": "second cycle done",
+        },
+    )
+
+    all_events = sup.event_bus.read_events()
+    latest_seq = all_events[-1].sequence_number if all_events else changes_seq + 2
+
+    # Watermark advanced past the CHANGES event — Builder acknowledged it
+    sup.save_state(
+        SupervisorState(
+            active_ticket=ticket_id,
+            last_processed_sequence=latest_seq,
+            last_requeue_trigger_sequence=changes_seq,
+        )
+    )
+
+    requeue_calls = []
+    monkeypatch.setattr(
+        sup, "requeue_ticket", lambda tid: requeue_calls.append(tid) or True
+    )
+    monkeypatch.setattr(sup, "_builder_alive", lambda: False)
+    monkeypatch.setattr(sup, "_bootstrap_watchdog_manager_if_needed", lambda s, t: None)
+
+    sup._bootstrap_requeue_if_needed(sup.load_state(), ticket_id)
+
+    assert requeue_calls == [], (
+        "requeue_ticket() must NOT be called when READY_FOR_REVIEW is legitimate "
+        "(watermark covers the CHANGES event)"
+    )
+
+
+def test_wt197_no_double_requeue_when_watermark_already_covers_changes(
+    tmp_path, monkeypatch
+):
+    """WT-2026-197: Regresión — si last_requeue_trigger_sequence ya cubre el seq del CHANGES,
+    no debe producirse un segundo requeue aunque el estado sea READY_FOR_REVIEW.
+
+    This guards against the WT-2026-189 double-requeue pattern being re-introduced.
+    """
+    sup = _make_supervisor_wt197(tmp_path)
+    ticket_id = "WT-2026-197"
+
+    sup.event_bus.emit(
+        "REVIEW_DECISION",
+        ticket_id=ticket_id,
+        actor="MANAGER",
+        payload={"decision": "changes", "feedback": "fix it"},
+    )
+    all_events = sup.event_bus.read_events(ticket_id=ticket_id)
+    changes_seq = all_events[-1].sequence_number if all_events else 1
+
+    sup.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="SUPERVISOR",
+        payload={
+            "from_state": "IN_PROGRESS",
+            "to_state": "READY_FOR_REVIEW",
+            "reason": "spurious",
+        },
+    )
+
+    # Watermark already covers the CHANGES — a previous bootstrap already processed it
+    sup.save_state(
+        SupervisorState(
+            active_ticket=ticket_id,
+            last_processed_sequence=0,
+            last_requeue_trigger_sequence=changes_seq,  # already recorded
+        )
+    )
+
+    requeue_calls = []
+    monkeypatch.setattr(
+        sup, "requeue_ticket", lambda tid: requeue_calls.append(tid) or True
+    )
+    monkeypatch.setattr(sup, "_builder_alive", lambda: False)
+    monkeypatch.setattr(sup, "_bootstrap_watchdog_manager_if_needed", lambda s, t: None)
+
+    sup._bootstrap_requeue_if_needed(sup.load_state(), ticket_id)
+
+    assert requeue_calls == [], (
+        "Must not double-requeue when last_requeue_trigger_sequence already covers the CHANGES seq"
+    )
