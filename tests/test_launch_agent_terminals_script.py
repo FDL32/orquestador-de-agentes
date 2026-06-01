@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 
@@ -120,7 +121,11 @@ def test_launcher_resume_builder_waits_for_supervisor_exit() -> None:
     # El launcher arranca supervisor fresco en ResumeBuilder, condicionado a -not $OnlyBuilder
     assert "Will launch fresh supervisor before Builder" in content
     # WT-2026-200: -OnlyBuilder manda sobre supervisor; migrado de $LaunchSupervisor = $true
-    assert "$LaunchSupervisor = -not $OnlyBuilder" in content
+    # WT-2026-201: assert semantico resistente a espaciado
+    assert re.search(r"\$LaunchSupervisor\s*=\s*-not\s*\$OnlyBuilder", content), (
+        "La asignacion $LaunchSupervisor = -not $OnlyBuilder debe existir "
+        "para que -OnlyBuilder mande sobre el supervisor en resume"
+    )
 
 
 def test_launcher_resume_builder_fail_closed_on_timeout() -> None:
