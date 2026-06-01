@@ -1241,7 +1241,12 @@ def test_builder_alive_fallback_mtime(tmp_path):
 
 
 def test_relaunch_uses_resume_flag(tmp_path, monkeypatch):
-    """Test that _relaunch_builder uses -ResumeBuilder flag."""
+    """Test that _relaunch_builder uses -ResumeBuilder flag with trigger_seq and -SkipSupervisorWait.
+
+    WT-2026-201: Endurecido para cubrir la firma real con trigger_seq no nulo
+    y afirmar los cuatro flags: -LaunchBuilder, -OnlyBuilder, -ResumeBuilder
+    y -SkipSupervisorWait.
+    """
     import subprocess
     import sys
 
@@ -1281,15 +1286,19 @@ def test_relaunch_uses_resume_flag(tmp_path, monkeypatch):
     # Forzar que _builder_alive devuelva False para que proceda al relanzamiento
     monkeypatch.setattr(supervisor, "_builder_alive", lambda: False)
 
-    supervisor._relaunch_builder("WP-TEST")
+    # WT-2026-201: Pasar trigger_seq no nulo para ejercer la firma real
+    supervisor._relaunch_builder("WP-TEST", trigger_seq=42)
 
     assert captured_cmd is not None
+    # WT-2026-201: Afirmar los cuatro flags del launcher
+    assert "-LaunchBuilder" in captured_cmd
+    assert "-OnlyBuilder" in captured_cmd
     assert "-ResumeBuilder" in captured_cmd
+    assert "-SkipSupervisorWait" in captured_cmd
     assert "-StrictLaunch:$false" not in captured_cmd
     # Regression: WP-085 used -LaunchSupervisor:0 etc which still failed under
     # PS 5.1 SwitchParameter cast from subprocess argv. Replaced with the
     # additive -OnlyBuilder switch defined in launch_agent_terminals.ps1.
-    assert "-OnlyBuilder" in captured_cmd
     assert "-LaunchSupervisor:0" not in captured_cmd
     assert "-LaunchBridge:0" not in captured_cmd
     assert "-LaunchMonitor:0" not in captured_cmd
