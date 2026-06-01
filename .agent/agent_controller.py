@@ -390,6 +390,23 @@ def parse_files_likely_touched(work_plan_content: str) -> set[str]:
     return files
 
 
+def _git_log_recent_files(git_root: Path, n: int = 10) -> set[str]:
+    """Return relative file paths from the last n commits in git_root."""
+    try:
+        result = subprocess.run(
+            ["git", "log", f"-{n}", "--name-only", "--format="],
+            capture_output=True,
+            text=True,
+            cwd=git_root,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            return {line.strip() for line in result.stdout.split("\n") if line.strip()}
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    return set()
+
+
 def get_changed_files() -> set[str] | None:
     """Get all changed files: staged, unstaged, untracked. None if not git repo.
 
@@ -439,6 +456,11 @@ def get_changed_files() -> set[str] | None:
                 else:
                     changed.add(path)
             i += 1
+        # If working tree is clean, fall back to recent commits so the scope gate
+        # works when implementation commits are followed by hotfix commits.
+        if not changed:
+            changed = _git_log_recent_files(git_root)
+
         # resolve to absolute paths
         resolved = set()
         for f in changed:
