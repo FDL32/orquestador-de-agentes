@@ -876,13 +876,12 @@ class SequentialTicketSupervisor:
         # next builder launch falls through to a clean session.
         _bus_cleanup_builder_session(self.runtime_dir)
 
-        # Update watermark only when Builder was actually launched (not skipped_alive).
-        # requeue_ticket() now calls _relaunch_builder() which no longer returns
-        # skipped_alive=True here because we pre-checked _builder_alive() above.
-        if self.requeue_ticket(ticket_id):
-            state = self.load_state()
-            state.last_requeue_trigger_sequence = requeue_trigger_seq
-            self.save_state(state)
+        # WP-2026-194: Save watermark BEFORE calling the launcher subprocess so a
+        # fresh supervisor started by the launcher sees the updated watermark and
+        # does not double-trigger via _bootstrap_requeue_if_needed.
+        state.last_requeue_trigger_sequence = requeue_trigger_seq
+        self.save_state(state)
+        self.requeue_ticket(ticket_id)
 
     def _load_manager_bridge_state(self) -> dict | None:
         """Read manager_bridge_state.json; return None if missing or unparseable."""
@@ -1636,14 +1635,16 @@ class SequentialTicketSupervisor:
                         "blocking_sequence": blocking_seq,
                     },
                 )
-            elif self.requeue_ticket(state.active_ticket):
-                changed = True
-                requeue_success = True
-                # Persist watermark so a repeated CHANGES event for the same
-                # sequence does not trigger a second requeue on the next cycle.
-                persisted = self.load_state()
-                persisted.last_requeue_trigger_sequence = requeue_trigger_sequence
-                self.save_state(persisted)
+            else:
+                # WP-2026-194: Save watermark BEFORE calling the launcher subprocess
+                # so a fresh supervisor started by the launcher reads the updated
+                # watermark and does not double-trigger _bootstrap_requeue_if_needed.
+                pre_save = self.load_state()
+                pre_save.last_requeue_trigger_sequence = requeue_trigger_sequence
+                self.save_state(pre_save)
+                if self.requeue_ticket(state.active_ticket):
+                    changed = True
+                    requeue_success = True
 
         # WP-2026-160: Signal requeue success for cooperative exit
         self._requeue_triggered_this_session = requeue_success
