@@ -1045,6 +1045,21 @@ function Fill-TemplateVariables {
 }
 
 
+function Add-BuilderCloseout {
+    param(
+        [Parameter(Mandatory)] [string]$RunnerCommand,
+        [Parameter(Mandatory)] [string]$CloseCommand
+    )
+    # Wrap the Builder runner in try/finally so --pre-handoff and --mark-ready
+    # execute even when the runner crashes or is killed (e.g. spawn-setup-refresh).
+    # The evidence gate in --mark-ready is the safety net: if there is no real
+    # implementation it rejects the call and the supervisor requeues normally.
+    # The Builder terminal uses the default ErrorActionPreference=Continue, so
+    # a non-zero exit from --pre-handoff does not suppress --mark-ready.
+    return "try { $RunnerCommand } finally { Write-Host '[Builder] runner exited - starting closeout'; $CloseCommand; Write-Host '[Builder] closeout done' }"
+}
+
+
 function Start-AgentWindow {
     param(
         [Parameter(Mandatory)] [string]$Title,
@@ -1323,7 +1338,7 @@ if ($LaunchBuilder) {
                 }
                 $sessionFlag = if ($sessionId) { "--session $sessionId" } else { "" }
                 $command = "& $builderExeLiteral run $promptLiteral --agent builder --model $modelLiteral --dir $rootLiteral --port 0 --title $sessionTitleLiteral $sessionFlag $fileFlagsString"
-                $builderProcess = Start-AgentWindow -Title $windowTitle -Command $command
+                $builderProcess = Start-AgentWindow -Title $windowTitle -Command (Add-BuilderCloseout $command $closeCommand)
                 Write-Host "Builder: lanzado para rol $activeRole con backend OpenCode (opencode run con prompt compuesto)"
             }
             else {
@@ -1333,11 +1348,11 @@ if ($LaunchBuilder) {
                     $templateContent = Get-TemplateContent -ProjectRoot $ProjectRoot -TemplateName $templateName
                     $filledPrompt = Fill-TemplateVariables -TemplateContent $templateContent -TicketId $ticketId -WorkPlan $workPlanContent -CloseCommand $closeCommand -Role $role -Backend $builderBackend
                     $builderPromptLiteral = ConvertTo-SingleQuotedLiteral $filledPrompt
-                    $builderProcess = Start-AgentWindow -Title $windowTitle -Command "& $builderExeLiteral run --auto $builderPromptLiteral"
+                    $builderProcess = Start-AgentWindow -Title $windowTitle -Command (Add-BuilderCloseout "& $builderExeLiteral run --auto $builderPromptLiteral" $closeCommand)
                 }
                 else {
                     $builderPromptLiteral = ConvertTo-SingleQuotedLiteral $BuilderPrompt
-                    $builderProcess = Start-AgentWindow -Title $windowTitle -Command "& $builderExeLiteral run --auto $builderPromptLiteral"
+                    $builderProcess = Start-AgentWindow -Title $windowTitle -Command (Add-BuilderCloseout "& $builderExeLiteral run --auto $builderPromptLiteral" $closeCommand)
                 }
                 Write-Host "Builder: lanzado para rol $activeRole con plantilla $templateName"
             }
