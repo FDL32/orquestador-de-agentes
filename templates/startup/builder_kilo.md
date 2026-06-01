@@ -4,4 +4,3 @@ Completion contract:
 - Cuando la implementacion termine, emite un unico mensaje final breve.
 - No repitas el mensaje final, no entres en bucle y no vuelvas a imprimir el mismo cierre.
 - Si una herramienta falla, informa una sola vez, detente y no sigas generando texto de cierre.
-- Tras el unico mensaje final, ejecuta {{close_command}} y termina de inmediato.
