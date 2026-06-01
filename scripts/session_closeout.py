@@ -989,67 +989,72 @@ def _is_lock_alive(lock_path: Path) -> bool:
         return True
 
 
+def _is_entry_delimiter(line: str) -> bool:
+    """Check if a line marks the start of a new logical entry.
+
+    Recognized delimiters: '---' or '## ' prefix.
+    """
+    stripped = line.strip()
+    if stripped in ("---",) or stripped.startswith("---"):
+        return True
+    return bool(re.match(r"^##\s", line))
+
+
+def _split_header_and_entries(lines: list[str]) -> tuple[str, list[str]]:
+    """Split content lines into header and logical entries.
+
+    Before: lines are the split lines of review_queue.md.
+    During: Finds all delimiter lines (--- or ##). Everything before the first
+            delimiter is the header. Each block starting at a delimiter is an
+            entry. For '---' delimiters, the separator line itself is excluded.
+            For '## ' delimiters, the heading line is included in the entry.
+    After: Returns (header_text, list_of_entry_texts).
+    """
+    # Collect delimiter positions
+    delimiter_indices: list[int] = []
+    for i, line in enumerate(lines):
+        if _is_entry_delimiter(line):
+            delimiter_indices.append(i)
+
+    # Extract header: everything before the first delimiter
+    if delimiter_indices:
+        header = "\n".join(lines[: delimiter_indices[0]]).strip()
+    else:
+        header = "\n".join(lines).strip()
+
+    # Extract entries from delimiter regions
+    entries: list[str] = []
+    for idx, start in enumerate(delimiter_indices):
+        end = (
+            delimiter_indices[idx + 1]
+            if idx + 1 < len(delimiter_indices)
+            else len(lines)
+        )
+        entry_lines = lines[start:end]
+        stripped = lines[start].strip()
+        if stripped in ("---",) or stripped.startswith("---"):
+            # '---' is a pure separator; exclude it from the entry content
+            entry_lines = entry_lines[1:]
+        entry_text = "\n".join(entry_lines).strip()
+        if entry_text:
+            entries.append(entry_text)
+
+    return header, entries
+
+
 def _parse_review_queue(content: str) -> tuple[str, list[str], str | None]:
     """Parse review_queue.md into header, entries, and active ticket entry.
 
     Before: content is the full text of review_queue.md.
-    During: Splits by '---' separator. Everything before the first '---' is the
-            header. Each block between separators is an entry. Also detects
-            '## ' prefix as an alternative delimiter, but the primary format
-            uses '---'.
+    During: Splits by '---' or '## ' delimiters. Everything before the first
+            delimiter (either '---' or '## ') is the header. Each block between
+            delimiters is an entry.
     After: Returns (header_text, list_of_entries, active_ticket_entry_or_None).
     """
-    # Split by separator lines
     lines = content.split("\n")
-    header_lines: list[str] = []
-    entries: list[str] = []
-    current_entry: list[str] = []
-    in_header = True
-    found_first_sep = False
-
-    for line in lines:
-        stripped = line.strip()
-        # Detect separator: line is exactly "---" or starts with "---"
-        if stripped in ("---",) or stripped.startswith("---"):
-            if not found_first_sep:
-                # First separator: header ends
-                found_first_sep = True
-                in_header = False
-                if current_entry:
-                    entries.append("\n".join(current_entry))
-                    current_entry = []
-                continue
-            # Subsequent separators: current entry ends
-            if current_entry:
-                entries.append("\n".join(current_entry))
-                current_entry = []
-            continue
-        # Detect '## ' prefix as alternative entry start (at top level)
-        if not in_header and re.match(r"^##\s", line) and current_entry:
-            # Complete previous entry and start new one (include the ## line)
-            entries.append("\n".join(current_entry))
-            current_entry = [line]
-            continue
-
-        if in_header:
-            header_lines.append(line)
-        else:
-            current_entry.append(line)
-
-    # Flush last entry
-    if current_entry:
-        entries.append("\n".join(current_entry))
-
-    header = "\n".join(header_lines).strip()
-
-    # Detect active ticket entry: look for "- **Plan ID:**" in each entry
-    # The active ticket is the one in work_plan.md
-    active_entry: str | None = None
-    # We detect by reading work_plan.md to find the active ticket ID
-    # This will be done at the call site; here we just return entries as-is.
-    # The caller will identify the active ticket entry.
-
-    return header, entries, active_entry
+    header, entries = _split_header_and_entries(lines)
+    # Active ticket detection is done at the call site via work_plan.md.
+    return header, entries, None
 
 
 def _find_active_ticket_entry(
@@ -1184,7 +1189,16 @@ def _step_rotate_review_queue(project_root: Path, dry_run: bool) -> StepResult: 
 
     try:
         archive_dir.mkdir(parents=True, exist_ok=True)
-        archive_path.write_text("\n".join(archive_lines), encoding="utf-8")
+        # Append to existing archive if present (idempotent; avoids overwrite)
+        new_archive_content = "\n".join(archive_lines)
+        if archive_path.exists():
+            existing = archive_path.read_text(encoding="utf-8")
+            archive_path.write_text(
+                existing.rstrip("\n") + "\n\n" + new_archive_content,
+                encoding="utf-8",
+            )
+        else:
+            archive_path.write_text(new_archive_content, encoding="utf-8")
     except OSError as exc:
         return StepResult(
             name="rotate_review_queue",
