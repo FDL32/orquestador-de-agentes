@@ -1148,7 +1148,10 @@ if (-not $ResumeBuilder) {
 
     # WP-2026-160: Ahora el launcher arranca un supervisor fresco antes de Builder
     # usando el mismo patron de arranque normal. Solo Supervisor + Builder en requeue.
-    $LaunchSupervisor = $true
+    # WT-2026-200: -OnlyBuilder manda sobre la politica de supervisor: si esta activo,
+    # no se arranca supervisor fresco incluso en resume. La asignacion truthy/falsey
+    # funciona correctamente bajo if ($LaunchSupervisor).
+    $LaunchSupervisor = -not $OnlyBuilder
     $LaunchBridge = $false
     $LaunchMonitor = $false
     $LaunchWatcher = $false

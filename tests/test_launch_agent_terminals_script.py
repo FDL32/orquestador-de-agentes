@@ -117,9 +117,10 @@ def test_launcher_resume_builder_waits_for_supervisor_exit() -> None:
     assert "Wait-SupervisorExit -ProjectRoot" in content
     assert "Cannot guarantee fresh supervisor" in content
 
-    # El launcher arranca supervisor fresco en ResumeBuilder
+    # El launcher arranca supervisor fresco en ResumeBuilder, condicionado a -not $OnlyBuilder
     assert "Will launch fresh supervisor before Builder" in content
-    assert "$LaunchSupervisor = $true" in content
+    # WT-2026-200: -OnlyBuilder manda sobre supervisor; migrado de $LaunchSupervisor = $true
+    assert "$LaunchSupervisor = -not $OnlyBuilder" in content
 
 
 def test_launcher_resume_builder_fail_closed_on_timeout() -> None:
@@ -192,3 +193,97 @@ def test_builder_templates_do_not_inject_close_command() -> None:
             f"{template_path.name} still contains {{{{close_command}}}}. "
             "CL-07: the launcher try/finally owns closeout; remove this injection."
         )
+
+
+# ============================================================================
+# WT-2026-200: Launcher/supervisor - resume sin supervisor fresco
+# ============================================================================
+
+
+def test_onlybuilder_resume_does_not_launch_supervisor() -> None:
+    """WT-2026-200: -OnlyBuilder + -ResumeBuilder must NOT launch a fresh supervisor.
+
+    The assignment $LaunchSupervisor = -not $OnlyBuilder ensures that
+    when -OnlyBuilder is active, no supervisor is spawned even in resume mode.
+    """
+    content = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    # Core fix: the assignment must be conditional on -not $OnlyBuilder
+    assert "$LaunchSupervisor = -not $OnlyBuilder" in content, (
+        "Line 1151 must use conditional assignment so OnlyBuilder blocks supervisor"
+    )
+
+    # The OnlyBuilder guard at line 95 must remain intact
+    assert "if ($OnlyBuilder) {" in content
+    assert "$LaunchSupervisor = $false" in content
+
+
+def test_builder_session_reuse_stays_intact_without_second_supervisor() -> None:
+    """WT-2026-200: Builder session reuse must work without a second supervisor.
+
+    The -ResumeBuilder path must still read builder_session.json and reuse
+    the session ID even when -OnlyBuilder prevents supervisor launch.
+    """
+    content = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    # builder_session.json reading must still be present
+    assert "builder_session.json" in content
+    assert "$sessionData.ticket_id -eq $ticketId" in content
+    assert "falling back to clean session" in content
+
+    # Session reuse should not depend on supervisor state
+    assert "--session" in content
+
+
+def test_bootstrap_rejected_only_when_a_real_second_supervisor_exists() -> None:
+    """WT-2026-200: Stale supervisor wait must remain for legitimately concurrent instances.
+
+    The Wait-SupervisorExit logic must still be present for cases where a
+    real stale supervisor exists (not triggered by -OnlyBuilder -ResumeBuilder).
+    """
+    content = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    # Stale supervisor wait must still be present
+    assert "Wait-SupervisorExit" in content
+    assert "supervisor_lock.txt" in content
+    assert "TimeoutSeconds" in content
+    assert "Cannot guarantee fresh supervisor" in content
+    assert "stale supervisor did not exit within timeout" in content
+
+
+def test_resume_builder_without_onlybuilder_preserves_supervisor_launch() -> None:
+    """WT-2026-200: -ResumeBuilder sin -OnlyBuilder arranca supervisor fresco.
+
+    When -OnlyBuilder is absent, the resume path must still launch a fresh
+    supervisor (preserving the WP-2026-160 behavior).
+    """
+    content = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    # -not $OnlyBuilder is $true when $OnlyBuilder is absent → supervisor launches
+    assert "$LaunchSupervisor = -not $OnlyBuilder" in content
+
+    # The message about launching fresh supervisor must remain
+    assert "Will launch fresh supervisor before Builder" in content
+
+    # SUPERVISOR_RESTART_REASON must still be set for fresh supervisor
+    assert "SUPERVISOR_RESTART_REASON" in content
+    assert '"resume-builder"' in content
+
+
+def test_normal_launch_without_flags_still_launches_supervisor() -> None:
+    """WT-2026-200: Normal launch (no -ResumeBuilder) must still launch supervisor.
+
+    The default parameter value of $LaunchSupervisor = $true must remain,
+    so a normal `launch_agent_terminals.ps1` call starts supervisor.
+    """
+    content = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    # Default parameter must be $true
+    assert "[switch]$LaunchSupervisor = $true" in content, (
+        "Default parameter must be $true for normal launch"
+    )
+
+    # The supervisor launch gate must still exist
+    assert "if ($LaunchSupervisor) {" in content
+    assert "Start-AgentWindow -Title 'Supervisor'" in content
+    assert "Supervisor: lanzado con ticket_supervisor.py --reactive" in content
