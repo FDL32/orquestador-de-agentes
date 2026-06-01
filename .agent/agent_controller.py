@@ -2741,16 +2741,24 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
         print("[ERROR] No active plan found.", file=sys.stderr, flush=True)
         return 1
 
-    # Check that we are in a git repository
+    # Check that we are in a git repository.
+    # Model B: workspace (PROJECT_ROOT) and motor (_MOTOR_ROOT) are separate repos.
+    # If the workspace has no .git, fall back to the motor root for git operations
+    # while keeping project_root for live-surface detection (surfaces live in workspace).
     project_root = PROJECT_ROOT.resolve()
-    git_dir = project_root / ".git"
-    if not git_dir.exists():
-        print(
-            "[ERROR] Not a git repository. Pre-handoff requires git.",
-            file=sys.stderr,
-            flush=True,
-        )
-        return 1
+    if (project_root / ".git").exists():
+        git_root = project_root
+    else:
+        motor_root = _MOTOR_ROOT.resolve()
+        if (motor_root / ".git").exists():
+            git_root = motor_root
+        else:
+            print(
+                "[ERROR] Not a git repository. Pre-handoff requires git.",
+                file=sys.stderr,
+                flush=True,
+            )
+            return 1
 
     # Build live surface sets
     live_files, live_dirs = _build_live_surface_sets(project_root)
@@ -2781,7 +2789,7 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
             ["git", "rev-parse", f"{tag_name}^{{}}"],
             capture_output=True,
             text=True,
-            cwd=project_root,
+            cwd=git_root,
         )
         if result.returncode == 0:
             tag_exists = True
@@ -2790,7 +2798,7 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
                 ["git", "rev-parse", "HEAD"],
                 capture_output=True,
                 text=True,
-                cwd=project_root,
+                cwd=git_root,
             )
             tag_aligned = (
                 head_result.returncode == 0 and tag_commit == head_result.stdout.strip()
@@ -2803,11 +2811,11 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
 
     # --- Step 1: Commit (if needed) ---
     if needs_commit:
-        # Convert absolute paths to relative for git add
+        # Convert absolute paths to relative for git add (relative to git_root)
         rel_files = {
-            str(Path(f).relative_to(project_root))
+            str(Path(f).relative_to(git_root))
             for f in files_to_stage
-            if _path_is_under(Path(f), project_root)
+            if _path_is_under(Path(f), git_root)
         }
 
         if rel_files:
@@ -2815,7 +2823,7 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
                 ["git", "add", "--", *sorted(rel_files)],
                 capture_output=True,
                 text=True,
-                cwd=project_root,
+                cwd=git_root,
             )
             if add_result.returncode != 0:
                 err = add_result.stderr.strip() or add_result.stdout.strip()
@@ -2831,7 +2839,7 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
             ["git", "commit", "-m", commit_msg],
             capture_output=True,
             text=True,
-            cwd=project_root,
+            cwd=git_root,
         )
         if commit_result.returncode != 0:
             # Propagate raw stderr verbatim for hook failures
@@ -2856,7 +2864,7 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
                     ["git", "tag", "-d", tag_name],
                     capture_output=True,
                     text=True,
-                    cwd=project_root,
+                    cwd=git_root,
                 )
                 if delete_result.returncode != 0:
                     err = delete_result.stderr.strip() or delete_result.stdout.strip()
@@ -2871,7 +2879,7 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
                 ["git", "tag", "-a", tag_name, "-m", tag_msg],
                 capture_output=True,
                 text=True,
-                cwd=project_root,
+                cwd=git_root,
             )
             if tag_result.returncode != 0:
                 err = tag_result.stderr.strip() or tag_result.stdout.strip()
@@ -2913,7 +2921,7 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
             ["git", "status", "--porcelain"],
             capture_output=True,
             text=True,
-            cwd=project_root,
+            cwd=git_root,
         )
     except FileNotFoundError:
         print(
@@ -2933,7 +2941,7 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
             # Using splitlines() avoids strip() eating the leading status space
             # on the first line of multi-line output.
             path = line_raw[3:].strip()
-            abs_path = str((project_root / path).resolve())
+            abs_path = str((git_root / path).resolve())
             if not _is_live_surface(abs_path, project_root, live_files, live_dirs):
                 dirty_entries.append(path)
 
