@@ -2109,7 +2109,9 @@ class SequentialTicketSupervisor:
                     changed = True
                     requeue_success = True
 
-        # WP-2026-160: Signal requeue success for cooperative exit
+        # WT-2026-202: Record whether this run_once iteration triggered a requeue.
+        # run_reactive may use the flag for watcher behavior, but it no longer
+        # implies a cooperative exit from the supervisor loop.
         self._requeue_triggered_this_session = requeue_success
 
         if self.advance_if_review_ready():
