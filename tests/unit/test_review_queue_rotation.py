@@ -168,6 +168,39 @@ class TestParseReviewQueue:
         assert "Header only." in header
         assert len(entries) == 0
 
+    def test_parses_entries_delimited_by_hashes_only(self) -> None:
+        """Entries delimited ONLY by '## ' (no '---') are correctly parsed."""
+        content = (
+            "# Review Queue\n\nHeader text.\n\n"
+            "## MANAGER REVIEW - 2026-06-01\n"
+            "Content line 1\n\n"
+            "## MANAGER REVIEW - 2026-06-02\n"
+            "Content line 2\n"
+        )
+        header, entries, _active = _parse_review_queue(content)
+        assert "Header text." in header
+        assert len(entries) == 2
+        assert "MANAGER REVIEW - 2026-06-01" in entries[0]
+        assert "MANAGER REVIEW - 2026-06-02" in entries[1]
+        # The '## ' line is part of the entry
+        assert entries[0].startswith("##")
+
+    def test_parses_mixed_delimiters(self) -> None:
+        """Mixed '---' and '## ' delimiters are both supported."""
+        content = (
+            "# Review Queue\n\nHeader.\n\n"
+            "---\n\n"
+            "### Entry A\nContent\n\n"
+            "## Entry B\nContent\n\n"
+            "---\n\n"
+            "### Entry C\n"
+        )
+        _header, entries, _active = _parse_review_queue(content)
+        assert len(entries) == 3
+        assert "Entry A" in entries[0]
+        assert "Entry B" in entries[1]
+        assert "Entry C" in entries[2]
+
 
 # Tests: _step_rotate_review_queue - lock checks
 
