@@ -62,6 +62,9 @@ MANAGER_FEEDBACK_ARCHIVE_DIR_REL = (
 KEEP_ENTRIES = 10
 SIZE_WARN_THRESHOLD = 50 * 1024  # 50 KB advisory threshold
 
+# Lock TTL (minutes) for liveness detection via mtime/started_at
+LOCK_TTL_MINUTES = 15
+
 # Directories to scan for absolute workspace paths (portability check)
 PORTABILITY_SCAN_DIRS = ("docs", "markdowns", "skills", ".agent/rules")
 
@@ -953,13 +956,14 @@ def _step_archive_event_bus(project_root: Path, dry_run: bool) -> StepResult:
 
 
 def _is_lock_alive(lock_path: Path) -> bool:
-    """Check if a lock file has an alive PID on Windows.
+    """Check if a lock file is alive based on TTL and mtime.
 
     Before: lock_path may or may not exist.
-    During: Reads the lock file as JSON. If it contains a 'pid' field,
-            attempts to check if the process is running via tasklist.
-    After: Returns True if the PID is alive, False if the lock is stale
-           or does not exist.
+    During: Reads the lock file as JSON. If it contains a 'started_at' field
+            within LOCK_TTL_MINUTES or the file's mtime is within
+            LOCK_TTL_MINUTES, considers the lock alive.
+            Does NOT use 'pid' (builder lock contract explicitly prohibits pid).
+    After: Returns True if the lock is recent, False if stale or absent.
     """
     if not lock_path.exists():
         return False
@@ -967,26 +971,34 @@ def _is_lock_alive(lock_path: Path) -> bool:
         data = json.loads(lock_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
-    pid = data.get("pid")
-    if pid is None:
-        return False
-    if not isinstance(pid, int) or pid <= 0:
-        return False
-    # On Windows, use tasklist to check if the process exists
+
+    now = datetime.now(timezone.utc)
+
+    # Check 'started_at' field for TTL (takes precedence when present)
+    started_at_str = data.get("started_at")
+    if started_at_str:
+        try:
+            started_at = datetime.fromisoformat(
+                started_at_str.replace("Z", "+00:00")
+            )
+            age_minutes = (now - started_at).total_seconds() / 60
+            return age_minutes < LOCK_TTL_MINUTES
+        except (ValueError, TypeError):
+            # Malformed started_at; fall through to mtime
+            pass
+
+    # Fallback: check file mtime (only when no valid started_at)
     try:
-        result = subprocess.run(  # noqa: S603 - controlled PID from lock file
-            ["tasklist", "/FI", f"PID eq {pid}", "/NH"],  # noqa: S607
-            capture_output=True,
-            text=True,
-            timeout=10,
+        mtime = datetime.fromtimestamp(
+            lock_path.stat().st_mtime, tz=timezone.utc
         )
-        if result.returncode != 0:
-            return False
-        # tasklist returns "INFO: No tasks are running..." if not found
-        return str(pid) in result.stdout
-    except (subprocess.TimeoutExpired, OSError):
-        # If we can't check, conservatively return True (lock assumed alive)
-        return True
+        age_minutes = (now - mtime).total_seconds() / 60
+        if age_minutes < LOCK_TTL_MINUTES:
+            return True
+    except OSError:
+        pass
+
+    return False
 
 
 def _is_entry_delimiter(line: str) -> bool:
@@ -1004,38 +1016,67 @@ def _split_header_and_entries(lines: list[str]) -> tuple[str, list[str]]:
     """Split content lines into header and logical entries.
 
     Before: lines are the split lines of review_queue.md.
-    During: Finds all delimiter lines (--- or ##). Everything before the first
-            delimiter is the header. Each block starting at a delimiter is an
-            entry. For '---' delimiters, the separator line itself is excluded.
+    During: Uses '---' as the primary header boundary. Everything before the
+            first '---' separator is the header (preserving any '## ' headings
+            within the header intact). After the first '---', both '---' and
+            '## ' serve as entry delimiters. If no '---' exists, falls back to
+            '## ' as the sole delimiter with everything before the first
+            '## ' as the header.
+            For '---' delimiters, the separator line itself is excluded.
             For '## ' delimiters, the heading line is included in the entry.
     After: Returns (header_text, list_of_entry_texts).
     """
-    # Collect delimiter positions
-    delimiter_indices: list[int] = []
-    for i, line in enumerate(lines):
-        if _is_entry_delimiter(line):
-            delimiter_indices.append(i)
+    # Find '---' separators
+    dash_indices = [
+        i
+        for i, line in enumerate(lines)
+        if line.strip() in ("---",) or line.strip().startswith("---")
+    ]
 
-    # Extract header: everything before the first delimiter
-    if delimiter_indices:
-        header = "\n".join(lines[: delimiter_indices[0]]).strip()
+    if dash_indices:
+        # Header is everything before the first '---'
+        first_dash = dash_indices[0]
+        header = "\n".join(lines[:first_dash]).strip()
+
+        # After the first '---', both '---' and '## ' are entry delimiters
+        content_lines = lines[first_dash:]
+        delimiter_indices: list[int] = [
+            i for i, line in enumerate(content_lines) if _is_entry_delimiter(line)
+        ]
+
+        entries: list[str] = []
+        for idx, start in enumerate(delimiter_indices):
+            end = (
+                delimiter_indices[idx + 1]
+                if idx + 1 < len(delimiter_indices)
+                else len(content_lines)
+            )
+            entry_lines = content_lines[start:end]
+            stripped_line = content_lines[start].strip()
+            if stripped_line in ("---",) or stripped_line.startswith("---"):
+                entry_lines = entry_lines[1:]
+            entry_text = "\n".join(entry_lines).strip()
+            if entry_text:
+                entries.append(entry_text)
+
+        return header, entries
+
+    # No '---' found: fall back to '## ' as delimiter
+    hash_indices = [i for i, line in enumerate(lines) if bool(re.match(r"^##\s", line))]
+
+    if hash_indices:
+        header = "\n".join(lines[: hash_indices[0]]).strip()
     else:
         header = "\n".join(lines).strip()
 
-    # Extract entries from delimiter regions
     entries: list[str] = []
-    for idx, start in enumerate(delimiter_indices):
+    for idx, start in enumerate(hash_indices):
         end = (
-            delimiter_indices[idx + 1]
-            if idx + 1 < len(delimiter_indices)
+            hash_indices[idx + 1]
+            if idx + 1 < len(hash_indices)
             else len(lines)
         )
-        entry_lines = lines[start:end]
-        stripped = lines[start].strip()
-        if stripped in ("---",) or stripped.startswith("---"):
-            # '---' is a pure separator; exclude it from the entry content
-            entry_lines = entry_lines[1:]
-        entry_text = "\n".join(entry_lines).strip()
+        entry_text = "\n".join(lines[start:end]).strip()
         if entry_text:
             entries.append(entry_text)
 
