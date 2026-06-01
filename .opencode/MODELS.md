@@ -30,7 +30,7 @@ opencode run "<msg>" --agent builder --model <model> --dir <root> -f <canonicals
 **Prompt composition:**
 - Ticket ID extracted from `.agent/collaboration/work_plan.md`
 - Includes reminder to follow `Files Likely Touched` whitelist
-- Mandatory closure instruction: emit `BUILDER_EXIT` and run `--mark-ready --json --force`
+- Closure is handled automatically by the launcher try/finally after the runner exits; the prompt does not inject a close command
 
 **Canonical files attached via `-f`:**
 - `.agent/collaboration/work_plan.md`
