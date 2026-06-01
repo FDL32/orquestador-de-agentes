@@ -6,7 +6,7 @@ import re
 import sys
 import tempfile
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .approval import ApprovalPolicy, ApprovalReason, ApprovalStatus, ApprovalStore
@@ -1204,17 +1204,30 @@ class SequentialTicketSupervisor:
         return False
 
     def _parse_iso_datetime(self, iso_str: str) -> datetime:
-        """Parse an ISO 8601 string into a timezone-aware datetime object."""
+        """Parse an ISO 8601 string into a timezone-aware datetime object.
+
+        Before: Input may be any string resembling ISO 8601 (naive or aware).
+        During: Strips whitespace, normalizes "Z" suffix to "+00:00",
+                parses via datetime.fromisoformat, and replaces a missing
+                timezone (naive) with UTC.
+        After: Returns a always-timezone-aware datetime.
+               Raises ValueError/TypeError if the string is unparseable.
+        """
         normalized = iso_str.strip()
         if normalized.endswith("Z"):
             normalized = normalized[:-1] + "+00:00"
-        return datetime.fromisoformat(normalized)
+        dt = datetime.fromisoformat(normalized)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
 
     def _has_builder_exited_after(self, ticket_id: str, lock_start: datetime) -> bool:
-        """Return True if a BUILDER_EXIT event was recorded for the ticket after lock_start.
+        """Return True if a BUILDER_EXIT event was recorded at or after lock_start.
 
         Before: Silently swallowed parse errors and fell back to PID check.
         During: Iterates events in reverse, parses timestamps with explicit error logging.
+                Uses >= comparison so an exit at exactly lock_start is also rejected
+                (WT-2026-199: at-exact-boundary is not treated as alive).
         After: Returns True/False based on bus evidence; errors are logged, not silenced.
         """
         events = self.event_bus.read_events(ticket_id=ticket_id)
@@ -1222,7 +1235,7 @@ class SequentialTicketSupervisor:
             if event.actor == "BUILDER" and event.event_type == "BUILDER_EXIT":
                 try:
                     event_time = self._parse_iso_datetime(event.timestamp)
-                    if event_time > lock_start:
+                    if event_time >= lock_start:
                         return True
                 except (ValueError, TypeError, AttributeError) as exc:
                     # Log parse error but continue checking other events
@@ -1778,11 +1791,9 @@ class SequentialTicketSupervisor:
         from datetime import datetime, timezone
 
         if not isinstance(trigger_seq, int) or trigger_seq <= 0:
-            # trigger_seq=0 means the caller cannot/chooses not to claim.
-            # Return True to allow the requeue to proceed without cross-process
-            # coordination. This path is used by review_bridge.py which has its
-            # own anti-double-relaunch guard via BUILDER_RELAUNCH_ATTEMPTED check.
-            return True
+            # trigger_seq is mandatory (must be > 0). If invalid, fail closed
+            # to prevent requeue without cross-process coordination.
+            return False
 
         claims_dir = self.runtime_dir / REQUEUE_CLAIMS_DIRNAME
         claims_dir.mkdir(parents=True, exist_ok=True)
@@ -1956,13 +1967,21 @@ class SequentialTicketSupervisor:
                 increment round and relaunch Builder.
                 trigger_seq is required (must be > 0). Callers that cannot
                 provide a valid trigger_seq must not call this method.
+                trigger_seq is required (must be > 0). Callers that cannot
+                provide a valid trigger_seq are rejected with False.
         After: On success, round is incremented and Builder is relaunched.
-               On claim failure, no state changes occur.
+               On claim failure or invalid trigger_seq, no state changes occur.
         """
         if not isinstance(trigger_seq, int) or trigger_seq <= 0:
-            # trigger_seq=0 means no claim coordination needed (e.g. review_bridge path).
-            # Proceed without the claim; the watermark update will be skipped too.
-            pass
+            # trigger_seq is mandatory (must be > 0). Invalid trigger_seq means
+            # the caller cannot identify the trigger; fail closed to prevent
+            # requeue without cross-process atomic claim.
+            print(
+                f"[ticket-supervisor] requeue_ticket: invalid trigger_seq={trigger_seq} "
+                f"for {ticket_id}. Failing closed.",
+                flush=True,
+            )
+            return False
 
         if not self._claim_requeue(ticket_id, trigger_seq):
             print(
@@ -1985,15 +2004,10 @@ class SequentialTicketSupervisor:
             )
             return False
 
-        # WT-2026-199: Update watermark when trigger_seq is known (claim-based
-        # path), before incrementing round or relaunching. This ensures a fresh
-        # supervisor started by the launcher sees the updated watermark and does
-        # not double-trigger via _bootstrap_requeue_if_needed.
-        # When trigger_seq=0 (passthrough path), the caller's own watermark
-        # save covers this (e.g. review_bridge calls requeue_ticket after
-        # already advancing its own checkpoint).
-        if trigger_seq > 0:
-            state.last_requeue_trigger_sequence = trigger_seq
+        # WT-2026-199: Update watermark before incrementing round or relaunching.
+        # This ensures a fresh supervisor started by the launcher sees the updated
+        # watermark and does not double-trigger via _bootstrap_requeue_if_needed.
+        state.last_requeue_trigger_sequence = trigger_seq
         state.loop_current_round += 1
         self.save_state(state)
         print(
