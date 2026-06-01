@@ -4751,6 +4751,88 @@ def test_run_once_relaunches_on_timeout_without_handoff_blocked(tmp_path, monkey
     assert state.loop_current_round == 2, "round must increment on requeue"
 
 
+def test_run_once_uses_review_decision_as_single_requeue_trigger(tmp_path, monkeypatch):
+    """A CHANGES decision plus IN_PROGRESS transition must relaunch only once."""
+    from bus.supervisor import SequentialTicketSupervisor, SupervisorState
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+    _write_work_plan(collaboration_dir / "work_plan.md")
+    _write_execution_log(collaboration_dir / "execution_log.md")
+    _write_turn(
+        collaboration_dir / "TURN.md",
+        role="BUILDER",
+        plan_id="WT-2026-197",
+        action="IMPLEMENT",
+        plan_status="APPROVED",
+        log_status="IN_PROGRESS",
+    )
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+    supervisor.save_state(
+        SupervisorState(
+            active_ticket="WT-2026-197",
+            loop_current_round=1,
+            last_requeue_trigger_sequence=0,
+        )
+    )
+
+    supervisor.event_bus.emit(
+        "REVIEW_DECISION",
+        ticket_id="WT-2026-197",
+        actor="MANAGER",
+        payload={"decision": "CHANGES", "feedback": "needs work"},
+    )
+    supervisor.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id="WT-2026-197",
+        actor="SUPERVISOR",
+        payload={
+            "from_state": "READY_FOR_REVIEW",
+            "to_state": "IN_PROGRESS",
+            "reason": "Manager requested changes",
+            "source": "request-changes",
+        },
+    )
+
+    events = supervisor.event_bus.read_events(ticket_id="WT-2026-197")
+    review_seq = next(
+        e.sequence_number for e in events if e.event_type == "REVIEW_DECISION"
+    )
+    in_progress_seq = next(
+        e.sequence_number
+        for e in events
+        if e.event_type == "STATE_CHANGED"
+        and str((e.payload or {}).get("to_state", "")) == "IN_PROGRESS"
+    )
+    assert in_progress_seq > review_seq
+
+    relaunch_calls: list[str] = []
+    monkeypatch.setattr(
+        supervisor,
+        "_relaunch_builder",
+        lambda ticket_id: relaunch_calls.append(ticket_id) or True,
+    )
+
+    result = supervisor.run_once()
+
+    assert result is True
+    assert relaunch_calls == ["WT-2026-197"], (
+        "run_once must relaunch exactly once for the CHANGES decision and must "
+        "not treat STATE_CHANGED -> IN_PROGRESS as a second trigger"
+    )
+    state = supervisor.load_state()
+    assert state.last_requeue_trigger_sequence == review_seq
+    assert state.last_requeue_trigger_sequence != in_progress_seq
+
+
 def test_bootstrap_requeue_suppresses_on_handoff_blocked(tmp_path, monkeypatch):
     """_bootstrap_requeue_if_needed must suppress relaunch when HANDOFF_BLOCKED
     exists after the trigger sequence.

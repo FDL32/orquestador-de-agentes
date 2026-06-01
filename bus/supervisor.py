@@ -774,6 +774,39 @@ class SequentialTicketSupervisor:
                 state.last_action = "RECONCILED"
                 self.save_state(state)
 
+    @staticmethod
+    def _latest_changes_trigger_sequence(
+        events: list, ticket_id: str | None = None
+    ) -> int:
+        """Return the highest sequence number of a CHANGES decision event.
+
+        Only REVIEW_DECISION/LOOP_DECISION with decision==CHANGES count as a
+        requeue trigger. STATE_CHANGED -> IN_PROGRESS is a consequence of the
+        decision, not the trigger itself — counting it would cause a second
+        requeue when both events appear in the same new_events batch.
+
+        Args:
+            events: Event list (BusEvent objects with .event_type, .payload, .sequence_number).
+            ticket_id: If provided, filter to this ticket only.
+
+        Returns:
+            Highest matching sequence number, or 0 if none found.
+        """
+        result = 0
+        for event in events:
+            if ticket_id is not None and getattr(event, "ticket_id", None) != ticket_id:
+                continue
+            if (
+                event.event_type in ("LOOP_DECISION", "REVIEW_DECISION")
+                and str(
+                    (getattr(event, "payload", None) or {}).get("decision", "")
+                ).upper()
+                == "CHANGES"
+                and event.sequence_number > result
+            ):
+                result = event.sequence_number
+        return result
+
     def _bootstrap_requeue_if_needed(
         self, state: SupervisorState, ticket_id: str
     ) -> None:
@@ -796,18 +829,9 @@ class SequentialTicketSupervisor:
         """
         state = self.load_state()
 
-        requeue_trigger_seq = 0
-        for event in self.event_bus.read_events(ticket_id=ticket_id):
-            is_changes = (
-                event.event_type
-                in (
-                    "LOOP_DECISION",
-                    "REVIEW_DECISION",
-                )
-                and str((event.payload or {}).get("decision", "")).upper() == "CHANGES"
-            )
-            if is_changes and event.sequence_number > requeue_trigger_seq:
-                requeue_trigger_seq = event.sequence_number
+        requeue_trigger_seq = self._latest_changes_trigger_sequence(
+            self.event_bus.read_events(ticket_id=ticket_id), ticket_id=ticket_id
+        )
 
         if not (
             requeue_trigger_seq > 0
@@ -1588,22 +1612,9 @@ class SequentialTicketSupervisor:
         state = self.load_state()
         event_activity = state.last_processed_sequence > previous_sequence
 
-        requeue_trigger_sequence = 0
-        for event in new_events:
-            is_changes = event.ticket_id == state.active_ticket and (
-                (
-                    event.event_type in ("LOOP_DECISION", "REVIEW_DECISION")
-                    and str((event.payload or {}).get("decision", "")).upper()
-                    == "CHANGES"
-                )
-                or (
-                    event.event_type == "STATE_CHANGED"
-                    and str((event.payload or {}).get("to_state", "")).upper()
-                    == "IN_PROGRESS"
-                )
-            )
-            if is_changes and event.sequence_number > requeue_trigger_sequence:
-                requeue_trigger_sequence = event.sequence_number
+        requeue_trigger_sequence = self._latest_changes_trigger_sequence(
+            new_events, ticket_id=state.active_ticket
+        )
 
         requeue_triggered = (
             requeue_trigger_sequence > 0
