@@ -1,14 +1,14 @@
 {
   "version": "1.0",
-  "generated": "2026-06-01T08:35:30.373527+00:00",
+  "generated": "2026-06-01T10:27:30.484945+00:00",
   "project_root": "C:\\Users\\fdl\\Proyectos_Python\\z_scripts\\orquestador_de_agentes",
   "summary": {
-    "total_files": 11338,
-    "total_size_bytes": 65603122,
+    "total_files": 11341,
+    "total_size_bytes": 65221228,
     "categories": {
       "config": 1094,
-      "python": 1668,
-      "documentation": 3288,
+      "python": 1670,
+      "documentation": 3289,
       "other": 5259,
       "scripts": 29
     }
@@ -203,12 +203,12 @@
       {
         "path": ".agent/collaboration/.session_state.json",
         "size": 134,
-        "sha256": "dfef16f4ce429bbbb1af8ce8491a8b7ff2c593ddb84ec6ecd1204a01e701b826"
+        "sha256": "c0869719563d32211e4619b77520be904b40078d0cf172c0338ae6bb6db830c1"
       },
       {
         "path": ".agent/config/agents.json",
-        "size": 2562,
-        "sha256": "2bd6c267b554e37abce3a055e4fb6676fc9990d22f9bf3fa39e05b4ab67c8d97"
+        "size": 2644,
+        "sha256": "2ff1b71083433939cee3f9b519a908ab31be2215b24a417856bc28fc8f028e32"
       },
       {
         "path": ".agent/config/hooks_config.json",
@@ -222,8 +222,8 @@
       },
       {
         "path": ".agent/context/project-map.json",
-        "size": 3712832,
-        "sha256": "53a548613ad396f2a459e6b570de28428f7a451ee1c881be0ab38341a77dd673"
+        "size": 3274530,
+        "sha256": "76d249a5ca5c3ca03d5dffa19fc49442c9d6af06fbb2272cb518abbdc5823ff9"
       },
       {
         "path": ".agent/known_models.json",
@@ -253,7 +253,7 @@
       {
         "path": ".agent/runtime/circuit_breaker.json",
         "size": 181,
-        "sha256": "1a4f92205980fa3e609855cb2942a80a89fd7aa17d228861f309629ae9932592"
+        "sha256": "db44b1a93dc767a6d4d1f0db4516a8f5d090706adefdfb95e017fb0c4c4f8aed"
       },
       {
         "path": ".agent/runtime/manager_bridge_state.json",
@@ -5768,6 +5768,11 @@
         "sha256": "932feeead2266e6f014113599183626eab72b693ea1e9c24d07f5dbda160a0b7"
       },
       {
+        "path": "bus/blocker_signature.py",
+        "size": 10568,
+        "sha256": "e0a850404061a38d0af5589492588694b36edad724d1d1a4beb7d26e8ae4b6fb"
+      },
+      {
         "path": "bus/event_bus.py",
         "size": 17272,
         "sha256": "3dc1e67ead201447c8b5bac3465175ab0a5825d287c6147071a7f1cd30c94576"
@@ -5789,8 +5794,8 @@
       },
       {
         "path": "bus/review_bridge.py",
-        "size": 96882,
-        "sha256": "26b268ce495b4d914967fefb65c6d131a807350923bbffcfd74f343074f77080"
+        "size": 112912,
+        "sha256": "a3f36fd711b73de65be36520102117df401980a7eabf0eeb2ad419b2a413f16a"
       },
       {
         "path": "bus/skill_resolver.py",
@@ -5849,8 +5854,8 @@
       },
       {
         "path": "scripts/archive_collaboration_artifacts.py",
-        "size": 12160,
-        "sha256": "120b5ba687cbf2664ee9ad903515f651850e20c3e056fa1660bfdf72f8a3ef2c"
+        "size": 12249,
+        "sha256": "f772f85cd3a900434a1750e076cda901911bd6c696b48523de4b7366a3e2bf80"
       },
       {
         "path": "scripts/archive_event_bus.py",
@@ -6019,8 +6024,8 @@
       },
       {
         "path": "scripts/session_closeout.py",
-        "size": 60190,
-        "sha256": "2eb7b8af3d323032db307ecac5e984e8f2c06214c0e10e4eadd7e0aab9ebd9db"
+        "size": 60510,
+        "sha256": "6ba8d86810c0966b22da108fdc00a6bb72980ae7f28b6373f2cbb60d3adddba2"
       },
       {
         "path": "scripts/state_projection_probe.py",
@@ -13288,6 +13293,11 @@
         "sha256": "0cc86d3f962bad0849dd74c4ad44f55288d816c3e82aa6bc56acc2a4679cd2eb"
       },
       {
+        "path": "tests/test_blocker_signature.py",
+        "size": 10663,
+        "sha256": "acc7dad03794bef1166cd30b489ce7d63979f834fd7a14947732e7438b9937cb"
+      },
+      {
         "path": "tests/test_builder_lock.py",
         "size": 8155,
         "sha256": "4c32633592962d1f09fac11939a43ac3e872896db3e36fac8acfdeac9ed7681a"
@@ -13439,8 +13449,8 @@
       },
       {
         "path": "tests/test_review_bridge.py",
-        "size": 30109,
-        "sha256": "36a375e163a1409b5866f11751e40ecb97f8f8244685207e979aa7bfa8368ca7"
+        "size": 45050,
+        "sha256": "288dc692390a609bb1cf77c6fa705f2d3eb14b639fb9d3757693206c4c33a8df"
       },
       {
         "path": "tests/test_review_cycle_e2e.py",
@@ -13659,8 +13669,8 @@
       },
       {
         "path": "tests/unit/test_manager_feedback_archive.py",
-        "size": 13127,
-        "sha256": "5af41ba2e68361d45b1783a6dbd6265a98a41cfb743dd86dc603963a0036f4a2"
+        "size": 14313,
+        "sha256": "ca212a4e606a4281cd67a03208540318837c767e9d0ade2b9c1b3a57d32ada71"
       },
       {
         "path": "tests/unit/test_mark_ready_idempotency.py",
@@ -14305,6 +14315,11 @@
         "sha256": "43427dbee2bf41c5e5dcf45262711c5e2404a28cfdd6615f135271d5bb13fa47"
       },
       {
+        "path": ".agent/README.md",
+        "size": 712,
+        "sha256": "ace04ea30067165a72004f7a0df17af917639b7f73ee4d37fd82d126fd44dbd4"
+      },
+      {
         "path": ".agent/rules/builder/recovery.md",
         "size": 4374,
         "sha256": "71eb1dbf5cd2e383874da1a7751b28aaf21227dbfce0fbfa91960b4b75f68295"
@@ -14491,8 +14506,8 @@
       },
       {
         "path": ".opencode/MODELS.md",
-        "size": 4468,
-        "sha256": "f08524b0fcdb16fab43d9e36920244b8c9162ec92f51b98cdf7cc1aeb0d4b7ea"
+        "size": 4507,
+        "sha256": "66be0874a968206a2a5202211df317385ce191331c22c6a4e158f21b2f760807"
       },
       {
         "path": ".session/wp_inventory.md",
@@ -14626,8 +14641,8 @@
       },
       {
         "path": "prompts/session_bootstrap.md",
-        "size": 6805,
-        "sha256": "19bf2a11e3a73f8523c48a2a0b544c3c5a69f224c9eae62c50da52edd43a447b"
+        "size": 6907,
+        "sha256": "c73db312b3a3ceddd3c4caa9d84227a5812b5e17bb62b51af2d52556f3ea92e8"
       },
       {
         "path": "QUICKSTART.md",
@@ -14966,13 +14981,13 @@
       },
       {
         "path": "templates/startup/builder_codex.md",
-        "size": 1173,
-        "sha256": "6354eaab80a667edf77d5dfd21d495e0304b96471fc3bf40582b987851023465"
+        "size": 1096,
+        "sha256": "85b91227c587a5f08793e49d89981d540a5cc55539f33011f569aa8d2db7c2c0"
       },
       {
         "path": "templates/startup/builder_kilo.md",
-        "size": 1210,
-        "sha256": "596ea46519b44ea570f4f10bfa5281b1d2ac9aa55274e1d632d857be274be91c"
+        "size": 1129,
+        "sha256": "c8db304095b764ff9a3cc585af7a67f7f7d8267650e45a85a717dc890d198b82"
       },
       {
         "path": "templates/startup/manager_kilo.md",
@@ -56575,8 +56590,8 @@
       },
       {
         "path": "scripts/launch_agent_terminals.ps1",
-        "size": 60586,
-        "sha256": "422732f36b52a017e41a2e7eb3a4e823335cbfecd562b7f17129ad38b9ee86a8"
+        "size": 62420,
+        "sha256": "53690b64c49d4a0bdd07c7b72a2f807d35c2ed80894772aa013799c7fc28badc"
       },
       {
         "path": "scripts/test_manager_smoke.ps1",
@@ -59437,6 +59452,26 @@
         ],
         "error": null
       },
+      "bus/blocker_signature.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "re",
+            "type": "stdlib",
+            "package": "re"
+          },
+          {
+            "name": "typing.Any",
+            "type": "stdlib",
+            "package": "typing"
+          }
+        ],
+        "error": null
+      },
       "bus/event_bus.py": {
         "imports": [
           {
@@ -59658,6 +59693,21 @@
             "name": "pathlib.Path",
             "type": "stdlib",
             "package": "pathlib"
+          },
+          {
+            "name": "blocker_signature.blocker_lines_from_signature",
+            "type": "external",
+            "package": "blocker_signature"
+          },
+          {
+            "name": "blocker_signature.compute_blocker_overlap",
+            "type": "external",
+            "package": "blocker_signature"
+          },
+          {
+            "name": "blocker_signature.extract_signatures_from_feedback",
+            "type": "external",
+            "package": "blocker_signature"
           },
           {
             "name": "event_bus.EventBus",
@@ -64157,6 +64207,51 @@
         ],
         "error": null
       },
+      "tests/test_blocker_signature.py": {
+        "imports": [
+          {
+            "name": "__future__.annotations",
+            "type": "stdlib",
+            "package": "__future__"
+          },
+          {
+            "name": "bus.blocker_signature.blocker_lines_from_signature",
+            "type": "local",
+            "path": "bus/blocker_signature.py"
+          },
+          {
+            "name": "bus.blocker_signature.compute_blocker_overlap",
+            "type": "local",
+            "path": "bus/blocker_signature.py"
+          },
+          {
+            "name": "bus.blocker_signature.compute_signature",
+            "type": "local",
+            "path": "bus/blocker_signature.py"
+          },
+          {
+            "name": "bus.blocker_signature.extract_signatures_from_feedback",
+            "type": "local",
+            "path": "bus/blocker_signature.py"
+          },
+          {
+            "name": "bus.blocker_signature.parse_blockers",
+            "type": "local",
+            "path": "bus/blocker_signature.py"
+          },
+          {
+            "name": "bus.blocker_signature.compute_signature",
+            "type": "local",
+            "path": "bus/blocker_signature.py"
+          },
+          {
+            "name": "bus.blocker_signature.parse_blockers",
+            "type": "local",
+            "path": "bus/blocker_signature.py"
+          }
+        ],
+        "error": null
+      },
       "tests/test_builder_lock.py": {
         "imports": [
           {
@@ -66278,6 +66373,121 @@
             "name": "datetime",
             "type": "stdlib",
             "package": "datetime"
+          },
+          {
+            "name": "bus.review_bridge.EventBus",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.ReviewBridge",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.EventBus",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.ReviewBridge",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.EventBus",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.ReviewBridge",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.EventBus",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.ReviewBridge",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.EventBus",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.ReviewBridge",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.event_bus.EventBus",
+            "type": "local",
+            "path": "bus/event_bus.py"
+          },
+          {
+            "name": "bus.review_bridge.ReviewBridge",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.EventBus",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.ReviewBridge",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.ReviewDecision",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.EventBus",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.ReviewBridge",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.ReviewDecision",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.EventBus",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.ReviewBridge",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.EventBus",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "bus.review_bridge.ReviewBridge",
+            "type": "local",
+            "path": "bus/review_bridge.py"
+          },
+          {
+            "name": "json",
+            "type": "stdlib",
+            "package": "json"
           },
           {
             "name": "datetime.datetime",
@@ -70543,9 +70753,9 @@
     "frameworks": [],
     "tools": [
       "uv",
+      "pytest",
       "mypy",
-      "ruff",
-      "pytest"
+      "ruff"
     ]
   },
   "parse_errors": [

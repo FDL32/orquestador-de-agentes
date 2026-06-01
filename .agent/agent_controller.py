@@ -1355,11 +1355,13 @@ def _collect_git_diff_files() -> set[str]:
         files |= _run_git_diff_cmd(["git", "diff", "--name-only"], cwd=root)
         files |= _run_git_diff_cmd(["git", "diff", "--cached", "--name-only"], cwd=root)
 
-    # If working tree is clean in both roots, check last commits
+    # If working tree is clean in both roots, check recent commits.
+    # Use -10 instead of -1: in Model B the implementation commits may be
+    # several commits behind HEAD (e.g. after hotfix commits on top of them).
     if not files:
         for root in {PROJECT_ROOT, _MOTOR_ROOT}:
             files |= _run_git_diff_cmd(
-                ["git", "log", "-1", "--name-only", "--format="], cwd=root
+                ["git", "log", "-10", "--name-only", "--format="], cwd=root
             )
 
     return files
@@ -2941,8 +2943,16 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
             # Using splitlines() avoids strip() eating the leading status space
             # on the first line of multi-line output.
             path = line_raw[3:].strip()
-            abs_path = str((git_root / path).resolve())
-            if not _is_live_surface(abs_path, project_root, live_files, live_dirs):
+            # Model B: git status runs in git_root (motor) but live surfaces are
+            # keyed on project_root (workspace). Check both resolved paths so that
+            # auto-generated files like project-map.json are excluded regardless of
+            # which root they fall under.
+            abs_from_git = str((git_root / path).resolve())
+            abs_from_ws = str((project_root / path).resolve())
+            if not (
+                _is_live_surface(abs_from_git, project_root, live_files, live_dirs)
+                or _is_live_surface(abs_from_ws, project_root, live_files, live_dirs)
+            ):
                 dirty_entries.append(path)
 
     if dirty_entries:
