@@ -1,2 +1,2 @@
 cache-dir = '.agent/runtime/uv-cache'
-exclude-newer = '2026-05-16'
+exclude-newer = '2026-06-01'
