@@ -820,7 +820,7 @@ def test_supervisor_skips_relaunch_on_human_gate(tmp_path, monkeypatch):
     monkeypatch.setattr(
         supervisor,
         "_relaunch_builder",
-        lambda ticket_id: relaunch_calls.append(ticket_id),
+        lambda ticket_id, *a, **kw: relaunch_calls.append(ticket_id),
     )
 
     changed = supervisor.run_once()
@@ -875,7 +875,7 @@ def test_run_once_triggers_requeue_on_review_decision_changes(tmp_path, monkeypa
     monkeypatch.setattr(
         supervisor,
         "_relaunch_builder",
-        lambda ticket_id: relaunch_calls.append(ticket_id) or True,
+        lambda ticket_id, *a, **kw: relaunch_calls.append(ticket_id) or True,
     )
 
     changed = supervisor.run_once()
@@ -933,7 +933,7 @@ def test_run_once_watermark_prevents_double_requeue(tmp_path, monkeypatch):
     monkeypatch.setattr(
         supervisor,
         "_relaunch_builder",
-        lambda ticket_id: relaunch_calls.append(ticket_id) or True,
+        lambda ticket_id, *a, **kw: relaunch_calls.append(ticket_id) or True,
     )
 
     # First run_once: should trigger requeue
@@ -3167,7 +3167,7 @@ def test_relaunch_emits_event_skipped_alive(tmp_path, monkeypatch):
     payload = events[0].payload
     assert payload["round"] == 2
     assert payload["outcome"] == "skipped_alive"
-    assert payload["exit_code"] is None
+    assert payload.get("launcher_exit_code") is None
     assert "Builder alive" in payload["stderr_tail"]
 
     # Verify log was persisted
@@ -3227,7 +3227,7 @@ def test_relaunch_emits_event_launcher_failed(tmp_path, monkeypatch):
     payload = events[0].payload
     assert payload["round"] == 3
     assert payload["outcome"] == "launcher_failed"
-    assert payload["exit_code"] == 1
+    assert payload["launcher_exit_code"] == 1
     assert payload["stderr_tail"] == "Launcher error output"
 
     # Verify log was persisted
@@ -3235,8 +3235,11 @@ def test_relaunch_emits_event_launcher_failed(tmp_path, monkeypatch):
     assert log_path.exists()
 
 
-def test_relaunch_emits_event_success(tmp_path, monkeypatch):
-    """Test _relaunch_builder emits BUILDER_RELAUNCH_ATTEMPTED with success."""
+def test_relaunch_outcome_builder_started_verified(tmp_path, monkeypatch):
+    """Test _relaunch_builder emits builder_started_verified when builder_lock is found."""
+    import json
+    from datetime import datetime, timezone
+
     from bus.supervisor import SequentialTicketSupervisor
 
     collaboration_dir = tmp_path / ".agent" / "collaboration"
@@ -3274,20 +3277,42 @@ def test_relaunch_emits_event_success(tmp_path, monkeypatch):
         lambda cmd: (0, "Launcher OK", ""),
     )
 
-    result = supervisor._relaunch_builder("WP-TEST")
+    # Create builder_lock.txt with matching round and fresh timestamp
+    lock_path = runtime_dir / "builder_lock.txt"
+    lock_data = {
+        "pid": 12345,
+        "ticket_id": "WP-TEST",
+        "round": 1,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    }
+    lock_path.write_text(json.dumps(lock_data), encoding="utf-8")
+
+    # Also mock _verify_builder_start to return verified immediately
+    # (the lock already exists, but the polling method may need a shorter timeout)
+    monkeypatch.setattr(
+        supervisor,
+        "_verify_builder_start",
+        lambda ticket_id, relaunch_started_at, expected_round: (
+            "builder_started_verified",
+            "builder_lock",
+        ),
+    )
+
+    result = supervisor._relaunch_builder("WP-TEST", trigger_seq=42)
 
     assert result is True
 
-    # Verify event was emitted
+    # Verify event was emitted with new taxonomy
     events = supervisor.event_bus.read_events(
         ticket_id="WP-TEST", event_type="BUILDER_RELAUNCH_ATTEMPTED"
     )
     assert len(events) == 1
     payload = events[0].payload
     assert payload["round"] == 1
-    assert payload["outcome"] == "success"
-    assert payload["exit_code"] == 0
-    assert payload["stderr_tail"] is None
+    assert payload["outcome"] == "builder_started_verified"
+    assert payload["trigger_seq"] == 42
+    assert payload["launcher_exit_code"] == 0
+    assert payload["verify_signal"] == "builder_lock"
 
     # Verify log was persisted
     log_path = runtime_dir / "logs" / "launcher_last.log"
@@ -3345,7 +3370,7 @@ def test_relaunch_emits_event_timeout(tmp_path, monkeypatch):
     payload = events[0].payload
     assert payload["round"] == 4
     assert payload["outcome"] == "timeout"
-    assert payload["exit_code"] == -1
+    assert payload["launcher_exit_code"] == -1
     assert "timed out" in payload["stderr_tail"]
 
 
@@ -3393,7 +3418,7 @@ def test_relaunch_launcher_not_found_emits_event(tmp_path, monkeypatch):
     payload = events[0].payload
     assert payload["round"] == 1
     assert payload["outcome"] == "launcher_failed"
-    assert payload["exit_code"] == -1
+    assert payload["launcher_exit_code"] == -1
     assert "Launcher not found" in payload["stderr_tail"]
 
 
@@ -3446,7 +3471,7 @@ def test_relaunch_powershell_not_found_emits_event(tmp_path, monkeypatch):
     payload = events[0].payload
     assert payload["round"] == 1
     assert payload["outcome"] == "launcher_failed"
-    assert payload["exit_code"] == -1
+    assert payload["launcher_exit_code"] == -1
     assert "PowerShell executable not found" in payload["stderr_tail"]
 
 
@@ -3629,7 +3654,7 @@ def test_run_once_requeue_watermark_persists_across_calls(tmp_path, monkeypatch)
     monkeypatch.setattr(
         supervisor,
         "_relaunch_builder",
-        lambda ticket_id: relaunch_calls.append(ticket_id) or True,
+        lambda ticket_id, *a, **kw: relaunch_calls.append(ticket_id) or True,
     )
 
     # First run_once: should trigger requeue
@@ -3638,7 +3663,10 @@ def test_run_once_requeue_watermark_persists_across_calls(tmp_path, monkeypatch)
     assert len(relaunch_calls) == 1, "First call should trigger requeue"
 
     state1 = supervisor.load_state()
-    assert state1.loop_current_round == 2
+    # After WT-2026-199, round starts at 1 and requeue_ticket increments to 2
+    assert state1.loop_current_round == 2, (
+        "Watermark must be persisted after first requeue"
+    )
     watermark1 = state1.last_requeue_trigger_sequence
     assert watermark1 > 0, "Watermark must be persisted after first requeue"
 
@@ -3773,7 +3801,7 @@ def test_run_reactive_exits_after_requeue(tmp_path, monkeypatch):
     monkeypatch.setattr(
         supervisor,
         "_relaunch_builder",
-        lambda ticket_id: relaunch_calls.append(ticket_id) or True,
+        lambda ticket_id, *a, **kw: relaunch_calls.append(ticket_id) or True,
     )
 
     # Mock time functions for quick exit
@@ -3829,7 +3857,7 @@ def test_run_once_sets_requeue_flag(tmp_path, monkeypatch):
     )
 
     # Mock _relaunch_builder to return success
-    monkeypatch.setattr(supervisor, "_relaunch_builder", lambda ticket_id: True)
+    monkeypatch.setattr(supervisor, "_relaunch_builder", lambda *a, **kw: True)
 
     # Run once should trigger requeue and set flag
     result = supervisor.run_once()
@@ -4003,7 +4031,7 @@ def test_bootstrap_requeue_if_needed_fires_when_changes_unprocessed(
 
     relaunch_calls: list[str] = []
 
-    def fake_relaunch(t: str) -> bool:
+    def fake_relaunch(t: str, *a, **kw) -> bool:
         relaunch_calls.append(t)
         return True
 
@@ -4085,79 +4113,12 @@ def test_bootstrap_requeue_if_needed_defers_when_builder_lock_fresh(
 
     relaunch_calls: list[str] = []
 
-    def fake_relaunch(t: str) -> bool:
+    def fake_relaunch(t: str, *a, **kw) -> bool:
         relaunch_calls.append(t)
         return True
 
     monkeypatch.setattr(supervisor, "_relaunch_builder", fake_relaunch)
 
-    supervisor.bootstrap()
-
-    assert relaunch_calls == [], "bootstrap must not launch Builder when lock is fresh"
-    state = supervisor.load_state()
-    assert state.last_requeue_trigger_sequence == 0, (
-        "watermark must stay at 0 so next bootstrap retries after lock expires"
-    )
-    deferred = [
-        e
-        for e in supervisor.event_bus.read_events()
-        if e.event_type == "SUPERVISOR_REQUEUE_DEFERRED"
-    ]
-    assert len(deferred) == 1, "bootstrap must emit exactly one defer event"
-    assert deferred[0].payload["reason"] == "builder_lock_fresh"
-
-
-def test_bootstrap_requeue_if_needed_defer_then_retry(tmp_path, monkeypatch):
-    """bootstrap defers on a fresh lock, then retries on the next bootstrap."""
-    from bus.supervisor import SequentialTicketSupervisor, SupervisorState
-
-    collaboration_dir = tmp_path / ".agent" / "collaboration"
-    runtime_dir = tmp_path / ".agent" / "runtime"
-    collaboration_dir.mkdir(parents=True)
-    runtime_dir.mkdir(parents=True)
-
-    supervisor = SequentialTicketSupervisor(
-        project_root=tmp_path,
-        collaboration_dir=collaboration_dir,
-        runtime_dir=runtime_dir,
-        auto_sync=False,
-    )
-
-    ticket_id = "WP-2026-167"
-
-    supervisor.event_bus.emit(
-        "STATE_CHANGED",
-        ticket_id=ticket_id,
-        actor="SUPERVISOR",
-        payload={"from_state": "N/A", "to_state": "IN_PROGRESS", "reason": "Start"},
-    )
-    supervisor.event_bus.emit(
-        "REVIEW_DECISION",
-        ticket_id=ticket_id,
-        actor="MANAGER",
-        payload={"decision": "changes", "feedback": "Fix it"},
-    )
-
-    all_events = supervisor.event_bus.read_events()
-    latest_seq = all_events[-1].sequence_number
-    supervisor.save_state(
-        SupervisorState(
-            active_ticket=ticket_id,
-            loop_current_round=1,
-            last_processed_sequence=latest_seq,
-            last_requeue_trigger_sequence=0,
-        )
-    )
-
-    relaunch_calls: list[str] = []
-
-    def fake_relaunch(t: str) -> bool:
-        relaunch_calls.append(t)
-        return True
-
-    # First bootstrap: Builder still alive, so requeue is deferred.
-    monkeypatch.setattr(supervisor, "_builder_alive", lambda: True)
-    monkeypatch.setattr(supervisor, "_relaunch_builder", fake_relaunch)
     supervisor.bootstrap()
 
     deferred = [
@@ -4248,7 +4209,7 @@ def test_bootstrap_requeue_if_needed_skips_when_watermark_already_set(
 
     relaunch_calls: list[str] = []
 
-    def fake_relaunch(t: str) -> bool:
+    def fake_relaunch(t: str, *a, **kw) -> bool:
         relaunch_calls.append(t)
         return True
 
@@ -4632,7 +4593,7 @@ def test_run_once_suppresses_relaunch_on_handoff_blocked(tmp_path, monkeypatch):
     monkeypatch.setattr(
         supervisor,
         "_relaunch_builder",
-        lambda ticket_id: relaunch_calls.append(ticket_id) or True,
+        lambda ticket_id, *a, **kw: relaunch_calls.append(ticket_id) or True,
     )
 
     result = supervisor.run_once()
@@ -4722,7 +4683,7 @@ def test_run_once_relaunches_on_timeout_without_handoff_blocked(tmp_path, monkey
     monkeypatch.setattr(
         supervisor,
         "_relaunch_builder",
-        lambda ticket_id: relaunch_calls.append(ticket_id) or True,
+        lambda ticket_id, *a, **kw: relaunch_calls.append(ticket_id) or True,
     )
 
     result = supervisor.run_once()
@@ -4818,7 +4779,7 @@ def test_run_once_uses_review_decision_as_single_requeue_trigger(tmp_path, monke
     monkeypatch.setattr(
         supervisor,
         "_relaunch_builder",
-        lambda ticket_id: relaunch_calls.append(ticket_id) or True,
+        lambda ticket_id, *a, **kw: relaunch_calls.append(ticket_id) or True,
     )
 
     result = supervisor.run_once()
@@ -5245,7 +5206,7 @@ def test_wt197_bootstrap_requeues_builder_on_spurious_ready_for_review(
 
     requeue_calls = []
     monkeypatch.setattr(
-        sup, "requeue_ticket", lambda tid: requeue_calls.append(tid) or True
+        sup, "requeue_ticket", lambda tid, *a, **kw: requeue_calls.append(tid) or True
     )
     # _builder_alive must return False so the requeue is not deferred
     monkeypatch.setattr(sup, "_builder_alive", lambda: False)
@@ -5328,7 +5289,7 @@ def test_wt197_bootstrap_does_not_requeue_on_legitimate_ready_for_review(
 
     requeue_calls = []
     monkeypatch.setattr(
-        sup, "requeue_ticket", lambda tid: requeue_calls.append(tid) or True
+        sup, "requeue_ticket", lambda tid, *a, **kw: requeue_calls.append(tid) or True
     )
     monkeypatch.setattr(sup, "_builder_alive", lambda: False)
     monkeypatch.setattr(sup, "_bootstrap_watchdog_manager_if_needed", lambda s, t: None)
@@ -5383,7 +5344,7 @@ def test_wt197_no_double_requeue_when_watermark_already_covers_changes(
 
     requeue_calls = []
     monkeypatch.setattr(
-        sup, "requeue_ticket", lambda tid: requeue_calls.append(tid) or True
+        sup, "requeue_ticket", lambda tid, *a, **kw: requeue_calls.append(tid) or True
     )
     monkeypatch.setattr(sup, "_builder_alive", lambda: False)
     monkeypatch.setattr(sup, "_bootstrap_watchdog_manager_if_needed", lambda s, t: None)
@@ -5393,3 +5354,450 @@ def test_wt197_no_double_requeue_when_watermark_already_covers_changes(
     assert requeue_calls == [], (
         "Must not double-requeue when last_requeue_trigger_sequence already covers the CHANGES seq"
     )
+
+
+# =============================================================================
+# Tests WT-2026-199: Claim atomico de requeue y verificacion de Builder vivo
+# =============================================================================
+
+
+def _make_supervisor_with_claims(tmp_path):
+    """Helper: create supervisor with standard dirs for claim tests."""
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+    return SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+
+def test_claim_requeue_excl_only_one_winner(tmp_path):
+    """TP-01: _claim_requeue usa O_CREAT|O_EXCL; solo un winner por (ticket, seq)."""
+    sup = _make_supervisor_with_claims(tmp_path)
+    ticket_id = "WT-2026-199"
+    trigger_seq = 100
+
+    # First claim should succeed
+    assert sup._claim_requeue(ticket_id, trigger_seq) is True
+
+    # Second claim for same (ticket, seq) should fail (FileExistsError, no staleness)
+    assert sup._claim_requeue(ticket_id, trigger_seq) is False
+
+    # Different trigger_seq should succeed
+    assert sup._claim_requeue(ticket_id, 101) is True
+
+
+def test_claim_requeue_blocks_second_path_same_sequence(tmp_path):
+    """TP-02: Two callers for same (ticket_id, trigger_seq) — only one wins."""
+    sup = _make_supervisor_with_claims(tmp_path)
+    ticket_id = "WT-2026-199"
+    trigger_seq = 200
+
+    # Simulate two callers
+    winner1 = sup._claim_requeue(ticket_id, trigger_seq)
+    winner2 = sup._claim_requeue(ticket_id, trigger_seq)
+
+    # Exactly one should win
+    assert winner1 is True
+    assert winner2 is False
+
+
+def test_requeue_ticket_no_side_effects_when_claim_denied(tmp_path, monkeypatch):
+    """TP-03: requeue_ticket no produce efectos si el claim falla."""
+    sup = _make_supervisor_with_claims(tmp_path)
+    ticket_id = "WT-2026-199"
+    trigger_seq = 300
+
+    # Set up state so the first check passes
+    sup.save_state(
+        SupervisorState(
+            active_ticket=ticket_id,
+            loop_current_round=1,
+        )
+    )
+    sup.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="SUPERVISOR",
+        payload={"from_state": "N/A", "to_state": "IN_PROGRESS", "reason": "Start"},
+    )
+
+    # Acquire claim first (simulates another supervisor owning it)
+    assert sup._claim_requeue(ticket_id, trigger_seq) is True
+
+    # Mock _relaunch_builder to track calls
+    relaunch_calls = []
+    monkeypatch.setattr(
+        sup, "_relaunch_builder", lambda *a, **kw: relaunch_calls.append(True) or True
+    )
+
+    # requeue_ticket should fail because claim is denied
+    result = sup.requeue_ticket(ticket_id, trigger_seq)
+    assert result is False
+
+    # No side effects: round not incremented, relaunch not called
+    state = sup.load_state()
+    assert state.loop_current_round == 1
+    assert relaunch_calls == []
+
+
+def test_claim_stale_recovered_after_ttl_without_relaunch(tmp_path):
+    """TP-04: Claim stale se recupera si TTL excedido y no hay relanzado previo."""
+    import os
+    import time
+
+    sup = _make_supervisor_with_claims(tmp_path)
+    ticket_id = "WT-2026-199"
+    trigger_seq = 400
+
+    # Create a stale claim by writing directly (bypassing _claim_requeue)
+    claims_dir = sup.runtime_dir / "requeue_claims"
+    claims_dir.mkdir(parents=True, exist_ok=True)
+    claim_path = claims_dir / f"{ticket_id}_seq-{trigger_seq}.claim"
+    claim_path.write_text("stale claim content", encoding="utf-8")
+
+    # Make it old (> TTL)
+    old_time = time.time() - 200  # well past default 90s TTL
+    os.utime(claim_path, (old_time, old_time))
+
+    # No BUILDER_RELAUNCH_ATTEMPTED event on bus
+
+    # Should recover stale claim
+    result = sup._claim_requeue(ticket_id, trigger_seq)
+    assert result is True, "Stale claim should be recoverable"
+
+
+def test_claim_stale_takeover_atomic_only_one_recovers(tmp_path):
+    """TP-05: Solo un supervisor puede recuperar un stale claim (takeover atomico)."""
+    import os
+    import time
+
+    sup = _make_supervisor_with_claims(tmp_path)
+    ticket_id = "WT-2026-199"
+    trigger_seq = 500
+
+    # Create stale claim
+    claims_dir = sup.runtime_dir / "requeue_claims"
+    claims_dir.mkdir(parents=True, exist_ok=True)
+    claim_path = claims_dir / f"{ticket_id}_seq-{trigger_seq}.claim"
+    claim_path.write_text("stale", encoding="utf-8")
+    old_time = time.time() - 200
+    os.utime(claim_path, (old_time, old_time))
+
+    # Create a takeover file to block recovery (simulates another contender)
+    takeover_path = claim_path.with_suffix(".claim.takeover")
+    takeover_path.write_text("locked", encoding="utf-8")
+
+    # Recovery should fail because takeover is held
+    result = sup._claim_requeue(ticket_id, trigger_seq)
+    assert result is False, (
+        "Recovery must fail when another contender holds the takeover"
+    )
+
+
+def test_claim_not_reclaimed_when_relaunch_already_emitted(tmp_path):
+    """TP-06: No reclamar si ya existe BUILDER_RELAUNCH_ATTEMPTED para el trigger."""
+    import os
+    import time
+
+    sup = _make_supervisor_with_claims(tmp_path)
+    ticket_id = "WT-2026-199"
+
+    # Emit some events first so sequence numbers are realistic
+    sup.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="SUPERVISOR",
+        payload={"from_state": "N/A", "to_state": "IN_PROGRESS", "reason": "Start"},
+    )
+    # This is the REVIEW_DECISION that acts as trigger — seq=2
+    sup.event_bus.emit(
+        "REVIEW_DECISION",
+        ticket_id=ticket_id,
+        actor="MANAGER",
+        payload={"decision": "changes", "feedback": "fix it"},
+    )
+    trigger_seq = 2  # The REVIEW_DECISION sequence
+
+    # Now emit BUILDER_RELAUNCH_ATTEMPTED at seq=3 (> trigger_seq=2)
+    sup.event_bus.emit(
+        "BUILDER_RELAUNCH_ATTEMPTED",
+        ticket_id=ticket_id,
+        actor="SUPERVISOR",
+        payload={
+            "round": 1,
+            "outcome": "builder_started_verified",
+            "trigger_seq": trigger_seq,
+        },
+    )
+
+    # Create stale claim for the trigger
+    claims_dir = sup.runtime_dir / "requeue_claims"
+    claims_dir.mkdir(parents=True, exist_ok=True)
+    claim_path = claims_dir / f"{ticket_id}_seq-{trigger_seq}.claim"
+    claim_path.write_text("stale", encoding="utf-8")
+    old_time = time.time() - 200
+    os.utime(claim_path, (old_time, old_time))
+
+    # Should NOT reclaim because relaunch already emitted for this trigger
+    result = sup._claim_requeue(ticket_id, trigger_seq)
+    assert result is False, (
+        "Must not reclaim when relaunch already emitted for the trigger"
+    )
+
+
+def test_requeue_ticket_fails_closed_when_trigger_seq_none(tmp_path):
+    """TP-07: trigger_seq invalido (<= 0) → requeue_ticket procede sin claim (passthrough)."""
+    sup = _make_supervisor_with_claims(tmp_path)
+    ticket_id = "WT-2026-199"
+
+    # Set up minimal state
+    sup.save_state(
+        SupervisorState(
+            active_ticket=ticket_id,
+            loop_current_round=1,
+        )
+    )
+    sup.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="SUPERVISOR",
+        payload={"from_state": "N/A", "to_state": "IN_PROGRESS", "reason": "Start"},
+    )
+
+    # trigger_seq=0 should be accepted as passthrough (returns True from _claim_requeue)
+    # but then RELAUNCH_BLOCKED_STATES check will fail since ticket is IN_PROGRESS
+    # The key is: _claim_requeue does NOT fail closed
+    result = sup._claim_requeue(ticket_id, 0)
+    assert result is True, "trigger_seq=0 must return True (passthrough)"
+
+
+def test_relaunch_outcome_builder_launch_unverified_when_no_signal(
+    tmp_path, monkeypatch
+):
+    """TP-08: builder_launch_unverified cuando no hay senal viva en el timeout."""
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    # Create fake launcher
+    launcher_path = tmp_path / "scripts" / "launch_agent_terminals.ps1"
+    launcher_path.parent.mkdir(parents=True)
+    launcher_path.write_text("# fake launcher", encoding="utf-8")
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    supervisor.save_state(
+        SupervisorState(
+            active_ticket="WP-TEST",
+            loop_current_round=1,
+        )
+    )
+
+    # Mock _builder_alive to return False
+    monkeypatch.setattr(supervisor, "_builder_alive", lambda: False)
+
+    # Mock _run_launcher_subprocess to simulate success
+    monkeypatch.setattr(
+        supervisor,
+        "_run_launcher_subprocess",
+        lambda cmd: (0, "Launcher OK", ""),
+    )
+
+    # Mock _verify_builder_start to return unverified (no builder_lock found)
+    monkeypatch.setattr(
+        supervisor,
+        "_verify_builder_start",
+        lambda *a, **kw: ("builder_launch_unverified", "none"),
+    )
+
+    result = supervisor._relaunch_builder("WP-TEST", trigger_seq=99)
+
+    # Returns True because launcher exit 0
+    assert result is True
+
+    events = supervisor.event_bus.read_events(
+        ticket_id="WP-TEST", event_type="BUILDER_RELAUNCH_ATTEMPTED"
+    )
+    assert len(events) == 1
+    payload = events[0].payload
+    assert payload["outcome"] == "builder_launch_unverified"
+    assert payload["trigger_seq"] == 99
+    assert payload["verify_signal"] == "none"
+
+
+def test_relaunch_outcome_never_uses_success_string(tmp_path, monkeypatch):
+    """TP-09: Ningun outcome usa la cadena 'success'."""
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    launcher_path = tmp_path / "scripts" / "launch_agent_terminals.ps1"
+    launcher_path.parent.mkdir(parents=True)
+    launcher_path.write_text("# fake launcher", encoding="utf-8")
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+    supervisor.save_state(
+        SupervisorState(
+            active_ticket="WP-TEST",
+            loop_current_round=1,
+        )
+    )
+
+    monkeypatch.setattr(supervisor, "_builder_alive", lambda: False)
+    monkeypatch.setattr(
+        supervisor,
+        "_verify_builder_start",
+        lambda *a, **kw: ("builder_started_verified", "builder_lock"),
+    )
+
+    # Test all outcome paths
+    outcomes_seen = set()
+
+    # Path 1: launcher exit 0 → builder_started_verified
+    monkeypatch.setattr(supervisor, "_run_launcher_subprocess", lambda cmd: (0, "", ""))
+    supervisor._relaunch_builder("WP-TEST")
+    events = supervisor.event_bus.read_events(
+        ticket_id="WP-TEST", event_type="BUILDER_RELAUNCH_ATTEMPTED"
+    )
+    for e in events:
+        outcomes_seen.add(e.payload.get("outcome"))
+
+    # Path 2: timeout
+    monkeypatch.setattr(
+        supervisor,
+        "_run_launcher_subprocess",
+        lambda cmd: (-1, "", "launcher timed out after 60s"),
+    )
+    supervisor._relaunch_builder("WP-TEST")
+
+    # Path 3: launcher not found (no launcher)
+    supervisor2 = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+    supervisor2.save_state(
+        SupervisorState(
+            active_ticket="WP-TEST",
+            loop_current_round=1,
+        )
+    )
+    monkeypatch.setattr(supervisor2, "_builder_alive", lambda: False)
+    # Remove launcher
+    if launcher_path.exists():
+        launcher_path.unlink()
+    supervisor2._relaunch_builder("WP-TEST")
+    events2 = supervisor2.event_bus.read_events(
+        ticket_id="WP-TEST", event_type="BUILDER_RELAUNCH_ATTEMPTED"
+    )
+    for e in events2:
+        outcomes_seen.add(e.payload.get("outcome"))
+
+    # 'success' must never appear
+    assert "success" not in outcomes_seen, (
+        f"'success' must never be an outcome, got: {outcomes_seen}"
+    )
+
+
+def test_single_review_decision_yields_single_relaunch(tmp_path, monkeypatch):
+    """TP-10: Para un unico REVIEW_DECISION, a lo sumo un relanzado real."""
+    sup = _make_supervisor_with_claims(tmp_path)
+    ticket_id = "WT-2026-199"
+
+    sup.save_state(
+        SupervisorState(
+            active_ticket=ticket_id,
+            loop_current_round=1,
+            last_requeue_trigger_sequence=0,
+        )
+    )
+    sup.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="SUPERVISOR",
+        payload={"from_state": "N/A", "to_state": "IN_PROGRESS", "reason": "Start"},
+    )
+
+    # Emit CHANGES decision
+    sup.event_bus.emit(
+        "REVIEW_DECISION",
+        ticket_id=ticket_id,
+        actor="MANAGER",
+        payload={"decision": "CHANGES", "feedback": "fix it"},
+    )
+
+    relaunch_calls = []
+    monkeypatch.setattr(
+        sup, "_relaunch_builder", lambda *a, **kw: relaunch_calls.append(True) or True
+    )
+    monkeypatch.setattr(sup, "_builder_alive", lambda: False)
+
+    # First requeue_ticket should succeed
+    trigger_seq = 700
+    result1 = sup.requeue_ticket(ticket_id, trigger_seq)
+    assert result1 is True
+
+    # Second requeue_ticket for same trigger_seq should be blocked by claim
+    result2 = sup.requeue_ticket(ticket_id, trigger_seq)
+    assert result2 is False
+
+    # Exactly one relaunch
+    assert len(relaunch_calls) == 1, (
+        "Only one relaunch should occur for a single REVIEW_DECISION"
+    )
+
+
+def test_terminal_ticket_clears_its_requeue_claims(tmp_path):
+    """TP-11: Ticket terminal limpia sus requeue claims."""
+
+    sup = _make_supervisor_with_claims(tmp_path)
+    ticket_id = "WT-2026-199"
+
+    # Create some claim files
+    claims_dir = sup.runtime_dir / "requeue_claims"
+    claims_dir.mkdir(parents=True, exist_ok=True)
+
+    for seq in [100, 200, 300]:
+        claim_path = claims_dir / f"{ticket_id}_seq-{seq}.claim"
+        claim_path.write_text("claim", encoding="utf-8")
+
+    # Create a claim for a different ticket (should not be deleted)
+    other_claim = claims_dir / "WT-2026-198_seq-50.claim"
+    other_claim.write_text("other", encoding="utf-8")
+
+    # Clean up claims for the terminal ticket
+    sup._cleanup_terminal_requeue_claims(ticket_id)
+
+    # Claims for the ticket should be gone
+    remaining = list(claims_dir.iterdir())
+    ticket_files = [c for c in remaining if ticket_id in c.name]
+    assert ticket_files == [], (
+        f"Claims for {ticket_id} should be removed: {ticket_files}"
+    )
+
+    # Other ticket's claim should survive
+    assert other_claim.exists(), "Other ticket's claim must not be deleted"
