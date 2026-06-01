@@ -2217,7 +2217,7 @@ class ReviewBridge:
         # WT-2026-196: Load adaptive review state from previous cycle
         adaptive_state = self._load_adaptive_state(ticket_id)
         previous_signatures = adaptive_state.get("blocker_signatures", [])
-        diagnostic_mode = bool(previous_signatures)
+        diagnostic_mode = bool(adaptive_state.get("diagnostic_mode", False))
         adaptive_context: dict | None = None
         if previous_signatures:
             current_git_head = self._get_current_git_head()
@@ -2226,7 +2226,7 @@ class ReviewBridge:
             )
             adaptive_context = {
                 "diagnostic_mode": diagnostic_mode,
-                "repeated_blockers": [],
+                "repeated_blockers": adaptive_state.get("repeated_blockers", []),
                 "changed_files_since_previous_review": changed_files,
                 "last_feedback": adaptive_state.get("last_feedback", ""),
             }
