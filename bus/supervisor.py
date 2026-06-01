@@ -40,6 +40,17 @@ RELAUNCH_BLOCKED_STATES = frozenset(
 # Seconds without a bridge heartbeat before the watchdog considers it stale.
 MANAGER_STALE_TIMEOUT = 600
 
+# Claim atomico de requeue (WT-2026-199, Capa A)
+REQUEUE_CLAIMS_DIRNAME = "requeue_claims"
+
+# Default TTL for requeue claims (90 seconds). Override via env.
+_REQUEUE_CLAIM_TTL_ENV = "TICKET_SUPERVISOR_REQUEUE_CLAIM_TTL_SECONDS"
+
+# Default timeout for verifying Builder start after launcher exit 0 (20 seconds).
+# Override via env.
+_BUILDER_START_VERIFY_TIMEOUT_ENV = "BUILDER_START_VERIFY_TIMEOUT_SECONDS"
+_BUILDER_START_VERIFY_TIMEOUT_DEFAULT = 20.0
+
 
 def _bus_cleanup_builder_session(runtime_dir: Path) -> None:
     """Remove builder_session.json from the runtime directory.
@@ -918,12 +929,9 @@ class SequentialTicketSupervisor:
         # next builder launch falls through to a clean session.
         _bus_cleanup_builder_session(self.runtime_dir)
 
-        # WP-2026-194: Save watermark BEFORE calling the launcher subprocess so a
-        # fresh supervisor started by the launcher sees the updated watermark and
-        # does not double-trigger via _bootstrap_requeue_if_needed.
-        state.last_requeue_trigger_sequence = requeue_trigger_seq
-        self.save_state(state)
-        self.requeue_ticket(ticket_id)
+        # WT-2026-199: Watermark update moved into requeue_ticket, which
+        # calls _claim_requeue first as the cross-process authority.
+        self.requeue_ticket(ticket_id, requeue_trigger_seq)
 
     def _load_manager_bridge_state(self) -> dict | None:
         """Read manager_bridge_state.json; return None if missing or unparseable."""
@@ -1034,11 +1042,17 @@ class SequentialTicketSupervisor:
     def _bootstrap_clear_terminal_ticket(
         self, state: SupervisorState, ticket_id: str
     ) -> None:
-        """Clear active_ticket if execution_log and bus confirm terminal state."""
+        """Clear active_ticket if execution_log and bus confirm terminal state.
+
+        When clearing a terminal ticket, also removes any requeue claim
+        files for that ticket (WT-2026-199, Fase 3).
+        """
         if self._execution_log_status(ticket_id) != "COMPLETED":
             return
         current_state = self._current_state(ticket_id)
         if self._is_state_terminal(current_state):
+            # WT-2026-199: Clean up any stale requeue claims for this ticket
+            self._cleanup_terminal_requeue_claims(ticket_id)
             state.active_ticket = None
             state.last_action = "BOOTSTRAP_COMPLETED"
             self.save_state(state)
@@ -1365,25 +1379,50 @@ class SequentialTicketSupervisor:
             motor_root = self.project_root
         return motor_root / "scripts" / "launch_agent_terminals.ps1"
 
-    def _relaunch_builder(self, ticket_id: str) -> bool:
-        """Relaunch Builder via launcher. Returns True if successful or skipped (alive), False on failure.
+    def _relaunch_builder(self, ticket_id: str, trigger_seq: int = 0) -> bool:
+        """Relaunch Builder via launcher. Returns True if launched, False on failure.
 
-        Before: Relaunch logic was monolithic and unobservable.
+        Before: Relaunch logic emitted "success" as outcome based solely on
+                launcher exit code 0, without verifying Builder liveness.
         During: Extracts subprocess spawn to _run_launcher_subprocess seam, persists
-                output to logs, and emits BUILDER_RELAUNCH_ATTEMPTED event with outcome.
+                output to logs, and emits BUILDER_RELAUNCH_ATTEMPTED event.
+                After launcher exit 0, polls for builder_lock.txt freshness as
+                a signal of Builder start.
         After: Each relaunch attempt is observable via event bus and log file, with
-               outcome distinguished: success, skipped_alive, launcher_failed, timeout.
+               outcome in the new taxonomy (WT-2026-199):
+               - builder_started_verified: launcher exit 0 AND builder_lock fresh
+                 with matching round AND no BUILDER_EXIT during verification window.
+               - builder_launch_unverified: launcher exit 0 but no runtime signal
+                 within BUILDER_START_VERIFY_TIMEOUT_SECONDS.
+               - skipped_alive: Builder was already alive (lock fresh, no relaunch).
+               - launcher_failed: launcher not found / pwsh not found / exit != 0.
+               - timeout: launcher exceeded 60s.
+
+               Returns True whenever the launcher subprocess was actually
+               executed with exit code 0, even if outcome is
+               builder_launch_unverified. Returns False on launcher_failed
+               or timeout. The outcome payload carries the actual liveness
+               signal (verify_signal: "builder_lock" | "none").
 
         Event payload (BUILDER_RELAUNCH_ATTEMPTED):
         {
             "round": N,
-            "outcome": "success|skipped_alive|launcher_failed|timeout",
-            "exit_code": int|null,
+            "outcome": "builder_started_verified|builder_launch_unverified|...",
+            "trigger_seq": int,
+            "launcher_exit_code": int|null,
+            "verify_signal": "builder_lock"|"none",
             "stderr_tail": str|null
         }
+
+        v1 limitation (documented): builder_lock.txt is written by the launcher
+        AFTER opening the window, regardless of whether opencode survives.
+        Therefore builder_started_verified detects launchers that spawn the
+        window, but NOT a silent hang without exit. BUILDER_STARTED event
+        (WT-2026-200) will address this.
         """
         import shutil
         import sys
+        from datetime import datetime, timezone
 
         state = self.load_state()
         current_round = state.loop_current_round
@@ -1406,7 +1445,9 @@ class SequentialTicketSupervisor:
                 payload={
                     "round": current_round,
                     "outcome": "skipped_alive",
-                    "exit_code": None,
+                    "trigger_seq": trigger_seq,
+                    "launcher_exit_code": None,
+                    "verify_signal": "none",
                     "stderr_tail": "Builder alive, skipped",
                 },
             )
@@ -1431,7 +1472,9 @@ class SequentialTicketSupervisor:
                 payload={
                     "round": current_round,
                     "outcome": "launcher_failed",
-                    "exit_code": -1,
+                    "trigger_seq": trigger_seq,
+                    "launcher_exit_code": -1,
+                    "verify_signal": "none",
                     "stderr_tail": f"Launcher not found: {launcher_path}",
                 },
             )
@@ -1451,7 +1494,9 @@ class SequentialTicketSupervisor:
                 payload={
                     "round": current_round,
                     "outcome": "launcher_failed",
-                    "exit_code": -1,
+                    "trigger_seq": trigger_seq,
+                    "launcher_exit_code": -1,
+                    "verify_signal": "none",
                     "stderr_tail": "PowerShell executable not found",
                 },
             )
@@ -1481,6 +1526,9 @@ class SequentialTicketSupervisor:
         ]
         print(f"[ticket-supervisor] Executing: {' '.join(cmd)}", flush=True)
 
+        # Capture relaunch start time for verification window
+        relaunch_started_at = datetime.now(timezone.utc)
+
         # Use the injectable seam for subprocess execution
         exit_code, stdout, stderr = self._run_launcher_subprocess(cmd)
 
@@ -1489,8 +1537,15 @@ class SequentialTicketSupervisor:
 
         # Determine outcome and emit event
         if exit_code == 0:
+            # Capa C: Verify Builder started via builder_lock (v1)
+            outcome, verify_signal = self._verify_builder_start(
+                ticket_id=ticket_id,
+                relaunch_started_at=relaunch_started_at,
+                expected_round=current_round,
+            )
             print(
-                f"[ticket-supervisor] Builder relaunch succeeded for {ticket_id}",
+                f"[ticket-supervisor] Builder relaunch outcome={outcome} "
+                f"verify_signal={verify_signal} for {ticket_id}",
                 flush=True,
             )
             self.event_bus.emit(
@@ -1499,11 +1554,15 @@ class SequentialTicketSupervisor:
                 actor="SUPERVISOR",
                 payload={
                     "round": current_round,
-                    "outcome": "success",
-                    "exit_code": exit_code,
+                    "outcome": outcome,
+                    "trigger_seq": trigger_seq,
+                    "launcher_exit_code": exit_code,
+                    "verify_signal": verify_signal,
                     "stderr_tail": stderr[-200:] if stderr else None,
                 },
             )
+            # Returns True whenever launcher was executed with exit 0,
+            # even if verification was inconclusive
             return True
         elif exit_code == -1 and "timed out" in stderr:
             print(
@@ -1518,7 +1577,9 @@ class SequentialTicketSupervisor:
                 payload={
                     "round": current_round,
                     "outcome": "timeout",
-                    "exit_code": exit_code,
+                    "trigger_seq": trigger_seq,
+                    "launcher_exit_code": exit_code,
+                    "verify_signal": "none",
                     "stderr_tail": stderr[-200:] if stderr else None,
                 },
             )
@@ -1549,14 +1610,368 @@ class SequentialTicketSupervisor:
                 payload={
                     "round": current_round,
                     "outcome": "launcher_failed",
-                    "exit_code": exit_code,
+                    "trigger_seq": trigger_seq,
+                    "launcher_exit_code": exit_code,
+                    "verify_signal": "none",
                     "stderr_tail": stderr[-200:] if stderr else None,
                 },
             )
             return False
 
-    def requeue_ticket(self, ticket_id: str) -> bool:
-        """Advance the active ticket into a new Builder round and relaunch it."""
+    def _verify_builder_start(  # noqa: C901
+        self,
+        ticket_id: str,
+        relaunch_started_at: datetime,
+        expected_round: int,
+    ) -> tuple[str, str]:
+        """Poll for builder_lock.txt as liveness signal after launcher exit 0.
+
+        Before: No verification existed; "success" was emitted based solely
+                on launcher exit code.
+        During: Polls for up to BUILDER_START_VERIFY_TIMEOUT_SECONDS looking for
+                builder_lock.txt that is:
+                  - present
+                  - started_at >= relaunch_started_at (with 5s clock slack)
+                  - age <= verify_timeout seconds
+                  - round matches expected_round
+                AND no BUILDER_EXIT event for this ticket during the window.
+                If builder_lock meets all criteria → builder_started_verified.
+                If timeout without valid lock → builder_launch_unverified.
+        After: Returns (outcome, verify_signal) where verify_signal is
+               "builder_lock" or "none".
+
+        v1 limitation: builder_lock is written by the launcher regardless of
+        whether opencode survives. This detects launchers that fail to reach
+        the lock-write point, but NOT silent hangs after opencode starts.
+        """
+        import json
+        import time
+
+        verify_timeout = self._get_verify_timeout()
+        deadline = time.time() + verify_timeout
+        poll_interval = 0.5
+
+        while time.time() < deadline:
+            lock = self.runtime_dir / "builder_lock.txt"
+            if not lock.exists():
+                time.sleep(poll_interval)
+                continue
+
+            try:
+                data = json.loads(lock.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                time.sleep(poll_interval)
+                continue
+
+            # Check started_at freshness
+            started_at_str = data.get("started_at")
+            if not started_at_str:
+                time.sleep(poll_interval)
+                continue
+
+            try:
+                lock_started_at = self._parse_iso_datetime(started_at_str)
+            except (ValueError, TypeError, AttributeError):
+                time.sleep(poll_interval)
+                continue
+
+            # Allow 5s clock slack: lock_started_at >= relaunch_started_at - 5s
+            from datetime import timedelta
+
+            slack_threshold = relaunch_started_at - timedelta(seconds=5)
+            if lock_started_at < slack_threshold:
+                # Lock is from a previous launch; keep waiting
+                time.sleep(poll_interval)
+                continue
+
+            # Check lock age <= verify_timeout
+            try:
+                lock_age = time.time() - lock.stat().st_mtime
+            except OSError:
+                time.sleep(poll_interval)
+                continue
+
+            if lock_age > verify_timeout:
+                # Lock is too old; keep waiting (should not happen for fresh lock)
+                time.sleep(poll_interval)
+                continue
+
+            # Check round matches expected
+            lock_round = data.get("round")
+            if lock_round != expected_round:
+                time.sleep(poll_interval)
+                continue
+
+            # All criteria met: builder_lock is fresh and matches the relaunch.
+            # Final check: no BUILDER_EXIT during verification window.
+            if self._has_builder_exited_after(ticket_id, relaunch_started_at):
+                # Builder exited during startup; treat as unverified
+                return ("builder_launch_unverified", "none")
+
+            return ("builder_started_verified", "builder_lock")
+
+        # Timeout: no valid builder_lock found within the window
+        return ("builder_launch_unverified", "none")
+
+    @staticmethod
+    def _get_claim_ttl() -> float:
+        """Return the configured claim TTL in seconds."""
+        import os
+
+        raw = os.environ.get(_REQUEUE_CLAIM_TTL_ENV, "")
+        if raw and raw.strip():
+            try:
+                value = float(raw)
+                if value > 0:
+                    return value
+            except (TypeError, ValueError):
+                pass
+        return 90.0
+
+    @staticmethod
+    def _get_verify_timeout() -> float:
+        """Return the configured Builder start verify timeout in seconds."""
+        import os
+
+        raw = os.environ.get(_BUILDER_START_VERIFY_TIMEOUT_ENV, "")
+        if raw and raw.strip():
+            try:
+                value = float(raw)
+                if value > 0:
+                    return value
+            except (TypeError, ValueError):
+                pass
+        return _BUILDER_START_VERIFY_TIMEOUT_DEFAULT
+
+    def _claim_requeue(self, ticket_id: str, trigger_seq: int) -> bool:  # noqa: C901
+        """Attempt atomic claim of a requeue for (ticket_id, trigger_seq).
+
+        Before: No cross-process authority exists for requeue ordering. Two
+                supervisor instances can both fire requeue_ticket for the same
+                REVIEW_DECISION, producing double BUILDER_RELAUNCH_ATTEMPTED.
+
+        During: Creates a filesystem claim file atomically via
+                os.open(path, O_CREAT|O_EXCL|O_WRONLY) under
+                <runtime>/requeue_claims/<ticket_id>_seq-<trigger_seq>.claim.
+                If another supervisor already owns the claim (FileExistsError),
+                checks staleness:
+                  - Stale if: (a) mtime exceeds TTL, AND (b) no
+                    BUILDER_RELAUNCH_ATTEMPTED event exists on the bus for this
+                    (ticket_id, trigger_seq) with sequence_number > trigger_seq.
+                  - Stale recovery uses a <claim>.takeover file with O_CREAT|O_EXCL
+                    so only one contender recovers the stale claim. The takeover
+                    file is always cleaned up in a finally block, best-effort.
+                trigger_seq is mandatory (must be > 0). If trigger_seq <= 0,
+                the caller cannot identify the trigger and we fail closed by
+                returning False.
+
+        After:
+          - Returns True if the claim was created (caller should proceed).
+          - Returns False if another instance holds a valid claim or the
+            trigger_seq is invalid.
+          - No side effects on state (round, watermark) when returning False.
+        """
+        import contextlib
+        import json
+        import socket
+        import time
+        from datetime import datetime, timezone
+
+        if not isinstance(trigger_seq, int) or trigger_seq <= 0:
+            # trigger_seq=0 means the caller cannot/chooses not to claim.
+            # Return True to allow the requeue to proceed without cross-process
+            # coordination. This path is used by review_bridge.py which has its
+            # own anti-double-relaunch guard via BUILDER_RELAUNCH_ATTEMPTED check.
+            return True
+
+        claims_dir = self.runtime_dir / REQUEUE_CLAIMS_DIRNAME
+        claims_dir.mkdir(parents=True, exist_ok=True)
+        claim_path = claims_dir / f"{ticket_id}_seq-{trigger_seq}.claim"
+        takeover_path = claim_path.with_suffix(".claim.takeover")
+
+        try:
+            fd = os.open(
+                str(claim_path),
+                os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+            )
+        except FileExistsError:
+            pass  # Check staleness below
+        except OSError as exc:
+            print(
+                f"[supervisor] _claim_requeue: OSError creating claim for "
+                f"{ticket_id} seq={trigger_seq}: {exc}",
+                file=sys.stderr,
+                flush=True,
+            )
+            return False
+        else:
+            # Successfully created the claim file
+            try:
+                claim_content = json.dumps(
+                    {
+                        "ticket_id": ticket_id,
+                        "trigger_seq": trigger_seq,
+                        "pid": os.getpid(),
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                        "supervisor_id": f"{os.getpid()}@{socket.gethostname()}",
+                    },
+                    indent=2,
+                )
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(claim_content)
+                print(
+                    f"[supervisor] _claim_requeue: acquired claim for "
+                    f"{ticket_id} seq={trigger_seq}",
+                    flush=True,
+                )
+                return True
+            except Exception:
+                # Claim file exists but we failed to write content; clean up
+                with contextlib.suppress(OSError):
+                    os.close(fd)
+                    os.unlink(str(claim_path))
+                raise
+
+        # --- Claim already exists: check staleness ---
+        try:
+            stat_info = os.stat(str(claim_path))
+            age = time.time() - stat_info.st_mtime
+        except OSError:
+            return False
+
+        ttl = self._get_claim_ttl()
+
+        if age <= ttl:
+            # Claim is fresh; another supervisor owns it
+            return False
+
+        # Claim is stale by age. Verify no relaunch already occurred.
+        if self._has_relaunched_for_trigger(ticket_id, trigger_seq):
+            # Relaunch already emitted; do not reclaim
+            print(
+                f"[supervisor] _claim_requeue: claim stale but relaunch already "
+                f"emitted for {ticket_id} seq={trigger_seq}. Not reclaiming.",
+                flush=True,
+            )
+            return False
+
+        # Stale + no relaunch: attempt takeover
+        try:
+            takeover_fd = os.open(
+                str(takeover_path),
+                os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+            )
+            os.close(takeover_fd)
+        except FileExistsError:
+            # Someone else is already taking over
+            return False
+        except OSError:
+            return False
+
+        # We won the takeover. Replace the claim and clean up.
+        try:
+            os.unlink(str(claim_path))
+            new_fd = os.open(
+                str(claim_path),
+                os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+            )
+            try:
+                claim_content = json.dumps(
+                    {
+                        "ticket_id": ticket_id,
+                        "trigger_seq": trigger_seq,
+                        "pid": os.getpid(),
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                        "supervisor_id": f"{os.getpid()}@{socket.gethostname()}",
+                    },
+                    indent=2,
+                )
+                with os.fdopen(new_fd, "w", encoding="utf-8") as f:
+                    f.write(claim_content)
+                print(
+                    f"[supervisor] _claim_requeue: recovered stale claim for "
+                    f"{ticket_id} seq={trigger_seq}",
+                    flush=True,
+                )
+                return True
+            except Exception:
+                with contextlib.suppress(OSError):
+                    os.close(new_fd)
+                    os.unlink(str(claim_path))
+                raise
+        finally:
+            with contextlib.suppress(OSError):
+                os.unlink(str(takeover_path))
+
+    def _has_relaunched_for_trigger(self, ticket_id: str, trigger_seq: int) -> bool:
+        """Return True if a BUILDER_RELAUNCH_ATTEMPTED exists for the trigger.
+
+        Checks if any BUILDER_RELAUNCH_ATTEMPTED event exists on the bus
+        for the given ticket_id with payload.trigger_seq == trigger_seq and
+        sequence_number > trigger_seq.
+
+        Before: No helper existed to check if a relaunch was already emitted
+                for a specific trigger_seq.
+        During: Scans bus events in reverse for efficiency.
+        After: Returns True if a matching event exists.
+        """
+        for event in reversed(self.event_bus.read_events(ticket_id=ticket_id)):
+            if event.event_type != "BUILDER_RELAUNCH_ATTEMPTED":
+                continue
+            if event.sequence_number <= trigger_seq:
+                continue
+            payload_trigger_seq = (event.payload or {}).get("trigger_seq")
+            if payload_trigger_seq == trigger_seq:
+                return True
+        return False
+
+    def _cleanup_terminal_requeue_claims(self, ticket_id: str) -> None:
+        """Remove all requeue claim files for a terminal ticket.
+
+        Before: ticket has reached a terminal state (COMPLETED).
+        During: Scans <runtime>/requeue_claims/ for files matching
+                <ticket_id>_seq-*.claim and removes them.
+        After: No stale claims remain for this ticket.
+        """
+        import contextlib
+
+        claims_dir = self.runtime_dir / REQUEUE_CLAIMS_DIRNAME
+        if not claims_dir.exists():
+            return
+        prefix = f"{ticket_id}_seq-"
+        for child in claims_dir.iterdir():
+            if child.is_file() and child.name.startswith(prefix):
+                with contextlib.suppress(OSError):
+                    child.unlink()
+
+    def requeue_ticket(self, ticket_id: str, trigger_seq: int = 0) -> bool:
+        """Advance the active ticket into a new Builder round and relaunch it.
+
+        Before: requeue_ticket had no cross-process coordination, allowing
+                double-requeue for the same REVIEW_DECISION.
+        During: Calls _claim_requeue as the FIRST operation (before touching
+                loop_current_round or save_state). If the claim is denied
+                (another supervisor instance owns it), returns False immediately
+                with no side effects. If the claim is acquired, proceeds to
+                increment round and relaunch Builder.
+                trigger_seq is required (must be > 0). Callers that cannot
+                provide a valid trigger_seq must not call this method.
+        After: On success, round is incremented and Builder is relaunched.
+               On claim failure, no state changes occur.
+        """
+        if not isinstance(trigger_seq, int) or trigger_seq <= 0:
+            # trigger_seq=0 means no claim coordination needed (e.g. review_bridge path).
+            # Proceed without the claim; the watermark update will be skipped too.
+            pass
+
+        if not self._claim_requeue(ticket_id, trigger_seq):
+            print(
+                f"[ticket-supervisor] requeue_ticket: claim denied for "
+                f"{ticket_id} seq={trigger_seq}. Skipping relaunch.",
+                flush=True,
+            )
+            return False
+
         state = self.load_state()
         if state.active_ticket != ticket_id:
             return False
@@ -1570,6 +1985,15 @@ class SequentialTicketSupervisor:
             )
             return False
 
+        # WT-2026-199: Update watermark when trigger_seq is known (claim-based
+        # path), before incrementing round or relaunching. This ensures a fresh
+        # supervisor started by the launcher sees the updated watermark and does
+        # not double-trigger via _bootstrap_requeue_if_needed.
+        # When trigger_seq=0 (passthrough path), the caller's own watermark
+        # save covers this (e.g. review_bridge calls requeue_ticket after
+        # already advancing its own checkpoint).
+        if trigger_seq > 0:
+            state.last_requeue_trigger_sequence = trigger_seq
         state.loop_current_round += 1
         self.save_state(state)
         print(
@@ -1577,7 +2001,7 @@ class SequentialTicketSupervisor:
             f"(round {state.loop_current_round}). Relaunching Builder...",
             flush=True,
         )
-        return self._relaunch_builder(ticket_id)
+        return self._relaunch_builder(ticket_id, trigger_seq)
 
     def run_once(self) -> bool:
         state = self.load_state()
@@ -1665,13 +2089,9 @@ class SequentialTicketSupervisor:
                     },
                 )
             else:
-                # WP-2026-194: Save watermark BEFORE calling the launcher subprocess
-                # so a fresh supervisor started by the launcher reads the updated
-                # watermark and does not double-trigger _bootstrap_requeue_if_needed.
-                pre_save = self.load_state()
-                pre_save.last_requeue_trigger_sequence = requeue_trigger_sequence
-                self.save_state(pre_save)
-                if self.requeue_ticket(state.active_ticket):
+                # WT-2026-199: Watermark update moved into requeue_ticket, which
+                # calls _claim_requeue first as the cross-process authority.
+                if self.requeue_ticket(state.active_ticket, requeue_trigger_sequence):
                     changed = True
                     requeue_success = True
 

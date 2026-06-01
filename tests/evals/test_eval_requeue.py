@@ -106,7 +106,7 @@ class TestRequeueTicket:
             assert ticket_id == "WP-2026-999"
             return TicketState.IN_PROGRESS
 
-        def fake_relaunch(ticket_id: str) -> bool:
+        def fake_relaunch(ticket_id: str, *a, **kw) -> bool:
             calls.append(ticket_id)
             return True
 
