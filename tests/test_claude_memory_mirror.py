@@ -222,7 +222,9 @@ class TestPermissionDeniedHandling:
         _write_observations(observations_path, obs)
 
         # Patch the write_text to raise OSError
-        with patch.object(Path, "write_text", side_effect=OSError(13, "Permission denied")):
+        with patch.object(
+            Path, "write_text", side_effect=OSError(13, "Permission denied")
+        ):
             exit_code, messages = do_export(observations_path, claude_dir, apply=True)
 
         assert exit_code == 0  # Non-fatal
@@ -281,9 +283,7 @@ class TestDryRunBehavior:
 class TestApplyBehavior:
     """--apply must actually write files."""
 
-    def test_export_apply_writes_to_mirror_path(
-        self, observations_path, claude_dir
-    ):
+    def test_export_apply_writes_to_mirror_path(self, observations_path, claude_dir):
         """Export with --apply creates .md files in claude_dir."""
         obs = [
             {
@@ -338,9 +338,7 @@ class TestExportScope:
 class TestImportPreservesSourceAndDedupes:
     """Import must preserve source provenance and avoid duplicates."""
 
-    def test_import_preserves_source_and_dedupes(
-        self, observations_path, claude_dir
-    ):
+    def test_import_preserves_source_and_dedupes(self, observations_path, claude_dir):
         """Import keeps source from metadata and dedupes by id."""
         # Existing observation (will cause dedupe)
         existing_obs = {
@@ -494,9 +492,7 @@ class TestSessionCloseIndependent:
         closeout_path = _SCRIPTS_DIR / "session_closeout.py"
         content = closeout_path.read_text(encoding="utf-8")
         assert "claude_memory_mirror" not in content
-        assert "Claude" not in content or "Claude" in content == content.count(
-            "Claude"
-        )
+        assert "Claude" not in content or "Claude" in content == content.count("Claude")
 
     def test_main_functions_return_expected_types(self):
         """Public functions return expected (int, list) tuples."""
