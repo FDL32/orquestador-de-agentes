@@ -506,7 +506,7 @@ def test_build_review_prompt_includes_generated_artifacts_block(tmp_path, monkey
 
 
 def test_build_review_prompt_uses_branch_base_diff(tmp_path, monkeypatch):
-    """Prompt includes diff anchored to origin/main...HEAD when remote is reachable."""
+    """Prompt includes diff anchored to merge-base(origin/main, HEAD) when reachable."""
     import subprocess as _subprocess
 
     from bus.event_bus import EventBus
@@ -517,16 +517,24 @@ def test_build_review_prompt_uses_branch_base_diff(tmp_path, monkeypatch):
     bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
     sha = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+    base = "feedfacefeedfacefeedfacefeedfacefeedface"
 
     def fake_run(cmd, **kwargs):
-        if isinstance(cmd, list) and "origin/main...HEAD" in cmd and "diff" in cmd:
+        if isinstance(cmd, list) and "merge-base" in cmd:
+            return _subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout=f"{base}\n",
+                stderr="",
+            )
+        if isinstance(cmd, list) and "diff" in cmd and f"{base}..HEAD" in cmd:
             return _subprocess.CompletedProcess(
                 cmd,
                 0,
                 stdout="diff --git a/bus/review_bridge.py b/bus/review_bridge.py\n+added line\n",
                 stderr="",
             )
-        if isinstance(cmd, list) and "origin/main..HEAD" in cmd and "log" in cmd:
+        if isinstance(cmd, list) and "log" in cmd and f"{base}..HEAD" in cmd:
             return _subprocess.CompletedProcess(
                 cmd,
                 0,
@@ -542,8 +550,10 @@ def test_build_review_prompt_uses_branch_base_diff(tmp_path, monkeypatch):
     assert "[WARNING: origin/main not reachable" not in prompt
 
 
-def test_build_review_prompt_falls_back_to_head_when_no_remote(tmp_path, monkeypatch):
-    """Prompt degrades to git diff HEAD with visible warning when origin/main is unreachable."""
+def test_build_review_prompt_falls_back_to_ticket_commit_range_when_no_remote(
+    tmp_path, monkeypatch
+):
+    """Prompt falls back to the contiguous ticket commit range when no remote is reachable."""
     import subprocess as _subprocess
 
     from bus.event_bus import EventBus
@@ -554,28 +564,32 @@ def test_build_review_prompt_falls_back_to_head_when_no_remote(tmp_path, monkeyp
     bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
     def fake_run(cmd, **kwargs):
-        if isinstance(cmd, list) and "origin/main...HEAD" in cmd and "diff" in cmd:
+        if isinstance(cmd, list) and "merge-base" in cmd:
             return _subprocess.CompletedProcess(
                 cmd,
                 128,
                 stdout="",
-                stderr="fatal: ambiguous argument 'origin/main...HEAD'",
+                stderr="fatal: origin/main not reachable",
             )
-        if isinstance(cmd, list) and "origin/main..HEAD" in cmd and "log" in cmd:
-            return _subprocess.CompletedProcess(
-                cmd,
-                128,
-                stdout="",
-                stderr="fatal: ambiguous argument 'origin/main..HEAD'",
-            )
-        if isinstance(cmd, list) and "diff" in cmd and "HEAD" in cmd:
+        if isinstance(cmd, list) and "log" in cmd and "--format=%H%x09%s" in cmd:
             return _subprocess.CompletedProcess(
                 cmd,
                 0,
-                stdout="diff --git a/bus/review_bridge.py b/bus/review_bridge.py\n+head line\n",
+                stdout=(
+                    "bbb222\tWT-2026-192 second commit\n"
+                    "aaa111\tWT-2026-192 first commit\n"
+                    "base999\tprevious unrelated commit\n"
+                ),
                 stderr="",
             )
-        if isinstance(cmd, list) and "log" in cmd and cmd[-1] == "HEAD":
+        if isinstance(cmd, list) and "diff" in cmd and "base999..HEAD" in cmd:
+            return _subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout="diff --git a/scripts/claude_memory_mirror.py b/scripts/claude_memory_mirror.py\n+ticket range line\n",
+                stderr="",
+            )
+        if isinstance(cmd, list) and "log" in cmd and "base999..HEAD" in cmd:
             return _subprocess.CompletedProcess(
                 cmd,
                 0,
@@ -585,9 +599,52 @@ def test_build_review_prompt_falls_back_to_head_when_no_remote(tmp_path, monkeyp
         return _subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
-    prompt = bridge._build_review_prompt(ticket_id="WP-TEST-134", dtype="code")
+    prompt = bridge._build_review_prompt(ticket_id="WT-2026-192", dtype="code")
 
-    assert "[WARNING: origin/main not reachable" in prompt
+    assert (
+        "[WARNING: origin/main not reachable, using ticket commit range fallback]"
+        in prompt
+    )
+    assert "diff --git a/scripts/claude_memory_mirror.py" in prompt
+
+
+def test_build_review_prompt_falls_back_to_head_parent_when_no_remote_or_ticket_range(
+    tmp_path, monkeypatch
+):
+    """Prompt uses HEAD^ as the last fallback when neither remote nor ticket range are available."""
+    import subprocess as _subprocess
+
+    from bus.event_bus import EventBus
+    from bus.review_bridge import ReviewBridge
+
+    runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+    event_bus = EventBus(runtime_dir=runtime_dir)
+    bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+    def fake_run(cmd, **kwargs):
+        if isinstance(cmd, list) and "merge-base" in cmd:
+            return _subprocess.CompletedProcess(cmd, 128, stdout="", stderr="fatal")
+        if isinstance(cmd, list) and "log" in cmd and "--format=%H%x09%s" in cmd:
+            return _subprocess.CompletedProcess(
+                cmd, 0, stdout="zzz999\tunrelated commit\n", stderr=""
+            )
+        if isinstance(cmd, list) and "diff" in cmd and "HEAD^..HEAD" in cmd:
+            return _subprocess.CompletedProcess(
+                cmd, 0, stdout="diff --git a/x b/x\n+head-parent fallback\n", stderr=""
+            )
+        if isinstance(cmd, list) and "log" in cmd and "HEAD^..HEAD" in cmd:
+            return _subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout="deadbeef 2026-05-25 10:00:00 +0200 Test Author\n",
+                stderr="",
+            )
+        return _subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
+    prompt = bridge._build_review_prompt(ticket_id="WT-2026-192", dtype="code")
+
+    assert "[WARNING: origin/main not reachable, using HEAD^ fallback]" in prompt
 
 
 def test_build_review_prompt_includes_provenance_section(tmp_path, monkeypatch):
@@ -602,9 +659,17 @@ def test_build_review_prompt_includes_provenance_section(tmp_path, monkeypatch):
     bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
     sha = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+    base = "feedfacefeedfacefeedfacefeedfacefeedface"
 
     def fake_run(cmd, **kwargs):
-        if isinstance(cmd, list) and "log" in cmd and "origin/main..HEAD" in cmd:
+        if isinstance(cmd, list) and "merge-base" in cmd:
+            return _subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout=f"{base}\n",
+                stderr="",
+            )
+        if isinstance(cmd, list) and "log" in cmd and f"{base}..HEAD" in cmd:
             return _subprocess.CompletedProcess(
                 cmd,
                 0,
@@ -618,6 +683,31 @@ def test_build_review_prompt_includes_provenance_section(tmp_path, monkeypatch):
 
     assert "--- git provenance ---" in prompt
     assert sha in prompt
+
+
+def test_render_loader_rules_dedupes_identical_blocks(tmp_path, monkeypatch):
+    """Repeated identical L2 blocks must appear only once in the review packet."""
+    from bus.event_bus import EventBus
+    from bus.review_bridge import ReviewBridge
+
+    runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+    event_bus = EventBus(runtime_dir=runtime_dir)
+    bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+    repeated_block = "## Domain: review-quality\n- R-001 repeated block"
+    monkeypatch.setattr(
+        bridge,
+        "_relevant_domains_for_dtype",
+        lambda dtype: {"review-quality", "builder-contract", "testing"},
+    )
+    monkeypatch.setattr(
+        "bus.review_bridge.get_review_context",
+        lambda domain=None: repeated_block,
+    )
+
+    rendered = bridge._render_loader_rules(dtype="code")
+
+    assert rendered.count(repeated_block) == 1
 
 
 def test_build_review_prompt_includes_allowed_skills_for_role(tmp_path, monkeypatch):
