@@ -877,6 +877,77 @@ class TestDiagnosticModePrompt:
         assert "--- DIAGNOSTIC MODE ---" not in prompt
         assert "REPEATED BLOCKER" not in prompt
 
+    def test_run_review_uses_persisted_adaptive_context_not_previous_signature_bool(
+        self, tmp_path, monkeypatch
+    ):
+        """Integration: previous signatures alone must not force diagnostic mode."""
+        from bus.event_bus import EventBus
+        from bus.review_bridge import ReviewBridge
+
+        ticket_id = "WT-2026-196"
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        (collab / "work_plan.md").write_text(
+            f"# WP\n- **ID:** {ticket_id}\n- **deliverable_type:** code\n",
+            encoding="utf-8",
+        )
+        for name in ("STATE.md", "TURN.md", "execution_log.md"):
+            (collab / name).write_text("", encoding="utf-8")
+
+        event_bus = EventBus(runtime_dir=tmp_path / ".agent" / "runtime" / "events")
+        event_bus.emit(
+            "STATE_CHANGED",
+            ticket_id=ticket_id,
+            actor="BUILDER",
+            payload={"from_state": "IN_PROGRESS", "to_state": "READY_FOR_REVIEW"},
+        )
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+        bridge._save_adaptive_state(
+            ticket_id,
+            {
+                "blocker_signatures": ["old.py:::PREVIOUS DIFFERENT BLOCKER"],
+                "repeated_blockers": [],
+                "diagnostic_mode": False,
+                "changed_files_since_previous_review": ["old.py"],
+                "last_feedback": "Previous different feedback.",
+                "last_review_sequence": 1,
+                "last_git_head": "abc123",
+            },
+        )
+
+        captured_contexts = []
+        original_build_prompt = bridge._build_review_prompt
+
+        def capture_prompt(*args, **kwargs):
+            captured_contexts.append(kwargs.get("adaptive_context"))
+            return original_build_prompt(*args, **kwargs)
+
+        monkeypatch.setattr(bridge, "_build_review_prompt", capture_prompt)
+        monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
+        monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
+        monkeypatch.setattr(bridge, "_git_provenance", lambda: "[no commits]")
+        monkeypatch.setattr(
+            bridge, "_build_diff_for_files_likely_touched", lambda *args: ""
+        )
+        monkeypatch.setattr(
+            bridge,
+            "_run_opencode_review",
+            lambda **kwargs: ("DECISION: APPROVE\n", "", 0),
+        )
+
+        supervisor = MagicMock()
+        result = bridge.run_manager_review_cycle(
+            ticket_id=ticket_id,
+            supervisor=supervisor,
+            timeout_seconds=10,
+        )
+
+        assert result.decision == ReviewDecision.APPROVE
+        assert captured_contexts
+        context = captured_contexts[0]
+        assert context["diagnostic_mode"] is False
+        assert context["repeated_blockers"] == []
+
 
 class TestHumanGateEnriched:
     """Tests for enriched HUMAN_GATE report."""
