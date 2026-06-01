@@ -1048,7 +1048,8 @@ function Fill-TemplateVariables {
 function Add-BuilderCloseout {
     param(
         [Parameter(Mandatory)] [string]$RunnerCommand,
-        [Parameter(Mandatory)] [string]$CloseCommand
+        [Parameter(Mandatory)] [string]$PreHandoffCommand,
+        [Parameter(Mandatory)] [string]$MarkReadyCommand
     )
     # Wrap the Builder runner in try/finally so --pre-handoff and --mark-ready
     # execute even when the runner crashes or is killed (e.g. spawn-setup-refresh).
@@ -1056,7 +1057,22 @@ function Add-BuilderCloseout {
     # implementation it rejects the call and the supervisor requeues normally.
     # The Builder terminal uses the default ErrorActionPreference=Continue, so
     # a non-zero exit from --pre-handoff does not suppress --mark-ready.
-    return "try { $RunnerCommand } finally { Write-Host '[Builder] runner exited - starting closeout'; $CloseCommand; Write-Host '[Builder] closeout done' }"
+    # Each step is logged individually so the terminal shows exactly which step
+    # failed - 'closeout done' is only printed on full success.
+    return @"
+try { $RunnerCommand } finally {
+    Write-Host '[Builder] runner exited - starting closeout'
+    Write-Host '[Builder] pre-handoff starting...'
+    $PreHandoffCommand
+    `$_ph = `$LASTEXITCODE
+    if (`$_ph -eq 0) { Write-Host '[Builder] pre-handoff OK' } else { Write-Host "[Builder] pre-handoff FAILED (exit `$_ph)" }
+    Write-Host '[Builder] mark-ready starting...'
+    $MarkReadyCommand
+    `$_mr = `$LASTEXITCODE
+    if (`$_mr -eq 0) { Write-Host '[Builder] mark-ready OK - ticket submitted for review' } else { Write-Host "[Builder] mark-ready FAILED (exit `$_mr) - supervisor will requeue" }
+    if (`$_ph -eq 0 -and `$_mr -eq 0) { Write-Host '[Builder] closeout done' } else { Write-Host '[Builder] closeout completed with errors - check output above' }
+}
+"@
 }
 
 
@@ -1171,13 +1187,17 @@ if (Test-Path -LiteralPath $workspaceMotorLink) {
 # If motor root differs from ProjectRoot, use external controller with --project-root
 $useExternalController = (Resolve-Path -LiteralPath $resolvedMotorRoot).Path -ne (Resolve-Path -LiteralPath $ProjectRoot).Path
 if ($useExternalController) {
-    $closeCommand = "python $resolvedMotorRoot\.agent\agent_controller.py --pre-handoff --project-root $ProjectRoot; python $resolvedMotorRoot\.agent\agent_controller.py --mark-ready --json --force --project-root $ProjectRoot"
-    $controllerPath = Join-Path $resolvedMotorRoot '.agent\agent_controller.py'
+    $closePreHandoff = "python $resolvedMotorRoot\.agent\agent_controller.py --pre-handoff --project-root $ProjectRoot"
+    $closeMarkReady  = "python $resolvedMotorRoot\.agent\agent_controller.py --mark-ready --json --force --project-root $ProjectRoot"
+    $controllerPath  = Join-Path $resolvedMotorRoot '.agent\agent_controller.py'
     Write-Host "Motor controller externo: $controllerPath para workspace $ProjectRoot"
 } else {
-    $closeCommand = "python .agent/agent_controller.py --pre-handoff; python .agent/agent_controller.py --mark-ready --json --force"
-    $controllerPath = Join-Path $script:_MotorCodeRoot '.agent\agent_controller.py'
+    $closePreHandoff = "python .agent/agent_controller.py --pre-handoff"
+    $closeMarkReady  = "python .agent/agent_controller.py --mark-ready --json --force"
+    $controllerPath  = Join-Path $script:_MotorCodeRoot '.agent\agent_controller.py'
 }
+# $closeCommand kept for template injection (non-OpenCode backends read it via Fill-TemplateVariables)
+$closeCommand = "$closePreHandoff; $closeMarkReady"
 
 # Bootstrap bus event for active ticket to prevent bridge UNKNOWN state
 $venvPython = Resolve-VenvPython -Root $script:_MotorCodeRoot
@@ -1338,7 +1358,7 @@ if ($LaunchBuilder) {
                 }
                 $sessionFlag = if ($sessionId) { "--session $sessionId" } else { "" }
                 $command = "& $builderExeLiteral run $promptLiteral --agent builder --model $modelLiteral --dir $rootLiteral --port 0 --title $sessionTitleLiteral $sessionFlag $fileFlagsString"
-                $builderProcess = Start-AgentWindow -Title $windowTitle -Command (Add-BuilderCloseout $command $closeCommand)
+                $builderProcess = Start-AgentWindow -Title $windowTitle -Command (Add-BuilderCloseout $command $closePreHandoff $closeMarkReady)
                 Write-Host "Builder: lanzado para rol $activeRole con backend OpenCode (opencode run con prompt compuesto)"
             }
             else {
@@ -1348,11 +1368,11 @@ if ($LaunchBuilder) {
                     $templateContent = Get-TemplateContent -ProjectRoot $ProjectRoot -TemplateName $templateName
                     $filledPrompt = Fill-TemplateVariables -TemplateContent $templateContent -TicketId $ticketId -WorkPlan $workPlanContent -CloseCommand $closeCommand -Role $role -Backend $builderBackend
                     $builderPromptLiteral = ConvertTo-SingleQuotedLiteral $filledPrompt
-                    $builderProcess = Start-AgentWindow -Title $windowTitle -Command (Add-BuilderCloseout "& $builderExeLiteral run --auto $builderPromptLiteral" $closeCommand)
+                    $builderProcess = Start-AgentWindow -Title $windowTitle -Command (Add-BuilderCloseout "& $builderExeLiteral run --auto $builderPromptLiteral" $closePreHandoff $closeMarkReady)
                 }
                 else {
                     $builderPromptLiteral = ConvertTo-SingleQuotedLiteral $BuilderPrompt
-                    $builderProcess = Start-AgentWindow -Title $windowTitle -Command (Add-BuilderCloseout "& $builderExeLiteral run --auto $builderPromptLiteral" $closeCommand)
+                    $builderProcess = Start-AgentWindow -Title $windowTitle -Command (Add-BuilderCloseout "& $builderExeLiteral run --auto $builderPromptLiteral" $closePreHandoff $closeMarkReady)
                 }
                 Write-Host "Builder: lanzado para rol $activeRole con plantilla $templateName"
             }
