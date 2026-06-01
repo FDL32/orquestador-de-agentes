@@ -1065,11 +1065,11 @@ try { $RunnerCommand } finally {
     Write-Host '[Builder] pre-handoff starting...'
     $PreHandoffCommand
     `$_ph = `$LASTEXITCODE
-    if (`$_ph -eq 0) { Write-Host '[Builder] pre-handoff OK' } else { Write-Host "[Builder] pre-handoff FAILED (exit `$_ph)" }
+    if (`$_ph -eq 0) { Write-Host '[Builder] pre-handoff OK' } else { Write-Host ('[Builder] pre-handoff FAILED code ' + `$_ph) }
     Write-Host '[Builder] mark-ready starting...'
     $MarkReadyCommand
     `$_mr = `$LASTEXITCODE
-    if (`$_mr -eq 0) { Write-Host '[Builder] mark-ready OK - ticket submitted for review' } else { Write-Host "[Builder] mark-ready FAILED (exit `$_mr) - supervisor will requeue" }
+    if (`$_mr -eq 0) { Write-Host '[Builder] mark-ready OK - ticket submitted for review' } else { Write-Host ('[Builder] mark-ready FAILED code ' + `$_mr + ' - supervisor will requeue') }
     if (`$_ph -eq 0 -and `$_mr -eq 0) { Write-Host '[Builder] closeout done' } else { Write-Host '[Builder] closeout completed with errors - check output above' }
 }
 "@
