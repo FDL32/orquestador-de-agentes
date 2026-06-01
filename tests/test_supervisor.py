@@ -5501,6 +5501,44 @@ def test_claim_stale_takeover_atomic_only_one_recovers(tmp_path):
     )
 
 
+def test_claim_stale_takeover_cleanup_on_successful_recovery(tmp_path):
+    """TP-05b: Takeover file is cleaned up after successful stale claim recovery."""
+    import os
+    import time
+
+    sup = _make_supervisor_with_claims(tmp_path)
+    ticket_id = "WT-2026-199"
+    trigger_seq = 501
+
+    # Create stale claim (TTL exceeded, no relaunch for this trigger)
+    claims_dir = sup.runtime_dir / "requeue_claims"
+    claims_dir.mkdir(parents=True, exist_ok=True)
+    claim_path = claims_dir / f"{ticket_id}_seq-{trigger_seq}.claim"
+    claim_path.write_text("stale", encoding="utf-8")
+    old_time = time.time() - 200
+    os.utime(claim_path, (old_time, old_time))
+
+    takeover_path = claim_path.with_suffix(".claim.takeover")
+    assert not takeover_path.exists(), "Takeover file should not exist yet"
+
+    # Successful recovery should create and then clean up the takeover file
+    result = sup._claim_requeue(ticket_id, trigger_seq)
+    assert result is True, "Must recover stale claim"
+
+    # Takeover file must be removed after recovery completes
+    assert not takeover_path.exists(), (
+        "Takeover file must be cleaned up after successful recovery"
+    )
+
+    # New claim file should be present with fresh content
+    assert claim_path.exists(), "Fresh claim must exist after recovery"
+    import json
+
+    claim_data = json.loads(claim_path.read_text(encoding="utf-8"))
+    assert claim_data["ticket_id"] == ticket_id
+    assert claim_data["trigger_seq"] == trigger_seq
+
+
 def test_claim_not_reclaimed_when_relaunch_already_emitted(tmp_path):
     """TP-06: No reclamar si ya existe BUILDER_RELAUNCH_ATTEMPTED para el trigger."""
     import os
