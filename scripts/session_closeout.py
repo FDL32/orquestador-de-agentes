@@ -978,9 +978,7 @@ def _is_lock_alive(lock_path: Path) -> bool:
     started_at_str = data.get("started_at")
     if started_at_str:
         try:
-            started_at = datetime.fromisoformat(
-                started_at_str.replace("Z", "+00:00")
-            )
+            started_at = datetime.fromisoformat(started_at_str.replace("Z", "+00:00"))
             age_minutes = (now - started_at).total_seconds() / 60
             return age_minutes < LOCK_TTL_MINUTES
         except (ValueError, TypeError):
@@ -989,9 +987,7 @@ def _is_lock_alive(lock_path: Path) -> bool:
 
     # Fallback: check file mtime (only when no valid started_at)
     try:
-        mtime = datetime.fromtimestamp(
-            lock_path.stat().st_mtime, tz=timezone.utc
-        )
+        mtime = datetime.fromtimestamp(lock_path.stat().st_mtime, tz=timezone.utc)
         age_minutes = (now - mtime).total_seconds() / 60
         if age_minutes < LOCK_TTL_MINUTES:
             return True
@@ -1071,11 +1067,7 @@ def _split_header_and_entries(lines: list[str]) -> tuple[str, list[str]]:
 
     entries: list[str] = []
     for idx, start in enumerate(hash_indices):
-        end = (
-            hash_indices[idx + 1]
-            if idx + 1 < len(hash_indices)
-            else len(lines)
-        )
+        end = hash_indices[idx + 1] if idx + 1 < len(hash_indices) else len(lines)
         entry_text = "\n".join(lines[start:end]).strip()
         if entry_text:
             entries.append(entry_text)
@@ -1166,6 +1158,15 @@ def _step_rotate_review_queue(project_root: Path, dry_run: bool) -> StepResult: 
             status="SKIP",
             detail=f"Skipped: lock(s) alive: {', '.join(lock_detail_parts)}",
         )
+
+    # Advisory: no reusable Manager Bridge/Stop Hook detector exists
+    # The work_plan explicitly says: "If no reusable mechanism exists, log a
+    # warning advisory and proceed. Do not invent a fragile process detector."
+    print(
+        "[rotate_review_queue] Advisory: no reusable detector for Manager "
+        "Bridge/Stop Hook; proceeding with best-effort rotation",
+        file=sys.stderr,
+    )
 
     # --- Parse review queue ---
     try:
@@ -1307,9 +1308,15 @@ def _can_prove_close(
         if ev.get("event_type") == "STATE_CHANGED":
             payload = ev.get("payload", {})
             to_state = payload.get("to_state")
-            if (to_state in TERMINAL_STATES or to_state == "READY_TO_CLOSE") and ev.get(
-                "ticket_id"
-            ) == ticket_id:
+            # Terminal states (COMPLETED, HUMAN_GATE) always prove close
+            if to_state in TERMINAL_STATES and ev.get("ticket_id") == ticket_id:
+                return True
+            # READY_TO_CLOSE only proves close if source is manager-approve
+            if (
+                to_state == "READY_TO_CLOSE"
+                and payload.get("source") == "manager-approve"
+                and ev.get("ticket_id") == ticket_id
+            ):
                 return True
         if ev.get("event_type") == "REVIEW_DECISION":
             payload = ev.get("payload", {})
