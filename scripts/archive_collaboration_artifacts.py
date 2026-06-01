@@ -242,7 +242,10 @@ def archive_manager_feedback(
             archive_dir.mkdir(parents=True, exist_ok=True)
             dest = archive_dir / fb_path.name
             if dest.exists():
-                result["skipped"].append(f"{fb_path.name} (already archived)")
+                fb_path.unlink()
+                result["archived"].append(
+                    f"{fb_path.name} (live copy removed; archive exists)"
+                )
                 continue
             shutil.move(str(fb_path), str(dest))
             result["archived"].append(str(fb_path))
