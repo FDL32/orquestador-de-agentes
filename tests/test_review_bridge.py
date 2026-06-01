@@ -730,3 +730,299 @@ class TestCanonicalAntiPatternInventory:
         bridge._canonical_anti_patterns = []
         rubric = bridge._rubric_for_type("code", "WP-TEST")
         assert "Canonical anti-pattern inventory" not in rubric
+
+
+# =============================================================================
+# Tests WT-2026-196: Manager adaptativo ante blockers repetidos
+# =============================================================================
+
+
+class TestAdaptiveReviewState:
+    """Tests for adaptive review state management."""
+
+    def test_adaptive_review_state_persisted_in_manager_bridge_state(self, tmp_path):
+        """TP-10: Adaptive state is persisted/loaded from manager_bridge_state.json."""
+        from bus.review_bridge import EventBus, ReviewBridge
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        ticket_id = "WT-2026-196"
+        state_data = {
+            "last_review_sequence": 3,
+            "last_git_head": "abc123",
+            "blocker_signatures": ["test.py:::SIGNATURE ONE"],
+            "repeated_blockers": [],
+            "diagnostic_mode": False,
+            "changed_files_since_previous_review": ["test.py"],
+            "last_feedback": "Some feedback",
+        }
+
+        # Save and load
+        bridge._save_adaptive_state(ticket_id, state_data)
+        loaded = bridge._load_adaptive_state(ticket_id)
+
+        assert loaded.get("last_review_sequence") == 3
+        assert loaded.get("last_git_head") == "abc123"
+        assert "test.py:::SIGNATURE ONE" in loaded.get("blocker_signatures", [])
+        assert loaded.get("diagnostic_mode") is False
+
+    def test_adaptive_review_state_merges_with_existing(self, tmp_path):
+        """Test _save_adaptive_state merges, not overwrites, existing state."""
+        from bus.review_bridge import EventBus, ReviewBridge
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        ticket_id = "WT-2026-196"
+        bridge._save_adaptive_state(ticket_id, {"diagnostic_mode": True})
+        bridge._save_adaptive_state(ticket_id, {"last_review_sequence": 5})
+
+        loaded = bridge._load_adaptive_state(ticket_id)
+        assert loaded.get("diagnostic_mode") is True
+        assert loaded.get("last_review_sequence") == 5
+
+    def test_adaptive_review_state_empty_when_no_ticket(self, tmp_path):
+        """Test _load_adaptive_state returns {} for unknown ticket."""
+        from bus.review_bridge import EventBus, ReviewBridge
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        loaded = bridge._load_adaptive_state("NONEXISTENT-TICKET")
+        assert loaded == {}
+
+
+class TestDiagnosticModePrompt:
+    """Tests for diagnostic mode prompt injection."""
+
+    def test_manager_prompt_includes_diagnostic_mode_sections_for_repeated_blocker(
+        self, tmp_path, monkeypatch
+    ):
+        """TP-06/TP-07: Prompt with diagnostic_mode=True includes diagnostic sections."""
+        from bus.review_bridge import EventBus, ReviewBridge
+
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        (collab / "work_plan.md").write_text(
+            "# WP\n- **ID:** WT-2026-196\n- **deliverable_type:** code\n",
+            encoding="utf-8",
+        )
+        for name in ("STATE.md", "TURN.md", "execution_log.md"):
+            (collab / name).write_text("", encoding="utf-8")
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
+        monkeypatch.setattr(bridge, "_git_provenance", lambda: "[no commits]")
+        monkeypatch.setattr(
+            bridge, "_build_diff_for_files_likely_touched", lambda *args: ""
+        )
+
+        adaptive_context = {
+            "diagnostic_mode": True,
+            "repeated_blockers": ["test.py:::SIGNATURE ONE"],
+            "changed_files_since_previous_review": ["test.py"],
+            "last_feedback": "Previous feedback here.",
+        }
+
+        prompt = bridge._build_review_prompt(
+            "WT-2026-196", "code", adaptive_context=adaptive_context
+        )
+
+        # Must contain diagnostic mode sections
+        assert "--- DIAGNOSTIC MODE ---" in prompt
+        assert "REPEATED BLOCKER" in prompt
+        assert "SIGNATURE ONE" in prompt
+        assert "test.py" in prompt
+        assert "REQUIRED ACTIONS" in prompt
+        assert "Re-read the exact affected code" in prompt
+        assert "Propose a concrete solution" in prompt
+        assert "Propose a minimal test" in prompt
+        assert "textual patch-plan" in prompt
+
+    def test_manager_prompt_does_not_include_diagnostic_mode_when_false(
+        self, tmp_path, monkeypatch
+    ):
+        """Prompt must NOT include diagnostic sections when diagnostic_mode is False."""
+        from bus.review_bridge import EventBus, ReviewBridge
+
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        (collab / "work_plan.md").write_text(
+            "# WP\n- **ID:** WT-2026-196\n- **deliverable_type:** code\n",
+            encoding="utf-8",
+        )
+        for name in ("STATE.md", "TURN.md", "execution_log.md"):
+            (collab / name).write_text("", encoding="utf-8")
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
+        monkeypatch.setattr(bridge, "_git_provenance", lambda: "[no commits]")
+        monkeypatch.setattr(
+            bridge, "_build_diff_for_files_likely_touched", lambda *args: ""
+        )
+
+        # No adaptive context (normal mode)
+        prompt = bridge._build_review_prompt("WT-2026-196", "code")
+
+        assert "--- DIAGNOSTIC MODE ---" not in prompt
+        assert "REPEATED BLOCKER" not in prompt
+
+
+class TestHumanGateEnriched:
+    """Tests for enriched HUMAN_GATE report."""
+
+    def test_human_gate_includes_repeated_blocker_summary(self, tmp_path, monkeypatch):
+        """TP-08: HUMAN_GATE report includes repeated blocker summary if available."""
+        from bus.review_bridge import EventBus, ReviewBridge, ReviewDecision
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        # Pre-seed adaptive state with repeated blockers
+        ticket_id = "WT-2026-196"
+        bridge._save_adaptive_state(
+            ticket_id,
+            {
+                "blocker_signatures": ["test.py:::REPEATED ERROR"],
+                "repeated_blockers": ["test.py:::REPEATED ERROR"],
+                "diagnostic_mode": True,
+                "changed_files_since_previous_review": [],
+                "last_feedback": "Fix the repeated error.",
+                "last_review_sequence": 5,
+                "last_git_head": None,
+            },
+        )
+
+        review_attempts = [
+            {
+                "attempt": 1,
+                "payload": {"attempt": 1, "blockers": "- Repeated error"},
+            },
+            {
+                "attempt": 2,
+                "payload": {"attempt": 2, "blockers": "- Same repeated error"},
+            },
+        ]
+
+        report_path = bridge._generate_human_review_report(
+            ticket_id=ticket_id,
+            review_attempts=review_attempts,
+            last_decision=ReviewDecision.CHANGES,
+        )
+
+        content = report_path.read_text(encoding="utf-8")
+        assert "Repeated BLOCKERS" in content
+        assert "REPEATED ERROR" in content
+        assert "Last Manager proposal" in content
+        assert "Fix the repeated error" in content
+
+    def test_human_gate_includes_files_touched_or_untouched(
+        self, tmp_path, monkeypatch
+    ):
+        """TP-08: HUMAN_GATE report includes file change info."""
+        from bus.review_bridge import EventBus, ReviewBridge, ReviewDecision
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        ticket_id = "WT-2026-196"
+        bridge._save_adaptive_state(
+            ticket_id,
+            {
+                "repeated_blockers": [],
+                "changed_files_since_previous_review": ["bus/review_bridge.py"],
+                "last_feedback": "",
+                "blocker_signatures": [],
+                "diagnostic_mode": False,
+                "last_review_sequence": 1,
+                "last_git_head": None,
+            },
+        )
+
+        review_attempts = [
+            {
+                "attempt": 1,
+                "payload": {"attempt": 1, "blockers": ""},
+            },
+        ]
+
+        report_path = bridge._generate_human_review_report(
+            ticket_id=ticket_id,
+            review_attempts=review_attempts,
+            last_decision=ReviewDecision.CHANGES,
+        )
+
+        content = report_path.read_text(encoding="utf-8")
+        assert "Files touched" in content
+        assert "bus/review_bridge.py" in content
+
+
+class TestChangedFilesTracking:
+    """Tests for git-based file change computation."""
+
+    def test_changed_files_since_previous_review_is_sorted_relative_path_list_or_unknown_reason(
+        self, tmp_path, monkeypatch
+    ):
+        """TP-11: changed_files is a sorted list of relative paths or unknown dict."""
+        from bus.review_bridge import EventBus, ReviewBridge
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        # When last_git_head is None and git is unreachable -> unknown
+        monkeypatch.setattr(bridge, "_get_current_git_head", lambda: None)
+        result = bridge._compute_changed_files(None)
+        assert isinstance(result, dict)
+        assert result["status"] == "unknown"
+        assert "reason" in result
+
+    def test_changed_files_is_empty_list_on_first_review(self, tmp_path, monkeypatch):
+        """TP-11: First review (no last_git_head but git available) returns empty list."""
+        from bus.review_bridge import EventBus, ReviewBridge
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        # Git is available (has a head) but no last_git_head -> first review
+        monkeypatch.setattr(bridge, "_get_current_git_head", lambda: "abc123def456")
+        result = bridge._compute_changed_files(None)
+        assert isinstance(result, list)
+        assert result == []
+
+
+class TestMaxAttempts:
+    """Tests for max_attempts finite guard."""
+
+    def test_max_attempts_remains_finite_and_configured_to_8(self, tmp_path):
+        """TP-01: max_attempts must be finite and configured to 8 in agents.json."""
+        # Check the agents.json config
+        agent_config_path = (
+            Path(__file__).resolve().parents[1] / ".agent" / "config" / "agents.json"
+        )
+        assert agent_config_path.exists(), "agents.json must exist"
+        import json
+
+        data = json.loads(agent_config_path.read_text(encoding="utf-8"))
+        mgr = data.get("manager_review", {})
+        max_attempts = mgr.get("max_attempts", None)
+        assert max_attempts is not None, (
+            "max_attempts must be configured in manager_review"
+        )
+        assert max_attempts == 8, f"max_attempts must be 8, got {max_attempts}"
+        assert isinstance(max_attempts, int), "max_attempts must be an integer"
+        assert max_attempts > 0, "max_attempts must be positive"
+        assert max_attempts < 100, "max_attempts must be finite (sanity check)"
