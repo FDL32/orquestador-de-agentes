@@ -12,7 +12,7 @@ Tests cover:
 from __future__ import annotations
 
 import json
-import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 from scripts.session_closeout import (
@@ -28,13 +28,18 @@ from scripts.session_closeout import (
 # ---------------------------------------------------------------------------
 
 
-def _make_lock_file(path: Path, pid: int) -> None:
-    """Create a lock file with the given PID."""
+def _make_lock_file(
+    path: Path,
+    ticket_id: str = "WT-2026-190",
+    started_at: str | None = None,
+) -> None:
+    """Create a lock file with ticket_id and started_at (no pid)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps({"pid": pid, "started_at": "2026-06-01T00:00:00+00:00"}),
-        encoding="utf-8",
-    )
+    data = {
+        "ticket_id": ticket_id,
+        "started_at": started_at or datetime.now(timezone.utc).isoformat(),
+    }
+    path.write_text(json.dumps(data), encoding="utf-8")
 
 
 def _make_review_queue(
@@ -106,38 +111,40 @@ def _setup_project_root(
 
 
 class TestIsLockAlive:
-    """Tests for the _is_lock_alive helper."""
+    """Tests for the _is_lock_alive helper (TTL-based, no pid)."""
 
     def test_no_lock_file(self, tmp_path: Path) -> None:
         """When no lock file exists, returns False."""
         assert _is_lock_alive(tmp_path / "nonexistent.txt") is False
 
-    def test_lock_with_invalid_pid(self, tmp_path: Path) -> None:
-        """When lock file has invalid PID, returns False."""
+    def test_lock_with_invalid_content(self, tmp_path: Path) -> None:
+        """When lock file has invalid JSON, returns False."""
         lock_path = tmp_path / "lock.txt"
-        lock_path.write_text(json.dumps({"pid": -1}), encoding="utf-8")
+        lock_path.write_text("not json", encoding="utf-8")
         assert _is_lock_alive(lock_path) is False
 
-    def test_lock_with_missing_pid_field(self, tmp_path: Path) -> None:
-        """When lock file has no pid field, returns False."""
+    def test_lock_with_recent_started_at(self, tmp_path: Path) -> None:
+        """When lock has recent started_at, returns True."""
         lock_path = tmp_path / "lock.txt"
-        lock_path.write_text(json.dumps({"ticket_id": "WP-2026-100"}), encoding="utf-8")
-        assert _is_lock_alive(lock_path) is False
-
-    def test_lock_alive_process(self, tmp_path: Path) -> None:
-        """When lock points to an existing process (current Python), returns True."""
-        lock_path = tmp_path / "lock.txt"
-        _make_lock_file(lock_path, os.getpid())
+        now = datetime.now(timezone.utc).isoformat()
+        _make_lock_file(lock_path, started_at=now)
         assert _is_lock_alive(lock_path) is True
 
-    def test_lock_stale_process(self, tmp_path: Path) -> None:
-        """When lock points to a non-existent PID, returns False eventually."""
+    def test_lock_with_stale_started_at(self, tmp_path: Path) -> None:
+        """When lock has old started_at, returns False."""
         lock_path = tmp_path / "lock.txt"
-        # Use a PID that almost certainly doesn't exist
-        _make_lock_file(lock_path, 99999999)
-        result = _is_lock_alive(lock_path)
-        # This PID is unlikely to exist; tasklist should return no result
-        assert result is False
+        old_time = "2020-01-01T00:00:00+00:00"
+        _make_lock_file(lock_path, started_at=old_time)
+        assert _is_lock_alive(lock_path) is False
+
+    def test_lock_with_recent_mtime_fallback(self, tmp_path: Path) -> None:
+        """When lock has no started_at but recent mtime, returns True."""
+        lock_path = tmp_path / "lock.txt"
+        lock_path.write_text(
+            json.dumps({"ticket_id": "WT-2026-190"}), encoding="utf-8"
+        )
+        # File was just created; mtime should be within TTL
+        assert _is_lock_alive(lock_path) is True
 
 
 # Tests: _parse_review_queue  # noqa: ERA001
@@ -212,7 +219,7 @@ class TestRotationLockChecks:
         """Builder lock alive prevents rotation."""
         project_root = _setup_project_root(tmp_path, num_entries=5)
         lock_path = project_root / ".agent" / "runtime" / "builder_lock.txt"
-        _make_lock_file(lock_path, os.getpid())
+        _make_lock_file(lock_path)
         result = _step_rotate_review_queue(project_root, dry_run=False)
         assert result.status == "SKIP"
         assert "builder_lock" in result.detail
@@ -221,7 +228,7 @@ class TestRotationLockChecks:
         """Supervisor lock alive prevents rotation."""
         project_root = _setup_project_root(tmp_path, num_entries=5)
         lock_path = project_root / ".agent" / "runtime" / "supervisor_lock.txt"
-        _make_lock_file(lock_path, os.getpid())
+        _make_lock_file(lock_path)
         result = _step_rotate_review_queue(project_root, dry_run=False)
         assert result.status == "SKIP"
         assert "supervisor_lock" in result.detail
