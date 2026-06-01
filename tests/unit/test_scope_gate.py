@@ -16,6 +16,7 @@ if str(_AGENT_DIR) not in sys.path:
 from agent_controller import (  # noqa: E402
     _exclude_files,
     _handle_mark_ready,
+    _scope_gate_allows_close,
     check_scope_gate,
     get_changed_files,
     parse_files_likely_touched,
@@ -272,3 +273,35 @@ class TestHandleMarkReadyScopeGate:
         mock_sync_targets.assert_not_called()
         mock_reset_breaker.assert_not_called()
         mock_release_lock.assert_not_called()
+
+
+class TestScopeGateHints:
+    """Test actionable CL-08 hints for workspace memory files."""
+
+    def test_scope_gate_prints_workspace_memory_hint(self, capsys):
+        gate_result = {
+            "valid": False,
+            "out_of_scope": set(),
+            "missing_from_diff": {
+                str(
+                    (
+                        Path.cwd()
+                        / ".agent"
+                        / "runtime"
+                        / "memory"
+                        / "observations.jsonl"
+                    ).resolve()
+                )
+            },
+            "covered_files": set(),
+            "warnings": [],
+            "blocked_reason": "None of the declared Files Likely Touched entries appeared in the diff",
+        }
+
+        allowed = _scope_gate_allows_close(gate_result, scope_override=None)
+
+        assert allowed is False
+        output = capsys.readouterr().out
+        assert "This is expected (CL-08)" in output
+        assert "--scope-override" in output
+        assert ".agent/runtime/memory/" in output

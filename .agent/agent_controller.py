@@ -553,8 +553,23 @@ def _scope_gate_allows_close(gate_result: dict, scope_override: str | None) -> b
             print(f"  {gate_result['blocked_reason']}")
         for file_path in sorted(gate_result["out_of_scope"]):
             print(f"  - {file_path}")
-        for file_path in sorted(gate_result.get("missing_from_diff", set())):
+        missing = sorted(gate_result.get("missing_from_diff", set()))
+        for file_path in missing:
             print(f"  - missing: {file_path}")
+        # CL-08: workspace memory files are not tracked in the motor git.
+        # Detect and print an actionable hint so Builder does not loop on this.
+        workspace_memory = ".agent/runtime/memory/"
+        memory_missing = [
+            f for f in missing if workspace_memory in f.replace("\\", "/")
+        ]
+        if memory_missing:
+            print(
+                "[HINT] Some missing files live in the workspace portable "
+                "(.agent/runtime/memory/) and are not tracked in the motor git diff. "
+                "This is expected (CL-08). Use --scope-override with reason:\n"
+                '  --scope-override "Memory files modified in workspace portable; '
+                'motor git diff cannot reflect .agent/runtime/memory/ changes."'
+            )
         print('Use --scope-override "reason" to proceed.')
         return False
 

@@ -172,3 +172,23 @@ def test_launcher_skip_supervisor_wait_flag_exists() -> None:
     assert "SkipSupervisorWait" in content
     assert "SkipSupervisorWait: internal requeue relaunch" in content
     assert "$SkipSupervisorWait" in content
+
+
+def test_builder_templates_do_not_inject_close_command() -> None:
+    """Regression: launcher owns closeout; templates must never re-inject {{close_command}}.
+
+    CL-07: the try/finally in Add-BuilderCloseout is the single source of
+    truth for Builder closeout. If {{close_command}} reappears in a template,
+    the AI would try to run the close command AND the finally block would run
+    it again, producing double closeout (or a stuck ticket on crash).
+    """
+    template_dir = PROJECT_ROOT / "templates" / "startup"
+    active_builder_templates = list(template_dir.glob("builder_*.md"))
+    assert active_builder_templates, f"No builder templates found in {template_dir}"
+
+    for template_path in active_builder_templates:
+        content = template_path.read_text(encoding="utf-8")
+        assert "{{close_command}}" not in content, (
+            f"{template_path.name} still contains {{{{close_command}}}}. "
+            "CL-07: the launcher try/finally owns closeout; remove this injection."
+        )
