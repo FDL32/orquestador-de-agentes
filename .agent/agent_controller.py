@@ -456,11 +456,6 @@ def get_changed_files() -> set[str] | None:
                 else:
                     changed.add(path)
             i += 1
-        # If working tree is clean, fall back to recent commits so the scope gate
-        # works when implementation commits are followed by hotfix commits.
-        if not changed:
-            changed = _git_log_recent_files(git_root)
-
         # resolve to absolute paths
         resolved = set()
         for f in changed:
@@ -2525,7 +2520,21 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
             )
         return 1
 
-    gate_result = check_scope_gate(plan_content, get_changed_files(), _exclude_files())
+    # For the scope gate, supplement current git status with recent commits so
+    # implementation files are found even when the tree is clean after hotfixes.
+    _scope_changed = get_changed_files()
+    if not _scope_changed:
+        # Tree is clean: resolve recent commits to absolute paths (same as get_changed_files)
+        _git_root = (
+            PROJECT_ROOT
+            if (PROJECT_ROOT / ".git").exists()
+            else (_MOTOR_ROOT if (_MOTOR_ROOT / ".git").exists() else None)
+        )
+        if _git_root:
+            _scope_changed = {
+                str((_git_root / f).resolve()) for f in _git_log_recent_files(_git_root)
+            }
+    gate_result = check_scope_gate(plan_content, _scope_changed, _exclude_files())
     if not _scope_gate_allows_close(gate_result, scope_override):
         return 1
 
