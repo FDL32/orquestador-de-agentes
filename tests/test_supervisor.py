@@ -1563,6 +1563,115 @@ def test_bus_active_non_terminal_ticket_prefers_highest_wp_id(tmp_path):
     assert result == "WP-2026-101"
 
 
+def _make_supervisor(tmp_path):
+    """Helper: create a SequentialTicketSupervisor with standard dirs."""
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+    return SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+
+# WT-2026-194: zombie READY_TO_CLOSE detection and reconcile guard
+
+
+def test_zombie_ready_to_close_excluded_from_bus_active(tmp_path):
+    """READY_TO_CLOSE + approve + no SUPERVISOR_CLOSED → excluded as zombie.
+
+    Scenario: WT-2026-187 got approved but Supervisor died before SUPERVISOR_CLOSED.
+    Expected: _bus_active_non_terminal_ticket returns None (zombie ignored).
+    """
+    supervisor = _make_supervisor(tmp_path)
+
+    supervisor.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id="WT-2026-187",
+        actor="SUPERVISOR",
+        payload={
+            "from_state": "READY_FOR_REVIEW",
+            "to_state": "READY_TO_CLOSE",
+            "reason": "Manager approved",
+        },
+    )
+    supervisor.event_bus.emit(
+        "REVIEW_DECISION",
+        ticket_id="WT-2026-187",
+        actor="MANAGER",
+        payload={"decision": "approve"},
+    )
+    # No SUPERVISOR_CLOSED → zombie
+
+    result = supervisor._bus_active_non_terminal_ticket()
+    assert result is None, f"Expected None (zombie ignored), got {result}"
+
+
+def test_legitimate_ready_to_close_not_excluded(tmp_path):
+    """READY_TO_CLOSE without approve → still returned as active (awaiting approval)."""
+    supervisor = _make_supervisor(tmp_path)
+
+    supervisor.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id="WT-2026-190",
+        actor="SUPERVISOR",
+        payload={
+            "from_state": "READY_FOR_REVIEW",
+            "to_state": "READY_TO_CLOSE",
+            "reason": "Manager approved",
+        },
+    )
+    # No REVIEW_DECISION yet → not a zombie
+
+    result = supervisor._bus_active_non_terminal_ticket()
+    assert result == "WT-2026-190", f"Expected WT-2026-190, got {result}"
+
+
+def test_reconcile_state_zombie_guard_prefers_work_plan(tmp_path):
+    """reconcile_state ignores zombie bus_active when work_plan has newer ticket.
+
+    Scenario: bus has WT-2026-187 zombie READY_TO_CLOSE; work_plan.md has WT-2026-188.
+    Expected: reconcile_state sets active_ticket = WT-2026-188, not WT-2026-187.
+    """
+    supervisor = _make_supervisor(tmp_path)
+
+    # Emit zombie in bus
+    supervisor.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id="WT-2026-187",
+        actor="SUPERVISOR",
+        payload={
+            "from_state": "READY_FOR_REVIEW",
+            "to_state": "READY_TO_CLOSE",
+            "reason": "Manager approved",
+        },
+    )
+    supervisor.event_bus.emit(
+        "REVIEW_DECISION",
+        ticket_id="WT-2026-187",
+        actor="MANAGER",
+        payload={"decision": "approve"},
+    )
+
+    # work_plan.md has newer ticket WT-2026-188
+    work_plan = supervisor.collaboration_dir / "work_plan.md"
+    work_plan.write_text(
+        "# Work Ticket - WT-2026-188\n## Metadata\n- **ID:** WT-2026-188\n- **Estado:** COMPLETED\n",
+        encoding="utf-8",
+    )
+
+    supervisor.reconcile_state()
+    state = supervisor.load_state()
+    assert state.active_ticket != "WT-2026-187", (
+        "Zombie WT-2026-187 must not win over work_plan WT-2026-188"
+    )
+
+
 def test_bootstrap_bus_precedence_over_turn_divergence(tmp_path):
     """Test bootstrap prefers bus active ticket over TURN.md when they diverge.
 

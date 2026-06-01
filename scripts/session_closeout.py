@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -43,6 +44,23 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 TERMINAL_STATES = {"COMPLETED", "HUMAN_GATE"}
+
+# Lock files (relative to project_root)
+BUILDER_LOCK_REL = Path(".agent") / "runtime" / "builder_lock.txt"
+SUPERVISOR_LOCK_REL = Path(".agent") / "runtime" / "supervisor_lock.txt"
+
+# Review queue paths (relative to project_root)
+REVIEW_QUEUE_REL = Path(".agent") / "collaboration" / "review_queue.md"
+REVIEW_QUEUE_ARCHIVE_DIR_REL = Path(".agent") / "collaboration" / "archive"
+
+# Manager feedback paths (relative to project_root)
+MANAGER_FEEDBACK_ARCHIVE_DIR_REL = (
+    Path(".agent") / "collaboration" / "archive" / "manager_feedback"
+)
+
+# Rotation constants
+KEEP_ENTRIES = 10
+SIZE_WARN_THRESHOLD = 50 * 1024  # 50 KB advisory threshold
 
 # Directories to scan for absolute workspace paths (portability check)
 PORTABILITY_SCAN_DIRS = ("docs", "markdowns", "skills", ".agent/rules")
@@ -929,6 +947,438 @@ def _step_archive_event_bus(project_root: Path, dry_run: bool) -> StepResult:
         )
 
 
+# ---------------------------------------------------------------------------
+# Review queue rotation
+# ---------------------------------------------------------------------------
+
+
+def _is_lock_alive(lock_path: Path) -> bool:
+    """Check if a lock file has an alive PID on Windows.
+
+    Before: lock_path may or may not exist.
+    During: Reads the lock file as JSON. If it contains a 'pid' field,
+            attempts to check if the process is running via tasklist.
+    After: Returns True if the PID is alive, False if the lock is stale
+           or does not exist.
+    """
+    if not lock_path.exists():
+        return False
+    try:
+        data = json.loads(lock_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    pid = data.get("pid")
+    if pid is None:
+        return False
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    # On Windows, use tasklist to check if the process exists
+    try:
+        result = subprocess.run(  # noqa: S603 - controlled PID from lock file
+            ["tasklist", "/FI", f"PID eq {pid}", "/NH"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return False
+        # tasklist returns "INFO: No tasks are running..." if not found
+        return str(pid) in result.stdout
+    except (subprocess.TimeoutExpired, OSError):
+        # If we can't check, conservatively return True (lock assumed alive)
+        return True
+
+
+def _parse_review_queue(content: str) -> tuple[str, list[str], str | None]:
+    """Parse review_queue.md into header, entries, and active ticket entry.
+
+    Before: content is the full text of review_queue.md.
+    During: Splits by '---' separator. Everything before the first '---' is the
+            header. Each block between separators is an entry. Also detects
+            '## ' prefix as an alternative delimiter, but the primary format
+            uses '---'.
+    After: Returns (header_text, list_of_entries, active_ticket_entry_or_None).
+    """
+    # Split by separator lines
+    lines = content.split("\n")
+    header_lines: list[str] = []
+    entries: list[str] = []
+    current_entry: list[str] = []
+    in_header = True
+    found_first_sep = False
+
+    for line in lines:
+        stripped = line.strip()
+        # Detect separator: line is exactly "---" or starts with "---"
+        if stripped in ("---",) or stripped.startswith("---"):
+            if not found_first_sep:
+                # First separator: header ends
+                found_first_sep = True
+                in_header = False
+                if current_entry:
+                    entries.append("\n".join(current_entry))
+                    current_entry = []
+                continue
+            # Subsequent separators: current entry ends
+            if current_entry:
+                entries.append("\n".join(current_entry))
+                current_entry = []
+            continue
+        # Detect '## ' prefix as alternative entry start (at top level)
+        if not in_header and re.match(r"^##\s", line) and current_entry:
+            # Complete previous entry and start new one (include the ## line)
+            entries.append("\n".join(current_entry))
+            current_entry = [line]
+            continue
+
+        if in_header:
+            header_lines.append(line)
+        else:
+            current_entry.append(line)
+
+    # Flush last entry
+    if current_entry:
+        entries.append("\n".join(current_entry))
+
+    header = "\n".join(header_lines).strip()
+
+    # Detect active ticket entry: look for "- **Plan ID:**" in each entry
+    # The active ticket is the one in work_plan.md
+    active_entry: str | None = None
+    # We detect by reading work_plan.md to find the active ticket ID
+    # This will be done at the call site; here we just return entries as-is.
+    # The caller will identify the active ticket entry.
+
+    return header, entries, active_entry
+
+
+def _find_active_ticket_entry(
+    entries: list[str], active_ticket_id: str | None
+) -> tuple[int | None, str | None]:
+    """Find the entry matching the active ticket.
+
+    Before: entries is a list of entry strings; active_ticket_id may be None.
+    During: Searches each entry for a '- **Plan ID:** <active_ticket_id>' line.
+    After: Returns (index, entry_text) or (None, None).
+    """
+    if active_ticket_id is None:
+        return None, None
+    for i, entry in enumerate(entries):
+        if f"**Plan ID:** {active_ticket_id}" in entry:
+            return i, entry
+    return None, None
+
+
+def _step_rotate_review_queue(project_root: Path, dry_run: bool) -> StepResult:  # noqa: C901 - multiple condition checks
+    """Rotate review_queue.md: archive old entries, keep header + active + 10 recent.
+
+    Before: project_root is the repository root. review_queue.md may or may not exist.
+    During:
+        1. Check builder_lock.txt and supervisor_lock.txt for alive locks.
+        2. If any lock is alive, skip rotation and return advisory warning.
+        3. Read review_queue.md, parse header and entries by '---' delimiter.
+        4. Identify active ticket from work_plan.md.
+        5. Keep header, active ticket entry (if found and not already in top 10),
+           and up to 10 most recent logical entries.
+        6. Archive old entries to archive/review_queue_YYYY-MM-DD.md.
+        7. Write truncated content back.
+        8. If kept entries exceed 50 KB, emit warning advisory.
+    After: Returns StepResult with PASS, SKIP, or WARN.
+    """
+    if dry_run:
+        return StepResult(
+            name="rotate_review_queue",
+            status="SKIP",
+            detail="Skipped in dry-run mode",
+        )
+
+    review_queue_path = project_root / REVIEW_QUEUE_REL
+    if not review_queue_path.exists():
+        return StepResult(
+            name="rotate_review_queue",
+            status="SKIP",
+            detail="review_queue.md does not exist; nothing to rotate",
+        )
+
+    # --- Lock checks ---
+    builder_lock = project_root / BUILDER_LOCK_REL
+    supervisor_lock = project_root / SUPERVISOR_LOCK_REL
+
+    lock_alive = False
+    lock_detail_parts: list[str] = []
+
+    if _is_lock_alive(builder_lock):
+        lock_alive = True
+        lock_detail_parts.append("builder_lock.txt alive")
+    if _is_lock_alive(supervisor_lock):
+        lock_alive = True
+        lock_detail_parts.append("supervisor_lock.txt alive")
+
+    if lock_alive:
+        return StepResult(
+            name="rotate_review_queue",
+            status="SKIP",
+            detail=f"Skipped: lock(s) alive: {', '.join(lock_detail_parts)}",
+        )
+
+    # --- Parse review queue ---
+    try:
+        content = review_queue_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return StepResult(
+            name="rotate_review_queue",
+            status="WARN",
+            detail=f"Could not read review_queue.md: {exc}",
+        )
+
+    header, entries, _active_entry = _parse_review_queue(content)
+
+    if not entries:
+        return StepResult(
+            name="rotate_review_queue",
+            status="SKIP",
+            detail="review_queue.md has no parsed entries; nothing to rotate",
+        )
+
+    # --- Identify active ticket entry ---
+    wpid = _resolve_active_ticket(project_root)
+    active_idx, active_entry = _find_active_ticket_entry(entries, wpid)
+
+    # --- Determine kept and archived ---
+    # Keep up to KEEP_ENTRIES most recent (last in list)
+    keep_start = max(0, len(entries) - KEEP_ENTRIES)
+    keep_entries = entries[keep_start:]
+    archived_entries = entries[:keep_start]
+
+    # If active entry is outside the keep window, prepend it
+    if active_idx is not None and active_idx < keep_start:
+        keep_entries.insert(0, active_entry)
+        # Also remove from archived if it was there
+        if active_idx < len(archived_entries):
+            archived_entries.remove(active_entry)
+
+    if not archived_entries:
+        return StepResult(
+            name="rotate_review_queue",
+            status="SKIP",
+            detail="Fewer entries than KEEP_ENTRIES; nothing to archive",
+        )
+
+    # --- Build archive file ---
+    archive_dir = project_root / REVIEW_QUEUE_ARCHIVE_DIR_REL
+    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    archive_path = archive_dir / f"review_queue_{date_str}.md"
+
+    archive_lines = [
+        f"# Archived Review Queue - {date_str}",
+        "",
+        f"Archived from review_queue.md on {date_str}.",
+        f"Total archived entries: {len(archived_entries)}",
+        "",
+    ]
+    for entry in archived_entries:
+        archive_lines.append("---")
+        archive_lines.append("")
+        archive_lines.append(entry)
+        archive_lines.append("")
+
+    try:
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        archive_path.write_text("\n".join(archive_lines), encoding="utf-8")
+    except OSError as exc:
+        return StepResult(
+            name="rotate_review_queue",
+            status="WARN",
+            detail=f"Could not write archive file: {exc}",
+        )
+
+    # --- Build truncated review queue ---
+    truncated_lines = [header, ""]
+    for entry in keep_entries:
+        truncated_lines.append("---")
+        truncated_lines.append("")
+        truncated_lines.append(entry)
+        truncated_lines.append("")
+
+    truncated_content = "\n".join(truncated_lines)
+
+    # Check size advisory
+    kept_size = len(truncated_content.encode("utf-8"))
+    size_warning = kept_size > SIZE_WARN_THRESHOLD
+
+    try:
+        review_queue_path.write_text(truncated_content, encoding="utf-8")
+    except OSError as exc:
+        return StepResult(
+            name="rotate_review_queue",
+            status="WARN",
+            detail=f"Could not write truncated review_queue.md: {exc}",
+        )
+
+    detail_parts = [
+        f"Archived {len(archived_entries)} entr(es)",
+        f"kept {len(keep_entries)} entr(es)",
+    ]
+    if size_warning:
+        detail_parts.append(
+            f"WARNING: kept entries exceed {SIZE_WARN_THRESHOLD // 1024} KB"
+        )
+    status = "WARN" if size_warning else "PASS"
+
+    return StepResult(
+        name="rotate_review_queue",
+        status=status,
+        detail="; ".join(detail_parts),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Manager feedback archival
+# ---------------------------------------------------------------------------
+
+
+def _can_prove_close(
+    ticket_id: str,
+    events: list[dict[str, Any]],
+) -> bool:
+    """Check if the bus provides unequivocal close/approval for a ticket.
+
+    Before: events is a sorted list of event dicts.
+    During: Looks for STATE_CHANGED with to_state in TERMINAL_STATES
+            or REVIEW_DECISION with decision=approve for the given ticket.
+    After: Returns True if close/approval is proven.
+    """
+    for ev in events:
+        if ev.get("event_type") == "STATE_CHANGED":
+            payload = ev.get("payload", {})
+            to_state = payload.get("to_state")
+            if (to_state in TERMINAL_STATES or to_state == "READY_TO_CLOSE") and ev.get(
+                "ticket_id"
+            ) == ticket_id:
+                return True
+        if ev.get("event_type") == "REVIEW_DECISION":
+            payload = ev.get("payload", {})
+            if (
+                payload.get("decision") == "approve"
+                and ev.get("ticket_id") == ticket_id
+            ):
+                return True
+    return False
+
+
+def _find_manager_feedback_files(
+    collaboration_dir: Path,
+) -> list[Path]:
+    """Find all manager_feedback_*.md files in the collaboration directory.
+
+    Before: collaboration_dir exists.
+    During: Lists files matching the pattern manager_feedback_*.md.
+    After: Returns sorted list of matching file paths.
+    """
+    if not collaboration_dir.exists():
+        return []
+    return sorted(
+        entry
+        for entry in collaboration_dir.iterdir()
+        if (
+            entry.is_file()
+            and entry.name.startswith("manager_feedback_")
+            and entry.name.endswith(".md")
+        )
+    )
+
+
+def _extract_ticket_id_from_feedback(filename: str) -> str | None:
+    """Extract ticket ID from a manager_feedback filename.
+
+    Before: filename is a string like 'manager_feedback_WP-2026-155.md'.
+    During: Uses regex to extract the ticket ID portion.
+    After: Returns ticket ID string or None if not matched.
+    """
+    m = re.search(r"manager_feedback_((?:WP|WT)-\d{4}-\d{3})\.md$", filename)
+    if m:
+        return m.group(1)
+    return None
+
+
+def _step_archive_manager_feedback(  # noqa: C901 - multiple condition checks
+    project_root: Path,
+    dry_run: bool,
+    events: list[dict[str, Any]],
+) -> StepResult:
+    """Archive manager_feedback_* files for tickets with proven close/approval.
+
+    Before: events is a sorted list of event dicts from the bus.
+    During:
+        1. Find all manager_feedback_*.md files in collaboration dir.
+        2. For each, extract ticket ID and check bus for close/approval.
+        3. If proven, move to archive/manager_feedback/.
+        4. If not proven, keep in place.
+        5. Skip files that are already in the archive (idempotent).
+    After: Returns StepResult with PASS, SKIP, or WARN.
+    """
+    if dry_run:
+        return StepResult(
+            name="archive_manager_feedback",
+            status="SKIP",
+            detail="Skipped in dry-run mode",
+        )
+
+    collab_dir = project_root / ".agent" / "collaboration"
+    feedback_files = _find_manager_feedback_files(collab_dir)
+
+    if not feedback_files:
+        return StepResult(
+            name="archive_manager_feedback",
+            status="SKIP",
+            detail="No manager_feedback files found",
+        )
+
+    archive_dir = project_root / MANAGER_FEEDBACK_ARCHIVE_DIR_REL
+    archived: list[str] = []
+    kept: list[str] = []
+
+    for fb_path in feedback_files:
+        ticket_id = _extract_ticket_id_from_feedback(fb_path.name)
+        if ticket_id is None:
+            kept.append(f"{fb_path.name} (unparseable ticket ID)")
+            continue
+
+        if _can_prove_close(ticket_id, events):
+            # Archive the file
+            try:
+                archive_dir.mkdir(parents=True, exist_ok=True)
+                dest = archive_dir / fb_path.name
+                # Skip if already archived
+                if dest.exists():
+                    archived.append(f"{fb_path.name} (already archived)")
+                    continue
+                shutil.move(str(fb_path), str(dest))
+                archived.append(fb_path.name)
+            except OSError as exc:
+                kept.append(f"{fb_path.name} (move failed: {exc})")
+        else:
+            kept.append(f"{fb_path.name} (close not proven)")
+
+    detail_parts: list[str] = []
+    if archived:
+        detail_parts.append(f"Archived {len(archived)} file(s)")
+    if kept:
+        detail_parts.append(f"Kept {len(kept)} file(s)")
+
+    if not archived:
+        status = "SKIP"
+        detail_parts.append("No files archived")
+    else:
+        status = "PASS"
+
+    return StepResult(
+        name="archive_manager_feedback",
+        status=status,
+        detail="; ".join(detail_parts),
+    )
+
+
 def _step_manifest_check(project_root: Path) -> StepResult:
     """Verify MANIFEST.distribute exists.
 
@@ -1129,6 +1579,13 @@ def run_closeout(
 
     # --- Step 9: Archival ---
     report.steps.append(_step_archive_collaboration(project_root, dry_run))
+
+    # --- Step 9b: Review queue rotation (between archive_collaboration and archive_execution_log) ---
+    report.steps.append(_step_rotate_review_queue(project_root, dry_run))
+
+    # --- Step 9c: Manager feedback archival ---
+    report.steps.append(_step_archive_manager_feedback(project_root, dry_run, events))
+
     report.steps.append(_step_archive_execution_log(project_root, dry_run))
     report.steps.append(_step_archive_event_bus(project_root, dry_run))
 

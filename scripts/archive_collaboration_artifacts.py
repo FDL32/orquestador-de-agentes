@@ -24,6 +24,9 @@ from pathlib import Path
 PLAN_RE = re.compile(r"^PLAN_(WP|WT)-(\d{4})-(\d{3})\.md$")
 AUDIT_RE = re.compile(r"^AUDIT_(WP|WT)-(\d{4})-(\d{3})\.md$")
 
+# Regex to extract ticket ID from manager_feedback filenames
+MANAGER_FEEDBACK_RE = re.compile(r"^manager_feedback_((?:WP|WT)-\d{4}-\d{3})\.md$")
+
 # Files that must always remain in the active collaboration surface
 ACTIVE_ONLY_FILES = {
     "work_plan.md",
@@ -161,6 +164,94 @@ def list_active_collaboration_files(collaboration_dir: Path) -> list[str]:
     return sorted(active_files)
 
 
+def find_manager_feedback_files(collaboration_dir: Path) -> list[Path]:
+    """Find all manager_feedback_*.md files in the collaboration directory.
+
+    Before: collaboration_dir exists.
+    During: Lists files matching the pattern manager_feedback_*.md.
+    After: Returns sorted list of matching file paths.
+    """
+    if not collaboration_dir.exists():
+        return []
+    return sorted(
+        entry
+        for entry in collaboration_dir.iterdir()
+        if (
+            entry.is_file()
+            and entry.name.startswith("manager_feedback_")
+            and entry.name.endswith(".md")
+        )
+    )
+
+
+def extract_ticket_id_from_feedback(filename: str) -> str | None:
+    """Extract ticket ID from a manager_feedback filename.
+
+    Before: filename is a string like 'manager_feedback_WP-2026-155.md'.
+    During: Uses MANAGER_FEEDBACK_RE to extract the ticket ID portion.
+    After: Returns ticket ID string or None if not matched.
+    """
+    match = MANAGER_FEEDBACK_RE.match(filename)
+    if match:
+        return match.group(1)
+    return None
+
+
+def archive_manager_feedback(
+    collaboration_dir: Path,
+    ticket_ids_to_archive: list[str],
+    dry_run: bool = False,
+) -> dict:
+    """Archive manager_feedback_* files for specific ticket IDs.
+
+    Before: collaboration_dir is the path to .agent/collaboration/.
+            ticket_ids_to_archive is the list of ticket IDs whose feedback
+            should be archived (close/approval already verified by caller).
+    During: For each manager_feedback file matching a ticket in
+            ticket_ids_to_archive, moves the file to
+            archive/manager_feedback/<filename>.
+            Skips files already in the archive (idempotent).
+    After: Returns dict with 'archived', 'skipped', 'errors' lists.
+    """
+    result: dict = {"archived": [], "skipped": [], "errors": []}
+
+    if not ticket_ids_to_archive:
+        return result
+
+    feedback_files = find_manager_feedback_files(collaboration_dir)
+    if not feedback_files:
+        return result
+
+    archive_dir = collaboration_dir / "archive" / "manager_feedback"
+    tid_set = set(ticket_ids_to_archive)
+
+    for fb_path in feedback_files:
+        tid = extract_ticket_id_from_feedback(fb_path.name)
+        if tid is None:
+            result["skipped"].append(f"{fb_path.name} (unparseable)")
+            continue
+        if tid not in tid_set:
+            result["skipped"].append(f"{fb_path.name} (not in archive list)")
+            continue
+
+        if dry_run:
+            result["archived"].append(str(fb_path))
+            continue
+
+        try:
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            dest = archive_dir / fb_path.name
+            if dest.exists():
+                result["skipped"].append(f"{fb_path.name} (already archived)")
+                continue
+            shutil.move(str(fb_path), str(dest))
+            result["archived"].append(str(fb_path))
+        except Exception as exc:
+            result["errors"].append({"file": str(fb_path), "error": str(exc)})
+
+    return result
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Archive closed PLAN/AUDIT artifacts from .agent/collaboration/"
@@ -187,10 +278,21 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="List active collaboration files and exit",
     )
+    parser.add_argument(
+        "--archive-manager-feedback",
+        type=str,
+        default=None,
+        help="Comma-separated ticket IDs whose manager_feedback files should be archived",
+    )
+    parser.add_argument(
+        "--list-manager-feedback",
+        action="store_true",
+        help="List manager_feedback files and exit",
+    )
     return parser
 
 
-def main() -> int:
+def main() -> int:  # noqa: C901 - CLI dispatch with multiple modes
     args = _build_parser().parse_args()
 
     if args.list_active:
@@ -199,6 +301,44 @@ def main() -> int:
         for f in active_files:
             print(f"  {f}")
         return 0
+
+    if args.list_manager_feedback:
+        feedback_files = find_manager_feedback_files(args.collaboration_dir)
+        if feedback_files:
+            print("Manager feedback files:")
+            for f in feedback_files:
+                tid = extract_ticket_id_from_feedback(f.name)
+                print(f"  {f.name}  [{tid or 'unknown'}]")
+        else:
+            print("No manager feedback files found")
+        return 0
+
+    if args.archive_manager_feedback:
+        ticket_ids = [
+            t.strip() for t in args.archive_manager_feedback.split(",") if t.strip()
+        ]
+        result = archive_manager_feedback(
+            collaboration_dir=args.collaboration_dir,
+            ticket_ids_to_archive=ticket_ids,
+            dry_run=args.dry_run,
+        )
+        if args.dry_run:
+            if result["archived"]:
+                print(f"DRY RUN: would archive {len(result['archived'])} file(s):")
+                for f in result["archived"]:
+                    print(f"  {f}")
+            else:
+                print("DRY RUN: no manager feedback files to archive")
+        else:
+            if result["archived"]:
+                print(f"Archived {len(result['archived'])} manager feedback file(s)")
+            if result["skipped"]:
+                print(f"Skipped {len(result['skipped'])} file(s)")
+            if result["errors"]:
+                print(f"Errors: {len(result['errors'])}")
+                for err in result["errors"]:
+                    print(f"  {err['file']}: {err['error']}")
+        return 1 if result["errors"] else 0
 
     result = archive_collaboration_artifacts(
         collaboration_dir=args.collaboration_dir,
