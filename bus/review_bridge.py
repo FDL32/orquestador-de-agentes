@@ -2658,7 +2658,9 @@ class ReviewBridge:
                         "relaunching Builder directly.",
                         flush=True,
                     )
-                    supervisor.requeue_ticket(ticket_id)
+                    # WT-2026-199: Pass review_decision_seq so requeue_ticket
+                    # can perform atomic cross-process claim coordination.
+                    supervisor.requeue_ticket(ticket_id, review_decision_seq)
             if consecutive_changes_count >= max_attempts:
                 report_path = self._generate_human_review_report(
                     ticket_id=ticket_id,
