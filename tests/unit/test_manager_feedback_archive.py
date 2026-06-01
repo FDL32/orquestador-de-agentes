@@ -317,6 +317,30 @@ class TestArchiveManagerFeedbackStandalone:
         assert len(second["archived"]) == 0
         assert len(second["errors"]) == 0
 
+    def test_idempotent_removes_live_copy_when_archive_exists(
+        self, tmp_path: Path
+    ) -> None:
+        """If archive already has the file, remove duplicate live feedback."""
+        collab_dir = _setup_collab(tmp_path, ["WP-2026-155"])
+        archive_dir = collab_dir / "archive" / "manager_feedback"
+        archive_dir.mkdir(parents=True)
+        archived_file = archive_dir / "manager_feedback_WP-2026-155.md"
+        archived_file.write_text("# Already archived\n", encoding="utf-8")
+
+        live_file = collab_dir / "manager_feedback_WP-2026-155.md"
+        assert live_file.exists()
+
+        result = archive_manager_feedback(
+            collaboration_dir=collab_dir,
+            ticket_ids_to_archive=["WP-2026-155"],
+            dry_run=False,
+        )
+
+        assert len(result["archived"]) == 1
+        assert len(result["errors"]) == 0
+        assert archived_file.exists()
+        assert not live_file.exists()
+
     def test_dry_run_does_not_move_files(self, tmp_path: Path) -> None:
         """Dry run reports without moving files."""
         collab_dir = _setup_collab(tmp_path, ["WP-2026-155"])
