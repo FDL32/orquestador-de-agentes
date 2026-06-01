@@ -1,3 +1,25 @@
+# 2026-06-01 - WT-2026-201 Hardening runtime del launcher tras WT-2026-200
+
+### Added
+- `tests/test_supervisor.py::test_relaunch_uses_resume_flag`: endurecido con `trigger_seq=42`
+  no nulo y afirmación explícita de los cuatro flags del launcher (`-LaunchBuilder`,
+  `-OnlyBuilder`, `-ResumeBuilder`, `-SkipSupervisorWait`).
+
+### Changed
+- `tests/test_launch_agent_terminals_script.py::test_launcher_resume_builder_waits_for_supervisor_exit`:
+  assert textual `"$LaunchSupervisor = -not $OnlyBuilder" in content` sustituido por
+  comprobación semántica vía `re.search(r'\$LaunchSupervisor\s*=\s*-not\s*\$OnlyBuilder', content)`
+  resistente a variaciones de espaciado.
+
+### Architecture note — Invariante de precedencia de flags en el launcher
+El invariante `-OnlyBuilder > -ResumeBuilder` es una regla dura del launcher:
+cuando `-OnlyBuilder` está activo, el supervisor NO se arranca incluso en modo
+resume. La asignación `$LaunchSupervisor = -not $OnlyBuilder` (línea 1154 de
+`launch_agent_terminals.ps1`) es el punto único donde esta precedencia se
+materializa. Cualquier refactorización futura debe preservar esta condición:
+`-OnlyBuilder` desactiva `$LaunchSupervisor` independientemente de `-ResumeBuilder`.
+
+---
 # 2026-05-30 - WP-2026-177 Fixes: supervisor launcher path + OpenCode workspace permissions
 
 ### Fixed
