@@ -2057,6 +2057,57 @@ def test_has_builder_exited_after_parse_error_logged(tmp_path, monkeypatch, caps
     assert "Failed to parse timestamp" in captured.err
 
 
+def test_has_builder_exited_after_equal_boundary(tmp_path, monkeypatch):
+    """Test _has_builder_exited_after uses >= so exact-boundary BUILDER_EXIT is caught.
+
+    WT-2026-199 Capa C: a BUILDER_EXIT at the exact relaunch_started_at timestamp
+    must suppress builder_started_verified. The >= comparison (not >) ensures the
+    equality boundary is counted as an exit during the verification window.
+    """
+    from datetime import datetime, timezone
+
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    ticket_id = "WP-TEST"
+    lock_start = datetime.now(timezone.utc)
+
+    # Create a mock BUILDER_EXIT event at exactly lock_start
+    mock_event = MagicMock()
+    mock_event.actor = "BUILDER"
+    mock_event.event_type = "BUILDER_EXIT"
+    mock_event.timestamp = lock_start.isoformat()
+
+    # Mock read_events to return the exit event
+    with patch.object(supervisor.event_bus, "read_events", return_value=[mock_event]):
+        # Should return True because event_time >= lock_start
+        result = supervisor._has_builder_exited_after(ticket_id, lock_start)
+        assert result is True, "BUILDER_EXIT at exactly lock_start must be detected"
+
+    # Now test that an event BEFORE lock_start is NOT detected
+    mock_event_before = MagicMock()
+    mock_event_before.actor = "BUILDER"
+    mock_event_before.event_type = "BUILDER_EXIT"
+    mock_event_before.timestamp = datetime(2020, 1, 1, tzinfo=timezone.utc).isoformat()
+
+    with patch.object(
+        supervisor.event_bus, "read_events", return_value=[mock_event_before]
+    ):
+        result = supervisor._has_builder_exited_after(ticket_id, lock_start)
+        assert result is False, "BUILDER_EXIT before lock_start must NOT be detected"
+
+
 def test_builder_alive_wrapper_pid_dead_builder(tmp_path, monkeypatch):
     """Test _builder_alive handles wrapper PID scenario (PowerShell wrapper alive, Builder dead).
 
@@ -5590,8 +5641,8 @@ def test_claim_not_reclaimed_when_relaunch_already_emitted(tmp_path):
     )
 
 
-def test_requeue_ticket_fails_closed_when_trigger_seq_none(tmp_path):
-    """TP-07: trigger_seq invalido (<= 0) → requeue_ticket procede sin claim (passthrough)."""
+def test_requeue_ticket_fails_closed_when_trigger_seq_none(tmp_path, monkeypatch):
+    """TP-07: trigger_seq invalido (<= 0) → fail-closed, no requeue."""
     sup = _make_supervisor_with_claims(tmp_path)
     ticket_id = "WT-2026-199"
 
@@ -5609,11 +5660,20 @@ def test_requeue_ticket_fails_closed_when_trigger_seq_none(tmp_path):
         payload={"from_state": "N/A", "to_state": "IN_PROGRESS", "reason": "Start"},
     )
 
-    # trigger_seq=0 should be accepted as passthrough (returns True from _claim_requeue)
-    # but then RELAUNCH_BLOCKED_STATES check will fail since ticket is IN_PROGRESS
-    # The key is: _claim_requeue does NOT fail closed
+    # trigger_seq=0 should fail closed: _claim_requeue returns False
     result = sup._claim_requeue(ticket_id, 0)
-    assert result is True, "trigger_seq=0 must return True (passthrough)"
+    assert result is False, "trigger_seq=0 must return False (fail-closed)"
+
+    # requeue_ticket should also fail closed without side effects
+    relaunch_calls = []
+    monkeypatch.setattr(
+        sup, "_relaunch_builder", lambda *a, **kw: relaunch_calls.append(True) or True
+    )
+    result2 = sup.requeue_ticket(ticket_id, 0)
+    assert result2 is False, "requeue_ticket with trigger_seq=0 must return False"
+    assert relaunch_calls == [], "No relaunch should occur with invalid trigger_seq"
+    state = sup.load_state()
+    assert state.loop_current_round == 1, "Round must not be incremented"
 
 
 def test_relaunch_outcome_builder_launch_unverified_when_no_signal(

@@ -3019,7 +3019,7 @@ class TestChangesResilienceSupervisorDead:
             def _is_supervisor_lock_stale(self):
                 return True
 
-            def requeue_ticket(self, ticket_id):
+            def requeue_ticket(self, ticket_id, *a, **kw):
                 requeue_calls.append(ticket_id)
 
         result = bridge.run_manager_review_cycle(
@@ -3163,7 +3163,7 @@ class TestAntiDoubleRelaunchGuard:
             def _is_supervisor_lock_stale(self):
                 return True
 
-            def requeue_ticket(self, tid):
+            def requeue_ticket(self, tid, *a, **kw):
                 requeue_calls.append(tid)
 
         result = bridge.run_manager_review_cycle(

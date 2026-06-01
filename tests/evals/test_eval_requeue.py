@@ -113,7 +113,7 @@ class TestRequeueTicket:
         mock_supervisor._current_state = fake_current_state  # type: ignore[method-assign]
         mock_supervisor._relaunch_builder = fake_relaunch  # type: ignore[method-assign]
 
-        result = mock_supervisor.requeue_ticket("WP-2026-999")
+        result = mock_supervisor.requeue_ticket("WP-2026-999", trigger_seq=42)
 
         assert result is True
         assert calls == ["WP-2026-999"]
@@ -140,7 +140,7 @@ class TestRequeueTicket:
         mock_supervisor._current_state = fake_current_state  # type: ignore[method-assign]
         mock_supervisor._relaunch_builder = fake_relaunch  # type: ignore[method-assign]
 
-        result = mock_supervisor.requeue_ticket("WP-2026-999")
+        result = mock_supervisor.requeue_ticket("WP-2026-999", trigger_seq=42)
 
         assert result is False
         assert calls == []
