@@ -1315,30 +1315,35 @@ def _can_prove_close(
     """Check if the bus provides unequivocal close/approval for a ticket.
 
     Before: events is a sorted list of event dicts.
-    During: Looks for STATE_CHANGED with to_state in TERMINAL_STATES
-            or REVIEW_DECISION with decision=approve for the given ticket.
-    After: Returns True if close/approval is proven.
+    During: Looks for SUPERVISOR_CLOSED, STATE_CHANGED to COMPLETED (only),
+            STATE_CHANGED to READY_TO_CLOSE with source=manager-approve,
+            or REVIEW_DECISION with decision=approve.
+            HUMAN_GATE does NOT prove close: it is an escalation state, not
+            a final closure. Only manager-driven or supervisor-confirmed
+            transitions prove that a ticket was genuinely approved.
+    After: Returns True if close/approval is proven, False otherwise.
     """
     for ev in events:
+        if ev.get("ticket_id") != ticket_id:
+            continue
+        # SUPERVISOR_CLOSED is the canonical bus proof of full closure
+        if ev.get("event_type") == "SUPERVISOR_CLOSED":
+            return True
         if ev.get("event_type") == "STATE_CHANGED":
             payload = ev.get("payload", {})
             to_state = payload.get("to_state")
-            # Terminal states (COMPLETED, HUMAN_GATE) always prove close
-            if to_state in TERMINAL_STATES and ev.get("ticket_id") == ticket_id:
+            # COMPLETED (not HUMAN_GATE) proves genuine close
+            if to_state == "COMPLETED":
                 return True
             # READY_TO_CLOSE only proves close if source is manager-approve
             if (
                 to_state == "READY_TO_CLOSE"
                 and payload.get("source") == "manager-approve"
-                and ev.get("ticket_id") == ticket_id
             ):
                 return True
         if ev.get("event_type") == "REVIEW_DECISION":
             payload = ev.get("payload", {})
-            if (
-                payload.get("decision") == "approve"
-                and ev.get("ticket_id") == ticket_id
-            ):
+            if payload.get("decision") == "approve":
                 return True
     return False
 
