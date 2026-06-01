@@ -213,7 +213,10 @@ def detect_destination_residues(source: Path, dest: Path) -> list[Path]:
     source_entries = set(iter_canonical_entries(source, include_ignored=False))
     dest_entries = set(iter_canonical_entries(dest, include_ignored=True))
     residues = dest_entries - source_entries
-    # Filter out installer-managed paths (deposited once, belong to destination)
+    # Filter out installer-managed paths (deposited once, belong to destination).
+    # Uses r.parts[0] to match both files (glossary.md) and directories (microagents/*)
+    # against the INSTALLER_MANAGED_PATHS set. LOCAL_DIRS paths are already excluded
+    # by iter_canonical_entries(); INSTALLER_MANAGED_PATHS are excluded here.
     residues = {r for r in residues if r.parts[0] not in INSTALLER_MANAGED_PATHS}
     return compact_paths(residues)
 
