@@ -374,6 +374,79 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _emit_packaging_changes(
+    *,
+    supervisor: SequentialTicketSupervisor,
+    ticket_id: str,
+    bridge_state: BridgeState,
+    latest_sequence: int,
+    current_state: TicketState,
+) -> None:
+    """WT-2026-203: Emit CHANGES of packaging without invoking Manager backend.
+
+    Before:
+        - check_review_packet_diff_empty() returned True for the ticket.
+        - The review packet has no verifiable diff.
+
+    During:
+        - Emits a REVIEW_DECISION event with decision=CHANGES and packaging
+          instructions as stdout_tail.
+        - Records the review via _record_review with packaging-specific feedback.
+        - Syncs the bridge checkpoint to prevent re-processing.
+
+    After:
+        - Bus contains a REVIEW_DECISION(CHANGES) event for the ticket.
+        - review_queue.md contains the packaging CHANGES entry.
+        - Bridge checkpoint advanced past this sequence.
+    """
+    try:
+        supervisor.event_bus.emit(
+            "REVIEW_DECISION",
+            ticket_id=ticket_id,
+            actor="MANAGER",
+            payload={
+                "decision": "CHANGES",
+                "stdout_tail": "[packaging: empty diff detected before Manager review]",
+            },
+        )
+    except Exception as exc:
+        print(
+            f"[manager-review-bridge] FAIL-SAFE: Cannot emit REVIEW_DECISION for "
+            f"{ticket_id}: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return
+
+    _record_review(
+        supervisor=supervisor,
+        ticket_id=ticket_id,
+        decision="CHANGES",
+        feedback=(
+            "**Packaging issue: empty review diff detected.**\n\n"
+            "The review packet has no verifiable diff. "
+            "Before requesting a new review:\n"
+            "1. Commit implementation changes with `git add` + `git commit`.\n"
+            "2. Record quality gate results (pytest/ruff/passed) in execution_log.md.\n"
+            "3. Run `--mark-ready` again once diff is verifiable."
+        ),
+        source="manager-review-bridge pre-check",
+        raw_stdout="",
+        parse_method="pre_check_packaging",
+    )
+
+    checkpoint_sequence = _sync_ticket_checkpoint(
+        supervisor=supervisor,
+        ticket_id=ticket_id,
+        minimum_sequence=latest_sequence,
+    )
+    bridge_state.last_processed_sequence = checkpoint_sequence
+    bridge_state.last_ticket_id = ticket_id
+    bridge_state.last_ticket_state = current_state.value
+    _save_state(bridge_state)
+    _save_checkpoint(bridge_state)
+
+
 def _tick(
     supervisor: SequentialTicketSupervisor,
     review: ReviewBridge,
@@ -392,6 +465,22 @@ def _tick(
     bridge_state = _load_state()
     if latest_sequence <= bridge_state.last_processed_sequence:
         return False
+
+    # WT-2026-203: Check for empty review diff before invoking Manager backend
+    if review.check_review_packet_diff_empty(ticket_id):
+        print(
+            f"[manager-review-bridge] Empty review diff for {ticket_id}: "
+            "returning CHANGES of packaging without Manager review.",
+            flush=True,
+        )
+        _emit_packaging_changes(
+            supervisor=supervisor,
+            ticket_id=ticket_id,
+            bridge_state=bridge_state,
+            latest_sequence=latest_sequence,
+            current_state=current_state,
+        )
+        return True
 
     try:
         manager_executable = _resolve_manager_executable(manager_path)

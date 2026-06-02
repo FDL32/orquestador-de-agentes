@@ -3177,3 +3177,157 @@ class TestAntiDoubleRelaunchGuard:
         assert requeue_calls == [ticket_id], (
             "requeue_ticket DEBE llamarse cuando no hay relaunch previo del Supervisor"
         )
+
+
+# =============================================================================
+# WT-2026-203: Empty review diff packaging CHANGES tests
+# =============================================================================
+
+
+def test_tick_empty_diff_returns_packaging_changes(tmp_path, monkeypatch):
+    """TP-04: _tick returns CHANGES of packaging when diff is empty, without Manager review."""
+    _mock_bridge_state_path(monkeypatch, tmp_path)
+
+    supervisor = _make_supervisor(tmp_path)
+    ticket_id = "WP-2026-203-EMPTY-DIFF"
+
+    _write_work_plan_rfr(supervisor.collaboration_dir / "work_plan.md", ticket_id)
+    _write_execution_log_rfr(
+        supervisor.collaboration_dir / "execution_log.md", "READY_FOR_REVIEW"
+    )
+
+    supervisor.save_state(
+        SupervisorState(active_ticket=ticket_id, completed_tickets=[])
+    )
+
+    # Bus state: emit events for READY_FOR_REVIEW
+    supervisor.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="BUILDER",
+        payload={
+            "from_state": "IN_PROGRESS",
+            "to_state": "READY_FOR_REVIEW",
+            "reason": "Ready",
+        },
+    )
+    supervisor.event_bus.emit(
+        "TURN_CHANGED",
+        ticket_id=ticket_id,
+        actor="CONTROLLER",
+        payload={"action": "IMPLEMENT"},
+    )
+
+    from bus.review_bridge import ReviewBridge
+
+    review = ReviewBridge(event_bus=supervisor.event_bus, project_root=tmp_path)
+
+    # Mock check_review_packet_diff_empty to return True (empty diff)
+    monkeypatch.setattr(review, "check_review_packet_diff_empty", lambda tid: True)
+
+    # Spy on run_manager_review_cycle — MUST NOT be called
+    review_cycle_called = False
+
+    def fail_if_called(**kw):
+        nonlocal review_cycle_called
+        review_cycle_called = True
+        raise AssertionError(
+            "run_manager_review_cycle must not be called for empty diff"
+        )
+
+    monkeypatch.setattr(review, "run_manager_review_cycle", fail_if_called)
+
+    result = _tick(
+        supervisor=supervisor,
+        review=review,
+        manager_path=None,
+        timeout=5,
+    )
+
+    # _tick must return True (processed the packaging CHANGES)
+    assert result is True, "_tick() must return True for packaging CHANGES"
+
+    # run_manager_review_cycle must NOT have been called
+    assert not review_cycle_called, (
+        "run_manager_review_cycle MUST NOT be called when diff is empty"
+    )
+
+    # Verify REVIEW_DECISION was emitted
+    latest_review = supervisor.event_bus.latest_event(
+        ticket_id=ticket_id, event_type="REVIEW_DECISION"
+    )
+    assert latest_review is not None, "REVIEW_DECISION must be emitted"
+    assert latest_review.payload.get("decision") == "CHANGES", (
+        f"Decision must be CHANGES, got: {latest_review.payload.get('decision')}"
+    )
+
+
+def test_tick_normal_diff_proceeds_with_review(tmp_path, monkeypatch):
+    """TP-04 regression: _tick proceeds with normal review when diff is valid."""
+    _mock_bridge_state_path(monkeypatch, tmp_path)
+
+    supervisor = _make_supervisor(tmp_path)
+    ticket_id = "WP-2026-203-VALID-DIFF"
+
+    _write_work_plan_rfr(supervisor.collaboration_dir / "work_plan.md", ticket_id)
+    _write_execution_log_rfr(
+        supervisor.collaboration_dir / "execution_log.md", "READY_FOR_REVIEW"
+    )
+
+    supervisor.save_state(
+        SupervisorState(active_ticket=ticket_id, completed_tickets=[])
+    )
+
+    supervisor.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="BUILDER",
+        payload={
+            "from_state": "IN_PROGRESS",
+            "to_state": "READY_FOR_REVIEW",
+            "reason": "Ready",
+        },
+    )
+    supervisor.event_bus.emit(
+        "TURN_CHANGED",
+        ticket_id=ticket_id,
+        actor="CONTROLLER",
+        payload={"action": "IMPLEMENT"},
+    )
+
+    from bus.review_bridge import ReviewBridge, ReviewDecision, ReviewResult
+
+    review = ReviewBridge(event_bus=supervisor.event_bus, project_root=tmp_path)
+
+    # Mock check_review_packet_diff_empty to return False (valid diff)
+    monkeypatch.setattr(review, "check_review_packet_diff_empty", lambda tid: False)
+
+    # Mock run_manager_review_cycle to return APPROVE
+    monkeypatch.setattr(
+        review,
+        "run_manager_review_cycle",
+        lambda **kw: ReviewResult(
+            decision=ReviewDecision.APPROVE,
+            feedback="LGTM",
+            stdout="",
+            parse_method="test",
+            transport_ok=True,
+        ),
+    )
+
+    fake_exe = tmp_path / "fake_manager.exe"
+    fake_exe.write_text("")
+    monkeypatch.setattr(
+        "scripts.manager_review_bridge._resolve_manager_executable",
+        lambda *a: fake_exe,
+    )
+
+    result = _tick(
+        supervisor=supervisor,
+        review=review,
+        manager_path=fake_exe,
+        timeout=5,
+    )
+
+    # _tick must return True (processed the normal review)
+    assert result is True, "_tick() must return True for normal review"

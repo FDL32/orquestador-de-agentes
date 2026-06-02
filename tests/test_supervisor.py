@@ -5922,3 +5922,116 @@ def test_terminal_ticket_clears_its_requeue_claims(tmp_path):
 
     # Other ticket's claim should survive
     assert other_claim.exists(), "Other ticket's claim must not be deleted"
+
+
+# =============================================================================
+# WT-2026-203: Tests for TURN.md blockers materialization
+# =============================================================================
+
+
+def test_materialize_turn_blockers_adds_blockers(tmp_path):
+    """TP-03: _materialize_turn_blockers updates TURN.md with blockers from feedback."""
+    sup = _make_supervisor(tmp_path)
+    ticket_id = "WT-2026-203"
+
+    # Create TURN.md with standard content
+    turn_path = sup.collaboration_dir / "TURN.md"
+    turn_path.write_text(
+        "\n".join(
+            [
+                "# TURNO ACTUAL",
+                "",
+                "## Instruccion",
+                "",
+                "> Implementa segun work_plan.md",
+                "",
+                "## Estado del Sistema",
+                "",
+                "| Archivo | Estado |",
+                "|---------|--------|",
+                "| work_plan.md | APPROVED |",
+                "| execution_log.md | IN_PROGRESS |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    # Create manager_feedback file with CHANGES feedback
+    feedback_file = sup.collaboration_dir / f"manager_feedback_{ticket_id}.md"
+    feedback_file.write_text(
+        "\n".join(
+            [
+                "# Manager Feedback - WT-2026-203",
+                "- Decision: CHANGES",
+                "- Parse method: opencode",
+                "- Source: manager backend exec review",
+                "- Timestamp: 2026-06-02T00:00:00+00:00",
+                "",
+                "**Blockers:**",
+                "1. Missing unit test for edge case",
+                "2. Ruff formatting issue in src/module.py",
+                "",
+                "## Raw Review",
+                "```text",
+                "Manager review output",
+                "```",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    # Call the method
+    sup._materialize_turn_blockers(ticket_id)
+
+    # Verify TURN.md now contains blockers
+    turn_content = turn_path.read_text(encoding="utf-8")
+    assert "## Blockers from Manager" in turn_content, (
+        "TURN.md should contain Blockers section"
+    )
+    assert "Missing unit test" in turn_content, (
+        "TURN.md should include feedback blockers"
+    )
+    assert "Ruff formatting" in turn_content, (
+        "TURN.md should include all blocker details"
+    )
+    # Original instruction should be preserved
+    assert "Implementa segun work_plan.md" in turn_content, (
+        "Original TURN.md instruction must be preserved"
+    )
+    # Estado del Sistema should still be present
+    assert "## Estado del Sistema" in turn_content, (
+        "Estado del Sistema section must be preserved"
+    )
+
+
+def test_materialize_turn_blockers_idempotent(tmp_path):
+    """_materialize_turn_blockers is idempotent: second call does not duplicate."""
+    sup = _make_supervisor(tmp_path)
+    ticket_id = "WT-2026-203"
+
+    # Create TURN.md
+    turn_path = sup.collaboration_dir / "TURN.md"
+    turn_path.write_text(
+        "# TURNO ACTUAL\n\n## Estado del Sistema\n\n",
+        encoding="utf-8",
+    )
+
+    # Create feedback file
+    feedback_file = sup.collaboration_dir / f"manager_feedback_{ticket_id}.md"
+    feedback_file.write_text(
+        "# Manager Feedback - WT-2026-203\n- Decision: CHANGES\n\nSome feedback\n\n## Raw Review\n",
+        encoding="utf-8",
+    )
+
+    # Call twice
+    sup._materialize_turn_blockers(ticket_id)
+    content_after_first = turn_path.read_text(encoding="utf-8")
+    sup._materialize_turn_blockers(ticket_id)
+    content_after_second = turn_path.read_text(encoding="utf-8")
+
+    # Should be identical (no duplicate Blockers section)
+    assert content_after_first == content_after_second
+    # Should have exactly one Blockers section
+    assert content_after_first.count("## Blockers from Manager") == 1, (
+        "Must not duplicate the Blockers section"
+    )
