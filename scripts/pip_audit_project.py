@@ -12,6 +12,7 @@ Used by .pre-commit-config.yaml pip-audit hook (pre-push stage).
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -26,6 +27,11 @@ def main() -> int:
         print("[pip-audit-project] ERROR: uv.lock not found", file=sys.stderr)
         return 1
 
+    uv_cmd = shutil.which("uv")
+    if uv_cmd is None:
+        print("[pip-audit-project] ERROR: uv not found in PATH", file=sys.stderr)
+        return 1
+
     tmp_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -33,9 +39,9 @@ def main() -> int:
         ) as tmp:
             tmp_path = Path(tmp.name)
 
-        export = subprocess.run(  # noqa: S603 S607
+        export = subprocess.run(  # noqa: S603
             [
-                "uv",
+                uv_cmd,
                 "export",
                 "--all-groups",
                 "--no-emit-project",
