@@ -17,6 +17,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from bus.redact import redact_payload
+
 
 # Bootstrap: project root must be on sys.path before importing runtime.project_root.
 _PROJECT_ROOT_BOOTSTRAP = Path(__file__).resolve().parent.parent
@@ -593,6 +595,17 @@ def _run_pipeline(
     return recent, stats, dropped, dedupe_count
 
 
+def _redact_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    """Redact secrets and PII from an observation entry before persistence.
+
+    Before: Requires an observation dict.
+    During: Applies redact_payload() recursively to all string values.
+            Returns a new dict; the original is not mutated.
+    After: Returns redacted copy with secrets replaced by ***REDACTED***.
+    """
+    return redact_payload(entry)
+
+
 def _apply_consolidation(
     recent: list[dict[str, Any]],
     archivable: list[dict[str, Any]],
@@ -616,16 +629,20 @@ def _apply_consolidation(
         if archive_file.exists():
             existing = parse_entries(archive_file)
             existing.extend(archivable)
-            lines_to_write = [json.dumps(e, ensure_ascii=False) for e in existing]
+            lines_to_write = [
+                json.dumps(_redact_entry(e), ensure_ascii=False) for e in existing
+            ]
         else:
-            lines_to_write = [json.dumps(e, ensure_ascii=False) for e in archivable]
+            lines_to_write = [
+                json.dumps(_redact_entry(e), ensure_ascii=False) for e in archivable
+            ]
         archive_file.write_text(
             "\n".join(lines_to_write) + "\n" if lines_to_write else "", encoding="utf-8"
         )
         if verbose:
             print(f"Archived {len(archivable)} entries to {archive_file}")
 
-    new_lines = [json.dumps(e, ensure_ascii=False) for e in recent]
+    new_lines = [json.dumps(_redact_entry(e), ensure_ascii=False) for e in recent]
     OBS.write_text("\n".join(new_lines) + "\n" if new_lines else "", encoding="utf-8")
 
     if verbose:
