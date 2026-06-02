@@ -529,6 +529,49 @@ class ReviewBridge:
         except Exception as e:
             return f"[Error fetching git diff: {e}]"
 
+    def check_review_packet_diff_empty(self, ticket_id: str) -> bool:
+        """WT-2026-203: Check if the review packet diff is empty or errored.
+
+        Before:
+            - ticket_id must be valid.
+            - git must be available (best-effort if not).
+
+        During:
+            - Gets diff_stat and checks for [git diff --stat empty] marker.
+            - Checks for [Error fetching git diff] markers in diff_stat.
+            - Builds the actual diff content with a small budget and checks
+              if the result is empty or contains error markers.
+
+        After:
+            - Returns True if any empty-diff condition is met (empty diff_stat,
+              empty diff content, or git error markers).
+            - Returns False if diff appears valid or check cannot be completed.
+            - Never raises: all exceptions are caught and return False.
+        """
+        try:
+            # Condition 1: diff_stat contains empty marker
+            diff_stat = self._git_diff_stat()
+            if "[git diff --stat empty]" in diff_stat:
+                return True
+
+            # Condition 2: diff_stat contains error marker
+            if "[Error fetching git diff" in diff_stat:
+                return True
+
+            # Condition 3: build actual diff content and check if empty/error
+            diff = self._build_diff_for_files_likely_touched(ticket_id, 4096)
+            if not diff or not diff.strip():
+                return True
+            if "[Error fetching git diff" in diff:
+                return True
+            if "[git diff --stat empty]" in diff:
+                return True
+
+        except Exception:  # noqa: S110 - best-effort check, silent on failure
+            pass
+
+        return False
+
     def _git_provenance(self) -> str:
         try:
             git_bin = shutil.which("git") or "git"

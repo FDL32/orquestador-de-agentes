@@ -1433,8 +1433,72 @@ def _check_log_has_evidence() -> bool:
         return False
 
 
+def _check_git_log_has_plan_id(plan_id: str) -> bool:
+    """WT-2026-203: Check if the plan_id appears in the last 20 git commit subjects.
+
+    Before:
+        - plan_id must be a non-empty string.
+        - git must be available (best-effort if not).
+
+    During:
+        - Runs git log --oneline -20 in both PROJECT_ROOT and _MOTOR_ROOT.
+        - Searches for plan_id in each commit line.
+
+    After:
+        - Returns True if plan_id found in any commit subject in either repo.
+        - Returns False if not found, git unavailable, or any error.
+        - Never raises: all exceptions are caught and return False.
+    """
+    for root in {PROJECT_ROOT, _MOTOR_ROOT}:
+        try:
+            result = subprocess.run(
+                ["git", "log", "--oneline", "-20"],
+                capture_output=True,
+                text=True,
+                cwd=root,
+                timeout=30,
+            )
+            if result.returncode == 0 and plan_id in result.stdout:
+                return True
+        except (subprocess.TimeoutExpired, FileNotFoundError):  # noqa: PERF203 - iterates at most 2 roots
+            pass
+    return False
+
+
+def _check_log_has_quality_gate_evidence() -> bool:
+    """WT-2026-203: Check execution_log.md for explicit quality gate evidence.
+
+    Before:
+        - EXEC_LOG must be accessible.
+
+    During:
+        - Reads execution_log.md and searches for lines containing
+          any of: pytest, ruff, passed, "All checks passed".
+        - This is stricter than the general non-boilerplate check.
+
+    After:
+        - Returns True if at least one quality gate evidence line found.
+        - Returns False if log is empty, missing, or no evidence found.
+        - Never raises: read errors are caught and return False.
+    """
+    try:
+        log_content = read_file(EXEC_LOG)
+        if not log_content:
+            return False
+        lines = log_content.strip().split("\n")
+        for line in lines:
+            stripped = line.strip().lower()
+            if any(kw in stripped for kw in ["pytest", "ruff", "passed"]):
+                return True
+            if "all checks passed" in stripped:
+                return True
+        return False
+    except Exception:
+        return False
+
+
 def _check_implementation_evidence(plan_id: str) -> list[str]:
-    """WP-2026-188 Phase 4: Check implementation evidence before --mark-ready.
+    """WP-2026-188 Phase 4 / WT-2026-203: Check implementation evidence before --mark-ready.
 
     Before:
         - plan_id must be valid (non-empty string).
@@ -1446,6 +1510,8 @@ def _check_implementation_evidence(plan_id: str) -> list[str]:
           .agent/collaboration/.
         - Checks execution_log.md for non-boilerplate evidence.
         - Best-effort: checks if Files Likely Touched appear in git changes.
+        - WT-2026-203: Checks git log --oneline -20 for plan_id.
+        - WT-2026-203: Checks execution_log.md for explicit quality gate markers.
         - NOT bypassable via --force or --scope-override: the gate is unconditional.
 
     After:
@@ -1490,6 +1556,21 @@ def _check_implementation_evidence(plan_id: str) -> list[str]:
                     )
     except Exception:  # noqa: S110 - best-effort check, silent on parse failure
         pass
+
+    # 4. WT-2026-203: Check git log --oneline -20 contains plan_id
+    has_commit = _check_git_log_has_plan_id(plan_id)
+    if not has_commit:
+        errors.append(
+            f"No commit evidence: git log --oneline -20 does not contain '{plan_id}'"
+        )
+
+    # 5. WT-2026-203: Check execution_log.md for explicit quality gate evidence
+    has_qg_evidence = _check_log_has_quality_gate_evidence()
+    if not has_qg_evidence:
+        errors.append(
+            "No quality gate evidence in execution_log.md: expected at least "
+            "one line with 'pytest', 'ruff', 'passed', or 'All checks passed'"
+        )
 
     return errors
 

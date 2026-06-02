@@ -1250,7 +1250,7 @@ class TestImplementationEvidenceGate:
 - **Estado:** APPROVED
 """
 
-    # Non-boilerplate execution log content
+    # Non-boilerplate execution log content (includes quality gate evidence for WT-2026-203)
     _LOG_WITH_EVIDENCE = """# Execution Log
 
 **Estado:** IN_PROGRESS
@@ -1258,6 +1258,7 @@ class TestImplementationEvidenceGate:
 - Implemented closeout commit validation
 - Added `_check_implementation_evidence` function
 - Ran quality gates: ruff, pytest
+- All checks passed
 """
 
     # Boilerplate-only log
@@ -1271,11 +1272,12 @@ Marked ready by Builder
 """
 
     @staticmethod
-    def _make_git_mock(changed_files: list[str]) -> MagicMock:
+    def _make_git_mock(changed_files: list[str], plan_in_log: bool = True) -> MagicMock:
         """Create a subprocess.run mock that returns specific git diff output.
 
         Args:
             changed_files: list of file paths to return from git diff --name-only
+            plan_in_log: if True, git log --oneline includes the plan_id
         """
         mock_stdout = "\n".join(changed_files)
 
@@ -1287,6 +1289,16 @@ Marked ready by Builder
                 return MagicMock(returncode=0, stdout="", stderr="")
             if "log -1 --name-only" in cmd_str:
                 return MagicMock(returncode=0, stdout="", stderr="")
+            if "log --oneline" in cmd_str:
+                if plan_in_log:
+                    return MagicMock(
+                        returncode=0,
+                        stdout="7a3c596 WT-2026-188: some change\n",
+                        stderr="",
+                    )
+                return MagicMock(
+                    returncode=0, stdout="abc1234 other ticket\n", stderr=""
+                )
             return MagicMock(returncode=0, stdout="", stderr="")
 
         return MagicMock(side_effect=mock_run)
@@ -1418,6 +1430,88 @@ Marked ready by Builder
     def test_gate_is_unconditional(self, monkeypatch):
         """Evidence gate is never bypassed: rejects even when no diff exists."""
         monkeypatch.setattr(agent_controller, "_collect_git_diff_files", lambda: [])
+        monkeypatch.setattr(
+            agent_controller, "_check_git_log_has_plan_id", lambda pid: False
+        )
+        monkeypatch.setattr(
+            agent_controller, "_check_log_has_quality_gate_evidence", lambda: False
+        )
         monkeypatch.setattr(agent_controller, "read_file", lambda name: "")
         errors = agent_controller._check_implementation_evidence(self._PLAN_ID)
         assert errors, "Evidence gate must reject when there is no real implementation"
+
+    # ===== WT-2026-203: New evidence gate tests =====
+
+    def test_rejects_when_git_log_misses_plan_id(self, monkeypatch):
+        """TP-01: --mark-ready blocks if git log --oneline -20 lacks plan_id."""
+        # Simulate git diff showing real file change
+        git_mock = self._make_git_mock(["src/module.py"], plan_in_log=False)
+        monkeypatch.setattr(agent_controller.subprocess, "run", git_mock)
+
+        # Mock reads: log has quality gate evidence, plan exists
+        monkeypatch.setattr(
+            agent_controller,
+            "read_file",
+            lambda x: (
+                self._LOG_WITH_EVIDENCE
+                if "execution_log.md" in str(x)
+                else self._PLAN_WITH_FILES
+            ),
+        )
+
+        errors = agent_controller._check_implementation_evidence(self._PLAN_ID)
+        assert any("commit evidence" in err.lower() for err in errors), (
+            f"Expected commit evidence error, got: {errors}"
+        )
+
+    def test_rejects_when_log_lacks_quality_gate_evidence(self, monkeypatch):
+        """TP-02: --mark-ready blocks if execution_log.md lacks pytest/ruff/passed."""
+        git_mock = self._make_git_mock(["src/module.py"], plan_in_log=True)
+        monkeypatch.setattr(agent_controller.subprocess, "run", git_mock)
+
+        # Log without quality gate keywords but with non-boilerplate content
+        # (passes the non-boilerplate check but fails the stricter quality gate check)
+        log_no_qg = """# Execution Log
+
+**Estado:** IN_PROGRESS
+
+- Implemented the feature
+- All tests were run manually
+- Ready for review
+"""
+
+        monkeypatch.setattr(
+            agent_controller,
+            "read_file",
+            lambda x: (
+                log_no_qg if "execution_log.md" in str(x) else self._PLAN_WITH_FILES
+            ),
+        )
+
+        errors = agent_controller._check_implementation_evidence(self._PLAN_ID)
+        assert any("quality gate" in err.lower() for err in errors), (
+            f"Expected quality gate evidence error, got: {errors}"
+        )
+
+    def test_accepts_when_all_new_checks_pass(self, monkeypatch):
+        """All WT-2026-203 checks pass when git log has plan_id and log has QG evidence."""
+        git_mock = self._make_git_mock(["src/module.py"], plan_in_log=True)
+        monkeypatch.setattr(agent_controller.subprocess, "run", git_mock)
+
+        def mock_read(path):
+            name = str(path).replace("\\", "/")
+            if "execution_log.md" in name:
+                return self._LOG_WITH_EVIDENCE
+            if "work_plan.md" in name:
+                return self._PLAN_WITH_FILES
+            return ""
+
+        monkeypatch.setattr(agent_controller, "read_file", mock_read)
+        monkeypatch.setattr(
+            agent_controller,
+            "parse_files_likely_touched",
+            lambda x: {"src/module.py"},
+        )
+
+        errors = agent_controller._check_implementation_evidence(self._PLAN_ID)
+        assert errors == [], f"Expected no errors, got: {errors}"

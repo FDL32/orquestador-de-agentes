@@ -929,6 +929,9 @@ class SequentialTicketSupervisor:
         # next builder launch falls through to a clean session.
         _bus_cleanup_builder_session(self.runtime_dir)
 
+        # WT-2026-203: Materialize blockers into TURN.md before requeue
+        self._materialize_turn_blockers(ticket_id)
+
         # WT-2026-199: Watermark update moved into requeue_ticket, which
         # calls _claim_requeue first as the cross-process authority.
         self.requeue_ticket(ticket_id, requeue_trigger_seq)
@@ -942,6 +945,103 @@ class SequentialTicketSupervisor:
             return json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             return None
+
+    def _materialize_turn_blockers(self, ticket_id: str) -> None:
+        """WT-2026-203: Materialize Manager blockers into TURN.md before requeue.
+
+        Before:
+            - A CHANGES decision has been recorded for the ticket.
+            - manager_feedback_<ticket_id>.md may exist in collaboration_dir.
+
+        During:
+            - Reads manager_feedback_<ticket_id>.md for feedback text.
+            - Extracts the feedback/summary section.
+            - Appends blockers section to TURN.md instructions.
+
+        After:
+            - TURN.md contains actionable blockers from the Manager feedback.
+            - If no feedback file exists or blockers already present, no-op.
+            - Never raises: all exceptions are caught and logged.
+        """
+        try:
+            feedback_file = self.collaboration_dir / f"manager_feedback_{ticket_id}.md"
+            if not feedback_file.exists():
+                return
+
+            feedback_content = feedback_file.read_text(encoding="utf-8")
+
+            # Extract feedback between the metadata header and the ## Raw Review section
+            feedback_match = re.search(
+                r"^(.*?)(?=## Raw Review)",
+                feedback_content,
+                re.DOTALL | re.MULTILINE,
+            )
+            blockers_text = ""
+            if feedback_match:
+                raw = feedback_match.group(1)
+                # Strip metadata lines (Decision, Parse method, Source, Timestamp)
+                lines = []
+                for line in raw.split("\n"):
+                    stripped = line.strip()
+                    if (
+                        stripped.startswith("# Manager Feedback")
+                        or stripped.startswith("- Decision:")
+                        or stripped.startswith("- Parse method:")
+                        or stripped.startswith("- Source:")
+                        or stripped.startswith("- Timestamp:")
+                    ):
+                        continue
+                    lines.append(line)
+                blockers_text = "\n".join(lines).strip()
+            else:
+                blockers_text = feedback_content.strip()
+
+            if not blockers_text or "[Feedback no pudo ser parseado" in blockers_text:
+                blockers_text = (
+                    f"Manager requested CHANGES for {ticket_id}. "
+                    f"Review manager_feedback_{ticket_id}.md for details."
+                )
+
+            turn_path = self.collaboration_dir / "TURN.md"
+            if not turn_path.exists():
+                return
+
+            current_turn = turn_path.read_text(encoding="utf-8")
+
+            # Avoid duplicate blockers injection
+            if "## Blockers from Manager" in current_turn:
+                return
+
+            blocker_section = (
+                f"\n\n## Blockers from Manager\n\n"
+                f"The last review returned CHANGES. "
+                f"Address these blockers before marking ready:\n\n"
+                f"{blockers_text}\n"
+            )
+
+            # Insert before ## Estado del Sistema if present, else append at end
+            if "## Estado del Sistema" in current_turn:
+                turn_path.write_text(
+                    current_turn.replace(
+                        "## Estado del Sistema",
+                        f"{blocker_section}\n## Estado del Sistema",
+                    ),
+                    encoding="utf-8",
+                )
+            else:
+                turn_path.write_text(
+                    current_turn.rstrip() + blocker_section, encoding="utf-8"
+                )
+
+            print(
+                f"[supervisor] Materialized blockers into TURN.md for {ticket_id}",
+                flush=True,
+            )
+        except Exception as exc:
+            print(
+                f"[supervisor] Error materializing TURN blockers: {exc}",
+                flush=True,
+            )
 
     def _is_manager_bridge_stale(self) -> bool:
         """Return True if the bridge heartbeat is absent or older than MANAGER_STALE_TIMEOUT.
@@ -2105,6 +2205,8 @@ class SequentialTicketSupervisor:
             else:
                 # WT-2026-199: Watermark update moved into requeue_ticket, which
                 # calls _claim_requeue first as the cross-process authority.
+                # WT-2026-203: Materialize blockers into TURN.md before requeue
+                self._materialize_turn_blockers(state.active_ticket)
                 if self.requeue_ticket(state.active_ticket, requeue_trigger_sequence):
                     changed = True
                     requeue_success = True
