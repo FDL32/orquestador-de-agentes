@@ -498,6 +498,27 @@ function Remove-StaleRuntimeArtifacts {
 function Get-ActiveRole {
     param([Parameter(Mandatory)] [string]$ProjectRoot)
 
+    $venvPython = Resolve-VenvPython -Root $script:_MotorCodeRoot
+    $helperPath = Join-Path $script:_MotorCodeRoot 'scripts\get_launcher_state.py'
+    if (Test-Path -LiteralPath $helperPath) {
+        $helperOutput = & $venvPython $helperPath --project-root $ProjectRoot 2>&1
+        $helperExitCode = $LASTEXITCODE
+        if ($helperExitCode -eq 0) {
+            try {
+                $launcherState = ($helperOutput | Out-String).Trim() | ConvertFrom-Json
+                if ($null -ne $launcherState -and $launcherState.role) {
+                    return [string]$launcherState.role
+                }
+            }
+            catch {
+                Write-Warning 'No se pudo parsear JSON de get_launcher_state.py. Recurriendo a TURN.md como fallback.'
+            }
+        }
+        else {
+            Write-Warning 'get_launcher_state.py fallo. Recurriendo a TURN.md como fallback.'
+        }
+    }
+
     $turnPath = Join-Path $ProjectRoot '.agent\collaboration\TURN.md'
     if (-not (Test-Path -LiteralPath $turnPath)) {
         Write-Warning 'TURN.md no encontrado. Asumiendo BUILDER para compatibilidad.'
