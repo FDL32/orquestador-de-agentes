@@ -688,6 +688,62 @@ function Assert-StartupAlignment {
     return $alignment
 }
 
+function Invoke-PreflightReconcile {
+    param(
+        [Parameter(Mandatory)] [string]$ProjectRoot,
+        [Parameter(Mandatory)] [object]$Alignment
+    )
+
+    $venvPython = Resolve-VenvPython -Root $script:_MotorCodeRoot
+    $helperPath = Join-Path $script:_MotorCodeRoot 'scripts\preflight_reconcile.py'
+
+    if (-not (Test-Path -LiteralPath $helperPath)) {
+        Write-Host "[preflight-reconcile] Helper no encontrado en $helperPath; se omite la comprobacion."
+        return
+    }
+
+    Write-Host "[preflight-reconcile] Evaluando drift para $($Alignment.WorkPlanId)..."
+    $output = & $venvPython $helperPath --project-root $ProjectRoot --work-plan-id $Alignment.WorkPlanId 2>&1
+    $exitCode = $LASTEXITCODE
+    $outputText = ($output | Out-String).Trim()
+
+    if ($exitCode -eq 0) {
+        # Parse JSON decision for ALIGNED / CLEANUP_LOCAL / RECONCILE
+        try {
+            $decision = $outputText | ConvertFrom-Json
+        } catch {
+            Write-Warning "[preflight-reconcile] No se pudo parsear la salida JSON; se omite la comprobacion."
+            return
+        }
+
+        Write-Host "[preflight-reconcile] Decision=$($decision.decision) prev=$($decision.prev_ticket_id) state=$($decision.prev_ticket_state)"
+
+        if ($decision.decision -eq 'RECONCILE') {
+            $reconcilerPath = Join-Path $script:_MotorCodeRoot 'scripts\reconcile_ticket.py'
+            Write-Host "[preflight-reconcile] El ticket anterior $($decision.prev_ticket_id) no es terminal. Ejecutando reconciliacion..."
+            & $venvPython $reconcilerPath --project-root $ProjectRoot --ticket $decision.prev_ticket_id --reason 'preflight forced close' --json 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                throw "La reconciliacion fallo para $($decision.prev_ticket_id). Vease la salida del reconciler arriba."
+            }
+            Write-Host "[preflight-reconcile] Reconciliacion completada para $($decision.prev_ticket_id)"
+        } elseif ($decision.decision -eq 'CLEANUP_LOCAL') {
+            Write-Host "[preflight-reconcile] Ticket anterior ya terminal; solo limpieza local."
+        } elseif ($decision.decision -eq 'ALIGNED') {
+            Write-Host "[preflight-reconcile] Sin drift; procediendo normalmente."
+        }
+    } elseif ($exitCode -eq 2) {
+        # ABORT decision
+        $reason = "El bus es ilegible o contradictorio"
+        try {
+            $abortDecision = $outputText | ConvertFrom-Json
+            if ($abortDecision.reason) { $reason = $abortDecision.reason }
+        } catch {}
+        throw "Preflight reconcile ABORT: $reason"
+    } else {
+        Write-Warning "[preflight-reconcile] El helper fallo con codigo $exitCode. Se omite la comprobacion."
+    }
+}
+
 function Invoke-ImportPreflight {
     param(
         [Parameter(Mandatory)] [string]$ProjectRoot,
@@ -1115,17 +1171,22 @@ function Start-AgentWindow {
 }
 
 if (-not $ResumeBuilder) {
+    $ProjectRoot = Assert-CanonicalProjectRoot -ProjectRoot $ProjectRoot
+    Stop-ProjectAgentProcesses -ProjectRoot $ProjectRoot
+    Write-Host 'Limpieza previa: sesiones viejas del proyecto cerradas antes del nuevo arranque'
+
+    # WT-2026-214: Preflight reconcile — detect drift between runtime and bus,
+    # decide between cleanup-local and canonical reconcile BEFORE destructive
+    # repair operations. This must happen before Assert-StartupAlignment or
+    # Repair-StartupSupervisorState delete the stale state evidence.
+    $preAlignment = Get-StartupAlignment -ProjectRoot $ProjectRoot
+    Invoke-PreflightReconcile -ProjectRoot $ProjectRoot -Alignment $preAlignment
+
     if ($StrictLaunch) {
-        $ProjectRoot = Assert-CanonicalProjectRoot -ProjectRoot $ProjectRoot
-        Stop-ProjectAgentProcesses -ProjectRoot $ProjectRoot
-        Write-Host 'Limpieza previa: sesiones viejas del proyecto cerradas antes del nuevo arranque'
         $alignment = Assert-StartupAlignment -ProjectRoot $ProjectRoot
         Write-Host "Preflight estricto: alineacion validada para $($alignment.WorkPlanId)"
     }
     else {
-        $ProjectRoot = Assert-CanonicalProjectRoot -ProjectRoot $ProjectRoot
-        Stop-ProjectAgentProcesses -ProjectRoot $ProjectRoot
-        Write-Host 'Limpieza previa: sesiones viejas del proyecto cerradas antes del nuevo arranque'
         $alignment = Repair-StartupSupervisorState -ProjectRoot $ProjectRoot
         Write-Host "Preflight flexible: alineacion reparada para $($alignment.WorkPlanId) | bridge_reparado=$($alignment.BridgeStateCorrupt -or ($null -ne $alignment.BridgeState -and $alignment.BridgeLastTicketId -and $alignment.BridgeLastTicketId -ne $alignment.WorkPlanId)) | supervisor_reparado=$($alignment.SupervisorStateCorrupt -or ($null -ne $alignment.SupervisorState -and $alignment.SupervisorLastTicketId -and $alignment.SupervisorLastTicketId -ne $alignment.WorkPlanId))"
     }
