@@ -66,6 +66,24 @@ def test_derive_launcher_state_defaults_to_builder_for_unknown_bus(
     assert state["action"] == "IMPLEMENT"
 
 
+def test_derive_launcher_state_accepts_custom_ticket_prefix(tmp_path: Path) -> None:
+    ticket_id = "ABC-2026-101"
+    _write_work_plan(tmp_path, ticket_id)
+    event_bus = EventBus(runtime_dir=tmp_path / ".agent" / "runtime" / "events")
+    event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="SUPERVISOR",
+        payload={"from_state": "IN_PROGRESS", "to_state": "READY_FOR_REVIEW"},
+    )
+
+    state = derive_launcher_state(tmp_path)
+
+    assert state["ticket_id"] == ticket_id
+    assert state["state"] == TicketState.READY_FOR_REVIEW.value
+    assert state["role"] == "MANAGER"
+
+
 def test_launcher_script_uses_python_helper_before_turn_fallback() -> None:
     content = SCRIPT_PATH.read_text(encoding="utf-8")
 
