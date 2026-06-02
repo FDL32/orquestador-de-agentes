@@ -33,7 +33,7 @@ def main() -> int:
         ) as tmp:
             tmp_path = Path(tmp.name)
 
-        export = subprocess.run(
+        export = subprocess.run(  # noqa: S603 S607
             [
                 "uv",
                 "export",
@@ -64,7 +64,7 @@ def main() -> int:
         ]
         print(f"[pip-audit-project] Auditing {len(lines)} packages from uv.lock")
 
-        audit = subprocess.run(
+        audit = subprocess.run(  # noqa: S603
             [sys.executable, "-m", "pip_audit", "-r", str(tmp_path)],
             cwd=project_root,
         )
