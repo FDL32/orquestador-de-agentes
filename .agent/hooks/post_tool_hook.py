@@ -5,6 +5,8 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
+from bus.redact import redact
+
 
 # Import memory helpers
 try:
@@ -45,6 +47,10 @@ def log_observation(context: dict[str, Any]) -> None:
     }
 
     _tool_call_counter += 1
+
+    # Redact secrets and PII before persisting
+    observation["signal"] = redact(observation["signal"])
+    observation["context"] = redact(observation["context"])
 
     # Write directly to the observations file (which may be patched in tests)
     with suppress(OSError, json.JSONDecodeError):

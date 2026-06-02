@@ -10,6 +10,7 @@ import json
 from collections import Counter
 from pathlib import Path
 
+from bus.redact import redact_payload
 from runtime.project_root import get_agent_dir
 
 
@@ -33,8 +34,10 @@ def append_observation(observation: dict) -> bool:
     memory_dir = get_memory_dir()
     memory_dir.mkdir(parents=True, exist_ok=True)
     observations_file = get_observations_file()
+    # Redact secrets and PII before persisting
+    redacted = redact_payload(observation)
     with observations_file.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(observation, ensure_ascii=False) + "\n")
+        handle.write(json.dumps(redacted, ensure_ascii=False) + "\n")
     return True
 
 

@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from bus.redact import redact
+
 
 # WP-2026-122: Deferred path resolution via runtime.project_root
 try:
@@ -257,6 +259,11 @@ def append_observations(entries: list[dict[str, Any]]) -> None:
     MEMORY_DIR.mkdir(parents=True, exist_ok=True)
     with open(OBS_FILE, "a", encoding="utf-8") as f:
         for entry in entries:
+            # Redact secrets and PII before persisting
+            if "signal" in entry:
+                entry["signal"] = redact(entry["signal"])
+            if "text" in entry:
+                entry["text"] = redact(entry["text"])
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
