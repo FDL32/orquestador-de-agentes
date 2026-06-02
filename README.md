@@ -168,7 +168,7 @@ python .agent/agent_controller.py --validate --json --force
 python scripts/run_gates_dispatch.py        # dispatches by deliverable_type
 python scripts/run_pytest_safe.py
 ruff check .
-uv run pip-audit .
+python scripts/pip_audit_project.py
 
 # Skill discovery
 python scripts/discover_skills.py --json

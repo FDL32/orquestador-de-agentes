@@ -304,7 +304,7 @@ Si el preflight falla:
 ```powershell
 python scripts/run_pytest_safe.py
 ruff check .
-uv run pip-audit .
+python scripts/pip_audit_project.py
 python .agent/agent_controller.py --health
 ```
 

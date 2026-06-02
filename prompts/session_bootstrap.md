@@ -32,7 +32,7 @@ Lee en este orden, sin omitir ninguno:
 - **Launcher:** `scripts/launch_agent_terminals.ps1` abre Supervisor + Bridge + Builder segun `TURN.md`. WP-2026-067 integro OpenCode con prompt compuesto desde ticket.
 - **Config de agentes:** `.agent/config/agents.json` mapea backend->ejecutable. Builder=opencode, Manager=opencode, Supervisor=default.
 - **Validate:** `python .agent/agent_controller.py --validate --json --force` debe pasar antes de cualquier cierre. Verifica entre otras cosas que destinos `host-project` tengan `Ticket prefix:` declarado.
-- **Quality gates:** `ruff check .`, `python scripts/run_pytest_safe.py`, `pip-audit`.
+- **Quality gates:** `ruff check .`, `python scripts/run_pytest_safe.py`, `python scripts/pip_audit_project.py`.
 
 ## Ciclo canonico de un ticket
 

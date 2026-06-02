@@ -45,3 +45,13 @@ def test_read_deliverable_type_unknown_fallback(tmp_path, monkeypatch, capsys):
     assert dispatch.read_deliverable_type() == "code"
     err = capsys.readouterr().err
     assert "unknown type" in err
+
+
+def test_run_code_gates_uses_project_pip_audit_wrapper():
+    """The dispatcher must share the same dependency-audit surface as pre-commit."""
+    source = (PROJECT_ROOT / "scripts" / "run_gates_dispatch.py").read_text(
+        encoding="utf-8"
+    )
+    assert "scripts/pip_audit_project.py" in source
+    assert '"uv", "run", "pip-audit", "."' not in source
+    assert "uv run pip-audit ." not in source

@@ -96,9 +96,9 @@ def run_code_gates() -> int:
         run_audit, reason = True, "Fallback: could not import pip_audit_policy"
 
     if run_audit:
-        print(f"[dispatch] Running pip-audit ({reason})")
-        rc_audit = subprocess.run(
-            ["uv", "run", "pip-audit", "."],  # noqa: S607
+        print(f"[dispatch] Running pip-audit wrapper ({reason})")
+        rc_audit = subprocess.run(  # noqa: S603
+            [sys.executable, "scripts/pip_audit_project.py"],
             cwd=PROJECT_ROOT,
         ).returncode
         if rc_audit != 0:
