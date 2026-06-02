@@ -1,23 +1,20 @@
 # Project: orquestador_de_agentes
 **Version:** v9.14.1
-**State:** SESSION CLOSED (2026-05-29)
+**State:** ACTIVE (2026-06-02) — bus reconstruction cycle
 
 ## Current Cycle
 
+- Last ticket: WT-2026-216 COMPLETED (2026-06-02). Launcher reads bus instead of TURN.md for agent decision (`get_launcher_state.py`).
+- Last ticket: WT-2026-212 COMPLETED (2026-06-02). Guarantee durable CHANGES consumer (`_ensure_durable_changes_consumer` in review_bridge.py).
+- Last ticket: WT-2026-211 COMPLETED (2026-06-02). Centralize transition projection writes — controller emits events, supervisor materializes projections.
+- Last ticket: WT-2026-210 COMPLETED (2026-06-02). Bus architecture audit + reconcile_ticket.py for orphaned runtime.
 - Last session closed: WP-2026-175 COMPLETED (2026-05-29). Canonical session closeout and cycle rollover.
-- Last ticket: WP-2026-174 COMPLETED (2026-05-29). Persist manager review bridge checkpoint across supervisor restarts.
-- Last ticket: WP-2026-173 COMPLETED (2026-05-29). Add pre-handoff helper to stage commit and checkpoint before mark-ready.
-- Last ticket: WP-2026-170 COMPLETED (2026-05-29). Fix ConcurrentStateError in supervisor/review bridge.
-- Last ticket: WP-2026-169 COMPLETED (2026-05-29). Session close loop bridge - `--session-close` en agent_controller.
-- Last ticket: WP-2026-168 COMPLETED (2026-05-29). Session closeout orchestrator - audit, memory, archive.
-- Previous ticket: WP-2026-167 COMPLETED (2026-05-29). Builder handoff safety - guard, checkpoints y recovery protocol.
-- Delivery hygiene loop already in place: `delivery_hygiene_check.py` preflight + `prepush_check.py`.
-- The session was closed canonically via `--session-close`, with observations, memory consolidation, and artifact archiving completed.
+- Open deuda: WT-2026-213 (double STATE_CHANGED in mark-ready), WT-2026-214 (forced close on preflight), WT-2026-215 (Modelo B gates).
 - `validate_ticket_prose.py` TP-06 / TP-07 detection remains active; the canonical TP Check format is still enforced.
 
 ## Current readiness
 
-- The repository session has been closed canonically. Ready for the next cycle startup.
+- Bus reconstruction complete (WT-210–212, 216). Ready for next ticket or session close.
 
 ## Repomix Context Integration (WT-2026-182)
 
