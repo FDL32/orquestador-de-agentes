@@ -76,9 +76,7 @@ tests/sandbox/tmp*/
 # Requeue claims atomico (WT-2026-199, transitorio)
 .agent/runtime/requeue_claims/
 
-# Prompts canonicos del motor son producto: session_bootstrap, refactor_bootstrap, memory_upload se versionan.
-# Solo se excluyen prompts de trabajo temporal (audit_*, etc.) generados durante sesiones.
-prompts/audit_*.md
+# Prompts del motor son producto y se versionan. Solo se excluyen debug temporales.
 prompts/debug_*.md
 # Runtime/historia de tickets del motor: vivir en workspace destino, no en producto
 .agent/collaboration/manager_feedback_*.md
