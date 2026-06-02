@@ -946,7 +946,7 @@ class SequentialTicketSupervisor:
         except Exception:
             return None
 
-    def _materialize_turn_blockers(self, ticket_id: str) -> None:
+    def _materialize_turn_blockers(self, ticket_id: str) -> None:  # noqa: C901
         """WT-2026-203: Materialize Manager blockers into TURN.md before requeue.
 
         Before:
@@ -994,7 +994,37 @@ class SequentialTicketSupervisor:
                     lines.append(line)
                 blockers_text = "\n".join(lines).strip()
             else:
-                blockers_text = feedback_content.strip()
+                # WT-2026-203: JSON streaming output fallback (AP-01 Mock Drift fix)
+                extracted_lines = []
+                import contextlib
+                import json
+
+                for line in feedback_content.split("\n"):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    with contextlib.suppress(Exception):
+                        obj = json.loads(line)
+                        part = obj.get("part", {})
+                        if (
+                            isinstance(part, dict)
+                            and part.get("type") == "text"
+                            and "text" in part
+                        ):
+                            extracted_lines.append(part["text"])
+                        elif "content" in obj and isinstance(obj["content"], list):
+                            for block in obj["content"]:
+                                if (
+                                    isinstance(block, dict)
+                                    and block.get("type") == "text"
+                                    and "text" in block
+                                ):
+                                    extracted_lines.append(block["text"])  # noqa: PERF401
+
+                if extracted_lines:
+                    blockers_text = "\n".join(extracted_lines).strip()
+                else:
+                    blockers_text = feedback_content.strip()
 
             if not blockers_text or "[Feedback no pudo ser parseado" in blockers_text:
                 blockers_text = (
