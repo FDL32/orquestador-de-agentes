@@ -99,7 +99,8 @@ class TestHookCIAlignment:
         """Verify pip-audit hook is defined in pre-commit config."""
         entry = extract_pip_audit_command_from_precommit(precommit_config)
         assert entry is not None, "pip-audit hook not found in .pre-commit-config.yaml"
-        assert "pip-audit" in entry
+        # Entry delegates to wrapper; wrapper name or pip-audit must be present
+        assert "pip_audit_project.py" in entry or "pip-audit" in entry
 
     def test_ci_runs_precommit(self, ci_config: dict[str, Any]):
         """Verify CI runs pre-commit hooks (not pip-audit directly)."""
@@ -117,36 +118,62 @@ class TestHookCIAlignment:
             "CI should use --hook-stage pre-push to match hook configuration"
         )
 
-    def test_pip_audit_no_reduced_scope(self, precommit_config: dict[str, Any]):
-        """Verify pip-audit hook does not use reduced scope (no trailing dot).
+    def test_pip_audit_uses_project_wrapper(self, precommit_config: dict[str, Any]):
+        """Verify pip-audit hook delegates to pip_audit_project.py wrapper.
 
-        The 2026-05-16 incident was caused by `pip-audit .` (reduced scope)
-        vs CI's `pip-audit` (full environment). This test ensures the hook
-        entry does not have a trailing dot that would limit scope.
+        The wrapper exports uv.lock (all groups) to a temp requirements.txt
+        and runs pip-audit -r against it. This guarantees:
+        - Only project dependencies are audited (not the system Python env).
+        - All dependency groups are included.
+        - Results are reproducible from locked versions.
+
+        Replaces the old 'no trailing dot' check, which guarded against a
+        different anti-pattern (reduced-scope `pip-audit .`).
         """
         entry = extract_pip_audit_command_from_precommit(precommit_config)
         assert entry is not None
+        assert "pip_audit_project.py" in entry, (
+            "pip-audit hook must delegate to scripts/pip_audit_project.py. "
+            "Direct invocations (uv run pip-audit, pip-audit ., etc.) audit "
+            "the wrong surface: either the system Python env or only pyproject.toml "
+            "without dependency-groups."
+        )
 
-        # Normalize and check for reduced scope pattern
-        tokens = normalize_command(entry)
-        # The entry should be just "uv run pip-audit" without a trailing "."
-        # A trailing "." would limit scope to current directory only
-        if "." in tokens:
-            # Find position of pip-audit
-            try:
-                pip_audit_idx = tokens.index("pip-audit")
-                # Check if next token is just "."
-                if pip_audit_idx + 1 < len(tokens) and tokens[pip_audit_idx + 1] == ".":
-                    pytest.fail(
-                        "pip-audit hook uses reduced scope '.' which differs from CI. "
-                        "This was the cause of the 2026-05-16 CVE incident."
-                    )
-            except ValueError:
-                pass  # pip-audit not found as separate token, might be in "uv run pip-audit"
+    def test_pip_audit_wrapper_script_exists(self):
+        """Verify the pip_audit_project.py wrapper script exists."""
+        repo_root = get_repo_root()
+        wrapper = repo_root / "scripts" / "pip_audit_project.py"
+        assert wrapper.exists(), (
+            "scripts/pip_audit_project.py not found. "
+            "The pre-commit hook entry references this wrapper."
+        )
 
-        # Alternative check: the entry should not end with " ."
-        assert not entry.rstrip().endswith(" ."), (
-            "pip-audit entry ends with reduced scope indicator"
+    def test_pip_audit_wrapper_audits_uv_lock(self):
+        """Verify the wrapper exports from uv.lock and uses -r flag.
+
+        The wrapper must call `uv export --all-groups ... --locked` to get
+        the full project surface, then pass `-r <tmpfile>` to pip-audit.
+        This protects against future edits that skip the lockfile export.
+        """
+        repo_root = get_repo_root()
+        wrapper_src = (repo_root / "scripts" / "pip_audit_project.py").read_text(
+            encoding="utf-8"
+        )
+        assert "uv" in wrapper_src and "export" in wrapper_src, (
+            "Wrapper must call `uv export` to derive the auditable surface from uv.lock"
+        )
+        assert "--all-groups" in wrapper_src, (
+            "Wrapper must pass --all-groups to include dev/test dependency groups"
+        )
+        assert "--locked" in wrapper_src, (
+            "Wrapper must pass --locked to use pinned versions from uv.lock"
+        )
+        assert (
+            '"-r"' in wrapper_src
+            or "'-r'" in wrapper_src
+            or '"-r", str(' in wrapper_src
+        ), (
+            "Wrapper must pass -r <requirements_file> to pip-audit, not audit the global env"
         )
 
     def test_semantic_alignment(
@@ -164,14 +191,14 @@ class TestHookCIAlignment:
         assert ci_precommit is not None, "CI must delegate to pre-commit"
         assert "pre-commit run" in ci_precommit
 
-        # Hook must define pip-audit
+        # Hook must define pip-audit (via wrapper or direct)
         hook_entry = extract_pip_audit_command_from_precommit(precommit_config)
         assert hook_entry is not None, "pip-audit hook must be defined"
-        assert "pip-audit" in hook_entry
+        assert "pip_audit_project.py" in hook_entry or "pip-audit" in hook_entry
 
-        # Hook must not use reduced scope
-        assert not hook_entry.rstrip().endswith(" ."), (
-            "pip-audit must not use reduced scope '.'"
+        # Hook must delegate to the project wrapper (not direct invocation)
+        assert "pip_audit_project.py" in hook_entry, (
+            "pip-audit hook must use scripts/pip_audit_project.py wrapper"
         )
 
         # CI must use pre-push stage
