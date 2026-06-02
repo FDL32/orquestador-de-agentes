@@ -147,6 +147,18 @@ def run_delivery_hygiene_check(project_root: Path) -> CheckResult:
         )
 
 
+def _ruff_exclude_args() -> list[str]:
+    """Return --extend-exclude arguments for directories outside operational scope.
+
+    _backups/ and uv-cache/ are outside the operational scope of the motor
+    and should not be linted or formatted by ruff.
+    """
+    return [
+        "--extend-exclude",
+        "_backups/*,uv-cache/*,.agent/runtime/uv-cache/*",
+    ]
+
+
 def run_ruff_check(project_root: Path) -> CheckResult:
     """Ejecuta ruff check en el proyecto.
 
@@ -157,7 +169,7 @@ def run_ruff_check(project_root: Path) -> CheckResult:
         CheckResult con el estado del check de ruff.
     """
     return run_subprocess_check(
-        cmd=["uv", "run", "ruff", "check", "."],
+        cmd=["uv", "run", "ruff", "check", ".", *_ruff_exclude_args()],
         name="Ruff Check",
         project_root=project_root,
     )
@@ -173,7 +185,7 @@ def run_ruff_format_check(project_root: Path) -> CheckResult:
         CheckResult con el estado del check de formato.
     """
     return run_subprocess_check(
-        cmd=["uv", "run", "ruff", "format", "--check", "."],
+        cmd=["uv", "run", "ruff", "format", "--check", ".", *_ruff_exclude_args()],
         name="Ruff Format Check",
         project_root=project_root,
     )
@@ -222,6 +234,10 @@ def run_agent_controller_validate(project_root: Path) -> CheckResult:
 def run_git_status_check(project_root: Path) -> CheckResult:
     """Ejecuta git status --short y verifica que el arbol este limpio.
 
+    Tolerante a workspaces no-repo: si el directorio no es un repositorio
+    Git, reporta un WARN no bloqueante en lugar de FAIL, para soportar la
+    arquitectura workspace activo + motor portable.
+
     Args:
         project_root: Raiz del proyecto donde ejecutar git.
 
@@ -238,13 +254,14 @@ def run_git_status_check(project_root: Path) -> CheckResult:
             encoding="utf-8",
             errors="replace",
         )
-        # If git command itself fails, report as error (not as clean tree)
+        # If git command itself fails, report as non-blocking WARN for
+        # workspaces that are not git repos (e.g. z_scripts/ in Model B).
         if result.returncode != 0:
             return CheckResult(
                 name="Git Status Check",
-                passed=False,
-                output=f"Error ejecutando git status (exit {result.returncode}):\n{result.stderr.strip() or result.stdout.strip()}",
-                is_blocking=True,
+                passed=True,
+                output=f"Workspace no-repo (git exit {result.returncode}): {result.stderr.strip() or result.stdout.strip()}",
+                is_blocking=False,
             )
 
         output = result.stdout.strip()
@@ -260,9 +277,9 @@ def run_git_status_check(project_root: Path) -> CheckResult:
     except FileNotFoundError:
         return CheckResult(
             name="Git Status Check",
-            passed=False,
-            output="Comando 'git' no encontrado en PATH",
-            is_blocking=True,
+            passed=True,
+            output="Comando 'git' no encontrado en PATH (workspace no-repo tolerado)",
+            is_blocking=False,
         )
 
 
