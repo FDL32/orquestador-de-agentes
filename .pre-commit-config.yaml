@@ -65,8 +65,9 @@ repos:
       # pip-audit: verificacion no mutadora, solo pre-push y manual
       - id: pip-audit
         name: pip-audit (CVE Detection)
-        entry: .venv/Scripts/python -m pip_audit .
-        language: system
+        entry: pip-audit .
+        language: python
+        additional_dependencies: [pip-audit]
         pass_filenames: false
         stages: [pre-push, manual]
 
