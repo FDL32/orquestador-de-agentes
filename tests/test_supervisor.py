@@ -5961,20 +5961,7 @@ def test_materialize_turn_blockers_adds_blockers(tmp_path):
     feedback_file.write_text(
         "\n".join(
             [
-                "# Manager Feedback - WT-2026-203",
-                "- Decision: CHANGES",
-                "- Parse method: opencode",
-                "- Source: manager backend exec review",
-                "- Timestamp: 2026-06-02T00:00:00+00:00",
-                "",
-                "**Blockers:**",
-                "1. Missing unit test for edge case",
-                "2. Ruff formatting issue in src/module.py",
-                "",
-                "## Raw Review",
-                "```text",
-                "Manager review output",
-                "```",
+                '{"part": {"type": "text", "text": "**Blockers:**\\n1. Missing unit test for edge case\\n2. Ruff formatting issue in src/module.py"}}'
             ]
         ),
         encoding="utf-8",

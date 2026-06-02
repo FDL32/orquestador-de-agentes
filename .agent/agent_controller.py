@@ -1490,8 +1490,6 @@ def _check_log_has_quality_gate_evidence() -> bool:
             stripped = line.strip().lower()
             if any(kw in stripped for kw in ["pytest", "ruff", "passed"]):
                 return True
-            if "all checks passed" in stripped:
-                return True
         return False
     except Exception:
         return False
@@ -2270,6 +2268,17 @@ def update_turn_file(action: dict) -> None:
     """Actualiza TURN.md con informacion del turno actual."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+    import contextlib
+
+    existing_blockers = ""
+    with contextlib.suppress(Exception):
+        turn_path = TURN_FILE.resolve()
+        if turn_path.exists():
+            current_content = turn_path.read_text(encoding="utf-8")
+            idx = current_content.find("## Blockers from Manager")
+            if idx != -1:
+                existing_blockers = "\n\n" + current_content[idx:].strip()
+
     content = f"""# TURNO ACTUAL
 
 **Ultima actualizacion:** {timestamp}
@@ -2293,13 +2302,6 @@ def update_turn_file(action: dict) -> None:
 
 ---
 
-## Archivos a Leer
-
-1. `{action["context_file"]}` (Contexto del rol)
-2. `{action["workflow_file"]}` (Flujo de trabajo)
-
----
-
 ## Estado del Sistema
 
 | Archivo | Estado |
@@ -2309,7 +2311,7 @@ def update_turn_file(action: dict) -> None:
 
 ---
 
-*Generado por agent_controller.py v5*
+*Generado por agent_controller.py v5*{existing_blockers}
 """
     write_file(TURN_FILE, content)
 
