@@ -1714,19 +1714,74 @@ class ReviewBridge:
         attempt_file.write_text("\n".join(content_parts), encoding="utf-8")
         return attempt_file
 
+    @staticmethod
+    def _extract_json_stream_text(stdout: str) -> str | None:
+        """Extract concatenated text from OpenCode NDJSON streaming output.
+
+        WT-2026-204: Before applying regex on structured sections (## SUMMARY,
+        ## BLOCKERS, ## SUGGESTIONS), extract text from ``obj["part"]["text"]``
+        of each NDJSON line. This prevents the parser from failing when stdout
+        contains JSONL lines interleaved with raw text (the real OpenCode
+        ``--format json`` output).
+
+        Before: Requires a stdout string that may contain NDJSON lines.
+        During: Iterates each line, attempts JSON parse, extracts text from
+                ``obj["part"]["text"]`` when ``obj.get("type") == "text"``.
+                Falls back to ``obj["content"]`` list blocks for legacy format.
+        After: Returns the concatenated text block, or None if no NDJSON
+               text could be extracted from any line.
+        """
+        import contextlib as _ctx
+
+        extracted: list[str] = []
+        for line in stdout.split("\n"):
+            line = line.strip()
+            if not line or not line.startswith("{"):
+                continue
+            with _ctx.suppress(Exception):
+                obj = json.loads(line)
+                part = obj.get("part", {})
+                if (
+                    isinstance(part, dict)
+                    and part.get("type") == "text"
+                    and "text" in part
+                ):
+                    extracted.append(part["text"])
+                elif "content" in obj and isinstance(obj["content"], list):
+                    extracted.extend(
+                        block["text"]
+                        for block in obj["content"]
+                        if (
+                            isinstance(block, dict)
+                            and block.get("type") == "text"
+                            and "text" in block
+                        )
+                    )
+        if extracted:
+            return "\n".join(extracted)
+        return None
+
     def _parse_changes_structure(self, stdout: str) -> dict[str, str]:
         """Parse structured sections from CHANGES review output.
 
         Before: Requires stdout string from Manager review.
-        During: Extracts SUMMARY, BLOCKERS, SUGGESTIONS sections using regex patterns.
-        After: Returns dict with 'summary', 'blockers', 'suggestions' keys (defaults if not found).
+        During: WT-2026-204: first extracts text from NDJSON streaming lines
+                via ``_extract_json_stream_text()``, then applies regex on the
+                extracted plain text. Falls back to raw stdout if no NDJSON
+                text is found.
+        After: Returns dict with 'summary', 'blockers', 'suggestions' keys
+               (defaults to empty string if section not found).
         """
         result = {"summary": "", "blockers": "", "suggestions": ""}
+
+        # WT-2026-204: Extract text from NDJSON streaming lines first
+        parsed_text = self._extract_json_stream_text(stdout)
+        search_text = parsed_text if parsed_text is not None else stdout
 
         # Pattern for ## SUMMARY section
         summary_match = re.search(
             r"##\s*SUMMARY\s*\n(.*?)(?=##\s*(?:BLOCKERS|SUGGESTIONS)|DECISION:|$)",
-            stdout,
+            search_text,
             re.IGNORECASE | re.DOTALL,
         )
         if summary_match:
@@ -1735,7 +1790,7 @@ class ReviewBridge:
         # Pattern for ## BLOCKERS section
         blockers_match = re.search(
             r"##\s*BLOCKERS\s*\n(.*?)(?=##\s*(?:SUMMARY|SUGGESTIONS)|DECISION:|$)",
-            stdout,
+            search_text,
             re.IGNORECASE | re.DOTALL,
         )
         if blockers_match:
@@ -1744,7 +1799,7 @@ class ReviewBridge:
         # Pattern for ## SUGGESTIONS section
         suggestions_match = re.search(
             r"##\s*SUGGESTIONS\s*\n(.*?)(?=##\s*(?:SUMMARY|BLOCKERS)|DECISION:|$)",
-            stdout,
+            search_text,
             re.IGNORECASE | re.DOTALL,
         )
         if suggestions_match:
@@ -1756,16 +1811,26 @@ class ReviewBridge:
         """Normalize Manager review feedback into a legible summary.
 
         Before: feedback field contained raw stdout or unstructured text.
-        During: Extracts structured sections (SUMMARY, BLOCKERS, SUGGESTIONS) for CHANGES,
-                or uses the full text for APPROVE/INSPECT, cleaning ANSI codes.
-        After: Returns normalized, legible feedback string for canonical persistence.
+        During: WT-2026-204: first extracts text from NDJSON streaming lines
+                via ``_extract_json_stream_text()``, then applies normalization
+                on the extracted plain text. Falls back to raw stdout if no
+                NDJSON text is found.
+                Extracts structured sections (SUMMARY, BLOCKERS, SUGGESTIONS)
+                for CHANGES, or uses the full text for APPROVE/INSPECT,
+                cleaning ANSI codes.
+        After: Returns normalized, legible feedback string for canonical
+               persistence. Never returns raw NDJSON as feedback.
         """
         # Clean ANSI codes
         ansi_pattern = re.compile(r"\x1b\[[0-9;]*m")
         clean_stdout = ansi_pattern.sub("", stdout)
 
+        # WT-2026-204: Extract text from NDJSON streaming lines first
+        parsed_text = self._extract_json_stream_text(clean_stdout)
+        normalized_source = parsed_text if parsed_text is not None else clean_stdout
+
         if decision == ReviewDecision.CHANGES:
-            structured = self._parse_changes_structure(clean_stdout)
+            structured = self._parse_changes_structure(normalized_source)
             parts = []
             if structured.get("summary"):
                 parts.append(f"## SUMMARY\n{structured['summary']}")
@@ -1775,27 +1840,31 @@ class ReviewBridge:
                 parts.append(f"## SUGGESTIONS\n{structured['suggestions']}")
             if parts:
                 return "\n\n".join(parts)
-            # Fallback: return cleaned stdout if no structured sections found
-            return clean_stdout.strip()
+            # Fallback: return normalized source if no structured sections found
+            return normalized_source.strip()
         elif decision == ReviewDecision.APPROVE:
             # Extract the text before DECISION: APPROVE for a cleaner summary
             approve_match = re.search(
-                r"(.*?)DECISION:\s*APPROVE", clean_stdout, re.IGNORECASE | re.DOTALL
+                r"(.*?)DECISION:\s*APPROVE",
+                normalized_source,
+                re.IGNORECASE | re.DOTALL,
             )
             if approve_match:
                 return approve_match.group(1).strip()
-            return clean_stdout.strip()
+            return normalized_source.strip()
         elif decision == ReviewDecision.INSPECT:
             # Extract text before DECISION: INSPECT or return cleaned stdout
             inspect_match = re.search(
-                r"(.*?)DECISION:\s*INSPECT", clean_stdout, re.IGNORECASE | re.DOTALL
+                r"(.*?)DECISION:\s*INSPECT",
+                normalized_source,
+                re.IGNORECASE | re.DOTALL,
             )
             if inspect_match:
                 return inspect_match.group(1).strip()
-            return clean_stdout.strip()
+            return normalized_source.strip()
         else:
             # TRANSPORT_FAILED, UNKNOWN, etc.
-            return clean_stdout.strip()
+            return normalized_source.strip()
 
     def _validate_changes_structure(self, stdout: str) -> tuple[bool, list[str]]:
         """Validate that CHANGES response has required structure.
@@ -2587,6 +2656,12 @@ class ReviewBridge:
                 parse_method=parse_method,
             )
 
+        # WT-2026-204: Extract blockers from the last attempt's structured output
+        last_blockers = ""
+        if decision == ReviewDecision.CHANGES and final_stdout:
+            last_structured = self._parse_changes_structure(final_stdout)
+            last_blockers = last_structured.get("blockers", "")
+
         try:
             self.event_bus.emit(
                 "REVIEW_DECISION",
@@ -2595,6 +2670,7 @@ class ReviewBridge:
                 payload={
                     "decision": decision.value,
                     "stdout_tail": (final_stdout or "")[-500:],
+                    "blockers": last_blockers,
                 },
             )
         except Exception as exc:

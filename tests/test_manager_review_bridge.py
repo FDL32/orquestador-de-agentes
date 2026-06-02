@@ -3331,3 +3331,268 @@ def test_tick_normal_diff_proceeds_with_review(tmp_path, monkeypatch):
 
     # _tick must return True (processed the normal review)
     assert result is True, "_tick() must return True for normal review"
+
+
+# =============================================================================
+# Tests WT-2026-204: Parser unico con fixture real y materializacion sin reparseo
+# =============================================================================
+
+
+class TestWT2026204:
+    """WT-2026-204: Hardening de materializacion de blockers con parser unico."""
+
+    def _get_golden_fixture_path(self) -> Path:
+        """Return the path to the golden fixture."""
+        return (
+            Path(__file__).resolve().parent
+            / "fixtures"
+            / "opencode_streaming_changes.jsonl"
+        )
+
+    def _read_golden_fixture(self) -> str:
+        fixture_path = self._get_golden_fixture_path()
+        assert fixture_path.exists(), f"Golden fixture not found: {fixture_path}"
+        return fixture_path.read_text(encoding="utf-8")
+
+    # TP-01: el parser del bridge extrae blockers desde un golden fixture real
+    # de OpenCode sanitizado via redact()
+    def test_parse_changes_structure_extracts_from_ndjson_fixture(self, tmp_path):
+        """_parse_changes_structure extracts blockers from NDJSON golden fixture."""
+        from bus.review_bridge import EventBus, ReviewBridge
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        fixture_content = self._read_golden_fixture()
+
+        structured = bridge._parse_changes_structure(fixture_content)
+
+        # Must find BLOCKERS from the NDJSON fixture
+        assert "blockers" in structured
+        assert structured["blockers"], "blockers must be non-empty from golden fixture"
+        assert "event_parser.py" in structured["blockers"], (
+            "blockers must contain parsed content"
+        )
+        assert '{"type":' not in structured["blockers"], (
+            "blockers must not contain raw JSONL"
+        )
+        assert "sessionID" not in structured["blockers"], (
+            "blockers must not contain sessionID"
+        )
+
+        # Must find SUMMARY
+        assert "summary" in structured
+        assert structured["summary"], "summary must be non-empty from golden fixture"
+
+        # Must find SUGGESTIONS
+        assert "suggestions" in structured
+        assert structured["suggestions"], (
+            "suggestions must be non-empty from golden fixture"
+        )
+
+    def test_extract_json_stream_text_extracts_from_ndjson(self, tmp_path):
+        """_extract_json_stream_text extracts text from NDJSON lines."""
+        from bus.review_bridge import EventBus, ReviewBridge
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        ndjson = (
+            '{"type":"text","part":{"type":"text","text":"## SUMMARY\\nSummary text"}}\n'
+            '{"type":"text","part":{"type":"text","text":"## BLOCKERS\\n- blocker1"}}\n'
+            '{"type":"text","phase":"final_answer","part":{"type":"text","text":"DECISION: CHANGES"}}'
+        )
+
+        result = bridge._extract_json_stream_text(ndjson)
+
+        assert result is not None
+        assert "## SUMMARY" in result
+        assert "Summary text" in result
+        assert "## BLOCKERS" in result
+        assert "blocker1" in result
+        assert "DECISION: CHANGES" in result
+
+    def test_extract_json_stream_text_returns_none_for_plain_text(self, tmp_path):
+        """_extract_json_stream_text returns None for plain text (no NDJSON)."""
+        from bus.review_bridge import EventBus, ReviewBridge
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        plain_text = (
+            "## SUMMARY\nSummary text\n## BLOCKERS\n- blocker1\nDECISION: CHANGES"
+        )
+
+        result = bridge._extract_json_stream_text(plain_text)
+
+        assert result is None, "plain text with no NDJSON lines should return None"
+
+    # TP-02: la normalizacion no devuelve raw stream gigante como feedback estructurado
+    def test_normalize_feedback_does_not_return_raw_stream(self, tmp_path):
+        """_normalize_feedback returns clean text, not raw NDJSON."""
+        from bus.review_bridge import EventBus, ReviewBridge, ReviewDecision
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        # NDJSON with CHANGES decision
+        ndjson_stdout = (
+            '{"type":"text","part":{"type":"text","text":"## SUMMARY\\nNeeds fixes"}}\n'
+            '{"type":"text","part":{"type":"text","text":"## BLOCKERS\\n- fix parser"}}\n'
+            '{"type":"text","part":{"type":"text","text":"## SUGGESTIONS\\n- add tests"}}\n'
+            '{"type":"text","phase":"final_answer","part":{"type":"text","text":"DECISION: CHANGES"}}'
+        )
+
+        normalized = bridge._normalize_feedback(ndjson_stdout, ReviewDecision.CHANGES)
+
+        # Must NOT contain raw NDJSON markers
+        assert '{"type":' not in normalized, (
+            "normalized feedback must not contain raw JSONL"
+        )
+        assert '"part"' not in normalized, (
+            "normalized feedback must not contain JSON object keys"
+        )
+        # Must contain the structured content
+        assert "## BLOCKERS" in normalized
+        assert "fix parser" in normalized
+        assert "## SUMMARY" in normalized
+
+    def test_normalize_feedback_falls_back_gracefully_for_unparseable(self, tmp_path):
+        """_normalize_feedback handles unparseable stdout without returning raw gibberish."""
+        from bus.review_bridge import EventBus, ReviewBridge, ReviewDecision
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        # Plain text without JSON structure (not parseable as NDJSON either)
+        plain_text = "Some review text without decision markers"
+
+        normalized = bridge._normalize_feedback(plain_text, ReviewDecision.CHANGES)
+
+        # Should still get something reasonable back
+        assert isinstance(normalized, str)
+        assert "Some review text" in normalized
+
+    # TP-03: el materializador de TURN.md consume payload["blockers"] de REVIEW_DECISION
+    # y no reparsea output crudo
+    def test_review_decision_payload_contains_blockers(self, monkeypatch, tmp_path):
+        """REVIEW_DECISION event payload includes blockers from _parse_changes_structure."""
+        from bus.review_bridge import EventBus, ReviewBridge
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        monkeypatch.setattr(
+            bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW"
+        )
+
+        # Mock the underlying subprocess to return real looking CHANGES output
+        import subprocess
+
+        def fake_run(cmd, **kwargs):
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout="## SUMMARY\nFix needed\n## BLOCKERS\n- test_blocker\n## SUGGESTIONS\n- none\nDECISION: CHANGES",
+                stderr="",
+            )
+
+        monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
+        monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
+        monkeypatch.setattr(bridge, "_resolve_motor_controller", lambda: None)
+        monkeypatch.setattr(bridge, "_supports_json_format", False)
+        monkeypatch.setattr(bridge, "_ensure_repomix_context", lambda *a: None)
+
+        class DummySupervisor:
+            def transition_ticket(self, tid, new_state, reason):
+                pass
+
+            def load_state(self):
+                from bus.supervisor import SupervisorState
+
+                return SupervisorState()
+
+            def _is_supervisor_lock_stale(self):
+                return False
+
+            def save_state(self, state):
+                pass
+
+        supervisor = DummySupervisor()
+
+        # Mock --request-changes call
+        def fake_subprocess_run(cmd, **kwargs):
+            if "agent_controller.py" in " ".join(
+                str(p) for p in (cmd if isinstance(cmd, list) else [cmd])
+            ):
+                return subprocess.CompletedProcess(
+                    cmd, 0, stdout="[OK] requeue", stderr=""
+                )
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(
+            bridge,
+            "_count_prior_changes_from_bus",
+            lambda tid: 1,
+        )
+        monkeypatch.setattr(
+            bridge,
+            "_load_review_config",
+            lambda: {
+                "timeout_seconds": 180,
+                "max_attempts": 5,
+                "retry_backoff_multiplier": 2.0,
+            },
+        )
+        # This prevents the subprocess from being called for --request-changes
+        monkeypatch.setattr(
+            bridge,
+            "_resolve_motor_controller",
+            lambda: None,
+        )
+
+        bridge.run_manager_review_cycle(
+            ticket_id="WT-2026-204",
+            supervisor=supervisor,
+            timeout_seconds=10,
+        )
+
+        # Verify the REVIEW_DECISION event has blockers
+        events = event_bus.read_events(ticket_id="WT-2026-204")
+        review_decision_events = [
+            e for e in events if e.event_type == "REVIEW_DECISION"
+        ]
+        assert review_decision_events, "Must have REVIEW_DECISION event"
+        latest = review_decision_events[-1]
+        blockers = (latest.payload or {}).get("blockers", "")
+        assert blockers, "REVIEW_DECISION payload must contain blockers"
+        assert "test_blocker" in blockers
+        assert '{"type":' not in blockers, "blockers must not contain raw JSONL"
+
+    def test_parse_changes_structure_plain_text_still_works(self, tmp_path):
+        """_parse_changes_structure handles plain text (non-NDJSON) correctly."""
+        from bus.review_bridge import EventBus, ReviewBridge
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        plain_text = (
+            "## SUMMARY\nFix the parser\n\n"
+            "## BLOCKERS\n- file.py:10 handle edge case\n- file.py:20 add null check\n\n"
+            "## SUGGESTIONS\n- Add tests\n\n"
+            "DECISION: CHANGES"
+        )
+
+        structured = bridge._parse_changes_structure(plain_text)
+
+        assert structured["summary"] == "Fix the parser"
+        assert "file.py:10" in structured["blockers"]
+        assert "file.py:20" in structured["blockers"]
+        assert "Add tests" in structured["suggestions"]

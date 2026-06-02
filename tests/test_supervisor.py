@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -3702,12 +3703,16 @@ def test_run_once_requeue_watermark_persists_across_calls(tmp_path, monkeypatch)
         )
     )
 
-    # Emit a single CHANGES event
+    # Emit a single CHANGES event with blockers payload (WT-2026-204)
     supervisor.event_bus.emit(
         "REVIEW_DECISION",
         ticket_id="WP-2026-159",
         actor="MANAGER",
-        payload={"decision": "CHANGES", "feedback": "needs work"},
+        payload={
+            "decision": "CHANGES",
+            "feedback": "needs work",
+            "blockers": "- fix parser",
+        },
     )
 
     relaunch_calls = []
@@ -3746,7 +3751,11 @@ def test_run_once_requeue_watermark_persists_across_calls(tmp_path, monkeypatch)
         "REVIEW_DECISION",
         ticket_id="WP-2026-159",
         actor="MANAGER",
-        payload={"decision": "CHANGES", "feedback": "still needs work"},
+        payload={
+            "decision": "CHANGES",
+            "feedback": "still needs work",
+            "blockers": "- fix other thing",
+        },
     )
 
     changed3 = supervisor.run_once()
@@ -5956,15 +5965,16 @@ def test_materialize_turn_blockers_adds_blockers(tmp_path):
         encoding="utf-8",
     )
 
-    # Create manager_feedback file with CHANGES feedback
-    feedback_file = sup.collaboration_dir / f"manager_feedback_{ticket_id}.md"
-    feedback_file.write_text(
-        "\n".join(
-            [
-                '{"part": {"type": "text", "text": "**Blockers:**\\n1. Missing unit test for edge case\\n2. Ruff formatting issue in src/module.py"}}'
-            ]
-        ),
-        encoding="utf-8",
+    # WT-2026-204: emit REVIEW_DECISION with blockers instead of writing feedback file
+    sup.event_bus.emit(
+        "REVIEW_DECISION",
+        ticket_id=ticket_id,
+        actor="MANAGER",
+        payload={
+            "decision": "CHANGES",
+            "blockers": "- Missing unit test for edge case\n- Ruff formatting issue in src/module.py",
+            "stdout_tail": "...",
+        },
     )
 
     # Call the method
@@ -6003,11 +6013,16 @@ def test_materialize_turn_blockers_idempotent(tmp_path):
         encoding="utf-8",
     )
 
-    # Create feedback file
-    feedback_file = sup.collaboration_dir / f"manager_feedback_{ticket_id}.md"
-    feedback_file.write_text(
-        "# Manager Feedback - WT-2026-203\n- Decision: CHANGES\n\nSome feedback\n\n## Raw Review\n",
-        encoding="utf-8",
+    # WT-2026-204: emit REVIEW_DECISION with blockers instead of writing feedback file
+    sup.event_bus.emit(
+        "REVIEW_DECISION",
+        ticket_id=ticket_id,
+        actor="MANAGER",
+        payload={
+            "decision": "CHANGES",
+            "blockers": "- Some feedback\n- More blockers",
+            "stdout_tail": "...",
+        },
     )
 
     # Call twice
@@ -6022,3 +6037,185 @@ def test_materialize_turn_blockers_idempotent(tmp_path):
     assert content_after_first.count("## Blockers from Manager") == 1, (
         "Must not duplicate the Blockers section"
     )
+
+
+# =============================================================================
+# Tests WT-2026-204: materializacion de blockers desde REVIEW_DECISION payload
+# =============================================================================
+
+
+class TestMaterializeTurnBlockersV2:
+    """WT-2026-204: _materialize_turn_blockers consume payload["blockers"]."""
+
+    def _setup(self, tmp_path) -> tuple[SequentialTicketSupervisor, Path, str]:
+        ticket_id = "WT-2026-204"
+        collaboration_dir = tmp_path / ".agent" / "collaboration"
+        runtime_dir = tmp_path / ".agent" / "runtime"
+        collaboration_dir.mkdir(parents=True)
+        runtime_dir.mkdir(parents=True)
+        sup = SequentialTicketSupervisor(
+            project_root=tmp_path,
+            collaboration_dir=collaboration_dir,
+            runtime_dir=runtime_dir,
+            auto_sync=False,
+        )
+        # Create TURN.md
+        turn_path = sup.collaboration_dir / "TURN.md"
+        turn_path.write_text(
+            "# TURNO ACTUAL\n\n## Estado del Sistema\n\n",
+            encoding="utf-8",
+        )
+        # Emit REVIEW_DECISION with blockers in payload
+        sup.event_bus.emit(
+            "REVIEW_DECISION",
+            ticket_id=ticket_id,
+            actor="MANAGER",
+            payload={
+                "decision": "changes",
+                "blockers": "- bus/parser.py: fix edge case\n- tests/: add null test",
+                "stdout_tail": "...",
+            },
+        )
+        return sup, turn_path, ticket_id
+
+    # TP-03: consume payload["blockers"] de REVIEW_DECISION
+    def test_materialize_from_review_decision_payload(self, tmp_path):
+        """_materialize_turn_blockers reads blockers from REVIEW_DECISION payload."""
+        sup, turn_path, ticket_id = self._setup(tmp_path)
+
+        sup._materialize_turn_blockers(ticket_id)
+
+        content = turn_path.read_text(encoding="utf-8")
+        assert "## Blockers from Manager" in content
+        assert "fix edge case" in content
+        assert "add null test" in content
+
+    # TP-04: TURN.md contiene blockers accionables, pesa menos de 15 KB
+    def test_materialized_blockers_under_15kb(self, tmp_path):
+        """Materialized TURN.md must be under 15 KB."""
+        sup, turn_path, ticket_id = self._setup(tmp_path)
+
+        sup._materialize_turn_blockers(ticket_id)
+
+        content = turn_path.read_text(encoding="utf-8")
+        assert len(content.encode("utf-8")) < 15 * 1024, "TURN.md must be under 15 KB"
+        # Must contain actionable blockers
+        assert "fix edge case" in content
+        assert "## Blockers from Manager" in content
+
+    # TP-04: sin JSONL crudo
+    def test_materialized_blockers_no_jsonl_crudo(self, tmp_path):
+        """Materialized TURN.md must not contain raw JSONL markers."""
+        sup, turn_path, ticket_id = self._setup(tmp_path)
+
+        sup._materialize_turn_blockers(ticket_id)
+
+        content = turn_path.read_text(encoding="utf-8")
+        assert '{"type":' not in content
+        assert "sessionID" not in content
+
+    # TP-05: HANDOFF_BLOCKED on empty blockers
+    def test_empty_blockers_emits_handoff_blocked(self, tmp_path):
+        """When blockers payload is empty, emit HANDOFF_BLOCKED, don't relaunch."""
+        sup, turn_path, ticket_id = self._setup(tmp_path)
+        # Clear the existing event and emit one without blockers
+        sup.event_bus.emit(
+            "REVIEW_DECISION",
+            ticket_id=ticket_id,
+            actor="MANAGER",
+            payload={
+                "decision": "changes",
+                "blockers": "",
+                "stdout_tail": "...",
+            },
+        )
+
+        sup._materialize_turn_blockers(ticket_id)
+
+        events = sup.event_bus.read_events(ticket_id=ticket_id)
+        handoff_blocked = [e for e in events if e.event_type == "HANDOFF_BLOCKED"]
+        assert handoff_blocked, "HANDOFF_BLOCKED must be emitted"
+        assert handoff_blocked[-1].payload.get("reason") == "empty_blockers"
+        # TURN.md should NOT have blockers section
+        content = turn_path.read_text(encoding="utf-8")
+        assert "## Blockers from Manager" not in content
+
+    # TP-05: HANDOFF_BLOCKED on oversized blockers
+    def test_oversized_blockers_emits_handoff_blocked(self, tmp_path):
+        """When blockers exceed 15 KB, emit HANDOFF_BLOCKED, don't relaunch."""
+        sup, turn_path, ticket_id = self._setup(tmp_path)
+        sup.event_bus.emit(
+            "REVIEW_DECISION",
+            ticket_id=ticket_id,
+            actor="MANAGER",
+            payload={
+                "decision": "changes",
+                "blockers": "x" * (16 * 1024),
+                "stdout_tail": "...",
+            },
+        )
+
+        sup._materialize_turn_blockers(ticket_id)
+
+        events = sup.event_bus.read_events(ticket_id=ticket_id)
+        handoff_blocked = [e for e in events if e.event_type == "HANDOFF_BLOCKED"]
+        assert handoff_blocked, "HANDOFF_BLOCKED must be emitted"
+        assert handoff_blocked[-1].payload.get("reason") == "blockers_too_large"
+        content = turn_path.read_text(encoding="utf-8")
+        assert "## Blockers from Manager" not in content
+
+    # TP-05: HANDOFF_BLOCKED on JSONL crudo in blockers
+    def test_jsonl_crudo_blockers_emits_handoff_blocked(self, tmp_path):
+        """When blockers contain raw JSONL markers, emit HANDOFF_BLOCKED."""
+        sup, turn_path, ticket_id = self._setup(tmp_path)
+        sup.event_bus.emit(
+            "REVIEW_DECISION",
+            ticket_id=ticket_id,
+            actor="MANAGER",
+            payload={
+                "decision": "changes",
+                "blockers": '{"type":"text","part":...}',
+                "stdout_tail": "...",
+            },
+        )
+
+        sup._materialize_turn_blockers(ticket_id)
+
+        events = sup.event_bus.read_events(ticket_id=ticket_id)
+        handoff_blocked = [e for e in events if e.event_type == "HANDOFF_BLOCKED"]
+        assert handoff_blocked, "HANDOFF_BLOCKED must be emitted"
+        assert handoff_blocked[-1].payload.get("reason") == "blockers_contain_raw_jsonl"
+        content = turn_path.read_text(encoding="utf-8")
+        assert "## Blockers from Manager" not in content
+
+    # TP-05: No REVIEW_DECISION event → no-op (no HANDOFF_BLOCKED, no blockers in TURN)
+    def test_no_review_decision_event_is_noop(self, tmp_path):
+        """When no REVIEW_DECISION event exists, materialize is a no-op."""
+        ticket_id = "WT-2026-204"
+        collaboration_dir = tmp_path / ".agent" / "collaboration"
+        runtime_dir = tmp_path / ".agent" / "runtime"
+        collaboration_dir.mkdir(parents=True)
+        runtime_dir.mkdir(parents=True)
+        sup = SequentialTicketSupervisor(
+            project_root=tmp_path,
+            collaboration_dir=collaboration_dir,
+            runtime_dir=runtime_dir,
+            auto_sync=False,
+        )
+        turn_path = sup.collaboration_dir / "TURN.md"
+        turn_path.write_text(
+            "# TURNO ACTUAL\n\n## Estado del Sistema\n\n",
+            encoding="utf-8",
+        )
+        # No REVIEW_DECISION event emitted
+        sup.event_bus.emit(
+            "STATE_CHANGED",
+            ticket_id=ticket_id,
+            actor="MANAGER",
+            payload={"from_state": "READY_FOR_REVIEW", "to_state": "IN_PROGRESS"},
+        )
+
+        sup._materialize_turn_blockers(ticket_id)
+
+        content = turn_path.read_text(encoding="utf-8")
+        assert "## Blockers from Manager" not in content

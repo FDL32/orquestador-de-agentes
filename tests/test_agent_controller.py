@@ -1515,3 +1515,113 @@ Marked ready by Builder
 
         errors = agent_controller._check_implementation_evidence(self._PLAN_ID)
         assert errors == [], f"Expected no errors, got: {errors}"
+
+
+# =============================================================================
+# Tests WT-2026-204: helpers de validacion de blockers y AUTO-REJECT
+# =============================================================================
+
+
+class TestValidateTurnBlockersContent:
+    """WT-2026-204: _validate_turn_blockers_content helper."""
+
+    def test_valid_non_empty_blockers(self):
+        """Valid non-empty blockers return True."""
+        assert (
+            agent_controller._validate_turn_blockers_content(
+                "- bus/parser.py: fix edge case"
+            )
+            is True
+        )
+
+    def test_empty_blockers_return_false(self):
+        """Empty or whitespace-only blockers return False."""
+        assert agent_controller._validate_turn_blockers_content("") is False
+        assert agent_controller._validate_turn_blockers_content("   ") is False
+
+    def test_oversized_blockers_return_false(self):
+        """Blockers exceeding 15 KB return False."""
+        big_blockers = "- file.py: " + "x" * (16 * 1024)
+        assert agent_controller._validate_turn_blockers_content(big_blockers) is False
+
+    def test_jsonl_crudo_blockers_return_false(self):
+        """Blockers containing raw JSONL markers return False."""
+        assert (
+            agent_controller._validate_turn_blockers_content(
+                '{"type":"text","part":{...}}'
+            )
+            is False
+        )
+        assert (
+            agent_controller._validate_turn_blockers_content(
+                "some text sessionID=abc123"
+            )
+            is False
+        )
+
+
+class TestAutoRejectQualityGates:
+    """WT-2026-204: _check_quality_gates AUTO-REJECT path."""
+
+    def test_auto_reject_has_distinct_instruction(self):
+        """AUTO-REJECT produces distinct instruction without builder_rules refs."""
+        with (
+            patch(
+                "agent_controller.run_quality_gates",
+                return_value={
+                    "passed": False,
+                    "errors": [],
+                    "summary": [],
+                    "warnings": [],
+                },
+            ),
+            patch("agent_controller.update_log_status"),
+        ):
+            result = agent_controller._check_quality_gates(
+                plan_id="WT-2026-204",
+                plan_type="IMPLEMENTATION",
+                plan_status="APPROVED",
+                skip_gates=False,
+            )
+
+        assert result is not None
+        assert result["role"] == "BUILDER"
+        # Must not reference old files
+        assert result["context_file"] != ".builder_rules"
+        assert result["workflow_file"] != ".agent/workflows/builder_workflow.md"
+        # Must have distinct instruction
+        assert "AUTO-REJECTED" in result["instruction"]
+        assert result["instruction"] != (
+            "RECHAZADO. Quality Gates fallaron. Corrige errores."
+        )
+        assert result["action_type"] == "FIX_QUALITY_ISSUES"
+
+    def test_auto_reject_logs_auto_rejected_status(self):
+        """AUTO-REJECT updates log status to AUTO-REJECTED."""
+        logged_status = {}
+
+        def fake_update_log_status(status, note):
+            logged_status["status"] = status
+            logged_status["note"] = note
+
+        with (
+            patch(
+                "agent_controller.run_quality_gates",
+                return_value={
+                    "passed": False,
+                    "errors": [],
+                    "summary": [],
+                    "warnings": [],
+                },
+            ),
+            patch("agent_controller.update_log_status", fake_update_log_status),
+        ):
+            agent_controller._check_quality_gates(
+                plan_id="WT-2026-204",
+                plan_type="IMPLEMENTATION",
+                plan_status="APPROVED",
+                skip_gates=False,
+            )
+
+        assert logged_status.get("status") == "IN_PROGRESS"
+        assert "AUTO-REJECTED" in logged_status.get("note", "")

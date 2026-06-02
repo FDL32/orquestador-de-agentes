@@ -1930,15 +1930,26 @@ def _run_pre_action_hooks(
 def _check_quality_gates(
     plan_id: str, plan_type: str, plan_status: str, skip_gates: bool
 ) -> dict | None:
-    """Check quality gates and return action if failed."""
+    """Check quality gates and return action if failed.
+
+    Before: plan_id must be non-empty, plan_type and plan_status must be valid.
+    During: Runs quality gates via run_quality_gates(). On failure, emits
+            AUTO-REJECT with a distinct instruction (no `.builder_rules` or
+            `builder_workflow.md` references — WT-2026-204).
+    After: Returns action dict with role=BUILDER for AUTO-REJECT, or None if
+           all gates pass.
+    """
     gate_result = run_quality_gates(plan_type=plan_type)
     if not gate_result["passed"]:
         update_log_status("IN_PROGRESS", "AUTO-REJECTED: Quality Gates fallaron")
         return {
             "role": "BUILDER",
-            "context_file": ".builder_rules",
-            "workflow_file": ".agent/workflows/builder_workflow.md",
-            "instruction": "RECHAZADO. Quality Gates fallaron. Corrige errores.",
+            "context_file": "",
+            "workflow_file": "",
+            "instruction": (
+                f"PLAN {plan_id} AUTO-REJECTED: Quality Gates fallaron. "
+                "Corrige errores de linter o tests antes de marcar como listo."
+            ),
             "plan_id": plan_id,
             "plan_status": plan_status,
             "log_status": "AUTO-REJECTED",
@@ -2264,8 +2275,29 @@ def should_overwrite_turn(turn_path: Path, force_reset: bool = False) -> bool:
         return True
 
 
+def _validate_turn_blockers_content(blockers_text: str) -> bool:
+    """Check that blockers section is valid (non-empty, < 15 KB, no JSONL crudo).
+
+    Before: blockers_text is the content of the ``## Blockers from Manager``
+            section to be appended to TURN.md.
+    During: Checks size < 15 KB and absence of ``{"type":`` / ``sessionID``.
+    After: Returns True only if all checks pass and the content is useful.
+    """
+    if not blockers_text or not blockers_text.strip():
+        return False
+    if len(blockers_text.encode("utf-8")) >= 15 * 1024:
+        return False
+    return not ('{"type":' in blockers_text or "sessionID" in blockers_text)
+
+
 def update_turn_file(action: dict) -> None:
-    """Actualiza TURN.md con informacion del turno actual."""
+    """Actualiza TURN.md con informacion del turno actual.
+
+    WT-2026-204: Preserves the ``## Blockers from Manager`` section from the
+    previous TURN.md only if it passes validation (non-empty, < 15 KB, no
+    JSONL crudo ``{"type":`` / ``sessionID``).  If validation fails, the
+    invalid blockers are discarded silently.
+    """
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     import contextlib
@@ -2277,7 +2309,16 @@ def update_turn_file(action: dict) -> None:
             current_content = turn_path.read_text(encoding="utf-8")
             idx = current_content.find("## Blockers from Manager")
             if idx != -1:
-                existing_blockers = "\n\n" + current_content[idx:].strip()
+                blockers_section = current_content[idx:].strip()
+                # WT-2026-204: validate before preserving
+                if _validate_turn_blockers_content(blockers_section):
+                    existing_blockers = "\n\n" + blockers_section
+                else:
+                    print(
+                        "[WARN] Discarded invalid blockers section in TURN.md "
+                        "(empty, oversized, or contains JSONL crudo)",
+                        flush=True,
+                    )
 
     content = f"""# TURNO ACTUAL
 
