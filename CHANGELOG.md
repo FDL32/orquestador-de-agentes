@@ -1,3 +1,10 @@
+# 2026-06-02 - WT-2026-205 prepush_check regression cleanup
+
+### Fixed
+- `scripts/prepush_check.py`: `ruff format --check` deja de recibir `--extend-exclude`, flag no aceptado por ese subcomando. Las exclusiones operativas se mantienen solo en `ruff check` hasta que `WT-2026-210` defina el contrato completo de gates Modelo B.
+
+---
+
 # 2026-06-01 - WT-2026-201 Hardening runtime del launcher tras WT-2026-200
 
 ### Added
