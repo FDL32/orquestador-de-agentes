@@ -992,6 +992,84 @@ def test_run_reactive_uses_idle_timeout_reset(tmp_path, monkeypatch):
     assert len(run_once_calls) > 3
 
 
+def test_run_reactive_idle_timeout_ignored_when_builder_alive(tmp_path, monkeypatch):
+    """Idle timeout should not stop the watcher while Builder is still alive."""
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+    monkeypatch.setattr(supervisor, "_builder_alive", lambda: True)
+
+    should_stop = supervisor._should_stop_run_reactive(
+        start_time=0.0,
+        last_activity=0.0,
+        idle_timeout=300.0,
+        max_runtime=3600.0,
+        now=540.0,
+    )
+
+    assert should_stop is False
+
+
+def test_run_reactive_idle_timeout_stops_when_builder_not_alive(tmp_path, monkeypatch):
+    """Idle timeout should still stop the watcher when there is no live Builder."""
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+    monkeypatch.setattr(supervisor, "_builder_alive", lambda: False)
+
+    should_stop = supervisor._should_stop_run_reactive(
+        start_time=0.0,
+        last_activity=0.0,
+        idle_timeout=300.0,
+        max_runtime=3600.0,
+        now=540.0,
+    )
+
+    assert should_stop is True
+
+
+def test_run_reactive_max_runtime_stops_even_when_builder_alive(tmp_path, monkeypatch):
+    """Max runtime remains a hard cap for the reactive supervisor loop."""
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+    monkeypatch.setattr(supervisor, "_builder_alive", lambda: True)
+
+    should_stop = supervisor._should_stop_run_reactive(
+        start_time=0.0,
+        last_activity=3500.0,
+        idle_timeout=300.0,
+        max_runtime=3600.0,
+        now=3600.0,
+    )
+
+    assert should_stop is True
+
+
 def test_supervisor_bootstrap_reconciles_stale_state_with_work_plan(tmp_path):
     collaboration_dir = tmp_path / ".agent" / "collaboration"
     runtime_dir = tmp_path / ".agent" / "runtime"

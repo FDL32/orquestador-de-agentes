@@ -2293,9 +2293,13 @@ class SequentialTicketSupervisor:
         max_runtime: float,
         now: float,
     ) -> bool:
-        return (max_runtime > 0 and now - start_time >= max_runtime) or (
-            idle_timeout > 0 and now - last_activity >= idle_timeout
-        )
+        if max_runtime > 0 and now - start_time >= max_runtime:
+            return True
+
+        if idle_timeout > 0 and now - last_activity >= idle_timeout:
+            return not self._builder_alive()
+
+        return False
 
     def run_reactive(self, timeout_seconds: float = 300.0):
         import time
