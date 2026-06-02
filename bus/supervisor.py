@@ -946,91 +946,97 @@ class SequentialTicketSupervisor:
         except Exception:
             return None
 
-    def _materialize_turn_blockers(self, ticket_id: str) -> None:  # noqa: C901
-        """WT-2026-203: Materialize Manager blockers into TURN.md before requeue.
+    def _materialize_turn_blockers(self, ticket_id: str) -> None:
+        """WT-2026-204: Materialize Manager blockers into TURN.md before requeue.
 
         Before:
             - A CHANGES decision has been recorded for the ticket.
-            - manager_feedback_<ticket_id>.md may exist in collaboration_dir.
+            - REVIEW_DECISION event exists on the bus with payload["blockers"].
 
         During:
-            - Reads manager_feedback_<ticket_id>.md for feedback text.
-            - Extracts the feedback/summary section.
+            - WT-2026-204: Reads the last REVIEW_DECISION event for the ticket.
+            - Extracts blockers from ``payload["blockers"]``.
+            - Validates: non-empty, < 15 KB, no JSONL crudo (``{"type":`` /
+              ``sessionID``).
             - Appends blockers section to TURN.md instructions.
+            - If validation fails, emits HANDOFF_BLOCKED and does NOT modify
+              TURN.md.
 
         After:
             - TURN.md contains actionable blockers from the Manager feedback.
-            - If no feedback file exists or blockers already present, no-op.
+            - If blockers validation fails, HANDOFF_BLOCKED event is emitted.
             - Never raises: all exceptions are caught and logged.
         """
         try:
-            feedback_file = self.collaboration_dir / f"manager_feedback_{ticket_id}.md"
-            if not feedback_file.exists():
+            # WT-2026-204: Read last REVIEW_DECISION event from bus
+            review_events = self.event_bus.read_events(
+                ticket_id=ticket_id, event_type="REVIEW_DECISION"
+            )
+            if not review_events:
                 return
 
-            feedback_content = feedback_file.read_text(encoding="utf-8")
+            latest_review = review_events[-1]
+            payload = latest_review.payload or {}
 
-            # Extract feedback between the metadata header and the ## Raw Review section
-            feedback_match = re.search(
-                r"^(.*?)(?=## Raw Review)",
-                feedback_content,
-                re.DOTALL | re.MULTILINE,
-            )
-            blockers_text = ""
-            if feedback_match:
-                raw = feedback_match.group(1)
-                # Strip metadata lines (Decision, Parse method, Source, Timestamp)
-                lines = []
-                for line in raw.split("\n"):
-                    stripped = line.strip()
-                    if (
-                        stripped.startswith("# Manager Feedback")
-                        or stripped.startswith("- Decision:")
-                        or stripped.startswith("- Parse method:")
-                        or stripped.startswith("- Source:")
-                        or stripped.startswith("- Timestamp:")
-                    ):
-                        continue
-                    lines.append(line)
-                blockers_text = "\n".join(lines).strip()
-            else:
-                # WT-2026-203: JSON streaming output fallback (AP-01 Mock Drift fix)
-                extracted_lines = []
-                import contextlib
-                import json
+            # WT-2026-204: Only validate when "blockers" key explicitly exists.
+            # If the field is absent entirely (backward compat), skip gracefully.
+            if "blockers" not in payload:
+                return
 
-                for line in feedback_content.split("\n"):
-                    line = line.strip()
-                    if not line:
-                        continue
-                    with contextlib.suppress(Exception):
-                        obj = json.loads(line)
-                        part = obj.get("part", {})
-                        if (
-                            isinstance(part, dict)
-                            and part.get("type") == "text"
-                            and "text" in part
-                        ):
-                            extracted_lines.append(part["text"])
-                        elif "content" in obj and isinstance(obj["content"], list):
-                            for block in obj["content"]:
-                                if (
-                                    isinstance(block, dict)
-                                    and block.get("type") == "text"
-                                    and "text" in block
-                                ):
-                                    extracted_lines.append(block["text"])  # noqa: PERF401
+            blockers = payload.get("blockers", "")
 
-                if extracted_lines:
-                    blockers_text = "\n".join(extracted_lines).strip()
-                else:
-                    blockers_text = feedback_content.strip()
-
-            if not blockers_text or "[Feedback no pudo ser parseado" in blockers_text:
-                blockers_text = (
-                    f"Manager requested CHANGES for {ticket_id}. "
-                    f"Review manager_feedback_{ticket_id}.md for details."
+            # WT-2026-204: Validate blockers — non-empty, < 15 KB, no JSONL crudo
+            if not blockers or not blockers.strip():
+                print(
+                    f"[supervisor] Empty blockers from REVIEW_DECISION for "
+                    f"{ticket_id}. Emitting HANDOFF_BLOCKED.",
+                    flush=True,
                 )
+                self.event_bus.emit(
+                    "HANDOFF_BLOCKED",
+                    ticket_id=ticket_id,
+                    actor="SUPERVISOR",
+                    payload={
+                        "reason": "empty_blockers",
+                        "details": "REVIEW_DECISION payload blockers field is empty.",
+                    },
+                )
+                return
+
+            blockers_bytes = blockers.encode("utf-8")
+            if len(blockers_bytes) >= 15 * 1024:
+                print(
+                    f"[supervisor] Blockers too large ({len(blockers_bytes)} bytes) "
+                    f"for {ticket_id}. Emitting HANDOFF_BLOCKED.",
+                    flush=True,
+                )
+                self.event_bus.emit(
+                    "HANDOFF_BLOCKED",
+                    ticket_id=ticket_id,
+                    actor="SUPERVISOR",
+                    payload={
+                        "reason": "blockers_too_large",
+                        "size_bytes": len(blockers_bytes),
+                    },
+                )
+                return
+
+            if '{"type":' in blockers or "sessionID" in blockers:
+                print(
+                    f"[supervisor] Blockers contain raw JSONL for {ticket_id}. "
+                    "Emitting HANDOFF_BLOCKED.",
+                    flush=True,
+                )
+                self.event_bus.emit(
+                    "HANDOFF_BLOCKED",
+                    ticket_id=ticket_id,
+                    actor="SUPERVISOR",
+                    payload={
+                        "reason": "blockers_contain_raw_jsonl",
+                        "details": "blockers contain {'type': or sessionID markers.",
+                    },
+                )
+                return
 
             turn_path = self.collaboration_dir / "TURN.md"
             if not turn_path.exists():
@@ -1046,7 +1052,7 @@ class SequentialTicketSupervisor:
                 f"\n\n## Blockers from Manager\n\n"
                 f"The last review returned CHANGES. "
                 f"Address these blockers before marking ready:\n\n"
-                f"{blockers_text}\n"
+                f"{blockers}\n"
             )
 
             # Insert before ## Estado del Sistema if present, else append at end
