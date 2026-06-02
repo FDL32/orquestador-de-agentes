@@ -1,3 +1,60 @@
+# 2026-06-02 - Bus reconstruction: WT-2026-210 / 211 / 212 / 216
+
+Reconstrucción del contrato del bus en cuatro tickets encadenados, derivada de la auditoría
+[BUS_ARCHITECTURE_WT-2026-210.md](docs/BUS_ARCHITECTURE_WT-2026-210.md) que documentó 7 invariantes
+rotas tras el incidente WT-2026-205.
+
+### Added (WT-2026-210 · commit `29b332e`)
+- `scripts/reconcile_ticket.py`: cierre canónico de tickets con runtime huérfano. Emite
+  `STATE_CHANGED → COMPLETED` + `SUPERVISOR_CLOSED` si faltan en el bus; limpia
+  `builder_lock`, `supervisor_lock` y `requeue_claims`; actualiza `supervisor_state.json`,
+  `manager_bridge_state.json` y `bridge_checkpoint.json`. Idempotente. Flags: `--ticket`,
+  `--reason`, `--dry-run`, `--json`. No enganchado al preflight automático (pendiente WT-2026-214).
+- `tests/test_reconcile_ticket.py`: tests focales del reconciler.
+- `docs/BUS_ARCHITECTURE_WT-2026-210.md`: auditoría base con línea temporal verificada del
+  incidente (bus seq 540–547), 7 invariantes rotas, tabla de write-paths, y propuesta de
+  arquitectura con tres opciones (A: orquestador único, B: supervisor durable, C: proyecciones
+  derivadas). Documento congelado — snapshot del estado *antes* de la reconstrucción.
+
+### Changed (WT-2026-211 · commit `0125638`)
+- `.agent/agent_controller.py`: `--mark-ready` ya no materializa proyecciones directamente;
+  elimina escrituras de `TURN.md`/`execution_log.md` del comando (−122 líneas neto). Solo emite
+  eventos al bus.
+- `bus/supervisor.py`: añadido como materializador principal de proyecciones operativas
+  (`TURN.md`, `STATE.md`, `execution_log.md`) tras transiciones (+133 líneas). El supervisor
+  pasa a ser el único writer de proyecciones en el camino normal.
+- `tests/test_wt_2026_211_write_path.py`: tests focales del write-path centralizado (nuevo).
+
+**Architecture note — Write-path de proyecciones:**
+El controller queda como *emisor de hechos al bus*; el supervisor como *materializador de
+proyecciones*. Esto reduce el drift bus↔`TURN.md`/`STATE.md` y hace el orden de transición
+determinista. Nota: `state_machine.py` sigue siendo derivador de lectura, no guard de escritura;
+cualquier proceso puede emitir `STATE_CHANGED` sin validación. Cerrar esa brecha es WT pendiente.
+
+### Changed (WT-2026-212 · commit `007875e`)
+- `bus/review_bridge.py`: añadido `_ensure_durable_changes_consumer()` (línea 238). Garantiza
+  que `REVIEW_DECISION=CHANGES` tenga consumidor aunque el supervisor reactivo haya muerto.
+  Mecanismo: (1) solo actúa si el lock del supervisor está stale, (2) guard anti-doble-relaunch
+  (revisa `BUILDER_RELAUNCH_ATTEMPTED` posterior al trigger antes de actuar), (3) dispara un
+  tick real del supervisor: `bootstrap()` + `run_once()` + `_release_supervisor_lock()`.
+  El bridge garantiza que exista el consumidor; el consumo real lo ejecuta el supervisor.
+- `tests/test_wt_2026_212_durable_changes.py`: tests focales del consumidor durable (nuevo).
+
+### Added (WT-2026-216 · commit `07991cd`)
+- `scripts/get_launcher_state.py`: helper Python que derive el estado canónico del launcher
+  desde el bus (`StateMachine.derive_state_from_events()`). Devuelve JSON estable
+  `{ticket_id, state, role, action, source}`. Requiere `--project-root`.
+- `scripts/launch_agent_terminals.ps1`: `Get-ActiveRole` intenta primero `get_launcher_state.py`;
+  `TURN.md` queda como fallback explícito. `TURN.md` stale ya no impide el relanzamiento correcto.
+- `tests/test_wt_2026_216_launcher_bus_read.py`: tests focales del camino bus vs. fallback TURN stale.
+
+**Architecture note — Autoridad de lectura del launcher:**
+La decisión de qué agente lanzar pasa de *proyección documental* (`TURN.md`) a *estado derivado
+del bus*. Patrón recomendado hacia adelante: toda decisión semántica nueva → helper Python
+testeable; PowerShell queda como borde de integración con Windows.
+
+---
+
 # 2026-06-02 - WT-2026-205 prepush_check regression cleanup
 
 ### Fixed
