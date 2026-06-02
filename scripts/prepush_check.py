@@ -185,7 +185,7 @@ def run_ruff_format_check(project_root: Path) -> CheckResult:
         CheckResult con el estado del check de formato.
     """
     return run_subprocess_check(
-        cmd=["uv", "run", "ruff", "format", "--check", ".", *_ruff_exclude_args()],
+        cmd=["uv", "run", "ruff", "format", "--check", "."],
         name="Ruff Format Check",
         project_root=project_root,
     )

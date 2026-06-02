@@ -3,6 +3,8 @@
 Alias: Audit Bus V2 / Architecture Audit
 Auditoria realizada: 2026-06-02 (sesion activa)
 Validacion: externa al loop Manager/Builder/Supervisor
+Estado: completed
+Cierre documental: contrato entregado y sustituido por WT-2026-211
 
 ## Reglas de trabajo
 
