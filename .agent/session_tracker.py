@@ -38,8 +38,19 @@ for _path in (str(_PROJECT_ROOT), str(_AGENT_DIR)):
 from runtime.project_root import get_collab_dir  # noqa: E402
 
 
-COLLAB_DIR = get_collab_dir()
-SESSION_FILE = COLLAB_DIR / ".session_state.json"
+# WP-2026-205: COLLAB_DIR/SESSION_FILE resolved at function call time (lazy),
+# not at module level, to prevent get_collab_dir() from being evaluated before
+# AGENT_PROJECT_ROOT is set. This was the root cause of legacy writes to
+# orquestador_de_agentes/.agent/collaboration instead of the active workspace.
+def _collab_dir() -> Path:
+    """Return the collaboration directory, resolved at call time."""
+    return get_collab_dir()
+
+
+def _session_file() -> Path:
+    """Return the session state file path, resolved at call time."""
+    return _collab_dir() / ".session_state.json"
+
 
 STALE_THRESHOLD_HOURS = 2
 MAX_FILES_TO_LIST = 10
@@ -47,8 +58,10 @@ MAX_FILES_TO_LIST = 10
 
 def save_session() -> None:
     """Guarda estado simple de la sesion actual."""
+    collab_dir = _collab_dir()
+    session_file = _session_file()
     with suppress(OSError, TypeError, ValueError):
-        COLLAB_DIR.mkdir(parents=True, exist_ok=True)
+        collab_dir.mkdir(parents=True, exist_ok=True)
 
         session = {
             "last_activity": datetime.now().isoformat(),
@@ -57,18 +70,19 @@ def save_session() -> None:
             "version": "1.0-lite",
         }
 
-        SESSION_FILE.write_text(
+        session_file.write_text(
             json.dumps(session, indent=2, ensure_ascii=False), encoding="utf-8"
         )
 
 
 def detect_stale_session() -> bool:
     """Detecta si han pasado mas de 2 horas desde la ultima actividad."""
-    if not SESSION_FILE.exists():
+    session_file = _session_file()
+    if not session_file.exists():
         return False
 
     try:
-        session = json.loads(SESSION_FILE.read_text(encoding="utf-8"))
+        session = json.loads(session_file.read_text(encoding="utf-8"))
         last_activity = datetime.fromisoformat(session["last_activity"])
         return datetime.now() - last_activity > timedelta(hours=STALE_THRESHOLD_HOURS)
     except (json.JSONDecodeError, KeyError, ValueError):
@@ -77,11 +91,12 @@ def detect_stale_session() -> bool:
 
 def recover_session() -> dict | None:
     """Recupera informacion de la sesion anterior."""
-    if not SESSION_FILE.exists():
+    session_file = _session_file()
+    if not session_file.exists():
         return None
 
     with suppress(Exception):
-        session = json.loads(SESSION_FILE.read_text(encoding="utf-8"))
+        session = json.loads(session_file.read_text(encoding="utf-8"))
         last = datetime.fromisoformat(session["last_activity"])
         elapsed = datetime.now() - last
         hours_ago = elapsed.total_seconds() / 3600
@@ -114,7 +129,7 @@ def show_recovery_hint() -> None:
 
 def _get_current_plan_id() -> str:
     """Obtiene el ID del plan actual desde work_plan.md."""
-    work_plan = COLLAB_DIR / "work_plan.md"
+    work_plan = _collab_dir() / "work_plan.md"
     if not work_plan.exists():
         return "N/A"
 
@@ -129,7 +144,7 @@ def _get_current_plan_id() -> str:
 
 def _count_project_files() -> int:
     """Cuenta archivos relevantes en el proyecto."""
-    project_root = COLLAB_DIR.parent.parent
+    project_root = _collab_dir().parent.parent
     ignore_dirs = {".git", ".venv", "__pycache__", ".pytest_cache"}
     extensions = {".py", ".md", ".json", ".yaml", ".yml", ".toml"}
 
@@ -148,7 +163,7 @@ def _count_project_files() -> int:
 
 def _get_recently_modified_files(hours: int = 2) -> list[str]:
     """Obtiene archivos modificados en las ultimas N horas."""
-    project_root = COLLAB_DIR.parent.parent
+    project_root = _collab_dir().parent.parent
     cutoff = datetime.now() - timedelta(hours=hours)
 
     ignore_dirs = {".git", ".venv", "__pycache__", ".pytest_cache"}

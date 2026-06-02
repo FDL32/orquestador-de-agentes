@@ -1524,9 +1524,13 @@ def _step_cleanup_builder_session(project_root: Path, dry_run: bool) -> StepResu
 def _step_git_clean(project_root: Path, dry_run: bool) -> StepResult:
     """Verify git status --short is clean (except expected runtime files).
 
-    Before: project_root must be a git repo.
+    Tolerante a workspaces no-repo: si el directorio no es un repositorio
+    Git, reporta un WARN no bloqueante informativo (arquitectura workspace
+    activo + motor portable).
+
+    Before: project_root may or may not be a git repo.
     During: Runs git status --short, filters out expected runtime files.
-    After: Returns PASS if clean, WARN if dirty (non-blocking).
+    After: Returns PASS if clean, WARN if dirty or non-repo (non-blocking).
     """
     if dry_run:
         return StepResult(
@@ -1543,10 +1547,17 @@ def _step_git_clean(project_root: Path, dry_run: bool) -> StepResult:
             timeout=30,
         )
         if result.returncode != 0:
+            stderr_msg = (result.stderr or "").strip()
+            if "not a git repository" in stderr_msg.lower():
+                return StepResult(
+                    name="git_clean",
+                    status="WARN",
+                    detail="Workspace not a git repository (tolerated for workspace+motor architecture)",
+                )
             return StepResult(
                 name="git_clean",
                 status="WARN",
-                detail=f"git status returned exit {result.returncode}",
+                detail=f"git status returned exit {result.returncode}: {stderr_msg}",
             )
         dirty_lines = [
             line for line in result.stdout.strip().splitlines() if line.strip()
@@ -1578,7 +1589,7 @@ def _step_git_clean(project_root: Path, dry_run: bool) -> StepResult:
         return StepResult(
             name="git_clean",
             status="WARN",
-            detail=f"git status could not run: {exc}",
+            detail=f"git status could not run: {exc} (tolerated for workspace+motor architecture)",
         )
 
 
