@@ -1090,6 +1090,53 @@ class SequentialTicketSupervisor:
         path.write_text(content, encoding="utf-8")
         return True
 
+    def _turn_without_update_timestamp(self, content: str) -> str:
+        """Normalize volatile TURN.md timestamp so projection writes stay idempotent."""
+        return re.sub(
+            r"^\*\*Ultima actualizacion:\*\* .*$(?:\r?\n)?",
+            "**Ultima actualizacion:** <timestamp>\n",
+            content,
+            count=1,
+            flags=re.MULTILINE,
+        )
+
+    def _preserve_turn_blockers(self, content: str) -> str:
+        """Carry existing Manager blockers across state projection refreshes."""
+        if not self.turn_path.exists():
+            return content
+        current = self.turn_path.read_text(encoding="utf-8")
+        marker = "## Blockers from Manager"
+        if marker not in current or marker in content:
+            return content
+
+        match = re.search(
+            r"\n\n## Blockers from Manager\n\n.*?(?=\n## Estado del Sistema|\Z)",
+            current,
+            flags=re.DOTALL,
+        )
+        if not match:
+            return content
+        blockers_section = match.group(0).rstrip() + "\n\n"
+        if "## Estado del Sistema" in content:
+            return content.replace(
+                "## Estado del Sistema",
+                f"{blockers_section}## Estado del Sistema",
+                1,
+            )
+        return content.rstrip() + blockers_section
+
+    def _write_turn_if_semantic_changed(self, content: str) -> bool:
+        """Write TURN.md only when role/action/state semantics change."""
+        content = self._preserve_turn_blockers(content)
+        current = ""
+        if self.turn_path.exists():
+            current = self.turn_path.read_text(encoding="utf-8")
+        if self._turn_without_update_timestamp(
+            current
+        ) == self._turn_without_update_timestamp(content):
+            return False
+        return self._write_text_if_changed(self.turn_path, content)
+
     def _render_turn_for_state(self, ticket_id: str, state: TicketState) -> str:
         """Render TURN.md for the given derived state."""
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -1173,8 +1220,8 @@ class SequentialTicketSupervisor:
             return False
         changed = False
 
-        changed |= self._write_text_if_changed(
-            self.turn_path, self._render_turn_for_state(ticket_id, state)
+        changed |= self._write_turn_if_semantic_changed(
+            self._render_turn_for_state(ticket_id, state)
         )
         changed |= self._write_text_if_changed(
             self.state_path_file, f"ACTIVE_TICKET: {ticket_id}\nSTATUS: {state.value}\n"
