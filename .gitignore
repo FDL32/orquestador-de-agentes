@@ -77,3 +77,12 @@ tests/sandbox/tmp*/
 .agent/runtime/requeue_claims/
 
 prompts/
+# Runtime/historia de tickets del motor: vivir en workspace destino, no en producto
+.agent/collaboration/manager_feedback_*.md
+.agent/collaboration/AUDIT_WP-*.md
+.agent/collaboration/PLAN_WP-*.md
+.agent/collaboration/_archive/
+.agent/runtime/events/archive/
+.agent/runtime/deliverables/
+.agent/runtime/approvals/
+.agent/runtime/memory/session_close_report.md

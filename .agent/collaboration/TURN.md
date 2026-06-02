@@ -1,40 +1,8 @@
-# TURNO ACTUAL
+# Turn - Seed
 
-**Ultima actualizacion:** 2026-05-30 00:46:31
+ROL: MANAGER
+ACCION: CREATE_PLAN
+TICKET: none
+ESTADO: READY_TO_START
 
----
-
-## Agente Activo
-
-| Campo | Valor |
-|-------|-------|
-| **ROL** | **MANAGER** |
-| **Plan ID** | N/A |
-| **Tipo** | IMPLEMENTATION |
-| **Accion** | CREATE_PLAN |
-
----
-
-## Instruccion
-
-> Ticket WP-2026-176 closed. Create new work_plan.md for next cycle.
-
----
-
-## Archivos a Leer
-
-1. `.manager_rules` (Contexto del rol)
-2. `.agent/workflows/manager_workflow.md` (Flujo de trabajo)
-
----
-
-## Estado del Sistema
-
-| Archivo | Estado |
-|---------|--------|
-| work_plan.md | COMPLETED |
-| execution_log.md | COMPLETED |
-
----
-
-*Generado por agent_controller.py v5*
+Superficie seed del motor. Las proyecciones operativas reales viven en el workspace destino.
