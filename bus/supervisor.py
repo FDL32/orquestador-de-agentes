@@ -1079,6 +1079,134 @@ class SequentialTicketSupervisor:
                 flush=True,
             )
 
+    def _write_text_if_changed(self, path: Path, content: str) -> bool:
+        """Write a text artifact only when the content actually changes."""
+        current = ""
+        if path.exists():
+            current = path.read_text(encoding="utf-8")
+        if current == content:
+            return False
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        return True
+
+    def _render_turn_for_state(self, ticket_id: str, state: TicketState) -> str:
+        """Render TURN.md for the given derived state."""
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        turn_map: dict[TicketState, tuple[str, str, str, str]] = {
+            TicketState.READY_FOR_REVIEW: (
+                "MANAGER",
+                "REVIEW_WORK",
+                f"Builder completo {ticket_id}. Revisa el trabajo.",
+                "APPROVED",
+            ),
+            TicketState.READY_TO_CLOSE: (
+                "SUPERVISOR",
+                "CLOSEOUT",
+                f"Ticket {ticket_id} aprobado. Procede al cierre.",
+                "APPROVED",
+            ),
+            TicketState.IN_PROGRESS: (
+                "BUILDER",
+                "IMPLEMENT",
+                f"Ticket {ticket_id} reactivado. Continua la implementacion.",
+                "IN_PROGRESS",
+            ),
+            TicketState.HUMAN_GATE: (
+                "SUPERVISOR",
+                "HUMAN_GATE",
+                f"Escalada humana requerida para {ticket_id}.",
+                "BLOCKED",
+            ),
+            TicketState.COMPLETED: (
+                "MANAGER",
+                "CREATE_PLAN",
+                f"Ticket {ticket_id} cerrado. Crea el siguiente work_plan.md.",
+                "COMPLETED",
+            ),
+            TicketState.BLOCKED: (
+                "SUPERVISOR",
+                "BLOCKED",
+                f"Ticket {ticket_id} bloqueado. Revisa los bloqueadores.",
+                "BLOCKED",
+            ),
+        }
+        role, action_type, instruction, work_plan_status = turn_map.get(
+            state,
+            (
+                "UNKNOWN",
+                "STATE_TRANSITION",
+                f"Estado materializado desde el bus: {state.value}.",
+                state.value,
+            ),
+        )
+
+        return (
+            "# TURNO ACTUAL\n\n"
+            f"**Ultima actualizacion:** {timestamp}\n\n"
+            "---\n\n"
+            "## Agente Activo\n\n"
+            "| Campo | Valor |\n"
+            "|-------|-------|\n"
+            f"| **ROL** | **{role}** |\n"
+            f"| **Plan ID** | {ticket_id} |\n"
+            "| **Tipo** | IMPLEMENT |\n"
+            f"| **Accion** | {action_type} |\n"
+            "\n---\n\n"
+            "## Instruccion\n\n"
+            f"> {instruction}\n\n"
+            "---\n\n"
+            "## Estado del Sistema\n\n"
+            "| Archivo | Estado |\n"
+            "|---------|--------|\n"
+            f"| work_plan.md | {work_plan_status} |\n"
+            f"| execution_log.md | {state.value} |\n"
+            "\n---\n\n"
+            f"*Preparado documentalmente para {ticket_id}*\n"
+        )
+
+    def _materialize_ticket_projection(
+        self, ticket_id: str, state: TicketState
+    ) -> bool:
+        """Materialize the active ticket projections synchronously."""
+        if state == TicketState.UNKNOWN:
+            return False
+        changed = False
+
+        changed |= self._write_text_if_changed(
+            self.turn_path, self._render_turn_for_state(ticket_id, state)
+        )
+        changed |= self._write_text_if_changed(
+            self.state_path_file, f"ACTIVE_TICKET: {ticket_id}\nSTATUS: {state.value}\n"
+        )
+
+        if self.execution_log_path.exists():
+            log_content = self.execution_log_path.read_text(encoding="utf-8")
+            updated_log = log_content
+            for old_marker in (
+                "**Estado:**",
+                "Estado documental:",
+                "Estado actual:",
+            ):
+                if old_marker in updated_log:
+                    updated_log = re.sub(
+                        rf"{re.escape(old_marker)}\s*.*",
+                        f"{old_marker} {state.value}",
+                        updated_log,
+                        count=1,
+                    )
+                    break
+            else:
+                updated_log = (
+                    updated_log.rstrip() + f"\n- Estado documental: {state.value}\n"
+                )
+            if updated_log != log_content:
+                changed |= self._write_text_if_changed(
+                    self.execution_log_path, updated_log
+                )
+
+        return changed
+
     def _is_manager_bridge_stale(self) -> bool:
         """Return True if the bridge heartbeat is absent or older than MANAGER_STALE_TIMEOUT.
 
@@ -2203,6 +2331,11 @@ class SequentialTicketSupervisor:
         changed = self._process_new_events()
         state = self.load_state()
         event_activity = state.last_processed_sequence > previous_sequence
+
+        if state.active_ticket and self._materialize_ticket_projection(
+            state.active_ticket, self._current_state(state.active_ticket)
+        ):
+            changed = True
 
         requeue_trigger_sequence = self._latest_changes_trigger_sequence(
             new_events, ticket_id=state.active_ticket

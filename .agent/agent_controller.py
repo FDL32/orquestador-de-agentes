@@ -582,9 +582,11 @@ def _scope_gate_allows_close(gate_result: dict, scope_override: str | None) -> b
 
 
 def _sync_mark_ready_targets(plan_id: str, plan_content: str) -> None:
-    """Update TURN.md and STATE.md after mark-ready.
+    """Emit the READY_FOR_REVIEW transition after mark-ready.
 
-    WP-2026-124: Uses bus-derived state as authority, not execution_log.md.
+    WT-2026-211: The controller no longer materializes TURN.md / STATE.md.
+    The supervisor synchronously materializes the projections after it
+    processes the new bus events in run_once().
     """
     # WP-2026-124: Get bus-derived state
     log_status_before = get_status(read_file(EXEC_LOG), "**Estado:**")
@@ -603,30 +605,6 @@ def _sync_mark_ready_targets(plan_id: str, plan_content: str) -> None:
         )
     else:
         from_state = log_status_before
-
-    action = {
-        "role": "MANAGER",
-        "context_file": ".manager_rules",
-        "workflow_file": ".agent/workflows/manager_workflow.md",
-        "instruction": f"Builder completo {plan_id}. Revisa el trabajo.",
-        "plan_id": plan_id,
-        "plan_status": get_status(plan_content, "**Estado:**"),
-        "log_status": "READY_FOR_REVIEW",
-        "action_type": "REVIEW_WORK",
-        "plan_type": get_plan_type(plan_content),
-    }
-    update_turn_file(action)
-
-    state_content = read_file(STATE_FILE)
-    if not state_content:
-        return
-
-    lines = state_content.split("\n")
-    for index, line in enumerate(lines):
-        if "**Estado actual:**" in line:
-            lines[index] = "- **Estado actual:** READY_FOR_REVIEW"
-            write_file(STATE_FILE, "\n".join(lines))
-            break
 
     # Emit STATE_CHANGED to bus idempotently
     if BUS_AVAILABLE and event_bus:
@@ -3675,13 +3653,14 @@ def _materialize_state_transition(
     """Materialize a state transition canonically.
 
     This is the shared route for all state transitions (approve, changes, inspect).
-    It ensures that STATE.md, TURN.md, execution_log.md and the bus are synchronized.
+    WT-2026-211: the controller only emits the bus transition; the supervisor
+    synchronizes TURN.md, STATE.md and execution_log.md from the derived state.
 
     Before: Requires ticket_id, to_state, reason, and optional actor/source.
-    During: Emits STATE_CHANGED to bus, updates execution_log.md, TURN.md, STATE.md.
-    After: All projections reflect the new state derived from the bus event.
+    During: Emits STATE_CHANGED to bus and creates a HUMAN_GATE approval request
+            when needed.
+    After: The supervisor can materialize projections from the bus event.
     """
-    plan_content = read_file(WORK_PLAN)
     log_content = read_file(EXEC_LOG)
     log_status = get_status(log_content, "**Estado:**")
 
@@ -3699,101 +3678,9 @@ def _materialize_state_transition(
             },
         )
 
-    # Sync execution_log.md
-    update_log_status(to_state, reason)
-
     # WP-2026-146: Create persistent ApprovalRequest when escalating to HUMAN_GATE
     if to_state == "HUMAN_GATE":
         _create_human_gate_approval_request(ticket_id)
-
-    # Sync TURN.md based on target state
-    if to_state == "HUMAN_GATE":
-        action = {
-            "role": "SUPERVISOR",
-            "context_file": ".supervisor_rules",
-            "workflow_file": ".agent/workflows/supervisor_workflow.md",
-            "instruction": f"Escalated to HUMAN_GATE: {reason}",
-            "plan_id": ticket_id,
-            "plan_status": get_status(plan_content, "**Estado:**"),
-            "log_status": to_state,
-            "action_type": "HUMAN_GATE",
-            "plan_type": get_plan_type(plan_content),
-        }
-    elif to_state == "IN_PROGRESS":
-        action = {
-            "role": "BUILDER",
-            "context_file": ".builder_rules",
-            "workflow_file": ".agent/workflows/builder_workflow.md",
-            "instruction": f"Requeued to Builder: {reason}",
-            "plan_id": ticket_id,
-            "plan_status": get_status(plan_content, "**Estado:**"),
-            "log_status": to_state,
-            "action_type": "IMPLEMENT",
-            "plan_type": get_plan_type(plan_content),
-        }
-    elif to_state == "READY_FOR_REVIEW":
-        action = {
-            "role": "MANAGER",
-            "context_file": ".manager_rules",
-            "workflow_file": ".agent/workflows/manager_workflow.md",
-            "instruction": f"Ticket {ticket_id} listo para review: {reason}",
-            "plan_id": ticket_id,
-            "plan_status": get_status(plan_content, "**Estado:**"),
-            "log_status": to_state,
-            "action_type": "REVIEW_WORK",
-            "plan_type": get_plan_type(plan_content),
-        }
-    elif to_state == "READY_TO_CLOSE":
-        action = {
-            "role": "SUPERVISOR",
-            "context_file": ".supervisor_rules",
-            "workflow_file": ".agent/workflows/supervisor_workflow.md",
-            "instruction": f"Ticket approved, pending close: {reason}",
-            "plan_id": ticket_id,
-            "plan_status": get_status(plan_content, "**Estado:**"),
-            "log_status": to_state,
-            "action_type": "CLOSEOUT",
-            "plan_type": get_plan_type(plan_content),
-        }
-    elif to_state == "COMPLETED":
-        action = {
-            "role": "MANAGER",
-            "context_file": ".manager_rules",
-            "workflow_file": ".agent/workflows/manager_workflow.md",
-            "instruction": f"Ticket {ticket_id} closed. Create new work_plan.md for next cycle.",
-            "plan_id": "N/A",
-            "plan_status": "COMPLETED",
-            "log_status": "COMPLETED",
-            "action_type": "CREATE_PLAN",
-        }
-    else:
-        # Fallback for unknown states
-        action = {
-            "role": "UNKNOWN",
-            "context_file": "N/A",
-            "workflow_file": "N/A",
-            "instruction": f"State transition to {to_state}: {reason}",
-            "plan_id": ticket_id,
-            "plan_status": get_status(plan_content, "**Estado:**"),
-            "log_status": to_state,
-            "action_type": "STATE_TRANSITION",
-            "plan_type": get_plan_type(plan_content),
-        }
-
-    update_turn_file(action)
-
-    # Sync STATE.md — canonical plain format (WP-2026-149)
-    state_content = read_file(STATE_FILE)
-    if state_content:
-        import re
-
-        updated_state = re.sub(
-            r"^(- \*\*Estado actual:\*\*|Estado actual:) .+",
-            f"Estado actual: {to_state}",
-            state_content,
-            flags=re.MULTILINE,
-        )
-        write_file(STATE_FILE, updated_state)
 
 
 def _handle_escalate_human_gate(ticket_id: str, json_output: bool) -> int:
