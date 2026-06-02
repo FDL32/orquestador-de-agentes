@@ -235,6 +235,62 @@ class ReviewBridge:
 
         return _resolve(self.project_root)
 
+    def _ensure_durable_changes_consumer(
+        self,
+        *,
+        supervisor,
+        ticket_id: str,
+        review_decision_seq: int,
+    ) -> None:
+        """Guarantee one supervisor-owned CHANGES consumer in bounded time."""
+        if not hasattr(supervisor, "_is_supervisor_lock_stale"):
+            return
+        if not supervisor._is_supervisor_lock_stale():
+            return
+
+        if any(
+            event.sequence_number > review_decision_seq
+            for event in self.event_bus.read_events(ticket_id=ticket_id)
+            if event.event_type == "BUILDER_RELAUNCH_ATTEMPTED"
+        ):
+            print(
+                "[review_bridge] BUILDER_RELAUNCH_ATTEMPTED already exists after "
+                "REVIEW_DECISION; skipping supervisor rescue tick to avoid double relaunch.",
+                flush=True,
+            )
+            return
+
+        if all(
+            hasattr(supervisor, name)
+            for name in ("bootstrap", "run_once", "_release_supervisor_lock")
+        ):
+            print(
+                "[review_bridge] Supervisor daemon absent after --request-changes; "
+                "running one durable supervisor tick.",
+                flush=True,
+            )
+            acquired = bool(supervisor.bootstrap())
+            if not acquired:
+                print(
+                    "[review_bridge] Supervisor rescue tick skipped: another "
+                    "supervisor instance acquired the lock first.",
+                    flush=True,
+                )
+                return
+            try:
+                supervisor.run_once()
+            finally:
+                supervisor._release_supervisor_lock()
+            return
+
+        if hasattr(supervisor, "requeue_ticket"):
+            print(
+                "[review_bridge] Legacy fallback: supervisor object lacks "
+                "bootstrap/run_once; invoking requeue_ticket directly.",
+                flush=True,
+            )
+            supervisor.requeue_ticket(ticket_id, review_decision_seq)
+
     @staticmethod
     def _looks_like_opencode_help(stdout: str, stderr: str) -> bool:
         """Detect an OpenCode help banner instead of model output.
@@ -2748,38 +2804,12 @@ class ReviewBridge:
                 )
             # Recompute from the bus (now includes this cycle's REVIEW_DECISION).
             consecutive_changes_count = self._count_prior_changes_from_bus(ticket_id)
-            # WT-2026-183: if the Supervisor did a cooperative exit, nobody is
-            # listening for the IN_PROGRESS state on the bus — relaunch Builder
-            # directly from the bridge so the requeue is never silently lost.
-            # Guard: skip when HUMAN_GATE threshold is reached; requeue_ticket
-            # would abort via RELAUNCH_BLOCKED_STATES anyway, but this avoids
-            # the spurious log line before the HUMAN_GATE report is generated.
-            if (
-                consecutive_changes_count < max_attempts
-                and supervisor._is_supervisor_lock_stale()
-            ):
-                # WT-2026-189: Guard anti double relaunch — skip requeue_ticket if
-                # Supervisor already emitted BUILDER_RELAUNCH_ATTEMPTED after this
-                # REVIEW_DECISION.
-                if any(
-                    event.sequence_number > review_decision_seq
-                    for event in self.event_bus.read_events(ticket_id=ticket_id)
-                    if event.event_type == "BUILDER_RELAUNCH_ATTEMPTED"
-                ):
-                    print(
-                        "[review_bridge] BUILDER_RELAUNCH_ATTEMPTED already exists after "
-                        "REVIEW_DECISION; skipping requeue_ticket to avoid double relaunch.",
-                        flush=True,
-                    )
-                else:
-                    print(
-                        "[review_bridge] Supervisor daemon absent after --request-changes; "
-                        "relaunching Builder directly.",
-                        flush=True,
-                    )
-                    # WT-2026-199: Pass review_decision_seq so requeue_ticket
-                    # can perform atomic cross-process claim coordination.
-                    supervisor.requeue_ticket(ticket_id, review_decision_seq)
+            if consecutive_changes_count < max_attempts:
+                self._ensure_durable_changes_consumer(
+                    supervisor=supervisor,
+                    ticket_id=ticket_id,
+                    review_decision_seq=review_decision_seq,
+                )
             if consecutive_changes_count >= max_attempts:
                 report_path = self._generate_human_review_report(
                     ticket_id=ticket_id,
