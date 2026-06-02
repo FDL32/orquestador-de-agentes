@@ -26,7 +26,7 @@ from bus.state_machine import StateMachine, TicketState  # noqa: E402
 
 WORK_PLAN_REL = Path(".agent") / "collaboration" / "work_plan.md"
 RUNTIME_EVENTS_REL = Path(".agent") / "runtime" / "events"
-_TICKET_PATTERN = re.compile(r"\*\*ID:\*\*\s*((?:WP|WT)-\d{4}-[A-Za-z0-9-]+)")
+_TICKET_PATTERN = re.compile(r"\*\*ID:\*\*\s*([A-Z][A-Z0-9]*-\d{4}-[A-Za-z0-9-]+)")
 
 
 def _read_active_ticket(project_root: Path) -> str:
