@@ -171,7 +171,11 @@ def _append_terminal_events(
     )
     closed_present = _latest_event(events, "SUPERVISOR_CLOSED") is not None
 
-    if before_state not in TERMINAL_STATES and not terminal_change_present and bus is not None:
+    if (
+        before_state not in TERMINAL_STATES
+        and not terminal_change_present
+        and bus is not None
+    ):
         record = bus.emit(
             "STATE_CHANGED",
             ticket_id=ticket_id,
@@ -246,14 +250,18 @@ def _cleanup_runtime_artifacts(
         (BUILDER_SESSION_REL, "builder_session.json"),
         (SUPERVISOR_LOCK_REL, "supervisor_lock.txt"),
     ):
-        _remove_lock_if_owned(project_root / rel, label, ticket_id, dry_run=dry_run, log=cleaned)
+        _remove_lock_if_owned(
+            project_root / rel, label, ticket_id, dry_run=dry_run, log=cleaned
+        )
 
     claims_dir = runtime_dir / REQUEUE_CLAIMS_REL.name
     if claims_dir.exists() and claims_dir.is_dir():
         prefix = f"{ticket_id}_seq-"
         for child in claims_dir.iterdir():
             if child.is_file() and child.name.startswith(prefix):
-                _try_unlink(child, f"requeue_claims/{child.name}", dry_run=dry_run, log=cleaned)
+                _try_unlink(
+                    child, f"requeue_claims/{child.name}", dry_run=dry_run, log=cleaned
+                )
 
     return cleaned
 
@@ -308,9 +316,7 @@ def _update_runtime_state(
         )
         if not dry_run:
             _write_json(bridge_state_path, bridge_state)
-        notes.append(
-            f"manager_bridge_state.json -> last_ticket_state={after_state}"
-        )
+        notes.append(f"manager_bridge_state.json -> last_ticket_state={after_state}")
 
     bridge_checkpoint_path = project_root / BRIDGE_CHECKPOINT_REL
     if bridge_checkpoint_path.exists():
@@ -419,17 +425,13 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
     else:
         print(f"[reconcile-ticket] ticket={result.ticket_id}")
-        print(f"[reconcile-ticket] before={result.before_state} after={result.after_state}")
+        print(
+            f"[reconcile-ticket] before={result.before_state} after={result.after_state}"
+        )
         if result.events_emitted:
-            print(
-                "[reconcile-ticket] events="
-                + ", ".join(result.events_emitted)
-            )
+            print("[reconcile-ticket] events=" + ", ".join(result.events_emitted))
         if result.cleaned_artifacts:
-            print(
-                "[reconcile-ticket] cleaned="
-                + ", ".join(result.cleaned_artifacts)
-            )
+            print("[reconcile-ticket] cleaned=" + ", ".join(result.cleaned_artifacts))
         for note in result.notes:
             print(f"[reconcile-ticket] note={note}")
     return 0
