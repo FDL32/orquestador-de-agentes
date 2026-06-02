@@ -29,7 +29,7 @@ Skill para ejecutar la batería de gates correspondiente al tipo de deliverable 
 
 | deliverable_type | Gates ejecutados |
 |---|---|
-| code | ruff + pytest-safe + pip-audit (condicional, invocado directo por el dispatcher) |
+| code | ruff + pytest-safe + pip-audit wrapper (condicional, invocado directo por el dispatcher) |
 | mixed | code gates + deliverable existence check |
 | documentation | deliverable existence check |
 | research | deliverable existence check |

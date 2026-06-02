@@ -43,7 +43,7 @@ Repo: https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main
 - `python .agent/agent_controller.py --validate --json --force` — drift detection.
 - `python scripts/run_pytest_safe.py` — test suite for current scope.
 - `ruff check . && ruff format .` — lint + format.
-- `uv run pip-audit .` — supply-chain audit.
+- `python scripts/pip_audit_project.py` — supply-chain audit from uv.lock.
 - `python scripts/build_llms.py` — regenerate this file + llms-full.txt.
 
 ## Forks
@@ -103,7 +103,7 @@ If you fork, override the URL base before regenerating: `LLMS_REPO_BASE=https://
 - Interaccion por terminal: `python scripts/ticket_supervisor.py --reactive`
 - Tests: `python scripts/run_pytest_safe.py`
 - Calidad: `ruff check . && ruff format .`
-- Auditoria de dependencias: `uv run pip-audit .`
+- Auditoria de dependencias: `python scripts/pip_audit_project.py`
 
 ## Convenciones
 

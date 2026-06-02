@@ -90,7 +90,7 @@ append `--project-root <destino>` to commands that operate on project state.
 - Interaccion por terminal: `python scripts/ticket_supervisor.py --reactive [--project-root <workspace>]`
 - Tests: `python scripts/run_pytest_safe.py [--project-root <workspace>]`
 - Calidad: `ruff check . && ruff format .`
-- Auditoria de dependencias: `uv run pip-audit .`
+- Auditoria de dependencias: `python scripts/pip_audit_project.py`
 - Archivar colaboracion: `python scripts/archive_collaboration_artifacts.py [--dry-run] [--project-root <workspace>]`
 
 ## Convenciones

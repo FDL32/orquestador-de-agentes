@@ -163,7 +163,7 @@ def build_index_block(base_url: str) -> str:
             "- `python .agent/agent_controller.py --validate --json --force` — drift detection.",
             "- `python scripts/run_pytest_safe.py` — test suite for current scope.",
             "- `ruff check . && ruff format .` — lint + format.",
-            "- `uv run pip-audit .` — supply-chain audit.",
+            "- `python scripts/pip_audit_project.py` — supply-chain audit from uv.lock.",
             "- `python scripts/build_llms.py` — regenerate this file + llms-full.txt.",
             "",
         ]
