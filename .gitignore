@@ -75,3 +75,5 @@ tests/sandbox/tmp*/
 
 # Requeue claims atomico (WT-2026-199, transitorio)
 .agent/runtime/requeue_claims/
+
+prompts/
