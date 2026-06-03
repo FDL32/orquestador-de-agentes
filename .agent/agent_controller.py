@@ -4341,8 +4341,6 @@ def _handle_main_action(
             project_map = scan_project(PROJECT_ROOT.resolve())
 
             # Write scanner output
-            import json
-
             output_path = context_dir / "project-map.json"
             output_path.write_text(
                 json.dumps(project_map, indent=2, ensure_ascii=False), encoding="utf-8"
