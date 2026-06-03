@@ -59,7 +59,7 @@ def _find_mojibake_snippets(text: str) -> list[str]:
         if ord(ch) not in SUSPICIOUS_CODEPOINTS:
             continue
         snippet = text[idx : idx + 4]
-        if any(ord(part) > 127 for part in snippet) and snippet not in snippets:
+        if snippet not in snippets:
             snippets.append(snippet)
     return snippets
 
