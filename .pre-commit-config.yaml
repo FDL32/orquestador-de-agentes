@@ -62,6 +62,13 @@ repos:
         pass_filenames: false
         stages: [pre-commit]
 
+      - id: check-encoding-guard
+        name: check encoding guard
+        entry: python scripts/check_encoding_guard.py
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
       # pip-audit: auditoria CVE desde uv.lock (todos los grupos).
       # El wrapper exporta uv.lock a requirements.txt temporal y llama pip-audit -r.
       # Garantia: audita la superficie real del proyecto, no el Python del sistema.

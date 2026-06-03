@@ -106,13 +106,13 @@ python -c "import yaml; yaml.safe_load(open('data/archivo.yaml', encoding='utf-8
 
 **Señales de alerta que requieren verificación adicional:**
 
-- Builder reporta **"ya exist?a"** o **"ya estaba hecho"** -> lee el archivo y verifica que el contenido cumple el criterio del plan exacto, no solo que algo con ese nombre existe.
+- Builder reporta **"ya existía"** o **"ya estaba hecho"** -> lee el archivo y verifica que el contenido cumple el criterio del plan exacto, no solo que algo con ese nombre existe.
 
-- Builder dice **"sin cambios necesarios"** -> verifica que el plan no requer?a algo diferente.
+- Builder dice **"sin cambios necesarios"** -> verifica que el plan no requería algo diferente.
 
 - El plan modificaba **N archivos del mismo tipo** y el log solo menciona uno -> verifica los N archivos individualmente.
 
-- El n?mero de tests **cambia >5%** -> investiga por qu?.
+- El número de tests **cambia >5%** -> investiga por qué.
 
 
 
@@ -120,27 +120,27 @@ Para cada archivo, verifica:
 
 
 
-| Verificación | ÿQué buscar? |
+| Verificación | ¿Qué buscar? |
 
 |--------------|--------------|
 
-| **Cumple plan** | ÿEl código hace exactamente lo que pide el plan, sin funciones extra no solicitadas? |
+| **Cumple plan** | ¿El código hace exactamente lo que pide el plan, sin funciones extra no solicitadas? |
 
-| **Consistencia de estado** | ÿLo que reporta `execution_log.md` coincide con lo que hay realmente en disco? |
+| **Consistencia de estado** | ¿Lo que reporta `execution_log.md` coincide con lo que hay realmente en disco? |
 
-| **Type hints** | ÿTodas las funciones tienen hints en argumentos y retorno? |
+| **Type hints** | ¿Todas las funciones tienen hints en argumentos y retorno? |
 
-| **Docstrings** | ÿFunciones y clases públicas tienen docstrings descriptivos? |
+| **Docstrings** | ¿Funciones y clases públicas tienen docstrings descriptivos? |
 
-| **Pathlib** | ÿSe usa `pathlib` de forma consistente para toda manipulación de rutas? |
+| **Pathlib** | ¿Se usa `pathlib` de forma consistente para toda manipulación de rutas? |
 
-| **Manejo errores** | ÿHay `try/except` con logs específicos? Prohibido `except: pass`. |
+| **Manejo errores** | ¿Hay `try/except` con logs específicos? Prohibido `except: pass`. |
 
-| **Secrets** | ÿNo hay API keys, passwords ni rutas absolutas locales hardcodeadas? |
+| **Secrets** | ¿No hay API keys, passwords ni rutas absolutas locales hardcodeadas? |
 
-| **Código muerto** | ÿSe eliminaron variables, imports y archivos `debug_*.py` temporales? |
+| **Código muerto** | ¿Se eliminaron variables, imports y archivos `debug_*.py` temporales? |
 
-| **Hub nodes** | Si existe `graphify-out/GRAPH_REPORT.md`, ÿlos archivos de alto grado tocados están mencionados en el log? |
+| **Hub nodes** | Si existe `graphify-out/GRAPH_REPORT.md`, ¿los archivos de alto grado tocados están mencionados en el log? |
 
 
 
@@ -202,7 +202,7 @@ python -c "import src"
 
 - [ ] Variables de entorno usadas vía `settings.py`
 
-- [ ] Patr?n cascada respetado (`privada/` -> `publica/`)
+- [ ] Patrón cascada respetado (`privada/` -> `publica/`)
 
 - [ ] `.gitignore` protege `privada/`, `.env`, `data/`
 
@@ -294,7 +294,7 @@ Si hay problemas graves (seguridad, arquitectura incorrecta):
 
 ```markdown
 
-### REV-[ID]: Revisi?n de [Plan ID]
+### REV-[ID]: Revisión de [Plan ID]
 
 - **Fecha:** [YYYY-MM-DD HH:MM]
 
@@ -342,7 +342,7 @@ Si hay problemas graves (seguridad, arquitectura incorrecta):
 
 ```markdown
 
-## [FECHA] Revisi?n Completa: Manager -> Builder
+## [FECHA] Revisión Completa: Manager -> Builder
 
 **Plan:** WP-XXX
 

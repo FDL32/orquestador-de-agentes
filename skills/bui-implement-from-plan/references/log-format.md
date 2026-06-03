@@ -24,7 +24,7 @@
 
 
 
-## Sesi?n N: YYYY-MM-DD HH:MM
+## Sesión N: YYYY-MM-DD HH:MM
 
 
 
@@ -110,4 +110,4 @@ $ python scripts/run_pytest_safe.py -- tests/ -v
 
 | BLOCKED | BLOQUEADO | Esperando Manager |
 
-| READY_FOR_REVIEW | LISTO | Listo para revisi?n |
+| READY_FOR_REVIEW | LISTO | Listo para revisión |
