@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fnmatch import fnmatch
+from functools import lru_cache
 from pathlib import Path
 
 
@@ -125,18 +126,24 @@ def is_allowlisted(relative: str) -> bool:
     return relative in ALLOWLIST
 
 
+@lru_cache(maxsize=1)
+def collect_files_to_check() -> tuple[Path, ...]:
+    files = {path for path in STATIC_FILES_TO_CHECK}
+    for pattern in GLOB_PATTERNS:
+        files.update(path for path in ROOT.glob(pattern) if path.is_file())
+    return tuple(sorted(path for path in files if not is_excluded(relative_path(path))))
+
+
+@lru_cache(maxsize=1)
+def collect_scope_set() -> frozenset[Path]:
+    return frozenset(collect_files_to_check())
+
+
 def is_in_scope(relative: str) -> bool:
     if is_excluded(relative):
         return False
     candidate = ROOT / relative
-    return candidate in set(collect_files_to_check())
-
-
-def collect_files_to_check() -> list[Path]:
-    files = {path for path in STATIC_FILES_TO_CHECK}
-    for pattern in GLOB_PATTERNS:
-        files.update(path for path in ROOT.glob(pattern) if path.is_file())
-    return sorted(path for path in files if not is_excluded(relative_path(path)))
+    return candidate in collect_scope_set()
 
 
 def load_text(path: Path) -> str:
