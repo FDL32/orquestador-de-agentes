@@ -86,7 +86,7 @@ try:
 
     process()
 
-except ValueError as e:  # Espec?fico
+except ValueError as e:  # Específico
 
     logger.error(e)
 
