@@ -79,7 +79,7 @@ def check_completion() -> dict[str, Any]:
 
 def show_completion_report(result: dict[str, Any]) -> None:
     """Muestra reporte de completitud de forma legible."""
-    emoji = "Ã¢Å“â€¦" if result["can_complete"] else "Ã¢Å¡Â Ã¯Â¸Â"
+    emoji = "[OK]" if result["can_complete"] else "[WARN]"
     status = "LISTO PARA COMPLETAR" if result["can_complete"] else "INCOMPLETO"
 
     print("\n" + "=" * 60)
@@ -92,7 +92,7 @@ def show_completion_report(result: dict[str, Any]) -> None:
         for item in result["missing"]:
             print(f"  - {item}")
     else:
-        print("\nÃ¢Å“â€¦ Todos los criterios cumplidos")
+        print("\n[OK] Todos los criterios cumplidos")
 
     print("=" * 60 + "\n")
 

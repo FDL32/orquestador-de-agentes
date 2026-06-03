@@ -2,8 +2,8 @@
 Extractor determinista de grafo de conocimiento para orquestador_de_agentes.
 
 Construye graphify-out/graph.json sin usar LLM:
-  - Archivos .py: extracciÃ³n AST (imports, clases, funciones)
-  - Archivos .md: extracciÃ³n de links Markdown [text](path)
+  - Archivos .py: extraccion AST (imports, clases, funciones)
+  - Archivos .md: extraccion de links Markdown [text](path)
 
 Uso:
     python scripts/update_project_map.py            # construir/actualizar
@@ -144,7 +144,7 @@ def rel(path: Path) -> str:
 
 
 # â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-# ExtracciÃ³n Python (AST)
+# Extraccion Python (AST)
 # â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 
@@ -164,7 +164,7 @@ def extract_py_links(path: Path) -> list[str]:
 
 
 # â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-# ExtracciÃ³n Markdown (links)
+# Extraccion Markdown (links)
 # â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 MD_LINK_RE = re.compile(r"\[.*?\]\((?!https?://)([^)]+)\)")
@@ -177,7 +177,7 @@ def extract_md_links(path: Path) -> list[str]:
         text = path.read_text(encoding="utf-8")
         for m in MD_LINK_RE.finditer(text):
             target = m.group(1)
-            # Ignorar enlaces vacÃ­os o con solo fragmento
+            # Ignorar enlaces vacios o con solo fragmento
             if target and not target.startswith("#"):
                 links.append(target)
     except Exception:  # noqa: S110
@@ -186,7 +186,7 @@ def extract_md_links(path: Path) -> list[str]:
 
 
 # â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-# ConstrucciÃ³n del grafo
+# Construccion del grafo
 # â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 
@@ -225,7 +225,7 @@ def build_graph() -> tuple[dict, dict]:
 
         # Convertir referencias a rutas relativas si es posible
         for ref in refs:
-            # Si el target estÃ¡ dentro del proyecto, normalizar
+            # Si el target esta dentro del proyecto, normalizar
             target_path = project_root / ref
             try:
                 if target_path.exists() and target_path.is_file():
@@ -320,7 +320,7 @@ def main() -> int:
         print(REPORT_FILE.read_text(encoding="utf-8"))
         return 0
 
-    # Modo solo actualizaciÃ³n incremental
+    # Modo solo actualizacion incremental
     only_update = "--update" in args
 
     # Cargar cache anterior
