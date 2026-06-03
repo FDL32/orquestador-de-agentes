@@ -128,7 +128,8 @@ def is_allowlisted(relative: str) -> bool:
 def is_in_scope(relative: str) -> bool:
     if is_excluded(relative):
         return False
-    return any(fnmatch(relative, pattern) for pattern in GLOB_PATTERNS)
+    candidate = ROOT / relative
+    return candidate in set(collect_files_to_check())
 
 
 def collect_files_to_check() -> list[Path]:
