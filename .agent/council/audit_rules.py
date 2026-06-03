@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from council.verdict import CouncilDecision
+
 
 @dataclass
 class RepairBudget:
@@ -30,13 +32,18 @@ def should_human_gate(report: Any, budget: RepairBudget) -> bool:
         return True
 
     # Gate if decision is HUMAN_GATE
-    return bool(hasattr(report, "decision") and str(report.decision) == "HUMAN_GATE")
+    return bool(
+        hasattr(report, "decision") and report.decision == CouncilDecision.HUMAN_GATE
+    )
 
 
 def should_retry(report: Any, budget: RepairBudget) -> bool:
     """Determine if retry is appropriate based on report and budget."""
     # Only retry if decision is REPAIR_REQUIRED
-    if not hasattr(report, "decision") or str(report.decision) != "REPAIR_REQUIRED":
+    if (
+        not hasattr(report, "decision")
+        or report.decision != CouncilDecision.REPAIR_REQUIRED
+    ):
         return False
 
     # Don't retry if max attempts reached
