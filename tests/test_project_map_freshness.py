@@ -58,46 +58,15 @@ class TestProjectMapExistence:
     def test_report_no_mojibake(self):
         """GRAPH_REPORT.md no contiene secuencias mojibake (UTF-8 mal interpretado)."""
         content = REPORT_FILE.read_text(encoding="utf-8")
+        # Use escapes so the detector itself stays stable even if an editor
+        # saves this test file with a bad encoding on Windows.
         mojibake_patterns = [
-            "â€",
-            "Ã",
-            "Â¡",
-            "Â¢",
-            "Â£",
-            "Â¤",
-            "Â¥",
-            "Â¦",
-            "Â§",
-            "Â¨",
-            "Â©",
-            "Â«",
-            "Â¬",
-            "Â®",
-            "Â¯",
-            "Â°",
-            "Â±",
-            "Â²",
-            "Â³",
-            "Â´",  # noqa: RUF001
-            "Âµ",
-            "Â¶",
-            "Â·",
-            "Â¸",  # noqa: RUF001
-            "Â¹",
-            "Âº",
-            "Â»",
-            "Â¼",
-            "Â½",
-            "Â¾",
-            "Â¿",
-            "Ã€",
-            "Ã",
-            "Ã‚",  # noqa: RUF001
-            "Ãƒ",
-            "Ã„",
-            "Ã…",
-            "Ã†",
-            "Ã‡",
+            "\u00c3\u00a2\u00e2\u201a\u00ac",
+            "\u00c3",
+            "\u00c2",
+            "\u00e2\u20ac",
+            "\u00e2\u20ac\u201d",
+            "\u00e2\u20ac\u00a2",
         ]
         found = [p for p in mojibake_patterns if p in content]
         assert not found, f"Mojibake detected in report: {found}"
