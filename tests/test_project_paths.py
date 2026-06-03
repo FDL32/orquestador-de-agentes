@@ -3,14 +3,8 @@
 Unit tests for project_paths.py
 """
 
-import shutil
 import sys
-import time
-import uuid
-from contextlib import contextmanager
 from pathlib import Path
-
-import pytest
 
 
 # Add agent_system to path
@@ -19,64 +13,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "agent_system"))
 from scripts.project_paths import ProjectPathsResolver
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-REPO_AGENT_DIR = PROJECT_ROOT / ".agent"
-
-
 def _make_agent_dir(base: Path) -> Path:
     agent_dir = base / ".agent"
     agent_dir.mkdir(parents=True, exist_ok=True)
     (agent_dir / "agent_controller.py").touch()
     return agent_dir
-
-
-def _restore_backup_agent_dir(backup_dir: Path) -> None:
-    """Restore .agent directory from backup with retries."""
-    for attempt in range(3):
-        if _try_restore_backup_agent_dir(backup_dir):
-            return
-        time.sleep(0.1 * (attempt + 1))
-    # Fallback: copy if rename failed
-    if backup_dir.exists() and not REPO_AGENT_DIR.exists():
-        shutil.copytree(backup_dir, REPO_AGENT_DIR, dirs_exist_ok=True)
-    shutil.rmtree(backup_dir, ignore_errors=True)
-
-
-def _try_restore_backup_agent_dir(backup_dir: Path) -> bool:
-    """Try restoring .agent with a single rename attempt."""
-    try:
-        if REPO_AGENT_DIR.exists():
-            shutil.rmtree(REPO_AGENT_DIR, ignore_errors=True)
-        backup_dir.rename(REPO_AGENT_DIR)
-        return True
-    except PermissionError:
-        return False
-
-
-@contextmanager
-def _hide_repo_agent_dir():
-    if not REPO_AGENT_DIR.exists():
-        yield
-        return
-
-    backup_dir = REPO_AGENT_DIR.with_name(
-        f".agent.__hidden_for_tests__{uuid.uuid4().hex}"
-    )
-    REPO_AGENT_DIR.rename(backup_dir)
-    try:
-        yield
-    finally:
-        if REPO_AGENT_DIR.exists():
-            shutil.rmtree(REPO_AGENT_DIR, ignore_errors=True)
-        if backup_dir.exists():
-            _restore_backup_agent_dir(backup_dir)
-
-
-@pytest.fixture(autouse=True)
-def isolate_repo_agent_dir():
-    """Hide the real repo .agent tree so these tests only see their fixture tree."""
-    with _hide_repo_agent_dir():
-        yield
 
 
 class TestProjectPathsResolver:
