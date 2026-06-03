@@ -1587,7 +1587,7 @@ def _validate_turn_file() -> list[str]:
     errors = []
     content = read_file(TURN_FILE)
     if content and "## Agente Activo" not in content:
-        errors.append("Falta secciÃƒÂ³n '## Agente Activo'")
+        errors.append("Falta seccion '## Agente Activo'")
     return errors
 
 

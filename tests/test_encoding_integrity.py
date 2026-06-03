@@ -19,6 +19,11 @@ MOJIBAKE_MARKERS = [
 ]
 
 FILES_TO_CHECK = [
+    ROOT / "prompts" / "memory_upload.md",
+    ROOT / "prompts" / "session_bootstrap.md",
+    AGENT_DIR / "agent_controller.py",
+    AGENT_DIR / "completion_checker.py",
+    ROOT / "scripts" / "update_project_map.py",
     AGENT_DIR / "README.md",
     AGENT_DIR / "hooks" / "stop_hook.py",
     AGENT_DIR / "completion_common.py",
