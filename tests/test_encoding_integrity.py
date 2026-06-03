@@ -8,15 +8,14 @@ import pytest
 ROOT = Path(__file__).parent.parent
 AGENT_DIR = ROOT / ".agent"
 
-# Broad mojibake markers from UTF-8 text interpreted as Latin-1/Win-1252.
-MOJIBAKE_MARKERS = [
-    "\u00c3",
-    "\u00c2",
-    "\u00e2\u0080",
-    "\u00e2\u009d",
-    "\u00f0\u009f",
-    "\u0102",
-]
+SUSPICIOUS_CODEPOINTS = {
+    0x00C3,  # ?
+    0x00C2,  # ?
+    0x00E2,  # ?
+    0x00F0,  # ?
+    0x0102,  # ?
+    0xFFFD,  # replacement char
+}
 
 FILES_TO_CHECK = [
     ROOT / "prompts" / "memory_upload.md",
@@ -54,13 +53,22 @@ FILES_TO_CHECK = [
 ]
 
 
+def _find_mojibake_snippets(text: str) -> list[str]:
+    snippets: list[str] = []
+    for idx, ch in enumerate(text):
+        if ord(ch) not in SUSPICIOUS_CODEPOINTS:
+            continue
+        snippet = text[idx : idx + 4]
+        if any(ord(part) > 127 for part in snippet) and snippet not in snippets:
+            snippets.append(snippet)
+    return snippets
+
+
 @pytest.mark.parametrize("file_path", FILES_TO_CHECK)
 def test_no_mojibake_in_file(file_path):
     if not file_path.exists():
         pytest.skip(f"File {file_path} does not exist")
 
     content = file_path.read_text(encoding="utf-8")
-    for marker in MOJIBAKE_MARKERS:
-        assert marker not in content, (
-            f"Mojibake marker {marker!r} detected in {file_path.name}"
-        )
+    snippets = _find_mojibake_snippets(content)
+    assert not snippets, f"Mojibake detected in {file_path.name}: {snippets[:12]}"

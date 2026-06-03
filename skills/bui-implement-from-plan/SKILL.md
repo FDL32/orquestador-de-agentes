@@ -36,7 +36,7 @@ Skill para implementar código según un plan de trabajo aprobado.
 
 
 
-Cuando el Manager marca un plan como `ðŸŸ¢ APPROVED`, el Builder usa esta skill para:
+Cuando el Manager marca un plan como `APPROVED`, el Builder usa esta skill para:
 
 1. Leer y entender el plan completo
 
@@ -104,9 +104,9 @@ En `work_plan.md`, buscar:
 
 Antes de implementar:
 
-- [ ] Plan está `ðŸŸ¢ APPROVED` (no `DRAFT` o `IN_PLANNING`)
+- [ ] Plan est? `APPROVED` (no `DRAFT` o `IN_PLANNING`)
 
-- [ ] No hay tareas `ðŸ‘¤ USUARIO` pendientes en esta fase
+- [ ] No hay tareas `USUARIO` pendientes en esta fase
 
 - [ ] Entiendo qué debo hacer (criterio de aceptación claro)
 
@@ -124,7 +124,7 @@ Ver `references/code-rules.md` para detalles completos.
 
 
 
-| Regla | Ejemplo | ÝŒ Incorrecto | âœ… Correcto |
+| Regla | Ejemplo | Incorrecto | Correcto |
 
 |-------|---------|---------------|-------------|
 
@@ -232,7 +232,7 @@ Antes de documentar la tarea como completada, ejecuta el skill `bui-self-audit`.
 
 ```markdown
 
-### âœ… [FECHA] - [Nombre Tarea]
+### [OK] [FECHA] - [Nombre Tarea]
 
 - **Archivo:** `src/[archivo].py`
 
@@ -326,11 +326,11 @@ python .agent/agent_controller.py --mark-ready --project-root <workspace> --json
 
 |--------|-----------|--------|
 
-| ðŸŸ¢ Bajo | 3+ intentos fallidos | Escalar |
+| Bajo | 3+ intentos fallidos | Escalar |
 
-| ðŸŸ¡ Medio | 2+ intentos fallidos | Escalar |
+| Medio | 2+ intentos fallidos | Escalar |
 
-| ðŸ”´ Alto | 1 intento fallido | Escalar inmediatamente |
+| Alto | 1 intento fallido | Escalar inmediatamente |
 
 | Cualquiera | 30+ min bloqueado | Escalar |
 
@@ -342,7 +342,7 @@ python .agent/agent_controller.py --mark-ready --project-root <workspace> --json
 
 2. Añadir a `review_queue.md` con formato de escalación
 
-3. Cambiar estado a `ðŸŸ  BLOCKED`
+3. Cambiar estado a `BLOCKED`
 
 4. Informar al usuario
 
