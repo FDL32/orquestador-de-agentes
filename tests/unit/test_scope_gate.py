@@ -13,9 +13,8 @@ _AGENT_DIR = _PROJECT_ROOT / ".agent"
 if str(_AGENT_DIR) not in sys.path:
     sys.path.insert(0, str(_AGENT_DIR))
 
-_MOTOR_ROOT = _PROJECT_ROOT.resolve()
-
 from agent_controller import (  # noqa: E402
+    PROJECT_ROOT,
     _exclude_files,
     _handle_mark_ready,
     _scope_gate_allows_close,
@@ -23,6 +22,10 @@ from agent_controller import (  # noqa: E402
     get_changed_files,
     parse_files_likely_touched,
 )
+
+
+# Use the same PROJECT_ROOT as the implementation resolves at runtime
+_MOTOR_ROOT = PROJECT_ROOT.resolve()
 
 
 class TestParseFilesLikelyTouched:
