@@ -17,7 +17,7 @@ Migra un proyecto Python existente a la arquitectura de seguridad privada/public
 
 ## Overview
 
-Convierte un proyecto con credenciales expuestas a uno seguro con separaciÃ³n privada/publica.
+Convierte un proyecto con credenciales expuestas a uno seguro con separación privada/publica.
 
 ## Workflow
 
@@ -38,33 +38,33 @@ find . -name "*.env" -o -name "config.json" -o -name "credentials*"
 
 ```
 proyecto/
-â”œâ”€â”€ privada/              # â›” NUNCA commitear
-â”‚   â”œâ”€â”€ .env
-â”‚   â”œâ”€â”€ config.json
-â”‚   â””â”€â”€ credentials.json
-â”‚
-â””â”€â”€ publica/
-    â””â”€â”€ repo/             # âœ… Workspace agentes
-        â”œâ”€â”€ src/
-        â”œâ”€â”€ tests/
-        â””â”€â”€ .env.example
+├── privada/              # ⛔ NUNCA commitear
+│   ├── .env
+│   ├── config.json
+│   └── credentials.json
+│
+└── publica/
+    └── repo/             # ✅ Workspace agentes
+        ├── src/
+        ├── tests/
+        └── .env.example
 ```
 
-### Paso 3: Migrar Secrets (ðŸ‘¤ Usuario)
+### Paso 3: Migrar Secrets (👤 Usuario)
 
 Instruir al usuario:
 ```markdown
-## AcciÃ³n Requerida (Usuario)
+## Acción Requerida (Usuario)
 
 Mover archivos sensibles a `privada/`:
 
-1. Copiar `.env` â†’ `privada/.env`
-2. Copiar `config.json` â†’ `privada/config.json`
+1. Copiar `.env` → `privada/.env`
+2. Copiar `config.json` → `privada/config.json`
 3. Eliminar originales de `publica/repo/`
 4. Crear versiones `.example` sin valores reales
 ```
 
-### Paso 4: Implementar ConfiguraciÃ³n
+### Paso 4: Implementar Configuración
 
 Crear `src/config.py`:
 ```python
@@ -79,7 +79,7 @@ OUTPUT_DIR = ROOT_DIR / "output"
 LOGS_DIR = ROOT_DIR / "logs"
 ```
 
-Crear `src/settings.py` con bÃºsqueda en cascada (ver reference).
+Crear `src/settings.py` con búsqueda en cascada (ver reference).
 
 ### Paso 5: Actualizar .gitignore
 
@@ -101,7 +101,7 @@ __pycache__/
 ### Paso 6: Verificar
 
 ```bash
-# Verificar que privada/ no estÃ¡ trackeada
+# Verificar que privada/ no está trackeada
 git status | grep privada  # No debe mostrar nada
 
 # Verificar que .env.example existe
@@ -114,15 +114,15 @@ ls -la publica/repo/.env.example
 - `config.py` y `settings.py` implementados
 - `.gitignore` actualizado
 - Archivos `.example` creados
-- Instrucciones al usuario para migraciÃ³n
+- Instrucciones al usuario para migración
 
 ## References
 
-- `references/security-checklist.md` - Checklist de auditorÃ­a
-- `references/cascade-config-pattern.md` - CÃ³digo de config/settings
+- `references/security-checklist.md` - Checklist de auditoría
+- `references/cascade-config-pattern.md` - Código de config/settings
 
 ## Constraints
 
-- **NO** mover archivos de `privada/` automÃ¡ticamente (usuario lo hace)
-- **NO** dejar secrets en cÃ³digo despuÃ©s de la migraciÃ³n
+- **NO** mover archivos de `privada/` automáticamente (usuario lo hace)
+- **NO** dejar secrets en código después de la migración
 - **SIEMPRE** crear archivos `.example`

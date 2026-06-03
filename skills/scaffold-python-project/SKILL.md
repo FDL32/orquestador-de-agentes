@@ -17,7 +17,7 @@ Crea un proyecto Python nuevo desde cero con estructura segura y moderna.
 
 ## Overview
 
-Genera estructura completa: directorios, archivos de configuraciÃ³n, y setup inicial.
+Genera estructura completa: directorios, archivos de configuración, y setup inicial.
 
 ## Workflow
 
@@ -30,14 +30,14 @@ mkdir -p proyecto/{privada,publica/repo/{src,tests,data,output,logs,tools}}
 Estructura resultante:
 ```
 proyecto/
-â”œâ”€â”€ privada/              # Credenciales (fuera del workspace)
-â””â”€â”€ publica/repo/         # Workspace del agente
-    â”œâ”€â”€ src/              # CÃ³digo fuente
-    â”œâ”€â”€ tests/            # Tests pytest
-    â”œâ”€â”€ data/             # Datos de entrada
-    â”œâ”€â”€ output/           # Resultados
-    â”œâ”€â”€ logs/             # Logs de ejecuciÃ³n
-    â””â”€â”€ tools/            # Scripts auxiliares
+├── privada/              # Credenciales (fuera del workspace)
+└── publica/repo/         # Workspace del agente
+    ├── src/              # Código fuente
+    ├── tests/            # Tests pytest
+    ├── data/             # Datos de entrada
+    ├── output/           # Resultados
+    ├── logs/             # Logs de ejecución
+    └── tools/            # Scripts auxiliares
 ```
 
 ### Paso 2: Inicializar con uv
@@ -136,7 +136,7 @@ python tools/pre_commit_check.py
 
 Proyecto listo para:
 - Desarrollo seguro (privada/publica)
-- GestiÃ³n con uv
+- Gestión con uv
 - Testing con pytest
 - Linting con ruff
 - Logging con loguru

@@ -1,4 +1,4 @@
-﻿# AnatomÃ­a de un SKILL.md
+# Anatomía de un SKILL.md
 
 ## Estructura General
 
@@ -6,7 +6,7 @@
 ---
 name: nombre-skill
 version: 1.0.0
-description: DescripciÃ³n clara
+description: Descripción clara
 author: agent-system
 tags: [tag1, tag2]
 ---
@@ -14,7 +14,7 @@ tags: [tag1, tag2]
 # nombre-skill
 
 ## Overview
-Contexto y propÃ³sito (2-3 lÃ­neas).
+Contexto y propósito (2-3 líneas).
 
 ## Workflow
 Pasos numerados claros.
@@ -31,19 +31,19 @@ Reglas que NO deben romperse.
 
 ## Frontmatter Obligatorio
 
-| Campo | DescripciÃ³n | Ejemplo |
+| Campo | Descripción | Ejemplo |
 |-------|-------------|---------|
 | name | Nombre kebab-case | `man-review-code` |
 | version | Semver | `1.0.0` |
-| description | Una lÃ­nea clara | `Revisar cÃ³digo del Builder` |
+| description | Una línea clara | `Revisar código del Builder` |
 | author | Creador | `agent-system` |
-| tags | CategorÃ­as | `[manager, review]` |
+| tags | Categorías | `[manager, review]` |
 
 ## Body: Secciones Requeridas
 
-1. **Overview** - Contexto y propÃ³sito
+1. **Overview** - Contexto y propósito
 2. **Workflow** - Pasos numerados
-3. **Output Format** - QuÃ© produce
+3. **Output Format** - Qué produce
 4. **References** - Links a docs
 5. **Constraints** - Reglas estrictas
 
@@ -51,9 +51,9 @@ Reglas que NO deben romperse.
 
 ```
 Frontmatter (metadata)
-    â†“
+    ↓
 Body (instrucciones)
-    â†“
+    ↓
 References (detalles)
 ```
 

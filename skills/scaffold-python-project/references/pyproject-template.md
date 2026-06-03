@@ -4,7 +4,7 @@
 [project]
 name = "mi-proyecto"
 version = "0.1.0"
-description = "DescripciÃ³n del proyecto"
+description = "Descripción del proyecto"
 requires-python = ">=3.10"
 dependencies = [
     "loguru>=0.7.0",

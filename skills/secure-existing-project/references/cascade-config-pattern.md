@@ -1,4 +1,4 @@
-﻿# PatrÃ³n de ConfiguraciÃ³n en Cascada
+# Patrón de Configuración en Cascada
 
 ## config.py
 

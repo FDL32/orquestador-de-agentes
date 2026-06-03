@@ -3,7 +3,7 @@
 ## Metadata
 - **ID:** CLOSE-[YYYY]-[NNN]
 - **Tipo:** FINALIZATION
-- **Estado:** ðŸŸ¡ IN_PLANNING
+- **Estado:** 🟡 IN_PLANNING
 - **Modo:** DELIVERY / RELEASE / HANDOFF / ARCHIVE
 - **Creado:** [FECHA]
 - **Aprobaciones requeridas:** [borrados / bump / tag / archive]
