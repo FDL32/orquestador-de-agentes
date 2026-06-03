@@ -94,7 +94,7 @@ class TestStatePersistence:
 
         assert state_data["ticket_id"] == "TEST-001"
         assert state_data["phase"] == "TEST_PHASE"
-        assert state_data["decision"] == "READY_FOR_HUMAN_REVIEW"
+        assert state_data["decision"] == "ready_for_human_review"
 
 
 class TestSynthesisLogic:
@@ -187,4 +187,4 @@ class TestBrokerFlow:
         broker._write_state(report)
         assert broker.state_path.exists()
         state_content = broker.state_path.read_text()
-        assert "READY_FOR_HUMAN_REVIEW" in state_content
+        assert "ready_for_human_review" in state_content

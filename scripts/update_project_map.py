@@ -268,11 +268,11 @@ def generate_report(graph: dict) -> str:
     for pair, count in top_edges:
         edge_lines.append(f"  - `{pair}` ({count}x)")
 
-    report = f"""# Graphify Report â€" {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}
+    report = f"""# Graphify Report - {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}
 
 **Corpus:** orquestador_de_agentes
 
-## EstadÃ­sticas
+## Estadisticas
 
 - Nodos totales: {stats["total_nodes"]}
   - Python: {stats["py_files"]}
@@ -283,7 +283,7 @@ def generate_report(graph: dict) -> str:
 
 {chr(10).join(file_lines[:200])}
 
-## Top 50 Enlaces (mÃ¡s referenciados)
+## Top 50 Enlaces (mas referenciados)
 
 {chr(10).join(edge_lines[:50])}
 
@@ -291,7 +291,7 @@ def generate_report(graph: dict) -> str:
 
 Graphify se ejecuta **manualmente** antes de:
   - Releases / tags
-  - AuditorÃ­as de seguridad
+  - Auditorias de seguridad
   - Copias de la plantilla a nuevos proyectos
   - Revisiones de arquitectura importante
 
