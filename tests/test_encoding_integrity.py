@@ -6,6 +6,7 @@ from scripts.encoding_guard import (
     ROOT,
     collect_files_to_check,
     file_issues,
+    is_in_scope,
     relative_path,
 )
 
@@ -42,3 +43,23 @@ def test_known_dirty_files_still_need_cleanup(relative):
     assert mojibake or q_in_word, (
         f"Allowlist entry is now clean and should be removed: {relative}"
     )
+
+
+CORE_SCOPE_REGRESSION = [
+    ".agent/agent_controller.py",
+    ".agent/completion_checker.py",
+    "scripts/update_project_map.py",
+    "scripts/orquestador.py",
+    "runtime/ui_state_projector.py",
+    "bus/event_bus.py",
+    "scripts/check_encoding_guard.py",
+]
+
+
+@pytest.mark.parametrize("relative", CORE_SCOPE_REGRESSION)
+def test_hook_scope_matches_test_scope_for_core_files(relative):
+    file_path = ROOT / relative
+    assert file_path in FILES_TO_CHECK, (
+        f"Regression fixture missing from test scope: {relative}"
+    )
+    assert is_in_scope(relative), f"Hook scope should include: {relative}"
