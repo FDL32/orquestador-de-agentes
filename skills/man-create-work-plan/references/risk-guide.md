@@ -1,24 +1,24 @@
-﻿# GuÃ­a de Riesgo
+# Guía de Riesgo
 
-## ðŸŸ¢ Bajo (3 intentos)
+## 🟢 Bajo (3 intentos)
 
-**CaracterÃ­sticas:** Tarea rutinaria, bajo impacto, reversible
+**Características:** Tarea rutinaria, bajo impacto, reversible
 
 **Ejemplos:** Crear archivos, copiar templates, tests simples
 
 ---
 
-## ðŸŸ¡ Medio (2 intentos)
+## 🟡 Medio (2 intentos)
 
-**CaracterÃ­sticas:** Requiere atenciÃ³n, impacto moderado
+**Características:** Requiere atención, impacto moderado
 
-**Ejemplos:** Modificar lÃ³gica, cambios en funciones core, integraciones
+**Ejemplos:** Modificar lógica, cambios en funciones core, integraciones
 
 ---
 
-## ðŸ”´ Alto (1 intento â†’ escalar)
+## 🔴 Alto (1 intento → escalar)
 
-**CaracterÃ­sticas:** CrÃ­tica, cambio estructural
+**Características:** Crítica, cambio estructural
 
 **Ejemplos:** Arquitectura de seguridad, migraciones complejas
 
@@ -28,5 +28,5 @@
 
 | Icono | Ejecutor | Uso |
 |-------|----------|-----|
-| ðŸ¤– | Builder | CÃ³digo/Tests/DocumentaciÃ³n |
-| ðŸ‘¤ | Usuario | Credenciales/Decisiones de negocio |
+| 🤖 | Builder | Código/Tests/Documentación |
+| 👤 | Usuario | Credenciales/Decisiones de negocio |
