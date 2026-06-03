@@ -1,7 +1,7 @@
 ---
 name: code-audit
 version: 2.0.0
-description: AuditorÃ­a sistemÃ¡tica de cÃ³digo Python detectando dead code, technical debt, y archivos inactivos usando vulture, deadcode, ruff y git log
+description: Auditoría sistemática de código Python detectando dead code, technical debt, y archivos inactivos usando vulture, deadcode, ruff y git log
 triggers: [/code-audit, code-quality, /deadcode]
 author: agent
 role: shared
@@ -13,15 +13,15 @@ tags: [core, system]
 
 # code-audit
 
-Skill para ejecutar auditorÃ­a completa del codebase identificando cÃ³digo muerto, deuda tÃ©cnica y patrones problemÃ¡ticos.
+Skill para ejecutar auditoría completa del codebase identificando código muerto, deuda técnica y patrones problemáticos.
 
 ## Overview
 
-La auditorÃ­a realiza anÃ¡lisis estÃ¡tico multi-herramienta combinando:
-- **vulture**: DetecciÃ³n de sÃ­mbolos no utilizados (confidence >= 80)
-- **deadcode**: AnÃ¡lisis de flujo para cÃ³digo realmente muerto
-- **ruff**: Deuda tÃ©cnica (complejidad ciclomÃ¡tica C90, cÃ³digo antiguo ERA, simplificaciones SIM)
-- **git log**: AntigÃ¼edad de archivos (commit count para categorizar abandono)
+La auditoría realiza análisis estático multi-herramienta combinando:
+- **vulture**: Detección de símbolos no utilizados (confidence >= 80)
+- **deadcode**: Análisis de flujo para código realmente muerto
+- **ruff**: Deuda técnica (complejidad ciclomática C90, código antiguo ERA, simplificaciones SIM)
+- **git log**: Antigüedad de archivos (commit count para categorizar abandono)
 
 ## Workflow
 
@@ -43,25 +43,25 @@ Ruff executed successfully
 Health check passed: all tools executed successfully
 ```
 
-**Si falla:** Verificar que las herramientas estÃ¡n instaladas con `uv sync`.
+**Si falla:** Verificar que las herramientas están instaladas con `uv sync`.
 
-### Paso 2: Ejecutar AuditorÃ­a Completa
+### Paso 2: Ejecutar Auditoría Completa
 
 ```bash
 python scripts/audit_codebase.py --report
 ```
 
 Este comando ejecuta los 4 analizadores:
-1. **Vulture** (subprocess CLI) â€” sÃ­mbolos no referenciados
-2. **Deadcode** (importado como librerÃ­a) â€” anÃ¡lisis de uso real
-3. **Ruff** (subprocess CLI) â€” complejidad y deuda tÃ©cnica
-4. **Git Log** (subprocess) â€” antigÃ¼edad de cambios
+1. **Vulture** (subprocess CLI) — símbolos no referenciados
+2. **Deadcode** (importado como librería) — análisis de uso real
+3. **Ruff** (subprocess CLI) — complejidad y deuda técnica
+4. **Git Log** (subprocess) — antigüedad de cambios
 
 **Salida esperada:**
 ```
 Running full audit...
 Vulture executed successfully (output not captured due to Windows encoding issues)
-Error running deadcode: ...  (tolerable si hay librerÃ­as externas sin AST)
+Error running deadcode: ...  (tolerable si hay librerías externas sin AST)
 Ruff executed successfully
 Audit complete.
 Report generated: .session/audit_report.md
@@ -77,38 +77,38 @@ cat .session/audit_report.md | head -50
 
 Estructura de tabla:
 
-| Archivo | LÃ­neas | Herramienta | Tipo | LÃ­nea | SÃ­mbolo | Usos | Commits | AcciÃ³n |
+| Archivo | Líneas | Herramienta | Tipo | Línea | Símbolo | Usos | Commits | Acción |
 |---------|--------|-------------|------|-------|---------|------|---------|--------|
 | `src/foo.py` | 145 | deadcode | function | 23 | `unused_helper` | 0 | 3 | LEGACY |
 | `src/bar.py` | 89 | ruff | lint | 12 | C901 | 1 | 15 | SMELL |
 
 **Columnas:**
-- **AcciÃ³n**: CategorizaciÃ³n automÃ¡tica (DEAD, LEGACY, ABANDONED, SMELL)
+- **Acción**: Categorización automática (DEAD, LEGACY, ABANDONED, SMELL)
 - **Commits**: Cantidad de commits que tocaron ese archivo
-- **Usos**: NÃºmero de referencias encontradas (0 = unused)
+- **Usos**: Número de referencias encontradas (0 = unused)
 
 ### Paso 4: Categorizar Hallazgos
 
 **DEAD** (commits=0):
-- CÃ³digo nunca commiteado o muy reciente
-- AcciÃ³n: Eliminar inmediatamente
+- Código nunca commiteado o muy reciente
+- Acción: Eliminar inmediatamente
 
 **ABANDONED** (0 < commits < 5):
-- CÃ³digo antiguo, pocos cambios, sin uso detectado
-- AcciÃ³n: Revisar + eliminar despuÃ©s de anÃ¡lisis manual
+- Código antiguo, pocos cambios, sin uso detectado
+- Acción: Revisar + eliminar después de análisis manual
 
 **LEGACY** (commits >= 5):
-- CÃ³digo histÃ³rico con cambios mÃºltiples pero sin uso actual
-- AcciÃ³n: Refactorizar o encapsular (podrÃ­a ser API pÃºblica)
+- Código histórico con cambios múltiples pero sin uso actual
+- Acción: Refactorizar o encapsular (podría ser API pública)
 
 **SMELL** (ruff findings):
-- Deuda tÃ©cnica: complejidad alta, cÃ³digo antiguo, oportunidades de simplificaciÃ³n
-- AcciÃ³n: Mejorar gradualmente en siguiente refactor
+- Deuda técnica: complejidad alta, código antiguo, oportunidades de simplificación
+- Acción: Mejorar gradualmente en siguiente refactor
 
-### Paso 5: Filtrar por AcciÃ³n
+### Paso 5: Filtrar por Acción
 
 ```bash
-# Ver solo cÃ³digo DEAD
+# Ver solo código DEAD
 grep "| DEAD$" .session/audit_report.md
 
 # Ver solo problemas de ruff (SMELL)
@@ -122,22 +122,22 @@ grep "| ABANDONED$" .session/audit_report.md | head -20
 
 Para cada hallazgo significativo:
 
-1. **DEAD** â†’ Eliminar del cÃ³digo
-2. **ABANDONED con 0 commits** â†’ Eliminar
-3. **ABANDONED con 1-4 commits** â†’ Validar manualmente antes de eliminar
-4. **LEGACY** â†’ Revisar con el equipo (podrÃ­a ser API interna)
-5. **SMELL** â†’ Agendar refactor gradual
+1. **DEAD** → Eliminar del código
+2. **ABANDONED con 0 commits** → Eliminar
+3. **ABANDONED con 1-4 commits** → Validar manualmente antes de eliminar
+4. **LEGACY** → Revisar con el equipo (podría ser API interna)
+5. **SMELL** → Agendar refactor gradual
 
 Documentar decisiones en `execution_log.md`:
 
 ```markdown
-### Code Audit Results â€” [FECHA]
+### Code Audit Results — [FECHA]
 
 **Hallazgos procesados:**
 - DEAD items: X (todos eliminados)
 - ABANDONED items: Y (revisados, Z eliminados)
 - LEGACY items: W (refactor agendado / API interna confirmada)
-- SMELL items: V (deuda tÃ©cnica acumulada)
+- SMELL items: V (deuda técnica acumulada)
 
 **Acciones tomadas:**
 - [ ] Eliminados archivos DEAD
@@ -150,43 +150,43 @@ Documentar decisiones en `execution_log.md`:
 
 ### Reporte Markdown (.session/audit_report.md)
 
-Tabla ordenada por archivo + lÃ­nea:
+Tabla ordenada por archivo + línea:
 
 ```markdown
 # Audit Report
 
-| Archivo | LÃ­neas | Herramienta | Tipo | LÃ­nea | SÃ­mbolo | Usos | Commits | AcciÃ³n |
+| Archivo | Líneas | Herramienta | Tipo | Línea | Símbolo | Usos | Commits | Acción |
 |---------|--------|-------------|------|-------|---------|------|---------|--------|
 ...
 ```
 
-**Filas totales:** TÃ­picamente 100-2000 dependiendo del codebase.
+**Filas totales:** Típicamente 100-2000 dependiendo del codebase.
 
-### CategorizaciÃ³n
+### Categorización
 
 ```
 DEAD      = sin uso + sin commits (eliminar)
 ABANDONED = sin uso + 0-5 commits (revisar + eliminar)
 LEGACY    = sin uso + 5+ commits (revisar con equipo)
-SMELL     = ruff findings (deuda tÃ©cnica)
+SMELL     = ruff findings (deuda técnica)
 ```
 
 ## References
 
-- `references/audit-report-template.md` â€” Plantilla para decisiones por hallazgo
-- `references/audit-tools-guide.md` â€” Umbrales y configuraciÃ³n de cada herramienta
-- `scripts/audit_codebase.py` â€” Script orquestador (descripciÃ³n de herramientas y parÃ¡metros)
+- `references/audit-report-template.md` — Plantilla para decisiones por hallazgo
+- `references/audit-tools-guide.md` — Umbrales y configuración de cada herramienta
+- `scripts/audit_codebase.py` — Script orquestador (descripción de herramientas y parámetros)
 
 ## Constraints
 
 ### Herramientas y Umbrales
 
-| Herramienta | ParÃ¡metro | Valor | RazÃ³n |
+| Herramienta | Parámetro | Valor | Razón |
 |-------------|-----------|-------|-------|
-| vulture | `--min-confidence` | 80 | Evitar false positives en parÃ¡metros opcionales |
+| vulture | `--min-confidence` | 80 | Evitar false positives en parámetros opcionales |
 | deadcode | `--exclude` | `venv,.venv,__pycache__,.git,agent_system,.agent` | Ignorar venv, cache y frameworks |
-| ruff | extends | `C90, ERA, SIM` | Complejidad, cÃ³digo antiguo, simplificaciones |
-| git | log | `--oneline --follow` | Rastrear antigÃ¼edad del cÃ³digo |
+| ruff | extends | `C90, ERA, SIM` | Complejidad, código antiguo, simplificaciones |
+| git | log | `--oneline --follow` | Rastrear antigüedad del código |
 
 ### Exclusiones
 
@@ -195,27 +195,27 @@ exclude = 'venv,.venv,__pycache__,.git,agent_system,.agent'
 ```
 
 Se ignoran deliberadamente:
-- **venv/.venv** â€” Dependencias aisladas
-- **__pycache__** â€” Compilados Python
-- **.git** â€” Historial externo
-- **agent_system/.agent** â€” Frameworks de referencia
+- **venv/.venv** — Dependencias aisladas
+- **__pycache__** — Compilados Python
+- **.git** — Historial externo
+- **agent_system/.agent** — Frameworks de referencia
 
 ### Limitaciones Conocidas
 
-- **Windows encoding**: Vulture output no se captura en Windows (usar log explÃ­cito de vulture)
-- **LibrerÃ­as externas**: Deadcode puede no analizar cÃ³digo de terceros (tolerable)
-- **No-git repos**: Audit continÃºa con warning si no es repo git
+- **Windows encoding**: Vulture output no se captura en Windows (usar log explícito de vulture)
+- **Librerías externas**: Deadcode puede no analizar código de terceros (tolerable)
+- **No-git repos**: Audit continúa con warning si no es repo git
 - **Tabla grande**: Si hay >2000 filas, considerar filtrar en post-procesamiento
 
 ### Reglas de Uso
 
 - **SIEMPRE** ejecutar `--status` primero para validar tooling
-- **NUNCA** eliminar cÃ³digo LEGACY sin revisiÃ³n manual (podrÃ­a ser API pÃºblica)
+- **NUNCA** eliminar código LEGACY sin revisión manual (podría ser API pública)
 - **SIEMPRE** documentar decisiones en `execution_log.md`
 - **NO** ejecutar audit en paralelo (subprocess contention)
 
 ---
 
-**VersiÃ³n:** 1.0.0  
+**Versión:** 1.0.0  
 **Autor:** agent-system  
-**Ãšltima actualizaciÃ³n:** 2026-04-28
+**Última actualización:** 2026-04-28
