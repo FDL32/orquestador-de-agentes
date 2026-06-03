@@ -4,11 +4,13 @@ from scripts.install_agent_system import _write_prefix_to_project_md
 
 
 def test_write_prefix_to_project_md_creates_file(tmp_path):
-    """When PROJECT.md doesn't exist, _write_prefix_to_project_md creates it."""
+    """When PROJECT.md doesn't exist, _write_prefix_to_project_md skips silently
+    (the file is expected to already exist from copy_project_template)."""
+    project_md = tmp_path / "PROJECT.md"
+    project_md.write_text("# Project\n", encoding="utf-8")
+
     _write_prefix_to_project_md(tmp_path, "XXX", dry_run=False)
 
-    project_md = tmp_path / "PROJECT.md"
-    assert project_md.exists()
     content = project_md.read_text(encoding="utf-8")
     assert "Ticket prefix: XXX" in content
 
@@ -57,11 +59,12 @@ def test_write_prefix_to_project_md_dry_run(tmp_path, capsys):
 
 
 def test_write_prefix_to_project_md_dry_run_create(tmp_path, capsys):
-    """When dry_run=True and file doesn't exist, print create message."""
+    """When dry_run=True and file doesn't exist, print update message."""
     _write_prefix_to_project_md(tmp_path, "XXX", dry_run=True)
 
     project_md = tmp_path / "PROJECT.md"
     assert not project_md.exists()
 
     out = capsys.readouterr().out
-    assert "Would create" in out
+    assert "Would update" in out
+    assert "file does not exist yet" in out

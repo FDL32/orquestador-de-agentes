@@ -220,9 +220,9 @@ class TestGitStatusCheck:
             result = run_git_status_check(tmp_path)
 
         assert result.name == "Git Status Check"
-        assert result.passed is False
+        assert result.passed is True  # Tolerated as non-blocking WARN
         assert "no encontrado" in result.output
-        assert result.is_blocking is True
+        assert result.is_blocking is False  # Workspace no-repo is tolerated
 
     def test_git_status_command_error(self, tmp_path: Path) -> None:
         """Test when git status returns non-zero exit code."""
@@ -237,10 +237,10 @@ class TestGitStatusCheck:
             result = run_git_status_check(tmp_path)
 
         assert result.name == "Git Status Check"
-        assert result.passed is False
-        assert "Error ejecutando git status" in result.output
+        assert result.passed is True  # Tolerated as non-blocking WARN
+        assert "Workspace no-repo" in result.output
         assert "exit 128" in result.output
-        assert result.is_blocking is True
+        assert result.is_blocking is False  # Workspace no-repo is tolerated
 
 
 class TestValidateAll:
