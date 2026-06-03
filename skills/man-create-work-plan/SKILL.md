@@ -1,7 +1,7 @@
 ---
 name: create-work-plan
 version: 2.0.0
-description: Skill para que el Manager cree planes de implementaciÃ³n estructurados con fases, tareas y criterios de aceptaciÃ³n
+description: Skill para que el Manager cree planes de implementación estructurados con fases, tareas y criterios de aceptación
 triggers: [/plan, create-plan, /schedule]
 author: agent
 role: manager
@@ -20,9 +20,9 @@ Skill para crear planes de trabajo detallados que el Builder pueda ejecutar.
 Cuando el usuario solicita una nueva funcionalidad, el Manager usa esta skill para:
 1. Analizar el requerimiento y contexto actual
 2. Identificar archivos privados necesarios (Fase 0)
-3. Descomponer en fases con tareas ðŸ¤–/ðŸ‘¤
-4. Asignar niveles de riesgo (ðŸŸ¢/ðŸŸ¡/ðŸ”´)
-5. Definir criterios de aceptaciÃ³n medibles
+3. Descomponer en fases con tareas 🤖/👤
+4. Asignar niveles de riesgo (🟢/🟡/🔴)
+5. Definir criterios de aceptación medibles
 6. Documentar trade-offs considerados
 
 ## Workflow
@@ -31,7 +31,7 @@ Cuando el usuario solicita una nueva funcionalidad, el Manager usa esta skill pa
 ```bash
 python .agent/agent_controller.py
 ```
-Debe indicar `ROL ACTIVO: MANAGER` y acciÃ³n `CREATE_PLAN`.
+Debe indicar `ROL ACTIVO: MANAGER` y acción `CREATE_PLAN`.
 
 ### Paso 0b: Cargar lecciones de cierre
 
@@ -48,11 +48,11 @@ Si el archivo no existe, continuar sin bloquear.
 ### Paso 1: Analizar Requerimiento
 
 Entender del usuario:
-- Â¿QuÃ© problema resuelve?
-- Â¿QuÃ© resultado espera?
-- Â¿Hay restricciones de tiempo/tecnologÃ­a?
+- ¿Qué problema resuelve?
+- ¿Qué resultado espera?
+- ¿Hay restricciones de tiempo/tecnología?
 
-Explorar cÃ³digo existente:
+Explorar código existente:
 ```bash
 tree src/ -L 2
 find src/ -name "*.py" | head -20
@@ -61,11 +61,11 @@ find src/ -name "*.py" | head -20
 ### Paso 2: Identificar Fase 0 (Usuario)
 
 Determinar si se necesitan archivos en `privada/`:
-- Â¿Necesita credenciales/API keys?
-- Â¿ConfiguraciÃ³n personal del usuario?
-- Â¿Datos sensibles de empresa?
+- ¿Necesita credenciales/API keys?
+- ¿Configuración personal del usuario?
+- ¿Datos sensibles de empresa?
 
-Si sÃ­ â†’ Fase 0 con tareas ðŸ‘¤ para el usuario
+Si sí → Fase 0 con tareas 👤 para el usuario
 
 ### Paso 3: Crear work_plan.md
 
@@ -73,121 +73,121 @@ Usar `references/plan-template.md` como base.
 
 Estructura obligatoria:
 ```markdown
-# Plan de Trabajo: [TÃ­tulo]
+# Plan de Trabajo: [Título]
 
 ## Metadata
 - **ID:** WP-[YYYY]-[NNN]
-- **Estado:** ðŸŸ¡ IN_PLANNING
+- **Estado:** 🟡 IN_PLANNING
 - **deliverable_type:** code | documentation | research | analysis | mixed
 - **Creado:** [FECHA]
 - **Prioridad:** HIGH/MEDIUM/LOW
 - **Asignado a:** Builder
 
-## ðŸŽ¯ Objetivo
-[DescripciÃ³n clara en 2-3 lÃ­neas]
+## 🎯 Objetivo
+[Descripción clara en 2-3 líneas]
 
-## ðŸ“‹ Contexto
-[SituaciÃ³n actual, problema a resolver]
+## 📋 Contexto
+[Situación actual, problema a resolver]
 
-## ðŸ” ConfiguraciÃ³n Privada Requerida
+## Configuración Privada Requerida
 [Lista de archivos necesarios en privada/]
 
-## ðŸ—ï¸ Plan de ImplementaciÃ³n
+## Plan de Implementación
 
 ### Tipos de Tareas
 | Icono | Tipo | Ejecutor |
 |-------|------|----------|
-| ðŸ¤– | TAREA AGENTE | Builder |
-| ðŸ‘¤ | TAREA USUARIO | Usuario |
+| 🤖 | TAREA AGENTE | Builder |
+| 👤 | TAREA USUARIO | Usuario |
 
-### Fase 0: [Nombre] (ðŸ‘¤/ðŸ¤–)
-#### 0.1: ðŸ¤–/ðŸ‘¤ [Nombre tarea]
-- **Tipo:** ðŸ¤–/ðŸ‘¤ TAREA [AGENTE/USUARIO]
+### Fase 0: [Nombre] (👤/🤖)
+#### 0.1: 🤖/👤 [Nombre tarea]
+- **Tipo:** 🤖/👤 TAREA [AGENTE/USUARIO]
 - **Archivo:** `ruta/archivo.py`
-- **AcciÃ³n:** Crear/Modificar
-- **DescripciÃ³n:** [QuÃ© hacer]
-- **Riesgo:** ðŸŸ¢/ðŸŸ¡/ðŸ”´ [Bajo/Medio/Alto]
-- **Criterio de AceptaciÃ³n:** [Medible y verificable]
-- **Si falla:** [AcciÃ³n a tomar]
+- **Acción:** Crear/Modificar
+- **Descripción:** [Qué hacer]
+- **Riesgo:** 🟢/🟡/🔴 [Bajo/Medio/Alto]
+- **Criterio de Aceptación:** [Medible y verificable]
+- **Si falla:** [Acción a tomar]
 
 ### Fase 1: [Nombre]
 ...
 
-## âš–ï¸ Trade-offs Considerados
-| OpciÃ³n | Pros | Contras | DecisiÃ³n |
+## Trade-offs Considerados
+| Opción | Pros | Contras | Decisión |
 |--------|------|---------|----------|
-| A | [+] | [-] | [âœ…/âŒ] |
+| A | [+] | [-] | [Aceptada/Descartada] |
 
-## ðŸš¨ GuÃ­a de Riesgos
-| Nivel | Significado | AcciÃ³n del Builder |
+## 🚨 Guía de Riesgos
+| Nivel | Significado | Acción del Builder |
 |-------|-------------|-------------------|
-| ðŸŸ¢ Bajo | Rutinaria | Intentar 3 veces antes de escalar |
-| ðŸŸ¡ Medio | Requiere atenciÃ³n | Intentar 2 veces, escalar si dudas |
-| ðŸ”´ Alto | CrÃ­tica | Escalar al primer fallo |
+| 🟢 Bajo | Rutinaria | Intentar 3 veces antes de escalar |
+| 🟡 Medio | Requiere atención | Intentar 2 veces, escalar si dudas |
+| 🔴 Alto | Crítica | Escalar al primer fallo |
 
-## ðŸ§ª Criterios de AceptaciÃ³n Global
+## 🧪 Criterios de Aceptación Global
 - [ ] [Criterio medible 1]
 - [ ] [Criterio medible 2]
 ```
 
 ### Paso 4: Asignar Riesgos
 
-Para cada tarea, usar guÃ­a en `references/risk-guide.md`:
+Para cada tarea, usar guía en `references/risk-guide.md`:
 
-**ðŸŸ¢ Bajo:**
+**🟢 Bajo:**
 - Crear archivos nuevos
 - Modificar templates
 - Tests simples
 
-**ðŸŸ¡ Medio:**
-- Modificar lÃ³gica existente
-- Cambios en configuraciÃ³n
+**🟡 Medio:**
+- Modificar lógica existente
+- Cambios en configuración
 - Integraciones
 
-**ðŸ”´ Alto:**
-- Cambios arquitectÃ³nicos
+**🔴 Alto:**
+- Cambios arquitectónicos
 - Migraciones de datos
 - Cambios en seguridad
 
-### Paso 5: Definir Criterios de AceptaciÃ³n
+### Paso 5: Definir Criterios de Aceptación
 
 Cada tarea necesita criterios **SMART**:
-- **S**pecific: QuÃ© exactamente
-- **M**easurable: CÃ³mo se verifica
+- **S**pecific: Qué exactamente
+- **M**easurable: Cómo se verifica
 - **A**chievable: Realista
 - **R**elevant: Al plan
-- **T**ime-bound: CuÃ¡ndo listo
+- **T**ime-bound: Cuándo listo
 
 Ejemplo bueno:
 > "Crear `validate_all.py` que detecte 9 directorios de skills y valide frontmatter YAML con campos: name, version, description, author, tags"
 
 Ejemplo malo:
-> "Crear script de validaciÃ³n"
+> "Crear script de validación"
 
 ### Paso 6: Documentar Trade-offs
 
-Si hay decisiones arquitectÃ³nicas:
+Si hay decisiones arquitectónicas:
 
 ```markdown
-## âš–ï¸ Trade-offs Considerados
+## Trade-offs Considerados
 
-| OpciÃ³n | Pros | Contras | DecisiÃ³n |
+| Opción | Pros | Contras | Decisión |
 |--------|------|---------|----------|
-| SQLite local | Simple, sin servidor | No escalable | âœ… Elegida |
-| PostgreSQL | Escalable | Requiere setup | âŒ Descartada |
+| SQLite local | Simple, sin servidor | No escalable | ✅ Elegida |
+| PostgreSQL | Escalable | Requiere setup | Descartada |
 
-**RazÃ³n:** Para MVP, SQLite es suficiente.
+**Razón:** Para MVP, SQLite es suficiente.
 ```
 
-Crear ADR en `.agent/decisions/` si es decisiÃ³n importante.
+Crear ADR en `.agent/decisions/` si es decisión importante.
 
 ### Paso 7: Aprobar Plan
 
 Checklist antes de aprobar:
-- [ ] ID Ãºnico y descriptivo
+- [ ] ID único y descriptivo
 - [ ] Fase 0 incluida si hay archivos privados
 - [ ] Todas las tareas tienen riesgo asignado
-- [ ] Criterios de aceptaciÃ³n son medibles
+- [ ] Criterios de aceptación son medibles
 - [ ] Trade-offs documentados (si aplica)
 - [ ] Ninguna fase tiene campos duplicados (p.ej. dos lineas `Descripcion:` en la misma fase); si se actualizo un campo, borrar la version anterior antes de aprobar
 - [ ] No hay contradiccion entre `Descripcion` y `Criterios de Aceptacion` de la misma fase; si difieren, reconciliarlos explicitamente antes de aprobar — nunca asumir que uno manda sobre el otro sin corregir el texto
@@ -197,14 +197,14 @@ Checklist antes de aprobar:
 - [ ] Si una fase depende de actualizar `PROJECT.md` o `CHANGELOG.md` manualmente, la Descripcion especifica quien lo actualiza (Builder/Manager) y con que criterio o contenido minimo; la ambiguedad aqui produce fases declaradas completas sin que los archivos se hayan tocado
 - [ ] El estado de `STATE.md` y `execution_log.md` debe usar el enum valido del controller para cierre o avance (`APPROVED`, `IN_PROGRESS`, `READY_FOR_REVIEW`, `COMPLETED`, etc.); `IDLE` solo sirve como sentinel de workspace sin ticket activo y no debe usarse para cerrar un ticket del motor
 
-Cambiar estado: `ðŸŸ¡ IN_PLANNING` â†’ `ðŸŸ¢ APPROVED`
+Cambiar estado: `🟡 IN_PLANNING` → `🟢 APPROVED`
 
-AÃ±adir notificaciÃ³n:
+Añadir notificación:
 ```markdown
-## ðŸ“¨ [FECHA] Handoff: Manager â†’ Builder
+## 📨 [FECHA] Handoff: Manager → Builder
 **Plan:** WP-XXX
-**AcciÃ³n requerida:** Implementar segÃºn work_plan.md
-**Estado:** â³ PENDING
+**Acción requerida:** Implementar según work_plan.md
+**Estado:** PENDING
 ```
 
 ## Handoff canonico al Builder (OBLIGATORIO)
@@ -250,7 +250,7 @@ El handoff al Builder genera/actualiza, sin omitir ninguno:
 ## References
 
 - `references/plan-template.md` - Template base del plan
-- `references/risk-guide.md` - GuÃ­a de asignaciÃ³n de riesgos
+- `references/risk-guide.md` - Guía de asignación de riesgos
 - `.agent/templates/work_plan_template.md` - Template completo del sistema
 - `.agent/rules/manager/` - Restricciones del rol
 
@@ -275,7 +275,7 @@ Regla de aprobacion:
 
 ## Constraints
 
-- **NO** asignar tareas del usuario (ðŸ‘¤) al Builder
+- **NO** asignar tareas del usuario (👤) al Builder
 - **NO** omitir Fase 0 si hay archivos privados
-- **SIEMPRE** incluir criterios de aceptaciÃ³n medibles
+- **SIEMPRE** incluir criterios de aceptación medibles
 - **SIEMPRE** asignar nivel de riesgo a cada tarea
