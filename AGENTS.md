@@ -19,7 +19,7 @@
   - `agent_system/templates/repomix.config.json`: plantilla de configuracion de Repomix.
 - `scripts/`: utilidades de instalacion, upgrade, rollback y validacion.
 - `skills/`: micro-habilidades reutilizables.
-- `.agent/collaboration/`: estado operacional canonico — vive en el WORKSPACE del proyecto activo (p.ej. `z_scripts/.agent/collaboration/`), no en el motor. El motor es code-only; apuntar al workspace correcto via `AGENT_PROJECT_ROOT` o `--project-root`.
+- `.agent/collaboration/`: estado operacional canonico — vive en el `repo_destino`, no en el motor. El motor contiene seeds neutros; apuntar al destino via `AGENT_PROJECT_ROOT` o `motor_destination_link.json`.
 - `.agent/runtime/memory/`: memoria persistente por proyecto.
 - `.agent/context/repomix.xml`: contexto comprimido del workspace generado por Repomix (bootstrapping).
 - `.agent/council/`: broker de consejo y auditoria paralela.
@@ -27,24 +27,29 @@
 - `.session/repomix_remote.xml`: contexto remoto comprimido para comparacion acelerada (repo-compare skill).
 - `REPOSITORY_STRUCTURE.md`: mapa interno publicable del repositorio.
 
-## Glosario de nomenclatura (Modelo B)
+## Vocabulario canonico
 
-| Termino | Ruta canonica | Descripcion |
-|---|---|---|
-| **Motor** | `C:\Users\fdl\Proyectos_Python\z_scripts\orquestador_de_agentes` | Codigo ejecutable portable. Code-only: no tiene estado operativo propio. Se comparte entre todos los proyectos. |
-| **Workspace del motor** | `C:\Users\fdl\Proyectos_Python\z_scripts` | Espacio de trabajo para desarrollar el motor. Contiene `.agent/` con tickets, memoria y configuracion propios del desarrollo del motor. Tambien llamado "workspace de z_scripts". |
-| **Workspace de destino** | `<proyecto>/` donde `.agent/` es el workspace | Espacio de trabajo de cada proyecto que usa el motor. Tiene su propio `.agent/collaboration/`, `.agent/runtime/memory/` y `backlog.md`. Nunca comparte estado con el motor ni con otros destinos. |
+No usar "workspace" a secas: el termino es ambiguo porque describe tanto el repo destino como el entorno multi-root del IDE.
 
-Regla: el motor siempre se invoca con `AGENT_PROJECT_ROOT` apuntando al workspace activo (motor o destino). Sin esa variable, el motor usa el modo code-only y bloquea escrituras operativas.
+| Termino | Descripcion |
+|---------|-------------|
+| `repo_motor` | `orquestador_de_agentes/` — motor portable, fuente canonica del sistema. Tiene su propio repo git. No contiene estado operativo de tickets. |
+| `repo_destino` | El proyecto que usa el motor. Tiene su propio `.agent/` con estado operativo (tickets, memoria, config). Nunca comparte estado con otros destinos. |
+| `workspace_activo` | Raiz operativa con `.agent/` desde la que corre el ticket actual. En la topologia actual coincide con `repo_destino`. Se configura via `AGENT_PROJECT_ROOT` o `motor_destination_link.json`. |
+| `entorno_multi_root` | IDE abierto con `repo_motor` + `repo_destino` a la vez (VS Code multi-folder workspace). No es un concepto de codigo: solo describe el entorno de desarrollo. |
 
-### Distincion critica: `.agent/collaboration/` del motor vs del workspace
+**Regla de repos:** toda operacion git del tooling (diff, log, commit) corre con `cwd=repo_motor`. El estado operativo (tickets, memoria, events) vive en `repo_destino`.
+
+**Regla de `AGENT_PROJECT_ROOT`:** el motor se invoca siempre con esta variable apuntando al `workspace_activo`. Sin ella, el motor usa modo code-only y bloquea escrituras operativas.
+
+### Distincion critica: `.agent/collaboration/` del motor vs del destino
 
 | Ubicacion | Rol | Contenido |
-|---|---|---|
-| `orquestador_de_agentes/.agent/collaboration/` | **Plantilla / referencia** | Archivos placeholder o en estado COMPLETED/IDLE. Sirven de molde para nuevos destinos. No contienen tickets activos del motor: el desarrollo del motor ocurre en el workspace del motor (`z_scripts/.agent/`). |
-| `<workspace>/.agent/collaboration/` | **Estado operativo activo** | `work_plan.md`, `execution_log.md`, `TURN.md`, `STATE.md`, `backlog.md` con el ticket real en curso. Aqui viven los planes y el estado canonico del proyecto activo. |
+|-----------|-----|-----------|
+| `repo_motor/.agent/collaboration/` | **Seed neutro** | Archivos en estado READY_TO_START/IDLE. Molde para nuevos destinos instalados. No contienen tickets activos. |
+| `repo_destino/.agent/collaboration/` | **Estado operativo activo** | `work_plan.md`, `execution_log.md`, `TURN.md`, `STATE.md`, `backlog.md` con el ticket real en curso. |
 
-**Nunca usar `orquestador_de_agentes/.agent/collaboration/` como workspace operativo.** Si el controller detecta escrituras operativas ahi sin `AGENT_PROJECT_ROOT`, el guard anti-drift las bloquea.
+**Nunca usar `repo_motor/.agent/collaboration/` como operativo.** El guard anti-drift bloquea escrituras operativas ahi sin `AGENT_PROJECT_ROOT`.
 
 ## Contrato de version y portabilidad
 

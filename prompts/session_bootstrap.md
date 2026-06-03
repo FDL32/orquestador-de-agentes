@@ -22,9 +22,20 @@ Lee en este orden, sin omitir ninguno:
 
 **Lectura bajo demanda (no en cada arranque):** si necesitas ubicar un subsistema o entender el arbol de carpetas, lee `REPOSITORY_STRUCTURE.md`. No lo cargues por defecto: solo cuando la tarea lo requiera.
 
+## Vocabulario canónico (no usar "workspace" a secas)
+
+| Término | Significado |
+|---------|-------------|
+| `repo_motor` | `orquestador_de_agentes/` — motor portable, fuente canónica |
+| `repo_destino` | El proyecto que usa el motor; tiene su propio `.agent/` |
+| `workspace_activo` | Raíz operativa con `.agent/` desde la que corre el ticket actual |
+| `entorno_multi_root` | IDE con `repo_motor` + `repo_destino` abiertos simultáneamente |
+
+Regla de repos: toda operación git de tooling corre en `repo_motor`. El estado operativo (tickets, memoria de proyecto) vive en `repo_destino`.
+
 ## Resumen breve del sistema
 
-- **Runtime activo:** `orquestador_de_agentes/` (repo portable).
+- **Runtime activo:** `orquestador_de_agentes/` (`repo_motor`, portable).
 - **Roles:** Manager (OpenCode via `scripts/manager_review_bridge.py`, modelo configurable en `.agent/config/agents.json`) y Builder (OpenCode, modelo `opencode-go/deepseek-v4-flash`).
 - **Bus canonico:** `.agent/runtime/events/events.jsonl` (append-only, autoridad absoluta).
 - **Proyecciones:** `TURN.md`, `STATE.md`, `work_plan.md`, `execution_log.md` se derivan del bus.
