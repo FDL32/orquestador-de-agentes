@@ -41,14 +41,16 @@ def mock_collaboration_dir(temp_runtime_dir):
     collab_dir = temp_runtime_dir / "collaboration"
     collab_dir.mkdir(parents=True, exist_ok=True)
 
-    # Mock work_plan.md
+    # Mock work_plan.md using the real metadata format
     (collab_dir / "work_plan.md").write_text(
-        "## WP-2026-024: UI State Projection\n\n**Estado:** APPROVED\n\n### Objetivo\nImplementar ui_state.json"
+        "# Work Ticket - WP-2026-024\n\n## Metadata\n- **ID:** WP-2026-024\n- **Title:** UI State Projection\n- **Estado:** APPROVED\n\n## Problema\nImplementar ui_state.json",
+        encoding="utf-8",
     )
 
     # Mock execution_log.md
     (collab_dir / "execution_log.md").write_text(
-        "## WP-2026-024\n\n**Estado:** READY_FOR_REVIEW"
+        "## WP-2026-024\n\n**Estado:** READY_FOR_REVIEW",
+        encoding="utf-8",
     )
 
     return collab_dir
@@ -67,9 +69,9 @@ def test_get_plan_info(mock_collaboration_dir):
     projector.collaboration_dir = mock_collaboration_dir
 
     plan_info = projector._get_plan_info()
-    assert plan_info["plan_id"] == "WP-2026-027"
-    assert plan_info["status"] == "COMPLETED"
-    assert "supervisor terminal-driven" in plan_info["objective"]
+    assert plan_info["plan_id"] == "WP-2026-024"
+    assert plan_info["status"] == "APPROVED"
+    assert "UI State Projection" in plan_info["objective"]
 
 
 def test_get_ticket_status(mock_collaboration_dir):
@@ -78,7 +80,7 @@ def test_get_ticket_status(mock_collaboration_dir):
     projector.collaboration_dir = mock_collaboration_dir
 
     status = projector._get_ticket_status()
-    assert status["plan_status"] == "COMPLETED"
+    assert status["plan_status"] == "APPROVED"
     assert status["log_status"] == "READY_FOR_REVIEW"
 
 
@@ -118,8 +120,8 @@ def test_project_state_integration(mock_event_bus, mock_collaboration_dir):
     assert "recent_events" in state
 
     assert state["current_turn"]["role"] == "BUILDER"
-    assert state["active_plan"]["plan_id"] == "WP-2026-027"
-    assert state["ticket_status"]["plan_status"] == "COMPLETED"
+    assert state["active_plan"]["plan_id"] == "WP-2026-024"
+    assert state["ticket_status"]["plan_status"] == "APPROVED"
 
 
 def test_update_ui_state(mock_event_bus, mock_collaboration_dir, temp_runtime_dir):
@@ -150,7 +152,8 @@ def test_get_recommended_files_review(mock_collaboration_dir):
 
     # Override with READY_FOR_REVIEW in correct block
     (mock_collaboration_dir / "execution_log.md").write_text(
-        "## WP-2026-027: Supervisor Recovery and Reconciliation\n\n**Estado:** READY_FOR_REVIEW"
+        "## WP-2026-027: Supervisor Recovery and Reconciliation\n\n**Estado:** READY_FOR_REVIEW",
+        encoding="utf-8",
     )
 
     recommended = projector._get_recommended_files()

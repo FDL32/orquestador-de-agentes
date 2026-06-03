@@ -19,6 +19,19 @@ from runtime.project_root import get_agent_dir, resolve_project_root
 
 _PROJECT_ROOT = resolve_project_root()
 _AGENT_DIR = get_agent_dir()
+_PLAN_ID_PATTERN = re.compile(
+    r"^-\s+\*\*ID:\*\*\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+|none|NINGUNO)\s*$",
+    re.MULTILINE,
+)
+_STATUS_PATTERN = re.compile(r"\*\*Estado:\*\*\s*([A-Z_]+)")
+_TITLE_PATTERN = re.compile(
+    r"^-\s+\*\*(?:Title|Titulo):\*\*\s*(.+?)\s*$",
+    re.MULTILINE,
+)
+_OBJECTIVE_PATTERN = re.compile(
+    r"^##\s+Objetivo\s*$\n(.+?)(?=\n##|\Z)",
+    re.DOTALL | re.MULTILINE,
+)
 
 
 def _project_root() -> Path:
@@ -42,6 +55,12 @@ class UIStateProjector:
         self.turn_path = self.collaboration_dir / "TURN.md"
         self.event_bus = EventBus(runtime_dir=self.runtime_dir / "events")
 
+    def _read_collaboration_file(self, name: str) -> str:
+        path = self.collaboration_dir / name
+        if not path.exists():
+            return ""
+        return path.read_text(encoding="utf-8")
+
     def _get_active_ticket_id(self) -> str:
         supervisor_state = self.runtime_dir / "supervisor_state.json"
         if supervisor_state.exists():
@@ -52,6 +71,10 @@ class UIStateProjector:
                     return active_ticket
             except json.JSONDecodeError:
                 pass
+
+        plan_info = self._get_plan_info()
+        if plan_info["plan_id"] != "NINGUNO":
+            return plan_info["plan_id"]
 
         if self.turn_path.exists():
             content = self.turn_path.read_text(encoding="utf-8")
@@ -67,9 +90,29 @@ class UIStateProjector:
         return "NINGUNO"
 
     def _get_plan_info(self) -> dict[str, str]:
-        plan_id = "WT-2026-027"
-        status = "COMPLETED"
-        objective = "supervisor terminal-driven"
+        content = self._read_collaboration_file("work_plan.md")
+        if not content:
+            return {
+                "plan_id": "NINGUNO",
+                "status": "N/A",
+                "objective": "",
+            }
+
+        plan_match = _PLAN_ID_PATTERN.search(content)
+        status_match = _STATUS_PATTERN.search(content)
+        title_match = _TITLE_PATTERN.search(content)
+        objective_match = _OBJECTIVE_PATTERN.search(content)
+
+        plan_id = plan_match.group(1) if plan_match else "NINGUNO"
+        if plan_id.lower() == "none":
+            plan_id = "NINGUNO"
+        status = status_match.group(1) if status_match else "N/A"
+        objective = ""
+        if objective_match:
+            objective = objective_match.group(1).strip().splitlines()[0].strip()
+        elif title_match:
+            objective = title_match.group(1).strip()
+
         return {
             "plan_id": plan_id,
             "status": status,
@@ -77,18 +120,13 @@ class UIStateProjector:
         }
 
     def _get_ticket_status(self) -> dict[str, str]:
-        active_ticket = self._get_active_ticket_id()
-        log_status = ""
-        if self.collaboration_dir.exists():
-            execution_log = self.collaboration_dir / "execution_log.md"
-            if execution_log.exists():
-                content = execution_log.read_text(encoding="utf-8")
-                match = re.search(r"\*\*Estado:\*\*\s*([A-Z_]+)", content)
-                if match:
-                    log_status = match.group(1)
+        plan_info = self._get_plan_info()
+        execution_log = self._read_collaboration_file("execution_log.md")
+        match = _STATUS_PATTERN.search(execution_log)
+        log_status = match.group(1) if match else "N/A"
         return {
-            "plan_status": "COMPLETED" if active_ticket != "NINGUNO" else "N/A",
-            "log_status": log_status or "READY_FOR_REVIEW",
+            "plan_status": plan_info["status"],
+            "log_status": log_status,
         }
 
     def _get_current_turn(self) -> dict[str, str]:
@@ -113,14 +151,10 @@ class UIStateProjector:
         return [event.to_dict() for event in events[-limit:]]
 
     def _get_recommended_files(self) -> list[str]:
-        active_ticket = self._get_active_ticket_id()
-        if active_ticket == "NINGUNO":
+        execution_log = self._read_collaboration_file("execution_log.md")
+        if not execution_log:
             return []
-        execution_log = self.collaboration_dir / "execution_log.md"
-        if not execution_log.exists():
-            return []
-        content = execution_log.read_text(encoding="utf-8")
-        if "READY_FOR_REVIEW" in content or "READY_TO_CLOSE" in content:
+        if "READY_FOR_REVIEW" in execution_log or "READY_TO_CLOSE" in execution_log:
             return ["work_plan.md", "execution_log.md"]
         return []
 
