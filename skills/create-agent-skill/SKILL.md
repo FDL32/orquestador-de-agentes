@@ -1,7 +1,7 @@
 ---
 name: create-agent-skill
 version: 2.0.0
-description: Meta-skill para crear nuevas micro-skills siguiendo el estÃ¡ndar Agent Skills
+description: Meta-skill para crear nuevas micro-skills siguiendo el estándar Agent Skills
 triggers: [/create-skill, skill-create, /new]
 author: agent
 role: shared
@@ -13,20 +13,20 @@ tags: [core, system]
 
 # create-agent-skill
 
-Crea nuevas micro-skills portables siguiendo el estÃ¡ndar establecido.
+Crea nuevas micro-skills portables siguiendo el estándar establecido.
 
 ## Overview
 
-Cuando necesitas una nueva skill para una acciÃ³n especÃ­fica, usa esta skill para crearla correctamente.
+Cuando necesitas una nueva skill para una acción específica, usa esta skill para crearla correctamente.
 
 ## Workflow
 
-### Paso 1: Definir PropÃ³sito
+### Paso 1: Definir Propósito
 
 Determinar:
-- **Â¿QuÃ© acciÃ³n realiza?** (una sola, concreta)
-- **Â¿QuiÃ©n la usa?** (Manager / Builder / Ambos)
-- **Â¿QuÃ© necesita saber el agente?** (contexto mÃ­nimo)
+- **¿Qué acción realiza?** (una sola, concreta)
+- **¿Quién la usa?** (Manager / Builder / Ambos)
+- **¿Qué necesita saber el agente?** (contexto mínimo)
 
 ### Paso 2: Identificar Fuentes
 
@@ -34,7 +34,7 @@ Buscar en el sistema actual:
 - Workflows relevantes
 - Reglas del agente
 - Protocolos existentes
-- CÃ³digo de referencia
+- Código de referencia
 
 **Principio:** Condensar, no copiar.
 
@@ -45,7 +45,7 @@ Buscar en el sistema actual:
 mkdir -p skills/[nombre-skill]/references
 ```
 
-**ConvenciÃ³n de nombres:**
+**Convención de nombres:**
 - `man-[accion]` - Skills del Manager
 - `bui-[accion]` - Skills del Builder
 - `[accion]` - Skills compartidas (sin prefijo)
@@ -57,18 +57,18 @@ Estructura obligatoria:
 ---
 name: nombre-skill
 version: 1.0.0
-description: DescripciÃ³n clara de una lÃ­nea
+description: Descripción clara de una línea
 author: agent-system
 tags: [tag1, tag2, tag3]
 ---
 
 # nombre-skill
 
-DescripciÃ³n breve (1-2 lÃ­neas).
+Descripción breve (1-2 líneas).
 
 ## Overview
 
-CuÃ¡ndo y para quÃ© usar esta skill.
+Cuándo y para qué usar esta skill.
 
 ## Workflow
 
@@ -80,11 +80,11 @@ Instrucciones claras...
 
 ## Output Format
 
-QuÃ© produce esta skill.
+Qué produce esta skill.
 
 ## References
 
-- `references/ref1.md` - DescripciÃ³n
+- `references/ref1.md` - Descripción
 
 ## Constraints
 
@@ -92,16 +92,16 @@ QuÃ© produce esta skill.
 - **SIEMPRE** hacer Y
 ```
 
-**LÃ­mites:**
-- SKILL.md: mÃ¡ximo 250 lÃ­neas
-- References: mÃ¡ximo 80 lÃ­neas cada una
+**Límites:**
+- SKILL.md: máximo 250 líneas
+- References: máximo 80 líneas cada una
 
 ### Paso 5: Crear References
 
 Extraer y condensar de las fuentes:
 - Checklists
 - Templates
-- Ejemplos de cÃ³digo
+- Ejemplos de código
 - Formatos
 
 ### Paso 6: Validar
@@ -111,22 +111,22 @@ python skills/validate_all.py
 ```
 
 Verificar:
-- [ ] Frontmatter YAML vÃ¡lido
+- [ ] Frontmatter YAML válido
 - [ ] Campos requeridos: name, version, description, author, tags
-- [ ] Cuerpo no supera 250 lÃ­neas
-- [ ] References no superan 80 lÃ­neas
+- [ ] Cuerpo no supera 250 líneas
+- [ ] References no superan 80 líneas
 - [ ] Carpeta `references/` existe
 
 ### Paso 7: Documentar
 
-AÃ±adir a `skills/README.md`:
+Añadir a `skills/README.md`:
 ```markdown
-| nombre-skill | DescripciÃ³n | Manager/Builder | tags |
+| nombre-skill | Descripción | Manager/Builder | tags |
 ```
 
 ## Progressive Disclosure
 
-Estructura de informaciÃ³n:
+Estructura de información:
 1. **Frontmatter** - Metadatos esenciales
 2. **Body** - Instrucciones paso a paso
 3. **References** - Detalles de apoyo
@@ -136,21 +136,21 @@ Estructura de informaciÃ³n:
 Nueva skill en:
 ```
 skills/[nombre-skill]/
-â”œâ”€â”€ SKILL.md           # Instrucciones principales
-â””â”€â”€ references/        # DocumentaciÃ³n de apoyo
-    â”œâ”€â”€ ref1.md
-    â””â”€â”€ ref2.md
+├── SKILL.md           # Instrucciones principales
+└── references/        # Documentación de apoyo
+    ├── ref1.md
+    └── ref2.md
 ```
 
 ## References
 
-- `references/skill-anatomy.md` - AnatomÃ­a de un SKILL.md
+- `references/skill-anatomy.md` - Anatomía de un SKILL.md
 - `references/frontmatter-template.md` - Template de frontmatter
 
 ## Constraints
 
-- **UNA** acciÃ³n por skill
-- **MÃXIMO** 250 lÃ­neas en SKILL.md
-- **MÃXIMO** 80 lÃ­neas por reference
+- **UNA** acción por skill
+- **MÁXIMO** 250 líneas en SKILL.md
+- **MÁXIMO** 80 líneas por reference
 - **SIEMPRE** validar con `validate_all.py`
-- **USAR** prefijos man-/bui- segÃºn corresponda
+- **USAR** prefijos man-/bui- según corresponda

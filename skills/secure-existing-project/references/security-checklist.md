@@ -1,13 +1,13 @@
 ﻿# Checklist de Seguridad
 
-## AuditorÃ­a Inicial
+## Auditoría Inicial
 
-### Buscar Secrets en CÃ³digo
+### Buscar Secrets en Código
 ```bash
 # API Keys
 grep -rE "(api_key|apikey|API_KEY)" src/ --include="*.py"
 
-# ContraseÃ±as
+# Contraseñas
 grep -rE "(password|PASSWORD|passwd|pwd)" src/ --include="*.py"
 
 # Tokens
@@ -16,12 +16,12 @@ grep -rE "(token|TOKEN|auth_token)" src/ --include="*.py"
 # Secrets
 grep -rE "(secret|SECRET|client_secret)" src/ --include="*.py"
 
-# Strings de conexiÃ³n
+# Strings de conexión
 grep -rE "(connection_string|DATABASE_URL)" src/ --include="*.py"
 ```
 
 ### Archivos a Verificar
-- [ ] `.env` en raÃ­z
+- [ ] `.env` en raíz
 - [ ] `config.json`
 - [ ] `credentials.json`
 - [ ] `settings.json`
@@ -34,7 +34,7 @@ find . -name "*.env" -o -name "*.key" -o -name "*.pem" \
        -o -name "credentials*" -o -name "config.json"
 ```
 
-## Post-MigraciÃ³n
+## Post-Migración
 
 ### Verificar .gitignore
 ```gitignore
@@ -56,8 +56,8 @@ git check-ignore privada/
 test -f publica/repo/.env.example && echo "OK"
 ```
 
-### Verificar CÃ³digo
-- [ ] No hay strings de conexiÃ³n hardcodeadas
-- [ ] Variables de entorno usadas vÃ­a `settings.py`
+### Verificar Código
+- [ ] No hay strings de conexión hardcodeadas
+- [ ] Variables de entorno usadas vía `settings.py`
 - [ ] No hay `print()` de datos sensibles
 - [ ] Logging sin datos personales

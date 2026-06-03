@@ -1,12 +1,12 @@
 ﻿# Template de Frontmatter
 
-## BÃ¡sico (Obligatorio)
+## Básico (Obligatorio)
 
 ```yaml
 ---
 name: nombre-skill
 version: 1.0.0
-description: DescripciÃ³n clara de una lÃ­nea
+description: Descripción clara de una línea
 author: agent-system
 tags: [tag1, tag2, tag3]
 ---
@@ -18,12 +18,12 @@ tags: [tag1, tag2, tag3]
 ---
 name: nombre-skill
 version: 1.0.0
-description: DescripciÃ³n
+description: Descripción
 author: agent-system
 tags: [tag1, tag2]
 # Opcionales:
 requires: [otra-skill]      # Dependencias
-scope: [manager, builder]   # QuiÃ©n puede usar
+scope: [manager, builder]   # Quién puede usar
 difficulty: beginner        # beginner/intermediate/advanced
 ---
 ```
@@ -43,7 +43,7 @@ tags: [manager, planning, architecture]
 ```yaml
 name: bui-implement-feature
 version: 1.0.0
-description: Implementar funcionalidad segÃºn plan
+description: Implementar funcionalidad según plan
 author: agent-system
 tags: [builder, implementation, coding]
 ```
@@ -52,15 +52,15 @@ tags: [builder, implementation, coding]
 ```yaml
 name: run-quality-gates
 version: 1.0.0
-description: Ejecutar validaciÃ³n de cÃ³digo
+description: Ejecutar validación de código
 author: agent-system
 tags: [quality, testing, linting]
 ```
 
 ## Tags Recomendados
 
-| CategorÃ­a | Tags |
+| Categoría | Tags |
 |-----------|------|
 | Rol | `manager`, `builder` |
-| AcciÃ³n | `planning`, `review`, `implementation`, `testing` |
+| Acción | `planning`, `review`, `implementation`, `testing` |
 | Tema | `security`, `architecture`, `quality`, `setup` |
