@@ -5,20 +5,10 @@ Version simplificada de verificacion de completitud que verifica
 criterios esenciales sin sobrecargar el sistema.
 
 WP-2026-122: Uses runtime.project_root for dynamic project root resolution.
-
-Uso:
-    from .completion_checker import check_completion
-    result = check_completion()
-    if result["can_complete"]:
-        print("Listo para completar")
-    else:
-        print(f"Faltan: {result['missing']}")
 """
 
 from __future__ import annotations
 
-import subprocess
-from pathlib import Path
 from typing import Any
 
 # WP-2026-122 / WP-2026-155: Centralized path resolution via runtime.project_root
@@ -33,13 +23,19 @@ for _path in (str(_PROJECT_ROOT), str(_AGENT_DIR)):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
-from runtime.project_root import get_collab_dir, resolve_project_root  # noqa: E402
+from completion_common import (  # noqa: E402
+    COLLAB_DIR,
+    EXEC_LOG,
+    PROJECT_ROOT,
+    REVIEW_QUEUE,
+    WORK_PLAN,
+    check_execution_summary as common_check_execution_summary,
+    check_no_escalations,
+    check_tasks_completed,
+    get_log_status,
+    run_tests,
+)
 
-COLLAB_DIR = get_collab_dir()
-PROJECT_ROOT = resolve_project_root()
-WORK_PLAN = COLLAB_DIR / "work_plan.md"
-EXEC_LOG = COLLAB_DIR / "execution_log.md"
-REVIEW_QUEUE = COLLAB_DIR / "review_queue.md"
 FINDINGS = COLLAB_DIR / "findings.md"
 
 
@@ -83,7 +79,7 @@ def check_completion() -> dict[str, Any]:
 
 def show_completion_report(result: dict[str, Any]) -> None:
     """Muestra reporte de completitud de forma legible."""
-    emoji = "âœ…" if result["can_complete"] else "âš ï¸"
+    emoji = "Ã¢Å“â€¦" if result["can_complete"] else "Ã¢Å¡Â Ã¯Â¸Â"
     status = "LISTO PARA COMPLETAR" if result["can_complete"] else "INCOMPLETO"
 
     print("\n" + "=" * 60)
@@ -96,7 +92,7 @@ def show_completion_report(result: dict[str, Any]) -> None:
         for item in result["missing"]:
             print(f"  - {item}")
     else:
-        print("\nâœ… Todos los criterios cumplidos")
+        print("\nÃ¢Å“â€¦ Todos los criterios cumplidos")
 
     print("=" * 60 + "\n")
 
@@ -111,64 +107,22 @@ def safe_print(text: str, end: str = "\n") -> None:
 
 def _check_all_tasks_done() -> bool:
     """Verifica que todas las tareas esten marcadas [x]."""
-    if not WORK_PLAN.exists():
-        return False
-
-    try:
-        content = WORK_PLAN.read_text(encoding="utf-8")
-        return content.count("- [ ]") == 0
-    except Exception:
-        return False
+    return check_tasks_completed(WORK_PLAN, get_log_status(EXEC_LOG))
 
 
 def _check_tests_pass() -> bool:
     """Verifica que los tests pasen (si hay tests)."""
-    tests_dir = PROJECT_ROOT / "tests"
-    if not tests_dir.exists():
-        return True
-
-    try:
-        result = subprocess.run(
-            ["uv", "run", "pytest", "-q", "--tb=no"],
-            capture_output=True,
-            timeout=60,
-            cwd=PROJECT_ROOT,
-        )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return True
+    return run_tests(PROJECT_ROOT)
 
 
 def _check_no_pending_escalations() -> bool:
     """Verifica que no haya escalaciones pendientes."""
-    if not REVIEW_QUEUE.exists():
-        return True
-
-    try:
-        content = REVIEW_QUEUE.read_text(encoding="utf-8")
-        import re
-
-        has_pending = re.search(r"PENDING", content) is not None
-        has_blocked = re.search(r"BLOCKED", content) is not None
-        return not has_pending and not has_blocked
-    except Exception:
-        return True
+    return check_no_escalations(REVIEW_QUEUE)
 
 
 def _check_execution_summary() -> bool:
     """Verifica que execution_log tenga resumen."""
-    if not EXEC_LOG.exists():
-        return False
-
-    try:
-        content = EXEC_LOG.read_text(encoding="utf-8")
-        import re
-
-        has_summary = re.search(r"##\s+.*Resumen", content) is not None
-        not_in_progress = re.search(r"IN_PROGRESS", content) is None
-        return has_summary and not_in_progress
-    except Exception:
-        return False
+    return common_check_execution_summary(EXEC_LOG, get_log_status(EXEC_LOG))
 
 
 def _check_findings_exist() -> bool:
