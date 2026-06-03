@@ -1,8 +1,8 @@
-﻿# Reglas de CÃ³digo Python
+# Reglas de Código Python
 
 ## Pathlib (SIEMPRE)
 
-**âŒ NUNCA:** `os.path.join()` â†’ **âœ… SIEMPRE:** `Path() / "file"`
+**? NUNCA:** `os.path.join()` ? **? SIEMPRE:** `Path() / "file"`
 
 ```python
 from pathlib import Path
@@ -17,7 +17,7 @@ Todas las funciones deben tener type hints:
 
 ```python
 def load_config(path: Path) -> dict[str, any]:
-    """Carga configuraciÃ³n desde archivo."""
+    """Carga configuración desde archivo."""
     ...
 
 def save_data(data: list[dict], output_path: Path) -> None:
@@ -29,32 +29,32 @@ def save_data(data: list[dict], output_path: Path) -> None:
 
 ## Docstrings
 
-Toda funciÃ³n pÃºblica debe tener docstring:
+Toda función pública debe tener docstring:
 
 ```python
 def validate_email(email: str) -> bool:
     """Valida formato de email.
 
     Args:
-        email: DirecciÃ³n a validar
+        email: Dirección a validar
 
     Returns:
-        True si vÃ¡lido, False si no
+        True si válido, False si no
     """
     ...
 ```
 
 ## Manejo de Errores
 
-**âŒ NUNCA bare except:**
+**? NUNCA bare except:**
 ```python
 try:
     process()
-except:  # âŒ
+except:  # ?
     pass
 ```
 
-**âœ… SIEMPRE especÃ­fico:**
+**✅ SIEMPRE específico:**
 ```python
 from loguru import logger
 
@@ -78,7 +78,7 @@ logger.warning("Archivo no existe")
 logger.error(f"Error: {e}")
 ```
 
-## Constantes (NO nÃºmeros mÃ¡gicos)
+## Constantes (NO números mágicos)
 
 ```python
 TIMEOUT_SECONDS = 30
@@ -88,19 +88,19 @@ if timeout > TIMEOUT_SECONDS:
     pass
 ```
 
-## ConfiguraciÃ³n sectorial (NO hardcoding)
+## Configuración sectorial (NO hardcoding)
 
 Si un valor depende del sector, NO lo escribas en Python:
-âŒ `if sector == "religioso": lista = ["casulla", "alba"]`
-âœ… `lista = sector_cfg.raw.get("interlinks", {}).get("patterns", {})`
+? `if sector == "religioso": lista = ["casulla", "alba"]`
+✅ `lista = sector_cfg.raw.get("interlinks", {}).get("patterns", {})`
 
-Los YAMLs de sector son el Ãºnico lugar donde viven los datos sectoriales.
+Los YAMLs de sector son el único lugar donde viven los datos sectoriales.
 
-## NormalizaciÃ³n de datos â€” punto Ãºnico
+## Normalización de datos — punto único
 
-Si un dato puede llegar en varios formatos (segÃºn la fuente), normaliza en el punto de SALIDA (el mÃ©todo que lo produce), no en cada punto de ENTRADA (los mÃ©todos que lo consumen):
-âŒ Cada consumer hace `data.get("wrapper", {}).get("field") or data.get("field")`
-âœ… El productor hace `data = unwrap(data)` antes del return; los consumers hacen `data.get("field")`
+Si un dato puede llegar en varios formatos (según la fuente), normaliza en el punto de SALIDA (el método que lo produce), no en cada punto de ENTRADA (los métodos que lo consumen):
+? Cada consumer hace `data.get("wrapper", {}).get("field") or data.get("field")`
+✅ El productor hace `data = unwrap(data)` antes del return; los consumers hacen `data.get("field")`
 
 ## Logging — sin f-strings en mensajes
 

@@ -1,4 +1,4 @@
-﻿# Audit Report â€” Decision Template
+# Audit Report — Decision Template
 
 Plantilla para procesar hallazgos de `audit_report.md` y documentar decisiones.
 
@@ -8,19 +8,19 @@ Para cada fila en `.session/audit_report.md`:
 
 ```
 | src/foo.py | 145 | deadcode | function | 23 | unused_func | 0 | 3 | LEGACY |
-                                                                     â†‘    â†‘
-                                                                   ACCIÃ“N
+                                                                     ↑    ↑
+                                                                   ACCIÓN
                                                                 (calculado)
 ```
 
-### 1. Identificar CategorÃ­a
+### 1. Identificar Categoría
 
-| AcciÃ³n | CritÃ©rio | DecisiÃ³n por Defecto |
+| Acción | Critério | Decisión por Defecto |
 |--------|----------|----------------------|
-| **DEAD** | `commits = 0` | âœ‚ï¸ Eliminar |
-| **ABANDONED** | `0 < commits < 5` | ðŸ‘ï¸ Revisar manual |
-| **LEGACY** | `commits >= 5` | âš ï¸ Revisar con equipo |
-| **SMELL** | ruff findings | ðŸ“ Agendar refactor |
+| **DEAD** | `commits = 0` | ?? Eliminar |
+| **ABANDONED** | `0 < commits < 5` | ??? Revisar manual |
+| **LEGACY** | `commits >= 5` | ?? Revisar con equipo |
+| **SMELL** | ruff findings | ?? Agendar refactor |
 
 ### 2. Validar Antes de Eliminar
 
@@ -28,41 +28,41 @@ Nunca eliminar sin verificar:
 
 ```python
 # Checklist para DEAD/ABANDONED
-- [ ] SÃ­mbolo realmente no usado en codebase (grep -r "nombre")
-- [ ] No es exportado en __all__ (API pÃºblica)
+- [ ] Símbolo realmente no usado en codebase (grep -r "nombre")
+- [ ] No es exportado en __all__ (API pública)
 - [ ] No es usado por tests (grep tests/)
-- [ ] No estÃ¡ documentado como estable en docstring
+- [ ] No está documentado como estable en docstring
 ```
 
-### 3. Documentar DecisiÃ³n
+### 3. Documentar Decisión
 
 ```markdown
 ### Hallazgo: src/foo.py:23 `unused_func` (LEGACY)
 
-**CategorÃ­a:** LEGACY (commits=3)
+**Categoría:** LEGACY (commits=3)
 
-**AnÃ¡lisis:**
-- LÃ­nea 23: funciÃ³n sin referencias encontradas
-- Ãšltimo commit: 2026-02-15 (hace 72 dÃ­as)
-- Estado: HistÃ³rico, potencial API interna
+**Análisis:**
+- Línea 23: función sin referencias encontradas
+- Último commit: 2026-02-15 (hace 72 días)
+- Estado: Histórico, potencial API interna
 
-**DecisiÃ³n:** REVISIÃ“N REQUERIDA
-- [ ] Confirmar que no es parte de API pÃºblica
+**Decisión:** REVISIÓN REQUERIDA
+- [ ] Confirmar que no es parte de API pública
 - [ ] Si es interna, eliminar
-- [ ] Si es pÃºblica, documentar en docstring
+- [ ] Si es pública, documentar en docstring
 
 **Ejecutado por:** [Usuario]  
 **Fecha:** 2026-04-28
 ```
 
-### 4. CategorÃ­as de AcciÃ³n Final
+### 4. Categorías de Acción Final
 
-| AcciÃ³n | DescripciÃ³n | Cuando Aplicar |
+| Acción | Descripción | Cuando Aplicar |
 |--------|-------------|----------------|
-| **DELETE** | Eliminar cÃ³digo | DEAD + manual confirmation |
+| **DELETE** | Eliminar código | DEAD + manual confirmation |
 | **REFACTOR** | Mejorar/simplificar | SMELL (ruff findings) |
 | **DOCUMENT** | Marcar como API interna | LEGACY + validado equipo |
-| **INVESTIGATE** | AnÃ¡lisis manual pendiente | ABANDONED + duda |
+| **INVESTIGATE** | Análisis manual pendiente | ABANDONED + duda |
 | **IGNORE** | Falso positivo | Todos (si aplica) |
 
 ---

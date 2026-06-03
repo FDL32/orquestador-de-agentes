@@ -61,14 +61,6 @@ EXCLUDE_PATTERNS = {
 }
 
 ALLOWLIST = {
-    "skills/_shared/ticket-anti-patterns.md",
-    "skills/bui-implement-from-plan/references/code-rules.md",
-    "skills/code-audit/references/audit-report-template.md",
-    "skills/graphify/SKILL.md",
-    "skills/man-review-implementation/references/review-checklist.md",
-    "skills/man-review-implementation/references/verdict-format.md",
-    "skills/setup-agent-system/SKILL.md",
-    "skills/setup-agent-system/references/quickstart-checklist.md",
     "scripts/discover_skills.py",
     "scripts/migrate_legacy_project.py",
     "scripts/orquestador.py",

@@ -89,10 +89,10 @@ Fuente compartida para Builder y Manager. Cada entrada debe leerse como una regl
 - **Por que rompe al Builder:** El Builder queda autorizado a incluir o excluir trabajo segun su interpretacion, y el plan deja de fijar el contrato de entrega.
 - **Senal de deteccion:** Aparicion de "si existe", "si se anade", "si aplica", "si procede" o formulaciones equivalentes dentro de `Objetivo`, `Fases`, `Criterios` o `Decision Arquitectonica`.
 
-âŒ Ejemplo malo:
+? Ejemplo malo:
 > "Si existe modo de reparacion, anadir un flag adicional."
 
-âœ… Ejemplo bueno:
+✅ Ejemplo bueno:
 > "El wrapper expone `--verify` como ruta por defecto y `--repair` como modo explicito separado; ambos estan definidos en la fase y en los criterios de aceptacion."
 
 Detectado automaticamente por `validate_ticket_prose.py` como `TP-PROSE-12`.
@@ -103,10 +103,10 @@ Detectado automaticamente por `validate_ticket_prose.py` como `TP-PROSE-12`.
 - **Por que rompe al Builder:** destruye trabajo ajeno y convierte una discrepancia de scope en una perdida de estado dificil de auditar.
 - **Senal de deteccion:** el diff muestra eliminaciones o reversiones fuera del whitelist del plan, o el log menciona limpieza destructiva sobre archivos no declarados.
 
-âŒ Ejemplo malo:
+? Ejemplo malo:
 > "Builder hace `git checkout -- skills/_shared/ticket-anti-patterns.md` porque sobraba en su scope."
 
-âœ… Ejemplo bueno:
+✅ Ejemplo bueno:
 > "Builder deja el archivo intacto, anota la discrepancia en `execution_log.md` y pide al Manager una actualizacion explicita del scope."
 
 Detectado por el review checklist y por el Manager leyendo el `git diff` cuando la discrepancia aparece en el flujo de entrega.
@@ -117,10 +117,10 @@ Detectado por el review checklist y por el Manager leyendo el `git diff` cuando 
 - **Por que rompe al Builder:** el push falla por mutacion de archivos que no deberian participar en el formateo o en el fijado de finales de linea.
 - **Senal de deteccion:** un hook mutador toca `.agent/context/project-map.json`, `events.jsonl` u otro artefacto generado declarado como runtime.
 
-âŒ Ejemplo malo:
+? Ejemplo malo:
 > "`pre-push` ejecuta `end-of-file-fixer` sobre `.agent/context/project-map.json` y modifica el arbol."
 
-âœ… Ejemplo bueno:
+✅ Ejemplo bueno:
 > "Los artefactos generados quedan excluidos de hooks mutadores; el preflight solo los verifica de forma no mutadora."
 
 Detectado automaticamente por `delivery_hygiene_check.py`.
@@ -131,10 +131,10 @@ Detectado automaticamente por `delivery_hygiene_check.py`.
 - **Por que rompe al Builder:** si el arbol queda en estado inconsistente, no hay forma segura de volver a un punto conocido sin riesgo de perder trabajo.
 - **Senal de deteccion:** `--mark-ready` falla por falta de M3; `git status` muestra archivos fuera de scope sin ancla de recuperacion; Builder usa `git checkout` destructivo en lugar de checkpoints.
 
-âŒ Ejemplo malo:
+? Ejemplo malo:
 > "Builder ejecuta `--mark-ready` sin M3 y cuando el arbol se ensucia, usa `git checkout --hard` para limpiar, perdiendo trabajo ajeno."
 
-âœ… Ejemplo bueno:
+✅ Ejemplo bueno:
 > "Builder crea M3 explicitamente con `create_checkpoint.py --milestone M3` antes de `--mark-ready`; si el arbol se ensucia, sigue el protocolo de recuperacion con `git checkout checkpoint/review-<ticket>`."
 
 Detectado por el guard de handoff (`pre_handoff_guard.py`) que bloquea si M3 falta. Ver `.agent/rules/builder/recovery.md`.

@@ -1,16 +1,16 @@
-﻿# Checklist de InstalaciÃ³n RÃ¡pida
+# Checklist de Instalación Rápida
 
 ## Pre-requisitos
 - [ ] Python 3.10+
 - [ ] Git instalado
 - [ ] `uv` instalado (`pip install uv`)
 
-## InstalaciÃ³n
-- [ ] Ejecutar script de instalaciÃ³n o copiar manual
+## Instalación
+- [ ] Ejecutar script de instalación o copiar manual
 - [ ] Verificar `.agent/` existe en `publica/repo/`
 - [ ] Verificar `.agent/rules/` existe con archivos modulares
 
-## ConfiguraciÃ³n de Agentes
+## Configuración de Agentes
 - [ ] Copiar archivos de `.agent/rules/common/` a ambos agentes
 - [ ] Copiar archivos de `.agent/rules/manager/` al agente Manager
 - [ ] Copiar archivos de `.agent/rules/builder/` al agente Builder
@@ -19,7 +19,7 @@
 - [ ] Crear carpeta `privada/`
 - [ ] Verificar `.gitignore` incluye `privada/`
 
-## VerificaciÃ³n
+## Verificación
 - [ ] Ejecutar `python .agent/agent_controller.py`
 - [ ] Confirmar estado inicial: MANAGER / CREATE_PLAN
 
@@ -29,7 +29,7 @@
 - [ ] Aprobar plan
 - [ ] Verificar que Builder implementa
 
-## SoluciÃ³n de Problemas
+## Solución de Problemas
 
 ### "No es tu turno"
 Verificar `TURN.md` y abrir el agente correcto.
@@ -38,4 +38,4 @@ Verificar `TURN.md` y abrir el agente correcto.
 Verificar ruta: debe estar en `publica/repo/.agent/`
 
 ### Errores de import
-Verificar que `uv sync` se ejecutÃ³ correctamente.
+Verificar que `uv sync` se ejecutó correctamente.
