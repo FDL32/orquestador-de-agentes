@@ -340,7 +340,8 @@ def _exclude_files() -> set[str]:
                 exclude_files.add(str(f.resolve()))
 
     exclude_files.add(str((context_dir / "project-map.json").resolve()))
-    exclude_files.add(str((context_dir / "project_map.md").resolve()))
+    # Legacy project_map.md was retired in WP-2026-151 and is no longer a
+    # runtime artifact, so it is deliberately omitted from the set above.
 
     # Exclude bus runtime files (events.jsonl is managed by the bus, not the Builder)
     exclude_files.add(
