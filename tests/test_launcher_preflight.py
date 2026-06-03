@@ -28,8 +28,8 @@ def test_import_preflight_success():
         [
             sys.executable,
             "-c",
-            f"import sys; sys.path.insert(0, r'{PROJECT_ROOT}'); "
-            f"sys.path.insert(0, r'{PROJECT_ROOT / '.agent'}'); "
+            f"import sys; sys.path.insert(0, r'{PROJECT_ROOT / '.agent'}'); "
+            f"sys.path.insert(0, r'{PROJECT_ROOT}'); "
             "__import__('bus.event_bus'); "
             "__import__('bus.review_bridge'); "
             "__import__('agent_controller')",

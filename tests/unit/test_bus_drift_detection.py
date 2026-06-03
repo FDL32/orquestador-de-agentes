@@ -34,6 +34,10 @@ def _mock_read_file_no_ticket(path):
 class TestBusDriftDetection:
     """Test detection of drift between Markdown state and bus events."""
 
+    @patch(
+        "scripts.validate_ticket_prose.validate_ticket_prose",
+        return_value={"warnings": []},
+    )
     @patch("agent_controller._check_invariants")
     @patch("agent_controller._check_scope_for_validate")
     @patch("agent_controller._collect_deliverable_type_warnings")
@@ -50,6 +54,7 @@ class TestBusDriftDetection:
         mock_deliverable,
         mock_scope,
         mock_invariants,
+        mock_prose,
     ):
         mock_validate.return_value = {}
         mock_scope.return_value = ([], [])
@@ -65,6 +70,10 @@ class TestBusDriftDetection:
 
         mock_print.assert_any_call("[WARN] 1 advertencia(s) encontradas.")
 
+    @patch(
+        "scripts.validate_ticket_prose.validate_ticket_prose",
+        return_value={"warnings": []},
+    )
     @patch("agent_controller._check_invariants")
     @patch("agent_controller._check_scope_for_validate")
     @patch("agent_controller._collect_deliverable_type_warnings")
@@ -81,6 +90,7 @@ class TestBusDriftDetection:
         mock_deliverable,
         mock_scope,
         mock_invariants,
+        mock_prose,
     ):
         mock_validate.return_value = {}
         mock_scope.return_value = ([], [])
@@ -96,6 +106,10 @@ class TestBusDriftDetection:
 
         mock_print.assert_any_call("[OK] Todos los archivos de estado son validos.")
 
+    @patch(
+        "scripts.validate_ticket_prose.validate_ticket_prose",
+        return_value={"warnings": []},
+    )
     @patch("agent_controller._check_invariants")
     @patch("agent_controller._check_scope_for_validate")
     @patch("agent_controller._collect_deliverable_type_warnings")
@@ -112,6 +126,7 @@ class TestBusDriftDetection:
         mock_deliverable,
         mock_scope,
         mock_invariants,
+        mock_prose,
     ):
         mock_validate.return_value = {}
         mock_scope.return_value = ([], [])
@@ -125,6 +140,10 @@ class TestBusDriftDetection:
 
         mock_print.assert_any_call("[WARN] 1 advertencia(s) encontradas.")
 
+    @patch(
+        "scripts.validate_ticket_prose.validate_ticket_prose",
+        return_value={"warnings": []},
+    )
     @patch("agent_controller._check_invariants")
     @patch("agent_controller._check_scope_for_validate")
     @patch("agent_controller._collect_deliverable_type_warnings")
@@ -141,6 +160,7 @@ class TestBusDriftDetection:
         mock_deliverable,
         mock_scope,
         mock_invariants,
+        mock_prose,
     ):
         mock_validate.return_value = {}
         mock_scope.return_value = ([], [])
@@ -152,6 +172,10 @@ class TestBusDriftDetection:
 
         mock_print.assert_any_call("[WARN] 1 advertencia(s) encontradas.")
 
+    @patch(
+        "scripts.validate_ticket_prose.validate_ticket_prose",
+        return_value={"warnings": []},
+    )
     @patch("agent_controller._check_invariants")
     @patch("agent_controller._check_scope_for_validate")
     @patch("agent_controller._collect_deliverable_type_warnings")
@@ -167,6 +191,7 @@ class TestBusDriftDetection:
         mock_deliverable,
         mock_scope,
         mock_invariants,
+        mock_prose,
     ):
         mock_validate.return_value = {}
         mock_scope.return_value = ([], [])
