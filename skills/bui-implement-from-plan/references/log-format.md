@@ -20,15 +20,15 @@
 
 - **Inicio:** YYYY-MM-DD HH:MM
 
-- **Estado:** ðŸ”µ IN_PROGRESS / ðŸŸ  BLOCKED / ðŸŸ£ READY_FOR_REVIEW
+- **Estado:** IN_PROGRESS / BLOCKED / READY_FOR_REVIEW
 
 
 
-## ðŸ“¦ Sesión N: YYYY-MM-DD HH:MM
+## Sesi?n N: YYYY-MM-DD HH:MM
 
 
 
-### ðŸ”„ Inicio de Fase X
+### Inicio de Fase X
 
 - **Fase:** [Nombre]
 
@@ -36,7 +36,7 @@
 
 
 
-### âœ… [FECHA] - [Tarea Completada]
+### [OK] [FECHA] - [Tarea Completada]
 
 - **Archivo:** `src/archivo.py`
 
@@ -70,7 +70,7 @@ $ python scripts/run_pytest_safe.py -- tests/ -v
 
 
 
-### âš ø Issue Encontrado
+### Issue Encontrado
 
 **ID:** ISS-001
 
@@ -84,7 +84,7 @@ $ python scripts/run_pytest_safe.py -- tests/ -v
 
 
 
-## ðŸ“Š Resumen de Fase
+## Resumen de Fase
 
 
 
@@ -106,8 +106,8 @@ $ python scripts/run_pytest_safe.py -- tests/ -v
 
 |--------|-------|-------------|
 
-| IN_PROGRESS | ðŸ”µ | Implementando |
+| IN_PROGRESS | EN_CURSO | Implementando |
 
-| BLOCKED | ðŸŸ  | Esperando Manager |
+| BLOCKED | BLOQUEADO | Esperando Manager |
 
-| READY_FOR_REVIEW | ðŸŸ£ | Listo para revisión |
+| READY_FOR_REVIEW | LISTO | Listo para revisi?n |

@@ -106,13 +106,13 @@ python -c "import yaml; yaml.safe_load(open('data/archivo.yaml', encoding='utf-8
 
 **Señales de alerta que requieren verificación adicional:**
 
-- Builder reporta **"ya existía"** o **"ya estaba hecho"** â†’ lee el archivo y verifica que el contenido cumple el criterio del plan exacto, no solo que algo con ese nombre existe.
+- Builder reporta **"ya exist?a"** o **"ya estaba hecho"** -> lee el archivo y verifica que el contenido cumple el criterio del plan exacto, no solo que algo con ese nombre existe.
 
-- Builder dice **"sin cambios necesarios"** â†’ verifica que el plan no requería algo diferente.
+- Builder dice **"sin cambios necesarios"** -> verifica que el plan no requer?a algo diferente.
 
-- El plan modificaba **N archivos del mismo tipo** y el log solo menciona uno â†’ verifica los N archivos individualmente.
+- El plan modificaba **N archivos del mismo tipo** y el log solo menciona uno -> verifica los N archivos individualmente.
 
-- El número de tests **cambia >5%** â†’ investiga por qué.
+- El n?mero de tests **cambia >5%** -> investiga por qu?.
 
 
 
@@ -202,7 +202,7 @@ python -c "import src"
 
 - [ ] Variables de entorno usadas vía `settings.py`
 
-- [ ] Patrón cascada respetado (`privada/` â†’ `publica/`)
+- [ ] Patr?n cascada respetado (`privada/` -> `publica/`)
 
 - [ ] `.gitignore` protege `privada/`, `.env`, `data/`
 
@@ -220,7 +220,7 @@ Si pasa todos los gates y verificaciones:
 
 
 
-1. En `work_plan.md`: cambiar estado a `âœ… COMPLETED`
+1. En `work_plan.md`: cambiar estado a `COMPLETED`
 
 2. En `review_queue.md`: añadir entrada `APPROVED`
 
@@ -238,7 +238,7 @@ Si hay problemas menores:
 
 ```markdown
 
-### ðŸ”„ REV-[ID]: Cambios Solicitados
+### REV-[ID]: Cambios Solicitados
 
 - **Plan ID:** WP-XXX
 
@@ -294,7 +294,7 @@ Si hay problemas graves (seguridad, arquitectura incorrecta):
 
 ```markdown
 
-### ðŸ” REV-[ID]: Revisión de [Plan ID]
+### REV-[ID]: Revisi?n de [Plan ID]
 
 - **Fecha:** [YYYY-MM-DD HH:MM]
 
@@ -302,7 +302,7 @@ Si hay problemas graves (seguridad, arquitectura incorrecta):
 
 - **Veredicto:** [APPROVED | CHANGES_REQUESTED | REJECTED]
 
-- **Estado:** âœ… RESOLVED / Ï³ PENDING
+- **Estado:** RESOLVED / PENDING
 
 
 
@@ -342,7 +342,7 @@ Si hay problemas graves (seguridad, arquitectura incorrecta):
 
 ```markdown
 
-## ðŸ“¨ [FECHA] Revisión Completa: Manager â†’ Builder
+## [FECHA] Revisi?n Completa: Manager -> Builder
 
 **Plan:** WP-XXX
 

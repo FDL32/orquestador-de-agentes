@@ -70,7 +70,7 @@ ruff check . --exclude .agent --fix
 
 
 
-Orden: `__future__` â†’ stdlib â†’ third-party â†’ local
+Orden: `__future__` -> stdlib -> third-party -> local
 
 
 
@@ -86,7 +86,7 @@ try:
 
     process()
 
-except ValueError as e:  # âœ… Específico
+except ValueError as e:  # Espec?fico
 
     logger.error(e)
 
