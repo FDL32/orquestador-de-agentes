@@ -24,6 +24,14 @@ Antes de proponer memoria, pregúntate: **¿este aprendizaje empuja al sistema h
 - **No promover como memoria estable** fixes de corto plazo que solo compensan síntomas, salvo que también dejen explícita la deuda estructural o el ticket que los reemplazará.
 - Si el aprendizaje es un hotfix, la entrada de memoria debe registrar *la causa raíz pendiente*, no solo la solución parcial.
 
+### Realismo de fixtures y seeds
+
+Antes de promover un aprendizaje nacido de tests, pregúntate: ¿el fixture o seed reproduce el formato y contrato reales, o solo valida un stub/localismo del test?
+
+- No promover aprendizajes extraídos de un verde si el test pasa contra un fixture inventado que no coincide con los artefactos reales del `repo_motor` o `repo_destino`.
+- Si el caso afecta a parsers, paths, estados o markdown operativo, contrasta siempre el fixture con los archivos reales canónicos antes de concluir si el bug está en producción o en el test.
+- Cuando fixture y realidad divergen, el aprendizaje valioso no es "el test pasó", sino qué contrato real debe imponer el fixture para que la suite vuelva a ser señal fiable.
+- Si detectas un patrón repetido de fixtures irreales o seeds que no espejan producción, trátalo como aprendizaje de `contrato-operativo` o `deuda-temporal`, no como incidente aislado.
 ### Topología de repos
 
 Este sistema opera con dos repositorios distintos. Cada propuesta de memoria debe especificar a cuál aplica:
