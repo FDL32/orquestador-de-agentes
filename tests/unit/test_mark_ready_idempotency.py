@@ -159,6 +159,11 @@ class TestMarkReadyIdempotency:
 
         with (
             patch("agent_controller._scope_gate_allows_close", return_value=True),
+            patch("agent_controller._check_implementation_evidence", return_value=[]),
+            patch(
+                "agent_controller._run_pre_handoff_guard",
+                return_value={"valid": True},
+            ),
             patch("agent_controller._emit_builder_exit"),
             patch("agent_controller._sync_mark_ready_targets"),
             patch("agent_controller._reset_circuit_breaker"),
@@ -218,6 +223,11 @@ class TestMarkReadyIdempotency:
 
         with (
             patch("agent_controller._scope_gate_allows_close", return_value=True),
+            patch("agent_controller._check_implementation_evidence", return_value=[]),
+            patch(
+                "agent_controller._run_pre_handoff_guard",
+                return_value={"valid": True},
+            ),
             patch("agent_controller._emit_builder_exit"),
             patch("agent_controller._sync_mark_ready_targets"),
             patch("agent_controller._reset_circuit_breaker"),

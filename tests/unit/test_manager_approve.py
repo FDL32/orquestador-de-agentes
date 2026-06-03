@@ -73,6 +73,7 @@ class TestManagerApprove:
             patch("agent_controller.TURN_FILE", mock_files["turn"]),
             patch("agent_controller.STATE_FILE", mock_files["state"]),
             patch("agent_controller.AGENT_DIR", tmp_path / ".agent"),
+            patch("agent_controller._check_last_commit", return_value=(True, "")),
         ):
             result = _handle_manager_approve(
                 "WP-TEST-001", json_output=False, force_mode=False
@@ -122,6 +123,7 @@ class TestManagerApprove:
             patch("agent_controller.TURN_FILE", mock_files["turn"]),
             patch("agent_controller.STATE_FILE", mock_files["state"]),
             patch("agent_controller.AGENT_DIR", tmp_path / ".agent"),
+            patch("agent_controller._check_last_commit", return_value=(True, "")),
         ):
             result = _handle_manager_approve(
                 "WP-TEST-001", json_output=True, force_mode=False
@@ -152,6 +154,7 @@ class TestManagerApprove:
             patch("agent_controller.TURN_FILE", mock_files["turn"]),
             patch("agent_controller.STATE_FILE", mock_files["state"]),
             patch("agent_controller.AGENT_DIR", tmp_path / ".agent"),
+            patch("agent_controller._check_last_commit", return_value=(True, "")),
         ):
             result = _handle_manager_approve(
                 "WP-TEST-001", json_output=False, force_mode=False
@@ -196,6 +199,7 @@ class TestManagerApprove:
             patch("agent_controller.TURN_FILE", mock_files["turn"]),
             patch("agent_controller.STATE_FILE", mock_files["state"]),
             patch("agent_controller.AGENT_DIR", tmp_path / ".agent"),
+            patch("agent_controller._check_last_commit", return_value=(True, "")),
         ):
             # Capture stdout
             captured = io.StringIO()
@@ -232,6 +236,7 @@ class TestManagerApprove:
             patch("agent_controller.STATE_FILE", mock_files["state"]),
             patch("agent_controller.AGENT_DIR", tmp_path / ".agent"),
             patch("agent_controller.CIRCUIT_BREAKER_PATH", breaker_path),
+            patch("agent_controller._check_last_commit", return_value=(True, "")),
         ):
             result = _handle_manager_approve(
                 "WP-TEST-001", json_output=False, force_mode=False
@@ -270,6 +275,7 @@ class TestManagerApprove:
             patch("agent_controller.TURN_FILE", mock_files["turn"]),
             patch("agent_controller.STATE_FILE", mock_files["state"]),
             patch("agent_controller.AGENT_DIR", tmp_path / ".agent"),
+            patch("agent_controller._check_last_commit", return_value=(True, "")),
         ):
             result = _handle_manager_approve(
                 "WP-TEST-001", json_output=True, force_mode=False
@@ -298,6 +304,7 @@ class TestManagerApprove:
             patch("agent_controller.TURN_FILE", mock_files["turn"]),
             patch("agent_controller.STATE_FILE", mock_files["state"]),
             patch("agent_controller.AGENT_DIR", tmp_path / ".agent"),
+            patch("agent_controller._check_last_commit", return_value=(True, "")),
         ):
             result = _handle_manager_approve(
                 "WP-TEST-001", json_output=True, force_mode=False
