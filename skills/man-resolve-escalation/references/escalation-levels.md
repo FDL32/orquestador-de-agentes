@@ -1,46 +1,46 @@
-﻿# Niveles de EscalaciÃ³n
+# Niveles de Escalación
 
-## ðŸ”´ Alta Urgencia
+## 🔴 Alta Urgencia
 
-**SeÃ±ales:** Bloqueo total, decisiÃ³n crÃ­tica, deadline inminente
+**Señales:** Bloqueo total, decisión crítica, deadline inminente
 
-**Ejemplos:** "No puedo decidir arquitectura", "Bug crÃ­tico bloquea todo"
+**Ejemplos:** "No puedo decidir arquitectura", "Bug crítico bloquea todo"
 
-**Formato:** `### ðŸš¨ ESC-001: [TÃ­tulo] - ðŸ”´ BLOQUEADO`
-
----
-
-## ðŸŸ¡ Media Urgencia
-
-**SeÃ±ales:** Problema tÃ©cnico complejo, trade-offs similares
-
-**Ejemplos:** "Â¿pandas o polars?", "Â¿DÃ³nde poner validaciÃ³n?"
-
-**Formato:** `### ðŸŸ¡ ESC-002: [TÃ­tulo] - ðŸŸ¡ CONSULTA`
+**Formato:** `### 🚨 ESC-001: [Título] - 🔴 BLOQUEADO`
 
 ---
 
-## ðŸŸ¢ Baja Urgencia
+## 🟡 Media Urgencia
 
-**SeÃ±ales:** Sugerencia de mejora, optimizaciÃ³n
+**Señales:** Problema técnico complejo, trade-offs similares
 
-**Ejemplos:** "Â¿Extraer en helper?", "LibrerÃ­a alternativa"
+**Ejemplos:** "¿pandas o polars?", "¿Dónde poner validación?"
 
-**Formato:** `### ðŸ’¡ ESC-003: [TÃ­tulo] - ðŸŸ¢ SUGERENCIA`
+**Formato:** `### 🟡 ESC-002: [Título] - 🟡 CONSULTA`
+
+---
+
+## 🟢 Baja Urgencia
+
+**Señales:** Sugerencia de mejora, optimización
+
+**Ejemplos:** "¿Extraer en helper?", "Librería alternativa"
+
+**Formato:** `### 💡 ESC-003: [Título] - 🟢 SUGERENCIA`
 
 ---
 
 ## Anti-Patrones
 
 **NO:** "No funciona, ayuda" (sin contexto)
-**SÃ:** Describir intentos + mensajes de error + opciones
+**Sí:** Describir intentos + mensajes de error + opciones
 
 ## Respuesta del Manager
 
 ```markdown
 **Respuesta del Manager:** [FECHA]
-- **DecisiÃ³n:** [OpciÃ³n elegida]
-- **Razonamiento:** [Por quÃ©]
-- **PrÃ³ximo paso:** [AcciÃ³n especÃ­fica]
-- **Estado:** âœ… RESOLVED
+- **Decisión:** [Opción elegida]
+- **Razonamiento:** [Por qué]
+- **Próximo paso:** [Acción específica]
+- **Estado:** ✅ RESOLVED
 ```

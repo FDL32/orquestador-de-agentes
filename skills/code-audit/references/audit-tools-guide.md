@@ -1,23 +1,23 @@
-﻿# Audit Tools â€” Configuration & Interpretation Guide
+# Audit Tools - Configuration & Interpretation Guide
 
-DescripciÃ³n de herramientas, umbrales y cÃ³mo interpretar resultados.
+Descripción de herramientas, umbrales y cómo interpretar resultados.
 
 ## Herramientas Configuradas
 
-### 1. Vulture (AnÃ¡lisis EstÃ¡tico de SÃ­mbolos)
+### 1. Vulture (Análisis Estático de Símbolos)
 
-**PropÃ³sito:** Encontrar cÃ³digo, variables y parÃ¡metros no utilizados.
+**Propósito:** Encontrar código, variables y parámetros no utilizados.
 
 **Comando:**
 ```bash
 vulture . --exclude venv,.venv --min-confidence 80 --sort-by-size
 ```
 
-**ConfiguraciÃ³n:**
-- `--min-confidence 80`: Ignora patrones ambiguos (parÃ¡metros opcionales, etc.)
-- `--sort-by-size`: Ordena por lÃ­neas de cÃ³digo (mÃ¡s relevante primero)
+**Configuración:**
+- `--min-confidence 80`: Ignora patrones ambiguos (parámetros opcionales, etc.)
+- `--sort-by-size`: Ordena por líneas de código (más relevante primero)
 
-**InterpretaciÃ³n:**
+**Interpretación:**
 ```
 src/foo.py:15: unused variable 'temp'
 src/bar.py:42: unused function 'helper'
@@ -25,27 +25,27 @@ src/bar.py:42: unused function 'helper'
 
 | Finding | Significado | Confiabilidad |
 |---------|-------------|---------------|
-| unused variable | Nunca leÃ­da tras asignaciÃ³n | â­â­â­ (muy confiable) |
-| unused function | Nunca llamada en el cÃ³digo | â­â­â­ |
-| unused parameter | Argumento nunca usado | â­â­ (puede ser intencional) |
+| unused variable | Nunca leída tras asignación | *** (muy confiable) |
+| unused function | Nunca llamada en el código | *** |
+| unused parameter | Argumento nunca usado | ** (puede ser intencional) |
 
 **Falsos positivos comunes:**
-- ParÃ¡metros en callbacks (handlers)
+- Parámetros en callbacks (handlers)
 - Variables usadas solo en strings (f-strings)
-- Atributos dinÃ¡micos (setattr/getattr)
+- Atributos dinámicos (setattr/getattr)
 
 ---
 
-### 2. Deadcode (AnÃ¡lisis de Flujo de Control)
+### 2. Deadcode (Análisis de Flujo de Control)
 
-**PropÃ³sito:** CÃ³digo alcanzable pero nunca ejecutado en prÃ¡ctica.
+**Propósito:** Código alcanzable pero nunca ejecutado en práctica.
 
-**LibrerÃ­a Python:**
+**Librería Python:**
 ```python
 from deadcode.actions import parse_arguments, find_python_filenames, find_unused_names
 ```
 
-**ConfiguraciÃ³n:**
+**Configuración:**
 ```python
 exclude = 'venv,.venv,__pycache__,.git,agent_system,.agent'
 ```
@@ -60,20 +60,20 @@ src/foo.py:23: unused_func (function)
 
 | Campo | Uso |
 |-------|-----|
-| filename | Archivo que contiene el sÃ­mbolo |
+| filename | Archivo que contiene el símbolo |
 | type_ | Tipo (function, class, method, variable) |
-| name_line | LÃ­nea donde se define |
+| name_line | Línea donde se define |
 | number_of_uses | Cantidad de referencias encontradas (0=unused) |
 
 **Diferencia con vulture:**
-- Deadcode: AnÃ¡lisis de flujo mÃ¡s profundo
-- Vulture: BÃºsqueda textual de referencias
+- Deadcode: Análisis de flujo más profundo
+- Vulture: Búsqueda textual de referencias
 
 ---
 
-### 3. Ruff (Deuda TÃ©cnica)
+### 3. Ruff (Deuda Técnica)
 
-**PropÃ³sito:** Detectar complejidad, cÃ³digo antiguo y oportunidades de simplificaciÃ³n.
+**Propósito:** Detectar complejidad, código antiguo y oportunidades de simplificación.
 
 **Comando:**
 ```bash
@@ -82,11 +82,11 @@ ruff check . --exclude venv,.venv
 
 **Reglas Configuradas:**
 
-| Regla | CÃ³digo | DescripciÃ³n |
+| Regla | Código | Descripción |
 |-------|--------|-------------|
-| McCabe Complexity | C90 | FunciÃ³n con ciclos/condiciones >10 |
+| McCabe Complexity | C90 | Función con ciclos/condiciones >10 |
 | Dead Code Elimination | ERA | `try/except` siempre falla |
-| Simplifications | SIM | CÃ³digo que puede simplificarse |
+| Simplifications | SIM | Código que puede simplificarse |
 
 **Ejemplos:**
 ```
@@ -96,27 +96,27 @@ src/simple.py:20: SIM105 use set(x) instead of `if x in ...`
 ```
 
 **Acciones:**
-- **C90X**: Refactorizar funciÃ³n grande en funciones pequeÃ±as
+- **C90X**: Refactorizar función grande en funciones pequeñas
 - **ERA**: Eliminar try/except innecesario
 - **SIM**: Aplicar sugerencia o ignorar si contexto es claro
 
 ---
 
-### 4. Git Log (AntigÃ¼edad)
+### 4. Git Log (Antigüedad)
 
-**PropÃ³sito:** Medir abandono midiendo frecuencia de commits.
+**Propósito:** Medir abandono midiendo frecuencia de commits.
 
 **Comando:**
 ```bash
 git log --oneline --follow -- src/foo.py | wc -l
 ```
 
-**InterpretaciÃ³n:**
+**Interpretación:**
 - **commits = 0**: Archivo nuevo, nunca commiteado
-- **commits < 5**: CÃ³digo antiguo, poco mantenimiento
-- **commits >= 5**: CÃ³digo histÃ³rico, posiblemente importante
+- **commits < 5**: Código antiguo, poco mantenimiento
+- **commits >= 5**: Código histórico, posiblemente importante
 
-**CategorizaciÃ³n:**
+**Categorización:**
 ```
 DEAD: commits = 0  + sin referencias
 ABANDONED: 0 < commits < 5  + sin referencias
@@ -127,7 +127,7 @@ LEGACY: commits >= 5  + sin referencias
 
 ## Decision Matrix
 
-| Hallazgo | Tool | Commits | Usos | AcciÃ³n Recomendada |
+| Hallazgo | Tool | Commits | Usos | Acción Recomendada |
 |----------|------|---------|------|-------------------|
 | Variable `x` | vulture | 0 | 0 | DELETE |
 | Function `f` | deadcode | 2 | 0 | REVIEW + DELETE |
@@ -141,11 +141,11 @@ LEGACY: commits >= 5  + sin referencias
 
 ```
 Minimum Confidence (vulture):   80%
-McCabe Threshold (ruff C90):    10 (funciÃ³n compleja si >10)
+McCabe Threshold (ruff C90):    10 (función compleja si >10)
 Deadcode Exclude:               venv,.venv,__pycache__,.git,agent_system,.agent
 Legacy Threshold (git commits): 5+ = posible API interna
 ```
 
 ---
 
-**Ãšltima actualizaciÃ³n:** 2026-04-28
+**Última actualización:** 2026-04-28
