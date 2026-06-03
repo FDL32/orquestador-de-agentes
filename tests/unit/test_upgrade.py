@@ -6,8 +6,6 @@ failure rollback, post-upgrade integrity verification, manifest-first detection.
 """
 
 import json
-import shutil
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -16,26 +14,8 @@ from scripts.upgrade_agent_system import UpgradeManager
 
 @pytest.fixture(autouse=True)
 def isolate_repo_agent_dir():
-    """Temporarily hide the repository .agent directory for isolation."""
-    repo_root = Path(__file__).resolve().parents[2]
-    agent_dir = repo_root / ".agent"
-    hidden_dir = repo_root / ".agent.__pytest_hidden__"
-    moved = False
-
-    if hidden_dir.exists() and not agent_dir.exists():
-        hidden_dir.rename(agent_dir)
-
-    if agent_dir.exists():
-        if hidden_dir.exists():
-            shutil.rmtree(hidden_dir)
-        agent_dir.rename(hidden_dir)
-        moved = True
-
-    try:
-        yield
-    finally:
-        if moved and hidden_dir.exists():
-            hidden_dir.rename(agent_dir)
+    """Isolation is provided by tmp_path project roots; do not touch repo .agent."""
+    yield
 
 
 class TestUpgradeBackup:
