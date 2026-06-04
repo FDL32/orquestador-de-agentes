@@ -1357,6 +1357,12 @@ def _collect_git_diff_files() -> set[str]:
     We check both roots and merge results so the evidence gate works regardless
     of which repo the changes landed in.
 
+    WT-2026-221b: Always check the motor log even when the workspace has
+    unstaged changes. The motor changes may be already committed (not in
+    unstaged/staged diff) but must still be counted as implementation evidence.
+    Without this, a workspace with only collaboration changes would hide the
+    motor's committed productive changes (root cause of seq 602/606/617).
+
     Returns:
         Set of normalized file paths (forward slashes). Empty if git unavailable.
         Never raises.
@@ -1366,14 +1372,19 @@ def _collect_git_diff_files() -> set[str]:
         files |= _run_git_diff_cmd(["git", "diff", "--name-only"], cwd=root)
         files |= _run_git_diff_cmd(["git", "diff", "--cached", "--name-only"], cwd=root)
 
-    # If working tree is clean in both roots, check recent commits.
-    # Use -10 instead of -1: in Model B the implementation commits may be
-    # several commits behind HEAD (e.g. after hotfix commits on top of them).
+    # Always check motor log for committed changes that may not appear in diff.
+    # This is essential for the evidence gate to detect productive motor changes
+    # even when the workspace has uncommitted collaboration-only changes.
+    motor_log_files = _run_git_diff_cmd(
+        ["git", "log", "-10", "--name-only", "--format="], cwd=_MOTOR_ROOT
+    )
+    files |= motor_log_files
+
+    # If still empty, also check workspace log as fallback
     if not files:
-        for root in {PROJECT_ROOT, _MOTOR_ROOT}:
-            files |= _run_git_diff_cmd(
-                ["git", "log", "-10", "--name-only", "--format="], cwd=root
-            )
+        files |= _run_git_diff_cmd(
+            ["git", "log", "-10", "--name-only", "--format="], cwd=PROJECT_ROOT
+        )
 
     return files
 
