@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import os
 import shutil
 import sys
@@ -105,3 +106,22 @@ def tmp_path(
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     """Remove the session runtime once pytest finishes."""
     shutil.rmtree(SESSION_RUNTIME_ROOT, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def _clear_runtime_project_root_cache() -> None:
+    """Keep runtime.project_root cache isolated across tests."""
+    try:
+        pr = importlib.import_module("runtime.project_root")
+    except Exception:
+        yield
+        return
+
+    clear = getattr(pr, "clear_cache", None)
+    if callable(clear):
+        clear()
+    try:
+        yield
+    finally:
+        if callable(clear):
+            clear()

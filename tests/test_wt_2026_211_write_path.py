@@ -10,6 +10,9 @@ from pathlib import Path
 
 MOTOR_ROOT = Path(__file__).resolve().parents[1]
 
+_ORIGINAL_RUNTIME_MODULE = sys.modules.get("runtime")
+_ORIGINAL_RUNTIME_PROJECT_ROOT = sys.modules.get("runtime.project_root")
+
 sys.path.insert(0, str(MOTOR_ROOT))
 sys.path.insert(0, str(MOTOR_ROOT / ".agent"))
 
@@ -144,3 +147,20 @@ def test_supervisor_materializes_ready_for_review_projection(tmp_path):
         "ACTIVE_TICKET: WT-2026-211\nSTATUS: READY_FOR_REVIEW\n"
     )
     assert "Estado documental: READY_FOR_REVIEW" in log_path.read_text(encoding="utf-8")
+
+
+def teardown_module(module) -> None:
+    runtime_module = sys.modules.get("runtime")
+    if _ORIGINAL_RUNTIME_PROJECT_ROOT is None:
+        sys.modules.pop("runtime.project_root", None)
+        if runtime_module is not None and hasattr(runtime_module, "project_root"):
+            delattr(runtime_module, "project_root")
+    else:
+        sys.modules["runtime.project_root"] = _ORIGINAL_RUNTIME_PROJECT_ROOT
+        if runtime_module is not None:
+            runtime_module.project_root = _ORIGINAL_RUNTIME_PROJECT_ROOT
+
+    if _ORIGINAL_RUNTIME_MODULE is None:
+        sys.modules.pop("runtime", None)
+    else:
+        sys.modules["runtime"] = _ORIGINAL_RUNTIME_MODULE
