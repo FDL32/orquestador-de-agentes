@@ -51,10 +51,10 @@ This is a **reference** setup, not a constraint. Swap any role for another backe
 
 ## Current state
 
-- **Version**: `v9.14.1`
-- **Status**: Stable. Session closed. Security hardening files added.
-- **Last work**: Session close — CHANGELOG completeness (WP-151/152), `.claude/` security patterns, `bui-self-audit` Paso 4b, WP-2026-153 grill-with-docs skill.
-- **Tests**: 255 passing. Validation 0 errors. Ruff clean. pip-audit clean.
+- **Version**: `v9.15.0`
+- **Status**: Stable. Canonical close complete; suite green and CEM v0 adopted.
+- **Last work**: Bus reconstruction, suite stabilization (`2071 passed, 22 skipped, 0 failed`), encoding guard hardening, and CEM v0 sustainable engineering philosophy.
+- **Tests**: 2071 passed, 22 skipped, 0 failed. Ruff clean. pip-audit clean.
 
 ### What changed since v9.9.0
 
