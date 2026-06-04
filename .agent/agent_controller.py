@@ -4399,9 +4399,50 @@ FLAG_HANDLERS = {
 # monkeypatching agent_controller._handle_validate in tests works correctly.
 # A dict entry captures the function object at import time, bypassing patches.
 
+HELP_TEXT = """Agent Controller - CLI reference
+
+Usage:
+  python .agent/agent_controller.py [options]
+
+Mode flags:
+  --json              Print machine-readable JSON where supported.
+  --force             Continue when local safety checks would otherwise stop.
+  --strict            Run strict validation mode.
+  --dry-run           Preview the operation without applying changes.
+
+Action flags:
+  --mark-ready                    Mark the active ticket as READY_FOR_REVIEW.
+  --pre-handoff                   Run pre-handoff checks before mark-ready.
+  --validate                      Validate collaboration state.
+  --bootstrap-ticket              Emit initial bus state for the active ticket.
+  --manager-approve <ticket>      Approve and close a ticket canonically.
+  --request-changes <ticket>      Request changes for a ticket.
+  --escalate-human-gate           Move a ticket to HUMAN_GATE.
+  --resume-human-gate             Resume review from HUMAN_GATE.
+  --session-close                 Close the current session.
+  --recover                       Recover session state.
+  --archive                       Archive old notifications.
+
+Control flags:
+  --project-root <path>       Destination project root.
+  --ticket <ticket>           Ticket ID for actions that accept one.
+  --tickets <ids>             Ticket list for session close.
+  --skip-gates                Skip quality gates.
+  --skip-slow                 Skip slow checks during session close.
+  --reset-turn                Regenerate TURN.md.
+  --scope-override <reason>   Override scope gate with a reason.
+
+Example:
+  python .agent/agent_controller.py --validate --json --project-root C:\\path\\to\\repo_destino
+"""
+
 
 def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
     """Funcion principal del controller."""
+    if "--help" in sys.argv or "-h" in sys.argv:
+        print(HELP_TEXT)
+        return 0
+
     # WP-2026-122: Parse --project-root FIRST and export to environment
     # This must happen before any imports that depend on project_root
     if "--project-root" in sys.argv:

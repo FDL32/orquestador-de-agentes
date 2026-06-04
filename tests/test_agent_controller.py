@@ -15,13 +15,15 @@ functions are implemented.
 """
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 
 # Add .agent to path for imports
-agent_dir = Path(__file__).parent.parent / ".agent"
+PROJECT_ROOT = Path(__file__).parent.parent
+agent_dir = PROJECT_ROOT / ".agent"
 if str(agent_dir) not in sys.path:
     sys.path.insert(0, str(agent_dir))
 
@@ -35,6 +37,32 @@ from agent_controller import (  # noqa: E402
     validate_state_files,
     write_file,
 )
+
+
+def test_agent_controller_help_lists_critical_flags() -> None:
+    controller = PROJECT_ROOT / ".agent" / "agent_controller.py"
+    result = subprocess.run(
+        [sys.executable, str(controller), "--help"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    for flag in (
+        "--mark-ready",
+        "--validate",
+        "--manager-approve <ticket>",
+        "--request-changes <ticket>",
+        "--resume-human-gate",
+        "--bootstrap-ticket",
+        "--escalate-human-gate",
+        "--pre-handoff",
+    ):
+        assert flag in result.stdout
+    assert "Traceback" not in result.stderr
+    assert "error:" not in result.stderr.lower()
 
 
 class TestReadFile:
