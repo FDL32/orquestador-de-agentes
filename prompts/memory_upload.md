@@ -82,7 +82,7 @@ Antes de escribir nada, dame una propuesta con estos campos:
   - En memoria de Claude (hábito transversal del usuario/equipo)
   - En varios (especificar)
 - **Archivo exacto a tocar**
-- **Lectura CEM opcional** (si aplica): clase de fallo evitado, barrera existente o propuesta, y deuda residual explícita.
+- **Clasificación CEM opcional** (si aplica): clase de fallo evitado, barrera existente o propuesta, tier afectado y deuda residual explícita.
 - **Texto propuesto** (en formato canónico JSON si es `observations.jsonl`)
 
 ## Restricciones
