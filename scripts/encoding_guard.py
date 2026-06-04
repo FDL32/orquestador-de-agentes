@@ -62,15 +62,7 @@ EXCLUDE_PATTERNS = {
 }
 
 ALLOWLIST = {
-    "scripts/discover_skills.py",
-    "scripts/migrate_legacy_project.py",
     "scripts/orquestador.py",
-    "scripts/rollback.py",
-    "scripts/run_pytest_safe.py",
-    "scripts/test_goose_realworld.py",
-    "scripts/upgrade.py",
-    "scripts/upgrade_agent_system.py",
-    "scripts/validate_agent_config.py",
     ".agent/runtime/memory/memory_helpers.py",
     "CHANGELOG.md",
 }

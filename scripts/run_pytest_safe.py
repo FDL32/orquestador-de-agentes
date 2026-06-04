@@ -387,7 +387,7 @@ def normalize_pytest_args(raw_args: list[str], level: str) -> list[str]:
             args = ["-m", "not integration", *args]
         elif level == "integration":
             args = ["-m", "integration", *args]
-        # level == "all" no aÃ±ade filtro
+        # level == "all" no añade filtro
 
     return args
 

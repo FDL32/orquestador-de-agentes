@@ -128,7 +128,7 @@ def main() -> int:
             print(f"  - {err}")
         return 1
 
-    print("Configuration valid â€” all checks passed.")
+    print("Configuration valid — all checks passed.")
     return 0
 
 
