@@ -1704,17 +1704,335 @@ class SequentialTicketSupervisor:
             motor_root = self.project_root
         return motor_root / "scripts" / "launch_agent_terminals.ps1"
 
+    @staticmethod
+    def _check_artifact(name: str, path: Path) -> tuple[bool, str]:
+        """Check that a canonical artifact exists and is non-empty.
+
+        Returns (True, "") on success, (False, reason) on failure.
+        """
+        try:
+            if not path.exists():
+                return False, f"Required artifact {name} missing: {path}"
+            content = path.read_text(encoding="utf-8")
+            if not content.strip():
+                return False, f"Required artifact {name} is empty: {path}"
+        except OSError as exc:
+            return False, f"Cannot read {name}: {exc}"
+        return True, ""
+
+    def _verify_relaunch_topology(  # noqa: C901
+        self, ticket_id: str
+    ) -> tuple[bool, str]:
+        """Verify topology before relaunch. Returns (is_valid, message).
+
+        Before: Topology was not verified before relaunch; Builder could be
+                launched with invalid or inconsistent root/topology.
+        During: Checks:
+                - project_root exists and is a directory
+                - .agent/collaboration/ directory exists
+                - Required artifacts (work_plan.md, TURN.md, STATE.md):
+                  if they exist, they must be non-empty; missing artifacts
+                  are allowed (graceful for test/minimal environments).
+                - If STATE.md has ACTIVE_TICKET, it must match ticket_id.
+                - Bus events directory exists and is readable
+                - Motor root is resolvable via motor_destination_link.json
+        After: Returns (True, "") if all checks pass, or (False, reason) if any
+               check fails. The message is actionable for diagnosis.
+        """
+
+        # 1) project_root must be a valid directory
+        try:
+            if not self.project_root.exists():
+                return False, f"project_root does not exist: {self.project_root}"
+            if not self.project_root.is_dir():
+                return False, f"project_root is not a directory: {self.project_root}"
+        except OSError as exc:
+            return False, f"project_root access error: {exc}"
+
+        # 2) collaboration dir must exist
+        try:
+            if not self.collaboration_dir.exists():
+                return False, f"Collaboration dir missing: {self.collaboration_dir}"
+            if not self.collaboration_dir.is_dir():
+                return (
+                    False,
+                    f"Collaboration path is not a directory: {self.collaboration_dir}",
+                )
+        except OSError as exc:
+            return False, f"Collaboration dir access error: {exc}"
+
+        # 3) Canonical artifacts: if they exist, they must be non-empty.
+        # Missing artifacts are allowed (graceful for test/minimal environments).
+        for art_name, art_path in [
+            ("work_plan.md", self.work_plan_path),
+            ("TURN.md", self.turn_path),
+            ("STATE.md", self.state_path_file),
+        ]:
+            if not art_path.exists():
+                continue
+            ok, msg = self._check_artifact(art_name, art_path)
+            if not ok:
+                return False, msg
+
+        # 4) Bus events directory must exist and be readable
+        try:
+            events_dir = self.runtime_dir / "events"
+            if not events_dir.exists():
+                return False, f"Bus events directory missing: {events_dir}"
+            events_file = events_dir / "events.jsonl"
+            if events_file.exists():
+                try:
+                    events_file.read_text(encoding="utf-8")
+                except OSError as exc:
+                    return False, f"Bus events file not readable: {exc}"
+        except OSError as exc:
+            return False, f"Bus events directory access error: {exc}"
+
+        # 5) Motor root: if motor_destination_link.json exists, validate it.
+        # Missing link file is allowed (Model A topology where motor is its own
+        # workspace or minimal test environments).
+        motor_link_path = (
+            self.project_root / ".agent" / "config" / "motor_destination_link.json"
+        )
+        if motor_link_path.exists():
+            try:
+                from runtime.motor_link import resolve_motor_root as _rmr
+
+                motor_root = _rmr(self.project_root)
+                if motor_root is None:
+                    return (
+                        False,
+                        "Motor root not resolvable from motor_destination_link.json",
+                    )
+                if not motor_root.exists():
+                    return False, f"Motor root path does not exist: {motor_root}"
+            except ImportError as exc:
+                return False, f"Cannot import runtime.motor_link: {exc}"
+
+        # 6) Ticket consistency: if STATE.md has ACTIVE_TICKET, it must match.
+        if self.state_path_file.exists():
+            try:
+                state_content = self.state_path_file.read_text(encoding="utf-8")
+                m = re.search(r"ACTIVE_TICKET:\s*(\S+)", state_content)
+                if m:
+                    artifact_ticket = m.group(1)
+                    if artifact_ticket != ticket_id:
+                        return (
+                            False,
+                            f"Ticket mismatch: STATE.md says {artifact_ticket} "
+                            f"but relaunching for {ticket_id}",
+                        )
+            except OSError:
+                pass  # unreadable STATE.md is not blocking if artifacts are optional
+
+        return True, ""
+
+    @staticmethod
+    def _capsule_hechos_from_work_plan(work_plan_path: Path) -> list[str]:
+        """Extract verified facts from work_plan.md metadata."""
+        result = []
+        try:
+            wp = work_plan_path.read_text(encoding="utf-8")
+            for line in wp.split("\n"):
+                ls = line.strip()
+                for prefix in (
+                    "**ID:**",
+                    "**Title:**",
+                    "**Estado:**",
+                    "**deliverable_type:**",
+                ):
+                    marker = f"- {prefix}"
+                    if ls.startswith(marker):
+                        val = ls[len(marker) :].strip()
+                        key = prefix.strip("*:")
+                        result.append(f"{key}: {val}")
+        except OSError:
+            result.append("(work_plan.md no disponible)")
+        return result
+
+    @staticmethod
+    def _capsule_hechos_from_state(state_path: Path) -> list[str]:
+        """Extract state from STATE.md."""
+        try:
+            state = state_path.read_text(encoding="utf-8").strip()
+            return [f"STATE.md: {state}"] if state else []
+        except OSError:
+            return ["(STATE.md no disponible)"]
+
+    @staticmethod
+    def _capsule_hechos_from_log_tail(log_path: Path) -> list[str]:
+        """Extract last non-empty lines from execution_log.md."""
+        try:
+            content = log_path.read_text(encoding="utf-8")
+            log_lines = [ln for ln in content.split("\n") if ln.strip()]
+            tail_count = min(10, len(log_lines))
+            tail = log_lines[-tail_count:] if tail_count > 0 else log_lines
+            if not tail:
+                return []
+            result = ["Execution log tail:"]
+            result.extend(f"  {tline}" for tline in tail)
+            return result
+        except OSError:
+            return ["(execution_log.md no disponible)"]
+
+    def _capsule_hechos_from_bus(self, ticket_id: str) -> list[str]:
+        """Extract last BUILDER_RELAUNCH_ATTEMPTED event from bus."""
+        try:
+            events = self.event_bus.read_events(
+                ticket_id=ticket_id,
+                event_type="BUILDER_RELAUNCH_ATTEMPTED",
+            )
+            if events:
+                latest = events[-1]
+                pl = latest.payload or {}
+                return [
+                    f"Event {latest.sequence_number}: "
+                    f"outcome={pl.get('outcome', '?')} "
+                    f"verify_signal={pl.get('verify_signal', '?')}",
+                ]
+        except Exception as exc:
+            print(
+                f"[supervisor] capsule bus read error: {exc}",
+                file=sys.stderr,
+                flush=True,
+            )
+        return ["(event bus no disponible)"]
+
+    @staticmethod
+    def _capsule_blockers_from_turn(turn_path: Path) -> list[str]:
+        """Extract blockers section from TURN.md."""
+        result = []
+        try:
+            turn = turn_path.read_text(encoding="utf-8")
+            in_blockers = False
+            for line in turn.split("\n"):
+                if "## Blockers from Manager" in line:
+                    in_blockers = True
+                    continue
+                if in_blockers:
+                    if line.startswith("## "):
+                        break
+                    stripped = line.strip()
+                    if stripped:
+                        result.append(stripped)
+        except OSError:
+            result.append("(TURN.md no disponible)")
+        if not result:
+            result.append("(No blockers documentados en TURN.md)")
+        return result
+
+    @staticmethod
+    def _capsule_hipotesis_from_log(log_path: Path) -> list[str]:
+        """Extract explicitly marked hypotheses from execution_log.md.
+
+        Only matches lines with the canonical prefix 'hipotesis:' or
+        '[hipotesis]' (case-insensitive). Generic terms like 'pendiente'
+        are intentionally excluded to avoid treating completed log entries
+        as open hypotheses.
+
+        Convention: Builder must prefix unverified inferences with
+        'hipotesis:' when writing to execution_log.md so the supervisor
+        can surface them in the relaunch capsule.
+        Example: '- hipotesis: fallo puede deberse a cache stale.'
+        """
+        _markers = ("hipotesis:", "[hipotesis]")
+        try:
+            content = log_path.read_text(encoding="utf-8")
+            return [
+                ln.strip()
+                for ln in content.split("\n")
+                if any(m in ln.lower() for m in _markers)
+            ][:5]
+        except OSError:
+            return []
+
+    def _build_relaunch_capsule(self, ticket_id: str) -> str:
+        """Build fresh evidence-linked capsule from canonical artifacts.
+
+        Before: No structured capsule existed; Builder had no evidence-linked
+                continuity on relaunch.
+        During: Reads canonical artifacts (work_plan.md, STATE.md,
+                execution_log.md, TURN.md, bus events) and composes a 4-section
+                capsule: Hechos Verificados, Blockers del Manager, Hipotesis /
+                Puntos No Verificados, Siguiente Accion Esperada.
+                Persists capsule to .agent/runtime/relaunch_capsule.md.
+        After: Capsule file exists in runtime dir. Returns capsule text.
+               Capsule is fresh each call (not accumulated across relaunches).
+        """
+        from datetime import datetime, timezone
+
+        # Collect each section via dedicated helpers
+        hechos = []
+        hechos.extend(self._capsule_hechos_from_work_plan(self.work_plan_path))
+        hechos.extend(self._capsule_hechos_from_state(self.state_path_file))
+        hechos.extend(self._capsule_hechos_from_log_tail(self.execution_log_path))
+        hechos.extend(self._capsule_hechos_from_bus(ticket_id))
+
+        blockers = self._capsule_blockers_from_turn(self.turn_path)
+        hipotesis = self._capsule_hipotesis_from_log(self.execution_log_path)
+
+        siguiente_accion = [
+            f"Implementar {ticket_id} segun work_plan.md y ejecutar "
+            "ruff + pytest-safe sobre archivos tocados.",
+        ]
+
+        # Compose capsule
+        now = datetime.now(timezone.utc).isoformat()
+        capsule = (
+            f"# Capsula de Relaunch - {ticket_id}\n"
+            f"Generada: {now}\n\n"
+            f"Fuentes: work_plan.md, TURN.md, STATE.md, "
+            f"execution_log.md, bus events\n\n"
+        )
+
+        capsule += "## 1. Hechos Verificados\n"
+        for h in hechos:
+            capsule += f"- {h}\n"
+
+        capsule += "\n## 2. Blockers del Manager\n"
+        for b in blockers:
+            capsule += f"- {b}\n"
+
+        capsule += "\n## 3. Hipotesis / Puntos No Verificados\n"
+        for h in hipotesis:
+            capsule += f"- {h}\n"
+
+        capsule += "\n## 4. Siguiente Accion Esperada\n"
+        for a in siguiente_accion:
+            capsule += f"- {a}\n"
+
+        capsule += (
+            f"\n---\n"
+            f"*Capsula generada por supervisor para relaunch de {ticket_id}. "
+            "Fuentes primarias: work_plan.md, TURN.md, STATE.md, "
+            "execution_log.md, bus events.*\n"
+        )
+
+        # Persist to runtime dir (always fresh, never stale)
+        capsule_path = self.runtime_dir / "relaunch_capsule.md"
+        capsule_path.parent.mkdir(parents=True, exist_ok=True)
+        capsule_path.write_text(capsule, encoding="utf-8")
+        print(
+            f"[ticket-supervisor] Capsula evidence-linked generada: {capsule_path}",
+            flush=True,
+        )
+
+        return capsule
+
     def _relaunch_builder(self, ticket_id: str, trigger_seq: int = 0) -> bool:
         """Relaunch Builder via launcher. Returns True if launched, False on failure.
 
         Before: Relaunch logic emitted "success" as outcome based solely on
                 launcher exit code 0, without verifying Builder liveness.
-        During: Extracts subprocess spawn to _run_launcher_subprocess seam, persists
-                output to logs, and emits BUILDER_RELAUNCH_ATTEMPTED event.
+        During: Verifies topology (WT-2026-221a), generates evidence-linked
+                capsule (WT-2026-221a), extracts subprocess spawn to
+                _run_launcher_subprocess seam, persists output to logs, and
+                emits BUILDER_RELAUNCH_ATTEMPTED event.
                 After launcher exit 0, polls for builder_lock.txt freshness as
                 a signal of Builder start.
         After: Each relaunch attempt is observable via event bus and log file, with
-               outcome in the new taxonomy (WT-2026-199):
+               outcome in the taxonomy (WT-2026-199 + WT-2026-221a):
+               - topology_invalid: topology/root verification failed before launch.
                - builder_started_verified: launcher exit 0 AND builder_lock fresh
                  with matching round AND no BUILDER_EXIT during verification window.
                - builder_launch_unverified: launcher exit 0 but no runtime signal
@@ -1725,14 +2043,14 @@ class SequentialTicketSupervisor:
 
                Returns True whenever the launcher subprocess was actually
                executed with exit code 0, even if outcome is
-               builder_launch_unverified. Returns False on launcher_failed
-               or timeout. The outcome payload carries the actual liveness
-               signal (verify_signal: "builder_lock" | "none").
+               builder_launch_unverified. Returns False on topology_invalid,
+               launcher_failed or timeout. The outcome payload carries the
+               actual liveness signal (verify_signal: "builder_lock" | "none").
 
         Event payload (BUILDER_RELAUNCH_ATTEMPTED):
         {
             "round": N,
-            "outcome": "builder_started_verified|builder_launch_unverified|...",
+            "outcome": "topology_invalid|builder_started_verified|...",
             "trigger_seq": int,
             "launcher_exit_code": int|null,
             "verify_signal": "builder_lock"|"none",
@@ -1782,6 +2100,36 @@ class SequentialTicketSupervisor:
         # Builder is dead (checked above); remove any captured session ID
         # so the next launch starts with a clean session.
         _bus_cleanup_builder_session(self.runtime_dir)
+
+        # WT-2026-221a: Verify topology before proceeding with relaunch.
+        # Blocks invalid relaunch with observable event.
+        topology_valid, topology_msg = self._verify_relaunch_topology(ticket_id)
+        if not topology_valid:
+            print(
+                f"[ticket-supervisor] Topology invalid, blocking relaunch: "
+                f"{topology_msg}",
+                file=sys.stderr,
+                flush=True,
+            )
+            self.event_bus.emit(
+                "BUILDER_RELAUNCH_ATTEMPTED",
+                ticket_id=ticket_id,
+                actor="SUPERVISOR",
+                payload={
+                    "round": current_round,
+                    "outcome": "topology_invalid",
+                    "trigger_seq": trigger_seq,
+                    "launcher_exit_code": -1,
+                    "verify_signal": "none",
+                    "stderr_tail": f"Topology invalid: {topology_msg}",
+                },
+            )
+            return False
+
+        # WT-2026-221a: Generate fresh evidence-linked capsule for Builder
+        # continuity. Capsule is derived from canonical artifacts on each
+        # relaunch, never accumulated or recycled from previous launches.
+        self._build_relaunch_capsule(ticket_id)
 
         launcher_path = self._resolve_launcher_path()
         if not launcher_path.exists():
