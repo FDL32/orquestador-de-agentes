@@ -43,6 +43,8 @@ def test_launcher_reprojects_canonical_state_after_preflight_reconcile() -> None
         in content
     )
     assert "Invoke-PostPreflightProjectionSync -ProjectRoot $ProjectRoot" in content
+    assert "if ($null -ne $previousProjectRoot)" in content
+    assert "SetEnvironmentVariable('AGENT_PROJECT_ROOT', $null, 'Process')" in content
 
 
 def test_launcher_reports_per_window() -> None:
