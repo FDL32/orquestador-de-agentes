@@ -55,7 +55,7 @@ Despues decide que evidencia minima exige. Un cierre requiere mas evidencia que 
 |----------------|------------------|
 | cierre | diff revisable, estado git, gates ejecutados, exit code real y bus/estado canonico si aplica |
 | plan | contrato canonico, archivos fuente nombrados, criterios binarios y riesgos de root/topologia |
-| codigo de bus/orquestacion | diff, tests gobernantes, validacion de estado canonico y regression check proporcional |
+| codigo de bus/orquestacion | diff, tests gobernantes, validacion de estado canonico, regression check proporcional y prueba de barrera cuando el cambio corrige un bug real |
 | claim de tests | comando exacto, contexto de ejecucion, exit code no enmascarado y arbol limpio si es evidencia de cierre |
 | comentario/review o propuesta | claims separados de inferencias y al menos una evidencia o limitacion explicita |
 | tipos no cubiertos arriba (codigo, propuesta arquitectonica, documentacion/memoria, otro) | al menos un claim separado de inferencia, una evidencia verificable o limitacion explicita, y criterio de riesgo proporcional |
@@ -94,7 +94,10 @@ Si el agente reporta tests:
 - El arbol estaba limpio si la prueba era evidencia de cierre?
 - El test aislado contradice el global?
 - El verde depende de fixtures realistas o de stubs inventados?
+- Hay mock-drift? Compara mocks con el contrato observable de produccion: firma, shape de datos y efectos esperados.
+- Hay aserciones reales o floor assertions? Prefiere limites exactos, efectos verificables y `pytest.raises` cuando aplique.
 - El gate bloquea de verdad o solo "pasa" en estado limpio?
+- Si el cambio corrige un bug real, existe prueba de barrera suficiente: evidencia de que el test o guard habria fallado sin el fix?
 
 ### 4. Produccion vs tests
 
