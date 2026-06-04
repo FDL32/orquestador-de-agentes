@@ -10,9 +10,10 @@ Covers:
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
-from bus.supervisor import SequentialTicketSupervisor
+from bus.supervisor import SequentialTicketSupervisor, SupervisorState
 
 
 def _write_collab_artifacts(
@@ -217,3 +218,112 @@ def test_relaunch_blocks_on_invalid_topology(tmp_path: Path) -> None:
     assert "Topology invalid" in last_event.payload.get("stderr_tail", "")
     assert last_event.payload.get("launcher_exit_code") == -1
     assert last_event.payload.get("verify_signal") == "none"
+
+
+# ---------------------------------------------------------------------------
+# Tests: WT-2026-224a — Overlap guard via _builder_alive()
+# ---------------------------------------------------------------------------
+
+
+def test_relaunch_suppressed_when_lock_fresh(tmp_path: Path) -> None:
+    """TP-02, TP-05: _relaunch_builder suprime relaunch cuando el lock
+    esta fresco y no hay BUILDER_EXIT posterior.
+
+    Reproduce el overlap: round N sigue activo con builder_lock.txt
+    recien escrito, supervisor detecta la senal y NO spawnear un
+    Builder nuevo. Verifica que el evento lleve outcome=skipped_alive
+    y que nunca se ejecute la topologia ni el launcher.
+    """
+    import json
+
+    collab = tmp_path / ".agent" / "collaboration"
+    _write_collab_artifacts(collab, ticket_id="WT-2026-224a")
+
+    supervisor = _make_supervisor(tmp_path)
+    supervisor.save_state(
+        SupervisorState(
+            active_ticket="WT-2026-224a",
+            loop_current_round=5,
+        )
+    )
+
+    # Write builder_lock.txt with fresh started_at (10 seconds ago),
+    # no BUILDER_EXIT event on the bus -> _builder_alive() returns True
+    lock = supervisor.runtime_dir / "builder_lock.txt"
+    started_at = datetime.now(timezone.utc).isoformat()
+    lock.write_text(
+        json.dumps(
+            {
+                "ticket_id": "WT-2026-224a",
+                "started_at": started_at,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    # Call _relaunch_builder — should suppress immediately
+    result = supervisor._relaunch_builder("WT-2026-224a", trigger_seq=42)
+
+    # Builder alive is not an error; returns True
+    assert result is True
+
+    events = supervisor.event_bus.read_events(
+        ticket_id="WT-2026-224a",
+        event_type="BUILDER_RELAUNCH_ATTEMPTED",
+    )
+    assert len(events) >= 1
+    last_event = events[-1]
+    payload = last_event.payload
+    assert payload["outcome"] == "skipped_alive", (
+        f"Expected skipped_alive, got {payload.get('outcome')}"
+    )
+    assert payload["round"] == 5
+    assert payload.get("launcher_exit_code") is None
+    assert payload.get("verify_signal") == "none"
+    assert payload.get("trigger_seq") == 42
+    assert "Builder alive" in payload.get("stderr_tail", "")
+
+    # Verify log was persisted
+    assert (supervisor.runtime_dir / "logs" / "launcher_last.log").exists()
+
+
+def test_relaunch_proceeds_when_builder_dead(tmp_path: Path) -> None:
+    """TP-03: _relaunch_builder NO suprime el relaunch cuando no hay
+    builder_lock.txt (Builder muerto).
+
+    El supervisor debe pasar la barrera de _builder_alive() y
+    continuar hacia la verificacion de topologia o lanzamiento.
+    """
+    collab = tmp_path / ".agent" / "collaboration"
+    _write_collab_artifacts(collab, ticket_id="WT-2026-224a")
+    _write_motor_link(tmp_path, motor_root=tmp_path)
+
+    supervisor = _make_supervisor(tmp_path)
+    supervisor.save_state(
+        SupervisorState(
+            active_ticket="WT-2026-224a",
+            loop_current_round=1,
+        )
+    )
+
+    # NO builder_lock.txt — _builder_alive() devuelve False.
+    # Call _relaunch_builder: the barrier does NOT block because
+    # _builder_alive() == False. The code proceeds to topology check
+    # (which passes with valid setup) then to launcher execution.
+    # The result may be False (pwsh not found in test env), but the
+    # key assertion is that the event outcome is NOT skipped_alive.
+    supervisor._relaunch_builder("WT-2026-224a", trigger_seq=7)
+
+    events = supervisor.event_bus.read_events(
+        ticket_id="WT-2026-224a",
+        event_type="BUILDER_RELAUNCH_ATTEMPTED",
+    )
+    assert len(events) >= 1
+    last_event = events[-1]
+    payload = last_event.payload
+    assert payload["outcome"] != "skipped_alive", (
+        "relaunch should NOT be skipped when builder is dead"
+    )
+    assert payload["round"] == 1
+    assert payload.get("trigger_seq") == 7
