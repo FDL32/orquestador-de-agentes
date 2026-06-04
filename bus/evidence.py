@@ -62,6 +62,9 @@ def motor_uncommitted_productive(motor_root: Path) -> list[str]:
     files = set()
     files |= _run_git_cmd(["git", "diff", "--name-only"], motor_root)
     files |= _run_git_cmd(["git", "diff", "--cached", "--name-only"], motor_root)
+    files |= _run_git_cmd(
+        ["git", "ls-files", "--others", "--exclude-standard"], motor_root
+    )
 
     productive = sorted(
         f for f in files if not _path_matches_any(f, DOCS_ONLY_PATTERNS)
