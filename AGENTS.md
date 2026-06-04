@@ -160,6 +160,21 @@ Para evitar la inflación artificial de cobertura sin validación lógica real, 
 
 - **Zero-logic wrapper:** una función cuyo cuerpo completo es una única llamada delegada 1:1 sin lógica propia debe ser inlineada o eliminada. Añade indirección cognitiva sin valor.
 
+## CEM v0 - Contrato, Evidencia y Memoria
+
+CEM es el contrato minimo para trabajar con agentes sin convertir cada ticket en burocracia. Se aplica con rigor proporcional al riesgo del cambio.
+
+- **Contrato antes que fix:** identifica que comportamiento canonico protege el cambio antes de tocar codigo o tests.
+- **Evidencia antes que relato:** ningun auto-reporte de agente es evidencia; usa diff, exit code, test, evento de bus, commit o artefacto verificable.
+- **Memoria despues de aprender:** si una familia de fallos puede repetirse, deja barrera automatica o deuda explicita con ticket y criterio de salida.
+- **Rigor proporcional:** docs y typos no cargan la misma ceremonia que bus, supervisor, seguridad, rutas o estado compartido.
+- **Barrera verificada:** un guard, hook o test nuevo no cuenta hasta demostrar que bloquea el fallo que promete bloquear.
+- **Fixtures realistas:** un test verde contra un fixture irreal es sospechoso; cuando el contrato sea operativo, contrasta contra artefactos reales.
+- **Gates self-service:** un gate preserva autonomia solo si explica que fallo, como reproducirlo y como volver a validar sin escalar al humano.
+- **Relaunch con root verificado:** antes de relanzar Builder, valida `AGENT_PROJECT_ROOT`, `repo_motor`, `repo_destino`, bus legible y ticket activo.
+
+Referencia ampliada: `.agent/rules/common/sustainable_engineering.md`.
+
 ## Skills Formales de Proceso
 
 El repositorio define skills operativas formales para estructurar el trabajo del agente.
