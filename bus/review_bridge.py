@@ -1942,9 +1942,20 @@ class ReviewBridge:
             elif bat_candidate.exists():
                 exe_full = str(bat_candidate)
 
+        repomix_path, repomix_status = self._ensure_repomix_context()
+
         # Review packet: el contexto completo del review se escribe a un
         # archivo dentro del repo; el Manager lo lee con sus herramientas.
         # El prompt posicional es corto (sin metacaracteres de cmd.exe).
+
+        # Loguear repomix_status en el review packet (WT-2026-227a fix)
+        if repomix_status:
+            prompt += (
+                f"\n\n--- Repomix Context Status ---\n"
+                f"Status: {repomix_status.get('status', 'unknown')}\n"
+                f"Reason: {repomix_status.get('reason', '')}\n"
+            )
+
         packet_path = self._get_review_packet_path(ticket_id, attempt)
         packet_path.write_text(prompt, encoding="utf-8")
         packet_rel = packet_path.relative_to(self.project_root).as_posix()
@@ -1965,7 +1976,6 @@ class ReviewBridge:
             cmd_args.extend(["--model", model])
         if self._supports_json_format:
             cmd_args.extend(["--format", "json"])
-        repomix_path, _repomix_status = self._ensure_repomix_context()
         if repomix_path:
             cmd_args.extend(["-f", str(repomix_path)])
         cmd_args.append(review_message)

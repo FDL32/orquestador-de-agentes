@@ -1262,7 +1262,7 @@ class TestReviewPacketTransport:
             tmp_path / ".agent" / "runtime" / "review_packets" / "WP-T_attempt-1.md"
         )
         assert packet.exists()
-        assert packet.read_text(encoding="utf-8") == prompt
+        assert prompt in packet.read_text(encoding="utf-8")
 
     def test_review_packet_is_separate_per_attempt(self, tmp_path, monkeypatch):
         """Cada intento escribe su propio packet y preserva la provenance."""
@@ -1289,8 +1289,8 @@ class TestReviewPacketTransport:
         )
         assert packet_1.exists()
         assert packet_2.exists()
-        assert packet_1.read_text(encoding="utf-8") == "PROMPT 1"
-        assert packet_2.read_text(encoding="utf-8") == "PROMPT 2"
+        assert "PROMPT 1" in packet_1.read_text(encoding="utf-8")
+        assert "PROMPT 2" in packet_2.read_text(encoding="utf-8")
 
     def test_bridge_helper_does_not_patch_global_os_name(self, tmp_path, monkeypatch):
         """La simulacion de plataforma debe quedar confinada al modulo de review."""
@@ -3864,6 +3864,19 @@ class TestRepomixStructuredStatus:
         assert "-f" not in cmd
         # Must contain the review message
         assert any("WT-2026-227a" in str(part) for part in cmd)
+
+        # Validate that repomix_status was injected into the review packet
+        packet_path = (
+            tmp_path
+            / ".agent"
+            / "runtime"
+            / "review_packets"
+            / "WT-2026-227a_attempt-1.md"
+        )
+        assert packet_path.exists(), "Review packet should be created"
+        packet_content = packet_path.read_text(encoding="utf-8")
+        assert "Repomix Context Status" in packet_content
+        assert "Repomix failed (simulated)" in packet_content
 
     # ---------------------------------------------------------------
     # TP-06: tests focales no usan _mock_repomix_for_tests
