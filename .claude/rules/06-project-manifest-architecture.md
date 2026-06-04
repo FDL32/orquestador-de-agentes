@@ -38,31 +38,31 @@ Los agentes deben leer el contrato primero cuando exista, priorizando rutas can�
 
 |-----------------|----------------------|-------------------------|-------------------|
 
-| Manifests del proyecto | ✅ `project_manifest.toml` | âŒ | âŒ |
+| Manifests del proyecto | ✅ `project_manifest.toml` | ? | ? |
 
-| Estado técnico del sistema | ✅ `.version_manifest.json` | âŒ | âŒ |
+| Estado técnico del sistema | ✅ `.version_manifest.json` | ? | ? |
 
-| Runtime y hooks | ✅ `agent_controller.py`, hooks/ | âŒ | âŒ |
+| Runtime y hooks | ✅ `agent_controller.py`, hooks/ | ? | ? |
 
-| Reglas del sistema | ✅ `rules/` | âŒ | âŒ |
+| Reglas del sistema | ✅ `rules/` | ? | ? |
 
-| Estado de colaboración | ✅ `collaboration/` | âŒ | âŒ |
+| Estado de colaboración | ✅ `collaboration/` | ? | ? |
 
-| Settings Claude Code | âŒ | ✅ `config.json` | âŒ |
+| Settings Claude Code | ? | ✅ `config.json` | ? |
 
-| Commands slash | âŒ | ✅ `commands/` | âŒ |
+| Commands slash | ? | ✅ `commands/` | ? |
 
-| Agentes nativos | âŒ | ✅ `agents/` | âŒ |
+| Agentes nativos | ? | ✅ `agents/` | ? |
 
-| Reglas de consumo | âŒ | ✅ `rules/` | âŒ |
+| Reglas de consumo | ? | ✅ `rules/` | ? |
 
-| Secretos | âŒ | âŒ | ✅ |
+| Secretos | ? | ? | ✅ |
 
-| Rutas absolutas personales | âŒ | âŒ | ✅ |
+| Rutas absolutas personales | ? | ? | ✅ |
 
-| Estado canónico del proyecto | ✅ | âŒ | âŒ |
+| Estado canónico del proyecto | ✅ | ? | ? |
 
-| Versionado técnico | ✅ | âŒ | âŒ |
+| Versionado técnico | ✅ | ? | ? |
 
 
 

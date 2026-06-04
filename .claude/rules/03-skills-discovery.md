@@ -15,7 +15,7 @@ triggers: [/codereview, review, /approve]
 - Valida con `python scripts/discover_skills.py --json`.
 
 ## 2. Descubrimiento Automático (Fase 2)
-- El script `scripts/discover_skills.py` genera un mapeo `trigger â†’ skill_path`.
+- El script `scripts/discover_skills.py` genera un mapeo `trigger → skill_path`.
 - **Integración Goose/Claw:** El orquestador ejecuta el discovery automáticamente en startup y agrega los triggers al prompt del agente. Así, el agente conoce y puede usar los comandos `/implement`, `/review` sin configuración adicional.
 
 ## 3. Skill Executor (Fase 3b)
