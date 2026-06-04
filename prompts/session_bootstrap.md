@@ -57,6 +57,13 @@ Regla de repos: toda operación git de tooling corre en `repo_motor`. El estado 
 
 **Manager devuelve `inspect` / CHANGES fantasma:** la causa raiz se corrigio en WP-2026-120 (el parser JSON del bridge leia un schema inexistente). Ya NO es comportamiento esperado: si reaparece un `changes` con `attempt-N.md` de BLOCKERS vacios, es una regresion del parser en `bus/review_bridge.py` — investigarla, no normalizarla. Cierre manual canonico si hace falta: `python .agent/agent_controller.py --manager-approve --ticket WP-XXXX --force`.
 
+## Reflejos CEM v0
+
+- **Contrato antes que fix:** identifica que comportamiento canonico protege el cambio antes de modificar codigo o tests.
+- **Evidencia antes que relato:** ningun auto-reporte de agente es evidencia; verifica con diff, test, exit code, bus o artefacto real.
+- **Rigor proporcional:** ajusta gates y pruebas al blast radius y reversibilidad del cambio.
+- **Root/topologia antes de relaunch:** valida `AGENT_PROJECT_ROOT`, `repo_motor`, `repo_destino`, bus legible y ticket activo antes de abrir Builder.
+
 ## Reglas no negociables
 
 - **Verifica antes de actuar.** No confies en reportes de Builder o agentes externos: `git status`, `tail events.jsonl`, `--validate`. El patron de fabricacion esta documentado en [AGENTS.md](AGENTS.md).
