@@ -768,7 +768,12 @@ function Invoke-PostPreflightProjectionSync {
         }
     }
     finally {
-        [System.Environment]::SetEnvironmentVariable('AGENT_PROJECT_ROOT', $previousProjectRoot, 'Process')
+        if ($null -ne $previousProjectRoot) {
+            [System.Environment]::SetEnvironmentVariable('AGENT_PROJECT_ROOT', $previousProjectRoot, 'Process')
+        }
+        else {
+            [System.Environment]::SetEnvironmentVariable('AGENT_PROJECT_ROOT', $null, 'Process')
+        }
     }
 }
 
