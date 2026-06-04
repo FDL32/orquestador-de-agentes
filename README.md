@@ -17,6 +17,17 @@ Central motor for multi-agent orchestration. Operational code lives once here; d
 
 A **domain-agnostic central motor** that automates work by making one agent generate plans, another implement them, and a third review the result. The motor lives once in this repo; destination projects prepare a workspace (`.agent/`) and reference the motor externally. No copying of operational code.
 
+### Engineering philosophy: CEM v0
+
+The motor now follows **CEM: Contract, Evidence, Memory** as its lightweight engineering philosophy for agent-assisted development.
+
+- **Contract:** decide the canonical behavior before changing code or tests.
+- **Evidence:** treat agent self-reports as hypotheses; accept diffs, exit codes, tests, bus events, commits and artifacts as evidence.
+- **Memory:** turn recurring lessons into guards, hooks, rules or explicit debt with an exit criterion.
+- **Proportionality:** scale rigor to blast radius; documentation changes and bus/supervisor changes do not need the same ceremony.
+
+The expanded v0 rule lives in `.agent/rules/common/sustainable_engineering.md`. `WT-2026-221a` is the first planned field test: relaunch with verified root/topology and an evidence-linked Builder handoff capsule.
+
 ### Three-agent loop
 
 | Role | Responsibility | Default backend |

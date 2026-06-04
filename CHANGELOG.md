@@ -1,3 +1,15 @@
+# 2026-06-04 - CEM v0: sustainable engineering philosophy
+
+### Added
+- `AGENTS.md`: CEM v0 (Contract, Evidence, Memory) added as the lightweight engineering philosophy for agent-assisted development.
+- `.agent/rules/common/sustainable_engineering.md`: expanded reference for proportional rigor, failure taxonomy, robustness ladder, evidence rules, and relaunch continuity.
+- `.agent/runtime/memory/observations.jsonl`: CEM-01..CEM-06 observations promoted so future agents inherit the lessons from the long encoding / suite-stabilization detour.
+
+### Changed
+- `README.md`: documents CEM v0 publicly and links it to the next field test, `WT-2026-221a` (verified root/topology plus evidence-linked Builder handoff capsule).
+
+---
+
 # 2026-06-02 - Bus reconstruction: WT-2026-210 / 211 / 212 / 216
 
 Reconstrucción del contrato del bus en cuatro tickets encadenados, derivada de la auditoría
