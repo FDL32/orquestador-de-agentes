@@ -1117,6 +1117,15 @@ class TestReviewBridgeEvidence:
         bridge = ReviewBridge(event_bus=MagicMock(), project_root=motor)
         bridge._resolve_motor_root = lambda: motor
 
+        # Add and commit the collaboration file FIRST
+        collab_dir = motor / ".agent" / "collaboration"
+        collab_dir.mkdir(parents=True, exist_ok=True)
+        (collab_dir / "notes.md").write_text("original")
+        subprocess.run(["git", "add", "."], cwd=motor, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "add collab file"], cwd=motor, check=True
+        )
+
         # Add ticket commit
         (motor / "productive.py").write_text("code")
         subprocess.run(["git", "add", "."], cwd=motor, check=True)
@@ -1124,10 +1133,8 @@ class TestReviewBridgeEvidence:
             ["git", "commit", "-m", "WT-2026-999: add code"], cwd=motor, check=True
         )
 
-        # Add dirty working tree file (collaboration-only)
-        collab_dir = motor / ".agent" / "collaboration"
-        collab_dir.mkdir(parents=True, exist_ok=True)
-        (collab_dir / "notes.md").write_text("dirty")
+        # Then modify the collaboration file without staging so it appears in git diff --name-only
+        (collab_dir / "notes.md").write_text("dirty modification")
 
         result = bridge.classify_review_packet("WT-2026-999")
 
