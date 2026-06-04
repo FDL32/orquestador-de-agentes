@@ -3013,6 +3013,8 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
     After: Returns 0 on success, 1 on failure. On failure, prints diagnostic
            info. On success, the tree is ready for --mark-ready.
     """
+    from bus.evidence import motor_uncommitted_productive
+
     plan_content = read_file(WORK_PLAN)
     if not plan_content:
         print("[ERROR] No work_plan.md found.", file=sys.stderr, flush=True)
@@ -3061,6 +3063,22 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
                 flush=True,
             )
             return 1
+    # --- Barrier: check for uncommitted productive changes in repo_motor ---
+    # WT-2026-228a: In Model B, _handle_pre_handoff selects git_root = project_root,
+    # so it never sees dirty productive files in the motor repo. This barrier
+    # detects them explicitly using motor_uncommitted_productive() which only
+    # checks git diff + git diff --cached (no git log).
+    motor_uncommitted = motor_uncommitted_productive(_MOTOR_ROOT)
+    if motor_uncommitted:
+        print(
+            "Uncommitted productive changes in repo_motor: "
+            "commit with ticket ID before handoff.\n"
+            + "\n".join(f"  {f}" for f in motor_uncommitted),
+            file=sys.stderr,
+            flush=True,
+        )
+        return 1
+    # --- end barrier ---
 
     # Build live surface sets
     live_files, live_dirs = _build_live_surface_sets(project_root)

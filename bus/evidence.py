@@ -45,6 +45,30 @@ def _run_git_cmd(args: list[str], cwd: Path) -> set[str]:
     return set()
 
 
+def motor_uncommitted_productive(motor_root: Path) -> list[str]:
+    """Return list of uncommitted productive files in motor_root.
+
+    Only considers working tree and staged changes (git diff + git diff --cached).
+    Does NOT include recently committed files — that is what distinguishes this
+    from resolve_evidence()["motor_productive"] which can include git log results.
+
+    Returns sorted list of file paths (normalized with forward slashes) that are
+    not docs-only or collaboration-only. Empty list means no uncommitted productive
+    changes.
+    """
+    if not motor_root or not (motor_root / ".git").exists():
+        return []
+
+    files = set()
+    files |= _run_git_cmd(["git", "diff", "--name-only"], motor_root)
+    files |= _run_git_cmd(["git", "diff", "--cached", "--name-only"], motor_root)
+
+    productive = sorted(
+        f for f in files if not _path_matches_any(f, DOCS_ONLY_PATTERNS)
+    )
+    return productive
+
+
 def resolve_evidence(
     motor_root: Path, project_root: Path, ticket_id: str | None = None
 ) -> dict:
