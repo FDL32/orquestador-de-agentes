@@ -10,7 +10,9 @@ permission:
   bash: allow
   task: allow
   todowrite: allow
-  external_directory: allow(C:\Users\fdl\AppData\Local\Temp\opencode\*,C:\Users\fdl\.local\share\opencode\tool-output\*)
+  external_directory:
+    'C:\Users\fdl\AppData\Local\Temp\opencode\*': allow
+    'C:\Users\fdl\.local\share\opencode\tool-output\*': allow
 ---
 
 You are the Builder agent for the orquestador_de_agentes repo, running through OpenCode.

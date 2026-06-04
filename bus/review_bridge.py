@@ -442,15 +442,26 @@ class ReviewBridge:
                 files.append(audit_file)
         return [f for f in files if f.exists()]
 
-    def _ensure_repomix_context(self, timeout: int = 15) -> Path | None:
-        """Return path to repomix.xml context file, generating it if needed.
+    def _ensure_repomix_context(self, timeout: int = 15) -> tuple[Path | None, dict]:
+        """Return (path, repomix_status) where path is the repomix Path or None.
 
-        Non-blocking: returns None on any failure so the review continues.
+        The repomix_status dict exposes structured diagnostic fields:
+          - status: "ok" | "failed" | "skipped"
+          - reason: str explanation
+          - returncode: int | None (only for failed)
+          - stderr_tail: str | None (only for failed, last 500 chars)
+          - output_path: str | None (only for ok)
+
+        Non-blocking: returns (None, dict) on any failure so the review continues.
         Uses npx -y to avoid interactive prompts in unattended environments.
         """
         out_path = self.project_root / ".agent" / "context" / "repomix.xml"
         if out_path.exists():
-            return out_path
+            return out_path, {
+                "status": "ok",
+                "reason": "Existing repomix.xml context file found",
+                "output_path": str(out_path),
+            }
         out_path.parent.mkdir(parents=True, exist_ok=True)
         config_path = self.project_root / "repomix.config.json"
         cmd = [
@@ -473,20 +484,33 @@ class ReviewBridge:
                 timeout=timeout,
             )
             if result.returncode == 0 and out_path.exists():
-                return out_path
-        except Exception:
-            warnings.warn(
-                "[repomix] Failed to generate context for Manager; continuing without it.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-            return None
-        warnings.warn(
-            "[repomix] Failed to generate context for Manager; continuing without it.",
-            RuntimeWarning,
-            stacklevel=2,
-        )
-        return None
+                return out_path, {
+                    "status": "ok",
+                    "reason": "Repomix completed successfully",
+                    "output_path": str(out_path),
+                }
+            stderr_tail = (result.stderr or "")[-500:]
+            return None, {
+                "status": "failed",
+                "reason": (f"Repomix exited with returncode {result.returncode}"),
+                "returncode": result.returncode,
+                "stderr_tail": stderr_tail,
+            }
+        except FileNotFoundError:
+            return None, {
+                "status": "skipped",
+                "reason": "npx not found; repomix cannot execute",
+            }
+        except subprocess.TimeoutExpired:
+            return None, {
+                "status": "failed",
+                "reason": f"Repomix timed out after {timeout}s",
+            }
+        except Exception as exc:
+            return None, {
+                "status": "skipped",
+                "reason": (f"Repomix failed: {type(exc).__name__}: {exc}"),
+            }
 
     def _get_active_ticket_id(self) -> str | None:
         """Read active ticket ID from work_plan.md."""
@@ -1941,7 +1965,7 @@ class ReviewBridge:
             cmd_args.extend(["--model", model])
         if self._supports_json_format:
             cmd_args.extend(["--format", "json"])
-        repomix_path = self._ensure_repomix_context()
+        repomix_path, _repomix_status = self._ensure_repomix_context()
         if repomix_path:
             cmd_args.extend(["-f", str(repomix_path)])
         cmd_args.append(review_message)

@@ -47,7 +47,8 @@ def _prepare_changes_bridge(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "legacy_manager")
     monkeypatch.setattr(bridge, "_resolve_motor_controller", lambda: None)
     monkeypatch.setattr(
-        "bus.review_bridge.ReviewBridge._ensure_repomix_context", lambda self: None
+        "bus.review_bridge.ReviewBridge._ensure_repomix_context",
+        lambda self: (None, {"status": "skipped", "reason": "mocked for tests"}),
     )
     return bridge, event_bus, legacy_exe
 

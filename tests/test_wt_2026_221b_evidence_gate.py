@@ -167,33 +167,38 @@ class TestClassifyReviewPacket:
         assert result["has_motor_evidence"] is False
 
     def test_accepts_motor_evidence(self, review_bridge, monkeypatch):
-        """TP-04: review with motor productive evidence passes the gate."""
-        monkeypatch.setattr(
-            review_bridge,
-            "_resolve_motor_root",
-            lambda: Path("/fake/motor"),
-        )
-        monkeypatch.setattr(
-            review_bridge,
-            "_get_motor_diff_files",
-            lambda: [
-                "bus/review_bridge.py",
-                "tests/test_wt_2026_221b_evidence_gate.py",
-            ],
-        )
+        """TP-04: review with motor productive evidence passes the gate.
 
-        # Mock git diff for destination (may also have collaboration changes)
-        def mock_run(cmd, *args, **kwargs):
-            cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
-            if "diff --name-only" in cmd_str or "log -5 --name-only" in cmd_str:
-                return _mock_git_diff(
-                    [
-                        ".agent/collaboration/execution_log.md",
-                    ]
-                )
-            return _mock_git_diff([])
-
-        monkeypatch.setattr("bus.review_bridge.subprocess.run", mock_run)
+        Clase C fix (WT-2026-227a): classify_review_packet delegates to
+        bus.evidence.resolve_evidence, not _get_motor_diff_files. The original
+        mock had no effect, allowing the real working tree to leak into the
+        classification. Fix: mock resolve_evidence directly with a realistic
+        productive result to keep the fixture honest without escaping to the
+        real tree.
+        """
+        motor_files = [
+            "bus/review_bridge.py",
+            "tests/test_wt_2026_221b_evidence_gate.py",
+        ]
+        monkeypatch.setattr(
+            "bus.evidence.resolve_evidence",
+            lambda motor_root, project_root, ticket_id=None: {
+                "motor_files": motor_files,
+                "destination_files": [],
+                "all_files": motor_files,
+                "docs_only_files": [],
+                "productive_files": motor_files,
+                "is_docs_only": False,
+                "is_collaboration_only": False,
+                "motor_productive": motor_files,
+                "dest_productive": [],
+                "has_motor_evidence": True,
+                "has_destination_productive": False,
+                "has_productive_evidence": True,
+                "has_ticket_commit": True,
+                "sources_used": ["working_tree"],
+            },
+        )
 
         result = review_bridge.classify_review_packet("WT-2026-221b")
 
@@ -418,7 +423,10 @@ class TestRunManagerReviewCycleEvidenceGate:
         monkeypatch.setattr(
             review_bridge,
             "_ensure_repomix_context",
-            lambda timeout=15: None,
+            lambda timeout=15: (
+                None,
+                {"status": "skipped", "reason": "mocked for tests"},
+            ),
         )
         monkeypatch.setattr(
             review_bridge,
@@ -712,7 +720,12 @@ class TestReviewCycleEvidenceGateIntegration:
         monkeypatch.setattr(review_bridge, "_detect_json_format_support", lambda: False)
         monkeypatch.setattr(review_bridge, "_get_manager_model", lambda: None)
         monkeypatch.setattr(
-            review_bridge, "_ensure_repomix_context", lambda timeout=15: None
+            review_bridge,
+            "_ensure_repomix_context",
+            lambda timeout=15: (
+                None,
+                {"status": "skipped", "reason": "mocked for tests"},
+            ),
         )
         monkeypatch.setattr(
             review_bridge,
