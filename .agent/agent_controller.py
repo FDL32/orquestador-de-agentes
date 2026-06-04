@@ -582,7 +582,9 @@ def _scope_gate_allows_close(gate_result: dict, scope_override: str | None) -> b
     return True
 
 
-def _sync_mark_ready_targets(plan_id: str, plan_content: str) -> None:
+def _sync_mark_ready_targets(
+    plan_id: str, plan_content: str, current_round: int | None = None
+) -> None:
     """Emit the READY_FOR_REVIEW transition after mark-ready.
 
     WT-2026-211: The controller no longer materializes TURN.md / STATE.md.
@@ -626,6 +628,7 @@ def _sync_mark_ready_targets(plan_id: str, plan_content: str) -> None:
                     "to_state": "READY_FOR_REVIEW",
                     "reason": "Builder completed implementation",
                     "source": "mark-ready",
+                    **({"round": current_round} if current_round is not None else {}),
                 },
             )
         if (
@@ -646,6 +649,7 @@ def _sync_mark_ready_targets(plan_id: str, plan_content: str) -> None:
                     "to_state": "READY_FOR_REVIEW",
                     "reason": "Builder completed implementation",
                     "source": "mark-ready",
+                    **({"round": current_round} if current_round is not None else {}),
                 },
             )
 
@@ -768,9 +772,68 @@ def _read_builder_lock() -> dict | None:
     if not BUILDER_LOCK_PATH.exists():
         return None
     try:
-        return json.loads(BUILDER_LOCK_PATH.read_text(encoding="utf-8"))
+        return json.loads(BUILDER_LOCK_PATH.read_text(encoding="utf-8-sig"))
     except (json.JSONDecodeError, OSError):
         return None
+
+
+def _read_process_builder_round() -> int | None:
+    """Read the Builder round assigned to this shell process, if any."""
+    raw = os.environ.get("AGENT_BUILDER_ROUND", "").strip()
+    if not raw:
+        return None
+    try:
+        round_num = int(raw)
+    except ValueError:
+        return None
+    return round_num if round_num >= 1 else None
+
+
+def _ensure_active_builder_round(plan_id: str) -> tuple[bool, int | None, str | None]:
+    """Verify that this Builder shell still owns the active round for the ticket.
+
+    Before: Builder may be running in a shell launched for an older round while a
+    newer round is already active.
+    During: Compares AGENT_BUILDER_TICKET / AGENT_BUILDER_ROUND from the current
+    shell against builder_lock.txt, which tracks the active Builder round.
+    After: Returns (is_valid, process_round, reason). If no process round is
+    available, the check is skipped for backward compatibility.
+    """
+    process_ticket = os.environ.get("AGENT_BUILDER_TICKET", "").strip()
+    process_round = _read_process_builder_round()
+    if process_ticket and process_ticket != plan_id:
+        return (
+            False,
+            process_round,
+            f"shell ticket {process_ticket} does not match active plan {plan_id}",
+        )
+    if process_round is None:
+        return (True, None, None)
+
+    lock_data = _read_builder_lock()
+    if lock_data is None:
+        return (
+            False,
+            process_round,
+            "builder_lock.txt missing for a Builder shell with explicit round identity",
+        )
+
+    lock_ticket = lock_data.get("ticket_id")
+    lock_round = lock_data.get("round")
+    if lock_ticket != plan_id:
+        return (
+            False,
+            process_round,
+            f"builder_lock ticket {lock_ticket} does not match active plan {plan_id}",
+        )
+    if lock_round != process_round:
+        return (
+            False,
+            process_round,
+            f"stale Builder round {process_round}; active round is {lock_round}",
+        )
+
+    return (True, process_round, None)
 
 
 def _acquire_builder_lock(
@@ -833,12 +896,16 @@ def _acquire_builder_lock(
     return True
 
 
-def _release_builder_lock(plan_id: str) -> None:
+def _release_builder_lock(plan_id: str, expected_round: int | None = None) -> None:
     """Release builder lock after completion."""
     import contextlib
 
     existing = _read_builder_lock()
-    if existing and existing.get("ticket_id") == plan_id:
+    if (
+        existing
+        and existing.get("ticket_id") == plan_id
+        and (expected_round is None or existing.get("round") == expected_round)
+    ):
         with contextlib.suppress(OSError):
             BUILDER_LOCK_PATH.unlink()
     # WP-2026-180: Clean up builder session file on lock release.
@@ -963,18 +1030,26 @@ def _capture_builder_session(plan_id: str, current_round: int) -> dict | None:
         return None
 
 
-def _emit_builder_exit(plan_id: str, exit_reason: str, completion_summary: str) -> None:
+def _emit_builder_exit(
+    plan_id: str,
+    exit_reason: str,
+    completion_summary: str,
+    current_round: int | None = None,
+) -> None:
     """Emit BUILDER_EXIT event to the bus - required for ticket closure."""
     if BUS_AVAILABLE and event_bus:
+        payload = {
+            "exit_reason": exit_reason,
+            "completion_summary": completion_summary,
+            "source": "mark-ready",
+        }
+        if current_round is not None:
+            payload["round"] = current_round
         event_bus.emit(
             event_type="BUILDER_EXIT",
             ticket_id=plan_id,
             actor="BUILDER",
-            payload={
-                "exit_reason": exit_reason,
-                "completion_summary": completion_summary,
-                "source": "mark-ready",
-            },
+            payload=payload,
         )
 
 
@@ -2544,6 +2619,39 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
         return 1
 
     log_status = get_status(log_content, "**Estado:**")
+    round_ok, process_round, round_reason = _ensure_active_builder_round(plan_id)
+    if not round_ok:
+        if BUS_AVAILABLE and event_bus:
+            event_bus.emit(
+                event_type="HANDOFF_BLOCKED",
+                ticket_id=plan_id,
+                actor="BUILDER",
+                payload={
+                    "reason": "stale_builder_round",
+                    "process_round": process_round,
+                    "details": round_reason,
+                },
+            )
+        msg = (
+            f"Stale Builder shell cannot mark ready for {plan_id}: {round_reason}. "
+            "Close the old Builder window and continue from the active round."
+        )
+        if json_output:
+            print(
+                json.dumps(
+                    {
+                        "status": "blocked",
+                        "reason": "stale_builder_round",
+                        "details": msg,
+                        "plan_id": plan_id,
+                        "process_round": process_round,
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            print(f"[ERROR] {msg}")
+        return 1
 
     # WP-2026-143: Get bus-derived state as authority
     bus_state = None
@@ -2619,6 +2727,7 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
                     plan_id=plan_id,
                     exit_reason="Implementation completed and ready for review",
                     completion_summary=f"Ticket {plan_id} implementation completed. All quality gates passed. Scope validated against Files Likely Touched.",
+                    current_round=process_round,
                 )
 
             # Check if STATE_CHANGED already exists
@@ -2643,6 +2752,11 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
                         "to_state": "READY_FOR_REVIEW",
                         "reason": "Ticket already in ready state",
                         "source": "mark-ready",
+                        **(
+                            {"round": process_round}
+                            if process_round is not None
+                            else {}
+                        ),
                     },
                 )
         return 0
@@ -2716,18 +2830,19 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
         plan_id=plan_id,
         exit_reason="Implementation completed and ready for review",
         completion_summary=f"Ticket {plan_id} implementation completed. All quality gates passed. Scope validated against Files Likely Touched.",
+        current_round=process_round,
     )
 
     # Auto-archive closed PLAN/AUDIT artifacts (idempotent, no-op if nothing to archive)
     _auto_archive_closed_artifacts()
 
-    _sync_mark_ready_targets(plan_id, plan_content)
+    _sync_mark_ready_targets(plan_id, plan_content, current_round=process_round)
 
     # Reset circuit breaker on successful completion
     _reset_circuit_breaker(plan_id)
 
     # Release builder lock
-    _release_builder_lock(plan_id)
+    _release_builder_lock(plan_id, expected_round=process_round)
 
     if json_output:
         print(json.dumps({"status": "marked_ready", "plan_id": plan_id}, indent=2))
@@ -2946,6 +3061,26 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
     plan_id = get_plan_id(plan_content)
     if not plan_id or plan_id == "N/A":
         print("[ERROR] No active plan found.", file=sys.stderr, flush=True)
+        return 1
+
+    round_ok, process_round, round_reason = _ensure_active_builder_round(plan_id)
+    if not round_ok:
+        if BUS_AVAILABLE and event_bus:
+            event_bus.emit(
+                event_type="HANDOFF_BLOCKED",
+                ticket_id=plan_id,
+                actor="BUILDER",
+                payload={
+                    "reason": "stale_builder_round",
+                    "process_round": process_round,
+                    "details": round_reason,
+                },
+            )
+        print(
+            f"[ERROR] Pre-handoff blocked for stale Builder shell: {round_reason}",
+            file=sys.stderr,
+            flush=True,
+        )
         return 1
 
     # Check that we are in a git repository.
@@ -3174,8 +3309,7 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
 
     # WP-2026-180: Capture OpenCode session ID after successful pre-handoff.
     # Read the round from builder_lock.txt to compose the session title.
-    lock_data = _read_builder_lock()
-    current_round = (lock_data or {}).get("round", 1)
+    current_round = process_round or 1
     _capture_builder_session(plan_id, current_round)
 
     if not json_output:

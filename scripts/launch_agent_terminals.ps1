@@ -1501,7 +1501,14 @@ if ($LaunchBuilder) {
                 }
                 $sessionFlag = if ($sessionId) { "--session $sessionId" } else { "" }
                 $command = "& $builderExeLiteral run $promptLiteral --agent builder --model $modelLiteral --dir $rootLiteral --port 0 --title $sessionTitleLiteral $sessionFlag $fileFlagsString"
-                $builderProcess = Start-AgentWindow -Title $windowTitle -Command (Add-BuilderCloseout $command $closePreHandoff $closeMarkReady)
+                $builderRoundLiteral = ConvertTo-SingleQuotedLiteral ([string]$currentRound)
+                $builderTicketLiteral = ConvertTo-SingleQuotedLiteral $ticketId
+                $builderEnvPrefix = @"
+$env:AGENT_BUILDER_TICKET = $builderTicketLiteral
+$env:AGENT_BUILDER_ROUND = $builderRoundLiteral
+"@
+                $builderCloseout = Add-BuilderCloseout $command $closePreHandoff $closeMarkReady
+                $builderProcess = Start-AgentWindow -Title $windowTitle -Command ($builderEnvPrefix + $builderCloseout)
                 Write-Host "Builder: lanzado para rol $activeRole con backend OpenCode (opencode run con prompt compuesto)"
             }
             else {
@@ -1511,11 +1518,25 @@ if ($LaunchBuilder) {
                     $templateContent = Get-TemplateContent -ProjectRoot $ProjectRoot -TemplateName $templateName
                     $filledPrompt = Fill-TemplateVariables -TemplateContent $templateContent -TicketId $ticketId -WorkPlan $workPlanContent -Role $role -Backend $builderBackend
                     $builderPromptLiteral = ConvertTo-SingleQuotedLiteral $filledPrompt
-                    $builderProcess = Start-AgentWindow -Title $windowTitle -Command (Add-BuilderCloseout "& $builderExeLiteral run --auto $builderPromptLiteral" $closePreHandoff $closeMarkReady)
+                    $builderRoundLiteral = ConvertTo-SingleQuotedLiteral ([string]$currentRound)
+                    $builderTicketLiteral = ConvertTo-SingleQuotedLiteral $ticketId
+                    $builderEnvPrefix = @"
+$env:AGENT_BUILDER_TICKET = $builderTicketLiteral
+$env:AGENT_BUILDER_ROUND = $builderRoundLiteral
+"@
+                    $builderCloseout = Add-BuilderCloseout "& $builderExeLiteral run --auto $builderPromptLiteral" $closePreHandoff $closeMarkReady
+                    $builderProcess = Start-AgentWindow -Title $windowTitle -Command ($builderEnvPrefix + $builderCloseout)
                 }
                 else {
                     $builderPromptLiteral = ConvertTo-SingleQuotedLiteral $BuilderPrompt
-                    $builderProcess = Start-AgentWindow -Title $windowTitle -Command (Add-BuilderCloseout "& $builderExeLiteral run --auto $builderPromptLiteral" $closePreHandoff $closeMarkReady)
+                    $builderRoundLiteral = ConvertTo-SingleQuotedLiteral ([string]$currentRound)
+                    $builderTicketLiteral = ConvertTo-SingleQuotedLiteral $ticketId
+                    $builderEnvPrefix = @"
+$env:AGENT_BUILDER_TICKET = $builderTicketLiteral
+$env:AGENT_BUILDER_ROUND = $builderRoundLiteral
+"@
+                    $builderCloseout = Add-BuilderCloseout "& $builderExeLiteral run --auto $builderPromptLiteral" $closePreHandoff $closeMarkReady
+                    $builderProcess = Start-AgentWindow -Title $windowTitle -Command ($builderEnvPrefix + $builderCloseout)
                 }
                 Write-Host "Builder: lanzado para rol $activeRole con plantilla $templateName"
             }
