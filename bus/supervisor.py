@@ -1138,7 +1138,8 @@ class SequentialTicketSupervisor:
             return False
         return self._write_text_if_changed(self.turn_path, content)
 
-    def _render_turn_for_state(self, ticket_id: str, state: TicketState) -> str:
+    @staticmethod
+    def _render_turn_for_state(ticket_id: str, state: TicketState) -> str:
         """Render TURN.md for the given derived state."""
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         turn_map: dict[TicketState, tuple[str, str, str, str]] = {
