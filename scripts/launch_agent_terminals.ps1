@@ -699,7 +699,7 @@ function Invoke-PreflightReconcile {
 
     if (-not (Test-Path -LiteralPath $helperPath)) {
         Write-Host "[preflight-reconcile] Helper no encontrado en $helperPath; se omite la comprobacion."
-        return
+        return $null
     }
 
     Write-Host "[preflight-reconcile] Evaluando drift para $($Alignment.WorkPlanId)..."
@@ -713,7 +713,7 @@ function Invoke-PreflightReconcile {
             $decision = $outputText | ConvertFrom-Json
         } catch {
             Write-Warning "[preflight-reconcile] No se pudo parsear la salida JSON; se omite la comprobacion."
-            return
+            return $null
         }
 
         Write-Host "[preflight-reconcile] Decision=$($decision.decision) prev=$($decision.prev_ticket_id) state=$($decision.prev_ticket_state)"
@@ -731,6 +731,7 @@ function Invoke-PreflightReconcile {
         } elseif ($decision.decision -eq 'ALIGNED') {
             Write-Host "[preflight-reconcile] Sin drift; procediendo normalmente."
         }
+        return $decision
     } elseif ($exitCode -eq 2) {
         # ABORT decision
         $reason = "El bus es ilegible o contradictorio"
@@ -741,6 +742,33 @@ function Invoke-PreflightReconcile {
         throw "Preflight reconcile ABORT: $reason"
     } else {
         Write-Warning "[preflight-reconcile] El helper fallo con codigo $exitCode. Se omite la comprobacion."
+    }
+
+    return $null
+}
+
+function Invoke-PostPreflightProjectionSync {
+    param([Parameter(Mandatory)] [string]$ProjectRoot)
+
+    $venvPython = Resolve-VenvPython -Root $script:_MotorCodeRoot
+    $supervisorPath = Join-Path $script:_MotorCodeRoot 'scripts\ticket_supervisor.py'
+
+    if (-not (Test-Path -LiteralPath $supervisorPath)) {
+        Write-Warning "[preflight-reconcile] ticket_supervisor.py no encontrado en $supervisorPath; se omite la reproyeccion canonica."
+        return
+    }
+
+    Write-Host "[preflight-reconcile] Reproyectando estado canonico tras reconciliacion..."
+    $previousProjectRoot = [System.Environment]::GetEnvironmentVariable('AGENT_PROJECT_ROOT', 'Process')
+    try {
+        [System.Environment]::SetEnvironmentVariable('AGENT_PROJECT_ROOT', $ProjectRoot, 'Process')
+        & $venvPython $supervisorPath --once --no-auto-sync 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "ticket_supervisor.py --once fallo al reproyectar estado canonico."
+        }
+    }
+    finally {
+        [System.Environment]::SetEnvironmentVariable('AGENT_PROJECT_ROOT', $previousProjectRoot, 'Process')
     }
 }
 
@@ -1180,7 +1208,10 @@ if (-not $ResumeBuilder) {
     # repair operations. This must happen before Assert-StartupAlignment or
     # Repair-StartupSupervisorState delete the stale state evidence.
     $preAlignment = Get-StartupAlignment -ProjectRoot $ProjectRoot
-    Invoke-PreflightReconcile -ProjectRoot $ProjectRoot -Alignment $preAlignment
+    $preflightDecision = Invoke-PreflightReconcile -ProjectRoot $ProjectRoot -Alignment $preAlignment
+    if ($null -ne $preflightDecision -and @('RECONCILE', 'CLEANUP_LOCAL') -contains $preflightDecision.decision) {
+        Invoke-PostPreflightProjectionSync -ProjectRoot $ProjectRoot
+    }
 
     if ($StrictLaunch) {
         $alignment = Assert-StartupAlignment -ProjectRoot $ProjectRoot

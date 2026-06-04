@@ -31,6 +31,20 @@ def test_launcher_strict_launch_parameter() -> None:
     assert "Cerrando sesion vieja del proyecto" in content
 
 
+def test_launcher_reprojects_canonical_state_after_preflight_reconcile() -> None:
+    content = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert "function Invoke-PostPreflightProjectionSync" in content
+    assert "ticket_supervisor.py" in content
+    assert "--once --no-auto-sync" in content
+    assert "AGENT_PROJECT_ROOT" in content
+    assert (
+        "@('RECONCILE', 'CLEANUP_LOCAL') -contains $preflightDecision.decision"
+        in content
+    )
+    assert "Invoke-PostPreflightProjectionSync -ProjectRoot $ProjectRoot" in content
+
+
 def test_launcher_reports_per_window() -> None:
     content = SCRIPT_PATH.read_text(encoding="utf-8")
 
