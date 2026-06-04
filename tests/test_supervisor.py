@@ -1760,6 +1760,56 @@ def test_reconcile_state_zombie_guard_prefers_work_plan(tmp_path):
     )
 
 
+def test_reconcile_state_prefers_newer_alphanumeric_ticket_over_stale_numeric_ticket(
+    tmp_path,
+):
+    """Bootstrap must not resurrect a lower numeric ticket over WT-2026-221a."""
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    (collaboration_dir / "work_plan.md").write_text(
+        "# Work Ticket - WT-2026-221a\n\n## Metadata\n- **ID:** WT-2026-221a\n- **Estado:** APPROVED\n",
+        encoding="utf-8",
+    )
+    (collaboration_dir / "TURN.md").write_text(
+        "| **Plan ID** | WT-2026-221a |\n",
+        encoding="utf-8",
+    )
+    (collaboration_dir / "execution_log.md").write_text(
+        "# Execution Log WT-2026-221a\n\n**Estado:** IN_PROGRESS\n",
+        encoding="utf-8",
+    )
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    supervisor.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id="WT-2026-183",
+        actor="SUPERVISOR",
+        payload={"from_state": "APPROVED", "to_state": "IN_PROGRESS"},
+    )
+    supervisor.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id="WT-2026-221a",
+        actor="BOOTSTRAP",
+        payload={"from_state": "APPROVED", "to_state": "IN_PROGRESS"},
+    )
+
+    supervisor.reconcile_state()
+
+    state = supervisor.load_state()
+    assert state.active_ticket == "WT-2026-221a"
+
+
 def test_bootstrap_bus_precedence_over_turn_divergence(tmp_path):
     """Test bootstrap prefers bus active ticket over TURN.md when they diverge.
 
@@ -5186,6 +5236,20 @@ class TestDualPrefixSupervisor:
         key = supervisor._ticket_sort_key("WT-2026-100")
         assert key[0] == 2026
         assert key[1] == 100
+
+    def test_ticket_sort_key_wt_alphanumeric_suffix_uses_numeric_prefix(self, tmp_path):
+        """WT alphanumeric suffixes must sort by their leading numeric component."""
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        bus_dir = tmp_path / ".agent" / "runtime" / "events"
+        bus_dir.mkdir(parents=True)
+        supervisor = SequentialTicketSupervisor(project_root=tmp_path)
+
+        key = supervisor._ticket_sort_key("WT-2026-221a")
+
+        assert key[0] == 2026
+        assert key[1] == 221
+        assert key > supervisor._ticket_sort_key("WT-2026-183")
 
     def test_ticket_sort_key_wp_wt_mixed(self, tmp_path):
         """_ticket_sort_key produces consistent ordering for mixed WP/WT tickets."""

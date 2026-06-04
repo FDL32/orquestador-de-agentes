@@ -703,7 +703,8 @@ class SequentialTicketSupervisor:
             return (-1, -1, ticket_id or "")
         year = int(match.group(1))
         suffix = match.group(2)
-        numeric_suffix = int(suffix) if suffix.isdigit() else -1
+        numeric_match = re.match(r"(\d+)", suffix)
+        numeric_suffix = int(numeric_match.group(1)) if numeric_match else -1
         return (year, numeric_suffix, suffix)
 
     def _is_approved_zombie_ready_to_close(self, ticket_id: str) -> bool:
