@@ -1,3 +1,13 @@
+# 2026-06-04 - v9.15.0 Canonical close: green suite and CEM v0
+
+### Changed
+- pyproject.toml, uv.lock, .agent/.version_manifest.json, README.md, AGENTS.md, CLAUDE.md and PROJECT.md: version aligned to `v9.15.0` after the canonical close.
+- Release state now records the bus reconstruction, suite stabilization (2071 passed, 22 skipped, 0 failed), encoding guard hardening and CEM v0 adoption.
+
+### Notes
+- WT-2026-221a remains the next field test for CEM v0: relaunch with verified root/topology and an evidence-linked Builder handoff capsule.
+
+---
 # 2026-06-04 - CEM v0: sustainable engineering philosophy
 
 ### Added

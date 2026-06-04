@@ -1,6 +1,6 @@
 # Project: orquestador_de_agentes
-**Version:** v9.14.1
-**State:** ACTIVE (2026-06-02) — bus reconstruction cycle
+**Version:** v9.15.0
+**State:** READY (2026-06-04) — canonical close complete; CEM v0 adopted
 
 ## Current Cycle
 
@@ -14,7 +14,9 @@
 
 ## Current readiness
 
-- Bus reconstruction complete (WT-210–212, 216). Ready for next ticket or session close.
+- Canonical close complete: bus reconstruction, suite stabilization, encoding guard hardening and CEM v0 are published.
+- Motor suite verified green: 2071 passed, 22 skipped, 0 failed.
+- Next strategic front: WT-2026-221a (Relaunch CEM: verified root/topology plus evidence-linked Builder handoff capsule).
 
 ## Repomix Context Integration (WT-2026-182)
 
