@@ -35,6 +35,7 @@ def test_launcher_reprojects_canonical_state_after_preflight_reconcile() -> None
     content = SCRIPT_PATH.read_text(encoding="utf-8")
 
     assert "function Invoke-PostPreflightProjectionSync" in content
+    assert "function Sync-StartupProjectionsIfNeeded" in content
     assert "ticket_supervisor.py" in content
     assert "--once --no-auto-sync" in content
     assert "AGENT_PROJECT_ROOT" in content
@@ -43,6 +44,14 @@ def test_launcher_reprojects_canonical_state_after_preflight_reconcile() -> None
         in content
     )
     assert "Invoke-PostPreflightProjectionSync -ProjectRoot $ProjectRoot" in content
+    assert (
+        "[launcher] Proyecciones stale detectadas; reproyectando antes del launch estricto..."
+        in content
+    )
+    assert (
+        "$alignment = Sync-StartupProjectionsIfNeeded -ProjectRoot $ProjectRoot"
+        in content
+    )
     assert "if ($null -ne $previousProjectRoot)" in content
     assert "SetEnvironmentVariable('AGENT_PROJECT_ROOT', $null, 'Process')" in content
 
