@@ -11,12 +11,15 @@ reviews with no productive evidence visible from the motor repository.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 from bus.event_bus import EventBus
 from bus.review_bridge import ReviewBridge, ReviewDecision
+
+from tests.test_pre_handoff_guard import init_git_repo
 
 
 # ---------------------------------------------------------------------------
@@ -796,6 +799,102 @@ class TestReviewCycleEvidenceGateIntegration:
             f"Expected CHANGES when bus inactive, got: {result.decision}"
         )
         assert result.exit_code == 1
+
+
+class TestClassifyReviewPacketRealRepos:
+    """Sentinel tests with real git repos and no subprocess.run mock.
+
+    These cover the residual risk from broad subprocess mocking by exercising
+    classify_review_packet() against actual git state in motor + destination.
+    """
+
+    @staticmethod
+    def _build_real_bridge(tmp_path: Path) -> tuple[ReviewBridge, Path, Path]:
+        motor = tmp_path / "motor"
+        dest = tmp_path / "dest"
+        init_git_repo(motor)
+        init_git_repo(dest)
+
+        collab_dir = dest / ".agent" / "collaboration"
+        collab_dir.mkdir(parents=True, exist_ok=True)
+        (collab_dir / "work_plan.md").write_text(
+            "# Work Plan\n\n## Metadata\n- **ID:** WT-2026-221b\n"
+            "- **deliverable_type:** code\n",
+            encoding="utf-8",
+        )
+        (collab_dir / "TURN.md").write_text(
+            "# TURNO ACTUAL\n\n## Agente Activo\n\n"
+            "| Campo | Valor |\n"
+            "|-------|-------|\n"
+            "| **ROL** | **BUILDER** |\n"
+            "| **Plan ID** | WT-2026-221b |\n",
+            encoding="utf-8",
+        )
+        (collab_dir / "STATE.md").write_text(
+            "# STATE.md\n\nACTIVE_TICKET: WT-2026-221b\nSTATUS: IN_PROGRESS\n",
+            encoding="utf-8",
+        )
+        (collab_dir / "execution_log.md").write_text(
+            "# Execution Log\n\n**Estado:** IN_PROGRESS\n\n"
+            "- WT-2026-221b: implementation started\n",
+            encoding="utf-8",
+        )
+
+        event_bus = EventBus(runtime_dir=dest / ".agent" / "runtime" / "events")
+        event_bus.emit(
+            "STATE_CHANGED",
+            ticket_id="WT-2026-221b",
+            actor="BUILDER",
+            payload={"from_state": "BOOTSTRAP", "to_state": "IN_PROGRESS"},
+        )
+
+        bridge = ReviewBridge(event_bus=event_bus, project_root=dest)
+        bridge._resolve_motor_root = lambda: motor
+        return bridge, motor, dest
+
+    def test_classify_docs_only_real_repos(self, tmp_path: Path) -> None:
+        """Docs-only destination changes are rejected using real git repos."""
+        bridge, _motor, dest = self._build_real_bridge(tmp_path)
+
+        project_md = dest / "PROJECT.md"
+        project_md.write_text("# Project\nbaseline\n", encoding="utf-8")
+        subprocess.run(["git", "add", "PROJECT.md"], cwd=dest, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "Add PROJECT.md"],
+            cwd=dest,
+            check=True,
+        )
+        project_md.write_text("# Project\nupdated\n", encoding="utf-8")
+
+        result = bridge.classify_review_packet("WT-2026-221b")
+
+        assert result["bus_active"] is True
+        assert result["is_empty"] is False
+        assert result["is_docs_only"] is True
+        assert result["has_motor_evidence"] is False
+        assert "PROJECT.md" in result["docs_only_files"]
+
+    def test_classify_motor_evidence_real_repos(self, tmp_path: Path) -> None:
+        """Motor productive commit is accepted using real git repos."""
+        bridge, motor, _dest = self._build_real_bridge(tmp_path)
+
+        productive = motor / "bus" / "review_bridge.py"
+        productive.parent.mkdir(parents=True, exist_ok=True)
+        productive.write_text("def sentinel():\n    return 'ok'\n", encoding="utf-8")
+        subprocess.run(["git", "add", "bus/review_bridge.py"], cwd=motor, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "WT-2026-221b: add productive evidence"],
+            cwd=motor,
+            check=True,
+        )
+
+        result = bridge.classify_review_packet("WT-2026-221b")
+
+        assert result["bus_active"] is True
+        assert result["is_empty"] is False
+        assert result["is_docs_only"] is False
+        assert result["has_motor_evidence"] is True
+        assert "bus/review_bridge.py" in result["motor_diff_files"]
 
 
 # ---------------------------------------------------------------------------
