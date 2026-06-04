@@ -1,4 +1,4 @@
-﻿# Claude Project Guide
+# Claude Project Guide
 
 ## Inicio de sesion
 
@@ -24,23 +24,23 @@ Si falla algun comando, corregir la instalacion antes de crear el primer plan.
 
 ## Roles y Reglas Modulares
 
-Las reglas estÃ¡n fragmentadas en **29 archivos modulares** dentro de `.agent/rules/`:
+Las reglas están fragmentadas en **29 archivos modulares** dentro de `.agent/rules/`:
 
 ### Manager
 Lee primero:
-1. `.agent/rules/common/` â€” 7 archivos con reglas compartidas
-2. `.agent/rules/manager/` â€” 9 archivos especÃ­ficos del Manager
+1. `.agent/rules/common/` — 7 archivos con reglas compartidas
+2. `.agent/rules/manager/` — 9 archivos específicos del Manager
 
 Crea planes, revisa implementaciones y cierra tickets.
 
 ### Builder
 Lee primero:
-1. `.agent/rules/common/` â€” 7 archivos con reglas compartidas
-2. `.agent/rules/builder/` â€” 13 archivos especÃ­ficos del Builder
+1. `.agent/rules/common/` — 7 archivos con reglas compartidas
+2. `.agent/rules/builder/` — 13 archivos específicos del Builder
 
 Implementa el plan aprobado y documenta evidencia.
 
-**Nota histÃ³rica:** Las reglas antiguas (`.agent_common_rules.md`, `.manager_rules`, `.builder_rules`) estÃ¡n archivadas en `.agent/legacy/` y no deben usarse.
+**Nota histórica:** Las reglas antiguas (`.agent_common_rules.md`, `.manager_rules`, `.builder_rules`) están archivadas en `.agent/legacy/` y no deben usarse.
 
 ## Comandos
 
@@ -66,7 +66,7 @@ python scripts/run_pytest_safe.py --level all
 - `.agent/collaboration/notifications.md`
 - `.agent/agent_controller.py`
 - `.agent/hooks/guard_paths.py`
-- `.agent/rules/**/*.md` â€” Reglas modulares (ver arriba)
+- `.agent/rules/**/*.md` — Reglas modulares (ver arriba)
 
 ## Copia a nuevos proyectos
 
