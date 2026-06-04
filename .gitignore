@@ -87,3 +87,6 @@ prompts/debug_*.md
 .agent/runtime/deliverables/
 .agent/runtime/approvals/
 .agent/runtime/memory/session_close_report.md
+
+# Checkpoints
+checkpoint/
