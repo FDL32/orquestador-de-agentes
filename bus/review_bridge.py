@@ -585,6 +585,319 @@ class ReviewBridge:
         except Exception as e:
             return f"[Error fetching git diff: {e}]"
 
+    # WT-2026-221b: Patterns for docs-only and collaboration-only classification
+    DOCS_ONLY_PATTERNS: tuple[str, ...] = (
+        ".agent/collaboration/",
+        ".agent/runtime/",
+        ".session/",
+        "PROJECT.md",
+        "AGENTS.md",
+        "README.md",
+        "CHANGELOG.md",
+        "CREDITS.md",
+        "REPOSITORY_STRUCTURE.md",
+        "repomix.config.json",
+    )
+    COLLABORATION_ONLY_PATTERNS: tuple[str, ...] = (
+        ".agent/collaboration/",
+        ".agent/runtime/",
+    )
+
+    @staticmethod
+    def _path_matches_any(path: str, patterns: tuple[str, ...]) -> bool:
+        """Check if a normalized path matches any of the given patterns."""
+        normalized = path.replace("\\", "/")
+        return any(pattern in normalized for pattern in patterns)
+
+    def _get_motor_diff_files(self) -> list[str]:
+        """Get diff file names from the motor repository.
+
+        Before:
+            - Motor root must be resolvable.
+
+        During:
+            - Runs ``git diff --name-only`` in the motor root (unstaged).
+            - Falls back to ``git log -5 --name-only --format=`` for committed
+              changes if the working tree is clean.
+
+        After:
+            - Returns a list of relative file paths, or empty list on error.
+            - Never raises.
+        """
+        motor_root = self._resolve_motor_root()
+        if motor_root is None:
+            return []
+        try:
+            git_bin = shutil.which("git") or "git"
+            result = subprocess.run(
+                [git_bin, "diff", "--name-only"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                cwd=motor_root,
+                timeout=10,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return [f.strip() for f in result.stdout.splitlines() if f.strip()]
+
+            # Staged changes
+            result = subprocess.run(
+                [git_bin, "diff", "--cached", "--name-only"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                cwd=motor_root,
+                timeout=10,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return [f.strip() for f in result.stdout.splitlines() if f.strip()]
+
+            # Fallback: recent commits
+            result = subprocess.run(
+                [git_bin, "log", "-5", "--name-only", "--format="],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                cwd=motor_root,
+                timeout=10,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return [
+                    f.strip()
+                    for f in result.stdout.splitlines()
+                    if f.strip() and not f.strip().startswith("commit ")
+                ]
+        except Exception:  # noqa: S110 - best-effort
+            pass
+        return []
+
+    def _get_destination_diff_files(self) -> list[str]:
+        """Get diff file names from the destination (project_root) repository.
+
+        Before:
+            - project_root must be a valid git repository.
+
+        During:
+            - Runs ``git diff --name-only`` (unstaged).
+            - Falls back to ``git log -5 --name-only --format=`` when tree is clean.
+
+        After:
+            - Returns a list of relative file paths, or empty list on error.
+            - Never raises.
+        """
+        try:
+            git_bin = shutil.which("git") or "git"
+            result = subprocess.run(
+                [git_bin, "diff", "--name-only"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                cwd=self.project_root,
+                timeout=10,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return [f.strip() for f in result.stdout.splitlines() if f.strip()]
+
+            # Fallback: recent commits
+            result = subprocess.run(
+                [git_bin, "log", "-5", "--name-only", "--format="],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                cwd=self.project_root,
+                timeout=10,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return [
+                    f.strip()
+                    for f in result.stdout.splitlines()
+                    if f.strip() and not f.strip().startswith("commit ")
+                ]
+        except Exception:  # noqa: S110 - best-effort
+            pass
+        return []
+
+    def _classify_diff_files(
+        self,
+        motor_files: list[str],
+        destination_files: list[str],
+    ) -> dict:
+        """Classify diff files into docs-only, collaboration-only, and productive.
+
+        Before:
+            - Two lists of file paths (motor and destination).
+
+        During:
+            - Merges all files, checks each against docs/collaboration patterns.
+
+        After:
+            - Returns dict with classification flags and file lists.
+            - Never raises.
+        """
+        all_files = set(motor_files) | set(destination_files)
+        docs_only: list[str] = []
+        productive: list[str] = []
+        for f in all_files:
+            if self._path_matches_any(f, self.DOCS_ONLY_PATTERNS):
+                docs_only.append(f)
+            else:
+                productive.append(f)
+
+        motor_productive = [
+            f
+            for f in motor_files
+            if not self._path_matches_any(f, self.DOCS_ONLY_PATTERNS)
+        ]
+        dest_productive = [
+            f
+            for f in destination_files
+            if not self._path_matches_any(f, self.DOCS_ONLY_PATTERNS)
+        ]
+        collab_only = (
+            all(
+                self._path_matches_any(f, self.COLLABORATION_ONLY_PATTERNS)
+                for f in all_files
+            )
+            if all_files
+            else False
+        )
+
+        return {
+            "all_files": all_files,
+            "docs_only_files": sorted(docs_only),
+            "productive_files": sorted(productive),
+            "is_docs_only": bool(all_files) and not bool(productive),
+            "is_collaboration_only": bool(all_files) and collab_only,
+            "motor_productive": motor_productive,
+            "dest_productive": dest_productive,
+            "has_motor_evidence": bool(motor_productive),
+            "has_destination_productive": bool(dest_productive),
+        }
+
+    def classify_review_packet(self, ticket_id: str) -> dict:
+        """WT-2026-221b: Classify a review packet for evidence gate.
+
+        Before:
+            - ticket_id must be valid.
+            - git must be available (best-effort if not).
+
+        During:
+            - Collects diff files from motor root (productive changes) and
+              project root (destination changes).
+            - Classifies files into docs-only, collaboration-only, or productive
+              categories.
+            - Checks for bus/state activity of the ticket.
+
+        After:
+            - Returns a dict with classification keys:
+                is_empty: True if no diff files found in either repo
+                is_docs_only: True if all changes are documentation
+                is_collaboration_only: True if all changes are collaboration
+                has_motor_evidence: True if motor repo has productive changes
+                has_destination_productive: True if destination has non-doc changes
+                motor_diff_files: list of file paths from motor
+                destination_diff_files: list of file paths from destination
+                docs_only_files: list of docs/collab files
+                productive_files: list of productive files
+                reason: structured rejection reason string
+                bus_active: True if ticket state is consistent
+            - Never raises: all exceptions caught, returns safe-fail dict.
+        """
+        result: dict = {
+            "is_empty": True,
+            "is_docs_only": False,
+            "is_collaboration_only": False,
+            "has_motor_evidence": False,
+            "has_destination_productive": False,
+            "motor_diff_files": [],
+            "destination_diff_files": [],
+            "docs_only_files": [],
+            "productive_files": [],
+            "reason": "",
+            "bus_active": False,
+        }
+
+        try:
+            # Check bus activity
+            ctx = self.state_ingest.get_ticket_context(ticket_id)
+            if ctx is not None:
+                result["bus_active"] = True
+            else:
+                result["reason"] = (
+                    f"Ticket {ticket_id} has no active bus/state context. "
+                    "Cannot verify ticket consistency before review."
+                )
+                return result
+
+            # Collect diff files from motor and destination
+            motor_files = self._get_motor_diff_files()
+            destination_files = self._get_destination_diff_files()
+            result["motor_diff_files"] = motor_files
+            result["destination_diff_files"] = destination_files
+
+            # Check for empty diff
+            if not motor_files and not destination_files:
+                result["reason"] = (
+                    f"Ticket {ticket_id}: no diff files found in either motor or "
+                    "destination repository. Review packet is empty."
+                )
+                return result
+
+            result["is_empty"] = False
+
+            # Classify files
+            cls = self._classify_diff_files(motor_files, destination_files)
+            result.update(
+                {
+                    "docs_only_files": cls["docs_only_files"],
+                    "productive_files": cls["productive_files"],
+                    "is_docs_only": cls["is_docs_only"],
+                    "is_collaboration_only": cls["is_collaboration_only"],
+                    "has_motor_evidence": cls["has_motor_evidence"],
+                    "has_destination_productive": cls["has_destination_productive"],
+                }
+            )
+
+            # Build rejection or acceptance reason
+            if cls["is_docs_only"]:
+                if cls["is_collaboration_only"]:
+                    result["reason"] = (
+                        f"Ticket {ticket_id}: all changes are collaboration-only "
+                        f"artifacts ({len(cls['docs_only_files'])} files). No productive "
+                        "evidence from motor or destination repository. "
+                        "Run --pre-handoff first, then produce real changes."
+                    )
+                else:
+                    result["reason"] = (
+                        f"Ticket {ticket_id}: all changes are docs-only "
+                        f"({len(cls['docs_only_files'])} files). No productive code "
+                        "changes detected. Manager review blocked until real "
+                        "implementation evidence exists."
+                    )
+            elif cls["has_motor_evidence"]:
+                result["reason"] = (
+                    f"Ticket {ticket_id}: has motor evidence "
+                    f"({len(cls['motor_productive'])} productive files) and "
+                    f"{len(cls['productive_files'])} total productive files "
+                    "across both repos."
+                )
+            elif cls["has_destination_productive"]:
+                result["reason"] = (
+                    f"Ticket {ticket_id}: has destination productive evidence "
+                    f"({len(cls['dest_productive'])} files) but no motor evidence."
+                )
+            else:
+                result["reason"] = (
+                    f"Ticket {ticket_id}: {len(cls['productive_files'])} productive "
+                    "files found but no motor or destination productive changes "
+                    "(unexpected state)."
+                )
+
+        except Exception as exc:
+            result["reason"] = f"Classification error: {type(exc).__name__}: {exc}"
+
+        return result
+
     def check_review_packet_diff_empty(self, ticket_id: str) -> bool:
         """WT-2026-203: Check if the review packet diff is empty or errored.
 
@@ -1386,6 +1699,34 @@ class ReviewBridge:
             "(3) a numeric outcome where applicable (e.g. '0 invalid skills', '253 passed', "
             "'All checks passed'). Declared validator + absent or ambiguous evidence: BLOCKER."
         )
+
+        # WT-2026-221b: Motor evidence section (evidence-linked)
+        motor_files = self._get_motor_diff_files()
+        if motor_files:
+            productive_motor = [
+                f
+                for f in motor_files
+                if not self._path_matches_any(f, self.DOCS_ONLY_PATTERNS)
+            ]
+            if productive_motor:
+                parts.append(
+                    "\n--- Motor Evidence (repo_motor) ---\n"
+                    f"Productive files changed in motor repository ({len(productive_motor)}):\n"
+                    + "\n".join(f"- {f}" for f in productive_motor)
+                )
+            docs_motor = [f for f in motor_files if f not in productive_motor]
+            if docs_motor:
+                parts.append(
+                    "\n--- Motor Documentation Changes ---\n"
+                    f"Documentation/collaboration files changed in motor ({len(docs_motor)}):\n"
+                    + "\n".join(f"- {f}" for f in docs_motor)
+                )
+        else:
+            parts.append(
+                "\n--- Motor Evidence (repo_motor) ---\n"
+                "No diff detected in the motor repository. "
+                "All changes appear to be destination-only."
+            )
 
         # WP-2026-178: L2 memory rules from the loader (domain-organized, first priority)
         loader_rules = self._render_loader_rules(dtype=dtype)
@@ -2445,6 +2786,45 @@ class ReviewBridge:
         multiplier = cfg["retry_backoff_multiplier"]
 
         dtype = self.state_ingest._read_deliverable_type()
+
+        # WT-2026-221b: Evidence gate - reject docs-only/collaboration-only
+        # before building the review prompt. This reproduces the binary barrier
+        # that was missing in seq 602/606/617.
+        classification = self.classify_review_packet(ticket_id)
+        if classification.get("is_docs_only") or classification.get(
+            "is_collaboration_only"
+        ):
+            reject_reason = classification.get(
+                "reason", "No productive evidence found."
+            )
+            print(
+                f"[evidence-gate] REJECTED: {reject_reason}",
+                file=sys.stderr,
+            )
+            self.event_bus.emit(
+                "REVIEW_EVIDENCE_BLOCKED",
+                ticket_id=ticket_id,
+                actor="MANAGER",
+                payload={
+                    "classification": (
+                        classification.get("is_collaboration_only", False)
+                        and "collaboration_only"
+                    )
+                    or "docs_only",
+                    "reason": reject_reason,
+                    "docs_only_files": classification.get("docs_only_files", []),
+                    "has_motor_evidence": classification.get(
+                        "has_motor_evidence", False
+                    ),
+                },
+            )
+            return ReviewResult(
+                decision=ReviewDecision.CHANGES,
+                stdout="",
+                stderr=reject_reason,
+                exit_code=1,
+                feedback=reject_reason,
+            )
 
         # WT-2026-196: Load adaptive review state from previous cycle
         adaptive_state = self._load_adaptive_state(ticket_id)
