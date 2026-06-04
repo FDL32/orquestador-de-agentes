@@ -58,6 +58,7 @@ Despues decide que evidencia minima exige. Un cierre requiere mas evidencia que 
 | codigo de bus/orquestacion | diff, tests gobernantes, validacion de estado canonico y regression check proporcional |
 | claim de tests | comando exacto, contexto de ejecucion, exit code no enmascarado y arbol limpio si es evidencia de cierre |
 | comentario/review o propuesta | claims separados de inferencias y al menos una evidencia o limitacion explicita |
+| tipos no cubiertos arriba (codigo, propuesta arquitectonica, documentacion/memoria, otro) | al menos un claim separado de inferencia, una evidencia verificable o limitacion explicita, y criterio de riesgo proporcional |
 
 ---
 
@@ -142,6 +143,8 @@ Para cada fallo relevante:
 
 - Existe ya una barrera que lo habria evitado?
 - Si existe, fallo la barrera, no se ejecuto, o estaba fuera de scope?
+- Si no se ejecuto: documenta por que y si el hueco es sistemico o circunstancial.
+- Si fallo: distingue falso positivo de gap real en la barrera.
 - Si no existe, la mejor salida es test, hook, fixture realista, prompt compuesto, manager gate o memoria?
 - Si solo propones documentacion/memoria, explica por que una barrera automatica no es proporcional.
 
@@ -207,11 +210,11 @@ Cada hallazgo incluye:
 
 ### 3. Que haria ahora
 
-Acciones concretas, en orden, con el menor cambio seguro.
+Solo si el veredicto es CAMBIOS NECESARIOS o NO ACEPTAR TODAVIA: acciones concretas, en orden, con el menor cambio seguro.
 
 ### 4. Que NO haria
 
-Atajos tentadores que introducirian falso verde, scope creep, deuda invisible o perdida de autonomia.
+Solo si el veredicto es CAMBIOS NECESARIOS o NO ACEPTAR TODAVIA: atajos tentadores que introducirian falso verde, scope creep, deuda invisible o perdida de autonomia.
 
 ### 5. Aprendizaje reusable
 
