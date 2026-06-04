@@ -829,14 +829,17 @@ class ReviewBridge:
                 )
                 return result
 
-            # Collect diff files from motor and destination
-            motor_files = self._get_motor_diff_files()
-            destination_files = self._get_destination_diff_files()
-            result["motor_diff_files"] = motor_files
-            result["destination_diff_files"] = destination_files
+            # Collect and classify files via unified evidence module
+            motor_root = self._resolve_motor_root()
+            from .evidence import resolve_evidence
+
+            cls = resolve_evidence(motor_root, self.project_root, ticket_id)
+
+            result["motor_diff_files"] = cls["motor_files"]
+            result["destination_diff_files"] = cls["destination_files"]
 
             # Check for empty diff
-            if not motor_files and not destination_files:
+            if not cls["all_files"]:
                 result["reason"] = (
                     f"Ticket {ticket_id}: no diff files found in either motor or "
                     "destination repository. Review packet is empty."
@@ -845,8 +848,6 @@ class ReviewBridge:
 
             result["is_empty"] = False
 
-            # Classify files
-            cls = self._classify_diff_files(motor_files, destination_files)
             result.update(
                 {
                     "docs_only_files": cls["docs_only_files"],

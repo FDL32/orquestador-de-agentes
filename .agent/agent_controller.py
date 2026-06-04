@@ -1428,40 +1428,15 @@ _MOTOR_ROOT: Path = Path(__file__).resolve().parent.parent
 def _collect_git_diff_files() -> set[str]:
     """Collect files from git diff (unstaged + staged + last commit).
 
-    In Model B the motor code lives in its own git repo separate from PROJECT_ROOT.
-    We check both roots and merge results so the evidence gate works regardless
-    of which repo the changes landed in.
-
-    WT-2026-221b: Always check the motor log even when the workspace has
-    unstaged changes. The motor changes may be already committed (not in
-    unstaged/staged diff) but must still be counted as implementation evidence.
-    Without this, a workspace with only collaboration changes would hide the
-    motor's committed productive changes (root cause of seq 602/606/617).
-
-    Returns:
-        Set of normalized file paths (forward slashes). Empty if git unavailable.
-        Never raises.
+    Delegates to bus.evidence.resolve_evidence for unified evidence handling.
     """
-    files: set[str] = set()
-    for root in {PROJECT_ROOT, _MOTOR_ROOT}:
-        files |= _run_git_diff_cmd(["git", "diff", "--name-only"], cwd=root)
-        files |= _run_git_diff_cmd(["git", "diff", "--cached", "--name-only"], cwd=root)
+    try:
+        from bus.evidence import resolve_evidence
 
-    # Always check motor log for committed changes that may not appear in diff.
-    # This is essential for the evidence gate to detect productive motor changes
-    # even when the workspace has uncommitted collaboration-only changes.
-    motor_log_files = _run_git_diff_cmd(
-        ["git", "log", "-10", "--name-only", "--format="], cwd=_MOTOR_ROOT
-    )
-    files |= motor_log_files
-
-    # If still empty, also check workspace log as fallback
-    if not files:
-        files |= _run_git_diff_cmd(
-            ["git", "log", "-10", "--name-only", "--format="], cwd=PROJECT_ROOT
-        )
-
-    return files
+        evidence = resolve_evidence(_MOTOR_ROOT, PROJECT_ROOT)
+        return set(evidence["all_files"])
+    except Exception:
+        return set()
 
 
 def _check_log_has_evidence() -> bool:
@@ -1582,61 +1557,42 @@ def _check_implementation_evidence(plan_id: str) -> list[str]:  # noqa: C901
         - Never raises: all exceptions are caught and reported as strings.
     """
     errors: list[str] = []
+    all_files = set()
+    has_commit = False
 
-    # 1. Check git diff for files outside .agent/collaboration/
     try:
-        all_files = _collect_git_diff_files()
-        has_real = any(not f.startswith(".agent/collaboration/") for f in all_files)
-        if not has_real:
+        from bus.evidence import resolve_evidence
+
+        evidence = resolve_evidence(_MOTOR_ROOT, PROJECT_ROOT, plan_id)
+        all_files = set(evidence["all_files"])
+        has_commit = evidence["has_ticket_commit"]
+
+        if all_files:
+            if evidence["is_collaboration_only"]:
+                errors.append(
+                    "Collaboration-only evidence: all git changes are collaboration "
+                    f"artifacts ({len(all_files)} files). No productive code changes "
+                    "detected in motor or destination. Run --pre-handoff first, "
+                    "then produce real implementation changes."
+                )
+            elif evidence["is_docs_only"]:
+                errors.append(
+                    "Docs-only evidence: all git changes are documentation artifacts "
+                    f"({len(all_files)} files). No productive implementation files "
+                    "detected. Manager would reject this review (see seq 602/606/617)."
+                )
+
+        if (
+            not evidence["has_productive_evidence"]
+            and not evidence["is_docs_only"]
+            and not evidence["is_collaboration_only"]
+        ):
             errors.append(
                 "No implementation evidence: git diff shows no files changed "
                 "outside .agent/collaboration/"
             )
     except Exception as exc:
         errors.append(f"Git check error (non-blocking): {exc}")
-
-    # 1b. WT-2026-221b: Classify docs-only / collaboration-only changes.
-    # If files exist but all match docs-only or collaboration-only patterns,
-    # reject with a structured reason similar to seq 602/606/617.
-    try:
-        all_files = _collect_git_diff_files()
-        if all_files:
-            docs_patterns = (
-                ".agent/collaboration/",
-                ".agent/runtime/",
-                ".session/",
-                "PROJECT.md",
-                "AGENTS.md",
-                "README.md",
-                "CHANGELOG.md",
-                "CREDITS.md",
-                "REPOSITORY_STRUCTURE.md",
-                "repomix.config.json",
-            )
-            collab_patterns = (
-                ".agent/collaboration/",
-                ".agent/runtime/",
-            )
-
-            normalized = {f.replace("\\", "/") for f in all_files}
-            all_docs = all(any(p in f for p in docs_patterns) for f in normalized)
-            all_collab = all(any(p in f for p in collab_patterns) for f in normalized)
-
-            if all_collab:
-                errors.append(
-                    "Collaboration-only evidence: all git changes are collaboration "
-                    f"artifacts ({len(normalized)} files). No productive code changes "
-                    "detected in motor or destination. Run --pre-handoff first, "
-                    "then produce real implementation changes."
-                )
-            elif all_docs:
-                errors.append(
-                    "Docs-only evidence: all git changes are documentation artifacts "
-                    f"({len(normalized)} files). No productive implementation files "
-                    "detected. Manager would reject this review (see seq 602/606/617)."
-                )
-    except Exception:  # noqa: S110 - best-effort classification
-        pass
 
     # 2. Check execution_log.md for non-boilerplate evidence
     has_evidence = _check_log_has_evidence()
@@ -1664,7 +1620,11 @@ def _check_implementation_evidence(plan_id: str) -> list[str]:  # noqa: C901
         pass
 
     # 4. WT-2026-203: Check git log --oneline -20 contains plan_id
-    has_commit = _check_git_log_has_plan_id(plan_id)
+    # has_commit already computed via resolve_evidence above
+    if not has_commit and not all_files:
+        # Fallback just in case resolve_evidence failed but we want to check
+        has_commit = _check_git_log_has_plan_id(plan_id)
+
     if not has_commit:
         errors.append(
             f"No commit evidence: git log --oneline -20 does not contain '{plan_id}'"

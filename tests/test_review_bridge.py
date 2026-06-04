@@ -1097,3 +1097,62 @@ class TestMaxAttempts:
         assert isinstance(max_attempts, int), "max_attempts must be an integer"
         assert max_attempts > 0, "max_attempts must be positive"
         assert max_attempts < 100, "max_attempts must be finite (sanity check)"
+
+
+class TestReviewBridgeEvidence:
+    """WT-2026-226a: Review bridge consumes bus.evidence without empty diff drift."""
+
+    def test_regression_ticket_commit_plus_dirty_working_tree(self, tmp_path):
+        """A dirty working tree must not hide valid ticket commits from the motor."""
+        import subprocess
+        from unittest.mock import MagicMock
+
+        from bus.review_bridge import ReviewBridge
+
+        from tests.test_pre_handoff_guard import init_git_repo
+
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+
+        bridge = ReviewBridge(event_bus=MagicMock(), project_root=motor)
+        bridge._resolve_motor_root = lambda: motor
+
+        # Add ticket commit
+        (motor / "productive.py").write_text("code")
+        subprocess.run(["git", "add", "."], cwd=motor, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "WT-2026-999: add code"], cwd=motor, check=True
+        )
+
+        # Add dirty working tree file (collaboration-only)
+        collab_dir = motor / ".agent" / "collaboration"
+        collab_dir.mkdir(parents=True, exist_ok=True)
+        (collab_dir / "notes.md").write_text("dirty")
+
+        result = bridge.classify_review_packet("WT-2026-999")
+
+        assert result["is_empty"] is False
+        assert result["has_motor_evidence"] is True
+        # Note: has_ticket_commit might not be returned in result, but we test it indirectly by is_empty being False
+
+    def test_negative_no_commit_no_diff(self, tmp_path):
+        """No ticket commit and no diff -> packet is empty."""
+        from unittest.mock import MagicMock
+
+        from bus.review_bridge import ReviewBridge
+
+        from tests.test_pre_handoff_guard import init_git_repo
+
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+
+        bridge = ReviewBridge(event_bus=MagicMock(), project_root=motor)
+        bridge._resolve_motor_root = lambda: motor
+
+        # Need bus_active = True to bypass the first check
+        bridge.state_ingest = MagicMock()
+        bridge.state_ingest.get_ticket_context.return_value = {"status": "in_progress"}
+
+        result = bridge.classify_review_packet("WT-2026-999")
+        assert result["is_empty"] is True
+        assert "no diff files found" in result.get("reason", "")

@@ -9,6 +9,22 @@
   blockers vacios y relanzamiento desde fuente equivocada de verdad.
 
 ---
+# 2026-06-04 - WT-2026-226a Unify evidence seam to fix empty review diff drift
+
+### Added
+- `bus/evidence.py`: unified evidence collection seam (`resolve_evidence`) to prevent "empty review diff" drift when working tree is dirty. Includes ticket-specific commits unconditionally by checking the commit log.
+- `tests/test_agent_controller.py`: `TestAgentControllerEvidence` suite to verify semantic parity and correct error classification.
+- `tests/test_review_bridge.py`: `TestReviewBridgeEvidence` suite to verify the review packet handles ticket commits and dirty working trees correctly without masking.
+
+### Changed
+- `.agent/agent_controller.py`: `_collect_git_diff_files` and `_check_implementation_evidence` delegated to `bus.evidence.resolve_evidence`.
+- `bus/review_bridge.py`: `classify_review_packet` delegates to `bus.evidence.resolve_evidence`. Replaces custom early-return logic that dropped motor evidence on dirty working trees.
+
+### Summary
+- Guarantees parity between `--mark-ready` gates and the Manager review packet.
+- Prevents false-positive empty review packets when the project destination is dirty but the motor repository has committed ticket implementation.
+
+---
 
 # 2026-06-04 - v9.15.0 Canonical close: green suite and CEM v0
 
