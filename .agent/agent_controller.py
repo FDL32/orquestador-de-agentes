@@ -1474,7 +1474,7 @@ def _check_log_has_quality_gate_evidence() -> bool:
         return False
 
 
-def _check_implementation_evidence(plan_id: str) -> list[str]:
+def _check_implementation_evidence(plan_id: str) -> list[str]:  # noqa: C901
     """WP-2026-188 Phase 4 / WT-2026-203: Check implementation evidence before --mark-ready.
 
     Before:
@@ -1508,6 +1508,49 @@ def _check_implementation_evidence(plan_id: str) -> list[str]:
             )
     except Exception as exc:
         errors.append(f"Git check error (non-blocking): {exc}")
+
+    # 1b. WT-2026-221b: Classify docs-only / collaboration-only changes.
+    # If files exist but all match docs-only or collaboration-only patterns,
+    # reject with a structured reason similar to seq 602/606/617.
+    try:
+        all_files = _collect_git_diff_files()
+        if all_files:
+            docs_patterns = (
+                ".agent/collaboration/",
+                ".agent/runtime/",
+                ".session/",
+                "PROJECT.md",
+                "AGENTS.md",
+                "README.md",
+                "CHANGELOG.md",
+                "CREDITS.md",
+                "REPOSITORY_STRUCTURE.md",
+                "repomix.config.json",
+            )
+            collab_patterns = (
+                ".agent/collaboration/",
+                ".agent/runtime/",
+            )
+
+            normalized = {f.replace("\\", "/") for f in all_files}
+            all_docs = all(any(p in f for p in docs_patterns) for f in normalized)
+            all_collab = all(any(p in f for p in collab_patterns) for f in normalized)
+
+            if all_collab:
+                errors.append(
+                    "Collaboration-only evidence: all git changes are collaboration "
+                    f"artifacts ({len(normalized)} files). No productive code changes "
+                    "detected in motor or destination. Run --pre-handoff first, "
+                    "then produce real implementation changes."
+                )
+            elif all_docs:
+                errors.append(
+                    "Docs-only evidence: all git changes are documentation artifacts "
+                    f"({len(normalized)} files). No productive implementation files "
+                    "detected. Manager would reject this review (see seq 602/606/617)."
+                )
+    except Exception:  # noqa: S110 - best-effort classification
+        pass
 
     # 2. Check execution_log.md for non-boilerplate evidence
     has_evidence = _check_log_has_evidence()
@@ -4399,9 +4442,50 @@ FLAG_HANDLERS = {
 # monkeypatching agent_controller._handle_validate in tests works correctly.
 # A dict entry captures the function object at import time, bypassing patches.
 
+HELP_TEXT = """Agent Controller - CLI reference
+
+Usage:
+  python .agent/agent_controller.py [options]
+
+Mode flags:
+  --json              Print machine-readable JSON where supported.
+  --force             Continue when local safety checks would otherwise stop.
+  --strict            Run strict validation mode.
+  --dry-run           Preview the operation without applying changes.
+
+Action flags:
+  --mark-ready                    Mark the active ticket as READY_FOR_REVIEW.
+  --pre-handoff                   Run pre-handoff checks before mark-ready.
+  --validate                      Validate collaboration state.
+  --bootstrap-ticket              Emit initial bus state for the active ticket.
+  --manager-approve <ticket>      Approve and close a ticket canonically.
+  --request-changes <ticket>      Request changes for a ticket.
+  --escalate-human-gate           Move a ticket to HUMAN_GATE.
+  --resume-human-gate             Resume review from HUMAN_GATE.
+  --session-close                 Close the current session.
+  --recover                       Recover session state.
+  --archive                       Archive old notifications.
+
+Control flags:
+  --project-root <path>       Destination project root.
+  --ticket <ticket>           Ticket ID for actions that accept one.
+  --tickets <ids>             Ticket list for session close.
+  --skip-gates                Skip quality gates.
+  --skip-slow                 Skip slow checks during session close.
+  --reset-turn                Regenerate TURN.md.
+  --scope-override <reason>   Override scope gate with a reason.
+
+Example:
+  python .agent/agent_controller.py --validate --json --project-root C:\\path\\to\\repo_destino
+"""
+
 
 def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
     """Funcion principal del controller."""
+    if "--help" in sys.argv or "-h" in sys.argv:
+        print(HELP_TEXT)
+        return 0
+
     # WP-2026-122: Parse --project-root FIRST and export to environment
     # This must happen before any imports that depend on project_root
     if "--project-root" in sys.argv:
