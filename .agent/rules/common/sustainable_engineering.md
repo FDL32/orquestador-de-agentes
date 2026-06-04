@@ -54,6 +54,10 @@ Humano: sostiene el criterio del sistema preguntando que contrato se defiende, q
 
 Un Builder relanzado no debe arrancar amnesico. Antes de relanzar, el Supervisor debe verificar root/topologia. Despues debe generar una capsula fresca desde fuentes canonicas que separe hechos verificados, blockers, hipotesis y siguiente accion. La capsula no es estado vivo acumulativo.
 
+Cuando el Builder escriba en execution_log.md algo no verificado o inferido, debe usar el prefijo canonico `hipotesis:` para que el Supervisor lo incluya en la capsula de relaunch.
+Ejemplo: `- hipotesis: el fallo puede deberse a contaminacion de cache — pendiente de confirmar.`
+Sin ese prefijo, la inferencia no aparece en la capsula y el siguiente Builder arranca sin ese contexto.
+
 ## Metricas ligeras
 
 - Familias recurrentes por periodo.

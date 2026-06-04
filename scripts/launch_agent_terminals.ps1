@@ -1092,6 +1092,14 @@ function Get-CanonicalFilesForOpenCode {
             $canonicalFiles += $feedbackPath
             Write-Host "Feedback normalizado detectado: $feedbackPath"
         }
+
+        # WT-2026-221a: Adjuntar capsula evidence-linked si existe (relaunch post-CHANGES).
+        # Generada por supervisor._build_relaunch_capsule() antes del launch.
+        $capsulePath = Join-Path $ProjectRoot '.agent\runtime\relaunch_capsule.md'
+        if (Test-Path -LiteralPath $capsulePath) {
+            $canonicalFiles += $capsulePath
+            Write-Host "Capsula evidence-linked detectada: $capsulePath"
+        }
     }
 
     # WT-2026-182: Repomix context bootstrapping (X-ray vision)
