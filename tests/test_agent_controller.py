@@ -1380,9 +1380,10 @@ Marked ready by Builder
 
         errors = agent_controller._check_implementation_evidence(self._PLAN_ID)
         # Should reject: no implementation files outside collaboration
-        assert any("No implementation evidence" in err for err in errors), (
-            f"Expected no-implementation-evidence error, got: {errors}"
-        )
+        assert any(
+            "Collaboration-only" in err or "No implementation evidence" in err
+            for err in errors
+        ), f"Expected no-implementation-evidence error, got: {errors}"
 
     def test_rejects_when_execution_log_has_only_boilerplate(self, monkeypatch):
         """Evidence gate rejects when execution_log.md has only boilerplate."""
@@ -1678,3 +1679,61 @@ class TestAutoRejectQualityGates:
 
         assert logged_status.get("status") == "IN_PROGRESS"
         assert "AUTO-REJECTED" in logged_status.get("note", "")
+
+
+class TestAgentControllerEvidence:
+    """WT-2026-226a: Ensure agent_controller delegates correctly to bus.evidence."""
+
+    def test_negative_no_commit_no_diff(self, tmp_path, monkeypatch):
+        import agent_controller
+
+        from tests.test_pre_handoff_guard import init_git_repo
+
+        motor = tmp_path / "motor"
+        dest = tmp_path / "dest"
+        init_git_repo(motor)
+        init_git_repo(dest)
+
+        monkeypatch.setattr(agent_controller, "_MOTOR_ROOT", motor)
+        monkeypatch.setattr(agent_controller, "PROJECT_ROOT", dest)
+
+        errors = agent_controller._check_implementation_evidence("WT-2026-999")
+
+        assert any("No commit evidence" in err for err in errors)
+        assert any("No implementation evidence" in err for err in errors)
+
+    def test_semantic_parity_positive(self, tmp_path, monkeypatch):
+        """agent_controller passes evidence gate when ticket commit exists."""
+        import subprocess
+
+        import agent_controller
+
+        from tests.test_pre_handoff_guard import init_git_repo
+
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+
+        (motor / "src").mkdir()
+        (motor / "src" / "productive.py").write_text("print('test')")
+        subprocess.run(["git", "add", "."], cwd=motor, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "WT-2026-999: add code"], cwd=motor, check=True
+        )
+
+        monkeypatch.setattr(agent_controller, "_MOTOR_ROOT", motor)
+        monkeypatch.setattr(agent_controller, "PROJECT_ROOT", motor)
+
+        # Mock out log checks
+        monkeypatch.setattr(agent_controller, "_check_log_has_evidence", lambda: True)
+        monkeypatch.setattr(
+            agent_controller, "_check_log_has_quality_gate_evidence", lambda: True
+        )
+        monkeypatch.setattr(agent_controller, "read_file", lambda x: "")
+
+        errors = agent_controller._check_implementation_evidence("WT-2026-999")
+
+        # None of the errors should be about missing implementation evidence or commits
+        assert not any("No commit evidence" in err for err in errors)
+        assert not any("No implementation evidence" in err for err in errors)
+        assert not any("Collaboration-only" in err for err in errors)
+        assert not any("Docs-only" in err for err in errors)
