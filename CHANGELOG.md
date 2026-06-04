@@ -1,3 +1,15 @@
+# 2026-06-04 - Known Failure Patterns registry
+
+### Added
+- `docs/KNOWN_FAILURE_PATTERNS.md`: registry canonico de patrones de fallo
+  observados en el motor, con IDs `FP-XXX`, sintoma observable, realidad
+  verificada, mitigacion temporal y fix estructural candidato. Primera
+  cobertura: drift bus/proyecciones, `builder_launch_unverified`,
+  `stale_builder_round`, composicion PowerShell rota, `REVIEW_DECISION` con
+  blockers vacios y relanzamiento desde fuente equivocada de verdad.
+
+---
+
 # 2026-06-04 - v9.15.0 Canonical close: green suite and CEM v0
 
 ### Changed
