@@ -2814,6 +2814,7 @@ _LIVE_SURFACES_REL = {
     ".agent/collaboration/notifications.md",
     ".agent/collaboration/review_queue.md",
     ".agent/collaboration/work_plan.md",
+    ".agent/collaboration/backlog.md",
     ".agent/collaboration/archive/",
     ".agent/collaboration/_archive/",
     ".agent/runtime/memory/session_close_report.md",
@@ -2833,6 +2834,7 @@ _WORKSPACE_EXCLUDED_PREFIXES = {
     ".agent/collaboration/PLAN_WT-",
     ".agent/collaboration/AUDIT_WP-",
     ".agent/collaboration/AUDIT_WT-",
+    ".agent/collaboration/manager_feedback_",
 }
 
 _LIVE_SURFACE_DIRS = {
