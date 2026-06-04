@@ -777,6 +777,19 @@ function Invoke-PostPreflightProjectionSync {
     }
 }
 
+function Sync-StartupProjectionsIfNeeded {
+    param([Parameter(Mandatory)] [string]$ProjectRoot)
+
+    $alignment = Get-StartupAlignment -ProjectRoot $ProjectRoot
+    if ($alignment.WorkPlanId -eq $alignment.TurnPlanId -and $alignment.WorkPlanId -eq $alignment.StatePlanId) {
+        return $alignment
+    }
+
+    Write-Host "[launcher] Proyecciones stale detectadas; reproyectando antes del launch estricto..."
+    Invoke-PostPreflightProjectionSync -ProjectRoot $ProjectRoot
+    return Get-StartupAlignment -ProjectRoot $ProjectRoot
+}
+
 function Invoke-ImportPreflight {
     param(
         [Parameter(Mandatory)] [string]$ProjectRoot,
@@ -1217,6 +1230,8 @@ if (-not $ResumeBuilder) {
     if ($null -ne $preflightDecision -and @('RECONCILE', 'CLEANUP_LOCAL') -contains $preflightDecision.decision) {
         Invoke-PostPreflightProjectionSync -ProjectRoot $ProjectRoot
     }
+
+    $alignment = Sync-StartupProjectionsIfNeeded -ProjectRoot $ProjectRoot
 
     if ($StrictLaunch) {
         $alignment = Assert-StartupAlignment -ProjectRoot $ProjectRoot
