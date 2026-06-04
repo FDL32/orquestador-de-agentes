@@ -1,4 +1,4 @@
-# ruff: noqa: RUF001,S603,S607
+# ruff: noqa: S603, S607
 # ruff: noqa: S603,S607
 """
 Orquestador multi-agente v2.2
@@ -214,7 +214,7 @@ ADAPTERS: dict[str, AdapterBase] = {
 def discover_available_skills() -> dict:
     """
     Ejecuta discover_skills.py y retorna el trigger_map.
-    Si discover_skills falla o no existe, retorna dict vacÃƒÂ­o.
+    Si discover_skills falla o no existe, retorna dict vacío.
     """
     try:
         discover_script = Path(__file__).parent / "discover_skills.py"
@@ -325,7 +325,7 @@ def print_dry_run(engine_name: str, instruction: str, mode: str) -> None:
     cmd = adapter.build_cmd(dummy_ref)
 
     print("\n" + "=" * 60)
-    print("  DRY-RUN Ã¢â‚¬â€ nada sera ejecutado")
+    print("  DRY-RUN — nada sera ejecutado")
     print("=" * 60)
     print(
         f"\nENGINE   : {engine_name} {'(experimental)' if adapter.experimental else '(estable)'}"
@@ -445,10 +445,10 @@ def execute_skill(skill_trigger: str, instruction: str) -> int:
         skill_name = skill_path.parent.name
         print(f">> Ejecutando skill: {skill_name}")
         print(f">> Archivo: {skill_path}")
-        print(f">> InstrucciÃƒÂ³n: {instruction}")
+        print(f">> Instrucción: {instruction}")
         print("=" * 60)
 
-        # Extraer secciÃƒÂ³n Workflow
+        # Extraer sección Workflow
         lines = skill_content.split("\n")
         workflow_start = None
         workflow_end = None
@@ -465,7 +465,7 @@ def execute_skill(skill_trigger: str, instruction: str) -> int:
                 break
 
         if workflow_start is None:
-            print("ERROR: Skill no tiene secciÃƒÂ³n 'Workflow'")
+            print("ERROR: Skill no tiene sección 'Workflow'")
             return 1
 
         if workflow_end is None:
@@ -477,7 +477,7 @@ def execute_skill(skill_trigger: str, instruction: str) -> int:
             print(line)
 
         print("\n" + "=" * 60)
-        print(">> Skill ejecutada correctamente. ImplementaciÃƒÂ³n manual requerida.")
+        print(">> Skill ejecutada correctamente. Implementación manual requerida.")
         # Intentional exit: skill mode exposes workflow without full execution (return 0 = salida informativa).
         return 0
 
@@ -510,7 +510,7 @@ def snapshot_file_info(path: Path) -> dict | None:
 
 def snapshot_paths(paths: list[Path]) -> dict[str, dict]:
     """
-    Captura snapshot de mÃƒÂºltiples paths (archivos o directorios).
+    Captura snapshot de múltiples paths (archivos o directorios).
     Si es directorio, expande recursivamente con rglob.
     Retorna dict: {str(path): {mtime_ns, size}}
     """
@@ -562,8 +562,8 @@ def classify_scope(
     ticket_allowed_files: list[Path] | None = None,
 ) -> tuple[list[str], list[str]]:
     """
-    Clasifica archivos tocados segÃƒÂºn allowlist.
-    Si ticket_allowed_files proveÃƒÂ­do, solo esos archivos son in_scope (modo restrictivo).
+    Clasifica archivos tocados según allowlist.
+    Si ticket_allowed_files proveído, solo esos archivos son in_scope (modo restrictivo).
     Retorna (in_scope, out_of_scope).
     """
     write_roots = allowlist.get("write_roots", [])

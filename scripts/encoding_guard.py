@@ -61,9 +61,7 @@ EXCLUDE_PATTERNS = {
     ".agent/runtime/uv-cache/**",
 }
 
-ALLOWLIST = {
-    "scripts/orquestador.py",
-}
+ALLOWLIST = {}
 
 
 def relative_path(path: Path) -> str:
