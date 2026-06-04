@@ -46,6 +46,7 @@ LIVE_SURFACES_REL = {
     ".agent/runtime/builder_lock.txt",
     ".agent/runtime/circuit_breaker.json",
     ".agent/runtime/supervisor_lock.txt",
+    ".agent/runtime/relaunch_capsule.md",
     ".agent/runtime/events/",
     ".agent/runtime/approvals/",
     ".agent/context/project-map.json",
