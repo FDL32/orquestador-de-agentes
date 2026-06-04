@@ -64,7 +64,7 @@ def create_memory_index() -> bool:
     if not observations:
         empty_message = (
             "No hay observaciones registradas a" + chr(250) + "n. "
-            "No hay observaciones registradas aÃºn."
+            "No hay observaciones registradas aún."
         )
         memory_file.write_text(
             f"# MEMORY\n\n{empty_message}\n",

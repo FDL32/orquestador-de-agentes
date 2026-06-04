@@ -63,8 +63,6 @@ EXCLUDE_PATTERNS = {
 
 ALLOWLIST = {
     "scripts/orquestador.py",
-    ".agent/runtime/memory/memory_helpers.py",
-    "CHANGELOG.md",
 }
 
 
