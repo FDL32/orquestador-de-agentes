@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Skill Discovery System â€” Finds and indexes skills with triggers.
+Skill Discovery System — Finds and indexes skills with triggers.
 
 Generates trigger_map for orquestador.py (v2.4+) and external agents (Goose, Claw).
 """
@@ -153,7 +153,7 @@ def main() -> None:
             print("|-------|----------|---------|")
             for skill in result["skills"]:
                 triggers_str = (
-                    ", ".join(skill["triggers"]) if skill["triggers"] else "â€”"
+                    ", ".join(skill["triggers"]) if skill["triggers"] else "—"
                 )
                 print(f"| {skill['name']} | {triggers_str} | {skill['version']} |")
         else:

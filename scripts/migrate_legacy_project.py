@@ -489,14 +489,14 @@ def main():  # noqa: C901
         result = manager.confirm_migrate()
 
         if result["success"]:
-            print("âœ… Migration successful!")
+            print("✅ Migration successful!")
             print(f"Message: {result['message']}")
             if result["changes"]:
                 print("Changes made:")
                 for change in result["changes"]:
                     print(f"  - {change}")
         else:
-            print("âŒ Migration failed!")
+            print("❌ Migration failed!")
             print(f"Message: {result['message']}")
 
         if result["warnings"]:

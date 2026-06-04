@@ -4,7 +4,7 @@ Goose Real-World Integration Test
 
 Ejecuta Goose con un plan real y captura:
 1. Que Goose recibe trigger_map
-2. Que Goose sugiere triggers en conversaciÃ³n
+2. Que Goose sugiere triggers en conversación
 3. Que Builder puede ejecutar los triggers sugeridos
 """
 
@@ -46,7 +46,7 @@ def test_goose_receives_trigger_map():
                 "--engine",
                 "goose",
                 "--query",
-                "Â¿QuÃ© triggers tengo disponibles? Lista los primeros 5.",
+                "¿Qué triggers tengo disponibles? Lista los primeros 5.",
             ]
         )
 
@@ -94,11 +94,11 @@ def test_goose_suggests_workflow():
         with open(plan_path, encoding="utf-8", errors="replace") as f:
             plan_content = f.read()[:500]
 
-        query = f"""Basado en este plan, Â¿cuÃ¡l es el workflow que sugiero?
+        query = f"""Basado en este plan, ¿cuál es el workflow que sugiero?
 
 {plan_content}
 
-Sugiere quÃ© triggers puedo usar para cada fase."""
+Sugiere qué triggers puedo usar para cada fase."""
 
         result = run_cmd(
             ["python", "scripts/orquestador.py", "--engine", "goose", "--query", query],
@@ -130,7 +130,7 @@ Sugiere quÃ© triggers puedo usar para cada fase."""
 
 
 def test_skill_execution_integration():
-    """Test 3: Builder puede ejecutar triggers que Goose sugiriÃ³"""
+    """Test 3: Builder puede ejecutar triggers que Goose sugirió"""
     print("\n[TEST 3] Builder Executes Suggested Triggers...")
 
     try:
@@ -141,7 +141,7 @@ def test_skill_execution_integration():
                 "--skill",
                 "/gates",
                 "--query",
-                "valida la calidad del cÃ³digo",
+                "valida la calidad del código",
             ],
             timeout=20,
         )

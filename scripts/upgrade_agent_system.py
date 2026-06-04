@@ -562,7 +562,7 @@ def main():
 
     if args.verify:
         success, checks = manager.verify_upgrade()
-        print(f"\nVerification Status: {'Ã¢Å“â€œ PASS' if success else 'Ã¢Å“â€” FAIL'}")
+        print(f"\nVerification Status: {'✓ PASS' if success else ' ✗ FAIL'}")
         for key, value in checks.items():
             print(f"  {key}: {value}")
         return 0 if success else 1

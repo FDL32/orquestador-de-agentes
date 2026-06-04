@@ -254,7 +254,7 @@ def main():  # noqa: C901
         if args.verify:
             print("\nVerifying integrity...")
             success, checks = manager.verify_restore()
-            print(f"Verification: {'âœ“ PASS' if success else 'âœ— FAIL'}")
+            print(f"Verification: {'✓ PASS' if success else '✗ FAIL'}")
             for key, value in checks.items():
                 print(f"  {key}: {value}")
 
