@@ -98,6 +98,19 @@ def test_launcher_exports_builder_round_identity(launcher_source: str) -> None:
         "Launcher must export AGENT_BUILDER_ROUND to the Builder shell so stale "
         "windows can be blocked before mark-ready"
     )
+    assert "`$env:AGENT_BUILDER_TICKET =" in launcher_source, (
+        "Builder env prefix must escape `$env:` inside the here-string; otherwise "
+        "PowerShell expands it too early and leaves only '= <value>' at runtime"
+    )
+    assert "`$env:AGENT_BUILDER_ROUND =" in launcher_source, (
+        "Builder env prefix must escape `$env:` inside the here-string; otherwise "
+        "the round assignment is stripped before the Builder shell starts"
+    )
+    assert '$builderEnvPrefix + "`r`n" + $builderCloseout' in launcher_source, (
+        "Builder env prefix and closeout must be joined with an explicit newline; "
+        "otherwise PowerShell parses the last env assignment and the closeout "
+        "try-block as a single broken statement"
+    )
 
 
 def test_resume_builder_reads_session_json(launcher_source: str) -> None:
