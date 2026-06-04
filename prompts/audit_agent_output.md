@@ -51,6 +51,14 @@ Antes de evaluar, identifica el tipo principal:
 
 Despues decide que evidencia minima exige. Un cierre requiere mas evidencia que una sugerencia; un cambio de produccion requiere mas que un comentario.
 
+| Tipo de output | Evidencia minima |
+|----------------|------------------|
+| cierre | diff revisable, estado git, gates ejecutados, exit code real y bus/estado canonico si aplica |
+| plan | contrato canonico, archivos fuente nombrados, criterios binarios y riesgos de root/topologia |
+| codigo de bus/orquestacion | diff, tests gobernantes, validacion de estado canonico y regression check proporcional |
+| claim de tests | comando exacto, contexto de ejecucion, exit code no enmascarado y arbol limpio si es evidencia de cierre |
+| comentario/review o propuesta | claims separados de inferencias y al menos una evidencia o limitacion explicita |
+
 ---
 
 ## Checklist esceptico
@@ -128,6 +136,15 @@ Distingue:
 
 Cuando sea posible, convierte aprendizajes en mecanismos automaticos y no en friccion manual.
 
+### 8. Barrera automatica
+
+Para cada fallo relevante:
+
+- Existe ya una barrera que lo habria evitado?
+- Si existe, fallo la barrera, no se ejecuto, o estaba fuera de scope?
+- Si no existe, la mejor salida es test, hook, fixture realista, prompt compuesto, manager gate o memoria?
+- Si solo propones documentacion/memoria, explica por que una barrera automatica no es proporcional.
+
 ---
 
 ## Etiquetas de evidencia
@@ -152,8 +169,9 @@ No mezcles inferencia con hecho confirmado.
 
 Para cada problema importante, indica:
 
-- **Clase de fallo:** falso verde / root equivocado / fixture irreal / scope creep / encoding / auto-reporte / estado canonico / gate ausente / otro.
-- **Tier afectado:** codigo / tests / proceso / orquestacion / memoria / documentacion.
+- **Clase CEM canonica:** A regresion de contrato / B fuga de estado / C deriva de fixture / D entorno-infraestructura. Si no encaja, marca otro y explica.
+- **Subtipo observado:** falso verde / root equivocado / fixture irreal / scope creep / encoding / auto-reporte / estado canonico / gate ausente / otro.
+- **Impacto de fallo:** codigo / tests / proceso / orquestacion / memoria / documentacion. No es el tipo de output auditado; es donde pega el riesgo.
 - **Barrera existente:** test, hook, prompt, bus, manager gate, review u otra.
 - **Barrera faltante:** que habria evitado el fallo.
 - **Deuda residual:** que queda fuera de esta pasada.
