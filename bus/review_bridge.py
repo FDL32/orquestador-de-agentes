@@ -899,41 +899,41 @@ class ReviewBridge:
         return result
 
     def check_review_packet_diff_empty(self, ticket_id: str) -> bool:
-        """WT-2026-203: Check if the review packet diff is empty or errored.
+        """WT-2026-203 / WT-2026-221b: Check review packet evidence.
 
         Before:
             - ticket_id must be valid.
             - git must be available (best-effort if not).
 
         During:
-            - Gets diff_stat and checks for [git diff --stat empty] marker.
-            - Checks for [Error fetching git diff] markers in diff_stat.
-            - Builds the actual diff content with a small budget and checks
-              if the result is empty or contains error markers.
+            - WT-2026-221b: Uses classify_review_packet() to detect if the
+              review packet has no productive evidence (docs-only, collaboration-only,
+              or empty diff). This replaces the simpler empty-diff-only check.
+            - Also checks diff_stat for [git diff --stat empty] marker as fallback.
+            - Also checks for [Error fetching git diff] markers.
 
         After:
-            - Returns True if any empty-diff condition is met (empty diff_stat,
-              empty diff content, or git error markers).
-            - Returns False if diff appears valid or check cannot be completed.
+            - Returns True if any empty-diff or docs-only/collaboration-only
+              condition is met.
+            - Returns False if productive evidence exists or check cannot
+              be completed.
             - Never raises: all exceptions are caught and return False.
         """
         try:
-            # Condition 1: diff_stat contains empty marker
+            # WT-2026-221b: Use classify_review_packet for structured evidence check
+            classification = self.classify_review_packet(ticket_id)
+            if classification.get("is_empty"):
+                return True
+            if classification.get("is_docs_only") or classification.get(
+                "is_collaboration_only"
+            ):
+                return True
+
+            # Fallback: legacy empty diff checks for edge cases
             diff_stat = self._git_diff_stat()
             if "[git diff --stat empty]" in diff_stat:
                 return True
-
-            # Condition 2: diff_stat contains error marker
             if "[Error fetching git diff" in diff_stat:
-                return True
-
-            # Condition 3: build actual diff content and check if empty/error
-            diff = self._build_diff_for_files_likely_touched(ticket_id, 4096)
-            if not diff or not diff.strip():
-                return True
-            if "[Error fetching git diff" in diff:
-                return True
-            if "[git diff --stat empty]" in diff:
                 return True
 
         except Exception:  # noqa: S110 - best-effort check, silent on failure
@@ -2788,15 +2788,23 @@ class ReviewBridge:
         dtype = self.state_ingest._read_deliverable_type()
 
         # WT-2026-221b: Evidence gate - reject docs-only/collaboration-only
-        # before building the review prompt. This reproduces the binary barrier
-        # that was missing in seq 602/606/617.
+        # or no bus/state activity before building the review prompt.
+        # This reproduces the binary barrier that was missing in seq 602/606/617.
         classification = self.classify_review_packet(ticket_id)
-        if classification.get("is_docs_only") or classification.get(
+        reject_reason = None
+        if not classification.get("bus_active"):
+            reject_reason = classification.get(
+                "reason",
+                f"Ticket {ticket_id} has no active bus/state context. "
+                "Cannot verify ticket consistency before review.",
+            )
+        elif classification.get("is_docs_only") or classification.get(
             "is_collaboration_only"
         ):
             reject_reason = classification.get(
                 "reason", "No productive evidence found."
             )
+        if reject_reason:
             print(
                 f"[evidence-gate] REJECTED: {reject_reason}",
                 file=sys.stderr,
@@ -2807,10 +2815,14 @@ class ReviewBridge:
                 actor="MANAGER",
                 payload={
                     "classification": (
-                        classification.get("is_collaboration_only", False)
-                        and "collaboration_only"
-                    )
-                    or "docs_only",
+                        "bus_inactive"
+                        if not classification.get("bus_active")
+                        else (
+                            "collaboration_only"
+                            if classification.get("is_collaboration_only", False)
+                            else "docs_only"
+                        )
+                    ),
                     "reason": reject_reason,
                     "docs_only_files": classification.get("docs_only_files", []),
                     "has_motor_evidence": classification.get(

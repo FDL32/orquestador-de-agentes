@@ -85,41 +85,6 @@ def _mock_git_diff(files: list[str], returncode: int = 0) -> MagicMock:
     return mock
 
 
-def _make_diff_side_effect(
-    motor_files: list[str],
-    destination_files: list[str],
-) -> callable:
-    """Create a side_effect for subprocess.run that returns different results
-    based on the cwd kwarg.
-
-    Motor repo queries use cwd=<tmp_path>/motor (controlled path).
-    Destination repo queries use any other cwd.
-    """
-
-    def side_effect(cmd, *args, **kwargs):
-        cwd = kwargs.get("cwd", "")
-        cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
-        if "diff --name-only" in cmd_str and str(cwd).endswith("motor"):
-            if motor_files:
-                return _mock_git_diff(motor_files)
-            # Fallback to log when diff is empty
-            return _mock_git_diff([])
-        if "diff --name-only" in cmd_str:
-            if destination_files:
-                return _mock_git_diff(destination_files)
-            # Fallback to log when diff is empty
-            return _mock_git_diff([])
-        if "log -5 --name-only" in cmd_str and str(cwd).endswith("motor"):
-            if motor_files and not any("diff" in c for c in [cmd_str]):
-                pass
-            return _mock_git_diff(motor_files)
-        if "log -5 --name-only" in cmd_str:
-            return _mock_git_diff(destination_files)
-        return _mock_git_diff([])
-
-    return side_effect
-
-
 # ---------------------------------------------------------------------------
 # Tests: classify_review_packet
 # ---------------------------------------------------------------------------
@@ -166,9 +131,6 @@ class TestClassifyReviewPacket:
         assert "no productive" in result["reason"].lower(), (
             f"Reason should mention no productive evidence: {result['reason']}"
         )
-        # Note: PROJECT.md is docs-only but not collaboration-only pattern,
-        # so is_collaboration_only is False for this mixed docs set.
-        # A pure collaboration-only test covers the collab classification.
 
     def test_classify_collaboration_only_diff(self, review_bridge, monkeypatch):
         """TP-03: collaboration-only files → is_collaboration_only=True."""
@@ -343,7 +305,7 @@ class TestClassifyReviewPacket:
 
 
 # ---------------------------------------------------------------------------
-# Tests: run_manager_review_cycle evidence gate
+# Tests: run_manager_review_cycle evidence gate (unit)
 # ---------------------------------------------------------------------------
 
 
@@ -550,3 +512,321 @@ class TestGetMotorDiffFiles:
         result = review_bridge._get_motor_diff_files()
         assert "bus/review_bridge.py" in result
         assert "tests/test_evidence.py" in result
+
+
+# ---------------------------------------------------------------------------
+# Integration tests: run_manager_review_cycle with real classify_review_packet
+# ---------------------------------------------------------------------------
+
+
+class TestReviewCycleEvidenceGateIntegration:
+    """End-to-end evidence gate tests using real classify_review_packet().
+
+    These tests do NOT mock classify_review_packet(). Instead, they mock
+    subprocess.run at the git level to control what files appear in diffs,
+    exercising the full classification -> gate rejection pipeline.
+    """
+
+    def _handle_name_only_query(self, files: list[str]) -> MagicMock | None:
+        """Handle git diff --name-only queries for a repo."""
+        if files is None:
+            return None
+        m = MagicMock()
+        m.returncode = 0
+        m.stdout = "\n".join(files) + ("\n" if files else "")
+        m.stderr = ""
+        return m
+
+    def _mock_result(self, stdout: str = "") -> MagicMock:
+        """Create a MagicMock subprocess result with given stdout."""
+        m = MagicMock()
+        m.returncode = 0
+        m.stdout = stdout
+        m.stderr = ""
+        return m
+
+    def _make_side_effect(self, destination_files, motor_files):  # noqa: C901
+        """Create subprocess.run side_effect returning controlled git output."""
+
+        def side_effect(cmd, *args, **kwargs):  # noqa: C901
+            cwd = kwargs.get("cwd", "")
+            cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+            is_motor = motor_files is not None and str(cwd).endswith("motor")
+            is_dest = destination_files is not None and not str(cwd).endswith("motor")
+
+            if is_motor:
+                if "diff --name-only" in cmd_str and "cached" not in cmd_str:
+                    return self._handle_name_only_query(motor_files)
+                if (
+                    "diff --cached --name-only" in cmd_str
+                    or "log -5 --name-only" in cmd_str
+                ):
+                    return self._mock_result()
+
+            if is_dest:
+                if "diff --name-only" in cmd_str and "cached" not in cmd_str:
+                    return self._handle_name_only_query(destination_files)
+                if (
+                    "diff --cached --name-only" in cmd_str
+                    or "log -5 --name-only" in cmd_str
+                ):
+                    return self._mock_result()
+                # diff --stat
+                if "diff --stat" in cmd_str:
+                    return self._mock_result(
+                        " 10 files changed, 200 insertions(+)\n"
+                        if destination_files
+                        else ""
+                    )
+                # diff (content)
+                if (
+                    "--name-only" not in cmd_str
+                    and "--stat" not in cmd_str
+                    and "diff " in cmd_str
+                ):
+                    return self._mock_result(
+                        "\n".join(
+                            f"diff --git a/{f} b/{f}\n--- a/{f}\n+++ b/{f}\n@@ -1 +1 @@\n-test\n+change"
+                            for f in (destination_files or [])
+                        )
+                    )
+                # git rev-parse / merge-base
+                if "rev-parse" in cmd_str:
+                    return self._mock_result("HEAD")
+                if "merge-base" in cmd_str:
+                    return self._mock_result("BASE")
+                # git log --oneline
+                if "git log" in cmd_str and "--oneline" in cmd_str:
+                    return self._mock_result()
+
+            return self._mock_result()
+
+        return side_effect
+
+    def test_integration_gate_rejects_collaboration_only(
+        self, review_bridge, monkeypatch
+    ):
+        """TP-03/TP-05: Real classify_review_packet rejects collaboration-only.
+
+        Reproduces seq 602/606/617 where only .agent/collaboration/ files
+        were changed. The evidence gate in run_manager_review_cycle must
+        return CHANGES before building the review prompt.
+        """
+        # Emit READY_FOR_REVIEW state
+        review_bridge.event_bus.emit(
+            "STATE_CHANGED",
+            ticket_id="WT-2026-221b",
+            actor="BUILDER",
+            payload={
+                "from_state": "IN_PROGRESS",
+                "to_state": "READY_FOR_REVIEW",
+                "reason": "Test setup",
+                "source": "test",
+            },
+        )
+
+        # No motor root
+        monkeypatch.setattr(review_bridge, "_resolve_motor_root", lambda: None)
+
+        # Mock subprocess.run to return only collaboration files from destination
+        monkeypatch.setattr(
+            "bus.review_bridge.subprocess.run",
+            self._make_side_effect(
+                destination_files=[
+                    ".agent/collaboration/work_plan.md",
+                    ".agent/collaboration/execution_log.md",
+                    ".agent/collaboration/TURN.md",
+                ],
+                motor_files=[],
+            ),
+        )
+
+        supervisor = MagicMock()
+        supervisor._is_supervisor_lock_stale.return_value = False
+
+        result = review_bridge.run_manager_review_cycle(
+            ticket_id="WT-2026-221b",
+            supervisor=supervisor,
+        )
+
+        assert result.decision == ReviewDecision.CHANGES, (
+            f"Expected CHANGES for collaboration-only, got: {result.decision}"
+        )
+        assert result.exit_code == 1
+        assert (
+            "collaboration-only" in result.feedback.lower()
+            or "productive" in result.feedback.lower()
+        ), (
+            f"Feedback should mention collaboration-only or productive: {result.feedback}"
+        )
+
+    def test_integration_gate_passes_with_motor_evidence(
+        self, review_bridge, monkeypatch
+    ):
+        """TP-04: Real classify_review_packet passes when motor has productive files."""
+        # Emit READY_FOR_REVIEW state
+        review_bridge.event_bus.emit(
+            "STATE_CHANGED",
+            ticket_id="WT-2026-221b",
+            actor="BUILDER",
+            payload={
+                "from_state": "IN_PROGRESS",
+                "to_state": "READY_FOR_REVIEW",
+                "reason": "Test setup",
+                "source": "test",
+            },
+        )
+
+        # Mock motor root to exist
+        monkeypatch.setattr(
+            review_bridge,
+            "_resolve_motor_root",
+            lambda: Path("/fake/motor"),
+        )
+
+        # Mock subprocess.run: motor has productive files, destination has collab files
+        monkeypatch.setattr(
+            "bus.review_bridge.subprocess.run",
+            self._make_side_effect(
+                destination_files=[
+                    ".agent/collaboration/execution_log.md",
+                ],
+                motor_files=[
+                    "bus/review_bridge.py",
+                    "tests/test_wt_2026_221b_evidence_gate.py",
+                ],
+            ),
+        )
+
+        # Mock downstream review calls to avoid actual execution
+        monkeypatch.setattr(review_bridge, "_get_current_role", lambda: "MANAGER")
+        monkeypatch.setattr(
+            review_bridge.state_ingest, "_read_deliverable_type", lambda: "code"
+        )
+        monkeypatch.setattr(review_bridge, "_get_manager_backend", lambda: "opencode")
+        monkeypatch.setattr(
+            review_bridge,
+            "_run_opencode_review",
+            lambda **kw: ("DECISION: APPROVE\n", "", 0),
+        )
+        monkeypatch.setattr(review_bridge, "_detect_json_format_support", lambda: False)
+        monkeypatch.setattr(review_bridge, "_get_manager_model", lambda: None)
+        monkeypatch.setattr(
+            review_bridge, "_ensure_repomix_context", lambda timeout=15: None
+        )
+        monkeypatch.setattr(
+            review_bridge,
+            "_load_review_config",
+            lambda: {
+                "timeout_seconds": 30,
+                "max_attempts": 2,
+                "retry_backoff_multiplier": 1.0,
+            },
+        )
+        monkeypatch.setattr(
+            review_bridge, "_count_prior_changes_from_bus", lambda tid: 0
+        )
+
+        supervisor = MagicMock()
+        supervisor._is_supervisor_lock_stale.return_value = False
+        supervisor.transition_ticket = MagicMock()
+
+        result = review_bridge.run_manager_review_cycle(
+            ticket_id="WT-2026-221b",
+            supervisor=supervisor,
+        )
+
+        # Should proceed past the evidence gate to the actual review
+        assert result.decision in (
+            ReviewDecision.APPROVE,
+            ReviewDecision.INSPECT,
+        ), f"Expected review to proceed, got: {result.decision}"
+
+    def test_integration_gate_rejects_no_bus(self, review_bridge, monkeypatch):
+        """TP-02: classify_review_packet returns bus_active=False when no state."""
+        # Emit READY_FOR_REVIEW so the initial state check passes
+        review_bridge.event_bus.emit(
+            "STATE_CHANGED",
+            ticket_id="WT-2026-221b",
+            actor="BUILDER",
+            payload={
+                "from_state": "IN_PROGRESS",
+                "to_state": "READY_FOR_REVIEW",
+                "reason": "Test setup",
+                "source": "test",
+            },
+        )
+
+        # Mock get_ticket_context to return None (simulates no bus/state context)
+        monkeypatch.setattr(
+            review_bridge.state_ingest,
+            "get_ticket_context",
+            lambda tid: None,
+        )
+
+        # Mock subprocess to avoid any real execution
+        monkeypatch.setattr(
+            "bus.review_bridge.subprocess.run",
+            self._make_side_effect(
+                destination_files=[".agent/collaboration/work_plan.md"],
+                motor_files=[],
+            ),
+        )
+
+        # Even with files, the bus context check should fail first
+        result = review_bridge.run_manager_review_cycle(
+            ticket_id="WT-2026-221b",
+            supervisor=MagicMock(),
+        )
+
+        assert result.decision == ReviewDecision.CHANGES, (
+            f"Expected CHANGES when bus inactive, got: {result.decision}"
+        )
+        assert result.exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# Tests: check_review_packet_diff_empty (updated with classify_review_packet)
+# ---------------------------------------------------------------------------
+
+
+class TestCheckReviewPacketDiffEmpty:
+    """Tests for the updated check_review_packet_diff_empty with classify_review_packet."""
+
+    def test_empty_diff_returns_true(self, review_bridge, monkeypatch):
+        """Empty diff returns True from check_review_packet_diff_empty."""
+        monkeypatch.setattr(review_bridge, "_resolve_motor_root", lambda: None)
+
+        def mock_run(cmd, *args, **kwargs):
+            m = MagicMock()
+            m.returncode = 0
+            m.stdout = ""
+            m.stderr = ""
+            return m
+
+        monkeypatch.setattr("bus.review_bridge.subprocess.run", mock_run)
+
+        result = review_bridge.check_review_packet_diff_empty("WT-2026-221b")
+        assert result is True, "Expected True for empty diff"
+
+    def test_docs_only_returns_true(self, review_bridge, monkeypatch):
+        """Docs-only diff returns True because classify_review_packet detects it."""
+        monkeypatch.setattr(review_bridge, "_resolve_motor_root", lambda: None)
+
+        def mock_run(cmd, *args, **kwargs):
+            cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+            m = MagicMock()
+            m.returncode = 0
+            if "diff --stat" in cmd_str:
+                m.stdout = " 1 file changed\n"
+            elif "diff --name-only" in cmd_str or "log -5 --name-only" in cmd_str:
+                m.stdout = ".agent/collaboration/work_plan.md\n"
+            else:
+                m.stdout = ""
+            m.stderr = ""
+            return m
+
+        monkeypatch.setattr("bus.review_bridge.subprocess.run", mock_run)
+
+        result = review_bridge.check_review_packet_diff_empty("WT-2026-221b")
+        assert result is True, "Expected True for docs-only diff"
