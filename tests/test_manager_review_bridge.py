@@ -25,6 +25,11 @@ from scripts.manager_review_bridge import (
 )
 
 
+# Save reference to the real _ensure_repomix_context before the autouse
+# fixture _mock_repomix_for_tests monkeypatches it at class level.
+_REAL_ENSURE_REPOMIX_CONTEXT = ReviewBridge._ensure_repomix_context
+
+
 class DummySupervisor:
     def __init__(self) -> None:
         self.transitions: list[tuple[str, str, str]] = []
@@ -58,7 +63,8 @@ def _make_bridge(tmp_path: Path) -> tuple[ReviewBridge, EventBus, Path]:
 def _mock_repomix_for_tests(monkeypatch):
     """WT-2026-182: Evitar warnings y ralentización en CI por npx repomix."""
     monkeypatch.setattr(
-        "bus.review_bridge.ReviewBridge._ensure_repomix_context", lambda self: None
+        "bus.review_bridge.ReviewBridge._ensure_repomix_context",
+        lambda self: (None, {"status": "skipped", "reason": "mocked for tests"}),
     )
 
 
@@ -3507,7 +3513,11 @@ class TestWT2026204:
         monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
         monkeypatch.setattr(bridge, "_resolve_motor_controller", lambda: None)
         monkeypatch.setattr(bridge, "_supports_json_format", False)
-        monkeypatch.setattr(bridge, "_ensure_repomix_context", lambda *a: None)
+        monkeypatch.setattr(
+            bridge,
+            "_ensure_repomix_context",
+            lambda *a: (None, {"status": "skipped", "reason": "mocked for tests"}),
+        )
 
         class DummySupervisor:
             def transition_ticket(self, tid, new_state, reason):
@@ -3596,3 +3606,282 @@ class TestWT2026204:
         assert "file.py:10" in structured["blockers"]
         assert "file.py:20" in structured["blockers"]
         assert "Add tests" in structured["suggestions"]
+
+
+# =============================================================================
+# Tests WT-2026-227a: Repomix estado estructurado y diagnostico verificable
+# =============================================================================
+
+
+class TestRepomixStructuredStatus:
+    """WT-2026-227a: _ensure_repomix_context returns structured status dict.
+
+    These tests override the autouse _mock_repomix_for_tests fixture at the
+    test level so they exercise the real _ensure_repomix_context logic paths
+    (success, failed, skipped/exception).
+    """
+
+    # ---------------------------------------------------------------
+    # Helpers
+    # ---------------------------------------------------------------
+
+    @staticmethod
+    def _make_repomix_bridge(tmp_path: Path) -> tuple[ReviewBridge, EventBus]:
+        """Build a minimal bridge with collaboration artifacts."""
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+        return bridge, event_bus
+
+    @staticmethod
+    def _stub_work_plan(tmp_path: Path) -> Path:
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True, exist_ok=True)
+        wp = collab / "work_plan.md"
+        wp.write_text(
+            "# Work Ticket - WT-2026-227a\n\n## Metadata\n"
+            "- **ID:** WT-2026-227a\n- **Estado:** APPROVED\n"
+            "- **deliverable_type:** code\n",
+            encoding="utf-8",
+        )
+        return wp
+
+    # ---------------------------------------------------------------
+    # TP-01 / TP-02: test de exito
+    # ---------------------------------------------------------------
+
+    def test_repomix_ok_when_subprocess_exit_zero(self, monkeypatch, tmp_path):
+        """TP-02: _ensure_repomix_context returns status=ok when subprocess
+        exits 0 and the output file is created."""
+        # Restore real method before testing
+        monkeypatch.setattr(
+            "bus.review_bridge.ReviewBridge._ensure_repomix_context",
+            _REAL_ENSURE_REPOMIX_CONTEXT,
+        )
+        bridge, _ = self._make_repomix_bridge(tmp_path)
+
+        context_dir = tmp_path / ".agent" / "context"
+        context_dir.mkdir(parents=True, exist_ok=True)
+        out_path = context_dir / "repomix.xml"
+
+        def fake_run(cmd, **kwargs):
+            # Simulate repomix creating the output file
+            out_path.write_text("<context>generated</context>", encoding="utf-8")
+            return subprocess.CompletedProcess(
+                args=cmd,
+                returncode=0,
+                stdout="",
+                stderr="",
+            )
+
+        monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
+
+        path, status = bridge._ensure_repomix_context(timeout=5)
+
+        assert status["status"] == "ok"
+        assert status["reason"] == "Repomix completed successfully"
+        assert status["output_path"] is not None
+        assert Path(status["output_path"]).exists()
+        assert path is not None
+        assert path.exists()
+
+    def test_repomix_ok_when_pre_existing_file(self, monkeypatch, tmp_path):
+        """TP-02 variant: status=ok when repomix.xml already exists."""
+        monkeypatch.setattr(
+            "bus.review_bridge.ReviewBridge._ensure_repomix_context",
+            _REAL_ENSURE_REPOMIX_CONTEXT,
+        )
+        bridge, _ = self._make_repomix_bridge(tmp_path)
+        context_dir = tmp_path / ".agent" / "context"
+        context_dir.mkdir(parents=True, exist_ok=True)
+        out_path = context_dir / "repomix.xml"
+        out_path.write_text("<context>existing</context>", encoding="utf-8")
+
+        path, status = bridge._ensure_repomix_context(timeout=5)
+
+        assert status["status"] == "ok"
+        assert "Existing" in status["reason"]
+        assert status["output_path"] == str(out_path)
+        assert path == out_path
+
+    # ---------------------------------------------------------------
+    # TP-03: test de fallo con returncode != 0
+    # ---------------------------------------------------------------
+
+    def test_repomix_failed_when_returncode_nonzero(self, monkeypatch, tmp_path):
+        """TP-03: _ensure_repomix_context returns status=failed when
+        subprocess exits with non-zero returncode and captures stderr_tail."""
+        monkeypatch.setattr(
+            "bus.review_bridge.ReviewBridge._ensure_repomix_context",
+            _REAL_ENSURE_REPOMIX_CONTEXT,
+        )
+        bridge, _ = self._make_repomix_bridge(tmp_path)
+
+        def fake_run(cmd, **kwargs):
+            return subprocess.CompletedProcess(
+                args=cmd,
+                returncode=1,
+                stdout="",
+                stderr="Error: repomix failed",
+            )
+
+        monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
+        # Ensure no pre-existing file
+        context_dir = tmp_path / ".agent" / "context"
+        context_dir.mkdir(parents=True, exist_ok=True)
+
+        path, status = bridge._ensure_repomix_context(timeout=5)
+
+        assert path is None
+        assert status["status"] == "failed"
+        assert status["returncode"] == 1
+        assert "stderr_tail" in status
+        assert "Error: repomix failed" in status["stderr_tail"]
+
+    # ---------------------------------------------------------------
+    # TP-04: test de excepcion / npx ausente
+    # ---------------------------------------------------------------
+
+    def test_repomix_skipped_when_npx_not_found(self, monkeypatch, tmp_path):
+        """TP-04: _ensure_repomix_context returns status=skipped when
+        FileNotFoundError is raised (npx not available)."""
+        monkeypatch.setattr(
+            "bus.review_bridge.ReviewBridge._ensure_repomix_context",
+            _REAL_ENSURE_REPOMIX_CONTEXT,
+        )
+        bridge, _ = self._make_repomix_bridge(tmp_path)
+
+        def fake_run(cmd, **kwargs):
+            raise FileNotFoundError("npx not found")
+
+        monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
+        context_dir = tmp_path / ".agent" / "context"
+        context_dir.mkdir(parents=True, exist_ok=True)
+
+        path, status = bridge._ensure_repomix_context(timeout=5)
+
+        assert path is None
+        assert status["status"] == "skipped"
+        assert "npx not found" in status["reason"]
+
+    def test_repomix_failed_when_timeout(self, monkeypatch, tmp_path):
+        """TP-04 variant: timeout raises TimeoutExpired -> status=failed."""
+        import subprocess as _subprocess
+
+        monkeypatch.setattr(
+            "bus.review_bridge.ReviewBridge._ensure_repomix_context",
+            _REAL_ENSURE_REPOMIX_CONTEXT,
+        )
+        bridge, _ = self._make_repomix_bridge(tmp_path)
+
+        def fake_run(cmd, **kwargs):
+            raise _subprocess.TimeoutExpired(cmd, timeout=5)
+
+        monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
+        context_dir = tmp_path / ".agent" / "context"
+        context_dir.mkdir(parents=True, exist_ok=True)
+
+        path, status = bridge._ensure_repomix_context(timeout=5)
+
+        assert path is None
+        assert status["status"] == "failed"
+        assert "timed out" in status["reason"]
+
+    def test_repomix_skipped_on_generic_exception(self, monkeypatch, tmp_path):
+        """TP-04 variant: generic Exception yields status=skipped with reason."""
+        monkeypatch.setattr(
+            "bus.review_bridge.ReviewBridge._ensure_repomix_context",
+            _REAL_ENSURE_REPOMIX_CONTEXT,
+        )
+        bridge, _ = self._make_repomix_bridge(tmp_path)
+
+        def fake_run(cmd, **kwargs):
+            raise PermissionError("Access denied")
+
+        monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
+        context_dir = tmp_path / ".agent" / "context"
+        context_dir.mkdir(parents=True, exist_ok=True)
+
+        path, status = bridge._ensure_repomix_context(timeout=5)
+
+        assert path is None
+        assert status["status"] == "skipped"
+        assert "PermissionError" in status["reason"]
+
+    # ---------------------------------------------------------------
+    # TP-05: el review continua cuando Repomix falla
+    # ---------------------------------------------------------------
+
+    def test_run_opencode_review_continues_when_repomix_fails(
+        self, monkeypatch, tmp_path
+    ):
+        """TP-05: _run_opencode_review invokes opencode even when repomix
+        context fails (status != ok)."""
+        import subprocess as _subprocess
+
+        bridge, _ = self._make_repomix_bridge(tmp_path)
+        self._stub_work_plan(tmp_path)
+
+        # Mock _ensure_repomix_context to return failed
+        monkeypatch.setattr(
+            bridge,
+            "_ensure_repomix_context",
+            lambda timeout=15: (
+                None,
+                {
+                    "status": "failed",
+                    "reason": "Repomix failed (simulated)",
+                    "returncode": 1,
+                    "stderr_tail": "simulated error",
+                },
+            ),
+        )
+        # Mock subprocess.run to capture the opencode command
+        captured = {}
+
+        def fake_run(cmd_args, **kwargs):
+            captured["cmd"] = cmd_args
+            return _subprocess.CompletedProcess(
+                args=cmd_args,
+                returncode=0,
+                stdout="DECISION: APPROVE",
+                stderr="",
+            )
+
+        monkeypatch.setattr(_subprocess, "run", fake_run)
+        monkeypatch.setattr(bridge, "_get_manager_model", lambda: None)
+        monkeypatch.setattr(bridge, "_supports_json_format", False)
+        monkeypatch.setattr("bus.review_bridge.OS_NAME", "posix")
+
+        bridge._run_opencode_review(
+            ticket_id="WT-2026-227a",
+            prompt="test prompt",
+            timeout_seconds=5,
+        )
+
+        cmd = captured.get("cmd", [])
+        # Must NOT contain -f flag (since repomix_path is None)
+        assert "-f" not in cmd
+        # Must contain the review message
+        assert any("WT-2026-227a" in str(part) for part in cmd)
+
+    # ---------------------------------------------------------------
+    # TP-06: tests focales no usan _mock_repomix_for_tests
+    # ---------------------------------------------------------------
+
+    def test_repomix_status_has_exact_literals(self, monkeypatch, tmp_path):
+        """TP-02: status literals are exactly 'ok', 'failed', 'skipped'."""
+        monkeypatch.setattr(
+            "bus.review_bridge.ReviewBridge._ensure_repomix_context",
+            _REAL_ENSURE_REPOMIX_CONTEXT,
+        )
+        bridge, _ = self._make_repomix_bridge(tmp_path)
+        context_dir = tmp_path / ".agent" / "context"
+        context_dir.mkdir(parents=True, exist_ok=True)
+        out_path = context_dir / "repomix.xml"
+        out_path.write_text("<context>pre-existing</context>", encoding="utf-8")
+
+        _, status = bridge._ensure_repomix_context(timeout=5)
+
+        assert status["status"] in ("ok", "failed", "skipped")
+        assert status["status"] == "ok"

@@ -18,7 +18,8 @@ def _make_bridge(tmp_path):
 def _mock_repomix_for_tests(monkeypatch):
     """WT-2026-182: Evitar warnings y ralentización en CI por npx repomix."""
     monkeypatch.setattr(
-        "bus.review_bridge.ReviewBridge._ensure_repomix_context", lambda self: None
+        "bus.review_bridge.ReviewBridge._ensure_repomix_context",
+        lambda self: (None, {"status": "skipped", "reason": "mocked for tests"}),
     )
 
 
