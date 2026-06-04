@@ -12,7 +12,10 @@ _AGENT_DIR = _PROJECT_ROOT / ".agent"
 if str(_AGENT_DIR) not in sys.path:
     sys.path.insert(0, str(_AGENT_DIR))
 
-from agent_controller import _handle_mark_ready  # noqa: E402
+from agent_controller import (  # noqa: E402
+    _ensure_active_builder_round,
+    _handle_mark_ready,
+)
 
 
 class TestMarkReadyIdempotency:
@@ -238,3 +241,54 @@ class TestMarkReadyIdempotency:
             )
 
         assert result == 0
+
+    @patch("agent_controller._load_mark_ready_context")
+    @patch("agent_controller.BUS_AVAILABLE", True)
+    @patch("agent_controller.event_bus")
+    @patch("agent_controller._ensure_active_builder_round")
+    def test_blocks_stale_builder_round_before_mark_ready(
+        self, mock_round, mock_bus, mock_load
+    ):
+        """A stale Builder shell must not emit READY_FOR_REVIEW or release the lock."""
+
+        mock_load.return_value = (
+            "**Estado:** APPROVED\n**ID:** WT-2026-221b",
+            "**Estado:** IN_PROGRESS",
+            "WT-2026-221b",
+        )
+        mock_round.return_value = (False, 3, "stale Builder round 3; active round is 4")
+
+        result = _handle_mark_ready(
+            scope_override=None, json_output=False, force_mode=False
+        )
+
+        assert result == 1
+        handoff_events = [
+            call
+            for call in mock_bus.emit.call_args_list
+            if call.kwargs.get("event_type") == "HANDOFF_BLOCKED"
+        ]
+        assert handoff_events, "stale mark-ready must emit HANDOFF_BLOCKED"
+
+    def test_builder_round_check_accepts_powershell_utf8_bom_lock(
+        self, tmp_path, monkeypatch
+    ):
+        """PowerShell 5.1 UTF8 locks include a BOM; active Builders must still pass."""
+
+        lock_path = tmp_path / "builder_lock.txt"
+        lock_path.write_text(
+            '{"ticket_id":"WT-2026-221b","round":4}', encoding="utf-8-sig"
+        )
+        monkeypatch.setattr("agent_controller.BUILDER_LOCK_PATH", lock_path)
+        monkeypatch.setenv("AGENT_BUILDER_TICKET", "WT-2026-221b")
+        monkeypatch.setenv("AGENT_BUILDER_ROUND", "4")
+
+        assert _ensure_active_builder_round("WT-2026-221b") == (True, 4, None)
+
+        monkeypatch.setenv("AGENT_BUILDER_ROUND", "3")
+
+        assert _ensure_active_builder_round("WT-2026-221b") == (
+            False,
+            3,
+            "stale Builder round 3; active round is 4",
+        )

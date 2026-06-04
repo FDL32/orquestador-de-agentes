@@ -85,6 +85,21 @@ def test_opencode_command_has_title_flag(launcher_source: str) -> None:
     )
 
 
+def test_launcher_exports_builder_round_identity(launcher_source: str) -> None:
+    """Builder shell must receive ticket and round identity via env vars.
+
+    This lets pre-handoff / mark-ready reject stale Builder windows after a requeue.
+    """
+    assert "AGENT_BUILDER_TICKET" in launcher_source, (
+        "Launcher must export AGENT_BUILDER_TICKET to the Builder shell so stale "
+        "windows can prove which ticket they belong to"
+    )
+    assert "AGENT_BUILDER_ROUND" in launcher_source, (
+        "Launcher must export AGENT_BUILDER_ROUND to the Builder shell so stale "
+        "windows can be blocked before mark-ready"
+    )
+
+
 def test_resume_builder_reads_session_json(launcher_source: str) -> None:
     """The -ResumeBuilder path must read builder_session.json to reuse session.
 

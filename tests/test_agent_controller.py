@@ -872,6 +872,31 @@ class TestPreHandoff:
         assert code != 0, f"Expected non-zero, got {code}. Output: {output}"
         assert "Tree still dirty" in output
 
+    def test_pre_handoff_blocks_stale_builder_round(self, monkeypatch):
+        """A stale Builder shell must not create checkpoint or commit new work."""
+        monkeypatch.setattr(
+            agent_controller,
+            "read_file",
+            lambda x: self._PLAN_CONTENT if "work_plan" in str(x).lower() else "",
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "_ensure_active_builder_round",
+            lambda plan_id: (False, 3, "stale Builder round 3; active round is 4"),
+        )
+        monkeypatch.setattr(agent_controller, "BUS_AVAILABLE", True)
+        emit_mock = MagicMock()
+        monkeypatch.setattr(agent_controller, "event_bus", MagicMock(emit=emit_mock))
+
+        code, output = self._capture_output(
+            lambda: agent_controller._handle_pre_handoff(json_output=False)
+        )
+
+        assert code == 1, f"Expected 1, got {code}. Output: {output}"
+        assert "stale Builder shell" in output
+        assert emit_mock.call_count == 1
+        assert emit_mock.call_args.kwargs["event_type"] == "HANDOFF_BLOCKED"
+
 
 # =============================================================================
 # Tests WP-2026-176: Motor code-only guard
