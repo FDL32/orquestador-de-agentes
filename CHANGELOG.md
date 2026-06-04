@@ -2016,9 +2016,9 @@ After closing `WP-2026-059` (timezone normalization), an attempt at `WP-2026-060
 
 ### Added
 
-- `scripts/launch_agent_terminals.ps1`: Nueva funciÃ³n `Get-ActiveRole()` que lee `TURN.md` para determinar el rol activo.
-- `scripts/launch_agent_terminals.ps1`: Nueva funciÃ³n `Is-BuilderRunning()` que verifica si Kilo ya estÃ¡ ejecutÃ¡ndose para evitar sesiones duplicadas.
-- `scripts/launch_agent_terminals.ps1`: LÃ³gica condicional que solo lanza Builder cuando el rol activo es `BUILDER` y no hay una sesiÃ³n existente.
+- `scripts/launch_agent_terminals.ps1`: Nueva función `Get-ActiveRole()` que lee `TURN.md` para determinar el rol activo.
+- `scripts/launch_agent_terminals.ps1`: Nueva función `Is-BuilderRunning()` que verifica si Kilo ya está ejecutándose para evitar sesiones duplicadas.
+- `scripts/launch_agent_terminals.ps1`: Lógica condicional que solo lanza Builder cuando el rol activo es `BUILDER` y no hay una sesión existente.
 # 2026-05-13 - Version metadata aligned to v9.5.0
 
 ### Added
