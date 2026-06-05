@@ -1,3 +1,29 @@
+# 2026-06-05 - WT-2026-215 Gates Modelo B: git evidence resolves motor_root
+
+### Fixed
+- `bus/review_bridge.py`: introduced `_motor_root_or_raise()` as single seam
+  for all git evidence/provenance call sites. Migrated `_git_diff_stat`,
+  `_build_diff_for_files_likely_touched`, `_git_provenance`, `_resolve_review_base`,
+  `_fallback_ticket_base_from_log`, `_get_untracked_files`, `_get_current_git_head`
+  and `_compute_changed_files` from `cwd=project_root` to `cwd=motor_root`.
+- `scripts/prepush_check.py`: `run_git_status_check` now resolves `motor_root`
+  via `runtime.motor_link`; non-blocking warning fallback when link is absent.
+- `scripts/session_closeout.py`: `_step_git_clean` now resolves `motor_root`
+  via `runtime.motor_link`; same non-blocking fallback pattern.
+
+### Added
+- `tests/test_motor_root_gates.py`: 10 tests covering the motor_root seam,
+  regression barrier (`test_regression_cwd_project_root_breaks_check`), fallback
+  without link, and out-of-scope call sites unchanged.
+
+### Notes
+- Out-of-scope call sites (repomix L502, review transport, `_get_destination_diff_files`,
+  `_run_script`) intentionally unchanged.
+- Eliminates the manual "Scope override" workaround needed each close since WT-2026-187.
+- Commit: `f8cd50d`
+
+---
+
 # 2026-06-04 - Known Failure Patterns registry
 
 ### Added
