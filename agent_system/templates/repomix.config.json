@@ -9,7 +9,18 @@
     "copyToClipboard": false,
     "includeEmptyDirectories": false
   },
-  "include": [],
+  "include": [
+    "bus/**",
+    "runtime/**",
+    "scripts/**",
+    "agent_system/**",
+    "prompts/**",
+    "skills/**",
+    "docs/**",
+    "*.md",
+    "pyproject.toml",
+    "pytest.ini"
+  ],
   "ignore": {
     "useGitignore": true,
     "customPatterns": [
@@ -26,6 +37,8 @@
       ".cache/",
       ".uv-cache/",
       ".pytest_cache/",
+      ".tmp/",
+      ".tmp/**",
       ".agent/runtime/",
       ".agent/collaboration/_archive/",
       ".agent/collaboration/archive/"

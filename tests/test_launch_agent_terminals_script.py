@@ -69,6 +69,21 @@ def test_launcher_reports_per_window() -> None:
     )
 
 
+def test_launcher_repomix_packs_motor_root_with_split_config_args() -> None:
+    content = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert "repomix_motor.xml" in content
+    assert "agent_system\\templates\\repomix.config.json" in content
+    assert '$configArgs = @("--config", $repomixConfigPath)' in content
+    assert "Set-Location -LiteralPath $WorkDir" in content
+    assert "@ConfigArgs" in content
+    assert (
+        "-ArgumentList $script:_MotorCodeRoot, $repomixOutputPath, $configArgs"
+        in content
+    )
+    assert "Generated context exceeds 1MB; skipping injection" in content
+
+
 def test_launcher_cleans_previous_project_sessions() -> None:
     content = SCRIPT_PATH.read_text(encoding="utf-8")
 

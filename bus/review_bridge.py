@@ -461,6 +461,50 @@ class ReviewBridge:
                 files.append(audit_file)
         return [f for f in files if f.exists()]
 
+    def _prepare_repomix_output(
+        self, max_context_bytes: int
+    ) -> tuple[Path | None, dict | None]:
+        out_path = self.project_root / ".agent" / "context" / "repomix_motor.xml"
+        if out_path.exists():
+            if out_path.stat().st_size <= max_context_bytes:
+                return out_path, {
+                    "status": "ok",
+                    "reason": "Existing repomix_motor.xml context file found",
+                    "output_path": str(out_path),
+                }
+            out_path.unlink()
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        return out_path, None
+
+    def _resolve_repomix_runtime(
+        self,
+    ) -> tuple[Path | None, Path | None, dict | None]:
+        motor_root = self._resolve_motor_root()
+        if motor_root is None:
+            return (
+                None,
+                None,
+                {
+                    "status": "skipped",
+                    "reason": "motor_root not resolvable; repomix context skipped",
+                },
+            )
+        config_candidates = (
+            motor_root / "repomix.config.json",
+            motor_root / "agent_system" / "templates" / "repomix.config.json",
+        )
+        config_path = next((p for p in config_candidates if p.exists()), None)
+        if config_path is None:
+            return (
+                None,
+                None,
+                {
+                    "status": "skipped",
+                    "reason": "Repomix config not found in motor_root; context skipped",
+                },
+            )
+        return motor_root, config_path, None
+
     def _ensure_repomix_context(self, timeout: int = 15) -> tuple[Path | None, dict]:
         """Return (path, repomix_status) where path is the repomix Path or None.
 
@@ -474,15 +518,13 @@ class ReviewBridge:
         Non-blocking: returns (None, dict) on any failure so the review continues.
         Uses npx -y to avoid interactive prompts in unattended environments.
         """
-        out_path = self.project_root / ".agent" / "context" / "repomix.xml"
-        if out_path.exists():
-            return out_path, {
-                "status": "ok",
-                "reason": "Existing repomix.xml context file found",
-                "output_path": str(out_path),
-            }
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        config_path = self.project_root / "repomix.config.json"
+        max_context_bytes = 1024 * 1024
+        out_path, cached_status = self._prepare_repomix_output(max_context_bytes)
+        if cached_status is not None:
+            return out_path, cached_status
+        motor_root, config_path, setup_status = self._resolve_repomix_runtime()
+        if setup_status is not None:
+            return None, setup_status
         cmd = [
             "npx",
             "-y",
@@ -499,10 +541,21 @@ class ReviewBridge:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
-                cwd=self.project_root,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                cwd=motor_root,
                 timeout=timeout,
             )
             if result.returncode == 0 and out_path.exists():
+                if out_path.stat().st_size > max_context_bytes:
+                    out_path.unlink()
+                    return None, {
+                        "status": "skipped",
+                        "reason": (
+                            f"Repomix output exceeds {max_context_bytes} bytes budget"
+                        ),
+                    }
                 return out_path, {
                     "status": "ok",
                     "reason": "Repomix completed successfully",

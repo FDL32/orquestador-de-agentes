@@ -1106,22 +1106,36 @@ function Get-CanonicalFilesForOpenCode {
     # Generates compressed project context using repomix for agent session bootstrap.
     # This is a best-effort step: if repomix fails or times out, the session
     # continues with the standard canonical files only.
-    $repomixOutputPath = Join-Path $ProjectRoot '.agent\context\repomix.xml'
+    $repomixOutputPath = Join-Path $ProjectRoot '.agent\context\repomix_motor.xml'
     $repomixDir = Split-Path -Parent $repomixOutputPath
     if (-not (Test-Path -LiteralPath $repomixDir)) {
         New-Item -ItemType Directory -Path $repomixDir -Force -ErrorAction SilentlyContinue | Out-Null
     }
 
-    # Check if repomix config exists in workspace root
-    $repomixConfigPath = Join-Path $ProjectRoot 'repomix.config.json'
-    $configArg = if (Test-Path -LiteralPath $repomixConfigPath) { "--config $(ConvertTo-SingleQuotedLiteral $repomixConfigPath)" } else { "" }
+    if (Test-Path -LiteralPath $repomixOutputPath) {
+        Remove-Item -LiteralPath $repomixOutputPath -Force -ErrorAction SilentlyContinue
+    }
+
+    $repomixConfigCandidates = @(
+        (Join-Path $script:_MotorCodeRoot 'repomix.config.json'),
+        (Join-Path $script:_MotorCodeRoot 'agent_system\templates\repomix.config.json')
+    )
+    $repomixConfigPath = $repomixConfigCandidates | Where-Object {
+        Test-Path -LiteralPath $_
+    } | Select-Object -First 1
+    if (-not $repomixConfigPath) {
+        Write-Warning "[repomix] Config not found in motor_root; skipping context injection"
+        return $canonicalFiles
+    }
+    $configArgs = @("--config", $repomixConfigPath)
 
     # Run repomix with 15s timeout via background job to avoid blocking the launcher
     $repomixJob = Start-Job -ScriptBlock {
-        param($OutPath, $ConfigArg)
-        $result = & npx -y repomix --style xml --compress --output $OutPath $ConfigArg 2>&1
+        param($WorkDir, $OutPath, $ConfigArgs)
+        Set-Location -LiteralPath $WorkDir
+        $result = & npx -y repomix --style xml --compress --output $OutPath @ConfigArgs 2>&1
         return $result
-    } -ArgumentList $repomixOutputPath, $configArg
+    } -ArgumentList $script:_MotorCodeRoot, $repomixOutputPath, $configArgs
 
     $repomixCompleted = $repomixJob | Wait-Job -Timeout 15
     if ($null -eq $repomixCompleted) {
@@ -1132,8 +1146,13 @@ function Get-CanonicalFilesForOpenCode {
         $null = $repomixJob | Receive-Job -ErrorAction SilentlyContinue
         $repomixJob | Remove-Job -ErrorAction SilentlyContinue
         if (Test-Path -LiteralPath $repomixOutputPath) {
-            $canonicalFiles += $repomixOutputPath
-            Write-Host "[repomix] Context generated: $repomixOutputPath"
+            if ((Get-Item -LiteralPath $repomixOutputPath).Length -le 1MB) {
+                $canonicalFiles += $repomixOutputPath
+                Write-Host "[repomix] Context generated: $repomixOutputPath"
+            } else {
+                Remove-Item -LiteralPath $repomixOutputPath -Force -ErrorAction SilentlyContinue
+                Write-Warning "[repomix] Generated context exceeds 1MB; skipping injection"
+            }
         } else {
             Write-Warning "[repomix] Failed to generate context; continuing without repomix"
         }
