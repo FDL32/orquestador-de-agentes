@@ -3639,6 +3639,18 @@ class TestRepomixStructuredStatus:
     def _make_repomix_bridge(tmp_path: Path) -> tuple[ReviewBridge, EventBus]:
         """Build a minimal bridge with collaboration artifacts."""
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        config_dir = tmp_path / ".agent" / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "motor_destination_link.json").write_text(
+            '{"motor_root": "' + str(tmp_path).replace("\\", "\\\\") + '"}',
+            encoding="utf-8",
+        )
+        template_dir = tmp_path / "agent_system" / "templates"
+        template_dir.mkdir(parents=True, exist_ok=True)
+        (template_dir / "repomix.config.json").write_text(
+            '{"include": [], "ignore": {"useGitignore": true, "customPatterns": []}}',
+            encoding="utf-8",
+        )
         event_bus = EventBus(runtime_dir=runtime_dir)
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
         return bridge, event_bus
@@ -3672,9 +3684,12 @@ class TestRepomixStructuredStatus:
 
         context_dir = tmp_path / ".agent" / "context"
         context_dir.mkdir(parents=True, exist_ok=True)
-        out_path = context_dir / "repomix.xml"
+        out_path = context_dir / "repomix_motor.xml"
+        captured: dict[str, object] = {}
 
         def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["cwd"] = kwargs.get("cwd")
             # Simulate repomix creating the output file
             out_path.write_text("<context>generated</context>", encoding="utf-8")
             return subprocess.CompletedProcess(
@@ -3694,9 +3709,15 @@ class TestRepomixStructuredStatus:
         assert Path(status["output_path"]).exists()
         assert path is not None
         assert path.exists()
+        assert captured["cwd"] == tmp_path
+        assert "--config" in captured["cmd"]
+        assert any(
+            "agent_system" in str(part) and "repomix.config.json" in str(part)
+            for part in captured["cmd"]
+        )
 
     def test_repomix_ok_when_pre_existing_file(self, monkeypatch, tmp_path):
-        """TP-02 variant: status=ok when repomix.xml already exists."""
+        """TP-02 variant: status=ok when repomix_motor.xml already exists."""
         monkeypatch.setattr(
             "bus.review_bridge.ReviewBridge._ensure_repomix_context",
             _REAL_ENSURE_REPOMIX_CONTEXT,
@@ -3704,7 +3725,7 @@ class TestRepomixStructuredStatus:
         bridge, _ = self._make_repomix_bridge(tmp_path)
         context_dir = tmp_path / ".agent" / "context"
         context_dir.mkdir(parents=True, exist_ok=True)
-        out_path = context_dir / "repomix.xml"
+        out_path = context_dir / "repomix_motor.xml"
         out_path.write_text("<context>existing</context>", encoding="utf-8")
 
         path, status = bridge._ensure_repomix_context(timeout=5)
@@ -3901,10 +3922,40 @@ class TestRepomixStructuredStatus:
         bridge, _ = self._make_repomix_bridge(tmp_path)
         context_dir = tmp_path / ".agent" / "context"
         context_dir.mkdir(parents=True, exist_ok=True)
-        out_path = context_dir / "repomix.xml"
+        out_path = context_dir / "repomix_motor.xml"
         out_path.write_text("<context>pre-existing</context>", encoding="utf-8")
 
         _, status = bridge._ensure_repomix_context(timeout=5)
 
         assert status["status"] in ("ok", "failed", "skipped")
         assert status["status"] == "ok"
+
+    def test_repomix_skipped_when_output_exceeds_budget(self, monkeypatch, tmp_path):
+        """Large repomix output is not injected into the review packet."""
+        monkeypatch.setattr(
+            "bus.review_bridge.ReviewBridge._ensure_repomix_context",
+            _REAL_ENSURE_REPOMIX_CONTEXT,
+        )
+        bridge, _ = self._make_repomix_bridge(tmp_path)
+
+        context_dir = tmp_path / ".agent" / "context"
+        context_dir.mkdir(parents=True, exist_ok=True)
+        out_path = context_dir / "repomix_motor.xml"
+
+        def fake_run(cmd, **kwargs):
+            out_path.write_bytes(b"x" * (1024 * 1024 + 1))
+            return subprocess.CompletedProcess(
+                args=cmd,
+                returncode=0,
+                stdout="",
+                stderr="",
+            )
+
+        monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
+
+        path, status = bridge._ensure_repomix_context(timeout=5)
+
+        assert path is None
+        assert status["status"] == "skipped"
+        assert "exceeds" in status["reason"]
+        assert not out_path.exists()
