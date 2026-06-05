@@ -1524,12 +1524,15 @@ def _step_cleanup_builder_session(project_root: Path, dry_run: bool) -> StepResu
 def _step_git_clean(project_root: Path, dry_run: bool) -> StepResult:
     """Verify git status --short is clean (except expected runtime files).
 
-    Tolerante a workspaces no-repo: si el directorio no es un repositorio
-    Git, reporta un WARN no bloqueante informativo (arquitectura workspace
+    WT-2026-215: ejecuta git sobre motor_root (repositorio del motor), no
+    sobre project_root (workspace destino). Si motor_root no es resoluble,
+    reporta un WARN no bloqueante informativo (arquitectura workspace
     activo + motor portable).
 
-    Before: project_root may or may not be a git repo.
-    During: Runs git status --short, filters out expected runtime files.
+    Before: project_root may or may not be a git repo; motor_root resolved
+        via motor_destination_link.json.
+    During: Runs git status --short on motor_root, filters out expected
+        runtime files.
     After: Returns PASS if clean, WARN if dirty or non-repo (non-blocking).
     """
     if dry_run:
@@ -1539,9 +1542,19 @@ def _step_git_clean(project_root: Path, dry_run: bool) -> StepResult:
             detail="Skipped in dry-run mode",
         )
     try:
+        from runtime.motor_link import resolve_motor_root
+
+        motor_root = resolve_motor_root(project_root)
+        if motor_root is None:
+            return StepResult(
+                name="git_clean",
+                status="WARN",
+                detail="motor_root no resoluble (motor_destination_link.json ausente); "
+                "check de git saltado (no bloqueante)",
+            )
         result = subprocess.run(
             ["git", "status", "--short"],  # noqa: S607 - git is always on PATH
-            cwd=str(project_root),
+            cwd=str(motor_root),
             capture_output=True,
             text=True,
             timeout=30,

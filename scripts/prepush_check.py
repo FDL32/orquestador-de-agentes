@@ -234,20 +234,32 @@ def run_agent_controller_validate(project_root: Path) -> CheckResult:
 def run_git_status_check(project_root: Path) -> CheckResult:
     """Ejecuta git status --short y verifica que el arbol este limpio.
 
-    Tolerante a workspaces no-repo: si el directorio no es un repositorio
-    Git, reporta un WARN no bloqueante en lugar de FAIL, para soportar la
+    WT-2026-215: ejecuta git sobre motor_root (repositorio del motor), no
+    sobre project_root (workspace destino). Si motor_root no es resoluble,
+    reporta un WARN no bloqueante en lugar de FAIL, para soportar la
     arquitectura workspace activo + motor portable.
 
     Args:
-        project_root: Raiz del proyecto donde ejecutar git.
+        project_root: Raiz del proyecto (usado para resolver motor_root).
 
     Returns:
         CheckResult con passed=True si no hay cambios en el arbol.
     """
     try:
+        from runtime.motor_link import resolve_motor_root
+
+        motor_root = resolve_motor_root(project_root)
+        if motor_root is None:
+            return CheckResult(
+                name="Git Status Check",
+                passed=True,
+                output="motor_root no resoluble (motor_destination_link.json ausente); "
+                "check de git saltado (no bloqueante)",
+                is_blocking=False,
+            )
         result = subprocess.run(
             ["git", "status", "--short"],  # noqa: S607
-            cwd=project_root,
+            cwd=motor_root,
             capture_output=True,
             text=True,
             check=False,

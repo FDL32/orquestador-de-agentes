@@ -222,6 +222,25 @@ class ReviewBridge:
 
         return _resolve(self.project_root)
 
+    def _motor_root_or_raise(self) -> Path:
+        """Return motor_root for git evidence operations, or raise.
+
+        WT-2026-215: Unico seam para resolver el motor_root en todas las
+        funciones de evidencia/provenance git. Cada call site llama a este
+        metodo en lugar de pasar ``motor_root`` como parametro encadenado.
+
+        Raises:
+            RuntimeError: If motor link is not configured (missing
+                motor_destination_link.json or invalid).
+        """
+        root = self._resolve_motor_root()
+        if root is None:
+            raise RuntimeError(
+                "motor_root not resolvable: motor_destination_link.json missing "
+                "or invalid. Cannot run git evidence operations."
+            )
+        return root
+
     def _resolve_motor_controller(self) -> Path | None:
         """Resolve agent_controller.py from external motor root, or None.
 
@@ -575,7 +594,7 @@ class ReviewBridge:
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
-                cwd=self.project_root,
+                cwd=self._motor_root_or_raise(),
                 timeout=10,
             )
             prefix = f"{warning}\n" if warning else ""
@@ -596,7 +615,7 @@ class ReviewBridge:
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
-                cwd=self.project_root,
+                cwd=self._motor_root_or_raise(),
                 timeout=15,
             )
             prefix = f"{warning_prefix}\n" if warning_prefix else ""
@@ -982,7 +1001,7 @@ class ReviewBridge:
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
-                cwd=self.project_root,
+                cwd=self._motor_root_or_raise(),
                 timeout=10,
             )
             line = result.stdout.strip() or "[no commits found]"
@@ -1011,7 +1030,7 @@ class ReviewBridge:
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
-                cwd=self.project_root,
+                cwd=self._motor_root_or_raise(),
                 timeout=10,
             )
         if result is not None and result.returncode == 0 and result.stdout.strip():
@@ -1037,7 +1056,7 @@ class ReviewBridge:
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
-                cwd=self.project_root,
+                cwd=self._motor_root_or_raise(),
                 timeout=10,
             )
             if result.returncode != 0 or not result.stdout.strip():
@@ -1069,7 +1088,7 @@ class ReviewBridge:
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
-                cwd=self.project_root,
+                cwd=self._motor_root_or_raise(),
                 timeout=10,
             )
             if parent.returncode == 0 and parent.stdout.strip():
@@ -1081,7 +1100,10 @@ class ReviewBridge:
     def _get_untracked_files(self) -> list[str]:
         """Get list of untracked files (??) from git status, filtered for deliverables.
 
-        Before: Requires a valid git repository at project_root.
+        WT-2026-215: motor_root — untracked files relevant for review packet are
+        code files in the motor pending commit, not workspace deliverables.
+
+        Before: Requires a valid git repository at motor_root.
         During: Runs git status --porcelain -z, parses ?? entries, filters out
                 generated artifacts (.agent/collaboration/, .agent/runtime/, .git/).
         After: Returns list of relative paths for untracked deliverables only.
@@ -1093,7 +1115,7 @@ class ReviewBridge:
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
-                cwd=self.project_root,
+                cwd=self._motor_root_or_raise(),
                 timeout=10,
             )
             if result.returncode != 0:
@@ -1450,7 +1472,7 @@ class ReviewBridge:
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
-                cwd=self.project_root,
+                cwd=self._motor_root_or_raise(),
                 timeout=10,
             )
             if result.returncode == 0:
@@ -1487,12 +1509,13 @@ class ReviewBridge:
             files: set[str] = set()
 
             # Committed changes since last_git_head
+            motor_root = self._motor_root_or_raise()
             result = subprocess.run(
                 [git_bin, "diff", "--name-only", f"{last_git_head}..HEAD"],
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
-                cwd=self.project_root,
+                cwd=motor_root,
                 timeout=10,
             )
             if result.returncode == 0:
@@ -1507,7 +1530,7 @@ class ReviewBridge:
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
-                cwd=self.project_root,
+                cwd=motor_root,
                 timeout=10,
             )
             if result.returncode == 0:
@@ -1522,7 +1545,7 @@ class ReviewBridge:
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
-                cwd=self.project_root,
+                cwd=motor_root,
                 timeout=10,
             )
             if result.returncode == 0:

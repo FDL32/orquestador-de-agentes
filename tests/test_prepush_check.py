@@ -188,7 +188,10 @@ class TestGitStatusCheck:
             stderr="",
         )
 
-        with patch("subprocess.run", return_value=mock_result):
+        with (
+            patch("runtime.motor_link.resolve_motor_root", return_value=tmp_path),
+            patch("subprocess.run", return_value=mock_result),
+        ):
             result = run_git_status_check(tmp_path)
 
         assert result.name == "Git Status Check"
@@ -205,7 +208,10 @@ class TestGitStatusCheck:
             stderr="",
         )
 
-        with patch("subprocess.run", return_value=mock_result):
+        with (
+            patch("runtime.motor_link.resolve_motor_root", return_value=tmp_path),
+            patch("subprocess.run", return_value=mock_result),
+        ):
             result = run_git_status_check(tmp_path)
 
         assert result.name == "Git Status Check"
@@ -216,7 +222,10 @@ class TestGitStatusCheck:
 
     def test_git_status_command_not_found(self, tmp_path: Path) -> None:
         """Test when git command is not found."""
-        with patch("subprocess.run", side_effect=FileNotFoundError("git")):
+        with (
+            patch("runtime.motor_link.resolve_motor_root", return_value=tmp_path),
+            patch("subprocess.run", side_effect=FileNotFoundError("git")),
+        ):
             result = run_git_status_check(tmp_path)
 
         assert result.name == "Git Status Check"
@@ -233,7 +242,10 @@ class TestGitStatusCheck:
             stderr="fatal: not a git repository",
         )
 
-        with patch("subprocess.run", return_value=mock_result):
+        with (
+            patch("runtime.motor_link.resolve_motor_root", return_value=tmp_path),
+            patch("subprocess.run", return_value=mock_result),
+        ):
             result = run_git_status_check(tmp_path)
 
         assert result.name == "Git Status Check"

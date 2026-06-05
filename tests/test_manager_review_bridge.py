@@ -549,6 +549,7 @@ def test_build_review_prompt_uses_branch_base_diff(tmp_path, monkeypatch):
             )
         return _subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
+    monkeypatch.setattr(bridge, "_motor_root_or_raise", lambda: tmp_path)
     monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
     prompt = bridge._build_review_prompt(ticket_id="WP-TEST-134", dtype="code")
 
@@ -604,6 +605,7 @@ def test_build_review_prompt_falls_back_to_ticket_commit_range_when_no_remote(
             )
         return _subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
+    monkeypatch.setattr(bridge, "_motor_root_or_raise", lambda: tmp_path)
     monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
     prompt = bridge._build_review_prompt(ticket_id="WT-2026-192", dtype="code")
 
@@ -647,6 +649,7 @@ def test_build_review_prompt_falls_back_to_head_parent_when_no_remote_or_ticket_
             )
         return _subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
+    monkeypatch.setattr(bridge, "_motor_root_or_raise", lambda: tmp_path)
     monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
     prompt = bridge._build_review_prompt(ticket_id="WT-2026-192", dtype="code")
 
@@ -684,6 +687,7 @@ def test_build_review_prompt_includes_provenance_section(tmp_path, monkeypatch):
             )
         return _subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
+    monkeypatch.setattr(bridge, "_motor_root_or_raise", lambda: tmp_path)
     monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
     prompt = bridge._build_review_prompt(ticket_id="WP-TEST-134", dtype="code")
 
@@ -2132,6 +2136,9 @@ class TestUntrackedDeliverables:
         event_bus = EventBus(runtime_dir=runtime_dir)
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
+        # WT-2026-215: mock motor_root so git evidence runs without link
+        monkeypatch.setattr(bridge, "_motor_root_or_raise", lambda: tmp_path)
+
         # Mock git status to return untracked files
         monkeypatch.setattr(
             "subprocess.run",
@@ -2159,6 +2166,9 @@ class TestUntrackedDeliverables:
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        # WT-2026-215: mock motor_root so git evidence runs without link
+        monkeypatch.setattr(bridge, "_motor_root_or_raise", lambda: tmp_path)
 
         # Mock git status with mix of deliverables and noise
         monkeypatch.setattr(
