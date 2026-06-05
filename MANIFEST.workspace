@@ -43,6 +43,7 @@
 
 # Contexto del workspace
 .agent/context/project-map.json
+.agent/context/destination_map.md
 
 # Configuracion del sistema
 .agent/config/hooks_config.json
@@ -50,6 +51,7 @@
 # Configuracion del proyecto destino
 .agent/config/agents.json
 .agent/config/motor_destination_link.json
+.agent/config/destination_context.json
 
 # =============================================================================
 # EXPLICITAMENTE EXCLUIDO (motor central vive en repo fuente unico)

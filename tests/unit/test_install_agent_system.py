@@ -10,10 +10,12 @@ Covers:
 
 from __future__ import annotations
 
+import json
 import textwrap
 from pathlib import Path
 
 from scripts.install_agent_system import (
+    copy_destination_bootstrap,
     copy_project_template,
     copy_tree,
     detect_destination_residues,
@@ -544,3 +546,101 @@ def test_copy_tree_copies_allowlisted_nested_child(tmp_path):
         f"Nested allowlisted file should be copied, got: {copied_names}"
     )
     assert (dest / "a" / "b" / "c" / "deep_file.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# copy_destination_bootstrap
+# ---------------------------------------------------------------------------
+
+
+def test_copy_destination_bootstrap_creates_context_dir(tmp_path, capsys):
+    """Creates .agent/context/ directory."""
+    project_agent = tmp_path / ".agent"
+    project_agent.mkdir(parents=True)
+
+    copy_destination_bootstrap(project_agent, tmp_path)
+    assert (project_agent / "context").exists()
+    assert (project_agent / "context").is_dir()
+
+
+def test_copy_destination_bootstrap_creates_config(tmp_path, capsys):
+    """Creates destination_context.json with defaults."""
+    project_agent = tmp_path / ".agent"
+    project_agent.mkdir(parents=True)
+
+    copy_destination_bootstrap(project_agent, tmp_path)
+    config_file = project_agent / "config" / "destination_context.json"
+    assert config_file.exists()
+    import json
+
+    data = json.loads(config_file.read_text(encoding="utf-8"))
+    assert data["version"] == "1"
+    assert data["max_bytes"] == 204800
+
+
+def test_copy_destination_bootstrap_does_not_overwrite(tmp_path, capsys):
+    """Existing destination_context.json is not overwritten."""
+    project_agent = tmp_path / ".agent"
+    config_dir = project_agent / "config"
+    config_dir.mkdir(parents=True)
+    existing = {"version": "2", "max_bytes": 99999, "custom": True}
+    (config_dir / "destination_context.json").write_text(
+        json.dumps(existing), encoding="utf-8"
+    )
+
+    copy_destination_bootstrap(project_agent, tmp_path)
+    data = json.loads(
+        (config_dir / "destination_context.json").read_text(encoding="utf-8")
+    )
+    assert data["custom"] is True
+    assert data["max_bytes"] == 99999
+
+
+def test_copy_destination_bootstrap_dry_run(tmp_path, capsys):
+    """Dry-run does not create files."""
+    project_agent = tmp_path / ".agent"
+    project_agent.mkdir(parents=True)
+
+    copy_destination_bootstrap(project_agent, tmp_path, dry_run=True)
+    assert not (project_agent / "context").exists()
+    assert not (project_agent / "config" / "destination_context.json").exists()
+    out = capsys.readouterr().out
+    assert "DRY-RUN" in out
+
+
+def test_copy_destination_bootstrap_idempotent(tmp_path, capsys):
+    """Second call does not change anything."""
+    project_agent = tmp_path / ".agent"
+    project_agent.mkdir(parents=True)
+
+    copy_destination_bootstrap(project_agent, tmp_path)
+    config_file = project_agent / "config" / "destination_context.json"
+    content_first = config_file.read_text(encoding="utf-8")
+
+    copy_destination_bootstrap(project_agent, tmp_path)
+    content_second = config_file.read_text(encoding="utf-8")
+    assert content_first == content_second
+
+
+# ---------------------------------------------------------------------------
+# INSTALLER_BOOTSTRAP_PATHS - residue survival
+# ---------------------------------------------------------------------------
+
+
+def test_destination_context_json_survives_residue_detection(tmp_path):
+    """config/destination_context.json must not be pruned by detect_destination_residues."""
+    source_agent = _create_minimal_agent_dir(tmp_path / "source")
+    dest_agent = _create_minimal_agent_dir(tmp_path / "dest")
+    # Add the bootstrap file to dest (simulating first install)
+    config_dir = dest_agent / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "destination_context.json").write_text(
+        '{"version": "1"}', encoding="utf-8"
+    )
+
+    residues = detect_destination_residues(source_agent, dest_agent)
+    residue_names = {r.as_posix() for r in residues}
+    assert "config/destination_context.json" not in residue_names, (
+        f"destination_context.json should be excluded by INSTALLER_BOOTSTRAP_PATHS, "
+        f"got residues: {residue_names}"
+    )

@@ -52,6 +52,15 @@ INSTALLER_MANAGED_PATHS: frozenset[str] = frozenset({"glossary.md", "microagents
 # Generated / transient directories that should not be part of canonical sync.
 IGNORED_NAMES = {"__pycache__", ".ruff_cache", ".tmp"}
 
+# Paths deposited by copy_destination_bootstrap(); survive residue detection
+# during sync. These use full path matching (not just r.parts[0] like
+# INSTALLER_MANAGED_PATHS) to avoid over-broad exclusion.
+INSTALLER_BOOTSTRAP_PATHS: frozenset[str] = frozenset(
+    {
+        "config/destination_context.json",
+    }
+)
+
 VERSION_MANIFEST_NAME = ".version_manifest.json"
 HOOKS_CONFIG_REL = Path("config") / "hooks_config.json"
 
@@ -218,6 +227,8 @@ def detect_destination_residues(source: Path, dest: Path) -> list[Path]:
     # against the INSTALLER_MANAGED_PATHS set. LOCAL_DIRS paths are already excluded
     # by iter_canonical_entries(); INSTALLER_MANAGED_PATHS are excluded here.
     residues = {r for r in residues if r.parts[0] not in INSTALLER_MANAGED_PATHS}
+    # Also exclude bootstrap-specific paths (full path matching, not just r.parts[0])
+    residues = {r for r in residues if r.as_posix() not in INSTALLER_BOOTSTRAP_PATHS}
     return compact_paths(residues)
 
 
@@ -917,6 +928,55 @@ def copy_knowledge_docs(
                     print(f"[INFO] Created {dest_doc} from template")
 
 
+def copy_destination_bootstrap(
+    project_agent: Path,
+    template_root: Path,
+    dry_run: bool = False,
+) -> None:
+    """Provision destination context directory and config for bootstrap.
+
+    Creates .agent/context/ and deposits destination_context.json with default
+    configuration (only if not exists — never overwrites local customizations).
+
+    Before: project_agent (.agent/ dir) exists; template_root is the motor root.
+    During: Creates .agent/context/ directory if absent. Writes
+            destination_context.json with default max_bytes if the file does not
+            already exist at .agent/config/destination_context.json.
+    After: .agent/context/ exists; destination_context.json exists or existed.
+           Idempotent: second call is no-op.
+    """
+    # 1. Ensure context directory exists
+    context_dir = project_agent / "context"
+    if dry_run:
+        if not context_dir.exists():
+            print(f"[DRY-RUN] Would create context directory: {context_dir}")
+    else:
+        context_dir.mkdir(parents=True, exist_ok=True)
+        print(f"[INFO] Ensured context directory: {context_dir}")
+
+    # 2. Deposit destination_context.json only if not exists
+    config_file = project_agent / "config" / "destination_context.json"
+    if config_file.exists():
+        print(f"[SKIP] {config_file} already exists — not overwriting")
+        return
+
+    if dry_run:
+        print(f"[DRY-RUN] Would create default {config_file}")
+        return
+
+    payload = {
+        "version": "1",
+        "max_bytes": 204800,
+        "created_by": "install_agent_system.py",
+    }
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_file.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    print(f"[INFO] Created default {config_file}")
+
+
 def install_agent_system(
     template_agent: Path,
     project_agent: Path,
@@ -976,6 +1036,9 @@ def install_agent_system(
 
     # Sync portable memory rules (engine/meta wings) from motor
     sync_memory_rules(template_agent, project_agent, dry_run=dry_run)
+
+    # Provision destination bootstrap context and config
+    copy_destination_bootstrap(project_agent, template_root, dry_run=dry_run)
 
     # Copy repomix.config.json to destination workspace root
     copy_repomix_config(template_root, destination_root, dry_run=dry_run)
@@ -1081,6 +1144,9 @@ def sync_agent_system(  # noqa: C901
 
     # Sync portable memory rules (engine/meta wings) from motor
     sync_memory_rules(template_agent, project_agent, dry_run=dry_run)
+
+    # Provision destination bootstrap context and config
+    copy_destination_bootstrap(project_agent, template_root, dry_run=dry_run)
 
     # Copy repomix.config.json to destination workspace root (idempotent)
     copy_repomix_config(template_root, destination_root, dry_run=dry_run)

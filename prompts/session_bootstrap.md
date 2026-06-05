@@ -97,6 +97,13 @@ Cuando termines la lectura, di "Sistema internalizado" y enumera en 5 lineas max
 - Si ya hay un `work_plan.md` activo IN_PROGRESS — el agente debe leer primero ese, no este bootstrap.
 - En llamadas one-shot a OpenCode/Codex desde el launcher — ahi sirve el prompt compuesto que ya genera `Get-OpenCodeBuilderPrompt`.
 
+## Modo destination-hosted
+
+Si el agente opera sobre un `repo_destino` (proyecto que consume el motor como
+dependencia externa), NO uses este prompt. Usa en su lugar `destination_bootstrap.md`
+(prompts/destination_bootstrap.md), que proporciona el arranque canonico para
+destinos con resolucion de motor_root via `motor_destination_link.json`.
+
 ## Mantenimiento
 
 Actualiza este archivo cuando:

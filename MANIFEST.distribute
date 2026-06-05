@@ -26,6 +26,7 @@ uv.lock
 # SCRIPTS OPERATIVOS
 # =============================================================================
 scripts/install_agent_system.py
+scripts/destination_context.py
 scripts/run_pytest_safe.py
 scripts/local_audit.py
 scripts/memory_consolidate.py
