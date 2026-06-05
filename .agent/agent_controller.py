@@ -2490,6 +2490,35 @@ def _handle_check_completion() -> int:
     return 1
 
 
+def _fallback_checkpoint_motor(guard_result: dict, plan_id: str) -> dict:
+    """WT-2026-232a: Fallback check for checkpoint tag in _MOTOR_ROOT.
+
+    In motor/destino topology, the checkpoint tag lives in repo_motor,
+    not PROJECT_ROOT. The pre_handoff_guard.py script checks PROJECT_ROOT
+    only; this fallback retries in _MOTOR_ROOT when the guard fails.
+    """
+    if (
+        not guard_result.get("valid")
+        and guard_result.get("missing_checkpoint")
+        and _MOTOR_ROOT.resolve() != PROJECT_ROOT.resolve()
+    ):
+        motor_tag = f"checkpoint/review-{plan_id}"
+        try:
+            tag_check = subprocess.run(
+                ["git", "rev-parse", f"{motor_tag}^{{}}"],
+                capture_output=True,
+                text=True,
+                cwd=_MOTOR_ROOT,
+                timeout=15,
+            )
+            if tag_check.returncode == 0:
+                guard_result["valid"] = True
+                guard_result["missing_checkpoint"] = False
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+    return guard_result
+
+
 def _run_pre_handoff_guard(plan_id: str, json_output: bool) -> dict:
     """
     Run the pre-handoff guard before emitting READY_FOR_REVIEW.
@@ -2531,6 +2560,9 @@ def _run_pre_handoff_guard(plan_id: str, json_output: bool) -> dict:
         except json.JSONDecodeError:
             print(f"[WARN] Failed to parse guard output: {result.stdout}")
             guard_result = {"valid": result.returncode == 0}
+
+        # WT-2026-232a: Fallback check for checkpoint tag in _MOTOR_ROOT.
+        guard_result = _fallback_checkpoint_motor(guard_result, plan_id)
 
         if not json_output:
             if guard_result.get("valid"):
