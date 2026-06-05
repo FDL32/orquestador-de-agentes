@@ -762,7 +762,7 @@ function Invoke-PostPreflightProjectionSync {
     $previousProjectRoot = [System.Environment]::GetEnvironmentVariable('AGENT_PROJECT_ROOT', 'Process')
     try {
         [System.Environment]::SetEnvironmentVariable('AGENT_PROJECT_ROOT', $ProjectRoot, 'Process')
-        & $venvPython $supervisorPath --once --no-auto-sync 2>&1
+        & $venvPython $supervisorPath --once --no-auto-sync
         if ($LASTEXITCODE -ne 0) {
             throw "ticket_supervisor.py --once fallo al reproyectar estado canonico."
         }
