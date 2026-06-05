@@ -181,7 +181,7 @@ class TestClassifyReviewPacket:
         """
         motor_files = [
             "bus/review_bridge.py",
-            "tests/test_wt_2026_221b_evidence_gate.py",
+            "tests/test_review_packet_evidence_gate.py",
         ]
         monkeypatch.setattr(
             "bus.evidence.resolve_evidence",
@@ -704,7 +704,7 @@ class TestReviewCycleEvidenceGateIntegration:
                 ],
                 motor_files=[
                     "bus/review_bridge.py",
-                    "tests/test_wt_2026_221b_evidence_gate.py",
+                    "tests/test_review_packet_evidence_gate.py",
                 ],
             ),
         )
