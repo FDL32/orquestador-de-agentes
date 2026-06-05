@@ -2993,6 +2993,179 @@ def _path_is_under(child: Path, parent: Path) -> bool:
         return False
 
 
+def _parse_raw_flt_paths(plan_content: str) -> set[str]:  # noqa: C901
+    """Parse Files Likely Touched returning motor-relative paths with /.
+
+    Unlike parse_files_likely_touched(), this function does NOT resolve paths
+    against PROJECT_ROOT. It returns raw relative paths normalized to forward
+    slashes, suitable for comparison with motor_uncommitted_productive() output.
+
+    Before: plan_content contains a ``## Files Likely Touched`` section.
+    During: Scans lines, normalizes backticks/quotes, strips bullets.
+    After: Returns set of motor-relative paths with forward slashes.
+    """
+    lines = plan_content.split("\n")
+    in_section = False
+    paths: set[str] = set()
+
+    def _looks_like_path_token(token: str) -> bool:
+        if not token or " " in token:
+            return False
+        if token.startswith("."):
+            return True
+        if "/" in token or "\\" in token:
+            return True
+        basename = token.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+        return "." in basename
+
+    for line in lines:
+        line = line.strip()
+        if "## Files Likely Touched" in line:
+            in_section = True
+            continue
+        if in_section and line.startswith("## "):
+            break
+        if in_section and line and not line.startswith("---"):
+            normalized = (
+                line.lstrip("*- ")
+                .replace("`", "")
+                .replace('"', "")
+                .replace("'", "")
+                .strip()
+            )
+            if normalized and _looks_like_path_token(normalized):
+                p = normalized.replace("\\", "/")
+                if p.startswith("./"):
+                    p = p[2:]
+                paths.add(p)
+    return paths
+
+
+def _try_motor_commit(
+    motor_root: Path, paths: list[str], plan_id: str, json_output: bool
+) -> tuple[bool, str]:
+    """Commit paths in motor_root with retry for hooks that modify staged files.
+
+    Before: motor_root is a git repo with uncommitted changes in listed paths.
+    During: git add + git commit. If commit fails (e.g. pre-commit hook modifies
+            staged files), checks remaining uncommitted changes within the same
+            paths and retries once. Never re-adds paths outside the original list.
+    After: Returns (True, '') on success, (False, error_message) on failure.
+    """
+    add_proc = subprocess.run(
+        ["git", "add", "--", *paths],
+        capture_output=True,
+        text=True,
+        cwd=motor_root,
+    )
+    if add_proc.returncode != 0:
+        return False, (
+            f"[ERROR] git add failed:\n"
+            f"{add_proc.stderr.strip() or add_proc.stdout.strip()}"
+        )
+
+    commit_msg = f"chore({plan_id}): pre-handoff checkpoint"
+    commit_proc = subprocess.run(
+        ["git", "commit", "-m", commit_msg],
+        capture_output=True,
+        text=True,
+        cwd=motor_root,
+    )
+    if commit_proc.returncode == 0:
+        if not json_output:
+            print(f"[OK] Committed in repo_motor: {commit_msg}")
+        return True, ""
+
+    # Attempt 2: commit failed - check for hook that modified staged files
+    from bus.evidence import motor_uncommitted_productive
+
+    remaining = motor_uncommitted_productive(motor_root)
+    remaining_in_flt = [f for f in remaining if f in paths]
+
+    if remaining_in_flt:
+        add_retry = subprocess.run(
+            ["git", "add", "--", *remaining_in_flt],
+            capture_output=True,
+            text=True,
+            cwd=motor_root,
+        )
+        if add_retry.returncode != 0:
+            return False, (
+                f"[ERROR] git add failed on retry:\n"
+                f"{add_retry.stderr.strip() or add_retry.stdout.strip()}"
+            )
+
+        commit_retry = subprocess.run(
+            ["git", "commit", "-m", commit_msg],
+            capture_output=True,
+            text=True,
+            cwd=motor_root,
+        )
+        if commit_retry.returncode == 0:
+            if not json_output:
+                print(f"[OK] Committed in repo_motor (retry): {commit_msg}")
+            return True, ""
+        else:
+            err = commit_retry.stderr.strip() or commit_retry.stdout.strip()
+            pending = "\n".join(f"  {f}" for f in remaining_in_flt)
+            return False, (
+                f"[ERROR] git commit failed after retry:\n{err}\n"
+                f"Pending paths motor-relative:\n{pending}"
+            )
+
+    err = commit_proc.stderr.strip() or commit_proc.stdout.strip()
+    return False, f"[ERROR] git commit failed:\n{err}"
+
+
+def _try_motor_tag(
+    motor_root: Path, plan_id: str, json_output: bool
+) -> tuple[bool, str]:
+    """Create or refresh checkpoint/review-<ticket> tag in motor_root.
+
+    Before: motor_root is a git repo.
+    During: If tag exists, deletes it first. Creates annotated tag at HEAD.
+    After: Returns (True, '') on success, (False, error_message) on failure.
+    """
+    tag_name = f"checkpoint/review-{plan_id}"
+
+    try:
+        check_proc = subprocess.run(
+            ["git", "rev-parse", f"{tag_name}^{{}}"],
+            capture_output=True,
+            text=True,
+            cwd=motor_root,
+        )
+        tag_exists = check_proc.returncode == 0
+
+        if tag_exists:
+            del_proc = subprocess.run(
+                ["git", "tag", "-d", tag_name],
+                capture_output=True,
+                text=True,
+                cwd=motor_root,
+            )
+            if del_proc.returncode != 0:
+                err = del_proc.stderr.strip() or del_proc.stdout.strip()
+                return False, f"[ERROR] Failed to delete tag {tag_name}:\n{err}"
+
+        tag_msg = f"Checkpoint M3 for {plan_id}"
+        tag_proc = subprocess.run(
+            ["git", "tag", "-a", tag_name, "-m", tag_msg],
+            capture_output=True,
+            text=True,
+            cwd=motor_root,
+        )
+        if tag_proc.returncode != 0:
+            err = tag_proc.stderr.strip() or tag_proc.stdout.strip()
+            return False, f"[ERROR] Failed to create tag {tag_name}:\n{err}"
+
+        if not json_output:
+            print(f"[OK] Created/refreshed tag: {tag_name}")
+        return True, ""
+    except FileNotFoundError:
+        return False, "[ERROR] git not available for tag operation"
+
+
 def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
     """Handle --pre-handoff flag.
 
@@ -3050,10 +3223,10 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
     # If the workspace has no .git, fall back to the motor root for git operations
     # while keeping project_root for live-surface detection (surfaces live in workspace).
     project_root = PROJECT_ROOT.resolve()
+    motor_root = _MOTOR_ROOT.resolve()  # TP-11: declared before guard
     if (project_root / ".git").exists():
         git_root = project_root
     else:
-        motor_root = _MOTOR_ROOT.resolve()
         if (motor_root / ".git").exists():
             git_root = motor_root
         else:
@@ -3063,22 +3236,51 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
                 flush=True,
             )
             return 1
-    # --- Barrier: check for uncommitted productive changes in repo_motor ---
-    # WT-2026-228a: In Model B, _handle_pre_handoff selects git_root = project_root,
-    # so it never sees dirty productive files in the motor repo. This barrier
-    # detects them explicitly using motor_uncommitted_productive() which only
-    # checks git diff + git diff --cached (no git log).
-    motor_uncommitted = motor_uncommitted_productive(_MOTOR_ROOT)
+    # --- Commit-or-block for uncommitted productive motor changes ---
+    # WT-2026-231a: Replace the simple barrier from WT-2026-228a with a
+    # commit-or-block decision. If all motor productive changes are within
+    # Files Likely Touched, auto-commit in repo_motor. If outside FLT, block.
+    motor_uncommitted = motor_uncommitted_productive(motor_root)
     if motor_uncommitted:
-        print(
-            "Uncommitted productive changes in repo_motor: "
-            "commit with ticket ID before handoff.\n"
-            + "\n".join(f"  {f}" for f in motor_uncommitted),
-            file=sys.stderr,
-            flush=True,
-        )
-        return 1
-    # --- end barrier ---
+        flt_motor_paths = _parse_raw_flt_paths(plan_content)
+        # Normalize both sets to motor-relative forward-slash paths (TP-06)
+        motor_set = {f.replace("\\", "/") for f in motor_uncommitted}
+        flt_set = {p.replace("\\", "/") for p in flt_motor_paths}
+        outside_flt = motor_set - flt_set
+        inside_flt = motor_set & flt_set
+
+        if not outside_flt:
+            # All motor changes within FLT: commit in motor_root (TP-02)
+            commit_ok, commit_err = _try_motor_commit(
+                motor_root, sorted(inside_flt), plan_id, json_output
+            )
+            if not commit_ok:
+                print(commit_err, file=sys.stderr, flush=True)
+                return 1
+            # Create/refresh checkpoint tag in motor_root (TP-05, TP-12)
+            tag_ok, tag_err = _try_motor_tag(motor_root, plan_id, json_output)
+            if not tag_ok:
+                print(tag_err, file=sys.stderr, flush=True)
+                return 1
+            _reset_circuit_breaker(plan_id)
+            if not json_output:
+                print(f"[OK] Pre-handoff complete for {plan_id}. Motor committed.")
+            else:
+                print(json.dumps({"status": "success", "plan_id": plan_id}, indent=2))
+            return 0
+        else:
+            # Some motor changes outside FLT: block with diagnostic (TP-03)
+            print(
+                "Productive changes in repo_motor outside "
+                "Files Likely Touched:\n"
+                + "\n".join(f"  {f}" for f in sorted(outside_flt)),
+                file=sys.stderr,
+                flush=True,
+            )
+            return 1
+    # No motor productive changes -> fall through to destination logic
+    # (TP-04: mark-ready will block if there is no commit evidence)
+    # --- end commit-or-block ---
 
     # Build live surface sets
     live_files, live_dirs = _build_live_surface_sets(project_root)
