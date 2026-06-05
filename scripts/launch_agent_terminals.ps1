@@ -1049,8 +1049,29 @@ function Get-OpenCodeBuilderPrompt {
         [Parameter(Mandatory)] [string]$ProjectRoot
     )
 
+    # WT-2026-232a: Resolve the three canonical roots via Python helper.
+    # This is the single source of truth; no PowerShell-side duplication.
+    $launcherRoots = $null
+    $controllerPath = Join-Path $script:_MotorCodeRoot '.agent\agent_controller.py'
+    if (Test-Path -LiteralPath $controllerPath) {
+        $rootsJson = & python $controllerPath --resolve-launcher-roots --json --project-root $ProjectRoot 2>$null
+        if ($rootsJson) {
+            try {
+                $launcherRoots = $rootsJson | ConvertFrom-Json
+            }
+            catch {
+                Write-Warning "Could not parse launcher roots JSON; proceeding without runtime context"
+            }
+        }
+    }
+
+    $repoMotorRoot = if ($launcherRoots -and $launcherRoots.repo_motor_root) { $launcherRoots.repo_motor_root } else { $script:_MotorCodeRoot }
+    $repoDestinoRoot = if ($launcherRoots -and $launcherRoots.repo_destino_root) { $launcherRoots.repo_destino_root } else { $ProjectRoot }
+    $workspaceActivoRoot = if ($launcherRoots -and $launcherRoots.workspace_activo_root) { $launcherRoots.workspace_activo_root } else { $ProjectRoot }
+
     # Composicion del prompt para OpenCode Builder
-    # Incluye ticket_id real, recordatorio de Files Likely Touched y cierre obligatorio
+    # Incluye ticket_id real, recordatorio de Files Likely Touched, cierre obligatorio
+    # y las tres raices de topologia motor/destino como valores efimeros.
     $prompt = @"
 Actua como BUILDER para $TicketId.
 Los artefactos canonicos del repo_destino se adjuntan a este prompt via -f. Usalos como estado canonico; no llames Read sobre .agent/collaboration/*, .agent/config/*, .agent/agent_controller.py ni PROJECT.md del repo_destino.
@@ -1060,6 +1081,11 @@ No cambies el alcance. No reescribas el plan.
 Si la Builder Access Surface prohibe escribir en repo_destino, no registres en .agent/collaboration/execution_log.md; imprime la evidencia en stdout para que Manager la registre.
 Mantente en el runtime bus-first y evita editar .agent/collaboration/TURN.md, .agent/collaboration/STATE.md o .agent/collaboration/execution_log.md a mano.
 Ejecuta ruff y pytest-safe sobre lo tocado.
+
+## Runtime context (efimero - no persistir como contrato canonico)
+- repo_motor_root: $repoMotorRoot
+- repo_destino_root: $repoDestinoRoot
+- workspace_activo_root: $workspaceActivoRoot
 
 CIERRE OBLIGATORIO (dos pasos, en orden):
 1. Ejecuta python .agent/agent_controller.py --pre-handoff para stagear, commitear y crear el checkpoint M3.
@@ -1073,9 +1099,10 @@ function Get-CanonicalFilesForOpenCode {
     param([Parameter(Mandatory)] [string]$ProjectRoot)
 
     # Ficheros canonicos base que siempre se adjuntan.
-    # Rutas absolutas desde $ProjectRoot: en Model B el workspace esta fuera del
-    # motor; pasar rutas absolutas garantiza que OpenCode los embebe en el prompt
-    # via -f sin necesidad de acceso de tool al directorio externo.
+    # Rutas absolutas desde $ProjectRoot: en topologia motor/destino el workspace
+    # esta fuera del motor; pasar rutas absolutas garantiza que OpenCode los
+    # embebe en el prompt via -f sin necesidad de acceso de tool al directorio
+    # externo.
     $canonicalFiles = @(
         (Join-Path $ProjectRoot '.agent\collaboration\work_plan.md'),
         (Join-Path $ProjectRoot '.agent\collaboration\TURN.md'),

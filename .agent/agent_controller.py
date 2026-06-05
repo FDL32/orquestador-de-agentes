@@ -2766,23 +2766,76 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
             )
         return 1
 
-    # For the scope gate, supplement current git status with recent commits so
-    # implementation files are found even when the tree is clean after hotfixes.
-    _scope_changed = get_changed_files()
-    if not _scope_changed:
-        # Tree is clean: resolve recent commits to absolute paths (same as get_changed_files)
-        _git_root = (
-            PROJECT_ROOT
-            if (PROJECT_ROOT / ".git").exists()
-            else (_MOTOR_ROOT if (_MOTOR_ROOT / ".git").exists() else None)
+    # --- WT-2026-232a: Motor-aware scope gate ---
+    # When motor/destino topology exists (different repos), check the motor
+    # checkpoint commit for scope compliance. Enables mark-ready to pass
+    # without --scope-override when productive changes are in repo_motor.
+    motor_root_mr = _MOTOR_ROOT.resolve()
+    project_root_mr = PROJECT_ROOT.resolve()
+    is_motor_topology = motor_root_mr != project_root_mr
+    motor_scope_pass = False
+
+    if is_motor_topology:
+        cp_valid, cp_files, cp_error = _resolve_motor_checkpoint_files(
+            motor_root_mr, plan_id
         )
-        if _git_root:
-            _scope_changed = {
-                str((_git_root / f).resolve()) for f in _git_log_recent_files(_git_root)
-            }
-    gate_result = check_scope_gate(plan_content, _scope_changed, _exclude_files())
-    if not _scope_gate_allows_close(gate_result, scope_override):
-        return 1
+        if cp_valid and cp_files:
+            flt_motor_paths = _parse_raw_flt_paths(plan_content)
+            motor_set = {f.replace("\\", "/") for f in cp_files}
+            flt_set = {p.replace("\\", "/") for p in flt_motor_paths}
+            outside_flt = motor_set - flt_set
+            inside_flt = motor_set & flt_set
+
+            if inside_flt and not outside_flt:
+                # Full scope compliance: motor checkpoint files within FLT
+                if not json_output:
+                    print(
+                        f"[OK] Motor scope: {len(inside_flt)} files within "
+                        "Files Likely Touched"
+                    )
+                motor_scope_pass = True
+            elif outside_flt:
+                # Motor checkpoint files outside FLT -> block (or override)
+                print(
+                    "[ERROR] Motor checkpoint has files outside Files Likely Touched:"
+                )
+                for f in sorted(outside_flt):
+                    print(f"  - {f}")
+                if not scope_override:
+                    print('Use --scope-override "reason" to proceed.')
+                    return 1
+                _record_scope_override(scope_override, outside_flt)
+                motor_scope_pass = True
+            # else: inside_flt empty, no outside_flt -> fall through to legacy
+        elif not cp_valid:
+            # No valid checkpoint in motor topology -> block
+            print(f"[ERROR] No valid motor checkpoint for {plan_id}: {cp_error}")
+            print(
+                "Run --pre-handoff first to create "
+                "checkpoint/review-<ticket> in repo_motor."
+            )
+            return 1
+        # cp_valid but cp_files empty -> fall through to legacy
+
+    if not motor_scope_pass:
+        # For the scope gate, supplement current git status with recent commits so
+        # implementation files are found even when the tree is clean after hotfixes.
+        _scope_changed = get_changed_files()
+        if not _scope_changed:
+            # Tree is clean: resolve recent commits to absolute paths
+            _git_root_l = (
+                PROJECT_ROOT
+                if (PROJECT_ROOT / ".git").exists()
+                else (_MOTOR_ROOT if (_MOTOR_ROOT / ".git").exists() else None)
+            )
+            if _git_root_l:
+                _scope_changed = {
+                    str((_git_root_l / f).resolve())
+                    for f in _git_log_recent_files(_git_root_l)
+                }
+        gate_result = check_scope_gate(plan_content, _scope_changed, _exclude_files())
+        if not _scope_gate_allows_close(gate_result, scope_override):
+            return 1
 
     # Exit gate: Emit BUILDER_EXIT event - REQUIRED for ticket closure
     # MUST occur BEFORE STATE_CHANGED to maintain order invariant
@@ -2886,6 +2939,30 @@ def _handle_bootstrap_ticket(json_output: bool) -> int:
         print(f"[OK] Bootstrapped STATE_CHANGED -> IN_PROGRESS for {plan_id}")
 
     return 0
+
+
+def _handle_resolve_launcher_roots(json_output: bool) -> int:
+    """Handle --resolve-launcher-roots flag.
+
+    WT-2026-232a: Single source of truth for launcher root resolution.
+    Consumed by scripts/launch_agent_terminals.ps1 via JSON output.
+
+    Before: PROJECT_ROOT must be set (either via --project-root or env var).
+    During: Delegates to _resolve_launcher_roots() for deterministic resolution.
+    After: Prints JSON or plain-text representation of the three roots.
+           Returns 0 on success, 1 on error.
+    """
+    try:
+        roots = _resolve_launcher_roots(PROJECT_ROOT)
+        if json_output:
+            print(json.dumps(roots, indent=2))
+        else:
+            for key, value in roots.items():
+                print(f"{key}: {value}")
+        return 0
+    except RuntimeError as e:
+        print(f"[ERROR] {e}", file=sys.stderr, flush=True)
+        return 1
 
 
 # ============================================================================
@@ -3039,6 +3116,137 @@ def _parse_raw_flt_paths(plan_content: str) -> set[str]:  # noqa: C901
                     p = p[2:]
                 paths.add(p)
     return paths
+
+
+def _resolve_motor_checkpoint_files(
+    motor_root: Path, ticket_id: str
+) -> tuple[bool, set[str], str]:
+    """Resolve checkpoint files from motor git repo.
+
+    WT-2026-232a: Helper for motor-aware scope gate in mark-ready.
+
+    Before: motor_root is a git repo with checkpoint/review-<ticket_id> tag.
+    During: Runs git rev-parse, merge-base --is-ancestor, git log, git diff-tree.
+    After: Returns (True, files_set, '') on valid checkpoint,
+           (False, set(), error_msg) on failure.
+    """
+    tag_name = f"checkpoint/review-{ticket_id}"
+
+    try:
+        # Step 1: Get SHA of the checkpoint tag
+        rev_proc = subprocess.run(
+            ["git", "rev-parse", f"{tag_name}^{{}}"],
+            capture_output=True,
+            text=True,
+            cwd=motor_root,
+            timeout=30,
+        )
+        if rev_proc.returncode != 0:
+            return False, set(), f"Tag {tag_name} not found in motor repo"
+
+        sha = rev_proc.stdout.strip()
+        if not sha:
+            return False, set(), f"Empty SHA from rev-parse {tag_name}"
+
+        # Step 2: Check SHA is ancestor of HEAD (not stale/detached)
+        ancestor_proc = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", sha, "HEAD"],
+            capture_output=True,
+            text=True,
+            cwd=motor_root,
+            timeout=30,
+        )
+        if ancestor_proc.returncode != 0:
+            return (
+                False,
+                set(),
+                f"Tag {tag_name}@{sha[:8]} is not an ancestor of HEAD",
+            )
+
+        # Step 3: Verify commit message contains ticket_id
+        log_proc = subprocess.run(
+            ["git", "log", "-1", "--format=%s", sha],
+            capture_output=True,
+            text=True,
+            cwd=motor_root,
+            timeout=30,
+        )
+        if log_proc.returncode == 0 and ticket_id not in log_proc.stdout:
+            return (
+                False,
+                set(),
+                f"Commit {sha[:8]} ({tag_name}) message does not contain {ticket_id}",
+            )
+
+        # Step 4: Get files from the checkpoint commit
+        diff_proc = subprocess.run(
+            ["git", "diff-tree", "--no-commit-id", "-r", "--name-only", sha],
+            capture_output=True,
+            text=True,
+            cwd=motor_root,
+            timeout=30,
+        )
+        if diff_proc.returncode != 0:
+            return False, set(), f"git diff-tree failed for {sha[:8]}"
+
+        files = {line.strip() for line in diff_proc.stdout.split("\n") if line.strip()}
+        return True, files, ""
+
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        return False, set(), f"Git operation failed: {e}"
+
+
+def _resolve_launcher_roots(project_root: Path | None) -> dict[str, str]:
+    """Resolve the three canonical root paths for the launcher.
+
+    WT-2026-232a: Single source of truth for launcher root resolution.
+    Used by --resolve-launcher-roots --json --project-root <dest>.
+
+    Before: project_root is either None or a valid Path.
+    During: Resolves motor_root from file location, destino_root
+            from project_root or motor_destination_link.json, and
+            workspace_activo_root as the directory containing .agent/.
+    After: Returns dict with three normalized string keys.
+           Raises RuntimeError if any root cannot be resolved.
+    """
+    motor_root = Path(__file__).resolve().parent.parent
+    destino_root = _resolve_destino_root(motor_root, project_root)
+    workspace_activo_root = _resolve_workspace_root(motor_root, destino_root)
+    result = {
+        "repo_motor_root": str(motor_root).replace("\\", "/"),
+        "repo_destino_root": str(destino_root).replace("\\", "/"),
+        "workspace_activo_root": str(workspace_activo_root).replace("\\", "/"),
+    }
+    for key, value in result.items():
+        if not value:
+            raise RuntimeError(f"Cannot resolve empty '{key}'")
+    return result
+
+
+def _resolve_destino_root(motor_root: Path, project_root: Path | None) -> Path:
+    """Resolve repo_destino_root from project_root or motor_destination_link.json."""
+    if project_root is not None:
+        return Path(project_root).resolve()
+    link_path = motor_root / ".agent" / "config" / "motor_destination_link.json"
+    if link_path.exists():
+        try:
+            link_data = json.loads(link_path.read_text(encoding="utf-8"))
+            dest = link_data.get("destination_root")
+            if dest:
+                return Path(dest).resolve()
+        except (json.JSONDecodeError, OSError):
+            pass
+    return motor_root
+
+
+def _resolve_workspace_root(motor_root: Path, destino_root: Path) -> Path:
+    """Resolve workspace_activo_root as directory containing .agent/."""
+    if (destino_root / ".agent").is_dir():
+        return destino_root
+    for parent in [motor_root, motor_root.parent]:
+        if (parent / ".agent").is_dir():
+            return parent
+    return motor_root
 
 
 def _try_motor_commit(
@@ -4792,6 +5000,7 @@ Action flags:
   --session-close                 Close the current session.
   --recover                       Recover session state.
   --archive                       Archive old notifications.
+  --resolve-launcher-roots        Print resolved repo_motor/destino/workspace roots.
 
 Control flags:
   --project-root <path>       Destination project root.
@@ -4901,6 +5110,10 @@ def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
         idx = sys.argv.index("--request-changes")
         if idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("--"):
             ticket_id = sys.argv[idx + 1]
+
+    # Check for --resolve-launcher-roots (WT-2026-232a)
+    if "--resolve-launcher-roots" in sys.argv:
+        return _handle_resolve_launcher_roots(json_output)
 
     # Check for --mark-ready
     if "--mark-ready" in sys.argv:
