@@ -1,4 +1,4 @@
-# 2026-06-05 - WT-2026-215 Gates Modelo B: git evidence resolves motor_root
+﻿# 2026-06-05 - WT-2026-215 Gates Modelo B: git evidence resolves motor_root
 
 ### Fixed
 - `bus/review_bridge.py`: introduced `_motor_root_or_raise()` as single seam
@@ -99,7 +99,7 @@ rotas tras el incidente WT-2026-205.
 - `bus/supervisor.py`: añadido como materializador principal de proyecciones operativas
   (`TURN.md`, `STATE.md`, `execution_log.md`) tras transiciones (+133 líneas). El supervisor
   pasa a ser el único writer de proyecciones en el camino normal.
-- `tests/test_wt_2026_211_write_path.py`: tests focales del write-path centralizado (nuevo).
+- `tests/test_ticket_projection_write_path.py`: tests focales del write-path centralizado (nuevo).
 
 **Architecture note — Write-path de proyecciones:**
 El controller queda como *emisor de hechos al bus*; el supervisor como *materializador de
@@ -114,7 +114,7 @@ cualquier proceso puede emitir `STATE_CHANGED` sin validación. Cerrar esa brech
   (revisa `BUILDER_RELAUNCH_ATTEMPTED` posterior al trigger antes de actuar), (3) dispara un
   tick real del supervisor: `bootstrap()` + `run_once()` + `_release_supervisor_lock()`.
   El bridge garantiza que exista el consumidor; el consumo real lo ejecuta el supervisor.
-- `tests/test_wt_2026_212_durable_changes.py`: tests focales del consumidor durable (nuevo).
+- `tests/test_durable_changes_requeue.py`: tests focales del consumidor durable (nuevo).
 
 ### Added (WT-2026-216 · commit `07991cd`)
 - `scripts/get_launcher_state.py`: helper Python que derive el estado canónico del launcher
@@ -122,7 +122,7 @@ cualquier proceso puede emitir `STATE_CHANGED` sin validación. Cerrar esa brech
   `{ticket_id, state, role, action, source}`. Requiere `--project-root`.
 - `scripts/launch_agent_terminals.ps1`: `Get-ActiveRole` intenta primero `get_launcher_state.py`;
   `TURN.md` queda como fallback explícito. `TURN.md` stale ya no impide el relanzamiento correcto.
-- `tests/test_wt_2026_216_launcher_bus_read.py`: tests focales del camino bus vs. fallback TURN stale.
+- `tests/test_launcher_state_from_bus.py`: tests focales del camino bus vs. fallback TURN stale.
 
 **Architecture note — Autoridad de lectura del launcher:**
 La decisión de qué agente lanzar pasa de *proyección documental* (`TURN.md`) a *estado derivado

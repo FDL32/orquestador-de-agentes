@@ -1,4 +1,4 @@
-# BUS_PROGRESS_AUDIT_2026-06-02
+﻿# BUS_PROGRESS_AUDIT_2026-06-02
 
 Tipo: Informe de progreso post-implantación (para auditoría externa)
 Baseline: [BUS_ARCHITECTURE_WT-2026-210.md](BUS_ARCHITECTURE_WT-2026-210.md)
@@ -83,7 +83,7 @@ El cambio más importante. Evidencia del diffstat:
 ```
 .agent/agent_controller.py   | 131 +++----------------- (−122 neto)
 bus/supervisor.py            | 133 +++++++++++++++++++++++ (+133)
-tests/test_wt_2026_211_write_path.py | 146 ++++++++++++++ (nuevo)
+tests/test_ticket_projection_write_path.py | 146 ++++++++++++++ (nuevo)
 ```
 
 La lógica de materialización de transiciones (`TURN.md`, `STATE.md`,
