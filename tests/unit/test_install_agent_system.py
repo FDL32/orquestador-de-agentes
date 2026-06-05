@@ -558,7 +558,7 @@ def test_copy_destination_bootstrap_creates_context_dir(tmp_path, capsys):
     project_agent = tmp_path / ".agent"
     project_agent.mkdir(parents=True)
 
-    copy_destination_bootstrap(project_agent, tmp_path)
+    copy_destination_bootstrap(project_agent)
     assert (project_agent / "context").exists()
     assert (project_agent / "context").is_dir()
 
@@ -568,7 +568,7 @@ def test_copy_destination_bootstrap_creates_config(tmp_path, capsys):
     project_agent = tmp_path / ".agent"
     project_agent.mkdir(parents=True)
 
-    copy_destination_bootstrap(project_agent, tmp_path)
+    copy_destination_bootstrap(project_agent)
     config_file = project_agent / "config" / "destination_context.json"
     assert config_file.exists()
     import json
@@ -588,7 +588,7 @@ def test_copy_destination_bootstrap_does_not_overwrite(tmp_path, capsys):
         json.dumps(existing), encoding="utf-8"
     )
 
-    copy_destination_bootstrap(project_agent, tmp_path)
+    copy_destination_bootstrap(project_agent)
     data = json.loads(
         (config_dir / "destination_context.json").read_text(encoding="utf-8")
     )
@@ -601,7 +601,7 @@ def test_copy_destination_bootstrap_dry_run(tmp_path, capsys):
     project_agent = tmp_path / ".agent"
     project_agent.mkdir(parents=True)
 
-    copy_destination_bootstrap(project_agent, tmp_path, dry_run=True)
+    copy_destination_bootstrap(project_agent, dry_run=True)
     assert not (project_agent / "context").exists()
     assert not (project_agent / "config" / "destination_context.json").exists()
     out = capsys.readouterr().out
@@ -613,11 +613,11 @@ def test_copy_destination_bootstrap_idempotent(tmp_path, capsys):
     project_agent = tmp_path / ".agent"
     project_agent.mkdir(parents=True)
 
-    copy_destination_bootstrap(project_agent, tmp_path)
+    copy_destination_bootstrap(project_agent)
     config_file = project_agent / "config" / "destination_context.json"
     content_first = config_file.read_text(encoding="utf-8")
 
-    copy_destination_bootstrap(project_agent, tmp_path)
+    copy_destination_bootstrap(project_agent)
     content_second = config_file.read_text(encoding="utf-8")
     assert content_first == content_second
 

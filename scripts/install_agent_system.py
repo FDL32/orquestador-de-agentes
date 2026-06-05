@@ -930,7 +930,6 @@ def copy_knowledge_docs(
 
 def copy_destination_bootstrap(
     project_agent: Path,
-    template_root: Path,
     dry_run: bool = False,
 ) -> None:
     """Provision destination context directory and config for bootstrap.
@@ -938,7 +937,7 @@ def copy_destination_bootstrap(
     Creates .agent/context/ and deposits destination_context.json with default
     configuration (only if not exists — never overwrites local customizations).
 
-    Before: project_agent (.agent/ dir) exists; template_root is the motor root.
+    Before: project_agent (.agent/ dir) exists.
     During: Creates .agent/context/ directory if absent. Writes
             destination_context.json with default max_bytes if the file does not
             already exist at .agent/config/destination_context.json.
@@ -1038,7 +1037,7 @@ def install_agent_system(
     sync_memory_rules(template_agent, project_agent, dry_run=dry_run)
 
     # Provision destination bootstrap context and config
-    copy_destination_bootstrap(project_agent, template_root, dry_run=dry_run)
+    copy_destination_bootstrap(project_agent, dry_run=dry_run)
 
     # Copy repomix.config.json to destination workspace root
     copy_repomix_config(template_root, destination_root, dry_run=dry_run)
@@ -1146,7 +1145,7 @@ def sync_agent_system(  # noqa: C901
     sync_memory_rules(template_agent, project_agent, dry_run=dry_run)
 
     # Provision destination bootstrap context and config
-    copy_destination_bootstrap(project_agent, template_root, dry_run=dry_run)
+    copy_destination_bootstrap(project_agent, dry_run=dry_run)
 
     # Copy repomix.config.json to destination workspace root (idempotent)
     copy_repomix_config(template_root, destination_root, dry_run=dry_run)

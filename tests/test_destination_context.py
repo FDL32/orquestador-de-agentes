@@ -363,5 +363,5 @@ def test_build_map_no_optional_files(tmp_path):
     _write_link(tmp_path)
     content = build_map(tmp_path, max_bytes=204800)
     # Should not crash, key sections present
-    assert "Identity" in content
-    assert "Operational" in content or "Operational" in content
+    assert "Identity & Topology" in content
+    assert "Operational State" in content
