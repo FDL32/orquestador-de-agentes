@@ -31,7 +31,7 @@ CONTEXT_DIR_REL = Path(".agent") / "context"
 LINK_REL = Path(".agent") / "config" / "motor_destination_link.json"
 DESTINATION_MAP_NAME = "destination_map.md"
 
-# Directories excluded from the filtered tree walk
+# Directory basenames excluded from the filtered tree walk (matched on entry.name)
 EXCLUDED_TREE_DIRS: frozenset[str] = frozenset(
     {
         ".git",
@@ -46,6 +46,14 @@ EXCLUDED_TREE_DIRS: frozenset[str] = frozenset(
         ".codex",
         ".claude-plugin",
         "graphify-out",
+    }
+)
+
+# Relative paths (posix, from project_root) excluded from the tree walk. These
+# need full-path matching because a bare basename would over-exclude (e.g. any
+# "context" dir) and because entry.name never contains a slash.
+EXCLUDED_TREE_RELPATHS: frozenset[str] = frozenset(
+    {
         ".agent/runtime",
         ".agent/context",
         ".agent/_archive",
@@ -167,6 +175,8 @@ def build_tree(project_root: Path, max_depth: int = 4) -> str:
 
         for entry in entries:
             if entry.name in EXCLUDED_TREE_DIRS:
+                continue
+            if entry.relative_to(project_root).as_posix() in EXCLUDED_TREE_RELPATHS:
                 continue
             # Skip hidden entries except .agent
             if entry.name.startswith(".") and entry.name != ".agent":
