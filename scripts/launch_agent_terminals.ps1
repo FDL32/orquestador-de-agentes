@@ -1053,10 +1053,11 @@ function Get-OpenCodeBuilderPrompt {
     # Incluye ticket_id real, recordatorio de Files Likely Touched y cierre obligatorio
     $prompt = @"
 Actua como BUILDER para $TicketId.
-Lee .agent/collaboration/TURN.md, .agent/collaboration/work_plan.md, .agent/collaboration/execution_log.md, .agent/collaboration/STATE.md y PROJECT.md.
-Implementa solo $TicketId siguiendo .agent/collaboration/work_plan.md y los Files Likely Touched.
+Los artefactos canonicos del repo_destino se adjuntan a este prompt via -f. Usalos como estado canonico; no llames Read sobre .agent/collaboration/*, .agent/config/*, .agent/agent_controller.py ni PROJECT.md del repo_destino.
+Si el ticket declara Builder Access Surface restrictiva, resuelve los Files Likely Touched contra el repo indicado por el plan (por ejemplo repo_motor), no contra AGENT_PROJECT_ROOT.
+Implementa solo $TicketId siguiendo el work_plan adjunto y los Files Likely Touched.
 No cambies el alcance. No reescribas el plan.
-Registra evidencia clara en .agent/collaboration/execution_log.md.
+Si la Builder Access Surface prohibe escribir en repo_destino, no registres en .agent/collaboration/execution_log.md; imprime la evidencia en stdout para que Manager la registre.
 Mantente en el runtime bus-first y evita editar .agent/collaboration/TURN.md, .agent/collaboration/STATE.md o .agent/collaboration/execution_log.md a mano.
 Ejecuta ruff y pytest-safe sobre lo tocado.
 

@@ -25,7 +25,8 @@ The hard scope gate in `--mark-ready` will enforce this whitelist mechanically.
 Close only via `python .agent/agent_controller.py --mark-ready --json --force`. That command emits `BUILDER_EXIT` automatically. Never call any other command to emit BUILDER_EXIT manually.
 
 Operating rules:
-- Read `.agent/collaboration/TURN.md`, `.agent/collaboration/work_plan.md`, `.agent/collaboration/execution_log.md`, `.agent/collaboration/STATE.md`, and `PROJECT.md` before editing.
+- Read `.agent/collaboration/TURN.md`, `.agent/collaboration/work_plan.md`, `.agent/collaboration/execution_log.md`, `.agent/collaboration/STATE.md`, and `PROJECT.md` before editing only when those paths are inside the active repo and allowed by the ticket.
+- If the launcher injected canonical files into the prompt or the ticket declares a restricted `Builder Access Surface`, treat the injected text as the canonical state. Do not call Read on repo_destino paths such as `.agent/collaboration/*`, `.agent/config/*`, `.agent/agent_controller.py`, or `PROJECT.md`.
 - Before making changes, compare your intended file list against `Files Likely Touched`.
 - If you need a file that is not whitelisted, stop immediately and report:
   - the file you need,
