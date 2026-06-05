@@ -716,19 +716,38 @@ function Invoke-PreflightReconcile {
             return $null
         }
 
-        Write-Host "[preflight-reconcile] Decision=$($decision.decision) prev=$($decision.prev_ticket_id) state=$($decision.prev_ticket_state)"
+        $decisionValue = $null
+        $prevTicketId = $null
+        $prevTicketState = $null
+        if ($decision.PSObject.Properties.Name -contains 'decision') { $decisionValue = $decision.decision }
+        if ($decision.PSObject.Properties.Name -contains 'prev_ticket_id') { $prevTicketId = $decision.prev_ticket_id }
+        if ($decision.PSObject.Properties.Name -contains 'prev_ticket_state') { $prevTicketState = $decision.prev_ticket_state }
 
-        if ($decision.decision -eq 'RECONCILE') {
+        if ([string]::IsNullOrWhiteSpace($decisionValue)) {
+            Write-Warning "[preflight-reconcile] Decision JSON sin campo 'decision'; se omite la comprobacion."
+            return $null
+        }
+
+        Write-Host "[preflight-reconcile] Decision=$decisionValue prev=$prevTicketId state=$prevTicketState"
+
+        if ($decisionValue -eq 'RECONCILE') {
             $reconcilerPath = Join-Path $script:_MotorCodeRoot 'scripts\reconcile_ticket.py'
-            Write-Host "[preflight-reconcile] El ticket anterior $($decision.prev_ticket_id) no es terminal. Ejecutando reconciliacion..."
-            & $venvPython $reconcilerPath --project-root $ProjectRoot --ticket $decision.prev_ticket_id --reason 'preflight forced close' --json 2>&1
-            if ($LASTEXITCODE -ne 0) {
-                throw "La reconciliacion fallo para $($decision.prev_ticket_id). Vease la salida del reconciler arriba."
+            if ([string]::IsNullOrWhiteSpace($prevTicketId)) {
+                throw "Preflight reconcile RECONCILE sin prev_ticket_id; no se puede reconciliar de forma segura."
             }
-            Write-Host "[preflight-reconcile] Reconciliacion completada para $($decision.prev_ticket_id)"
-        } elseif ($decision.decision -eq 'CLEANUP_LOCAL') {
+            Write-Host "[preflight-reconcile] El ticket anterior $prevTicketId no es terminal. Ejecutando reconciliacion..."
+            $reconcileOutput = & $venvPython $reconcilerPath --project-root $ProjectRoot --ticket $prevTicketId --reason 'preflight forced close' --json 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                $reconcileText = ($reconcileOutput | Out-String).Trim()
+                if (-not [string]::IsNullOrWhiteSpace($reconcileText)) {
+                    Write-Host $reconcileText
+                }
+                throw "La reconciliacion fallo para $prevTicketId. Vease la salida del reconciler arriba."
+            }
+            Write-Host "[preflight-reconcile] Reconciliacion completada para $prevTicketId"
+        } elseif ($decisionValue -eq 'CLEANUP_LOCAL') {
             Write-Host "[preflight-reconcile] Ticket anterior ya terminal; solo limpieza local."
-        } elseif ($decision.decision -eq 'ALIGNED') {
+        } elseif ($decisionValue -eq 'ALIGNED') {
             Write-Host "[preflight-reconcile] Sin drift; procediendo normalmente."
         }
         return $decision
@@ -737,7 +756,7 @@ function Invoke-PreflightReconcile {
         $reason = "El bus es ilegible o contradictorio"
         try {
             $abortDecision = $outputText | ConvertFrom-Json
-            if ($abortDecision.reason) { $reason = $abortDecision.reason }
+            if ($abortDecision.PSObject.Properties.Name -contains 'reason' -and $abortDecision.reason) { $reason = $abortDecision.reason }
         } catch {}
         throw "Preflight reconcile ABORT: $reason"
     } else {
@@ -1254,7 +1273,11 @@ if (-not $ResumeBuilder) {
     # Repair-StartupSupervisorState delete the stale state evidence.
     $preAlignment = Get-StartupAlignment -ProjectRoot $ProjectRoot
     $preflightDecision = Invoke-PreflightReconcile -ProjectRoot $ProjectRoot -Alignment $preAlignment
-    if ($null -ne $preflightDecision -and @('RECONCILE', 'CLEANUP_LOCAL') -contains $preflightDecision.decision) {
+    $preflightDecisionValue = $null
+    if ($null -ne $preflightDecision -and $preflightDecision.PSObject.Properties.Name -contains 'decision') {
+        $preflightDecisionValue = $preflightDecision.decision
+    }
+    if (@('RECONCILE', 'CLEANUP_LOCAL') -contains $preflightDecisionValue) {
         Invoke-PostPreflightProjectionSync -ProjectRoot $ProjectRoot
     }
 
