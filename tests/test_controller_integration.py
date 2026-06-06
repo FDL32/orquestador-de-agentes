@@ -96,6 +96,12 @@ def _plan(plan_id: str, status: str) -> str:
         f"- **Estado:** {status}\n"
         "- **Prioridad:** HIGH\n"
         "- **deliverable_type:** code\n"
+        "\n## Non-goals\n"
+        "- No cambiar dependencias.\n"
+        "- No modificar interfaces publicas.\n"
+        "- No ampliar el alcance del fixture.\n"
+        "\n## Decision Arquitectonica\n"
+        "El fixture representa un ticket canonico minimo para validar el controlador.\n"
     )
 
 
@@ -110,6 +116,18 @@ def _log(status: str) -> str:
 
 def _notif() -> str:
     return "# Notifications\n\nSin notificaciones.\n"
+
+
+def _audit() -> str:
+    return (
+        "# Audit\n\n"
+        "## TP Check\n"
+        "TP-01: objetivo verificable.\n"
+        "TP-02: alcance acotado.\n"
+        "TP-03: criterios binarios.\n"
+        "TP-04: riesgos identificados.\n"
+        "TP-05: gates definidos.\n"
+    )
 
 
 @pytest.mark.integration
@@ -155,6 +173,7 @@ def test_validate_returns_empty_arrays(sandbox):
     )
     (collab_dir / "execution_log.md").write_text(_log("IN_PROGRESS"), encoding="utf-8")
     (collab_dir / "notifications.md").write_text(_notif(), encoding="utf-8")
+    (collab_dir / "AUDIT_WT-TEST-001.md").write_text(_audit(), encoding="utf-8")
 
     event_bus = EventBus(agent_dir / "runtime" / "events")
     event_bus.emit(
