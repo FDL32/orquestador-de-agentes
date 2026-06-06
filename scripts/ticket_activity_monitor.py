@@ -54,10 +54,23 @@ def _active_ticket_from_work_plan() -> str | None:
     if not work_plan_path.exists():
         return None
     content = work_plan_path.read_text(encoding="utf-8")
+    return _active_ticket_from_work_plan_content(content)
+
+
+def _active_ticket_from_work_plan_content(content: str) -> str | None:
     for line in content.splitlines():
+        # Match canonical work_plan fields: "- **ID:** WT-YYYY-NNN[a]"
+        canonical = re.search(
+            r"\*\*(?:Plan\s+ID|ID):\*\*\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+)",
+            line,
+            re.IGNORECASE,
+        )
+        if canonical:
+            return canonical.group(1).strip().lstrip("*").rstrip("*").strip()
+
         # Match "- **Plan activo:** WP-YYYY-XXX" or "- **Ticket activo:** WT-YYYY-XXX"
         match = re.search(
-            r"(?:Plan|Ticket)\s+activo.*?:\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+)",
+            r"(?:Plan|Ticket)\s+activo.*?:\*{0,2}\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+)",
             line,
             re.IGNORECASE,
         )
