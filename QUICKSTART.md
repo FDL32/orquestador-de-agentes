@@ -6,15 +6,16 @@ Use this file to start the template in a fresh project, relaunch the terminal-dr
 > **Memoria existente:** antes de empezar, revisa `.agent/runtime/memory/MEMORY.md` (indice corto) y `.agent/runtime/memory/observations.jsonl` (historial completo). Si la memoria esta vacia o ausente, se construye al cerrar el primer ciclo.
 
 Namespace de tickets:
-- Motor: `WP-YYYY-NNN`
-- Destino: `XXX-YYYY-NNN` con `Ticket prefix: XXX` en el `PROJECT.md` local (el instalador lo escribe con `--install --prefix XXX`)
+- Cada `repo_destino` declara su prefijo en `PROJECT.md` como `Ticket prefix: XXX`.
+- El dogfooding actual del motor usa `WT-YYYY-NNN[a]`.
+- `WP-YYYY-NNN` aparece en historia legacy; no lo uses para tickets nuevos salvo repos antiguos que todavia declaren ese prefijo.
 
 ## Motor vs Workspace
 
 The motor is the code in `orquestador_de_agentes/`. It is code-only and does not own the active ticket state.
 
 The active workspace is always the `.agent/` of the project you are operating on:
-- `z_scripts/.agent/` for the `z_scripts` project
+- `z_scripts/.agent/` as an author reference workspace
 - `<destino>/.agent/` for any destination project
 
 Inside each workspace, `collaboration/` is the live operational surface for that project:
@@ -34,8 +35,8 @@ Rule of separation:
 Common switching pattern:
 
 ```powershell
-$env:AGENT_PROJECT_ROOT = "C:\Users\fdl\Proyectos_Python\z_scripts"
-python orquestador_de_agentes\.agent\agent_controller.py --validate --json --force
+$env:AGENT_PROJECT_ROOT = "C:\ruta\a\repo_destino"
+python C:\ruta\a\orquestador_de_agentes\.agent\agent_controller.py --validate --json --project-root $env:AGENT_PROJECT_ROOT
 ```
 
 To operate on another destination, replace `AGENT_PROJECT_ROOT` with that project's root. The collaboration files under that project's `.agent/` stay local to that project.

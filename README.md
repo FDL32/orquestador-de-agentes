@@ -8,7 +8,7 @@ Central motor for multi-agent orchestration. Operational code lives once here; d
 - It does not own active ticket state for any project.
 - Active collaboration state always lives in the `.agent/` of the project being operated on.
 - `orquestador_de_agentes/.agent/` is the motor development workspace when working on the motor itself.
-- `z_scripts/.agent/` is the canonical workspace for the `z_scripts` project.
+- `z_scripts/.agent/` is an author reference workspace for the `z_scripts` project.
 - Any other destination project gets its own `<project>/.agent/` with the same collaboration structure.
 - Use `AGENT_PROJECT_ROOT` or the workspace `motor_destination_link.json` to select the current workspace.
 - Do not mix motor-side collaboration history with project-side collaboration history.
@@ -26,7 +26,7 @@ The motor now follows **CEM: Contract, Evidence, Memory** as its lightweight eng
 - **Memory:** turn recurring lessons into guards, hooks, rules or explicit debt with an exit criterion.
 - **Proportionality:** scale rigor to blast radius; documentation changes and bus/supervisor changes do not need the same ceremony.
 
-The expanded v0 rule lives in `.agent/rules/common/sustainable_engineering.md`. `WT-2026-221a` is the first planned field test: relaunch with verified root/topology and an evidence-linked Builder handoff capsule.
+The expanded v0 rule lives in `.agent/rules/common/sustainable_engineering.md`. Current field work has moved the loop toward bus-first state, motor-aware gates, and portable closeout checks.
 
 ### Three-agent loop
 
@@ -53,8 +53,8 @@ This is a **reference** setup, not a constraint. Swap any role for another backe
 
 - **Version**: `v9.15.0`
 - **Status**: Stable. Canonical close complete; suite green and CEM v0 adopted.
-- **Last work**: Bus reconstruction, suite stabilization (`2071 passed, 22 skipped, 0 failed`), encoding guard hardening, and CEM v0 sustainable engineering philosophy.
-- **Tests**: 2071 passed, 22 skipped, 0 failed. Ruff clean. pip-audit clean.
+- **Last work**: Bus reconstruction, motor-aware evidence gates, Builder checkpoint hardening, and portable session closeout checks.
+- **Tests**: latest full-suite baseline recorded in collaboration history: 2231 passed, 22 skipped. Ruff clean.
 
 ### What changed since v9.9.0
 
@@ -94,7 +94,7 @@ The motor lives **once** in this repo. A destination project:
 5. **Chooses deliverable type per ticket**: `deliverable_type: code | documentation | research | analysis | mixed` in `work_plan.md` switches the gate dispatch and Manager review rubric.
 6. **Flips profile automatically**: `agents.json.active_profile` goes from `engine-dev` (motor repo) to `host-project` (destination) during install/sync.
 7. **Receives motor-destination link file**: `.agent/config/motor_destination_link.json` with schema (motor_root, destination_root, motor_version, destination_id, created_at, manifest_version) for portable traceability (WP-2026-123).
-8. **Uses a local ticket namespace in the destination**: the destination `PROJECT.md` declares `Ticket prefix: XXX`, and tickets in that repo use `XXX-YYYY-NNN`. The motor repo keeps `WP-YYYY-NNN`. The installer can write this prefix with `--install --prefix XXX` or `--sync --prefix XXX`.
+8. **Uses a local ticket namespace in the destination**: the destination `PROJECT.md` declares `Ticket prefix: XXX`, and tickets in that repo use `XXX-YYYY-NNN`. The dogfooding destination for this motor currently uses `WT-YYYY-NNN[a]`; `WP-YYYY-NNN` remains historical in older motor records. The installer can write the prefix with `--install --prefix XXX` or `--sync --prefix XXX`.
 
 ## Version contract
 
