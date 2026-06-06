@@ -1266,6 +1266,58 @@ class TestHandleManagerApproveIntegration:
         assert not mgr.exists(), "manager_bridge_state.json must be deleted on approve"
         assert not sup.exists(), "supervisor_state.json must be deleted on approve"
 
+    def test_historical_close_does_not_block_approval_after_reopen(
+        self, monkeypatch, tmp_path
+    ):
+        """A reopened READY_FOR_REVIEW ticket must not return already_completed."""
+        from bus.event_bus import EventBus
+
+        self._setup(
+            monkeypatch,
+            tmp_path,
+            "feat(WT-2026-188): validate canonical closeout commit hygiene",
+        )
+        bus = EventBus(runtime_dir=tmp_path / "events")
+        bus.emit(
+            "STATE_CHANGED",
+            ticket_id=self._TICKET,
+            actor="SUPERVISOR",
+            payload={"from_state": "READY_TO_CLOSE", "to_state": "COMPLETED"},
+        )
+        bus.emit(
+            "SUPERVISOR_CLOSED",
+            ticket_id=self._TICKET,
+            actor="SUPERVISOR",
+            payload={"reason": "historical close"},
+        )
+        bus.emit(
+            "STATE_CHANGED",
+            ticket_id=self._TICKET,
+            actor="SUPERVISOR",
+            payload={"from_state": "COMPLETED", "to_state": "IN_PROGRESS"},
+            allow_reentry=True,
+        )
+        bus.emit(
+            "STATE_CHANGED",
+            ticket_id=self._TICKET,
+            actor="SUPERVISOR",
+            payload={"from_state": "IN_PROGRESS", "to_state": "READY_FOR_REVIEW"},
+        )
+
+        cascade_calls = []
+        monkeypatch.setattr(agent_controller, "BUS_AVAILABLE", True)
+        monkeypatch.setattr(agent_controller, "event_bus", bus)
+        monkeypatch.setattr(
+            agent_controller,
+            "_emit_manager_approve_cascade",
+            lambda active_bus, ticket_id: cascade_calls.append((active_bus, ticket_id)),
+        )
+
+        rc = agent_controller._handle_manager_approve(self._TICKET, False, True)
+
+        assert rc == 0
+        assert cascade_calls == [(bus, self._TICKET)]
+
 
 class TestHandleReopenTerminalTicket:
     """WT-2026-233a: explicit reopen path for terminal tickets."""

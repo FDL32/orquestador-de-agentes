@@ -4209,13 +4209,22 @@ def _handle_manager_approve(  # noqa: C901 - flag handler intentionally branches
             )
         return 1
 
-    # Check idempotency per-ticket using bus events (not just global markdown state)
-    # If there's already a SUPERVISOR_CLOSED event for this ticket, it's already completed
+    # Check idempotency per-ticket using the current bus-derived state. A historical
+    # SUPERVISOR_CLOSED is not sufficient after an explicit terminal reopen.
     if BUS_AVAILABLE and event_bus:
+        from bus.state_machine import StateMachine, TicketState
+
         supervisor_closed_events = event_bus.read_events(
             ticket_id=ticket_id, event_type="SUPERVISOR_CLOSED"
         )
-        if supervisor_closed_events:
+        ticket_events = event_bus.read_events(ticket_id=ticket_id)
+        if supervisor_closed_events and ticket_events:
+            bus_state = StateMachine.derive_state_from_events(
+                [event.to_dict() for event in ticket_events]
+            )
+        else:
+            bus_state = None
+        if supervisor_closed_events and bus_state == TicketState.COMPLETED:
             # Ticket already closed in bus - idempotent return
             if json_output:
                 print(
