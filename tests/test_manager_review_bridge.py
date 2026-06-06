@@ -908,29 +908,39 @@ class TestOpencodeReviewRoute:
     """Tests for OpenCode backend review route."""
 
     def test_parse_opencode_decision_approve(self, tmp_path):
-        """Test parser detects DECISION: APPROVE."""
+        """text_regex already degraded: DECISION: APPROVE via text_regex returns INSPECT.
+
+        WT-2026-235a: text_regex is diagnostic only; APPROVE requires
+        json_final_answer source.
+        """
         from bus.review_bridge import EventBus, ReviewBridge
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+        bridge._supports_json_format = False  # Force text_regex path for this test
 
         stdout = "Review complete. All criteria met.\nDECISION: APPROVE"
         decision, method = bridge._parse_opencode_decision(stdout)
-        assert decision == ReviewDecision.APPROVE
+        assert decision == ReviewDecision.INSPECT
         assert method == "text_regex"
 
     def test_parse_opencode_decision_changes(self, tmp_path):
-        """Test parser detects DECISION: CHANGES."""
+        """text_regex already degraded: DECISION: CHANGES via text_regex returns INSPECT.
+
+        WT-2026-235a: text_regex is diagnostic only; CHANGES requires
+        json_final_answer source.
+        """
         from bus.review_bridge import EventBus, ReviewBridge
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+        bridge._supports_json_format = False  # Force text_regex path
 
         stdout = "Found issues:\n- Missing tests\n\nDECISION: CHANGES"
         decision, method = bridge._parse_opencode_decision(stdout)
-        assert decision == ReviewDecision.CHANGES
+        assert decision == ReviewDecision.INSPECT
         assert method == "text_regex"
 
     def test_parse_opencode_decision_no_decision_fallback_inspect(self, tmp_path):
@@ -940,6 +950,7 @@ class TestOpencodeReviewRoute:
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+        bridge._supports_json_format = False  # Force text_regex path
 
         stdout = "Review complete but output lacks decision format."
         decision, method = bridge._parse_opencode_decision(stdout)
@@ -953,6 +964,7 @@ class TestOpencodeReviewRoute:
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+        bridge._supports_json_format = False  # Force text_regex path
 
         stdout = "Cannot verify acceptance criteria remotely.\nDECISION: INSPECT"
         decision, method = bridge._parse_opencode_decision(stdout)
@@ -960,16 +972,17 @@ class TestOpencodeReviewRoute:
         assert method == "explicit_inspect"
 
     def test_parse_opencode_decision_lowercase(self, tmp_path):
-        """Test parser handles lowercase decision patterns."""
+        """text_regex already degraded: lowercase 'decision: approve' returns INSPECT."""
         from bus.review_bridge import EventBus, ReviewBridge
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+        bridge._supports_json_format = False  # Force text_regex path
 
         stdout = "decision: approve"
         decision, method = bridge._parse_opencode_decision(stdout)
-        assert decision == ReviewDecision.APPROVE
+        assert decision == ReviewDecision.INSPECT
         assert method == "text_regex"
 
     def test_get_manager_backend_default_opencode(self, tmp_path):
@@ -986,6 +999,8 @@ class TestOpencodeReviewRoute:
 
     def test_run_manager_review_cycle_dispatches_opencode(self, monkeypatch, tmp_path):
         """Test review cycle dispatches to opencode route when backend is opencode."""
+        import json as _json
+
         from bus.review_bridge import EventBus, ReviewBridge
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
@@ -1005,11 +1020,17 @@ class TestOpencodeReviewRoute:
 
         captured = {}
 
+        ndjson_approve = _json.dumps({
+            "type": "text",
+            "phase": "final_answer",
+            "part": {"type": "text", "text": "All criteria met.\nDECISION: APPROVE"},
+        })
+
         def fake_opencode_review(
             *, ticket_id, prompt="", attempt=1, manager_executable=None, timeout_seconds
         ):
             captured["ticket_id"] = ticket_id
-            return "DECISION: APPROVE", "", 0
+            return ndjson_approve, "", 0
 
         monkeypatch.setattr(bridge, "_run_opencode_review", fake_opencode_review)
 
@@ -1231,6 +1252,235 @@ class TestOpencodeReviewRoute:
         assert len(cmd_string) < 6000
         # Verify that no -f flags are passed
         assert "-f" not in captured_cmd
+
+    # =========================================================================
+    # WT-2026-235a: Procedencia autoritativa y validacion de CHANGES
+    # =========================================================================
+
+    def test_text_regex_template_decisions_are_inspect(self, tmp_path):
+        """Transcript with template DECISION markers but no verdict → INSPECT.
+
+        The review packet template contains literal ``DECISION: APPROVE`` and
+        ``DECISION: CHANGES`` in the INSTRUCTIONS block.  text_regex must not
+        mistake these for a real verdict.
+        """
+        from bus.review_bridge import EventBus, ReviewBridge
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+        bridge._supports_json_format = False  # Force text_regex path
+
+        stdout = (
+            "I have reviewed the implementation.\n\n"
+            "--- INSTRUCTIONS ---\n"
+            "If you APPROVE, end with EXACTLY one line:\n"
+            "DECISION: APPROVE\n\n"
+            "If you request changes:\n"
+            "## SUMMARY\n..."
+            "## BLOCKERS\n..."
+            "DECISION: CHANGES\n"
+        )
+        decision, method = bridge._parse_opencode_decision(stdout)
+        assert decision == ReviewDecision.INSPECT
+        assert method == "text_regex"
+
+    def test_tool_calls_without_final_answer_is_inspect(self, tmp_path, monkeypatch):
+        """NDJSON with text events but no final_answer phase → INSPECT.
+
+        Simulates an OpenCode stream that ends with ``step_finish`` /
+        ``tool-calls`` and has no ``phase=final_answer`` event.  ``json_last_text``
+        should degrade strong decisions.
+        """
+        import json
+
+        from bus.review_bridge import EventBus, ReviewBridge, ReviewDecision
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+        monkeypatch.setattr(bridge, "_supports_json_format", True)
+
+        # NDJSON with text events but none marked final_answer
+        lines = [
+            json.dumps({"type": "text", "phase": "", "part": {"type": "text", "text": "I have reviewed the code."}}),
+            json.dumps({"type": "text", "phase": "", "part": {"type": "text", "text": "## SUMMARY\nFix needed\n## BLOCKERS\n- Bug\n## SUGGESTIONS\n- Fix\nDECISION: CHANGES"}}),
+            json.dumps({"type": "step_finish", "phase": ""}),
+        ]
+        stdout = "\n".join(lines)
+
+        decision, method = bridge._parse_opencode_decision(stdout)
+        # json_last_text found CHANGES but it is not authoritative → INSPECT
+        assert decision == ReviewDecision.INSPECT
+        assert method == "json_last_text"
+
+    def test_json_final_answer_approve_is_authoritative(self, tmp_path, monkeypatch):
+        """json_final_answer with APPROVE still produces APPROVE."""
+        import json
+
+        from bus.review_bridge import EventBus, ReviewBridge, ReviewDecision
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+        monkeypatch.setattr(bridge, "_supports_json_format", True)
+
+        stdout = json.dumps({
+            "type": "text",
+            "phase": "final_answer",
+            "part": {"type": "text", "text": "All criteria met.\nDECISION: APPROVE"},
+        })
+
+        decision, method = bridge._parse_opencode_decision(stdout)
+        assert decision == ReviewDecision.APPROVE
+        assert method == "json_final_answer"
+
+    def test_structured_changes_preserves_valid_changes(self, monkeypatch, tmp_path):
+        """Valid CHANGES with full structure and non-empty blockers → CHANGES."""
+        bridge, event_bus, legacy_manager_exe = _make_bridge(tmp_path)
+        supervisor = DummySupervisor()
+
+        call_count = {"n": 0}
+
+        def fake_run(cmd, **kwargs):
+            nonlocal call_count
+            if (
+                isinstance(cmd, list)
+                and cmd
+                and Path(str(cmd[0])).name.lower() in ("git", "git.exe")
+            ):
+                return __import__("subprocess").CompletedProcess(
+                    cmd, 0, stdout="", stderr=""
+                )
+            call_count["n"] += 1
+            return __import__("subprocess").CompletedProcess(
+                cmd,
+                0,
+                stdout=(
+                    "## SUMMARY\nNeeds coverage.\n"
+                    "## BLOCKERS\n- tests/test_a.py: missing edge case\n"
+                    "## SUGGESTIONS\n- Add test for negative input\n"
+                    "DECISION: CHANGES"
+                ),
+                stderr="",
+            )
+
+        monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
+        monkeypatch.setattr(
+            bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW"
+        )
+        monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "legacy_manager")
+
+        result = bridge.run_manager_review_cycle(
+            ticket_id="WP-2026-025",
+            supervisor=supervisor,
+            manager_executable=legacy_manager_exe,
+            timeout_seconds=5,
+        )
+
+        assert result.decision == ReviewDecision.CHANGES
+        # Check the REVIEW_DECISION payload preserves parse_method
+        events = event_bus.read_events(ticket_id="WP-2026-025")
+        rd_events = [e for e in events if e.event_type == "REVIEW_DECISION"]
+        assert len(rd_events) > 0
+        assert rd_events[-1].payload.get("decision") == "changes"
+        assert "parse_method" in rd_events[-1].payload
+
+    def test_changes_without_blockers_degrades_to_inspect(self, monkeypatch, tmp_path):
+        """CHANGES without ## BLOCKERS section → INSPECT + failure_reason."""
+        bridge, event_bus, legacy_manager_exe = _make_bridge(tmp_path)
+        supervisor = DummySupervisor()
+
+        def fake_run(cmd, **kwargs):
+            if (
+                isinstance(cmd, list)
+                and cmd
+                and Path(str(cmd[0])).name.lower() in ("git", "git.exe")
+            ):
+                return __import__("subprocess").CompletedProcess(
+                    cmd, 0, stdout="", stderr=""
+                )
+            return __import__("subprocess").CompletedProcess(
+                cmd,
+                0,
+                stdout=(
+                    "## SUMMARY\nFix needed.\n"
+                    "## SUGGESTIONS\n- Improve\n"
+                    "DECISION: CHANGES"
+                ),
+                stderr="",
+            )
+
+        monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
+        monkeypatch.setattr(
+            bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW"
+        )
+        monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "legacy_manager")
+
+        result = bridge.run_manager_review_cycle(
+            ticket_id="WP-2026-025",
+            supervisor=supervisor,
+            manager_executable=legacy_manager_exe,
+            timeout_seconds=5,
+        )
+
+        assert result.decision == ReviewDecision.INSPECT
+
+        events = event_bus.read_events(ticket_id="WP-2026-025")
+        rd_events = [e for e in events if e.event_type == "REVIEW_DECISION"]
+        assert len(rd_events) > 0
+        payload = rd_events[-1].payload or {}
+        assert payload.get("decision") == "inspect"
+        assert payload.get("failure_reason") == "changes_structure_invalid"
+        assert "BLOCKERS" in payload.get("missing_sections", [])
+
+    def test_changes_with_empty_blockers_degrades_to_inspect(self, monkeypatch, tmp_path):
+        """CHANGES with empty BLOCKERS content → INSPECT + failure_reason."""
+        bridge, event_bus, legacy_manager_exe = _make_bridge(tmp_path)
+        supervisor = DummySupervisor()
+
+        def fake_run(cmd, **kwargs):
+            if (
+                isinstance(cmd, list)
+                and cmd
+                and Path(str(cmd[0])).name.lower() in ("git", "git.exe")
+            ):
+                return __import__("subprocess").CompletedProcess(
+                    cmd, 0, stdout="", stderr=""
+                )
+            return __import__("subprocess").CompletedProcess(
+                cmd,
+                0,
+                stdout=(
+                    "## SUMMARY\nFix needed.\n"
+                    "## BLOCKERS\n\n"
+                    "## SUGGESTIONS\n- Improve\n"
+                    "DECISION: CHANGES"
+                ),
+                stderr="",
+            )
+
+        monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
+        monkeypatch.setattr(
+            bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW"
+        )
+        monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "legacy_manager")
+
+        result = bridge.run_manager_review_cycle(
+            ticket_id="WP-2026-025",
+            supervisor=supervisor,
+            manager_executable=legacy_manager_exe,
+            timeout_seconds=5,
+        )
+
+        assert result.decision == ReviewDecision.INSPECT
+
+        events = event_bus.read_events(ticket_id="WP-2026-025")
+        rd_events = [e for e in events if e.event_type == "REVIEW_DECISION"]
+        assert len(rd_events) > 0
+        payload = rd_events[-1].payload or {}
+        assert payload.get("decision") == "inspect"
+        assert payload.get("failure_reason") == "changes_structure_invalid"
 
 
 class TestReviewPacketTransport:
@@ -1509,11 +1759,22 @@ class TestBridgeHandshakeWithoutSnapshots:
         # Mock the review execution to capture that it was called
         captured = {}
 
+        import json as _json
+
+        # NDJSON that both parsers can consume: top-level type=text for
+        # _extract_decision_from_single_line and part.type=text for
+        # _extract_json_stream_text.
+        ndjson_approve = _json.dumps({
+            "type": "text",
+            "phase": "final_answer",
+            "part": {"type": "text", "text": "All criteria met.\nDECISION: APPROVE"},
+        })
+
         def fake_opencode_review(
             *, ticket_id, prompt, attempt=1, manager_executable=None, timeout_seconds
         ):
             captured["prompt_includes_ticket"] = "WP-2026-102" in prompt
-            return "DECISION: APPROVE", "", 0
+            return ndjson_approve, "", 0
 
         monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
         monkeypatch.setattr(bridge, "_run_opencode_review", fake_opencode_review)
@@ -1932,6 +2193,8 @@ class TestHumanGateEscalation:
         CHANGES). After 5 bus-recorded CHANGES the human_review_report.md
         is generated.
         """
+        import json as _json
+
         import bus.review_bridge as rb
         from bus.review_bridge import EventBus, ReviewBridge
 
@@ -1959,14 +2222,18 @@ class TestHumanGateEscalation:
 
         def fake_run(**kw):
             call_count["n"] += 1
-            # Vary per call so the bus anti-duplicate guard does not block
-            # later cycles (production reviews always differ).
-            return (
-                f"## SUMMARY\nIssues remain (cycle {call_count['n']}).\n"
-                "## BLOCKERS\n- Issue\n## SUGGESTIONS\n- Fix\nDECISION: CHANGES",
-                "",
-                0,
-            )
+            ndjson_changes = _json.dumps({
+                "type": "text",
+                "phase": "final_answer",
+                "part": {
+                    "type": "text",
+                    "text": (
+                        f"## SUMMARY\nIssues remain (cycle {call_count['n']}).\n"
+                        "## BLOCKERS\n- Issue\n## SUGGESTIONS\n- Fix\nDECISION: CHANGES"
+                    )
+                },
+            })
+            return ndjson_changes, "", 0
 
         monkeypatch.setattr(bridge, "_run_opencode_review", fake_run)
         # Stub the escalation authority (agent_controller --request-changes).
@@ -2018,6 +2285,8 @@ class TestHumanGateEscalation:
         One review per cycle; the 3rd cycle approves, so the ticket reaches
         READY_TO_CLOSE without escalating.
         """
+        import json as _json
+
         import bus.review_bridge as rb
         from bus.review_bridge import EventBus, ReviewBridge
 
@@ -2053,13 +2322,24 @@ class TestHumanGateEscalation:
         def fake_run(**kw):
             call_count["n"] += 1
             if call_count["n"] < 3:
-                return (
-                    f"## SUMMARY\nIssues (cycle {call_count['n']}).\n"
-                    "## BLOCKERS\n- X\n## SUGGESTIONS\n- Y\nDECISION: CHANGES",
-                    "",
-                    0,
-                )
-            return ("DECISION: APPROVE", "", 0)
+                ndjson_changes = _json.dumps({
+                    "type": "text",
+                    "phase": "final_answer",
+                    "part": {
+                        "type": "text",
+                        "text": (
+                            f"## SUMMARY\nIssues (cycle {call_count['n']}).\n"
+                            "## BLOCKERS\n- X\n## SUGGESTIONS\n- Y\nDECISION: CHANGES"
+                        )
+                    },
+                })
+                return ndjson_changes, "", 0
+            ndjson_approve = _json.dumps({
+                "type": "text",
+                "phase": "final_answer",
+                "part": {"type": "text", "text": "OK.\nDECISION: APPROVE"},
+            })
+            return ndjson_approve, "", 0
 
         monkeypatch.setattr(bridge, "_run_opencode_review", fake_run)
 
@@ -3498,6 +3778,8 @@ class TestWT2026204:
     # y no reparsea output crudo
     def test_review_decision_payload_contains_blockers(self, monkeypatch, tmp_path):
         """REVIEW_DECISION event payload includes blockers from _parse_changes_structure."""
+        import json as _json
+
         from bus.review_bridge import EventBus, ReviewBridge
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
@@ -3508,21 +3790,36 @@ class TestWT2026204:
             bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW"
         )
 
-        # Mock the underlying subprocess to return real looking CHANGES output
+        # Mock the underlying subprocess to return NDJSON with final_answer CHANGES
         import subprocess
+
+        ndjson_stdout = _json.dumps({
+            "type": "text",
+            "phase": "final_answer",
+            "part": {
+                "type": "text",
+                "text": (
+                    "## SUMMARY\nFix needed\n"
+                    "## BLOCKERS\n- test_blocker\n"
+                    "## SUGGESTIONS\n- none\n"
+                    "DECISION: CHANGES"
+                )
+            },
+        })
 
         def fake_run(cmd, **kwargs):
             return subprocess.CompletedProcess(
                 cmd,
                 0,
-                stdout="## SUMMARY\nFix needed\n## BLOCKERS\n- test_blocker\n## SUGGESTIONS\n- none\nDECISION: CHANGES",
+                stdout=ndjson_stdout,
                 stderr="",
             )
 
         monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
         monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
         monkeypatch.setattr(bridge, "_resolve_motor_controller", lambda: None)
-        monkeypatch.setattr(bridge, "_supports_json_format", False)
+        # _supports_json_format left as True (detected at runtime) so the NDJSON
+        # parser correctly identifies final_answer CHANGES
         monkeypatch.setattr(
             bridge,
             "_ensure_repomix_context",
