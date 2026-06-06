@@ -39,6 +39,13 @@ from pathlib import Path
 from typing import Any
 
 
+# Bootstrap: repo_motor root must be importable when this file is executed by
+# absolute path while cwd points at repo_destino.
+_MOTOR_ROOT_BOOTSTRAP = Path(__file__).resolve().parent.parent
+if str(_MOTOR_ROOT_BOOTSTRAP) not in sys.path:
+    sys.path.insert(0, str(_MOTOR_ROOT_BOOTSTRAP))
+
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -87,7 +94,7 @@ WORK_PLAN_REL = Path(".agent") / "collaboration" / "work_plan.md"
 SCRIPTS_DIR = "scripts"
 
 # Ticket regex pattern
-TICKET_RE = re.compile(r"(?:WP|WT)-\d{4}-\d{3}")
+TICKET_RE = re.compile(r"(?:WP|WT)-\d{4}-\d{3}[a-z]?")
 
 # Ticket ID in filename pattern (matches basenames of versioned files)
 TICKET_ID_FILENAME_RE = re.compile(r"(?i)(?:WT|WP|PLAN)[_-]\d{4}[_-]\d{3}[a-z]?")
@@ -312,7 +319,7 @@ def _resolve_active_ticket(project_root: Path) -> str | None:
         content = wp_path.read_text(encoding="utf-8")
     except OSError:
         return None
-    m = re.search(r"-?\s*\*\*ID:\*\*\s*((?:WP|WT)-\d{4}-\d{3})", content)
+    m = re.search(r"-?\s*\*\*ID:\*\*\s*((?:WP|WT)-\d{4}-\d{3}[a-z]?)", content)
     if m:
         return m.group(1)
     return None
@@ -1442,7 +1449,7 @@ def _extract_ticket_id_from_feedback(filename: str) -> str | None:
     During: Uses regex to extract the ticket ID portion.
     After: Returns ticket ID string or None if not matched.
     """
-    m = re.search(r"manager_feedback_((?:WP|WT)-\d{4}-\d{3})\.md$", filename)
+    m = re.search(r"manager_feedback_((?:WP|WT)-\d{4}-\d{3}[a-z]?)\.md$", filename)
     if m:
         return m.group(1)
     return None
