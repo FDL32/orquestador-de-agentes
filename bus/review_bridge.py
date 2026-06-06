@@ -2774,30 +2774,36 @@ class ReviewBridge:
 
         Returns (decision, parse_method):
           parse_method is one of:
-            - "json_final_answer"  — NDJSON final_answer phase
-            - "json_last_text"     — NDJSON last text event
-            - "text_regex"         — DECISION: pattern via regex
+            - "json_final_answer"  — NDJSON final_answer phase (authoritative)
+            - "json_last_text"     — NDJSON last text event (degraded)
+            - "json_no_decision"   — NDJSON without recognisable decision
             - "explicit_inspect"   — DECISION: INSPECT explicitly found
             - "fallback_inspect"   — parser default, no pattern recognized
 
-        Prioridad de parseo:
-        1. Si hay formato JSON (NDJSON), usar el parser estructurado.
-        2. Buscar patron estructurado DECISION:\\s*(APPROVE|CHANGES|INSPECT).
-        3. NO hay fallback a palabra desnuda — si no hay patron estructurado,
-           retorna INSPECT + "fallback_inspect" para evitar falsos positivos.
+        Contrato de procedencia (WT-2026-235a):
+        - Solo ``json_final_answer`` puede producir APPROVE o CHANGES.
+        - ``json_last_text`` que encuentra APPROVE/CHANGES degrada a INSPECT.
+        - ``text_regex`` nunca produce APPROVE o CHANGES (diagnóstico solamente).
         """
         if self._supports_json_format:
             json_decision, json_method = self._parse_opencode_json_decision(stdout)
             if json_decision != ReviewDecision.INSPECT:
-                return json_decision, json_method
+                # Only json_final_answer is authoritative for strong decisions
+                if json_method == "json_final_answer":
+                    return json_decision, json_method
+                # json_last_text is not authoritative: degrade strong decisions
+                return ReviewDecision.INSPECT, json_method
+            # json_no_decision - never fall through to text_regex
+            return json_decision, json_method
 
-        # Look for explicit DECISION: pattern only (no bare word fallback)
+        # text_regex is diagnostic only - never return APPROVE or CHANGES.
+        # Pattern is still detected for diagnostic traceability but the
+        # decision is always degraded to INSPECT.
         stdout_upper = stdout.upper()
-
         if re.search(r"DECISION:\s*CHANGES", stdout_upper):
-            return ReviewDecision.CHANGES, "text_regex"
+            return ReviewDecision.INSPECT, "text_regex"
         if re.search(r"DECISION:\s*APPROVE", stdout_upper):
-            return ReviewDecision.APPROVE, "text_regex"
+            return ReviewDecision.INSPECT, "text_regex"
         if re.search(r"DECISION:\s*INSPECT", stdout_upper):
             return ReviewDecision.INSPECT, "explicit_inspect"
 
@@ -2983,6 +2989,8 @@ class ReviewBridge:
         # this cycle emits its REVIEW_DECISION, so a bridge restart or an
         # internal retry can neither inflate nor reset it.
         review_attempts_payloads: list[dict] = []
+        # WT-2026-235a: Track failure_reason for degraded decisions across loop boundary
+        failure_reason: str = ""
 
         for attempt in range(1, max_attempts + 1):
             current_timeout = int(base_timeout * (multiplier ** (attempt - 1)))
@@ -3060,22 +3068,38 @@ class ReviewBridge:
             )
             blockers = structured.get("blockers", "")
 
-            # WP-2026-106: Enforce CHANGES structure. Validate BEFORE emitting
-            # so the result is auditable on the bus and in attempt-N.md, not a
-            # stderr print that gets lost.
+            # WT-2026-235a: Enforce CHANGES structure and non-empty blockers.
+            # If invalid, degrade to INSPECT with failure_reason so no false
+            # decision reaches the bus or triggers requeue.
+            # Extract text from NDJSON first so validation works on the real
+            # content, not raw JSON lines.
+            search_text = (
+                self._extract_json_stream_text(stdout) or stdout
+            )
             structure_valid = True
             missing_sections: list[str] = []
             if decision == ReviewDecision.CHANGES:
                 structure_valid, missing_sections = self._validate_changes_structure(
-                    stdout
+                    search_text
                 )
                 if not structure_valid:
+                    failure_reason = "changes_structure_invalid"
                     print(
                         "[manager-review-bridge] ERROR: CHANGES response missing "
-                        f"required sections {missing_sections} -- recorded as "
-                        "structure_invalid (see attempt-N.md).",
+                        f"required sections {missing_sections} -- "
+                        "degraded to INSPECT.",
                         file=sys.stderr,
                     )
+                    decision = ReviewDecision.INSPECT
+                elif not blockers.strip():
+                    failure_reason = "changes_structure_invalid"
+                    missing_sections = ["BLOCKERS (empty content)"]
+                    print(
+                        "[manager-review-bridge] ERROR: CHANGES response has "
+                        "empty BLOCKERS content -- degraded to INSPECT.",
+                        file=sys.stderr,
+                    )
+                    decision = ReviewDecision.INSPECT
 
             # WP-2026-106: Emit lightweight event (review_log_path + stdout_tail)
             # WP-2026-118: Already wrapped in fail-safe inside _emit_review_attempt
@@ -3222,15 +3246,24 @@ class ReviewBridge:
             last_blockers = last_structured.get("blockers", "")
 
         try:
+            # WT-2026-235a: Include parse_method in every REVIEW_DECISION;
+            # include failure_reason and missing_sections when decision was
+            # degraded from CHANGES to INSPECT.
+            rd_payload: dict = {
+                "decision": decision.value,
+                "stdout_tail": (final_stdout or "")[-500:],
+                "blockers": last_blockers,
+                "parse_method": parse_method,
+            }
+            if failure_reason:
+                rd_payload["failure_reason"] = failure_reason
+            if missing_sections:
+                rd_payload["missing_sections"] = missing_sections
             self.event_bus.emit(
                 "REVIEW_DECISION",
                 ticket_id=ticket_id,
                 actor="MANAGER",
-                payload={
-                    "decision": decision.value,
-                    "stdout_tail": (final_stdout or "")[-500:],
-                    "blockers": last_blockers,
-                },
+                payload=rd_payload,
             )
         except Exception as exc:
             # WP-2026-118: Fail-safe - log the error but don't crash
