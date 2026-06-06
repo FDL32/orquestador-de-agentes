@@ -221,8 +221,10 @@ def _create_work_plan(plan_dir: Path, ticket_id: str) -> Path:
     return wp
 
 
-def test_pre_handoff_blocks_on_motor_dirty(tmp_path: Path, monkeypatch, capsys) -> None:
-    """E2E TP-02: _handle_pre_handoff returns 1 when motor has uncommitted productive changes."""
+def test_pre_handoff_auto_commits_motor_dirty_within_flt(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """E2E TP-02: _handle_pre_handoff auto-commits productive changes inside FLT."""
     import agent_controller
 
     motor = tmp_path / "motor"
@@ -248,11 +250,23 @@ def test_pre_handoff_blocks_on_motor_dirty(tmp_path: Path, monkeypatch, capsys) 
 
     result = agent_controller._handle_pre_handoff(json_output=False)
 
-    assert result == 1, f"Expected return 1 (blocked), got {result}"
-    stderr_text = capsys.readouterr().err
-    assert "Uncommitted productive changes in repo_motor:" in stderr_text
-    assert "commit with ticket ID before handoff." in stderr_text
-    assert "bus/evidence.py" in stderr_text
+    captured = capsys.readouterr()
+    assert result == 0, f"Expected return 0 (auto-commit), got {result}"
+    assert (
+        "Productive changes in repo_motor outside Files Likely Touched:"
+        not in captured.err
+    )
+    assert (
+        "[OK] Committed in repo_motor: chore(WT-2026-228a): pre-handoff checkpoint"
+        in captured.out
+    )
+    assert (
+        "[OK] Pre-handoff complete for WT-2026-228a. Motor committed." in captured.out
+    )
+    status = _git(["status", "--porcelain"], cwd=motor)
+    assert status.stdout.strip() == ""
+    log = _git(["log", "--oneline", "-1"], cwd=motor)
+    assert "WT-2026-228a" in log.stdout
 
 
 def test_pre_handoff_blocks_on_motor_untracked(
@@ -284,7 +298,9 @@ def test_pre_handoff_blocks_on_motor_untracked(
 
     assert result == 1, f"Expected return 1 (blocked on untracked), got {result}"
     stderr_text = capsys.readouterr().err
-    assert "Uncommitted productive changes in repo_motor:" in stderr_text
+    assert (
+        "Productive changes in repo_motor outside Files Likely Touched:" in stderr_text
+    )
     assert "bus/new_feature.py" in stderr_text
 
 
