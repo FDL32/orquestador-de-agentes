@@ -26,6 +26,7 @@ from scripts.session_closeout import (
     CloseoutReport,
     StepResult,
     _check_portability,
+    _check_versioned_filenames,
     _detect_tickets_in_window,
     _find_last_report_timestamp,
     _generate_report,
@@ -609,3 +610,102 @@ class TestCLI:
         ):
             result = main()
             assert result == 1
+
+
+class TestCheckVersionedFilenames:
+    """Tests for _check_versioned_filenames — ticket-ID-in-filename barrier."""
+
+    @staticmethod
+    def _mock_git_ls_files(
+        files: list[str], returncode: int = 0, stderr: str = ""
+    ) -> subprocess.CompletedProcess:
+        return subprocess.CompletedProcess(
+            args=["git", "ls-files"],
+            returncode=returncode,
+            stdout="\n".join(files),
+            stderr=stderr,
+        )
+
+    def test_clean_repo_returns_pass(self, tmp_path: Path) -> None:
+        """No ticket IDs in any versioned filename → PASS."""
+        mock = self._mock_git_ls_files(
+            ["README.md", "scripts/session_closeout.py", "tests/test_utils.py"]
+        )
+        with patch("scripts.session_closeout.subprocess.run", return_value=mock):
+            result = _check_versioned_filenames(tmp_path)
+        assert result.status == "PASS"
+
+    def test_detects_wt_ticket_in_filename(self, tmp_path: Path) -> None:
+        """WT-YYYY-NNN in basename → FAIL."""
+        mock = self._mock_git_ls_files(
+            ["README.md", "docs/BUS_ARCHITECTURE_WT-2026-210.md"]
+        )
+        with patch("scripts.session_closeout.subprocess.run", return_value=mock):
+            result = _check_versioned_filenames(tmp_path)
+        assert result.status == "FAIL"
+        assert "BUS_ARCHITECTURE_WT-2026-210.md" in result.detail
+
+    def test_detects_underscore_test_pattern(self, tmp_path: Path) -> None:
+        """test_wt_YYYY_NNNa.py underscore pattern → FAIL."""
+        mock = self._mock_git_ls_files(["tests/test_wt_2026_252a.py"])
+        with patch("scripts.session_closeout.subprocess.run", return_value=mock):
+            result = _check_versioned_filenames(tmp_path)
+        assert result.status == "FAIL"
+        assert "test_wt_2026_252a.py" in result.detail
+
+    def test_detects_plan_prefix(self, tmp_path: Path) -> None:
+        """PLAN-YYYY-NNN in basename → FAIL."""
+        mock = self._mock_git_ls_files(["PLAN-2026-252.md"])
+        with patch("scripts.session_closeout.subprocess.run", return_value=mock):
+            result = _check_versioned_filenames(tmp_path)
+        assert result.status == "FAIL"
+        assert "PLAN-2026-252" in result.detail
+
+    def test_detects_wp_prefix(self, tmp_path: Path) -> None:
+        """WP-YYYY-NNN in basename → FAIL."""
+        mock = self._mock_git_ls_files(["docs/WP-2026-100-plan.md"])
+        with patch("scripts.session_closeout.subprocess.run", return_value=mock):
+            result = _check_versioned_filenames(tmp_path)
+        assert result.status == "FAIL"
+        assert "WP-2026-100" in result.detail
+
+    def test_ignores_content_with_ticket_ids(self, tmp_path: Path) -> None:
+        """Ticket IDs in file content, not filename → PASS."""
+        mock = self._mock_git_ls_files(["utils.py"])
+        with patch("scripts.session_closeout.subprocess.run", return_value=mock):
+            result = _check_versioned_filenames(tmp_path)
+        assert result.status == "PASS"
+
+    def test_paths_are_motor_relative(self, tmp_path: Path) -> None:
+        """Diagnostic uses motor-relative paths, never absolute paths."""
+        mock = self._mock_git_ls_files(["docs/BUS_ARCHITECTURE_WT-2026-210.md"])
+        with patch("scripts.session_closeout.subprocess.run", return_value=mock):
+            result = _check_versioned_filenames(tmp_path)
+        assert "docs/BUS_ARCHITECTURE_WT-2026-210.md" in result.detail
+        assert str(tmp_path) not in result.detail
+
+    def test_git_failure_returns_warn(self, tmp_path: Path) -> None:
+        """Git command timeout → WARN, not crash."""
+        with patch(
+            "scripts.session_closeout.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(
+                cmd=["git", "ls-files"], timeout=30
+            ),
+        ):
+            result = _check_versioned_filenames(tmp_path)
+        assert result.status == "WARN"
+
+    def test_git_nonzero_exit_returns_warn(self, tmp_path: Path) -> None:
+        """Git ls-files non-zero exit → WARN."""
+        mock = self._mock_git_ls_files([], returncode=128, stderr="fatal: not a git repo")
+        with patch("scripts.session_closeout.subprocess.run", return_value=mock):
+            result = _check_versioned_filenames(tmp_path)
+        assert result.status == "WARN"
+
+    def test_detects_suffixed_wt_ticket(self, tmp_path: Path) -> None:
+        """WT-YYYY-NNNa with suffixed letter → FAIL."""
+        mock = self._mock_git_ls_files(["docs/PLAN_WT-2026-233c.md"])
+        with patch("scripts.session_closeout.subprocess.run", return_value=mock):
+            result = _check_versioned_filenames(tmp_path)
+        assert result.status == "FAIL"
+        assert "PLAN_WT-2026-233c.md" in result.detail
