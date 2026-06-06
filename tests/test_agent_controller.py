@@ -1165,6 +1165,32 @@ class TestManagerApproveStateCleanup:
         assert not mgr.exists()
         assert not sup.exists()
 
+    def test_closeout_updates_compact_state_projection(self, monkeypatch):
+        """Compact ACTIVE_TICKET/STATUS projections close to COMPLETED."""
+        written = {}
+
+        def fake_read(path):
+            if str(path).endswith("STATE.md"):
+                return "ACTIVE_TICKET: WT-2026-208\nSTATUS: READY_FOR_REVIEW\n"
+            return ""
+
+        monkeypatch.setattr(agent_controller, "read_file", fake_read)
+        monkeypatch.setattr(
+            agent_controller,
+            "write_file",
+            lambda path, content: written.__setitem__(str(path), content),
+        )
+        monkeypatch.setattr(agent_controller, "update_log_status", lambda *_args: True)
+        monkeypatch.setattr(agent_controller, "update_turn_file", lambda *_args: None)
+
+        agent_controller._sync_markdowns_to_completed("WT-2026-208")
+
+        state_content = next(
+            content for path, content in written.items() if path.endswith("STATE.md")
+        )
+        assert "ACTIVE_TICKET: WT-2026-208" in state_content
+        assert "STATUS: COMPLETED" in state_content
+
 
 # ======================================================================
 # WT-2026-188: _handle_manager_approve integration tests
