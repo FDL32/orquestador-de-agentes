@@ -89,6 +89,9 @@ SCRIPTS_DIR = "scripts"
 # Ticket regex pattern
 TICKET_RE = re.compile(r"(?:WP|WT)-\d{4}-\d{3}")
 
+# Ticket ID in filename pattern (matches basenames of versioned files)
+TICKET_ID_FILENAME_RE = re.compile(r"(?i)(?:WT|WP|PLAN)[_-]\d{4}[_-]\d{3}[a-z]?")
+
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -505,6 +508,68 @@ def _check_portability(project_root: Path) -> StepResult:
         name="portability_paths",
         status="PASS",
         detail="No absolute workspace paths found",
+    )
+
+
+def _check_versioned_filenames(motor_root: Path) -> StepResult:
+    """Check versioned filenames for embedded ticket IDs (WT-, WP-, PLAN-).
+
+    Before: motor_root is a valid git repository path pointing to the motor.
+    During: Runs ``git ls-files`` on motor_root, normalises paths to forward
+            slashes, and matches each basename against TICKET_ID_FILENAME_RE.
+            Only versioned (tracked) files are inspected; ignored files and
+            file contents are never read.
+    After: Returns StepResult with FAIL if any versioned filename contains a
+            ticket ID, PASS otherwise. WARN on git-or-filesystem errors.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "ls-files"],  # noqa: S607 - git is always on PATH
+            cwd=str(motor_root),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        return StepResult(
+            name="versioned_filenames",
+            status="WARN",
+            detail=f"git ls-files could not run: {exc}",
+        )
+
+    if result.returncode != 0:
+        return StepResult(
+            name="versioned_filenames",
+            status="WARN",
+            detail=f"git ls-files returned exit {result.returncode}: {result.stderr}",
+        )
+
+    matches: list[str] = []
+    for line in result.stdout.strip().splitlines():
+        if not line.strip():
+            continue
+        # Normalise to forward slashes for consistent diagnostics
+        normalized = line.strip().replace("\\", "/")
+        basename = normalized.rsplit("/", 1)[-1]
+        if TICKET_ID_FILENAME_RE.search(basename):
+            matches.append(normalized)
+
+    if matches:
+        detail = (
+            f"Ticket IDs found in versioned filenames ({len(matches)}): "
+            + ", ".join(matches)
+        )
+        return StepResult(
+            name="versioned_filenames",
+            status="FAIL",
+            detail=detail,
+            blocking=False,
+        )
+
+    return StepResult(
+        name="versioned_filenames",
+        status="PASS",
+        detail="No ticket IDs found in versioned filenames",
     )
 
 
@@ -1702,6 +1767,28 @@ def run_closeout(
     # --- Step 10: Portability checks ---
     report.steps.append(_step_manifest_check(project_root))
     report.steps.append(_check_portability(project_root))
+    try:
+        from runtime.motor_link import resolve_motor_root
+
+        motor_root = resolve_motor_root(project_root)
+        if motor_root is not None:
+            report.steps.append(_check_versioned_filenames(motor_root))
+        else:
+            report.steps.append(
+                StepResult(
+                    name="versioned_filenames",
+                    status="SKIP",
+                    detail="motor_root not resolvable; check skipped",
+                )
+            )
+    except ImportError:
+        report.steps.append(
+            StepResult(
+                name="versioned_filenames",
+                status="SKIP",
+                detail="runtime.motor_link not available; check skipped",
+            )
+        )
     report.steps.append(_step_git_clean(project_root, dry_run))
 
     # --- Generate report ---
