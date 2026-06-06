@@ -4148,6 +4148,18 @@ def _sync_markdowns_to_completed(ticket_id: str) -> None:
             "- **Estado actual:** COMPLETED",
             1,
         )
+        updated_state = re.sub(
+            r"(?m)^STATUS:\s*\S+\s*$",
+            "STATUS: COMPLETED",
+            updated_state,
+            count=1,
+        )
+        updated_state = re.sub(
+            r"(?m)^Estado actual:\s*\S+\s*$",
+            "Estado actual: COMPLETED",
+            updated_state,
+            count=1,
+        )
         write_file(STATE_FILE, updated_state)
 
 
