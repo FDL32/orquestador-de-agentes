@@ -39,9 +39,9 @@ def test_launcher_reprojects_canonical_state_after_preflight_reconcile() -> None
     assert "ticket_supervisor.py" in content
     assert "--once --no-auto-sync" in content
     assert "AGENT_PROJECT_ROOT" in content
+    assert "$preflightDecisionValue = $preflightDecision.decision" in content
     assert (
-        "@('RECONCILE', 'CLEANUP_LOCAL') -contains $preflightDecision.decision"
-        in content
+        "@('RECONCILE', 'CLEANUP_LOCAL') -contains $preflightDecisionValue" in content
     )
     assert "Invoke-PostPreflightProjectionSync -ProjectRoot $ProjectRoot" in content
     assert (

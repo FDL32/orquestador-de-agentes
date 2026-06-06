@@ -389,6 +389,27 @@ class TestResolveMotorCheckpointFiles:
         assert valid, f"Expected valid checkpoint, got error: {error}"
         assert "src/feature.py" in files, f"Expected src/feature.py in {files}"
 
+    def test_checkpoint_includes_contiguous_ticket_commits(
+        self, tmp_path: Path
+    ) -> None:
+        """Scope evidence includes every contiguous ticket commit before the tag."""
+        import agent_controller
+
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+
+        _create_file(motor, "src/outside.py", "first")
+        _git(["add", "."], cwd=motor)
+        _git(["commit", "-m", "feat(TICKET-1): first delivery commit"], cwd=motor)
+        _create_checkpoint(motor, "src/inside.py", "TICKET-1")
+
+        valid, files, error = agent_controller._resolve_motor_checkpoint_files(
+            motor, "TICKET-1"
+        )
+
+        assert valid, error
+        assert files == {"src/outside.py", "src/inside.py"}
+
     def test_missing_tag_returns_invalid(self, tmp_path: Path) -> None:
         """Missing checkpoint tag returns invalid."""
         import agent_controller
@@ -422,3 +443,33 @@ class TestResolveMotorCheckpointFiles:
         )
         assert not valid
         assert "not an ancestor" in error
+
+
+class TestFallbackCheckpointMotor:
+    """Fallback only repairs a missing destination checkpoint."""
+
+    def test_dirty_tree_remains_blocked(self, tmp_path: Path, monkeypatch) -> None:
+        """A motor checkpoint must not hide an independent dirty-tree failure."""
+        import agent_controller
+
+        motor = tmp_path / "motor"
+        dest = tmp_path / "dest"
+        init_git_repo(motor)
+        init_git_repo(dest)
+        _create_checkpoint(motor, "src/feature.py", "WT-2026-232a")
+        monkeypatch.setattr(agent_controller, "_MOTOR_ROOT", motor)
+        monkeypatch.setattr(agent_controller, "PROJECT_ROOT", dest)
+
+        result = agent_controller._fallback_checkpoint_motor(
+            {
+                "valid": False,
+                "missing_checkpoint": True,
+                "dirty_tree": True,
+                "dirty_files": ["uncommitted.py"],
+            },
+            "WT-2026-232a",
+        )
+
+        assert result["valid"] is False
+        assert result["missing_checkpoint"] is True
+        assert result["dirty_tree"] is True

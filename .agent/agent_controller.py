@@ -2500,22 +2500,16 @@ def _fallback_checkpoint_motor(guard_result: dict, plan_id: str) -> dict:
     if (
         not guard_result.get("valid")
         and guard_result.get("missing_checkpoint")
+        and not guard_result.get("dirty_tree")
+        and not guard_result.get("dirty_files")
         and _MOTOR_ROOT.resolve() != PROJECT_ROOT.resolve()
     ):
-        motor_tag = f"checkpoint/review-{plan_id}"
-        try:
-            tag_check = subprocess.run(
-                ["git", "rev-parse", f"{motor_tag}^{{}}"],
-                capture_output=True,
-                text=True,
-                cwd=_MOTOR_ROOT,
-                timeout=15,
-            )
-            if tag_check.returncode == 0:
-                guard_result["valid"] = True
-                guard_result["missing_checkpoint"] = False
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            pass
+        checkpoint_valid, _files, _error = _resolve_motor_checkpoint_files(
+            _MOTOR_ROOT, plan_id
+        )
+        if checkpoint_valid:
+            guard_result["valid"] = True
+            guard_result["missing_checkpoint"] = False
     return guard_result
 
 
@@ -3195,7 +3189,7 @@ def _resolve_motor_checkpoint_files(
                 f"Tag {tag_name}@{sha[:8]} is not an ancestor of HEAD",
             )
 
-        # Step 3: Verify commit message contains ticket_id
+        # Step 3: Verify checkpoint commit message contains ticket_id
         log_proc = subprocess.run(
             ["git", "log", "-1", "--format=%s", sha],
             capture_output=True,
@@ -3203,29 +3197,82 @@ def _resolve_motor_checkpoint_files(
             cwd=motor_root,
             timeout=30,
         )
-        if log_proc.returncode == 0 and ticket_id not in log_proc.stdout:
+        if log_proc.returncode != 0:
+            return False, set(), f"git log failed for {sha[:8]}"
+        if ticket_id not in log_proc.stdout:
             return (
                 False,
                 set(),
                 f"Commit {sha[:8]} ({tag_name}) message does not contain {ticket_id}",
             )
 
-        # Step 4: Get files from the checkpoint commit
+        delivery_commits, history_error = _contiguous_ticket_commits(
+            motor_root, sha, ticket_id
+        )
+        if history_error:
+            return False, set(), history_error
+
+        files, files_error = _files_from_commits(motor_root, delivery_commits)
+        if files_error:
+            return False, set(), files_error
+        return True, files, ""
+
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        return False, set(), f"Git operation failed: {e}"
+
+
+def _contiguous_ticket_commits(
+    motor_root: Path, checkpoint_sha: str, ticket_id: str
+) -> tuple[list[str], str]:
+    """Return contiguous first-parent commits for the ticket at the checkpoint."""
+    history_proc = subprocess.run(
+        ["git", "log", "--first-parent", "--format=%H%x00%s", checkpoint_sha],
+        capture_output=True,
+        text=True,
+        cwd=motor_root,
+        timeout=30,
+    )
+    if history_proc.returncode != 0:
+        return [], f"git history failed for {checkpoint_sha[:8]}"
+
+    commits: list[str] = []
+    for line in history_proc.stdout.splitlines():
+        commit_sha, separator, subject = line.partition("\0")
+        if not separator or ticket_id not in subject:
+            break
+        commits.append(commit_sha)
+    if not commits:
+        return [], f"No contiguous {ticket_id} commits at checkpoint"
+    return commits, ""
+
+
+def _files_from_commits(
+    motor_root: Path, commit_shas: list[str]
+) -> tuple[set[str], str]:
+    """Return the union of motor-relative files changed by the given commits."""
+    files: set[str] = set()
+    for commit_sha in commit_shas:
         diff_proc = subprocess.run(
-            ["git", "diff-tree", "--no-commit-id", "-r", "--name-only", sha],
+            [
+                "git",
+                "diff-tree",
+                "--root",
+                "--no-commit-id",
+                "-r",
+                "--name-only",
+                commit_sha,
+            ],
             capture_output=True,
             text=True,
             cwd=motor_root,
             timeout=30,
         )
         if diff_proc.returncode != 0:
-            return False, set(), f"git diff-tree failed for {sha[:8]}"
-
-        files = {line.strip() for line in diff_proc.stdout.split("\n") if line.strip()}
-        return True, files, ""
-
-    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-        return False, set(), f"Git operation failed: {e}"
+            return set(), f"git diff-tree failed for {commit_sha[:8]}"
+        files.update(
+            line.strip() for line in diff_proc.stdout.splitlines() if line.strip()
+        )
+    return files, ""
 
 
 def _resolve_launcher_roots(project_root: Path | None) -> dict[str, str]:
