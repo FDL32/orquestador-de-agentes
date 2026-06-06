@@ -240,6 +240,11 @@ class TestResolveActiveTicket:
         _write_work_plan(tmp_path, "WP-2026-168")
         assert _resolve_active_ticket(tmp_path) == "WP-2026-168"
 
+    def test_parses_suffixed_ticket_id(self, tmp_path: Path) -> None:
+        """Correctly extracts suffixed ticket IDs from work_plan.md."""
+        _write_work_plan(tmp_path, "WT-2026-234a")
+        assert _resolve_active_ticket(tmp_path) == "WT-2026-234a"
+
     def test_no_work_plan(self, tmp_path: Path) -> None:
         """Returns None when work_plan.md doesn't exist."""
         assert _resolve_active_ticket(tmp_path) is None
@@ -688,16 +693,16 @@ class TestCheckVersionedFilenames:
         """Git command timeout → WARN, not crash."""
         with patch(
             "scripts.session_closeout.subprocess.run",
-            side_effect=subprocess.TimeoutExpired(
-                cmd=["git", "ls-files"], timeout=30
-            ),
+            side_effect=subprocess.TimeoutExpired(cmd=["git", "ls-files"], timeout=30),
         ):
             result = _check_versioned_filenames(tmp_path)
         assert result.status == "WARN"
 
     def test_git_nonzero_exit_returns_warn(self, tmp_path: Path) -> None:
         """Git ls-files non-zero exit → WARN."""
-        mock = self._mock_git_ls_files([], returncode=128, stderr="fatal: not a git repo")
+        mock = self._mock_git_ls_files(
+            [], returncode=128, stderr="fatal: not a git repo"
+        )
         with patch("scripts.session_closeout.subprocess.run", return_value=mock):
             result = _check_versioned_filenames(tmp_path)
         assert result.status == "WARN"
