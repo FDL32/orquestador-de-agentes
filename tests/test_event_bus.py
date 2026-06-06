@@ -188,6 +188,21 @@ def test_reentry_guard_blocks_review_decision_changes_reopen(tmp_path):
     assert result is None, "REVIEW_DECISION=changes must not reopen a COMPLETED ticket"
 
 
+def test_reentry_guard_allows_explicit_terminal_reopen_override(tmp_path):
+    """Explicit human recovery path may reopen a COMPLETED ticket."""
+    bus = EventBus(runtime_dir=tmp_path / ".agent" / ".runtime" / "events")
+    _complete_ticket(bus)
+
+    result = bus.emit(
+        "STATE_CHANGED",
+        ticket_id="WP-RT",
+        actor="SUPERVISOR",
+        payload={"from_state": "COMPLETED", "to_state": "IN_PROGRESS"},
+        allow_reentry=True,
+    )
+    assert result is not None, "Explicit allow_reentry must bypass the terminal guard"
+
+
 def test_reentry_guard_allows_changes_on_ready_to_close(tmp_path):
     """WP-2026-116: READY_TO_CLOSE is NOT terminal — a changes can still revert it.
 
