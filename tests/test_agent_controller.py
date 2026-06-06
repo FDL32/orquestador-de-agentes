@@ -1319,6 +1319,21 @@ class TestHandleReopenTerminalTicket:
     def test_reopens_completed_ticket_to_in_progress(self, monkeypatch):
         """The explicit reopen flag bypasses the terminal reentry guard intentionally."""
         fake_bus = self._setup(monkeypatch)
+        sync_calls = []
+        monkeypatch.setattr(
+            "scripts.state_projection_sync.sync_state_projection",
+            lambda **kwargs: sync_calls.append(kwargs) or True,
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "get_runtime_dir",
+            lambda: Path("destination/.agent/runtime"),
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "get_collab_dir",
+            lambda: Path("destination/.agent/collaboration"),
+        )
 
         rc = agent_controller._handle_reopen_terminal_ticket(self._TICKET, False)
 
@@ -1328,6 +1343,13 @@ class TestHandleReopenTerminalTicket:
         assert kwargs["ticket_id"] == self._TICKET
         assert kwargs["payload"]["to_state"] == "IN_PROGRESS"
         assert kwargs["allow_reentry"] is True
+        assert sync_calls == [
+            {
+                "runtime_dir": Path("destination/.agent/runtime/events"),
+                "collaboration_dir": Path("destination/.agent/collaboration"),
+                "ticket_id": self._TICKET,
+            }
+        ]
 
     def test_rejects_ticket_mismatch(self, monkeypatch):
         """A terminal ticket cannot be reopened unless it is the active work plan."""
