@@ -73,7 +73,7 @@ class StateMachine:
             payload = event.get("payload") or {}
             if event_type == "STATE_CHANGED":
                 return StateMachine._state_from_state_changed(payload)
-            if event_type == "CLOSE_CONFIRMED":
+            if event_type in {"CLOSE_CONFIRMED", "SUPERVISOR_CLOSED"}:
                 return TicketState.COMPLETED
             if event_type == "REVIEW_DECISION":
                 return StateMachine._state_from_review_decision(payload)

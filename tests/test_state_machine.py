@@ -31,6 +31,23 @@ def test_derive_state_from_close_confirmed():
     assert state == TicketState.COMPLETED
 
 
+def test_derive_state_from_supervisor_closed():
+    """SUPERVISOR_CLOSED is sufficient evidence of canonical completion."""
+    events = [{"event_type": "SUPERVISOR_CLOSED", "payload": {}}]
+    state = StateMachine.derive_state_from_events(events)
+    assert state == TicketState.COMPLETED
+
+
+def test_explicit_reopen_takes_precedence_over_supervisor_closed():
+    """A later human-authorized transition reopens a terminal ticket."""
+    events = [
+        {"event_type": "SUPERVISOR_CLOSED", "payload": {}},
+        {"event_type": "STATE_CHANGED", "payload": {"to_state": "IN_PROGRESS"}},
+    ]
+    state = StateMachine.derive_state_from_events(events)
+    assert state == TicketState.IN_PROGRESS
+
+
 def test_derive_state_from_review_decision_approve():
     """REVIEW_DECISION with approve returns READY_TO_CLOSE."""
     events = [
