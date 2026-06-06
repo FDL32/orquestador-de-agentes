@@ -132,6 +132,7 @@ class EventBus:
         ticket_id: str,
         actor: str,
         payload: dict | None = None,
+        allow_reentry: bool = False,
         event_id: str | None = None,
         timestamp: str | None = None,
     ) -> EventRecord | None:
@@ -141,8 +142,9 @@ class EventBus:
         Returns None if the event would exceed the maximum consecutive duplicates
         threshold (same event_type, ticket_id, actor, and payload).
 
-        Returns None if the event is a STATE_CHANGED that attempts to reopen a ticket
-        from an approved/terminal state (READY_TO_CLOSE, COMPLETED) to a work state.
+        Returns None if the event attempts to reopen a ticket from an approved/terminal
+        state (READY_TO_CLOSE, COMPLETED) to a work state, unless allow_reentry=True
+        is passed explicitly by a human-controlled recovery path.
         """
         records = self._read_raw_events()
 
@@ -158,7 +160,11 @@ class EventBus:
         # and an indirect REVIEW_DECISION (decision=changes -> IN_PROGRESS, etc.)
         # can reopen a ticket, so both routes must be checked.
         reentry_target = self._reentry_target_state(event_type, payload)
-        if reentry_target and self._is_reentry_blocked(ticket_id, reentry_target):
+        if (
+            not allow_reentry
+            and reentry_target
+            and self._is_reentry_blocked(ticket_id, reentry_target)
+        ):
             self._record_blocked_reentry(ticket_id, reentry_target.value)
             return None
 

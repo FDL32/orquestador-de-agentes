@@ -4307,6 +4307,7 @@ def _materialize_state_transition(
     reason: str,
     actor: str = "SUPERVISOR",
     source: str = "canonical",
+    allow_reentry: bool = False,
 ) -> None:
     """Materialize a state transition canonically.
 
@@ -4334,6 +4335,7 @@ def _materialize_state_transition(
                 "reason": reason,
                 "source": source,
             },
+            allow_reentry=allow_reentry,
         )
 
     # WP-2026-146: Create persistent ApprovalRequest when escalating to HUMAN_GATE
@@ -4472,6 +4474,101 @@ def _handle_resume_human_gate(ticket_id: str, json_output: bool) -> int:
         )
     else:
         print(f"[OK] Ticket {ticket_id} resumed from HUMAN_GATE to READY_FOR_REVIEW.")
+
+    return 0
+
+
+def _handle_reopen_terminal_ticket(  # noqa: C901 - flag handler validates bus state and projections
+    ticket_id: str, json_output: bool
+) -> int:
+    """Handle --reopen-terminal-ticket flag.
+
+    Explicit human-controlled recovery path for a ticket already in COMPLETED.
+    Reopens the active ticket to IN_PROGRESS by bypassing the EventBus reentry
+    guard intentionally. This is reserved for canonical repair flows.
+    """
+    if not ticket_id or ticket_id == "N/A":
+        if json_output:
+            print(json.dumps({"error": "No ticket_id provided"}, indent=2))
+        else:
+            print("[ERROR] No ticket_id provided. Use --ticket WT-XXXX or WP-XXXX")
+        return 1
+
+    current_plan_id = get_plan_id(read_file(WORK_PLAN))
+    if ticket_id != current_plan_id:
+        msg = f"Ticket {ticket_id} does not match active ticket {current_plan_id}"
+        if json_output:
+            print(json.dumps({"error": msg}, indent=2))
+        else:
+            print(f"[ERROR] {msg}")
+        return 1
+
+    if not BUS_AVAILABLE or not event_bus:
+        msg = "EventBus unavailable; cannot reopen terminal ticket canonically."
+        if json_output:
+            print(json.dumps({"error": msg}, indent=2))
+        else:
+            print(f"[ERROR] {msg}")
+        return 1
+
+    from bus.state_machine import StateMachine, TicketState
+
+    events = event_bus.read_events(ticket_id=ticket_id)
+    if not events:
+        msg = f"No bus events found for ticket {ticket_id}."
+        if json_output:
+            print(json.dumps({"error": msg}, indent=2))
+        else:
+            print(f"[ERROR] {msg}")
+        return 1
+
+    bus_state = StateMachine.derive_state_from_events([e.to_dict() for e in events])
+    if bus_state != TicketState.COMPLETED:
+        msg = (
+            f"Ticket {ticket_id} bus state is {bus_state}, not COMPLETED. "
+            "--reopen-terminal-ticket solo aplica a tickets terminales."
+        )
+        if json_output:
+            print(json.dumps({"error": msg}, indent=2))
+        else:
+            print(f"[ERROR] {msg}")
+        return 1
+
+    _materialize_state_transition(
+        ticket_id=ticket_id,
+        to_state="IN_PROGRESS",
+        reason="Human recovery: reopen terminal ticket for canonical repair cycle",
+        actor="SUPERVISOR",
+        source="reopen-terminal-ticket",
+        allow_reentry=True,
+    )
+
+    update_log_status(
+        "IN_PROGRESS",
+        f"Terminal reopen requested by human for {ticket_id}",
+    )
+
+    try:
+        from scripts.state_projection_sync import sync_state_projection
+
+        sync_state_projection(ticket_id=ticket_id)
+    except Exception as exc:
+        if not json_output:
+            print(
+                f"[WARN] Ticket {ticket_id} reopened in bus, but projection sync "
+                f"failed: {exc}",
+                file=sys.stderr,
+            )
+
+    if json_output:
+        print(
+            json.dumps(
+                {"status": "reopened_to_in_progress", "ticket_id": ticket_id},
+                indent=2,
+            )
+        )
+    else:
+        print(f"[OK] Ticket {ticket_id} reopened from COMPLETED to IN_PROGRESS.")
 
     return 0
 
@@ -5076,6 +5173,7 @@ Action flags:
   --request-changes <ticket>      Request changes for a ticket.
   --escalate-human-gate           Move a ticket to HUMAN_GATE.
   --resume-human-gate             Resume review from HUMAN_GATE.
+  --reopen-terminal-ticket        Reopen the active COMPLETED ticket to IN_PROGRESS.
   --session-close                 Close the current session.
   --recover                       Recover session state.
   --archive                       Archive old notifications.
@@ -5129,6 +5227,7 @@ def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
             "--bootstrap-ticket",
             "--escalate-human-gate",
             "--resume-human-gate",
+            "--reopen-terminal-ticket",
         }
     )
     if is_motor_code_only() and any(
@@ -5169,7 +5268,7 @@ def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
             return 1
         scope_override = next_token
 
-    # Parse --ticket (used by --manager-approve and --request-changes)
+    # Parse --ticket (used by closeout/review/reopen action flags)
     ticket_id = None
     if "--ticket" in sys.argv:
         idx = sys.argv.index("--ticket")
@@ -5187,6 +5286,10 @@ def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
             ticket_id = sys.argv[idx + 1]
     elif "--request-changes" in sys.argv:
         idx = sys.argv.index("--request-changes")
+        if idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("--"):
+            ticket_id = sys.argv[idx + 1]
+    elif "--reopen-terminal-ticket" in sys.argv:
+        idx = sys.argv.index("--reopen-terminal-ticket")
         if idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("--"):
             ticket_id = sys.argv[idx + 1]
 
@@ -5209,6 +5312,10 @@ def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
     # Check for --resume-human-gate (salida canonica de HUMAN_GATE)
     if "--resume-human-gate" in sys.argv:
         return _handle_resume_human_gate(ticket_id, json_output)
+
+    # Check for --reopen-terminal-ticket (salida manual de tickets COMPLETED)
+    if "--reopen-terminal-ticket" in sys.argv:
+        return _handle_reopen_terminal_ticket(ticket_id, json_output)
 
     # Check for --pre-handoff (WP-2026-173)
     if "--pre-handoff" in sys.argv:

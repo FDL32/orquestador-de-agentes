@@ -1267,6 +1267,87 @@ class TestHandleManagerApproveIntegration:
         assert not sup.exists(), "supervisor_state.json must be deleted on approve"
 
 
+class TestHandleReopenTerminalTicket:
+    """WT-2026-233a: explicit reopen path for terminal tickets."""
+
+    _TICKET = "WT-2026-208"
+    _WORK_PLAN = (
+        "# Work Ticket - WT-2026-208\n"
+        "## Metadata\n"
+        "- **ID:** WT-2026-208\n"
+        "- **Estado:** APPROVED\n"
+        "- **deliverable_type:** code\n"
+    )
+    _EXEC_LOG_COMPLETED = "# Execution Log WT-2026-208\n\n**Estado:** COMPLETED\n"
+
+    class FakeEvent:
+        def __init__(self, to_state):
+            self.payload = {"from_state": "IN_PROGRESS", "to_state": to_state}
+
+        def to_dict(self):
+            return {
+                "event_type": "STATE_CHANGED",
+                "payload": self.payload,
+            }
+
+    class FakeBus:
+        def __init__(self, to_state="COMPLETED"):
+            self.emits = []
+            self.to_state = to_state
+
+        def read_events(self, ticket_id=None, event_type=None):
+            return [TestHandleReopenTerminalTicket.FakeEvent(self.to_state)]
+
+        def emit(self, *args, **kwargs):
+            self.emits.append((args, kwargs))
+            return object()
+
+    def _setup(self, monkeypatch, *, active_ticket=None, bus_state="COMPLETED"):
+        active_ticket = active_ticket or self._TICKET
+        work_plan = self._WORK_PLAN.replace(self._TICKET, active_ticket)
+        fake_bus = self.FakeBus(bus_state)
+        monkeypatch.setattr(
+            agent_controller,
+            "read_file",
+            lambda p: work_plan if "work_plan" in str(p) else self._EXEC_LOG_COMPLETED,
+        )
+        monkeypatch.setattr(agent_controller, "BUS_AVAILABLE", True)
+        monkeypatch.setattr(agent_controller, "event_bus", fake_bus)
+        monkeypatch.setattr(agent_controller, "update_log_status", lambda *_args: True)
+        return fake_bus
+
+    def test_reopens_completed_ticket_to_in_progress(self, monkeypatch):
+        """The explicit reopen flag bypasses the terminal reentry guard intentionally."""
+        fake_bus = self._setup(monkeypatch)
+
+        rc = agent_controller._handle_reopen_terminal_ticket(self._TICKET, False)
+
+        assert rc == 0
+        assert fake_bus.emits, "Expected reopen command to emit a state transition"
+        _args, kwargs = fake_bus.emits[0]
+        assert kwargs["ticket_id"] == self._TICKET
+        assert kwargs["payload"]["to_state"] == "IN_PROGRESS"
+        assert kwargs["allow_reentry"] is True
+
+    def test_rejects_ticket_mismatch(self, monkeypatch):
+        """A terminal ticket cannot be reopened unless it is the active work plan."""
+        fake_bus = self._setup(monkeypatch, active_ticket="WT-2026-999")
+
+        rc = agent_controller._handle_reopen_terminal_ticket(self._TICKET, False)
+
+        assert rc == 1
+        assert fake_bus.emits == []
+
+    def test_rejects_non_terminal_bus_state(self, monkeypatch):
+        """The recovery command only accepts a bus-derived COMPLETED state."""
+        fake_bus = self._setup(monkeypatch, bus_state="READY_FOR_REVIEW")
+
+        rc = agent_controller._handle_reopen_terminal_ticket(self._TICKET, False)
+
+        assert rc == 1
+        assert fake_bus.emits == []
+
+
 # ======================================================================
 # WT-2026-188 Phase 4: Builder ready evidence gate tests
 # ======================================================================
