@@ -51,6 +51,7 @@ from runtime.project_root import (  # noqa: E402
     get_agent_dir,
     get_collab_dir,
     get_context_dir,
+    get_runtime_dir,
     is_motor_code_only,
     resolve_project_root,
 )
@@ -4551,7 +4552,11 @@ def _handle_reopen_terminal_ticket(  # noqa: C901 - flag handler validates bus s
     try:
         from scripts.state_projection_sync import sync_state_projection
 
-        sync_state_projection(ticket_id=ticket_id)
+        sync_state_projection(
+            runtime_dir=get_runtime_dir() / "events",
+            collaboration_dir=get_collab_dir(),
+            ticket_id=ticket_id,
+        )
     except Exception as exc:
         if not json_output:
             print(
