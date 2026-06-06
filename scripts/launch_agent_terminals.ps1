@@ -1053,21 +1053,31 @@ function Get-OpenCodeBuilderPrompt {
     # This is the single source of truth; no PowerShell-side duplication.
     $launcherRoots = $null
     $controllerPath = Join-Path $script:_MotorCodeRoot '.agent\agent_controller.py'
-    if (Test-Path -LiteralPath $controllerPath) {
-        $rootsJson = & python $controllerPath --resolve-launcher-roots --json --project-root $ProjectRoot 2>$null
-        if ($rootsJson) {
-            try {
-                $launcherRoots = $rootsJson | ConvertFrom-Json
-            }
-            catch {
-                Write-Warning "Could not parse launcher roots JSON; proceeding without runtime context"
-            }
+    if (-not (Test-Path -LiteralPath $controllerPath)) {
+        throw "Cannot resolve Builder runtime roots: controller not found at $controllerPath"
+    }
+    $rootsJson = & python $controllerPath --resolve-launcher-roots --json --project-root $ProjectRoot
+    if ($LASTEXITCODE -ne 0 -or -not $rootsJson) {
+        throw "Cannot resolve Builder runtime roots: resolver failed with exit code $LASTEXITCODE"
+    }
+    try {
+        $launcherRoots = $rootsJson | ConvertFrom-Json
+    }
+    catch {
+        throw "Cannot resolve Builder runtime roots: invalid JSON returned by resolver"
+    }
+    foreach ($requiredRoot in @('repo_motor_root', 'repo_destino_root', 'workspace_activo_root')) {
+        if (
+            -not ($launcherRoots.PSObject.Properties.Name -contains $requiredRoot) -or
+            [string]::IsNullOrWhiteSpace([string]$launcherRoots.$requiredRoot)
+        ) {
+            throw "Cannot resolve Builder runtime roots: missing or empty '$requiredRoot'"
         }
     }
 
-    $repoMotorRoot = if ($launcherRoots -and $launcherRoots.repo_motor_root) { $launcherRoots.repo_motor_root } else { $script:_MotorCodeRoot }
-    $repoDestinoRoot = if ($launcherRoots -and $launcherRoots.repo_destino_root) { $launcherRoots.repo_destino_root } else { $ProjectRoot }
-    $workspaceActivoRoot = if ($launcherRoots -and $launcherRoots.workspace_activo_root) { $launcherRoots.workspace_activo_root } else { $ProjectRoot }
+    $repoMotorRoot = $launcherRoots.repo_motor_root
+    $repoDestinoRoot = $launcherRoots.repo_destino_root
+    $workspaceActivoRoot = $launcherRoots.workspace_activo_root
 
     # Composicion del prompt para OpenCode Builder
     # Incluye ticket_id real, recordatorio de Files Likely Touched, cierre obligatorio

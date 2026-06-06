@@ -156,3 +156,16 @@ class TestResolveLauncherRootsCLI:
         assert "repo_destino_root" in output
         assert "workspace_activo_root" in output
         assert output["repo_destino_root"] == dest.resolve().as_posix()
+
+
+def test_launcher_fails_closed_when_root_resolution_fails() -> None:
+    """PowerShell must not silently launch with partial or fallback roots."""
+    launcher = (
+        Path(__file__).resolve().parents[1] / "scripts" / "launch_agent_terminals.ps1"
+    ).read_text(encoding="utf-8")
+
+    assert "proceeding without runtime context" not in launcher
+    assert "Cannot resolve Builder runtime roots: controller not found" in launcher
+    assert "Cannot resolve Builder runtime roots: resolver failed" in launcher
+    assert "Cannot resolve Builder runtime roots: invalid JSON" in launcher
+    assert "missing or empty '$requiredRoot'" in launcher
