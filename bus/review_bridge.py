@@ -931,6 +931,7 @@ class ReviewBridge:
             "productive_files": [],
             "reason": "",
             "bus_active": False,
+            "deliverable_type": "code",
         }
 
         try:
@@ -938,6 +939,11 @@ class ReviewBridge:
             ctx = self.state_ingest.get_ticket_context(ticket_id)
             if ctx is not None:
                 result["bus_active"] = True
+                if isinstance(ctx, dict):
+                    dtype = str(ctx.get("deliverable_type") or "code").lower()
+                else:
+                    dtype = str(getattr(ctx, "deliverable_type", "code")).lower()
+                result["deliverable_type"] = dtype
             else:
                 result["reason"] = (
                     f"Ticket {ticket_id} has no active bus/state context. "
@@ -1041,10 +1047,12 @@ class ReviewBridge:
             classification = self.classify_review_packet(ticket_id)
             if classification.get("is_empty"):
                 return True
+            dtype = str(classification.get("deliverable_type") or "code").lower()
+            non_code_ticket = dtype in {"documentation", "research", "analysis"}
             if classification.get("is_docs_only") or classification.get(
                 "is_collaboration_only"
             ):
-                return True
+                return not non_code_ticket
 
             # Fallback: legacy empty diff checks for edge cases
             diff_stat = self._git_diff_stat()
