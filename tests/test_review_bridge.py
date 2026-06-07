@@ -1210,6 +1210,56 @@ class TestReviewBridgeEvidence:
         assert classification["deliverable_type"] == "documentation"
         assert bridge.check_review_packet_diff_empty("WT-2026-236a") is False
 
+    def test_productive_evidence_wins_over_legacy_empty_diff_stat(
+        self, tmp_path, monkeypatch
+    ):
+        """Structured productive evidence must not be overridden by legacy diff_stat."""
+        from unittest.mock import MagicMock
+
+        from bus.review_bridge import ReviewBridge
+
+        bridge = ReviewBridge(event_bus=MagicMock(), project_root=tmp_path)
+        bridge._resolve_motor_root = lambda: tmp_path
+        bridge._git_diff_stat = lambda: "[git diff --stat empty]"
+        bridge.state_ingest = MagicMock()
+        bridge.state_ingest.get_ticket_context.return_value = {
+            "status": "ready_for_review",
+            "deliverable_type": "documentation",
+        }
+
+        monkeypatch.setattr(
+            "bus.evidence.resolve_evidence",
+            lambda *_args, **_kwargs: {
+                "motor_files": ["bus/review_bridge.py"],
+                "destination_files": [
+                    ".agent/reports/compare/stablyai-orca-HEAD-2026-06-07.md"
+                ],
+                "all_files": [
+                    "bus/review_bridge.py",
+                    ".agent/reports/compare/stablyai-orca-HEAD-2026-06-07.md",
+                ],
+                "docs_only_files": [],
+                "productive_files": [
+                    "bus/review_bridge.py",
+                    ".agent/reports/compare/stablyai-orca-HEAD-2026-06-07.md",
+                ],
+                "is_docs_only": False,
+                "is_collaboration_only": False,
+                "motor_productive": ["bus/review_bridge.py"],
+                "dest_productive": [
+                    ".agent/reports/compare/stablyai-orca-HEAD-2026-06-07.md"
+                ],
+                "has_motor_evidence": True,
+                "has_destination_productive": True,
+            },
+        )
+
+        classification = bridge.classify_review_packet("WT-2026-236a")
+
+        assert classification["is_empty"] is False
+        assert classification["productive_files"]
+        assert bridge.check_review_packet_diff_empty("WT-2026-236a") is False
+
     def test_code_ticket_docs_only_evidence_still_blocks(self, tmp_path, monkeypatch):
         """Code tickets still need productive evidence; docs-only is not enough."""
         from unittest.mock import MagicMock

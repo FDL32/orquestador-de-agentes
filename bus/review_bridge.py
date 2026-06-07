@@ -1053,6 +1053,12 @@ class ReviewBridge:
                 "is_collaboration_only"
             ):
                 return not non_code_ticket
+            if (
+                classification.get("productive_files")
+                or classification.get("has_motor_evidence")
+                or classification.get("has_destination_productive")
+            ):
+                return False
 
             # Fallback: legacy empty diff checks for edge cases
             diff_stat = self._git_diff_stat()

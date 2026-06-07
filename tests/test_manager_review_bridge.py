@@ -508,6 +508,42 @@ def test_ticket_state_falls_back_to_execution_log(tmp_path):
     assert sequence >= 0
 
 
+def test_ticket_state_ignores_manager_stale_as_review_trigger(tmp_path):
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+    supervisor.save_state(
+        SupervisorState(active_ticket="WT-2026-236a", completed_tickets=[])
+    )
+
+    ready_event = supervisor.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id="WT-2026-236a",
+        actor="SUPERVISOR",
+        payload={"from_state": "IN_PROGRESS", "to_state": "READY_FOR_REVIEW"},
+    )
+    supervisor.event_bus.emit(
+        "MANAGER_STALE",
+        ticket_id="WT-2026-236a",
+        actor="SUPERVISOR",
+        payload={"trigger_sequence": ready_event.sequence_number},
+    )
+
+    ticket_id, state, sequence = _ticket_state(supervisor)
+
+    assert ticket_id == "WT-2026-236a"
+    assert state.value == "READY_FOR_REVIEW"
+    assert sequence == ready_event.sequence_number
+
+
 def test_bridge_heartbeat_includes_cursor_and_sequence():
     from bus.state_machine import TicketState
 
@@ -3716,6 +3752,85 @@ def test_tick_normal_diff_proceeds_with_review(tmp_path, monkeypatch):
 
     # _tick must return True (processed the normal review)
     assert result is True, "_tick() must return True for normal review"
+
+
+def test_tick_manager_stale_checkpoint_does_not_block_ready_review(
+    tmp_path, monkeypatch
+):
+    """MANAGER_STALE checkpoint must not suppress the pending READY review."""
+    _mock_bridge_state_path(monkeypatch, tmp_path)
+
+    supervisor = _make_supervisor(tmp_path)
+    ticket_id = "WT-2026-236a"
+
+    _write_work_plan_rfr(supervisor.collaboration_dir / "work_plan.md", ticket_id)
+    _write_execution_log_rfr(
+        supervisor.collaboration_dir / "execution_log.md", "READY_FOR_REVIEW"
+    )
+    supervisor.save_state(
+        SupervisorState(active_ticket=ticket_id, completed_tickets=[])
+    )
+
+    ready_event = supervisor.event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="BUILDER",
+        payload={
+            "from_state": "IN_PROGRESS",
+            "to_state": "READY_FOR_REVIEW",
+            "reason": "Ready",
+        },
+    )
+    stale_event = supervisor.event_bus.emit(
+        "MANAGER_STALE",
+        ticket_id=ticket_id,
+        actor="SUPERVISOR",
+        payload={"trigger_sequence": ready_event.sequence_number},
+    )
+    _save_state(
+        BridgeState(
+            last_processed_sequence=stale_event.sequence_number,
+            last_ticket_id=ticket_id,
+            last_ticket_state="READY_FOR_REVIEW",
+        )
+    )
+
+    from bus.review_bridge import ReviewBridge, ReviewDecision, ReviewResult
+
+    review = ReviewBridge(event_bus=supervisor.event_bus, project_root=tmp_path)
+    monkeypatch.setattr(review, "check_review_packet_diff_empty", lambda tid: False)
+
+    review_called = False
+
+    def approve_review(**kw):
+        nonlocal review_called
+        review_called = True
+        return ReviewResult(
+            decision=ReviewDecision.APPROVE,
+            feedback="LGTM",
+            stdout="",
+            parse_method="test",
+            transport_ok=True,
+        )
+
+    monkeypatch.setattr(review, "run_manager_review_cycle", approve_review)
+
+    fake_exe = tmp_path / "fake_manager.exe"
+    fake_exe.write_text("")
+    monkeypatch.setattr(
+        "scripts.manager_review_bridge._resolve_manager_executable",
+        lambda *a: fake_exe,
+    )
+
+    result = _tick(
+        supervisor=supervisor,
+        review=review,
+        manager_path=fake_exe,
+        timeout=5,
+    )
+
+    assert result is True
+    assert review_called is True
 
 
 # =============================================================================
