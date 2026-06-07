@@ -2796,6 +2796,8 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
         TicketState.READY_TO_CLOSE,
         TicketState.COMPLETED,
     ):
+        if bus_state == TicketState.READY_FOR_REVIEW:
+            _sync_mark_ready_targets(plan_id, plan_content, current_round=process_round)
         if json_output:
             print(
                 json.dumps(
