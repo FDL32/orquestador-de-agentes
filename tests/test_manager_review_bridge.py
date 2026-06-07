@@ -341,6 +341,18 @@ def test_manager_review_cycle_requests_changes(monkeypatch, tmp_path):
     assert any(event.event_type == "REVIEW_DECISION" for event in events)
 
 
+def _configure_motor_topology(project_root, motor_root):
+    config_dir = project_root / ".agent" / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    manager_source = motor_root / ".opencode" / "agents" / "manager.md"
+    manager_source.parent.mkdir(parents=True, exist_ok=True)
+    manager_source.write_text("---\ndescription: test manager\n---\n", encoding="utf-8")
+    (config_dir / "motor_destination_link.json").write_text(
+        json.dumps({"motor_root": str(motor_root)}),
+        encoding="utf-8",
+    )
+
+
 def test_manager_review_cycle_tool_error_is_transport_failed(monkeypatch, tmp_path):
     bridge, event_bus, legacy_manager_exe = _make_bridge(tmp_path)
     supervisor = DummySupervisor()
@@ -363,6 +375,9 @@ def test_manager_review_cycle_tool_error_is_transport_failed(monkeypatch, tmp_pa
     monkeypatch.setattr(
         bridge, "_build_diff_for_files_likely_touched", lambda *args: ""
     )
+    motor_root = tmp_path / "repo_motor"
+    motor_root.mkdir(parents=True, exist_ok=True)
+    _configure_motor_topology(tmp_path, motor_root)
 
     result = bridge.run_manager_review_cycle(
         ticket_id="WP-2026-025",
@@ -409,6 +424,9 @@ def test_manager_review_cycle_auth_error_exit_zero_is_transport_failed(
     monkeypatch.setattr(
         bridge, "_build_diff_for_files_likely_touched", lambda *args: ""
     )
+    motor_root = tmp_path / "repo_motor"
+    motor_root.mkdir(parents=True, exist_ok=True)
+    _configure_motor_topology(tmp_path, motor_root)
 
     result = bridge.run_manager_review_cycle(
         ticket_id="WT-2026-236a",
@@ -1196,6 +1214,10 @@ class TestOpencodeReviewRoute:
 
         monkeypatch.setattr(subprocess, "run", fake_run)
 
+        motor_root = tmp_path / "repo_motor"
+        motor_root.mkdir(parents=True, exist_ok=True)
+        _configure_motor_topology(tmp_path, motor_root)
+
         bridge._run_opencode_review(
             ticket_id="WP-2026-072",
             prompt="test prompt",
@@ -1351,6 +1373,10 @@ class TestOpencodeReviewRoute:
             )
 
         monkeypatch.setattr(subprocess, "run", fake_run)
+
+        motor_root = tmp_path / "repo_motor"
+        motor_root.mkdir(parents=True, exist_ok=True)
+        _configure_motor_topology(tmp_path, motor_root)
 
         class DummySupervisor:
             def transition_ticket(self, *args, **kwargs):
@@ -1631,6 +1657,9 @@ class TestReviewPacketTransport:
 
         event_bus = EventBus(runtime_dir=tmp_path / ".agent" / "runtime" / "events")
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+        motor_root = tmp_path / "repo_motor"
+        motor_root.mkdir(parents=True, exist_ok=True)
+        _configure_motor_topology(tmp_path, motor_root)
         monkeypatch.setattr(bridge, "_get_manager_model", lambda: None)
         monkeypatch.setattr(bridge, "_supports_json_format", False)
         monkeypatch.setattr("bus.review_bridge.OS_NAME", os_name)
@@ -4057,6 +4086,9 @@ class TestWT2026204:
             "_ensure_repomix_context",
             lambda *a: (None, {"status": "skipped", "reason": "mocked for tests"}),
         )
+        motor_root = tmp_path / "repo_motor"
+        motor_root.mkdir(parents=True, exist_ok=True)
+        _configure_motor_topology(tmp_path, motor_root)
 
         class DummySupervisor:
             def transition_ticket(self, tid, new_state, reason):
@@ -4546,6 +4578,36 @@ class TestRepomixStructuredStatus:
         with pytest.raises(FileNotFoundError, match="Manager agent spec not found"):
             bridge._run_opencode_review(
                 ticket_id="WT-2026-236a",
+                prompt="test prompt",
+                timeout_seconds=5,
+            )
+
+    def test_run_opencode_review_fails_closed_when_motor_root_is_unresolvable(
+        self, monkeypatch, tmp_path
+    ):
+        """Bridge must fail closed when repo_motor topology is unavailable."""
+        project_root = tmp_path / "repo_destino"
+        project_root.mkdir(parents=True, exist_ok=True)
+        bridge, _, _ = _make_bridge(project_root)
+        self._stub_work_plan(project_root)
+
+        monkeypatch.setattr(
+            bridge,
+            "_ensure_repomix_context",
+            lambda timeout=15: (None, {"status": "skipped", "reason": "test"}),
+        )
+        monkeypatch.setattr(bridge, "_get_manager_model", lambda: None)
+        monkeypatch.setattr(bridge, "_supports_json_format", False)
+        monkeypatch.setattr("bus.review_bridge.OS_NAME", "posix")
+
+        def fail_if_run(*args, **kwargs):
+            raise AssertionError("subprocess.run should not be called")
+
+        monkeypatch.setattr("bus.review_bridge.subprocess.run", fail_if_run)
+
+        with pytest.raises(RuntimeError, match="motor_root"):
+            bridge._run_opencode_review(
+                ticket_id="WT-2026-237a",
                 prompt="test prompt",
                 timeout_seconds=5,
             )
