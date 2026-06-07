@@ -115,6 +115,16 @@ class TestParseMarkdownState:
         result = _parse_markdown_state(state_md_path, "WP-2026-145")
         assert result == "IN_PROGRESS"
 
+    def test_parse_canonical_status_state(self, tmp_path: Path) -> None:
+        """Canonical ACTIVE_TICKET/STATUS format returns state."""
+        state_md_path = tmp_path / "STATE.md"
+        state_md_path.write_text(
+            "ACTIVE_TICKET: WP-2026-145\nSTATUS: READY_FOR_REVIEW\n",
+            encoding="utf-8",
+        )
+        result = _parse_markdown_state(state_md_path, "WP-2026-145")
+        assert result == "READY_FOR_REVIEW"
+
     def test_no_estado_actual_line(self, tmp_path: Path) -> None:
         """Missing 'Estado actual:' line returns None."""
         state_md_path = tmp_path / "STATE.md"

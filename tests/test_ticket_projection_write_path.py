@@ -149,6 +149,71 @@ def test_supervisor_materializes_ready_for_review_projection(tmp_path):
     assert "Estado documental: READY_FOR_REVIEW" in log_path.read_text(encoding="utf-8")
 
 
+def test_mark_ready_sync_materializes_projection_without_supervisor(
+    monkeypatch, tmp_path
+):
+    """mark-ready must align bus and markdown projections without a live supervisor."""
+    project_root = tmp_path
+    collaboration_dir = project_root / ".agent" / "collaboration"
+    runtime_dir = project_root / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    (collaboration_dir / "TURN.md").write_text(
+        "# TURNO ACTUAL\n\n"
+        "**Ultima actualizacion:** 2026-06-01 10:00:00\n\n"
+        "---\n\n"
+        "## Agente Activo\n\n"
+        "| Campo | Valor |\n"
+        "|-------|-------|\n"
+        "| **ROL** | **BUILDER** |\n"
+        "| **Plan ID** | WT-2026-999 |\n"
+        "| **Tipo** | IMPLEMENT |\n"
+        "| **Accion** | IMPLEMENT |\n"
+        "\n---\n\n"
+        "## Instruccion\n\n"
+        "> Trabajo en progreso.\n\n"
+        "---\n\n"
+        "## Estado del Sistema\n\n"
+        "| Archivo | Estado |\n"
+        "|---------|--------|\n"
+        "| work_plan.md | APPROVED |\n"
+        "| execution_log.md | IN_PROGRESS |\n",
+        encoding="utf-8",
+    )
+    (collaboration_dir / "STATE.md").write_text(
+        "ACTIVE_TICKET: WT-2026-999\nSTATUS: IN_PROGRESS\n",
+        encoding="utf-8",
+    )
+    (collaboration_dir / "execution_log.md").write_text(
+        "# Execution Log\n\n## WT-2026-999\n- **Estado:** IN_PROGRESS\n",
+        encoding="utf-8",
+    )
+
+    fake_bus = FakeEventBus()
+    monkeypatch.setattr(agent_controller, "BUS_AVAILABLE", True)
+    monkeypatch.setattr(agent_controller, "event_bus", fake_bus)
+    monkeypatch.setattr(agent_controller, "PROJECT_ROOT", project_root)
+    monkeypatch.setattr(agent_controller, "get_collab_dir", lambda: collaboration_dir)
+    monkeypatch.setattr(agent_controller, "get_runtime_dir", lambda: runtime_dir)
+
+    agent_controller._sync_mark_ready_targets("WT-2026-999", "")
+
+    assert [event_type for event_type, _ in fake_bus.emitted] == [
+        "STATE_CHANGED",
+        "STATE_CHANGED",
+    ]
+    assert (collaboration_dir / "STATE.md").read_text(encoding="utf-8") == (
+        "ACTIVE_TICKET: WT-2026-999\nSTATUS: READY_FOR_REVIEW\n"
+    )
+    turn_content = (collaboration_dir / "TURN.md").read_text(encoding="utf-8")
+    assert "| **ROL** | **MANAGER** |" in turn_content
+    assert "| **Accion** | REVIEW_WORK |" in turn_content
+    assert "- **Estado:** READY_FOR_REVIEW" in (
+        collaboration_dir / "execution_log.md"
+    ).read_text(encoding="utf-8")
+
+
 def teardown_module(module) -> None:
     runtime_module = sys.modules.get("runtime")
     if _ORIGINAL_RUNTIME_PROJECT_ROOT is None:
