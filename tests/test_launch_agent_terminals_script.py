@@ -211,8 +211,8 @@ def test_launcher_external_controller_close_command() -> None:
     assert "--bootstrap-ticket --json --project-root $ProjectRoot" in content
 
 
-def test_launcher_injects_opencode_external_directory_for_runtime_compare() -> None:
-    """OpenCode Builder must be able to write repo_destino runtime compare reports."""
+def test_launcher_injects_opencode_external_directory_for_builder_surfaces() -> None:
+    """OpenCode Builder must access declared repo_destino runtime/read/log surfaces."""
     content = SCRIPT_PATH.read_text(encoding="utf-8")
 
     assert "function Set-OpenCodeExternalPermission" in content
@@ -222,7 +222,12 @@ def test_launcher_injects_opencode_external_directory_for_runtime_compare() -> N
     assert "$permission.PSObject.Properties['external_directory'].Value" in content
     assert "foreach ($property in $externalDirectory.PSObject.Properties)" in content
     assert ".agent\\runtime\\*" in content
-    assert "$runtimePermissionPattern = '*\\.agent\\runtime\\*'" in content
+    assert ".agent\\collaboration\\execution_log.md" in content
+    assert "scripts\\*" in content
+    assert "$managedPermissionPatterns = @(" in content
+    assert "'*\\.agent\\runtime\\*'" in content
+    assert "'*\\.agent\\collaboration\\execution_log.md'" in content
+    assert "'*\\scripts\\*'" in content
     assert "PSObject.Properties.Remove($key)" in content
     assert ".agent\\runtime\\compare\\*" not in content
     assert (

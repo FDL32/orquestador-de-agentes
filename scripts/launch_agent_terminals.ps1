@@ -1271,20 +1271,33 @@ function Set-OpenCodeExternalPermission {
     }
     $externalDirectory = $permission.PSObject.Properties['external_directory'].Value
 
-    $runtimePermissionPattern = '*\.agent\runtime\*'
-    $staleRuntimeKeys = @()
+    $managedPermissionPatterns = @(
+        '*\.agent\runtime\*',
+        '*\.agent\collaboration\execution_log.md',
+        '*\scripts\*'
+    )
+    $stalePermissionKeys = @()
     foreach ($property in $externalDirectory.PSObject.Properties) {
-        if ($property.Name -like $runtimePermissionPattern) {
-            $staleRuntimeKeys += $property.Name
+        foreach ($managedPattern in $managedPermissionPatterns) {
+            if ($property.Name -like $managedPattern) {
+                $stalePermissionKeys += $property.Name
+                break
+            }
         }
     }
-    foreach ($key in $staleRuntimeKeys) {
+    foreach ($key in $stalePermissionKeys) {
         $externalDirectory.PSObject.Properties.Remove($key)
     }
 
-    $runtimePattern = Join-Path $ProjectRoot '.agent\runtime\*'
-    $externalDirectory |
-        Add-Member -NotePropertyName $runtimePattern -NotePropertyValue 'allow' -Force
+    $permissionPaths = @(
+        (Join-Path $ProjectRoot '.agent\runtime\*'),
+        (Join-Path $ProjectRoot '.agent\collaboration\execution_log.md'),
+        (Join-Path $ProjectRoot 'scripts\*')
+    )
+    foreach ($permissionPath in $permissionPaths) {
+        $externalDirectory |
+            Add-Member -NotePropertyName $permissionPath -NotePropertyValue 'allow' -Force
+    }
 
     $config | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $ConfigPath -Encoding UTF8
 }
