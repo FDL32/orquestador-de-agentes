@@ -194,7 +194,7 @@ def _ticket_state(
     if not ticket_id:
         return None, TicketState.IN_PROGRESS, 0
     events = supervisor.event_bus.read_events(ticket_id=ticket_id)
-    latest_sequence = events[-1].sequence_number if events else 0
+    latest_sequence = _latest_reviewable_sequence(events)
     current_state = (
         StateMachine.derive_state_from_events([event.to_dict() for event in events])
         if events
@@ -211,6 +211,42 @@ def _ticket_state(
         current_state = fallback_map.get(log_status, current_state)
 
     return ticket_id, current_state, latest_sequence
+
+
+def _latest_reviewable_sequence(events) -> int:
+    """Return the latest event sequence that should trigger Manager review."""
+    for event in reversed(events):
+        if event.event_type != "STATE_CHANGED":
+            continue
+        payload = event.payload or {}
+        if str(payload.get("to_state", "")).upper() == "READY_FOR_REVIEW":
+            return event.sequence_number
+    return events[-1].sequence_number if events else 0
+
+
+def _event_type_at_sequence(
+    supervisor: SequentialTicketSupervisor, ticket_id: str, sequence: int
+) -> str | None:
+    """Return event_type for a ticket sequence, or None if unavailable."""
+    for event in supervisor.event_bus.read_events(ticket_id=ticket_id):
+        if event.sequence_number == sequence:
+            return event.event_type
+    return None
+
+
+def _checkpoint_blocks_review(
+    supervisor: SequentialTicketSupervisor,
+    ticket_id: str,
+    latest_sequence: int,
+    bridge_state: BridgeState,
+) -> bool:
+    """Return whether bridge checkpoint already covers this review trigger."""
+    if latest_sequence > bridge_state.last_processed_sequence:
+        return False
+    checkpoint_type = _event_type_at_sequence(
+        supervisor, ticket_id, bridge_state.last_processed_sequence
+    )
+    return checkpoint_type != "MANAGER_STALE"
 
 
 def _execution_log_state(supervisor: SequentialTicketSupervisor) -> str:
@@ -463,7 +499,12 @@ def _tick(
         return False
 
     bridge_state = _load_state()
-    if latest_sequence <= bridge_state.last_processed_sequence:
+    if _checkpoint_blocks_review(
+        supervisor=supervisor,
+        ticket_id=ticket_id,
+        latest_sequence=latest_sequence,
+        bridge_state=bridge_state,
+    ):
         return False
 
     # WT-2026-203: Check for empty review diff before invoking Manager backend
