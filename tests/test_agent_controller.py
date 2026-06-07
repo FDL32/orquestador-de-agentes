@@ -2100,6 +2100,70 @@ class TestAgentControllerEvidence:
         errors = agent_controller._check_implementation_evidence("WT-2026-236a")
         assert any("Missing declared deliverables" in err for err in errors)
 
+    def test_documentation_deliverables_ignore_read_only_subheaders(
+        self, tmp_path, monkeypatch
+    ):
+        """Read/inspect and Manager-only FLT paths are not required artifacts."""
+        import agent_controller
+
+        report_dir = tmp_path / ".agent" / "runtime" / "compare"
+        report_dir.mkdir(parents=True)
+        report_file = report_dir / "stablyai-orca-HEAD-2026-06-07.md"
+        report_file.write_text("# report\n", encoding="utf-8")
+        missing_read_only = tmp_path / "skills" / "repo-compare" / "SKILL.md"
+        missing_manager_only = tmp_path / ".agent" / "collaboration" / "PLAN.md"
+
+        plan_content = f"""# Work Plan
+
+- **deliverable_type:** research
+
+## Files Likely Touched
+
+### repo_destino - Builder
+- `{report_file}`
+
+### repo_destino - Read/inspect only
+- `{missing_read_only}`
+
+### repo_destino - Manager only
+- `{missing_manager_only}`
+"""
+        log_content = """
+# Execution Log
+
+**Estado:** IN_PROGRESS
+
+- Reporte `.agent/runtime/compare/stablyai-orca-HEAD-2026-06-07.md` creado. Validate: exit code 0, 0 errors, 0 warnings.
+"""
+
+        monkeypatch.setattr(
+            agent_controller,
+            "read_file",
+            lambda path: (
+                log_content if "execution_log.md" in str(path) else plan_content
+            ),
+        )
+        monkeypatch.setattr(agent_controller, "_check_log_has_evidence", lambda: True)
+
+        from types import SimpleNamespace
+
+        monkeypatch.setitem(
+            sys.modules,
+            "bus.evidence",
+            SimpleNamespace(
+                resolve_evidence=lambda *_args, **_kwargs: {
+                    "all_files": {str(report_file)},
+                    "has_ticket_commit": False,
+                    "is_collaboration_only": True,
+                    "is_docs_only": True,
+                    "has_productive_evidence": False,
+                }
+            ),
+        )
+
+        errors = agent_controller._check_implementation_evidence("WT-2026-236a")
+        assert errors == [], f"Read-only paths should not be required: {errors}"
+
     def test_documentation_quality_gate_ignores_planning_validate_entries(
         self, monkeypatch
     ):

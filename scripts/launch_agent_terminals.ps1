@@ -1561,6 +1561,7 @@ if ($LaunchBuilder) {
                 if (-not (Test-Path -LiteralPath $opencodeConfigPath)) {
                     throw "OpenCode config not found: $opencodeConfigPath"
                 }
+                $opencodeOriginalConfig = Get-Content -LiteralPath $opencodeConfigPath -Raw
                 Set-OpenCodeExternalPermission -ConfigPath $opencodeConfigPath -ProjectRoot $ProjectRoot
                 $opencodeConfig = Get-Content -LiteralPath $opencodeConfigPath -Raw | ConvertFrom-Json
                 $model = $opencodeConfig.model
@@ -1592,6 +1593,11 @@ if ($LaunchBuilder) {
                     $fileFlags += "-f $fileLiteral"
                 }
                 $fileFlagsString = $fileFlags -join ' '
+                $opencodeConfigPathLiteral = ConvertTo-SingleQuotedLiteral $opencodeConfigPath
+                $opencodeOriginalConfigB64 = [Convert]::ToBase64String(
+                    [System.Text.Encoding]::UTF8.GetBytes($opencodeOriginalConfig)
+                )
+                $opencodeOriginalConfigLiteral = ConvertTo-SingleQuotedLiteral $opencodeOriginalConfigB64
 
                 # --port 0 makes opencode run spawn its own local server before executing.
                 # Required since v1.15.x: without a running server the CLI fails with
@@ -1619,7 +1625,15 @@ if ($LaunchBuilder) {
                     }
                 }
                 $sessionFlag = if ($sessionId) { "--session $sessionId" } else { "" }
-                $command = "& $builderExeLiteral run $promptLiteral --agent builder --model $modelLiteral --dir $rootLiteral --port 0 --title $sessionTitleLiteral $sessionFlag $fileFlagsString"
+                $opencodeRunCommand = "& $builderExeLiteral run $promptLiteral --agent builder --model $modelLiteral --dir $rootLiteral --port 0 --title $sessionTitleLiteral $sessionFlag $fileFlagsString"
+                $command = @"
+try { $opencodeRunCommand } finally {
+    `$__opencodeConfigPath = $opencodeConfigPathLiteral
+    `$__opencodeOriginalConfigB64 = $opencodeOriginalConfigLiteral
+    `$__opencodeOriginalConfig = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(`$__opencodeOriginalConfigB64))
+    Set-Content -LiteralPath `$__opencodeConfigPath -Value `$__opencodeOriginalConfig -NoNewline -Encoding UTF8
+}
+"@
                 $builderRoundLiteral = ConvertTo-SingleQuotedLiteral ([string]$currentRound)
                 $builderTicketLiteral = ConvertTo-SingleQuotedLiteral $ticketId
                 $builderEnvPrefix = @"
