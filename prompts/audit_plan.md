@@ -102,6 +102,14 @@ No asumas que el Builder podrá leer `manager_feedback_*` ni otras superficies f
 - ¿Las rutas de ruff apuntan a archivos que realmente existen y serán tocados?
 - ¿El `--validate` usa el `--project-root` correcto para Modelo B?
 
+### PowerShell bajo Set-StrictMode
+
+Si el PLAN toca funciones PowerShell que accedan a objetos de `ConvertFrom-Json`
+o `PSCustomObject`, no basta con parseo sintáctico del `.ps1`:
+verifica que la función tiene un test funcional bajo `Set-StrictMode -Version Latest`
+con un fixture JSON mínimo real (no un mock). El acceso `$obj.prop` y
+`.PSObject.Properties.Name` pueden fallar en runtime aunque el parse sea OK.
+
 ### Consistencia entre archivos
 
 | Par de archivos | Qué debe coincidir |

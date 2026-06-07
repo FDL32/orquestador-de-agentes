@@ -1669,7 +1669,9 @@ Marked ready by Builder
             agent_controller, "_check_git_log_has_plan_id", lambda pid: False
         )
         monkeypatch.setattr(
-            agent_controller, "_check_log_has_quality_gate_evidence", lambda: False
+            agent_controller,
+            "_check_log_has_quality_gate_evidence",
+            lambda *_args, **_kwargs: False,
         )
         monkeypatch.setattr(agent_controller, "read_file", lambda name: "")
         errors = agent_controller._check_implementation_evidence(self._PLAN_ID)
@@ -1907,7 +1909,9 @@ class TestAgentControllerEvidence:
         # Mock out log checks
         monkeypatch.setattr(agent_controller, "_check_log_has_evidence", lambda: True)
         monkeypatch.setattr(
-            agent_controller, "_check_log_has_quality_gate_evidence", lambda: True
+            agent_controller,
+            "_check_log_has_quality_gate_evidence",
+            lambda *_args, **_kwargs: True,
         )
         monkeypatch.setattr(agent_controller, "read_file", lambda x: "")
 
@@ -1918,3 +1922,220 @@ class TestAgentControllerEvidence:
         assert not any("No implementation evidence" in err for err in errors)
         assert not any("Collaboration-only" in err for err in errors)
         assert not any("Docs-only" in err for err in errors)
+
+    def test_documentation_ticket_accepts_declared_deliverable_without_commit(
+        self, tmp_path, monkeypatch
+    ):
+        """Documentation/research tickets should not require code commits."""
+        import agent_controller
+
+        report_path = tmp_path / ".agent" / "runtime" / "compare"
+        report_path.mkdir(parents=True)
+        report_file = report_path / "stablyai-orca-HEAD-2026-06-07.md"
+        report_file.write_text("# report\n", encoding="utf-8")
+
+        plan_content = f"""# Work Plan
+
+- **deliverable_type:** research
+
+## Deliverables
+- `{report_file}`
+"""
+        log_content = """
+# Execution Log
+
+**Estado:** IN_PROGRESS
+
+- Validate final tras reporte: exit code 0, 0 errores, 0 warnings
+- Report persisted to runtime/compare
+"""
+
+        monkeypatch.setattr(
+            agent_controller,
+            "read_file",
+            lambda path: (
+                log_content if "execution_log.md" in str(path) else plan_content
+            ),
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "_check_log_has_evidence",
+            lambda: True,
+        )
+
+        def fake_resolve_evidence(*_args, **_kwargs):
+            return {
+                "all_files": {str(report_file)},
+                "has_ticket_commit": False,
+                "is_collaboration_only": True,
+                "is_docs_only": True,
+                "has_productive_evidence": False,
+            }
+
+        from types import SimpleNamespace
+
+        monkeypatch.setitem(
+            sys.modules,
+            "bus.evidence",
+            SimpleNamespace(resolve_evidence=fake_resolve_evidence),
+        )
+
+        errors = agent_controller._check_implementation_evidence("WT-2026-236a")
+        assert errors == [], (
+            f"Expected no errors for research deliverable, got: {errors}"
+        )
+
+    def test_documentation_ticket_rejects_missing_declared_deliverable(
+        self, tmp_path, monkeypatch
+    ):
+        """Documentation/research tickets still require declared artifacts."""
+        import agent_controller
+
+        report_file = (
+            tmp_path
+            / ".agent"
+            / "runtime"
+            / "compare"
+            / "stablyai-orca-HEAD-2026-06-07.md"
+        )
+        plan_content = f"""# Work Plan
+
+- **deliverable_type:** documentation
+
+## Deliverables
+- `{report_file}`
+"""
+        log_content = """
+# Execution Log
+
+**Estado:** IN_PROGRESS
+
+- Validate final: exit code 0, 0 errors, 0 warnings
+"""
+
+        monkeypatch.setattr(
+            agent_controller,
+            "read_file",
+            lambda path: (
+                log_content if "execution_log.md" in str(path) else plan_content
+            ),
+        )
+        monkeypatch.setattr(agent_controller, "_check_log_has_evidence", lambda: True)
+
+        def fake_resolve_evidence(*_args, **_kwargs):
+            return {
+                "all_files": set(),
+                "has_ticket_commit": False,
+                "is_collaboration_only": False,
+                "is_docs_only": False,
+                "has_productive_evidence": False,
+            }
+
+        from types import SimpleNamespace
+
+        monkeypatch.setitem(
+            sys.modules,
+            "bus.evidence",
+            SimpleNamespace(resolve_evidence=fake_resolve_evidence),
+        )
+
+        errors = agent_controller._check_implementation_evidence("WT-2026-236a")
+        assert any("Missing declared deliverables" in err for err in errors)
+
+    def test_documentation_ticket_detects_missing_deliverable_under_subheader(
+        self, tmp_path, monkeypatch
+    ):
+        """Files Likely Touched sub-sections must still declare artifacts."""
+        import agent_controller
+
+        report_file = (
+            tmp_path
+            / ".agent"
+            / "runtime"
+            / "compare"
+            / "stablyai-orca-HEAD-2026-06-07.md"
+        )
+        plan_content = f"""# Work Plan
+
+- **deliverable_type:** research
+
+## Files Likely Touched
+
+### repo_destino - Builder
+- `{report_file}`
+"""
+        log_content = """
+# Execution Log
+
+**Estado:** IN_PROGRESS
+
+- Validate final tras reporte: exit code 0, 0 errors, 0 warnings
+"""
+
+        monkeypatch.setattr(
+            agent_controller,
+            "read_file",
+            lambda path: (
+                log_content if "execution_log.md" in str(path) else plan_content
+            ),
+        )
+        monkeypatch.setattr(agent_controller, "_check_log_has_evidence", lambda: True)
+
+        from types import SimpleNamespace
+
+        monkeypatch.setitem(
+            sys.modules,
+            "bus.evidence",
+            SimpleNamespace(
+                resolve_evidence=lambda *_args, **_kwargs: {
+                    "all_files": set(),
+                    "has_ticket_commit": False,
+                    "is_collaboration_only": False,
+                    "is_docs_only": False,
+                    "has_productive_evidence": False,
+                }
+            ),
+        )
+
+        errors = agent_controller._check_implementation_evidence("WT-2026-236a")
+        assert any("Missing declared deliverables" in err for err in errors)
+
+    def test_documentation_quality_gate_ignores_planning_validate_entries(
+        self, monkeypatch
+    ):
+        """Planning validate lines should not satisfy Builder deliverable evidence."""
+        import agent_controller
+
+        log_content = """
+# Execution Log
+
+**Estado:** IN_PROGRESS
+
+- Validate final tras sustitucion de placeholders: exit code 0, 0 errors, 0 warnings.
+- Fase 3: pendiente reporte `.agent/runtime/compare/stablyai-orca-HEAD-2026-06-07.md`.
+"""
+
+        monkeypatch.setattr(agent_controller, "read_file", lambda _path: log_content)
+
+        assert (
+            agent_controller._check_log_has_quality_gate_evidence("documentation")
+            is False
+        )
+
+    def test_documentation_quality_gate_accepts_report_validate_entry(
+        self, monkeypatch
+    ):
+        """Builder report evidence and validate result can close non-code tickets."""
+        import agent_controller
+
+        log_content = """
+# Execution Log
+
+**Estado:** IN_PROGRESS
+
+- Validate final tras reporte `.agent/runtime/compare/stablyai-orca-HEAD-2026-06-07.md`: exit code 0, 0 errors, 0 warnings.
+"""
+
+        monkeypatch.setattr(agent_controller, "read_file", lambda _path: log_content)
+
+        assert agent_controller._check_log_has_quality_gate_evidence("research") is True

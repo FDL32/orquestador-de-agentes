@@ -1276,6 +1276,19 @@ def _check_deliverable_type(content: str) -> list[str]:
     return []
 
 
+def _read_deliverable_type(content: str, default: str = "code") -> str:
+    """Read normalized deliverable_type from work_plan.md content."""
+    match = _DELIVERABLE_TYPE_RE.search(content or "")
+    if not match:
+        return default
+    value = match.group(1).strip().lower()
+    if "+" in value:
+        return "mixed"
+    if value not in _VALID_DELIVERABLE_TYPES:
+        return default
+    return value
+
+
 # Keywords that indicate a generic/checkpoint commit (not a meaningful closeout)
 _CHECKPOINT_KEYWORDS = frozenset({"checkpoint", "pre-handoff", "wip", "interim"})
 
@@ -1506,15 +1519,15 @@ def _check_git_log_has_plan_id(plan_id: str) -> bool:
     return False
 
 
-def _check_log_has_quality_gate_evidence() -> bool:
+def _check_log_has_quality_gate_evidence(deliverable_type: str = "code") -> bool:
     """WT-2026-203: Check execution_log.md for explicit quality gate evidence.
 
     Before:
         - EXEC_LOG must be accessible.
 
     During:
-        - Reads execution_log.md and searches for lines containing
-          any of: pytest, ruff, passed, "All checks passed".
+        - Reads execution_log.md and searches for deliverable-type-specific
+          quality gate markers.
         - This is stricter than the general non-boilerplate check.
 
     After:
@@ -1527,13 +1540,84 @@ def _check_log_has_quality_gate_evidence() -> bool:
         if not log_content:
             return False
         lines = log_content.strip().split("\n")
+        quality_markers = {
+            "code": ("pytest", "ruff", "passed", "all checks passed"),
+            "mixed": ("pytest", "ruff", "passed", "all checks passed"),
+            "documentation": (
+                "validate",
+                "check-deliverables",
+                "deliverable",
+                "report",
+                "success",
+                "0 warnings",
+                "0 errores",
+                "0 errors",
+                "passed",
+            ),
+            "research": (
+                "validate",
+                "check-deliverables",
+                "deliverable",
+                "report",
+                "success",
+                "0 warnings",
+                "0 errores",
+                "0 errors",
+                "passed",
+            ),
+            "analysis": (
+                "validate",
+                "check-deliverables",
+                "deliverable",
+                "report",
+                "success",
+                "0 warnings",
+                "0 errores",
+                "0 errors",
+                "passed",
+            ),
+        }
+        markers = quality_markers.get(deliverable_type, quality_markers["code"])
         for line in lines:
             stripped = line.strip().lower()
-            if any(kw in stripped for kw in ["pytest", "ruff", "passed"]):
+            if deliverable_type in {"documentation", "research", "analysis"}:
+                artifact_markers = (
+                    "check-deliverables",
+                    "deliverable",
+                    "reporte",
+                    "report",
+                    ".agent/runtime/compare",
+                    "runtime/compare",
+                )
+                if "pendiente" in stripped or "pending" in stripped:
+                    continue
+                if not any(marker in stripped for marker in artifact_markers):
+                    continue
+            if any(kw in stripped for kw in markers):
                 return True
         return False
     except Exception:
         return False
+
+
+def _check_declared_deliverables_exist(plan_content: str) -> list[str]:
+    """Return missing declared deliverables for non-code tickets."""
+    try:
+        from scripts.check_deliverables_exist import extract_paths_from_work_plan
+
+        declared_paths = extract_paths_from_work_plan(plan_content)
+    except Exception as exc:
+        return [f"Could not inspect declared deliverables: {exc}"]
+
+    if not declared_paths:
+        return []
+
+    missing = [path for path in sorted(declared_paths) if not path.exists()]
+    if not missing:
+        return []
+    return [
+        "Missing declared deliverables: " + ", ".join(str(path) for path in missing)
+    ]
 
 
 def _check_implementation_evidence(plan_id: str) -> list[str]:  # noqa: C901
@@ -1560,6 +1644,9 @@ def _check_implementation_evidence(plan_id: str) -> list[str]:  # noqa: C901
     errors: list[str] = []
     all_files = set()
     has_commit = False
+    plan_content = read_file(WORK_PLAN)
+    deliverable_type = _read_deliverable_type(plan_content)
+    non_code_ticket = deliverable_type in {"documentation", "research", "analysis"}
 
     try:
         from bus.evidence import resolve_evidence
@@ -1569,14 +1656,14 @@ def _check_implementation_evidence(plan_id: str) -> list[str]:  # noqa: C901
         has_commit = evidence["has_ticket_commit"]
 
         if all_files:
-            if evidence["is_collaboration_only"]:
+            if evidence["is_collaboration_only"] and not non_code_ticket:
                 errors.append(
                     "Collaboration-only evidence: all git changes are collaboration "
                     f"artifacts ({len(all_files)} files). No productive code changes "
                     "detected in motor or destination. Run --pre-handoff first, "
                     "then produce real implementation changes."
                 )
-            elif evidence["is_docs_only"]:
+            elif evidence["is_docs_only"] and not non_code_ticket:
                 errors.append(
                     "Docs-only evidence: all git changes are documentation artifacts "
                     f"({len(all_files)} files). No productive implementation files "
@@ -1585,6 +1672,7 @@ def _check_implementation_evidence(plan_id: str) -> list[str]:  # noqa: C901
 
         if (
             not evidence["has_productive_evidence"]
+            and not non_code_ticket
             and not evidence["is_docs_only"]
             and not evidence["is_collaboration_only"]
         ):
@@ -1602,9 +1690,18 @@ def _check_implementation_evidence(plan_id: str) -> list[str]:  # noqa: C901
             "No implementation evidence in execution_log.md (only boilerplate content)"
         )
 
+    if non_code_ticket:
+        errors.extend(_check_declared_deliverables_exist(plan_content))
+        has_qg_evidence = _check_log_has_quality_gate_evidence(deliverable_type)
+        if not has_qg_evidence:
+            errors.append(
+                "No documentation/research quality gate evidence in execution_log.md: "
+                "expected validate/check-deliverables/report evidence."
+            )
+        return errors
+
     # 3. Best-effort: check Files Likely Touched
     try:
-        plan_content = read_file(WORK_PLAN)
         if plan_content:
             likely_files = parse_files_likely_touched(plan_content)
             if likely_files and all_files:
@@ -1632,7 +1729,7 @@ def _check_implementation_evidence(plan_id: str) -> list[str]:  # noqa: C901
         )
 
     # 5. WT-2026-203: Check execution_log.md for explicit quality gate evidence
-    has_qg_evidence = _check_log_has_quality_gate_evidence()
+    has_qg_evidence = _check_log_has_quality_gate_evidence(deliverable_type)
     if not has_qg_evidence:
         errors.append(
             "No quality gate evidence in execution_log.md: expected at least "
@@ -2748,6 +2845,28 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
                 )
         return 0
 
+    def _fail_closeout(reason: str, details: dict | None = None) -> int:
+        payload = {"reason": reason}
+        if details:
+            payload.update(details)
+        if process_round is not None:
+            payload["round"] = process_round
+        if BUS_AVAILABLE and event_bus:
+            event_bus.emit(
+                event_type="HANDOFF_BLOCKED",
+                ticket_id=plan_id,
+                actor="BUILDER",
+                payload=payload,
+            )
+            _emit_builder_exit(
+                plan_id=plan_id,
+                exit_reason=f"mark-ready blocked: {reason}",
+                completion_summary=json.dumps(payload, ensure_ascii=False),
+                current_round=process_round,
+            )
+        _release_builder_lock(plan_id, expected_round=process_round)
+        return 1
+
     # Exit gate: Check circuit breaker before allowing close
     breaker_status = _check_circuit_breaker(plan_id)
     if breaker_status["open"]:
@@ -2756,7 +2875,14 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
             f"  Failures: {breaker_status['failures']}, No-progress count: {breaker_status['no_progress_count']}"
         )
         print("  Resolve the underlying issue before marking ready.")
-        return 1
+        return _fail_closeout(
+            "circuit_breaker_open",
+            {
+                "details": breaker_status["reason"],
+                "failures": breaker_status["failures"],
+                "no_progress_count": breaker_status["no_progress_count"],
+            },
+        )
 
     # WP-2026-188 Phase 4: Builder ready evidence gate (unconditional — not bypassable)
     evidence_errors = _check_implementation_evidence(plan_id)
@@ -2772,26 +2898,23 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
             file=sys.stderr,
             flush=True,
         )
-        return 1
+        return _fail_closeout(
+            "implementation_evidence_failed",
+            {"errors": evidence_errors},
+        )
 
     # WP-2026-167: Pre-handoff guard - verify tree hygiene and M3 checkpoint
     guard_result = _run_pre_handoff_guard(plan_id, json_output)
     if not guard_result["valid"]:
-        # Emit HANDOFF_BLOCKED event
-        if BUS_AVAILABLE and event_bus:
-            event_bus.emit(
-                event_type="HANDOFF_BLOCKED",
-                ticket_id=plan_id,
-                actor="BUILDER",
-                payload={
-                    "reason": "pre_handoff_guard_failed",
-                    "dirty_tree": guard_result.get("dirty_tree", False),
-                    "missing_checkpoint": guard_result.get("missing_checkpoint", False),
-                    "dirty_files": guard_result.get("dirty_files", []),
-                    "scope_discrepancy": guard_result.get("scope_discrepancy", []),
-                },
-            )
-        return 1
+        return _fail_closeout(
+            "pre_handoff_guard_failed",
+            {
+                "dirty_tree": guard_result.get("dirty_tree", False),
+                "missing_checkpoint": guard_result.get("missing_checkpoint", False),
+                "dirty_files": guard_result.get("dirty_files", []),
+                "scope_discrepancy": guard_result.get("scope_discrepancy", []),
+            },
+        )
 
     # --- WT-2026-232a: Motor-aware scope gate ---
     # When motor/destino topology exists (different repos), check the motor
