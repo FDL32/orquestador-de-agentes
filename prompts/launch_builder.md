@@ -23,6 +23,24 @@ Eres el BUILDER del ticket `{{TICKET_ID}}` en el motor `orquestador_de_agentes`.
 ## Objetivo
 `{{DESCRIPCION_DEL_OBJETIVO_Y_ROOT_CAUSE}}`
 
+## Tipo de entrega
+Lee `deliverable_type` en `work_plan.md` antes de decidir gates y evidencia.
+
+- Si es `code`, entrega diff/commit productivo del ticket y evidencia de tests,
+  ruff y gates aplicables.
+- Si es `mixed`, cumple el contrato de `code` y verifica tambien los artefactos
+  documentales declarados.
+- Si es `documentation`, `research` o `analysis`, no fabriques cambios de codigo
+  ni ejecutes pytest/ruff salvo que el plan lo pida o hayas tocado codigo. El
+  cierre requiere que los artefactos declarados existan en disco y que
+  `execution_log.md` contenga una linea que combine artefacto y gate final, por
+  ejemplo:
+  `Reporte .agent/runtime/compare/<archivo>.md creado. Validate: exit code 0, 0 errors, 0 warnings.`
+
+En tickets documentales, trata las subsecciones `Read/inspect only` y
+`Manager-only` como contexto: no las conviertas en entregables ni en scope
+productivo.
+
 ## Fase 0: Diagnostico antes del cambio
 Confirma en codigo antes de modificar archivos:
 
@@ -92,6 +110,11 @@ python scripts/pip_audit_project.py
 ```
 
 La validacion del `repo_destino` debe cerrar en `0 errors` y `0 warnings`.
+
+Para `documentation`, `research` o `analysis`, el gate minimo es:
+- existencia de cada artefacto declarado para Builder;
+- `validate --json --project-root <repo_destino>` con salida final registrada;
+- linea de evidencia artefacto + validate/success/passed en `execution_log.md`.
 
 ## Registro y cierre
 En `execution_log.md` del `repo_destino`, registra solo si tu `Builder Access Surface`
