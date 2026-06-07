@@ -34,18 +34,52 @@ from bus.state_machine import TicketState  # type: ignore  # noqa: E402
 from bus.supervisor import SequentialTicketSupervisor  # type: ignore  # noqa: E402
 
 
+class FakeEvent:
+    def __init__(
+        self, event_type: str, ticket_id: str, payload: dict[str, str]
+    ) -> None:
+        self.event_type = event_type
+        self.ticket_id = ticket_id
+        self.payload = payload
+
+    def to_dict(self) -> dict:
+        return {
+            "event_type": self.event_type,
+            "ticket_id": self.ticket_id,
+            "payload": self.payload,
+        }
+
+
 class FakeEventBus:
-    def __init__(self) -> None:
+    def __init__(self, events: list[FakeEvent] | None = None) -> None:
         self.emitted: list[tuple[str, dict]] = []
+        self.events = events or []
 
     def read_events(self, *args, **kwargs):
-        return []
+        ticket_id = kwargs.get("ticket_id")
+        event_type = kwargs.get("event_type")
+        return [
+            event
+            for event in self.events
+            if (ticket_id is None or event.ticket_id == ticket_id)
+            and (event_type is None or event.event_type == event_type)
+        ]
 
     def latest_event(self, *args, **kwargs):
+        events = self.read_events(*args, **kwargs)
+        if events:
+            return events[-1]
         return None
 
     def emit(self, event_type: str, **kwargs):
         self.emitted.append((event_type, kwargs))
+        self.events.append(
+            FakeEvent(
+                event_type,
+                kwargs.get("ticket_id", ""),
+                kwargs.get("payload", {}),
+            )
+        )
 
 
 def test_materialize_state_transition_only_emits_bus(monkeypatch):
@@ -209,6 +243,75 @@ def test_mark_ready_sync_materializes_projection_without_supervisor(
     turn_content = (collaboration_dir / "TURN.md").read_text(encoding="utf-8")
     assert "| **ROL** | **MANAGER** |" in turn_content
     assert "| **Accion** | REVIEW_WORK |" in turn_content
+    assert "- **Estado:** READY_FOR_REVIEW" in (
+        collaboration_dir / "execution_log.md"
+    ).read_text(encoding="utf-8")
+
+
+def test_mark_ready_already_ready_reprojects_stale_markdown(monkeypatch, tmp_path):
+    """already_ready is idempotent for events but must still heal projections."""
+    project_root = tmp_path
+    collaboration_dir = project_root / ".agent" / "collaboration"
+    runtime_dir = project_root / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    (collaboration_dir / "work_plan.md").write_text(
+        "# Work Plan\n\n- **ID:** WT-2026-999\n",
+        encoding="utf-8",
+    )
+    (collaboration_dir / "TURN.md").write_text(
+        "# TURNO ACTUAL\n\n"
+        "**Ultima actualizacion:** 2026-06-01 10:00:00\n\n"
+        "---\n\n"
+        "## Agente Activo\n\n"
+        "| Campo | Valor |\n"
+        "|-------|-------|\n"
+        "| **ROL** | **BUILDER** |\n"
+        "| **Plan ID** | WT-2026-999 |\n"
+        "| **Tipo** | IMPLEMENT |\n"
+        "| **Accion** | IMPLEMENT |\n",
+        encoding="utf-8",
+    )
+    (collaboration_dir / "STATE.md").write_text(
+        "ACTIVE_TICKET: WT-2026-999\nSTATUS: IN_PROGRESS\n",
+        encoding="utf-8",
+    )
+    (collaboration_dir / "execution_log.md").write_text(
+        "# Execution Log\n\n## WT-2026-999\n- **Estado:** IN_PROGRESS\n",
+        encoding="utf-8",
+    )
+
+    fake_bus = FakeEventBus(
+        [
+            FakeEvent(
+                "STATE_CHANGED",
+                "WT-2026-999",
+                {"from_state": "IN_PROGRESS", "to_state": "READY_FOR_REVIEW"},
+            )
+        ]
+    )
+    monkeypatch.setattr(agent_controller, "BUS_AVAILABLE", True)
+    monkeypatch.setattr(agent_controller, "event_bus", fake_bus)
+    monkeypatch.setattr(agent_controller, "PROJECT_ROOT", project_root)
+    monkeypatch.setattr(agent_controller, "get_collab_dir", lambda: collaboration_dir)
+    monkeypatch.setattr(agent_controller, "get_runtime_dir", lambda: runtime_dir)
+    monkeypatch.setattr(
+        agent_controller,
+        "_ensure_active_builder_round",
+        lambda _plan_id: (True, None, "ok"),
+    )
+
+    rc = agent_controller._handle_mark_ready(None, True, True)
+
+    assert rc == 0
+    assert fake_bus.emitted == []
+    assert (collaboration_dir / "STATE.md").read_text(encoding="utf-8") == (
+        "ACTIVE_TICKET: WT-2026-999\nSTATUS: READY_FOR_REVIEW\n"
+    )
+    assert "| **ROL** | **MANAGER** |" in (collaboration_dir / "TURN.md").read_text(
+        encoding="utf-8"
+    )
     assert "- **Estado:** READY_FOR_REVIEW" in (
         collaboration_dir / "execution_log.md"
     ).read_text(encoding="utf-8")
