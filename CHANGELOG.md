@@ -1,4 +1,18 @@
-﻿# 2026-06-05 - WT-2026-215 Gates Modelo B: git evidence resolves motor_root
+# 2026-06-07 - WT-2026-237a Fail-closed manager invocation on unresolvable motor root
+
+### Fixed
+- `bus/review_bridge.py`: Removed the legacy fail-open stub that created a fake `manager.md` in the destination workspace when `motor_root` was unresolvable. The `_materialize_manager_agent_spec()` and `_run_opencode_review()` methods now raise a `RuntimeError` immediately if `motor_root` cannot be resolved, enforcing the Model B topology.
+
+### Added
+- `tests/test_manager_review_bridge.py`: Added `test_run_opencode_review_fails_closed_when_motor_root_is_unresolvable` to ensure `subprocess.run` is never called when `motor_root` is unresolvable. Adjusted legacy tests with `_configure_motor_topology()` to provide a minimal explicit motor/destination linkage.
+
+### Summary
+- Prevents silent fallback execution in the destination workspace when the motor root is lost.
+- Commit: `9542ef0`
+
+---
+
+# 2026-06-05 - WT-2026-215 Gates Modelo B: git evidence resolves motor_root
 
 ### Fixed
 - `bus/review_bridge.py`: introduced `_motor_root_or_raise()` as single seam
