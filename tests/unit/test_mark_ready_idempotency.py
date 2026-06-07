@@ -393,3 +393,116 @@ class TestMarkReadyIdempotency:
             3,
             "stale Builder round 3; active round is 4",
         )
+
+    @patch("agent_controller._load_mark_ready_context")
+    @patch("agent_controller.BUS_AVAILABLE", True)
+    @patch("agent_controller.event_bus")
+    def test_doc_ticket_skips_motor_checkpoint(self, mock_bus, mock_load):
+        """Documentation ticket must reach --mark-ready without a motor checkpoint tag."""
+        plan_content = (
+            "**Estado:** APPROVED\n"
+            "**ID:** WT-2026-236a\n"
+            "- **deliverable_type:** documentation\n"
+        )
+        mock_load.return_value = (
+            plan_content,
+            "**Estado:** IN_PROGRESS",
+            "WT-2026-236a",
+        )
+        mock_event = MagicMock()
+        mock_event.to_dict.return_value = {
+            "event_type": "STATE_CHANGED",
+            "payload": {"to_state": "IN_PROGRESS"},
+        }
+        mock_bus.read_events.return_value = [mock_event]
+        mock_bus.latest_event.return_value = None
+
+        with (
+            patch(
+                "agent_controller._ensure_active_builder_round",
+                return_value=(True, 1, None),
+            ),
+            patch(
+                "agent_controller._check_circuit_breaker", return_value={"open": False}
+            ),
+            patch("agent_controller._check_implementation_evidence", return_value=[]),
+            patch(
+                "agent_controller._run_pre_handoff_guard",
+                return_value={"valid": True},
+            ),
+            patch("agent_controller._MOTOR_ROOT", Path("/motor")),
+            patch("agent_controller.PROJECT_ROOT", Path("/workspace")),
+            patch("agent_controller._emit_builder_exit"),
+            patch("agent_controller._sync_mark_ready_targets"),
+            patch("agent_controller._reset_circuit_breaker"),
+            patch("agent_controller._release_builder_lock"),
+            patch("agent_controller._resolve_motor_checkpoint_files") as mock_cp,
+        ):
+            result = _handle_mark_ready(
+                scope_override=None, json_output=False, force_mode=False
+            )
+
+        assert result == 0
+        # Motor checkpoint should never be consulted for doc tickets
+        mock_cp.assert_not_called()
+
+    @patch("agent_controller._load_mark_ready_context")
+    @patch("agent_controller.BUS_AVAILABLE", True)
+    @patch("agent_controller.event_bus")
+    def test_motor_checkpoint_failure_emits_handoff_blocked(self, mock_bus, mock_load):
+        """Missing motor checkpoint must emit HANDOFF_BLOCKED and release lock."""
+        plan_content = (
+            "**Estado:** APPROVED\n**ID:** WT-2026-236a\n- **deliverable_type:** code\n"
+        )
+        mock_load.return_value = (
+            plan_content,
+            "**Estado:** IN_PROGRESS",
+            "WT-2026-236a",
+        )
+        mock_event = MagicMock()
+        mock_event.to_dict.return_value = {
+            "event_type": "STATE_CHANGED",
+            "payload": {"to_state": "IN_PROGRESS"},
+        }
+        mock_bus.read_events.return_value = [mock_event]
+        mock_bus.latest_event.return_value = None
+
+        with (
+            patch(
+                "agent_controller._ensure_active_builder_round",
+                return_value=(True, 1, None),
+            ),
+            patch(
+                "agent_controller._check_circuit_breaker", return_value={"open": False}
+            ),
+            patch("agent_controller._check_implementation_evidence", return_value=[]),
+            patch(
+                "agent_controller._run_pre_handoff_guard",
+                return_value={"valid": True},
+            ),
+            patch("agent_controller._MOTOR_ROOT", Path("/motor")),
+            patch("agent_controller.PROJECT_ROOT", Path("/workspace")),
+            patch(
+                "agent_controller._resolve_motor_checkpoint_files",
+                return_value=(
+                    False,
+                    [],
+                    "Tag checkpoint/review-WT-2026-236a not found",
+                ),
+            ),
+            patch("agent_controller._emit_builder_exit") as mock_exit,
+            patch("agent_controller._release_builder_lock") as mock_release,
+        ):
+            result = _handle_mark_ready(
+                scope_override=None, json_output=False, force_mode=False
+            )
+
+        assert result == 1
+        handoff_events = [
+            call
+            for call in mock_bus.emit.call_args_list
+            if call.kwargs.get("event_type") == "HANDOFF_BLOCKED"
+        ]
+        assert handoff_events, "missing motor checkpoint must emit HANDOFF_BLOCKED"
+        mock_exit.assert_called_once()
+        mock_release.assert_called_once_with("WT-2026-236a", expected_round=1)

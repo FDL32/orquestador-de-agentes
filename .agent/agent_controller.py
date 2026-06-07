@@ -2926,46 +2926,62 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
     motor_scope_pass = False
 
     if is_motor_topology:
-        cp_valid, cp_files, cp_error = _resolve_motor_checkpoint_files(
-            motor_root_mr, plan_id
-        )
-        if cp_valid and cp_files:
-            flt_motor_paths = _parse_raw_flt_paths(plan_content)
-            motor_set = {f.replace("\\", "/") for f in cp_files}
-            flt_set = {p.replace("\\", "/") for p in flt_motor_paths}
-            outside_flt = motor_set - flt_set
-            inside_flt = motor_set & flt_set
-
-            if inside_flt and not outside_flt:
-                # Full scope compliance: motor checkpoint files within FLT
-                if not json_output:
-                    print(
-                        f"[OK] Motor scope: {len(inside_flt)} files within "
-                        "Files Likely Touched"
-                    )
-                motor_scope_pass = True
-            elif outside_flt:
-                # Motor checkpoint files outside FLT -> block (or override)
-                print(
-                    "[ERROR] Motor checkpoint has files outside Files Likely Touched:"
-                )
-                for f in sorted(outside_flt):
-                    print(f"  - {f}")
-                if not scope_override:
-                    print('Use --scope-override "reason" to proceed.')
-                    return 1
-                _record_scope_override(scope_override, outside_flt)
-                motor_scope_pass = True
-            # else: inside_flt empty, no outside_flt -> fall through to legacy
-        elif not cp_valid:
-            # No valid checkpoint in motor topology -> block
-            print(f"[ERROR] No valid motor checkpoint for {plan_id}: {cp_error}")
-            print(
-                "Run --pre-handoff first to create "
-                "checkpoint/review-<ticket> in repo_motor."
+        # For documentation/research/analysis tickets, skip motor checkpoint:
+        # the evidence gate already verified declared deliverables exist on disk.
+        _non_code_ticket = _read_deliverable_type(plan_content) in {
+            "documentation",
+            "research",
+            "analysis",
+        }
+        if _non_code_ticket:
+            motor_scope_pass = True
+        else:
+            cp_valid, cp_files, cp_error = _resolve_motor_checkpoint_files(
+                motor_root_mr, plan_id
             )
-            return 1
-        # cp_valid but cp_files empty -> fall through to legacy
+            if cp_valid and cp_files:
+                flt_motor_paths = _parse_raw_flt_paths(plan_content)
+                motor_set = {f.replace("\\", "/") for f in cp_files}
+                flt_set = {p.replace("\\", "/") for p in flt_motor_paths}
+                outside_flt = motor_set - flt_set
+                inside_flt = motor_set & flt_set
+
+                if inside_flt and not outside_flt:
+                    # Full scope compliance: motor checkpoint files within FLT
+                    if not json_output:
+                        print(
+                            f"[OK] Motor scope: {len(inside_flt)} files within "
+                            "Files Likely Touched"
+                        )
+                    motor_scope_pass = True
+                elif outside_flt:
+                    # Motor checkpoint files outside FLT -> block (or override)
+                    print(
+                        "[ERROR] Motor checkpoint has files outside Files Likely Touched:"
+                    )
+                    for f in sorted(outside_flt):
+                        print(f"  - {f}")
+                    if not scope_override:
+                        print('Use --scope-override "reason" to proceed.')
+                        return _fail_closeout(
+                            "motor_scope_outside_flt",
+                            {"outside_flt": sorted(outside_flt)},
+                        )
+                    _record_scope_override(scope_override, outside_flt)
+                    motor_scope_pass = True
+                # else: inside_flt empty, no outside_flt -> fall through to legacy
+            elif not cp_valid:
+                # No valid checkpoint in motor topology -> block with bus events
+                print(f"[ERROR] No valid motor checkpoint for {plan_id}: {cp_error}")
+                print(
+                    "Run --pre-handoff first to create "
+                    "checkpoint/review-<ticket> in repo_motor."
+                )
+                return _fail_closeout(
+                    "motor_checkpoint_missing",
+                    {"cp_error": cp_error},
+                )
+            # cp_valid but cp_files empty -> fall through to legacy
 
     if not motor_scope_pass:
         # For the scope gate, supplement current git status with recent commits so
