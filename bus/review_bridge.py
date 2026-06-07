@@ -2081,7 +2081,14 @@ class ReviewBridge:
                 "Review message must be ASCII for Windows command transport."
             )
 
-        cmd_args = [exe_full, "run", "--agent", "manager"]
+        cmd_args = [
+            exe_full,
+            "run",
+            "--agent",
+            "manager",
+            "--dir",
+            str(self.project_root),
+        ]
         if model:
             cmd_args.extend(["--model", model])
         if self._supports_json_format:
@@ -2118,7 +2125,7 @@ class ReviewBridge:
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
-                cwd=self.project_root,
+                cwd=self._motor_root_or_raise(),
                 env=self._review_env(),
                 timeout=timeout_seconds,
                 shell=use_shell,

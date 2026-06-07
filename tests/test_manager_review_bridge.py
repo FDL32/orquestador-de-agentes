@@ -4411,6 +4411,63 @@ class TestRepomixStructuredStatus:
         assert "Repomix Context Status" in packet_content
         assert "Repomix failed (simulated)" in packet_content
 
+    def test_run_opencode_review_uses_motor_root_and_project_dir(
+        self, monkeypatch, tmp_path
+    ):
+        """Manager agent must resolve from repo_motor while tools run on repo_destino."""
+        import subprocess as _subprocess
+
+        project_root = tmp_path / "repo_destino"
+        project_root.mkdir(parents=True, exist_ok=True)
+        bridge, _, _ = _make_bridge(project_root)
+        self._stub_work_plan(project_root)
+
+        config_dir = project_root / ".agent" / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        motor_root = tmp_path / "repo_motor"
+        motor_root.mkdir(parents=True, exist_ok=True)
+        (config_dir / "motor_destination_link.json").write_text(
+            json.dumps({"motor_root": str(motor_root)}),
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(
+            bridge,
+            "_ensure_repomix_context",
+            lambda timeout=15: (None, {"status": "skipped", "reason": "test"}),
+        )
+        monkeypatch.setattr(bridge, "_get_manager_model", lambda: None)
+        monkeypatch.setattr(bridge, "_supports_json_format", False)
+        monkeypatch.setattr("bus.review_bridge.OS_NAME", "posix")
+
+        captured: dict[str, object] = {}
+
+        def fake_run(cmd_args, **kwargs):
+            captured["cmd"] = cmd_args
+            captured["cwd"] = kwargs.get("cwd")
+            return _subprocess.CompletedProcess(
+                args=cmd_args,
+                returncode=0,
+                stdout="DECISION: APPROVE",
+                stderr="",
+            )
+
+        monkeypatch.setattr(_subprocess, "run", fake_run)
+
+        bridge._run_opencode_review(
+            ticket_id="WT-2026-236a",
+            prompt="test prompt",
+            timeout_seconds=5,
+        )
+
+        cmd = captured["cmd"]
+        assert isinstance(cmd, list)
+        assert "--agent" in cmd
+        assert "manager" in cmd
+        assert "--dir" in cmd
+        assert cmd[cmd.index("--dir") + 1] == str(project_root)
+        assert captured["cwd"] == motor_root.resolve()
+
     # ---------------------------------------------------------------
     # TP-06: tests focales no usan _mock_repomix_for_tests
     # ---------------------------------------------------------------
