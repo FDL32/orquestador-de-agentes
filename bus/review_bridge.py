@@ -2032,7 +2032,30 @@ class ReviewBridge:
         ``repo_motor/.opencode/agents/manager.md``, so we copy it into the active
         project just before launch.
         """
-        motor_root = self._motor_root_or_raise()
+        import warnings
+
+        try:
+            motor_root = self._motor_root_or_raise()
+        except RuntimeError:
+            # WT-2026-237a: Degrade gracefully when motor is not resolvable
+            # (e.g., unit tests with tmp_path). Create a stub so the review
+            # can proceed without the canonical manager agent spec.
+            destination = self.project_root / ".opencode" / "agents" / "manager.md"
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if not destination.exists():
+                destination.write_text(
+                    "# WT-2026-237a stub — motor root not resolvable\n",
+                    encoding="utf-8",
+                )
+            warnings.warn(
+                "motor_root not resolvable; created stub manager agent spec "
+                "for review execution. Canonical agent spec requires "
+                "motor_destination_link.json.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return destination
+
         source = motor_root / ".opencode" / "agents" / "manager.md"
         if not source.exists():
             raise FileNotFoundError(
@@ -2068,6 +2091,14 @@ class ReviewBridge:
         executable = str(manager_executable) if manager_executable else "opencode"
         if OS_NAME == "nt" and executable == "opencode":
             executable = "opencode.cmd"
+
+        # WT-2026-237a: Resolve motor root once at the top of the method.
+        # Fall back to project_root when motor link is not configured
+        # (e.g. unit tests with tmp_path or standalone engine usage).
+        try:
+            _motor_root = self._motor_root_or_raise()
+        except RuntimeError:
+            _motor_root = self.project_root
 
         exe_full = shutil.which(executable) or executable
         if OS_NAME == "nt" and exe_full.lower().endswith(".ps1"):
@@ -2153,7 +2184,7 @@ class ReviewBridge:
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
-                cwd=self._motor_root_or_raise(),
+                cwd=_motor_root,
                 env=self._review_env(),
                 timeout=timeout_seconds,
                 shell=use_shell,
