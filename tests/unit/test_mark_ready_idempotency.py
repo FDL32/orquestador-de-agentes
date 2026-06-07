@@ -15,6 +15,7 @@ if str(_AGENT_DIR) not in sys.path:
 from agent_controller import (  # noqa: E402
     _ensure_active_builder_round,
     _handle_mark_ready,
+    _sync_mark_ready_targets,
 )
 
 
@@ -392,6 +393,39 @@ class TestMarkReadyIdempotency:
             False,
             3,
             "stale Builder round 3; active round is 4",
+        )
+
+    @patch("agent_controller.BUS_AVAILABLE", True)
+    @patch("agent_controller.event_bus")
+    def test_sync_mark_ready_reemits_after_changes_decision(self, mock_bus):
+        """A CHANGES decision resets derived state even if latest STATE_CHANGED is ready."""
+        ready_event = MagicMock()
+        ready_event.to_dict.return_value = {
+            "event_type": "STATE_CHANGED",
+            "payload": {"to_state": "READY_FOR_REVIEW"},
+        }
+        changes_event = MagicMock()
+        changes_event.to_dict.return_value = {
+            "event_type": "REVIEW_DECISION",
+            "payload": {"decision": "CHANGES"},
+        }
+        latest_state = MagicMock()
+        latest_state.payload = {"to_state": "READY_FOR_REVIEW"}
+
+        mock_bus.read_events.return_value = [ready_event, changes_event]
+        mock_bus.latest_event.return_value = latest_state
+
+        _sync_mark_ready_targets("WT-2026-236a", "", current_round=2)
+
+        state_events = [
+            call
+            for call in mock_bus.emit.call_args_list
+            if call.kwargs.get("event_type") == "STATE_CHANGED"
+        ]
+        assert len(state_events) == 2
+        assert all(
+            call.kwargs["payload"]["to_state"] == "READY_FOR_REVIEW"
+            for call in state_events
         )
 
     @patch("agent_controller._load_mark_ready_context")

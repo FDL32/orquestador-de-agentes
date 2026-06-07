@@ -616,10 +616,12 @@ def _sync_mark_ready_targets(
         latest_state_event = event_bus.latest_event(
             ticket_id=plan_id, event_type="STATE_CHANGED"
         )
-        if (
+        should_emit_ready = (
             not latest_state_event
             or latest_state_event.payload.get("to_state") != "READY_FOR_REVIEW"
-        ):
+            or from_state == "IN_PROGRESS"
+        )
+        if should_emit_ready:
             event_bus.emit(
                 event_type="STATE_CHANGED",
                 ticket_id=plan_id,
@@ -632,10 +634,7 @@ def _sync_mark_ready_targets(
                     **({"round": current_round} if current_round is not None else {}),
                 },
             )
-        if (
-            not latest_state_event
-            or latest_state_event.payload.get("to_state") != "READY_FOR_REVIEW"
-        ):
+        if should_emit_ready:
             bus_from_state = (
                 latest_state_event.payload.get("to_state")
                 if latest_state_event and latest_state_event.payload
