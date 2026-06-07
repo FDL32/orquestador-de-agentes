@@ -45,7 +45,7 @@ def test_sync_matched(sync_env):
     """Test when state already matches bus state."""
     sync_env.emit("STATE_CHANGED", "IN_PROGRESS")
     sync_env.state_md_path.write_text(
-        f"# State - {sync_env.ticket_id}\n\nEstado actual: IN_PROGRESS\n",
+        f"ACTIVE_TICKET: {sync_env.ticket_id}\nSTATUS: IN_PROGRESS\n",
         encoding="utf-8",
     )
 
@@ -55,9 +55,7 @@ def test_sync_matched(sync_env):
 
     assert result is True
     # Should not have changed
-    assert "Estado actual: IN_PROGRESS" in sync_env.state_md_path.read_text(
-        encoding="utf-8"
-    )
+    assert "STATUS: IN_PROGRESS" in sync_env.state_md_path.read_text(encoding="utf-8")
 
 
 def test_sync_drifted(sync_env):
@@ -74,9 +72,9 @@ def test_sync_drifted(sync_env):
 
     assert result is True
     # Should have healed
-    assert "Estado actual: READY_FOR_REVIEW" in sync_env.state_md_path.read_text(
-        encoding="utf-8"
-    )
+    synced_state = sync_env.state_md_path.read_text(encoding="utf-8")
+    assert f"ACTIVE_TICKET: {sync_env.ticket_id}" in synced_state
+    assert "STATUS: READY_FOR_REVIEW" in synced_state
 
 
 def test_sync_empty_bus(sync_env):
@@ -109,9 +107,6 @@ def test_sync_missing_state(sync_env):
 
     assert result is True
     assert sync_env.state_md_path.exists()
-    assert "Estado actual: COMPLETED" in sync_env.state_md_path.read_text(
-        encoding="utf-8"
-    )
-    assert f"# State - {sync_env.ticket_id}" in sync_env.state_md_path.read_text(
-        encoding="utf-8"
-    )
+    synced_state = sync_env.state_md_path.read_text(encoding="utf-8")
+    assert f"ACTIVE_TICKET: {sync_env.ticket_id}" in synced_state
+    assert "STATUS: COMPLETED" in synced_state

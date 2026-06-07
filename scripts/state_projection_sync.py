@@ -54,8 +54,11 @@ def sync_state_projection(
         state_md_path = collaboration_dir / "STATE.md"
         actual_ticket_id = probe_output.ticket_id
 
-        # Write canonical plain line format
-        content = f"# State - {actual_ticket_id}\n\nEstado actual: {probe_output.bus_derived_state}\n"
+        # Write the canonical machine-readable projection format.
+        content = (
+            f"ACTIVE_TICKET: {actual_ticket_id}\n"
+            f"STATUS: {probe_output.bus_derived_state}\n"
+        )
         state_md_path.write_text(content, encoding="utf-8")
         return True
 

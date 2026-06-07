@@ -653,6 +653,27 @@ def _sync_mark_ready_targets(
                 },
             )
 
+    try:
+        from bus.state_machine import TicketState
+        from bus.supervisor import SequentialTicketSupervisor
+
+        SequentialTicketSupervisor(
+            project_root=PROJECT_ROOT,
+            collaboration_dir=get_collab_dir(),
+            runtime_dir=get_runtime_dir(),
+        )._materialize_ticket_projection(plan_id, TicketState.READY_FOR_REVIEW)
+    except Exception:
+        try:
+            from scripts.state_projection_sync import sync_state_projection
+
+            sync_state_projection(
+                runtime_dir=get_runtime_dir() / "events",
+                collaboration_dir=get_collab_dir(),
+                ticket_id=plan_id,
+            )
+        except Exception:  # noqa: S110 - fallback sync must not block mark-ready
+            pass
+
 
 # ============================================================================
 # CIRCUIT BREAKER AND CHECKOUT UTILITIES
@@ -5089,7 +5110,11 @@ def _handle_validate(json_output: bool) -> int:  # noqa: C901
     try:
         from scripts.state_projection_sync import sync_state_projection
 
-        sync_state_projection()
+        sync_state_projection(
+            runtime_dir=get_runtime_dir() / "events",
+            collaboration_dir=get_collab_dir(),
+            ticket_id=get_plan_id(plan_content),
+        )
     except Exception:  # noqa: S110 - sync is best-effort and must not block validate
         pass
     drift_warnings = _check_bus_drift(plan_content, log_status)
@@ -5285,7 +5310,11 @@ def _handle_main_action(
     try:
         from scripts.state_projection_sync import sync_state_projection
 
-        sync_state_projection()
+        sync_state_projection(
+            runtime_dir=get_runtime_dir() / "events",
+            collaboration_dir=get_collab_dir(),
+            ticket_id=get_plan_id(read_file(WORK_PLAN)),
+        )
     except Exception:  # noqa: S110 - sync is best-effort and must not block status path
         pass
 

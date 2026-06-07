@@ -119,6 +119,28 @@ def _extract_ticket_id_from_work_plan(work_plan_path: Path) -> str | None:
     return None
 
 
+def _state_projection_matches_ticket(content: str, ticket_id: str) -> bool:
+    """Return whether STATE.md content belongs to ticket_id."""
+    for line in content.splitlines():
+        line_stripped = line.strip()
+        if line_stripped.startswith("ACTIVE_TICKET:"):
+            return line_stripped.split(":", 1)[1].strip() == ticket_id
+    return f"# State - {ticket_id}" in content
+
+
+def _extract_state_from_projection(content: str) -> str | None:
+    """Extract the state from canonical or legacy STATE.md content."""
+    for line in content.splitlines():
+        line_stripped = line.strip()
+        if line_stripped.startswith("STATUS:"):
+            return line_stripped.split(":", 1)[1].strip()
+        if line_stripped.startswith("Estado actual:"):
+            return line_stripped.split(":", 1)[1].strip()
+        if line_stripped.startswith("- **Estado actual:**"):
+            return line_stripped.split(":", 1)[1].strip().replace("*", "")
+    return None
+
+
 def _parse_markdown_state(state_md_path: Path, ticket_id: str) -> str | None:
     """
     Parse current state from STATE.md.
@@ -132,18 +154,9 @@ def _parse_markdown_state(state_md_path: Path, ticket_id: str) -> str | None:
 
     content = state_md_path.read_text(encoding="utf-8")
 
-    expected_header = f"# State - {ticket_id}"
-    if expected_header not in content:
+    if not _state_projection_matches_ticket(content, ticket_id):
         return None
-
-    for line in content.splitlines():
-        line_stripped = line.strip()
-        # Look for "Estado actual: STATE" or "- **Estado actual:** STATE"
-        if line_stripped.startswith("Estado actual:"):
-            return line_stripped.split(":", 1)[1].strip()
-        if line_stripped.startswith("- **Estado actual:**"):
-            return line_stripped.split(":", 1)[1].strip().replace("*", "")
-    return None
+    return _extract_state_from_projection(content)
 
 
 def _filter_events_for_ticket(all_events: list[dict], ticket_id: str) -> list[dict]:
