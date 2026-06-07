@@ -1020,11 +1020,16 @@ class TestOpencodeReviewRoute:
 
         captured = {}
 
-        ndjson_approve = _json.dumps({
-            "type": "text",
-            "phase": "final_answer",
-            "part": {"type": "text", "text": "All criteria met.\nDECISION: APPROVE"},
-        })
+        ndjson_approve = _json.dumps(
+            {
+                "type": "text",
+                "phase": "final_answer",
+                "part": {
+                    "type": "text",
+                    "text": "All criteria met.\nDECISION: APPROVE",
+                },
+            }
+        )
 
         def fake_opencode_review(
             *, ticket_id, prompt="", attempt=1, manager_executable=None, timeout_seconds
@@ -1303,8 +1308,23 @@ class TestOpencodeReviewRoute:
 
         # NDJSON with text events but none marked final_answer
         lines = [
-            json.dumps({"type": "text", "phase": "", "part": {"type": "text", "text": "I have reviewed the code."}}),
-            json.dumps({"type": "text", "phase": "", "part": {"type": "text", "text": "## SUMMARY\nFix needed\n## BLOCKERS\n- Bug\n## SUGGESTIONS\n- Fix\nDECISION: CHANGES"}}),
+            json.dumps(
+                {
+                    "type": "text",
+                    "phase": "",
+                    "part": {"type": "text", "text": "I have reviewed the code."},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "text",
+                    "phase": "",
+                    "part": {
+                        "type": "text",
+                        "text": "## SUMMARY\nFix needed\n## BLOCKERS\n- Bug\n## SUGGESTIONS\n- Fix\nDECISION: CHANGES",
+                    },
+                }
+            ),
             json.dumps({"type": "step_finish", "phase": ""}),
         ]
         stdout = "\n".join(lines)
@@ -1325,11 +1345,16 @@ class TestOpencodeReviewRoute:
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
         monkeypatch.setattr(bridge, "_supports_json_format", True)
 
-        stdout = json.dumps({
-            "type": "text",
-            "phase": "final_answer",
-            "part": {"type": "text", "text": "All criteria met.\nDECISION: APPROVE"},
-        })
+        stdout = json.dumps(
+            {
+                "type": "text",
+                "phase": "final_answer",
+                "part": {
+                    "type": "text",
+                    "text": "All criteria met.\nDECISION: APPROVE",
+                },
+            }
+        )
 
         decision, method = bridge._parse_opencode_decision(stdout)
         assert decision == ReviewDecision.APPROVE
@@ -1434,7 +1459,9 @@ class TestOpencodeReviewRoute:
         assert payload.get("failure_reason") == "changes_structure_invalid"
         assert "BLOCKERS" in payload.get("missing_sections", [])
 
-    def test_changes_with_empty_blockers_degrades_to_inspect(self, monkeypatch, tmp_path):
+    def test_changes_with_empty_blockers_degrades_to_inspect(
+        self, monkeypatch, tmp_path
+    ):
         """CHANGES with empty BLOCKERS content → INSPECT + failure_reason."""
         bridge, event_bus, legacy_manager_exe = _make_bridge(tmp_path)
         supervisor = DummySupervisor()
@@ -1764,11 +1791,16 @@ class TestBridgeHandshakeWithoutSnapshots:
         # NDJSON that both parsers can consume: top-level type=text for
         # _extract_decision_from_single_line and part.type=text for
         # _extract_json_stream_text.
-        ndjson_approve = _json.dumps({
-            "type": "text",
-            "phase": "final_answer",
-            "part": {"type": "text", "text": "All criteria met.\nDECISION: APPROVE"},
-        })
+        ndjson_approve = _json.dumps(
+            {
+                "type": "text",
+                "phase": "final_answer",
+                "part": {
+                    "type": "text",
+                    "text": "All criteria met.\nDECISION: APPROVE",
+                },
+            }
+        )
 
         def fake_opencode_review(
             *, ticket_id, prompt, attempt=1, manager_executable=None, timeout_seconds
@@ -2222,17 +2254,19 @@ class TestHumanGateEscalation:
 
         def fake_run(**kw):
             call_count["n"] += 1
-            ndjson_changes = _json.dumps({
-                "type": "text",
-                "phase": "final_answer",
-                "part": {
+            ndjson_changes = _json.dumps(
+                {
                     "type": "text",
-                    "text": (
-                        f"## SUMMARY\nIssues remain (cycle {call_count['n']}).\n"
-                        "## BLOCKERS\n- Issue\n## SUGGESTIONS\n- Fix\nDECISION: CHANGES"
-                    )
-                },
-            })
+                    "phase": "final_answer",
+                    "part": {
+                        "type": "text",
+                        "text": (
+                            f"## SUMMARY\nIssues remain (cycle {call_count['n']}).\n"
+                            "## BLOCKERS\n- Issue\n## SUGGESTIONS\n- Fix\nDECISION: CHANGES"
+                        ),
+                    },
+                }
+            )
             return ndjson_changes, "", 0
 
         monkeypatch.setattr(bridge, "_run_opencode_review", fake_run)
@@ -2322,23 +2356,27 @@ class TestHumanGateEscalation:
         def fake_run(**kw):
             call_count["n"] += 1
             if call_count["n"] < 3:
-                ndjson_changes = _json.dumps({
+                ndjson_changes = _json.dumps(
+                    {
+                        "type": "text",
+                        "phase": "final_answer",
+                        "part": {
+                            "type": "text",
+                            "text": (
+                                f"## SUMMARY\nIssues (cycle {call_count['n']}).\n"
+                                "## BLOCKERS\n- X\n## SUGGESTIONS\n- Y\nDECISION: CHANGES"
+                            ),
+                        },
+                    }
+                )
+                return ndjson_changes, "", 0
+            ndjson_approve = _json.dumps(
+                {
                     "type": "text",
                     "phase": "final_answer",
-                    "part": {
-                        "type": "text",
-                        "text": (
-                            f"## SUMMARY\nIssues (cycle {call_count['n']}).\n"
-                            "## BLOCKERS\n- X\n## SUGGESTIONS\n- Y\nDECISION: CHANGES"
-                        )
-                    },
-                })
-                return ndjson_changes, "", 0
-            ndjson_approve = _json.dumps({
-                "type": "text",
-                "phase": "final_answer",
-                "part": {"type": "text", "text": "OK.\nDECISION: APPROVE"},
-            })
+                    "part": {"type": "text", "text": "OK.\nDECISION: APPROVE"},
+                }
+            )
             return ndjson_approve, "", 0
 
         monkeypatch.setattr(bridge, "_run_opencode_review", fake_run)
@@ -3793,19 +3831,21 @@ class TestWT2026204:
         # Mock the underlying subprocess to return NDJSON with final_answer CHANGES
         import subprocess
 
-        ndjson_stdout = _json.dumps({
-            "type": "text",
-            "phase": "final_answer",
-            "part": {
+        ndjson_stdout = _json.dumps(
+            {
                 "type": "text",
-                "text": (
-                    "## SUMMARY\nFix needed\n"
-                    "## BLOCKERS\n- test_blocker\n"
-                    "## SUGGESTIONS\n- none\n"
-                    "DECISION: CHANGES"
-                )
-            },
-        })
+                "phase": "final_answer",
+                "part": {
+                    "type": "text",
+                    "text": (
+                        "## SUMMARY\nFix needed\n"
+                        "## BLOCKERS\n- test_blocker\n"
+                        "## SUGGESTIONS\n- none\n"
+                        "DECISION: CHANGES"
+                    ),
+                },
+            }
+        )
 
         def fake_run(cmd, **kwargs):
             return subprocess.CompletedProcess(
