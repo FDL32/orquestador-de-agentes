@@ -2989,9 +2989,6 @@ class ReviewBridge:
         # this cycle emits its REVIEW_DECISION, so a bridge restart or an
         # internal retry can neither inflate nor reset it.
         review_attempts_payloads: list[dict] = []
-        # WT-2026-235a: Track failure_reason for degraded decisions across loop boundary
-        failure_reason: str = ""
-
         for attempt in range(1, max_attempts + 1):
             current_timeout = int(base_timeout * (multiplier ** (attempt - 1)))
             start_time = time.time()
@@ -3073,11 +3070,10 @@ class ReviewBridge:
             # decision reaches the bus or triggers requeue.
             # Extract text from NDJSON first so validation works on the real
             # content, not raw JSON lines.
-            search_text = (
-                self._extract_json_stream_text(stdout) or stdout
-            )
+            search_text = self._extract_json_stream_text(stdout) or stdout
             structure_valid = True
             missing_sections: list[str] = []
+            failure_reason: str = ""
             if decision == ReviewDecision.CHANGES:
                 structure_valid, missing_sections = self._validate_changes_structure(
                     search_text
