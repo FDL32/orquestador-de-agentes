@@ -116,6 +116,7 @@ def _process_backtick_tokens(line: str, paths: set[Path]) -> None:
 def extract_paths_from_work_plan(content: str) -> set[Path]:
     paths = set()
     in_section = False
+    skip_subsection = False
 
     # Sections to scan
     scan_keywords = {
@@ -151,13 +152,24 @@ def extract_paths_from_work_plan(content: str) -> set[Path]:
             # Check if this header starts the scanning
             if any(kw in line_lower for kw in scan_keywords):
                 in_section = True
+                skip_subsection = False
                 continue
 
             if in_section and _heading_level(line_stripped) > 2:
+                skip_subsection = any(
+                    marker in line_lower
+                    for marker in (
+                        "read/inspect",
+                        "read-only",
+                        "read only",
+                        "manager only",
+                    )
+                )
                 continue
 
             # A new top-level/section header resets scanning.
             in_section = False
+            skip_subsection = False
 
         # Also detect bold tags as section starters
         if any(f"**{kw}" in line_lower for kw in ["must create", "must modify"]):
@@ -167,6 +179,8 @@ def extract_paths_from_work_plan(content: str) -> set[Path]:
         if in_section and (
             line_stripped.startswith("-") or line_stripped.startswith("*")
         ):
+            if skip_subsection:
+                continue
             _process_backtick_tokens(line_stripped, paths)
 
     return paths

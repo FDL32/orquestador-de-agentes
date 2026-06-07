@@ -229,6 +229,16 @@ def test_launcher_injects_opencode_external_directory_for_runtime_compare() -> N
         "Set-OpenCodeExternalPermission -ConfigPath $opencodeConfigPath -ProjectRoot $ProjectRoot"
         in content
     )
+    assert (
+        "$opencodeOriginalConfig = Get-Content -LiteralPath $opencodeConfigPath -Raw"
+        in content
+    )
+    assert "$opencodeOriginalConfigB64 = [Convert]::ToBase64String(" in content
+    assert "try { $opencodeRunCommand } finally" in content
+    assert (
+        "Set-Content -LiteralPath `$__opencodeConfigPath -Value `$__opencodeOriginalConfig"
+        in content
+    )
 
 
 def test_launcher_skip_supervisor_wait_flag_exists() -> None:
