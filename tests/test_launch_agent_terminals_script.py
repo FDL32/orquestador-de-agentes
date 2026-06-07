@@ -222,11 +222,11 @@ def test_launcher_injects_opencode_external_directory_for_builder_surfaces() -> 
     assert "$permission.PSObject.Properties['external_directory'].Value" in content
     assert "foreach ($property in $externalDirectory.PSObject.Properties)" in content
     assert ".agent\\runtime\\*" in content
-    assert ".agent\\collaboration\\execution_log.md" in content
+    assert ".agent\\collaboration\\*" in content
     assert "scripts\\*" in content
     assert "$managedPermissionPatterns = @(" in content
     assert "'*\\.agent\\runtime\\*'" in content
-    assert "'*\\.agent\\collaboration\\execution_log.md'" in content
+    assert "'*\\.agent\\collaboration\\*'" in content
     assert "'*\\scripts\\*'" in content
     assert "PSObject.Properties.Remove($key)" in content
     assert ".agent\\runtime\\compare\\*" not in content
