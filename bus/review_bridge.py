@@ -331,6 +331,24 @@ class ReviewBridge:
         )
         return any(marker in candidate for marker in markers)
 
+    @staticmethod
+    def _looks_like_auth_failure(stdout: str, stderr: str) -> bool:
+        """Detect backend auth failures that may still return process exit 0."""
+        candidate = f"{stdout}\n{stderr}".lower()
+        markers = (
+            "token_invalidated",
+            "token invalidated",
+            "authentication token has been invalidated",
+            "authentication failed",
+            "bad credentials",
+            "status 401",
+            'status": 401',
+            'statuscode":401',
+            'statuscode": 401',
+            "x-openai-authorization-error",
+        )
+        return any(marker in candidate for marker in markers)
+
     def _classify_transport_result(
         self, stdout: str, stderr: str, exit_code: int
     ) -> tuple[bool, str]:
@@ -339,6 +357,8 @@ class ReviewBridge:
             return True, "timeout_retryable"
         if exit_code != 0:
             return False, f"exit_code={exit_code}"
+        if self._looks_like_auth_failure(stdout, stderr):
+            return False, "auth_failed"
         if self._looks_like_opencode_help(stdout, stderr):
             return False, "help_output_detected"
         return True, ""

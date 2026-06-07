@@ -380,6 +380,53 @@ def test_manager_review_cycle_tool_error_is_transport_failed(monkeypatch, tmp_pa
     assert any(event.event_type == "REVIEW_TRANSPORT_FAILED" for event in events)
 
 
+def test_manager_review_cycle_auth_error_exit_zero_is_transport_failed(
+    monkeypatch, tmp_path
+):
+    bridge, event_bus, legacy_manager_exe = _make_bridge(tmp_path)
+    supervisor = DummySupervisor()
+
+    def fake_run(cmd, **kwargs):
+        return __import__("subprocess").CompletedProcess(
+            cmd,
+            0,
+            stdout=(
+                '{"type":"error","error":{"data":'
+                '{"message":"Your authentication token has been invalidated. '
+                'Please try signing in again.","statusCode":401,'
+                '"responseBody":"{\\"status\\": 401, '
+                '\\"code\\": \\"token_invalidated\\"}"}}}'
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW"
+    )
+    monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
+    monkeypatch.setattr(bridge, "_git_provenance", lambda: "[no commits]")
+    monkeypatch.setattr(
+        bridge, "_build_diff_for_files_likely_touched", lambda *args: ""
+    )
+
+    result = bridge.run_manager_review_cycle(
+        ticket_id="WT-2026-236a",
+        supervisor=supervisor,
+        manager_executable=legacy_manager_exe,
+        timeout_seconds=5,
+    )
+
+    assert result.decision.value == "transport_failed"
+    assert result.transport_ok is False
+    assert result.transport_error == "auth_failed"
+    assert supervisor.transitions == []
+    events = event_bus.read_events(ticket_id="WT-2026-236a")
+    assert any(event.event_type == "MANAGER_REVIEWING" for event in events)
+    assert any(event.event_type == "REVIEW_TRANSPORT_FAILED" for event in events)
+    assert not any(event.event_type == "REVIEW_DECISION" for event in events)
+
+
 def test_ticket_state_falls_back_to_execution_log(tmp_path):
     collaboration_dir = tmp_path / ".agent" / "collaboration"
     runtime_dir = tmp_path / ".agent" / "runtime"
