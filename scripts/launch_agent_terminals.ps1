@@ -1273,7 +1273,7 @@ function Set-OpenCodeExternalPermission {
 
     $managedPermissionPatterns = @(
         '*\.agent\runtime\*',
-        '*\.agent\collaboration\execution_log.md',
+        '*\.agent\collaboration\*',
         '*\scripts\*'
     )
     $stalePermissionKeys = @()
@@ -1291,7 +1291,7 @@ function Set-OpenCodeExternalPermission {
 
     $permissionPaths = @(
         (Join-Path $ProjectRoot '.agent\runtime\*'),
-        (Join-Path $ProjectRoot '.agent\collaboration\execution_log.md'),
+        (Join-Path $ProjectRoot '.agent\collaboration\*'),
         (Join-Path $ProjectRoot 'scripts\*')
     )
     foreach ($permissionPath in $permissionPaths) {
