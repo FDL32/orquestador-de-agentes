@@ -82,4 +82,10 @@ testpaths = ["tests"]
 addopts = "--tb=short --cov=src --cov-report=term-missing"
 asyncio_mode = "auto"
 
+[tool.pip-audit]
+# Temporal: PYSEC-2026-196 is fixed by pip 26.1.2, but uv/PyPI simple index
+# currently resolves only pip 26.1.1 in this environment. Remove this ignore
+# once uv can lock pip>=26.1.2.
+ignore-vuln = ["PYSEC-2026-196"]
+
 [tool.uv]

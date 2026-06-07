@@ -176,6 +176,17 @@ class TestHookCIAlignment:
             "Wrapper must pass -r <requirements_file> to pip-audit, not audit the global env"
         )
 
+    def test_pip_audit_wrapper_honors_project_ignores(self):
+        """Verify wrapper applies explicit [tool.pip-audit] ignore-vuln policy."""
+        repo_root = get_repo_root()
+        wrapper_src = (repo_root / "scripts" / "pip_audit_project.py").read_text(
+            encoding="utf-8"
+        )
+        assert "_ignored_vulnerabilities" in wrapper_src
+        assert "pyproject.toml" in wrapper_src
+        assert "ignore-vuln" in wrapper_src
+        assert "--ignore-vuln" in wrapper_src
+
     def test_semantic_alignment(
         self, precommit_config: dict[str, Any], ci_config: dict[str, Any]
     ):
