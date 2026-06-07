@@ -1009,6 +1009,7 @@ class TestOpencodeReviewRoute:
 
         # Mock _get_manager_backend to return opencode
         monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
+        monkeypatch.setattr(bridge, "_supports_json_format", True)
         monkeypatch.setattr(
             bridge, "_get_manager_model", lambda: "opencode-go/deepseek-v4-flash"
         )
@@ -1809,6 +1810,7 @@ class TestBridgeHandshakeWithoutSnapshots:
             return ndjson_approve, "", 0
 
         monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
+        monkeypatch.setattr(bridge, "_supports_json_format", True)
         monkeypatch.setattr(bridge, "_run_opencode_review", fake_opencode_review)
 
         class DummySupervisor:
@@ -2245,6 +2247,7 @@ class TestHumanGateEscalation:
             bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW"
         )
         monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
+        monkeypatch.setattr(bridge, "_supports_json_format", True)
         monkeypatch.setattr(
             bridge, "_build_diff_for_files_likely_touched", lambda *args: ""
         )
@@ -2339,6 +2342,7 @@ class TestHumanGateEscalation:
             bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW"
         )
         monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
+        monkeypatch.setattr(bridge, "_supports_json_format", True)
         monkeypatch.setattr(
             bridge, "_build_diff_for_files_likely_touched", lambda *args: ""
         )
@@ -3857,9 +3861,8 @@ class TestWT2026204:
 
         monkeypatch.setattr("bus.review_bridge.subprocess.run", fake_run)
         monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
+        monkeypatch.setattr(bridge, "_supports_json_format", True)
         monkeypatch.setattr(bridge, "_resolve_motor_controller", lambda: None)
-        # _supports_json_format left as True (detected at runtime) so the NDJSON
-        # parser correctly identifies final_answer CHANGES
         monkeypatch.setattr(
             bridge,
             "_ensure_repomix_context",
