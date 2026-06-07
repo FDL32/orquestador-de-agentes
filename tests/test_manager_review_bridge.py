@@ -427,6 +427,33 @@ def test_manager_review_cycle_auth_error_exit_zero_is_transport_failed(
     assert not any(event.event_type == "REVIEW_DECISION" for event in events)
 
 
+def test_ndjson_review_output_does_not_trigger_false_auth_failed(tmp_path):
+    bridge, _, _ = _make_bridge(tmp_path)
+    stdout = "\n".join(
+        [
+            '{"type":"step_start","timestamp":1}',
+            (
+                '{"type":"tool_use","part":{"type":"tool","tool":"read","state":'
+                '{"status":"completed","output":"Authentication Failed: Bad credentials"}}}'
+            ),
+            (
+                '{"type":"text","part":{"text":"DECISION: CHANGES"},'
+                '"metadata":{"openai":{"phase":"final_answer"}}}'
+            ),
+            '{"type":"step_finish","timestamp":2}',
+        ]
+    )
+
+    transport_ok, transport_error = bridge._classify_transport_result(
+        stdout=stdout,
+        stderr="",
+        exit_code=0,
+    )
+
+    assert transport_ok is True
+    assert transport_error == ""
+
+
 def test_ticket_state_falls_back_to_execution_log(tmp_path):
     collaboration_dir = tmp_path / ".agent" / "collaboration"
     runtime_dir = tmp_path / ".agent" / "runtime"

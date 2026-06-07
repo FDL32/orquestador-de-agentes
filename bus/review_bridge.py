@@ -334,7 +334,11 @@ class ReviewBridge:
     @staticmethod
     def _looks_like_auth_failure(stdout: str, stderr: str) -> bool:
         """Detect backend auth failures that may still return process exit 0."""
-        candidate = f"{stdout}\n{stderr}".lower()
+        ndjson_signatures = ('"type":"step_finish"', '"type":"step_start"')
+        stdout_has_ndjson = any(sig in stdout for sig in ndjson_signatures)
+        candidate = (
+            stderr.lower() if stdout_has_ndjson else f"{stdout}\n{stderr}".lower()
+        )
         markers = (
             "token_invalidated",
             "token invalidated",
