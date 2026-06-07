@@ -89,6 +89,9 @@ def test_retry_succeeds_on_second_attempt(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
     monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
+    monkeypatch.setattr(bridge, "_supports_json_format", True)
+
+    import json as _json
 
     call_count = {"n": 0}
 
@@ -97,7 +100,17 @@ def test_retry_succeeds_on_second_attempt(tmp_path, monkeypatch):
         if call_count["n"] == 1:
             # Timeout: triggers INSPECT+fallback_inspect → outer loop continues
             return ("", "TimeoutExpired: timed out", 1)
-        return ("DECISION: APPROVE\n", "", 0)
+        return (
+            _json.dumps(
+                {
+                    "type": "text",
+                    "phase": "final_answer",
+                    "part": {"type": "text", "text": "DECISION: APPROVE"},
+                }
+            ),
+            "",
+            0,
+        )
 
     monkeypatch.setattr(bridge, "_run_opencode_review", fake_run)
 
@@ -178,16 +191,28 @@ def test_decision_changes_does_not_retry_for_timeout(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
     monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
+    monkeypatch.setattr(bridge, "_supports_json_format", True)
     monkeypatch.setattr(
         "bus.review_bridge.subprocess.run", lambda *a, **kw: MagicMock(returncode=0)
     )
+
+    import json as _json
 
     call_count = {"n": 0}
 
     def fake_run(**kw):
         call_count["n"] += 1
         return (
-            "## SUMMARY\nIssues\n## BLOCKERS\n- X\n## SUGGESTIONS\n- Y\nDECISION: CHANGES",
+            _json.dumps(
+                {
+                    "type": "text",
+                    "phase": "final_answer",
+                    "part": {
+                        "type": "text",
+                        "text": "## SUMMARY\nIssues\n## BLOCKERS\n- X\n## SUGGESTIONS\n- Y\nDECISION: CHANGES",
+                    },
+                }
+            ),
             "",
             0,
         )
@@ -399,6 +424,9 @@ def test_human_gate_escalation_at_5_changes(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
     monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
+    monkeypatch.setattr(bridge, "_supports_json_format", True)
+
+    import json as _json
 
     # Vary the response per call so the bus anti-duplicate guard (identical
     # payloads) does not block later cycles -- production reviews always differ.
@@ -407,10 +435,21 @@ def test_human_gate_escalation_at_5_changes(tmp_path, monkeypatch):
     def fake_run(**kw):
         cycle_n["n"] += 1
         return (
-            f"## SUMMARY\nIssues remain (cycle {cycle_n['n']}).\n"
-            "## BLOCKERS\n- Missing tests\n"
-            "## SUGGESTIONS\n- Add tests\n"
-            "DECISION: CHANGES",
+            _json.dumps(
+                {
+                    "type": "text",
+                    "phase": "final_answer",
+                    "part": {
+                        "type": "text",
+                        "text": (
+                            f"## SUMMARY\nIssues remain (cycle {cycle_n['n']}).\n"
+                            "## BLOCKERS\n- Missing tests\n"
+                            "## SUGGESTIONS\n- Add tests\n"
+                            "DECISION: CHANGES"
+                        ),
+                    },
+                }
+            ),
             "",
             0,
         )
@@ -502,16 +541,28 @@ def test_review_attempt_bus_payload_is_lightweight(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
     monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
+    monkeypatch.setattr(bridge, "_supports_json_format", True)
     monkeypatch.setattr(
         "bus.review_bridge.subprocess.run",
         lambda *a, **k: type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})(),
     )
 
-    changes_with_blockers = (
-        "## SUMMARY\nIssues.\n"
-        "## BLOCKERS\n- Critical bug in parser\n"
-        "## SUGGESTIONS\n- Fix parser\n"
-        "DECISION: CHANGES"
+    import json as _json
+
+    changes_with_blockers = _json.dumps(
+        {
+            "type": "text",
+            "phase": "final_answer",
+            "part": {
+                "type": "text",
+                "text": (
+                    "## SUMMARY\nIssues.\n"
+                    "## BLOCKERS\n- Critical bug in parser\n"
+                    "## SUGGESTIONS\n- Fix parser\n"
+                    "DECISION: CHANGES"
+                ),
+            },
+        }
     )
 
     monkeypatch.setattr(
