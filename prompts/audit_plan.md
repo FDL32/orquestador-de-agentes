@@ -106,6 +106,19 @@ Esta sección evalúa si el paquete está listo para review aunque el código se
 
 No asumas que el Builder podrá leer `manager_feedback_*` ni otras superficies fuera del motor durante un ciclo CHANGES. Todo blocker accionable debe quedar materializado en `TURN.md`. Si `TURN.md` solo dice "Manager requested changes" sin blockers concretos, el Builder queda ciego y repetirá el error.
 
+### Pre-relaunch / HUMAN_GATE
+
+Antes de relanzar Builder, verifica el bus proyectado del ticket activo. Si el
+ultimo estado operativo es `HUMAN_GATE` o `READY_FOR_REVIEW`, o existe un
+`RELAUNCH_SUPPRESSED` posterior al ultimo `IN_PROGRESS`, no lances Builder.
+Materializa primero `TURN.md` con el rol correcto (`HUMAN_GATE`,
+`MANAGER` o `BUILDER`) y documenta la causa.
+
+Si el Manager falla por `401`, `authentication`, `token invalidated` o credenciales
+invalidas, clasificalo como fallo de infraestructura. No lo trates como blocker
+del ticket ni como `inspect` con blockers vacios. El siguiente paso debe ser
+reautenticar el backend del Manager y relanzar solo la revision/bridge, no Builder.
+
 ### Quality gates ejecutables
 
 - ¿Los comandos de calidad en el PLAN son ejecutables desde el repo correcto?
@@ -129,6 +142,10 @@ Si `deliverable_type` es `documentation`, `research` o `analysis`, verifica:
 - Las fuentes leidas para contexto no aparecen como entregables requeridos.
 - El Manager conserva un gate de revision de contenido, aunque no haya tests de
   codigo.
+
+- El paquete de review incluye el artefacto documental revisable o una ruta
+  tracked equivalente; no basta con un diff de motor ni con un archivo solo en
+  runtime si el Manager no puede verlo en el packet.
 
 ### PowerShell bajo Set-StrictMode
 
