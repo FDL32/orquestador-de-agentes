@@ -1,18 +1,27 @@
 # MEMORY
 
-Regenerated: 2026-05-29T17:05:26.828367+00:00
+Regenerated: 2026-06-07T09:03:02.012245+00:00
 
-Total observations: 48
+Total observations: 65
 
 - Adapter Pipeline Wp Split (1 observations)
 - Ap-Nn-Cross-Cutting-Architecture (1 observations)
 - Architecture (1 observations)
 - Arranque (1 observations)
 - Auto-Improvement-Loop-Formalized (1 observations)
+- Bootstrap-Ticket-State-Contract (1 observations)
 - Builder-Closeout-Hallucination (1 observations)
 - Builder-Manager-Mirror-Pattern (1 observations)
 - Builder-Window-Silent-Fail (1 observations)
+- Bus-First-Read-Authority (1 observations)
 - Bus-Import-Boundary (1 observations)
+- Canonical-Consumer-Recovery (1 observations)
+- Cem-Auto-Report-Is-Hypothesis (1 observations)
+- Cem-Contract-Before-Fix (1 observations)
+- Cem-Debt-Must-Be-Contractual (1 observations)
+- Cem-False-Green (1 observations)
+- Cem-Proportional-Rigor (1 observations)
+- Cem-Relaunch-Continuity (1 observations)
 - Delivery-Hook-Mutation (2 observations)
 - Design-Pattern-Positive (1 observations)
 - Dispatcher Global Side Effect (1 observations)
@@ -22,11 +31,16 @@ Total observations: 48
 - Handoff-Blocked-Not-Crash (1 observations)
 - Lock Reentrancy Antipattern (1 observations)
 - Manager-Review-Rubric (5 observations)
+- Portable-Ticket-Filename-Boundary (1 observations)
 - Projection-Probe-Debt (1 observations)
 - Protocol-Key-Assumption (1 observations)
+- Repo-Motor-Portable-Root (1 observations)
 - Request Changes Requeue Deadlock (1 observations)
 - Return Type Falsy Guard (1 observations)
+- Review-Decision-Provenance-Contract (1 observations)
 - Review-Packet-Untracked-Files (1 observations)
+- Review-Queue-Traceability (1 observations)
+- Runtime-Cleanup-Vs-Bus-Reconciliation (1 observations)
 - Safe-Suite-Coverage-Gap (1 observations)
 - Scanner Corpus Scope (1 observations)
 - Security-Gate-Fail-Open (1 observations)
@@ -34,6 +48,7 @@ Total observations: 48
 - Silent Subprocess Failure Pattern (1 observations)
 - Skills-Taxonomy-V2 (1 observations)
 - State-Projection-Drift (1 observations)
+- State-Surface-Separation (1 observations)
 - Supervisor-Process-Staleness (1 observations)
 - Test-Linting-Policy (1 observations)
 - Test-Surrogate-Antipattern (1 observations)
@@ -42,10 +57,12 @@ Total observations: 48
 - Ticket-Contradiction-Sequence (1 observations)
 - Ticket-Gate-Placement (1 observations)
 - Ticket-Plan-Audit-Parity-Gap (1 observations)
+- Ticket-State-Enum-Contract (1 observations)
 - Ticket-Structure-Risk-Heuristic (1 observations)
 - Ticket-Unverifiable-Acceptance (1 observations)
 - Timeout Config Key Collision (1 observations)
 - Unique Id Generation Smell (1 observations)
+- Validator-Enforce-Not-Observe (1 observations)
 - Windows-Precommit-Line-Endings (1 observations)
 
 ## adapter_pipeline_wp_split
@@ -57,23 +74,6 @@ Total observations: 48
 ## architecture
 - Decisiones arquitectonicas documentadas en WP-2026-175
 
-## arranque
-- Runtime correcto localizado en orquestador_de_agentes; validacion limpia y memoria lista para continuar el trabajo.
-
-## auto-improvement-loop-formalized
-- Auto-improvement loop architecture documented and operational: (1) human audit finding -> (2) observations.jsonl entry with applies_to scope -> (3) review_bridge._render_manager_review_learnings() inj
-
-## builder-closeout-hallucination
-- WP-2026-159: the Builder prompt that told a fresh window to 'emit BUILDER_EXIT' manually caused a hallucinated close command (--emit-exit builder ...) instead of the intended mark-ready flow. Rule: cl
-
-## builder-manager-mirror-pattern
-- Convention: every BLOCKER in Manager review-checklist.md has a corresponding preventive rule in Builder code-rules.md at the same AP-NN ID. The mirror is intentional: Manager detects, Builder prevents
-
-## builder-window-silent-fail
-- Cuando el supervisor emite BUILDER_RELAUNCH_ATTEMPTED y el launcher reporta exito, puede ocurrir que la ventana del Builder se abra pero el proceso opencode interior falle silenciosamente. El supervis
-
-## bus-import-boundary
-- Bus import boundary firewall implemented: tests/test_bus_boundary.py enforces bus/ -> scripts/ seam via (1) AST static analysis (ast.walk ImportFrom/Import) and (2) grep-based dynamic import detection
 
 ---
 
