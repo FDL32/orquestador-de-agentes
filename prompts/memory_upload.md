@@ -85,6 +85,23 @@ Antes de escribir nada, dame una propuesta con estos campos:
 - **Clasificación CEM opcional** (si aplica): clase de fallo evitado, barrera existente o propuesta, tier afectado y deuda residual explícita.
 - **Texto propuesto** (en formato canónico JSON si es `observations.jsonl`)
 
+### Canonical schema for `observations.jsonl`
+
+If you propose an entry for `observations.jsonl`, validate it against
+`skills/_shared/ap-schema.md` and against the real motor consumer before
+promoting it.
+
+- `applies_to` must be a **single string** from the canonical enum:
+  `code`, `mixed`, `docs`, or `all`.
+  Accepted values: `all`, `code`, `mixed`, `docs`.
+- Do not use arrays or compound strings such as `code,mixed`; the migrator
+  normalizes them to `mixed`, but that creates unnecessary drift in new memory.
+- `category` is **legacy/backward-compatible**. Do not use it in new entries
+  unless you are migrating or preserving a historical record.
+- If you introduce extra non-canonical fields (for example `memory_class`),
+  explain why they exist and avoid mixing two equivalent taxonomies in the same
+  entry without a real consumer need.
+
 ## Restricciones
 
 > **No des por hecho** que "memoria" significa solo la del proyecto activo.
