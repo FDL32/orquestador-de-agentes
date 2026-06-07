@@ -130,6 +130,23 @@ reautenticar el backend del Manager y relanzar solo la revision/bridge, no Build
   por pytest/ruff fabricados. Un ticket de codigo no debe escapar sin diff,
   commit y tests aplicables.
 
+### Preflight extra para tickets de codigo
+
+Si `deliverable_type` es `code` o `mixed`, verifica además estos cuatro puntos
+antes de dar el PLAN por listo:
+
+- `Files Likely Touched` incluye todos los archivos que Builder puede tocar:
+  codigo, tests, configs, fixtures y wrappers auxiliares. Un archivo fuera de
+  FLT producirá rechazo legitimo del Manager aunque el transporte funcione.
+- `--pre-handoff` puede correr con árbol limpio. Si el launcher o OpenCode
+  modifican `repo_motor/.opencode/opencode.json` u otros archivos runtime antes
+  del closeout, el PLAN debe tratarlo como riesgo real de packaging.
+- Los quality gates de codigo son ejecutables y concretos: `ruff`/`pytest`
+  apuntan a rutas reales que existen hoy y corresponden al alcance declarado.
+- La evidencia de commit debe referenciar exactamente el ticket activo
+  (`WT-...a` incluido si aplica). Un commit con ID truncado o ticket distinto
+  puede bloquear `--manager-approve` aunque la implementacion sea correcta.
+
 ### Planes documentales / research / analysis
 
 Si `deliverable_type` es `documentation`, `research` o `analysis`, verifica:
