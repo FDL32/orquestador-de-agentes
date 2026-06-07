@@ -222,6 +222,31 @@ Cada `work_plan.md` declara `deliverable_type` en su sección Metadata. Valores:
 
 `agent_controller --validate` valida que exista el campo y no tenga valores inválidos.
 
+### Contrato operativo por tipo de ticket
+
+El `deliverable_type` no es decorativo: cambia que evidencia debe producir el
+Builder y que debe auditar el Manager.
+
+- `code`: requiere diff/commit productivo del ticket, tests/ruff aplicables y
+  evidencia de gates en `execution_log.md`.
+- `mixed`: requiere el contrato de `code` mas existencia verificable de los
+  artefactos no-codigo declarados.
+- `documentation` / `research` / `analysis`: no debe exigirse commit de codigo
+  ni pytest/ruff salvo que el plan toque codigo. El cierre se basa en artefactos
+  documentales declarados y una linea de evidencia en `execution_log.md` que
+  combine artefacto y gate final, por ejemplo:
+  `Reporte .agent/runtime/compare/<archivo>.md creado. Validate: exit code 0, 0 errors, 0 warnings.`
+
+En tickets documentales, separa explicitamente las superficies:
+- `Builder`: archivos que debe crear o modificar y que cuentan como entregables.
+- `Read/inspect only`: fuentes que puede leer pero no deben contar como
+  entregables ni como scope productivo.
+- `Manager-only`: gates o revisiones que ejecuta el Manager y no el Builder.
+
+Si el plan mezcla estas superficies, `check_deliverables_exist.py` puede bloquear
+el handoff o validar una evidencia equivocada. El plan debe dejar claro que existe
+en disco al final y que solo era contexto.
+
 ## Quality gates dispatch by deliverable_type (WP-2026-089)
 
 `bui-run-quality-gates` invoca ahora `scripts/run_gates_dispatch.py` que lee `deliverable_type` del work_plan activo y dispatchea:

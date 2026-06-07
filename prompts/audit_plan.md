@@ -65,6 +65,16 @@ Recorre ítem por ítem.
 9. **Dual-contract sync (`work_plan.md` ↔ `PLAN_WT-*`)**
    ¿Toda corrección está aplicada en ambos archivos? El scope gate lee `work_plan.md`; el Builder lee `PLAN_WT-*`. Una corrección en solo uno de los dos pasa inadvertida y requiere rondas adicionales.
 
+10. **Contrato por `deliverable_type`**
+   El plan debe estar organizado segun el tipo real de entrega. Para
+   `documentation` / `research` / `analysis`, no exijas commit de codigo,
+   pytest ni ruff salvo que el plan toque codigo. Exige artefactos declarados,
+   existencia en disco y una linea final en `execution_log.md` que combine
+   artefacto + gate (`validate`, `passed` o `success`) sin `pendiente`.
+   Para `code` / `mixed`, verifica diff/commit productivo y gates de codigo.
+   Si el plan tiene subsecciones `Builder`, `Read/inspect only` o
+   `Manager-only`, confirma que solo `Builder` cuenta como entregable.
+
 ---
 
 ## Verificaciones adicionales
@@ -101,6 +111,24 @@ No asumas que el Builder podrá leer `manager_feedback_*` ni otras superficies f
 - ¿Los comandos de calidad en el PLAN son ejecutables desde el repo correcto?
 - ¿Las rutas de ruff apuntan a archivos que realmente existen y serán tocados?
 - ¿El `--validate` usa el `--project-root` correcto para Modelo B?
+
+- ¿Los gates corresponden al `deliverable_type` declarado? Un ticket
+  documental debe cerrar por artefacto verificable + evidencia de validate, no
+  por pytest/ruff fabricados. Un ticket de codigo no debe escapar sin diff,
+  commit y tests aplicables.
+
+### Planes documentales / research / analysis
+
+Si `deliverable_type` es `documentation`, `research` o `analysis`, verifica:
+
+- `Files Likely Touched` separa archivos que Builder crea/modifica de fuentes
+  `Read/inspect only` y gates `Manager-only`.
+- Cada artefacto Builder tiene ruta concreta y criterio binario de existencia.
+- El plan indica que Builder debe registrar una linea final tipo:
+  `Reporte .agent/runtime/compare/<archivo>.md creado. Validate: exit code 0, 0 errors, 0 warnings.`
+- Las fuentes leidas para contexto no aparecen como entregables requeridos.
+- El Manager conserva un gate de revision de contenido, aunque no haya tests de
+  codigo.
 
 ### PowerShell bajo Set-StrictMode
 
