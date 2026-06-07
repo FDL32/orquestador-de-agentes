@@ -133,6 +133,10 @@ def extract_paths_from_work_plan(content: str) -> set[Path]:
         "## orden operativo",
     }
 
+    def _heading_level(line: str) -> int:
+        stripped = line.lstrip()
+        return len(stripped) - len(stripped.lstrip("#"))
+
     for line in content.splitlines():
         line_stripped = line.strip()
         line_lower = line_stripped.lower()
@@ -149,7 +153,10 @@ def extract_paths_from_work_plan(content: str) -> set[Path]:
                 in_section = True
                 continue
 
-            # Any other header (H1, H2, H3 etc.) resets scanning to False
+            if in_section and _heading_level(line_stripped) > 2:
+                continue
+
+            # A new top-level/section header resets scanning.
             in_section = False
 
         # Also detect bold tags as section starters

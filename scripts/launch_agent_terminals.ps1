@@ -1251,6 +1251,44 @@ function Fill-TemplateVariables {
     return $filled
 }
 
+function Set-OpenCodeExternalPermission {
+    param(
+        [Parameter(Mandatory)] [string]$ConfigPath,
+        [Parameter(Mandatory)] [string]$ProjectRoot
+    )
+
+    if (-not (Test-Path -LiteralPath $ConfigPath)) {
+        throw "OpenCode config not found: $ConfigPath"
+    }
+
+    $config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+    if ($null -eq $config.PSObject.Properties['permission']) {
+        $config | Add-Member -NotePropertyName permission -NotePropertyValue ([pscustomobject]@{})
+    }
+    $permission = $config.PSObject.Properties['permission'].Value
+    if ($null -eq $permission.PSObject.Properties['external_directory']) {
+        $permission | Add-Member -NotePropertyName external_directory -NotePropertyValue ([pscustomobject]@{})
+    }
+    $externalDirectory = $permission.PSObject.Properties['external_directory'].Value
+
+    $runtimePermissionPattern = '*\.agent\runtime\*'
+    $staleRuntimeKeys = @()
+    foreach ($property in $externalDirectory.PSObject.Properties) {
+        if ($property.Name -like $runtimePermissionPattern) {
+            $staleRuntimeKeys += $property.Name
+        }
+    }
+    foreach ($key in $staleRuntimeKeys) {
+        $externalDirectory.PSObject.Properties.Remove($key)
+    }
+
+    $runtimePattern = Join-Path $ProjectRoot '.agent\runtime\*'
+    $externalDirectory |
+        Add-Member -NotePropertyName $runtimePattern -NotePropertyValue 'allow' -Force
+
+    $config | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $ConfigPath -Encoding UTF8
+}
+
 
 function Add-BuilderCloseout {
     param(
@@ -1276,7 +1314,7 @@ try { $RunnerCommand } finally {
     Write-Host '[Builder] mark-ready starting...'
     $MarkReadyCommand
     `$_mr = `$LASTEXITCODE
-    if (`$_mr -eq 0) { Write-Host '[Builder] mark-ready OK - ticket submitted for review' } else { Write-Host ('[Builder] mark-ready FAILED code ' + `$_mr + ' - supervisor will requeue') }
+    if (`$_mr -eq 0) { Write-Host '[Builder] mark-ready OK - ticket submitted for review' } else { Write-Host ('[Builder] mark-ready FAILED code ' + `$_mr + ' - HANDOFF_BLOCKED/BUILDER_EXIT emitted for supervisor recovery') }
     if (`$_ph -eq 0 -and `$_mr -eq 0) { Write-Host '[Builder] closeout done' } else { Write-Host '[Builder] closeout completed with errors - check output above' }
 }
 "@
@@ -1523,6 +1561,7 @@ if ($LaunchBuilder) {
                 if (-not (Test-Path -LiteralPath $opencodeConfigPath)) {
                     throw "OpenCode config not found: $opencodeConfigPath"
                 }
+                Set-OpenCodeExternalPermission -ConfigPath $opencodeConfigPath -ProjectRoot $ProjectRoot
                 $opencodeConfig = Get-Content -LiteralPath $opencodeConfigPath -Raw | ConvertFrom-Json
                 $model = $opencodeConfig.model
                 if ([string]::IsNullOrWhiteSpace($model)) {

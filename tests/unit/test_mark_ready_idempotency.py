@@ -270,6 +270,107 @@ class TestMarkReadyIdempotency:
         ]
         assert handoff_events, "stale mark-ready must emit HANDOFF_BLOCKED"
 
+    @patch("agent_controller._load_mark_ready_context")
+    @patch("agent_controller.BUS_AVAILABLE", True)
+    @patch("agent_controller.event_bus")
+    def test_evidence_failure_emits_terminal_events_and_releases_lock(
+        self, mock_bus, mock_load
+    ):
+        """Failed closeout must emit HANDOFF_BLOCKED + BUILDER_EXIT and release lock."""
+        mock_load.return_value = (
+            "**Estado:** APPROVED\n**ID:** WT-2026-236a\n- **deliverable_type:** code",
+            "**Estado:** IN_PROGRESS",
+            "WT-2026-236a",
+        )
+        mock_event = MagicMock()
+        mock_event.to_dict.return_value = {
+            "event_type": "STATE_CHANGED",
+            "payload": {"to_state": "IN_PROGRESS"},
+        }
+        mock_bus.read_events.return_value = [mock_event]
+        mock_bus.latest_event.return_value = None
+
+        with (
+            patch(
+                "agent_controller._ensure_active_builder_round",
+                return_value=(True, 1, None),
+            ),
+            patch(
+                "agent_controller._check_circuit_breaker", return_value={"open": False}
+            ),
+            patch(
+                "agent_controller._check_implementation_evidence",
+                return_value=["No implementation evidence"],
+            ),
+            patch("agent_controller._emit_builder_exit") as mock_exit,
+            patch("agent_controller._release_builder_lock") as mock_release,
+        ):
+            result = _handle_mark_ready(
+                scope_override=None, json_output=False, force_mode=False
+            )
+
+        assert result == 1
+        handoff_events = [
+            call
+            for call in mock_bus.emit.call_args_list
+            if call.kwargs.get("event_type") == "HANDOFF_BLOCKED"
+        ]
+        assert handoff_events
+        mock_exit.assert_called_once()
+        mock_release.assert_called_once_with("WT-2026-236a", expected_round=1)
+
+    @patch("agent_controller._load_mark_ready_context")
+    @patch("agent_controller.BUS_AVAILABLE", True)
+    @patch("agent_controller.event_bus")
+    def test_pre_handoff_failure_releases_lock_once(self, mock_bus, mock_load):
+        """Pre-handoff guard failure should emit one HANDOFF_BLOCKED and release lock."""
+        mock_load.return_value = (
+            "**Estado:** APPROVED\n**ID:** WT-2026-236a\n- **deliverable_type:** code",
+            "**Estado:** IN_PROGRESS",
+            "WT-2026-236a",
+        )
+        mock_event = MagicMock()
+        mock_event.to_dict.return_value = {
+            "event_type": "STATE_CHANGED",
+            "payload": {"to_state": "IN_PROGRESS"},
+        }
+        mock_bus.read_events.return_value = [mock_event]
+        mock_bus.latest_event.return_value = None
+
+        with (
+            patch(
+                "agent_controller._ensure_active_builder_round",
+                return_value=(True, 1, None),
+            ),
+            patch(
+                "agent_controller._check_circuit_breaker", return_value={"open": False}
+            ),
+            patch("agent_controller._check_implementation_evidence", return_value=[]),
+            patch(
+                "agent_controller._run_pre_handoff_guard",
+                return_value={
+                    "valid": False,
+                    "dirty_tree": True,
+                    "dirty_files": ["x.py"],
+                },
+            ),
+            patch("agent_controller._emit_builder_exit") as mock_exit,
+            patch("agent_controller._release_builder_lock") as mock_release,
+        ):
+            result = _handle_mark_ready(
+                scope_override=None, json_output=False, force_mode=False
+            )
+
+        assert result == 1
+        handoff_events = [
+            call
+            for call in mock_bus.emit.call_args_list
+            if call.kwargs.get("event_type") == "HANDOFF_BLOCKED"
+        ]
+        assert len(handoff_events) == 1
+        mock_exit.assert_called_once()
+        mock_release.assert_called_once_with("WT-2026-236a", expected_round=1)
+
     def test_builder_round_check_accepts_powershell_utf8_bom_lock(
         self, tmp_path, monkeypatch
     ):
