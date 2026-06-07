@@ -4354,6 +4354,11 @@ class TestRepomixStructuredStatus:
 
         bridge, _ = self._make_repomix_bridge(tmp_path)
         self._stub_work_plan(tmp_path)
+        manager_source = tmp_path / ".opencode" / "agents" / "manager.md"
+        manager_source.parent.mkdir(parents=True, exist_ok=True)
+        manager_source.write_text(
+            "---\ndescription: test manager\n---\n", encoding="utf-8"
+        )
 
         # Mock _ensure_repomix_context to return failed
         monkeypatch.setattr(
@@ -4414,9 +4419,75 @@ class TestRepomixStructuredStatus:
     def test_run_opencode_review_uses_motor_root_and_project_dir(
         self, monkeypatch, tmp_path
     ):
-        """Manager agent must resolve from repo_motor while tools run on repo_destino."""
+        """Manager agent must be materialized before OpenCode runs."""
         import subprocess as _subprocess
 
+        project_root = tmp_path / "repo_destino"
+        project_root.mkdir(parents=True, exist_ok=True)
+        bridge, _, _ = _make_bridge(project_root)
+        self._stub_work_plan(project_root)
+
+        config_dir = project_root / ".agent" / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        motor_root = tmp_path / "repo_motor"
+        motor_root.mkdir(parents=True, exist_ok=True)
+        manager_source = motor_root / ".opencode" / "agents" / "manager.md"
+        manager_source.parent.mkdir(parents=True, exist_ok=True)
+        manager_source.write_text(
+            "---\ndescription: test manager\n---\n", encoding="utf-8"
+        )
+        (config_dir / "motor_destination_link.json").write_text(
+            json.dumps({"motor_root": str(motor_root)}),
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(
+            bridge,
+            "_ensure_repomix_context",
+            lambda timeout=15: (None, {"status": "skipped", "reason": "test"}),
+        )
+        monkeypatch.setattr(bridge, "_get_manager_model", lambda: None)
+        monkeypatch.setattr(bridge, "_supports_json_format", False)
+        monkeypatch.setattr("bus.review_bridge.OS_NAME", "posix")
+
+        captured: dict[str, object] = {}
+        manager_dest = project_root / ".opencode" / "agents" / "manager.md"
+
+        def fake_run(cmd_args, **kwargs):
+            captured["cmd"] = cmd_args
+            captured["cwd"] = kwargs.get("cwd")
+            captured["dest_exists_before_run"] = manager_dest.exists()
+            if manager_dest.exists():
+                captured["dest_content"] = manager_dest.read_text(encoding="utf-8")
+            return _subprocess.CompletedProcess(
+                args=cmd_args,
+                returncode=0,
+                stdout="DECISION: APPROVE",
+                stderr="",
+            )
+
+        monkeypatch.setattr(_subprocess, "run", fake_run)
+
+        bridge._run_opencode_review(
+            ticket_id="WT-2026-236a",
+            prompt="test prompt",
+            timeout_seconds=5,
+        )
+
+        cmd = captured["cmd"]
+        assert isinstance(cmd, list)
+        assert "--agent" in cmd
+        assert "manager" in cmd
+        assert "--dir" in cmd
+        assert cmd[cmd.index("--dir") + 1] == str(project_root)
+        assert captured["cwd"] == motor_root.resolve()
+        assert captured["dest_exists_before_run"] is True
+        assert captured["dest_content"] == manager_source.read_text(encoding="utf-8")
+
+    def test_run_opencode_review_fails_clearly_when_manager_agent_missing(
+        self, monkeypatch, tmp_path
+    ):
+        """Bridge must fail clearly before subprocess when manager.md is absent."""
         project_root = tmp_path / "repo_destino"
         project_root.mkdir(parents=True, exist_ok=True)
         bridge, _, _ = _make_bridge(project_root)
@@ -4440,33 +4511,17 @@ class TestRepomixStructuredStatus:
         monkeypatch.setattr(bridge, "_supports_json_format", False)
         monkeypatch.setattr("bus.review_bridge.OS_NAME", "posix")
 
-        captured: dict[str, object] = {}
+        def fail_if_run(*args, **kwargs):
+            raise AssertionError("subprocess.run should not be called")
 
-        def fake_run(cmd_args, **kwargs):
-            captured["cmd"] = cmd_args
-            captured["cwd"] = kwargs.get("cwd")
-            return _subprocess.CompletedProcess(
-                args=cmd_args,
-                returncode=0,
-                stdout="DECISION: APPROVE",
-                stderr="",
+        monkeypatch.setattr("bus.review_bridge.subprocess.run", fail_if_run)
+
+        with pytest.raises(FileNotFoundError, match="Manager agent spec not found"):
+            bridge._run_opencode_review(
+                ticket_id="WT-2026-236a",
+                prompt="test prompt",
+                timeout_seconds=5,
             )
-
-        monkeypatch.setattr(_subprocess, "run", fake_run)
-
-        bridge._run_opencode_review(
-            ticket_id="WT-2026-236a",
-            prompt="test prompt",
-            timeout_seconds=5,
-        )
-
-        cmd = captured["cmd"]
-        assert isinstance(cmd, list)
-        assert "--agent" in cmd
-        assert "manager" in cmd
-        assert "--dir" in cmd
-        assert cmd[cmd.index("--dir") + 1] == str(project_root)
-        assert captured["cwd"] == motor_root.resolve()
 
     # ---------------------------------------------------------------
     # TP-06: tests focales no usan _mock_repomix_for_tests

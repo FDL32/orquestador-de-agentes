@@ -2020,6 +2020,28 @@ class ReviewBridge:
         )
         return result.stdout or "", result.stderr or "", result.returncode
 
+    def _materialize_manager_agent_spec(self) -> Path:
+        """Ensure repo_destino has a runtime copy of the OpenCode manager agent.
+
+        OpenCode resolves ``--agent manager`` from ``<project_root>/.opencode`` when
+        ``--dir <project_root>`` is used. The authoritative agent lives in
+        ``repo_motor/.opencode/agents/manager.md``, so we copy it into the active
+        project just before launch.
+        """
+        motor_root = self._motor_root_or_raise()
+        source = motor_root / ".opencode" / "agents" / "manager.md"
+        if not source.exists():
+            raise FileNotFoundError(
+                f"Manager agent spec not found in repo_motor: {source}"
+            )
+
+        destination = self.project_root / ".opencode" / "agents" / "manager.md"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if source.resolve() == destination.resolve():
+            return destination
+        shutil.copy2(source, destination)
+        return destination
+
     def _run_opencode_review(  # noqa: C901
         self,
         *,
@@ -2080,6 +2102,8 @@ class ReviewBridge:
             raise ValueError(
                 "Review message must be ASCII for Windows command transport."
             )
+
+        self._materialize_manager_agent_spec()
 
         cmd_args = [
             exe_full,
