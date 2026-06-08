@@ -2727,6 +2727,41 @@ def _is_bus_state_post_success(bus_state: object | None) -> bool:
     )
 
 
+def _maybe_handle_stale_builder_orphan(
+    *,
+    plan_id: str,
+    process_round: int | None,
+    round_reason: str,
+    bus_state: object | None,
+) -> tuple[bool, str]:
+    """Contain stale Builder noise after success without changing IN_PROGRESS rules.
+
+    WT-2026-242b intentionally adds only controller-side containment. It does
+    not resolve launcher/process identity or stale-shell root cause.
+    """
+    if not _is_bus_state_post_success(bus_state):
+        return False, round_reason
+
+    state_name = str(bus_state.value) if bus_state else "post-success"
+    msg = (
+        f"Stale Builder shell detected for {plan_id}: {round_reason}. "
+        f"Ticket is already in {state_name}. No action taken."
+    )
+    if BUS_AVAILABLE and event_bus:
+        event_bus.emit(
+            event_type="STALE_BUILDER_ORPHAN",
+            ticket_id=plan_id,
+            actor="BUILDER",
+            payload={
+                "reason": "stale_builder_round",
+                "process_round": process_round,
+                "bus_state": state_name,
+                "details": round_reason,
+            },
+        )
+    return True, msg
+
+
 def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-ready, breaker)
     scope_override: str | None, json_output: bool, force_mode: bool
 ) -> int:
@@ -2762,24 +2797,13 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
         # WT-2026-242b: Orphan containment — if the ticket is already past
         # IN_PROGRESS, emit STALE_BUILDER_ORPHAN instead of HANDOFF_BLOCKED.
         # This prevents stale shells from contaminating the bus post-success.
-        if _is_bus_state_post_success(bus_state):
-            if BUS_AVAILABLE and event_bus:
-                event_bus.emit(
-                    event_type="STALE_BUILDER_ORPHAN",
-                    ticket_id=plan_id,
-                    actor="BUILDER",
-                    payload={
-                        "reason": "stale_builder_round",
-                        "process_round": process_round,
-                        "bus_state": str(bus_state.value) if bus_state else "unknown",
-                        "details": round_reason,
-                    },
-                )
-            msg = (
-                f"Stale Builder shell detected for {plan_id}: {round_reason}. "
-                f"Ticket is already in {bus_state.value if bus_state else 'post-success'}. "
-                "No action taken."
-            )
+        was_orphan, msg = _maybe_handle_stale_builder_orphan(
+            plan_id=plan_id,
+            process_round=process_round,
+            round_reason=round_reason,
+            bus_state=bus_state,
+        )
+        if was_orphan:
             if json_output:
                 print(
                     json.dumps(
@@ -3729,25 +3753,14 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
     if not round_ok:
         # WT-2026-242b: Orphan containment — if ticket is past IN_PROGRESS,
         # emit STALE_BUILDER_ORPHAN instead of HANDOFF_BLOCKED.
-        if _is_bus_state_post_success(bus_state):
-            if BUS_AVAILABLE and event_bus:
-                event_bus.emit(
-                    event_type="STALE_BUILDER_ORPHAN",
-                    ticket_id=plan_id,
-                    actor="BUILDER",
-                    payload={
-                        "reason": "stale_builder_round",
-                        "process_round": process_round,
-                        "bus_state": str(bus_state.value) if bus_state else "unknown",
-                        "details": round_reason,
-                    },
-                )
-            print(
-                f"[WARN] Pre-handoff skipped for stale Builder shell — ticket already "
-                f"in {bus_state.value if bus_state else 'post-success'}: {round_reason}",
-                file=sys.stderr,
-                flush=True,
-            )
+        was_orphan, msg = _maybe_handle_stale_builder_orphan(
+            plan_id=plan_id,
+            process_round=process_round,
+            round_reason=round_reason,
+            bus_state=bus_state,
+        )
+        if was_orphan:
+            print(f"[WARN] {msg}", file=sys.stderr, flush=True)
             # Return 0 so the stale shell exits cleanly without polluting the bus.
             return 0
         # Ticket is still IN_PROGRESS — maintain existing blocking behavior.

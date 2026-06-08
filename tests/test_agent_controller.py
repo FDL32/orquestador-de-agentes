@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 # Add .agent to path for imports
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -897,8 +899,43 @@ class TestPreHandoff:
         assert emit_mock.call_count == 1
         assert emit_mock.call_args.kwargs["event_type"] == "HANDOFF_BLOCKED"
 
-    def test_pre_handoff_orphan_when_bus_state_is_ready_for_review(self, monkeypatch):
-        """Stale Builder shell on READY_FOR_REVIEW ticket must emit STALE_BUILDER_ORPHAN and exit 0."""
+    @pytest.mark.parametrize(
+        ("event_dict", "active_round"),
+        [
+            (
+                {
+                    "event_type": "STATE_CHANGED",
+                    "payload": {"to_state": "READY_FOR_REVIEW"},
+                },
+                4,
+            ),
+            (
+                {
+                    "event_type": "STATE_CHANGED",
+                    "payload": {"to_state": "READY_TO_CLOSE"},
+                },
+                5,
+            ),
+            (
+                {
+                    "event_type": "REVIEW_DECISION",
+                    "payload": {"decision": "inspect"},
+                },
+                3,
+            ),
+            (
+                {
+                    "event_type": "STATE_CHANGED",
+                    "payload": {"to_state": "COMPLETED"},
+                },
+                2,
+            ),
+        ],
+    )
+    def test_pre_handoff_orphan_for_post_success_states(
+        self, monkeypatch, event_dict, active_round
+    ):
+        """Stale Builder shell on post-success states must emit STALE_BUILDER_ORPHAN and exit 0."""
         monkeypatch.setattr(
             agent_controller,
             "read_file",
@@ -907,17 +944,18 @@ class TestPreHandoff:
         monkeypatch.setattr(
             agent_controller,
             "_ensure_active_builder_round",
-            lambda plan_id: (False, 3, "stale Builder round 3; active round is 4"),
+            lambda plan_id: (
+                False,
+                active_round - 1,
+                f"stale Builder round {active_round - 1}; active round is {active_round}",
+            ),
         )
         monkeypatch.setattr(agent_controller, "BUS_AVAILABLE", True)
         emit_mock = MagicMock()
         monkeypatch.setattr(agent_controller, "event_bus", MagicMock(emit=emit_mock))
 
         mock_event = MagicMock()
-        mock_event.to_dict.return_value = {
-            "event_type": "STATE_CHANGED",
-            "payload": {"to_state": "READY_FOR_REVIEW"},
-        }
+        mock_event.to_dict.return_value = event_dict
         agent_controller.event_bus.read_events.return_value = [mock_event]
 
         code, output = self._capture_output(
@@ -938,78 +976,8 @@ class TestPreHandoff:
         ]
         assert not handoff_events, "must NOT emit HANDOFF_BLOCKED for orphan"
 
-    def test_pre_handoff_orphan_when_bus_state_is_ready_to_close(self, monkeypatch):
-        """Stale Builder shell on READY_TO_CLOSE must emit STALE_BUILDER_ORPHAN and exit 0."""
-        monkeypatch.setattr(
-            agent_controller,
-            "read_file",
-            lambda x: self._PLAN_CONTENT if "work_plan" in str(x).lower() else "",
-        )
-        monkeypatch.setattr(
-            agent_controller,
-            "_ensure_active_builder_round",
-            lambda plan_id: (False, 4, "stale Builder round 4; active round is 5"),
-        )
-        monkeypatch.setattr(agent_controller, "BUS_AVAILABLE", True)
-        emit_mock = MagicMock()
-        monkeypatch.setattr(agent_controller, "event_bus", MagicMock(emit=emit_mock))
-
-        mock_event = MagicMock()
-        mock_event.to_dict.return_value = {
-            "event_type": "STATE_CHANGED",
-            "payload": {"to_state": "READY_TO_CLOSE"},
-        }
-        agent_controller.event_bus.read_events.return_value = [mock_event]
-
-        code, output = self._capture_output(
-            lambda: agent_controller._handle_pre_handoff(json_output=False)
-        )
-
-        assert code == 0, f"Expected 0, got {code}. Output: {output}"
-        orphan_events = [
-            call
-            for call in emit_mock.call_args_list
-            if call.kwargs.get("event_type") == "STALE_BUILDER_ORPHAN"
-        ]
-        assert orphan_events
-
-    def test_pre_handoff_orphan_when_bus_state_is_human_gate(self, monkeypatch):
-        """Stale Builder shell on HUMAN_GATE must emit STALE_BUILDER_ORPHAN and exit 0."""
-        monkeypatch.setattr(
-            agent_controller,
-            "read_file",
-            lambda x: self._PLAN_CONTENT if "work_plan" in str(x).lower() else "",
-        )
-        monkeypatch.setattr(
-            agent_controller,
-            "_ensure_active_builder_round",
-            lambda plan_id: (False, 2, "stale Builder round 2; active round is 3"),
-        )
-        monkeypatch.setattr(agent_controller, "BUS_AVAILABLE", True)
-        emit_mock = MagicMock()
-        monkeypatch.setattr(agent_controller, "event_bus", MagicMock(emit=emit_mock))
-
-        mock_event = MagicMock()
-        mock_event.to_dict.return_value = {
-            "event_type": "REVIEW_DECISION",
-            "payload": {"decision": "inspect"},
-        }
-        agent_controller.event_bus.read_events.return_value = [mock_event]
-
-        code, output = self._capture_output(
-            lambda: agent_controller._handle_pre_handoff(json_output=False)
-        )
-
-        assert code == 0, f"Expected 0, got {code}. Output: {output}"
-        orphan_events = [
-            call
-            for call in emit_mock.call_args_list
-            if call.kwargs.get("event_type") == "STALE_BUILDER_ORPHAN"
-        ]
-        assert orphan_events
-
-    def test_pre_handoff_orphan_when_bus_state_is_completed(self, monkeypatch):
-        """Stale Builder shell on COMPLETED must emit STALE_BUILDER_ORPHAN and exit 0."""
+    def test_pre_handoff_stays_blocking_when_bus_state_unknown(self, monkeypatch):
+        """Unknown bus state must keep the original stale Builder block."""
         monkeypatch.setattr(
             agent_controller,
             "read_file",
@@ -1023,25 +991,25 @@ class TestPreHandoff:
         monkeypatch.setattr(agent_controller, "BUS_AVAILABLE", True)
         emit_mock = MagicMock()
         monkeypatch.setattr(agent_controller, "event_bus", MagicMock(emit=emit_mock))
-
-        mock_event = MagicMock()
-        mock_event.to_dict.return_value = {
-            "event_type": "STATE_CHANGED",
-            "payload": {"to_state": "COMPLETED"},
-        }
-        agent_controller.event_bus.read_events.return_value = [mock_event]
+        agent_controller.event_bus.read_events.return_value = []
 
         code, output = self._capture_output(
             lambda: agent_controller._handle_pre_handoff(json_output=False)
         )
 
-        assert code == 0, f"Expected 0, got {code}. Output: {output}"
+        assert code == 1, f"Expected 1, got {code}. Output: {output}"
+        handoff_events = [
+            call
+            for call in emit_mock.call_args_list
+            if call.kwargs.get("event_type") == "HANDOFF_BLOCKED"
+        ]
+        assert handoff_events, "unknown bus state must keep HANDOFF_BLOCKED"
         orphan_events = [
             call
             for call in emit_mock.call_args_list
             if call.kwargs.get("event_type") == "STALE_BUILDER_ORPHAN"
         ]
-        assert orphan_events
+        assert not orphan_events
 
 
 # =============================================================================
