@@ -102,6 +102,7 @@ append `--project-root <destino>` to commands that operate on project state.
 
 - Lee `PROJECT.md` antes de tocar arquitectura o estado.
 - Lee `INTERACTION_MODES.md` antes de operar por chat o por terminal.
+- Para tickets que tocan sincronizacion de estado, bus, proyecciones o codigo topologia-aware (`repo_motor + repo_destino`), comprueba primero si el sintoma encaja con un patron documentado en `docs/KNOWN_FAILURE_PATTERNS.md` antes de proponer un fix nuevo.
 - Para arrancar una sesion nueva con cualquier agente, usa el bootstrap canonico en `prompts/session_bootstrap.md` (apunta a archivos clave en lugar de embeber).
 - Usa `pathlib` y `try/except` explicito para I/O.
 - Mantiene la raiz limpia: no metas basura temporal en el arbol portable.

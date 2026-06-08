@@ -268,3 +268,53 @@ estado derivado del bus.
 
 - `WT-2026-216`
 - `WT-2026-224a`
+
+---
+
+## FP-007: Stub fail-open en codigo topologia-aware elevado a blocker arquitectonico
+
+**Estado de evidencia:** VERIFICADO EN CODIGO Y REVIEW
+
+### Sintoma observable
+
+- Un metodo de `repo_motor` que depende de `motor_root` (resolucion de agente,
+  discovery de paths, inyeccion de config) captura `RuntimeError` cuando
+  `_motor_root_or_raise()` falla y crea un stub o fallback silencioso.
+- El stub permite avanzar en pruebas aisladas o en rondas tacticas, pero
+  Manager review para un ticket de codigo que formaliza la topologia lo
+  identifica como blocker arquitectonico.
+
+### Contrato / realidad verificada
+
+- En la topologia `repo_motor + repo_destino`, cualquier codigo que degrada
+  su comportamiento silenciosamente cuando `motor_root` no es resoluble viola
+  el contrato topologico.
+- Un fail-open en una ruta de decision (agent spec, cwd de subprocess, path
+  discovery) no es un fallback defensivo; es una ruta de ejecucion incorrecta
+  disfrazada de resiliencia.
+
+### Causa raiz probable
+
+Se acepta el stub como solucion tactica para desbloquear una ronda
+Builder/Manager, sin extraerlo a un ticket de compatibilidad con scope y
+aprobacion explicita.
+
+### Mitigacion temporal
+
+- Si el stub es inevitable para avanzar, abrirlo como ticket separado de
+  compatibilidad antes de cerrar el ticket principal.
+
+### Fix estructural candidato
+
+- En codigo topologia-aware: llamar a `_motor_root_or_raise()` directamente
+  y dejar que `RuntimeError` propague. No capturar la excepcion salvo en el
+  perimetro de tests con topologia explicita.
+- En tests: usar `_configure_motor_topology(project_root, motor_root)` o
+  patron equivalente que construya un `motor_destination_link.json` real y
+  un `manager.md` en la ruta esperada. No depender de mocks de
+  `_motor_root_or_raise()` como setup principal; preferir topologia explicita
+  con fixture real.
+
+### Tickets relacionados
+
+- `WT-2026-237a`

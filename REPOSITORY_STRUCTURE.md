@@ -7,24 +7,26 @@ It is written so the repository can be cloned or published without any knowledge
 
 ```text
 orquestador_de_agentes/
-├── .agent/
-│   ├── collaboration/
-│   ├── runtime/
-│   ├── project_manifest.toml
-│   └── .version_manifest.json
-├── agent_system/
-├── scripts/
-├── skills/
-├── templates/
-├── tests/
-├── AGENTS.md
-├── CHANGELOG.md
-├── CLAUDE.md
-├── INTERACTION_MODES.md
-├── PROJECT.md
-├── QUICKSTART.md
-├── README.md
-└── pyproject.toml
+|-- .agent/
+|   |-- collaboration/
+|   |-- runtime/
+|   |-- project_manifest.toml
+|   `-- .version_manifest.json
+|-- agent_system/
+|-- docs/
+|-- prompts/
+|-- scripts/
+|-- skills/
+|-- templates/
+|-- tests/
+|-- AGENTS.md
+|-- CHANGELOG.md
+|-- CLAUDE.md
+|-- INTERACTION_MODES.md
+|-- PROJECT.md
+|-- QUICKSTART.md
+|-- README.md
+`-- pyproject.toml
 ```
 
 ## What is public
@@ -32,6 +34,8 @@ orquestador_de_agentes/
 - `.agent/` holds the canonical runtime state and manifests.
 - `scripts/` contains reproducible utilities and launcher commands.
 - `skills/` contains reusable skill instructions.
+- `docs/` contains durable architectural reference documents (known failure patterns, bus audit reports). Read on demand when a ticket touches bus, state projections, or topology-aware code.
+- `prompts/` contains operator-facing prompts used during planning, launch, review and audits; not part of the default runtime context unless explicitly referenced.
 - `templates/` contains reusable startup templates.
 - `tests/` contains the validation suite for the repo.
 - The top-level Markdown files document how the repo works as a standalone project.
