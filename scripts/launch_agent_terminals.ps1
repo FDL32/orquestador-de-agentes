@@ -895,6 +895,65 @@ function Stop-ProjectAgentProcesses {
     }
 }
 
+function Stop-ProjectBuilderProcesses {
+    param([Parameter(Mandatory)] [string]$ProjectRoot)
+
+    # WT-2026-241a: detectar y cerrar procesos Builder previos del mismo project_root.
+    # Busca procesos OpenCode con --agent builder y shells con AGENT_BUILDER_TICKET
+    # o AGENT_BUILDER_ROUND, todos acotados al project_root activo.
+    $normalizedRoot = [regex]::Escape((Resolve-Path -LiteralPath $ProjectRoot).Path)
+    $builderProcessPatterns = @(
+        'opencode.*run.*--agent\s+builder',
+        'AGENT_BUILDER_TICKET',
+        'AGENT_BUILDER_ROUND'
+    )
+
+    $builderProcesses = @()
+    try {
+        $builderProcesses = Get-CimInstance Win32_Process | Where-Object {
+            $commandLine = $_.CommandLine
+            $null -ne $commandLine -and
+            $_.ProcessId -ne $PID -and
+            ($commandLine -match $normalizedRoot) -and
+            (($builderProcessPatterns | Where-Object { $commandLine -match $_ }) -ne $null)
+        }
+    }
+    catch {
+        Write-Warning "No se pudieron inspeccionar procesos Builder previos; se continuara sin esa limpieza. Detalle: $($_.Exception.Message)"
+        return 0
+    }
+
+    foreach ($process in $builderProcesses) {
+        try {
+            Write-Warning "[launcher] Cerrando Builder previo: PID $($process.ProcessId) -> $($process.Name)"
+            Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
+        }
+        catch {
+            Write-Warning "[launcher] No se pudo cerrar el proceso Builder $($process.ProcessId): $($_.Exception.Message)"
+        }
+    }
+
+    $count = @($builderProcesses).Count
+    if ($count -gt 0) {
+        Write-Host "[launcher] Se cerraron $count proceso(s) Builder previo(s) del proyecto $ProjectRoot"
+
+        # Limpiar builder_lock.txt y builder_session.json solo si se cerraron procesos Builder previos
+        $lockPath = Join-Path $ProjectRoot '.agent\runtime\builder_lock.txt'
+        if (Test-Path -LiteralPath $lockPath) {
+            Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
+            Write-Host "[launcher] builder_lock.txt eliminado tras cerrar Builder previo"
+        }
+
+        $sessionPath = Join-Path $ProjectRoot '.agent\runtime\builder_session.json'
+        if (Test-Path -LiteralPath $sessionPath) {
+            Remove-Item -LiteralPath $sessionPath -Force -ErrorAction SilentlyContinue
+            Write-Host "[launcher] builder_session.json eliminado tras cerrar Builder previo"
+        }
+    }
+
+    return $count
+}
+
 function Resolve-BackendExecutable {
     param(
         [Parameter(Mandatory)] [string]$BackendName,
@@ -1548,6 +1607,10 @@ if ($LaunchMonitor) {
     Start-AgentWindow -Title 'Ticket Activity Monitor' -Command "& $venvPythonLiteral $monitorScriptLiteral"
     Write-Host "Ticket Activity Monitor: lanzado para el ticket activo"
 }
+
+# WT-2026-241a: Limpiar procesos Builder previos del mismo project_root antes de lanzar nuevo Builder.
+# Cubre tanto el arranque fresco como la ruta de resume/relaunch.
+Stop-ProjectBuilderProcesses -ProjectRoot $ProjectRoot | Out-Null
 
 if ($LaunchBuilder) {
     $activeRole = Get-ActiveRole -ProjectRoot $ProjectRoot
