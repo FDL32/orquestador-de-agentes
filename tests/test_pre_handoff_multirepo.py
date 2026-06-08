@@ -59,6 +59,13 @@ def _setup_multi_repo(
 
     Returns (motor, dest, work_plan_path, exec_log_path).
     """
+    import os as _os
+
+    # Clear Builder session env vars so tests are independent of the
+    # OpenCode runtime environment (WT-2026-240a).
+    _os.environ.pop("AGENT_BUILDER_TICKET", None)
+    _os.environ.pop("AGENT_BUILDER_ROUND", None)
+
     motor = tmp_path / "motor"
     dest = tmp_path / "dest"
     init_git_repo(motor)
@@ -460,8 +467,8 @@ def test_parse_raw_flt_paths_handles_edge_cases() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_docs_ticket_skips_motor_commit(tmp_path: Path, monkeypatch) -> None:
-    """TP-05 docs: documentation ticket with motor changes -> no commit/tag in motor."""
+def test_docs_ticket_dirty_motor_blocks(tmp_path: Path, monkeypatch) -> None:
+    """WT-2026-240a: documentation ticket with motor dirty -> block with HANDOFF_BLOCKED."""
     import agent_controller
 
     motor, dest, wp, exec_log = _setup_multi_repo(tmp_path, motor_flt=[".agent/agent_controller.py"])
@@ -470,7 +477,7 @@ def test_docs_ticket_skips_motor_commit(tmp_path: Path, monkeypatch) -> None:
     wp.write_text(
         "# Work Plan\n\n"
         "## Metadata\n"
-        "- **ID:** WT-2026-239a\n"
+        "- **ID:** WT-2026-240a\n"
         "- **Estado:** APPROVED\n"
         "- **deliverable_type:** documentation\n\n"
         "## Files Likely Touched\n"
@@ -494,22 +501,111 @@ def test_docs_ticket_skips_motor_commit(tmp_path: Path, monkeypatch) -> None:
 
     result = agent_controller._handle_pre_handoff(json_output=True)
 
-    # Should succeed without committing or tagging in motor
-    assert result == 0, f"Expected 0 (bypass), got {result}"
+    # Documentation ticket with dirty motor must BLOCK
+    assert result == 1, f"Expected 1 (blocked), got {result}"
 
-    # Verify NO new commit was created in motor with the ticket ID
+    # Verify NO commit was created in motor with the ticket ID
     log = _git(["log", "--oneline", "-5"], cwd=motor)
-    assert "WT-2026-239a" not in log.stdout, (
+    assert "WT-2026-240a" not in log.stdout, (
         f"Documentation ticket should not create motor commit:\n{log.stdout}"
     )
 
     # Verify NO checkpoint tag was created
     tag_check = _git(
-        ["rev-parse", "checkpoint/review-WT-2026-239a"], cwd=motor
+        ["rev-parse", "checkpoint/review-WT-2026-240a"], cwd=motor
     )
     assert tag_check.returncode != 0, (
         "Documentation ticket should not create checkpoint tag"
     )
+
+
+# ---------------------------------------------------------------------------
+# WT-2026-240a: documentation ticket with clean motor -> bypass without commit
+# ---------------------------------------------------------------------------
+
+
+def test_docs_ticket_clean_motor_bypass(tmp_path: Path, monkeypatch) -> None:
+    """WT-2026-240a: documentation ticket with clean motor -> bypass with result 0."""
+    import agent_controller
+
+    motor, dest, wp, exec_log = _setup_multi_repo(tmp_path, motor_flt=[".agent/agent_controller.py"])
+
+    # Override work_plan to documentation deliverable_type
+    wp.write_text(
+        "# Work Plan\n\n"
+        "## Metadata\n"
+        "- **ID:** WT-2026-240a\n"
+        "- **Estado:** APPROVED\n"
+        "- **deliverable_type:** documentation\n\n"
+        "## Files Likely Touched\n"
+        "- `.agent/agent_controller.py`\n"
+    )
+
+    # Motor is clean (tracked file exists but no uncommitted changes)
+    tracked = _create_file(motor, ".agent/agent_controller.py", "original")
+    _git(["add", str(tracked)], cwd=motor)
+    _git(["commit", "-m", "add tracked file"], cwd=motor)
+    # Do NOT modify anything in motor
+
+    # Commit .agent/ collaboration files in dest so the tree is clean
+    _git(["add", "."], cwd=dest)
+    _git(["commit", "-m", "add collaboration files"], cwd=dest)
+
+    monkeypatch.setattr(agent_controller, "PROJECT_ROOT", dest)
+    monkeypatch.setattr(agent_controller, "WORK_PLAN", wp)
+    monkeypatch.setattr(agent_controller, "EXEC_LOG", exec_log)
+    monkeypatch.setattr(agent_controller, "_MOTOR_ROOT", motor)
+
+    result = agent_controller._handle_pre_handoff(json_output=True)
+
+    # Clean motor with docs ticket should bypass (result 0)
+    assert result == 0, f"Expected 0 (bypass), got {result}"
+
+    # Verify NO new commit was created in motor
+    log = _git(["log", "--oneline", "-5"], cwd=motor)
+    assert "WT-2026-240a" not in log.stdout, (
+        f"Documentation ticket bypass should not create motor commit:\n{log.stdout}"
+    )
+
+    # Verify NO checkpoint tag was created
+    tag_check = _git(
+        ["rev-parse", "checkpoint/review-WT-2026-240a"], cwd=motor
+    )
+    assert tag_check.returncode != 0, (
+        "Documentation ticket bypass should not create checkpoint tag"
+    )
+
+
+# ---------------------------------------------------------------------------
+# WT-2026-240a: code ticket regression - still blocks on dirty motor
+# ---------------------------------------------------------------------------
+
+
+def test_code_ticket_still_blocks_on_dirty_motor(tmp_path: Path, monkeypatch, capsys) -> None:
+    """WT-2026-240a: code ticket with motor dirty outside FLT -> block (regression)."""
+    import agent_controller
+
+    motor, dest, wp, exec_log = _setup_multi_repo(
+        tmp_path, motor_flt=[".agent/agent_controller.py"]
+    )
+
+    # Create and track a file NOT in FLT, then modify it
+    tracked = _create_file(motor, "src/outside_flt.py", "original")
+    _git(["add", str(tracked)], cwd=motor)
+    _git(["commit", "-m", "add outside file"], cwd=motor)
+    tracked.write_text("def outside_change(): pass")
+
+    monkeypatch.setattr(agent_controller, "PROJECT_ROOT", dest)
+    monkeypatch.setattr(agent_controller, "WORK_PLAN", wp)
+    monkeypatch.setattr(agent_controller, "EXEC_LOG", exec_log)
+    monkeypatch.setattr(agent_controller, "_MOTOR_ROOT", motor)
+
+    result = agent_controller._handle_pre_handoff(json_output=False)
+
+    # Code ticket with motor dirty outside FLT must block
+    assert result == 1, f"Expected 1 (blocked), got {result}"
+    stderr = capsys.readouterr().err
+    assert "outside Files Likely Touched" in stderr
 
 
 # ---------------------------------------------------------------------------
