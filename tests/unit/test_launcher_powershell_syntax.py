@@ -25,6 +25,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LAUNCHER = REPO_ROOT / "scripts" / "launch_agent_terminals.ps1"
+DIAGNOSTIC_SCRIPT = REPO_ROOT / "scripts" / "diagnose_builder_orphans.py"
 
 
 def _resolve_powershell() -> str | None:
@@ -76,3 +77,101 @@ def test_launcher_powershell_parses_cleanly() -> None:
         f"PowerShell did not confirm clean parse:\n"
         f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
     )
+
+
+@pytest.mark.skipif(
+    _resolve_powershell() is None,
+    reason="PowerShell required to query launcher source",
+)
+def test_stop_builder_no_env_var_patterns() -> None:
+    """WT-2026-242c: AGENT_BUILDER_TICKET/ROUND patterns removed from Stop-ProjectBuilderProcesses.
+
+    These patterns were dead code: Win32_Process.CommandLine does not contain
+    environment variables. The detection must rely solely on CLI-arg patterns.
+    """
+    launcher_source = LAUNCHER.read_text(encoding="utf-8")
+
+    func_start = launcher_source.find("function Stop-ProjectBuilderProcesses")
+    assert func_start != -1, "Stop-ProjectBuilderProcesses function not found"
+
+    patterns_marker = "$builderProcessPatterns = @("
+    patterns_start = launcher_source.find(patterns_marker, func_start)
+    assert patterns_start != -1, "$builderProcessPatterns array not found in function"
+
+    patterns_end = launcher_source.find(")", patterns_start)
+    patterns_section = launcher_source[patterns_start:patterns_end]
+
+    assert "AGENT_BUILDER_TICKET" not in patterns_section, (
+        "AGENT_BUILDER_TICKET still in $builderProcessPatterns — dead code not cleaned"
+    )
+    assert "AGENT_BUILDER_ROUND" not in patterns_section, (
+        "AGENT_BUILDER_ROUND still in $builderProcessPatterns — dead code not cleaned"
+    )
+
+    func_section = launcher_source[func_start : func_start + 2000]
+    assert "opencode.*run.*--agent" in func_section, (
+        "opencode.*run.*--agent pattern missing from Stop-ProjectBuilderProcesses"
+    )
+
+
+def test_diagnostic_script_importable() -> None:
+    """WT-2026-242c: diagnose_builder_orphans.py must be importable."""
+    assert DIAGNOSTIC_SCRIPT.is_file(), (
+        f"diagnostic script not found at {DIAGNOSTIC_SCRIPT}"
+    )
+
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "diagnose_builder_orphans", str(DIAGNOSTIC_SCRIPT)
+    )
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    assert hasattr(mod, "diagnose"), "diagnose() function not found"
+    assert hasattr(mod, "_read_builder_lock"), "_read_builder_lock() not found"
+    assert hasattr(mod, "_is_bus_state_post_success"), (
+        "_is_bus_state_post_success() not found"
+    )
+
+
+def test_diagnostic_bus_state_post_success() -> None:
+    """WT-2026-242c: _is_bus_state_post_success must identify orphan-safe states."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "diagnose_builder_orphans", str(DIAGNOSTIC_SCRIPT)
+    )
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    for state in ("READY_FOR_REVIEW", "READY_TO_CLOSE", "HUMAN_GATE", "COMPLETED"):
+        assert mod._is_bus_state_post_success(state), f"{state} should be post-success"
+
+    assert not mod._is_bus_state_post_success("IN_PROGRESS")
+    assert not mod._is_bus_state_post_success(None)
+    assert not mod._is_bus_state_post_success("UNKNOWN_STATE")
+
+
+@pytest.mark.skipif(
+    platform.system() != "Windows",
+    reason="WMI orphan detection only available on Windows",
+)
+def test_diagnostic_runs_on_clean_state() -> None:
+    """WT-2026-242c: diagnostic must run without error on a clean project."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "diagnose_builder_orphans", str(DIAGNOSTIC_SCRIPT)
+    )
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    workspace = REPO_ROOT.parent / "orquestador_de_agentes_workspace"
+    result = mod.diagnose(str(workspace))
+    assert "gap_confirmed" in result
+    assert "builder_processes" in result
+    assert isinstance(result["builder_processes"], list)

@@ -292,7 +292,7 @@ function Read-BuilderLockState {
                 TicketId     = Get-OptionalPropertyValue -Object $state -Names @('ticket_id', 'ticketId')
                 ProjectRoot  = Get-OptionalPropertyValue -Object $state -Names @('project_root', 'projectRoot')
                 StartedAt    = Get-OptionalPropertyValue -Object $state -Names @('started_at', 'startedAt')
-                # WP-2026-117: PID eliminado del contrato del lock - no usar como seÃ±al de vida
+                Pid          = Get-OptionalPropertyValue -Object $state -Names @('pid')
                 Role         = Get-OptionalPropertyValue -Object $state -Names @('role')
                 Backend      = Get-OptionalPropertyValue -Object $state -Names @('backend')
                 Round        = Get-OptionalPropertyValue -Object $state -Names @('round')
@@ -898,14 +898,15 @@ function Stop-ProjectAgentProcesses {
 function Stop-ProjectBuilderProcesses {
     param([Parameter(Mandatory)] [string]$ProjectRoot)
 
-    # WT-2026-241a: detectar y cerrar procesos Builder previos del mismo project_root.
-    # Busca procesos OpenCode con --agent builder y shells con AGENT_BUILDER_TICKET
-    # o AGENT_BUILDER_ROUND, todos acotados al project_root activo.
+    # WT-2026-241a/WT-2026-242c: detectar y cerrar procesos Builder previos del
+    # mismo project_root. Busca procesos OpenCode con --agent builder en CommandLine.
+    # Los patrones AGENT_BUILDER_TICKET/AGENT_BUILDER_ROUND fueron eliminados porque
+    # Win32_Process.CommandLine no contiene variables de entorno; esas env vars solo
+    # existen en el bloque de entorno del proceso, no en argv. Ver diagnostic en
+    # execution_log.md de WT-2026-242c para evidencia reproducible.
     $normalizedRoot = [regex]::Escape((Resolve-Path -LiteralPath $ProjectRoot).Path)
     $builderProcessPatterns = @(
-        'opencode.*run.*--agent\s+builder',
-        'AGENT_BUILDER_TICKET',
-        'AGENT_BUILDER_ROUND'
+        'opencode.*run.*--agent\s+builder'
     )
 
     $builderProcesses = @()
@@ -1750,7 +1751,11 @@ try { $opencodeRunCommand } finally {
                 Write-Host "Builder: lanzado para rol $activeRole con plantilla $templateName"
             }
 
-            # WP-2026-117: Lock minimo sin PID - solo ticket_id + started_at como apoyo operativo
+            # WP-2026-117: PID como senal diagnostica, no como autoridad de kill.
+            # WT-2026-242c: Identidad enriquecida: pid + round + ticket_id +
+            # project_root + started_at. El PID permite correlacionar procesos
+            # huerfanos en diagnostico pero no gobierna la decision de matar.
+            $builderPid = if ($null -ne $builderProcess) { $builderProcess.Id } else { 0 }
             $builderLockState = [ordered]@{
                 ticket_id    = $ticketId
                 project_root = (Resolve-Path -LiteralPath $ProjectRoot).Path
@@ -1758,6 +1763,7 @@ try { $opencodeRunCommand } finally {
                 role         = 'BUILDER'
                 backend      = $backend
                 round        = $currentRound
+                pid          = $builderPid
             }
             $builderLockState | ConvertTo-Json -Depth 4 | Out-File -LiteralPath $lockPath -Encoding UTF8
         }
