@@ -2705,6 +2705,28 @@ def _run_pre_handoff_guard(plan_id: str, json_output: bool) -> dict:
         return {"valid": True, "warnings": [f"Guard execution error: {exc}"]}
 
 
+def _is_bus_state_post_success(bus_state: object | None) -> bool:
+    """Check if bus-derived state is past IN_PROGRESS (orphan-safe territory).
+
+    When a stale Builder shell runs mark-ready or pre-handoff but the ticket
+    is already past IN_PROGRESS, the shell is orphaned. This function returns
+    True for READY_FOR_REVIEW, READY_TO_CLOSE, HUMAN_GATE, and COMPLETED.
+
+    Returns False for None (unknown/unavailable bus) so the caller falls back
+    to the current blocking behavior.
+    """
+    if bus_state is None:
+        return False
+    from bus.state_machine import TicketState
+
+    return bus_state in (
+        TicketState.READY_FOR_REVIEW,
+        TicketState.READY_TO_CLOSE,
+        TicketState.HUMAN_GATE,
+        TicketState.COMPLETED,
+    )
+
+
 def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-ready, breaker)
     scope_override: str | None, json_output: bool, force_mode: bool
 ) -> int:
@@ -2724,7 +2746,60 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
 
     log_status = get_status(log_content, "**Estado:**")
     round_ok, process_round, round_reason = _ensure_active_builder_round(plan_id)
+
+    # WP-2026-143 / WT-2026-242b: Derive bus state early for orphan detection.
+    bus_state = None
+    if BUS_AVAILABLE and event_bus:
+        from bus.state_machine import StateMachine
+
+        events = event_bus.read_events(ticket_id=plan_id)
+        if events:
+            bus_state = StateMachine.derive_state_from_events(
+                [e.to_dict() for e in events]
+            )
+
     if not round_ok:
+        # WT-2026-242b: Orphan containment — if the ticket is already past
+        # IN_PROGRESS, emit STALE_BUILDER_ORPHAN instead of HANDOFF_BLOCKED.
+        # This prevents stale shells from contaminating the bus post-success.
+        if _is_bus_state_post_success(bus_state):
+            if BUS_AVAILABLE and event_bus:
+                event_bus.emit(
+                    event_type="STALE_BUILDER_ORPHAN",
+                    ticket_id=plan_id,
+                    actor="BUILDER",
+                    payload={
+                        "reason": "stale_builder_round",
+                        "process_round": process_round,
+                        "bus_state": str(bus_state.value) if bus_state else "unknown",
+                        "details": round_reason,
+                    },
+                )
+            msg = (
+                f"Stale Builder shell detected for {plan_id}: {round_reason}. "
+                f"Ticket is already in {bus_state.value if bus_state else 'post-success'}. "
+                "No action taken."
+            )
+            if json_output:
+                print(
+                    json.dumps(
+                        {
+                            "status": "orphan_ignored",
+                            "reason": "stale_builder_round",
+                            "details": msg,
+                            "plan_id": plan_id,
+                            "process_round": process_round,
+                            "bus_state": str(bus_state.value)
+                            if bus_state
+                            else "unknown",
+                        },
+                        indent=2,
+                    )
+                )
+            else:
+                print(f"[WARN] {msg}")
+            return 0
+        # Ticket is still IN_PROGRESS — maintain existing blocking behavior.
         if BUS_AVAILABLE and event_bus:
             event_bus.emit(
                 event_type="HANDOFF_BLOCKED",
@@ -2757,16 +2832,7 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
             print(f"[ERROR] {msg}")
         return 1
 
-    # WP-2026-143: Get bus-derived state as authority
-    bus_state = None
-    if BUS_AVAILABLE and event_bus:
-        from bus.state_machine import StateMachine
-
-        events = event_bus.read_events(ticket_id=plan_id)
-        if events:
-            bus_state = StateMachine.derive_state_from_events(
-                [e.to_dict() for e in events]
-            )
+    # WP-2026-143: Get bus-derived state as authority (also derived above for orphan detection)
 
     # WP-2026-106 hotfix: a ticket escalated to HUMAN_GATE can only leave that
     # state by explicit human intervention. The Builder must not be able to
@@ -3648,7 +3714,43 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
         return 1
 
     round_ok, process_round, round_reason = _ensure_active_builder_round(plan_id)
+
+    # WT-2026-242b: Derive bus state for orphan detection.
+    bus_state = None
+    if BUS_AVAILABLE and event_bus:
+        from bus.state_machine import StateMachine
+
+        events = event_bus.read_events(ticket_id=plan_id)
+        if events:
+            bus_state = StateMachine.derive_state_from_events(
+                [e.to_dict() for e in events]
+            )
+
     if not round_ok:
+        # WT-2026-242b: Orphan containment — if ticket is past IN_PROGRESS,
+        # emit STALE_BUILDER_ORPHAN instead of HANDOFF_BLOCKED.
+        if _is_bus_state_post_success(bus_state):
+            if BUS_AVAILABLE and event_bus:
+                event_bus.emit(
+                    event_type="STALE_BUILDER_ORPHAN",
+                    ticket_id=plan_id,
+                    actor="BUILDER",
+                    payload={
+                        "reason": "stale_builder_round",
+                        "process_round": process_round,
+                        "bus_state": str(bus_state.value) if bus_state else "unknown",
+                        "details": round_reason,
+                    },
+                )
+            print(
+                f"[WARN] Pre-handoff skipped for stale Builder shell — ticket already "
+                f"in {bus_state.value if bus_state else 'post-success'}: {round_reason}",
+                file=sys.stderr,
+                flush=True,
+            )
+            # Return 0 so the stale shell exits cleanly without polluting the bus.
+            return 0
+        # Ticket is still IN_PROGRESS — maintain existing blocking behavior.
         if BUS_AVAILABLE and event_bus:
             event_bus.emit(
                 event_type="HANDOFF_BLOCKED",
