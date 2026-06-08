@@ -3689,8 +3689,32 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
     # --- WT-2026-239a: Docs/research/analysis early bypass ---
     # For non-code tickets, skip motor commit/tag/checkpoint and workspace
     # commit/tag. Only verify tree hygiene (excluding live surfaces).
+    # WT-2026-240a: Block if motor has uncommitted productive changes.
     _dt_ph = _read_deliverable_type(plan_content)
     if _dt_ph in {"documentation", "research", "analysis"}:
+        # WT-2026-240a: Check motor hygiene before bypass
+        _motor_dirty_docs = motor_uncommitted_productive(motor_root)
+        if _motor_dirty_docs:
+            print(
+                "Productive changes in repo_motor "
+                "(documentation ticket bypass blocked):\n"
+                + "\n".join(f"  {f}" for f in sorted(_motor_dirty_docs)),
+                file=sys.stderr,
+                flush=True,
+            )
+            if BUS_AVAILABLE and event_bus:
+                event_bus.emit(
+                    event_type="HANDOFF_BLOCKED",
+                    ticket_id=plan_id,
+                    actor="BUILDER",
+                    payload={
+                        "reason": "motor_uncommitted_productive_docs_bypass",
+                        "deliverable_type": _dt_ph,
+                        "productive_files": sorted(_motor_dirty_docs),
+                    },
+                )
+            return 1
+        # Continue with bypass (no motor commit/tag/checkpoint)
         _live_files_ph, _live_dirs_ph = _build_live_surface_sets(project_root)
         try:
             _status_result = subprocess.run(
