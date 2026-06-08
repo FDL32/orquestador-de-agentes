@@ -309,3 +309,54 @@ class TestManagerApprove:
         output = json.loads(captured.getvalue())
         assert output["status"] == "already_completed"
         assert output["ticket_id"] == "WP-TEST-001"
+
+    def test_documentation_ticket_bypasses_commit_check(
+        self, temp_bus: EventBus, mock_files: dict, tmp_path: Path
+    ) -> None:
+        """Documentation ticket: manager-approve must skip _check_last_commit()."""
+        from agent_controller import _handle_manager_approve
+
+        # Override work_plan to documentation deliverable_type
+        mock_files["work_plan"].write_text(
+            "# Plan de Trabajo: WP-TEST-DOC\n\n"
+            "## Metadata\n"
+            "- **ID:** WP-TEST-DOC\n"
+            "- **Estado:** APPROVED\n"
+            "- **deliverable_type:** documentation\n"
+        )
+
+        # Set state to READY_FOR_REVIEW
+        mock_files["exec_log"].write_text(
+            "# Execution Log\n\n## WP-TEST-DOC\n**Estado:** READY_FOR_REVIEW\n"
+        )
+
+        with (
+            patch("agent_controller.event_bus", temp_bus),
+            patch("agent_controller.BUS_AVAILABLE", True),
+            patch("agent_controller.WORK_PLAN", mock_files["work_plan"]),
+            patch("agent_controller.EXEC_LOG", mock_files["exec_log"]),
+            patch("agent_controller.TURN_FILE", mock_files["turn"]),
+            patch("agent_controller.STATE_FILE", mock_files["state"]),
+            patch("agent_controller.AGENT_DIR", tmp_path / ".agent"),
+            # _check_last_commit must NOT be called for documentation tickets.
+            # A side_effect that raises proves the bypass works.
+            patch(
+                "agent_controller._check_last_commit",
+                side_effect=RuntimeError("must not be called for docs"),
+            ),
+        ):
+            result = _handle_manager_approve(
+                "WP-TEST-DOC", json_output=False, force_mode=False
+            )
+
+        assert result == 0, (
+            f"Expected 0 (closed for docs without commit check), got {result}"
+        )
+
+        # Verify cascade events were emitted (full closeout)
+        events = temp_bus.read_events(ticket_id="WP-TEST-DOC")
+        event_types = [e.event_type for e in events]
+        assert "REVIEW_DECISION" in event_types
+        assert "STATE_CHANGED" in event_types
+        assert "CLOSE_CONFIRMED" in event_types
+        assert "SUPERVISOR_CLOSED" in event_types

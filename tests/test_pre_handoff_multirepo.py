@@ -30,7 +30,12 @@ def _create_file(repo: Path, rel: str, content: str = "content") -> Path:
     return f
 
 
-def _create_work_plan(plan_dir: Path, ticket_id: str, flt_paths: list[str]) -> Path:
+def _create_work_plan(
+    plan_dir: Path,
+    ticket_id: str,
+    flt_paths: list[str],
+    deliverable_type: str = "code",
+) -> Path:
     """Create a work_plan.md with Files Likely Touched section."""
     flt_lines = "\n".join(f"- `{p}`" for p in flt_paths)
     wp = plan_dir / "work_plan.md"
@@ -39,7 +44,7 @@ def _create_work_plan(plan_dir: Path, ticket_id: str, flt_paths: list[str]) -> P
         f"## Metadata\n"
         f"- **ID:** {ticket_id}\n"
         f"- **Estado:** APPROVED\n"
-        f"- **deliverable_type:** code\n\n"
+        f"- **deliverable_type:** {deliverable_type}\n\n"
         f"## Files Likely Touched\n{flt_lines}\n"
     )
     return wp
@@ -448,6 +453,63 @@ def test_parse_raw_flt_paths_handles_edge_cases() -> None:
     result2 = _parse_raw_flt_paths(content2)
     assert "src/module.py" in result2
     assert "./src/module.py" not in result2
+
+
+# ---------------------------------------------------------------------------
+# WT-2026-239a: documentation ticket skips motor commit/tag/checkpoint
+# ---------------------------------------------------------------------------
+
+
+def test_docs_ticket_skips_motor_commit(tmp_path: Path, monkeypatch) -> None:
+    """TP-05 docs: documentation ticket with motor changes -> no commit/tag in motor."""
+    import agent_controller
+
+    motor, dest, wp, exec_log = _setup_multi_repo(tmp_path, motor_flt=[".agent/agent_controller.py"])
+
+    # Override work_plan to documentation deliverable_type
+    wp.write_text(
+        "# Work Plan\n\n"
+        "## Metadata\n"
+        "- **ID:** WT-2026-239a\n"
+        "- **Estado:** APPROVED\n"
+        "- **deliverable_type:** documentation\n\n"
+        "## Files Likely Touched\n"
+        "- `.agent/agent_controller.py`\n"
+    )
+
+    # Create tracked file in motor then modify it (productive change within FLT)
+    tracked = _create_file(motor, ".agent/agent_controller.py", "original")
+    _git(["add", str(tracked)], cwd=motor)
+    _git(["commit", "-m", "add tracked file"], cwd=motor)
+    tracked.write_text("def new_handler(): pass")
+
+    # Commit .agent/ collaboration files in dest so the tree is clean
+    _git(["add", "."], cwd=dest)
+    _git(["commit", "-m", "add collaboration files"], cwd=dest)
+
+    monkeypatch.setattr(agent_controller, "PROJECT_ROOT", dest)
+    monkeypatch.setattr(agent_controller, "WORK_PLAN", wp)
+    monkeypatch.setattr(agent_controller, "EXEC_LOG", exec_log)
+    monkeypatch.setattr(agent_controller, "_MOTOR_ROOT", motor)
+
+    result = agent_controller._handle_pre_handoff(json_output=True)
+
+    # Should succeed without committing or tagging in motor
+    assert result == 0, f"Expected 0 (bypass), got {result}"
+
+    # Verify NO new commit was created in motor with the ticket ID
+    log = _git(["log", "--oneline", "-5"], cwd=motor)
+    assert "WT-2026-239a" not in log.stdout, (
+        f"Documentation ticket should not create motor commit:\n{log.stdout}"
+    )
+
+    # Verify NO checkpoint tag was created
+    tag_check = _git(
+        ["rev-parse", "checkpoint/review-WT-2026-239a"], cwd=motor
+    )
+    assert tag_check.returncode != 0, (
+        "Documentation ticket should not create checkpoint tag"
+    )
 
 
 # ---------------------------------------------------------------------------

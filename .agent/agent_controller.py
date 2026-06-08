@@ -3685,6 +3685,72 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
                 flush=True,
             )
             return 1
+
+    # --- WT-2026-239a: Docs/research/analysis early bypass ---
+    # For non-code tickets, skip motor commit/tag/checkpoint and workspace
+    # commit/tag. Only verify tree hygiene (excluding live surfaces).
+    _dt_ph = _read_deliverable_type(plan_content)
+    if _dt_ph in {"documentation", "research", "analysis"}:
+        _live_files_ph, _live_dirs_ph = _build_live_surface_sets(project_root)
+        try:
+            _status_result = subprocess.run(
+                ["git", "status", "--porcelain"],
+                capture_output=True,
+                text=True,
+                cwd=git_root,
+            )
+        except FileNotFoundError:
+            print(
+                "[ERROR] git not available for status check",
+                file=sys.stderr,
+                flush=True,
+            )
+            return 1
+        _dirty_entries: list[str] = []
+        if _status_result.stdout:
+            for _line_raw in _status_result.stdout.splitlines():
+                _line = _line_raw.strip()
+                if not _line or len(_line_raw) < 3:
+                    continue
+                _path = _line_raw[3:].strip()
+                _abs_git = str((git_root / _path).resolve())
+                _abs_ws = str((project_root / _path).resolve())
+                if not (
+                    _is_live_surface(
+                        _abs_git, project_root, _live_files_ph, _live_dirs_ph
+                    )
+                    or _is_live_surface(
+                        _abs_ws, project_root, _live_files_ph, _live_dirs_ph
+                    )
+                ):
+                    _dirty_entries.append(_path)
+        if _dirty_entries:
+            print(
+                f"[ERROR] Tree dirty after pre-handoff: {', '.join(_dirty_entries)}",
+                file=sys.stderr,
+                flush=True,
+            )
+            return 1
+        _reset_circuit_breaker(plan_id)
+        _capture_builder_session(plan_id, process_round or 1)
+        if not json_output:
+            print(
+                f"[OK] Pre-handoff complete for {plan_id} "
+                f"(deliverable_type={_dt_ph}). Tree is clean."
+            )
+        else:
+            print(
+                json.dumps(
+                    {
+                        "status": "success",
+                        "plan_id": plan_id,
+                        "deliverable_type": _dt_ph,
+                    },
+                    indent=2,
+                )
+            )
+        return 0
+
     # --- Commit-or-block for uncommitted productive motor changes ---
     # WT-2026-231a: Replace the simple barrier from WT-2026-228a with a
     # commit-or-block decision. If all motor productive changes are within
@@ -4442,9 +4508,13 @@ def _handle_manager_approve(  # noqa: C901 - flag handler intentionally branches
             )
         return 1
 
+    # WT-2026-239a: For documentation/research/analysis tickets, skip
+    # last-commit validation (no manual commit requirement for docs).
+    _dt_ma = _read_deliverable_type(plan_content)
+
     # WP-2026-188: Validate last commit message for closeout hygiene
     # Block generic checkpoints, wrong/missing ticket IDs unless --force
-    if not force_mode:
+    if not force_mode and _dt_ma not in {"documentation", "research", "analysis"}:
         commit_valid, commit_reason = _check_last_commit(
             PROJECT_ROOT.resolve(), ticket_id
         )
