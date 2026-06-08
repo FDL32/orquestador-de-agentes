@@ -134,7 +134,8 @@ def test_emit_fail_safe_on_review_decision(review_bridge, event_bus, tmp_path, c
 
     Before: An emit() failure on REVIEW_DECISION would crash with raw traceback.
     During: Simulates event_bus.emit() raising an exception when emitting REVIEW_DECISION.
-    After: Bridge logs error audibly and returns result with decision intact.
+    After: Bridge logs error audibly and returns result with INSPECT decision
+           (text_regex degrades plain-text APPROVE to INSPECT).
     """
     # Emit STATE_CHANGED to set ticket state to READY_FOR_REVIEW
     event_bus.emit(
@@ -185,8 +186,10 @@ def test_emit_fail_safe_on_review_decision(review_bridge, event_bus, tmp_path, c
                 timeout_seconds=10,
             )
 
-    # Decision should still be APPROVE (the review ran successfully)
-    assert result.decision == ReviewDecision.APPROVE
+    # WT-2026-242a: text_regex degrades plain-text APPROVE to INSPECT.
+    # The bridge handles the REVIEW_DECISION emit failure gracefully.
+    assert result.decision == ReviewDecision.INSPECT
+    assert result.exit_code == 1
     # But stderr should contain the fail-safe message
     captured = capfd.readouterr()
     assert "FAIL-SAFE" in captured.err or "REVIEW_DECISION emit failed" in captured.err
@@ -379,8 +382,14 @@ class TestOpencodeJsonParserRealSchema:
 class TestParseOpencodeDecisionWithRetry:
     """Tests for WP-2026-120: Parser with controlled retry."""
 
-    def test_retry_not_invoked_on_valid_decision(self, tmp_path):
-        """Test retry is not invoked when parser extracts valid decision."""
+    def test_retry_not_invoked_on_plain_text_decision(self, tmp_path):
+        """Test retry is not invoked when text_regex extracts a decision.
+
+        WT-2026-242a: Plain text DECISION: APPROVE goes through JSON
+        (no NDJSON found) then text_regex which degrades to INSPECT.
+        Retry is not invoked because parse_method is "text_regex",
+        not "fallback_inspect".
+        """
         from bus.review_bridge import EventBus, ReviewBridge, ReviewDecision
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
@@ -391,12 +400,14 @@ class TestParseOpencodeDecisionWithRetry:
         stdout = "Review complete.\nDECISION: APPROVE"
         stderr = ""
 
-        decision, attempts, _ = bridge._parse_opencode_decision_with_retry(
+        decision, attempts, parse_method = bridge._parse_opencode_decision_with_retry(
             stdout, stderr, max_retries=2
         )
 
-        assert decision == ReviewDecision.APPROVE
-        assert attempts == 1  # No retry needed
+        # text_regex always degrades APPROVE to INSPECT
+        assert decision == ReviewDecision.INSPECT
+        assert parse_method == "text_regex"
+        assert attempts == 1  # No retry needed (not fallback_inspect)
 
     def test_retry_invoked_on_inspect_with_valid_output(self, tmp_path):
         """Test retry is invoked when INSPECT but output looks valid."""
@@ -487,7 +498,7 @@ class TestParseOpencodeDecisionWithRetry:
 class TestNoBareWordFallback:
     """Tests for WP-2026-120: No bare word fallback for decisions."""
 
-    def test_no_changes_needed_not_interpreted_as_changes(self, tmp_path, monkeypatch):
+    def test_no_changes_needed_not_interpreted_as_changes(self, tmp_path):
         """Test 'no changes needed' does not trigger CHANGES decision."""
         from bus.review_bridge import EventBus, ReviewBridge, ReviewDecision
 
@@ -495,8 +506,8 @@ class TestNoBareWordFallback:
         event_bus = EventBus(runtime_dir=runtime_dir)
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
-        # Disable JSON format to test text parser
-        monkeypatch.setattr(bridge, "_supports_json_format", False)
+        # WT-2026-242a: _supports_json_format removed; parser always
+        # tries JSON first, then falls to text_regex automatically.
 
         stdout = "The code looks fine. No changes needed at this time."
         decision, _ = bridge._parse_opencode_decision(stdout)
@@ -504,9 +515,7 @@ class TestNoBareWordFallback:
         # Should be INSPECT, not CHANGES (no DECISION: pattern)
         assert decision == ReviewDecision.INSPECT
 
-    def test_approve_without_decision_pattern_returns_inspect(
-        self, tmp_path, monkeypatch
-    ):
+    def test_approve_without_decision_pattern_returns_inspect(self, tmp_path):
         """Test 'APPROVE' without DECISION: pattern returns INSPECT."""
         from bus.review_bridge import EventBus, ReviewBridge, ReviewDecision
 
@@ -514,27 +523,33 @@ class TestNoBareWordFallback:
         event_bus = EventBus(runtime_dir=runtime_dir)
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
-        monkeypatch.setattr(bridge, "_supports_json_format", False)
+        # WT-2026-242a: _supports_json_format removed; parser always
+        # tries JSON first, then falls to text_regex automatically.
 
         stdout = "I approve of this implementation."
         decision, _ = bridge._parse_opencode_decision(stdout)
 
         assert decision == ReviewDecision.INSPECT
 
-    def test_explicit_decision_pattern_is_recognized(self, tmp_path, monkeypatch):
-        """Test explicit DECISION: pattern is correctly recognized."""
+    def test_explicit_decision_pattern_is_recognized(self, tmp_path):
+        """Test explicit DECISION: pattern is found but degraded to INSPECT.
+
+        WT-2026-242a: _supports_json_format removed; parser always
+        tries JSON first, then falls to text_regex. text_regex always
+        degrades APPROVE to INSPECT per WT-2026-235a contract.
+        """
         from bus.review_bridge import EventBus, ReviewBridge, ReviewDecision
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
-        monkeypatch.setattr(bridge, "_supports_json_format", False)
-
         stdout = "Review complete.\nDECISION: APPROVE"
-        decision, _ = bridge._parse_opencode_decision(stdout)
+        decision, parse_method = bridge._parse_opencode_decision(stdout)
 
-        assert decision == ReviewDecision.APPROVE
+        # text_regex never produces APPROVE — degrades to INSPECT
+        assert decision == ReviewDecision.INSPECT
+        assert parse_method == "text_regex"
 
 
 class TestDocumentationPromptWiring:
@@ -733,7 +748,7 @@ class TestCanonicalAntiPatternInventory:
 
 
 # =============================================================================
-# Tests WT-2026-196: Manager adaptativo ante blockers repetidos
+# Tests WT-2026-196: Manager adaptivo ante blockers repetidos
 # =============================================================================
 
 
@@ -942,7 +957,10 @@ class TestDiagnosticModePrompt:
             timeout_seconds=10,
         )
 
-        assert result.decision == ReviewDecision.APPROVE
+        # WT-2026-242a: text_regex degrades plain-text APPROVE to INSPECT.
+        # The test verifies the adaptive context capture and control flow,
+        # not the JSON path.
+        assert result.decision == ReviewDecision.INSPECT
         assert captured_contexts
         context = captured_contexts[0]
         assert context["diagnostic_mode"] is False
@@ -1297,3 +1315,230 @@ class TestReviewBridgeEvidence:
         assert classification["is_docs_only"] is True
         assert classification["deliverable_type"] == "code"
         assert bridge.check_review_packet_diff_empty("WT-2026-CODE") is True
+
+
+# ---------------------------------------------------------------------------
+# WT-2026-242a: try-first JSON transport governing tests
+# ---------------------------------------------------------------------------
+
+
+class TestTryFirstJsonTransport:
+    """Tests for the WT-2026-242a try-first JSON transport in review_bridge."""
+
+    @staticmethod
+    def _make_bridge(tmp_path):
+        """Create a ReviewBridge with minimal setup."""
+        collaboration_dir = tmp_path / ".agent" / "collaboration"
+        collaboration_dir.mkdir(parents=True, exist_ok=True)
+        (collaboration_dir / "work_plan.md").write_text(
+            "## Metadata\n- **ID:** WT-2026-242a\n- **deliverable_type:** code\n",
+            encoding="utf-8",
+        )
+        event_bus = MagicMock()
+        return ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+    def _make_bridge_with_motor(self, tmp_path):
+        """Create a ReviewBridge with motor_root mocked for _run_opencode_review tests."""
+        bridge = self._make_bridge(tmp_path)
+        # Mock _resolve_motor_root to return tmp_path (avoids RuntimeError)
+        bridge._resolve_motor_root = lambda: tmp_path
+        # Mock _materialize_manager_agent_spec to return a fake path
+        bridge._materialize_manager_agent_spec = lambda: tmp_path / "fake_manager.md"
+        return bridge
+
+    def test_opencode_review_uses_json_when_executable_off_path(self, tmp_path):
+        """Test that _run_opencode_review tries --format json with the real executable.
+
+        Even when PATH is empty, if the manager_executable is a valid path,
+        the command built must include --format json.
+        """
+        bridge = self._make_bridge_with_motor(tmp_path)
+
+        # NDJSON output that would be produced by a real OpenCode run with JSON
+        ndjson_output = '{"type":"text","phase":"final_answer","part":{"text":"DECISION: CHANGES"}}\n'
+
+        mock_result = MagicMock()
+        mock_result.stdout = ndjson_output
+        mock_result.stderr = ""
+        mock_result.returncode = 0
+
+        with patch(
+            "bus.review_bridge.subprocess.run", return_value=mock_result
+        ) as mock_run:
+            _, _, rc = bridge._run_opencode_review(
+                ticket_id="WT-2026-242a",
+                prompt="test prompt",
+                manager_executable=tmp_path / "opencode",
+                timeout_seconds=180,
+            )
+
+            # Verify --format json was in the command
+            call_args = mock_run.call_args
+            cmd_list = (
+                call_args[0][0]
+                if not call_args.kwargs.get("shell")
+                else call_args[0][0].split()
+            )
+            cmd_str = " ".join(str(a) for a in cmd_list)
+            assert "--format" in cmd_str and "json" in cmd_str, (
+                f"Expected --format json in command: {cmd_str}"
+            )
+            # Verify the decision is parsed from JSON (CHANGES via json_final_answer)
+            assert rc == 0
+
+    def test_opencode_review_falls_back_without_json_on_unsupported_flag_error(
+        self, tmp_path
+    ):
+        """Test that _run_opencode_review falls back to non-JSON when stderr indicates
+        --format json is not supported by the real executable."""
+        bridge = self._make_bridge_with_motor(tmp_path)
+
+        # First attempt: stderr indicates unsupported flag
+        # Second attempt (fallback): successful non-JSON output
+        fallback_stdout = "DECISION: CHANGES\n"
+
+        call_count = [0]
+
+        def mock_run_side_effect(*args, **kwargs):
+            call_count[0] += 1
+            mock_result = MagicMock()
+            if call_count[0] == 1:
+                # First call: --format json rejected
+                mock_result.stdout = ""
+                mock_result.stderr = "Error: unknown flag --format"
+                mock_result.returncode = 1
+            else:
+                # Second call: fallback without JSON succeeds
+                mock_result.stdout = fallback_stdout
+                mock_result.stderr = ""
+                mock_result.returncode = 0
+            return mock_result
+
+        with patch(
+            "bus.review_bridge.subprocess.run", side_effect=mock_run_side_effect
+        ):
+            stdout, _, _ = bridge._run_opencode_review(
+                ticket_id="WT-2026-242a",
+                prompt="test prompt",
+                manager_executable=tmp_path / "opencode",
+                timeout_seconds=180,
+            )
+
+            # Should have fallen back and returned the fallback output
+            assert "DECISION: CHANGES" in stdout
+            assert call_count[0] == 2
+
+    def test_opencode_review_degrades_textual_approve_to_inspect_after_fallback(
+        self, tmp_path
+    ):
+        """Test that after fallback, a textual APPROVE degrades to INSPECT."""
+        bridge = self._make_bridge_with_motor(tmp_path)
+
+        call_count = [0]
+
+        def mock_run_side_effect(*args, **kwargs):
+            call_count[0] += 1
+            mock_result = MagicMock()
+            if call_count[0] == 1:
+                mock_result.stdout = ""
+                mock_result.stderr = "Error: invalid option --format"
+                mock_result.returncode = 1
+            else:
+                # Textual APPROVE (not NDJSON)
+                mock_result.stdout = "DECISION: APPROVE\n"
+                mock_result.stderr = ""
+                mock_result.returncode = 0
+            return mock_result
+
+        with patch(
+            "bus.review_bridge.subprocess.run", side_effect=mock_run_side_effect
+        ):
+            stdout, _, _ = bridge._run_opencode_review(
+                ticket_id="WT-2026-242a",
+                prompt="test prompt",
+                manager_executable=tmp_path / "opencode",
+                timeout_seconds=180,
+            )
+
+        # The raw output is APPROVE, but _parse_opencode_decision should
+        # degrade it to INSPECT because text_regex never produces APPROVE.
+        decision, method = bridge._parse_opencode_decision(stdout)
+        assert decision == ReviewDecision.INSPECT
+        assert method == "text_regex"
+
+    def test_opencode_review_does_not_fallback_on_generic_failure(self, tmp_path):
+        """Test that timeout/auth/output empty does NOT trigger fallback.
+
+        WT-2026-242a: The fallback is governed by concrete patterns from the
+        real executable's error output (unknown flag, invalid option, help
+        banner), NOT by exit_code != 0 alone. A timeout or auth failure
+        should return the failure result, not silently fall back.
+        """
+        bridge = self._make_bridge_with_motor(tmp_path)
+
+        # Timeout error — should NOT trigger fallback
+        mock_result = MagicMock()
+        mock_result.stdout = ""
+        mock_result.stderr = "TimeoutExpired: ..."
+        mock_result.returncode = 1
+
+        with patch(
+            "bus.review_bridge.subprocess.run", return_value=mock_result
+        ) as mock_run:
+            _, stderr, rc = bridge._run_opencode_review(
+                ticket_id="WT-2026-242a",
+                prompt="test prompt",
+                manager_executable=tmp_path / "opencode",
+                timeout_seconds=1,  # Very short timeout to trigger it
+            )
+
+            # Should NOT have fallen back — only one call
+            assert mock_run.call_count == 1
+            # Should return the error result
+            assert rc == 1
+            assert "TimeoutExpired" in stderr
+
+        # Auth failure — should NOT trigger fallback
+        call_count = [0]
+
+        def auth_side_effect(*args, **kwargs):
+            call_count[0] += 1
+            mock_result = MagicMock()
+            mock_result.stdout = ""
+            mock_result.stderr = "Authentication failed"
+            mock_result.returncode = 1
+            return mock_result
+
+        with patch("bus.review_bridge.subprocess.run", side_effect=auth_side_effect):
+            _, _, rc = bridge._run_opencode_review(
+                ticket_id="WT-2026-242a",
+                prompt="test prompt",
+                manager_executable=tmp_path / "opencode",
+                timeout_seconds=180,
+            )
+
+            # Should NOT have fallen back
+            assert call_count[0] == 1
+            assert rc == 1
+
+        # Empty output (no error, just no output) — should NOT trigger fallback
+        call_count[0] = 0
+
+        def empty_side_effect(*args, **kwargs):
+            call_count[0] += 1
+            mock_result = MagicMock()
+            mock_result.stdout = ""
+            mock_result.stderr = ""
+            mock_result.returncode = 0
+            return mock_result
+
+        with patch("bus.review_bridge.subprocess.run", side_effect=empty_side_effect):
+            _, _, _ = bridge._run_opencode_review(
+                ticket_id="WT-2026-242a",
+                prompt="test prompt",
+                manager_executable=tmp_path / "opencode",
+                timeout_seconds=180,
+            )
+
+            # Should NOT have fallen back
+            assert call_count[0] == 1
