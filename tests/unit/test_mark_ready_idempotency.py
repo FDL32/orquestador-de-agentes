@@ -4,6 +4,8 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
@@ -15,6 +17,7 @@ if str(_AGENT_DIR) not in sys.path:
 from agent_controller import (  # noqa: E402
     _ensure_active_builder_round,
     _handle_mark_ready,
+    _is_bus_state_post_success,
     _sync_mark_ready_targets,
 )
 
@@ -567,26 +570,60 @@ class TestMarkReadyIdempotency:
         mock_exit.assert_called_once()
         mock_release.assert_called_once_with("WT-2026-236a", expected_round=1)
 
+    @pytest.mark.parametrize(
+        ("event_dict", "active_round"),
+        [
+            (
+                {
+                    "event_type": "STATE_CHANGED",
+                    "payload": {"to_state": "READY_FOR_REVIEW"},
+                },
+                4,
+            ),
+            (
+                {
+                    "event_type": "STATE_CHANGED",
+                    "payload": {"to_state": "READY_TO_CLOSE"},
+                },
+                5,
+            ),
+            (
+                {
+                    "event_type": "REVIEW_DECISION",
+                    "payload": {"decision": "inspect"},
+                },
+                3,
+            ),
+            (
+                {
+                    "event_type": "STATE_CHANGED",
+                    "payload": {"to_state": "COMPLETED"},
+                },
+                2,
+            ),
+        ],
+    )
     @patch("agent_controller._load_mark_ready_context")
     @patch("agent_controller.BUS_AVAILABLE", True)
     @patch("agent_controller.event_bus")
     @patch("agent_controller._ensure_active_builder_round")
-    def test_stale_builder_orphan_when_bus_state_is_ready_for_review(
-        self, mock_round, mock_bus, mock_load
+    def test_stale_builder_orphan_for_post_success_states(
+        self, mock_round, mock_bus, mock_load, event_dict, active_round
     ):
-        """Stale shell on READY_FOR_REVIEW must emit STALE_BUILDER_ORPHAN and exit 0."""
+        """Stale shell on post-success states must emit STALE_BUILDER_ORPHAN and exit 0."""
         mock_load.return_value = (
             "**Estado:** APPROVED\n**ID:** WT-2026-242b",
             "**Estado:** IN_PROGRESS",
             "WT-2026-242b",
         )
-        mock_round.return_value = (False, 3, "stale Builder round 3; active round is 4")
+        mock_round.return_value = (
+            False,
+            active_round - 1,
+            f"stale Builder round {active_round - 1}; active round is {active_round}",
+        )
 
         mock_event = MagicMock()
-        mock_event.to_dict.return_value = {
-            "event_type": "STATE_CHANGED",
-            "payload": {"to_state": "READY_FOR_REVIEW"},
-        }
+        mock_event.to_dict.return_value = event_dict
         mock_bus.read_events.return_value = [mock_event]
 
         result = _handle_mark_ready(
@@ -611,103 +648,40 @@ class TestMarkReadyIdempotency:
     @patch("agent_controller.BUS_AVAILABLE", True)
     @patch("agent_controller.event_bus")
     @patch("agent_controller._ensure_active_builder_round")
-    def test_stale_builder_orphan_when_bus_state_is_ready_to_close(
+    def test_stale_builder_round_stays_blocking_when_bus_state_unknown(
         self, mock_round, mock_bus, mock_load
     ):
-        """Stale shell on READY_TO_CLOSE must emit STALE_BUILDER_ORPHAN and exit 0."""
-        mock_load.return_value = (
-            "**Estado:** APPROVED\n**ID:** WT-2026-242b",
-            "**Estado:** IN_PROGRESS",
-            "WT-2026-242b",
-        )
-        mock_round.return_value = (False, 4, "stale Builder round 4; active round is 5")
-
-        mock_event = MagicMock()
-        mock_event.to_dict.return_value = {
-            "event_type": "STATE_CHANGED",
-            "payload": {"to_state": "READY_TO_CLOSE"},
-        }
-        mock_bus.read_events.return_value = [mock_event]
-
-        result = _handle_mark_ready(
-            scope_override=None, json_output=False, force_mode=False
-        )
-
-        assert result == 0
-        orphan_events = [
-            call
-            for call in mock_bus.emit.call_args_list
-            if call.kwargs.get("event_type") == "STALE_BUILDER_ORPHAN"
-        ]
-        assert orphan_events
-
-    @patch("agent_controller._load_mark_ready_context")
-    @patch("agent_controller.BUS_AVAILABLE", True)
-    @patch("agent_controller.event_bus")
-    @patch("agent_controller._ensure_active_builder_round")
-    def test_stale_builder_orphan_when_bus_state_is_human_gate(
-        self, mock_round, mock_bus, mock_load
-    ):
-        """Stale shell on HUMAN_GATE must emit STALE_BUILDER_ORPHAN and exit 0."""
-        mock_load.return_value = (
-            "**Estado:** APPROVED\n**ID:** WT-2026-242b",
-            "**Estado:** IN_PROGRESS",
-            "WT-2026-242b",
-        )
-        mock_round.return_value = (False, 2, "stale Builder round 2; active round is 3")
-
-        mock_event = MagicMock()
-        mock_event.to_dict.return_value = {
-            "event_type": "REVIEW_DECISION",
-            "payload": {"decision": "inspect"},
-        }
-        mock_bus.read_events.return_value = [mock_event]
-
-        result = _handle_mark_ready(
-            scope_override=None, json_output=False, force_mode=False
-        )
-
-        assert result == 0
-        orphan_events = [
-            call
-            for call in mock_bus.emit.call_args_list
-            if call.kwargs.get("event_type") == "STALE_BUILDER_ORPHAN"
-        ]
-        assert orphan_events
-
-    @patch("agent_controller._load_mark_ready_context")
-    @patch("agent_controller.BUS_AVAILABLE", True)
-    @patch("agent_controller.event_bus")
-    @patch("agent_controller._ensure_active_builder_round")
-    def test_stale_builder_orphan_when_bus_state_is_completed(
-        self, mock_round, mock_bus, mock_load
-    ):
-        """Stale shell on COMPLETED must emit STALE_BUILDER_ORPHAN and exit 0."""
+        """Unknown bus state must keep the original blocking path."""
         mock_load.return_value = (
             "**Estado:** APPROVED\n**ID:** WT-2026-242b",
             "**Estado:** IN_PROGRESS",
             "WT-2026-242b",
         )
         mock_round.return_value = (False, 1, "stale Builder round 1; active round is 2")
-
-        mock_event = MagicMock()
-        mock_event.to_dict.return_value = {
-            "event_type": "STATE_CHANGED",
-            "payload": {"to_state": "COMPLETED"},
-        }
-        mock_bus.read_events.return_value = [mock_event]
+        mock_bus.read_events.return_value = []
 
         result = _handle_mark_ready(
             scope_override=None, json_output=False, force_mode=False
         )
 
-        assert result == 0
+        assert result == 1
+        handoff_events = [
+            call
+            for call in mock_bus.emit.call_args_list
+            if call.kwargs.get("event_type") == "HANDOFF_BLOCKED"
+        ]
+        assert handoff_events, "unknown bus state must keep HANDOFF_BLOCKED"
         orphan_events = [
             call
             for call in mock_bus.emit.call_args_list
             if call.kwargs.get("event_type") == "STALE_BUILDER_ORPHAN"
         ]
-        assert orphan_events
+        assert not orphan_events
+
+    def test_is_bus_state_post_success_rejects_none_and_unknown(self):
+        """Only explicit post-success states should bypass stale shell blocking."""
+        assert _is_bus_state_post_success(None) is False
+        assert _is_bus_state_post_success("UNKNOWN") is False
 
     @patch("agent_controller._load_mark_ready_context")
     @patch("agent_controller.BUS_AVAILABLE", True)
