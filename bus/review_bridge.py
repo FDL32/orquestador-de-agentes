@@ -34,6 +34,17 @@ ARGV_PROMPT_THRESHOLD = 8000
 MAX_RUBRIC_OBSERVATIONS = 5
 MAX_OBSERVATION_SIGNAL_CHARS = 200
 
+# WT-2026-242a: Patterns that indicate --format json is not supported by the
+# real manager_executable. Used by _run_opencode_review() try-first logic to
+# fall back to non-JSON output when the CLI rejects the flag.
+_UNSUPPORTED_JSON_FLAG_PATTERNS = (
+    "unknown flag",
+    "invalid option",
+    "opencode run [message..]",
+    "show help",
+    "usage:",
+)
+
 # Domain-to-deliverable_type relevance mapping (WP-2026-177)
 # Maps each domain to the set of deliverable_types it applies to.
 # Canonical entries use 'domain'; legacy entries use topic='manager-review-rubric'.
@@ -191,8 +202,11 @@ class ReviewBridge:
         self.skill_resolver = skill_resolver or create_resolver(
             project_root, validate=False
         )
-        self._supports_json_format = self._detect_json_format_support()
         self._canonical_anti_patterns = self._load_canonical_anti_patterns()
+        # WT-2026-242a: Stub for backward compatibility with other test files.
+        # This attribute no longer governs the JSON/no-JSON decision — the
+        # bridge uses try-first via _run_opencode_review() + _parse_opencode_decision().
+        self._supports_json_format = True
 
     def _get_current_role(self) -> str:
         """Get the current active role from TURN.md.
@@ -367,27 +381,16 @@ class ReviewBridge:
             return False, "help_output_detected"
         return True, ""
 
-    def _detect_json_format_support(self) -> bool:
-        try:
-            executable = "opencode"
-            if OS_NAME == "nt":
-                executable = "opencode.cmd"
-            exe_full = shutil.which(executable) or executable
-            detect_args = [exe_full, "run", "--help"]
-            use_detect_shell = OS_NAME == "nt"
-            result = subprocess.run(
-                subprocess.list2cmdline(detect_args)
-                if use_detect_shell
-                else detect_args,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                timeout=5,
-                shell=use_detect_shell,
-            )
-            return "--format" in (result.stdout + result.stderr)
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-            return False
+    @staticmethod
+    def _needs_json_fallback(stderr: str) -> bool:
+        """Return True if stderr indicates --format json is not supported.
+
+        WT-2026-242a: The fallback is governed by concrete patterns from
+        the real executable's error output, not by exit code alone. Returns
+        True only when stderr contains CLI-flag-rejection markers.
+        """
+        stderr_lower = stderr.lower()
+        return any(p in stderr_lower for p in _UNSUPPORTED_JSON_FLAG_PATTERNS)
 
     def _review_env(self) -> dict[str, str]:
         """Return the inherited process environment for review execution.
@@ -2111,7 +2114,10 @@ class ReviewBridge:
 
         self._materialize_manager_agent_spec()
 
-        cmd_args = [
+        # WT-2026-242a: Try-first with --format json using the real
+        # manager_executable. Fall back without JSON only when stderr
+        # contains specific unsupported-flag patterns.
+        js_cmd_args = [
             exe_full,
             "run",
             "--agent",
@@ -2120,12 +2126,11 @@ class ReviewBridge:
             str(self.project_root),
         ]
         if model:
-            cmd_args.extend(["--model", model])
-        if self._supports_json_format:
-            cmd_args.extend(["--format", "json"])
+            js_cmd_args.extend(["--model", model])
+        js_cmd_args.extend(["--format", "json"])  # try-first
         if repomix_path:
-            cmd_args.extend(["-f", str(repomix_path)])
-        cmd_args.append(review_message)
+            js_cmd_args.extend(["-f", str(repomix_path)])
+        js_cmd_args.append(review_message)
 
         use_shell = False
         if OS_NAME == "nt" and (
@@ -2136,20 +2141,22 @@ class ReviewBridge:
             use_shell = True
 
         if OS_NAME == "nt" and exe_full.lower().endswith(".ps1"):
-            cmd_args = [
+            js_cmd_args = [
                 "powershell.exe",
                 "-NoProfile",
                 "-ExecutionPolicy",
                 "Bypass",
                 "-File",
-                *cmd_args,
+                *js_cmd_args,
             ]
 
         try:
             # En Windows, shell=True con una lista hace que cmd.exe trate
             # args[1:] como argumentos del propio shell: opencode arrancaria
             # sin ninguno. list2cmdline produce el string correcto.
-            run_args = subprocess.list2cmdline(cmd_args) if use_shell else cmd_args
+            run_args = (
+                subprocess.list2cmdline(js_cmd_args) if use_shell else js_cmd_args
+            )
             result = subprocess.run(
                 run_args,
                 capture_output=True,
@@ -2166,7 +2173,74 @@ class ReviewBridge:
                 err_msg = f"TimeoutExpired: {exc}"
             return "", err_msg, 1
 
-        return result.stdout or "", result.stderr or "", result.returncode
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
+        exit_code = result.returncode
+
+        # WT-2026-242a: Try-first fallback — check if --format json was
+        # rejected by the real executable (stderr indicates unsupported flag).
+        if self._needs_json_fallback(stderr):
+            fb_cmd_args = [
+                exe_full,
+                "run",
+                "--agent",
+                "manager",
+                "--dir",
+                str(self.project_root),
+            ]
+            if model:
+                fb_cmd_args.extend(["--model", model])
+            if repomix_path:
+                fb_cmd_args.extend(["-f", str(repomix_path)])
+            fb_cmd_args.append(review_message)
+
+            # Recalculate shell for fallback args
+            fb_use_shell = False
+            if OS_NAME == "nt" and (
+                exe_full.lower().endswith(".cmd")
+                or exe_full.lower().endswith(".bat")
+                or "opencode" in exe_full.lower()
+            ):
+                fb_use_shell = True
+
+            if OS_NAME == "nt" and exe_full.lower().endswith(".ps1"):
+                fb_cmd_args = [
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    *fb_cmd_args,
+                ]
+
+            try:
+                fb_run_args = (
+                    subprocess.list2cmdline(fb_cmd_args)
+                    if fb_use_shell
+                    else fb_cmd_args
+                )
+                fb_result = subprocess.run(
+                    fb_run_args,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    cwd=motor_root,
+                    env=self._review_env(),
+                    timeout=timeout_seconds,
+                    shell=fb_use_shell,
+                )
+                return (
+                    fb_result.stdout or "",
+                    fb_result.stderr or "",
+                    fb_result.returncode,
+                )
+            except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+                err_msg = f"{type(exc).__name__}: {exc}"
+                if isinstance(exc, subprocess.TimeoutExpired):
+                    err_msg = f"TimeoutExpired: {exc}"
+                return "", err_msg, 1
+
+        return stdout, stderr, exit_code
 
     def _load_review_config(self) -> dict:
         """Load review configuration from agents.json with WP-2026-106 defaults.
@@ -2848,24 +2922,26 @@ class ReviewBridge:
             - "json_final_answer"  — NDJSON final_answer phase (authoritative)
             - "json_last_text"     — NDJSON last text event (degraded)
             - "json_no_decision"   — NDJSON without recognisable decision
+            - "text_regex"         — DECISION pattern found in plain text
             - "explicit_inspect"   — DECISION: INSPECT explicitly found
             - "fallback_inspect"   — parser default, no pattern recognized
 
-        Contrato de procedencia (WT-2026-235a):
+        Contrato de procedencia (WT-2026-235a + WT-2026-242a):
+        - Siempre se intenta parsing NDJSON primero (try-first).
         - Solo ``json_final_answer`` puede producir APPROVE o CHANGES.
         - ``json_last_text`` que encuentra APPROVE/CHANGES degrada a INSPECT.
         - ``text_regex`` nunca produce APPROVE o CHANGES (diagnóstico solamente).
+        - Si NDJSON no encuentra decisión, cae a text_regex como fallback.
         """
-        if self._supports_json_format:
-            json_decision, json_method = self._parse_opencode_json_decision(stdout)
-            if json_decision != ReviewDecision.INSPECT:
-                # Only json_final_answer is authoritative for strong decisions
-                if json_method == "json_final_answer":
-                    return json_decision, json_method
-                # json_last_text is not authoritative: degrade strong decisions
-                return ReviewDecision.INSPECT, json_method
-            # json_no_decision - never fall through to text_regex
-            return json_decision, json_method
+        # WT-2026-242a: Always attempt JSON NDJSON parsing first.
+        json_decision, json_method = self._parse_opencode_json_decision(stdout)
+        if json_decision != ReviewDecision.INSPECT:
+            # Only json_final_answer is authoritative for strong decisions
+            if json_method == "json_final_answer":
+                return json_decision, json_method
+            # json_last_text is not authoritative: degrade strong decisions
+            return ReviewDecision.INSPECT, json_method
+        # json_no_decision — fall through to text_regex
 
         # text_regex is diagnostic only - never return APPROVE or CHANGES.
         # Pattern is still detected for diagnostic traceability but the
