@@ -134,7 +134,8 @@ def test_emit_fail_safe_on_review_decision(review_bridge, event_bus, tmp_path, c
 
     Before: An emit() failure on REVIEW_DECISION would crash with raw traceback.
     During: Simulates event_bus.emit() raising an exception when emitting REVIEW_DECISION.
-    After: Bridge logs error audibly and returns result with decision intact.
+    After: Bridge logs error audibly and returns result with INSPECT decision
+           (text_regex degrades plain-text APPROVE to INSPECT).
     """
     # Emit STATE_CHANGED to set ticket state to READY_FOR_REVIEW
     event_bus.emit(
@@ -185,8 +186,10 @@ def test_emit_fail_safe_on_review_decision(review_bridge, event_bus, tmp_path, c
                 timeout_seconds=10,
             )
 
-    # Decision should still be APPROVE (the review ran successfully)
-    assert result.decision == ReviewDecision.APPROVE
+    # WT-2026-242a: text_regex degrades plain-text APPROVE to INSPECT.
+    # The bridge handles the REVIEW_DECISION emit failure gracefully.
+    assert result.decision == ReviewDecision.INSPECT
+    assert result.exit_code == 1
     # But stderr should contain the fail-safe message
     captured = capfd.readouterr()
     assert "FAIL-SAFE" in captured.err or "REVIEW_DECISION emit failed" in captured.err
@@ -379,8 +382,14 @@ class TestOpencodeJsonParserRealSchema:
 class TestParseOpencodeDecisionWithRetry:
     """Tests for WP-2026-120: Parser with controlled retry."""
 
-    def test_retry_not_invoked_on_valid_decision(self, tmp_path):
-        """Test retry is not invoked when parser extracts valid decision."""
+    def test_retry_not_invoked_on_plain_text_decision(self, tmp_path):
+        """Test retry is not invoked when text_regex extracts a decision.
+
+        WT-2026-242a: Plain text DECISION: APPROVE goes through JSON
+        (no NDJSON found) then text_regex which degrades to INSPECT.
+        Retry is not invoked because parse_method is "text_regex",
+        not "fallback_inspect".
+        """
         from bus.review_bridge import EventBus, ReviewBridge, ReviewDecision
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
@@ -391,12 +400,14 @@ class TestParseOpencodeDecisionWithRetry:
         stdout = "Review complete.\nDECISION: APPROVE"
         stderr = ""
 
-        decision, attempts, _ = bridge._parse_opencode_decision_with_retry(
+        decision, attempts, parse_method = bridge._parse_opencode_decision_with_retry(
             stdout, stderr, max_retries=2
         )
 
-        assert decision == ReviewDecision.APPROVE
-        assert attempts == 1  # No retry needed
+        # text_regex always degrades APPROVE to INSPECT
+        assert decision == ReviewDecision.INSPECT
+        assert parse_method == "text_regex"
+        assert attempts == 1  # No retry needed (not fallback_inspect)
 
     def test_retry_invoked_on_inspect_with_valid_output(self, tmp_path):
         """Test retry is invoked when INSPECT but output looks valid."""
@@ -487,7 +498,7 @@ class TestParseOpencodeDecisionWithRetry:
 class TestNoBareWordFallback:
     """Tests for WP-2026-120: No bare word fallback for decisions."""
 
-    def test_no_changes_needed_not_interpreted_as_changes(self, tmp_path, monkeypatch):
+    def test_no_changes_needed_not_interpreted_as_changes(self, tmp_path):
         """Test 'no changes needed' does not trigger CHANGES decision."""
         from bus.review_bridge import EventBus, ReviewBridge, ReviewDecision
 
@@ -495,8 +506,8 @@ class TestNoBareWordFallback:
         event_bus = EventBus(runtime_dir=runtime_dir)
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
-        # Disable JSON format to test text parser
-        monkeypatch.setattr(bridge, "_supports_json_format", False)
+        # WT-2026-242a: _supports_json_format removed; parser always
+        # tries JSON first, then falls to text_regex automatically.
 
         stdout = "The code looks fine. No changes needed at this time."
         decision, _ = bridge._parse_opencode_decision(stdout)
@@ -504,9 +515,7 @@ class TestNoBareWordFallback:
         # Should be INSPECT, not CHANGES (no DECISION: pattern)
         assert decision == ReviewDecision.INSPECT
 
-    def test_approve_without_decision_pattern_returns_inspect(
-        self, tmp_path, monkeypatch
-    ):
+    def test_approve_without_decision_pattern_returns_inspect(self, tmp_path):
         """Test 'APPROVE' without DECISION: pattern returns INSPECT."""
         from bus.review_bridge import EventBus, ReviewBridge, ReviewDecision
 
@@ -514,27 +523,33 @@ class TestNoBareWordFallback:
         event_bus = EventBus(runtime_dir=runtime_dir)
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
-        monkeypatch.setattr(bridge, "_supports_json_format", False)
+        # WT-2026-242a: _supports_json_format removed; parser always
+        # tries JSON first, then falls to text_regex automatically.
 
         stdout = "I approve of this implementation."
         decision, _ = bridge._parse_opencode_decision(stdout)
 
         assert decision == ReviewDecision.INSPECT
 
-    def test_explicit_decision_pattern_is_recognized(self, tmp_path, monkeypatch):
-        """Test explicit DECISION: pattern is correctly recognized."""
+    def test_explicit_decision_pattern_is_recognized(self, tmp_path):
+        """Test explicit DECISION: pattern is found but degraded to INSPECT.
+
+        WT-2026-242a: _supports_json_format removed; parser always
+        tries JSON first, then falls to text_regex. text_regex always
+        degrades APPROVE to INSPECT per WT-2026-235a contract.
+        """
         from bus.review_bridge import EventBus, ReviewBridge, ReviewDecision
 
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
-        monkeypatch.setattr(bridge, "_supports_json_format", False)
-
         stdout = "Review complete.\nDECISION: APPROVE"
-        decision, _ = bridge._parse_opencode_decision(stdout)
+        decision, parse_method = bridge._parse_opencode_decision(stdout)
 
-        assert decision == ReviewDecision.APPROVE
+        # text_regex never produces APPROVE — degrades to INSPECT
+        assert decision == ReviewDecision.INSPECT
+        assert parse_method == "text_regex"
 
 
 class TestDocumentationPromptWiring:
@@ -942,7 +957,10 @@ class TestDiagnosticModePrompt:
             timeout_seconds=10,
         )
 
-        assert result.decision == ReviewDecision.APPROVE
+        # WT-2026-242a: text_regex degrades plain-text APPROVE to INSPECT.
+        # The test verifies the adaptive context capture and control flow,
+        # not the JSON path.
+        assert result.decision == ReviewDecision.INSPECT
         assert captured_contexts
         context = captured_contexts[0]
         assert context["diagnostic_mode"] is False
