@@ -298,6 +298,13 @@ Origen del patrón: OpenHands `.openhands/setup.sh` (MIT).
 - No toques `privada/`.
 - No desactives `guard_paths` para trabajar mas rapido.
 - No pidas dependencias nuevas sin aprobacion.
+- `OpenCode Permission Preflight`: si el ticket requiere modificar archivos
+  fuera de `.agent/collaboration/` o `scripts/` del `repo_destino` (por
+  ejemplo `PROJECT.md`, `AGENTS.md` o `CHANGELOG.md`), el plan o el arranque
+  debe verificar antes que esas rutas esten permitidas en
+  `.opencode/opencode.json` bajo `external_directory`. Si no lo estan, el
+  Builder debe bloquear el arranque con diagnostico claro en vez de continuar
+  ciego.
 
 ## Robust Builder Relaunch (WP-2026-084)
 
