@@ -24,7 +24,7 @@ from .blocker_signature import (
 from .event_bus import EventBus
 from .memory_loader import get_review_context
 from .skill_resolver import SkillResolver, create_resolver
-from .ticket_id import TICKET_ID_PATTERN, WORKPLAN_ID_PATTERN
+from .ticket_id import WORKPLAN_ID_PATTERN
 from .time_utils import now_local
 from .utils import count_trailing_changes
 
@@ -658,7 +658,7 @@ class ReviewBridge:
 
     def _extract_ticket_section(self, ticket_id: str) -> str:
         content = self.state_ingest._read_canonical("execution_log.md")
-        pattern = rf"### {re.escape(ticket_id)}.*?(?=\n### {TICKET_ID_PATTERN}-|\Z)"
+        pattern = rf"### {re.escape(ticket_id)}.*?(?=\n### [A-Za-z]{{2,3}}-|\Z)"
         match = re.search(pattern, content, re.DOTALL)
         return (
             match.group(0)
