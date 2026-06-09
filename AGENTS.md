@@ -304,7 +304,9 @@ Origen del patrón: OpenHands `.openhands/setup.sh` (MIT).
   debe verificar antes que esas rutas esten permitidas en
   `.opencode/opencode.json` bajo `external_directory`. Si no lo estan, el
   Builder debe bloquear el arranque con diagnostico claro en vez de continuar
-  ciego.
+  ciego. En OpenCode, esa allowlist puede necesitar el root completo del
+  `repo_destino` (`repo_destino\*`) y no solo permisos por archivo, porque el
+  backend puede resolver la lectura como acceso al arbol externo completo.
 
 ## Robust Builder Relaunch (WP-2026-084)
 
