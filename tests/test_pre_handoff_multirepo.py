@@ -471,7 +471,9 @@ def test_docs_ticket_dirty_motor_blocks(tmp_path: Path, monkeypatch) -> None:
     """WT-2026-240a: documentation ticket with motor dirty -> block with HANDOFF_BLOCKED."""
     import agent_controller
 
-    motor, dest, wp, exec_log = _setup_multi_repo(tmp_path, motor_flt=[".agent/agent_controller.py"])
+    motor, dest, wp, exec_log = _setup_multi_repo(
+        tmp_path, motor_flt=[".agent/agent_controller.py"]
+    )
 
     # Override work_plan to documentation deliverable_type
     wp.write_text(
@@ -511,9 +513,7 @@ def test_docs_ticket_dirty_motor_blocks(tmp_path: Path, monkeypatch) -> None:
     )
 
     # Verify NO checkpoint tag was created
-    tag_check = _git(
-        ["rev-parse", "checkpoint/review-WT-2026-240a"], cwd=motor
-    )
+    tag_check = _git(["rev-parse", "checkpoint/review-WT-2026-240a"], cwd=motor)
     assert tag_check.returncode != 0, (
         "Documentation ticket should not create checkpoint tag"
     )
@@ -528,7 +528,9 @@ def test_docs_ticket_clean_motor_bypass(tmp_path: Path, monkeypatch) -> None:
     """WT-2026-240a: documentation ticket with clean motor -> bypass with result 0."""
     import agent_controller
 
-    motor, dest, wp, exec_log = _setup_multi_repo(tmp_path, motor_flt=[".agent/agent_controller.py"])
+    motor, dest, wp, exec_log = _setup_multi_repo(
+        tmp_path, motor_flt=[".agent/agent_controller.py"]
+    )
 
     # Override work_plan to documentation deliverable_type
     wp.write_text(
@@ -568,9 +570,7 @@ def test_docs_ticket_clean_motor_bypass(tmp_path: Path, monkeypatch) -> None:
     )
 
     # Verify NO checkpoint tag was created
-    tag_check = _git(
-        ["rev-parse", "checkpoint/review-WT-2026-240a"], cwd=motor
-    )
+    tag_check = _git(["rev-parse", "checkpoint/review-WT-2026-240a"], cwd=motor)
     assert tag_check.returncode != 0, (
         "Documentation ticket bypass should not create checkpoint tag"
     )
@@ -581,7 +581,9 @@ def test_docs_ticket_clean_motor_bypass(tmp_path: Path, monkeypatch) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_code_ticket_still_blocks_on_dirty_motor(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_code_ticket_still_blocks_on_dirty_motor(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
     """WT-2026-240a: code ticket with motor dirty outside FLT -> block (regression)."""
     import agent_controller
 
