@@ -43,6 +43,7 @@ def _project_root() -> Path:
     return resolve_project_root()
 
 
+from bus.exceptions import ConcurrentStateError  # noqa: E402
 from bus.review_bridge import ReviewBridge  # noqa: E402
 from bus.state_machine import StateMachine, TicketState  # noqa: E402
 from bus.supervisor import SequentialTicketSupervisor  # noqa: E402
@@ -371,6 +372,20 @@ def _sync_ticket_checkpoint(
     return checkpoint_sequence
 
 
+def _reconcile_state_best_effort(supervisor: SequentialTicketSupervisor):
+    """Reload state after a benign bootstrap race instead of aborting startup."""
+    try:
+        supervisor.reconcile_state()
+    except ConcurrentStateError as exc:
+        print(
+            "[manager-review-bridge] bootstrap reconcile race detected; "
+            f"reloading canonical supervisor state and continuing: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
+    return supervisor.load_state()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Automated manager review bridge")
     parser.add_argument(
@@ -579,8 +594,7 @@ def main() -> int:
     review = ReviewBridge(event_bus=supervisor.event_bus, project_root=project_root)
 
     if args.watch:
-        supervisor.reconcile_state()
-        state = supervisor.load_state()
+        state = _reconcile_state_best_effort(supervisor)
         print(
             f"[manager-review-bridge] watch mode start | active={state.active_ticket or 'NONE'} "
             f"| completed={len(state.completed_tickets)} | poll={args.poll_interval}s",
@@ -620,8 +634,7 @@ def main() -> int:
             time.sleep(args.poll_interval)
 
     if args.once:
-        supervisor.reconcile_state()
-        state = supervisor.load_state()
+        state = _reconcile_state_best_effort(supervisor)
         print(
             f"[manager-review-bridge] once mode start | active={state.active_ticket or 'NONE'} "
             f"| completed={len(state.completed_tickets)}",
