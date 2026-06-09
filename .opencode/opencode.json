@@ -1,6 +1,13 @@
 ﻿{
-  "$schema": "https://opencode.ai/config.json",
-  "default_agent": "builder",
-  "model": "opencode-go/deepseek-v4-flash",
-  "share": "manual"
+    "$schema":  "https://opencode.ai/config.json",
+    "default_agent":  "builder",
+    "model":  "opencode-go/deepseek-v4-flash",
+    "share":  "manual",
+    "permission":  {
+                       "external_directory":  {
+                                                  "C:\\Users\\fdl\\Proyectos_Python\\orquestador_de_agentes_workspace\\.agent\\runtime\\*":  "allow",
+                                                  "C:\\Users\\fdl\\Proyectos_Python\\orquestador_de_agentes_workspace\\.agent\\collaboration\\*":  "allow",
+                                                  "C:\\Users\\fdl\\Proyectos_Python\\orquestador_de_agentes_workspace\\scripts\\*":  "allow"
+                                              }
+                   }
 }
