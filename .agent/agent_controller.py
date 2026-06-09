@@ -2631,7 +2631,7 @@ def _fallback_checkpoint_motor(guard_result: dict, plan_id: str) -> dict:
     return guard_result
 
 
-def _run_pre_handoff_guard(plan_id: str, json_output: bool) -> dict:
+def _run_pre_handoff_guard(plan_id: str, json_output: bool) -> dict:  # noqa: C901
     """
     Run the pre-handoff guard before emitting READY_FOR_REVIEW.
 
@@ -2675,6 +2675,28 @@ def _run_pre_handoff_guard(plan_id: str, json_output: bool) -> dict:
 
         # WT-2026-232a: Fallback check for checkpoint tag in _MOTOR_ROOT.
         guard_result = _fallback_checkpoint_motor(guard_result, plan_id)
+
+        # WT-2026-245b: When the guard passed without checking the tag (workspace
+        # has no .git in Model B), explicitly verify the checkpoint exists in
+        # _MOTOR_ROOT. Without this, --mark-ready would pass the guard but later
+        # fail in the motor scope gate with "Tag ... not found in motor repo".
+        if (
+            guard_result.get("valid")
+            and _MOTOR_ROOT.resolve() != PROJECT_ROOT.resolve()
+            and not guard_result.get("missing_checkpoint")
+        ):
+            cp_valid, _cp_files, cp_error = _resolve_motor_checkpoint_files(
+                _MOTOR_ROOT, plan_id
+            )
+            if not cp_valid:
+                guard_result["valid"] = False
+                guard_result["missing_checkpoint"] = True
+                if not json_output:
+                    print(
+                        f"[ERROR] {cp_error}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
 
         if not json_output:
             if guard_result.get("valid"):
@@ -4032,49 +4054,61 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
         needs_tag = not tag_aligned
 
     # --- Step 2: Create/refresh checkpoint M3 tag ---
+    # WT-2026-245b: In Model B topology the tag must always live in repo_motor,
+    # not in the workspace git_root, so --mark-ready finds it via
+    # _resolve_motor_checkpoint_files(_MOTOR_ROOT, ...).
     if needs_tag:
-        try:
-            tag_msg = f"Checkpoint M3 for {plan_id}"
-            if tag_exists:
-                delete_result = subprocess.run(
-                    ["git", "tag", "-d", tag_name],
+        if motor_root != project_root:
+            # Model B: delegate to _try_motor_tag which always operates on motor_root
+            tag_ok, tag_err = _try_motor_tag(motor_root, plan_id, json_output)
+            if not tag_ok:
+                print(tag_err, file=sys.stderr, flush=True)
+                return 1
+        else:
+            try:
+                tag_msg = f"Checkpoint M3 for {plan_id}"
+                if tag_exists:
+                    delete_result = subprocess.run(
+                        ["git", "tag", "-d", tag_name],
+                        capture_output=True,
+                        text=True,
+                        cwd=git_root,
+                    )
+                    if delete_result.returncode != 0:
+                        err = (
+                            delete_result.stderr.strip() or delete_result.stdout.strip()
+                        )
+                        print(
+                            f"[ERROR] Failed to delete tag {tag_name}:\n{err}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                        return 1
+
+                tag_result = subprocess.run(
+                    ["git", "tag", "-a", tag_name, "-m", tag_msg],
                     capture_output=True,
                     text=True,
                     cwd=git_root,
                 )
-                if delete_result.returncode != 0:
-                    err = delete_result.stderr.strip() or delete_result.stdout.strip()
+                if tag_result.returncode != 0:
+                    err = tag_result.stderr.strip() or tag_result.stdout.strip()
                     print(
-                        f"[ERROR] Failed to delete tag {tag_name}:\n{err}",
+                        f"[ERROR] Failed to create tag {tag_name}:\n{err}",
                         file=sys.stderr,
                         flush=True,
                     )
                     return 1
 
-            tag_result = subprocess.run(
-                ["git", "tag", "-a", tag_name, "-m", tag_msg],
-                capture_output=True,
-                text=True,
-                cwd=git_root,
-            )
-            if tag_result.returncode != 0:
-                err = tag_result.stderr.strip() or tag_result.stdout.strip()
+                if not json_output:
+                    print(f"[OK] Created/refreshed tag: {tag_name}")
+            except FileNotFoundError:
                 print(
-                    f"[ERROR] Failed to create tag {tag_name}:\n{err}",
+                    "[ERROR] git not available for tag operation",
                     file=sys.stderr,
                     flush=True,
                 )
                 return 1
-
-            if not json_output:
-                print(f"[OK] Created/refreshed tag: {tag_name}")
-        except FileNotFoundError:
-            print(
-                "[ERROR] git not available for tag operation",
-                file=sys.stderr,
-                flush=True,
-            )
-            return 1
 
     # --- Idempotent no-op case: no changes + tag already aligned ---
     if not needs_commit and tag_aligned:

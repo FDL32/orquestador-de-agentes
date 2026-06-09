@@ -2317,3 +2317,440 @@ class TestAgentControllerEvidence:
         monkeypatch.setattr(agent_controller, "read_file", lambda _path: log_content)
 
         assert agent_controller._check_log_has_quality_gate_evidence("research") is True
+
+
+# =============================================================================
+# WT-2026-245b: Model B checkpoint topology regression tests
+# =============================================================================
+
+
+class TestModelBCheckpointTopology:
+    """WT-2026-245b: Regression tests for checkpoint M3 in Model B topology.
+
+    In Model B, the motor repo and workspace are separate directories.
+    The checkpoint tag (checkpoint/review-<ticket>) must live in repo_motor,
+    not in the workspace. These tests use real git repos in tmp_path to
+    reproduce the bug: --pre-handoff creating the tag in the wrong root
+    and --mark-ready failing to find it.
+
+    [NON-REVERSE-CLASSICAL: regression test for identified bug — the fix
+    was implemented first, then the test was written to prove it works.]
+    """
+
+    _PLAN_ID = "WT-2026-245b"
+    _PLAN_CONTENT = f"""# Work Plan
+
+## Metadata
+- **ID:** {_PLAN_ID}
+- **Estado:** APPROVED
+- **deliverable_type:** code
+
+## Files Likely Touched
+- `.agent/agent_controller.py`
+- `tests/test_agent_controller.py`
+"""
+
+    @staticmethod
+    def _init_git_repo(repo_path: Path) -> None:
+        """Initialize a git repository with initial commit."""
+        repo_path.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "init"], cwd=repo_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=repo_path,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=repo_path,
+            check=True,
+            capture_output=True,
+        )
+        (repo_path / "README.md").write_text("# Test Repo")
+        subprocess.run(
+            ["git", "add", "."], cwd=repo_path, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "Initial commit"],
+            cwd=repo_path,
+            check=True,
+            capture_output=True,
+        )
+
+    @staticmethod
+    def _create_work_plan(workspace: Path) -> None:
+        """Create work_plan.md in the workspace."""
+        collab_dir = workspace / ".agent" / "collaboration"
+        collab_dir.mkdir(parents=True, exist_ok=True)
+        (collab_dir / "work_plan.md").write_text(
+            TestModelBCheckpointTopology._PLAN_CONTENT
+        )
+
+    @staticmethod
+    def _create_execution_log(workspace: Path) -> None:
+        """Create execution_log.md in the workspace."""
+        collab_dir = workspace / ".agent" / "collaboration"
+        collab_dir.mkdir(parents=True, exist_ok=True)
+        (collab_dir / "execution_log.md").write_text(
+            "# Execution Log\n\n**Estado:** IN_PROGRESS\n"
+        )
+
+    def test_pre_handoff_creates_tag_in_motor_not_workspace(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """--pre-handoff in Model B must create the tag in repo_motor, not workspace.
+
+        Regression: if the workspace has its own .git, the old code would
+        create the tag in the workspace (git_root = project_root). The fix
+        delegates to _try_motor_tag() when motor_root != project_root.
+        """
+        # Setup: motor repo and workspace as separate directories
+        motor_repo = tmp_path / "motor"
+        workspace = tmp_path / "workspace"
+        self._init_git_repo(motor_repo)
+        self._init_git_repo(workspace)  # workspace also has .git (Model B variant)
+        self._create_work_plan(workspace)
+        self._create_execution_log(workspace)
+
+        # Create a productive file in motor repo (simulating code changes)
+        (motor_repo / "src").mkdir(parents=True, exist_ok=True)
+        (motor_repo / "src" / "module.py").write_text("# productive change")
+        subprocess.run(
+            ["git", "add", "."], cwd=motor_repo, check=True, capture_output=True
+        )
+
+        # Monkey-patch the controller to use our temp repos
+        monkeypatch.setattr(agent_controller, "_MOTOR_ROOT", motor_repo)
+        monkeypatch.setattr(agent_controller, "PROJECT_ROOT", workspace)
+
+        # Patch read_file to return our plan content
+        monkeypatch.setattr(
+            agent_controller,
+            "read_file",
+            lambda path: (
+                self._PLAN_CONTENT
+                if "work_plan" in str(path).lower()
+                else (
+                    "# Execution Log\n\n**Estado:** IN_PROGRESS\n"
+                    if "execution_log" in str(path).lower()
+                    else ""
+                )
+            ),
+        )
+
+        # Patch _ensure_active_builder_round to pass
+        monkeypatch.setattr(
+            agent_controller,
+            "_ensure_active_builder_round",
+            lambda plan_id: (True, 1, None),
+        )
+
+        # Patch BUS_AVAILABLE to False to avoid bus dependency
+        monkeypatch.setattr(agent_controller, "BUS_AVAILABLE", False)
+
+        # Patch motor_uncommitted_productive (imported from bus.evidence inside
+        # _handle_pre_handoff) to return our file as an uncommitted motor change
+        import bus.evidence
+
+        monkeypatch.setattr(
+            bus.evidence,
+            "motor_uncommitted_productive",
+            lambda root: {"src/module.py"},
+        )
+
+        # Patch parse_files_likely_touched to return our FLT paths
+        monkeypatch.setattr(
+            agent_controller,
+            "parse_files_likely_touched",
+            lambda content: {
+                str((motor_repo / ".agent" / "agent_controller.py").resolve()),
+                str((motor_repo / "tests" / "test_agent_controller.py").resolve()),
+            },
+        )
+
+        # Patch _parse_raw_flt_paths to return our FLT paths
+        monkeypatch.setattr(
+            agent_controller,
+            "_parse_raw_flt_paths",
+            lambda content: {
+                ".agent/agent_controller.py",
+                "tests/test_agent_controller.py",
+                "src/module.py",
+            },
+        )
+
+        # Run pre-handoff
+        code, output = self._capture_output(
+            lambda: agent_controller._handle_pre_handoff(json_output=False)
+        )
+
+        assert code == 0, f"pre-handoff failed: {output}"
+
+        # Verify: tag exists in motor_repo, NOT in workspace
+        tag_result = subprocess.run(
+            ["git", "rev-parse", f"checkpoint/review-{self._PLAN_ID}^{{}}"],
+            capture_output=True,
+            text=True,
+            cwd=motor_repo,
+        )
+        assert tag_result.returncode == 0, (
+            f"Tag should exist in motor_repo: {tag_result.stderr}"
+        )
+
+        tag_in_ws = subprocess.run(
+            ["git", "rev-parse", f"checkpoint/review-{self._PLAN_ID}^{{}}"],
+            capture_output=True,
+            text=True,
+            cwd=workspace,
+        )
+        assert tag_in_ws.returncode != 0, "Tag should NOT exist in workspace"
+
+    def test_mark_ready_finds_checkpoint_in_motor(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """--mark-ready in Model B must find the checkpoint tag in repo_motor.
+
+        Regression: after --pre-handoff creates the tag in motor_repo,
+        --mark-ready must validate it via _resolve_motor_checkpoint_files.
+        """
+        # Setup: motor repo and workspace as separate directories
+        motor_repo = tmp_path / "motor"
+        workspace = tmp_path / "workspace"
+        self._init_git_repo(motor_repo)
+        self._init_git_repo(workspace)
+        self._create_work_plan(workspace)
+        self._create_execution_log(workspace)
+
+        # Create a productive commit in motor repo with the ticket ID
+        (motor_repo / "src").mkdir(parents=True, exist_ok=True)
+        (motor_repo / "src" / "module.py").write_text("# productive change")
+        subprocess.run(
+            ["git", "add", "."], cwd=motor_repo, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", f"feat({self._PLAN_ID}): implement fix"],
+            cwd=motor_repo,
+            check=True,
+            capture_output=True,
+        )
+
+        # Create the checkpoint tag in motor_repo (as pre-handoff would)
+        subprocess.run(
+            [
+                "git",
+                "tag",
+                "-a",
+                f"checkpoint/review-{self._PLAN_ID}",
+                "-m",
+                f"Checkpoint M3 for {self._PLAN_ID}",
+            ],
+            cwd=motor_repo,
+            check=True,
+            capture_output=True,
+        )
+
+        # Monkey-patch the controller to use our temp repos
+        monkeypatch.setattr(agent_controller, "_MOTOR_ROOT", motor_repo)
+        monkeypatch.setattr(agent_controller, "PROJECT_ROOT", workspace)
+
+        # Patch read_file
+        monkeypatch.setattr(
+            agent_controller,
+            "read_file",
+            lambda path: (
+                self._PLAN_CONTENT
+                if "work_plan" in str(path).lower()
+                else (
+                    "# Execution Log\n\n**Estado:** IN_PROGRESS\n"
+                    if "execution_log" in str(path).lower()
+                    else ""
+                )
+            ),
+        )
+
+        # Patch _ensure_active_builder_round to pass
+        monkeypatch.setattr(
+            agent_controller,
+            "_ensure_active_builder_round",
+            lambda plan_id: (True, 1, None),
+        )
+
+        # Patch BUS_AVAILABLE to False to avoid bus dependency
+        monkeypatch.setattr(agent_controller, "BUS_AVAILABLE", False)
+
+        # Patch _check_implementation_evidence to pass
+        monkeypatch.setattr(
+            agent_controller, "_check_implementation_evidence", lambda plan_id: []
+        )
+
+        # Patch _run_pre_handoff_guard to pass (we already have the tag)
+        monkeypatch.setattr(
+            agent_controller,
+            "_run_pre_handoff_guard",
+            lambda plan_id, json_output: {"valid": True},
+        )
+
+        # Patch _emit_builder_exit to no-op
+        monkeypatch.setattr(
+            agent_controller, "_emit_builder_exit", lambda *a, **kw: None
+        )
+
+        # Patch _sync_mark_ready_targets to no-op
+        monkeypatch.setattr(
+            agent_controller, "_sync_mark_ready_targets", lambda *a, **kw: None
+        )
+
+        # Patch _reset_circuit_breaker to no-op
+        monkeypatch.setattr(
+            agent_controller, "_reset_circuit_breaker", lambda plan_id: None
+        )
+
+        # Patch _release_builder_lock to no-op
+        monkeypatch.setattr(
+            agent_controller, "_release_builder_lock", lambda *a, **kw: None
+        )
+
+        # Patch _auto_archive_closed_artifacts to no-op
+        monkeypatch.setattr(
+            agent_controller, "_auto_archive_closed_artifacts", lambda: None
+        )
+
+        # Patch _read_deliverable_type to return "code"
+        monkeypatch.setattr(
+            agent_controller,
+            "_read_deliverable_type",
+            lambda content, default="code": "code",
+        )
+
+        # Patch _parse_raw_flt_paths to return our FLT paths
+        monkeypatch.setattr(
+            agent_controller,
+            "_parse_raw_flt_paths",
+            lambda content: {
+                ".agent/agent_controller.py",
+                "tests/test_agent_controller.py",
+                "src/module.py",
+            },
+        )
+
+        # Run mark-ready
+        code, output = self._capture_output(
+            lambda: agent_controller._handle_mark_ready(
+                scope_override=None, json_output=False, force_mode=False
+            )
+        )
+
+        assert code == 0, f"mark-ready failed: {output}"
+        assert "marked as ready" in output.lower() or "Motor scope" in output, (
+            f"Unexpected output: {output}"
+        )
+
+    def test_mark_ready_blocks_when_checkpoint_missing_in_motor(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """--mark-ready must block when checkpoint tag is missing from repo_motor.
+
+        Negative test: even if the workspace has a .git, the tag must be in
+        motor_repo. Without the tag, mark-ready must fail.
+        """
+        # Setup: motor repo and workspace as separate directories
+        motor_repo = tmp_path / "motor"
+        workspace = tmp_path / "workspace"
+        self._init_git_repo(motor_repo)
+        self._init_git_repo(workspace)
+        self._create_work_plan(workspace)
+        self._create_execution_log(workspace)
+
+        # Create a productive commit in motor repo (WITHOUT checkpoint tag)
+        (motor_repo / "src").mkdir(parents=True, exist_ok=True)
+        (motor_repo / "src" / "module.py").write_text("# productive change")
+        subprocess.run(
+            ["git", "add", "."], cwd=motor_repo, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", f"feat({self._PLAN_ID}): implement fix"],
+            cwd=motor_repo,
+            check=True,
+            capture_output=True,
+        )
+
+        # Monkey-patch the controller to use our temp repos
+        monkeypatch.setattr(agent_controller, "_MOTOR_ROOT", motor_repo)
+        monkeypatch.setattr(agent_controller, "PROJECT_ROOT", workspace)
+
+        # Patch read_file
+        monkeypatch.setattr(
+            agent_controller,
+            "read_file",
+            lambda path: (
+                self._PLAN_CONTENT
+                if "work_plan" in str(path).lower()
+                else (
+                    "# Execution Log\n\n**Estado:** IN_PROGRESS\n"
+                    if "execution_log" in str(path).lower()
+                    else ""
+                )
+            ),
+        )
+
+        # Patch _ensure_active_builder_round to pass
+        monkeypatch.setattr(
+            agent_controller,
+            "_ensure_active_builder_round",
+            lambda plan_id: (True, 1, None),
+        )
+
+        # Patch BUS_AVAILABLE to False
+        monkeypatch.setattr(agent_controller, "BUS_AVAILABLE", False)
+
+        # Patch _check_implementation_evidence to pass
+        monkeypatch.setattr(
+            agent_controller, "_check_implementation_evidence", lambda plan_id: []
+        )
+
+        # Patch _run_pre_handoff_guard to pass (guard doesn't check motor)
+        monkeypatch.setattr(
+            agent_controller,
+            "_run_pre_handoff_guard",
+            lambda plan_id, json_output: {"valid": True},
+        )
+
+        # Patch _read_deliverable_type to return "code"
+        monkeypatch.setattr(
+            agent_controller,
+            "_read_deliverable_type",
+            lambda content, default="code": "code",
+        )
+
+        # Run mark-ready — should fail because checkpoint tag is missing
+        code, output = self._capture_output(
+            lambda: agent_controller._handle_mark_ready(
+                scope_override=None, json_output=False, force_mode=False
+            )
+        )
+
+        assert code != 0, f"mark-ready should have blocked without checkpoint: {output}"
+        assert (
+            "No valid motor checkpoint" in output
+            or "motor_checkpoint_missing" in output
+        ), f"Expected motor checkpoint error: {output}"
+
+    @staticmethod
+    def _capture_output(func):
+        """Run func capturing stdout+stderr, return (exit_code, combined_text)."""
+        from io import StringIO
+
+        captured_out = StringIO()
+        captured_err = StringIO()
+        old_stdout = sys.stdout
+        old_stderr = sys.stderr
+        sys.stdout = captured_out
+        sys.stderr = captured_err
+        try:
+            code = func()
+        finally:
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
+        combined = captured_out.getvalue() + captured_err.getvalue()
+        return code, combined
