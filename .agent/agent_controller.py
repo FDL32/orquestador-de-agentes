@@ -340,6 +340,20 @@ def _exclude_files() -> set[str]:
             if f.is_file():
                 exclude_files.add(str(f.resolve()))
 
+    # WT-2026-245b: Exclude _archive/ subtree (legacy, plan_audit, motor_history)
+    # These are historical artifacts, not productive changes.
+    _archive_dir = collab_dir / "_archive"
+    if _archive_dir.exists():
+        for f in _archive_dir.rglob("*"):
+            if f.is_file():
+                exclude_files.add(str(f.resolve()))
+        # Also exclude the _archive/ directory itself (git may report it as untracked dir)
+        exclude_files.add(str(_archive_dir.resolve()))
+        # Exclude any subdirectory under _archive/ (e.g. _archive/legacy/)
+        for sub in _archive_dir.iterdir():
+            if sub.is_dir():
+                exclude_files.add(str(sub.resolve()))
+
     exclude_files.add(str((context_dir / "project-map.json").resolve()))
     # Legacy project_map.md was retired in WP-2026-151 and is no longer a
     # runtime artifact, so it is deliberately omitted from the set above.
