@@ -206,3 +206,80 @@ class TestTicketIdModule:
 
     def test_extract_all_ticket_ids_empty(self):
         assert extract_all_ticket_ids("No tickets") == []
+
+
+class TestSupervisorPatternIntegration:
+    """Regression: compiled patterns must work with .search(), not re.search(flags=).
+
+    WT-2026-245c: TURN_TABLE_PATTERN and WORKPLAN_FIELD_PATTERN are compiled
+    with IGNORECASE in bus/ticket_id.py. Callers must use pattern.search(content)
+    instead of re.search(pattern, content, flags=...) which raises ValueError
+    on compiled patterns.
+    """
+
+    def test_turn_table_pattern_search_no_flags(self):
+        """TURN_TABLE_PATTERN.search() must match with IGNORECASE baked in."""
+        content = "| **Plan ID** | WT-2026-042a |"
+        m = TURN_TABLE_PATTERN.search(content)
+        assert m is not None
+        assert m.group(1) == "WT-2026-042a"
+
+    def test_turn_table_pattern_search_lowercase_header(self):
+        """Lowercase header must still match (IGNORECASE compiled in)."""
+        content = "| **plan id** | CTL-2026-001a |"
+        m = TURN_TABLE_PATTERN.search(content)
+        assert m is not None
+        assert m.group(1) == "CTL-2026-001a"
+
+    def test_workplan_field_pattern_search_no_flags(self):
+        """WORKPLAN_FIELD_PATTERN.search() must match with IGNORECASE baked in."""
+        content = "**ID:** WT-2026-042a"
+        m = WORKPLAN_FIELD_PATTERN.search(content)
+        assert m is not None
+        assert m.group(1) == "WT-2026-042a"
+
+    def test_workplan_field_pattern_search_lowercase(self):
+        """Lowercase field must still match (IGNORECASE compiled in)."""
+        content = "**id:** ctl-2026-001a"
+        m = WORKPLAN_FIELD_PATTERN.search(content)
+        assert m is not None
+        assert m.group(1) == "ctl-2026-001a"
+
+    def test_workplan_heading_pattern_search_no_flags(self):
+        """WORKPLAN_HEADING_PATTERN.search() must match with MULTILINE baked in."""
+        content = "## CTL-2026-001a\nsome content"
+        m = WORKPLAN_HEADING_PATTERN.search(content)
+        assert m is not None
+        assert m.group(1) == "CTL-2026-001a"
+
+    def test_recover_active_ticket_simulated(self):
+        """Simulate recover_active_ticket() logic with real patterns.
+
+        This exercises the exact call chain that was broken by the regression:
+        iterating compiled patterns and calling .search() on each.
+        """
+        turn_content = "| **Plan ID** | CTL-2026-001a |"
+        patterns = (TURN_TABLE_PATTERN,) * 4
+        for pattern in patterns:
+            match = pattern.search(turn_content)
+            if match:
+                assert match.group(1) == "CTL-2026-001a"
+                break
+        else:
+            pytest.fail("recover_active_ticket TURN path failed")
+
+    def test_work_plan_active_ticket_simulated(self):
+        """Simulate _work_plan_active_ticket() logic with real patterns."""
+        wp_content = "## Metadata\n- **ID:** CTL-2026-001a\n- **Estado:** IN_PROGRESS\n"
+        patterns = (
+            WORKPLAN_FIELD_PATTERN,
+            WORKPLAN_FIELD_PATTERN,
+            WORKPLAN_HEADING_PATTERN,
+        )
+        for pattern in patterns:
+            match = pattern.search(wp_content)
+            if match:
+                assert match.group(1) == "CTL-2026-001a"
+                break
+        else:
+            pytest.fail("_work_plan_active_ticket path failed")
