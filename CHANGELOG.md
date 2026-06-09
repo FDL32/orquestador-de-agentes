@@ -1,3 +1,21 @@
+# 2026-06-09 - Ticket lettering and bus-recovery contract
+
+### Changed
+- `PROJECT.md`: documented the durable ticket system used by the motor across
+  projects: every plan starts with an `...a` ticket, while `...b` and later
+  letters are reserved for plan splits and post-close fixes.
+- `PROJECT.md`: documented the bus recovery rule: when a shell-launched Builder
+  does not carry the bus to canonical termination, first analyze the root
+  cause, then close the base `...a` ticket cleanly through chat, and move
+  remediation to derived tickets instead of repairing the bus through the live
+  bus path itself.
+
+### Notes
+- This rule is portable system behavior, not a one-off workaround for the
+  current dogfooding destination.
+
+---
+
 # 2026-06-07 - WT-2026-237a Fail-closed manager invocation on unresolvable motor root
 
 ### Fixed

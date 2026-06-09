@@ -38,6 +38,30 @@ The system integrates `repomix` as a compressed context layer for agent bootstra
 
 - Destination projects declare `Ticket prefix: XXX` in their local `PROJECT.md` (or via `--install --prefix XXX`) and use `XXX-YYYY-NNN`; this motor keeps `WP-YYYY-NNN`.
 
+## Ticket System Contract
+
+- Every new plan starts from a base ticket ending in `a`.
+- There is no canonical plan without an `...a` ticket; that ticket defines the
+  first complete deliverable and the base closeout of the cycle.
+- Tickets `...b`, `...c`, `...d` and later letters are reserved for:
+  - splitting long plans into smaller deliverables;
+  - formalizing fixes discovered after the `...a` closeout;
+  - absorbing follow-up hardening without polluting the original base ticket.
+
+## Bus Recovery Rule
+
+- When a shell-launched Builder does not carry the bus to canonical
+  termination, the priority is root-cause analysis, not forcing a superficial
+  close.
+- The durable workflow is:
+  1. diagnose why the bus did not reach terminal state;
+  2. close the corresponding `...a` ticket through chat to keep commits clean;
+  3. open derived tickets `...b`, `...c`, `...d` for the concrete fixes;
+  4. implement those fixes through chat rather than trying to repair the bus
+     through the same broken live bus path.
+- Operational rule: avoid fixing the bus "through the bus" unless the ticket is
+  explicitly about recovery semantics and the evidence justifies that path.
+
 - `.agent/collaboration/work_plan.md`
 - `.agent/collaboration/execution_log.md`
 - `.agent/collaboration/STATE.md`

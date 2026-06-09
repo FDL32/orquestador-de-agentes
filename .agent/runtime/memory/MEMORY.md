@@ -1,8 +1,8 @@
 # MEMORY
 
-Regenerated: 2026-06-07T09:03:02.012245+00:00
+Regenerated: 2026-06-09T00:00:00Z
 
-Total observations: 65
+Total observations: 67
 
 - Adapter Pipeline Wp Split (1 observations)
 - Ap-Nn-Cross-Cutting-Architecture (1 observations)
@@ -10,6 +10,7 @@ Total observations: 65
 - Arranque (1 observations)
 - Auto-Improvement-Loop-Formalized (1 observations)
 - Bootstrap-Ticket-State-Contract (1 observations)
+- Bus-Recovery-Rule (1 observations)
 - Builder-Closeout-Hallucination (1 observations)
 - Builder-Manager-Mirror-Pattern (1 observations)
 - Builder-Window-Silent-Fail (1 observations)
@@ -56,6 +57,7 @@ Total observations: 65
 - Ticket-Completion (1 observations)
 - Ticket-Contradiction-Sequence (1 observations)
 - Ticket-Gate-Placement (1 observations)
+- Ticket-Lineage-Rule (1 observations)
 - Ticket-Plan-Audit-Parity-Gap (1 observations)
 - Ticket-State-Enum-Contract (1 observations)
 - Ticket-Structure-Risk-Heuristic (1 observations)
