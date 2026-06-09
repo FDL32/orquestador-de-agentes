@@ -6,55 +6,27 @@ prefix) ticket IDs are all correctly parsed by string-extraction patterns,
 while patterns that feed int() remain limited to WP|WT + numeric suffix.
 """
 
-import re
-
 import pytest
 
-
-# ── Expanded patterns (must accept WP, WT, and three-letter prefixes) ──
-
-# Pattern from review_bridge.py _get_active_ticket_id (both copies)
-PATTERN_WORKPLAN_ID = re.compile(
-    r"\*\*ID:\*\*\s*((?:WP|WT|[A-Z]{3})-\d{4}-[A-Za-z0-9]+)"
+# -- Import canonical patterns from bus.ticket_id --
+from bus.ticket_id import (
+    LOOSE_PATTERN,
+    NEXT_TICKET_PATTERN,
+    NUMERIC_SUFFIX_PATTERN,
+    SECTION_DELIMITER_PATTERN,
+    TICKET_ID_RE,
+    TICKET_SORT_KEY_PATTERN,
+    TURN_TABLE_PATTERN,
+    WORKPLAN_FIELD_PATTERN,
+    WORKPLAN_HEADING_PATTERN,
+    WORKPLAN_ID_PATTERN,
+    extract_all_ticket_ids,
+    extract_ticket_id,
+    is_valid_ticket_id,
 )
 
-# Pattern from supervisor.py ensure_ticket_queue:450 (re.findall)
-PATTERN_ENSURE_QUEUE_FINDALL = re.compile(r"(?:WP|WT|[A-Z]{3})-\d{4}-[A-Za-z0-9]+")
 
-# Pattern from supervisor.py ensure_ticket_queue:453 (re.search)
-PATTERN_ENSURE_QUEUE_SEARCH = re.compile(r"(?:WP|WT|[A-Z]{3})-(\d{4})-([A-Za-z0-9]+)")
-
-# Patterns from supervisor.py recover_active_ticket TURN.md table (lines 634-637)
-PATTERN_TURN_TABLE = re.compile(
-    r"\|\s*\*\*(?:Ticket Activo|Plan ID|Ticket|Plan activo)\*\*\s*\|\s*"
-    r"((?:WP|WT|[A-Z]{3})-\d{4}-[A-Za-z0-9]+)\s*\|"
-)
-
-# Patterns from supervisor.py recover_active_ticket work_plan fields (lines 650-652)
-PATTERN_WORKPLAN_FIELD = re.compile(
-    r"\*\*(?:Plan activo|ID):\*\*\s*((?:WP|WT|[A-Z]{3})-\d{4}-[A-Za-z0-9]+)"
-)
-
-# Patterns from supervisor.py recover_active_ticket work_plan heading (line 652)
-PATTERN_WORKPLAN_HEADING = re.compile(
-    r"^\s*##\s+((?:WP|WT|[A-Z]{3})-\d{4}-[A-Za-z0-9]+)\b",
-    re.MULTILINE,
-)
-
-# Loose match patterns from supervisor.py (lines 643, 658, 680)
-PATTERN_LOOSE = re.compile(r"((?:WP|WT|[A-Z]{3})-\d{4}-[A-Za-z0-9]+)")
-
-# Pattern from supervisor.py _ticket_sort_key (line 701)
-PATTERN_TICKET_SORT_KEY = re.compile(r"(?:WP|WT|[A-Z]{3})-(\d{4})-([A-Za-z0-9]+)")
-
-# Section delimiter from review_bridge.py _extract_ticket_section (line 660)
-PATTERN_SECTION_DELIMITER = re.compile(r"(?=\n### (?:WP|WT|[A-Z]{3})-)")
-
-# ── Numeric-only patterns (preserved — feed int()) ──
-PATTERN_NUMERIC_SUFFIX = re.compile(r"(?:WP|WT)-\d{4}-(\d+)")
-PATTERN_NEXT_TICKET = re.compile(r"(?:WP|WT)-(\d{4})-(\d+)")
-
-# Test vectors
+# -- Test vectors --
 TICKET_WP = "WP-2026-001"
 TICKET_WT = "WT-2026-042a"
 TICKET_CTL = "CTL-2026-001a"
@@ -67,20 +39,20 @@ class TestExpandedPatternsMatchAllPrefixes:
     @pytest.mark.parametrize("ticket", TICKETS_ALL)
     def test_workplan_id(self, ticket):
         content = f"**ID:** {ticket}"
-        m = PATTERN_WORKPLAN_ID.search(content)
+        m = WORKPLAN_ID_PATTERN.search(content)
         assert m is not None, f"workplan_id pattern failed for {ticket}"
         assert m.group(1) == ticket
 
     @pytest.mark.parametrize("ticket", TICKETS_ALL)
     def test_ensure_queue_findall(self, ticket):
         content = f"## Tickets\n- {ticket}\n"
-        matches = PATTERN_ENSURE_QUEUE_FINDALL.findall(content)
+        matches = TICKET_ID_RE.findall(content)
         assert ticket in matches, f"ensure_queue_findall failed for {ticket}"
 
     @pytest.mark.parametrize("ticket", TICKETS_ALL)
     def test_ensure_queue_search(self, ticket):
         content = f"## Tickets\n- {ticket}\n"
-        m = PATTERN_ENSURE_QUEUE_SEARCH.search(content)
+        m = TICKET_SORT_KEY_PATTERN.search(content)
         assert m is not None, f"ensure_queue_search failed for {ticket}"
         prefix, suffix = m.group(1), m.group(2)
         assert f"{prefix}-{suffix}" in ticket
@@ -91,7 +63,7 @@ class TestExpandedPatternsMatchAllPrefixes:
         # Row header variants
         for header in ("Plan ID", "Ticket Activo", "Ticket", "Plan activo"):
             content = f"| **{header}** | {ticket} |"
-            m = PATTERN_TURN_TABLE.search(content)
+            m = TURN_TABLE_PATTERN.search(content)
             assert m is not None, f"turn_table ({header}) failed for {ticket}"
             assert m.group(1) == ticket
 
@@ -100,14 +72,14 @@ class TestExpandedPatternsMatchAllPrefixes:
         """recover_active_ticket work_plan field patterns."""
         for field in ("Plan activo:", "ID:"):
             content = f"**{field}** {ticket}"
-            m = PATTERN_WORKPLAN_FIELD.search(content)
+            m = WORKPLAN_FIELD_PATTERN.search(content)
             assert m is not None, f"workplan_field ({field}) failed for {ticket}"
             assert m.group(1) == ticket
 
     @pytest.mark.parametrize("ticket", TICKETS_ALL)
     def test_workplan_heading(self, ticket):
         content = f"## {ticket}"
-        m = PATTERN_WORKPLAN_HEADING.search(content)
+        m = WORKPLAN_HEADING_PATTERN.search(content)
         assert m is not None, f"workplan_heading failed for {ticket}"
         assert m.group(1) == ticket
 
@@ -115,13 +87,13 @@ class TestExpandedPatternsMatchAllPrefixes:
     def test_loose(self, ticket):
         """Loose match pattern in recover_active_ticket and _work_plan_active_ticket."""
         content = f"... {ticket} ..."
-        m = PATTERN_LOOSE.search(content)
+        m = LOOSE_PATTERN.search(content)
         assert m is not None, f"loose pattern failed for {ticket}"
         assert m.group(1) == ticket
 
     @pytest.mark.parametrize("ticket", TICKETS_ALL)
     def test_ticket_sort_key_pattern(self, ticket):
-        m = PATTERN_TICKET_SORT_KEY.match(ticket)
+        m = TICKET_SORT_KEY_PATTERN.match(ticket)
         assert m is not None, f"sort_key pattern failed for {ticket}"
         year, suffix = m.group(1), m.group(2)
         assert len(year) == 4
@@ -133,7 +105,7 @@ class TestExpandedPatternsMatchAllPrefixes:
             content = (
                 f"### some_ticket\nsome content\n### {prefix}-2026-999\nother content"
             )
-            match = PATTERN_SECTION_DELIMITER.search(content)
+            match = SECTION_DELIMITER_PATTERN.search(content)
             assert match is not None, f"section delimiter failed for {prefix}"
             # Lookahead is zero-width; verify it finds the boundary before `### ...`
             assert content[match.start() :].startswith("\n### "), (
@@ -144,7 +116,7 @@ class TestExpandedPatternsMatchAllPrefixes:
     def test_no_false_negatives_embedded(self, ticket):
         """Ticket ID embedded in larger text should still be found."""
         content = f"Some context before. {ticket} is the ticket. Some context after."
-        m = PATTERN_LOOSE.search(content)
+        m = LOOSE_PATTERN.search(content)
         assert m is not None, f"embedded match failed for {ticket}"
         assert m.group(1) == ticket
 
@@ -154,21 +126,21 @@ class TestNumericPatternsPreserved:
 
     @pytest.mark.parametrize("ticket", [TICKET_WP, TICKET_WT])
     def test_numeric_suffix_accepts_wp_wt(self, ticket):
-        m = PATTERN_NUMERIC_SUFFIX.search(ticket)
+        m = NUMERIC_SUFFIX_PATTERN.search(ticket)
         assert m is not None, f"numeric_suffix should match {ticket}"
 
     def test_numeric_suffix_rejects_three_letter_alpha(self):
         """CTL-2026-001a has alphanumeric suffix; numeric pattern must reject it."""
-        m = PATTERN_NUMERIC_SUFFIX.search(TICKET_CTL)
+        m = NUMERIC_SUFFIX_PATTERN.search(TICKET_CTL)
         assert m is None, "CTL alphanumeric suffix must NOT match numeric pattern"
 
     @pytest.mark.parametrize("ticket", [TICKET_WP, TICKET_WT])
     def test_next_ticket_accepts_wp_wt(self, ticket):
-        m = PATTERN_NEXT_TICKET.match(ticket)
+        m = NEXT_TICKET_PATTERN.match(ticket)
         assert m is not None, f"next_ticket should match {ticket}"
 
     def test_next_ticket_rejects_three_letter_with_alpha(self):
-        m = PATTERN_NEXT_TICKET.match(TICKET_CTL)
+        m = NEXT_TICKET_PATTERN.match(TICKET_CTL)
         assert m is None, "CTL must NOT match next_ticket pattern (int() guard)"
 
 
@@ -204,3 +176,33 @@ class TestSortKeyIntegration:
 
         key = SequentialTicketSupervisor._ticket_sort_key(None)
         assert key == (-1, -1, ""), f"Unexpected {key}"
+
+
+class TestTicketIdModule:
+    """Tests for the bus.ticket_id module utility functions."""
+
+    def test_is_valid_ticket_id_wp(self):
+        assert is_valid_ticket_id("WP-2026-001") is True
+
+    def test_is_valid_ticket_id_wt(self):
+        assert is_valid_ticket_id("WT-2026-042a") is True
+
+    def test_is_valid_ticket_id_ctl(self):
+        assert is_valid_ticket_id("CTL-2026-001a") is True
+
+    def test_is_valid_ticket_id_invalid(self):
+        assert is_valid_ticket_id("INVALID") is False
+        assert is_valid_ticket_id("") is False
+        assert is_valid_ticket_id("WP-2026") is False
+
+    def test_extract_ticket_id(self):
+        assert extract_ticket_id("Ticket **ID:** CTL-2026-001a") == "CTL-2026-001a"
+        assert extract_ticket_id("No ticket here") is None
+
+    def test_extract_all_ticket_ids(self):
+        text = "First: WP-2026-001, Second: CTL-2026-001a"
+        ids = extract_all_ticket_ids(text)
+        assert ids == ["WP-2026-001", "CTL-2026-001a"]
+
+    def test_extract_all_ticket_ids_empty(self):
+        assert extract_all_ticket_ids("No tickets") == []
