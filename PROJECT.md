@@ -62,6 +62,21 @@ The system integrates `repomix` as a compressed context layer for agent bootstra
 - Operational rule: avoid fixing the bus "through the bus" unless the ticket is
   explicitly about recovery semantics and the evidence justifies that path.
 
+## OpenCode Permission Preflight
+
+- If a Builder ticket needs to touch files outside `.agent/collaboration/` or
+  `scripts/`, the plan or launcher bootstrap must verify before launch that
+  those paths are permitted in `.opencode/opencode.json`.
+- If the required paths are not permitted, startup must fail fast with a clear
+  diagnostic instead of letting the Builder run blind and discover the gap only
+  after partial execution.
+- The work plan can correctly declare the intended surfaces and still be
+  insufficient on its own: what failed in practice was not the plan, but the
+  missing alignment between that plan and the backend permission layer.
+- For documentation tickets in `repo_destino`, declaring `Files Likely Touched`
+  is not enough. The backend must also have real access to those declared
+  surfaces, or the Builder cannot execute the contract it was given.
+
 - `.agent/collaboration/work_plan.md`
 - `.agent/collaboration/execution_log.md`
 - `.agent/collaboration/STATE.md`
