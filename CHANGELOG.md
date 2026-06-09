@@ -1,3 +1,27 @@
+# 2026-06-09 - Portability cleanup for OpenCode config and destination-facing docs
+
+### Changed
+- `.opencode/opencode.json`: removed destination-specific `external_directory`
+  entries from the tracked motor config. The file now stays path-agnostic; the
+  launcher injects active `repo_destino` permissions at runtime and restores
+  the original config after the Builder session.
+- `PROJECT.md`, `AGENTS.md`, `README.md` and `QUICKSTART.md`: clarified that
+  OpenCode permission preflight is a runtime concern, not a versioned absolute
+  path contract. Documentation now states explicitly that workspace-specific
+  permissions must not be committed into the portable motor.
+
+### Added
+- `tests/unit/test_launcher_powershell_syntax.py`: removed the hardcoded
+  `orquestador_de_agentes_workspace` dependency from the clean-state diagnostic
+  test so the suite no longer assumes one local destination name.
+
+### Notes
+- This change preserves the current launcher behavior: `external_directory`
+  permissions are still available to Builder sessions, but only as temporary
+  runtime injection tied to the active `repo_destino`.
+
+---
+
 # 2026-06-09 - Ticket lettering and bus-recovery contract
 
 ### Fixed

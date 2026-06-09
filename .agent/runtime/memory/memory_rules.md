@@ -210,4 +210,6 @@ WP-2026-146: Builder generated unique IDs with sha256(ticket_id + timestamp), re
 #### R-030: Pattern: on Windows, files edited by Python tools (Edit/Write) may have mixed CR
 
 Pattern: on Windows, files edited by Python tools (Edit/Write) may have mixed CRLF+LF endings. pre-commit mixed-line-ending hook fixes them but fails if there are unstaged files (stash+restore conflict). Fix: run python -c to convert all .py files to LF before git add, so the hook finds nothing to change. Origin: WP-2026-140 commit session.
+
 *Source: WP-2026-140*
+

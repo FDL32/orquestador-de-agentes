@@ -80,11 +80,7 @@ The system integrates `repomix` as a compressed context layer for agent bootstra
 - For documentation tickets in `repo_destino`, declaring `Files Likely Touched`
   is not enough. The backend must also have real access to those declared
   surfaces, or the Builder cannot execute the contract it was given.
-
-- `.agent/collaboration/work_plan.md`
-- `.agent/collaboration/execution_log.md`
-- `.agent/collaboration/STATE.md`
-- `.agent/runtime/memory/`
-- `.agent/council/`
-- `.agent/agent_controller.py`
-- `scripts/run_pytest_safe.py`
+- The tracked `.opencode/opencode.json` in `repo_motor` must stay path-agnostic
+  and portable. Workspace-specific `external_directory` permissions belong to
+  runtime injection by the launcher and must be restored after the Builder run,
+  not committed as absolute paths to one local `repo_destino`.

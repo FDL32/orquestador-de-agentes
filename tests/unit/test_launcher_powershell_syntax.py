@@ -157,7 +157,7 @@ def test_diagnostic_bus_state_post_success() -> None:
     platform.system() != "Windows",
     reason="WMI orphan detection only available on Windows",
 )
-def test_diagnostic_runs_on_clean_state() -> None:
+def test_diagnostic_runs_on_clean_state(tmp_path: Path) -> None:
     """WT-2026-242c: diagnostic must run without error on a clean project."""
     spec = importlib.util.spec_from_file_location(
         "diagnose_builder_orphans", str(DIAGNOSTIC_SCRIPT)
@@ -166,8 +166,8 @@ def test_diagnostic_runs_on_clean_state() -> None:
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
 
-    workspace = REPO_ROOT.parent / "orquestador_de_agentes_workspace"
-    result = mod.diagnose(str(workspace))
+    project_root = tmp_path / "portable_destination"
+    result = mod.diagnose(str(project_root))
     assert "gap_confirmed" in result
     assert "builder_processes" in result
     assert isinstance(result["builder_processes"], list)

@@ -95,6 +95,7 @@ The motor lives **once** in this repo. A destination project:
 6. **Flips profile automatically**: `agents.json.active_profile` goes from `engine-dev` (motor repo) to `host-project` (destination) during install/sync.
 7. **Receives motor-destination link file**: `.agent/config/motor_destination_link.json` with schema (motor_root, destination_root, motor_version, destination_id, created_at, manifest_version) for portable traceability (WP-2026-123).
 8. **Uses a local ticket namespace in the destination**: the destination `PROJECT.md` declares `Ticket prefix: XXX`, and tickets in that repo use `XXX-YYYY-NNN`. The dogfooding destination for this motor currently uses `WT-YYYY-NNN[a]`; `WP-YYYY-NNN` remains historical in older motor records. The installer can write the prefix with `--install --prefix XXX` or `--sync --prefix XXX`.
+9. **Keeps OpenCode permissions portable**: `.opencode/opencode.json` stores only reusable motor config. Workspace-specific `external_directory` permissions are injected temporarily by the launcher for the active `repo_destino` and restored afterwards, so the motor does not commit absolute local paths.
 
 ## Version contract
 

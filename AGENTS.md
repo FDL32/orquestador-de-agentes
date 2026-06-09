@@ -307,6 +307,10 @@ Origen del patrón: OpenHands `.openhands/setup.sh` (MIT).
   ciego. En OpenCode, esa allowlist puede necesitar el root completo del
   `repo_destino` (`repo_destino\*`) y no solo permisos por archivo, porque el
   backend puede resolver la lectura como acceso al arbol externo completo.
+- La configuracion versionada de `.opencode/opencode.json` debe permanecer
+  portable y sin rutas absolutas del `repo_destino` actual. Los permisos
+  `external_directory` especificos del proyecto se inyectan en runtime desde el
+  launcher y se restauran al terminar; no deben quedar commiteados en el motor.
 
 ## Robust Builder Relaunch (WP-2026-084)
 

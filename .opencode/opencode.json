@@ -1,17 +1,6 @@
-﻿{
-    "$schema":  "https://opencode.ai/config.json",
-    "default_agent":  "builder",
-    "model":  "opencode-go/deepseek-v4-flash",
-    "share":  "manual",
-    "permission":  {
-                       "external_directory":  {
-                                                  "C:\\Users\\fdl\\Proyectos_Python\\orquestador_de_agentes_workspace\\.agent\\runtime\\*":  "allow",
-                                                  "C:\\Users\\fdl\\Proyectos_Python\\orquestador_de_agentes_workspace\\.agent\\collaboration\\*":  "allow",
-                                                  "C:\\Users\\fdl\\Proyectos_Python\\orquestador_de_agentes_workspace\\scripts\\*":  "allow",
-                                                  "C:\\Users\\fdl\\Proyectos_Python\\orquestador_de_agentes_workspace\\*":  "allow",
-                                                  "C:\\Users\\fdl\\Proyectos_Python\\orquestador_de_agentes_workspace\\PROJECT.md":  "allow",
-                                                  "C:\\Users\\fdl\\Proyectos_Python\\orquestador_de_agentes_workspace\\AGENTS.md":  "allow",
-                                                  "C:\\Users\\fdl\\Proyectos_Python\\orquestador_de_agentes_workspace\\CHANGELOG.md":  "allow"
-                                              }
-                   }
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "builder",
+  "model": "opencode-go/deepseek-v4-flash",
+  "share": "manual"
 }
