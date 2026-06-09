@@ -73,6 +73,10 @@ The system integrates `repomix` as a compressed context layer for agent bootstra
 - The work plan can correctly declare the intended surfaces and still be
   insufficient on its own: what failed in practice was not the plan, but the
   missing alignment between that plan and the backend permission layer.
+- For OpenCode specifically, the effective allowlist may need the destination
+  root wildcard itself (for example `repo_destino\*`), not only individual
+  files, because the backend can resolve reads as an `external_directory`
+  request over the enclosing tree.
 - For documentation tickets in `repo_destino`, declaring `Files Likely Touched`
   is not enough. The backend must also have real access to those declared
   surfaces, or the Builder cannot execute the contract it was given.
