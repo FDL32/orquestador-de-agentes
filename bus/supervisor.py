@@ -447,10 +447,10 @@ class SequentialTicketSupervisor:
             return
 
         content = work_plan.read_text(encoding="utf-8")
-        tickets = re.findall(r"(?:WP|WT)-\d{4}-[A-Za-z0-9]+", content)
+        tickets = re.findall(r"(?:WP|WT|[A-Z]{3})-\d{4}-[A-Za-z0-9]+", content)
         if not tickets:
             return
-        match = re.search(r"(?:WP|WT)-(\d{4})-([A-Za-z0-9]+)", tickets[0])
+        match = re.search(r"(?:WP|WT|[A-Z]{3})-(\d{4})-([A-Za-z0-9]+)", tickets[0])
         if not match:
             return
         prefix = match.group(1)
@@ -631,31 +631,31 @@ class SequentialTicketSupervisor:
         if turn_path.exists():
             content = turn_path.read_text(encoding="utf-8")
             patterns = (
-                r"\|\s*\*\*Ticket Activo\*\*\s*\|\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+)\s*\|",
-                r"\|\s*\*\*Plan ID\*\*\s*\|\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+)\s*\|",
-                r"\|\s*\*\*Ticket\*\*\s*\|\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+)\s*\|",
-                r"\|\s*\*\*Plan activo\*\*\s*\|\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+)\s*\|",
+                r"\|\s*\*\*Ticket Activo\*\*\s*\|\s*((?:WP|WT|[A-Z]{3})-\d{4}-[A-Za-z0-9]+)\s*\|",
+                r"\|\s*\*\*Plan ID\*\*\s*\|\s*((?:WP|WT|[A-Z]{3})-\d{4}-[A-Za-z0-9]+)\s*\|",
+                r"\|\s*\*\*Ticket\*\*\s*\|\s*((?:WP|WT|[A-Z]{3})-\d{4}-[A-Za-z0-9]+)\s*\|",
+                r"\|\s*\*\*Plan activo\*\*\s*\|\s*((?:WP|WT|[A-Z]{3})-\d{4}-[A-Za-z0-9]+)\s*\|",
             )
             for pattern in patterns:
                 match = re.search(pattern, content, flags=re.IGNORECASE)
                 if match:
                     return match.group(1)
-            loose_match = re.search(r"((?:WP|WT)-\d{4}-[A-Za-z0-9]+)", content)
+            loose_match = re.search(r"((?:WP|WT|[A-Z]{3})-\d{4}-[A-Za-z0-9]+)", content)
             if loose_match:
                 return loose_match.group(1)
         work_plan_path = self.collaboration_dir / "work_plan.md"
         if work_plan_path.exists():
             content = work_plan_path.read_text(encoding="utf-8")
             patterns = (
-                r"\*\*Plan activo:\*\*\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+)",
-                r"\*\*ID:\*\*\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+)",
-                r"^\s*##\s+((?:WP|WT)-\d{4}-[A-Za-z0-9]+)\b",
+                r"\*\*Plan activo:\*\*\s*((?:WP|WT|[A-Z]{3})-\d{4}-[A-Za-z0-9]+)",
+                r"\*\*ID:\*\*\s*((?:WP|WT|[A-Z]{3})-\d{4}-[A-Za-z0-9]+)",
+                r"^\s*##\s+((?:WP|WT|[A-Z]{3})-\d{4}-[A-Za-z0-9]+)\b",
             )
             for pattern in patterns:
                 match = re.search(pattern, content, flags=re.IGNORECASE | re.MULTILINE)
                 if match:
                     return match.group(1)
-            loose_match = re.search(r"((?:WP|WT)-\d{4}-[A-Za-z0-9]+)", content)
+            loose_match = re.search(r"((?:WP|WT|[A-Z]{3})-\d{4}-[A-Za-z0-9]+)", content)
             if loose_match:
                 return loose_match.group(1)
         latest = self.event_bus.latest_event(event_type="TURN_CHANGED")
@@ -669,15 +669,15 @@ class SequentialTicketSupervisor:
             return None
         content = work_plan_path.read_text(encoding="utf-8")
         patterns = (
-            r"\*\*Plan activo:\*\*\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+)",
-            r"\*\*ID:\*\*\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+)",
-            r"^\s*##\s+((?:WP|WT)-\d{4}-[A-Za-z0-9]+)\b",
+            r"\*\*Plan activo:\*\*\s*((?:WP|WT|[A-Z]{3})-\d{4}-[A-Za-z0-9]+)",
+            r"\*\*ID:\*\*\s*((?:WP|WT|[A-Z]{3})-\d{4}-[A-Za-z0-9]+)",
+            r"^\s*##\s+((?:WP|WT|[A-Z]{3})-\d{4}-[A-Za-z0-9]+)\b",
         )
         for pattern in patterns:
             match = re.search(pattern, content, flags=re.IGNORECASE | re.MULTILINE)
             if match:
                 return match.group(1)
-            loose_match = re.search(r"((?:WP|WT)-\d{4}-[A-Za-z0-9]+)", content)
+            loose_match = re.search(r"((?:WP|WT|[A-Z]{3})-\d{4}-[A-Za-z0-9]+)", content)
             if loose_match:
                 return loose_match.group(1)
         return None
@@ -698,7 +698,7 @@ class SequentialTicketSupervisor:
         Higher keys win. We order by WP year, then by numeric suffix, then by
         raw suffix as a stable tie-breaker for any non-numeric variant.
         """
-        match = re.match(r"(?:WP|WT)-(\d{4})-([A-Za-z0-9]+)", ticket_id or "")
+        match = re.match(r"(?:WP|WT|[A-Z]{3})-(\d{4})-([A-Za-z0-9]+)", ticket_id or "")
         if not match:
             return (-1, -1, ticket_id or "")
         year = int(match.group(1))
