@@ -3051,10 +3051,6 @@ def test_main_once_reads_state_from_disk_without_startup_reconcile(
             self.project_root = project_root
 
     monkeypatch.setattr(
-        "scripts.manager_review_bridge.SequentialTicketSupervisor",
-        FakeSupervisor,
-    )
-    monkeypatch.setattr(
         "scripts.manager_review_bridge.ReviewBridge",
         FakeReviewBridge,
     )
