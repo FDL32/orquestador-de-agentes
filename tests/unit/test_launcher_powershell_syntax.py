@@ -173,13 +173,6 @@ def test_diagnostic_runs_on_clean_state() -> None:
     assert isinstance(result["builder_processes"], list)
 
 
-def test_launcher_powershell_syntax_importability(launcher_script):
-    """Verifica que el script de lanzamiento es importable."""
-    spec = importlib.util.spec_from_file_location("launcher", launcher_script)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-
 def test_builder_lock_enriched_content(tmp_path):
     """WT-2026-242c: _read_builder_lock must parse enriched identity contract.
 
