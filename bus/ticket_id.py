@@ -27,14 +27,20 @@ TICKET_ID_RE = re.compile(TICKET_ID_PATTERN)
 WORKPLAN_ID_PATTERN = re.compile(r"\*\*ID:\*\*\s*(" + TICKET_ID_PATTERN + r")")
 
 # ── Pattern for matching markdown table rows with ticket IDs ─────────────────
+# Compiled with IGNORECASE because callers match against user-authored markdown
+# where header casing may vary (e.g. "Plan ID" vs "plan id").
 TURN_TABLE_PATTERN = re.compile(
     r"\|\s*\*\*(?:Ticket Activo|Plan ID|Ticket|Plan activo)\*\*\s*\|\s*"
-    r"(" + TICKET_ID_PATTERN + r")\s*\|"
+    r"(" + TICKET_ID_PATTERN + r")\s*\|",
+    re.IGNORECASE,
 )
 
 # ── Pattern for matching **Plan activo:** or **ID:** fields ──────────────────
+# Compiled with IGNORECASE because callers match against user-authored markdown
+# where field casing may vary.
 WORKPLAN_FIELD_PATTERN = re.compile(
-    r"\*\*(?:Plan activo|ID):\*\*\s*(" + TICKET_ID_PATTERN + r")"
+    r"\*\*(?:Plan activo|ID):\*\*\s*(" + TICKET_ID_PATTERN + r")",
+    re.IGNORECASE,
 )
 
 # ── Pattern for matching markdown headings with ticket IDs ───────────────────

@@ -642,7 +642,7 @@ class SequentialTicketSupervisor:
             content = turn_path.read_text(encoding="utf-8")
             patterns = (TURN_TABLE_PATTERN,) * 4
             for pattern in patterns:
-                match = re.search(pattern, content, flags=re.IGNORECASE)
+                match = pattern.search(content)
                 if match:
                     return match.group(1)
             loose_match = LOOSE_PATTERN.search(content)
@@ -657,7 +657,7 @@ class SequentialTicketSupervisor:
                 WORKPLAN_HEADING_PATTERN,
             )
             for pattern in patterns:
-                match = re.search(pattern, content, flags=re.IGNORECASE | re.MULTILINE)
+                match = pattern.search(content)
                 if match:
                     return match.group(1)
             loose_match = LOOSE_PATTERN.search(content)
@@ -679,7 +679,7 @@ class SequentialTicketSupervisor:
             WORKPLAN_HEADING_PATTERN,
         )
         for pattern in patterns:
-            match = re.search(pattern, content, flags=re.IGNORECASE | re.MULTILINE)
+            match = pattern.search(content)
             if match:
                 return match.group(1)
             loose_match = LOOSE_PATTERN.search(content)
