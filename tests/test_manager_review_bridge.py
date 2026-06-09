@@ -17,6 +17,7 @@ from scripts.manager_review_bridge import (
     _checkpoint_path,
     _load_checkpoint,
     _load_state,
+    _reconcile_state_best_effort,
     _save_checkpoint,
     _save_state,
     _state_path,
@@ -3016,6 +3017,92 @@ def test_tick_no_concurrent_state_error(tmp_path, monkeypatch):
         )
 
     assert result is True
+
+
+def test_reconcile_state_best_effort_recovers_from_concurrent_conflict(capsys):
+    """Bridge startup must tolerate a concurrent reconcile win by the supervisor."""
+
+    class DummySupervisorForRace:
+        def __init__(self) -> None:
+            self.state = SupervisorState(
+                active_ticket="WT-2026-244a",
+                completed_tickets=["WT-2026-242c"],
+            )
+
+        def reconcile_state(self) -> None:
+            raise ConcurrentStateError(
+                artifact_path="supervisor_state.json",
+                expected_revision=111,
+                actual_revision=222,
+            )
+
+        def load_state(self) -> SupervisorState:
+            return self.state
+
+    supervisor = DummySupervisorForRace()
+
+    state = _reconcile_state_best_effort(supervisor)
+
+    assert state.active_ticket == "WT-2026-244a"
+    assert state.completed_tickets == ["WT-2026-242c"]
+    captured = capsys.readouterr()
+    assert "bootstrap reconcile race detected" in captured.err
+    assert "reloading canonical supervisor state and continuing" in captured.err
+
+
+def test_main_once_recovers_from_bootstrap_reconcile_race(
+    tmp_path, monkeypatch, capsys
+):
+    """CLI --once must not abort if reconcile_state races with a live supervisor."""
+
+    class FakeSupervisor:
+        def __init__(self, project_root, auto_sync):
+            self.project_root = project_root
+            self.auto_sync = auto_sync
+            self.event_bus = object()
+            self._state = SupervisorState(active_ticket="WT-2026-244a")
+
+        def reconcile_state(self) -> None:
+            raise ConcurrentStateError(
+                artifact_path="supervisor_state.json",
+                expected_revision=111,
+                actual_revision=222,
+            )
+
+        def load_state(self) -> SupervisorState:
+            return self._state
+
+    class FakeReviewBridge:
+        def __init__(self, event_bus, project_root):
+            self.event_bus = event_bus
+            self.project_root = project_root
+
+    monkeypatch.setattr(
+        "scripts.manager_review_bridge.SequentialTicketSupervisor",
+        FakeSupervisor,
+    )
+    monkeypatch.setattr(
+        "scripts.manager_review_bridge.ReviewBridge",
+        FakeReviewBridge,
+    )
+    tick_calls: list[tuple[object, object, Path | None, int]] = []
+
+    def fake_tick(*, supervisor, review, manager_path, timeout):
+        tick_calls.append((supervisor, review, manager_path, timeout))
+        return False
+
+    monkeypatch.setattr("scripts.manager_review_bridge._tick", fake_tick)
+    monkeypatch.setattr("sys.argv", ["manager_review_bridge.py", "--once"])
+
+    from scripts.manager_review_bridge import main
+
+    exit_code = main()
+
+    assert exit_code == 0
+    assert len(tick_calls) == 1
+    captured = capsys.readouterr()
+    assert "bootstrap reconcile race detected" in captured.err
+    assert "once mode start | active=WT-2026-244a | completed=0" in captured.out
 
 
 # =============================================================================

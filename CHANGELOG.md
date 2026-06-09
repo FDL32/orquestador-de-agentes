@@ -1,5 +1,17 @@
 # 2026-06-09 - Ticket lettering and bus-recovery contract
 
+### Fixed
+- `scripts/manager_review_bridge.py`: bridge startup now tolerates a benign
+  `ConcurrentStateError` during bootstrap reconcile. If a freshly launched
+  supervisor wins the initial write to `supervisor_state.json`, the bridge logs
+  the race, reloads canonical on-disk state, and continues instead of aborting
+  `--watch`/`--once`.
+
+### Added
+- `tests/test_manager_review_bridge.py`: regression coverage for
+  `_reconcile_state_best_effort()` and `main --once` so bootstrap races degrade
+  to reload-and-continue instead of crashing the Builder/Manager startup.
+
 ### Changed
 - `PROJECT.md`: documented the durable ticket system used by the motor across
   projects: every plan starts with an `...a` ticket, while `...b` and later
