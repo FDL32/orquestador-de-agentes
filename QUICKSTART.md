@@ -7,7 +7,9 @@ Use this file to start the template in a fresh project, relaunch the terminal-dr
 
 Namespace de tickets:
 - Cada `repo_destino` declara su prefijo en `PROJECT.md` como `Ticket prefix: XXX`.
-- El dogfooding actual del motor usa `WT-YYYY-NNN[a]`.
+- Este repositorio usa `WT-YYYY-NNN[a]` en el dogfooding actual, pero es solo
+  una instancia de referencia; cualquier destino puede declarar su propio
+  prefijo.
 - `WP-YYYY-NNN` aparece en historia legacy; no lo uses para tickets nuevos salvo repos antiguos que todavia declaren ese prefijo.
 
 ## Motor vs Workspace
@@ -94,7 +96,11 @@ OpenCode model selection lives in the repo-local config in:
 .opencode/opencode.json
 ```
 
-The `model` field in that file is the place to switch the AI used by OpenCode. The current target label is `Qwen3.5 Plus`, but the exact `provider/model` mapping remains [NO VERIFICADO].
+The `model` field in that file is the place to switch the AI used by OpenCode.
+The tracked config should remain portable: do not commit workspace-specific
+`external_directory` paths there. The launcher injects the active
+`repo_destino` permissions at runtime and restores the original file after the
+Builder run. The current default model is `opencode-go/deepseek-v4-flash`.
 
 ## 0b. Role-to-backend mapping
 

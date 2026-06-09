@@ -1,8 +1,8 @@
 # MEMORY
 
-Regenerated: 2026-06-09T00:00:00Z
+Regenerated: 2026-06-09T10:18:17.751503+00:00
 
-Total observations: 67
+Total observations: 71
 
 - Adapter Pipeline Wp Split (1 observations)
 - Ap-Nn-Cross-Cutting-Architecture (1 observations)
@@ -10,12 +10,12 @@ Total observations: 67
 - Arranque (1 observations)
 - Auto-Improvement-Loop-Formalized (1 observations)
 - Bootstrap-Ticket-State-Contract (1 observations)
-- Bus-Recovery-Rule (1 observations)
 - Builder-Closeout-Hallucination (1 observations)
 - Builder-Manager-Mirror-Pattern (1 observations)
 - Builder-Window-Silent-Fail (1 observations)
 - Bus-First-Read-Authority (1 observations)
 - Bus-Import-Boundary (1 observations)
+- Bus-Recovery-Rule (1 observations)
 - Canonical-Consumer-Recovery (1 observations)
 - Cem-Auto-Report-Is-Hypothesis (1 observations)
 - Cem-Contract-Before-Fix (1 observations)
@@ -23,6 +23,7 @@ Total observations: 67
 - Cem-False-Green (1 observations)
 - Cem-Proportional-Rigor (1 observations)
 - Cem-Relaunch-Continuity (1 observations)
+- Code-Ticket-Prehandoff-Packaging (1 observations)
 - Delivery-Hook-Mutation (2 observations)
 - Design-Pattern-Positive (1 observations)
 - Dispatcher Global Side Effect (1 observations)
@@ -32,7 +33,9 @@ Total observations: 67
 - Handoff-Blocked-Not-Crash (1 observations)
 - Lock Reentrancy Antipattern (1 observations)
 - Manager-Review-Rubric (5 observations)
+- Opencode-Runtime-Permission-Injection (1 observations)
 - Portable-Ticket-Filename-Boundary (1 observations)
+- Powershell-Strictmode-Dynamic-Properties (1 observations)
 - Projection-Probe-Debt (1 observations)
 - Protocol-Key-Assumption (1 observations)
 - Repo-Motor-Portable-Root (1 observations)
@@ -63,18 +66,13 @@ Total observations: 67
 - Ticket-Structure-Risk-Heuristic (1 observations)
 - Ticket-Unverifiable-Acceptance (1 observations)
 - Timeout Config Key Collision (1 observations)
+- Topology-Contract-Stub-Elevation (1 observations)
 - Unique Id Generation Smell (1 observations)
 - Validator-Enforce-Not-Observe (1 observations)
 - Windows-Precommit-Line-Endings (1 observations)
 
 ## adapter_pipeline_wp_split
 - WP-2026-147: ticket originally mixed a read-only adapter (graph_context.py) with a full pipeline build (project_scanner.py). Corrected before Builder started. Rule: read-only adapter over existing art
-
-## ap-nn-cross-cutting-architecture
-- AP-NN numbering system established as cross-cutting convention linking 3 artifacts: skills/_shared/anti-patterns.md (canonical source of IDs + names), bui-implement-from-plan/references/code-rules.md 
-
-## architecture
-- Decisiones arquitectonicas documentadas en WP-2026-175
 
 
 ---
