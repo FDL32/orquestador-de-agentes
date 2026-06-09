@@ -2647,6 +2647,13 @@ def _run_pre_handoff_guard(plan_id: str, json_output: bool) -> dict:  # noqa: C9
         dict with 'valid' (bool), 'dirty_tree', 'missing_checkpoint', etc.
     """
     try:
+        # WT-2026-245b: Read deliverable type early to skip checkpoint checks
+        # for non-code tickets (documentation/research/analysis) that bypass
+        # the motor checkpoint in mark-ready.
+        _plan_content_ph = read_file(WORK_PLAN)
+        _dt_ph = _read_deliverable_type(_plan_content_ph)
+        _is_non_code = _dt_ph in {"documentation", "research", "analysis"}
+
         guard_script = SCRIPT_DIR.parent / "scripts" / "pre_handoff_guard.py"
         if not guard_script.exists():
             print("[WARN] pre_handoff_guard.py not found; skipping guard check")
@@ -2680,8 +2687,11 @@ def _run_pre_handoff_guard(plan_id: str, json_output: bool) -> dict:  # noqa: C9
         # has no .git in Model B), explicitly verify the checkpoint exists in
         # _MOTOR_ROOT. Without this, --mark-ready would pass the guard but later
         # fail in the motor scope gate with "Tag ... not found in motor repo".
+        # Skip this verification for non-code tickets (documentation/research/
+        # analysis) since they bypass the motor checkpoint in mark-ready.
         if (
-            guard_result.get("valid")
+            not _is_non_code
+            and guard_result.get("valid")
             and _MOTOR_ROOT.resolve() != PROJECT_ROOT.resolve()
             and not guard_result.get("missing_checkpoint")
         ):
@@ -2697,6 +2707,13 @@ def _run_pre_handoff_guard(plan_id: str, json_output: bool) -> dict:  # noqa: C9
                         file=sys.stderr,
                         flush=True,
                     )
+
+        # WT-2026-245b: For non-code tickets, override missing_checkpoint to
+        # False so the guard does not block mark-ready. Tree hygiene (dirty_tree)
+        # is still enforced by the guard script.
+        if _is_non_code and guard_result.get("missing_checkpoint"):
+            guard_result["valid"] = True
+            guard_result["missing_checkpoint"] = False
 
         if not json_output:
             if guard_result.get("valid"):

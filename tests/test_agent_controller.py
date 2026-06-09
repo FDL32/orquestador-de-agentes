@@ -2736,6 +2736,120 @@ class TestModelBCheckpointTopology:
             or "motor_checkpoint_missing" in output
         ), f"Expected motor checkpoint error: {output}"
 
+    def test_non_code_ticket_not_blocked_by_motor_checkpoint_guard(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Non-code tickets must NOT be blocked by the Model B checkpoint guard.
+
+        Regression: the new _MOTOR_ROOT verification in _run_pre_handoff_guard()
+        must skip documentation/research/analysis tickets, otherwise mark-ready
+        would block them before reaching the non-code bypass in the motor scope gate.
+        """
+        # Setup: motor repo and workspace as separate directories
+        motor_repo = tmp_path / "motor"
+        workspace = tmp_path / "workspace"
+        self._init_git_repo(motor_repo)
+        self._init_git_repo(workspace)
+        self._create_work_plan(workspace)
+        self._create_execution_log(workspace)
+
+        # Monkey-patch the controller to use our temp repos
+        monkeypatch.setattr(agent_controller, "_MOTOR_ROOT", motor_repo)
+        monkeypatch.setattr(agent_controller, "PROJECT_ROOT", workspace)
+
+        # Commit .agent in workspace so the guard doesn't report dirty tree
+        subprocess.run(
+            ["git", "add", ".agent"],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "Add .agent directory"],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+        )
+
+        # Patch read_file to return a DOCUMENTATION plan
+        _doc_plan = self._PLAN_CONTENT.replace(
+            "deliverable_type:** code", "deliverable_type:** documentation"
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "read_file",
+            lambda path: (
+                _doc_plan
+                if "work_plan" in str(path).lower()
+                else (
+                    "# Execution Log\n\n**Estado:** IN_PROGRESS\n"
+                    if "execution_log" in str(path).lower()
+                    else ""
+                )
+            ),
+        )
+
+        # Patch _ensure_active_builder_round to pass
+        monkeypatch.setattr(
+            agent_controller,
+            "_ensure_active_builder_round",
+            lambda plan_id: (True, 1, None),
+        )
+
+        # Patch BUS_AVAILABLE to False
+        monkeypatch.setattr(agent_controller, "BUS_AVAILABLE", False)
+
+        # Patch _check_implementation_evidence to pass
+        monkeypatch.setattr(
+            agent_controller, "_check_implementation_evidence", lambda plan_id: []
+        )
+
+        # Patch _emit_builder_exit to no-op
+        monkeypatch.setattr(
+            agent_controller, "_emit_builder_exit", lambda *a, **kw: None
+        )
+
+        # Patch _sync_mark_ready_targets to no-op
+        monkeypatch.setattr(
+            agent_controller, "_sync_mark_ready_targets", lambda *a, **kw: None
+        )
+
+        # Patch _reset_circuit_breaker to no-op
+        monkeypatch.setattr(
+            agent_controller, "_reset_circuit_breaker", lambda plan_id: None
+        )
+
+        # Patch _release_builder_lock to no-op
+        monkeypatch.setattr(
+            agent_controller, "_release_builder_lock", lambda *a, **kw: None
+        )
+
+        # Patch _auto_archive_closed_artifacts to no-op
+        monkeypatch.setattr(
+            agent_controller, "_auto_archive_closed_artifacts", lambda: None
+        )
+
+        # Patch _check_log_has_evidence to pass
+        monkeypatch.setattr(agent_controller, "_check_log_has_evidence", lambda: True)
+
+        # Patch _check_log_has_quality_gate_evidence to pass
+        monkeypatch.setattr(
+            agent_controller,
+            "_check_log_has_quality_gate_evidence",
+            lambda dt="code": True,
+        )
+
+        # Run mark-ready — must NOT block even though no checkpoint tag exists
+        code, output = self._capture_output(
+            lambda: agent_controller._handle_mark_ready(
+                scope_override=None, json_output=False, force_mode=False
+            )
+        )
+
+        assert code == 0, (
+            f"Non-code mark-ready should pass without checkpoint: {output}"
+        )
+
     @staticmethod
     def _capture_output(func):
         """Run func capturing stdout+stderr, return (exit_code, combined_text)."""
