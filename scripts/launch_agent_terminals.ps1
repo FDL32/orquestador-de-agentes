@@ -21,6 +21,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# WT-2026-245c: Canonical ticket ID pattern for PowerShell runtime.
+# Must stay in sync with bus/ticket_id.py TICKET_ID_PATTERN.
+# Matches WP-XXXX-XXX, WT-XXXX-XXX, and three-letter-prefix tickets like CTL-XXXX-XXX.
+$script:TicketIdPattern = '(?:WP|WT|[A-Z]{3})-\d{4}-[A-Za-z0-9]+'
+
 function Resolve-DestinationRoot {
     param([Parameter(Mandatory)] [string]$MotorRoot)
 
@@ -179,10 +184,10 @@ function Get-PlanIdFromWorkPlanContent {
     param([Parameter(Mandatory)] [string]$Content)
 
     $patterns = @(
-        '\*\*Plan activo:\*\*\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+)',
-        '\*\*ID:\*\*\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+)',
-        '^\s*##\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+)\s*:',
-        '((?:WP|WT)-\d{4}-[A-Za-z0-9]+)'
+        ('\*\*Plan activo:\*\*\s*(' + $script:TicketIdPattern + ')'),
+        ('\*\*ID:\*\*\s*(' + $script:TicketIdPattern + ')'),
+        ('^\s*##\s*(' + $script:TicketIdPattern + ')\s*:'),
+        ('(' + $script:TicketIdPattern + ')')
     )
 
     foreach ($pattern in $patterns) {
@@ -201,11 +206,11 @@ function Get-PlanIdFromStateContent {
     param([Parameter(Mandatory)] [string]$Content)
 
     $patterns = @(
-        '-\s*\*\*Plan Activo:\*\*\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+)',
-        '-\s*\*\*ID:\*\*\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+)',
-        '\*\*Plan Activo:\*\*\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+)',
-        '\*\*ID:\*\*\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+)',
-        '((?:WP|WT)-\d{4}-[A-Za-z0-9]+)'
+        ('-\s*\*\*Plan Activo:\*\*\s*(' + $script:TicketIdPattern + ')'),
+        ('-\s*\*\*ID:\*\*\s*(' + $script:TicketIdPattern + ')'),
+        ('\*\*Plan Activo:\*\*\s*(' + $script:TicketIdPattern + ')'),
+        ('\*\*ID:\*\*\s*(' + $script:TicketIdPattern + ')'),
+        ('(' + $script:TicketIdPattern + ')')
     )
 
     foreach ($pattern in $patterns) {
@@ -223,7 +228,7 @@ function Get-PlanIdFromStateContent {
 function Get-OptionalPlanIdFromTurnContent {
     param([Parameter(Mandatory)] [string]$Content)
 
-    $planIdPattern = '(?:WP|WT)-\d{4}-[A-Za-z0-9]+'
+    $planIdPattern = $script:TicketIdPattern
     $pattern = "\|\s*\*\*Plan ID\*\*\s*\|\s*\*{0,2}($planIdPattern)\*{0,2}\s*\|"
     if ($Content -match $pattern) {
         return $Matches[1]
@@ -546,7 +551,7 @@ function Get-StartupAlignment {
     $turnContent = Get-Content -LiteralPath $turnPath -Raw
     $stateContent = Get-Content -LiteralPath $statePath -Raw
 
-    $planIdPattern = '(?:WP|WT)-\d{4}-[A-Za-z0-9]+'
+    $planIdPattern = $script:TicketIdPattern
     $workPlanId = Get-PlanIdFromWorkPlanContent -Content $workPlanContent
     $turnPlanId = Get-OptionalPlanIdFromTurnContent -Content $turnContent
     if ($null -eq $turnPlanId) {

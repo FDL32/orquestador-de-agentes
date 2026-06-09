@@ -215,3 +215,37 @@ def test_builder_lock_enriched_content(tmp_path):
     assert result["backend"] == "open-code"
     assert result["round"] == 1
     assert result["pid"] == 1234
+
+
+def test_launcher_ticket_id_pattern_matches_ctl() -> None:
+    """WT-2026-245c: $script:TicketIdPattern must match CTL-2026-001a.
+
+    Verifies that the PowerShell launcher canonical ticket ID pattern
+    supports three-letter prefixes like CTL, not just WP and WT."""
+    launcher_source = LAUNCHER.read_text(encoding="utf-8")
+
+    # Find the $script:TicketIdPattern definition
+    pattern_match = __import__("re").search(
+        "\\$script:TicketIdPattern\\s*=\\s*['\\x22](.+?)['\\x22]",
+        launcher_source,
+    )
+    assert pattern_match is not None, "$script:TicketIdPattern not found in launcher"
+    pattern = pattern_match.group(1)
+
+    # Test that the pattern matches CTL-2026-001a
+    import re
+
+    assert re.search(pattern, "CTL-2026-001a") is not None, (
+        "Pattern does not match CTL-2026-001a"
+    )
+
+    # Test that the pattern matches WP and WT
+    assert re.search(pattern, "WP-2026-001") is not None, (
+        "Pattern does not match WP-2026-001"
+    )
+    assert re.search(pattern, "WT-2026-042a") is not None, (
+        "Pattern does not match WT-2026-042a"
+    )
+
+    # Test that the pattern rejects invalid IDs
+    assert re.search(pattern, "INVALID") is None, "Pattern incorrectly matched INVALID"
