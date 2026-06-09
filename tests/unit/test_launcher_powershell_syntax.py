@@ -15,6 +15,8 @@ exercised by other tests.
 
 from __future__ import annotations
 
+import importlib.util
+import json
 import platform
 import shutil
 import subprocess
@@ -120,8 +122,6 @@ def test_diagnostic_script_importable() -> None:
         f"diagnostic script not found at {DIAGNOSTIC_SCRIPT}"
     )
 
-    import importlib.util
-
     spec = importlib.util.spec_from_file_location(
         "diagnose_builder_orphans", str(DIAGNOSTIC_SCRIPT)
     )
@@ -138,8 +138,6 @@ def test_diagnostic_script_importable() -> None:
 
 def test_diagnostic_bus_state_post_success() -> None:
     """WT-2026-242c: _is_bus_state_post_success must identify orphan-safe states."""
-    import importlib.util
-
     spec = importlib.util.spec_from_file_location(
         "diagnose_builder_orphans", str(DIAGNOSTIC_SCRIPT)
     )
@@ -161,8 +159,6 @@ def test_diagnostic_bus_state_post_success() -> None:
 )
 def test_diagnostic_runs_on_clean_state() -> None:
     """WT-2026-242c: diagnostic must run without error on a clean project."""
-    import importlib.util
-
     spec = importlib.util.spec_from_file_location(
         "diagnose_builder_orphans", str(DIAGNOSTIC_SCRIPT)
     )
@@ -175,3 +171,54 @@ def test_diagnostic_runs_on_clean_state() -> None:
     assert "gap_confirmed" in result
     assert "builder_processes" in result
     assert isinstance(result["builder_processes"], list)
+
+
+def test_launcher_powershell_syntax_importability(launcher_script):
+    """Verifica que el script de lanzamiento es importable."""
+    spec = importlib.util.spec_from_file_location("launcher", launcher_script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+
+def test_builder_lock_enriched_content(tmp_path):
+    """WT-2026-242c: _read_builder_lock must parse enriched identity contract.
+
+    Verifica que el lock escrito con el formato exacto del launcher
+    (ticket_id, project_root, started_at, role, backend, round, pid)
+    es correctamente parseado por _read_builder_lock, devolviendo
+    todos los campos de identidad enriquecida.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "diagnose_builder_orphans", str(DIAGNOSTIC_SCRIPT)
+    )
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    lock_dir = tmp_path / ".agent" / "runtime"
+    lock_dir.mkdir(parents=True)
+    lock_file = lock_dir / "builder_lock.txt"
+
+    lock_data = {
+        "ticket_id": "WT-2026-242c",
+        "project_root": str(tmp_path),
+        "started_at": "2026-06-09T08:00:00.0000000Z",
+        "role": "BUILDER",
+        "backend": "open-code",
+        "round": 1,
+        "pid": 1234,
+    }
+    lock_file.write_text(json.dumps(lock_data, indent=2), encoding="utf-8")
+
+    result = mod._read_builder_lock(str(tmp_path))
+
+    assert result is not None, "_read_builder_lock returned None"
+    assert result["ticket_id"] == "WT-2026-242c"
+    assert result["project_root"] == str(tmp_path)
+    assert result["started_at"] == "2026-06-09T08:00:00.0000000Z"
+    assert result["role"] == "BUILDER"
+    assert result["backend"] == "open-code"
+    assert result["round"] == 1
+    assert result["pid"] == 1234
