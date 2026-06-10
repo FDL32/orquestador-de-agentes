@@ -5756,6 +5756,8 @@ def _handle_get_closeout_skip(json_output: bool) -> int:
             "Closeout will run."
         )
     return 0
+
+
 # --validate is dispatched via direct call (not FLAG_HANDLERS) so that
 # monkeypatching agent_controller._handle_validate in tests works correctly.
 # A dict entry captures the function object at import time, bypassing patches.
