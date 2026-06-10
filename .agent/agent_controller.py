@@ -47,6 +47,7 @@ for _path in (str(_AGENT_DIR), str(_PROJECT_ROOT_DERIVED)):
 # WP-2026-122: Import project_root module for dynamic path resolution
 # Entry points set AGENT_PROJECT_ROOT env var after parsing --project-root
 # Import AFTER sys.path setup to ensure runtime/ is importable
+from bus.ticket_id import extract_all_ticket_ids  # noqa: E402
 from runtime.project_root import (  # noqa: E402
     get_agent_dir,
     get_collab_dir,
@@ -1363,8 +1364,9 @@ def _validate_closeout_commit_message(msg: str, active_id: str) -> tuple[bool, s
                 f"not a meaningful closeout message",
             )
 
-    # Extract all ticket IDs from message (e.g., WT-2026-188 or WP-2026-100)
-    ticket_ids = re.findall(r"(?:WT|WP)-\d+(?:-\d+)*", msg)
+    # Use the canonical ticket-id parser so suffixes like WT-2026-248a are
+    # preserved consistently across bus, closeout, and manager validation.
+    ticket_ids = extract_all_ticket_ids(msg)
 
     if not ticket_ids:
         return False, "Commit message does not reference any ticket ID"
