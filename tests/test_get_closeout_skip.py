@@ -33,8 +33,9 @@ def mock_event_bus():
 @pytest.fixture
 def mock_bus_available():
     """Patch BUS_AVAILABLE and event_bus in agent_controller."""
-    with patch("agent_controller.BUS_AVAILABLE", True), patch(
-        "agent_controller.event_bus", MagicMock()
+    with (
+        patch("agent_controller.BUS_AVAILABLE", True),
+        patch("agent_controller.event_bus", MagicMock()),
     ):
         yield
 
@@ -78,7 +79,6 @@ class TestGetCloseoutSkipPostSuccess:
 
     def test_skip_true_ready_for_review(self):
         """Bus state READY_FOR_REVIEW → skip=true."""
-        from bus.state_machine import TicketState
 
         mock_bus = MagicMock()
         mock_ev = MagicMock()
@@ -88,8 +88,9 @@ class TestGetCloseoutSkipPostSuccess:
         }
         mock_bus.read_events.return_value = [mock_ev]
 
-        with patch("agent_controller.BUS_AVAILABLE", True), patch(
-            "agent_controller.event_bus", mock_bus
+        with (
+            patch("agent_controller.BUS_AVAILABLE", True),
+            patch("agent_controller.event_bus", mock_bus),
         ):
             result = _invoke_handler()
         assert result["skip"] is True
@@ -97,7 +98,6 @@ class TestGetCloseoutSkipPostSuccess:
 
     def test_skip_true_ready_to_close(self):
         """Bus state READY_TO_CLOSE → skip=true."""
-        from bus.state_machine import TicketState
 
         mock_bus = MagicMock()
         mock_ev = MagicMock()
@@ -107,8 +107,9 @@ class TestGetCloseoutSkipPostSuccess:
         }
         mock_bus.read_events.return_value = [mock_ev]
 
-        with patch("agent_controller.BUS_AVAILABLE", True), patch(
-            "agent_controller.event_bus", mock_bus
+        with (
+            patch("agent_controller.BUS_AVAILABLE", True),
+            patch("agent_controller.event_bus", mock_bus),
         ):
             result = _invoke_handler()
         assert result["skip"] is True
@@ -116,7 +117,6 @@ class TestGetCloseoutSkipPostSuccess:
 
     def test_skip_true_human_gate(self):
         """Bus state HUMAN_GATE → skip=true."""
-        from bus.state_machine import TicketState
 
         mock_bus = MagicMock()
         mock_ev = MagicMock()
@@ -126,8 +126,9 @@ class TestGetCloseoutSkipPostSuccess:
         }
         mock_bus.read_events.return_value = [mock_ev]
 
-        with patch("agent_controller.BUS_AVAILABLE", True), patch(
-            "agent_controller.event_bus", mock_bus
+        with (
+            patch("agent_controller.BUS_AVAILABLE", True),
+            patch("agent_controller.event_bus", mock_bus),
         ):
             result = _invoke_handler()
         assert result["skip"] is True
@@ -135,7 +136,6 @@ class TestGetCloseoutSkipPostSuccess:
 
     def test_skip_true_completed(self):
         """Bus state COMPLETED → skip=true."""
-        from bus.state_machine import TicketState
 
         mock_bus = MagicMock()
         mock_ev = MagicMock()
@@ -145,8 +145,9 @@ class TestGetCloseoutSkipPostSuccess:
         }
         mock_bus.read_events.return_value = [mock_ev]
 
-        with patch("agent_controller.BUS_AVAILABLE", True), patch(
-            "agent_controller.event_bus", mock_bus
+        with (
+            patch("agent_controller.BUS_AVAILABLE", True),
+            patch("agent_controller.event_bus", mock_bus),
         ):
             result = _invoke_handler()
         assert result["skip"] is True
@@ -166,14 +167,19 @@ class TestGetCloseoutSkipInProgress:
 
         mock_bus = MagicMock()
         # Simulate events that derive to IN_PROGRESS
-        event_dict = {"event_type": "STATE_CHANGED", "payload": {"to_state": "IN_PROGRESS"}}
+        event_dict = {
+            "event_type": "STATE_CHANGED",
+            "payload": {"to_state": "IN_PROGRESS"},
+        }
         mock_ev = MagicMock()
         mock_ev.to_dict.return_value = event_dict
         mock_bus.read_events.return_value = [mock_ev]
 
-        with patch("agent_controller.BUS_AVAILABLE", True), patch(
-            "agent_controller.event_bus", mock_bus
-        ), patch("agent_controller._is_bus_state_post_success", return_value=False):
+        with (
+            patch("agent_controller.BUS_AVAILABLE", True),
+            patch("agent_controller.event_bus", mock_bus),
+            patch("agent_controller._is_bus_state_post_success", return_value=False),
+        ):
             result = _invoke_handler()
         assert result["skip"] is False
         assert result["reason"] == "bus_authority_not_post_success"
@@ -183,9 +189,11 @@ class TestGetCloseoutSkipInProgress:
         mock_bus = MagicMock()
         mock_bus.read_events.return_value = []
 
-        with patch("agent_controller.BUS_AVAILABLE", True), patch(
-            "agent_controller.event_bus", mock_bus
-        ), patch("agent_controller._is_bus_state_post_success", return_value=False):
+        with (
+            patch("agent_controller.BUS_AVAILABLE", True),
+            patch("agent_controller.event_bus", mock_bus),
+            patch("agent_controller._is_bus_state_post_success", return_value=False),
+        ):
             result = _invoke_handler()
         assert result["skip"] is False
 
@@ -206,7 +214,9 @@ class TestGetCloseoutSkipNoPlan:
 
     def test_skip_false_no_active_plan(self):
         """No plan_id → skip=false with reason 'no_active_plan'."""
-        with patch("agent_controller._load_mark_ready_context", return_value=("", "", "N/A")):
+        with patch(
+            "agent_controller._load_mark_ready_context", return_value=("", "", "N/A")
+        ):
             result = _invoke_handler()
         assert result["skip"] is False
         assert result["reason"] == "no_active_plan"
@@ -229,8 +239,9 @@ class TestGetCloseoutSkipJsonStructure:
             "payload": {"to_state": "READY_FOR_REVIEW"},
         }
         mock_bus.read_events.return_value = [mock_ev]
-        with patch("agent_controller.BUS_AVAILABLE", True), patch(
-            "agent_controller.event_bus", mock_bus
+        with (
+            patch("agent_controller.BUS_AVAILABLE", True),
+            patch("agent_controller.event_bus", mock_bus),
         ):
             result = _invoke_handler()
         assert "skip" in result
@@ -245,8 +256,9 @@ class TestGetCloseoutSkipJsonStructure:
             "payload": {"to_state": "READY_FOR_REVIEW"},
         }
         mock_bus.read_events.return_value = [mock_ev]
-        with patch("agent_controller.BUS_AVAILABLE", True), patch(
-            "agent_controller.event_bus", mock_bus
+        with (
+            patch("agent_controller.BUS_AVAILABLE", True),
+            patch("agent_controller.event_bus", mock_bus),
         ):
             result = _invoke_handler()
         assert "plan_id" in result
@@ -261,8 +273,9 @@ class TestGetCloseoutSkipJsonStructure:
             "payload": {"to_state": "IN_PROGRESS"},
         }
         mock_bus.read_events.return_value = [mock_ev]
-        with patch("agent_controller.BUS_AVAILABLE", True), patch(
-            "agent_controller.event_bus", mock_bus
+        with (
+            patch("agent_controller.BUS_AVAILABLE", True),
+            patch("agent_controller.event_bus", mock_bus),
         ):
             result = _invoke_handler()
         assert "bus_state" in result
@@ -276,8 +289,9 @@ class TestGetCloseoutSkipJsonStructure:
             "payload": {"to_state": "IN_PROGRESS"},
         }
         mock_bus.read_events.return_value = [mock_ev]
-        with patch("agent_controller.BUS_AVAILABLE", True), patch(
-            "agent_controller.event_bus", mock_bus
+        with (
+            patch("agent_controller.BUS_AVAILABLE", True),
+            patch("agent_controller.event_bus", mock_bus),
         ):
             result = _invoke_handler()
         assert "reason" in result
@@ -315,11 +329,10 @@ class TestLauncherParseResilience:
     def test_json_is_flat_object(self):
         """Output is a flat JSON object (no nested objects/arrays)."""
         mock_bus = MagicMock()
-        mock_bus.read_events.return_value = [
-            self._make_mock_event("READY_FOR_REVIEW")
-        ]
-        with patch("agent_controller.BUS_AVAILABLE", True), patch(
-            "agent_controller.event_bus", mock_bus
+        mock_bus.read_events.return_value = [self._make_mock_event("READY_FOR_REVIEW")]
+        with (
+            patch("agent_controller.BUS_AVAILABLE", True),
+            patch("agent_controller.event_bus", mock_bus),
         ):
             result = _invoke_handler()
         # All values should be scalar (bool, str, None)
@@ -331,11 +344,10 @@ class TestLauncherParseResilience:
     def test_json_keys_are_strings(self):
         """All JSON keys are strings (PowerShell dict access)."""
         mock_bus = MagicMock()
-        mock_bus.read_events.return_value = [
-            self._make_mock_event("READY_FOR_REVIEW")
-        ]
-        with patch("agent_controller.BUS_AVAILABLE", True), patch(
-            "agent_controller.event_bus", mock_bus
+        mock_bus.read_events.return_value = [self._make_mock_event("READY_FOR_REVIEW")]
+        with (
+            patch("agent_controller.BUS_AVAILABLE", True),
+            patch("agent_controller.event_bus", mock_bus),
         ):
             result = _invoke_handler()
         for key in result:
@@ -344,11 +356,10 @@ class TestLauncherParseResilience:
     def test_skip_value_is_boolean_not_string(self):
         """'skip' is a JSON boolean, not a string 'true'/'false'."""
         mock_bus = MagicMock()
-        mock_bus.read_events.return_value = [
-            self._make_mock_event("READY_FOR_REVIEW")
-        ]
-        with patch("agent_controller.BUS_AVAILABLE", True), patch(
-            "agent_controller.event_bus", mock_bus
+        mock_bus.read_events.return_value = [self._make_mock_event("READY_FOR_REVIEW")]
+        with (
+            patch("agent_controller.BUS_AVAILABLE", True),
+            patch("agent_controller.event_bus", mock_bus),
         ):
             result = _invoke_handler()
         assert isinstance(result["skip"], bool)
@@ -357,11 +368,10 @@ class TestLauncherParseResilience:
     def test_plan_id_is_string_not_null(self):
         """'plan_id' is always a string."""
         mock_bus = MagicMock()
-        mock_bus.read_events.return_value = [
-            self._make_mock_event("READY_FOR_REVIEW")
-        ]
-        with patch("agent_controller.BUS_AVAILABLE", True), patch(
-            "agent_controller.event_bus", mock_bus
+        mock_bus.read_events.return_value = [self._make_mock_event("READY_FOR_REVIEW")]
+        with (
+            patch("agent_controller.BUS_AVAILABLE", True),
+            patch("agent_controller.event_bus", mock_bus),
         ):
             result = _invoke_handler()
         assert isinstance(result["plan_id"], str)
