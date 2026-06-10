@@ -1720,6 +1720,12 @@ if ($LaunchBuilder) {
                 )
                 $opencodeOriginalConfigLiteral = ConvertTo-SingleQuotedLiteral $opencodeOriginalConfigB64
 
+                # WT-2026-248a: Use a Base64-decode restore path (no BOM) instead of
+                # Set-Content -Encoding UTF8 which always prepends the UTF-8 BOM.
+                # The finally-block decodes the original bytes and writes them raw so
+                # that the config file on disk is byte-identical to HEAD after each
+                # Builder run.
+
                 # --port 0 makes opencode run spawn its own local server before executing.
                 # Required since v1.15.x: without a running server the CLI fails with
                 # "InstanceRef not provided" when launched from Start-Process (no TTY).
@@ -1747,12 +1753,18 @@ if ($LaunchBuilder) {
                 }
                 $sessionFlag = if ($sessionId) { "--session $sessionId" } else { "" }
                 $opencodeRunCommand = "& $builderExeLiteral run $promptLiteral --agent builder --model $modelLiteral --dir $rootLiteral --port 0 --title $sessionTitleLiteral $sessionFlag $fileFlagsString"
+                # WT-2026-248a: restore via [IO.File]::WriteAllBytes (no BOM)
+                $bomFixScript = @"
+`$__opencodeConfigPath = $opencodeConfigPathLiteral
+`$__opencodeOriginalConfigB64 = $opencodeOriginalConfigLiteral
+`$__opencodeOriginalBytes = [Convert]::FromBase64String(`$__opencodeOriginalConfigB64)
+[IO.File]::WriteAllBytes(`$__opencodeConfigPath, `$__opencodeOriginalBytes)
+"@
                 $command = @"
 try { $opencodeRunCommand } finally {
-    `$__opencodeConfigPath = $opencodeConfigPathLiteral
-    `$__opencodeOriginalConfigB64 = $opencodeOriginalConfigLiteral
-    `$__opencodeOriginalConfig = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(`$__opencodeOriginalConfigB64))
-    Set-Content -LiteralPath `$__opencodeConfigPath -Value `$__opencodeOriginalConfig -NoNewline -Encoding UTF8
+    Write-Host '[Builder] restoring .opencode/opencode.json to HEAD (BOM-safe)...'
+    $bomFixScript
+    Write-Host '[Builder] opencode.json restored.'
 }
 "@
                 $builderRoundLiteral = ConvertTo-SingleQuotedLiteral ([string]$currentRound)
