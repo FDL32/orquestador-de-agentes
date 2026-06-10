@@ -36,6 +36,7 @@ Operating rules:
 - Keep edits surgical. No adjacent refactors, no cosmetic cleanup outside the ticket, no prompt drift.
 - Run the relevant quality gates for the touched files before closing.
 - Use `python .agent/agent_controller.py --mark-ready --json --force` only when the ticket is ready for review.
+- If `--mark-ready` says the motor checkpoint is stale or expected `HEAD`, do not force it and do not use `--scope-override`: rerun `python .agent/agent_controller.py --pre-handoff --json --force` so `checkpoint/review-<ticket>` is recreated on the latest `repo_motor` commit, then retry `--mark-ready`.
 
 Completion contract:
 - Write one short final completion message only once.

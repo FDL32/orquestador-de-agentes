@@ -3137,11 +3137,7 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
                 # else: inside_flt empty, no outside_flt -> fall through to legacy
             elif not cp_valid:
                 # No valid checkpoint in motor topology -> block with bus events
-                print(f"[ERROR] No valid motor checkpoint for {plan_id}: {cp_error}")
-                print(
-                    "Run --pre-handoff first to create "
-                    "checkpoint/review-<ticket> in repo_motor."
-                )
+                _print_motor_checkpoint_guidance(plan_id, cp_error)
                 return _fail_closeout(
                     "motor_checkpoint_missing",
                     {"cp_error": cp_error},
@@ -3457,7 +3453,8 @@ def _resolve_motor_checkpoint_files(
     WT-2026-232a: Helper for motor-aware scope gate in mark-ready.
 
     Before: motor_root is a git repo with checkpoint/review-<ticket_id> tag.
-    During: Runs git rev-parse, merge-base --is-ancestor, git log, git diff-tree.
+    During: Runs git rev-parse, merge-base --is-ancestor, verifies tag == HEAD,
+            then git log and git diff-tree.
     After: Returns (True, files_set, '') on valid checkpoint,
            (False, set(), error_msg) on failure.
     """
@@ -3465,36 +3462,32 @@ def _resolve_motor_checkpoint_files(
 
     try:
         # Step 1: Get SHA of the checkpoint tag
-        rev_proc = subprocess.run(
-            ["git", "rev-parse", f"{tag_name}^{{}}"],
-            capture_output=True,
-            text=True,
-            cwd=motor_root,
-            timeout=30,
-        )
-        if rev_proc.returncode != 0:
-            return False, set(), f"Tag {tag_name} not found in motor repo"
-
-        sha = rev_proc.stdout.strip()
-        if not sha:
-            return False, set(), f"Empty SHA from rev-parse {tag_name}"
+        sha_ok, sha_result = _resolve_git_tag_sha(motor_root, tag_name)
+        if not sha_ok:
+            return False, set(), sha_result
+        sha = sha_result
 
         # Step 2: Check SHA is ancestor of HEAD (not stale/detached)
-        ancestor_proc = subprocess.run(
-            ["git", "merge-base", "--is-ancestor", sha, "HEAD"],
-            capture_output=True,
-            text=True,
-            cwd=motor_root,
-            timeout=30,
-        )
-        if ancestor_proc.returncode != 0:
+        if not _is_git_ancestor_of_head(motor_root, sha):
             return (
                 False,
                 set(),
                 f"Tag {tag_name}@{sha[:8]} is not an ancestor of HEAD",
             )
 
-        # Step 3: Verify checkpoint commit message contains ticket_id
+        # Step 3: Require the checkpoint tag to anchor the exact handoff HEAD.
+        head_ok, head_result = _resolve_git_head_sha(motor_root)
+        if not head_ok:
+            return False, set(), head_result
+        head_sha = head_result
+        if sha != head_sha:
+            return (
+                False,
+                set(),
+                f"Tag {tag_name}@{sha[:8]} is stale; expected HEAD {head_sha[:8]}",
+            )
+
+        # Step 4: Verify checkpoint commit message contains ticket_id
         log_proc = subprocess.run(
             ["git", "log", "-1", "--format=%s", sha],
             capture_output=True,
@@ -3578,6 +3571,72 @@ def _files_from_commits(
             line.strip() for line in diff_proc.stdout.splitlines() if line.strip()
         )
     return files, ""
+
+
+def _resolve_git_head_sha(git_root: Path) -> tuple[bool, str]:
+    """Return HEAD SHA for git_root or a diagnostic error string."""
+    head_proc = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        cwd=git_root,
+        timeout=30,
+    )
+    if head_proc.returncode != 0:
+        return False, "Unable to resolve HEAD in motor repo"
+
+    head_sha = head_proc.stdout.strip()
+    if not head_sha:
+        return False, "Empty SHA from rev-parse HEAD"
+    return True, head_sha
+
+
+def _print_motor_checkpoint_guidance(plan_id: str, cp_error: str) -> None:
+    """Print Builder-facing recovery guidance for motor checkpoint failures."""
+    print(f"[ERROR] No valid motor checkpoint for {plan_id}: {cp_error}")
+    if "stale; expected HEAD" in cp_error:
+        print(
+            "Checkpoint M3 exists but is outdated. Run `--pre-handoff` again after "
+            "the latest repo_motor commit so checkpoint/review-<ticket> is recreated "
+            "on the current HEAD."
+        )
+        print(
+            "Do not use --scope-override for this case: the handoff anchor itself "
+            "must be refreshed."
+        )
+        return
+
+    print("Run --pre-handoff first to create checkpoint/review-<ticket> in repo_motor.")
+
+
+def _resolve_git_tag_sha(git_root: Path, tag_name: str) -> tuple[bool, str]:
+    """Return the peeled commit SHA for tag_name or a diagnostic error string."""
+    rev_proc = subprocess.run(
+        ["git", "rev-parse", f"{tag_name}^{{}}"],
+        capture_output=True,
+        text=True,
+        cwd=git_root,
+        timeout=30,
+    )
+    if rev_proc.returncode != 0:
+        return False, f"Tag {tag_name} not found in motor repo"
+
+    sha = rev_proc.stdout.strip()
+    if not sha:
+        return False, f"Empty SHA from rev-parse {tag_name}"
+    return True, sha
+
+
+def _is_git_ancestor_of_head(git_root: Path, sha: str) -> bool:
+    """Return True when sha is an ancestor of HEAD in git_root."""
+    ancestor_proc = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", sha, "HEAD"],
+        capture_output=True,
+        text=True,
+        cwd=git_root,
+        timeout=30,
+    )
+    return ancestor_proc.returncode == 0
 
 
 def _resolve_launcher_roots(project_root: Path | None) -> dict[str, str]:
