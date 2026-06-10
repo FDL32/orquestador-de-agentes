@@ -5677,6 +5677,85 @@ FLAG_HANDLERS = {
     "--manager-approve": _handle_manager_approve,
     "--request-changes": _handle_request_changes,
 }
+
+
+def _handle_get_closeout_skip(json_output: bool) -> int:
+    """WT-2026-246b: Decide whether the launcher should skip closeout.
+
+    Called by the launcher's Add-BuilderCloseout finally-block to query
+    state authority BEFORE running --pre-handoff / --mark-ready.
+
+    Returns 0 and prints JSON with {"skip": true/false}:
+    - skip=true  → ticket is in READY_FOR_REVIEW, READY_TO_CLOSE, HUMAN_GATE
+                   or COMPLETED; closeout is a no-op and should be skipped.
+    - skip=false → ticket is still IN_PROGRESS (or unknown); closeout must
+                   run so the supervisor can recover from a stuck Builder.
+
+    Authority: bus-derived state is the ONLY source for skip=true.
+    When the bus is unavailable or has no events for the ticket,
+    the function returns skip=false (fail-open). No markdown-based
+    fallback is used — execution_log.md / STATE.md are projections
+    derived from the bus, not authority.
+    """
+    _plan_content, _log_content, plan_id = _load_mark_ready_context()
+    if not plan_id or plan_id == "N/A":
+        if json_output:
+            print(json.dumps({"skip": False, "reason": "no_active_plan"}, indent=2))
+        else:
+            print("[WARN] No active plan; closeout will run.")
+        return 0
+
+    # Authority: bus-derived state only
+    bus_state = None
+    if BUS_AVAILABLE and event_bus:
+        from bus.state_machine import StateMachine
+
+        events = event_bus.read_events(ticket_id=plan_id)
+        if events:
+            bus_state = StateMachine.derive_state_from_events(
+                [e.to_dict() for e in events]
+            )
+
+    # Only skip when bus explicitly says post-success
+    if _is_bus_state_post_success(bus_state):
+        if json_output:
+            print(
+                json.dumps(
+                    {
+                        "skip": True,
+                        "plan_id": plan_id,
+                        "bus_state": bus_state.value,
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            print(
+                f"[INFO] Ticket {plan_id} bus state is {bus_state.value}. "
+                "Closeout skipped."
+            )
+        return 0
+
+    # Fail-open: bus unavailable, no events, or not post-success → do not skip
+    if json_output:
+        print(
+            json.dumps(
+                {
+                    "skip": False,
+                    "plan_id": plan_id,
+                    "bus_state": bus_state.value if bus_state else None,
+                    "reason": "bus_authority_not_post_success",
+                },
+                indent=2,
+            )
+        )
+    else:
+        print(
+            f"[INFO] Ticket {plan_id} bus state is not post-success "
+            f"({bus_state.value if bus_state else 'unknown'}). "
+            "Closeout will run."
+        )
+    return 0
 # --validate is dispatched via direct call (not FLAG_HANDLERS) so that
 # monkeypatching agent_controller._handle_validate in tests works correctly.
 # A dict entry captures the function object at import time, bypassing patches.
@@ -5706,6 +5785,7 @@ Action flags:
   --recover                       Recover session state.
   --archive                       Archive old notifications.
   --resolve-launcher-roots        Print resolved repo_motor/destino/workspace roots.
+  --get-closeout-skip             Query state authority for closeout skip decision.
 
 Control flags:
   --project-root <path>       Destination project root.
@@ -5824,6 +5904,10 @@ def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
     # Check for --resolve-launcher-roots (WT-2026-232a)
     if "--resolve-launcher-roots" in sys.argv:
         return _handle_resolve_launcher_roots(json_output)
+
+    # Check for --get-closeout-skip (WT-2026-246b)
+    if "--get-closeout-skip" in sys.argv:
+        return _handle_get_closeout_skip(json_output)
 
     # Check for --mark-ready
     if "--mark-ready" in sys.argv:
