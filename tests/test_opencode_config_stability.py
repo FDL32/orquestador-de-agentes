@@ -105,9 +105,7 @@ class TestBomHappyPath:
         _exit_code, _stdout, _stderr = _pre_handoff()
         # pre-handoff puede fallar si no hay ticket activo, pero el diff debe ser cero
         diff = _git_diff_head_path(".opencode/opencode.json")
-        assert diff == "", (
-            f"Expected empty diff after pre-handoff, but got:\n{diff}"
-        )
+        assert diff == "", f"Expected empty diff after pre-handoff, but got:\n{diff}"
 
 
 # ============================================================================
@@ -173,7 +171,9 @@ class TestPreHandoffBomAutocorrect:
 
         # Archivo debe estar restaurado a HEAD
         actual = _OPENCODE_PATH.read_bytes()
-        assert actual == self._head_backup, "File should be restored to HEAD after BOM autocorrect"
+        assert actual == self._head_backup, (
+            "File should be restored to HEAD after BOM autocorrect"
+        )
 
         # Diff debe ser vacio
         diff = _git_diff_head_path(".opencode/opencode.json")
