@@ -415,11 +415,6 @@ class TestRunManagerReviewCycleEvidenceGate:
         )
         monkeypatch.setattr(
             review_bridge,
-            "_detect_json_format_support",
-            lambda: False,
-        )
-        monkeypatch.setattr(
-            review_bridge,
             "_get_manager_model",
             lambda: None,
         )
@@ -720,7 +715,6 @@ class TestReviewCycleEvidenceGateIntegration:
             "_run_opencode_review",
             lambda **kw: ("DECISION: APPROVE\n", "", 0),
         )
-        monkeypatch.setattr(review_bridge, "_detect_json_format_support", lambda: False)
         monkeypatch.setattr(review_bridge, "_get_manager_model", lambda: None)
         monkeypatch.setattr(
             review_bridge,

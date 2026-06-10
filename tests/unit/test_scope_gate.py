@@ -283,7 +283,9 @@ class TestHandleMarkReadyScopeGate:
         mock_archive.assert_not_called()
         mock_sync_targets.assert_not_called()
         mock_reset_breaker.assert_not_called()
-        mock_release_lock.assert_not_called()
+        # mark-ready failure is terminal for this Builder round, so the
+        # controller must release the lock to allow supervisor recovery.
+        mock_release_lock.assert_called_once_with("WP-2026-142", expected_round=None)
 
 
 class TestScopeGateHints:
