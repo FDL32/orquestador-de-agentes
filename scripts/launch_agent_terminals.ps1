@@ -1374,8 +1374,44 @@ function Add-BuilderCloseout {
         [Parameter(Mandatory)] [string]$PreHandoffCommand,
         [Parameter(Mandatory)] [string]$MarkReadyCommand
     )
+    # WT-2026-246b: Consult state authority BEFORE closeout to avoid a second
+    # late closeout when the runner already completed a successful handoff.
+    # If the ticket is already in READY_FOR_REVIEW, READY_TO_CLOSE, HUMAN_GATE
+    # or COMPLETED the finally-block skips --pre-handoff and --mark-ready
+    # entirely, preventing duplicate BUILDER_EXIT / STATE_CHANGED events and
+    # the STALE_BUILDER_ORPHAN noise the supervisor would otherwise emit.
+    # If the state-query CLI fails, returns empty output, or produces
+    # unparseable data the launcher FALLS BACK to executing closeout normally
+    # (fail-open: closeout runs rather than being silently skipped).
+    $stateCheckScript = @"
+`$_stateOutput = `$null
+`$_stateExit = 0
+try {
+    `$_stateOutput = (python .agent/agent_controller.py --get-closeout-skip --json --project-root $ProjectRoot 2>&1 | Out-String).Trim()
+    `$_stateExit = `$LASTEXITCODE
+} catch {
+    `$_stateExit = 1
+}
+`$_skipCloseout = `$false
+if (`$_stateExit -eq 0 -and -not [string]::IsNullOrWhiteSpace(`$_stateOutput)) {
+    try {
+        `$_stateJson = `$_stateOutput | ConvertFrom-Json
+        if (`$_stateJson.PSObject.Properties.Name -contains 'skip') {
+            `$_skipCloseout = [bool]`$_stateJson.skip
+        }
+    } catch {
+        # Unparseable JSON: fall back to executing closeout
+        `$_skipCloseout = `$false
+    }
+}
+if (`$_skipCloseout) {
+    Write-Host '[Builder] closeout skipped: ticket already in terminal state'
+}
+"@
+
     # Wrap the Builder runner in try/finally so --pre-handoff and --mark-ready
-    # execute even when the runner crashes or is killed (e.g. spawn-setup-refresh).
+    # execute even when the runner crashes or is killed (e.g. spawn-setup-refresh),
+    # UNLESS the state check indicates the ticket is already in a terminal state.
     # The evidence gate in --mark-ready is the safety net: if there is no real
     # implementation it rejects the call and the supervisor requeues normally.
     # The Builder terminal uses the default ErrorActionPreference=Continue, so
@@ -1385,15 +1421,18 @@ function Add-BuilderCloseout {
     return @"
 try { $RunnerCommand } finally {
     Write-Host '[Builder] runner exited - starting closeout'
-    Write-Host '[Builder] pre-handoff starting...'
-    $PreHandoffCommand
-    `$_ph = `$LASTEXITCODE
-    if (`$_ph -eq 0) { Write-Host '[Builder] pre-handoff OK' } else { Write-Host ('[Builder] pre-handoff FAILED code ' + `$_ph) }
-    Write-Host '[Builder] mark-ready starting...'
-    $MarkReadyCommand
-    `$_mr = `$LASTEXITCODE
-    if (`$_mr -eq 0) { Write-Host '[Builder] mark-ready OK - ticket submitted for review' } else { Write-Host ('[Builder] mark-ready FAILED code ' + `$_mr + ' - HANDOFF_BLOCKED/BUILDER_EXIT emitted for supervisor recovery') }
-    if (`$_ph -eq 0 -and `$_mr -eq 0) { Write-Host '[Builder] closeout done' } else { Write-Host '[Builder] closeout completed with errors - check output above' }
+    $stateCheckScript
+    if (-not `$_skipCloseout) {
+        Write-Host '[Builder] pre-handoff starting...'
+        $PreHandoffCommand
+        `$_ph = `$LASTEXITCODE
+        if (`$_ph -eq 0) { Write-Host '[Builder] pre-handoff OK' } else { Write-Host ('[Builder] pre-handoff FAILED code ' + `$_ph) }
+        Write-Host '[Builder] mark-ready starting...'
+        $MarkReadyCommand
+        `$_mr = `$LASTEXITCODE
+        if (`$_mr -eq 0) { Write-Host '[Builder] mark-ready OK - ticket submitted for review' } else { Write-Host ('[Builder] mark-ready FAILED code ' + `$_mr + ' - HANDOFF_BLOCKED/BUILDER_EXIT emitted for supervisor recovery') }
+        if (`$_ph -eq 0 -and `$_mr -eq 0) { Write-Host '[Builder] closeout done' } else { Write-Host '[Builder] closeout completed with errors - check output above' }
+    }
 }
 "@
 }
