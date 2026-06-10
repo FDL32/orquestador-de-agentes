@@ -270,11 +270,19 @@ def test_fallback_no_crash_prepush_without_link(tmp_path):
 
 
 def test_regression_cwd_project_root_breaks_check(tmp_path, monkeypatch):
-    """Reverting _git_diff_stat to cwd=project_root makes check fail.
+    """Reverting motor_root resolution makes check_review_packet_diff_empty return True.
 
-    This is the regression test: without the motor_root fix,
-    check_review_packet_diff_empty returns True even when motor has commits.
+    This regression test verifies that when evidence resolution loses motor
+    context (simulating reverting to project_root-only git ops), the review
+    packet is wrongly reported as empty.
+
+    The current code uses resolve_evidence which runs git on both motor and
+    project roots. To simulate the regression, we mock resolve_evidence to
+    return only destination files (no motor evidence), which is what would
+    happen if git operations ran on project_root only.
     """
+    import bus.evidence as ev
+
     workspace = tmp_path / "workspace"
     init_git_repo(workspace)
 
@@ -285,62 +293,22 @@ def test_regression_cwd_project_root_breaks_check(tmp_path, monkeypatch):
 
     bridge, _, _ = make_bridge(workspace)
 
-    # Regression: monkeypatch _git_diff_stat to use project_root
-    def broken_git_diff():
-        """Replica de _git_diff_stat con cwd=project_root (como antes del fix)."""
-        import shutil
-        import subprocess as sp
+    # Save the real resolve_evidence
+    _real_resolve = ev.resolve_evidence
 
-        git_bin = shutil.which("git") or "git"
-        try:
-            base = bridge._resolve_review_base(git_bin, ticket_id=None)[0]
-            result = sp.run(
-                [git_bin, "diff", "--stat", f"{base}..HEAD"],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                cwd=workspace,  # <-- regression: project_root en vez de motor_root
-                timeout=10,
-            )
-            return result.stdout or "[git diff --stat empty]"
-        except Exception as e:
-            return f"[Error fetching git diff --stat: {e}]"
+    # Regression: resolve_evidence that ignores motor_root
+    # (simulates what would happen if git ops only ran on project_root)
+    def broken_evidence(motor_root, project_root, ticket_id=None):
+        """resolve_evidence that ignores motor_root -- simulates regression."""
+        # Only use project_root, ignoring motor_root
+        return _real_resolve(None, project_root, ticket_id)
 
-    monkeypatch.setattr(bridge, "_git_diff_stat", broken_git_diff)
-
-    # También parcheamos _git_provenance para que use project_root
-    def broken_provenance():
-        import shutil
-        import subprocess as sp
-
-        git_bin = shutil.which("git") or "git"
-        try:
-            base = bridge._resolve_review_base(git_bin, ticket_id=None)[0]
-            result = sp.run(
-                [
-                    git_bin,
-                    "log",
-                    f"{base}..HEAD",
-                    "--format=%H %ai %an",
-                    "--no-merges",
-                    "-1",
-                ],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                cwd=workspace,  # <-- regression
-                timeout=10,
-            )
-            return result.stdout.strip() or "[no commits found]"
-        except Exception:
-            return "[no commits found]"
-
-    monkeypatch.setattr(bridge, "_git_provenance", broken_provenance)
+    monkeypatch.setattr("bus.evidence.resolve_evidence", broken_evidence)
 
     # Con la regresion, el check deberia devolver True (packet empty)
     result = bridge.check_review_packet_diff_empty(ticket_id="WT-2026-215")
     assert result is True, (
-        "Regression: with project_root instead of motor_root, "
+        "Regression: without motor_root evidence, "
         "check_review_packet_diff_empty should return True (wrongly empty)"
     )
 
