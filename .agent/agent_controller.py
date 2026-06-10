@@ -4002,6 +4002,38 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
             )
         return 0
 
+    # --- WT-2026-248a: BOM autocorrection for .opencode/opencode.json ---
+    # The launcher finally-block may write the config via Set-Content -Encoding
+    # UTF8 which prepends the UTF-8 BOM (EF BB BF).  Detect the exact residual:
+    # bytes_actuales == BOM_UTF8 + bytes_head -- autocorrect if so, BLOCK otherwise.
+    _opencode_path = _MOTOR_ROOT / ".opencode" / "opencode.json"
+    if _opencode_path.exists():
+        _bom_bytes = b"\xef\xbb\xbf"
+        try:
+            _head_proc = subprocess.run(
+                ["git", "show", "HEAD:.opencode/opencode.json"],
+                capture_output=True,
+                cwd=motor_root,
+                timeout=10,
+            )
+            if _head_proc.returncode == 0:
+                _head_bytes = _head_proc.stdout
+                _current_bytes = _opencode_path.read_bytes()
+                _expected_bom_drift = _bom_bytes + _head_bytes
+                if _current_bytes == _expected_bom_drift:
+                    # Autocorrect: restore exact HEAD bytes
+                    _opencode_path.write_bytes(_head_bytes)
+                    print(
+                        "[OK] Pre-handoff BOM autocorrected: "
+                        ".opencode/opencode.json restored to HEAD (removed BOM drift).",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                # else: no autocorrection — fall through to normal logic
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+    # --- end WT-2026-248a BOM autocorrection ---
+
     # --- Commit-or-block for uncommitted productive motor changes ---
     # WT-2026-231a: Replace the simple barrier from WT-2026-228a with a
     # commit-or-block decision. If all motor productive changes are within
