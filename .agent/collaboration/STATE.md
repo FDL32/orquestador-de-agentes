@@ -1,6 +1,2 @@
-# State - Seed
-
-Estado actual: READY_TO_START
-ACTIVE_TICKET: none
-
-Este archivo es una superficie seed del motor. Los tickets reales viven en el workspace destino.
+ACTIVE_TICKET: WT-2026-236a
+STATUS: READY_FOR_REVIEW
