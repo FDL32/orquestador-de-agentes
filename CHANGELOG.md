@@ -1,3 +1,22 @@
+# 2026-06-10 - Session close: WT-2026-245c/246a/246b/247a/248a, BOM drift fix, session learnings
+
+### Added
+- `scripts/launch_agent_terminals.ps1`: el bloque `finally` del launcher restaura byte-exactamente `.opencode/opencode.json` tras la inyección de permisos runtime, evitando BOM drift (WT-2026-248a).
+- `tests/test_opencode_config_stability.py`: verifica que `git diff -- .opencode/opencode.json` queda vacío tras el ciclo de restauración y guard de BOM (WT-2026-248a).
+- `tests/test_get_closeout_skip.py`: tests para `--get-closeout-skip` del launcher (WT-2026-246b).
+- `tests/test_mark_ready_motor_scope.py`: tests de scope gate para cambios en repo_motor con working tree sucio (WT-2026-247a).
+- `.agent/runtime/memory/UPSTREAM_LEARNINGS.md`: nuevo archivo con 4 learnings de sesión (ticket-id-parser, PS5.1 BOM, fix vs follow-up separation, prompt-skill drift).
+
+### Changed
+- `.agent/agent_controller.py`: `_release_builder_lock` se llama incluso en camino de fallo terminal de `--mark-ready` (contrato confirmado). `--manager-approve` usa `extract_all_ticket_ids()` de `bus/ticket_id.py` en vez de regex inline.
+- `scripts/launch_agent_terminals.ps1`: `Get-CloseoutSkip` derivado del bus, no de proyección markdown (WT-2026-246b, contrato corregido).
+- `.session/repomix_local.xml` y `.session/repomix_remote.xml` añadidos a exclusiones de scope gate y pre-handoff.
+
+### Fixed
+- `.opencode/opencode.json`: restauración byte-exacta para evitar BOM U+FEFF añadido por PowerShell 5.1 `Set-Content -Encoding UTF8` (WT-2026-248a).
+- `.agent/agent_controller.py`: `--manager-approve` deja de truncar sufijos alfanuméricos de ticket al usar el parser canónico de `bus/ticket_id.py` en vez de regex inline.
+- `tests/test_mark_ready_motor_scope.py`: alineado con contrato runtime actual (`_release_builder_lock` en camino de fallo).
+
 # 2026-06-09 - Portability cleanup for OpenCode config and destination-facing docs
 
 ### Changed
