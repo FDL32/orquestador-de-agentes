@@ -3874,7 +3874,11 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
             bus_state=bus_state,
         )
         if was_orphan:
-            print(f"[WARN] {msg}", file=sys.stderr, flush=True)
+            # WT-2026-249a: returncode governs; this is a non-fatal warning,
+            # not an error. stdout keeps it visible for the operator; stderr
+            # stays clean so consumers (email, CI, wrappers) don't treat a
+            # healthy stale-shell exit as a failure.
+            print(f"[WARN] {msg}", flush=True)
             # Return 0 so the stale shell exits cleanly without polluting the bus.
             return 0
         # Ticket is still IN_PROGRESS — maintain existing blocking behavior.
@@ -5617,10 +5621,14 @@ def _handle_session_close(  # noqa: C901 - delegation handler with flag building
         result = subprocess.run(
             cmd, capture_output=True, text=True, cwd=PROJECT_ROOT, timeout=600
         )
-        # Print stdout/stderr from the orchestrator
+        # WT-2026-249a: returncode governs stderr propagation.
+        # Print stdout from the subprocess unconditionally.
+        # Propagate stderr only when returncode indicates failure,
+        # so warnings in stderr with returncode 0 do not contaminate
+        # the parent's error stream (email, CI, wrappers).
         if result.stdout:
             print(result.stdout, end="")
-        if result.stderr:
+        if result.returncode != 0 and result.stderr:
             print(result.stderr, file=sys.stderr, end="")
 
         if result.returncode != 0:

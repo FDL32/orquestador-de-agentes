@@ -2877,3 +2877,188 @@ class TestModelBCheckpointTopology:
             sys.stderr = old_stderr
         combined = captured_out.getvalue() + captured_err.getvalue()
         return code, combined
+
+    @staticmethod
+    def _capture_streams(func):
+        """Run func capturing stdout+stderr separately, return (exit_code, out_text, err_text)."""
+        from io import StringIO
+
+        captured_out = StringIO()
+        captured_err = StringIO()
+        old_stdout = sys.stdout
+        old_stderr = sys.stderr
+        sys.stdout = captured_out
+        sys.stderr = captured_err
+        try:
+            code = func()
+        finally:
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
+        return code, captured_out.getvalue(), captured_err.getvalue()
+
+
+# =============================================================================
+# WT-2026-249a: CLI contract hardening — stderr vs returncode
+# =============================================================================
+
+
+class TestCliContractStaleOrphan:
+    """WT-2026-249a: stale_builder_orphan must not write to stderr when exit 0."""
+
+    _PLAN_ID = "WT-2026-249a"
+    _PLAN_CONTENT = f"""# Work Plan
+
+## Metadata
+- **ID:** {_PLAN_ID}
+- **Estado:** APPROVED
+
+## Files Likely Touched
+- .agent/agent_controller.py
+"""
+
+    def _setup(self, monkeypatch):
+        """Minimal mocks: post-success bus state, active round mismatch."""
+        monkeypatch.setattr(
+            agent_controller,
+            "read_file",
+            lambda x: self._PLAN_CONTENT if "work_plan" in str(x).lower() else "",
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "_ensure_active_builder_round",
+            lambda plan_id: (
+                False,
+                1,
+                "stale Builder round 1; active round is 2",
+            ),
+        )
+        monkeypatch.setattr(agent_controller, "BUS_AVAILABLE", True)
+        emit_mock = MagicMock()
+        monkeypatch.setattr(agent_controller, "event_bus", MagicMock(emit=emit_mock))
+        # Simulate a post-success bus state (ticket already READY_FOR_REVIEW)
+        mock_event = MagicMock()
+        mock_event.to_dict.return_value = {
+            "event_type": "STATE_CHANGED",
+            "payload": {"to_state": "READY_FOR_REVIEW"},
+        }
+        agent_controller.event_bus.read_events.return_value = [mock_event]
+        return emit_mock
+
+    def test_stale_orphan_exit_0_stderr_empty(self, monkeypatch):
+        """stale_builder_orphan exits 0 with empty stderr (WT-2026-249a)."""
+        emit_mock = self._setup(monkeypatch)
+
+        code, out_text, err_text = TestModelBCheckpointTopology._capture_streams(
+            lambda: agent_controller._handle_pre_handoff(json_output=False)
+        )
+
+        assert code == 0, f"Expected 0, got {code}"
+        assert err_text == "", f"stderr must be empty, got: {err_text!r}"
+        # Warning should be on stdout instead
+        assert "[WARN]" in out_text, f"Warning must appear on stdout, got: {out_text!r}"
+        # STALE_BUILDER_ORPHAN event must still be emitted
+        orphan_events = [
+            call
+            for call in emit_mock.call_args_list
+            if call.kwargs.get("event_type") == "STALE_BUILDER_ORPHAN"
+        ]
+        assert orphan_events, "Must emit STALE_BUILDER_ORPHAN event"
+
+    def test_stale_orphan_no_handoff_blocked_event(self, monkeypatch):
+        """stale_builder_orphan must NOT emit HANDOFF_BLOCKED when returning 0."""
+        emit_mock = self._setup(monkeypatch)
+
+        code, _out_text, _err_text = TestModelBCheckpointTopology._capture_streams(
+            lambda: agent_controller._handle_pre_handoff(json_output=False)
+        )
+
+        assert code == 0, f"Expected 0, got {code}"
+        handoff_events = [
+            call
+            for call in emit_mock.call_args_list
+            if call.kwargs.get("event_type") == "HANDOFF_BLOCKED"
+        ]
+        assert not handoff_events, "Must NOT emit HANDOFF_BLOCKED for orphan"
+
+
+class TestCliContractSessionClose:
+    """WT-2026-249a: session close wrapper must classify stderr by returncode."""
+
+    _TICKET = "WT-2026-249a"
+
+    def _setup(self, monkeypatch, tmp_path, subprocess_result):
+        """Set up mocks for _handle_session_close with a controlled subprocess result."""
+        monkeypatch.setattr(
+            agent_controller,
+            "read_file",
+            lambda path: (
+                "# State\nEstado actual: IN_PROGRESS\n"
+                if path == agent_controller.STATE_FILE.resolve()
+                else ""
+            ),
+        )
+        monkeypatch.setattr(agent_controller, "write_file", lambda p, c: None)
+        # Create scripts/session_closeout.py
+        script_dir = tmp_path / "scripts"
+        script_dir.mkdir()
+        (script_dir / "session_closeout.py").write_text("")
+        monkeypatch.setattr(agent_controller, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(
+            agent_controller.subprocess,
+            "run",
+            MagicMock(return_value=subprocess_result),
+        )
+
+    def test_session_close_success_no_stderr_propagation(self, monkeypatch, tmp_path):
+        """Session close with returncode 0 must NOT propagate stderr."""
+        mock_result = MagicMock(
+            returncode=0,
+            stdout="[OK] Session close completed\n",
+            stderr="[WARN] Non-fatal orphan file detected\n",
+        )
+        self._setup(monkeypatch, tmp_path, mock_result)
+
+        code, out_text, err_text = TestModelBCheckpointTopology._capture_streams(
+            lambda: agent_controller._handle_session_close(
+                dry_run=False,
+                skip_slow=False,
+                ticket=None,
+                tickets=None,
+                force_mode=False,
+                json_output=False,
+            )
+        )
+
+        assert code == 0, f"Expected 0, got {code}"
+        # stdout should contain the subprocess output
+        assert "[OK] Session close completed" in out_text
+        # stderr must be empty despite subprocess having stderr warnings
+        assert err_text == "", (
+            f"stderr must be empty for returncode==0, got: {err_text!r}"
+        )
+
+    def test_session_close_failure_propagates_stderr(self, monkeypatch, tmp_path):
+        """Session close with returncode != 0 must propagate stderr."""
+        mock_result = MagicMock(
+            returncode=1,
+            stdout="",
+            stderr="[ERROR] Closeout script failed: timeout\n",
+        )
+        self._setup(monkeypatch, tmp_path, mock_result)
+
+        code, _out_text, err_text = TestModelBCheckpointTopology._capture_streams(
+            lambda: agent_controller._handle_session_close(
+                dry_run=False,
+                skip_slow=False,
+                ticket=None,
+                tickets=None,
+                force_mode=False,
+                json_output=False,
+            )
+        )
+
+        assert code == 1, f"Expected 1, got {code}"
+        # stderr must contain the subprocess error
+        assert "[ERROR] Closeout script failed: timeout" in err_text, (
+            f"stderr must contain subprocess error, got: {err_text!r}"
+        )
