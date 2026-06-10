@@ -256,6 +256,27 @@ class TestMotorNoEvidence:
         )
         assert result == 1, f"Expected 1 (blocked), got {result}"
 
+    def test_stale_ancestor_checkpoint_blocks(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Ancestor checkpoints must block when they do not anchor the current HEAD."""
+        import agent_controller
+
+        motor, dest, wp, exec_log, plan_content = _setup_multi_repo(tmp_path)
+        _create_checkpoint(motor, ".agent/agent_controller.py", "WT-2026-232a")
+        _create_file(motor, "README.md", "post-checkpoint change")
+        _git(["add", "."], cwd=motor)
+        _git(["commit", "-m", "feat: commit after checkpoint"], cwd=motor)
+
+        _monkeypatch_mark_ready(
+            monkeypatch, agent_controller, motor, dest, wp, exec_log, plan_content
+        )
+
+        result = agent_controller._handle_mark_ready(
+            scope_override=None, json_output=True, force_mode=False
+        )
+        assert result == 1, f"Expected 1 (blocked), got {result}"
+
 
 # ---------------------------------------------------------------------------
 # TP-04: FLT resolved against motor, not destination
@@ -350,6 +371,14 @@ class TestRegressionPreHandoff:
         monkeypatch.setattr(agent_controller, "WORK_PLAN", wp)
         monkeypatch.setattr(agent_controller, "EXEC_LOG", exec_log)
         monkeypatch.setattr(agent_controller, "_MOTOR_ROOT", motor)
+        # Bypass stale-Builder-shell guard so test works regardless of
+        # AGENT_BUILDER_TICKET in the calling shell (same pattern as
+        # _monkeypatch_mark_ready uses for mark-ready tests).
+        monkeypatch.setattr(
+            agent_controller,
+            "_ensure_active_builder_round",
+            lambda *a, **kw: (True, None, None),
+        )
 
         result = agent_controller._handle_pre_handoff(json_output=True)
 
@@ -443,6 +472,27 @@ class TestResolveMotorCheckpointFiles:
         )
         assert not valid
         assert "not an ancestor" in error
+
+    def test_ancestor_but_not_head_returns_invalid(self, tmp_path: Path) -> None:
+        """Tag on an older ancestor commit must fail; handoff requires tag == HEAD."""
+        import agent_controller
+
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+
+        _create_checkpoint(motor, "src/base.py", "TICKET-1")
+        _create_file(motor, "src/newer.py", "newer")
+        _git(["add", "."], cwd=motor)
+        _git(
+            ["commit", "-m", "feat(TICKET-1): newer commit after checkpoint"],
+            cwd=motor,
+        )
+
+        valid, _files, error = agent_controller._resolve_motor_checkpoint_files(
+            motor, "TICKET-1"
+        )
+        assert not valid
+        assert "stale" in error
 
 
 class TestFallbackCheckpointMotor:

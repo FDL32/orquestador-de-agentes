@@ -312,6 +312,8 @@ python .agent/agent_controller.py --mark-ready --project-root <workspace> --json
 
 **Este paso es obligatorio.** Sin el `--mark-ready`, el bus no recibe `BUILDER_EXIT` y el Manager nunca revisa.
 
+Si `--mark-ready` falla porque `checkpoint/review-<ticket>` esta obsoleto (`stale`, `expected HEAD`), no uses `--scope-override`: ejecuta `python .agent/agent_controller.py --pre-handoff --project-root <workspace> --json --force` otra vez para recrear M3 sobre el HEAD actual de `repo_motor` y despues reintenta `--mark-ready`.
+
 
 
 ## Escalación

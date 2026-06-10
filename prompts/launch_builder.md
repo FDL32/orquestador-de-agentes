@@ -129,6 +129,8 @@ Antes de `mark-ready`:
 - commitea en `repo_motor`;
 - usa `{{TICKET_ID}}` en el mensaje del commit;
 - verifica que el diff revisable corresponde al contrato.
+- si hay herencia operativa de un ticket anterior en `.agent/collaboration/` del `repo_motor`, limpiala primero en un commit previo separado para que no contamine el scope gate.
+- si `mark-ready` dice que `checkpoint/review-<ticket>` esta `stale` o que esperaba `HEAD`, no uses override: relanza `--pre-handoff` para recrear M3 en el commit actual y luego repite `mark-ready`.
 
 Handoff:
 
@@ -142,6 +144,8 @@ Si el scope gate pide override porque la entrega productiva vive en
 ```powershell
 python .agent/agent_controller.py --mark-ready --project-root <repo_destino> --scope-override "<razon con commit del repo_motor>"
 ```
+
+Si `mark-ready` dice que `checkpoint/review-<ticket>` esta `stale` o que esperaba `HEAD`, no uses override: relanza `python .agent/agent_controller.py --pre-handoff --project-root <repo_destino> --json --force` para recrear M3 en el commit actual y luego repite `mark-ready`.
 
 No hagas rondas vacias: cada nuevo `mark-ready` despues de un rechazo debe
 aportar diff, commit o evidencia nueva.
