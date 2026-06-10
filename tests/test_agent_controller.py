@@ -1218,6 +1218,15 @@ class TestCloseoutCommitValidation:
         )
         assert valid, f"Expected valid, got: {reason}"
 
+    def test_manager_approve_accepts_commit_message_with_alphanumeric_suffix(self):
+        """Canonical parser must preserve ticket suffixes like WT-2026-248a."""
+        active_id = "WT-2026-248a"
+        valid, reason = agent_controller._validate_closeout_commit_message(
+            "fix(WT-2026-248a): preserve canonical suffix in manager approve",
+            active_id,
+        )
+        assert valid, f"Expected valid suffix-preserving match, got: {reason}"
+
 
 class TestManagerApproveStateCleanup:
     """WT-2026-188: --manager-approve clears auxiliary state files."""
