@@ -24,6 +24,7 @@ from .decision_parser import (
     ReviewDecision,
     extract_decision_from_single_line,
     extract_decision_from_text_events,
+    load_decision_artifact,
     parse_opencode_decision,
     parse_opencode_decision_with_retry,
     parse_opencode_json_decision,
@@ -3012,10 +3013,31 @@ class ReviewBridge:
                     stdout, stderr, exit_code
                 )
                 if transport_ok:
-                    # WP-2026-120: Use parser with controlled retry for transient failures
-                    decision, _, parse_method = (
-                        self._parse_opencode_decision_with_retry(stdout, stderr)
+                    # WT-2026-252a follow-up: structured decision artifact is
+                    # the primary channel; transcript parsing is the fallback
+                    # and the transcript remains the evidence.
+                    artifact = load_decision_artifact(
+                        self.project_root / ".agent" / "runtime" / "reviews",
+                        ticket_id,
+                        not_before=start_time,
                     )
+                    if artifact is not None:
+                        decision, parse_method = artifact
+                        transcript_decision, _, transcript_method = (
+                            self._parse_opencode_decision_with_retry(stdout, stderr)
+                        )
+                        if transcript_decision != decision:
+                            print(
+                                f"[review-bridge] decision artifact ({decision.value})"
+                                f" overrides transcript ({transcript_decision.value}"
+                                f" via {transcript_method}) for {ticket_id}",
+                                flush=True,
+                            )
+                    else:
+                        # WP-2026-120: parser with controlled retry for transient failures
+                        decision, _, parse_method = (
+                            self._parse_opencode_decision_with_retry(stdout, stderr)
+                        )
                 else:
                     decision = ReviewDecision.TRANSPORT_FAILED
                     parse_method = "transport_failed"

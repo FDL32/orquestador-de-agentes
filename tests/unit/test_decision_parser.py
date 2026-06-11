@@ -160,3 +160,103 @@ class TestParseOpencodeDecision:
         decision, method = parse_opencode_decision(stdout)
         assert decision == ReviewDecision.INSPECT
         assert method == "fallback_inspect"
+
+
+class TestLoadDecisionArtifact:
+    """WT-2026-252a follow-up: structured decision artifact as primary channel.
+
+    The Manager writes .agent/runtime/reviews/decision_<ticket>.json during
+    review; the bridge consumes it before falling back to transcript parsing.
+    """
+
+    def _write_artifact(self, reviews_dir, ticket_id, payload) -> None:
+        reviews_dir.mkdir(parents=True, exist_ok=True)
+        path = reviews_dir / f"decision_{ticket_id}.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+    def test_valid_artifact_approve(self, tmp_path) -> None:
+        from bus.decision_parser import load_decision_artifact
+
+        self._write_artifact(
+            tmp_path,
+            "WOT-2026-001a",
+            {"ticket_id": "WOT-2026-001a", "decision": "APROBADO"},
+        )
+        result = load_decision_artifact(tmp_path, "WOT-2026-001a")
+        assert result is not None
+        decision, method = result
+        assert decision == ReviewDecision.APPROVE
+        assert method == "decision_artifact"
+
+    def test_valid_artifact_changes(self, tmp_path) -> None:
+        from bus.decision_parser import load_decision_artifact
+
+        self._write_artifact(
+            tmp_path, "WT-2026-100", {"ticket_id": "WT-2026-100", "decision": "CHANGES"}
+        )
+        result = load_decision_artifact(tmp_path, "WT-2026-100")
+        assert result is not None
+        assert result[0] == ReviewDecision.CHANGES
+
+    def test_missing_artifact_returns_none(self, tmp_path) -> None:
+        from bus.decision_parser import load_decision_artifact
+
+        assert load_decision_artifact(tmp_path, "WT-2026-100") is None
+
+    def test_corrupt_artifact_returns_none(self, tmp_path) -> None:
+        from bus.decision_parser import load_decision_artifact
+
+        tmp_path.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "decision_WT-2026-100.json").write_text(
+            "{not json", encoding="utf-8"
+        )
+        assert load_decision_artifact(tmp_path, "WT-2026-100") is None
+
+    def test_ticket_mismatch_returns_none(self, tmp_path) -> None:
+        from bus.decision_parser import load_decision_artifact
+
+        self._write_artifact(
+            tmp_path,
+            "WT-2026-100",
+            {"ticket_id": "WT-2026-999", "decision": "APROBADO"},
+        )
+        assert load_decision_artifact(tmp_path, "WT-2026-100") is None
+
+    def test_invalid_decision_returns_none(self, tmp_path) -> None:
+        from bus.decision_parser import load_decision_artifact
+
+        self._write_artifact(
+            tmp_path, "WT-2026-100", {"ticket_id": "WT-2026-100", "decision": "MAYBE"}
+        )
+        assert load_decision_artifact(tmp_path, "WT-2026-100") is None
+
+    def test_stale_artifact_returns_none(self, tmp_path) -> None:
+        import time as time_mod
+
+        from bus.decision_parser import load_decision_artifact
+
+        self._write_artifact(
+            tmp_path,
+            "WT-2026-100",
+            {"ticket_id": "WT-2026-100", "decision": "APROBADO"},
+        )
+        # Artifact written before the review session started -> stale
+        future = time_mod.time() + 60
+        assert (
+            load_decision_artifact(tmp_path, "WT-2026-100", not_before=future) is None
+        )
+
+    def test_fresh_artifact_passes_not_before(self, tmp_path) -> None:
+        import time as time_mod
+
+        from bus.decision_parser import load_decision_artifact
+
+        past = time_mod.time() - 60
+        self._write_artifact(
+            tmp_path,
+            "WT-2026-100",
+            {"ticket_id": "WT-2026-100", "decision": "APROBADO"},
+        )
+        result = load_decision_artifact(tmp_path, "WT-2026-100", not_before=past)
+        assert result is not None
+        assert result[0] == ReviewDecision.APPROVE
