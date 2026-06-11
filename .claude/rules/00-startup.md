@@ -16,8 +16,8 @@
 
 > Ver detalle en [QUICKSTART.md sección "6. Comandos diarios"](../QUICKSTART.md#6-comandos-diarios).
 
-- **Auditoría de dependencias:** `uv run pip-audit .`
-- **Linter y Formatter:** `ruff check src/ tests/ --fix` y `ruff format src/ tests/`
+- **Auditoría de dependencias:** `python scripts/pip_audit_project.py`
+- **Linter y Formatter:** `ruff check .` y `ruff format .`
 - **Tests:** `python scripts/run_pytest_safe.py`
 
 ## Error y Debug
