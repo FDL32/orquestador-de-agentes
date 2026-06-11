@@ -11,7 +11,11 @@ Las reglas del motor orquestador (Goose, Claw) se dividen en:
 - `manager/`: Específicas del gestor (e.g. review protocol).
 Los archivos monolíticos `.builder_rules` etc. son **legacy**.
 
-## Integración de Agentes Externos
-- `goose.exe`: Estable. Lee `.goosehints` e integra contexto de skills automáticamente.
-- `claw.exe`: Experimental. Lee `.clawrules`.
-- Invocación oficial: `python scripts/orquestador.py --stage [etapa]` o la versión pipeline completa `--run-pipeline`.
+## Integración de Agentes Externos [DEPRECATED - WT-2026-254a]
+
+> **DEPRECATED:** Goose y Claw están deprecados como motores de orquestación.
+> Claude Code es el agente principal. Las referencias siguientes son históricas.
+
+- `goose.exe`: **[DEPRECATED]** Leia `.goosehints` e integraba contexto de skills.
+- `claw.exe`: **[DEPRECATED]** Experimental. Leía `.clawrules`.
+- Invocación oficial: `python scripts/orquestador.py --stage [etapa]` — mantener solo para compatibilidad.
