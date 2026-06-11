@@ -4578,6 +4578,34 @@ def _check_scope_for_validate(
     return errors, warnings
 
 
+def _backfill_builder_exit(event_bus, ticket_id: str) -> bool:
+    """Emit a synthetic BUILDER_EXIT if the bus has none for this ticket.
+
+    Chat-driven closeouts skip --mark-ready, leaving the BUILDER_EXIT
+    invariant permanently broken in --validate. A trailing BUILDER_EXIT is
+    state-neutral (derive_state_from_events ignores it), so backfilling is
+    safe even after SUPERVISOR_CLOSED.
+
+    Returns True if an event was emitted.
+    """
+    if event_bus.latest_event(ticket_id=ticket_id, event_type="BUILDER_EXIT"):
+        return False
+    event_bus.emit(
+        event_type="BUILDER_EXIT",
+        ticket_id=ticket_id,
+        actor="BUILDER",
+        payload={
+            "exit_reason": "backfilled_closeout",
+            "completion_summary": (
+                "Synthesized by manager-approve: ticket was "
+                "completed via chat flow without bus events."
+            ),
+            "source": "manager-approve-backfill",
+        },
+    )
+    return True
+
+
 def _emit_manager_approve_cascade(event_bus, ticket_id: str) -> None:
     """Emit the canonical closeout cascade for manager approve."""
     # 1. REVIEW_DECISION with approve
@@ -4670,6 +4698,10 @@ def _sync_markdowns_to_completed(ticket_id: str) -> None:
         updated_work_plan = work_plan_content
         updated_work_plan = updated_work_plan.replace(
             "- **Estado:** APPROVED", "- **Estado:** COMPLETED", 1
+        )
+        # Chat-driven builders may set READY_FOR_REVIEW directly on the plan.
+        updated_work_plan = updated_work_plan.replace(
+            "- **Estado:** READY_FOR_REVIEW", "- **Estado:** COMPLETED", 1
         )
         updated_work_plan = updated_work_plan.replace(
             "- **Estado del ticket:** READY_FOR_REVIEW",
@@ -4802,7 +4834,12 @@ def _handle_manager_approve(  # noqa: C901 - flag handler intentionally branches
         else:
             bus_state = None
         if supervisor_closed_events and bus_state == TicketState.COMPLETED:
-            # Ticket already closed in bus - idempotent return
+            # Ticket already closed in bus - idempotent return. Still repair
+            # a missing BUILDER_EXIT (chat-driven closeouts skip --mark-ready)
+            # and re-sync markdown projections so --validate converges on the
+            # bus-derived state.
+            _backfill_builder_exit(event_bus, ticket_id)
+            _sync_markdowns_to_completed(ticket_id)
             if json_output:
                 print(
                     json.dumps(
@@ -4816,8 +4853,28 @@ def _handle_manager_approve(  # noqa: C901 - flag handler intentionally branches
                 )
             return 0
 
-    # Fallback: also check markdown state for tickets without bus events
+    # Markdown says COMPLETED but the bus (canonical authority) has no
+    # closeout: chat-driven closeouts leave this drift, and --validate then
+    # fails permanently with no repair path. Backfill the canonical cascade
+    # to reconcile toward the bus instead of returning passively.
     if "COMPLETED" in log_status:
+        if BUS_AVAILABLE and event_bus:
+            _backfill_builder_exit(event_bus, ticket_id)
+            _emit_manager_approve_cascade(event_bus, ticket_id)
+            _sync_markdowns_to_completed(ticket_id)
+            if json_output:
+                print(
+                    json.dumps(
+                        {"status": "backfilled_closeout", "ticket_id": ticket_id},
+                        indent=2,
+                    )
+                )
+            else:
+                print(
+                    f"[OK] Ticket {ticket_id} was COMPLETED in markdown only; "
+                    "canonical closeout cascade backfilled to bus."
+                )
+            return 0
         if json_output:
             print(
                 json.dumps(

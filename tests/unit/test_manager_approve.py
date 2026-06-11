@@ -99,13 +99,19 @@ class TestManagerApprove:
         assert "READY_TO_CLOSE" in to_states
         assert "COMPLETED" in to_states
 
-    def test_idempotency_already_completed(
+    def test_backfills_closeout_when_markdown_completed_but_bus_empty(
         self, temp_bus: EventBus, mock_files: dict, tmp_path: Path
     ) -> None:
-        """--manager-approve on COMPLETED ticket should be idempotent."""
+        """Markdown COMPLETED without SUPERVISOR_CLOSED in bus must backfill.
+
+        Chat-driven closeouts can leave the log in COMPLETED while the bus
+        (canonical authority) has no closeout events, making --validate fail
+        permanently with no CLI repair path. manager-approve must reconcile
+        toward the bus instead of returning a passive already_completed.
+        """
         from agent_controller import _handle_manager_approve
 
-        # Set state to COMPLETED
+        # Set state to COMPLETED with an empty bus (chat-driven drift)
         mock_files["exec_log"].write_text(
             "# Execution Log\n\n## WP-TEST-001\n**Estado:** COMPLETED\n"
         )
@@ -120,15 +126,67 @@ class TestManagerApprove:
             patch("agent_controller.AGENT_DIR", tmp_path / ".agent"),
             patch("agent_controller._check_last_commit", return_value=(True, "")),
         ):
-            result = _handle_manager_approve(
-                "WP-TEST-001", json_output=True, force_mode=False
-            )
+            import io
+            import sys
+
+            captured = io.StringIO()
+            sys.stdout = captured
+            try:
+                result = _handle_manager_approve(
+                    "WP-TEST-001", json_output=True, force_mode=False
+                )
+            finally:
+                sys.stdout = sys.__stdout__
 
         assert result == 0
+        output = json.loads(captured.getvalue())
+        assert output["status"] == "backfilled_closeout"
 
-        # No events should be emitted
+        # The canonical cascade must now exist in the bus, including a
+        # synthetic BUILDER_EXIT (chat closeouts never ran --mark-ready)
         events = temp_bus.read_events(ticket_id="WP-TEST-001")
-        assert len(events) == 0
+        event_types = [event.event_type for event in events]
+        assert "SUPERVISOR_CLOSED" in event_types
+        assert "STATE_CHANGED" in event_types
+        assert "BUILDER_EXIT" in event_types
+        builder_exit = next(e for e in events if e.event_type == "BUILDER_EXIT")
+        assert builder_exit.payload["exit_reason"] == "backfilled_closeout"
+
+    def test_idempotency_already_completed_without_bus(
+        self, temp_bus: EventBus, mock_files: dict, tmp_path: Path
+    ) -> None:
+        """Without bus available, COMPLETED markdown returns already_completed."""
+        from agent_controller import _handle_manager_approve
+
+        mock_files["exec_log"].write_text(
+            "# Execution Log\n\n## WP-TEST-001\n**Estado:** COMPLETED\n"
+        )
+
+        with (
+            patch("agent_controller.event_bus", None),
+            patch("agent_controller.BUS_AVAILABLE", False),
+            patch("agent_controller.WORK_PLAN", mock_files["work_plan"]),
+            patch("agent_controller.EXEC_LOG", mock_files["exec_log"]),
+            patch("agent_controller.TURN_FILE", mock_files["turn"]),
+            patch("agent_controller.STATE_FILE", mock_files["state"]),
+            patch("agent_controller.AGENT_DIR", tmp_path / ".agent"),
+            patch("agent_controller._check_last_commit", return_value=(True, "")),
+        ):
+            import io
+            import sys
+
+            captured = io.StringIO()
+            sys.stdout = captured
+            try:
+                result = _handle_manager_approve(
+                    "WP-TEST-001", json_output=True, force_mode=False
+                )
+            finally:
+                sys.stdout = sys.__stdout__
+
+        assert result == 0
+        output = json.loads(captured.getvalue())
+        assert output["status"] == "already_completed"
 
     def test_blocks_if_not_ready_for_review(
         self, temp_bus: EventBus, mock_files: dict, tmp_path: Path
@@ -178,10 +236,10 @@ class TestManagerApprove:
     def test_json_output_on_completed(
         self, temp_bus: EventBus, mock_files: dict, tmp_path: Path
     ) -> None:
-        """--manager-approve should return JSON on already completed ticket."""
+        """--manager-approve returns JSON when backfilling a markdown-only COMPLETED."""
         from agent_controller import _handle_manager_approve
 
-        # Set state to COMPLETED
+        # Set state to COMPLETED with an empty bus (chat-driven drift)
         mock_files["exec_log"].write_text(
             "# Execution Log\n\n## WP-TEST-001\n**Estado:** COMPLETED\n"
         )
@@ -206,7 +264,7 @@ class TestManagerApprove:
 
         assert result == 0
         output = json.loads(captured.getvalue())
-        assert output["status"] == "already_completed"
+        assert output["status"] == "backfilled_closeout"
         assert output["ticket_id"] == "WP-TEST-001"
 
     def test_circuit_breaker_reset(
@@ -278,11 +336,12 @@ class TestManagerApprove:
 
         assert result == 0
 
-        # Should return already_completed without emitting new events
+        # Returns already_completed without re-emitting the cascade, but it
+        # repairs the missing BUILDER_EXIT (chat closeouts skip --mark-ready)
         events = temp_bus.read_events(ticket_id="WP-TEST-001")
-        # Only the pre-existing SUPERVISOR_CLOSED event should exist
-        assert len(events) == 1
-        assert events[0].event_type == "SUPERVISOR_CLOSED"
+        event_types = [event.event_type for event in events]
+        assert event_types.count("SUPERVISOR_CLOSED") == 1
+        assert event_types.count("BUILDER_EXIT") == 1
 
         # Verify JSON output
         import io
