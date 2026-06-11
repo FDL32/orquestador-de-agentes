@@ -1428,12 +1428,11 @@ class TestOpencodeReviewRoute:
         assert method == "text_regex"
 
     def test_tool_calls_without_final_answer_is_inspect(self, tmp_path, monkeypatch):
-        """NDJSON with text events but no final_answer phase → CHANGES.
+        """NDJSON with text events but no final_answer phase → INSPECT.
 
         Simulates an OpenCode stream that ends with ``step_finish`` /
-        ``tool-calls`` and has no ``phase=final_answer`` event.
-        ``json_last_text`` is now the best available evidence and must
-        not degrade strong decisions (WT-2026-249c).
+        ``tool-calls`` and has no ``phase=final_answer`` event.  ``json_last_text``
+        should degrade strong decisions.
         """
         import json
 
@@ -1468,9 +1467,8 @@ class TestOpencodeReviewRoute:
         stdout = "\n".join(lines)
 
         decision, method = bridge._parse_opencode_decision(stdout)
-        # WT-2026-249c: json_last_text no longer degrades when
-        # json_final_answer found nothing. Returns CHANGES.
-        assert decision == ReviewDecision.CHANGES, f"expected CHANGES, got {decision}"
+        # json_last_text found CHANGES but it is not authoritative → INSPECT
+        assert decision == ReviewDecision.INSPECT
         assert method == "json_last_text"
 
     def test_json_final_answer_approve_is_authoritative(self, tmp_path, monkeypatch):
