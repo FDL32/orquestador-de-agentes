@@ -413,6 +413,41 @@ class TestSessionClose:
         args = mock_run.call_args[0][0]
         assert "--dry-run" in args
 
+    def test_session_close_uses_motor_script_for_model_b(self, monkeypatch, tmp_path):
+        """Model B executes the motor-owned script with destination cwd."""
+        motor_root = tmp_path / "motor"
+        destination_root = tmp_path / "destination"
+        script_dir = motor_root / "scripts"
+        script_dir.mkdir(parents=True)
+        destination_root.mkdir()
+        script_path = script_dir / "session_closeout.py"
+        script_path.write_text("", encoding="utf-8")
+
+        monkeypatch.setattr(agent_controller, "_MOTOR_ROOT", motor_root)
+        monkeypatch.setattr(agent_controller, "PROJECT_ROOT", destination_root)
+        monkeypatch.setattr(
+            agent_controller,
+            "read_file",
+            lambda path: "Estado actual: IN_PROGRESS\n",
+        )
+        mock_run = MagicMock(
+            return_value=MagicMock(returncode=0, stdout="[DRY-RUN] ok\n", stderr="")
+        )
+        monkeypatch.setattr(agent_controller.subprocess, "run", mock_run)
+
+        code = agent_controller._handle_session_close(
+            dry_run=True,
+            skip_slow=False,
+            ticket=None,
+            tickets=None,
+            force_mode=True,
+            json_output=False,
+        )
+
+        assert code == 0
+        assert mock_run.call_args[0][0][1] == str(script_path)
+        assert mock_run.call_args.kwargs["cwd"] == destination_root
+
     def test_session_close_dry_run_passes_ticket(self, monkeypatch, tmp_path):
         """--session-close --dry-run --ticket WP-2026-168 passes the flag."""
         # Create mock scripts/session_closeout.py in temp dir
@@ -521,11 +556,13 @@ class TestSessionClose:
 
     def test_session_close_script_not_found(self, monkeypatch):
         """When session_closeout.py is missing, exit with error."""
+        nonexistent_root = Path("/nonexistent")
         monkeypatch.setattr(
             agent_controller,
             "PROJECT_ROOT",
-            Path("/nonexistent"),
+            nonexistent_root,
         )
+        monkeypatch.setattr(agent_controller, "_MOTOR_ROOT", nonexistent_root)
 
         def mock_read(path):
             return "Estado actual: IN_PROGRESS\n"
