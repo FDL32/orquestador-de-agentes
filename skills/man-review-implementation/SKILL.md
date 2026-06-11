@@ -97,8 +97,8 @@ python -c "import src"
 
 **Si falla algun gate:**
 
-- Documentar errores en `review_queue.md` como `CHANGES`
-- Notificar al Builder via `notifications.md`
+- Documentar blockers con veredicto `CHANGES`
+- Notificar al Builder via la superficie de review vigente
 - **NO aprobar hasta que pase todos los gates**
 
 ### Paso 4: Verificar Seguridad
@@ -118,8 +118,8 @@ python -c "import src"
 Si pasa todos los gates y verificaciones:
 
 1. En `work_plan.md`: cambiar estado a `COMPLETED`
-2. En `review_queue.md`: anadir entrada `APPROVED`
-3. En `notifications.md`: notificar handoff al usuario
+2. Registrar decision `APROBADO` en la superficie de review vigente
+3. Notificar handoff al usuario
 4. Limpiar `execution_log.md` para proxima sesion
 
 #### Opcion B: CHANGES
@@ -129,8 +129,8 @@ Si hay problemas menores:
 ```markdown
 ### REV-[ID]: Cambios Solicitados
 
-- **Plan ID:** WP-XXX
-- **Tipo:** CHANGES_REQUESTED
+- **Plan ID:** WT-XXX
+- **Tipo:** CHANGES
 - **Prioridad:** [Alta/Media/Baja]
 - **Estado:** PENDING
 
@@ -147,7 +147,7 @@ Si hay problemas menores:
 
 ## Output Format
 
-### Veredicto en review_queue.md
+### Veredicto en la superficie de review vigente
 
 ```markdown
 ### REV-[ID]: Revision de [Plan ID]
@@ -177,9 +177,9 @@ Si hay problemas menores:
 ```markdown
 ## [FECHA] Revision Completa: Manager -> Builder
 
-**Plan:** WP-XXX
+**Plan:** WT-XXX
 **Veredicto:** [APPROVED | CHANGES]
-**Accion requerida:** [Ver review_queue.md | Continuar con siguiente tarea]
+**Accion requerida:** [Ver feedback de review | Continuar con siguiente tarea]
 **Estado:** PENDING
 ```
 
@@ -195,4 +195,4 @@ Si hay problemas menores:
 - **NO** modificar codigo en `src/` o `tests/`
 - **NO** escribir en `execution_log.md` (solo lectura)
 - **NO** aprobar sin verificar Quality Gates
-- **SIEMPRE** documentar decision en `review_queue.md`
+- **SIEMPRE** documentar la decision en la superficie de review vigente
