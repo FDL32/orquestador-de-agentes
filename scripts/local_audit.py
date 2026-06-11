@@ -41,9 +41,16 @@ def get_versions():
     project_md = PROJECT_ROOT / "PROJECT.md"
     if project_md.exists():
         for line in project_md.read_text(encoding="utf-8").splitlines():
-            if line.startswith("- Version:"):
-                raw = line.split(":", 1)[1].strip()
-                versions["project_md"] = raw.strip("`").strip("'").strip('"').strip()
+            # Canonical format: "**Version:** vX.Y.Z" (bold markdown)
+            # Legacy format: "- Version: vX.Y.Z" (list item)
+            for prefix in ("**Version:**", "- Version:"):
+                if line.strip().startswith(prefix):
+                    raw = line.strip()[len(prefix) :].strip()
+                    versions["project_md"] = (
+                        raw.strip("`").strip("'").strip('"').strip()
+                    )
+                    break
+            if "project_md" in versions:
                 break
 
     version_manifest = AGENT_DIR / ".version_manifest.json"
@@ -219,12 +226,14 @@ def get_health(quick=False):
 
 
 def get_recent_wps():
+    from bus.ticket_id import TICKET_ID_RE
+
     wps = []
     exec_log = COLLAB_DIR / "execution_log.md"
     if exec_log.exists():
         lines = exec_log.read_text(encoding="utf-8").splitlines()
         for line in lines:
-            if line.startswith("### WP-"):
+            if line.startswith("### ") and TICKET_ID_RE.search(line):
                 wps.append(line.replace("### ", "").strip())
                 if len(wps) >= 5:
                     break
