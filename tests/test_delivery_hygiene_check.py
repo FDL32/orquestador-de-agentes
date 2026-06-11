@@ -147,6 +147,29 @@ def test_load_pre_commit_config_missing_file(tmp_path: Path) -> None:
     assert config is None
 
 
+def test_load_pre_commit_config_uses_motor_link(tmp_path: Path) -> None:
+    """A destination without local config reads the canonical motor config."""
+    motor_root = tmp_path / "motor"
+    motor_root.mkdir()
+    (motor_root / ".pre-commit-config.yaml").write_text(
+        VALID_CONFIG_CLEAN,
+        encoding="utf-8",
+    )
+
+    project_root = tmp_path / "destination"
+    config_dir = project_root / ".agent" / "config"
+    config_dir.mkdir(parents=True)
+    (config_dir / "motor_destination_link.json").write_text(
+        f'{{"motor_root": "{motor_root.as_posix()}"}}',
+        encoding="utf-8",
+    )
+
+    config = load_pre_commit_config(project_root)
+
+    assert config is not None
+    assert len(config["repos"]) == 2
+
+
 def test_check_mutating_hooks_clean_config() -> None:
     """Test que config limpia pasa la verificacion."""
     config = {

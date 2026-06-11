@@ -13,6 +13,7 @@ No test mutates the real filesystem.
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -30,6 +31,20 @@ from scripts.prepush_check import (
 
 class TestDeliveryHygieneCheck:
     """Tests for delivery_hygiene_check integration."""
+
+    def test_destination_root_does_not_shadow_motor_scripts(
+        self, tmp_path: Path
+    ) -> None:
+        """The canonical motor module is imported without mutating sys.path."""
+        original_path = list(sys.path)
+        with patch(
+            "scripts.delivery_hygiene_check.run_delivery_hygiene_check",
+            return_value=0,
+        ):
+            result = run_delivery_hygiene_check(tmp_path)
+
+        assert result.passed is True
+        assert sys.path == original_path
 
     def test_delivery_hygiene_import_error(self, tmp_path: Path) -> None:
         """Test when delivery_hygiene_check module cannot be imported."""

@@ -1,9 +1,20 @@
 # Project: orquestador_de_agentes
 **Version:** v9.15.0
-**State:** READY (2026-06-11) - WT-2026-248b prompt/skill contract hardening implemented; bidirectional `contract_id` + `--check-contract` gate active
+**State:** READY (2026-06-12) - E0-E6 audit batch implemented and closeout path unified for chat and bus
 
 ## Current Cycle
 
+- E0-E6 audit batch VERIFIED (2026-06-12). Tickets `WT-2026-248b` through
+  `WT-2026-255a` are implemented across `repo_motor` and `repo_destino`.
+- Chat closeout now converges on the canonical `--session-close` pipeline.
+  `prompts/session_close_chat.md` documents dry-run, real execution, report
+  review and `--force` idempotency for an already completed ticket.
+- Review decisions use a structured decision artifact as the primary channel
+  with parser fallback; `bus/decision_parser.py` is the extracted compatibility
+  boundary.
+- Final closeout hardening makes `prepush_check.py` and
+  `delivery_hygiene_check.py` topology-aware when invoked against a Model B
+  destination.
 - WT-2026-248b IMPLEMENTED (2026-06-11). Bidirectional prompt<->skill contract hardening: `source_prompt:` + `contract_id` in skills, `Skill canonica:` + `contract_id` in prompts, `--check-contract` barrier in gates. No runtime/OpenCode config changes.
 - Local hardening (2026-06-11). `.gitattributes` now normalizes LF for portable docs/config/memory surfaces, with regression coverage to prevent recurring CRLF noise in local updates. Esto no implica cierre canonico de `WT-2026-248b`.
 - Last ticket: WT-2026-249c IMPLEMENTED (2026-06-11). `review_bridge.py` now honors nested OpenCode phase metadata and uses the last matching NDJSON decision when `final_answer` is absent.
@@ -14,7 +25,10 @@
 - Last ticket: WT-2026-211 COMPLETED (2026-06-02). Centralize transition projection writes — controller emits events, supervisor materializes projections.
 - Last ticket: WT-2026-210 COMPLETED (2026-06-02). Bus architecture audit + reconcile_ticket.py for orphaned runtime.
 - Last session closed: WP-2026-175 COMPLETED (2026-05-29). Canonical session closeout and cycle rollover.
-- Open deuda priorizada: `WT-2026-248b` resuelto como hardening de contrato prompt/skill con barrera ejecutable en gates. No cubre separacion de runtime temporal de OpenCode vs config versionada — ese follow-up permanece fuera de alcance.
+- Open deuda priorizada: endurecer `--check-contract` para toda skill con
+  `role: manager|builder`, normalizar el contrato documental `archive/` frente
+  a `_archive/`, y continuar la extraccion gradual de responsabilidades de
+  `.agent/agent_controller.py`.
 - `validate_ticket_prose.py` TP-06 / TP-07 detection remains active; the canonical TP Check format is still enforced.
 
 ## Current readiness
@@ -22,8 +36,10 @@
 - Canonical close complete: bus reconstruction, suite stabilization, encoding guard hardening and CEM v0 are published.
 - Review packet hardening published locally for `WT-2026-249a/249b/249c`: stale-orphan CLI contract aligned, `BUILDER_BRIEF_*` excluded from workspace residue guards, and NDJSON decision parsing hardened for OpenCode review flows.
 - Git hygiene hardening published locally: portable text surfaces now normalize to LF through `.gitattributes`, reducing false diffs in docs/config/memory updates on Windows. Este endurecimiento no sustituye el alcance pendiente de `WT-2026-248b`.
-- Motor suite verified green: 2071 passed, 22 skipped, 0 failed.
-- Next strategic front: separacion mas limpia del runtime temporal de OpenCode frente a config versionada (follow-up post-248b).
+- Focused closeout/preflight verification: 120 tests passed; Ruff check and
+  format clean on the changed surfaces.
+- Next strategic front: follow-ups WOT derivados de la auditoria, sin reabrir
+  los tickets funcionalmente correctos del lote E0-E6.
 
 ## Repomix Context Integration (WT-2026-182)
 

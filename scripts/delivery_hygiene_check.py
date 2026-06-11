@@ -31,6 +31,13 @@ from pathlib import Path
 from typing import NamedTuple
 
 
+# Bootstrap: motor root must be on sys.path so `runtime.*` imports resolve
+# even when this script runs with cwd inside a destination workspace.
+_MOTOR_ROOT = Path(__file__).resolve().parent.parent
+if str(_MOTOR_ROOT) not in sys.path:
+    sys.path.insert(0, str(_MOTOR_ROOT))
+
+
 class HygieneResult(NamedTuple):
     """Resultado de una verificacion de higiene."""
 
@@ -130,6 +137,19 @@ def load_pre_commit_config(project_root: Path) -> dict[str, list[dict]] | None:
         Dict con clave 'repos' y lista de hooks, o None si falla el parseo.
     """
     config_path = project_root / ".pre-commit-config.yaml"
+    if not config_path.exists():
+        # Motor/destino topology: the pre-commit config lives in repo_motor,
+        # not in the destination workspace. Resolve it via motor_link.
+        try:
+            from runtime.motor_link import resolve_motor_root
+
+            motor_root = resolve_motor_root(project_root)
+            if motor_root is not None:
+                motor_config = motor_root / ".pre-commit-config.yaml"
+                if motor_config.exists():
+                    config_path = motor_config
+        except ImportError:
+            pass
     if not config_path.exists():
         return None
 

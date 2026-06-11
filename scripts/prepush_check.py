@@ -114,15 +114,10 @@ def run_delivery_hygiene_check(project_root: Path) -> CheckResult:
         CheckResult con el estado de la higiene de entrega.
     """
     try:
-        # Add project root to sys.path to import scripts.delivery_hygiene_check
-        import sys
-
-        sys.path.insert(0, str(project_root))
-
         import io
         from contextlib import redirect_stdout
 
-        # Import as package module (scripts.delivery_hygiene_check)
+        # Destination-local scripts must not shadow the canonical motor gate.
         from scripts.delivery_hygiene_check import run_delivery_hygiene_check
 
         f = io.StringIO()

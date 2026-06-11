@@ -2,6 +2,25 @@
 
 ## Pendientes de revision
 
+### 2026-06-12 | origen: proceso | estado: generalizable | ttl_wps: N/A
+- learning: "Los cierres por chat y por bus deben converger en un unico pipeline canonico. Un prompt que reconstruye el cierre mediante scripts sueltos crea rutas divergentes y puede omitir rotacion, archivado o consolidacion."
+- evidencia: "commit `961f210`; `prompts/session_close_chat.md`; `scripts/session_closeout.py`; tests de `tests/test_session_closeout.py`."
+- razon: "La rotacion de `review_queue.md` no se ejecutaba en cierres por chat porque el wrapper no invocaba `--session-close`. Centralizar la orquestacion elimina esa divergencia."
+- propuesta de aplicacion en herramienta:
+  - `prompts/session_close_chat.md`
+  - `skills/project-finalize/SKILL.md`
+  - `scripts/session_closeout.py`
+- decision del usuario: aceptado
+
+### 2026-06-12 | origen: proceso | estado: generalizable | ttl_wps: N/A
+- learning: "Un learning no puede promoverse como generalizable sin un ancla de evidencia verificable. Debe incluir commit, test, archivo:linea o comando con resultado; sin ella se clasifica como dudoso o se descarta."
+- evidencia: "commit `961f210`; `skills/man-session-closeout/SKILL.md` version 1.1.0."
+- razon: "La evidencia permite validar la regla en sesiones futuras sin reconstruir el relato original y reduce la promocion de recuerdos ambiguos a contrato del motor."
+- propuesta de aplicacion en herramienta:
+  - `skills/man-session-closeout/SKILL.md`
+  - `skills/man-session-closeout/references/upstream-learnings-format.md`
+- decision del usuario: aceptado
+
 ### 2026-06-10 | origen: WT-2026-248a | estado: generalizable | ttl_wps: N/A
 - learning: "Toda lógica que parsea ticket IDs debe usar `extract_all_ticket_ids()` de `bus/ticket_id.py`; los regex inline como `(?:WT|WP)-\d+(?:-\d+)*` truncan sufijos alfanuméricos (248a -> 248) y degradan en rutas de cierre."
 - razon: "Cualquier código nuevo que valide IDs puede heredar el bug. Ya ocurrió en `--manager-approve`. El parser canónico debe ser el único punto de entrada."
