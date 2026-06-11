@@ -1,6 +1,6 @@
 ---
 name: repo-compare
-version: 2.0.0
+version: 2.1.0
 description: Comparar proyecto local con repositorio GitHub para detectar funcionalidades de alto valor
 triggers: [/repo-compare, /compare, /gh-compare]
 author: agent
@@ -13,7 +13,7 @@ tags: [core, system]
 
 # repo-compare
 
-Skill para comparar el proyecto local (`z_scripts/`) con cualquier repositorio público de GitHub y detectar funcionalidades, utilidades o patrones de alto valor que se puedan incorporar.
+Skill para comparar el proyecto local (identificado desde `.agent/runtime/audit/AUDIT.md`) con cualquier repositorio público de GitHub y detectar funcionalidades, utilidades o patrones de alto valor que se puedan incorporar.
 
 Usa `.agent/runtime/audit/AUDIT.md` como **Fase 0 autoritativa** del contexto local, eliminando hallucinación sobre "qué ya existe". Lee el repo remoto vía GitHub MCP (`mcp__github__get_file_contents`, `mcp__github__search_code`).
 
@@ -70,7 +70,7 @@ de tokens y eliminando la exploración manual.
 ### Paso 5: Output (Fase 3+4)
 - 3-5 oportunidades con plantilla canónica (ver `references/output-format.md`).
 - Cada oportunidad incluye:
-  - Campo `¿Ya existe en z_scripts?` citando ruta + sección de AUDIT.md (no `Yes/No` a secas).
+  - Campo `¿Ya existe en el proyecto local?` citando ruta + sección de AUDIT.md (no `Yes/No` a secas).
   - Campo `📎 Fuente verificada: [AUDIT.md sección X | GitHub: owner/repo/path:L# | Ambos]`.
 - Matriz final (Impacto / Esfuerzo / Encaje / Decisión).
 - Sección "Qué Ignorar" + "Acción Inmediata".

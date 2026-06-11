@@ -14,7 +14,7 @@ Tu trabajo no es "leer todo el repo". Tu trabajo es identificar 3-5 oportunidade
 
 ## Objetivo general
 
-Comparar el proyecto local (`z_scripts/`) con un repositorio público de GitHub para detectar funcionalidades, utilidades o patrones de alto valor que se puedan incorporar, preservando la integridad del contexto local (AUDIT.md como Fase 0).
+Comparar el proyecto local (`el proyecto local/`) con un repositorio público de GitHub para detectar funcionalidades, utilidades o patrones de alto valor que se puedan incorporar, preservando la integridad del contexto local (AUDIT.md como Fase 0).
 
 Prioridades, por orden:
 
@@ -104,10 +104,10 @@ Generar **3-5 oportunidades** (ni menos, ni más). Usar plantilla de `references
 **¿Qué hace?**
 [Descripción en 2-3 frases]
 
-**¿Qué valor aporta a z_scripts?**
+**¿Qué valor aporta a el proyecto local?**
 [Justificación concreta: qué problema resuelve, qué gap cubre]
 
-**¿Ya existe en z_scripts?**
+**¿Ya existe en el proyecto local?**
 [AUDIT.md sección X, ruta Y]: [Sí/No/Parcial]. [Citar explícitamente: "AUDIT.md sección 3.2 menciona `scripts/local_audit.py` que hace Z"].
 
 **📎 Fuente verificada:** [AUDIT.md sección X | GitHub: owner/repo/path:L# | Ambos]
@@ -118,7 +118,7 @@ Generar **3-5 oportunidades** (ni menos, ni más). Usar plantilla de `references
 
 **Plan de incorporación:**
 1. [Paso 1: leer/entender]
-2. [Paso 2: adaptar a z_scripts]
+2. [Paso 2: adaptar a el proyecto local]
 3. [Paso 3: tests de validación]
 4. [Paso 4: documentar en AGENTS.md/CHANGELOG.md]
 
@@ -130,7 +130,7 @@ Generar **3-5 oportunidades** (ni menos, ni más). Usar plantilla de `references
 ```
 
 **Invariante anti-fabricación**: cada oportunidad DEBE incluir:
-- Campo `¿Ya existe en z_scripts?` con cita explícita a AUDIT.md sección + ruta.
+- Campo `¿Ya existe en el proyecto local?` con cita explícita a AUDIT.md sección + ruta.
 - Campo `📎 Fuente verificada:` con tipo de fuente (AUDIT.md, GitHub, o Ambos).
 
 ## Fase 4: Matriz final + Qué Ignorar + Acción Inmediata
