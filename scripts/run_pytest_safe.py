@@ -96,6 +96,7 @@ DEFAULT_PYTEST_ARGS = [
     "tests/unit/test_migrated_ticket_patterns.py",
     "tests/unit/test_no_inline_ticket_regex.py",
     "tests/unit/test_local_audit_parsers.py",
+    "tests/unit/test_decision_artifact.py",
     "-q",
     "-p",
     "no:cacheprovider",
