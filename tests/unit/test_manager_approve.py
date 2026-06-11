@@ -360,3 +360,45 @@ class TestManagerApprove:
         assert "STATE_CHANGED" in event_types
         assert "CLOSE_CONFIRMED" in event_types
         assert "SUPERVISOR_CLOSED" in event_types
+
+    def test_code_ticket_validates_last_commit_in_motor_root_for_model_b(
+        self, temp_bus: EventBus, mock_files: dict, tmp_path: Path
+    ) -> None:
+        """Code tickets in motor/destino topology must validate against repo_motor."""
+        from agent_controller import _handle_manager_approve
+
+        workspace_root = tmp_path / "workspace"
+        workspace_root.mkdir()
+        (workspace_root / ".git").mkdir()
+
+        motor_root = tmp_path / "motor"
+        motor_root.mkdir()
+        (motor_root / ".git").mkdir()
+
+        captured_roots: list[Path] = []
+
+        def _capture_commit_root(root: Path, ticket_id: str) -> tuple[bool, str]:
+            captured_roots.append(root)
+            return True, ""
+
+        with (
+            patch("agent_controller.event_bus", temp_bus),
+            patch("agent_controller.BUS_AVAILABLE", True),
+            patch("agent_controller.WORK_PLAN", mock_files["work_plan"]),
+            patch("agent_controller.EXEC_LOG", mock_files["exec_log"]),
+            patch("agent_controller.TURN_FILE", mock_files["turn"]),
+            patch("agent_controller.STATE_FILE", mock_files["state"]),
+            patch("agent_controller.AGENT_DIR", tmp_path / ".agent"),
+            patch("agent_controller.PROJECT_ROOT", workspace_root),
+            patch("agent_controller._MOTOR_ROOT", motor_root),
+            patch(
+                "agent_controller._check_last_commit",
+                side_effect=_capture_commit_root,
+            ),
+        ):
+            result = _handle_manager_approve(
+                "WP-TEST-001", json_output=False, force_mode=False
+            )
+
+        assert result == 0
+        assert captured_roots == [motor_root.resolve()]
