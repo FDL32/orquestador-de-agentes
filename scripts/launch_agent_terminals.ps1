@@ -1280,6 +1280,26 @@ function Get-CanonicalFilesForOpenCode {
         }
     }
 
+    # WT-2026-253c: Generate AUDIT.md best-effort (same pattern as repomix).
+    # Runs local_audit.py in background with 20s timeout; failure is non-blocking.
+    $localAuditScript = Join-Path $script:_MotorCodeRoot 'scripts\local_audit.py'
+    if (Test-Path -LiteralPath $localAuditScript) {
+        $auditJob = Start-Job -ScriptBlock {
+            param($WorkDir, $ScriptPath)
+            Set-Location -LiteralPath $WorkDir
+            & python $ScriptPath 2>&1
+        } -ArgumentList $script:_MotorCodeRoot, $localAuditScript
+        $auditCompleted = $auditJob | Wait-Job -Timeout 20
+        if ($null -eq $auditCompleted) {
+            $auditJob | Stop-Job -ErrorAction SilentlyContinue | Out-Null
+            Write-Warning "[local_audit] Timed out after 20s; AUDIT.md may be stale"
+        } else {
+            $null = $auditJob | Receive-Job -ErrorAction SilentlyContinue
+            $auditJob | Remove-Job -ErrorAction SilentlyContinue
+            Write-Host "[local_audit] AUDIT.md refreshed"
+        }
+    }
+
     return $canonicalFiles
 }
 
