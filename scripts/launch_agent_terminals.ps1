@@ -1282,21 +1282,29 @@ function Get-CanonicalFilesForOpenCode {
 
     # WT-2026-253c: Generate AUDIT.md best-effort (same pattern as repomix).
     # Runs local_audit.py in background with 20s timeout; failure is non-blocking.
+    # The freshness contract (session_bootstrap.md: AUDIT.md < 24h) applies to
+    # the active workspace, so the destination AUDIT.md is refreshed too via
+    # AGENT_PROJECT_ROOT (same resolution mechanism as the review bridge).
     $localAuditScript = Join-Path $script:_MotorCodeRoot 'scripts\local_audit.py'
     if (Test-Path -LiteralPath $localAuditScript) {
         $auditJob = Start-Job -ScriptBlock {
-            param($WorkDir, $ScriptPath)
+            param($WorkDir, $ScriptPath, $DestinationRoot)
             Set-Location -LiteralPath $WorkDir
             & python $ScriptPath 2>&1
-        } -ArgumentList $script:_MotorCodeRoot, $localAuditScript
-        $auditCompleted = $auditJob | Wait-Job -Timeout 20
+            if ($DestinationRoot -and ($DestinationRoot -ne $WorkDir)) {
+                $env:AGENT_PROJECT_ROOT = $DestinationRoot
+                & python $ScriptPath 2>&1
+                Remove-Item Env:AGENT_PROJECT_ROOT -ErrorAction SilentlyContinue
+            }
+        } -ArgumentList $script:_MotorCodeRoot, $localAuditScript, $ProjectRoot
+        $auditCompleted = $auditJob | Wait-Job -Timeout 40
         if ($null -eq $auditCompleted) {
             $auditJob | Stop-Job -ErrorAction SilentlyContinue | Out-Null
-            Write-Warning "[local_audit] Timed out after 20s; AUDIT.md may be stale"
+            Write-Warning "[local_audit] Timed out after 40s; AUDIT.md may be stale"
         } else {
             $null = $auditJob | Receive-Job -ErrorAction SilentlyContinue
             $auditJob | Remove-Job -ErrorAction SilentlyContinue
-            Write-Host "[local_audit] AUDIT.md refreshed"
+            Write-Host "[local_audit] AUDIT.md refreshed (motor + destination)"
         }
     }
 

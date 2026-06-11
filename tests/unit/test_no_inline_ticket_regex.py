@@ -1,8 +1,9 @@
 """Test-barrier: no inline ticket-ID regex outside bus/ticket_id.py.
 
 WT-2026-251a: after centralizing all ticket-ID parsing to bus/ticket_id.py,
-no Python file under scripts/, bus/, or runtime/ may contain the legacy
-inline pattern ``(?:WP|WT)-``.
+no Python file under scripts/, bus/, runtime/, or tests/ may contain the
+legacy inline pattern ``(?:WP|WT)-``. Tests must exercise production parsers
+(or import patterns from bus.ticket_id) instead of duplicating the regex.
 
 Exemption: a file may contain a line with the comment
 ``# ticket-id-exemption: <reason>`` immediately inline to suppress the check
@@ -22,10 +23,14 @@ import pytest
 _MOTOR_ROOT = Path(__file__).resolve().parent.parent.parent
 
 # Directories to scan (relative to motor root)
-_SCAN_DIRS = ["scripts", "bus", "runtime"]
+_SCAN_DIRS = ["scripts", "bus", "runtime", "tests"]
 
-# The canonical source of truth — excluded from the scan
-_EXEMPT_FILE = _MOTOR_ROOT / "bus" / "ticket_id.py"
+# Files excluded from the scan: the canonical source of truth, and this
+# barrier itself (it must name the forbidden literal to search for it).
+_EXEMPT_FILES = {
+    _MOTOR_ROOT / "bus" / "ticket_id.py",
+    Path(__file__).resolve(),
+}
 
 # The forbidden inline pattern (literal string to search for)
 _FORBIDDEN_PATTERN = "(?:WP|WT)-"
@@ -45,7 +50,7 @@ def _collect_violations() -> list[tuple[str, int, str]]:
         if not directory.is_dir():
             continue
         for py_file in sorted(directory.rglob("*.py")):
-            if py_file.resolve() == _EXEMPT_FILE.resolve():
+            if py_file.resolve() in _EXEMPT_FILES:
                 continue
             try:
                 lines = py_file.read_text(encoding="utf-8").splitlines()

@@ -1,6 +1,6 @@
 """Unit tests for ticket-ID regex patterns in migrated consumers.
 
-WT-2026-251a: these modules were migrated from inline ``(?:WP|WT)-`` patterns
+WT-2026-251a: these modules were migrated from inline WP/WT-only patterns
 to canonical imports from bus.ticket_id.  Each test covers a 2-letter prefix
 ticket (``WT-2026-248b``) and a 3-letter prefix ticket (``WOT-2026-001a``)
 per the minimum matrix defined in the ticket specification.

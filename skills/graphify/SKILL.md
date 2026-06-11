@@ -37,9 +37,16 @@ ls graphify-out/graph.json 2>/dev/null && echo "EXISTE" || echo "NUEVO"
 
 ### Paso 2: Construir grafo inicial
 
-Escanear el directorio objetivo y estimar el corpus:
+Escanear el directorio objetivo y estimar el corpus (elige el shell disponible):
+
+```powershell
+# PowerShell (runtime canonico en Windows)
+(Get-ChildItem src -Recurse -Include *.py, *.md -File).Count
+(Get-ChildItem src -Recurse -Include *.py -File | Get-Content | Measure-Object -Word).Words
+```
 
 ```bash
+# bash (Linux/macOS)
 find src/ -type f \( -name "*.py" -o -name "*.md" \) | wc -l
 find src/ -type f -name "*.py" -exec wc -w {} + | tail -1
 ```
@@ -113,16 +120,47 @@ explain "NombreClase"              → todos los nodos conectados a NombreClase
 community "autenticación"          → cluster completo de módulos relacionados
 ```
 
-Traducción a operaciones sobre graph.json:
-```python
-import json, networkx as nx
-G = nx.node_link_graph(json.load(open("graphify-out/graph.json")))
+Traducción a operaciones sobre graph.json (stdlib puro, sin dependencias).
+Formato real del artefacto: `{"nodes": {ruta: metadata}, "edges": [{"source", "target", "type"}]}`.
 
-# BFS query
-neighbors = list(nx.bfs_tree(G, "NodoObjetivo", depth_limit=2).nodes())
+```python
+import json
+from collections import defaultdict, deque
+
+data = json.load(open("graphify-out/graph.json", encoding="utf-8"))
+adj = defaultdict(set)
+for edge in data["edges"]:
+    adj[edge["source"]].add(edge["target"])
+    adj[edge["target"]].add(edge["source"])
+
+# BFS query (vecindario a profundidad 2)
+def bfs(start, depth_limit=2):
+    seen, frontier = {start}, deque([(start, 0)])
+    while frontier:
+        node, depth = frontier.popleft()
+        if depth == depth_limit:
+            continue
+        for nxt in adj[node] - seen:
+            seen.add(nxt)
+            frontier.append((nxt, depth + 1))
+    return seen
 
 # Shortest path
-path = nx.shortest_path(G, "ModuloA", "ModuloB")
+def shortest_path(a, b):
+    prev, frontier, seen = {a: None}, deque([a]), {a}
+    while frontier:
+        node = frontier.popleft()
+        if node == b:
+            path = []
+            while node is not None:
+                path.append(node)
+                node = prev[node]
+            return path[::-1]
+        for nxt in adj[node] - seen:
+            seen.add(nxt)
+            prev[nxt] = node
+            frontier.append(nxt)
+    return None
 ```
 
 ## Output

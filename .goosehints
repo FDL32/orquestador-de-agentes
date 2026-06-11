@@ -1,3 +1,7 @@
+﻿# [DEPRECATED - WT-2026-254a] Goose/Claw estan deprecados como motores de orquestacion.
+# Claude Code es el agente principal. Este archivo se conserva solo para compatibilidad
+# historica; la retirada completa del codigo es la fase 2 de la deprecacion.
+
 # Goose Integration Hints for z_scripts
 
 ## Native Skills
