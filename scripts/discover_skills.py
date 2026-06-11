@@ -195,71 +195,89 @@ def _resolve_skill_path(source_prompt: str, bundle_root: Path) -> Path | None:
     return candidate
 
 
-def _validate_skill_contract(
-    skill_file: Path, bundle_root: Path
-) -> tuple[list[str], list[str]]:
-    """Validate contract for a single skill. Returns (errors, warnings)."""
-    errors: list[str] = []
-    warnings: list[str] = []
+def _error(message: str) -> list[str]:
+    return [message]
 
+
+def _validate_frontmatter_contract_opt_in(
+    skill_file: Path, bundle_root: Path
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Return parsed frontmatter for opted-in role skills or a terminal error."""
     fm, fm_error = parse_frontmatter(skill_file)
     if fm_error == "NO_FRONTMATTER":
-        return errors, warnings
+        return None, None
     if fm_error:
         rel = skill_file.relative_to(bundle_root).as_posix()
-        errors.append(f"{rel}: YAML invalido ({fm_error})")
-        return errors, warnings
+        return None, f"{rel}: YAML invalido ({fm_error})"
 
     role = fm.get("role", "")
     if role not in ("manager", "builder"):
-        return errors, warnings
+        return None, None
+
+    source_prompt = fm.get("source_prompt", "")
+    contract_id = fm.get("contract_id", "")
+    if not (source_prompt or contract_id):
+        return None, None
+
+    return fm, None
+
+
+def _validate_prompt_binding(
+    rel_skill_path: str, source_prompt: str, contract_id: str, bundle_root: Path
+) -> list[str]:
+    """Validate prompt existence, portability, reverse anchor, and contract_id."""
+    prompt_path = _resolve_skill_path(source_prompt, bundle_root)
+    if prompt_path is None:
+        return _error(
+            f"{rel_skill_path}: source_prompt '{source_prompt}' no es portable contra repo_motor"
+        )
+    if not prompt_path.exists():
+        return _error(f"{rel_skill_path}: source_prompt '{source_prompt}' no existe")
+
+    prompt_content = prompt_path.read_text(encoding="utf-8")
+    expected_anchor = f"Skill canonica: {rel_skill_path}"
+    if expected_anchor not in prompt_content:
+        return _error(
+            f"{rel_skill_path}: prompt '{source_prompt}' no contiene '{expected_anchor}'"
+        )
+
+    prompt_contract_pattern = re.compile(
+        rf"^contract_id:\s*{re.escape(contract_id)}\s*$", re.MULTILINE
+    )
+    if not prompt_contract_pattern.search(prompt_content):
+        return _error(
+            f"{rel_skill_path}: prompt '{source_prompt}' no contiene contract_id '{contract_id}'"
+        )
+
+    return []
+
+
+def _validate_skill_contract(skill_file: Path, bundle_root: Path) -> list[str]:
+    """Validate contract for a single skill file.
+
+    Role skills opt into this contract once they declare either
+    `source_prompt:` or `contract_id`. From that point onward the contract is
+    strict and partial metadata is rejected.
+    """
+    fm, terminal_error = _validate_frontmatter_contract_opt_in(skill_file, bundle_root)
+    if terminal_error:
+        return _error(terminal_error)
+    if fm is None:
+        return []
 
     rel_skill_path = skill_file.relative_to(bundle_root).as_posix()
     source_prompt = fm.get("source_prompt", "")
     contract_id = fm.get("contract_id", "")
 
     if not source_prompt:
-        warnings.append(
-            f"{rel_skill_path}: AVISO - falta source_prompt (contrato no establecido)"
-        )
-        return errors, warnings
+        return _error(f"{rel_skill_path}: falta source_prompt")
 
     if not contract_id:
-        errors.append(f"{rel_skill_path}: falta contract_id")
-        return errors, warnings
+        return _error(f"{rel_skill_path}: falta contract_id")
 
-    prompt_path = _resolve_skill_path(source_prompt, bundle_root)
-    if prompt_path is None:
-        errors.append(
-            f"{rel_skill_path}: source_prompt '{source_prompt}' no es portable contra repo_motor"
-        )
-        return errors, warnings
-
-    if not prompt_path.exists():
-        errors.append(f"{rel_skill_path}: source_prompt '{source_prompt}' no existe")
-        return errors, warnings
-
-    prompt_content = prompt_path.read_text(encoding="utf-8")
-    expected_anchor = f"Skill canonica: {rel_skill_path}"
-    if expected_anchor not in prompt_content:
-        errors.append(
-            f"{rel_skill_path}: prompt '{source_prompt}' no contiene '{expected_anchor}'"
-        )
-        return errors, warnings
-
-    prompt_contract_pattern = re.compile(
-        rf"^contract_id:\s*{re.escape(contract_id)}\s*$", re.MULTILINE
+    return _validate_prompt_binding(
+        rel_skill_path, source_prompt, contract_id, bundle_root
     )
-    if not prompt_contract_pattern.search(prompt_content):
-        errors.append(
-            f"{rel_skill_path}: prompt '{source_prompt}' no contiene contract_id '{contract_id}'"
-        )
-        return errors, warnings
-
-    warnings.append(
-        f"{rel_skill_path}: contrato valido (source_prompt={source_prompt}, contract_id={contract_id})"
-    )
-    return errors, warnings
 
 
 def _check_contract() -> int:
@@ -275,7 +293,6 @@ def _check_contract() -> int:
         return 1
 
     all_errors: list[str] = []
-    all_warnings: list[str] = []
 
     for skill_dir in sorted(skills_dir.iterdir()):
         if not skill_dir.is_dir():
@@ -284,12 +301,8 @@ def _check_contract() -> int:
         if not skill_file.exists():
             continue
 
-        errors, warnings = _validate_skill_contract(skill_file, bundle_root)
+        errors = _validate_skill_contract(skill_file, bundle_root)
         all_errors.extend(errors)
-        all_warnings.extend(warnings)
-
-    for w in all_warnings:
-        print(w)
 
     if all_errors:
         for e in all_errors:

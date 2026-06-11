@@ -170,7 +170,7 @@ Si `--mark-ready` falla porque `checkpoint/review-<ticket>` esta obsoleto (`stal
 **Como escalar:**
 
 1. Documentar en `execution_log.md` intentos realizados
-2. Anadir a `review_queue.md` con formato de escalacion
+2. Anadir la escalacion a la superficie de review vigente
 3. Cambiar estado a `BLOCKED`
 4. Informar al usuario
 

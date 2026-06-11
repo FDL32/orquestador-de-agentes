@@ -148,10 +148,10 @@ class TestCheckContract:
         rc = _check_contract()
         assert rc == 0
 
-    def test_missing_source_prompt_warns_not_fails(
+    def test_missing_source_prompt_fails(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Skills without source_prompt: emit warning but don't fail the gate."""
+        """Role skills that opt in via contract_id must also declare source_prompt:."""
         bundle = tmp_path / "motor"
         skills_dir = bundle / "skills"
         skills_dir.mkdir(parents=True)
@@ -161,6 +161,24 @@ class TestCheckContract:
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text(
             "---\nname: my-skill\nrole: builder\ncontract_id: cid-test-v1\n---\n"
+        )
+
+        monkeypatch.setattr("scripts.discover_skills._get_bundle_root", lambda: bundle)
+        rc = _check_contract()
+        assert rc == 1
+
+    def test_role_skill_without_contract_metadata_skipped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Legacy role skills remain out of scope until they opt into metadata."""
+        bundle = tmp_path / "motor"
+        skills_dir = bundle / "skills"
+        skills_dir.mkdir(parents=True)
+
+        skill_dir = skills_dir / "legacy-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: legacy-skill\nrole: builder\n---\n"
         )
 
         monkeypatch.setattr("scripts.discover_skills._get_bundle_root", lambda: bundle)
