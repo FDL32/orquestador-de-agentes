@@ -45,6 +45,8 @@ _MOTOR_ROOT_BOOTSTRAP = Path(__file__).resolve().parent.parent
 if str(_MOTOR_ROOT_BOOTSTRAP) not in sys.path:
     sys.path.insert(0, str(_MOTOR_ROOT_BOOTSTRAP))
 
+from bus.ticket_id import TICKET_ID_PATTERN  # noqa: E402
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -93,11 +95,15 @@ WORK_PLAN_REL = Path(".agent") / "collaboration" / "work_plan.md"
 # Scripts directory (relative to project_root)
 SCRIPTS_DIR = "scripts"
 
-# Ticket regex pattern
-TICKET_RE = re.compile(r"(?:WP|WT)-\d{4}-\d{3}[a-z]?")
+# Ticket regex pattern — derived from canonical TICKET_ID_PATTERN (bus/ticket_id.py)
+# WT-2026-251a: extended from WP|WT-only to include 3-letter prefixes via TICKET_ID_PATTERN.
+TICKET_RE = re.compile(TICKET_ID_PATTERN)
 
-# Ticket ID in filename pattern (matches basenames of versioned files)
-TICKET_ID_FILENAME_RE = re.compile(r"(?i)(?:WT|WP|PLAN)[_-]\d{4}[_-]\d{3}[a-z]?")
+# Ticket ID in filename pattern (matches basenames of versioned files).
+# Accepts WT/WP (2-letter ticket prefixes), any 3-letter uppercase prefix (e.g. WOT),
+# AND the special "PLAN" file-naming prefix (not a ticket prefix — file convention only).
+# WT-2026-251a: extended [A-Z]{2,3} to replace the hard-coded WT|WP alternatives.
+TICKET_ID_FILENAME_RE = re.compile(r"(?i)(?:[A-Z]{2,3}|PLAN)[_-]\d{4}[_-]\d{3}[a-z]?")
 
 
 # ---------------------------------------------------------------------------
@@ -319,7 +325,7 @@ def _resolve_active_ticket(project_root: Path) -> str | None:
         content = wp_path.read_text(encoding="utf-8")
     except OSError:
         return None
-    m = re.search(r"-?\s*\*\*ID:\*\*\s*((?:WP|WT)-\d{4}-\d{3}[a-z]?)", content)
+    m = re.search(r"-?\s*\*\*ID:\*\*\s*(" + TICKET_ID_PATTERN + r")", content)
     if m:
         return m.group(1)
     return None
@@ -1449,7 +1455,7 @@ def _extract_ticket_id_from_feedback(filename: str) -> str | None:
     During: Uses regex to extract the ticket ID portion.
     After: Returns ticket ID string or None if not matched.
     """
-    m = re.search(r"manager_feedback_((?:WP|WT)-\d{4}-\d{3}[a-z]?)\.md$", filename)
+    m = re.search(r"manager_feedback_(" + TICKET_ID_PATTERN + r")\.md$", filename)
     if m:
         return m.group(1)
     return None

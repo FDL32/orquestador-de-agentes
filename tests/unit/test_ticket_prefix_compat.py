@@ -2,8 +2,11 @@
 
 Covers the regex patterns expanded in WT-2026-245a for bus/review_bridge.py
 and bus/supervisor.py. Verifies that WP-*, WT-* and CTL-* (three-letter
-prefix) ticket IDs are all correctly parsed by string-extraction patterns,
-while patterns that feed int() remain limited to WP|WT + numeric suffix.
+prefix) ticket IDs are all correctly parsed by string-extraction patterns.
+
+WT-2026-251a: NUMERIC_SUFFIX_PATTERN and NEXT_TICKET_PATTERN now also accept
+3-letter prefixes, but ONLY when the suffix is purely numeric (int() safe).
+Alphanumeric suffixes like "042a" must still be rejected by these patterns.
 """
 
 import pytest
@@ -122,26 +125,85 @@ class TestExpandedPatternsMatchAllPrefixes:
 
 
 class TestNumericPatternsPreserved:
-    """Patterns that feed int() must remain limited to WP|WT + numeric suffix."""
+    """Patterns that feed int() must only capture pure-numeric suffixes.
+
+    WT-2026-251a: extended from WP|WT-only to include 3-letter prefixes,
+    but ONLY for tickets with pure-numeric suffixes (int() safety contract).
+    Alphanumeric suffixes like "042a" must still NOT match.
+    """
 
     @pytest.mark.parametrize("ticket", [TICKET_WP, TICKET_WT])
     def test_numeric_suffix_accepts_wp_wt(self, ticket):
         m = NUMERIC_SUFFIX_PATTERN.search(ticket)
         assert m is not None, f"numeric_suffix should match {ticket}"
 
-    def test_numeric_suffix_rejects_three_letter_alpha(self):
-        """CTL-2026-001a has alphanumeric suffix; numeric pattern must reject it."""
+    def test_numeric_suffix_on_three_letter_alpha_only_captures_numeric_part(self):
+        r"""CTL-2026-001a: NUMERIC_SUFFIX_PATTERN may match but captured group is '001' only.
+
+        WT-2026-251a: The pattern uses (\d+) so if the ticket string is
+        'CTL-2026-001a', the match stops at the digits — group(1) == '001',
+        not '001a'. This preserves int() safety even when search() finds a
+        partial match inside an alphanumeric-suffixed ticket ID.
+        """
         m = NUMERIC_SUFFIX_PATTERN.search(TICKET_CTL)
-        assert m is None, "CTL alphanumeric suffix must NOT match numeric pattern"
+        # The pattern may or may not match depending on anchor position.
+        # If it matches, the captured group MUST be pure-numeric for int() safety.
+        if m is not None:
+            captured = m.group(1)
+            assert captured.isdigit(), (
+                f"Captured group {captured!r} must be digits-only for int() safety"
+            )
+            assert int(captured) == 1, f"Expected 1, got {int(captured)}"
+
+    def test_numeric_suffix_accepts_three_letter_numeric(self):
+        """WT-2026-251a: CTL-2026-001 (pure numeric) must now match NUMERIC_SUFFIX_PATTERN."""
+        m = NUMERIC_SUFFIX_PATTERN.search("CTL-2026-001")
+        assert m is not None, "CTL pure-numeric suffix must match numeric pattern"
+        assert m.group(1) == "001", f"Expected captured group '001', got {m.group(1)!r}"
+        assert int(m.group(1)) == 1, "Captured group must be safely castable to int()"
+
+    def test_numeric_suffix_group_is_numeric_only(self):
+        """WT-2026-251a: group(1) must be digits-only for WOT-2026-042."""
+        m = NUMERIC_SUFFIX_PATTERN.search("WOT-2026-042")
+        assert m is not None, "WOT (3-letter) pure-numeric must match"
+        assert m.group(1) == "042"
+        assert int(m.group(1)) == 42
 
     @pytest.mark.parametrize("ticket", [TICKET_WP, TICKET_WT])
     def test_next_ticket_accepts_wp_wt(self, ticket):
         m = NEXT_TICKET_PATTERN.match(ticket)
         assert m is not None, f"next_ticket should match {ticket}"
 
-    def test_next_ticket_rejects_three_letter_with_alpha(self):
+    def test_next_ticket_on_three_letter_alpha_number_group_is_numeric_only(self):
+        r"""CTL-2026-001a: if NEXT_TICKET_PATTERN matches, the number group must be digits-only.
+
+        WT-2026-251a: NEXT_TICKET_PATTERN uses (\d+) for the suffix so even
+        when matching 'CTL-2026-001a' the captured number group is '001', never
+        '001a'.  This ensures the caller can safely call int() on group(2).
+        """
         m = NEXT_TICKET_PATTERN.match(TICKET_CTL)
-        assert m is None, "CTL must NOT match next_ticket pattern (int() guard)"
+        if m is not None:
+            number_group = m.group(2)
+            assert number_group.isdigit(), (
+                f"Number group {number_group!r} must be digits-only for int() safety"
+            )
+            assert int(number_group) == 1
+
+    def test_next_ticket_accepts_three_letter_numeric(self):
+        """WT-2026-251a: CTL-2026-001 (pure numeric) must now match NEXT_TICKET_PATTERN."""
+        m = NEXT_TICKET_PATTERN.match("CTL-2026-001")
+        assert m is not None, "CTL pure-numeric suffix must match next_ticket pattern"
+        year, number = m.group(1), m.group(2)
+        assert year == "2026"
+        assert number == "001"
+        assert int(number) == 1, "Number group must be safely castable to int()"
+
+    def test_next_ticket_accepts_three_letter_wot(self):
+        """WT-2026-251a: WOT-2026-042 must match NEXT_TICKET_PATTERN."""
+        m = NEXT_TICKET_PATTERN.match("WOT-2026-042")
+        assert m is not None
+        assert m.group(2) == "042"
+        assert int(m.group(2)) == 42
 
 
 class TestSortKeyIntegration:

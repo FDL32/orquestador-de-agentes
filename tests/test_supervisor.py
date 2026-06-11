@@ -5338,6 +5338,29 @@ class TestDualPrefixSupervisor:
         # ensure_ticket_queue should not crash with mixed prefixes
         supervisor.ensure_ticket_queue()
 
+    def test_next_ticket_id_from_three_letter_prefix(self, tmp_path):
+        """WT-2026-251a: _next_ticket_id generates next ID from CTL- ticket (pure numeric suffix)."""
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        bus_dir = tmp_path / ".agent" / "runtime" / "events"
+        bus_dir.mkdir(parents=True)
+        supervisor = SequentialTicketSupervisor(project_root=tmp_path)
+        # CTL-2026-100 has a pure-numeric suffix; NEXT_TICKET_PATTERN now matches it.
+        # _next_ticket_id extracts year=2026, number=100, returns WT-2026-101.
+        result = supervisor._next_ticket_id("CTL-2026-100")
+        assert result == "WT-2026-101", f"Expected WT-2026-101, got {result}"
+
+    def test_next_ticket_id_three_letter_alpha_suffix_returns_none(self, tmp_path):
+        """WT-2026-251a: _next_ticket_id returns None for CTL- with alphanumeric suffix (int() guard)."""
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        bus_dir = tmp_path / ".agent" / "runtime" / "events"
+        bus_dir.mkdir(parents=True)
+        supervisor = SequentialTicketSupervisor(project_root=tmp_path)
+        # CTL-2026-001a has alphanumeric suffix; NEXT_TICKET_PATTERN must not match.
+        result = supervisor._next_ticket_id("CTL-2026-001a")
+        assert result is None, f"Expected None for alphanumeric suffix, got {result}"
+
 
 # ---------------------------------------------------------------------------
 # WT-2026-197: Supervisor post-restart sin Builder tras CHANGES

@@ -44,6 +44,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+from bus.ticket_id import TICKET_ID_PATTERN  # noqa: E402  # WT-2026-251a
 from runtime.project_root import get_agent_dir  # noqa: E402
 
 
@@ -214,8 +215,11 @@ def _normalize_timestamp(value: Any) -> str:
 
 
 def _extract_ticket_from_source(source: str) -> str:
-    """Extract ticket ID from source string like 'human_audit_WP-2026-137'."""
-    match = re.search(r"(WP-\d{4}-\d{3}|WT-\d{4}-\d{3})", source)
+    """Extract ticket ID from source string like 'human_audit_WP-2026-137'.
+
+    WT-2026-251a: uses TICKET_ID_PATTERN to accept 3-letter prefixes (e.g. WOT).
+    """
+    match = re.search(r"(" + TICKET_ID_PATTERN + r")", source)
     if match:
         return match.group(1)
     return ""

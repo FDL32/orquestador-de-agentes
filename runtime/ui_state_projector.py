@@ -13,14 +13,18 @@ from pathlib import Path
 
 from bus.event_bus import EventBus
 
+# WT-2026-251a: canonical ticket ID pattern (accepts WP, WT, 3-letter prefixes)
+from bus.ticket_id import TICKET_ID_PATTERN
+
 # WP-2026-122 / WP-2026-155: Centralized path resolution via runtime.project_root
 from runtime.project_root import get_agent_dir, resolve_project_root
 
 
 _PROJECT_ROOT = resolve_project_root()
 _AGENT_DIR = get_agent_dir()
+# WT-2026-251a: derived from TICKET_ID_PATTERN to accept 3-letter prefixes.
 _PLAN_ID_PATTERN = re.compile(
-    r"^-\s+\*\*ID:\*\*\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+|none|NINGUNO)\s*$",
+    r"^-\s+\*\*ID:\*\*\s*(" + TICKET_ID_PATTERN + r"|none|NINGUNO)\s*$",
     re.MULTILINE,
 )
 _STATUS_PATTERN = re.compile(r"\*\*Estado:\*\*\s*([A-Z_]+)")
@@ -78,8 +82,11 @@ class UIStateProjector:
 
         if self.turn_path.exists():
             content = self.turn_path.read_text(encoding="utf-8")
+            # WT-2026-251a: derived from TICKET_ID_PATTERN to accept 3-letter prefixes.
             match = re.search(
-                r"\|\s*\*\*(?:Plan|Ticket)\s*ID\*\*\s*\|\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+|NINGUNO)\s*\|",
+                r"\|\s*\*\*(?:Plan|Ticket)\s*ID\*\*\s*\|\s*("
+                + TICKET_ID_PATTERN
+                + r"|NINGUNO)\s*\|",
                 content,
             )
             if match:

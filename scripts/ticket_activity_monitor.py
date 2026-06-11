@@ -17,6 +17,8 @@ if str(_PROJECT_ROOT_BOOTSTRAP) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT_BOOTSTRAP))
 
 # WP-2026-122 / WP-2026-155: Centralized path resolution via runtime.project_root
+# WT-2026-251a: canonical ticket ID pattern (accepts WP, WT, 3-letter prefixes)
+from bus.ticket_id import TICKET_ID_PATTERN  # noqa: E402
 from runtime.project_root import resolve_project_root  # noqa: E402
 
 
@@ -60,8 +62,9 @@ def _active_ticket_from_work_plan() -> str | None:
 def _active_ticket_from_work_plan_content(content: str) -> str | None:
     for line in content.splitlines():
         # Match canonical work_plan fields: "- **ID:** WT-YYYY-NNN[a]"
+        # WT-2026-251a: derived from TICKET_ID_PATTERN to accept 3-letter prefixes.
         canonical = re.search(
-            r"\*\*(?:Plan\s+ID|ID):\*\*\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+)",
+            r"\*\*(?:Plan\s+ID|ID):\*\*\s*(" + TICKET_ID_PATTERN + r")",
             line,
             re.IGNORECASE,
         )
@@ -69,8 +72,9 @@ def _active_ticket_from_work_plan_content(content: str) -> str | None:
             return canonical.group(1).strip().lstrip("*").rstrip("*").strip()
 
         # Match "- **Plan activo:** WP-YYYY-XXX" or "- **Ticket activo:** WT-YYYY-XXX"
+        # WT-2026-251a: derived from TICKET_ID_PATTERN to accept 3-letter prefixes.
         match = re.search(
-            r"(?:Plan|Ticket)\s+activo.*?:\*{0,2}\s*((?:WP|WT)-\d{4}-[A-Za-z0-9]+)",
+            r"(?:Plan|Ticket)\s+activo.*?:\*{0,2}\s*(" + TICKET_ID_PATTERN + r")",
             line,
             re.IGNORECASE,
         )
