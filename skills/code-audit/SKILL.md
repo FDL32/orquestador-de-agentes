@@ -1,6 +1,6 @@
 ---
 name: code-audit
-version: 2.0.0
+version: 2.1.0
 description: Auditoría sistemática de código Python detectando dead code, technical debt, y archivos inactivos usando vulture, deadcode, ruff y git log
 triggers: [/code-audit, code-quality, /deadcode]
 author: agent
@@ -26,196 +26,151 @@ La auditoría realiza análisis estático multi-herramienta combinando:
 ## Workflow
 
 ### Paso 0: Verificar Pre-condiciones
-- Proyecto contiene archivos Python (`*.py`)
-- Herramientas instaladas: `vulture>=2.0`, `deadcode>=2.0`, `ruff`, `git` (opcional)
-- Repositorio limpio (cambios guardados)
 
-### Paso 1: Ejecutar Health Check
+Confirmar que las herramientas están disponibles:
+
+```powershell
+# PowerShell (Windows)
+python -m vulture --version
+deadcode --version
+python -m ruff --version
+```
 
 ```bash
-python scripts/audit_codebase.py --status
+# Bash/POSIX
+python -m vulture --version
+deadcode --version
+ruff --version
 ```
 
-**Salida esperada:**
-```
-Deadcode found X unused items
-Ruff executed successfully
-Health check passed: all tools executed successfully
-```
+Si faltan, instalar con: `uv sync`
 
-**Si falla:** Verificar que las herramientas están instaladas con `uv sync`.
+Herramientas requeridas declaradas en `pyproject.toml`: `vulture>=2.0`, `deadcode>=2.0`.
 
-### Paso 2: Ejecutar Auditoría Completa
+### Paso 1: Ejecutar Vulture (simbolos no usados)
+
+```powershell
+# PowerShell
+python -m vulture . --min-confidence 80 --exclude ".venv,venv,__pycache__,.git,agent_system,.agent"
+```
 
 ```bash
-python scripts/audit_codebase.py --report
+# Bash
+python -m vulture . --min-confidence 80 --exclude ".venv,venv,__pycache__,.git,agent_system,.agent"
 ```
 
-Este comando ejecuta los 4 analizadores:
-1. **Vulture** (subprocess CLI) — símbolos no referenciados
-2. **Deadcode** (importado como librería) — análisis de uso real
-3. **Ruff** (subprocess CLI) — complejidad y deuda técnica
-4. **Git Log** (subprocess) — antigüedad de cambios
+**Salida esperada:** Lista de `path/file.py:NN: unused X 'name' (NN% confidence)`
 
-**Salida esperada:**
+Si la salida es grande, filtrar a un subdirectorio: `python -m vulture bus/ scripts/ --min-confidence 80`
+
+> **Nota Windows:** La captura de salida de vulture puede tener encoding issues en Windows.
+> Si ocurre, redirigir: `python -m vulture . --min-confidence 80 2>&1 | Out-File audit_vulture.txt -Encoding utf8`
+
+### Paso 2: Ejecutar Deadcode (codigo realmente muerto)
+
+```powershell
+# PowerShell
+deadcode . --exclude ".venv,venv,__pycache__,.git,agent_system,.agent"
 ```
-Running full audit...
-Vulture executed successfully (output not captured due to Windows encoding issues)
-Error running deadcode: ...  (tolerable si hay librerías externas sin AST)
-Ruff executed successfully
-Audit complete.
-Report generated: .session/audit_report.md
-```
-
-Warnings/Errors parciales son tolerables. El reporte se genera incluso con fallos parciales.
-
-### Paso 3: Inspeccionar Reporte
 
 ```bash
-cat .session/audit_report.md | head -50
+# Bash
+deadcode . --exclude ".venv,venv,__pycache__,.git,agent_system,.agent"
 ```
 
-Estructura de tabla:
+**Salida esperada:** Lista de `path/file.py:NN:N: DC01 X 'name' is never used`
 
-| Archivo | Líneas | Herramienta | Tipo | Línea | Símbolo | Usos | Commits | Acción |
-|---------|--------|-------------|------|-------|---------|------|---------|--------|
-| `src/foo.py` | 145 | deadcode | function | 23 | `unused_helper` | 0 | 3 | LEGACY |
-| `src/bar.py` | 89 | ruff | lint | 12 | C901 | 1 | 15 | SMELL |
+Errores parciales (librerías externas sin AST) son tolerables — continuar.
 
-**Columnas:**
-- **Acción**: Categorización automática (DEAD, LEGACY, ABANDONED, SMELL)
-- **Commits**: Cantidad de commits que tocaron ese archivo
-- **Usos**: Número de referencias encontradas (0 = unused)
+### Paso 3: Ejecutar Ruff (deuda técnica)
 
-### Paso 4: Categorizar Hallazgos
+```powershell
+# PowerShell / Bash (mismo comando)
+python -m ruff check . --select C90,ERA,SIM --output-format concise
+```
 
-**DEAD** (commits=0):
-- Código nunca commiteado o muy reciente
-- Acción: Eliminar inmediatamente
+**Salida esperada:** Lista de `path/file.py:NN:N: C901 'func' is too complex`
 
-**ABANDONED** (0 < commits < 5):
-- Código antiguo, pocos cambios, sin uso detectado
-- Acción: Revisar + eliminar después de análisis manual
+Reglas activas:
+- **C90**: Complejidad ciclomática alta
+- **ERA**: Código comentado (candidato a eliminar)
+- **SIM**: Simplificaciones disponibles
 
-**LEGACY** (commits >= 5):
-- Código histórico con cambios múltiples pero sin uso actual
-- Acción: Refactorizar o encapsular (podría ser API pública)
-
-**SMELL** (ruff findings):
-- Deuda técnica: complejidad alta, código antiguo, oportunidades de simplificación
-- Acción: Mejorar gradualmente en siguiente refactor
-
-### Paso 5: Filtrar por Acción
+### Paso 4: Revisar Antigüedad (git log)
 
 ```bash
-# Ver solo código DEAD
-grep "| DEAD$" .session/audit_report.md
-
-# Ver solo problemas de ruff (SMELL)
-grep "| ruff " .session/audit_report.md
-
-# Ver solo archivos no commiteados (ABANDONED nuevos)
-grep "| ABANDONED$" .session/audit_report.md | head -20
+# Ver archivos con menor actividad reciente (bash/git)
+git log --oneline --name-only --since="6 months ago" | grep "\.py$" | sort | uniq -c | sort -n | head -20
 ```
 
-### Paso 6: Tomar Decisiones
+```powershell
+# PowerShell equivalente
+$since = (Get-Date).AddMonths(-6).ToString("yyyy-MM-dd")
+git log --oneline --name-only --after=$since |
+    Where-Object { $_ -match "\.py$" } |
+    Group-Object | Sort-Object Count | Select-Object -First 20 Count, Name
+```
 
-Para cada hallazgo significativo:
+Archivos con 0-2 cambios en 6 meses son candidatos a ABANDONED/DEAD.
 
-1. **DEAD** → Eliminar del código
-2. **ABANDONED con 0 commits** → Eliminar
-3. **ABANDONED con 1-4 commits** → Validar manualmente antes de eliminar
-4. **LEGACY** → Revisar con el equipo (podría ser API interna)
-5. **SMELL** → Agendar refactor gradual
+### Paso 5: Categorizar y Documentar Hallazgos
+
+Para cada hallazgo cruzar vulture/deadcode con git log:
+
+| Categoria | Criterio | Accion |
+|-----------|----------|--------|
+| **DEAD** | 0 commits + 0 usos | Eliminar inmediatamente |
+| **ABANDONED** | <5 commits + 0 usos | Revisar manualmente antes de eliminar |
+| **LEGACY** | >=5 commits + 0 usos | Revisar con equipo (puede ser API publica) |
+| **SMELL** | Hallazgo ruff (C90/ERA/SIM) | Deuda tecnica, agendar refactor |
 
 Documentar decisiones en `execution_log.md`:
 
 ```markdown
 ### Code Audit Results — [FECHA]
 
-**Hallazgos procesados:**
-- DEAD items: X (todos eliminados)
-- ABANDONED items: Y (revisados, Z eliminados)
-- LEGACY items: W (refactor agendado / API interna confirmada)
-- SMELL items: V (deuda técnica acumulada)
+**Hallazgos:**
+- Vulture: N items (confidence >= 80)
+- Deadcode: N items
+- Ruff C90/ERA/SIM: N items
 
-**Acciones tomadas:**
-- [ ] Eliminados archivos DEAD
-- [ ] Revisados ABANDONED manualmente
-- [ ] Confirmado status de LEGACY
-- [ ] Ruff findings documentados en PROJECT.md
+**Decisiones:**
+- DEAD: X eliminados
+- ABANDONED: Y revisados, Z eliminados
+- LEGACY: W confirmados como API interna
+- SMELL: V documentados en PROJECT.md para refactor gradual
 ```
 
-## Output Format
+## Constraints
 
-### Reporte Markdown (.session/audit_report.md)
+### Umbrales
 
-Tabla ordenada por archivo + línea:
+| Herramienta | Parametro | Valor | Razon |
+|-------------|-----------|-------|-------|
+| vulture | `--min-confidence` | 80 | Evitar false positives en parametros opcionales |
+| deadcode | `--exclude` | `.venv,venv,__pycache__,.git,agent_system,.agent` | Ignorar deps y frameworks |
+| ruff | `--select` | `C90,ERA,SIM` | Complejidad, codigo antiguo, simplificaciones |
+| git | `--since` | 6 months | Ventana de actividad para clasificar abandono |
 
-```markdown
-# Audit Report
+### Limitaciones Conocidas
 
-| Archivo | Líneas | Herramienta | Tipo | Línea | Símbolo | Usos | Commits | Acción |
-|---------|--------|-------------|------|-------|---------|------|---------|--------|
-...
-```
+- **Windows encoding**: Vulture puede tener problemas con caracteres no-ASCII; redirigir a archivo con `-Encoding utf8` si ocurre.
+- **Librerias externas**: Deadcode puede no analizar codigo de terceros — tolerable.
+- **No-git repos**: Los pasos de git son opcionales si no es repo git.
 
-**Filas totales:** Típicamente 100-2000 dependiendo del codebase.
+### Reglas de Uso
 
-### Categorización
-
-```
-DEAD      = sin uso + sin commits (eliminar)
-ABANDONED = sin uso + 0-5 commits (revisar + eliminar)
-LEGACY    = sin uso + 5+ commits (revisar con equipo)
-SMELL     = ruff findings (deuda técnica)
-```
+- **NUNCA** eliminar codigo LEGACY sin revision manual (puede ser API publica).
+- **SIEMPRE** documentar decisiones en `execution_log.md`.
+- Los hallazgos son sugerencias del agente, no acciones automaticas.
 
 ## References
 
 - `references/audit-report-template.md` — Plantilla para decisiones por hallazgo
-- `references/audit-tools-guide.md` — Umbrales y configuración de cada herramienta
-- `scripts/audit_codebase.py` — Script orquestador (descripción de herramientas y parámetros)
-
-## Constraints
-
-### Herramientas y Umbrales
-
-| Herramienta | Parámetro | Valor | Razón |
-|-------------|-----------|-------|-------|
-| vulture | `--min-confidence` | 80 | Evitar false positives en parámetros opcionales |
-| deadcode | `--exclude` | `venv,.venv,__pycache__,.git,agent_system,.agent` | Ignorar venv, cache y frameworks |
-| ruff | extends | `C90, ERA, SIM` | Complejidad, código antiguo, simplificaciones |
-| git | log | `--oneline --follow` | Rastrear antigüedad del código |
-
-### Exclusiones
-
-```python
-exclude = 'venv,.venv,__pycache__,.git,agent_system,.agent'
-```
-
-Se ignoran deliberadamente:
-- **venv/.venv** — Dependencias aisladas
-- **__pycache__** — Compilados Python
-- **.git** — Historial externo
-- **agent_system/.agent** — Frameworks de referencia
-
-### Limitaciones Conocidas
-
-- **Windows encoding**: Vulture output no se captura en Windows (usar log explícito de vulture)
-- **Librerías externas**: Deadcode puede no analizar código de terceros (tolerable)
-- **No-git repos**: Audit continúa con warning si no es repo git
-- **Tabla grande**: Si hay >2000 filas, considerar filtrar en post-procesamiento
-
-### Reglas de Uso
-
-- **SIEMPRE** ejecutar `--status` primero para validar tooling
-- **NUNCA** eliminar código LEGACY sin revisión manual (podría ser API pública)
-- **SIEMPRE** documentar decisiones en `execution_log.md`
-- **NO** ejecutar audit en paralelo (subprocess contention)
+- `references/audit-tools-guide.md` — Umbrales y configuracion de cada herramienta
 
 ---
 
-**Versión:** 1.0.0  
-**Autor:** agent-system  
-**Última actualización:** 2026-04-28
+**Version:** 2.1.0
+**Autor:** agent-system
+**Ultima actualizacion:** 2026-06-11 (WT-2026-253a: reescrito sobre CLIs directas)
