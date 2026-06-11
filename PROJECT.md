@@ -4,19 +4,23 @@
 
 ## Current Cycle
 
+- Last ticket: WT-2026-249c IMPLEMENTED (2026-06-11). `review_bridge.py` now honors nested OpenCode phase metadata and uses the last matching NDJSON decision when `final_answer` is absent.
+- Last ticket: WT-2026-249b IMPLEMENTED (2026-06-11). `BUILDER_BRIEF_WT-*` / `BUILDER_BRIEF_WP-*` are treated as live handoff surfaces, not workspace residue, in pre-handoff packaging.
+- Last ticket: WT-2026-249a IMPLEMENTED (2026-06-11). CLI contract around `--pre-handoff` / session-close warnings stays exit-0 clean on non-fatal orphan flows.
 - Last ticket: WT-2026-216 COMPLETED (2026-06-02). Launcher reads bus instead of TURN.md for agent decision (`get_launcher_state.py`).
 - Last ticket: WT-2026-212 COMPLETED (2026-06-02). Guarantee durable CHANGES consumer (`_ensure_durable_changes_consumer` in review_bridge.py).
 - Last ticket: WT-2026-211 COMPLETED (2026-06-02). Centralize transition projection writes — controller emits events, supervisor materializes projections.
 - Last ticket: WT-2026-210 COMPLETED (2026-06-02). Bus architecture audit + reconcile_ticket.py for orphaned runtime.
 - Last session closed: WP-2026-175 COMPLETED (2026-05-29). Canonical session closeout and cycle rollover.
-- Open deuda: WT-2026-213 (double STATE_CHANGED in mark-ready), WT-2026-214 (forced close on preflight), WT-2026-215 (Modelo B gates).
+- Open deuda priorizada: WT-2026-248b (higiene Git/EOL y follow-up documental/estructural tras 249).
 - `validate_ticket_prose.py` TP-06 / TP-07 detection remains active; the canonical TP Check format is still enforced.
 
 ## Current readiness
 
 - Canonical close complete: bus reconstruction, suite stabilization, encoding guard hardening and CEM v0 are published.
+- Review packet hardening published locally for `WT-2026-249a/249b/249c`: stale-orphan CLI contract aligned, `BUILDER_BRIEF_*` excluded from workspace residue guards, and NDJSON decision parsing hardened for OpenCode review flows.
 - Motor suite verified green: 2071 passed, 22 skipped, 0 failed.
-- Next strategic front: WT-2026-221a (Relaunch CEM: verified root/topology plus evidence-linked Builder handoff capsule).
+- Next strategic front: WT-2026-248b (higiene Git/EOL y actualizacion documental/estructural tras la implantacion local de 249).
 
 ## Repomix Context Integration (WT-2026-182)
 
