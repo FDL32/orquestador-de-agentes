@@ -1415,6 +1415,33 @@ def _check_last_commit(project_root: Path, active_id: str) -> tuple[bool, str]:
         return False, "Git not available"
 
 
+def _resolve_closeout_commit_root(deliverable_type: str) -> Path:
+    """Resolve which git repo owns closeout commit validation.
+
+    Before:
+        - deliverable_type is normalized via _read_deliverable_type().
+
+    During:
+        - In motor/destino topology, code and mixed tickets validate against
+          repo_motor because productive commits land there.
+        - Documentation/research/analysis keep using PROJECT_ROOT if they ever
+          opt into commit validation in the future.
+
+    After:
+        - Returns the Path that should be used as cwd for _check_last_commit().
+    """
+    project_root = PROJECT_ROOT.resolve()
+    motor_root = _MOTOR_ROOT.resolve()
+
+    if deliverable_type in {"documentation", "research", "analysis"}:
+        return project_root
+
+    if motor_root != project_root and (motor_root / ".git").exists():
+        return motor_root
+
+    return project_root
+
+
 def _clear_auxiliary_states(ticket_id: str) -> None:
     """Clear auxiliary state files after ticket closeout.
 
@@ -4826,9 +4853,8 @@ def _handle_manager_approve(  # noqa: C901 - flag handler intentionally branches
     # WP-2026-188: Validate last commit message for closeout hygiene
     # Block generic checkpoints, wrong/missing ticket IDs unless --force
     if not force_mode and _dt_ma not in {"documentation", "research", "analysis"}:
-        commit_valid, commit_reason = _check_last_commit(
-            PROJECT_ROOT.resolve(), ticket_id
-        )
+        commit_root = _resolve_closeout_commit_root(_dt_ma)
+        commit_valid, commit_reason = _check_last_commit(commit_root, ticket_id)
         if not commit_valid:
             warn_parts = [
                 f"[WARN] Last commit validation failed: {commit_reason}",
