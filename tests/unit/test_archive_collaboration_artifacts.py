@@ -65,7 +65,8 @@ def test_parse_wp_number() -> None:
     assert mod.parse_wp_number("AUDIT_WP-2026-099.md") == "WP-2026-099"
     assert mod.parse_wp_number("work_plan.md") is None
     assert mod.parse_wp_number("TURN.md") is None
-    assert mod.parse_wp_number("PLAN_WP-2026-1000.md") is None  # Invalid format
+    # 4-digit suffix is now valid (canonical pattern accepts any alphanumeric suffix)
+    assert mod.parse_wp_number("PLAN_WP-2026-1000.md") == "WP-2026-1000"
 
 
 def test_get_active_wp(tmp_path: Path) -> None:
@@ -204,3 +205,87 @@ def test_archive_dir_creation(tmp_path: Path) -> None:
     assert len(result["archived"]) == 2
     assert archive_dir.exists()
     assert archive_dir.is_dir()
+
+
+# ── WT-2026-250a: letter-suffix ticket names ──────────────────────────────────
+
+
+def test_parse_wp_number_letter_suffix() -> None:
+    """parse_wp_number must handle letter-suffix filenames introduced in WT-2026-221a."""
+    # PLAN with letter suffix
+    assert mod.parse_wp_number("PLAN_WT-2026-221a.md") == "WT-2026-221a"
+    # AUDIT with letter+digit suffix (three-letter prefix)
+    assert mod.parse_wp_number("AUDIT_WOT-2026-001b.md") == "WOT-2026-001b"
+    # Old numeric-only still works
+    assert mod.parse_wp_number("PLAN_WT-2026-221.md") == "WT-2026-221"
+    # No match for unrelated files
+    assert mod.parse_wp_number("manager_feedback_WT-2026-249b.md") is None
+
+
+def test_extract_ticket_id_from_feedback_letter_suffix() -> None:
+    """extract_ticket_id_from_feedback must handle letter-suffix IDs."""
+    assert (
+        mod.extract_ticket_id_from_feedback("manager_feedback_WT-2026-249b.md")
+        == "WT-2026-249b"
+    )
+    # Numeric-only still works
+    assert (
+        mod.extract_ticket_id_from_feedback("manager_feedback_WP-2026-100.md")
+        == "WP-2026-100"
+    )
+    # Non-matching returns None
+    assert mod.extract_ticket_id_from_feedback("PLAN_WT-2026-221a.md") is None
+
+
+def test_get_active_wp_letter_suffix(tmp_path: Path) -> None:
+    """get_active_wp must return letter-suffix IDs from work_plan.md."""
+    collab = tmp_path / "collaboration"
+    collab.mkdir()
+    work_plan = collab / "work_plan.md"
+
+    work_plan.write_text(
+        "# Work Plan\n\n**ID:** WT-2026-248b\n**Estado:** IN_PROGRESS\n",
+        encoding="utf-8",
+    )
+    assert mod.get_active_wp(collab) == "WT-2026-248b"
+
+
+def test_archive_letter_suffix_files(tmp_path: Path) -> None:
+    """Closed PLAN/AUDIT files with letter-suffix names are archived correctly."""
+    collab = tmp_path / "collaboration"
+    collab.mkdir(parents=True, exist_ok=True)
+
+    active_id = "WT-2026-250a"
+    closed_id = "WT-2026-221a"
+
+    # Active work_plan.md
+    (collab / "work_plan.md").write_text(
+        f"# Work Plan\n\n**ID:** {active_id}\n**Estado:** IN_PROGRESS\n",
+        encoding="utf-8",
+    )
+    # Active PLAN/AUDIT files
+    (collab / f"PLAN_{active_id}.md").write_text(
+        f"# PLAN {active_id}\n", encoding="utf-8"
+    )
+    (collab / f"AUDIT_{active_id}.md").write_text(
+        f"# AUDIT {active_id}\n", encoding="utf-8"
+    )
+    # Closed PLAN/AUDIT files with letter suffix
+    (collab / f"PLAN_{closed_id}.md").write_text(
+        f"# PLAN {closed_id}\n", encoding="utf-8"
+    )
+    (collab / f"AUDIT_{closed_id}.md").write_text(
+        f"# AUDIT {closed_id}\n", encoding="utf-8"
+    )
+
+    result = mod.archive_collaboration_artifacts(collab, dry_run=False)
+
+    assert len(result["archived"]) == 2
+    assert len(result["errors"]) == 0
+
+    archive_dir = mod.get_archive_dir(collab)
+    assert (archive_dir / f"PLAN_{closed_id}.md").exists()
+    assert (archive_dir / f"AUDIT_{closed_id}.md").exists()
+    # Active files remain
+    assert (collab / f"PLAN_{active_id}.md").exists()
+    assert (collab / f"AUDIT_{active_id}.md").exists()

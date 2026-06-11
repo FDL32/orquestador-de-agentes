@@ -17,15 +17,25 @@ from __future__ import annotations
 import argparse
 import re
 import shutil
+import sys
 from pathlib import Path
 
 
-# Patterns to match PLAN and AUDIT files (dual WP/WT prefix)
-PLAN_RE = re.compile(r"^PLAN_(WP|WT)-(\d{4})-(\d{3})\.md$")
-AUDIT_RE = re.compile(r"^AUDIT_(WP|WT)-(\d{4})-(\d{3})\.md$")
+# Bootstrap: project root must be on sys.path before importing bus modules.
+_PROJECT_ROOT_BOOTSTRAP = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT_BOOTSTRAP) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT_BOOTSTRAP))
+
+from bus.ticket_id import TICKET_ID_PATTERN, WORKPLAN_ID_PATTERN  # noqa: E402
+
+
+# Patterns to match PLAN and AUDIT files — derived from canonical TICKET_ID_PATTERN
+# so letter-suffix IDs (e.g. WT-2026-221a) are matched.
+PLAN_RE = re.compile(r"^PLAN_(" + TICKET_ID_PATTERN + r")\.md$")
+AUDIT_RE = re.compile(r"^AUDIT_(" + TICKET_ID_PATTERN + r")\.md$")
 
 # Regex to extract ticket ID from manager_feedback filenames
-MANAGER_FEEDBACK_RE = re.compile(r"^manager_feedback_((?:WP|WT)-\d{4}-\d{3})\.md$")
+MANAGER_FEEDBACK_RE = re.compile(r"^manager_feedback_(" + TICKET_ID_PATTERN + r")\.md$")
 
 # Files that must always remain in the active collaboration surface
 ACTIVE_ONLY_FILES = {
@@ -38,12 +48,11 @@ ACTIVE_ONLY_FILES = {
 
 
 def parse_wp_number(filename: str) -> str | None:
-    """Extract ticket ID from filename (e.g., 'PLAN_WP-2026-100.md' -> 'WP-2026-100')."""
+    """Extract ticket ID from filename (e.g., 'PLAN_WT-2026-221a.md' -> 'WT-2026-221a')."""
     for pattern in (PLAN_RE, AUDIT_RE):
         match = pattern.match(filename)
         if match:
-            prefix, year, num = match.groups()
-            return f"{prefix}-{year}-{num}"
+            return match.group(1)
     return None
 
 
@@ -54,8 +63,8 @@ def get_active_wp(collaboration_dir: Path) -> str | None:
         return None
 
     text = work_plan.read_text(encoding="utf-8")
-    # Look for "- **ID:** WP-YYYY-NNN" or "**ID:** WT-YYYY-NNN" patterns
-    match = re.search(r"(?m)-?\s*\*\*ID:\*\*\s*((?:WP|WT)-\d{4}-\d{3})", text)
+    # Use canonical WORKPLAN_ID_PATTERN (supports letter-suffix IDs like WT-2026-221a)
+    match = WORKPLAN_ID_PATTERN.search(text)
     if match:
         return match.group(1)
     return None
@@ -260,10 +269,16 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Archive closed PLAN/AUDIT artifacts from .agent/collaboration/"
     )
     parser.add_argument(
+        "--project-root",
+        type=Path,
+        default=None,
+        help="Project root directory (overrides --collaboration-dir default)",
+    )
+    parser.add_argument(
         "--collaboration-dir",
         type=Path,
-        default=Path(".agent/collaboration"),
-        help="Path to .agent/collaboration directory",
+        default=None,
+        help="Path to .agent/collaboration directory (default: <project-root>/.agent/collaboration)",
     )
     parser.add_argument(
         "--dry-run",
@@ -297,6 +312,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:  # noqa: C901 - CLI dispatch with multiple modes
     args = _build_parser().parse_args()
+
+    # Resolve collaboration_dir: explicit > derived from project-root > cwd default
+    if args.collaboration_dir is not None:
+        collaboration_dir = args.collaboration_dir
+    elif args.project_root is not None:
+        collaboration_dir = args.project_root / ".agent" / "collaboration"
+    else:
+        collaboration_dir = Path(".agent/collaboration")
+    args.collaboration_dir = collaboration_dir
 
     if args.list_active:
         active_files = list_active_collaboration_files(args.collaboration_dir)
