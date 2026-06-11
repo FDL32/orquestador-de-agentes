@@ -16,13 +16,14 @@ During (Proceso y Recursos):
       validate_ticket_prose (informativo), session_close_observations (por ticket),
       memory_consolidate (unless --skip-slow), archivadores, verificacion de portabilidad.
     - Genera `.agent/runtime/memory/session_close_report.md` con PASS/WARN/FAIL por paso.
-    - En `--dry-run` genera el reporte sin ejecutar scripts destructivos.
+    - En `--dry-run` genera el preview en `.agent/runtime/tmp/` sin tocar el
+      reporte durable.
 
 After (Post-condiciones y Errores):
     - Exit code 0 si el cierre completo pasa (prepush_check OK + sin errores fatales).
     - Exit code 1 si prepush_check falla o hay errores fatales en pasos bloqueantes.
-    - El reporte se escribe siempre, incluyendo en `--dry-run`.
-    - `git status --short` debe quedar limpio salvo por el reporte.
+    - El reporte durable se escribe solo en el cierre real.
+    - `git status --short` queda limpio tras `--dry-run`.
 """
 
 from __future__ import annotations
@@ -85,6 +86,7 @@ PORTABILITY_SCAN_GLOBS = ("*.py", "*.ps1", "*.md", "MANIFEST*")
 
 # Report path (relative to project_root)
 REPORT_REL = Path(".agent") / "runtime" / "memory" / "session_close_report.md"
+DRY_RUN_REPORT_REL = Path(".agent") / "runtime" / "tmp" / "session_close_report.md"
 
 # Events file (relative to project_root)
 EVENTS_REL = Path(".agent") / "runtime" / "events" / "events.jsonl"
@@ -595,7 +597,8 @@ def _generate_report(report: CloseoutReport, project_root: Path) -> Path:
     """Generate the session close report markdown file.
 
     Before: report has all steps populated.
-    During: Formats steps as a table and writes to session_close_report.md.
+    During: Formats steps as a table. Dry-run previews go to runtime/tmp;
+            real reports go to runtime/memory.
     After: Returns the path to the written report.
     """
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -658,7 +661,8 @@ def _generate_report(report: CloseoutReport, project_root: Path) -> Path:
         ]
     )
 
-    report_path = project_root / REPORT_REL
+    report_rel = DRY_RUN_REPORT_REL if report.dry_run else REPORT_REL
+    report_path = project_root / report_rel
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text("\n".join(lines), encoding="utf-8")
     return report_path
@@ -1546,16 +1550,28 @@ def _step_archive_manager_feedback(  # noqa: C901 - multiple condition checks
 def _step_manifest_check(project_root: Path) -> StepResult:
     """Verify MANIFEST.distribute exists.
 
-    Before: MANIFEST.distribute may or may not exist at project root.
-    During: Checks file existence.
+    Before: MANIFEST.distribute may live in repo_motor for Model B.
+    During: Resolves repo_motor via motor_destination_link, then checks the
+            legacy project root as fallback.
     After: Returns PASS or FAIL.
     """
-    manifest_path = project_root / "MANIFEST.distribute"
+    manifest_root = project_root
+    try:
+        from runtime.motor_link import resolve_motor_root
+
+        motor_root = resolve_motor_root(project_root)
+        if motor_root is not None:
+            manifest_root = motor_root
+    except ImportError:
+        pass
+
+    manifest_path = manifest_root / "MANIFEST.distribute"
     if manifest_path.exists():
+        location = "repo_motor" if manifest_root != project_root else "project root"
         return StepResult(
             name="manifest_check",
             status="PASS",
-            detail="MANIFEST.distribute exists",
+            detail=f"MANIFEST.distribute exists in {location}",
         )
     return StepResult(
         name="manifest_check",

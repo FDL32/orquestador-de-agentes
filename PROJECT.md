@@ -16,7 +16,8 @@
   `delivery_hygiene_check.py` topology-aware when invoked against a Model B
   destination. `--session-close` also resolves its orchestrator script from
   `repo_motor` instead of assuming that operational scripts are copied into
-  `repo_destino`.
+  `repo_destino`; dry-run previews remain in ignored runtime and do not dirty
+  the durable workspace report.
 - WT-2026-248b IMPLEMENTED (2026-06-11). Bidirectional prompt<->skill contract hardening: `source_prompt:` + `contract_id` in skills, `Skill canonica:` + `contract_id` in prompts, `--check-contract` barrier in gates. No runtime/OpenCode config changes.
 - Local hardening (2026-06-11). `.gitattributes` now normalizes LF for portable docs/config/memory surfaces, with regression coverage to prevent recurring CRLF noise in local updates. Esto no implica cierre canonico de `WT-2026-248b`.
 - Last ticket: WT-2026-249c IMPLEMENTED (2026-06-11). `review_bridge.py` now honors nested OpenCode phase metadata and uses the last matching NDJSON decision when `final_answer` is absent.
