@@ -18,7 +18,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from bus.redact import redact
+
+# Bootstrap repo_motor before importing sibling packages when executed by
+# absolute path with cwd pointing at repo_destino.
+_MOTOR_ROOT_BOOTSTRAP = Path(__file__).resolve().parent.parent
+if str(_MOTOR_ROOT_BOOTSTRAP) not in sys.path:
+    sys.path.insert(0, str(_MOTOR_ROOT_BOOTSTRAP))
+
+from bus.redact import redact  # noqa: E402
 
 
 # WP-2026-122: Deferred path resolution via runtime.project_root

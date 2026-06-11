@@ -17,13 +17,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from bus.redact import redact_payload
 
+# Bootstrap repo_motor before importing sibling packages when executed by
+# absolute path with cwd pointing at repo_destino.
+_MOTOR_ROOT_BOOTSTRAP = Path(__file__).resolve().parent.parent
+if str(_MOTOR_ROOT_BOOTSTRAP) not in sys.path:
+    sys.path.insert(0, str(_MOTOR_ROOT_BOOTSTRAP))
 
-# Bootstrap: project root must be on sys.path before importing runtime.project_root.
-_PROJECT_ROOT_BOOTSTRAP = Path(__file__).resolve().parent.parent
-if str(_PROJECT_ROOT_BOOTSTRAP) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT_BOOTSTRAP))
+from bus.redact import redact_payload  # noqa: E402
 
 # WP-2026-122 / WP-2026-155: Centralized path resolution via runtime.project_root
 from runtime.project_root import get_agent_dir  # noqa: E402

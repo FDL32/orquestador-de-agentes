@@ -36,6 +36,7 @@ from scripts.session_closeout import (
     _resolve_active_ticket,
     _resolve_session_window,
     _resolve_tickets,
+    _run_script,
     _step_manifest_check,
     main,
     run_closeout,
@@ -103,6 +104,30 @@ def _write_work_plan(project_root: Path, ticket_id: str = "WP-2026-168") -> None
 def _generated_report_path(project_root: Path, *, dry_run: bool) -> Path:
     """Return the report path for the requested closeout mode."""
     return project_root / (DRY_RUN_REPORT_REL if dry_run else REPORT_REL)
+
+
+def test_run_script_exports_agent_project_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Child scripts receive the canonical destination root explicitly."""
+    captured: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr("scripts.session_closeout.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "runtime.motor_link.resolve_motor_script",
+        lambda project_root, script_name: tmp_path / script_name,
+    )
+
+    _run_script("memory_consolidate.py", ["--apply"], tmp_path)
+
+    assert captured["cwd"] == str(tmp_path)
+    assert captured["env"]["AGENT_PROJECT_ROOT"] == str(tmp_path.resolve())
 
 
 class TestFindLastReportTimestamp:
@@ -462,6 +487,28 @@ class TestRunCloseout:
         content = report_path.read_text(encoding="utf-8")
         assert "prepush_check" in content
         assert "FAIL" in content
+
+    def test_prepush_failure_reports_stderr(self, tmp_path: Path) -> None:
+        """A stderr-only gate failure remains actionable in the report."""
+        _write_work_plan(tmp_path, "WP-2026-168")
+
+        def _mock_run(script_name, args, project_root, timeout=120):
+            return subprocess.CompletedProcess(
+                args=[],
+                returncode=1,
+                stdout="",
+                stderr="ModuleNotFoundError: No module named 'bus'",
+            )
+
+        with patch("scripts.session_closeout._run_script", side_effect=_mock_run):
+            result = run_closeout(tmp_path, dry_run=False)
+
+        assert result == 1
+        content = _generated_report_path(
+            tmp_path,
+            dry_run=False,
+        ).read_text(encoding="utf-8")
+        assert "ModuleNotFoundError" in content
 
     def test_explicit_ticket_passed_through(self, tmp_path: Path) -> None:
         """Explicit tickets from CLI are used directly."""
