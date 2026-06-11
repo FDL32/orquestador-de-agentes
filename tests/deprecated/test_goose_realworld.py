@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# DEPRECATED (WT-2026-254a): Goose integration deprecated. Moved from scripts/ to tests/deprecated/.
 """
 Goose Real-World Integration Test
 
@@ -23,7 +24,7 @@ if sys.platform == "win32":
 
 
 def run_cmd(args, timeout=30):
-    return subprocess.run(  # noqa: S603
+    return subprocess.run(
         args,
         capture_output=True,
         text=True,

@@ -4,7 +4,7 @@
 
 - Claude Code: agente principal y supervisor.
 - Codex / GitHub Copilot: agentes soportados si leen este archivo dentro del arbol.
-- Goose / Claw: motores orquestados por `scripts/orquestador.py`.
+- Goose / Claw: **[DEPRECATED - WT-2026-254a]** motores orquestados por `scripts/orquestador.py`. No usar en proyectos nuevos; reemplazados por Claude Code como agente principal.
 
 ## Resumen del entorno
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# DEPRECATED (WT-2026-254a): Goose native skill integration deprecated. Kept for historical reference.
 """
 Test Suite for Goose Native Skill Integration
 

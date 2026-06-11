@@ -1,4 +1,4 @@
-# ruff: noqa: S607
+# DEPRECATED (WT-2026-254a): Goose integration deprecated. Moved from scripts/ to tests/deprecated/.
 """
 Goose Integration Testing Suite
 
@@ -34,14 +34,14 @@ def test_trigger_map_generation():
         data = json.loads(result.stdout)
 
         # Validate structure
-        assert "trigger_map" in data, "Missing trigger_map"  # noqa: S101
-        assert "skills" in data, "Missing skills"  # noqa: S101
-        assert data["total_skills"] == 14  # noqa: S101
-        assert data["total_triggers"] == 41  # noqa: S101
+        assert "trigger_map" in data, "Missing trigger_map"
+        assert "skills" in data, "Missing skills"
+        assert data["total_skills"] == 14
+        assert data["total_triggers"] == 41
 
         # Validate no duplicates
         triggers = list(data["trigger_map"].keys())
-        assert len(triggers) == len(set(triggers)), "Duplicate triggers detected"  # noqa: S101
+        assert len(triggers) == len(set(triggers)), "Duplicate triggers detected"
 
         print("  PASS: Generated valid trigger_map (14 skills, 41 triggers)")
         return True
