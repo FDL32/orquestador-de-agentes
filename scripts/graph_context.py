@@ -27,6 +27,14 @@ from pathlib import Path
 from typing import Any
 
 
+# Bootstrap: motor root on sys.path so bus.ticket_id is importable.
+_MOTOR_ROOT_BOOTSTRAP = Path(__file__).resolve().parent.parent
+if str(_MOTOR_ROOT_BOOTSTRAP) not in sys.path:
+    sys.path.insert(0, str(_MOTOR_ROOT_BOOTSTRAP))
+
+from bus.ticket_id import TICKET_ID_PATTERN  # noqa: E402
+
+
 def get_project_root() -> Path:
     """Get the project root directory."""
     return Path(__file__).parent.parent
@@ -159,12 +167,13 @@ def extract_active_ticket_id(work_plan_content: str) -> str | None:
     During: Searches for WP-YYYY-NNN pattern in metadata section.
     After: Returns ticket ID (e.g., 'WP-2026-147') or None if not found.
     """
-    match = re.search(r"\*\*ID:\*\*\s*((?:WP|WT)-\d{4}-\d{3})", work_plan_content)
+    # WT-2026-251a: derived from TICKET_ID_PATTERN to accept 3-letter prefixes.
+    match = re.search(r"\*\*ID:\*\*\s*(" + TICKET_ID_PATTERN + r")", work_plan_content)
     if match:
         return match.group(1)
 
     match = re.search(
-        r"#\s*(?:Work\s+)?(?:Plan|Ticket)\s*-\s*((?:WP|WT)-\d{4}-\d{3})",
+        r"#\s*(?:Work\s+)?(?:Plan|Ticket)\s*-\s*(" + TICKET_ID_PATTERN + r")",
         work_plan_content,
     )
     if match:

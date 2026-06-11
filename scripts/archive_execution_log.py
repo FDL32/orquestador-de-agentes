@@ -2,11 +2,21 @@ from __future__ import annotations
 
 import argparse
 import re
+import sys
 from datetime import datetime
 from pathlib import Path
 
 
-SECTION_RE = re.compile(r"(?m)^###\s+(?:WP|WT)-\d{4}-\d{3}\b.*$")
+# Bootstrap: motor root on sys.path so bus.ticket_id is importable.
+_MOTOR_ROOT_BOOTSTRAP = Path(__file__).resolve().parent.parent
+if str(_MOTOR_ROOT_BOOTSTRAP) not in sys.path:
+    sys.path.insert(0, str(_MOTOR_ROOT_BOOTSTRAP))
+
+from bus.ticket_id import TICKET_ID_PATTERN  # noqa: E402
+
+
+# WT-2026-251a: derived from canonical TICKET_ID_PATTERN (accepts WP, WT, 3-letter prefixes).
+SECTION_RE = re.compile(r"(?m)^###\s+" + TICKET_ID_PATTERN + r"\b.*$")
 
 
 def _find_sections(text: str) -> list[tuple[int, int, str]]:

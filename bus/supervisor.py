@@ -621,7 +621,7 @@ class SequentialTicketSupervisor:
         return True
 
     def _next_ticket_id(self, ticket_id: str) -> str | None:
-        match = re.match(NEXT_TICKET_PATTERN, ticket_id)
+        match = NEXT_TICKET_PATTERN.fullmatch(ticket_id)
         if not match:
             return None
         prefix, number = match.groups()

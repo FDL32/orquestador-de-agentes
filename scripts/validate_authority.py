@@ -13,9 +13,16 @@ Exit code:
 from __future__ import annotations
 
 import json
-import re
 import sys
 from pathlib import Path
+
+
+# Bootstrap: motor root on sys.path so bus.ticket_id is importable.
+_MOTOR_ROOT_BOOTSTRAP = Path(__file__).resolve().parent.parent
+if str(_MOTOR_ROOT_BOOTSTRAP) not in sys.path:
+    sys.path.insert(0, str(_MOTOR_ROOT_BOOTSTRAP))
+
+from bus.ticket_id import TICKET_ID_RE  # noqa: E402
 
 
 def find_all_agent_dirs(root: Path) -> dict[str, str]:
@@ -49,14 +56,17 @@ def find_all_agent_dirs(root: Path) -> dict[str, str]:
 
 
 def extract_ticket_id(content: str) -> str:
-    """Extract ticket ID from work_plan.md content."""
+    """Extract ticket ID from work_plan.md content.
+
+    WT-2026-251a: uses TICKET_ID_RE (canonical, accepts WP, WT, 3-letter prefixes)
+    instead of inline WP|WT-only pattern.
+    """
     ticket = "UNKNOWN"
     for line in content.splitlines()[:60]:
-        if "WP-" in line or "WT-" in line:
-            m = re.search(r"((?:WP|WT)-\d{4}-[A-Za-z0-9]+)", line)
-            if m:
-                ticket = m.group(1)
-                break
+        m = TICKET_ID_RE.search(line)
+        if m:
+            ticket = m.group(0)
+            break
     return ticket
 
 

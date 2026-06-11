@@ -55,10 +55,14 @@ LOOSE_PATTERN = re.compile(r"(" + TICKET_ID_PATTERN + r")")
 # ── Section delimiter for execution_log.md extraction ────────────────────────
 SECTION_DELIMITER_PATTERN = re.compile(r"(?=\n### " + TICKET_ID_PATTERN + r")")
 
-# ── Numeric-only patterns (preserved — feed int()) ───────────────────────────
-# These MUST remain limited to WP|WT + numeric suffix because they feed int().
-NUMERIC_SUFFIX_PATTERN = re.compile(r"(?:WP|WT)-\d{4}-(\d+)")
-NEXT_TICKET_PATTERN = re.compile(r"(?:WP|WT)-(\d{4})-(\d+)")
+# ── Numeric-only patterns (feed int()) ──────────────────────────────────────
+# WT-2026-251a: Extended from WP|WT to include 3-letter prefixes (e.g. WOT).
+# The captured group is always the numeric suffix (\d+) so callers can safely
+# call int() on it. Alphanumeric suffixes like "042a" do NOT match these
+# patterns — only the pure-numeric portion prefix triggers a match,
+# ensuring int() safety downstream (bus/supervisor.py:468,624).
+NUMERIC_SUFFIX_PATTERN = re.compile(r"(?:WP|WT|[A-Z]{3})-\d{4}-(\d+)")
+NEXT_TICKET_PATTERN = re.compile(r"(?:WP|WT|[A-Z]{3})-(\d{4})-(\d+)")
 
 # ── Sort key pattern (accepts all prefixes, extracts year + suffix) ──────────
 TICKET_SORT_KEY_PATTERN = re.compile(r"(?:WP|WT|[A-Z]{3})-(\d{4})-([A-Za-z0-9]+)")
