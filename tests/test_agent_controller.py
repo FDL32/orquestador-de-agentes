@@ -3075,3 +3075,153 @@ class TestCliContractSessionClose:
         assert "[ERROR] Closeout script failed: timeout" in err_text, (
             f"stderr must contain subprocess error, got: {err_text!r}"
         )
+
+
+# =============================================================================
+# WT-2026-249b: BUILDER_BRIEF_ exclusion from workspace live-surface guard
+# =============================================================================
+
+
+class TestBuilderBriefExclusion:
+    """WT-2026-249b: BUILDER_BRIEF_ must be treated as live surface (non-blocking)
+    while UPSTREAM_LEARNINGS.md must remain outside exclusions.
+
+    [NON-REVERSE-CLASSICAL: test of guard prefix logic — the fix is a
+    one-line constant addition, behavioural coverage matters.]
+    """
+
+    def test_is_live_surface_accepts_builder_brief(self, tmp_path):
+        """_is_live_surface() returns True for BUILDER_BRIEF_WT-*.md paths."""
+        brief_path = str(
+            tmp_path / ".agent" / "collaboration" / "BUILDER_BRIEF_WT-2026-249b.md"
+        )
+        result = agent_controller._is_live_surface(
+            brief_path,
+            tmp_path,
+            live_files=set(),
+            live_dirs=set(),
+        )
+        assert result is True, "BUILDER_BRIEF_ path should be a live surface, got False"
+
+    def test_is_live_surface_rejects_upstream_learnings(self, tmp_path):
+        """_is_live_surface() returns False for UPSTREAM_LEARNINGS.md paths."""
+        learnings_path = str(
+            tmp_path / ".agent" / "runtime" / "memory" / "UPSTREAM_LEARNINGS.md"
+        )
+        result = agent_controller._is_live_surface(
+            learnings_path,
+            tmp_path,
+            live_files=set(),
+            live_dirs=set(),
+        )
+        assert result is False, (
+            "UPSTREAM_LEARNINGS.md must NOT be a live surface, got True"
+        )
+
+    @staticmethod
+    def _make_pre_handoff_git_mock():
+        """Standard git mock for pre-handoff that succeeds on all operations."""
+
+        def git_mock(cmd, *args, **kwargs):
+            cmd_str = " ".join(cmd)
+            if "git show HEAD:.opencode/opencode.json" in cmd_str:
+                return MagicMock(returncode=1, stdout=b"", stderr=b"")
+            if "rev-parse" in cmd_str and "checkpoint" in cmd_str and "^{}" in cmd_str:
+                return MagicMock(returncode=1, stdout="", stderr="")
+            if "rev-parse HEAD" in cmd_str:
+                return MagicMock(returncode=0, stdout="abc123\n", stderr="")
+            if len(cmd) >= 2 and cmd[:2] == ["git", "add"]:
+                return MagicMock(returncode=0, stdout="", stderr="")
+            if len(cmd) >= 2 and cmd[:2] == ["git", "commit"]:
+                return MagicMock(
+                    returncode=0, stdout="[main abc123] commit\n", stderr=""
+                )
+            if len(cmd) >= 3 and cmd[1] == "tag" and cmd[2] in ("-a", "-d"):
+                return MagicMock(returncode=0, stdout="", stderr="")
+            if len(cmd) >= 2 and cmd[:2] == ["git", "status"]:
+                return MagicMock(returncode=0, stdout="", stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        return git_mock
+
+    @staticmethod
+    def _patch_git_exists(monkeypatch):
+        """Patch Path.exists to simulate .git directory."""
+        project_root = agent_controller.PROJECT_ROOT.resolve()
+        git_path = project_root / ".git"
+        original_exists = Path.exists
+
+        def _patched_exists(self_path):
+            if str(self_path) == str(git_path):
+                return True
+            return original_exists(self_path)
+
+        monkeypatch.setattr(Path, "exists", _patched_exists)
+
+    def test_builder_brief_does_not_block_pre_handoff(self, monkeypatch, tmp_path):
+        """--pre-handoff must NOT block when the only untracked file is a BUILDER_BRIEF_."""
+        from agent_controller import _handle_pre_handoff
+
+        project_root = agent_controller.PROJECT_ROOT.resolve()
+        brief_file = str(
+            project_root / ".agent" / "collaboration" / "BUILDER_BRIEF_WT-2026-249b.md"
+        )
+
+        # The brief file is excluded via _WORKSPACE_EXCLUDED_PREFIXES,
+        # so it is removed from the "changed" set before the scope check.
+        monkeypatch.setattr(
+            agent_controller,
+            "read_file",
+            lambda x: (
+                TestPreHandoff._PLAN_CONTENT if "work_plan" in str(x).lower() else ""
+            ),
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "parse_files_likely_touched",
+            lambda x: {brief_file},
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "get_changed_files",
+            lambda: {brief_file},
+        )
+        self._patch_git_exists(monkeypatch)
+
+        # Patch pre-handoff guard and round check to pass
+        monkeypatch.setattr(
+            agent_controller,
+            "_run_pre_handoff_guard",
+            lambda plan_id, json_output: {"valid": True},
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "_ensure_active_builder_round",
+            lambda plan_id: (True, 1, None),
+        )
+        monkeypatch.setattr(agent_controller, "BUS_AVAILABLE", False)
+
+        # Patch git operations
+        monkeypatch.setattr(
+            agent_controller.subprocess, "run", self._make_pre_handoff_git_mock()
+        )
+
+        code, output = TestModelBCheckpointTopology._capture_output(
+            lambda: _handle_pre_handoff(json_output=False)
+        )
+
+        assert code == 0, (
+            f"pre-handoff should pass when only BUILDER_BRIEF_ is untracked: "
+            f"exit={code}, output={output}"
+        )
+        assert "Pre-handoff complete" in output, (
+            f"Expected success message in output: {output}"
+        )
+
+    def test_upstream_learnings_not_in_excluded_prefixes(self):
+        """UPSTREAM_LEARNINGS.md must NOT appear in _WORKSPACE_EXCLUDED_PREFIXES."""
+        excluded = agent_controller._WORKSPACE_EXCLUDED_PREFIXES
+        for prefix in excluded:
+            assert "UPSTREAM_LEARNINGS" not in prefix, (
+                f"UPSTREAM_LEARNINGS must not be in excluded prefixes, found: {prefix}"
+            )

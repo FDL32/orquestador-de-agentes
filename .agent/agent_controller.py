@@ -3327,6 +3327,9 @@ _WORKSPACE_EXCLUDED_PREFIXES = {
     ".agent/collaboration/AUDIT_WP-",
     ".agent/collaboration/AUDIT_WT-",
     ".agent/collaboration/manager_feedback_",
+    # WT-2026-249b: BUILDER_BRIEF_ artefacts are operational handoff files
+    # generated for the active ticket. They must not block --pre-handoff.
+    ".agent/collaboration/BUILDER_BRIEF_",
 }
 
 _LIVE_SURFACE_DIRS = {
