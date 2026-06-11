@@ -574,7 +574,10 @@ class TestPreHandoff:
             overrides: dict of pattern -> (returncode, stdout, stderr)
                        to override specific command responses.
         """
-        default_overrides = overrides or {}
+        default_overrides = {
+            "git show HEAD:.opencode/opencode.json": (1, b"", b""),
+            **(overrides or {}),
+        }
 
         def mock_run(cmd, *args, **kwargs):
             cmd_str = " ".join(cmd)
@@ -722,6 +725,8 @@ class TestPreHandoff:
         # Override: tag exists and aligns with HEAD
         def git_mock(cmd, *args, **kwargs):
             cmd_str = " ".join(cmd)
+            if "git show HEAD:.opencode/opencode.json" in cmd_str:
+                return MagicMock(returncode=1, stdout=b"", stderr=b"")
             if "rev-parse" in cmd_str and "checkpoint" in cmd_str and "^{}" in cmd_str:
                 return MagicMock(returncode=0, stdout="abc123\n", stderr="")
             if "rev-parse HEAD" in cmd_str:
@@ -745,6 +750,8 @@ class TestPreHandoff:
 
         def git_mock(cmd, *args, **kwargs):
             cmd_str = " ".join(cmd)
+            if "git show HEAD:.opencode/opencode.json" in cmd_str:
+                return MagicMock(returncode=1, stdout=b"", stderr=b"")
             if "rev-parse" in cmd_str and "checkpoint" in cmd_str and "^{}" in cmd_str:
                 return MagicMock(returncode=1, stdout="", stderr="")
             if len(cmd) >= 2 and cmd[1] == "tag" and cmd[2] == "-a":
@@ -775,6 +782,8 @@ class TestPreHandoff:
         def git_mock(cmd, *args, **kwargs):
             cmd_str = " ".join(cmd)
             calls.append(cmd_str)
+            if "git show HEAD:.opencode/opencode.json" in cmd_str:
+                return MagicMock(returncode=1, stdout=b"", stderr=b"")
             if "rev-parse" in cmd_str and "checkpoint" in cmd_str and "^{}" in cmd_str:
                 return MagicMock(returncode=0, stdout="oldsha\n", stderr="")
             if "rev-parse HEAD" in cmd_str:
@@ -818,6 +827,8 @@ class TestPreHandoff:
 
         def git_mock(cmd, *args, **kwargs):
             cmd_str = " ".join(cmd)
+            if "git show HEAD:.opencode/opencode.json" in cmd_str:
+                return MagicMock(returncode=1, stdout=b"", stderr=b"")
             if "rev-parse" in cmd_str and "checkpoint" in cmd_str and "^{}" in cmd_str:
                 return MagicMock(returncode=1, stdout="", stderr="")
             if len(cmd) >= 2 and cmd[:2] == ["git", "add"]:
@@ -846,6 +857,8 @@ class TestPreHandoff:
         # Override status to report a dirty file
         def git_mock(cmd, *args, **kwargs):
             cmd_str = " ".join(cmd)
+            if "git show HEAD:.opencode/opencode.json" in cmd_str:
+                return MagicMock(returncode=1, stdout=b"", stderr=b"")
             if "rev-parse" in cmd_str and "checkpoint" in cmd_str and "^{}" in cmd_str:
                 return MagicMock(returncode=1, stdout="", stderr="")
             if len(cmd) >= 2 and cmd[:2] == ["git", "add"]:
