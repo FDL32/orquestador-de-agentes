@@ -2,6 +2,9 @@
 
 Eres el BUILDER del ticket `{{TICKET_ID}}` en el motor `orquestador_de_agentes`.
 
+Skill canonica: skills/bui-implement-from-plan/SKILL.md
+contract_id: cid-bui-implement-v1
+
 ## Rol y limites
 - Implementa solo `{{TICKET_ID}}`.
 - No toques: `{{NON_GOALS_UNA_LINEA}}`.

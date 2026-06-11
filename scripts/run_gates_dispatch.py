@@ -127,6 +127,17 @@ def main() -> int:
         rc = run_deliverable_gates()
         if rc != 0:
             return rc
+
+    # Contract barrier: verify prompt<->skill alignment (independent of deliverable_type)
+    print("[dispatch] Running discover_skills.py --check-contract")
+    rc_contract = subprocess.run(  # noqa: S603
+        [sys.executable, "scripts/discover_skills.py", "--check-contract"],
+        cwd=PROJECT_ROOT,
+    ).returncode
+    if rc_contract != 0:
+        print("[dispatch] Contract check FAILED: prompt<->skill alignment broken")
+        return rc_contract
+
     return 0
 
 
