@@ -1,3 +1,18 @@
+# 2026-06-11 - WT-2026-249a/249b/249c review packet hardening and NDJSON parser fixes
+
+### Added
+- `tests/test_review_bridge.py`: barrier coverage for OpenCode NDJSON parsing, including nested `part.metadata.openai.phase` handling and the `last decision wins` rule when `final_answer` is absent (WT-2026-249c).
+- `tests/test_agent_controller.py`: coverage for CLI/stderr contract hardening around `--pre-handoff` orphan handling (WT-2026-249a) and for `BUILDER_BRIEF_WT-*` / `BUILDER_BRIEF_WP-*` live-surface exclusions in the workspace guard (WT-2026-249b).
+
+### Changed
+- `bus/review_bridge.py`: decision extraction now prefers canonical `final_answer`, falls back to nested OpenCode phase metadata when needed, and keeps the last matching NDJSON decision instead of the first (WT-2026-249c).
+- `.agent/agent_controller.py`: pre-handoff packaging treats `BUILDER_BRIEF_*` artifacts as operational handoff surfaces instead of workspace residue, preventing spurious `HANDOFF_BLOCKED` outcomes (WT-2026-249b).
+- `.agent/agent_controller.py`: post-success stale-builder/orphan flows keep exit code `0` and avoid leaking non-fatal warnings to stderr, aligning the CLI contract with the BOM-safe closeout path (WT-2026-249a).
+
+### Notes
+- `WT-2026-249c` landed through iterative commits (`a73b894`, `d0bdabb`, `50d8dd9`); the final state preserves Fix A + Fix B while reverting incidental drift in `tests/test_manager_review_bridge.py`.
+- The review-packet/parser hardening of `249` is implemented; the remaining follow-up stays in the separate `248b` hygiene/documentation track.
+
 # 2026-06-10 - Session close: WT-2026-245c/246a/246b/247a/248a, BOM drift fix, session learnings
 
 ### Added
