@@ -21,12 +21,16 @@
   implementation.
 - `scripts/delivery_hygiene_check.py`: resolves motor-owned pre-commit
   configuration when executed against a Model B destination.
+- `.agent/agent_controller.py`: `--session-close` resolves
+  `scripts/session_closeout.py` from `repo_motor` in Model B, with a legacy
+  single-repo fallback.
 - `PROJECT.md`: reflects completion of the E0-E6 audit batch and the remaining
   WOT follow-up themes.
 
 ### Verification
 - `pytest tests/test_delivery_hygiene_check.py tests/test_prepush_check.py -q`
   -> 43 passed.
+- `pytest tests/test_agent_controller.py -k session_close -q` -> 10 passed.
 - Ruff check and format verification pass on all changed Python surfaces.
 - Encoding guard passes on the updated portable files.
 

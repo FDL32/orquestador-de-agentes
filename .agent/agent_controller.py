@@ -5656,7 +5656,8 @@ def _handle_session_close(  # noqa: C901 - delegation handler with flag building
     """Handle --session-close flag by delegating to scripts/session_closeout.py.
 
     Before:
-        - scripts/session_closeout.py must exist in scripts/.
+        - scripts/session_closeout.py must exist in repo_motor or in the
+          legacy single-repo project root.
         - STATE.md may be in any state.
 
     During:
@@ -5681,10 +5682,17 @@ def _handle_session_close(  # noqa: C901 - delegation handler with flag building
             )
         return 0
 
-    # Find session_closeout.py
-    script_path = PROJECT_ROOT / "scripts" / "session_closeout.py"
+    # Model B keeps operational scripts in repo_motor. Preserve the local
+    # project-root lookup only as a compatibility fallback for legacy installs.
+    script_path = _MOTOR_ROOT / "scripts" / "session_closeout.py"
     if not script_path.exists():
-        print("[ERROR] scripts/session_closeout.py not found.", file=sys.stderr)
+        script_path = PROJECT_ROOT / "scripts" / "session_closeout.py"
+    if not script_path.exists():
+        print(
+            "[ERROR] scripts/session_closeout.py not found in repo_motor "
+            "or project root.",
+            file=sys.stderr,
+        )
         return 1
 
     # Build command with flags
