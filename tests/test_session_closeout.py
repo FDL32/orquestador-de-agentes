@@ -23,6 +23,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from scripts.session_closeout import (
+    DRY_RUN_REPORT_REL,
+    REPORT_REL,
     CloseoutReport,
     StepResult,
     _check_portability,
@@ -34,6 +36,7 @@ from scripts.session_closeout import (
     _resolve_active_ticket,
     _resolve_session_window,
     _resolve_tickets,
+    _step_manifest_check,
     main,
     run_closeout,
 )
@@ -95,6 +98,11 @@ def _write_work_plan(project_root: Path, ticket_id: str = "WP-2026-168") -> None
         f"# Work Plan\n\n## Metadata\n- **ID:** {ticket_id}\n- **Estado:** APPROVED\n",
         encoding="utf-8",
     )
+
+
+def _generated_report_path(project_root: Path, *, dry_run: bool) -> Path:
+    """Return the report path for the requested closeout mode."""
+    return project_root / (DRY_RUN_REPORT_REL if dry_run else REPORT_REL)
 
 
 class TestFindLastReportTimestamp:
@@ -407,14 +415,13 @@ class TestRunCloseout:
         )
 
     def test_dry_run_generates_report(self, tmp_path: Path) -> None:
-        """Dry-run mode generates report without running scripts."""
+        """Dry-run mode writes an ignored preview, not the durable report."""
         _write_work_plan(tmp_path, "WP-2026-168")
         result = run_closeout(tmp_path, dry_run=True)
         assert result == 0
-        report_path = (
-            tmp_path / ".agent" / "runtime" / "memory" / "session_close_report.md"
-        )
+        report_path = _generated_report_path(tmp_path, dry_run=True)
         assert report_path.exists()
+        assert not _generated_report_path(tmp_path, dry_run=False).exists()
         content = report_path.read_text(encoding="utf-8")
         assert "**Dry Run:** Yes" in content
 
@@ -428,9 +435,7 @@ class TestRunCloseout:
             result = run_closeout(tmp_path, dry_run=True, skip_slow=True)
 
         assert result == 0
-        report_path = (
-            tmp_path / ".agent" / "runtime" / "memory" / "session_close_report.md"
-        )
+        report_path = _generated_report_path(tmp_path, dry_run=True)
         content = report_path.read_text(encoding="utf-8")
         assert "**Skip Slow:** Yes" in content
         assert "observations_all" in content
@@ -453,9 +458,7 @@ class TestRunCloseout:
             result = run_closeout(tmp_path, dry_run=False)
 
         assert result == 1
-        report_path = (
-            tmp_path / ".agent" / "runtime" / "memory" / "session_close_report.md"
-        )
+        report_path = _generated_report_path(tmp_path, dry_run=False)
         content = report_path.read_text(encoding="utf-8")
         assert "prepush_check" in content
         assert "FAIL" in content
@@ -469,9 +472,7 @@ class TestRunCloseout:
                 tmp_path, dry_run=True, explicit_tickets=["WP-2026-999"]
             )
         assert result == 0
-        report_path = (
-            tmp_path / ".agent" / "runtime" / "memory" / "session_close_report.md"
-        )
+        report_path = _generated_report_path(tmp_path, dry_run=True)
         content = report_path.read_text(encoding="utf-8")
         assert "WP-2026-999" in content
 
@@ -480,9 +481,7 @@ class TestRunCloseout:
         _write_work_plan(tmp_path, "WP-2026-168")
         result = run_closeout(tmp_path, dry_run=True)
         assert result == 0
-        report_path = (
-            tmp_path / ".agent" / "runtime" / "memory" / "session_close_report.md"
-        )
+        report_path = _generated_report_path(tmp_path, dry_run=True)
         content = report_path.read_text(encoding="utf-8")
         assert "WP-2026-168" in content
         assert "fallback" in content.lower() or "work_plan" in content.lower()
@@ -497,9 +496,7 @@ class TestRunCloseout:
             run_closeout(tmp_path, dry_run=True)
 
         # manifest_check is not blocking in the current impl (WARN/FAIL but non-blocking)
-        report_path = (
-            tmp_path / ".agent" / "runtime" / "memory" / "session_close_report.md"
-        )
+        report_path = _generated_report_path(tmp_path, dry_run=True)
         content = report_path.read_text(encoding="utf-8")
         assert "manifest_check" in content
 
@@ -517,12 +514,29 @@ class TestRunCloseout:
         ):
             run_closeout(tmp_path, dry_run=True)
 
-        report_path = (
-            tmp_path / ".agent" / "runtime" / "memory" / "session_close_report.md"
-        )
+        report_path = _generated_report_path(tmp_path, dry_run=True)
         content = report_path.read_text(encoding="utf-8")
         assert "portability_paths" in content
         assert "WARN" in content
+
+    def test_manifest_resolves_from_motor_link(self, tmp_path: Path) -> None:
+        """Model B validates MANIFEST.distribute in repo_motor."""
+        motor_root = tmp_path / "motor"
+        motor_root.mkdir()
+        (motor_root / "MANIFEST.distribute").write_text("", encoding="utf-8")
+
+        project_root = tmp_path / "destination"
+        config_dir = project_root / ".agent" / "config"
+        config_dir.mkdir(parents=True)
+        (config_dir / "motor_destination_link.json").write_text(
+            json.dumps({"motor_root": str(motor_root)}),
+            encoding="utf-8",
+        )
+
+        result = _step_manifest_check(project_root)
+
+        assert result.status == "PASS"
+        assert "repo_motor" in result.detail
 
 
 # ---------------------------------------------------------------------------
