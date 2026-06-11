@@ -1,3 +1,11 @@
+# 2026-06-11 - WT-2026-248b Git EOL hygiene for portable text surfaces
+
+### Added
+- `tests/test_gitattributes_hygiene.py`: regression coverage to keep LF normalization explicit for portable docs/config/memory surfaces.
+
+### Changed
+- `.gitattributes`: expanded LF normalization from Python-only files to portable text surfaces used by the motor (`*.md`, `*.json`, `*.jsonl`, `*.toml`, `*.yaml`, `*.yml`, `*.sh`), preventing recurring `LF will be replaced by CRLF` noise during local documentation and memory updates.
+
 # 2026-06-11 - WT-2026-249a/249b/249c review packet hardening and NDJSON parser fixes
 
 ### Added
