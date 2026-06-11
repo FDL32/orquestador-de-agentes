@@ -1550,13 +1550,23 @@ class TestTryFirstJsonTransport:
 # =============================================================================
 # WT-2026-249c: Review bridge parser barrier tests
 # - json_final_answer: phase in part.metadata.openai.phase must be found
+#   (Fix A — nested phase resolution)
 # - json_last_text: last text event decision wins, not first
-# - No degradation of json_last_text when json_final_answer found nothing
+#   (Fix B — Bug #1 first-vs-last)
+# Fix C (json_last_text degradation lift) NOT included: the evidence from
+# 249b confirmed that final_answer phase exists (only nested), so Fix A
+# alone resolves the real case at the json_final_answer level without
+# changing the degradation contract for json_last_text.
 # =============================================================================
 
 
 class TestDecisionParser249c:
-    """Barrier tests for WT-2026-249c: CHANGES must not degrade to INSPECT."""
+    """Barrier tests for WT-2026-249c: Fix A + Fix B only.
+
+    Tests at the _parse_opencode_json_decision level for Bug #1, and at
+    the full _parse_opencode_decision level for the nested-phase fix.
+    json_last_text degradation (Fix C) is NOT included per Manager ruling.
+    """
 
     @staticmethod
     def _make_bridge(tmp_path):
@@ -1569,37 +1579,35 @@ class TestDecisionParser249c:
         return ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
     def test_early_inspect_later_changes_returns_changes(self, tmp_path):
-        """json_last_text: last text event with CHANGES wins over early INSPECT.
+        """Bug #1: _parse_opencode_json_decision returns last text event.
 
-        WT-2026-249c barrier: without Bug #1 fix (first-vs-last) this returns
-        INSPECT. With the fix it returns CHANGES.
+        Two text events without phase — first INSPECT, last CHANGES.
+        Tests the inner JSON parser directly (avoids the json_last_text
+        degradation in _parse_opencode_decision which is a separate
+        contract). With Bug #1 fix the inner parser returns CHANGES.
         """
         bridge = self._make_bridge(tmp_path)
-        # Two text events without phase — first INSPECT, last CHANGES.
-        # Bug #1 would return INSPECT (first). Fix returns CHANGES (last).
         stdout = (
             '{"type":"text","part":{"text":"Early check: DECISION: INSPECT"}}\n'
             '{"type":"text","part":{"text":"After full review: DECISION: CHANGES"}}\n'
         )
-        decision, method = bridge._parse_opencode_decision(stdout)
+        decision, method = bridge._parse_opencode_json_decision(stdout)
         assert method == "json_last_text", f"expected json_last_text, got {method}"
         assert decision == ReviewDecision.CHANGES, f"expected CHANGES, got {decision}"
 
     def test_no_final_answer_text_with_changes_returns_changes(self, tmp_path):
-        """json_last_text: single text event without phase returns CHANGES.
+        """Bug #1: _parse_opencode_json_decision finds CHANGES without phase.
 
-        WT-2026-249c barrier: regression test for the canonical case where
-        the Manager emits a text event without phase metadata but DECISION:
-        CHANGES. Without the json_last_text degradation fix, this returns
-        INSPECT.
+        Single text event without phase metadata but with DECISION: CHANGES.
+        Tests the inner JSON parser — verifies the last-text-event decision
+        capture works even without Fix C in the outer pipeline.
         """
         bridge = self._make_bridge(tmp_path)
-        # Single text event with CHANGES but NO phase field at all
         stdout = (
             '{"type":"text","part":{"text":"Review complete.'
             '\\n\\nDECISION: CHANGES"}}\n'
         )
-        decision, method = bridge._parse_opencode_decision(stdout)
+        decision, method = bridge._parse_opencode_json_decision(stdout)
         assert method == "json_last_text", f"expected json_last_text, got {method}"
         assert decision == ReviewDecision.CHANGES, f"expected CHANGES, got {decision}"
 
