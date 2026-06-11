@@ -41,21 +41,40 @@ skills canonicas como fuente de verdad:
 - `man-session-closeout` para learnings y puente al siguiente ciclo
 - `version-changelog` para version y CHANGELOG si aplica
 
-Y, cuando aplique, apóyate en estos scripts concretos del motor:
+### Comando canonico del cierre operativo
 
-- `python scripts/local_audit.py` para snapshot estructurado del estado actual
-- `python scripts/session_close_observations.py --ticket <TICKET_ID>` o
-  `--candidates <archivo>` para generar observaciones curadas
-- `python scripts/memory_consolidate.py --dry-run` y opcionalmente `--apply`
-  para consolidacion de memoria
-- `python scripts/prepush_check.py` para verificar hygiene antes de push o
-  cierre operativo
-- `python .agent/agent_controller.py --validate --json --force` para validar
-  el estado canonico cuando haya componente operativa
+El pipeline completo de cierre vive en `scripts/session_closeout.py` y se
+invoca via el controller. Es la MISMA via para chat y para bus — no
+reimplementes sus pasos a mano:
 
-Nota: si ejecutas `python scripts/prepush_check.py`, el
-`python .agent/agent_controller.py --validate --json --force` ya esta
-incluido; no hace falta repetirlo por separado salvo diagnostico puntual.
+```powershell
+# 1. Previsualizar (no muta nada):
+python .agent/agent_controller.py --session-close --dry-run --project-root <repo_destino>
+
+# 2. Ejecutar el cierre real tras revisar el reporte:
+python .agent/agent_controller.py --session-close --project-root <repo_destino>
+```
+
+El pipeline orquesta en orden: prepush_check, local_audit, validacion de
+prosa de tickets, observaciones por ticket, consolidacion de memoria,
+limpieza de sesion del Builder, archivado de collaboration/, rotacion de
+review_queue.md, archivado de manager_feedback, archivado de execution_log
+y del bus, manifest check y git clean. El reporte queda en
+`.agent/runtime/` y debe revisarse antes de dar el cierre por bueno.
+
+Nota de idempotencia: si `STATE.md` ya esta en `COMPLETED` (ticket cerrado
+antes del cierre de sesion), anade `--force` o el comando devolvera
+`already_completed` sin ejecutar ningun paso.
+
+Scripts sueltos SOLO para diagnostico puntual (el pipeline ya los incluye):
+
+- `python scripts/local_audit.py` — snapshot estructurado del estado actual
+- `python scripts/session_close_observations.py --ticket <TICKET_ID>` —
+  observaciones curadas de un ticket concreto
+- `python scripts/memory_consolidate.py --dry-run` / `--apply` —
+  consolidacion de memoria
+- `python scripts/prepush_check.py` — hygiene pre-push (incluye
+  `--validate --json --force`; no lo repitas por separado)
 
 ## Principios CEM v0 aplicados al cierre
 

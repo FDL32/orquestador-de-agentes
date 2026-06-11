@@ -1,6 +1,6 @@
 ---
 name: man-session-closeout
-version: 1.0.0
+version: 1.1.0
 description: Cierre de sesion del Manager con propuesta de learnings, clasificacion local/generalizable/dudoso y puente de mejora continua para el motor
 triggers: [/closeout, /session-closeout, /close-session]
 author: agent
@@ -57,11 +57,15 @@ Generar un bloque con exactamente este formato por item:
 ### 1
 - learning: "..."
 - categoria_propuesta: local|generalizable|dudoso
+- origen: bug-fix|contrato|proceso|documental
+- evidencia: "<commit sha | test | archivo:linea | comando + resultado>"
 - razon: "..."
 
 ### 2
 - learning: "..."
 - categoria_propuesta: local|generalizable|dudoso
+- origen: bug-fix|contrato|proceso|documental
+- evidencia: "..."
 - razon: "..."
 ```
 
@@ -69,6 +73,16 @@ Categorias permitidas:
 - `local`
 - `generalizable`
 - `dudoso`
+
+Taxonomia de `origen` (mejora el enrutado posterior):
+- `bug-fix` — nacio de un defecto corregido; candidato a barrera de regresion
+- `contrato` — define o cambia un contrato entre componentes; candidato a wing `engine`
+- `proceso` — regla de flujo de trabajo o review; candidato a wing `meta`
+- `documental` — drift docs/realidad; candidato a fix documental, no a memoria estable
+
+Regla de evidencia: un learning sin campo `evidencia` verificable no puede
+proponerse como `generalizable`; rebajalo a `dudoso` o descartalo. La
+validacion humana debe poder comprobar el anchor sin reconstruir la sesion.
 
 ### Paso 2: Pedir validacion humana
 
