@@ -1,6 +1,6 @@
 # Project: orquestador_de_agentes
 **Version:** v9.15.0
-**State:** READY (2026-06-04) — canonical close complete; CEM v0 adopted
+**State:** READY (2026-06-11) - review packet hardening for WT-2026-249 and Git EOL hygiene for WT-2026-248b published locally
 
 ## Current Cycle
 
