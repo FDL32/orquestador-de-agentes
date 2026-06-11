@@ -307,23 +307,28 @@ def _record_review(
         ),
     )
 
-    # WP-2026-155: Persist canonical normalized feedback
+    # WT-2026-250b: Split feedback into tracked digest + gitignored raw.
+    # Tracked file: digest only (~30 lines), no raw NDJSON.
+    # Raw file: full stdout in .agent/runtime/reviews/ (already gitignored).
     feedback_file = supervisor.collaboration_dir / f"manager_feedback_{ticket_id}.md"
     is_parse_warning = "[PARSE_WARNING]" if not feedback.strip() else ""
+    timestamp_iso = datetime.now(timezone.utc).isoformat()
+
+    raw_dir = supervisor.project_root / ".agent" / "runtime" / "reviews"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    raw_file = raw_dir / f"manager_review_raw_{ticket_id}.txt"
+    raw_file.write_text(raw_stdout or "[empty stdout]", encoding="utf-8")
+
     feedback_content = [
         f"# Manager Feedback - {ticket_id} {is_parse_warning}".strip(),
         f"- Decision: {decision}",
         f"- Parse method: {parse_method or 'unknown'}",
         f"- Source: {source}",
-        f"- Timestamp: {datetime.now(timezone.utc).isoformat()}",
+        f"- Timestamp: {timestamp_iso}",
+        f"- Raw: {raw_file.name} (in .agent/runtime/reviews/)",
         "",
         feedback.strip()
         or "[Feedback no pudo ser parseado en secciones estructuradas]",
-        "",
-        "## Raw Review",
-        "```text",
-        raw_stdout or "[empty stdout]",
-        "```",
         "",
     ]
     feedback_file.write_text("\n".join(feedback_content), encoding="utf-8")
