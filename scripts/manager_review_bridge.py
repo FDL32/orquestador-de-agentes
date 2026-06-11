@@ -319,6 +319,19 @@ def _record_review(
     raw_file = raw_dir / f"manager_review_raw_{ticket_id}.txt"
     raw_file.write_text(raw_stdout or "[empty stdout]", encoding="utf-8")
 
+    artifact_block = "\n".join(
+        [
+            "## Decision Artifact",
+            "```yaml",
+            f"ticket_id: {ticket_id}",
+            f"decision: {decision}",
+            f"parse_method: {parse_method or 'unknown'}",
+            f"source: {source}",
+            f"timestamp: {timestamp_iso}",
+            "```",
+        ]
+    )
+
     feedback_content = [
         f"# Manager Feedback - {ticket_id} {is_parse_warning}".strip(),
         f"- Decision: {decision}",
@@ -326,6 +339,8 @@ def _record_review(
         f"- Source: {source}",
         f"- Timestamp: {timestamp_iso}",
         f"- Raw: {raw_file.name} (in .agent/runtime/reviews/)",
+        "",
+        artifact_block,
         "",
         feedback.strip()
         or "[Feedback no pudo ser parseado en secciones estructuradas]",
