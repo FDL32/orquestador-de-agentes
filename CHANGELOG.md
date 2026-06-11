@@ -1,3 +1,35 @@
+# 2026-06-12 - E0-E6 audit closeout and canonical chat session closure
+
+### Added
+- `tests/test_delivery_hygiene_check.py`: regression coverage proving a
+  destination without local `.pre-commit-config.yaml` resolves the canonical
+  configuration through `motor_destination_link.json`.
+- `tests/test_prepush_check.py`: regression coverage preventing a
+  destination-local `scripts` package from shadowing the motor-owned delivery
+  gate.
+
+### Changed
+- `prompts/session_close_chat.md`: chat-driven closure now invokes the same
+  `--session-close` pipeline as the bus, with explicit dry-run, report review
+  and `--force` behavior for completed tickets.
+- `skills/man-session-closeout/SKILL.md`: generalizable learnings now require a
+  verifiable evidence anchor and an origin taxonomy.
+- `skills/project-finalize/SKILL.md`: distinguishes automated session closeout
+  from manual project finalization.
+- `scripts/prepush_check.py`: bootstraps `repo_motor` deterministically and no
+  longer allows destination-local modules to shadow the canonical hygiene
+  implementation.
+- `scripts/delivery_hygiene_check.py`: resolves motor-owned pre-commit
+  configuration when executed against a Model B destination.
+- `PROJECT.md`: reflects completion of the E0-E6 audit batch and the remaining
+  WOT follow-up themes.
+
+### Verification
+- `pytest tests/test_delivery_hygiene_check.py tests/test_prepush_check.py -q`
+  -> 43 passed.
+- Ruff check and format verification pass on all changed Python surfaces.
+- Encoding guard passes on the updated portable files.
+
 # 2026-06-11 - WT-2026-248b Prompt/Skill contract hardening
 
 ### Added
