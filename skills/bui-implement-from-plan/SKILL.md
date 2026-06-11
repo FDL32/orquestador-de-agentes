@@ -97,11 +97,10 @@ Antes de documentar la tarea como completada, ejecuta el skill `bui-self-audit`.
 
 `bui-self-audit` cubre:
 
-1. Verificacion tipo-especifica (py_compile, yaml.safe_load, json.load)
-2. Protocolo "ya existia" con cita de linea
-3. Completitud multi-archivo
-4. Checklist anti-regresion para ISS/code smell
-5. Gate completo ruff + pytest
+1. Protocolo "ya existia" con cita de linea
+2. Completitud multi-archivo
+3. Checklist anti-regresion para ISS/code smell
+4. Gate completo ruff + pytest
 
 **Solo si `bui-self-audit` pasa completamente, continua al Paso 7.**
 
