@@ -2960,14 +2960,11 @@ class ReviewBridge:
         # WT-2026-242a: Always attempt JSON NDJSON parsing first.
         json_decision, json_method = self._parse_opencode_json_decision(stdout)
         if json_decision != ReviewDecision.INSPECT:
-            # json_final_answer is authoritative for strong decisions.
+            # Only json_final_answer is authoritative for strong decisions
             if json_method == "json_final_answer":
                 return json_decision, json_method
-            # WT-2026-249c: json_last_text is reached only when
-            # json_final_answer found no phase:final_answer event.
-            # In that case it is the best available evidence from the
-            # NDJSON stream and must not be degraded to INSPECT.
-            return json_decision, json_method
+            # json_last_text is not authoritative: degrade strong decisions
+            return ReviewDecision.INSPECT, json_method
         # json_no_decision — fall through to text_regex
 
         # text_regex is diagnostic only - never return APPROVE or CHANGES.
