@@ -13,13 +13,21 @@ import time
 import warnings
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from enum import Enum
 from pathlib import Path
 
 from .blocker_signature import (
     blocker_lines_from_signature,
     compute_blocker_overlap,
     extract_signatures_from_feedback,
+)
+from .decision_parser import (
+    ReviewDecision,
+    extract_decision_from_single_line,
+    extract_decision_from_text_events,
+    parse_opencode_decision,
+    parse_opencode_decision_with_retry,
+    parse_opencode_json_decision,
+    resolve_event_phase,
 )
 from .event_bus import EventBus
 from .memory_loader import get_review_context
@@ -62,12 +70,9 @@ DOMAIN_DTYPE_MAP: dict[str, set[str]] = {
 }
 
 
-class ReviewDecision(str, Enum):
-    APPROVE = "approve"
-    CHANGES = "changes"
-    INSPECT = "inspect"
-    UNKNOWN = "unknown"
-    TRANSPORT_FAILED = "transport_failed"
+# ReviewDecision is defined in bus.decision_parser (WT-2026-255a).
+# Re-exported here for backward compatibility.
+__all_compat__ = ["ReviewDecision"]
 
 
 @dataclass(slots=True)
@@ -2780,205 +2785,35 @@ class ReviewBridge:
         return count_trailing_changes(events)
 
     def _parse_opencode_json_decision(self, stdout: str) -> tuple[ReviewDecision, str]:
-        """Parse OpenCode NDJSON output for DECISION: APPROVE|CHANGES|INSPECT pattern.
-
-        Returns (decision, parse_method) where parse_method is:
-          - "json_final_answer" if decision extracted from phase:final_answer
-          - "json_last_text" if decision extracted from last text event
-          - "json_no_decision" if no decision found in any JSON event
-
-        Schema real de OpenCode:
-        - Eventos type:"text" con part.text contienen el texto del modelo.
-        - Eventos con phase:"final_answer" tienen autoridad superior.
-        - Se prioriza el texto de final_answer sobre otros fragmentos.
-        """
-        # First pass: look for final_answer phase (highest authority)
-        final_answer_decision = self._extract_decision_from_text_events(
-            stdout, require_final_answer=True
-        )
-        if final_answer_decision is not None:
-            return final_answer_decision, "json_final_answer"
-
-        # Second pass: use last text event decision (no phase filter)
-        last_text_decision = self._extract_decision_from_text_events(
-            stdout, require_final_answer=False
-        )
-        if last_text_decision is not None:
-            return last_text_decision, "json_last_text"
-
-        return ReviewDecision.INSPECT, "json_no_decision"
+        """Delegate to bus.decision_parser.parse_opencode_json_decision (WT-2026-255a)."""
+        return parse_opencode_json_decision(stdout)
 
     def _extract_decision_from_text_events(
         self, stdout: str, require_final_answer: bool
     ) -> ReviewDecision | None:
-        """Extract DECISION from text events, optionally filtering by phase.
-
-        Args:
-            stdout: NDJSON output from OpenCode.
-            require_final_answer: If True, only consider events with phase:"final_answer".
-
-        Returns:
-            ReviewDecision if found, None otherwise.
-        """
-        last_decision = None
-        for line in stdout.splitlines():
-            decision = self._extract_decision_from_single_line(
-                line, require_final_answer
-            )
-            if decision is not None:
-                if require_final_answer:
-                    return decision
-                # WT-2026-249c: always overwrite so the LAST text event
-                # decision wins (fixes Bug #1: first-vs-last).
-                last_decision = decision
-        return last_decision
+        """Delegate to bus.decision_parser.extract_decision_from_text_events (WT-2026-255a)."""
+        return extract_decision_from_text_events(stdout, require_final_answer)
 
     @staticmethod
     def _resolve_event_phase(event: dict) -> str:
-        """Resolve the phase field from an OpenCode NDJSON event.
-
-        OpenCode may emit ``phase`` at the event top level or nested inside
-        ``part.metadata.openai.phase`` (``--format json`` output).  Returns
-        the phase string, or empty string if not found at any location.
-        """
-        phase = event.get("phase", "") or ""
-        if phase:
-            return phase
-        part = event.get("part", {})
-        if isinstance(part, dict):
-            meta = part.get("metadata", {}) or {}
-            if isinstance(meta, dict):
-                oai = meta.get("openai", {}) or {}
-                if isinstance(oai, dict):
-                    phase = oai.get("phase", "") or ""
-        return phase
+        """Delegate to bus.decision_parser.resolve_event_phase (WT-2026-255a)."""
+        return resolve_event_phase(event)
 
     def _extract_decision_from_single_line(
         self, line: str, require_final_answer: bool
     ) -> ReviewDecision | None:
-        """Extract decision from a single NDJSON line.
-
-        Args:
-            line: Single line of NDJSON output.
-            require_final_answer: If True, only consider events with phase:"final_answer".
-
-        Returns:
-            ReviewDecision if found, None otherwise.
-        """
-        line = line.strip()
-        if not line or not line.startswith("{"):
-            return None
-
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            return None
-
-        if event.get("type") != "text":
-            return None
-
-        # Phase filter — check top-level phase and nested part.metadata.openai.phase
-        # (WT-2026-249c: OpenCode emits phase inside part.metadata.openai.phase
-        # for --format json output, not at the event top level).
-        phase = self._resolve_event_phase(event)
-        if require_final_answer and phase != "final_answer":
-            return None
-
-        # Extract text from part.text
-        part = event.get("part", {})
-        if not isinstance(part, dict):
-            return None
-        text = part.get("text", "")
-        if not text:
-            return None
-
-        text_upper = text.upper()
-        if "DECISION: CHANGES" in text_upper:
-            return ReviewDecision.CHANGES
-        if "DECISION: APPROVE" in text_upper:
-            return ReviewDecision.APPROVE
-        if "DECISION: INSPECT" in text_upper:
-            return ReviewDecision.INSPECT
-
-        return None
+        """Delegate to bus.decision_parser.extract_decision_from_single_line (WT-2026-255a)."""
+        return extract_decision_from_single_line(line, require_final_answer)
 
     def _parse_opencode_decision_with_retry(
         self, stdout: str, stderr: str, max_retries: int = 2
     ) -> tuple[ReviewDecision, int, str]:
-        """Parse OpenCode output with controlled retry for transient parse failures.
-
-        Returns (decision, parse_attempts, parse_method).
-
-        Before: A parse failure could immediately lead to INSPECT and potential
-                HUMAN_GATE escalation.
-        During: When parser returns INSPECT with fallback_inspect but output
-                appears valid (non-empty stdout, no technical errors), retry
-                parsing up to max_retries times.
-        After: Returns (decision, parse_attempts, parse_method) for audit trail.
-        """
-        # First attempt
-        decision, parse_method = self._parse_opencode_decision(stdout)
-        parse_attempts = 1
-
-        # If fallback INSPECT and output looks valid (not a technical failure), retry
-        if decision == ReviewDecision.INSPECT and parse_method == "fallback_inspect":
-            is_technical_failure = (
-                "TimeoutExpired" in stderr
-                or "FileNotFoundError" in stderr
-                or "OSError" in stderr
-                or not stdout.strip()
-            )
-            if not is_technical_failure and stdout.strip():
-                for retry in range(max_retries):
-                    time.sleep(0.1 * (2**retry))
-                    decision, parse_method = self._parse_opencode_decision(stdout)
-                    parse_attempts += 1
-                    if parse_method != "fallback_inspect":
-                        break
-
-        return decision, parse_attempts, parse_method
+        """Delegate to bus.decision_parser.parse_opencode_decision_with_retry (WT-2026-255a)."""
+        return parse_opencode_decision_with_retry(stdout, stderr, max_retries)
 
     def _parse_opencode_decision(self, stdout: str) -> tuple[ReviewDecision, str]:
-        """Parse OpenCode output for DECISION: APPROVE|CHANGES|INSPECT pattern.
-
-        Returns (decision, parse_method):
-          parse_method is one of:
-            - "json_final_answer"  — NDJSON final_answer phase (authoritative)
-            - "json_last_text"     — NDJSON last text event (degraded)
-            - "json_no_decision"   — NDJSON without recognisable decision
-            - "text_regex"         — DECISION pattern found in plain text
-            - "explicit_inspect"   — DECISION: INSPECT explicitly found
-            - "fallback_inspect"   — parser default, no pattern recognized
-
-        Contrato de procedencia (WT-2026-235a + WT-2026-242a):
-        - Siempre se intenta parsing NDJSON primero (try-first).
-        - Solo ``json_final_answer`` puede producir APPROVE o CHANGES.
-        - ``json_last_text`` que encuentra APPROVE/CHANGES degrada a INSPECT.
-        - ``text_regex`` nunca produce APPROVE o CHANGES (diagnóstico solamente).
-        - Si NDJSON no encuentra decisión, cae a text_regex como fallback.
-        """
-        # WT-2026-242a: Always attempt JSON NDJSON parsing first.
-        json_decision, json_method = self._parse_opencode_json_decision(stdout)
-        if json_decision != ReviewDecision.INSPECT:
-            # Only json_final_answer is authoritative for strong decisions
-            if json_method == "json_final_answer":
-                return json_decision, json_method
-            # json_last_text is not authoritative: degrade strong decisions
-            return ReviewDecision.INSPECT, json_method
-        # json_no_decision — fall through to text_regex
-
-        # text_regex is diagnostic only - never return APPROVE or CHANGES.
-        # Pattern is still detected for diagnostic traceability but the
-        # decision is always degraded to INSPECT.
-        stdout_upper = stdout.upper()
-        if re.search(r"DECISION:\s*CHANGES", stdout_upper):
-            return ReviewDecision.INSPECT, "text_regex"
-        if re.search(r"DECISION:\s*APPROVE", stdout_upper):
-            return ReviewDecision.INSPECT, "text_regex"
-        if re.search(r"DECISION:\s*INSPECT", stdout_upper):
-            return ReviewDecision.INSPECT, "explicit_inspect"
-
-        return ReviewDecision.INSPECT, "fallback_inspect"
+        """Delegate to bus.decision_parser.parse_opencode_decision (WT-2026-255a)."""
+        return parse_opencode_decision(stdout)
 
     def run_manager_review_cycle(  # noqa: C901
         self,
