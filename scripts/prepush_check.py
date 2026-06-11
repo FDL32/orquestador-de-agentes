@@ -36,6 +36,13 @@ from pathlib import Path
 from typing import NamedTuple
 
 
+# Bootstrap: motor root must be on sys.path so `runtime.*` imports resolve
+# even when this script runs with cwd inside a destination workspace.
+_MOTOR_ROOT = Path(__file__).resolve().parent.parent
+if str(_MOTOR_ROOT) not in sys.path:
+    sys.path.insert(0, str(_MOTOR_ROOT))
+
+
 # Global noqa for S603 - all subprocess calls use hardcoded command lists
 # ruff: noqa: S603
 

@@ -183,6 +183,14 @@ Este wrapper ejecuta en secuencia fija:
 - Prepara el ticket para review sin drift post-review
 - Registrar evidencia del comando ejecutado en `execution_log.md`
 
+> **Nota — pipeline de cierre de sesion:** los pasos 9c-9f estan automatizados
+> en `scripts/session_closeout.py`, invocable con
+> `python .agent/agent_controller.py --session-close [--dry-run] [--force]`.
+> Para cierres de SESION usa el pipeline (incluye ademas rotacion de
+> review_queue y archivado de manager_feedback que no estan listados aqui).
+> Ejecuta estos pasos a mano solo para diagnostico puntual o cierres de
+> PROYECTO donde necesites control paso a paso.
+
 ### Paso 9c: Builder genera snapshot de auditoría local
 
 - Ejecutar `python scripts/local_audit.py`
