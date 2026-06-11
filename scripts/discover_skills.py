@@ -24,6 +24,41 @@ def extract_frontmatter(path: Path) -> dict[str, Any]:
     return data
 
 
+def _parse_fm_lines(fm_text: str) -> dict[str, Any]:
+    """Parse key:value lines from frontmatter text block."""
+    data: dict[str, Any] = {}
+    for line in fm_text.split("\n"):
+        line = line.strip()
+        if ": " in line:
+            key, val = line.split(": ", 1)
+            key = key.strip()
+            val = val.strip()
+            if val.startswith("[") and val.endswith("]"):
+                val = [t.strip() for t in val[1:-1].split(",")]
+            data[key] = val
+        elif ":" in line and not line.startswith("#"):
+            key, val = line.split(":", 1)
+            key = key.strip()
+            val = val.strip()
+            if val.startswith("[") and val.endswith("]"):
+                val = [t.strip() for t in val[1:-1].split(",")]
+            data[key] = val
+    return data
+
+
+def _validate_yaml(fm_text: str) -> str | None:
+    """Validate frontmatter text as YAML. Returns error string or None."""
+    try:
+        import yaml
+
+        yaml.safe_load(fm_text)
+    except ImportError:
+        return None
+    except Exception as e:
+        return f"YAML_INVALIDO: {e}"
+    return None
+
+
 def parse_frontmatter(path: Path) -> tuple[dict[str, Any], str | None]:
     """Parse YAML frontmatter from a markdown file.
 
@@ -50,27 +85,11 @@ def parse_frontmatter(path: Path) -> tuple[dict[str, Any], str | None]:
     if not fm_text:
         return {}, "NO_FRONTMATTER"
 
-    data: dict[str, Any] = {}
-    for line in fm_text.split("\n"):
-        line = line.strip()
-        if ": " in line:
-            key, val = line.split(": ", 1)
-            key = key.strip()
-            val = val.strip()
+    yaml_error = _validate_yaml(fm_text)
+    if yaml_error:
+        return {}, yaml_error
 
-            if val.startswith("[") and val.endswith("]"):
-                val = [t.strip() for t in val[1:-1].split(",")]
-
-            data[key] = val
-        elif ":" in line and not line.startswith("#"):
-            key, val = line.split(":", 1)
-            key = key.strip()
-            val = val.strip()
-            if val.startswith("[") and val.endswith("]"):
-                val = [t.strip() for t in val[1:-1].split(",")]
-            data[key] = val
-
-    return data, None
+    return _parse_fm_lines(fm_text), None
 
 
 def _scan_skills_dir(directory: Path | None) -> dict[str, dict[str, Any]]:
@@ -176,42 +195,49 @@ def _resolve_skill_path(source_prompt: str, bundle_root: Path) -> Path | None:
     return candidate
 
 
-def _validate_single_skill(skill_file: Path, bundle_root: Path) -> list[str]:
-    """Validate contract for a single skill file. Returns list of error messages."""
+def _validate_skill_contract(
+    skill_file: Path, bundle_root: Path
+) -> tuple[list[str], list[str]]:
+    """Validate contract for a single skill. Returns (errors, warnings)."""
     errors: list[str] = []
+    warnings: list[str] = []
+
     fm, fm_error = parse_frontmatter(skill_file)
     if fm_error == "NO_FRONTMATTER":
-        return errors
+        return errors, warnings
     if fm_error:
         rel = skill_file.relative_to(bundle_root).as_posix()
         errors.append(f"{rel}: YAML invalido ({fm_error})")
-        return errors
+        return errors, warnings
 
     role = fm.get("role", "")
     if role not in ("manager", "builder"):
-        return errors
+        return errors, warnings
 
     rel_skill_path = skill_file.relative_to(bundle_root).as_posix()
     source_prompt = fm.get("source_prompt", "")
     contract_id = fm.get("contract_id", "")
 
     if not source_prompt:
-        return errors
+        warnings.append(
+            f"{rel_skill_path}: AVISO - falta source_prompt (contrato no establecido)"
+        )
+        return errors, warnings
 
     if not contract_id:
         errors.append(f"{rel_skill_path}: falta contract_id")
-        return errors
+        return errors, warnings
 
     prompt_path = _resolve_skill_path(source_prompt, bundle_root)
     if prompt_path is None:
         errors.append(
             f"{rel_skill_path}: source_prompt '{source_prompt}' no es portable contra repo_motor"
         )
-        return errors
+        return errors, warnings
 
     if not prompt_path.exists():
         errors.append(f"{rel_skill_path}: source_prompt '{source_prompt}' no existe")
-        return errors
+        return errors, warnings
 
     prompt_content = prompt_path.read_text(encoding="utf-8")
     expected_anchor = f"Skill canonica: {rel_skill_path}"
@@ -219,7 +245,7 @@ def _validate_single_skill(skill_file: Path, bundle_root: Path) -> list[str]:
         errors.append(
             f"{rel_skill_path}: prompt '{source_prompt}' no contiene '{expected_anchor}'"
         )
-        return errors
+        return errors, warnings
 
     prompt_contract_pattern = re.compile(
         rf"^contract_id:\s*{re.escape(contract_id)}\s*$", re.MULTILINE
@@ -228,8 +254,12 @@ def _validate_single_skill(skill_file: Path, bundle_root: Path) -> list[str]:
         errors.append(
             f"{rel_skill_path}: prompt '{source_prompt}' no contiene contract_id '{contract_id}'"
         )
+        return errors, warnings
 
-    return errors
+    warnings.append(
+        f"{rel_skill_path}: contrato valido (source_prompt={source_prompt}, contract_id={contract_id})"
+    )
+    return errors, warnings
 
 
 def _check_contract() -> int:
@@ -245,7 +275,7 @@ def _check_contract() -> int:
         return 1
 
     all_errors: list[str] = []
-    warnings: list[str] = []
+    all_warnings: list[str] = []
 
     for skill_dir in sorted(skills_dir.iterdir()):
         if not skill_dir.is_dir():
@@ -254,18 +284,11 @@ def _check_contract() -> int:
         if not skill_file.exists():
             continue
 
-        errors = _validate_single_skill(skill_file, bundle_root)
-        if errors:
-            all_errors.extend(errors)
-        else:
-            rel = skill_file.relative_to(bundle_root).as_posix()
-            fm, _ = parse_frontmatter(skill_file)
-            if fm.get("source_prompt"):
-                warnings.append(
-                    f"{rel}: contrato valido (source_prompt={fm.get('source_prompt')}, contract_id={fm.get('contract_id')})"
-                )
+        errors, warnings = _validate_skill_contract(skill_file, bundle_root)
+        all_errors.extend(errors)
+        all_warnings.extend(warnings)
 
-    for w in warnings:
+    for w in all_warnings:
         print(w)
 
     if all_errors:

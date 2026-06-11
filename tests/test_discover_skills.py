@@ -61,6 +61,14 @@ class TestParseFrontmatter:
         data = extract_frontmatter(f)
         assert data == {}
 
+    def test_invalid_yaml_detected(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.md"
+        f.write_text("---\nname: test\ninvalid: [unclosed\n---\nBody")
+        data, error = parse_frontmatter(f)
+        assert error is not None
+        assert "YAML_INVALIDO" in error
+        assert data == {}
+
 
 class TestResolveSkillPath:
     """Tests for _resolve_skill_path portability."""
@@ -84,6 +92,28 @@ class TestResolveSkillPath:
         bundle.mkdir()
         result = _resolve_skill_path("../outside/test.md", bundle)
         assert result is None
+
+
+class TestCheckContractInvalidYaml:
+    """Tests for _check_contract with invalid YAML frontmatter."""
+
+    def test_invalid_yaml_in_skill_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        bundle = tmp_path / "motor"
+        skills_dir = bundle / "skills"
+        skills_dir.mkdir(parents=True)
+        (bundle / "prompts").mkdir(parents=True)
+
+        skill_dir = skills_dir / "my-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: my-skill\nrole: builder\ninvalid: [unclosed\n---\n"
+        )
+
+        monkeypatch.setattr("scripts.discover_skills._get_bundle_root", lambda: bundle)
+        rc = _check_contract()
+        assert rc == 1
 
 
 class TestCheckContract:
@@ -118,10 +148,10 @@ class TestCheckContract:
         rc = _check_contract()
         assert rc == 0
 
-    def test_missing_source_prompt_skipped(
+    def test_missing_source_prompt_warns_not_fails(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Skills without source_prompt: are silently skipped (not part of contract yet)."""
+        """Skills without source_prompt: emit warning but don't fail the gate."""
         bundle = tmp_path / "motor"
         skills_dir = bundle / "skills"
         skills_dir.mkdir(parents=True)

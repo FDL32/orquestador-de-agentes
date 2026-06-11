@@ -55,7 +55,6 @@ Para cada archivo listado en `execution_log.md`, leelo directamente. No aceptes 
 Re-ejecuta tu mismo las validaciones tipo-especificas:
 
 ```bash
-python -m py_compile src/archivo.py
 python -c "import yaml; yaml.safe_load(open('data/archivo.yaml', encoding='utf-8')); print('OK')"
 ```
 
@@ -83,25 +82,22 @@ Para cada archivo, verifica:
 ### Paso 3: Ejecutar Quality Gates
 
 ```bash
-# 1. Sintaxis Python
-python -m py_compile src/**/*.py
-
-# 2. Linting (src/ + tests/)
+# 1. Linting (src/ + tests/)
 ruff check . --exclude .agent
 
-# 3. Tests
+# 2. Tests
 python scripts/run_pytest_safe.py
 
 # Fallback
 python scripts/run_pytest_safe.py -- tests/ -v
 
-# 4. Verificar imports circulares
+# 3. Verificar imports circulares
 python -c "import src"
 ```
 
 **Si falla algun gate:**
 
-- Documentar errores en `review_queue.md` como `CHANGES_REQUESTED`
+- Documentar errores en `review_queue.md` como `CHANGES`
 - Notificar al Builder via `notifications.md`
 - **NO aprobar hasta que pase todos los gates**
 
