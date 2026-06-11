@@ -2828,9 +2828,30 @@ class ReviewBridge:
             if decision is not None:
                 if require_final_answer:
                     return decision
-                if last_decision is None:
-                    last_decision = decision
+                # WT-2026-249c: always overwrite so the LAST text event
+                # decision wins (fixes Bug #1: first-vs-last).
+                last_decision = decision
         return last_decision
+
+    @staticmethod
+    def _resolve_event_phase(event: dict) -> str:
+        """Resolve the phase field from an OpenCode NDJSON event.
+
+        OpenCode may emit ``phase`` at the event top level or nested inside
+        ``part.metadata.openai.phase`` (``--format json`` output).  Returns
+        the phase string, or empty string if not found at any location.
+        """
+        phase = event.get("phase", "") or ""
+        if phase:
+            return phase
+        part = event.get("part", {})
+        if isinstance(part, dict):
+            meta = part.get("metadata", {}) or {}
+            if isinstance(meta, dict):
+                oai = meta.get("openai", {}) or {}
+                if isinstance(oai, dict):
+                    phase = oai.get("phase", "") or ""
+        return phase
 
     def _extract_decision_from_single_line(
         self, line: str, require_final_answer: bool
@@ -2856,8 +2877,10 @@ class ReviewBridge:
         if event.get("type") != "text":
             return None
 
-        # Phase filter
-        phase = event.get("phase", "")
+        # Phase filter — check top-level phase and nested part.metadata.openai.phase
+        # (WT-2026-249c: OpenCode emits phase inside part.metadata.openai.phase
+        # for --format json output, not at the event top level).
+        phase = self._resolve_event_phase(event)
         if require_final_answer and phase != "final_answer":
             return None
 
@@ -2937,11 +2960,14 @@ class ReviewBridge:
         # WT-2026-242a: Always attempt JSON NDJSON parsing first.
         json_decision, json_method = self._parse_opencode_json_decision(stdout)
         if json_decision != ReviewDecision.INSPECT:
-            # Only json_final_answer is authoritative for strong decisions
+            # json_final_answer is authoritative for strong decisions.
             if json_method == "json_final_answer":
                 return json_decision, json_method
-            # json_last_text is not authoritative: degrade strong decisions
-            return ReviewDecision.INSPECT, json_method
+            # WT-2026-249c: json_last_text is reached only when
+            # json_final_answer found no phase:final_answer event.
+            # In that case it is the best available evidence from the
+            # NDJSON stream and must not be degraded to INSPECT.
+            return json_decision, json_method
         # json_no_decision — fall through to text_regex
 
         # text_regex is diagnostic only - never return APPROVE or CHANGES.
