@@ -22,10 +22,10 @@ Cada oportunidad detectada debe seguir esta estructura:
 **¿Qué hace?**
 [Descripción en 2-3 frases. Sé concreto: qué input, qué output, qué efecto]
 
-**¿Qué valor aporta a z_scripts?**
+**¿Qué valor aporta a el proyecto local?**
 [Justificación concreta: qué problema resuelve, qué gap cubre, qué mejora]
 
-**¿Ya existe en z_scripts?**
+**¿Ya existe en el proyecto local?**
 - **Estado:** [Sí / No / Parcial / [YA EXISTE]]
 - **Cita AUDIT.md:** [Sección X, ruta Y]: "[texto o paráfrasis de lo que dice AUDIT.md]".
   - Ejemplo: "AUDIT.md sección 4.2 menciona `scripts/local_audit.py` que ya recopila estado operativo".
@@ -48,7 +48,7 @@ Cada oportunidad detectada debe seguir esta estructura:
 
 **Plan de incorporación:**
 1. [Paso 1: leer/entender el código original]
-2. [Paso 2: adaptar a estructura z_scripts (rutas, naming, convenciones)]
+2. [Paso 2: adaptar a estructura el proyecto local (rutas, naming, convenciones)]
 3. [Paso 3: escribir tests de validación (si aplican)]
 4. [Paso 4: documentar en AGENTS.md / CHANGELOG.md]
 5. [Paso 5: ejecutar quality gates (ruff, pytest, validate)]
@@ -80,7 +80,7 @@ Tabla resumen de todas las oportunidades:
 ```
 
 **Columnas:**
-- **Impacto (1-10):** ¿Cuánto valor aporta a z_scripts? (10 = transforma el flujo, 1 = cosmético)
+- **Impacto (1-10):** ¿Cuánto valor aporta a el proyecto local? (10 = transforma el flujo, 1 = cosmético)
 - **Esfuerzo (h):** Horas estimadas de incorporación (incluye tests + docs).
 - **Encaje (%):** ¿Qué tan bien coincide con la arquitectura actual? (100% = drop-in, 0% = requiere rediseño)
 - **Decisión:**
@@ -170,7 +170,7 @@ Si decides adoptar alguna de las oportunidades anteriores, añade esta fila a `C
 Al inicio del archivo persistido, incluir:
 
 ```markdown
-# Repo Compare: [owner/repo] vs z_scripts
+# Repo Compare: [owner/repo] vs el proyecto local
 
 **Fecha:** YYYY-MM-DD
 **Repo target:** https://github.com/<owner>/<repo>
@@ -206,10 +206,10 @@ def generate_audit_snapshot() -> dict:
 **¿Qué hace?**
 Script que recopila el estado operativo del repositorio (estructura, skills, scripts) y emite un snapshot JSON/Markdown para contexto de agentes.
 
-**¿Qué valor aporta a z_scripts?**
+**¿Qué valor aporta a el proyecto local?**
 Permite a los agentes entender rápidamente qué existe en el proyecto sin leer todo el árbol. Reduce hallucination y acelera onboarding.
 
-**¿Ya existe en z_scripts?**
+**¿Ya existe en el proyecto local?**
 - **Estado:** [YA EXISTE]
 - **Cita AUDIT.md:** AUDIT.md sección 4.1 menciona `scripts/local_audit.py` que ya genera `audit.json` y `AUDIT.md`.
 
@@ -228,5 +228,5 @@ Permite a los agentes entender rápidamente qué existe en el proyecto sin leer 
 
 **Prioridad:** Baja — [ya existe]
 
-**Decisión:** IGNORAR — [ya existe en z_scripts]
+**Decisión:** IGNORAR — [ya existe en el proyecto local]
 ```

@@ -47,7 +47,7 @@ Evaluar el repo target sobre 5 dimensiones. Cada dimensión suma 0 o 1 punto.
 ### 4. Encaje técnico (0-1)
 
 **1 punto si:**
-- Python 3.10+ (coincide con z_scripts).
+- Python 3.10+ (coincide con el proyecto local).
 - Usa `uv`, `pip`, o gestor compatible.
 - Deps ligeras o justificadas (no `tensorflow` para algo simple).
 
@@ -109,7 +109,7 @@ Descartar sin scoring detallado si:
 
 ### Ya existe mejor en local
 
-- AUDIT.md indica que z_scripts ya tiene funcionalidad equivalente o superior.
+- AUDIT.md indica que el proyecto local ya tiene funcionalidad equivalente o superior.
 - El repo target es un subconjunto de lo que ya existe.
 
 ### Proyecto abandonado
