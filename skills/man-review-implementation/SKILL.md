@@ -1,4 +1,4 @@
----
+﻿---
 name: code-review
 version: 2.0.0
 description: Revisar cambios de codigo contra arquitectura del proyecto
@@ -10,7 +10,7 @@ writes_memory: false
 quality_gate: false
 tags: [core, system]
 source_prompt: prompts/review_manager.md
-contract_id: cid-man-review-v1
+contract_id: cid-man-review-v2
 ---
 
 # man-review-implementation
@@ -112,6 +112,14 @@ python -c "import src"
 - [ ] No hay `print()` con datos sensibles
 
 ### Paso 5: Generar Veredicto
+
+Antes de emitir el veredicto en texto, escribe el decision artifact
+estructurado (canal primario del bridge; el transcript es fallback):
+
+- Ruta: `.agent/runtime/reviews/decision_<ticket_id>.json` (en `repo_destino`).
+- Contenido: `{"ticket_id": "<ticket_id>", "decision": "APROBADO|CHANGES", "blockers": []}`
+- En `CHANGES`, lista cada blocker como string breve en `blockers`.
+- Si no puedes escribir el archivo, emite igualmente el veredicto en texto.
 
 #### Opcion A: APROBADO
 

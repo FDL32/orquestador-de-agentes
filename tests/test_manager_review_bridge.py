@@ -1186,6 +1186,132 @@ class TestOpencodeReviewRoute:
             "Manager approved",
         )
 
+    def test_decision_artifact_overrides_transcript(self, monkeypatch, tmp_path):
+        """WT-2026-252a: a fresh decision artifact is the primary channel.
+
+        The transcript says CHANGES but the Manager's structured artifact
+        (written during the review session) says APROBADO -> artifact wins
+        and parse_method records the channel.
+        """
+        import json as _json
+
+        from bus.review_bridge import EventBus, ReviewBridge
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
+        monkeypatch.setattr(bridge, "_supports_json_format", True)
+        monkeypatch.setattr(
+            bridge, "_get_manager_model", lambda: "opencode-go/deepseek-v4-flash"
+        )
+        monkeypatch.setattr(bridge, "_get_canonical_files", lambda: [])
+        monkeypatch.setattr(bridge, "_get_active_ticket_id", lambda: "WP-2026-072")
+        monkeypatch.setattr(
+            bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW"
+        )
+
+        ndjson_changes = _json.dumps(
+            {
+                "type": "text",
+                "phase": "final_answer",
+                "part": {
+                    "type": "text",
+                    "text": "Blockers found.\nDECISION: CHANGES",
+                },
+            }
+        )
+
+        def fake_opencode_review(
+            *, ticket_id, prompt="", attempt=1, manager_executable=None, timeout_seconds
+        ):
+            # Simulate the Manager writing the artifact during its session,
+            # so its mtime is fresh relative to the review start_time.
+            reviews_dir = tmp_path / ".agent" / "runtime" / "reviews"
+            reviews_dir.mkdir(parents=True, exist_ok=True)
+            (reviews_dir / f"decision_{ticket_id}.json").write_text(
+                _json.dumps(
+                    {"ticket_id": ticket_id, "decision": "APROBADO", "blockers": []}
+                ),
+                encoding="utf-8",
+            )
+            return ndjson_changes, "", 0
+
+        monkeypatch.setattr(bridge, "_run_opencode_review", fake_opencode_review)
+
+        captured = {}
+
+        class DummySupervisor:
+            def transition_ticket(self, ticket_id, new_state, reason):
+                captured["transition"] = (ticket_id, new_state, reason)
+
+        result = bridge.run_manager_review_cycle(
+            ticket_id="WP-2026-072",
+            supervisor=DummySupervisor(),
+            timeout_seconds=5,
+        )
+
+        assert result.decision == ReviewDecision.APPROVE
+        assert result.parse_method == "decision_artifact"
+
+    def test_missing_artifact_falls_back_to_transcript(self, monkeypatch, tmp_path):
+        """WT-2026-252a: without artifact, transcript parsing decides (no regression)."""
+        import json as _json
+
+        from bus.review_bridge import EventBus, ReviewBridge
+
+        runtime_dir = tmp_path / ".agent" / "runtime" / "events"
+        event_bus = EventBus(runtime_dir=runtime_dir)
+        bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
+
+        monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
+        monkeypatch.setattr(bridge, "_supports_json_format", True)
+        monkeypatch.setattr(
+            bridge, "_get_manager_model", lambda: "opencode-go/deepseek-v4-flash"
+        )
+        monkeypatch.setattr(bridge, "_get_canonical_files", lambda: [])
+        monkeypatch.setattr(bridge, "_get_active_ticket_id", lambda: "WP-2026-072")
+        monkeypatch.setattr(
+            bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW"
+        )
+
+        ndjson_changes = _json.dumps(
+            {
+                "type": "text",
+                "phase": "final_answer",
+                "part": {
+                    "type": "text",
+                    "text": (
+                        "## SUMMARY\nBlockers found.\n"
+                        "## BLOCKERS\n- missing test\n"
+                        "## SUGGESTIONS\n- add test\n"
+                        "DECISION: CHANGES"
+                    ),
+                },
+            }
+        )
+
+        def fake_opencode_review(
+            *, ticket_id, prompt="", attempt=1, manager_executable=None, timeout_seconds
+        ):
+            return ndjson_changes, "", 0
+
+        monkeypatch.setattr(bridge, "_run_opencode_review", fake_opencode_review)
+
+        class DummySupervisor:
+            def transition_ticket(self, ticket_id, new_state, reason):
+                pass
+
+        result = bridge.run_manager_review_cycle(
+            ticket_id="WP-2026-072",
+            supervisor=DummySupervisor(),
+            timeout_seconds=5,
+        )
+
+        assert result.decision == ReviewDecision.CHANGES
+        assert result.parse_method != "decision_artifact"
+
     def test_opencode_review_preserves_github_copilot_prefix(
         self, monkeypatch, tmp_path
     ):
@@ -3481,15 +3607,10 @@ class TestDualPrefixBridge:
             "### WT-2026-181: Dual prefix\n**Estado:** IN_PROGRESS\n\n"
             "### WP-2026-100: Old ticket\n**Estado:** COMPLETED\n\n"
         )
-        # The boundary regex (?=\n### (?:WP|WT)-|\Z) should match WT- boundary
-        import re
-
-        content = elog.read_text(encoding="utf-8")
-        ticket_id = "WT-2026-181"
-        pattern = rf"### {re.escape(ticket_id)}.*?(?=\n### (?:WP|WT)-|\Z)"
-        match = re.search(pattern, content, re.DOTALL)
-        assert match is not None, "Section boundary regex should match WT- ticket"
-        assert "WT-2026-181" in match.group(0)
+        bridge, _, _ = _make_bridge(tmp_path)
+        section = bridge._extract_ticket_section("WT-2026-181")
+        assert "WT-2026-181" in section
+        assert "WP-2026-100" not in section, "Section must stop at next WP- boundary"
 
     def test_bridge_extract_ticket_section_boundary_wp_next(self, tmp_path):
         """_extract_ticket_section boundary handles next ### WT- section."""
@@ -3501,16 +3622,25 @@ class TestDualPrefixBridge:
             "### WP-2026-100: Old ticket\n**Estado:** COMPLETED\n\n"
             "### WT-2026-181: New ticket\n**Estado:** IN_PROGRESS\n\n"
         )
-        import re
+        bridge, _, _ = _make_bridge(tmp_path)
+        section = bridge._extract_ticket_section("WP-2026-100")
+        assert "WP-2026-100" in section
+        assert "WT-2026-181" not in section, "Section must stop at next WT- boundary"
 
-        content = elog.read_text(encoding="utf-8")
-        ticket_id = "WP-2026-100"
-        pattern = rf"### {re.escape(ticket_id)}.*?(?=\n### (?:WP|WT)-|\Z)"
-        match = re.search(pattern, content, re.DOTALL)
-        assert match is not None, (
-            "Section boundary regex should match WP- ticket with WT- next"
+    def test_bridge_extract_ticket_section_boundary_wot(self, tmp_path):
+        """WT-2026-251a: _extract_ticket_section recognizes 3-letter WOT- boundary."""
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        elog = collab / "execution_log.md"
+        elog.write_text(
+            "# Execution Log\n\n"
+            "### WOT-2026-001a: New prefix ticket\n**Estado:** IN_PROGRESS\n\n"
+            "### WT-2026-181: Old prefix ticket\n**Estado:** COMPLETED\n\n"
         )
-        assert "WP-2026-100" in match.group(0)
+        bridge, _, _ = _make_bridge(tmp_path)
+        section = bridge._extract_ticket_section("WOT-2026-001a")
+        assert "WOT-2026-001a" in section
+        assert "WT-2026-181" not in section, "Section must stop at next WT- boundary"
 
 
 # =============================================================================

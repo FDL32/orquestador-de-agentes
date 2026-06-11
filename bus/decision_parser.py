@@ -17,6 +17,7 @@ import json
 import re
 import time
 from enum import Enum
+from pathlib import Path
 
 
 class ReviewDecision(str, Enum):
@@ -25,6 +26,54 @@ class ReviewDecision(str, Enum):
     INSPECT = "inspect"
     UNKNOWN = "unknown"
     TRANSPORT_FAILED = "transport_failed"
+
+
+# Decisiones fuertes aceptadas en el decision artifact (canal primario).
+_ARTIFACT_DECISIONS = {
+    "APROBADO": ReviewDecision.APPROVE,
+    "APPROVE": ReviewDecision.APPROVE,
+    "CHANGES": ReviewDecision.CHANGES,
+}
+
+
+def load_decision_artifact(
+    reviews_dir: Path,
+    ticket_id: str,
+    not_before: float | None = None,
+) -> tuple[ReviewDecision, str] | None:
+    """Load the Manager's structured decision artifact, if valid.
+
+    WT-2026-252a follow-up: the Manager writes
+    ``decision_<ticket_id>.json`` ({"ticket_id", "decision", "blockers"})
+    under ``.agent/runtime/reviews/`` during its review session. The bridge
+    consumes it as the primary decision channel; transcript parsing remains
+    the fallback and the transcript remains the evidence.
+
+    Validation (any failure returns None so the caller falls back):
+    - file exists and is valid JSON;
+    - ``ticket_id`` in the payload matches the requested ticket;
+    - ``decision`` maps to a strong decision (APROBADO/APPROVE/CHANGES);
+    - if ``not_before`` is given, the file mtime must be >= it (artifacts
+      written before this review session are stale and ignored).
+    """
+    path = reviews_dir / f"decision_{ticket_id}.json"
+    try:
+        if not path.is_file():
+            return None
+        if not_before is not None and path.stat().st_mtime < not_before:
+            return None
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("ticket_id") != ticket_id:
+        return None
+    decision_raw = str(payload.get("decision", "")).strip().upper()
+    decision = _ARTIFACT_DECISIONS.get(decision_raw)
+    if decision is None:
+        return None
+    return decision, "decision_artifact"
 
 
 def resolve_event_phase(event: dict) -> str:
