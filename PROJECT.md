@@ -1,9 +1,10 @@
 # Project: orquestador_de_agentes
 **Version:** v9.15.0
-**State:** READY (2026-06-11) - review packet hardening for WT-2026-249 published locally; 248b remains pending
+**State:** READY (2026-06-11) - WT-2026-248b prompt/skill contract hardening implemented; bidirectional `contract_id` + `--check-contract` gate active
 
 ## Current Cycle
 
+- WT-2026-248b IMPLEMENTED (2026-06-11). Bidirectional prompt<->skill contract hardening: `source_prompt:` + `contract_id` in skills, `Skill canonica:` + `contract_id` in prompts, `--check-contract` barrier in gates. No runtime/OpenCode config changes.
 - Local hardening (2026-06-11). `.gitattributes` now normalizes LF for portable docs/config/memory surfaces, with regression coverage to prevent recurring CRLF noise in local updates. Esto no implica cierre canonico de `WT-2026-248b`.
 - Last ticket: WT-2026-249c IMPLEMENTED (2026-06-11). `review_bridge.py` now honors nested OpenCode phase metadata and uses the last matching NDJSON decision when `final_answer` is absent.
 - Last ticket: WT-2026-249b IMPLEMENTED (2026-06-11). `BUILDER_BRIEF_WT-*` / `BUILDER_BRIEF_WP-*` are treated as live handoff surfaces, not workspace residue, in pre-handoff packaging.
@@ -13,7 +14,7 @@
 - Last ticket: WT-2026-211 COMPLETED (2026-06-02). Centralize transition projection writes — controller emits events, supervisor materializes projections.
 - Last ticket: WT-2026-210 COMPLETED (2026-06-02). Bus architecture audit + reconcile_ticket.py for orphaned runtime.
 - Last session closed: WP-2026-175 COMPLETED (2026-05-29). Canonical session closeout and cycle rollover.
-- Open deuda priorizada: `WT-2026-248b` sigue pendiente como follow-up estructural post-248a/249 (alineacion prompt/skill y separacion mas clara del runtime state temporal frente a config versionada).
+- Open deuda priorizada: `WT-2026-248b` resuelto como hardening de contrato prompt/skill con barrera ejecutable en gates. No cubre separacion de runtime temporal de OpenCode vs config versionada — ese follow-up permanece fuera de alcance.
 - `validate_ticket_prose.py` TP-06 / TP-07 detection remains active; the canonical TP Check format is still enforced.
 
 ## Current readiness
@@ -22,7 +23,7 @@
 - Review packet hardening published locally for `WT-2026-249a/249b/249c`: stale-orphan CLI contract aligned, `BUILDER_BRIEF_*` excluded from workspace residue guards, and NDJSON decision parsing hardened for OpenCode review flows.
 - Git hygiene hardening published locally: portable text surfaces now normalize to LF through `.gitattributes`, reducing false diffs in docs/config/memory updates on Windows. Este endurecimiento no sustituye el alcance pendiente de `WT-2026-248b`.
 - Motor suite verified green: 2071 passed, 22 skipped, 0 failed.
-- Next strategic front: `WT-2026-248b` como follow-up estructural post-248a/249 (prompt-skill alignment y aislamiento mas limpio del runtime temporal de OpenCode).
+- Next strategic front: separacion mas limpia del runtime temporal de OpenCode frente a config versionada (follow-up post-248b).
 
 ## Repomix Context Integration (WT-2026-182)
 

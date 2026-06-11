@@ -1,3 +1,22 @@
+# 2026-06-11 - WT-2026-248b Prompt/Skill contract hardening
+
+### Added
+- `scripts/discover_skills.py`: `--check-contract` flag validates bidirectional prompt<->skill contract. Checks `source_prompt:`, `contract_id`, portability against `repo_motor`, reverse anchor `Skill canonica:` in prompt, and `contract_id` match between skill and prompt.
+- `scripts/discover_skills.py`: `parse_frontmatter()` returns tri-state (data, error) distinguishing "no frontmatter", "invalid YAML", and "valid frontmatter". Legacy `extract_frontmatter()` preserved for backward compat.
+- `scripts/run_gates_dispatch.py`: invokes `discover_skills.py --check-contract` as final step in `main()`, independent of `deliverable_type`. Non-zero exit fails the gate.
+- `tests/test_discover_skills.py`: 15 tests covering valid contract, missing `source_prompt:`, missing `contract_id`, nonexistent path, non-portable path, missing reverse anchor, contract_id mismatch, role filtering, and real bundle integration.
+
+### Changed
+- `skills/man-review-implementation/SKILL.md`: added `source_prompt: prompts/review_manager.md` and `contract_id: cid-man-review-v1` in frontmatter. Replaced tripartite verdict (APROBADO/CAMBIOS_REQUERIDOS/RECHAZADO) with binary (APROBADO/CHANGES). Removed mojibake (`Ï³ PENDING`), legacy gates, and `CAMBIOS_REQUERIDOS`/`RECHAZADO` vocabulary.
+- `skills/bui-implement-from-plan/SKILL.md`: added `source_prompt: prompts/launch_builder.md` and `contract_id: cid-bui-implement-v1` in frontmatter. Removed `Regla de 2 Acciones` and legacy vocabulary. Aligned workflow with `--pre-handoff` + `--mark-ready`.
+- `prompts/review_manager.md`: added `Skill canonica: skills/man-review-implementation/SKILL.md` and `contract_id: cid-man-review-v1`.
+- `prompts/launch_builder.md`: added `Skill canonica: skills/bui-implement-from-plan/SKILL.md` and `contract_id: cid-bui-implement-v1`.
+- `PROJECT.md`: state updated to reflect WT-2026-248b completion. 248b described as prompt/skill contract hardening, not runtime/OpenCode change.
+
+### Notes
+- WT-2026-248b cubre drift estructural prompt/skill, no runtime/config de OpenCode.
+- `contract_id` es la identidad contractual principal; `rg` queda como evidencia auxiliar de limpieza de deuda heredada.
+
 # 2026-06-11 - Git EOL hygiene hardening for portable text surfaces
 
 ### Added
