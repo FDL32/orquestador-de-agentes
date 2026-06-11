@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -175,13 +176,26 @@ def _run_script(
     except ImportError:
         script_path = project_root / SCRIPTS_DIR / script_name
     cmd = [sys.executable, str(script_path), *args]
+    env = os.environ.copy()
+    env["AGENT_PROJECT_ROOT"] = str(project_root.resolve())
     return subprocess.run(  # noqa: S603 - controlled script execution
         cmd,
         cwd=str(project_root),
+        env=env,
         capture_output=True,
         text=True,
         timeout=timeout,
     )
+
+
+def _process_diagnostic(
+    result: subprocess.CompletedProcess[str],
+    *,
+    limit: int = 500,
+) -> str:
+    """Return actionable subprocess output, preferring stdout then stderr."""
+    output = (result.stdout or "").strip() or (result.stderr or "").strip()
+    return output[-limit:] if output else "No output"
 
 
 def _read_events(project_root: Path) -> list[dict[str, Any]]:
@@ -701,7 +715,7 @@ def _step_prepush_check(project_root: Path, dry_run: bool) -> StepResult:
                 detail="All blocking quality checks passed",
                 blocking=True,
             )
-        detail = result.stdout[-500:] if result.stdout else "No output"
+        detail = _process_diagnostic(result)
         return StepResult(
             name="prepush_check",
             status="FAIL",
@@ -856,7 +870,7 @@ def _step_session_observations(
                     )
                 )
             else:
-                detail = result.stdout[-300:] if result.stdout else "No output"
+                detail = _process_diagnostic(result, limit=300)
                 results.append(
                     StepResult(
                         name=f"observations:{tid}",
@@ -904,7 +918,10 @@ def _step_memory_consolidate(project_root: Path, dry_run: bool) -> StepResult:
         return StepResult(
             name="memory_consolidate",
             status="WARN",
-            detail=f"Memory consolidate returned exit {result.returncode}",
+            detail=(
+                f"Memory consolidate returned exit {result.returncode}: "
+                f"{_process_diagnostic(result)}"
+            ),
         )
     except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
         return StepResult(

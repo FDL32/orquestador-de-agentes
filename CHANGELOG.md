@@ -26,7 +26,11 @@
   single-repo fallback.
 - `scripts/session_closeout.py`: dry-run previews now go to ignored
   `.agent/runtime/tmp/` instead of mutating the durable tracked report; the
-  manifest check resolves `MANIFEST.distribute` from `repo_motor` in Model B.
+  manifest check resolves `MANIFEST.distribute` from `repo_motor` in Model B,
+  and every child process receives `AGENT_PROJECT_ROOT` explicitly.
+- `scripts/session_close_observations.py` and `scripts/memory_consolidate.py`:
+  bootstrap `repo_motor` before importing `bus` or `runtime`, allowing
+  absolute-path execution with `cwd` in `repo_destino`.
 - `PROJECT.md`: reflects completion of the E0-E6 audit batch and the remaining
   WOT follow-up themes.
 
@@ -35,6 +39,7 @@
   -> 43 passed.
 - `pytest tests/test_agent_controller.py -k session_close -q` -> 10 passed.
 - Closeout dry-run/manifest/controller focused suite -> 62 passed.
+- Closeout, observations and memory Model B suite -> 110 passed.
 - Ruff check and format verification pass on all changed Python surfaces.
 - Encoding guard passes on the updated portable files.
 
