@@ -1,10 +1,13 @@
-# 2026-06-11 - WT-2026-248b Git EOL hygiene for portable text surfaces
+# 2026-06-11 - Git EOL hygiene hardening for portable text surfaces
 
 ### Added
 - `tests/test_gitattributes_hygiene.py`: regression coverage to keep LF normalization explicit for portable docs/config/memory surfaces.
 
 ### Changed
 - `.gitattributes`: expanded LF normalization from Python-only files to portable text surfaces used by the motor (`*.md`, `*.json`, `*.jsonl`, `*.toml`, `*.yaml`, `*.yml`, `*.sh`), preventing recurring `LF will be replaced by CRLF` noise during local documentation and memory updates.
+
+### Notes
+- Este hardening reduce ruido de Git en Windows, pero no debe interpretarse como cierre canonico de `WT-2026-248b`.
 
 # 2026-06-11 - WT-2026-249a/249b/249c review packet hardening and NDJSON parser fixes
 
@@ -19,7 +22,7 @@
 
 ### Notes
 - `WT-2026-249c` landed through iterative commits (`a73b894`, `d0bdabb`, `50d8dd9`); the final state preserves Fix A + Fix B while reverting incidental drift in `tests/test_manager_review_bridge.py`.
-- The review-packet/parser hardening of `249` is implemented; the remaining follow-up stays in the separate `248b` hygiene/documentation track.
+- The review-packet/parser hardening of `249` is implemented; `WT-2026-248b` remains pending as the structural follow-up track.
 
 # 2026-06-10 - Session close: WT-2026-245c/246a/246b/247a/248a, BOM drift fix, session learnings
 
