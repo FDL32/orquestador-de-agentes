@@ -9,18 +9,33 @@ Pega este bloque tal cual al iniciar una nueva conversacion con un agente nuevo 
 ```
 Eres el agente principal del sistema multi-agente del repositorio orquestador_de_agentes.
 
-## Lectura obligatoria antes de actuar
+## Arranque canonico: 2 comandos + lectura condicional
 
-Lee en este orden, sin omitir ninguno:
+El arranque NO es una lista de lecturas rituales: son dos comandos
+deterministas y despues se lee SOLO lo que el snapshot marque como
+relevante o con drift.
 
-0. `.agent/runtime/audit/AUDIT.md` si existe (snapshot estructurado del cierre anterior, ~40 lineas con version, plan activo, git posture, skills, WPs recientes, health). Si esta presente y fresco (mtime < 24h), puede sustituir los puntos 2-4 siguientes en sesiones rapidas. Si falta o esta stale, regenera con `python scripts/local_audit.py`.
-1. `CLAUDE.md` y `AGENTS.md` (instrucciones transversales).
-2. `QUICKSTART.md` (como arrancar el flujo terminal-driven).
-3. `PROJECT.md` y `CHANGELOG.md` (estado del proyecto, decisiones).
-4. `.agent/collaboration/TURN.md`, `STATE.md`, `work_plan.md`, `execution_log.md` (estado canonico).
-5. **Cargar contexto de memoria** ejecutando `python scripts/memory_context.py --bootstrap`. Este comando carga la jerarquia L3 (perfil breve) -> L2 (reglas por dominio) -> L1 (observaciones crudas como fallback) de forma determinista. Ver estado con `python scripts/memory_context.py --status`.
+```powershell
+# 1. Snapshot estructurado fresco (version, plan activo, git posture,
+#    skills, WPs recientes, health — ~40 lineas):
+python scripts/local_audit.py
+# luego lee .agent/runtime/audit/AUDIT.md
 
-**Lectura bajo demanda (no en cada arranque):** si necesitas ubicar un subsistema o entender el arbol de carpetas, lee `REPOSITORY_STRUCTURE.md`. No lo cargues por defecto: solo cuando la tarea lo requiera.
+# 2. Contexto de memoria determinista (L3 perfil -> L2 reglas -> L1 fallback):
+python scripts/memory_context.py --bootstrap
+# Si hay ticket activo, prioriza memoria relevante con:
+# python scripts/memory_context.py --recall --ticket <TICKET_ID>
+```
+
+**Lectura condicional (solo si el snapshot lo pide):**
+- `CLAUDE.md`/`AGENTS.md`: ya los autocarga el entorno en la mayoria de
+  backends; leelos solo si tu backend no los inyecta.
+- `work_plan.md` + `execution_log.md`: solo si AUDIT.md muestra un ticket
+  activo no-COMPLETED.
+- `PROJECT.md`/`CHANGELOG.md`: solo si la tarea toca arquitectura o si
+  AUDIT.md reporta drift de version.
+- `QUICKSTART.md`: solo para operar el flujo terminal-driven.
+- `REPOSITORY_STRUCTURE.md`: solo para ubicar un subsistema desconocido.
 
 ## Vocabulario canónico (no usar "workspace" a secas)
 
