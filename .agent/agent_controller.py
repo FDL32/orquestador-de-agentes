@@ -48,6 +48,7 @@ for _path in (str(_AGENT_DIR), str(_PROJECT_ROOT_DERIVED)):
 # Entry points set AGENT_PROJECT_ROOT env var after parsing --project-root
 # Import AFTER sys.path setup to ensure runtime/ is importable
 import closure_invariants  # noqa: E402 - sibling module in .agent/
+import scope_gate  # noqa: E402 - sibling module in .agent/
 import state_validation  # noqa: E402 - sibling module in .agent/
 from bus.ticket_id import extract_all_ticket_ids  # noqa: E402
 from runtime.project_root import (  # noqa: E402
@@ -300,299 +301,77 @@ CIRCUIT_BREAKER_PATH = _LazyPath(
 )
 BUILDER_LOCK_PATH = _LazyPath(lambda: get_agent_dir() / "runtime" / "builder_lock.txt")
 
-# ============================================================================
-# SCOPE GATE UTILITIES
-# ============================================================================
-
-EXCLUDE_FILES_REL = {
-    "work_plan.md",
-    "execution_log.md",
-    "STATE.md",
-    "TURN.md",
-    "notifications.md",
-    ".session_state.json",
-}
+# Scope gate utilities
+EXCLUDE_FILES_REL = scope_gate.EXCLUDE_FILES_REL
 
 
 def _exclude_files() -> set[str]:
-    collab_dir = get_collab_dir()
-    agent_dir = get_agent_dir()
-    context_dir = get_context_dir()
-    exclude_files = {str((collab_dir / f).resolve()) for f in EXCLUDE_FILES_REL}
-
-    # Implicit whitelist for all auto-generated collaboration artifacts
-    if collab_dir.exists():
-        for f in collab_dir.glob("*"):
-            if f.is_file():
-                exclude_files.add(str(f.resolve()))
-
-    # WT-2026-245b: Exclude _archive/ subtree (legacy, plan_audit, motor_history)
-    # These are historical artifacts, not productive changes.
-    _archive_dir = collab_dir / "_archive"
-    if _archive_dir.exists():
-        for f in _archive_dir.rglob("*"):
-            if f.is_file():
-                exclude_files.add(str(f.resolve()))
-        # Also exclude the _archive/ directory itself (git may report it as untracked dir)
-        exclude_files.add(str(_archive_dir.resolve()))
-        # Exclude any subdirectory under _archive/ (e.g. _archive/legacy/)
-        for sub in _archive_dir.iterdir():
-            if sub.is_dir():
-                exclude_files.add(str(sub.resolve()))
-
-    exclude_files.add(str((context_dir / "project-map.json").resolve()))
-    # Legacy project_map.md was retired in WP-2026-151 and is no longer a
-    # runtime artifact, so it is deliberately omitted from the set above.
-
-    # Exclude bus runtime files (events.jsonl is managed by the bus, not the Builder)
-    exclude_files.add(
-        str((agent_dir / "runtime" / "events" / "events.jsonl").resolve())
+    return scope_gate.exclude_files(
+        collab_dir=get_collab_dir(),
+        agent_dir=get_agent_dir(),
+        context_dir=get_context_dir(),
+        exclude_files_rel=EXCLUDE_FILES_REL,
     )
-    # Exclude agent config directory (managed by agents_config.py, not the Builder)
-    exclude_files.add(str((agent_dir / "config").resolve()))
-    return exclude_files
 
 
 def parse_files_likely_touched(work_plan_content: str) -> set[str]:
-    """Parse Files Likely Touched from work_plan.md."""
-    lines = work_plan_content.split("\n")
-    in_section = False
-    files = set()
-
-    def _looks_like_path_token(token: str) -> bool:
-        if not token or " " in token:
-            return False
-        if token.startswith("."):
-            return True
-        if "/" in token or "\\" in token:
-            return True
-        basename = token.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-        return "." in basename
-
-    for line in lines:
-        line = line.strip()
-        if "## Files Likely Touched" in line:
-            in_section = True
-            continue
-        if in_section and line.startswith("## "):
-            break  # next section
-        if in_section and line and not line.startswith("---"):
-            # normalize: remove backticks, quotes, bullets, trim
-            normalized = (
-                line.lstrip("*- ")
-                .replace("`", "")
-                .replace('"', "")
-                .replace("'", "")
-                .strip()
-            )
-            if normalized and _looks_like_path_token(normalized):
-                # resolve relative to project root
-                path = (PROJECT_ROOT / normalized).resolve()
-                files.add(str(path))
-    return files
+    return scope_gate.parse_files_likely_touched(
+        work_plan_content,
+        project_root=PROJECT_ROOT.resolve(),
+    )
 
 
 def _git_log_recent_files(git_root: Path, n: int = 10) -> set[str]:
-    """Return relative file paths from the last n commits in git_root."""
-    try:
-        result = subprocess.run(
-            ["git", "log", f"-{n}", "--name-only", "--format="],
-            capture_output=True,
-            text=True,
-            cwd=git_root,
-            timeout=30,
-        )
-        if result.returncode == 0:
-            return {line.strip() for line in result.stdout.split("\n") if line.strip()}
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        pass
-    return set()
+    return scope_gate.git_log_recent_files(git_root, n=n, run_fn=subprocess.run)
 
 
 def get_changed_files() -> set[str] | None:
-    """Get all changed files: staged, unstaged, untracked. None if not git repo.
-
-    In Model B the motor code lives in its own git repo (_MOTOR_ROOT) separate
-    from PROJECT_ROOT (workspace). Falls back to _MOTOR_ROOT when PROJECT_ROOT
-    has no .git so the scope gate works without the "not git-managed" warning.
-    """
-    git_root = (
-        PROJECT_ROOT
-        if (PROJECT_ROOT / ".git").exists()
-        else (_MOTOR_ROOT if (_MOTOR_ROOT / ".git").exists() else None)
+    return scope_gate.get_changed_files(
+        project_root=PROJECT_ROOT.resolve(),
+        motor_root=_MOTOR_ROOT.resolve() if (_MOTOR_ROOT / ".git").exists() else None,
+        run_fn=subprocess.run,
     )
-    if git_root is None:
-        return None
-    try:
-        # Use -z for null-byte separated output to handle paths with spaces and renames safely
-        result = subprocess.run(
-            ["git", "status", "--porcelain", "-z"],
-            capture_output=True,
-            text=True,
-            cwd=git_root,
-        )
-        changed = set()
-        # Split by null byte, each entry is: "XY path" where XY is 2-char status
-        # Renames have two consecutive entries: "R old_path" followed by "new_path"
-        entries = result.stdout.split("\0")
-        i = 0
-        while i < len(entries):
-            entry = entries[i]
-            if not entry:
-                i += 1
-                continue
-            # Format: "XY path" where XY is 2-char status (e.g., "M ", "??", "R ")
-            # When Y=' ' (space), format is "M path" (path at index 2)
-            # When Y!=' ', format is "XY path" with space separator (path at index 3)
-            if len(entry) >= 3:
-                status = entry[:2]
-                # Determine path start: if entry[2] is space, path starts at 3; otherwise at 2
-                path = entry[3:] if entry[2] == " " else entry[2:]
-                # Handle renames: status starts with 'R', next entry is the new path
-                if status[0] == "R" and i + 1 < len(entries):
-                    new_path = entries[i + 1]
-                    if new_path:
-                        changed.add(new_path)
-                    i += 2
-                    continue
-                else:
-                    changed.add(path)
-            i += 1
-        # resolve to absolute paths
-        resolved = set()
-        for f in changed:
-            path = (git_root / f).resolve()
-            resolved.add(str(path))
-        return resolved
-    except FileNotFoundError:
-        return None
 
 
 def check_scope_gate(
     work_plan_content: str, changed_files: set[str] | None, exclude_files: set[str]
 ) -> dict:
-    """Check if changed files are within scope."""
-    if changed_files is None:
-        return {
-            "valid": True,
-            "out_of_scope": set(),
-            "missing_from_diff": set(),
-            "covered_files": set(),
-            "warnings": ["Repository is not git-managed"],
-            "blocked_reason": None,
-        }
-
-    whitelist = parse_files_likely_touched(work_plan_content)
-    if not whitelist:
-        return {
-            "valid": True,
-            "out_of_scope": set(),
-            "missing_from_diff": set(),
-            "covered_files": set(),
-            "warnings": ["No Files Likely Touched section in work_plan.md"],
-            "blocked_reason": None,
-        }
-
-    relevant_changed = changed_files - exclude_files
-    relevant_whitelist = whitelist - exclude_files
-    covered_files = relevant_changed & relevant_whitelist
-    missing_from_diff = relevant_whitelist - relevant_changed
-    out_of_scope = relevant_changed - relevant_whitelist
-
-    warnings = []
-    blocked_reason = None
-    valid = len(out_of_scope) == 0
-
-    if relevant_whitelist and not covered_files:
-        valid = False
-        blocked_reason = (
-            "None of the declared Files Likely Touched entries appeared in the diff"
-        )
-    elif covered_files and missing_from_diff:
-        warnings.append(
-            "Partial scope coverage: "
-            f"{len(covered_files)} of {len(relevant_whitelist)} declared files touched"
-        )
-
-    return {
-        "valid": valid,
-        "out_of_scope": out_of_scope,
-        "missing_from_diff": missing_from_diff,
-        "covered_files": covered_files,
-        "warnings": warnings,
-        "blocked_reason": blocked_reason,
-    }
+    return scope_gate.check_scope_gate(
+        work_plan_content,
+        changed_files,
+        exclude_files,
+        parse_files_likely_touched_fn=parse_files_likely_touched,
+    )
 
 
 def _load_mark_ready_context() -> tuple[str, str, str]:
-    """Load the plan and log content for --mark-ready."""
     plan_content = read_file(WORK_PLAN)
     log_content = read_file(EXEC_LOG)
-    plan_id = get_plan_id(plan_content)
-    return plan_content, log_content, plan_id
+    return plan_content, log_content, get_plan_id(plan_content)
 
 
 def _record_scope_override(scope_override: str, problem_files: set[str]) -> None:
-    """Record a scope override in the execution log."""
-    note = (
-        f"Scope override: {scope_override}. "
-        f"Affected files: {', '.join(sorted(problem_files))}"
+    return scope_gate.record_scope_override(
+        scope_override,
+        problem_files,
+        update_log_status_fn=update_log_status,
     )
-    update_log_status("READY_FOR_REVIEW", note)
 
 
 def _scope_gate_allows_close(gate_result: dict, scope_override: str | None) -> bool:
-    """Apply scope gate decision for mark-ready."""
-    if gate_result["valid"]:
-        for warning in gate_result["warnings"]:
-            print(f"[WARN] {warning}")
-        update_log_status("READY_FOR_REVIEW", "Marked ready by Builder")
-        return True
-
-    if not scope_override:
-        print("[ERROR] Scope violation detected:")
-        if gate_result.get("blocked_reason"):
-            print(f"  {gate_result['blocked_reason']}")
-        for file_path in sorted(gate_result["out_of_scope"]):
-            print(f"  - {file_path}")
-        missing = sorted(gate_result.get("missing_from_diff", set()))
-        for file_path in missing:
-            print(f"  - missing: {file_path}")
-        # CL-08: workspace memory files are not tracked in the motor git.
-        # Detect and print an actionable hint so Builder does not loop on this.
-        workspace_memory = ".agent/runtime/memory/"
-        memory_missing = [
-            f for f in missing if workspace_memory in f.replace("\\", "/")
-        ]
-        if memory_missing:
-            print(
-                "[HINT] Some missing files live in the workspace portable "
-                "(.agent/runtime/memory/) and are not tracked in the motor git diff. "
-                "This is expected (CL-08). Use --scope-override with reason:\n"
-                '  --scope-override "Memory files modified in workspace portable; '
-                'motor git diff cannot reflect .agent/runtime/memory/ changes."'
-            )
-        print('Use --scope-override "reason" to proceed.')
-        return False
-
-    print(f"[INFO] Scope override applied: {scope_override}")
-    problem_files = set(gate_result["out_of_scope"]) | set(
-        gate_result.get("missing_from_diff", set())
+    return scope_gate.scope_gate_allows_close(
+        gate_result,
+        scope_override,
+        update_log_status_fn=update_log_status,
+        record_scope_override_fn=_record_scope_override,
+        print_fn=print,
     )
-    _record_scope_override(scope_override, problem_files)
-    return True
 
 
 def _sync_mark_ready_targets(
     plan_id: str, plan_content: str, current_round: int | None = None
 ) -> None:
-    """Emit the READY_FOR_REVIEW transition after mark-ready.
-
-    WT-2026-211: The controller no longer materializes TURN.md / STATE.md.
-    The supervisor synchronously materializes the projections after it
-    processes the new bus events in run_once().
-    """
-    # WP-2026-124: Get bus-derived state
+    """Emit READY_FOR_REVIEW after mark-ready and refresh projections."""
     log_status_before = get_status(read_file(EXEC_LOG), "**Estado:**")
     if BUS_AVAILABLE and event_bus:
         from bus.state_machine import StateMachine, TicketState
@@ -603,16 +382,13 @@ def _sync_mark_ready_targets(
             if events
             else TicketState.UNKNOWN
         )
-        # Use bus state if available, fallback to log
         from_state = (
             bus_state.value if bus_state != TicketState.UNKNOWN else log_status_before
         )
     else:
         from_state = log_status_before
 
-    # Emit STATE_CHANGED to bus idempotently
     if BUS_AVAILABLE and event_bus:
-        # Check if already emitted for this ticket and state
         latest_state_event = event_bus.latest_event(
             ticket_id=plan_id, event_type="STATE_CHANGED"
         )
@@ -675,9 +451,7 @@ def _sync_mark_ready_targets(
             pass
 
 
-# ============================================================================
-# CIRCUIT BREAKER AND CHECKOUT UTILITIES
-# ============================================================================
+# Circuit breaker and checkout utilities
 
 
 def _read_circuit_breaker() -> dict:
@@ -1189,11 +963,7 @@ def _auto_archive_closed_artifacts() -> None:
         print(f"[WARN] Auto-archive failed: {exc}")
 
 
-# ============================================================================
-# UTILITY FUNCTIONS
-# ============================================================================
-
-
+# Utility functions
 def read_file(path: Path) -> str:
     """Lee un archivo si existe, retorna string vacio si no."""
     if not path.exists():
@@ -2057,7 +1827,7 @@ def _check_quality_gates(
     Before: plan_id must be non-empty, plan_type and plan_status must be valid.
     During: Runs quality gates via run_quality_gates(). On failure, emits
             AUTO-REJECT with a distinct instruction (no `.builder_rules` or
-            `builder_workflow.md` references — WT-2026-204).
+            `builder_workflow.md` references - WT-2026-204).
     After: Returns action dict with role=BUILDER for AUTO-REJECT, or None if
            all gates pass.
     """
@@ -2769,7 +2539,7 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
             )
 
     if not round_ok:
-        # WT-2026-242b: Orphan containment — if the ticket is already past
+        # WT-2026-242b: Orphan containment - if the ticket is already past
         # IN_PROGRESS, emit STALE_BUILDER_ORPHAN instead of HANDOFF_BLOCKED.
         # This prevents stale shells from contaminating the bus post-success.
         was_orphan, msg = _maybe_handle_stale_builder_orphan(
@@ -2798,7 +2568,7 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
             else:
                 print(f"[WARN] {msg}")
             return 0
-        # Ticket is still IN_PROGRESS — maintain existing blocking behavior.
+        # Ticket is still IN_PROGRESS - maintain existing blocking behavior.
         if BUS_AVAILABLE and event_bus:
             event_bus.emit(
                 event_type="HANDOFF_BLOCKED",
@@ -2971,7 +2741,7 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
             },
         )
 
-    # WP-2026-188 Phase 4: Builder ready evidence gate (unconditional — not bypassable)
+    # WP-2026-188 Phase 4: Builder ready evidence gate (unconditional - not bypassable)
     evidence_errors = _check_implementation_evidence(plan_id)
     if evidence_errors:
         for err in evidence_errors:
@@ -3214,11 +2984,7 @@ def _handle_resolve_launcher_roots(json_output: bool) -> int:
         return 1
 
 
-# ============================================================================
-# PRE-HANDOFF HELPER (WP-2026-173)
-# ============================================================================
-
-
+# Pre-handoff helper (WP-2026-173)
 _LIVE_SURFACES_REL = {
     ".agent/collaboration/TURN.md",
     ".agent/collaboration/STATE.md",
@@ -3788,7 +3554,7 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
             )
 
     if not round_ok:
-        # WT-2026-242b: Orphan containment — if ticket is past IN_PROGRESS,
+        # WT-2026-242b: Orphan containment - if ticket is past IN_PROGRESS,
         # emit STALE_BUILDER_ORPHAN instead of HANDOFF_BLOCKED.
         was_orphan, msg = _maybe_handle_stale_builder_orphan(
             plan_id=plan_id,
@@ -3804,7 +3570,7 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
             print(f"[WARN] {msg}", flush=True)
             # Return 0 so the stale shell exits cleanly without polluting the bus.
             return 0
-        # Ticket is still IN_PROGRESS — maintain existing blocking behavior.
+        # Ticket is still IN_PROGRESS - maintain existing blocking behavior.
         if BUS_AVAILABLE and event_bus:
             event_bus.emit(
                 event_type="HANDOFF_BLOCKED",
@@ -3937,7 +3703,7 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
     # bytes_actuales == BOM_UTF8 + bytes_head -- autocorrect if so, BLOCK otherwise.
     #
     # FLT gate: if .opencode/opencode.json is declared in Files Likely Touched,
-    # DO NOT autocorrect — the file is in scope and the Builder may have made
+    # DO NOT autocorrect - the file is in scope and the Builder may have made
     # legitimate changes. Fall through to normal scope/evidence rules.
     _opencode_path = _MOTOR_ROOT / ".opencode" / "opencode.json"
     if _opencode_path.exists():
@@ -3965,7 +3731,7 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
                             file=sys.stderr,
                             flush=True,
                         )
-                    # else: no autocorrection — fall through to normal logic
+                    # else: no autocorrection - fall through to normal logic
             except (subprocess.TimeoutExpired, FileNotFoundError):
                 pass
     # --- end WT-2026-248a BOM autocorrection ---
@@ -5374,7 +5140,7 @@ def _handle_validate(json_output: bool) -> int:  # noqa: C901
     if scope_warnings:
         warnings.setdefault("scope", []).extend(scope_warnings)
 
-    # Check bus drift — heal first, then report any residual
+    # Check bus drift - heal first, then report any residual
     try:
         from scripts.state_projection_sync import sync_state_projection
 
@@ -5639,7 +5405,7 @@ def _handle_get_closeout_skip(json_output: bool) -> int:
     Authority: bus-derived state is the ONLY source for skip=true.
     When the bus is unavailable or has no events for the ticket,
     the function returns skip=false (fail-open). No markdown-based
-    fallback is used — execution_log.md / STATE.md are projections
+    fallback is used - execution_log.md / STATE.md are projections
     derived from the bus, not authority.
     """
     _plan_content, _log_content, plan_id = _load_mark_ready_context()
