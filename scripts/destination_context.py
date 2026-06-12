@@ -244,7 +244,7 @@ def _parse_turn_file(tm_path: Path, state: dict) -> bool:
         for line in tm_path.read_text(encoding="utf-8").splitlines():
             s = line.strip()
             if s.startswith("| **ROL** |"):
-                state["role"] = s.split("|")[2].strip().rstrip("*").strip()
+                state["role"] = s.split("|")[2].strip().strip("*").strip()
             elif s.startswith("| **Accion** |") or s.startswith("| **Acción** |"):
                 state["action"] = s.split("|")[2].strip().rstrip("*").strip()
         return True
