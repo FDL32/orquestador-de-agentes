@@ -19,7 +19,12 @@ Estas operando sobre un `repo_destino` del motor `orquestador_de_agentes`.
 3. Ejecuta el generador de mapa compacto:
    `python <motor_root>/scripts/destination_context.py --bootstrap --project-root .`
 4. Lee el mapa generado en `.agent/context/destination_map.md`.
-5. Continua con `rg` y lectura directa de archivos bajo demanda.
+5. Valida el estado canonico del destino:
+   `python <motor_root>/.agent/agent_controller.py --validate --json --project-root .`
+   La salida aporta en un solo comando: errores de estado, drift plan/log,
+   warnings de prosa del ticket activo, invariantes del bus y prefijo de
+   tickets. Triarla antes de tocar nada.
+6. Continua con `rg` y lectura directa de archivos bajo demanda.
 
 ## Vocabulario canonico
 

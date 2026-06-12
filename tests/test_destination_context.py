@@ -365,3 +365,75 @@ def test_build_map_no_optional_files(tmp_path):
     # Should not crash, key sections present
     assert "Identity & Topology" in content
     assert "Operational State" in content
+
+
+# ---------------------------------------------------------------------------
+# _latest_handoff_blocked (HANDOFF_BLOCKED summary with resolution status)
+# ---------------------------------------------------------------------------
+
+
+def _write_events(tmp_path: Path, events: list[dict]) -> None:
+    events_dir = tmp_path / ".agent" / "runtime" / "events"
+    events_dir.mkdir(parents=True, exist_ok=True)
+    lines = "\n".join(json.dumps(e) for e in events)
+    (events_dir / "events.jsonl").write_text(lines + "\n", encoding="utf-8")
+
+
+def test_handoff_blocked_unresolved(tmp_path):
+    """A trailing HANDOFF_BLOCKED with no later activity is unresolved."""
+    from scripts.destination_context import _latest_handoff_blocked
+
+    _write_events(
+        tmp_path,
+        [
+            {
+                "event_type": "STATE_CHANGED",
+                "ticket_id": "CTL-2026-001a",
+                "sequence_number": 1,
+            },
+            {
+                "event_type": "HANDOFF_BLOCKED",
+                "ticket_id": "CTL-2026-001a",
+                "sequence_number": 2,
+                "payload": {"reason": "scope gate rejected"},
+            },
+        ],
+    )
+    result = _latest_handoff_blocked(tmp_path)
+    assert result is not None
+    assert result["ticket_id"] == "CTL-2026-001a"
+    assert result["sequence"] == 2
+    assert result["reason"] == "scope gate rejected"
+    assert result["status"] == "unresolved"
+
+
+def test_handoff_blocked_resolved_by_later_event(tmp_path):
+    """Later lifecycle activity for the same ticket marks the block resolved."""
+    from scripts.destination_context import _latest_handoff_blocked
+
+    _write_events(
+        tmp_path,
+        [
+            {
+                "event_type": "HANDOFF_BLOCKED",
+                "ticket_id": "CTL-2026-001a",
+                "sequence_number": 5,
+                "payload": {"reason": "stale checkpoint"},
+            },
+            {
+                "event_type": "STATE_CHANGED",
+                "ticket_id": "CTL-2026-001a",
+                "sequence_number": 6,
+            },
+        ],
+    )
+    result = _latest_handoff_blocked(tmp_path)
+    assert result is not None
+    assert result["status"] == "resolved_by_STATE_CHANGED"
+
+
+def test_handoff_blocked_absent_bus(tmp_path):
+    """No bus file -> no hint (None), map must not crash."""
+    from scripts.destination_context import _latest_handoff_blocked
+
+    assert _latest_handoff_blocked(tmp_path) is None

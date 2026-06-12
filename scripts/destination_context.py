@@ -296,7 +296,63 @@ def get_operational_state(project_root: Path) -> dict:
     if audits:
         state["active_audits"] = [a.name for a in audits]
 
+    blocked = _latest_handoff_blocked(project_root)
+    if blocked:
+        state["handoff_blocked"] = blocked
+
     return state
+
+
+def _latest_handoff_blocked(project_root: Path) -> dict | None:
+    """Summarize the latest HANDOFF_BLOCKED event from the bus, with status.
+
+    A bare "there is a HANDOFF_BLOCKED" hint would mislead: the blockage may
+    already be resolved by later activity. The summary therefore reports
+    whether any later event for the same ticket supersedes it
+    (status: unresolved / resolved_by_<EVENT_TYPE>).
+    Returns None when the bus is missing or has no HANDOFF_BLOCKED events.
+    """
+    events_path = project_root / ".agent" / "runtime" / "events" / "events.jsonl"
+    if not events_path.exists():
+        return None
+    try:
+        lines = events_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+
+    blocked: dict | None = None
+    resolved_by: str | None = None
+    for raw in lines:
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            event = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        etype = event.get("event_type", "")
+        if etype == "HANDOFF_BLOCKED":
+            blocked = event
+            resolved_by = None  # later blockage resets resolution tracking
+        elif blocked is not None and event.get("ticket_id") == blocked.get("ticket_id"):
+            # Any later lifecycle event for the same ticket supersedes the block
+            resolved_by = etype
+
+    if blocked is None:
+        return None
+    payload = (
+        blocked.get("payload", {}) if isinstance(blocked.get("payload"), dict) else {}
+    )
+    return {
+        "ticket_id": blocked.get("ticket_id", "unknown"),
+        "sequence": blocked.get("sequence_number", "?"),
+        "reason": str(payload.get("reason", payload.get("detail", "unspecified")))[
+            :160
+        ],
+        "status": f"resolved_by_{resolved_by}" if resolved_by else "unresolved",
+    }
 
 
 def build_map(project_root: Path, max_bytes: int) -> str:  # noqa: C901
@@ -378,6 +434,13 @@ def build_map(project_root: Path, max_bytes: int) -> str:  # noqa: C901
         op_lines.append(f"- **Active plans:** {', '.join(op_state['active_plans'])}")
     if op_state.get("active_audits"):
         op_lines.append(f"- **Active audits:** {', '.join(op_state['active_audits'])}")
+    blocked = op_state.get("handoff_blocked")
+    if blocked:
+        op_lines.append(
+            f"- **Latest HANDOFF_BLOCKED:** ticket={blocked['ticket_id']}, "
+            f"seq={blocked['sequence']}, reason={blocked['reason']}, "
+            f"status={blocked['status']}"
+        )
 
     # Include STATE.md raw content if present
     state_content = op_state.get("state_md_content")
