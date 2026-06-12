@@ -459,7 +459,13 @@ def build_map(project_root: Path, max_bytes: int) -> str:  # noqa: C901
         "## Git State",
     ]
     if git_info is None:
-        git_lines.append("- **Status:** no git repository or .git not found")
+        git_lines.append(
+            "- **Status:** NOT A GIT REPOSITORY - the motor evidence chain "
+            "(implementation evidence, scope gate, checkpoints, prepush) "
+            "CANNOT operate. Builder handoffs will fail with "
+            "implementation_evidence_failed. Fix: git init + initial commit "
+            "with a security-reviewed .gitignore before launching tickets."
+        )
     elif "error" in git_info:
         git_lines.append(
             "- **Status:** error reading git state (git unavailable or timeout)"
