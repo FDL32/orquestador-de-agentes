@@ -349,9 +349,13 @@ def test_approval_store_save_and_load(tmp_path):
     assert loaded.ticket_id == "WP-2026-127"
 
 
-def test_approval_store_load_nonexistent():
-    """Test ApprovalStore returns None for nonexistent request."""
-    store = ApprovalStore(store_path=Path("/nonexistent/path/store.json"))
+def test_approval_store_load_nonexistent(tmp_path):
+    """Test ApprovalStore returns None for nonexistent request.
+
+    Uses a tmp_path-based missing file: a bare /nonexistent absolute path
+    raises PermissionError on Linux CI runners instead of being absent.
+    """
+    store = ApprovalStore(store_path=tmp_path / "nonexistent" / "store.json")
     assert store.load("nonexistent") is None
 
 
