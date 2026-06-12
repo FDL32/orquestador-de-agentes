@@ -162,3 +162,38 @@ aportar diff, commit o evidencia nueva.
 - El fix no introduce gates paralelos ni relaja gates existentes fuera de
   contrato.
 - Los cambios no salen de la whitelist operativa sin justificacion CEM previa.
+
+## Informe de salida (obligatorio en flujo por chat)
+
+Tu ultimo mensaje al Manager DEBE ser este bloque, con valores reales (no
+aproximados ni recordados — copia los numeros de la salida de los comandos):
+
+```markdown
+## BUILDER REPORT — {{TICKET_ID}}
+
+### Diff
+- Archivos tocados: <lista exacta de `git status --short`>
+- Lineas: <archivo>: <antes> -> <despues> (medido con wc -l, no estimado)
+
+### Gates (comando exacto + resultado literal)
+- Tests: `python scripts/run_pytest_safe.py` -> <linea final literal, p.ej. "642 passed in 57s">
+- Ruff: `uv run ruff check <paths>` -> <salida literal>
+- State-leak: <silencioso | STATE LEAK detectado>
+
+### Criterios binarios del ticket
+- [x|✗] <cada criterio del work_plan, marcado contra evidencia>
+
+### Desviaciones y justificaciones CEM
+- <ninguna | lista con justificacion>
+
+### Estado de entrega
+- <staged sin commit | commit <sha>> — el commit final lo decide el Manager
+```
+
+Reglas del informe:
+- Cifras de tests SOLO de `run_pytest_safe.py` (la suite canonica completa);
+  no sumes conteos parciales de archivos sueltos.
+- No declares "pre-existente" ningun warning sin evidencia (`git stash` +
+  re-ejecucion o referencia a commit anterior).
+- Si un criterio no se cumple, marcalo con ✗ y explica: el Manager decide,
+  no lo ocultes.

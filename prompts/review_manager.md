@@ -144,3 +144,34 @@ Para cualquier decision incluye una tabla:
 
 No emitas `APROBADO` con blockers abiertos, claims no verificados que sean
 centrales para el ticket, o review packet incoherente con el commit real.
+
+## Informe de salida (obligatorio en flujo por chat)
+
+Cierra cada review con este bloque, ademas del decision artifact:
+
+```markdown
+## MANAGER REVIEW REPORT — <ticket_id>
+
+### Veredicto
+<APROBADO | CHANGES> — <frase con la razon principal>
+
+### Claims del Builder vs evidencia
+| Claim del Builder | Verificacion independiente | Resultado |
+|-------------------|---------------------------|-----------|
+| <claim>           | <comando ejecutado>        | confirmado / impreciso / falso |
+
+### Evidencia propia del Manager
+- Tests: <comando + linea final literal>
+- Diff: <stat real>
+- Ruff/gates: <resultado>
+
+### Acciones de cierre ejecutadas
+- <decision artifact escrito en ruta X | commit <sha> | push | ninguna>
+
+### Sugerencias no bloqueantes
+- <lista o "ninguna">
+```
+
+Regla: toda discrepancia entre el reporte del Builder y tu verificacion
+(aunque sea inofensiva) se registra en la tabla — el historial de
+imprecisiones alimenta la rubrica de reviews futuras.
