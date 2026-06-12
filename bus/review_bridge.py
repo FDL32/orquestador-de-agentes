@@ -10,11 +10,11 @@ import subprocess
 import sys
 import tempfile
 import time
-import warnings
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import review_observations
 from .blocker_signature import (
     blocker_lines_from_signature,
     compute_blocker_overlap,
@@ -31,7 +31,6 @@ from .decision_parser import (
     resolve_event_phase,
 )
 from .event_bus import EventBus
-from .memory_loader import get_review_context
 from .skill_resolver import SkillResolver, create_resolver
 from .ticket_id import WORKPLAN_ID_PATTERN
 from .time_utils import now_local
@@ -41,8 +40,10 @@ from .utils import count_trailing_changes
 # Windows CreateProcess argv limit ~8191 chars; leave margin for other args
 OS_NAME = os.name
 ARGV_PROMPT_THRESHOLD = 8000
-MAX_RUBRIC_OBSERVATIONS = 5
-MAX_OBSERVATION_SIGNAL_CHARS = 200
+
+# Re-exported from bus/review_observations.py for backward compatibility.
+MAX_RUBRIC_OBSERVATIONS = review_observations.MAX_RUBRIC_OBSERVATIONS
+MAX_OBSERVATION_SIGNAL_CHARS = review_observations.MAX_OBSERVATION_SIGNAL_CHARS
 
 # WT-2026-242a: Patterns that indicate --format json is not supported by the
 # real manager_executable. Used by _run_opencode_review() try-first logic to
@@ -55,20 +56,9 @@ _UNSUPPORTED_JSON_FLAG_PATTERNS = (
     "usage:",
 )
 
-# Domain-to-deliverable_type relevance mapping (WP-2026-177)
-# Maps each domain to the set of deliverable_types it applies to.
-# Canonical entries use 'domain'; legacy entries use topic='manager-review-rubric'.
-DOMAIN_DTYPE_MAP: dict[str, set[str]] = {
-    "review-quality": {"code", "mixed", "documentation", "research", "analysis"},
-    "delivery-hygiene": {"code", "mixed"},
-    "builder-contract": {"code", "mixed"},
-    "testing": {"code", "mixed"},
-    "security-gates": {"code", "mixed"},
-    "integration-tests": {"code", "mixed"},
-    "protocol-handlers": {"code", "mixed"},
-    "bus-architecture": {"code", "mixed"},
-    "config-schema": {"code", "mixed"},
-}
+# Domain-to-deliverable_type relevance mapping (WP-2026-177).
+# Canonical source: bus/review_observations.py (re-exported here).
+DOMAIN_DTYPE_MAP: dict[str, set[str]] = review_observations.DOMAIN_DTYPE_MAP
 
 
 # ReviewDecision is defined in bus.decision_parser (WT-2026-255a).
@@ -1272,241 +1262,79 @@ class ReviewBridge:
                 return False
         return True
 
+    # ── Review memory context ────────────────────────────────────────────
+    # Extracted to bus/review_observations.py (monolith decomposition).
+    # Thin wrappers kept for backward compatibility with existing tests
+    # and any external callers that reach these private helpers.
+
     def _observations_path(self) -> Path:
-        return (
-            self.project_root / ".agent" / "runtime" / "memory" / "observations.jsonl"
-        )
+        return review_observations.observations_path(self.project_root)
 
     def _canonical_anti_patterns_path(self) -> Path:
-        return (
-            Path(__file__).resolve().parents[1]
-            / "skills"
-            / "_shared"
-            / "anti-patterns.md"
-        )
+        return review_observations.canonical_anti_patterns_path()
 
     @staticmethod
     def _parse_canonical_anti_patterns(content: str) -> list[tuple[str, str]]:
-        inventory: list[tuple[str, str]] = []
-        pattern = re.compile(r"^##\s+(AP-\d{2})\s*-\s*(.+?)\s*$")
-        for raw_line in content.splitlines():
-            match = pattern.match(raw_line.strip())
-            if not match:
-                continue
-            inventory.append((match.group(1), match.group(2).strip()))
-        return inventory
+        return review_observations.parse_canonical_anti_patterns(content)
 
     def _load_canonical_anti_patterns(self) -> list[tuple[str, str]]:
-        path = self._canonical_anti_patterns_path()
-        try:
-            content = path.read_text(encoding="utf-8")
-        except OSError as exc:
-            warnings.warn(
-                f"Canonical anti-pattern inventory unavailable at {path}: {exc}",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-            return []
-
-        inventory = self._parse_canonical_anti_patterns(content)
-        if not inventory:
-            warnings.warn(
-                f"Canonical anti-pattern inventory at {path} is empty or invalid.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-        return inventory
+        # Pass the instance-resolved path so monkeypatched seams keep working.
+        return review_observations.load_canonical_anti_patterns(
+            self._canonical_anti_patterns_path()
+        )
 
     def _render_canonical_anti_pattern_inventory(self) -> str:
-        if not self._canonical_anti_patterns:
-            return ""
-        lines = [
-            "Canonical anti-pattern inventory (from skills/_shared/anti-patterns.md):"
-        ]
-        for ap_id, ap_name in self._canonical_anti_patterns:
-            lines.append(f"- {ap_id} {ap_name}")
-        return "\n".join(lines)
+        return review_observations.render_anti_pattern_inventory(
+            self._canonical_anti_patterns
+        )
 
     @staticmethod
     def _parse_observation_timestamp(raw_timestamp: object) -> datetime:
-        if isinstance(raw_timestamp, str):
-            stamp = raw_timestamp.strip().replace("Z", "+00:00")
-            try:
-                parsed = datetime.fromisoformat(stamp)
-                return (
-                    parsed
-                    if parsed.tzinfo is not None
-                    else parsed.replace(tzinfo=timezone.utc)
-                )
-            except ValueError:
-                pass
-        return datetime.min.replace(tzinfo=timezone.utc)
+        return review_observations.parse_observation_timestamp(raw_timestamp)
 
     @staticmethod
     def _truncate_observation_signal(signal: object) -> str:
-        text = str(signal or "").strip()
-        if len(text) <= MAX_OBSERVATION_SIGNAL_CHARS:
-            return text
-        return text[: MAX_OBSERVATION_SIGNAL_CHARS - 3].rstrip() + "..."
+        return review_observations.truncate_observation_signal(signal)
 
     @staticmethod
     def _observation_matches_dtype(record: dict, dtype: str) -> bool:
-        """Return True if the observation applies to the given deliverable_type."""
-        if dtype == "all":
-            return True
-        applies_to = record.get("applies_to")
-        if applies_to is None or applies_to == "all":
-            return True
-        targets = applies_to if isinstance(applies_to, list) else [applies_to]
-        return dtype in targets or "all" in targets
+        return review_observations.observation_matches_dtype(record, dtype)
 
     @staticmethod
     def _parse_observation_record(raw_line: str) -> dict | None:
-        """Parse a single JSONL line into a validated dict, or None."""
-        line = raw_line.strip()
-        if not line:
-            return None
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError:
-            return None
-        return record if isinstance(record, dict) else None
+        return review_observations.parse_observation_record(raw_line)
 
     @staticmethod
     def _record_to_observation_tuple(
         record: dict,
     ) -> tuple[datetime, str, str] | None:
-        """Extract (timestamp, signal, source_ticket) from a record, or None."""
-        signal = ReviewBridge._truncate_observation_signal(record.get("signal", ""))
-        if not signal:
-            return None
-        timestamp = ReviewBridge._parse_observation_timestamp(record.get("timestamp"))
-        source_ticket = str(record.get("source_ticket", "")).strip() or "unknown"
-        return (timestamp, signal, source_ticket)
+        return review_observations.record_to_observation_tuple(record)
 
     def _relevant_domains_for_dtype(self, dtype: str) -> set[str]:
-        """Compute the set of domain names relevant to a given deliverable_type."""
-        if dtype == "all":
-            return set()
-        domains: set[str] = set()
-        for domain, dtypes in DOMAIN_DTYPE_MAP.items():
-            if dtype in dtypes:
-                domains.add(domain)
-        return domains
+        return review_observations.relevant_domains_for_dtype(dtype)
 
     def _load_manager_review_observations_by_domain(
         self, dtype: str = "all"
     ) -> list[tuple[datetime, str, str]]:
-        """Load observations by domain relevance to deliverable_type.
-
-        WP-2026-177: Primary route for canonical entries that carry a 'domain'
-        field. Returns observations whose domain is relevant to dtype.
-        """
-        path = self._observations_path()
-        if not path.exists():
-            return []
-        try:
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-        except Exception:
-            return []
-
-        relevant_domains = self._relevant_domains_for_dtype(dtype)
-        observations: list[tuple[datetime, str, str]] = []
-        for raw_line in lines:
-            record = self._parse_observation_record(raw_line)
-            if record is None:
-                continue
-            domain = record.get("domain")
-            if not domain:
-                continue
-            if dtype != "all" and domain not in relevant_domains:
-                continue
-            if not self._observation_matches_dtype(record, dtype):
-                continue
-            obs = self._record_to_observation_tuple(record)
-            if obs:
-                observations.append(obs)
-
-        observations.sort(key=lambda item: item[0], reverse=True)
-        return observations[:MAX_RUBRIC_OBSERVATIONS]
+        return review_observations.load_review_observations_by_domain(
+            self.project_root, dtype
+        )
 
     def _load_manager_review_observations(
         self, dtype: str = "all"
     ) -> list[tuple[datetime, str, str]]:
-        """Load observations by domain relevance with legacy fallback.
-
-        WP-2026-177: Primary route is domain-based (canonical entries).
-        Falls back to topic='manager-review-rubric' for legacy entries
-        when no domain-based results are found.
-        """
-        domain_observations = self._load_manager_review_observations_by_domain(dtype)
-        if domain_observations:
-            return domain_observations
-
-        path = self._observations_path()
-        if not path.exists():
-            return []
-        try:
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-        except Exception:
-            return []
-
-        observations: list[tuple[datetime, str, str]] = []
-        for raw_line in lines:
-            record = self._parse_observation_record(raw_line)
-            if record is None:
-                continue
-            if record.get("topic") != "manager-review-rubric":
-                continue
-            if not self._observation_matches_dtype(record, dtype):
-                continue
-            obs = self._record_to_observation_tuple(record)
-            if obs:
-                observations.append(obs)
-
-        observations.sort(key=lambda item: item[0], reverse=True)
-        return observations[:MAX_RUBRIC_OBSERVATIONS]
+        return review_observations.load_review_observations(self.project_root, dtype)
 
     def _render_loader_rules(self, dtype: str = "all") -> str:
-        """Load L2 domain rules from the memory loader as primary memory source.
-
-        WP-2026-178: Uses memory_loader.get_review_context() to load L2 rules
-        by domain relevance as the first choice for review memory context.
-        Falls back to empty string (caller will use legacy L1 observations).
-
-        Before: Requires dtype string for domain relevance filtering.
-        During: Maps dtype to relevant domains via DOMAIN_DTYPE_MAP, loads
-                L2 rules for matched domains from the memory loader.
-        After: Returns a formatted markdown block with domain rules,
-               or empty string if no L2 rules are available.
-        """
         if dtype == "all":
             return ""
-
-        relevant_domains = self._relevant_domains_for_dtype(dtype)
-        parts: list[str] = []
-        seen_blocks: set[str] = set()
-        for domain in sorted(relevant_domains):
-            domain_rules = get_review_context(domain=domain)
-            if domain_rules and domain_rules not in seen_blocks:
-                parts.append(domain_rules)
-                seen_blocks.add(domain_rules)
-
-        if not parts:
-            return ""
-
-        return "\n--- Memory Rules (L2, from memory_loader) ---\n" + "\n\n".join(parts)
+        # Pass instance-resolved domains so monkeypatched seams keep working.
+        return review_observations.render_loader_rules(
+            dtype, domains=self._relevant_domains_for_dtype(dtype)
+        )
 
     def _render_manager_review_learnings(self, dtype: str = "all") -> str:
-        observations = self._load_manager_review_observations(dtype=dtype)
-        if not observations:
-            return ""
-
-        lines = ["Lecciones acumuladas de auditoria (de revisiones anteriores):"]
-        for timestamp, signal, source_ticket in observations:
-            date = timestamp.astimezone(timezone.utc).date().isoformat()
-            lines.append(f"- [{date}] {signal} ({source_ticket})")
-        return "\n".join(lines)
+        return review_observations.render_review_learnings(self.project_root, dtype)
 
     def _adaptive_state_path(self) -> Path:
         """Return path to the manager bridge state (shared with bridge heartbeat)."""

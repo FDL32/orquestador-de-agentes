@@ -838,8 +838,10 @@ def test_render_loader_rules_dedupes_identical_blocks(tmp_path, monkeypatch):
         "_relevant_domains_for_dtype",
         lambda dtype: {"review-quality", "builder-contract", "testing"},
     )
+    # get_review_context lives in bus.review_observations since the
+    # review-memory cluster was extracted from review_bridge.
     monkeypatch.setattr(
-        "bus.review_bridge.get_review_context",
+        "bus.review_observations.get_review_context",
         lambda domain=None: repeated_block,
     )
 
