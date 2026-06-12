@@ -65,6 +65,41 @@ def _ensure_utf8_stdout() -> None:
         pass
 
 
+def _queries_from_work_plan(ticket_id: str) -> list[str]:
+    """Derive recall queries from the active work_plan.md for a ticket.
+
+    Pulls the plan title terms and the stems of 'Files Likely Touched'
+    so the agent gets ticket-relevant memory without guessing keywords.
+    Returns [] when the plan is missing or belongs to another ticket.
+    """
+    import re
+
+    from runtime.project_root import get_collab_dir
+
+    plan_path = get_collab_dir() / "work_plan.md"
+    try:
+        content = plan_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    if ticket_id not in content:
+        return []
+
+    queries: set[str] = set()
+    # File stems from Files Likely Touched bullets (e.g. `bus/review_bridge.py`)
+    for match in re.finditer(r"[`\s]([\w/\\.-]+\.(?:py|md|ps1|json))", content):
+        stem = Path(match.group(1)).stem
+        if len(stem) >= 4:
+            queries.add(stem)
+    # Title words (first heading line), skipping short/stop tokens
+    for line in content.splitlines():
+        if line.startswith("#"):
+            queries.update(
+                w for w in re.findall(r"[a-zA-Z_]{5,}", line) if w.lower() != ticket_id
+            )
+            break
+    return sorted(queries)[:8]
+
+
 def main() -> int:  # noqa: C901
     """Main entry point for memory_context CLI."""
     _ensure_utf8_stdout()
@@ -96,6 +131,15 @@ def main() -> int:  # noqa: C901
         type=str,
         default=None,
         help="Keyword filter for --recall",
+    )
+    parser.add_argument(
+        "--ticket",
+        type=str,
+        default=None,
+        help=(
+            "Derive recall queries from the active work_plan.md of this ticket "
+            "(title terms + Files Likely Touched stems) instead of --query"
+        ),
     )
     parser.add_argument(
         "--limit",
@@ -152,7 +196,27 @@ def main() -> int:  # noqa: C901
         print(_format_status())
 
     elif mode == "recall":
-        observations = recall_observations(query=args.query, limit=args.limit)
+        if args.ticket:
+            # Ticket-relevant recall: multi-query derived from the work plan,
+            # deduplicated by signal.
+            queries = _queries_from_work_plan(args.ticket)
+            if not queries:
+                print(
+                    f"No work_plan context found for {args.ticket}; "
+                    "falling back to plain recall.",
+                    file=sys.stderr,
+                )
+            seen: set[str] = set()
+            observations = []
+            for q in queries or [None]:
+                for obs in recall_observations(query=q, limit=args.limit):
+                    sig = str(obs.get("signal") or "")
+                    if sig not in seen:
+                        seen.add(sig)
+                        observations.append(obs)
+            observations = observations[: args.limit]
+        else:
+            observations = recall_observations(query=args.query, limit=args.limit)
         if not observations:
             print("No observations found.", file=sys.stderr)
             return 1
