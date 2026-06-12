@@ -74,7 +74,7 @@ def test_result_caching():
     sys.path.insert(0, str(Path(__file__).parent.parent))
     from agent_system.refactor_kit import RefactorManager
 
-    with tempfile.TemporaryDirectory(dir=Path("C:/tmp")) as temp_dir:
+    with tempfile.TemporaryDirectory() as temp_dir:
         # Create test file
         test_file = Path(temp_dir) / "test.py"
         test_file.write_text("def hello():\n    print('hello')")
@@ -104,7 +104,7 @@ def test_cache_invalidation():
     sys.path.insert(0, str(Path(__file__).parent.parent))
     from agent_system.refactor_kit import RefactorManager
 
-    with tempfile.TemporaryDirectory(dir=Path("C:/tmp")) as temp_dir:
+    with tempfile.TemporaryDirectory() as temp_dir:
         # Create test file
         test_file = Path(temp_dir) / "test.py"
         test_file.write_text("def hello():\n    print('hello')")

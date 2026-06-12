@@ -107,6 +107,10 @@ def sample_observations() -> list[dict]:
 class TestDeriveProjectSlug:
     """Deterministic slug derivation per WT-2026-192 algorithm."""
 
+    @pytest.mark.skipif(
+        sys.platform != "win32",
+        reason="drive-letter paths only resolve natively on Windows",
+    )
     def test_windows_path(self):
         """Windows paths produce expected slug."""
         root = Path("C:/Users/fdl/Proyectos_Python/z_scripts")
@@ -114,12 +118,14 @@ class TestDeriveProjectSlug:
         assert slug == "c--Users-fdl-Proyectos-Python-z-scripts"
 
     def test_unix_path_passthrough(self):
-        """Unix paths without drive letters get C: prefix on Windows."""
+        """Unix-style paths produce a separator-free slug on any platform."""
         root = Path("/home/user/project")
         slug = derive_project_slug(root)
-        # On Windows, resolve() prepends C:\ -> slug starts with c--
+        # Windows resolve() prepends a drive (-> contains '--'); Linux keeps
+        # the absolute path (-> leading '-'). Both must be slug-safe.
         assert isinstance(slug, str)
-        assert "--" in slug
+        assert "/" not in slug and "\\" not in slug and "_" not in slug
+        assert slug.endswith("home-user-project")
         assert "home" in slug
         assert "user" in slug
         assert "project" in slug
@@ -595,6 +601,10 @@ class TestRealPathSlug:
         assert len(slug) > 10
         assert "--" in slug or "-" in slug
 
+    @pytest.mark.skipif(
+        sys.platform != "win32",
+        reason="drive-letter paths only resolve natively on Windows",
+    )
     def test_workspace_slug(self):
         """Workspace path produces expected slug pattern."""
         workspace = Path("C:/Users/fdl/Proyectos_Python/z_scripts")

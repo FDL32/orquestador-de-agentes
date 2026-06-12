@@ -5,8 +5,18 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 PROJECT_ROOT = Path(__file__).parent.parent
+
+# graphify-out/ is a LOCAL, gitignored artifact regenerated per workspace.
+# These freshness checks only make sense where the graph has been built
+# (developer machines); on CI runners the artifact legitimately absent.
+pytestmark = pytest.mark.skipif(
+    not (PROJECT_ROOT / "graphify-out" / "graph.json").exists(),
+    reason="graphify-out/ local artifact not present (e.g. CI runner)",
+)
 GRAPH_FILE = PROJECT_ROOT / "graphify-out" / "graph.json"
 REPORT_FILE = PROJECT_ROOT / "graphify-out" / "GRAPH_REPORT.md"
 CACHE_FILE = PROJECT_ROOT / "graphify-out" / "cache" / "sha256.json"

@@ -459,10 +459,18 @@ class TestResolveMotorCheckpointFiles:
         motor = tmp_path / "motor"
         init_git_repo(motor)
 
-        # Create commit on detached branch, tag it, then diverge
+        # Create commit on detached branch, tag it, then diverge.
+        # Capture the default branch first: git init yields main or master
+        # depending on host config (CI runners default to master), and a
+        # silent failed checkout would put the divergent commit ON TOP of
+        # the tag, turning this into the wrong scenario.
+        base_branch = _git(
+            ["rev-parse", "--abbrev-ref", "HEAD"], cwd=motor
+        ).stdout.strip()
         _git(["checkout", "-b", "orphan-branch"], cwd=motor)
         _create_checkpoint(motor, "src/orphan.py", "TICKET-1")
-        _git(["checkout", "main"], cwd=motor)
+        checkout = _git(["checkout", base_branch], cwd=motor)
+        assert checkout.returncode == 0, checkout.stderr
         _create_file(motor, "README.md", "divergent")
         _git(["add", "."], cwd=motor)
         _git(["commit", "-m", "divergent change"], cwd=motor)
