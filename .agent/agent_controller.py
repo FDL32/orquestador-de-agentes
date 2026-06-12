@@ -48,6 +48,7 @@ for _path in (str(_AGENT_DIR), str(_PROJECT_ROOT_DERIVED)):
 # Entry points set AGENT_PROJECT_ROOT env var after parsing --project-root
 # Import AFTER sys.path setup to ensure runtime/ is importable
 import closure_invariants  # noqa: E402 - sibling module in .agent/
+import state_validation  # noqa: E402 - sibling module in .agent/
 from bus.ticket_id import extract_all_ticket_ids  # noqa: E402
 from runtime.project_root import (  # noqa: E402
     get_agent_dir,
@@ -248,27 +249,10 @@ def get_human_gate_timeout() -> int:
 # Configuracion de comprobaciones
 MAX_FILES_CIRCULAR_CHECK = 50
 
-# Estados validos para validacion
-VALID_PLAN_STATES = {
-    "DRAFT",
-    "IN_PLANNING",
-    "APPROVED",
-    "IN_REVIEW",
-    "COMPLETED",
-    "N/A",
-}
-VALID_LOG_STATES = {
-    "PENDING",
-    "IN_PROGRESS",
-    "BLOCKED",
-    "READY_FOR_REVIEW",
-    # WP-2026-106: HUMAN_GATE and READY_TO_CLOSE are real terminal-adjacent
-    # states emitted by bus/state_machine.py; the validator must accept them.
-    "HUMAN_GATE",
-    "READY_TO_CLOSE",
-    "COMPLETED",
-    "N/A",
-}
+# Estados validos para validacion.
+# Canonical source: .agent/state_validation.py (re-exported here).
+VALID_PLAN_STATES = state_validation.VALID_PLAN_STATES
+VALID_LOG_STATES = state_validation.VALID_LOG_STATES
 
 
 def _ensure_runtime_dirs() -> None:
@@ -1225,28 +1209,11 @@ def write_file(path: Path, content: str) -> None:
         f.write(content)
 
 
-def get_status(content: str, marker: str) -> str:
-    """Extrae el estado de un archivo buscando un marcador."""
-    for line in content.split("\n"):
-        if marker in line:
-            return line.split(marker)[1].strip()
-    return "UNKNOWN"
-
-
-def get_plan_id(content: str) -> str:
-    """Extrae el ID del plan de trabajo."""
-    for line in content.split("\n"):
-        if "**ID:**" in line or "**Plan ID:**" in line:
-            return line.split(":**")[1].strip()
-    return "N/A"
-
-
-def get_plan_type(content: str) -> str:
-    """Extrae el tipo de plan. Valores: IMPLEMENTATION (default) | FINALIZATION."""
-    for line in content.split("\n"):
-        if "**Tipo:**" in line:
-            return line.split(":**")[1].strip().upper()
-    return "IMPLEMENTATION"
+# Parsing helpers: canonical source .agent/state_validation.py
+# (re-exported here for the many internal callers and test imports).
+get_status = state_validation.get_status
+get_plan_id = state_validation.get_plan_id
+get_plan_type = state_validation.get_plan_type
 
 
 def check_git_status() -> bool | None:
@@ -1265,17 +1232,7 @@ def check_git_status() -> bool | None:
         return None
 
 
-def extract_status_emoji(status_str: str) -> tuple[str, str]:
-    """Extrae el estado limpio y el emoji."""
-    emojis = {"🟢", "🟡", "🔴", "🟣", "✅", "⏳", "❌", "⚠️"}
-    status_clean = status_str.strip()
-    found_emoji = ""
-    for emoji in emojis:
-        if emoji in status_clean:
-            found_emoji = emoji
-            status_clean = status_clean.replace(emoji, "").strip()
-            break
-    return status_clean, found_emoji
+extract_status_emoji = state_validation.extract_status_emoji
 
 
 _VALID_DELIVERABLE_TYPES = {"code", "documentation", "research", "analysis", "mixed"}
@@ -1803,102 +1760,37 @@ def _check_implementation_evidence(plan_id: str) -> list[str]:  # noqa: C901
     return errors
 
 
+# ── State-file validation ────────────────────────────────────────────────
+# Pure content->errors logic lives in .agent/state_validation.py (monolith
+# decomposition). These wrappers read the files via the module-global
+# read_file / lazy paths, which remain the seam that tests monkeypatch.
+
+
 def _validate_work_plan() -> list[str]:
     """Validate work_plan.md file."""
-    errors = []
-    content = read_file(WORK_PLAN)
-    if not content:
-        return errors
-
-    status_raw = get_status(content, "**Estado:**")
-    status_clean, _ = extract_status_emoji(status_raw)
-    if status_clean and status_clean not in VALID_PLAN_STATES:
-        errors.append(f"Estado invalido: '{status_clean}'")
-    if "**ID:**" not in content:
-        errors.append("Falta campo **ID:**")
-    return errors
+    return state_validation.validate_work_plan_content(read_file(WORK_PLAN))
 
 
 def _validate_execution_log() -> list[str]:
     """Validate execution_log.md file."""
-    errors = []
-    content = read_file(EXEC_LOG)
-    if not content:
-        return errors
-
-    status_raw = get_status(content, "**Estado:**")
-    status_clean, _ = extract_status_emoji(status_raw)
-    if status_clean and status_clean not in VALID_LOG_STATES:
-        errors.append(f"Estado invalido: '{status_clean}'")
-    return errors
+    return state_validation.validate_execution_log_content(read_file(EXEC_LOG))
 
 
 def _validate_turn_file() -> list[str]:
     """Validate TURN.md file."""
-    errors = []
-    content = read_file(TURN_FILE)
-    if content and "## Agente Activo" not in content:
-        errors.append("Falta sección '## Agente Activo'")
-    return errors
+    return state_validation.validate_turn_content(read_file(TURN_FILE))
 
 
 def _validate_notifications() -> list[str]:
     """Validate notifications.md file."""
-    errors = []
-    content = read_file(NOTIFICATIONS)
-    if content and "</thinking>" in content:
-        errors.append("Contiene etiquetas </thinking> (corrupto)")
-    return errors
+    return state_validation.validate_notifications_content(read_file(NOTIFICATIONS))
 
 
 def _validate_cross_file_consistency() -> list[str]:
     """Validate consistency across files."""
-    errors = []
-    plan_content = read_file(WORK_PLAN)
-    log_content = read_file(EXEC_LOG)
-
-    if not plan_content or not log_content:
-        return errors
-
-    plan_status_raw = get_status(plan_content, "**Estado:**")
-    log_status_raw = get_status(log_content, "**Estado:**")
-    plan_clean, _ = extract_status_emoji(plan_status_raw)
-    log_clean, _ = extract_status_emoji(log_status_raw)
-
-    # Plan APPROVED pero log COMPLETED
-    if "APPROVED" in plan_clean and "COMPLETED" in log_clean:
-        errors.append(
-            "DRIFT: plan=APPROVED pero log=COMPLETED -- "
-            "el log pertenece a un ciclo anterior. Limpia execution_log.md."
-        )
-
-    # Plan COMPLETED pero log IN_PROGRESS
-    if "COMPLETED" in plan_clean and "IN_PROGRESS" in log_clean:
-        errors.append(
-            "DRIFT: plan=COMPLETED pero log=IN_PROGRESS -- "
-            "el Builder no cerro su bitacora correctamente."
-        )
-
-    # Plan IN_PLANNING con log READY_FOR_REVIEW
-    if "IN_PLANNING" in plan_clean and "READY_FOR_REVIEW" in log_clean:
-        errors.append(
-            "DRIFT: plan=IN_PLANNING pero log=READY_FOR_REVIEW -- "
-            "estado imposible. El plan debe estar APPROVED antes de que el Builder entregue."
-        )
-
-    # Plan N/A pero log activo
-    if ("N/A" in plan_clean or not plan_clean) and log_clean not in (
-        "N/A",
-        "COMPLETED",
-        "PENDING",
-        "",
-    ):
-        errors.append(
-            f"DRIFT: no hay plan activo pero log={log_clean} -- "
-            "limpia execution_log.md o crea un nuevo work_plan.md."
-        )
-
-    return errors
+    return state_validation.validate_cross_file_consistency(
+        read_file(WORK_PLAN), read_file(EXEC_LOG)
+    )
 
 
 def _validate_host_project_prefix() -> list[str]:

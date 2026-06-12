@@ -53,14 +53,22 @@ def load_decision_artifact(
     - file exists and is valid JSON;
     - ``ticket_id`` in the payload matches the requested ticket;
     - ``decision`` maps to a strong decision (APROBADO/APPROVE/CHANGES);
-    - if ``not_before`` is given, the file mtime must be >= it (artifacts
-      written before this review session are stale and ignored).
+    - if ``not_before`` is given, the file mtime must not predate it by
+      more than the tolerance (artifacts written before this review
+      session are stale and ignored). The 2s tolerance absorbs filesystem
+      mtime granularity/rounding: stale artifacts are minutes or hours
+      old, while an artifact written milliseconds after ``not_before``
+      can legitimately receive an earlier rounded mtime.
     """
+    mtime_tolerance_seconds = 2.0
     path = reviews_dir / f"decision_{ticket_id}.json"
     try:
         if not path.is_file():
             return None
-        if not_before is not None and path.stat().st_mtime < not_before:
+        if (
+            not_before is not None
+            and path.stat().st_mtime < not_before - mtime_tolerance_seconds
+        ):
             return None
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
