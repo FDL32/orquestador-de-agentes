@@ -600,7 +600,10 @@ def run_closeout(
     report.steps.append(_step_git_clean(project_root, dry_run))
 
     # --- Generate report ---
-    _generate_report(report, project_root)
+    report_path = _generate_report(report, project_root)
+    # Dry-run writes to runtime/tmp/ (non-mutating, 7d28d2e); print the path
+    # so operators and reviewers do not look at the stale canonical report.
+    print(f"[closeout] Report ({report.overall_status}): {report_path}")
 
     # Return code: 0 if overall is PASS or WARN, 1 if FAIL
     return 1 if report.overall_status == "FAIL" else 0

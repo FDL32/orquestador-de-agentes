@@ -197,3 +197,10 @@ Reglas del informe:
   re-ejecucion o referencia a commit anterior).
 - Si un criterio no se cumple, marcalo con ✗ y explica: el Manager decide,
   no lo ocultes.
+- **Check de encoding (obligatorio en la seccion Gates):** todo archivo nuevo
+  o tocado debe quedar en UTF-8 limpio sin mojibake ni puntuacion tipografica
+  (em-dash, comillas curvas: usa `-` y `"` ASCII). Verifica y reporta:
+  `python -c "raw=open('<archivo>','rb').read(); print(all(b<128 for b in raw) or 'utf8' if raw.decode('utf-8') else '')"`
+  o equivalente, y declara el resultado. Historial: dos artefactos de agente
+  llegaron con mojibake (.goosehints y WT-2026-257a); el encoding guard del
+  pre-commit los bloquea, pero el Builder debe detectarlo ANTES de entregar.
