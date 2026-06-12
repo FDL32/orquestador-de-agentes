@@ -59,6 +59,7 @@ from scripts.closeout_steps.gates import (  # noqa: E402
 from scripts.closeout_steps.observations import (  # noqa: E402
     step_memory_consolidate as _step_memory_consolidate_impl,
     step_session_observations as _step_session_observations_impl,
+    step_upstream_learnings_ttl as _step_upstream_learnings_ttl_impl,
 )
 from scripts.closeout_steps.rotation import (  # noqa: E402
     is_lock_alive as _rotation_is_lock_alive,
@@ -566,6 +567,9 @@ def run_closeout(
                 detail="Skipped by --skip-slow",
             )
         )
+    report.steps.append(
+        _step_upstream_learnings_ttl_impl(project_root, step_result_cls=StepResult)
+    )
     report.steps.append(_step_cleanup_builder_session(project_root, dry_run))
     report.steps.append(_step_archive_collaboration(project_root, dry_run))
     report.steps.append(_step_rotate_review_queue(project_root, dry_run))

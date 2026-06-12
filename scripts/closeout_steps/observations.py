@@ -123,3 +123,87 @@ def step_memory_consolidate(
             status="WARN",
             detail=f"Memory consolidate could not run: {exc}",
         )
+
+
+def _resolve_upstream_learnings_path(project_root: Path) -> Path:
+    """Resolve UPSTREAM_LEARNINGS.md locally or via motor_link fallback."""
+    path = project_root / ".agent" / "runtime" / "memory" / "UPSTREAM_LEARNINGS.md"
+    if path.exists():
+        return path
+    try:
+        from runtime.motor_link import resolve_motor_root
+
+        motor_root = resolve_motor_root(project_root)
+        if motor_root is not None:
+            candidate = (
+                motor_root / ".agent" / "runtime" / "memory" / "UPSTREAM_LEARNINGS.md"
+            )
+            if candidate.exists():
+                return candidate
+    except ImportError:
+        pass
+    return path
+
+
+def step_upstream_learnings_ttl(
+    project_root: Path,
+    *,
+    step_result_cls: type[StepResult],
+) -> StepResult:
+    """Warn about pending upstream learnings whose TTL is about to expire.
+
+    UPSTREAM_LEARNINGS.md entries under '## Pendientes de revision' carry a
+    'ttl_wps: N' counter decremented by man-session-closeout. Without an
+    automatic consumer they used to expire silently; this step surfaces
+    entries with ttl_wps <= 1 (numeric) so the human can triage them
+    before archival.
+    """
+    import re
+
+    path = _resolve_upstream_learnings_path(project_root)
+    if not path.exists():
+        return step_result_cls(
+            name="upstream_learnings_ttl",
+            status="SKIP",
+            detail="UPSTREAM_LEARNINGS.md not present",
+        )
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return step_result_cls(
+            name="upstream_learnings_ttl",
+            status="WARN",
+            detail=f"Could not read UPSTREAM_LEARNINGS.md: {exc}",
+        )
+
+    pending_section = content.split("## Pendientes de revision", 1)
+    if len(pending_section) < 2:
+        return step_result_cls(
+            name="upstream_learnings_ttl",
+            status="PASS",
+            detail="No 'Pendientes de revision' section",
+        )
+    # Stop at the next H2 section if present
+    pending = re.split(r"\n## ", pending_section[1], maxsplit=1)[0]
+
+    expiring: list[str] = []
+    for match in re.finditer(r"^### (.+?)$", pending, flags=re.MULTILINE):
+        header = match.group(1)
+        ttl_match = re.search(r"ttl_wps:\s*(\d+)", header)
+        if ttl_match and int(ttl_match.group(1)) <= 1:
+            expiring.append(header.strip()[:80])
+
+    if expiring:
+        return step_result_cls(
+            name="upstream_learnings_ttl",
+            status="WARN",
+            detail=(
+                f"{len(expiring)} pending learning(s) with ttl_wps <= 1 "
+                f"(triage before they expire): {expiring[:3]}"
+            ),
+        )
+    return step_result_cls(
+        name="upstream_learnings_ttl",
+        status="PASS",
+        detail="No pending learnings near TTL expiry",
+    )
