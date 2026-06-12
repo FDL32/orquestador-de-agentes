@@ -16,6 +16,7 @@ from pathlib import Path
 from . import (
     opencode_transport,
     review_observations,
+    review_packet,
     review_report,
     review_rubrics,
     review_state,
@@ -616,194 +617,41 @@ class ReviewBridge:
         except Exception as e:
             return f"[Error fetching git diff: {e}]"
 
-    # WT-2026-221b: Patterns for docs-only and collaboration-only classification
-    DOCS_ONLY_PATTERNS: tuple[str, ...] = (
-        ".agent/collaboration/",
-        ".agent/runtime/",
-        ".session/",
-        "PROJECT.md",
-        "AGENTS.md",
-        "README.md",
-        "CHANGELOG.md",
-        "CREDITS.md",
-        "REPOSITORY_STRUCTURE.md",
-        "repomix.config.json",
-    )
+    # WT-2026-221b: canonical source bus/review_packet.py (re-exported here).
+    DOCS_ONLY_PATTERNS: tuple[str, ...] = review_packet.DOCS_ONLY_PATTERNS
     COLLABORATION_ONLY_PATTERNS: tuple[str, ...] = (
-        ".agent/collaboration/",
-        ".agent/runtime/",
+        review_packet.COLLABORATION_ONLY_PATTERNS
     )
+
+    # ── Diff collection and classification ──────────────────────────────
+    # Extracted to bus/review_packet.py (monolith decomposition).
+    # Thin wrappers kept for backward compatibility.
 
     @staticmethod
     def _path_matches_any(path: str, patterns: tuple[str, ...]) -> bool:
-        """Check if a normalized path matches any of the given patterns."""
-        normalized = path.replace("\\", "/")
-        return any(pattern in normalized for pattern in patterns)
+        return review_packet.path_matches_any(path, patterns)
 
     def _get_motor_diff_files(self) -> list[str]:
-        """Get diff file names from the motor repository.
-
-        Before:
-            - Motor root must be resolvable.
-
-        During:
-            - Runs ``git diff --name-only`` in the motor root (unstaged).
-            - Falls back to ``git log -5 --name-only --format=`` for committed
-              changes if the working tree is clean.
-
-        After:
-            - Returns a list of relative file paths, or empty list on error.
-            - Never raises.
-        """
         motor_root = self._resolve_motor_root()
         if motor_root is None:
             return []
-        try:
-            git_bin = shutil.which("git") or "git"
-            result = subprocess.run(
-                [git_bin, "diff", "--name-only"],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                cwd=motor_root,
-                timeout=10,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                return [f.strip() for f in result.stdout.splitlines() if f.strip()]
-
-            # Staged changes
-            result = subprocess.run(
-                [git_bin, "diff", "--cached", "--name-only"],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                cwd=motor_root,
-                timeout=10,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                return [f.strip() for f in result.stdout.splitlines() if f.strip()]
-
-            # Fallback: recent commits
-            result = subprocess.run(
-                [git_bin, "log", "-5", "--name-only", "--format="],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                cwd=motor_root,
-                timeout=10,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                return [
-                    f.strip()
-                    for f in result.stdout.splitlines()
-                    if f.strip() and not f.strip().startswith("commit ")
-                ]
-        except Exception:  # noqa: S110 - best-effort
-            pass
-        return []
+        return review_packet.get_motor_diff_files(motor_root)
 
     def _get_destination_diff_files(self) -> list[str]:
-        """Get diff file names from the destination (project_root) repository.
-
-        Before:
-            - project_root must be a valid git repository.
-
-        During:
-            - Runs ``git diff --name-only`` (unstaged).
-            - Falls back to ``git log -5 --name-only --format=`` when tree is clean.
-
-        After:
-            - Returns a list of relative file paths, or empty list on error.
-            - Never raises.
-        """
-        try:
-            git_bin = shutil.which("git") or "git"
-            result = subprocess.run(
-                [git_bin, "diff", "--name-only"],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                cwd=self.project_root,
-                timeout=10,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                return [f.strip() for f in result.stdout.splitlines() if f.strip()]
-
-            # Fallback: recent commits
-            result = subprocess.run(
-                [git_bin, "log", "-5", "--name-only", "--format="],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                cwd=self.project_root,
-                timeout=10,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                return [
-                    f.strip()
-                    for f in result.stdout.splitlines()
-                    if f.strip() and not f.strip().startswith("commit ")
-                ]
-        except Exception:  # noqa: S110 - best-effort
-            pass
-        return []
+        return review_packet.get_destination_diff_files(self.project_root)
 
     def _classify_diff_files(
         self,
         motor_files: list[str],
         destination_files: list[str],
     ) -> dict:
-        """Classify diff files into docs-only, collaboration-only, and productive.
-
-        Before:
-            - Two lists of file paths (motor and destination).
-
-        During:
-            - Merges all files, checks each against docs/collaboration patterns.
-
-        After:
-            - Returns dict with classification flags and file lists.
-            - Never raises.
-        """
-        all_files = set(motor_files) | set(destination_files)
-        docs_only: list[str] = []
-        productive: list[str] = []
-        for f in all_files:
-            if self._path_matches_any(f, self.DOCS_ONLY_PATTERNS):
-                docs_only.append(f)
-            else:
-                productive.append(f)
-
-        motor_productive = [
-            f
-            for f in motor_files
-            if not self._path_matches_any(f, self.DOCS_ONLY_PATTERNS)
-        ]
-        dest_productive = [
-            f
-            for f in destination_files
-            if not self._path_matches_any(f, self.DOCS_ONLY_PATTERNS)
-        ]
-        collab_only = (
-            all(
-                self._path_matches_any(f, self.COLLABORATION_ONLY_PATTERNS)
-                for f in all_files
-            )
-            if all_files
-            else False
+        # Class-level pattern tuples remain the seam (tests may override them).
+        return review_packet.classify_diff_files(
+            motor_files,
+            destination_files,
+            docs_patterns=self.DOCS_ONLY_PATTERNS,
+            collab_patterns=self.COLLABORATION_ONLY_PATTERNS,
         )
-
-        return {
-            "all_files": all_files,
-            "docs_only_files": sorted(docs_only),
-            "productive_files": sorted(productive),
-            "is_docs_only": bool(all_files) and not bool(productive),
-            "is_collaboration_only": bool(all_files) and collab_only,
-            "motor_productive": motor_productive,
-            "dest_productive": dest_productive,
-            "has_motor_evidence": bool(motor_productive),
-            "has_destination_productive": bool(dest_productive),
-        }
 
     def classify_review_packet(self, ticket_id: str) -> dict:
         """WT-2026-221b: Classify a review packet for evidence gate.
