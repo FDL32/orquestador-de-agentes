@@ -10,10 +10,16 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
-from . import opencode_transport, review_observations, review_state
+from . import (
+    opencode_transport,
+    review_observations,
+    review_report,
+    review_rubrics,
+    review_state,
+)
 from .blocker_signature import (
     blocker_lines_from_signature,
     extract_signatures_from_feedback,
@@ -1290,78 +1296,12 @@ class ReviewBridge:
         )
 
     def _rubric_for_type(self, dtype: str, ticket_id: str) -> str:
-        scaffolding_precheck = (
-            "AP-07 Scaffolding misclassified as code precheck: if the majority of Files Likely Touched are "
-            "structural non-Python artifacts (references/, .gitkeep, empty dirs, placeholders, "
-            "config stubs) with no logic — even if one small support file is included — "
-            "the correct deliverable_type is 'documentation', not 'code'. "
-            "Flag 'code' classification for majority-scaffolding tickets as a planning error "
-            "(SUGGESTIONS, not BLOCKER)."
+        """Rubric text lives in bus/review_rubrics.py (monolith decomposition)."""
+        return review_rubrics.rubric_for_type(
+            dtype,
+            ticket_id,
+            anti_pattern_inventory=self._render_canonical_anti_pattern_inventory(),
         )
-        canonical_anti_patterns = self._render_canonical_anti_pattern_inventory()
-        canonical_anti_patterns_block = (
-            f"{canonical_anti_patterns}\n\n" if canonical_anti_patterns else ""
-        )
-        if dtype == "code":
-            return (
-                f"Review code ticket {ticket_id}. "
-                f"Verify the implementation correctness, testing coverage, and style guides. "
-                f"Check acceptance criteria and Files Likely Touched.\n\n"
-                f"{scaffolding_precheck}\n\n"
-                f"{canonical_anti_patterns_block}"
-                f"Test anti-patterns — flag as BLOCKERS if found:\n"
-                f"- AP-01 Mock drift: each patch/mock must target the actual API the code calls "
-                f"(e.g. patching pathlib.Path.open is inert if the code uses the built-in open()).\n"
-                f"- AP-02 Floor assertion: each numeric threshold must exceed the base value that exists "
-                f"without the tested feature (e.g. assert score >= 150 is trivially true if "
-                f"the base recency score alone is ~20_000_000).\n\n"
-                f"Implementation anti-patterns — flag as BLOCKERS if found:\n"
-                f"- AP-03 Zero-logic wrapper: a function whose entire body is a single 1:1 delegate "
-                f"call with no own logic must be inlined or eliminated.\n"
-                f"- AP-04 Exclusive resource acquisition without reentrancy guard: if the diff introduces "
-                f"exclusive resource acquisition (O_CREAT|O_EXCL, flock, Lock.acquire(), lock-file "
-                f"creation) inside a method that can be reached from more than one call site or "
-                f"called twice on the same instance (e.g. standalone + inside a wrapper), verify "
-                f"that an explicit instance-level reentrancy guard exists. Without it: BLOCKER.\n"
-                f"- AP-05 Boolean truthiness regression in changed return contracts: if the diff changes "
-                f"a method's return type from implicit None to explicit bool, verify that every "
-                f"caller uses `is False` / `is True` rather than generic truthiness (`if not x`, "
-                f"`if x`, `while x`). Mixing None, False, and True under a falsy guard silently "
-                f"breaks when the method is monkeypatched or called from a legacy path. "
-                f"Any caller still using generic truthiness after the return-type change: BLOCKER."
-            )
-        elif dtype == "mixed":
-            return (
-                f"Review mixed ticket {ticket_id}. "
-                f"Verify code correctness, tests, and style guides, and additionally verify "
-                f"that all declared non-code deliverables exist, are well-structured, and are fully complete. "
-                f"Check acceptance criteria and Files Likely Touched.\n\n"
-                f"{scaffolding_precheck}\n\n"
-                f"{canonical_anti_patterns_block}"
-                f"Test anti-patterns — flag as BLOCKERS if found:\n"
-                f"- AP-01 Mock drift: each patch/mock must target the actual API the code calls.\n"
-                f"- AP-02 Floor assertion: each numeric threshold must exceed the base value that "
-                f"exists without the tested feature.\n\n"
-                f"Implementation anti-patterns — flag as BLOCKERS if found:\n"
-                f"- AP-03 Zero-logic wrapper: a function whose entire body is a single 1:1 delegate "
-                f"call with no own logic must be inlined or eliminated.\n"
-                f"- AP-04 Exclusive resource acquisition without reentrancy guard: if the diff introduces "
-                f"exclusive resource acquisition (O_CREAT|O_EXCL, flock, Lock.acquire(), lock-file "
-                f"creation) inside a method that can be reached from more than one call site or "
-                f"called twice on the same instance, verify that an explicit reentrancy guard exists. "
-                f"Without it: BLOCKER.\n"
-                f"- AP-05 Boolean truthiness regression in changed return contracts: if the diff changes "
-                f"a method's return type from implicit None to explicit bool, verify all callers use "
-                f"`is False` / `is True` rather than generic truthiness (`if not x`, `if x`). "
-                f"Any caller still using generic truthiness after the change: BLOCKER."
-            )
-        else:  # documentation, research, analysis
-            return (
-                f"Review non-code {dtype} ticket {ticket_id}. "
-                f"Since this is a non-code deliverable, focus strictly on the clarity, depth, correctness, "
-                f"structure, and completeness of the requested document deliverables. "
-                f"Check acceptance criteria and Files Likely Touched."
-            )
 
     def _build_review_prompt(  # noqa: C901
         self,
@@ -1878,23 +1818,15 @@ class ReviewBridge:
         except (json.JSONDecodeError, ValueError, TypeError):
             return defaults
 
-    def _get_review_log_path(self, ticket_id: str) -> Path:
-        """Get the review log directory for a ticket.
+    # ── Review attempt persistence ───────────────────────────────────────
+    # Extracted to bus/review_report.py (monolith decomposition).
+    # Thin wrappers kept for backward compatibility.
 
-        Before: Requires ticket_id string.
-        During: Creates directory structure under .agent/runtime/reviews/<TICKET_ID>/.
-        After: Returns Path object for the ticket's review log directory.
-        """
-        reviews_dir = self.project_root / ".agent" / "runtime" / "reviews"
-        ticket_dir = reviews_dir / ticket_id
-        ticket_dir.mkdir(parents=True, exist_ok=True)
-        return ticket_dir
+    def _get_review_log_path(self, ticket_id: str) -> Path:
+        return review_report.review_log_path(self.project_root, ticket_id)
 
     def _get_review_packet_path(self, ticket_id: str, attempt: int) -> Path:
-        """Get the canonical review packet path for a ticket attempt."""
-        packets_dir = self.project_root / ".agent" / "runtime" / "review_packets"
-        packets_dir.mkdir(parents=True, exist_ok=True)
-        return packets_dir / f"{ticket_id}_attempt-{attempt}.md"
+        return review_report.review_packet_path(self.project_root, ticket_id, attempt)
 
     def _persist_review_attempt(
         self,
@@ -1908,68 +1840,25 @@ class ReviewBridge:
         transport_ok: bool = True,
         transport_error: str = "",
     ) -> Path:
-        """Persist a review attempt to attempt-N.md idempotently.
-
-        Before: Requires ticket_id, attempt number, stdout, stderr, and decision.
-        During: Writes review content to .agent/runtime/reviews/<TICKET_ID>/attempt-N.md,
-                overwriting any existing file with the same attempt number.
-        After: Returns the Path to the persisted review file.
-        """
-        ticket_dir = self._get_review_log_path(ticket_id)
-        attempt_file = ticket_dir / f"attempt-{attempt}.md"
-
-        # Build structured review content
-        content_parts = [
-            f"# Review Attempt {attempt}",
-            "",
-            f"## Ticket: {ticket_id}",
-            f"## Decision: {decision.value.upper()}",
-            f"## Parse Method: {parse_method or 'unknown'}",
-            f"## Transport OK: {transport_ok}",
-            "",
-            "## Review Packet",
-            "",
-            str(review_packet_path.relative_to(self.project_root).as_posix())
-            if review_packet_path is not None
-            else "[not recorded]",
-            "",
-            "## Transport Error",
-            "",
-            transport_error or "[none]",
-            "",
-            "## STDOUT",
-            "",
-            stdout or "[empty]",
-            "",
-            "## STDERR",
-            "",
-            stderr or "[empty]",
-            "",
-        ]
-
-        # Parse and add structured sections for CHANGES decisions
-        if decision == ReviewDecision.CHANGES:
-            structured = self._parse_changes_structure(stdout)
-            content_parts.extend(
-                [
-                    "",
-                    "## SUMMARY",
-                    "",
-                    structured.get("summary", "[no summary provided]"),
-                    "",
-                    "## BLOCKERS",
-                    "",
-                    structured.get("blockers", "[no blockers provided]"),
-                    "",
-                    "## SUGGESTIONS",
-                    "",
-                    structured.get("suggestions", "[no suggestions provided]"),
-                    "",
-                ]
-            )
-
-        attempt_file.write_text("\n".join(content_parts), encoding="utf-8")
-        return attempt_file
+        """Persist attempt-N.md. Content building: bus/review_report.py."""
+        changes_structure = (
+            self._parse_changes_structure(stdout)
+            if decision == ReviewDecision.CHANGES
+            else None
+        )
+        return review_report.persist_review_attempt(
+            self.project_root,
+            ticket_id,
+            attempt,
+            stdout,
+            stderr,
+            decision,
+            review_packet=review_packet_path,
+            parse_method=parse_method,
+            transport_ok=transport_ok,
+            transport_error=transport_error,
+            changes_structure=changes_structure,
+        )
 
     @staticmethod
     def _extract_json_stream_text(stdout: str) -> str | None:
@@ -2104,167 +1993,20 @@ class ReviewBridge:
 
         return len(missing) == 0, missing
 
-    def _generate_human_review_report(  # noqa: C901
+    def _generate_human_review_report(
         self,
         ticket_id: str,
         review_attempts: list[dict],
         last_decision: ReviewDecision,
     ) -> Path:
-        """Generate human_review_report.md from template at 5th rejection.
-
-        Before: Requires ticket_id, list of review attempt payloads, and last decision.
-        During: Reads template from .agent/templates/human_review_report.md,
-                fills placeholders with consolidated review data,
-                writes to .agent/runtime/reviews/<TICKET_ID>/human_review_report.md.
-        After: Returns Path to generated report file.
-        """
-        template_path = (
-            self.project_root / ".agent" / "templates" / "human_review_report.md"
+        """Escalation report at 5th rejection. Body: bus/review_report.py."""
+        return review_report.generate_human_review_report(
+            self.project_root,
+            ticket_id,
+            review_attempts,
+            last_decision,
+            adaptive_state=self._load_adaptive_state(ticket_id),
         )
-
-        # Load template
-        if template_path.exists():
-            template = template_path.read_text(encoding="utf-8")
-        else:
-            # Fallback inline template
-            template = """# Human Review Report
-
-## Ticket
-- **Ticket ID:** {{ticket_id}}
-- **Generated at:** {{generated_at}}
-- **Review attempts:** {{review_attempt_count}}
-
-## Summary
-{{summary}}
-
-## Decision Context
-- **Last decision:** {{last_decision}}
-- **Escalation reason:** {{escalation_reason}}
-
-## Consolidated Blockers
-{{blockers}}
-
-## Notes
-{{notes}}
-"""
-
-        # Consolidate blockers from all attempts
-        all_blockers = []
-        for attempt in review_attempts:
-            payload = attempt.get("payload", {})
-            blockers = payload.get("blockers", "")
-            if blockers:
-                all_blockers.append(
-                    f"### Attempt {attempt.get('attempt', '?')}\n{blockers}"
-                )
-
-        # Build summary
-        summary_lines = [
-            f"Ticket {ticket_id} reached HUMAN_GATE after {len(review_attempts)} consecutive CHANGES decisions.",
-            "",
-            "## Review History",
-            "",
-        ]
-        for attempt in review_attempts:
-            payload = attempt.get("payload", {})
-            summary_lines.append(
-                f"- Attempt {attempt.get('attempt', '?')}: "
-                f"exit_code={payload.get('exit_code', 'N/A')}, "
-                f"duration={payload.get('duration_seconds', 'N/A')}s"
-            )
-
-        # WT-2026-196: Include repeated blocker summary from adaptive state
-        repeated_blockers_report = ""
-        changed_files_report = ""
-        last_proposal = ""
-        adaptive_state = self._load_adaptive_state(ticket_id)
-        if adaptive_state:
-            repeated_sigs = adaptive_state.get("repeated_blockers", [])
-            if repeated_sigs:
-                repeated_lines = [
-                    "## Repeated BLOCKERS",
-                    "",
-                    "The following BLOCKERS reappeared in consecutive reviews:",
-                ]
-                repeated_lines.extend(
-                    f"- {line}"
-                    for sig in repeated_sigs
-                    for line in blocker_lines_from_signature(sig)
-                )
-                repeated_blockers_report = "\n".join(repeated_lines) + "\n\n"
-
-            chg = adaptive_state.get("changed_files_since_previous_review", [])
-            if isinstance(chg, list):
-                if chg:
-                    changed_files_report = (
-                        "## Files touched since previous review\n\n"
-                        + "\n".join(f"- {f}" for f in chg)
-                        + "\n\n"
-                    )
-                else:
-                    changed_files_report = (
-                        "## Files touched since previous review\n\n"
-                        "(none detected — Builder may not have modified the affected files)\n\n"
-                    )
-            elif isinstance(chg, dict):
-                changed_files_report = (
-                    "## File change tracking\n\n"
-                    f"Status: {chg.get('status', 'unknown')}\n"
-                    f"Reason: {chg.get('reason', 'N/A')}\n\n"
-                )
-
-            last_feedback = adaptive_state.get("last_feedback", "")
-            if last_feedback:
-                last_proposal = (
-                    f"## Last Manager proposal\n\n{last_feedback[:2000]}\n\n"
-                )
-
-        # Fill template
-        notes_lines = [
-            "This report was auto-generated when the review budget was exhausted. Human review required.",
-            "",
-        ]
-        if repeated_blockers_report:
-            notes_lines.insert(0, repeated_blockers_report)
-        if changed_files_report:
-            notes_lines.insert(0, changed_files_report)
-        if last_proposal:
-            notes_lines.insert(0, last_proposal)
-
-        report_content = (
-            template.replace("{{ticket_id}}", ticket_id)
-            .replace("{{generated_at}}", datetime.now(timezone.utc).isoformat())
-            .replace("{{review_attempt_count}}", str(len(review_attempts)))
-            .replace("{{summary}}", "\n".join(summary_lines))
-            .replace("{{last_decision}}", last_decision.value.upper())
-            .replace(
-                "{{escalation_reason}}",
-                f"Reached {len(review_attempts)} consecutive CHANGES decisions (threshold: 5)"
-                + (
-                    f". Repeated blockers detected: {len(adaptive_state.get('repeated_blockers', []))}"
-                    if adaptive_state.get("repeated_blockers")
-                    else ""
-                ),
-            )
-            .replace(
-                "{{blockers}}",
-                "\n\n".join(all_blockers)
-                if all_blockers
-                else "[No structured blockers found]",
-            )
-            .replace(
-                "{{notes}}",
-                "\n".join(notes_lines).strip()
-                or "This report was auto-generated when the review budget was exhausted. Human review required.",
-            )
-        )
-
-        # Write report
-        ticket_dir = self._get_review_log_path(ticket_id)
-        report_path = ticket_dir / "human_review_report.md"
-        report_path.write_text(report_content, encoding="utf-8")
-
-        return report_path
 
     def _emit_review_attempt(
         self,
