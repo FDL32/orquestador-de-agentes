@@ -13,10 +13,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import opencode_transport, review_observations
+from . import opencode_transport, review_observations, review_state
 from .blocker_signature import (
     blocker_lines_from_signature,
-    compute_blocker_overlap,
     extract_signatures_from_feedback,
 )
 from .decision_parser import (
@@ -1242,189 +1241,53 @@ class ReviewBridge:
     def _render_manager_review_learnings(self, dtype: str = "all") -> str:
         return review_observations.render_review_learnings(self.project_root, dtype)
 
+    # ── Adaptive review state ────────────────────────────────────────────
+    # Extracted to bus/review_state.py (monolith decomposition).
+    # Thin wrappers kept for backward compatibility.
+
     def _adaptive_state_path(self) -> Path:
-        """Return path to the manager bridge state (shared with bridge heartbeat)."""
-        return self.project_root / ".agent" / "runtime" / "manager_bridge_state.json"
+        return review_state.adaptive_state_path(self.project_root)
 
     def _load_adaptive_state(self, ticket_id: str) -> dict:
-        """Load adaptive review state for a given ticket.
-
-        Before: Requires a valid ticket_id.
-        During: Reads manager_bridge_state.json, extracts adaptive_review[ticket_id].
-        After: Returns a dict with keys matching the canonical schema, or empty dict.
-        """
-        path = self._adaptive_state_path()
-        if not path.exists():
-            return {}
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            adaptive = data.get("adaptive_review", {})
-            return adaptive.get(ticket_id, {})
-        except (json.JSONDecodeError, ValueError, TypeError, OSError):
-            return {}
+        return review_state.load_adaptive_state(self.project_root, ticket_id)
 
     def _save_adaptive_state(self, ticket_id: str, state_update: dict) -> None:
-        """Save/merge adaptive review state for a ticket.
-
-        Before: Requires ticket_id and state_update dict.
-        During: Reads existing file, merges adaptive_review[ticket_id] with update,
-                writes back atomically (overwrite).
-        After: manager_bridge_state.json contains updated adaptive_review section.
-
-        Schema (WT-2026-196):
-            adaptive_review: {
-                "<ticket_id>": {
-                    "last_review_sequence": int,
-                    "last_git_head": str | null,
-                    "blocker_signatures": [str, ...],
-                    "repeated_blockers": [str, ...],
-                    "diagnostic_mode": bool,
-                    "changed_files_since_previous_review": [str, ...] | {"status": "unknown", ...}
-                }
-            }
-        """
-        path = self._adaptive_state_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-        except (json.JSONDecodeError, ValueError, TypeError):
-            data = {}
-        if "adaptive_review" not in data:
-            data["adaptive_review"] = {}
-        existing = data["adaptive_review"].get(ticket_id, {})
-        existing.update(state_update)
-        data["adaptive_review"][ticket_id] = existing
-        path.write_text(
-            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
+        review_state.save_adaptive_state(self.project_root, ticket_id, state_update)
 
     def _get_current_git_head(self) -> str | None:
-        """Return current git HEAD SHA, or None if git is unavailable."""
+        # Unresolvable motor link must degrade to None, not raise (original
+        # contract: any failure inside the probe returns None).
         try:
-            git_bin = shutil.which("git") or "git"
-            result = subprocess.run(
-                [git_bin, "rev-parse", "HEAD"],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                cwd=self._motor_root_or_raise(),
-                timeout=10,
-            )
-            if result.returncode == 0:
-                return result.stdout.strip()
-        except Exception:  # noqa: S110
-            pass
-        return None
+            motor_root = self._motor_root_or_raise()
+        except RuntimeError:
+            return None
+        return review_state.get_current_git_head(motor_root)
 
-    def _compute_changed_files(self, last_git_head: str | None) -> list[str] | dict:  # noqa: C901
-        """Compute files changed since the given git HEAD.
-
-        Before: Requires last_git_head (SHA string) or None.
-        During: Runs ``git diff --name-only <last>..HEAD`` plus unstaged diff and
-                untracked status. Deduplicates and sorts alphabetically.
-        After: Returns sorted list of relative paths with forward-slash separators,
-                or ``{"status": "unknown", "reason": "<reason>"}`` if git is unavailable.
-
-        Formato exacto (WT-2026-196 contrato):
-            - Si Git disponible: lista JSON de rutas relativas, normalizadas con /,
-              sin duplicados, ordenadas alfabeticamente.
-            - Si Git no disponible: ``{"status": "unknown", "reason": "<motivo>"}``.
-        """
+    def _compute_changed_files(self, last_git_head: str | None) -> list[str] | dict:
+        """Compute files changed since the given git HEAD (WT-2026-196)."""
         if last_git_head is None:
-            git_head_current = self._get_current_git_head()
-            if git_head_current is None:
+            # Route through the instance method so monkeypatched seams work.
+            if self._get_current_git_head() is None:
                 return {
                     "status": "unknown",
                     "reason": "git is unavailable or not a repository",
                 }
             return []  # First review in this ticket, no previous HEAD
-
+        # Unresolvable motor link degrades to the unknown-dict contract.
         try:
-            git_bin = shutil.which("git") or "git"
-            files: set[str] = set()
-
-            # Committed changes since last_git_head
             motor_root = self._motor_root_or_raise()
-            result = subprocess.run(
-                [git_bin, "diff", "--name-only", f"{last_git_head}..HEAD"],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                cwd=motor_root,
-                timeout=10,
-            )
-            if result.returncode == 0:
-                for line in result.stdout.strip().splitlines():
-                    fname = line.strip()
-                    if fname:
-                        files.add(fname.replace("\\", "/"))
-
-            # Unstaged changes (working tree)
-            result = subprocess.run(
-                [git_bin, "diff", "--name-only"],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                cwd=motor_root,
-                timeout=10,
-            )
-            if result.returncode == 0:
-                for line in result.stdout.strip().splitlines():
-                    fname = line.strip()
-                    if fname:
-                        files.add(fname.replace("\\", "/"))
-
-            # Untracked files
-            result = subprocess.run(
-                [git_bin, "status", "--porcelain", "-z"],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                cwd=motor_root,
-                timeout=10,
-            )
-            if result.returncode == 0:
-                entries = result.stdout.split("\0")
-                for entry in entries:
-                    if entry and entry.startswith("?? "):
-                        fname = entry[3:].strip()
-                        if fname:
-                            files.add(fname.replace("\\", "/"))
-
-            if not files:
-                return []
-            return sorted(files)
-        except Exception as exc:
+        except RuntimeError as exc:
             return {"status": "unknown", "reason": f"git error: {exc}"}
+        return review_state.compute_changed_files(motor_root, last_git_head)
 
     def _compute_repeated_blockers(
         self,
         previous_signatures: list[str],
         current_feedback: str,
     ) -> tuple[list[str], bool]:
-        """Compute repeated blockers and whether diagnostic mode should activate.
-
-        Before: Requires previous_signatures list and current feedback text.
-        During: Parses current feedback for blockers, computes signatures, finds
-                intersection between previous and current signatures.
-        After: Returns (repeated_signatures_list, should_activate_diagnostic).
-
-        Diagnostic mode activates when:
-        - A blocker signature reappears in consecutive reviews (REPEATED_BLOCKER).
-        - The overlap ratio (by signature) exceeds 50%.
-        """
-        current_sigs = extract_signatures_from_feedback(current_feedback)
-        if not previous_signatures or not current_sigs:
-            return [], False
-
-        prev_set = set(previous_signatures)
-        repeated = list(prev_set & current_sigs)
-        if not repeated:
-            return [], False
-
-        overlap = compute_blocker_overlap(prev_set, current_sigs)
-        should_diagnose = bool(repeated) or (overlap > 0.5)
-        return repeated, should_diagnose
+        return review_state.compute_repeated_blockers(
+            previous_signatures, current_feedback
+        )
 
     def _rubric_for_type(self, dtype: str, ticket_id: str) -> str:
         scaffolding_precheck = (
