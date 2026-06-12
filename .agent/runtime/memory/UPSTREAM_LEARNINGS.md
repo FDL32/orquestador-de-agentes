@@ -2,6 +2,13 @@
 
 ## Pendientes de revision
 
+### 2026-06-12 | origen: contrato | estado: generalizable | ttl_wps: N/A
+
+- learning: "El bootstrap en un destino real debe ejecutar la triada link + context map + validate (destination_bootstrap.md pasos 1-5); cualquier friccion observada durante ese arranque se trata como senal de integracion del motor y se convierte en fix o ticket del motor, no se normaliza."
+- evidencia: commits de7c8d3 (bug de parsing del rol detectado en el bootstrap de Crear_Texto_LLM) y b9c0bc0 (paso validate canonico + resumen HANDOFF_BLOCKED con estado de resolucion).
+- razon: el arranque en destino real ejercita el contrato motor-link de extremo a extremo; cada friccion es un test de integracion que el motor no tiene en CI.
+
+
 ### 2026-06-12 | origen: proceso | estado: generalizable | ttl_wps: N/A
 - learning: "Los cierres por chat y por bus deben converger en un unico pipeline canonico. Un prompt que reconstruye el cierre mediante scripts sueltos crea rutas divergentes y puede omitir rotacion, archivado o consolidacion."
 - evidencia: "commit `961f210`; `prompts/session_close_chat.md`; `scripts/session_closeout.py`; tests de `tests/test_session_closeout.py`."
