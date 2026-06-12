@@ -123,7 +123,8 @@ reautenticar el backend del Manager y relanzar solo la revision/bridge, no Build
 
 - ¿Los comandos de calidad en el PLAN son ejecutables desde el repo correcto?
 - ¿Las rutas de ruff apuntan a archivos que realmente existen y serán tocados?
-- ¿El `--validate` usa el `--project-root` correcto para Modelo B?
+- ¿El `--validate` usa el `--project-root` correcto para la topologia
+  `repo_motor + repo_destino`?
 
 - ¿Los gates corresponden al `deliverable_type` declarado? Un ticket
   documental debe cerrar por artefacto verificable + evidencia de validate, no

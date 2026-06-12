@@ -13,8 +13,8 @@
   with parser fallback; `bus/decision_parser.py` is the extracted compatibility
   boundary.
 - Final closeout hardening makes `prepush_check.py` and
-  `delivery_hygiene_check.py` topology-aware when invoked against a Model B
-  destination. `--session-close` also resolves its orchestrator script from
+  `delivery_hygiene_check.py` topology-aware when invoked against an external
+  motor destination (`repo_motor` + `repo_destino`). `--session-close` also resolves its orchestrator script from
   `repo_motor` instead of assuming that operational scripts are copied into
   `repo_destino`; dry-run previews remain in ignored runtime and do not dirty
   the durable workspace report. Child scripts receive `AGENT_PROJECT_ROOT`

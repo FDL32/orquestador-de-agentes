@@ -376,7 +376,7 @@ def test_hook_reformat_outside_flt_not_re_added(
 def test_motor_root_defined_when_destination_is_git_repo(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """TP-11: motor_root is declared before guard when dest has .git (Model B)."""
+    """TP-11: motor_root is declared before guard when dest has .git in external-motor topology."""
     import agent_controller
 
     motor, dest, wp, exec_log = _setup_multi_repo(tmp_path)
