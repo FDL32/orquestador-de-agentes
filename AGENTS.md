@@ -94,6 +94,12 @@ append `--project-root <destino>` to commands that operate on project state.
 - Comparar con repo GitHub: skill `/repo-compare`
 - Interaccion por terminal: `python scripts/ticket_supervisor.py --reactive [--project-root <workspace>]`
 - Tests: `python scripts/run_pytest_safe.py [--project-root <workspace>]`
+  - NO usar `python -m pytest` directo sobre tests que importan el controller:
+    al insertar `.agent/` en sys.path, `runtime` puede resolver a
+    `.agent/runtime/` (que tiene `__init__.py`) en vez de `<motor>/runtime/`,
+    y la coleccion falla con `No module named 'runtime.project_root'`.
+    El runner seguro configura el entorno correcto y ademas incluye la
+    barrera de state-leak (falla si la suite muta `.agent/collaboration/`).
 - Calidad: `ruff check . && ruff format .`
 - Auditoria de dependencias: `python scripts/pip_audit_project.py`
 - Archivar colaboracion: `python scripts/archive_collaboration_artifacts.py [--dry-run] [--project-root <workspace>]`
