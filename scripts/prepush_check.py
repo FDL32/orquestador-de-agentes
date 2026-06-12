@@ -196,7 +196,8 @@ def run_ruff_format_check(project_root: Path) -> CheckResult:
 def run_agent_controller_validate(project_root: Path) -> CheckResult:
     """Ejecuta agent_controller --validate --json --force.
 
-    Resuelve el controller via motor_link (Model B). Si no hay motor link,
+    Resuelve el controller via motor_link (topologia repo_motor + repo_destino).
+    Si no hay motor link,
     usa .agent/agent_controller.py local como fallback.
 
     Args:
@@ -269,7 +270,7 @@ def run_git_status_check(project_root: Path) -> CheckResult:
             errors="replace",
         )
         # If git command itself fails, report as non-blocking WARN for
-        # workspaces that are not git repos (e.g. z_scripts/ in Model B).
+        # workspaces that are not git repos under external-motor topology.
         if result.returncode != 0:
             return CheckResult(
                 name="Git Status Check",

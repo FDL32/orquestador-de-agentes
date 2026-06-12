@@ -1,4 +1,4 @@
-"""Tests for runtime/motor_link.py - Model B motor resolution helper."""
+"""Tests for runtime/motor_link.py - external-motor topology helper."""
 
 from __future__ import annotations
 

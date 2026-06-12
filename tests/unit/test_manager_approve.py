@@ -420,7 +420,7 @@ class TestManagerApprove:
         assert "CLOSE_CONFIRMED" in event_types
         assert "SUPERVISOR_CLOSED" in event_types
 
-    def test_code_ticket_validates_last_commit_in_motor_root_for_model_b(
+    def test_code_ticket_validates_last_commit_in_motor_root_for_external_motor_topology(
         self, temp_bus: EventBus, mock_files: dict, tmp_path: Path
     ) -> None:
         """Code tickets in motor/destino topology must validate against repo_motor."""

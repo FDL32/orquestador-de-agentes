@@ -567,7 +567,7 @@ class TestRunCloseout:
         assert "WARN" in content
 
     def test_manifest_resolves_from_motor_link(self, tmp_path: Path) -> None:
-        """Model B validates MANIFEST.distribute in repo_motor."""
+        """External-motor topology validates MANIFEST.distribute in repo_motor."""
         motor_root = tmp_path / "motor"
         motor_root.mkdir()
         (motor_root / "MANIFEST.distribute").write_text("", encoding="utf-8")

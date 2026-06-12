@@ -3,7 +3,7 @@ Motor Link - Pure helper to resolve motor root/controller/script from motor_dest
 
 This module provides pure functions for resolving the external motor repository
 location from the workspace's motor_destination_link.json file. It is the single
-point of truth for Model B motor resolution across all bus components.
+point of truth for external-motor topology resolution across all bus components.
 
 Before: Each component (review_bridge, supervisor, scripts) had its own private
         resolution logic, leading to duplication and drift.

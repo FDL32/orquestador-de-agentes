@@ -192,7 +192,7 @@ Decir "el bus es robusto" sin este matiz sería sobre-vender el entregable.
 |--------|-------|---------|--------------------|
 | WT-2026-213 | Eliminar doble `STATE_CHANGED` en `--mark-ready` (un solo evento `actor=BUILDER`) | Ruido semántico en el bus; mantiene I2 rota | Media |
 | WT-2026-214 | Forced close en preflight: cerrar runtime del ticket anterior al abrir el siguiente | Cierra la clase de drift que originó WT-205 (I7) | **Alta** |
-| WT-2026-215 | Gates Modelo B: `prepush_check.py` para workspace no-repo + motor portable | Bloquea `session_closeout` en Modelo B | Media |
+| WT-2026-215 | Gates topologia motor/destino: `prepush_check.py` para workspace no-repo + motor portable | Bloquea `session_closeout` en topologia motor/destino | Media |
 | — | Consolidación documental: WT-211/212/216 **no están en `CHANGELOG.md` ni `PROJECT.md`** | La doc canónica va por detrás del código; incumple criterio de cierre #3 | **Alta** |
 
 > El último punto es un hallazgo de este informe: los tres tickets de la

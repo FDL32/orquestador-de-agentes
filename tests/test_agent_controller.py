@@ -541,8 +541,10 @@ class TestSessionClose:
         args = mock_run.call_args[0][0]
         assert "--dry-run" in args
 
-    def test_session_close_uses_motor_script_for_model_b(self, monkeypatch, tmp_path):
-        """Model B executes the motor-owned script with destination cwd."""
+    def test_session_close_uses_motor_script_for_external_motor_topology(
+        self, monkeypatch, tmp_path
+    ):
+        """External-motor topology executes the motor-owned script with destination cwd."""
         motor_root = tmp_path / "motor"
         destination_root = tmp_path / "destination"
         script_dir = motor_root / "scripts"
@@ -2507,14 +2509,14 @@ class TestAgentControllerEvidence:
 
 
 # =============================================================================
-# WT-2026-245b: Model B checkpoint topology regression tests
+# WT-2026-245b: external-motor checkpoint topology regression tests
 # =============================================================================
 
 
-class TestModelBCheckpointTopology:
-    """WT-2026-245b: Regression tests for checkpoint M3 in Model B topology.
+class TestExternalMotorCheckpointTopology:
+    """WT-2026-245b: Regression tests for checkpoint M3 in external-motor topology.
 
-    In Model B, the motor repo and workspace are separate directories.
+    In external-motor topology, the motor repo and workspace are separate directories.
     The checkpoint tag (checkpoint/review-<ticket>) must live in repo_motor,
     not in the workspace. These tests use real git repos in tmp_path to
     reproduce the bug: --pre-handoff creating the tag in the wrong root
@@ -2571,7 +2573,7 @@ class TestModelBCheckpointTopology:
         collab_dir = workspace / ".agent" / "collaboration"
         collab_dir.mkdir(parents=True, exist_ok=True)
         (collab_dir / "work_plan.md").write_text(
-            TestModelBCheckpointTopology._PLAN_CONTENT
+            TestExternalMotorCheckpointTopology._PLAN_CONTENT
         )
 
     @staticmethod
@@ -2586,7 +2588,7 @@ class TestModelBCheckpointTopology:
     def test_pre_handoff_creates_tag_in_motor_not_workspace(
         self, tmp_path: Path, monkeypatch
     ) -> None:
-        """--pre-handoff in Model B must create the tag in repo_motor, not workspace.
+        """--pre-handoff in external-motor topology must create the tag in repo_motor, not workspace.
 
         Regression: if the workspace has its own .git, the old code would
         create the tag in the workspace (git_root = project_root). The fix
@@ -2596,7 +2598,7 @@ class TestModelBCheckpointTopology:
         motor_repo = tmp_path / "motor"
         workspace = tmp_path / "workspace"
         self._init_git_repo(motor_repo)
-        self._init_git_repo(workspace)  # workspace also has .git (Model B variant)
+        self._init_git_repo(workspace)  # workspace also has .git in this topology
         self._create_work_plan(workspace)
         self._create_execution_log(workspace)
 
@@ -2696,7 +2698,7 @@ class TestModelBCheckpointTopology:
     def test_mark_ready_finds_checkpoint_in_motor(
         self, tmp_path: Path, monkeypatch
     ) -> None:
-        """--mark-ready in Model B must find the checkpoint tag in repo_motor.
+        """--mark-ready in external-motor topology must find the checkpoint tag in repo_motor.
 
         Regression: after --pre-handoff creates the tag in motor_repo,
         --mark-ready must validate it via _resolve_motor_checkpoint_files.
@@ -2926,7 +2928,7 @@ class TestModelBCheckpointTopology:
     def test_non_code_ticket_not_blocked_by_motor_checkpoint_guard(
         self, tmp_path: Path, monkeypatch
     ) -> None:
-        """Non-code tickets must NOT be blocked by the Model B checkpoint guard.
+        """Non-code tickets must NOT be blocked by the external-motor checkpoint guard.
 
         Regression: the new _MOTOR_ROOT verification in _run_pre_handoff_guard()
         must skip documentation/research/analysis tickets, otherwise mark-ready
@@ -3126,7 +3128,7 @@ class TestCliContractStaleOrphan:
         """stale_builder_orphan exits 0 with empty stderr (WT-2026-249a)."""
         emit_mock = self._setup(monkeypatch)
 
-        code, out_text, err_text = TestModelBCheckpointTopology._capture_streams(
+        code, out_text, err_text = TestExternalMotorCheckpointTopology._capture_streams(
             lambda: agent_controller._handle_pre_handoff(json_output=False)
         )
 
@@ -3146,8 +3148,10 @@ class TestCliContractStaleOrphan:
         """stale_builder_orphan must NOT emit HANDOFF_BLOCKED when returning 0."""
         emit_mock = self._setup(monkeypatch)
 
-        code, _out_text, _err_text = TestModelBCheckpointTopology._capture_streams(
-            lambda: agent_controller._handle_pre_handoff(json_output=False)
+        code, _out_text, _err_text = (
+            TestExternalMotorCheckpointTopology._capture_streams(
+                lambda: agent_controller._handle_pre_handoff(json_output=False)
+            )
         )
 
         assert code == 0, f"Expected 0, got {code}"
@@ -3196,7 +3200,7 @@ class TestCliContractSessionClose:
         )
         self._setup(monkeypatch, tmp_path, mock_result)
 
-        code, out_text, err_text = TestModelBCheckpointTopology._capture_streams(
+        code, out_text, err_text = TestExternalMotorCheckpointTopology._capture_streams(
             lambda: agent_controller._handle_session_close(
                 dry_run=False,
                 skip_slow=False,
@@ -3224,14 +3228,16 @@ class TestCliContractSessionClose:
         )
         self._setup(monkeypatch, tmp_path, mock_result)
 
-        code, _out_text, err_text = TestModelBCheckpointTopology._capture_streams(
-            lambda: agent_controller._handle_session_close(
-                dry_run=False,
-                skip_slow=False,
-                ticket=None,
-                tickets=None,
-                force_mode=False,
-                json_output=False,
+        code, _out_text, err_text = (
+            TestExternalMotorCheckpointTopology._capture_streams(
+                lambda: agent_controller._handle_session_close(
+                    dry_run=False,
+                    skip_slow=False,
+                    ticket=None,
+                    tickets=None,
+                    force_mode=False,
+                    json_output=False,
+                )
             )
         )
 
@@ -3371,7 +3377,7 @@ class TestBuilderBriefExclusion:
             agent_controller.subprocess, "run", self._make_pre_handoff_git_mock()
         )
 
-        code, output = TestModelBCheckpointTopology._capture_output(
+        code, output = TestExternalMotorCheckpointTopology._capture_output(
             lambda: _handle_pre_handoff(json_output=False)
         )
 

@@ -80,7 +80,7 @@ Los archivos `MANIFEST.distribute` y `MANIFEST.workspace` en la raiz del reposit
 
 ## Comandos principales
 
-When running from a Model B destination workspace (where the motor lives externally),
+When running from an external-motor destination workspace (repo_motor + repo_destino topology),
 append `--project-root <destino>` to commands that operate on project state.
 
 - Instalacion inicial: `python scripts/install_agent_system.py --install`
