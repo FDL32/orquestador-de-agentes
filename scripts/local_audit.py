@@ -233,8 +233,13 @@ def get_recent_wps():
     if exec_log.exists():
         lines = exec_log.read_text(encoding="utf-8").splitlines()
         for line in lines:
-            if line.startswith("### ") and TICKET_ID_RE.search(line):
-                wps.append(line.replace("### ", "").strip())
+            if not line.startswith("### "):
+                continue
+            heading = line.replace("### ", "", 1).strip()
+            # Backward-compatible with legacy short headings like "WP-001"
+            # while still preferring canonical ticket ids when present.
+            if TICKET_ID_RE.search(heading) or heading.startswith("WP-"):
+                wps.append(heading)
                 if len(wps) >= 5:
                     break
     return wps

@@ -23,6 +23,8 @@ python scripts/local_audit.py
 
 # 2. Contexto de memoria determinista (L3 perfil -> L2 reglas -> L1 fallback):
 python scripts/memory_context.py --bootstrap
+# Verifica rapidamente el estado de memoria cargada:
+python scripts/memory_context.py --status
 # Si hay ticket activo, prioriza memoria relevante con:
 # python scripts/memory_context.py --recall --ticket <TICKET_ID>
 ```

@@ -19,6 +19,7 @@ test_supervisor_does_not_depend_on_pid_for_liveness).
 
 from __future__ import annotations
 
+import inspect
 import json
 from datetime import datetime
 from pathlib import Path
@@ -166,32 +167,30 @@ class TestSupervisorLockHandling:
 
     def test_supervisor_does_not_depend_on_pid_for_liveness(self) -> None:
         """Supervisor _builder_alive must not use pid as primary authority."""
-        content = SUPERVISOR_PATH.read_text(encoding="utf-8")
+        from bus import supervisor as supervisor_module
 
-        # Find the _builder_alive method
-        method_start = content.find("def _builder_alive(self)")
-        assert method_start != -1, "Could not find _builder_alive method"
-
-        # Find the next method definition or end of class
-        next_method = content.find("def ", method_start + 1)
-        if next_method == -1:
-            next_method = len(content)
-        method_content = content[method_start:next_method]
+        wrapper_content = inspect.getsource(
+            supervisor_module.SequentialTicketSupervisor._builder_alive
+        )
+        helper_content = inspect.getsource(supervisor_module._builder_alive_bare)
 
         # The method should NOT call _is_pid_alive or check process by PID
         # It should use bus events (BUILDER_EXIT) and mtime fallback
-        assert "_is_pid_alive" not in method_content, (
+        assert "_is_pid_alive" not in wrapper_content, (
             "_builder_alive must not use _is_pid_alive (WP-2026-117)"
+        )
+        assert "_is_pid_alive" not in helper_content, (
+            "_builder_alive helper must not use _is_pid_alive (WP-2026-117)"
         )
 
         # Should use bus-based liveness check
         assert (
-            "BUILDER_EXIT" in method_content
-            or "_has_builder_exited_after" in method_content
+            "BUILDER_EXIT" in helper_content
+            or "_has_builder_exited_after" in helper_content
         ), "_builder_alive should use bus events for liveness"
 
         # Should use mtime fallback
-        assert "st_mtime" in method_content or "mtime" in method_content, (
+        assert "st_mtime" in helper_content or "mtime" in helper_content, (
             "_builder_alive should use mtime as fallback"
         )
 

@@ -22,6 +22,18 @@ from agent_controller import (  # noqa: E402
 )
 
 
+@pytest.fixture(autouse=True)
+def _isolate_mark_ready_projection_side_effects():
+    """Prevent mark-ready unit tests from mutating canonical .agent projections."""
+    with (
+        patch(
+            "bus.supervisor.SequentialTicketSupervisor._materialize_ticket_projection"
+        ),
+        patch("scripts.state_projection_sync.sync_state_projection"),
+    ):
+        yield
+
+
 class TestMarkReadyIdempotency:
     """Test bus-backed idempotency for --mark-ready."""
 
@@ -444,7 +456,13 @@ class TestMarkReadyIdempotency:
         mock_bus.read_events.return_value = [ready_event, changes_event]
         mock_bus.latest_event.return_value = latest_state
 
-        _sync_mark_ready_targets("WT-2026-236a", "", current_round=2)
+        with (
+            patch(
+                "bus.supervisor.SequentialTicketSupervisor._materialize_ticket_projection"
+            ),
+            patch("scripts.state_projection_sync.sync_state_projection"),
+        ):
+            _sync_mark_ready_targets("WT-2026-236a", "", current_round=2)
 
         state_events = [
             call

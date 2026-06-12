@@ -243,6 +243,8 @@ def test_launcher_injects_opencode_external_directory_for_builder_surfaces() -> 
     assert (
         "Set-Content -LiteralPath `$__opencodeConfigPath -Value `$__opencodeOriginalConfig"
         in content
+        or "[IO.File]::WriteAllBytes(`$__opencodeConfigPath, `$__opencodeOriginalBytes)"
+        in content
     )
 
 

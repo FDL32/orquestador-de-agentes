@@ -87,7 +87,7 @@ python scripts/run_pytest_safe.py -- tests/test_[modulo].py -v
 
 # Verificar linting
 ruff check src/[archivo].py
-uv run ruff format --check src/[archivo].py
+ruff format --check src/[archivo].py
 ```
 
 **Si falla:** Corregir antes de continuar.
@@ -141,7 +141,7 @@ En `work_plan.md`:
 Si todas las tareas de la fase estan `[x]`:
 
 1. Ejecutar **Quality Gates completos**
-2. Incluir `uv run ruff format --check` sobre los archivos Python tocados
+2. Incluir `ruff format --check` sobre los archivos Python tocados
 3. Si pasan -> Continuar con siguiente fase
 4. Si fallan -> Corregir antes de continuar
 
