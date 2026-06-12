@@ -398,6 +398,43 @@ def normalize_pytest_args(raw_args: list[str], level: str) -> list[str]:
     return args
 
 
+def snapshot_canonical_state() -> dict[str, str]:
+    """Snapshot canonical collaboration files before the suite runs.
+
+    Barrier (CEM class B - state leak): some historical tests wrote to the
+    REAL .agent/collaboration/ of the motor instead of tmp_path. Capturing
+    content before and comparing after turns that silent leak into a
+    visible failure with the offending delta.
+    """
+    snapshot: dict[str, str] = {}
+    collab = _AGENT_DIR / "collaboration"
+    for name in ("STATE.md", "TURN.md", "work_plan.md", "execution_log.md"):
+        path = collab / name
+        try:
+            snapshot[name] = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            snapshot[name] = ""
+    return snapshot
+
+
+def check_canonical_state_leak(snapshot: dict[str, str]) -> list[str]:
+    """Compare canonical files against the pre-suite snapshot.
+
+    Returns a list of leaked file names (content changed during the run).
+    """
+    leaked: list[str] = []
+    collab = _AGENT_DIR / "collaboration"
+    for name, before in snapshot.items():
+        path = collab / name
+        try:
+            after = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            after = ""
+        if after != before:
+            leaked.append(name)
+    return leaked
+
+
 def main() -> int:
     args = parse_args()
     ensure_runtime_dir()
@@ -448,9 +485,25 @@ def main() -> int:
         print(f"[pytest-safe] Lock: {LOCK_FILE}")
         print(f"[pytest-safe] Temp: {run_dir}")
         print(f"[pytest-safe] Ejecutando: {' '.join(command)}")
+        state_snapshot = snapshot_canonical_state()
         exit_code = stream_pytest(command)
         summary["status"] = "finished"
         summary["exit_code"] = exit_code
+
+        # Barrier: fail the run if the suite mutated canonical collaboration
+        # state of the motor (state-leak tests writing outside tmp_path).
+        leaked = check_canonical_state_leak(state_snapshot)
+        if leaked:
+            summary["state_leak"] = leaked
+            print(
+                "[pytest-safe] STATE LEAK: la suite modifico archivos canonicos "
+                f"de .agent/collaboration/: {', '.join(leaked)}. "
+                "Algun test escribe fuera de tmp_path. Restaura con git checkout "
+                "y biseca el test culpable."
+            )
+            if exit_code == 0:
+                exit_code = 1
+                summary["exit_code"] = exit_code
         return exit_code
     finally:
         cleanup_after = {"removed": [], "failed": []}

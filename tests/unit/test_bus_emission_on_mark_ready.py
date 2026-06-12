@@ -4,6 +4,8 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
@@ -13,6 +15,20 @@ if str(_AGENT_DIR) not in sys.path:
     sys.path.insert(0, str(_AGENT_DIR))
 
 from agent_controller import _sync_mark_ready_targets  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _no_real_projection_writes(monkeypatch):
+    """State-leak barrier: _sync_mark_ready_targets instantiates a REAL
+    SequentialTicketSupervisor that materializes STATE.md/TURN.md in the
+    motor's .agent/collaboration/. Mocking agent_controller.write_file is
+    not enough — the supervisor writes through its own functions. Patch the
+    materialization so these unit tests never touch canonical state.
+    """
+    monkeypatch.setattr(
+        "bus.supervisor.SequentialTicketSupervisor._materialize_ticket_projection",
+        lambda self, *a, **k: None,
+    )
 
 
 class TestBusEmissionOnMarkReady:
