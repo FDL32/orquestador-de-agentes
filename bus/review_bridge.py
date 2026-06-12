@@ -8,13 +8,12 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import review_observations
+from . import opencode_transport, review_observations
 from .blocker_signature import (
     blocker_lines_from_signature,
     compute_blocker_overlap,
@@ -45,16 +44,8 @@ ARGV_PROMPT_THRESHOLD = 8000
 MAX_RUBRIC_OBSERVATIONS = review_observations.MAX_RUBRIC_OBSERVATIONS
 MAX_OBSERVATION_SIGNAL_CHARS = review_observations.MAX_OBSERVATION_SIGNAL_CHARS
 
-# WT-2026-242a: Patterns that indicate --format json is not supported by the
-# real manager_executable. Used by _run_opencode_review() try-first logic to
-# fall back to non-JSON output when the CLI rejects the flag.
-_UNSUPPORTED_JSON_FLAG_PATTERNS = (
-    "unknown flag",
-    "invalid option",
-    "opencode run [message..]",
-    "show help",
-    "usage:",
-)
+# WT-2026-242a: canonical source bus/opencode_transport.py (re-exported here).
+_UNSUPPORTED_JSON_FLAG_PATTERNS = opencode_transport.UNSUPPORTED_JSON_FLAG_PATTERNS
 
 # Domain-to-deliverable_type relevance mapping (WP-2026-177).
 # Canonical source: bus/review_observations.py (re-exported here).
@@ -323,46 +314,11 @@ class ReviewBridge:
 
     @staticmethod
     def _looks_like_opencode_help(stdout: str, stderr: str) -> bool:
-        """Detect an OpenCode help banner instead of model output.
-
-        Guards: if stdout contains real NDJSON events (step_start / step_finish)
-        it is genuine model output — the marker strings may appear inside source
-        code the model read, not as an actual help banner. Only inspect stderr
-        in that case, since OpenCode writes its CLI help to stderr.
-        """
-        ndjson_signatures = ('"type":"step_finish"', '"type":"step_start"')
-        stdout_has_ndjson = any(sig in stdout for sig in ndjson_signatures)
-        candidate = (
-            stderr.lower() if stdout_has_ndjson else f"{stdout}\n{stderr}".lower()
-        )
-        markers = (
-            "opencode run [message..]",
-            "run opencode with a message",
-            "show help",
-        )
-        return any(marker in candidate for marker in markers)
+        return opencode_transport.looks_like_opencode_help(stdout, stderr)
 
     @staticmethod
     def _looks_like_auth_failure(stdout: str, stderr: str) -> bool:
-        """Detect backend auth failures that may still return process exit 0."""
-        ndjson_signatures = ('"type":"step_finish"', '"type":"step_start"')
-        stdout_has_ndjson = any(sig in stdout for sig in ndjson_signatures)
-        candidate = (
-            stderr.lower() if stdout_has_ndjson else f"{stdout}\n{stderr}".lower()
-        )
-        markers = (
-            "token_invalidated",
-            "token invalidated",
-            "authentication token has been invalidated",
-            "authentication failed",
-            "bad credentials",
-            "status 401",
-            'status": 401',
-            'statuscode":401',
-            'statuscode": 401',
-            "x-openai-authorization-error",
-        )
-        return any(marker in candidate for marker in markers)
+        return opencode_transport.looks_like_auth_failure(stdout, stderr)
 
     def _classify_transport_result(
         self, stdout: str, stderr: str, exit_code: int
@@ -372,6 +328,7 @@ class ReviewBridge:
             return True, "timeout_retryable"
         if exit_code != 0:
             return False, f"exit_code={exit_code}"
+        # Route through the instance statics so monkeypatched seams keep working.
         if self._looks_like_auth_failure(stdout, stderr):
             return False, "auth_failed"
         if self._looks_like_opencode_help(stdout, stderr):
@@ -380,53 +337,10 @@ class ReviewBridge:
 
     @staticmethod
     def _needs_json_fallback(stderr: str) -> bool:
-        """Return True if stderr indicates --format json is not supported.
-
-        WT-2026-242a: The fallback is governed by concrete patterns from
-        the real executable's error output, not by exit code alone. Returns
-        True only when stderr contains CLI-flag-rejection markers.
-        """
-        stderr_lower = stderr.lower()
-        return any(p in stderr_lower for p in _UNSUPPORTED_JSON_FLAG_PATTERNS)
+        return opencode_transport.needs_json_fallback(stderr)
 
     def _review_env(self) -> dict[str, str]:
-        """Return the inherited process environment for review execution.
-
-        Before: Returned os.environ unchanged, which allowed OpenCode to reuse
-                the host home directory and fail on Windows with EEXIST.
-        During: Creates a scratch home, redirects HOME/USERPROFILE/XDG_* there,
-                and copies auth.json so OpenCode can start cleanly without
-                losing credentials.
-        After: Returns an isolated environment for subprocess execution.
-        """
-        env = os.environ.copy()
-        tmp_root = Path(tempfile.gettempdir())
-        scratch_home = Path(tempfile.mkdtemp(prefix="opencode-review-", dir=tmp_root))
-
-        # Keep at most 10 scratch dirs; delete oldest by mtime when exceeded.
-        existing = sorted(
-            tmp_root.glob("opencode-review-*"),
-            key=lambda p: p.stat().st_mtime,
-        )
-        for old in existing[:-10]:
-            shutil.rmtree(old, ignore_errors=True)
-
-        env["HOME"] = str(scratch_home)
-        env["USERPROFILE"] = str(scratch_home)
-        env["XDG_CONFIG_HOME"] = str(scratch_home / ".config")
-        env["XDG_DATA_HOME"] = str(scratch_home / ".local" / "share")
-        env["XDG_STATE_HOME"] = str(scratch_home / ".local" / "state")
-
-        source_home = Path(
-            os.environ.get("USERPROFILE") or os.environ.get("HOME") or str(Path.home())
-        )
-        source_auth = source_home / ".local" / "share" / "opencode" / "auth.json"
-        if source_auth.exists():
-            target_auth = scratch_home / ".local" / "share" / "opencode" / "auth.json"
-            target_auth.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source_auth, target_auth)
-
-        return env
+        return opencode_transport.build_review_env()
 
     def _get_manager_backend(self) -> str:
         """Get the backend assigned to MANAGER role from agents.json.
@@ -456,15 +370,7 @@ class ReviewBridge:
 
     @staticmethod
     def _normalize_opencode_model(model: str | None) -> str | None:
-        """Normalize a role model to the identifier accepted by OpenCode CLI.
-
-        The OpenCode CLI ``--model`` flag accepts provider-qualified IDs verbatim:
-        ``opencode-go/deepseek-v4-flash``, ``openai/gpt-5.4-mini``, etc.
-        Both forms were verified to work against the real CLI. No stripping needed.
-        """
-        if model is None:
-            return None
-        return model.strip() or None
+        return opencode_transport.normalize_opencode_model(model)
 
     def _get_canonical_files(self) -> list[Path]:
         """Get list of canonical collaboration files to attach to OpenCode review."""
@@ -2204,50 +2110,8 @@ class ReviewBridge:
 
     @staticmethod
     def _extract_json_stream_text(stdout: str) -> str | None:
-        """Extract concatenated text from OpenCode NDJSON streaming output.
-
-        WT-2026-204: Before applying regex on structured sections (## SUMMARY,
-        ## BLOCKERS, ## SUGGESTIONS), extract text from ``obj["part"]["text"]``
-        of each NDJSON line. This prevents the parser from failing when stdout
-        contains JSONL lines interleaved with raw text (the real OpenCode
-        ``--format json`` output).
-
-        Before: Requires a stdout string that may contain NDJSON lines.
-        During: Iterates each line, attempts JSON parse, extracts text from
-                ``obj["part"]["text"]`` when ``obj.get("type") == "text"``.
-                Falls back to ``obj["content"]`` list blocks for legacy format.
-        After: Returns the concatenated text block, or None if no NDJSON
-               text could be extracted from any line.
-        """
-        import contextlib as _ctx
-
-        extracted: list[str] = []
-        for line in stdout.split("\n"):
-            line = line.strip()
-            if not line or not line.startswith("{"):
-                continue
-            with _ctx.suppress(Exception):
-                obj = json.loads(line)
-                part = obj.get("part", {})
-                if (
-                    isinstance(part, dict)
-                    and part.get("type") == "text"
-                    and "text" in part
-                ):
-                    extracted.append(part["text"])
-                elif "content" in obj and isinstance(obj["content"], list):
-                    extracted.extend(
-                        block["text"]
-                        for block in obj["content"]
-                        if (
-                            isinstance(block, dict)
-                            and block.get("type") == "text"
-                            and "text" in block
-                        )
-                    )
-        if extracted:
-            return "\n".join(extracted)
-        return None
+        """Extract NDJSON text (WT-2026-204). See bus/opencode_transport.py."""
+        return opencode_transport.extract_json_stream_text(stdout)
 
     def _parse_changes_structure(self, stdout: str) -> dict[str, str]:
         """Parse structured sections from CHANGES review output.
