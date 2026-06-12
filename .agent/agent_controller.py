@@ -1607,15 +1607,35 @@ def _validate_host_project_prefix() -> list[str]:
     return warnings
 
 
+def _validate_git_presence() -> list[str]:
+    """Warn when the workspace is not a git repository.
+
+    The motor evidence chain (implementation evidence, scope gate, M3
+    checkpoints, prepush) depends on git probes; without a repository every
+    Builder handoff dies with implementation_evidence_failed. Surfacing it
+    in --validate makes the root cause visible at bootstrap instead of at
+    handoff time (found live in the Crear_Texto_LLM integration audit).
+    """
+    if (Path(str(PROJECT_ROOT)) / ".git").exists():
+        return []
+    return [
+        "[WARN] workspace is NOT a git repository - the evidence chain "
+        "(implementation evidence, scope gate, checkpoints) cannot operate "
+        "and Builder handoffs will fail with implementation_evidence_failed. "
+        "Fix: git init + initial commit with a security-reviewed .gitignore."
+    ]
+
+
 def validate_state_files() -> dict[str, list[str]]:
     """Valida el formato y consistencia cruzada de los archivos de estado."""
     return {
         "work_plan.md": _validate_work_plan(),
         "execution_log.md": _validate_execution_log(),
         "notifications.md": _validate_notifications(),
-        "TURN.md": _validate_turn_file(),
         "consistency": _validate_cross_file_consistency(),
+        "TURN.md": _validate_turn_file(),
         "host_project_prefix": _validate_host_project_prefix(),
+        "git_presence": _validate_git_presence(),
     }
 
 
@@ -3537,11 +3557,26 @@ def _check_pre_closure_invariants(plan_id: str) -> list[str]:
     return closure_invariants.check_pre_closure_invariants(event_bus, plan_id)
 
 
+def _ticket_events_archived(plan_id: str) -> bool:
+    """True when the ticket's bus events were rotated to the archive.
+
+    archive_event_bus.py moves terminal tickets to
+    .agent/runtime/events/archive/events.<ticket>.jsonl. Those archived
+    events remain the canonical evidence: post-closure invariants must not
+    report them as missing (otherwise every session close re-orphans the
+    still-projected COMPLETED ticket - recurring drift seen with 251a).
+    """
+    archive_file = get_runtime_dir() / "events" / "archive" / f"events.{plan_id}.jsonl"
+    return archive_file.exists()
+
+
 def _check_post_closure_built_exit(
     plan_id: str, log_status: str
 ) -> tuple[list[str], list[str]]:
     """Check BUILDER_EXIT invariant. Returns (errors, warnings)."""
     if not BUS_AVAILABLE or not event_bus:
+        return [], []
+    if _ticket_events_archived(plan_id):
         return [], []
     return closure_invariants.check_post_closure_built_exit(
         event_bus, plan_id, log_status
@@ -3567,6 +3602,8 @@ def _check_post_closure_state_changed(
 ) -> tuple[list[str], list[str]]:
     """Check STATE_CHANGED invariant. Returns (errors, warnings)."""
     if not BUS_AVAILABLE or not event_bus:
+        return [], []
+    if _ticket_events_archived(plan_id):
         return [], []
     return closure_invariants.check_post_closure_state_changed(
         event_bus, plan_id, log_status
