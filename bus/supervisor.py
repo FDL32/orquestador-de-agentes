@@ -9,7 +9,51 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .approval import ApprovalPolicy, ApprovalReason, ApprovalStatus, ApprovalStore
+from .approval import ApprovalPolicy, ApprovalStatus, ApprovalStore
+from .builder_lifecycle import (
+    MANAGER_STALE_TIMEOUT as MANAGER_STALE_TIMEOUT,
+    RELAUNCH_BLOCKED_STATES as RELAUNCH_BLOCKED_STATES,
+    REQUEUE_CLAIMS_DIRNAME as REQUEUE_CLAIMS_DIRNAME,
+    _BUILDER_START_VERIFY_TIMEOUT_DEFAULT as _BUILDER_START_VERIFY_TIMEOUT_DEFAULT,
+    _BUILDER_START_VERIFY_TIMEOUT_ENV as _BUILDER_START_VERIFY_TIMEOUT_ENV,
+    _REQUEUE_CLAIM_TTL_ENV as _REQUEUE_CLAIM_TTL_ENV,
+    _bootstrap_requeue_if_needed as _bootstrap_requeue_if_needed,
+    _build_relaunch_capsule as _build_relaunch_capsule,
+    _capsule_blockers_from_turn as _capsule_blockers_from_turn,
+    _capsule_hechos_from_bus as _capsule_hechos_from_bus,
+    _capsule_hechos_from_log_tail as _capsule_hechos_from_log_tail,
+    _capsule_hechos_from_state as _capsule_hechos_from_state,
+    _capsule_hechos_from_work_plan as _capsule_hechos_from_work_plan,
+    _capsule_hipotesis_from_log as _capsule_hipotesis_from_log,
+    _check_artifact as _check_artifact,
+    _claim_requeue as _claim_requeue,
+    _cleanup_terminal_requeue_claims as _cleanup_terminal_requeue_claims,
+    _emit_supervisor_restarted_if_requested as _emit_supervisor_restarted_if_requested,
+    _get_claim_ttl as _get_claim_ttl,
+    _get_verify_timeout as _get_verify_timeout,
+    _has_builder_exited_after as _has_builder_exited_after,
+    _has_handoff_blocked_after_sequence as _has_handoff_blocked_after_sequence,
+    _has_relaunched_for_trigger as _has_relaunched_for_trigger,
+    _is_manager_bridge_stale as _is_manager_bridge_stale_bare,
+    _is_pid_alive as _is_pid_alive_bare,
+    _latest_changes_trigger_sequence as _latest_changes_trigger_sequence_bare,
+    _materialize_turn_blockers as _materialize_turn_blockers_bare,
+    _parse_iso_datetime as _parse_iso_datetime,
+    _persist_relaunch_log as _persist_relaunch_log_bare,
+    _relaunch_builder as _relaunch_builder_bare,
+    _resolve_launcher_path as _resolve_launcher_path_bare,
+    _run_launcher_subprocess as _run_launcher_subprocess_bare,
+    _should_stop_run_reactive as _should_stop_run_reactive_bare,
+    _timeout_from_env as _timeout_from_env_bare,
+    _verify_builder_start as _verify_builder_start_bare,
+    _verify_relaunch_topology as _verify_relaunch_topology_bare,
+    builder_alive as _builder_alive_bare,
+    bus_cleanup_builder_session as _bus_cleanup_builder_session,
+    requeue_ticket as _requeue_ticket_bare,
+    run_loop as _run_loop_bare,
+    run_once as _run_once_bare,
+    run_reactive as _run_reactive_bare,
+)
 from .event_bus import EventBus
 from .exceptions import ConcurrentStateError
 from .state_machine import StateMachine, TicketState
@@ -37,52 +81,6 @@ NON_TERMINAL_STATES = frozenset(
         TicketState.HUMAN_GATE,
     }
 )
-
-# Do not relaunch Builder once the ticket has crossed into a gate/closeout state.
-RELAUNCH_BLOCKED_STATES = frozenset(
-    {
-        TicketState.HUMAN_GATE,
-        TicketState.READY_TO_CLOSE,
-        TicketState.COMPLETED,
-    }
-)
-
-# Seconds without a bridge heartbeat before the watchdog considers it stale.
-MANAGER_STALE_TIMEOUT = 600
-
-# Claim atomico de requeue (WT-2026-199, Capa A)
-REQUEUE_CLAIMS_DIRNAME = "requeue_claims"
-
-# Default TTL for requeue claims (90 seconds). Override via env.
-_REQUEUE_CLAIM_TTL_ENV = "TICKET_SUPERVISOR_REQUEUE_CLAIM_TTL_SECONDS"
-
-# Default timeout for verifying Builder start after launcher exit 0 (20 seconds).
-# Override via env.
-_BUILDER_START_VERIFY_TIMEOUT_ENV = "BUILDER_START_VERIFY_TIMEOUT_SECONDS"
-_BUILDER_START_VERIFY_TIMEOUT_DEFAULT = 20.0
-
-
-def _bus_cleanup_builder_session(runtime_dir: Path) -> None:
-    """Remove builder_session.json from the runtime directory.
-
-    Before: builder_session.json may or may not exist.
-    During: Unconditionally removes the file, suppressing any OSError.
-    After: builder_session.json no longer exists in the runtime directory.
-
-    This is called by the supervisor before a clean requeue to ensure
-    the next Builder launch starts without attempting to reuse a stale
-    or corrupt session ID.
-    """
-    import contextlib as _contextlib
-
-    session_path = runtime_dir / "builder_session.json"
-    if session_path.exists():
-        with _contextlib.suppress(OSError):
-            session_path.unlink()
-            print(
-                f"[supervisor] Purged stale builder_session.json in {runtime_dir}",
-                flush=True,
-            )
 
 
 @dataclass(slots=True)
@@ -314,7 +312,7 @@ class SequentialTicketSupervisor:
         import contextlib
         import json
         import os
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         # Reentrancy: same instance already holds the lock (e.g. standalone
         # bootstrap() call followed by run_reactive() calling bootstrap() again).
@@ -791,302 +789,8 @@ class SequentialTicketSupervisor:
                 state.last_action = "RECONCILED"
                 self.save_state(state)
 
-    @staticmethod
-    def _latest_changes_trigger_sequence(
-        events: list, ticket_id: str | None = None
-    ) -> int:
-        """Return the highest sequence number of a CHANGES decision event.
-
-        Only REVIEW_DECISION/LOOP_DECISION with decision==CHANGES count as a
-        requeue trigger. STATE_CHANGED -> IN_PROGRESS is a consequence of the
-        decision, not the trigger itself — counting it would cause a second
-        requeue when both events appear in the same new_events batch.
-
-        Args:
-            events: Event list (BusEvent objects with .event_type, .payload, .sequence_number).
-            ticket_id: If provided, filter to this ticket only.
-
-        Returns:
-            Highest matching sequence number, or 0 if none found.
-        """
-        result = 0
-        for event in events:
-            if ticket_id is not None and getattr(event, "ticket_id", None) != ticket_id:
-                continue
-            if (
-                event.event_type in ("LOOP_DECISION", "REVIEW_DECISION")
-                and str(
-                    (getattr(event, "payload", None) or {}).get("decision", "")
-                ).upper()
-                == "CHANGES"
-                and event.sequence_number > result
-            ):
-                result = event.sequence_number
-        return result
-
-    def _bootstrap_requeue_if_needed(
-        self, state: SupervisorState, ticket_id: str
-    ) -> None:
-        """Requeue Builder during bootstrap if a CHANGES trigger was consumed by sequence reconciliation.
-
-        Before: bootstrap advanced last_processed_sequence past a REVIEW_DECISION(changes)
-                event, leaving last_requeue_trigger_sequence=0 and run_once() unable to see
-                the trigger (new_events is empty on restart).
-        During: Reads REVIEW_DECISION/LOOP_DECISION events for the active ticket, finds the
-                latest CHANGES decision, compares its sequence against last_requeue_trigger_sequence,
-                verifies the ticket is still IN_PROGRESS, then checks _builder_alive() before
-                acting. If Builder lock is fresh (alive or stale without BUILDER_EXIT), skips
-                without updating the watermark so the next restart can retry once the lock expires.
-                Only REVIEW_DECISION/LOOP_DECISION events trigger requeue — not STATE_CHANGED —
-                to avoid spurious requeues on initial ticket start.
-        After: If requeue is actually launched, last_requeue_trigger_sequence is updated to the
-               trigger sequence so a subsequent bootstrap does not double-requeue. If Builder is
-               alive (lock fresh) or launch fails, the watermark is left unchanged so the next
-               restart retries after the 15-min lock TTL expires.
-        """
-        state = self.load_state()
-
-        requeue_trigger_seq = self._latest_changes_trigger_sequence(
-            self.event_bus.read_events(ticket_id=ticket_id), ticket_id=ticket_id
-        )
-
-        if not (
-            requeue_trigger_seq > 0
-            and requeue_trigger_seq > state.last_requeue_trigger_sequence
-        ):
-            return
-
-        # WT-2026-197: allow requeue when state is READY_FOR_REVIEW but CHANGES was never
-        # acknowledged by Builder (crash during BUILDER_RELAUNCH_ATTEMPTED). The condition
-        # requeue_trigger_seq > state.last_processed_sequence acts as a proxy for
-        # "Builder has not responded to the CHANGES yet" without requiring an explicit
-        # BUILDER_EXIT scan — if Builder had exited normally the watermark would have advanced.
-        current_ticket_state = self._current_state(ticket_id)
-        state_ok = current_ticket_state == TicketState.IN_PROGRESS or (
-            current_ticket_state == TicketState.READY_FOR_REVIEW
-            and requeue_trigger_seq > 0
-            and requeue_trigger_seq > state.last_processed_sequence
-        )
-        if not state_ok:
-            return
-        if current_ticket_state == TicketState.READY_FOR_REVIEW:
-            print(
-                f"[supervisor] bootstrap: spurious READY_FOR_REVIEW detected for {ticket_id} "
-                f"after CHANGES at seq={requeue_trigger_seq} — crash during relaunch suspected. "
-                "Forcing Builder requeue.",
-                flush=True,
-            )
-
-        # If Builder lock is fresh, either Builder is truly alive (no action needed)
-        # or the lock is stale without a BUILDER_EXIT event (mtime fallback <15 min).
-        # In both cases, skip the requeue without updating the watermark so the next
-        # bootstrap retries once the lock expires via the 15-min TTL.
-        if self._builder_alive():
-            print(
-                f"[supervisor] bootstrap: Builder lock is fresh for {ticket_id}, "
-                "deferring requeue until lock expires.",
-                flush=True,
-            )
-            self.event_bus.emit(
-                "SUPERVISOR_REQUEUE_DEFERRED",
-                ticket_id=ticket_id,
-                actor="SUPERVISOR",
-                payload={
-                    "trigger_sequence": requeue_trigger_seq,
-                    "reason": "builder_lock_fresh",
-                    "watermark": state.last_requeue_trigger_sequence,
-                },
-            )
-            return
-
-        # WP-2026-172: Suppress relaunch if a HANDOFF_BLOCKED event exists after
-        # the requeue trigger. The Builder reached the delivery contract but was
-        # blocked by hygiene; this is not a crash or timeout.
-        blocking_seq = self._has_handoff_blocked_after_sequence(
-            ticket_id, requeue_trigger_seq
-        )
-        if blocking_seq > 0:
-            print(
-                f"[supervisor] bootstrap: HANDOFF_BLOCKED at seq={blocking_seq} after "
-                f"trigger seq={requeue_trigger_seq} for {ticket_id}. "
-                "Suppressing relaunch.",
-                flush=True,
-            )
-            self.event_bus.emit(
-                "RELAUNCH_SUPPRESSED",
-                ticket_id=ticket_id,
-                actor="SUPERVISOR",
-                payload={
-                    "reason": "handoff_blocked",
-                    "trigger_sequence": requeue_trigger_seq,
-                    "blocking_sequence": blocking_seq,
-                },
-            )
-            return
-
-        print(
-            f"[supervisor] bootstrap: unprocessed CHANGES trigger at seq={requeue_trigger_seq} "
-            f"for {ticket_id}. Firing requeue.",
-            flush=True,
-        )
-        # WP-2026-180: Purge stale builder session before clean requeue.
-        # The builder_session.json captured from a previous round may contain
-        # a session ID that is now stale/corrupt. Removing it ensures the
-        # next builder launch falls through to a clean session.
-        _bus_cleanup_builder_session(self.runtime_dir)
-
-        # WT-2026-203: Materialize blockers into TURN.md before requeue
-        self._materialize_turn_blockers(ticket_id)
-
-        # WT-2026-199: Watermark update moved into requeue_ticket, which
-        # calls _claim_requeue first as the cross-process authority.
-        self.requeue_ticket(ticket_id, requeue_trigger_seq)
-
-    def _load_manager_bridge_state(self) -> dict | None:
-        """Read manager_bridge_state.json; return None if missing or unparseable."""
-        path = self.runtime_dir / "manager_bridge_state.json"
-        if not path.exists():
-            return None
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-
-    def _materialize_turn_blockers(self, ticket_id: str) -> None:
-        """WT-2026-204: Materialize Manager blockers into TURN.md before requeue.
-
-        Before:
-            - A CHANGES decision has been recorded for the ticket.
-            - REVIEW_DECISION event exists on the bus with payload["blockers"].
-
-        During:
-            - WT-2026-204: Reads the last REVIEW_DECISION event for the ticket.
-            - Extracts blockers from ``payload["blockers"]``.
-            - Validates: non-empty, < 15 KB, no JSONL crudo (``{"type":`` /
-              ``sessionID``).
-            - Appends blockers section to TURN.md instructions.
-            - If validation fails, emits HANDOFF_BLOCKED and does NOT modify
-              TURN.md.
-
-        After:
-            - TURN.md contains actionable blockers from the Manager feedback.
-            - If blockers validation fails, HANDOFF_BLOCKED event is emitted.
-            - Never raises: all exceptions are caught and logged.
-        """
-        try:
-            # WT-2026-204: Read last REVIEW_DECISION event from bus
-            review_events = self.event_bus.read_events(
-                ticket_id=ticket_id, event_type="REVIEW_DECISION"
-            )
-            if not review_events:
-                return
-
-            latest_review = review_events[-1]
-            payload = latest_review.payload or {}
-
-            # WT-2026-204: Only validate when "blockers" key explicitly exists.
-            # If the field is absent entirely (backward compat), skip gracefully.
-            if "blockers" not in payload:
-                return
-
-            blockers = payload.get("blockers", "")
-
-            # WT-2026-204: Validate blockers — non-empty, < 15 KB, no JSONL crudo
-            if not blockers or not blockers.strip():
-                print(
-                    f"[supervisor] Empty blockers from REVIEW_DECISION for "
-                    f"{ticket_id}. Emitting HANDOFF_BLOCKED.",
-                    flush=True,
-                )
-                self.event_bus.emit(
-                    "HANDOFF_BLOCKED",
-                    ticket_id=ticket_id,
-                    actor="SUPERVISOR",
-                    payload={
-                        "reason": "empty_blockers",
-                        "details": "REVIEW_DECISION payload blockers field is empty.",
-                    },
-                )
-                return
-
-            blockers_bytes = blockers.encode("utf-8")
-            if len(blockers_bytes) >= 15 * 1024:
-                print(
-                    f"[supervisor] Blockers too large ({len(blockers_bytes)} bytes) "
-                    f"for {ticket_id}. Emitting HANDOFF_BLOCKED.",
-                    flush=True,
-                )
-                self.event_bus.emit(
-                    "HANDOFF_BLOCKED",
-                    ticket_id=ticket_id,
-                    actor="SUPERVISOR",
-                    payload={
-                        "reason": "blockers_too_large",
-                        "size_bytes": len(blockers_bytes),
-                    },
-                )
-                return
-
-            if '{"type":' in blockers or "sessionID" in blockers:
-                print(
-                    f"[supervisor] Blockers contain raw JSONL for {ticket_id}. "
-                    "Emitting HANDOFF_BLOCKED.",
-                    flush=True,
-                )
-                self.event_bus.emit(
-                    "HANDOFF_BLOCKED",
-                    ticket_id=ticket_id,
-                    actor="SUPERVISOR",
-                    payload={
-                        "reason": "blockers_contain_raw_jsonl",
-                        "details": "blockers contain {'type': or sessionID markers.",
-                    },
-                )
-                return
-
-            turn_path = self.collaboration_dir / "TURN.md"
-            if not turn_path.exists():
-                return
-
-            current_turn = turn_path.read_text(encoding="utf-8")
-
-            # Avoid duplicate blockers injection
-            if "## Blockers from Manager" in current_turn:
-                return
-
-            blocker_section = (
-                f"\n\n## Blockers from Manager\n\n"
-                f"The last review returned CHANGES. "
-                f"Address these blockers before marking ready:\n\n"
-                f"{blockers}\n"
-            )
-
-            # Insert before ## Estado del Sistema if present, else append at end
-            if "## Estado del Sistema" in current_turn:
-                turn_path.write_text(
-                    current_turn.replace(
-                        "## Estado del Sistema",
-                        f"{blocker_section}\n## Estado del Sistema",
-                    ),
-                    encoding="utf-8",
-                )
-            else:
-                turn_path.write_text(
-                    current_turn.rstrip() + blocker_section, encoding="utf-8"
-                )
-
-            print(
-                f"[supervisor] Materialized blockers into TURN.md for {ticket_id}",
-                flush=True,
-            )
-        except Exception as exc:
-            print(
-                f"[supervisor] Error materializing TURN blockers: {exc}",
-                flush=True,
-            )
-
     def _write_text_if_changed(self, path: Path, content: str) -> bool:
-        """Write a text artifact only when the content actually changes."""
+        """Write a text artifact only when its content changes."""
         current = ""
         if path.exists():
             current = path.read_text(encoding="utf-8")
@@ -1097,7 +801,7 @@ class SequentialTicketSupervisor:
         return True
 
     def _turn_without_update_timestamp(self, content: str) -> str:
-        """Normalize volatile TURN.md timestamp so projection writes stay idempotent."""
+        """Normalize the volatile TURN.md timestamp."""
         return re.sub(
             r"^\*\*Ultima actualizacion:\*\* .*$(?:\r?\n)?",
             "**Ultima actualizacion:** <timestamp>\n",
@@ -1107,7 +811,7 @@ class SequentialTicketSupervisor:
         )
 
     def _preserve_turn_blockers(self, content: str) -> str:
-        """Carry existing Manager blockers across state projection refreshes."""
+        """Carry Manager blockers across projection refreshes."""
         if not self.turn_path.exists():
             return content
         current = self.turn_path.read_text(encoding="utf-8")
@@ -1132,7 +836,7 @@ class SequentialTicketSupervisor:
         return content.rstrip() + blockers_section
 
     def _write_turn_if_semantic_changed(self, content: str) -> bool:
-        """Write TURN.md only when role/action/state semantics change."""
+        """Write TURN.md only when role or state semantics change."""
         content = self._preserve_turn_blockers(content)
         current = ""
         if self.turn_path.exists():
@@ -1145,7 +849,7 @@ class SequentialTicketSupervisor:
 
     @staticmethod
     def _render_turn_for_state(ticket_id: str, state: TicketState) -> str:
-        """Render TURN.md for the given derived state."""
+        """Render TURN.md for a derived ticket state."""
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         turn_map: dict[TicketState, tuple[str, str, str, str]] = {
             TicketState.READY_FOR_REVIEW: (
@@ -1222,7 +926,7 @@ class SequentialTicketSupervisor:
     def _materialize_ticket_projection(
         self, ticket_id: str, state: TicketState
     ) -> bool:
-        """Materialize the active ticket projections synchronously."""
+        """Materialize active-ticket projections synchronously."""
         if state == TicketState.UNKNOWN:
             return False
         changed = False
@@ -1262,26 +966,315 @@ class SequentialTicketSupervisor:
         return changed
 
     def _is_manager_bridge_stale(self) -> bool:
-        """Return True if the bridge heartbeat is absent or older than MANAGER_STALE_TIMEOUT.
+        return _is_manager_bridge_stale_bare(self.runtime_dir)
 
-        Before: manager_bridge_state.json may not exist or heartbeat_at may be empty.
-        During: Reads heartbeat_at field; compares against current UTC time.
-        After: Returns True (stale) when no heartbeat or age > MANAGER_STALE_TIMEOUT seconds.
+    def _materialize_turn_blockers(self, ticket_id: str) -> None:
+        _materialize_turn_blockers_bare(
+            self.collaboration_dir, self.event_bus, ticket_id
+        )
+
+    @staticmethod
+    def _latest_changes_trigger_sequence(
+        events: list, ticket_id: str | None = None
+    ) -> int:
+        return _latest_changes_trigger_sequence_bare(events, ticket_id)
+
+    @staticmethod
+    def _check_artifact(name: str, path: Path) -> tuple[bool, str]:
+        return _check_artifact(name, path)
+
+    @staticmethod
+    def _capsule_hechos_from_work_plan(work_plan_path: Path) -> list[str]:
+        return _capsule_hechos_from_work_plan(work_plan_path)
+
+    @staticmethod
+    def _capsule_hechos_from_state(state_path: Path) -> list[str]:
+        return _capsule_hechos_from_state(state_path)
+
+    @staticmethod
+    def _capsule_hechos_from_log_tail(log_path: Path) -> list[str]:
+        return _capsule_hechos_from_log_tail(log_path)
+
+    def _capsule_hechos_from_bus(self, ticket_id: str) -> list[str]:
+        return _capsule_hechos_from_bus(self.event_bus, ticket_id)
+
+    @staticmethod
+    def _capsule_blockers_from_turn(turn_path: Path) -> list[str]:
+        return _capsule_blockers_from_turn(turn_path)
+
+    @staticmethod
+    def _capsule_hipotesis_from_log(log_path: Path) -> list[str]:
+        return _capsule_hipotesis_from_log(log_path)
+
+    def _build_relaunch_capsule(self, ticket_id: str) -> str:
+        return _build_relaunch_capsule(
+            project_root=self.project_root,
+            collaboration_dir=self.collaboration_dir,
+            runtime_dir=self.runtime_dir,
+            work_plan_path=self.work_plan_path,
+            state_path_file=self.state_path_file,
+            execution_log_path=self.execution_log_path,
+            turn_path=self.turn_path,
+            event_bus=self.event_bus,
+            ticket_id=ticket_id,
+        )
+
+    @staticmethod
+    def _get_claim_ttl() -> float:
+        return _get_claim_ttl()
+
+    @staticmethod
+    def _get_verify_timeout() -> float:
+        return _get_verify_timeout()
+
+    @staticmethod
+    def _timeout_from_env(name: str, default: float) -> float:
+        return _timeout_from_env_bare(name, default)
+
+    def _is_pid_alive(self, pid: int) -> bool:
+        return _is_pid_alive_bare(pid)
+
+    def _parse_iso_datetime(self, iso_str: str) -> datetime:
+        return _parse_iso_datetime(iso_str)
+
+    def _has_builder_exited_after(self, ticket_id: str, lock_start: datetime) -> bool:
+        return _has_builder_exited_after(self.event_bus, ticket_id, lock_start)
+
+    def _has_handoff_blocked_after_sequence(
+        self, ticket_id: str, trigger_sequence: int
+    ) -> int:
+        return _has_handoff_blocked_after_sequence(
+            self.event_bus, ticket_id, trigger_sequence
+        )
+
+    def _builder_alive(self) -> bool:
+        return _builder_alive_bare(self.runtime_dir, self.event_bus)
+
+    def _run_launcher_subprocess(self, cmd: list[str]) -> tuple[int, str, str]:
+        return _run_launcher_subprocess_bare(self.project_root, cmd)
+
+    def _persist_relaunch_log(self, stdout: str, stderr: str) -> None:
+        _persist_relaunch_log_bare(self.runtime_dir, stdout, stderr)
+
+    def _resolve_launcher_path(self) -> Path:
+        return _resolve_launcher_path_bare(self.project_root)
+
+    def _verify_relaunch_topology(self, ticket_id: str) -> tuple[bool, str]:
+        return _verify_relaunch_topology_bare(
+            project_root=self.project_root,
+            collaboration_dir=self.collaboration_dir,
+            runtime_dir=self.runtime_dir,
+            state_path_file=self.state_path_file,
+            turn_path=self.turn_path,
+            work_plan_path=self.work_plan_path,
+            ticket_id=ticket_id,
+        )
+
+    def _relaunch_builder(self, ticket_id: str, trigger_seq: int = 0) -> bool:
+        return _relaunch_builder_bare(
+            project_root=self.project_root,
+            runtime_dir=self.runtime_dir,
+            collaboration_dir=self.collaboration_dir,
+            event_bus=self.event_bus,
+            state_path_file=self.state_path_file,
+            turn_path=self.turn_path,
+            work_plan_path=self.work_plan_path,
+            execution_log_path=self.execution_log_path,
+            ticket_id=ticket_id,
+            trigger_seq=trigger_seq,
+            load_state_fn=self.load_state,
+            save_state_fn=self.save_state,
+            builder_alive_fn=self._builder_alive,
+            run_launcher_fn=self._run_launcher_subprocess,
+            cleanup_session_fn=lambda: _bus_cleanup_builder_session(self.runtime_dir),
+            verify_topology_fn=self._verify_relaunch_topology,
+            build_capsule_fn=self._build_relaunch_capsule,
+            resolve_launcher_fn=self._resolve_launcher_path,
+            persist_log_fn=self._persist_relaunch_log,
+            verify_builder_start_fn=self._verify_builder_start,
+        )
+
+    def _verify_builder_start(
+        self,
+        ticket_id: str,
+        relaunch_started_at: datetime,
+        expected_round: int,
+    ) -> tuple[str, str]:
+        return _verify_builder_start_bare(
+            runtime_dir=self.runtime_dir,
+            event_bus=self.event_bus,
+            ticket_id=ticket_id,
+            relaunch_started_at=relaunch_started_at,
+            expected_round=expected_round,
+        )
+
+    def _claim_requeue(self, ticket_id: str, trigger_seq: int) -> bool:
+        return _claim_requeue(self.runtime_dir, self.event_bus, ticket_id, trigger_seq)
+
+    def _has_relaunched_for_trigger(self, ticket_id: str, trigger_seq: int) -> bool:
+        return _has_relaunched_for_trigger(self.event_bus, ticket_id, trigger_seq)
+
+    def _cleanup_terminal_requeue_claims(self, ticket_id: str) -> None:
+        _cleanup_terminal_requeue_claims(self.runtime_dir, ticket_id)
+
+    def requeue_ticket(self, ticket_id: str, trigger_seq: int = 0) -> bool:
+        return _requeue_ticket_bare(
+            runtime_dir=self.runtime_dir,
+            event_bus=self.event_bus,
+            project_root=self.project_root,
+            collaboration_dir=self.collaboration_dir,
+            state_path_file=self.state_path_file,
+            turn_path=self.turn_path,
+            work_plan_path=self.work_plan_path,
+            execution_log_path=self.execution_log_path,
+            ticket_id=ticket_id,
+            trigger_seq=trigger_seq,
+            load_state_fn=self.load_state,
+            save_state_fn=self.save_state,
+            current_state_fn=self._current_state,
+            relaunch_builder_fn=self._relaunch_builder,
+            builder_alive_fn=self._builder_alive,
+            run_launcher_fn=self._run_launcher_subprocess,
+            claim_requeue_fn=self._claim_requeue,
+        )
+
+    def _bootstrap_requeue_if_needed(
+        self, state: SupervisorState, ticket_id: str
+    ) -> None:
+        _bootstrap_requeue_if_needed(
+            runtime_dir=self.runtime_dir,
+            event_bus=self.event_bus,
+            project_root=self.project_root,
+            collaboration_dir=self.collaboration_dir,
+            state_path_file=self.state_path_file,
+            turn_path=self.turn_path,
+            work_plan_path=self.work_plan_path,
+            execution_log_path=self.execution_log_path,
+            ticket_id=ticket_id,
+            load_state_fn=self.load_state,
+            save_state_fn=self.save_state,
+            current_state_fn=self._current_state,
+            requeue_ticket_fn=self.requeue_ticket,
+            relaunch_builder_fn=self._relaunch_builder,
+            builder_alive_fn=self._builder_alive,
+            run_launcher_fn=self._run_launcher_subprocess,
+            cleanup_session_fn=lambda: _bus_cleanup_builder_session(self.runtime_dir),
+            materialize_turn_blockers_fn=self._materialize_turn_blockers,
+        )
+
+    def _emit_supervisor_restarted_if_requested(self) -> None:
+        _emit_supervisor_restarted_if_requested(
+            self.runtime_dir, self.event_bus, self.load_state
+        )
+
+    def _should_stop_run_reactive(
+        self,
+        *,
+        start_time: float,
+        last_activity: float,
+        idle_timeout: float,
+        max_runtime: float,
+        now: float,
+    ) -> bool:
+        return _should_stop_run_reactive_bare(
+            start_time=start_time,
+            last_activity=last_activity,
+            idle_timeout=idle_timeout,
+            max_runtime=max_runtime,
+            now=now,
+            runtime_dir=self.runtime_dir,
+            event_bus=self.event_bus,
+            builder_alive_fn=self._builder_alive,
+        )
+
+    def run_once(self) -> bool:
+        changed, requeued = _run_once_bare(
+            runtime_dir=self.runtime_dir,
+            event_bus=self.event_bus,
+            project_root=self.project_root,
+            collaboration_dir=self.collaboration_dir,
+            state_path_file=self.state_path_file,
+            turn_path=self.turn_path,
+            work_plan_path=self.work_plan_path,
+            execution_log_path=self.execution_log_path,
+            load_state_fn=self.load_state,
+            save_state_fn=self.save_state,
+            transition_ticket_fn=self.transition_ticket,
+            get_approval_store_fn=self.get_approval_store,
+            advance_if_review_ready_fn=self.advance_if_review_ready,
+            current_state_fn=self._current_state,
+            materialize_ticket_projection_fn=self._materialize_ticket_projection,
+            relaunch_builder_fn=self._relaunch_builder,
+            builder_alive_fn=self._builder_alive,
+            run_launcher_fn=self._run_launcher_subprocess,
+            process_new_events_fn=self._process_new_events,
+            requeue_ticket_fn=self.requeue_ticket,
+        )
+        self._requeue_triggered_this_session = requeued
+        return changed
+
+    def run_reactive(self, timeout_seconds: float = 300.0):
+        return _run_reactive_bare(
+            runtime_dir=self.runtime_dir,
+            event_bus=self.event_bus,
+            project_root=self.project_root,
+            collaboration_dir=self.collaboration_dir,
+            state_path_file=self.state_path_file,
+            turn_path=self.turn_path,
+            work_plan_path=self.work_plan_path,
+            execution_log_path=self.execution_log_path,
+            bootstrap_fn=self.bootstrap,
+            load_state_fn=self.load_state,
+            save_state_fn=self.save_state,
+            transition_ticket_fn=self.transition_ticket,
+            get_approval_store_fn=self.get_approval_store,
+            advance_if_review_ready_fn=self.advance_if_review_ready,
+            current_state_fn=self._current_state,
+            materialize_ticket_projection_fn=self._materialize_ticket_projection,
+            release_supervisor_lock_fn=self._release_supervisor_lock,
+            timeout_seconds=timeout_seconds,
+            relaunch_builder_fn=self._relaunch_builder,
+            run_once_fn=self.run_once,
+            builder_alive_fn=self._builder_alive,
+            get_requeue_triggered_fn=lambda: getattr(
+                self, "_requeue_triggered_this_session", False
+            ),
+            clear_requeue_triggered_fn=lambda: setattr(
+                self, "_requeue_triggered_this_session", False
+            ),
+        )
+
+    def run_loop(self, poll_interval: float = 1.0):
+        _run_loop_bare(
+            runtime_dir=self.runtime_dir,
+            event_bus=self.event_bus,
+            project_root=self.project_root,
+            collaboration_dir=self.collaboration_dir,
+            state_path_file=self.state_path_file,
+            turn_path=self.turn_path,
+            work_plan_path=self.work_plan_path,
+            execution_log_path=self.execution_log_path,
+            bootstrap_fn=self.bootstrap,
+            load_state_fn=self.load_state,
+            save_state_fn=self.save_state,
+            transition_ticket_fn=self.transition_ticket,
+            get_approval_store_fn=self.get_approval_store,
+            advance_if_review_ready_fn=self.advance_if_review_ready,
+            current_state_fn=self._current_state,
+            materialize_ticket_projection_fn=self._materialize_ticket_projection,
+            release_supervisor_lock_fn=self._release_supervisor_lock,
+            poll_interval=poll_interval,
+            relaunch_builder_fn=self._relaunch_builder,
+            run_once_fn=self.run_once,
+        )
+
+    def sync_controller(self, *_args, **_kwargs) -> bool:
+        """Compatibility shim for the review bridge.
+
+        Canonical state is already persisted by bridge and supervisor events.
+        This keeps the bridge flow stable without the old controller entrypoint.
         """
-        bridge = self._load_manager_bridge_state()
-        if not bridge:
-            return True
-        heartbeat_at = bridge.get("heartbeat_at", "")
-        if not heartbeat_at:
-            return True
-        try:
-            from datetime import timezone
-
-            hb = datetime.fromisoformat(str(heartbeat_at))
-            age = (datetime.now(tz=timezone.utc) - hb).total_seconds()
-            return age > MANAGER_STALE_TIMEOUT
-        except Exception:
-            return True
+        return True
 
     def _bootstrap_watchdog_manager_if_needed(
         self, state: SupervisorState, ticket_id: str
@@ -1520,1408 +1513,3 @@ class SequentialTicketSupervisor:
             self.save_state(state)
             return True
         return False
-
-    def _parse_iso_datetime(self, iso_str: str) -> datetime:
-        """Parse an ISO 8601 string into a timezone-aware datetime object.
-
-        Before: Input may be any string resembling ISO 8601 (naive or aware).
-        During: Strips whitespace, normalizes "Z" suffix to "+00:00",
-                parses via datetime.fromisoformat, and replaces a missing
-                timezone (naive) with UTC.
-        After: Returns a always-timezone-aware datetime.
-               Raises ValueError/TypeError if the string is unparseable.
-        """
-        normalized = iso_str.strip()
-        if normalized.endswith("Z"):
-            normalized = normalized[:-1] + "+00:00"
-        dt = datetime.fromisoformat(normalized)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt
-
-    def _has_builder_exited_after(self, ticket_id: str, lock_start: datetime) -> bool:
-        """Return True if a BUILDER_EXIT event was recorded at or after lock_start.
-
-        Before: Silently swallowed parse errors and fell back to PID check.
-        During: Iterates events in reverse, parses timestamps with explicit error logging.
-                Uses >= comparison so an exit at exactly lock_start is also rejected
-                (WT-2026-199: at-exact-boundary is not treated as alive).
-        After: Returns True/False based on bus evidence; errors are logged, not silenced.
-        """
-        events = self.event_bus.read_events(ticket_id=ticket_id)
-        for event in reversed(events):
-            if event.actor == "BUILDER" and event.event_type == "BUILDER_EXIT":
-                try:
-                    event_time = self._parse_iso_datetime(event.timestamp)
-                    if event_time >= lock_start:
-                        return True
-                except (ValueError, TypeError, AttributeError) as exc:
-                    # Log parse error but continue checking other events
-                    print(
-                        f"[supervisor] Failed to parse timestamp for BUILDER_EXIT event: {exc}",
-                        file=sys.stderr,
-                        flush=True,
-                    )
-        return False
-
-    def _is_pid_alive(self, pid: int) -> bool:
-        """Return True if the given process PID is running (NT tasklist check)."""
-        import os
-        import shutil
-        import subprocess
-
-        if os.name != "nt":
-            return False
-        tasklist = shutil.which("tasklist")
-        if not tasklist:
-            return False
-        try:
-            check_result = subprocess.run(  # noqa: S603
-                [tasklist, "/FI", f"PID eq {pid}"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            return check_result.returncode == 0 and str(pid) in check_result.stdout
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            return False
-
-    def _has_handoff_blocked_after_sequence(
-        self, ticket_id: str, trigger_sequence: int
-    ) -> int:
-        """Return highest HANDOFF_BLOCKED sequence > trigger_sequence, or 0.
-
-        Before: No check existed for HANDOFF_BLOCKED events relative to requeue triggers.
-        During: Scans bus events for HANDOFF_BLOCKED emitted by BUILDEr/CONTROLLER after
-                the requeue trigger sequence. An event is relevant if its sequence_number
-                exceeds the requeue_trigger_sequence passed in.
-        After: Returns the highest blocking sequence (>0) if any HANDOFF_BLOCKED event
-               exists after the trigger, or 0 if no such event blocks the requeue.
-        """
-        max_seq = 0
-        for event in self.event_bus.read_events(ticket_id=ticket_id):
-            if (
-                event.event_type == "HANDOFF_BLOCKED"
-                and event.sequence_number > trigger_sequence
-                and event.sequence_number > max_seq
-            ):
-                max_seq = event.sequence_number
-        return max_seq
-
-    def _builder_alive(self) -> bool:
-        """Return True if Builder is alive based on bus events and lock mtime.
-
-        Before: Checked bus, then fell back to PID check, then mtime.
-        During: Checks bus for BUILDER_EXIT after lock start; falls back to mtime only.
-        After: PID is never used as authority; bus + mtime are the only signals.
-
-        Bus-first precedence:
-        - If BUILDER_EXIT event exists after lock_start -> Builder is dead.
-        - If no BUILDER_EXIT and lock is fresh (<15 min) -> Builder is alive.
-        - If no BUILDER_EXIT and lock is old -> Builder is dead.
-        """
-        import time
-
-        lock = self.runtime_dir / "builder_lock.txt"
-        if not lock.exists():
-            return False
-        try:
-            data = json.loads(lock.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return False
-
-        ticket_id = data.get("ticket_id")
-        started_at_str = data.get("started_at")
-
-        # Bus-first: if BUILDER_EXIT event exists after lock_start, Builder is dead.
-        if ticket_id and started_at_str:
-            try:
-                lock_start = self._parse_iso_datetime(started_at_str)
-                if self._has_builder_exited_after(ticket_id, lock_start):
-                    return False
-            except (ValueError, TypeError, AttributeError) as exc:
-                # Log parse error but continue to mtime fallback
-                print(
-                    f"[supervisor] Failed to parse lock timestamp: {exc}",
-                    file=sys.stderr,
-                    flush=True,
-                )
-
-        # Fallback: lock fresh (<15 min) treated as alive for crash recovery.
-        # PID is NOT used as authority - it can be stale/wrapper PID.
-        try:
-            age = time.time() - lock.stat().st_mtime
-            return age < 900  # 15 minutes TTL
-        except OSError:
-            return False
-
-    def _run_launcher_subprocess(self, cmd: list[str]) -> tuple[int, str, str]:
-        """Execute the launcher subprocess and return (exit_code, stdout, stderr).
-
-        Before: _relaunch_builder called subprocess.run directly, making it untestable.
-        During: Spawns the launcher via subprocess.run with 60s timeout, captures output.
-        After: Returns exit code and captured stdout/stderr for inspection and logging.
-
-        This seam enables tests to monkeypatch the subprocess boundary without
-        depending on PYTEST_CURRENT_TEST global blocking.
-        """
-        import subprocess
-
-        try:
-            result = subprocess.run(  # noqa: S603
-                cmd,
-                cwd=self.project_root,
-                capture_output=True,
-                text=True,
-                check=False,  # Don't raise; we handle exit codes explicitly
-                timeout=60,
-            )
-            return result.returncode, result.stdout, result.stderr
-        except subprocess.TimeoutExpired as exc:
-            # Return timeout signature
-            return -1, "", f"launcher timed out after 60s: {exc}"
-        except Exception as exc:
-            # Return exception signature
-            return -1, "", f"ERROR executing launcher: {exc}"
-
-    def _persist_relaunch_log(self, stdout: str, stderr: str) -> None:
-        """Persist launcher stdout/stderr to .agent/runtime/logs/launcher_last.log.
-
-        Before: Launcher output was only printed to stderr, not persisted.
-        During: Writes stdout and stderr to a rotating log file for observability.
-        After: Log file exists with last relaunch output for post-mortem analysis.
-        """
-        logs_dir = self.runtime_dir / "logs"
-        logs_dir.mkdir(parents=True, exist_ok=True)
-        log_path = logs_dir / "launcher_last.log"
-        content = f"=== STDOUT ===\n{stdout}\n\n=== STDERR ===\n{stderr}\n"
-        log_path.write_text(content, encoding="utf-8")
-
-    def _resolve_launcher_path(self) -> Path:
-        """Return launcher path, preferring motor root when Model B link is present.
-
-        Delegates to motor_link.resolve_motor_root() for consolidated resolution.
-        """
-        try:
-            from runtime.motor_link import resolve_motor_root as _resolve_motor_root
-
-            motor_root = _resolve_motor_root(self.project_root) or self.project_root
-        except ImportError:
-            motor_root = self.project_root
-        return motor_root / "scripts" / "launch_agent_terminals.ps1"
-
-    @staticmethod
-    def _check_artifact(name: str, path: Path) -> tuple[bool, str]:
-        """Check that a canonical artifact exists and is non-empty.
-
-        Returns (True, "") on success, (False, reason) on failure.
-        """
-        try:
-            if not path.exists():
-                return False, f"Required artifact {name} missing: {path}"
-            content = path.read_text(encoding="utf-8")
-            if not content.strip():
-                return False, f"Required artifact {name} is empty: {path}"
-        except OSError as exc:
-            return False, f"Cannot read {name}: {exc}"
-        return True, ""
-
-    def _verify_relaunch_topology(  # noqa: C901
-        self, ticket_id: str
-    ) -> tuple[bool, str]:
-        """Verify topology before relaunch. Returns (is_valid, message).
-
-        Before: Topology was not verified before relaunch; Builder could be
-                launched with invalid or inconsistent root/topology.
-        During: Checks:
-                - project_root exists and is a directory
-                - .agent/collaboration/ directory exists
-                - Required artifacts (work_plan.md, TURN.md, STATE.md):
-                  if they exist, they must be non-empty; missing artifacts
-                  are allowed (graceful for test/minimal environments).
-                - If STATE.md has ACTIVE_TICKET, it must match ticket_id.
-                - Bus events directory exists and is readable
-                - Motor root is resolvable via motor_destination_link.json
-        After: Returns (True, "") if all checks pass, or (False, reason) if any
-               check fails. The message is actionable for diagnosis.
-        """
-
-        # 1) project_root must be a valid directory
-        try:
-            if not self.project_root.exists():
-                return False, f"project_root does not exist: {self.project_root}"
-            if not self.project_root.is_dir():
-                return False, f"project_root is not a directory: {self.project_root}"
-        except OSError as exc:
-            return False, f"project_root access error: {exc}"
-
-        # 2) collaboration dir must exist
-        try:
-            if not self.collaboration_dir.exists():
-                return False, f"Collaboration dir missing: {self.collaboration_dir}"
-            if not self.collaboration_dir.is_dir():
-                return (
-                    False,
-                    f"Collaboration path is not a directory: {self.collaboration_dir}",
-                )
-        except OSError as exc:
-            return False, f"Collaboration dir access error: {exc}"
-
-        # 3) Canonical artifacts: if they exist, they must be non-empty.
-        # Missing artifacts are allowed (graceful for test/minimal environments).
-        for art_name, art_path in [
-            ("work_plan.md", self.work_plan_path),
-            ("TURN.md", self.turn_path),
-            ("STATE.md", self.state_path_file),
-        ]:
-            if not art_path.exists():
-                continue
-            ok, msg = self._check_artifact(art_name, art_path)
-            if not ok:
-                return False, msg
-
-        # 4) Bus events directory must exist and be readable
-        try:
-            events_dir = self.runtime_dir / "events"
-            if not events_dir.exists():
-                return False, f"Bus events directory missing: {events_dir}"
-            events_file = events_dir / "events.jsonl"
-            if events_file.exists():
-                try:
-                    events_file.read_text(encoding="utf-8")
-                except OSError as exc:
-                    return False, f"Bus events file not readable: {exc}"
-        except OSError as exc:
-            return False, f"Bus events directory access error: {exc}"
-
-        # 5) Motor root: if motor_destination_link.json exists, validate it.
-        # Missing link file is allowed (Model A topology where motor is its own
-        # workspace or minimal test environments).
-        motor_link_path = (
-            self.project_root / ".agent" / "config" / "motor_destination_link.json"
-        )
-        if motor_link_path.exists():
-            try:
-                from runtime.motor_link import resolve_motor_root as _rmr
-
-                motor_root = _rmr(self.project_root)
-                if motor_root is None:
-                    return (
-                        False,
-                        "Motor root not resolvable from motor_destination_link.json",
-                    )
-                if not motor_root.exists():
-                    return False, f"Motor root path does not exist: {motor_root}"
-            except ImportError as exc:
-                return False, f"Cannot import runtime.motor_link: {exc}"
-
-        # 6) Ticket consistency: if STATE.md has ACTIVE_TICKET, it must match.
-        if self.state_path_file.exists():
-            try:
-                state_content = self.state_path_file.read_text(encoding="utf-8")
-                m = re.search(r"ACTIVE_TICKET:\s*(\S+)", state_content)
-                if m:
-                    artifact_ticket = m.group(1)
-                    if artifact_ticket != ticket_id:
-                        return (
-                            False,
-                            f"Ticket mismatch: STATE.md says {artifact_ticket} "
-                            f"but relaunching for {ticket_id}",
-                        )
-            except OSError:
-                pass  # unreadable STATE.md is not blocking if artifacts are optional
-
-        return True, ""
-
-    @staticmethod
-    def _capsule_hechos_from_work_plan(work_plan_path: Path) -> list[str]:
-        """Extract verified facts from work_plan.md metadata."""
-        result = []
-        try:
-            wp = work_plan_path.read_text(encoding="utf-8")
-            for line in wp.split("\n"):
-                ls = line.strip()
-                for prefix in (
-                    "**ID:**",
-                    "**Title:**",
-                    "**Estado:**",
-                    "**deliverable_type:**",
-                ):
-                    marker = f"- {prefix}"
-                    if ls.startswith(marker):
-                        val = ls[len(marker) :].strip()
-                        key = prefix.strip("*:")
-                        result.append(f"{key}: {val}")
-        except OSError:
-            result.append("(work_plan.md no disponible)")
-        return result
-
-    @staticmethod
-    def _capsule_hechos_from_state(state_path: Path) -> list[str]:
-        """Extract state from STATE.md."""
-        try:
-            state = state_path.read_text(encoding="utf-8").strip()
-            return [f"STATE.md: {state}"] if state else []
-        except OSError:
-            return ["(STATE.md no disponible)"]
-
-    @staticmethod
-    def _capsule_hechos_from_log_tail(log_path: Path) -> list[str]:
-        """Extract last non-empty lines from execution_log.md."""
-        try:
-            content = log_path.read_text(encoding="utf-8")
-            log_lines = [ln for ln in content.split("\n") if ln.strip()]
-            tail_count = min(10, len(log_lines))
-            tail = log_lines[-tail_count:] if tail_count > 0 else log_lines
-            if not tail:
-                return []
-            result = ["Execution log tail:"]
-            result.extend(f"  {tline}" for tline in tail)
-            return result
-        except OSError:
-            return ["(execution_log.md no disponible)"]
-
-    def _capsule_hechos_from_bus(self, ticket_id: str) -> list[str]:
-        """Extract last BUILDER_RELAUNCH_ATTEMPTED event from bus."""
-        try:
-            events = self.event_bus.read_events(
-                ticket_id=ticket_id,
-                event_type="BUILDER_RELAUNCH_ATTEMPTED",
-            )
-            if events:
-                latest = events[-1]
-                pl = latest.payload or {}
-                return [
-                    f"Event {latest.sequence_number}: "
-                    f"outcome={pl.get('outcome', '?')} "
-                    f"verify_signal={pl.get('verify_signal', '?')}",
-                ]
-        except Exception as exc:
-            print(
-                f"[supervisor] capsule bus read error: {exc}",
-                file=sys.stderr,
-                flush=True,
-            )
-        return ["(event bus no disponible)"]
-
-    @staticmethod
-    def _capsule_blockers_from_turn(turn_path: Path) -> list[str]:
-        """Extract blockers section from TURN.md."""
-        result = []
-        try:
-            turn = turn_path.read_text(encoding="utf-8")
-            in_blockers = False
-            for line in turn.split("\n"):
-                if "## Blockers from Manager" in line:
-                    in_blockers = True
-                    continue
-                if in_blockers:
-                    if line.startswith("## "):
-                        break
-                    stripped = line.strip()
-                    if stripped:
-                        result.append(stripped)
-        except OSError:
-            result.append("(TURN.md no disponible)")
-        if not result:
-            result.append("(No blockers documentados en TURN.md)")
-        return result
-
-    @staticmethod
-    def _capsule_hipotesis_from_log(log_path: Path) -> list[str]:
-        """Extract explicitly marked hypotheses from execution_log.md.
-
-        Only matches lines with the canonical prefix 'hipotesis:' or
-        '[hipotesis]' (case-insensitive). Generic terms like 'pendiente'
-        are intentionally excluded to avoid treating completed log entries
-        as open hypotheses.
-
-        Convention: Builder must prefix unverified inferences with
-        'hipotesis:' when writing to execution_log.md so the supervisor
-        can surface them in the relaunch capsule.
-        Example: '- hipotesis: fallo puede deberse a cache stale.'
-        """
-        _markers = ("hipotesis:", "[hipotesis]")
-        try:
-            content = log_path.read_text(encoding="utf-8")
-            return [
-                ln.strip()
-                for ln in content.split("\n")
-                if any(m in ln.lower() for m in _markers)
-            ][:5]
-        except OSError:
-            return []
-
-    def _build_relaunch_capsule(self, ticket_id: str) -> str:
-        """Build fresh evidence-linked capsule from canonical artifacts.
-
-        Before: No structured capsule existed; Builder had no evidence-linked
-                continuity on relaunch.
-        During: Reads canonical artifacts (work_plan.md, STATE.md,
-                execution_log.md, TURN.md, bus events) and composes a 4-section
-                capsule: Hechos Verificados, Blockers del Manager, Hipotesis /
-                Puntos No Verificados, Siguiente Accion Esperada.
-                Persists capsule to .agent/runtime/relaunch_capsule.md.
-        After: Capsule file exists in runtime dir. Returns capsule text.
-               Capsule is fresh each call (not accumulated across relaunches).
-        """
-        from datetime import datetime, timezone
-
-        # Collect each section via dedicated helpers
-        hechos = []
-        hechos.extend(self._capsule_hechos_from_work_plan(self.work_plan_path))
-        hechos.extend(self._capsule_hechos_from_state(self.state_path_file))
-        hechos.extend(self._capsule_hechos_from_log_tail(self.execution_log_path))
-        hechos.extend(self._capsule_hechos_from_bus(ticket_id))
-
-        blockers = self._capsule_blockers_from_turn(self.turn_path)
-        hipotesis = self._capsule_hipotesis_from_log(self.execution_log_path)
-
-        siguiente_accion = [
-            f"Implementar {ticket_id} segun work_plan.md y ejecutar "
-            "ruff + pytest-safe sobre archivos tocados.",
-        ]
-
-        # Compose capsule
-        now = datetime.now(timezone.utc).isoformat()
-        capsule = (
-            f"# Capsula de Relaunch - {ticket_id}\n"
-            f"Generada: {now}\n\n"
-            f"Fuentes: work_plan.md, TURN.md, STATE.md, "
-            f"execution_log.md, bus events\n\n"
-        )
-
-        capsule += "## 1. Hechos Verificados\n"
-        for h in hechos:
-            capsule += f"- {h}\n"
-
-        capsule += "\n## 2. Blockers del Manager\n"
-        for b in blockers:
-            capsule += f"- {b}\n"
-
-        capsule += "\n## 3. Hipotesis / Puntos No Verificados\n"
-        for h in hipotesis:
-            capsule += f"- {h}\n"
-
-        capsule += "\n## 4. Siguiente Accion Esperada\n"
-        for a in siguiente_accion:
-            capsule += f"- {a}\n"
-
-        capsule += (
-            f"\n---\n"
-            f"*Capsula generada por supervisor para relaunch de {ticket_id}. "
-            "Fuentes primarias: work_plan.md, TURN.md, STATE.md, "
-            "execution_log.md, bus events.*\n"
-        )
-
-        # Persist to runtime dir (always fresh, never stale)
-        capsule_path = self.runtime_dir / "relaunch_capsule.md"
-        capsule_path.parent.mkdir(parents=True, exist_ok=True)
-        capsule_path.write_text(capsule, encoding="utf-8")
-        print(
-            f"[ticket-supervisor] Capsula evidence-linked generada: {capsule_path}",
-            flush=True,
-        )
-
-        return capsule
-
-    def _relaunch_builder(self, ticket_id: str, trigger_seq: int = 0) -> bool:
-        """Relaunch Builder via launcher. Returns True if launched, False on failure.
-
-        Before: Relaunch logic emitted "success" as outcome based solely on
-                launcher exit code 0, without verifying Builder liveness.
-        During: Verifies topology (WT-2026-221a), generates evidence-linked
-                capsule (WT-2026-221a), extracts subprocess spawn to
-                _run_launcher_subprocess seam, persists output to logs, and
-                emits BUILDER_RELAUNCH_ATTEMPTED event.
-                After launcher exit 0, polls for builder_lock.txt freshness as
-                a signal of Builder start.
-        After: Each relaunch attempt is observable via event bus and log file, with
-               outcome in the taxonomy (WT-2026-199 + WT-2026-221a):
-               - topology_invalid: topology/root verification failed before launch.
-               - builder_started_verified: launcher exit 0 AND builder_lock fresh
-                 with matching round AND no BUILDER_EXIT during verification window.
-               - builder_launch_unverified: launcher exit 0 but no runtime signal
-                 within BUILDER_START_VERIFY_TIMEOUT_SECONDS.
-               - skipped_alive: Builder was already alive (lock fresh, no relaunch).
-               - launcher_failed: launcher not found / pwsh not found / exit != 0.
-               - timeout: launcher exceeded 60s.
-
-               Returns True whenever the launcher subprocess was actually
-               executed with exit code 0, even if outcome is
-               builder_launch_unverified. Returns False on topology_invalid,
-               launcher_failed or timeout. The outcome payload carries the
-               actual liveness signal (verify_signal: "builder_lock" | "none").
-
-        Event payload (BUILDER_RELAUNCH_ATTEMPTED):
-        {
-            "round": N,
-            "outcome": "topology_invalid|builder_started_verified|...",
-            "trigger_seq": int,
-            "launcher_exit_code": int|null,
-            "verify_signal": "builder_lock"|"none",
-            "stderr_tail": str|null
-        }
-
-        v1 limitation (documented): builder_lock.txt is written by the launcher
-        AFTER opening the window, regardless of whether opencode survives.
-        Therefore builder_started_verified detects launchers that spawn the
-        window, but NOT a silent hang without exit. BUILDER_STARTED event
-        (WT-2026-200) will address this.
-        """
-        import shutil
-        import sys
-        from datetime import datetime, timezone
-
-        state = self.load_state()
-        current_round = state.loop_current_round
-
-        # Capa 2: Check liveness before relaunch
-        if self._builder_alive():
-            print(
-                f"[ticket-supervisor] Builder alive (lock fresh), skipping relaunch for {ticket_id}",
-                file=sys.stderr,
-                flush=True,
-            )
-            # Persist observable outcome for skipped_alive
-            self._persist_relaunch_log(
-                "", f"Builder alive, skipped relaunch for {ticket_id}"
-            )
-            self.event_bus.emit(
-                "BUILDER_RELAUNCH_ATTEMPTED",
-                ticket_id=ticket_id,
-                actor="SUPERVISOR",
-                payload={
-                    "round": current_round,
-                    "outcome": "skipped_alive",
-                    "trigger_seq": trigger_seq,
-                    "launcher_exit_code": None,
-                    "verify_signal": "none",
-                    "stderr_tail": "Builder alive, skipped",
-                },
-            )
-            return True  # no es error, Builder vivo manejará el requeue
-
-        # WP-2026-180: Purge stale session before clean relaunch.
-        # Builder is dead (checked above); remove any captured session ID
-        # so the next launch starts with a clean session.
-        _bus_cleanup_builder_session(self.runtime_dir)
-
-        # WT-2026-221a: Verify topology before proceeding with relaunch.
-        # Blocks invalid relaunch with observable event.
-        topology_valid, topology_msg = self._verify_relaunch_topology(ticket_id)
-        if not topology_valid:
-            print(
-                f"[ticket-supervisor] Topology invalid, blocking relaunch: "
-                f"{topology_msg}",
-                file=sys.stderr,
-                flush=True,
-            )
-            self.event_bus.emit(
-                "BUILDER_RELAUNCH_ATTEMPTED",
-                ticket_id=ticket_id,
-                actor="SUPERVISOR",
-                payload={
-                    "round": current_round,
-                    "outcome": "topology_invalid",
-                    "trigger_seq": trigger_seq,
-                    "launcher_exit_code": -1,
-                    "verify_signal": "none",
-                    "stderr_tail": f"Topology invalid: {topology_msg}",
-                },
-            )
-            return False
-
-        # WT-2026-221a: Generate fresh evidence-linked capsule for Builder
-        # continuity. Capsule is derived from canonical artifacts on each
-        # relaunch, never accumulated or recycled from previous launches.
-        self._build_relaunch_capsule(ticket_id)
-
-        launcher_path = self._resolve_launcher_path()
-        if not launcher_path.exists():
-            print(
-                f"[ticket-supervisor] ERROR: Launcher not found at {launcher_path}",
-                file=sys.stderr,
-                flush=True,
-            )
-            self.event_bus.emit(
-                "BUILDER_RELAUNCH_ATTEMPTED",
-                ticket_id=ticket_id,
-                actor="SUPERVISOR",
-                payload={
-                    "round": current_round,
-                    "outcome": "launcher_failed",
-                    "trigger_seq": trigger_seq,
-                    "launcher_exit_code": -1,
-                    "verify_signal": "none",
-                    "stderr_tail": f"Launcher not found: {launcher_path}",
-                },
-            )
-            return False
-
-        pwsh = shutil.which("pwsh") or shutil.which("powershell")
-        if not pwsh:
-            print(
-                "[ticket-supervisor] ERROR: PowerShell executable not found",
-                file=sys.stderr,
-                flush=True,
-            )
-            self.event_bus.emit(
-                "BUILDER_RELAUNCH_ATTEMPTED",
-                ticket_id=ticket_id,
-                actor="SUPERVISOR",
-                payload={
-                    "round": current_round,
-                    "outcome": "launcher_failed",
-                    "trigger_seq": trigger_seq,
-                    "launcher_exit_code": -1,
-                    "verify_signal": "none",
-                    "stderr_tail": "PowerShell executable not found",
-                },
-            )
-            return False
-
-        # Use -OnlyBuilder additive switch: PowerShell 5.1 invoked from
-        # subprocess.run cannot cast string argv elements ("0", "$false") to
-        # SwitchParameter, so -LaunchSupervisor:0 / :$false both fail. The
-        # launcher now exposes -OnlyBuilder which internally sets the other
-        # launchers to $false. Pair with -ResumeBuilder to skip cleanup.
-        # Pass -ProjectRoot explicitly: under PowerShell 5.1 subprocess invocation,
-        # the script's auto-variables ($PSScriptRoot, $PSCommandPath,
-        # $MyInvocation.MyCommand.Path) can all be null during param-block
-        # evaluation. The supervisor already knows the absolute root.
-        cmd = [
-            pwsh,
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(launcher_path),
-            "-ProjectRoot",
-            str(self.project_root),
-            "-LaunchBuilder",
-            "-OnlyBuilder",
-            "-ResumeBuilder",
-            "-SkipSupervisorWait",
-        ]
-        print(f"[ticket-supervisor] Executing: {' '.join(cmd)}", flush=True)
-
-        # Capture relaunch start time for verification window
-        relaunch_started_at = datetime.now(timezone.utc)
-
-        # Use the injectable seam for subprocess execution
-        exit_code, stdout, stderr = self._run_launcher_subprocess(cmd)
-
-        # Persist output to log file for observability
-        self._persist_relaunch_log(stdout, stderr)
-
-        # Determine outcome and emit event
-        if exit_code == 0:
-            # Capa C: Verify Builder started via builder_lock (v1)
-            outcome, verify_signal = self._verify_builder_start(
-                ticket_id=ticket_id,
-                relaunch_started_at=relaunch_started_at,
-                expected_round=current_round,
-            )
-            print(
-                f"[ticket-supervisor] Builder relaunch outcome={outcome} "
-                f"verify_signal={verify_signal} for {ticket_id}",
-                flush=True,
-            )
-            self.event_bus.emit(
-                "BUILDER_RELAUNCH_ATTEMPTED",
-                ticket_id=ticket_id,
-                actor="SUPERVISOR",
-                payload={
-                    "round": current_round,
-                    "outcome": outcome,
-                    "trigger_seq": trigger_seq,
-                    "launcher_exit_code": exit_code,
-                    "verify_signal": verify_signal,
-                    "stderr_tail": stderr[-200:] if stderr else None,
-                },
-            )
-            # Returns True whenever launcher was executed with exit 0,
-            # even if verification was inconclusive
-            return True
-        elif exit_code == -1 and "timed out" in stderr:
-            print(
-                "[ticket-supervisor] launcher timed out after 60s",
-                file=sys.stderr,
-                flush=True,
-            )
-            self.event_bus.emit(
-                "BUILDER_RELAUNCH_ATTEMPTED",
-                ticket_id=ticket_id,
-                actor="SUPERVISOR",
-                payload={
-                    "round": current_round,
-                    "outcome": "timeout",
-                    "trigger_seq": trigger_seq,
-                    "launcher_exit_code": exit_code,
-                    "verify_signal": "none",
-                    "stderr_tail": stderr[-200:] if stderr else None,
-                },
-            )
-            return False
-        else:
-            # Capa 1: diagnóstico stdout/stderr
-            print(
-                f"[ticket-supervisor] launcher failed exit={exit_code}",
-                file=sys.stderr,
-                flush=True,
-            )
-            if stdout:
-                print(
-                    f"  stdout (last 500): {stdout[-500:]}",
-                    file=sys.stderr,
-                    flush=True,
-                )
-            if stderr:
-                print(
-                    f"  stderr (last 500): {stderr[-500:]}",
-                    file=sys.stderr,
-                    flush=True,
-                )
-            self.event_bus.emit(
-                "BUILDER_RELAUNCH_ATTEMPTED",
-                ticket_id=ticket_id,
-                actor="SUPERVISOR",
-                payload={
-                    "round": current_round,
-                    "outcome": "launcher_failed",
-                    "trigger_seq": trigger_seq,
-                    "launcher_exit_code": exit_code,
-                    "verify_signal": "none",
-                    "stderr_tail": stderr[-200:] if stderr else None,
-                },
-            )
-            return False
-
-    def _verify_builder_start(  # noqa: C901
-        self,
-        ticket_id: str,
-        relaunch_started_at: datetime,
-        expected_round: int,
-    ) -> tuple[str, str]:
-        """Poll for builder_lock.txt as liveness signal after launcher exit 0.
-
-        Before: No verification existed; "success" was emitted based solely
-                on launcher exit code.
-        During: Polls for up to BUILDER_START_VERIFY_TIMEOUT_SECONDS looking for
-                builder_lock.txt that is:
-                  - present
-                  - started_at >= relaunch_started_at (with 5s clock slack)
-                  - age <= verify_timeout seconds
-                  - round matches expected_round
-                AND no BUILDER_EXIT event for this ticket during the window.
-                If builder_lock meets all criteria → builder_started_verified.
-                If timeout without valid lock → builder_launch_unverified.
-        After: Returns (outcome, verify_signal) where verify_signal is
-               "builder_lock" or "none".
-
-        v1 limitation: builder_lock is written by the launcher regardless of
-        whether opencode survives. This detects launchers that fail to reach
-        the lock-write point, but NOT silent hangs after opencode starts.
-        """
-        import json
-        import time
-
-        verify_timeout = self._get_verify_timeout()
-        deadline = time.time() + verify_timeout
-        poll_interval = 0.5
-
-        while time.time() < deadline:
-            lock = self.runtime_dir / "builder_lock.txt"
-            if not lock.exists():
-                time.sleep(poll_interval)
-                continue
-
-            try:
-                data = json.loads(lock.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                time.sleep(poll_interval)
-                continue
-
-            # Check started_at freshness
-            started_at_str = data.get("started_at")
-            if not started_at_str:
-                time.sleep(poll_interval)
-                continue
-
-            try:
-                lock_started_at = self._parse_iso_datetime(started_at_str)
-            except (ValueError, TypeError, AttributeError):
-                time.sleep(poll_interval)
-                continue
-
-            # Allow 5s clock slack: lock_started_at >= relaunch_started_at - 5s
-            from datetime import timedelta
-
-            slack_threshold = relaunch_started_at - timedelta(seconds=5)
-            if lock_started_at < slack_threshold:
-                # Lock is from a previous launch; keep waiting
-                time.sleep(poll_interval)
-                continue
-
-            # Check lock age <= verify_timeout
-            try:
-                lock_age = time.time() - lock.stat().st_mtime
-            except OSError:
-                time.sleep(poll_interval)
-                continue
-
-            if lock_age > verify_timeout:
-                # Lock is too old; keep waiting (should not happen for fresh lock)
-                time.sleep(poll_interval)
-                continue
-
-            # Check round matches expected
-            lock_round = data.get("round")
-            if lock_round != expected_round:
-                time.sleep(poll_interval)
-                continue
-
-            # All criteria met: builder_lock is fresh and matches the relaunch.
-            # Final check: no BUILDER_EXIT during verification window.
-            if self._has_builder_exited_after(ticket_id, relaunch_started_at):
-                # Builder exited during startup; treat as unverified
-                return ("builder_launch_unverified", "none")
-
-            return ("builder_started_verified", "builder_lock")
-
-        # Timeout: no valid builder_lock found within the window
-        return ("builder_launch_unverified", "none")
-
-    @staticmethod
-    def _get_claim_ttl() -> float:
-        """Return the configured claim TTL in seconds."""
-        import os
-
-        raw = os.environ.get(_REQUEUE_CLAIM_TTL_ENV, "")
-        if raw and raw.strip():
-            try:
-                value = float(raw)
-                if value > 0:
-                    return value
-            except (TypeError, ValueError):
-                pass
-        return 90.0
-
-    @staticmethod
-    def _get_verify_timeout() -> float:
-        """Return the configured Builder start verify timeout in seconds."""
-        import os
-
-        raw = os.environ.get(_BUILDER_START_VERIFY_TIMEOUT_ENV, "")
-        if raw and raw.strip():
-            try:
-                value = float(raw)
-                if value > 0:
-                    return value
-            except (TypeError, ValueError):
-                pass
-        return _BUILDER_START_VERIFY_TIMEOUT_DEFAULT
-
-    def _claim_requeue(self, ticket_id: str, trigger_seq: int) -> bool:  # noqa: C901
-        """Attempt atomic claim of a requeue for (ticket_id, trigger_seq).
-
-        Before: No cross-process authority exists for requeue ordering. Two
-                supervisor instances can both fire requeue_ticket for the same
-                REVIEW_DECISION, producing double BUILDER_RELAUNCH_ATTEMPTED.
-
-        During: Creates a filesystem claim file atomically via
-                os.open(path, O_CREAT|O_EXCL|O_WRONLY) under
-                <runtime>/requeue_claims/<ticket_id>_seq-<trigger_seq>.claim.
-                If another supervisor already owns the claim (FileExistsError),
-                checks staleness:
-                  - Stale if: (a) mtime exceeds TTL, AND (b) no
-                    BUILDER_RELAUNCH_ATTEMPTED event exists on the bus for this
-                    (ticket_id, trigger_seq) with sequence_number > trigger_seq.
-                  - Stale recovery uses a <claim>.takeover file with O_CREAT|O_EXCL
-                    so only one contender recovers the stale claim. The takeover
-                    file is always cleaned up in a finally block, best-effort.
-                trigger_seq is mandatory (must be > 0). If trigger_seq <= 0,
-                the caller cannot identify the trigger and we fail closed by
-                returning False.
-
-        After:
-          - Returns True if the claim was created (caller should proceed).
-          - Returns False if another instance holds a valid claim or the
-            trigger_seq is invalid.
-          - No side effects on state (round, watermark) when returning False.
-        """
-        import contextlib
-        import json
-        import socket
-        import time
-        from datetime import datetime, timezone
-
-        if not isinstance(trigger_seq, int) or trigger_seq <= 0:
-            # trigger_seq is mandatory (must be > 0). If invalid, fail closed
-            # to prevent requeue without cross-process coordination.
-            return False
-
-        claims_dir = self.runtime_dir / REQUEUE_CLAIMS_DIRNAME
-        claims_dir.mkdir(parents=True, exist_ok=True)
-        claim_path = claims_dir / f"{ticket_id}_seq-{trigger_seq}.claim"
-        takeover_path = claim_path.with_suffix(".claim.takeover")
-
-        try:
-            fd = os.open(
-                str(claim_path),
-                os.O_CREAT | os.O_EXCL | os.O_WRONLY,
-            )
-        except FileExistsError:
-            pass  # Check staleness below
-        except OSError as exc:
-            print(
-                f"[supervisor] _claim_requeue: OSError creating claim for "
-                f"{ticket_id} seq={trigger_seq}: {exc}",
-                file=sys.stderr,
-                flush=True,
-            )
-            return False
-        else:
-            # Successfully created the claim file
-            try:
-                claim_content = json.dumps(
-                    {
-                        "ticket_id": ticket_id,
-                        "trigger_seq": trigger_seq,
-                        "pid": os.getpid(),
-                        "created_at": datetime.now(timezone.utc).isoformat(),
-                        "supervisor_id": f"{os.getpid()}@{socket.gethostname()}",
-                    },
-                    indent=2,
-                )
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    f.write(claim_content)
-                print(
-                    f"[supervisor] _claim_requeue: acquired claim for "
-                    f"{ticket_id} seq={trigger_seq}",
-                    flush=True,
-                )
-                return True
-            except Exception:
-                # Claim file exists but we failed to write content; clean up
-                with contextlib.suppress(OSError):
-                    os.close(fd)
-                    os.unlink(str(claim_path))
-                raise
-
-        # --- Claim already exists: check staleness ---
-        try:
-            stat_info = os.stat(str(claim_path))
-            age = time.time() - stat_info.st_mtime
-        except OSError:
-            return False
-
-        ttl = self._get_claim_ttl()
-
-        if age <= ttl:
-            # Claim is fresh; another supervisor owns it
-            return False
-
-        # Claim is stale by age. Verify no relaunch already occurred.
-        if self._has_relaunched_for_trigger(ticket_id, trigger_seq):
-            # Relaunch already emitted; do not reclaim
-            print(
-                f"[supervisor] _claim_requeue: claim stale but relaunch already "
-                f"emitted for {ticket_id} seq={trigger_seq}. Not reclaiming.",
-                flush=True,
-            )
-            return False
-
-        # Stale + no relaunch: attempt takeover
-        try:
-            takeover_fd = os.open(
-                str(takeover_path),
-                os.O_CREAT | os.O_EXCL | os.O_WRONLY,
-            )
-            os.close(takeover_fd)
-        except FileExistsError:
-            # Someone else is already taking over
-            return False
-        except OSError:
-            return False
-
-        # We won the takeover. Replace the claim and clean up.
-        try:
-            os.unlink(str(claim_path))
-            new_fd = os.open(
-                str(claim_path),
-                os.O_CREAT | os.O_EXCL | os.O_WRONLY,
-            )
-            try:
-                claim_content = json.dumps(
-                    {
-                        "ticket_id": ticket_id,
-                        "trigger_seq": trigger_seq,
-                        "pid": os.getpid(),
-                        "created_at": datetime.now(timezone.utc).isoformat(),
-                        "supervisor_id": f"{os.getpid()}@{socket.gethostname()}",
-                    },
-                    indent=2,
-                )
-                with os.fdopen(new_fd, "w", encoding="utf-8") as f:
-                    f.write(claim_content)
-                print(
-                    f"[supervisor] _claim_requeue: recovered stale claim for "
-                    f"{ticket_id} seq={trigger_seq}",
-                    flush=True,
-                )
-                return True
-            except Exception:
-                with contextlib.suppress(OSError):
-                    os.close(new_fd)
-                    os.unlink(str(claim_path))
-                raise
-        finally:
-            with contextlib.suppress(OSError):
-                os.unlink(str(takeover_path))
-
-    def _has_relaunched_for_trigger(self, ticket_id: str, trigger_seq: int) -> bool:
-        """Return True if a BUILDER_RELAUNCH_ATTEMPTED exists for the trigger.
-
-        Checks if any BUILDER_RELAUNCH_ATTEMPTED event exists on the bus
-        for the given ticket_id with payload.trigger_seq == trigger_seq and
-        sequence_number > trigger_seq.
-
-        Before: No helper existed to check if a relaunch was already emitted
-                for a specific trigger_seq.
-        During: Scans bus events in reverse for efficiency.
-        After: Returns True if a matching event exists.
-        """
-        for event in reversed(self.event_bus.read_events(ticket_id=ticket_id)):
-            if event.event_type != "BUILDER_RELAUNCH_ATTEMPTED":
-                continue
-            if event.sequence_number <= trigger_seq:
-                continue
-            payload_trigger_seq = (event.payload or {}).get("trigger_seq")
-            if payload_trigger_seq == trigger_seq:
-                return True
-        return False
-
-    def _cleanup_terminal_requeue_claims(self, ticket_id: str) -> None:
-        """Remove all requeue claim files for a terminal ticket.
-
-        Before: ticket has reached a terminal state (COMPLETED).
-        During: Scans <runtime>/requeue_claims/ for files matching
-                <ticket_id>_seq-*.claim and removes them.
-        After: No stale claims remain for this ticket.
-        """
-        import contextlib
-
-        claims_dir = self.runtime_dir / REQUEUE_CLAIMS_DIRNAME
-        if not claims_dir.exists():
-            return
-        prefix = f"{ticket_id}_seq-"
-        for child in claims_dir.iterdir():
-            if child.is_file() and child.name.startswith(prefix):
-                with contextlib.suppress(OSError):
-                    child.unlink()
-
-    def requeue_ticket(self, ticket_id: str, trigger_seq: int = 0) -> bool:
-        """Advance the active ticket into a new Builder round and relaunch it.
-
-        Before: requeue_ticket had no cross-process coordination, allowing
-                double-requeue for the same REVIEW_DECISION.
-        During: Calls _claim_requeue as the FIRST operation (before touching
-                loop_current_round or save_state). If the claim is denied
-                (another supervisor instance owns it), returns False immediately
-                with no side effects. If the claim is acquired, proceeds to
-                increment round and relaunch Builder.
-                trigger_seq is required (must be > 0). Callers that cannot
-                provide a valid trigger_seq must not call this method.
-                trigger_seq is required (must be > 0). Callers that cannot
-                provide a valid trigger_seq are rejected with False.
-        After: On success, round is incremented and Builder is relaunched.
-               On claim failure or invalid trigger_seq, no state changes occur.
-        """
-        if not isinstance(trigger_seq, int) or trigger_seq <= 0:
-            # trigger_seq is mandatory (must be > 0). Invalid trigger_seq means
-            # the caller cannot identify the trigger; fail closed to prevent
-            # requeue without cross-process atomic claim.
-            print(
-                f"[ticket-supervisor] requeue_ticket: invalid trigger_seq={trigger_seq} "
-                f"for {ticket_id}. Failing closed.",
-                flush=True,
-            )
-            return False
-
-        if not self._claim_requeue(ticket_id, trigger_seq):
-            print(
-                f"[ticket-supervisor] requeue_ticket: claim denied for "
-                f"{ticket_id} seq={trigger_seq}. Skipping relaunch.",
-                flush=True,
-            )
-            return False
-
-        state = self.load_state()
-        if state.active_ticket != ticket_id:
-            return False
-
-        current_state = self._current_state(ticket_id)
-        if current_state in RELAUNCH_BLOCKED_STATES:
-            print(
-                f"[ticket-supervisor] Skipping Builder relaunch for {ticket_id}: "
-                f"ticket is {current_state.value}",
-                flush=True,
-            )
-            return False
-
-        # WT-2026-199: Update watermark before incrementing round or relaunching.
-        # This ensures a fresh supervisor started by the launcher sees the updated
-        # watermark and does not double-trigger via _bootstrap_requeue_if_needed.
-        state.last_requeue_trigger_sequence = trigger_seq
-        state.loop_current_round += 1
-        self.save_state(state)
-        print(
-            f"[ticket-supervisor] Detected requeue for {ticket_id} "
-            f"(round {state.loop_current_round}). Relaunching Builder...",
-            flush=True,
-        )
-        return self._relaunch_builder(ticket_id, trigger_seq)
-
-    def run_once(self) -> bool:
-        state = self.load_state()
-
-        # Wire approval timeout expiration into the live loop
-        try:
-            store = self.get_approval_store()
-            expired = store.check_and_expire_all()
-            for req in expired:
-                target_state = "BLOCKED"
-                if req.reason == ApprovalReason.TIMEOUT_EXPIRED:
-                    target_state = "BLOCKED"
-                    self.transition_ticket(
-                        ticket_id=req.ticket_id,
-                        new_state=target_state,
-                        reason=f"Approval {req.approval_id} expired after {req.timeout_seconds}s",
-                    )
-                self.event_bus.emit(
-                    "APPROVAL_RESOLVED",
-                    ticket_id=req.ticket_id,
-                    actor="SUPERVISOR",
-                    payload={
-                        "approval_id": req.approval_id,
-                        "status": req.status.value,
-                        "reason": req.reason.value if req.reason else "TIMEOUT_EXPIRED",
-                        "to_state": target_state,
-                        "message": "Approval expired automatically by supervisor timeout policy",
-                    },
-                )
-                print(
-                    f"[ticket-supervisor] Auto-expired approval {req.approval_id}",
-                    flush=True,
-                )
-        except Exception as exc:
-            import sys
-
-            print(
-                f"[ticket-supervisor] Error checking approval timeouts: {exc}",
-                file=sys.stderr,
-                flush=True,
-            )
-
-        previous_sequence = state.last_processed_sequence
-        events = self.event_bus.read_events()
-        new_events = [
-            e for e in events if e.sequence_number > state.last_processed_sequence
-        ]
-
-        changed = self._process_new_events()
-        state = self.load_state()
-        event_activity = state.last_processed_sequence > previous_sequence
-
-        if state.active_ticket and self._materialize_ticket_projection(
-            state.active_ticket, self._current_state(state.active_ticket)
-        ):
-            changed = True
-
-        requeue_trigger_sequence = self._latest_changes_trigger_sequence(
-            new_events, ticket_id=state.active_ticket
-        )
-
-        requeue_triggered = (
-            requeue_trigger_sequence > 0
-            and requeue_trigger_sequence > state.last_requeue_trigger_sequence
-        )
-
-        requeue_success = False
-        if requeue_triggered and state.active_ticket:
-            # WP-2026-172: Suppress relaunch if a HANDOFF_BLOCKED event exists after
-            # the requeue trigger. The Builder reached the delivery contract but was
-            # blocked by hygiene; this is not a crash or timeout.
-            blocking_seq = self._has_handoff_blocked_after_sequence(
-                state.active_ticket, requeue_trigger_sequence
-            )
-            if blocking_seq > 0:
-                print(
-                    f"[supervisor] run_once: HANDOFF_BLOCKED at seq={blocking_seq} after "
-                    f"trigger seq={requeue_trigger_sequence} for {state.active_ticket}. "
-                    "Suppressing relaunch.",
-                    flush=True,
-                )
-                self.event_bus.emit(
-                    "RELAUNCH_SUPPRESSED",
-                    ticket_id=state.active_ticket,
-                    actor="SUPERVISOR",
-                    payload={
-                        "reason": "handoff_blocked",
-                        "trigger_sequence": requeue_trigger_sequence,
-                        "blocking_sequence": blocking_seq,
-                    },
-                )
-            else:
-                # WT-2026-199: Watermark update moved into requeue_ticket, which
-                # calls _claim_requeue first as the cross-process authority.
-                # WT-2026-203: Materialize blockers into TURN.md before requeue
-                self._materialize_turn_blockers(state.active_ticket)
-                if self.requeue_ticket(state.active_ticket, requeue_trigger_sequence):
-                    changed = True
-                    requeue_success = True
-
-        # WT-2026-202: Record whether this run_once iteration triggered a requeue.
-        # run_reactive may use the flag for watcher behavior, but it no longer
-        # implies a cooperative exit from the supervisor loop.
-        self._requeue_triggered_this_session = requeue_success
-
-        if self.advance_if_review_ready():
-            changed = True
-        return changed or event_activity
-
-    @staticmethod
-    def _timeout_from_env(name: str, default: float) -> float:
-        import os
-
-        raw = os.environ.get(name)
-        if raw is None or not raw.strip():
-            return default
-        try:
-            value = float(raw)
-        except (TypeError, ValueError):
-            return default
-        return value if value > 0 else default
-
-    def _emit_supervisor_restarted_if_requested(self) -> None:
-        import os
-
-        restart_reason = os.environ.get("SUPERVISOR_RESTART_REASON", "").strip()
-        if not restart_reason:
-            return
-
-        state = self.load_state()
-        self.event_bus.emit(
-            "SUPERVISOR_RESTARTED",
-            ticket_id=state.active_ticket or "",
-            actor="SUPERVISOR",
-            payload={"round": state.loop_current_round, "reason": restart_reason},
-        )
-
-    def _should_stop_run_reactive(
-        self,
-        *,
-        start_time: float,
-        last_activity: float,
-        idle_timeout: float,
-        max_runtime: float,
-        now: float,
-    ) -> bool:
-        if max_runtime > 0 and now - start_time >= max_runtime:
-            return True
-
-        if idle_timeout > 0 and now - last_activity >= idle_timeout:
-            return not self._builder_alive()
-
-        return False
-
-    def run_reactive(self, timeout_seconds: float = 300.0):
-        import time
-
-        # Acquire lock via bootstrap - if rejected, another instance is running
-        if self.bootstrap() is False:
-            return False  # Lock rejected, another supervisor is active
-
-        # WP-2026-160: If launched after a cooperative restart, emit SUPERVISOR_RESTARTED
-        # so the bus has an observable signal that the fresh supervisor is active.
-        self._emit_supervisor_restarted_if_requested()
-
-        # Emit SUPERVISOR_IDLE once if no active ticket after bootstrap.
-        # This is a bootstrap-level signal, not a ticket-scoped event.
-        state_after_bootstrap = self.load_state()
-        if not state_after_bootstrap.active_ticket:
-            print(
-                "[supervisor] idle: no active ticket. Waiting for Manager to create a new plan.",
-                flush=True,
-            )
-            self.event_bus.emit(
-                "SUPERVISOR_IDLE",
-                ticket_id="__bootstrap__",
-                actor="SUPERVISOR",
-                payload={"reason": "no active ticket after bootstrap"},
-            )
-
-        idle_timeout = self._timeout_from_env(
-            "TICKET_SUPERVISOR_IDLE_TIMEOUT_SECONDS", timeout_seconds
-        )
-        max_runtime = self._timeout_from_env(
-            "TICKET_SUPERVISOR_MAX_RUNTIME_SECONDS", 3600.0
-        )
-        start_time = time.time()
-        last_activity = start_time
-        changed = False
-        # WP-2026-160: Reset requeue flag at session start
-        self._requeue_triggered_this_session = False
-        try:
-            while True:
-                if self._should_stop_run_reactive(
-                    start_time=start_time,
-                    last_activity=last_activity,
-                    idle_timeout=idle_timeout,
-                    max_runtime=max_runtime,
-                    now=time.time(),
-                ):
-                    break
-                if self.run_once():
-                    changed = True
-                    last_activity = time.time()
-                # WT-2026-202: Requeue usa -OnlyBuilder; el launcher no arranca supervisor fresco.
-                # Resetear el flag y quedarse como watcher del Builder.
-                # WP-2026-160 asumia que el launcher siempre abria un supervisor nuevo tras
-                # el requeue; esa premisa fue eliminada en WT-2026-200.
-                if getattr(self, "_requeue_triggered_this_session", False):
-                    self._requeue_triggered_this_session = False
-                    print(
-                        "[supervisor] Builder-only requeue: staying alive as watcher",
-                        flush=True,
-                    )
-                time.sleep(1.0)
-        finally:
-            # Always release lock on exit (normal or exceptional)
-            self._release_supervisor_lock()
-        return changed
-
-    def run_loop(self, poll_interval: float = 1.0):
-        import time
-
-        # Acquire lock via bootstrap - if rejected, another instance is running
-        if self.bootstrap() is False:
-            return  # Lock rejected, another supervisor is active
-
-        try:
-            while True:
-                self.run_once()
-                time.sleep(poll_interval)
-        finally:
-            # Always release lock on exit
-            self._release_supervisor_lock()
-
-    def sync_controller(self, *_args, **_kwargs) -> bool:
-        """Compatibility shim for the review bridge.
-
-        The canonical state is already persisted by the bridge/supervisor events.
-        This method keeps the bridge flow stable without requiring the old controller
-        entrypoint contract.
-        """
-        return True
