@@ -6,6 +6,7 @@ removed from the controller and that project-map.json is the only
 runtime-consumed project-map artifact.
 """
 
+import inspect
 from pathlib import Path
 
 import pytest
@@ -52,27 +53,15 @@ class TestLegacyProjectMapCleanup:
         )
 
     def test_exclude_files_uses_project_map_json(self):
-        """Verify _exclude_files() excludes project-map.json, not project_map.md."""
-        source = CONTROLLER_PATH.read_text(encoding="utf-8")
-        # Find the _exclude_files function
-        in_exclude_files = False
-        found_json_exclude = False
-        found_md_exclude = False
+        """Verify the active scope gate excludes project-map.json, not project_map.md."""
+        import scope_gate
 
-        for line in source.split("\n"):
-            if "def _exclude_files()" in line:
-                in_exclude_files = True
-            elif in_exclude_files and line.startswith("def "):
-                break
-            elif in_exclude_files:
-                if "project-map.json" in line and "exclude" in line.lower():
-                    found_json_exclude = True
-                if "project_map.md" in line and "exclude" in line.lower():
-                    found_md_exclude = True
-
-        assert found_json_exclude, "_exclude_files() should exclude project-map.json"
-        assert not found_md_exclude, (
-            "_exclude_files() should not exclude project_map.md (legacy)"
+        source = inspect.getsource(scope_gate.exclude_files)
+        assert "project-map.json" in source, (
+            "exclude_files() should exclude project-map.json"
+        )
+        assert "project_map.md" not in source, (
+            "exclude_files() should not exclude project_map.md (legacy)"
         )
 
     def test_scanner_context_injection_present(self):

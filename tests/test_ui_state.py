@@ -137,10 +137,16 @@ def test_update_ui_state(mock_event_bus, mock_collaboration_dir, temp_runtime_di
     assert data["current_turn"]["role"] == "BUILDER"
 
 
-def test_get_recommended_files_ready_for_review():
-    """Test recommended files when status is READY_FOR_REVIEW."""
-    # Since current state has no active ticket in review, expect no recommended files
-    projector = UIStateProjector()
+def test_get_recommended_files_ready_for_review(temp_runtime_dir):
+    """No recommendation should be emitted when the isolated state is not in review."""
+    collab_dir = temp_runtime_dir.parent / "collaboration"
+    collab_dir.mkdir(parents=True, exist_ok=True)
+    (collab_dir / "execution_log.md").write_text(
+        "## Seed\n\n**Estado:** READY_TO_START",
+        encoding="utf-8",
+    )
+
+    projector = UIStateProjector(runtime_dir=temp_runtime_dir)
     recommended = projector._get_recommended_files()
     assert recommended == []
 

@@ -8,8 +8,8 @@ Objectives:
 - limpiar residuos conocidos antes y despues del run
 - dejar log del ultimo run para diagnostico
 
-By default this runner executes a curated allowlist of stable test files.
-Pass explicit pytest args (for example ``-- tests``) to run discovery.
+By default this runner executes pytest discovery over ``tests/``.
+Pass explicit pytest args (for example ``-- tests/unit``) to narrow the scope.
 
 WP-2026-122: Uses runtime.project_root for dynamic project root resolution.
 """
@@ -73,44 +73,14 @@ LAST_RUN_LOG = _LazyPath(lambda: RUNTIME_DIR.resolve() / "last-run.log")
 LAST_RUN_JSON = _LazyPath(lambda: RUNTIME_DIR.resolve() / "last-run.json")
 
 DEFAULT_PYTEST_ARGS = [
-    "tests/test_event_bus.py",
-    "tests/test_supervisor.py",
-    "tests/test_agent_controller.py",
-    "tests/test_external_motor_script_bootstrap.py",
-    "tests/test_redact.py",
-    "tests/test_event_bus_hygiene.py",
-    "tests/test_check_skill_collisions.py",
-    "tests/test_manager_review_bridge.py",
-    "tests/test_guard_paths.py",
-    "tests/unit/test_work_plan_schema.py",
-    "tests/unit/test_run_gates_dispatch.py",
-    "tests/unit/test_run_pytest_safe.py",
-    "tests/unit/test_no_legacy_topology_terms.py",
-    "tests/unit/test_check_deliverables_exist.py",
-    "tests/unit/test_configuration_loading.py",
-    "tests/unit/test_review_strategy_selection.py",
-    "tests/unit/test_pip_audit_policy.py",
-    "tests/unit/test_check_ruff_hook_scope.py",
-    "tests/unit/test_install_agent_system.py",
-    "tests/unit/test_review_budget_retry.py",
-    "tests/unit/test_bus_utils.py",
-    "tests/unit/test_archive_execution_log.py",
-    "tests/unit/test_archive_collaboration_artifacts.py",
-    "tests/unit/test_no_history_truncation.py",
-    "tests/unit/test_bus_emission_on_mark_ready.py",
-    "tests/unit/test_feedback_split.py",
-    "tests/unit/test_migrated_ticket_patterns.py",
-    "tests/unit/test_no_inline_ticket_regex.py",
-    "tests/unit/test_local_audit_parsers.py",
-    "tests/unit/test_decision_artifact.py",
-    "tests/unit/test_decision_parser.py",
+    "tests",
     "-q",
     "-p",
     "no:cacheprovider",
 ]
 
 LEVEL_CHOICES = {"unit", "integration", "all"}
-DEFAULT_ARGS_MODE = "default_allowlist"
+DEFAULT_ARGS_MODE = "default_discovery"
 EXPLICIT_ARGS_MODE = "explicit_args"
 
 
@@ -401,17 +371,17 @@ def pytest_args_mode(raw_args: list[str]) -> str:
     return EXPLICIT_ARGS_MODE if strip_pytest_separator(raw_args) else DEFAULT_ARGS_MODE
 
 
-def default_test_file_count() -> int:
-    return sum(1 for arg in DEFAULT_PYTEST_ARGS if arg.endswith(".py"))
+def default_test_target() -> str:
+    return "tests/"
 
 
-def print_default_allowlist_notice(args_mode: str) -> None:
+def print_default_discovery_notice(args_mode: str) -> None:
     if args_mode != DEFAULT_ARGS_MODE:
         return
     print(
-        "[pytest-safe] Mode: default allowlist "
-        f"({default_test_file_count()} test files). "
-        "Pass explicit args after -- for discovery, e.g. -- tests."
+        "[pytest-safe] Mode: default discovery "
+        f"({default_test_target()}, excluding deprecated/debug/sandbox via pytest.ini). "
+        "Pass explicit args after -- to narrow scope, e.g. -- tests/unit."
     )
 
 
@@ -498,7 +468,7 @@ def main() -> int:
         "lock": lock,
         "level": args.level,
         "args_mode": args_mode,
-        "default_allowlist_files": default_test_file_count()
+        "default_discovery_target": default_test_target()
         if args_mode == DEFAULT_ARGS_MODE
         else None,
         "pytest_args": pytest_args,
@@ -511,7 +481,7 @@ def main() -> int:
 
     try:
         if args.dry_run:
-            print_default_allowlist_notice(args_mode)
+            print_default_discovery_notice(args_mode)
             print("Comando pytest:")
             print(" ".join(command))
             summary["status"] = "dry-run"
@@ -521,7 +491,7 @@ def main() -> int:
         print(f"[pytest-safe] Proyecto: {PROJECT_ROOT}")
         print(f"[pytest-safe] Lock: {LOCK_FILE}")
         print(f"[pytest-safe] Temp: {run_dir}")
-        print_default_allowlist_notice(args_mode)
+        print_default_discovery_notice(args_mode)
         print(f"[pytest-safe] Ejecutando: {' '.join(command)}")
         state_snapshot = snapshot_canonical_state()
         exit_code = stream_pytest(command)

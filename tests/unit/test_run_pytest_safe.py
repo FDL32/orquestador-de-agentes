@@ -19,15 +19,15 @@ def load_runner_module():
     return module
 
 
-def test_default_args_are_reported_as_allowlist() -> None:
+def test_default_args_are_reported_as_default_discovery() -> None:
     runner = load_runner_module()
 
     assert runner.pytest_args_mode([]) == runner.DEFAULT_ARGS_MODE
     assert runner.pytest_args_mode(["--"]) == runner.DEFAULT_ARGS_MODE
-    assert runner.default_test_file_count() > 0
+    assert runner.default_test_target() == "tests/"
 
 
-def test_explicit_args_are_not_reported_as_default_allowlist() -> None:
+def test_explicit_args_are_not_reported_as_default_discovery() -> None:
     runner = load_runner_module()
 
     assert runner.pytest_args_mode(["--", "tests"]) == runner.EXPLICIT_ARGS_MODE

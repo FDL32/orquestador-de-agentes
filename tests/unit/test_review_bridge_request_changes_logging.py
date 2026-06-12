@@ -6,6 +6,7 @@ to stderr without changing the transition semantics.
 
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -19,6 +20,23 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 class TestReviewBridgeRequestChangesLogging:
     """Test that the bridge logs failed --request-changes calls to stderr."""
+
+    @staticmethod
+    def _structured_changes_output() -> str:
+        return textwrap.dedent(
+            """\
+            ## SUMMARY
+            Builder must address the blocking finding.
+
+            ## BLOCKERS
+            - bus/review_bridge.py:1 fix the failing path
+
+            ## SUGGESTIONS
+            - none
+
+            DECISION: CHANGES
+            """
+        )
 
     @pytest.fixture
     def mock_event_bus(self):
@@ -76,9 +94,14 @@ class TestReviewBridgeRequestChangesLogging:
             patch.object(bridge, "_build_review_prompt", return_value="prompt"),
             patch.object(bridge, "_get_manager_backend", return_value="opencode"),
             patch.object(
+                review_bridge,
+                "load_decision_artifact",
+                return_value=(review_bridge.ReviewDecision.CHANGES, "artifact"),
+            ),
+            patch.object(
                 bridge,
                 "_run_opencode_review",
-                return_value=("DECISION: CHANGES\n", "", 0),
+                return_value=(self._structured_changes_output(), "", 0),
             ),
             patch.object(bridge, "_count_prior_changes_from_bus", return_value=0),
             patch.object(review_bridge.subprocess, "run", return_value=mock_result),
@@ -123,9 +146,14 @@ class TestReviewBridgeRequestChangesLogging:
             patch.object(bridge, "_build_review_prompt", return_value="prompt"),
             patch.object(bridge, "_get_manager_backend", return_value="opencode"),
             patch.object(
+                review_bridge,
+                "load_decision_artifact",
+                return_value=(review_bridge.ReviewDecision.CHANGES, "artifact"),
+            ),
+            patch.object(
                 bridge,
                 "_run_opencode_review",
-                return_value=("DECISION: CHANGES\n", "", 0),
+                return_value=(self._structured_changes_output(), "", 0),
             ),
             patch.object(bridge, "_count_prior_changes_from_bus", return_value=0),
             patch.object(review_bridge.subprocess, "run", return_value=mock_result),

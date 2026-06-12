@@ -45,6 +45,9 @@ if str(_MOTOR_ROOT_BOOTSTRAP) not in sys.path:
 
 from bus.ticket_id import TICKET_ID_PATTERN  # noqa: E402
 from scripts.closeout_steps.archival import (  # noqa: E402
+    _can_prove_close as _archival_can_prove_close,
+    _extract_ticket_id_from_feedback as _archival_extract_ticket_id_from_feedback,
+    _find_manager_feedback_files as _archival_find_manager_feedback_files,
     step_archive_collaboration as _step_archive_collaboration_impl,
     step_archive_event_bus as _step_archive_event_bus_impl,
     step_archive_execution_log as _step_archive_execution_log_impl,
@@ -462,6 +465,27 @@ def _step_rotate_review_queue(project_root: Path, dry_run: bool) -> StepResult:
         size_warn_threshold=SIZE_WARN_THRESHOLD,
         step_result_cls=StepResult,
         supervisor_lock_rel=SUPERVISOR_LOCK_REL,
+    )
+
+
+def _can_prove_close(
+    ticket_id: str,
+    events: list[dict[str, Any]],
+) -> bool:
+    """Compatibility wrapper for manager feedback archival tests/helpers."""
+    return _archival_can_prove_close(ticket_id, events)
+
+
+def _find_manager_feedback_files(collaboration_dir: Path) -> list[Path]:
+    """Compatibility wrapper for manager feedback file discovery."""
+    return _archival_find_manager_feedback_files(collaboration_dir)
+
+
+def _extract_ticket_id_from_feedback(filename: str) -> str | None:
+    """Compatibility wrapper for manager feedback ticket parsing."""
+    return _archival_extract_ticket_id_from_feedback(
+        filename,
+        ticket_id_pattern=TICKET_ID_PATTERN,
     )
 
 

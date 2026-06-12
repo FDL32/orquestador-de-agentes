@@ -30,14 +30,32 @@ Design:
     - Safe: never raises on missing/corrupted files; returns empty strings.
 """
 
-from __future__ import annotations
-
+import importlib
 import json
 import re
+import sys
+import types
 from pathlib import Path
 from typing import Any
 
-from runtime.project_root import get_agent_dir
+
+_PROJECT_ROOT_BOOTSTRAP = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT_BOOTSTRAP) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT_BOOTSTRAP))
+
+_RUNTIME_PACKAGE_ROOT = str(_PROJECT_ROOT_BOOTSTRAP / "runtime")
+_runtime_pkg = sys.modules.get("runtime")
+if _runtime_pkg is None:
+    _runtime_pkg = types.ModuleType("runtime")
+    _runtime_pkg.__path__ = [_RUNTIME_PACKAGE_ROOT]
+    sys.modules["runtime"] = _runtime_pkg
+else:
+    runtime_paths = list(getattr(_runtime_pkg, "__path__", []))
+    if _RUNTIME_PACKAGE_ROOT not in runtime_paths:
+        runtime_paths.insert(0, _RUNTIME_PACKAGE_ROOT)
+        _runtime_pkg.__path__ = runtime_paths
+
+get_agent_dir = importlib.import_module("runtime.project_root").get_agent_dir
 
 
 # Default max observations when falling back to raw L1.
