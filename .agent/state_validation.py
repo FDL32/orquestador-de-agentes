@@ -24,6 +24,7 @@ VALID_PLAN_STATES = {
     "IN_REVIEW",
     "COMPLETED",
     "N/A",
+    "READY_TO_START",
 }
 VALID_LOG_STATES = {
     "PENDING",
@@ -36,6 +37,7 @@ VALID_LOG_STATES = {
     "READY_TO_CLOSE",
     "COMPLETED",
     "N/A",
+    "READY_TO_START",
 }
 
 
@@ -79,6 +81,23 @@ def extract_status_emoji(status_str: str) -> tuple[str, str]:
             status_clean = status_clean.replace(emoji, "").strip()
             break
     return status_clean, found_emoji
+
+
+def is_seed_neutral_state(plan_content: str, log_content: str) -> bool:
+    """Return True when the motor collaboration seed has no active ticket.
+
+    The portable motor ships a neutral seed under ``repo_motor/.agent/collaboration/``.
+    That seed is documented as ``ID=none`` with ``READY_TO_START`` projections and
+    must validate cleanly even though no ticket/bus lifecycle exists yet.
+    """
+    plan_id = get_plan_id(plan_content).strip().lower()
+    plan_status, _ = extract_status_emoji(get_status(plan_content, "**Estado:**"))
+    log_status, _ = extract_status_emoji(get_status(log_content, "**Estado:**"))
+    return (
+        plan_id == "none"
+        and plan_status == "READY_TO_START"
+        and log_status == "READY_TO_START"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +158,9 @@ def validate_cross_file_consistency(plan_content: str, log_content: str) -> list
     """Detect impossible plan/log state combinations (drift)."""
     errors: list[str] = []
     if not plan_content or not log_content:
+        return errors
+
+    if is_seed_neutral_state(plan_content, log_content):
         return errors
 
     plan_status_raw = get_status(plan_content, "**Estado:**")

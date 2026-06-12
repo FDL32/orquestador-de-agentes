@@ -1,6 +1,6 @@
 # TURNO ACTUAL
 
-**Ultima actualizacion:** 2026-06-10 08:33:26
+**Ultima actualizacion:** 2026-06-12 18:05:00
 
 ---
 
@@ -9,15 +9,15 @@
 | Campo | Valor |
 |-------|-------|
 | **ROL** | **MANAGER** |
-| **Plan ID** | WT-2026-236a |
-| **Tipo** | IMPLEMENT |
-| **Accion** | REVIEW_WORK |
+| **Plan ID** | none |
+| **Tipo** | SEED |
+| **Accion** | WAIT |
 
 ---
 
 ## Instruccion
 
-> Builder completo WT-2026-236a. Revisa el trabajo.
+> Seed neutro del motor. No hay ticket activo en `repo_motor`.
 
 ---
 
@@ -25,9 +25,9 @@
 
 | Archivo | Estado |
 |---------|--------|
-| work_plan.md | APPROVED |
-| execution_log.md | READY_FOR_REVIEW |
+| work_plan.md | READY_TO_START |
+| execution_log.md | READY_TO_START |
 
 ---
 
-*Preparado documentalmente para WT-2026-236a*
+*Preparado como seed neutro para nuevos destinos*

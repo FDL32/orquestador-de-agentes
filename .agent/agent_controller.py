@@ -4615,55 +4615,62 @@ def _handle_validate(json_output: bool) -> int:  # noqa: C901
     warnings = {}
 
     plan_content = read_file(WORK_PLAN)
+    log_content = read_file(EXEC_LOG)
+    seed_neutral = state_validation.is_seed_neutral_state(plan_content, log_content)
     for file_key, warns in _collect_deliverable_type_warnings(plan_content).items():
         warnings.setdefault(file_key, []).extend(warns)
 
-    log_content = read_file(EXEC_LOG)
     log_status = get_status(log_content, "**Estado:**")
 
     # WP-2026-162: Ticket prose validation
-    try:
-        from scripts.validate_ticket_prose import validate_ticket_prose
+    if not seed_neutral:
+        try:
+            from scripts.validate_ticket_prose import validate_ticket_prose
 
-        prose_result = validate_ticket_prose(WORK_PLAN, get_collab_dir())
-        if prose_result["warnings"]:
-            # Convert ProseWarning dicts to strings for consistent warning format
-            prose_warnings = [
-                f"[{w['rule_id']}] {w['rule_name']}: {w['suggestion']}"
-                for w in prose_result["warnings"]
-            ]
-            warnings.setdefault("ticket_prose", []).extend(prose_warnings)
-    except ImportError:
-        pass  # Gracefully degrade if validator not available
+            prose_result = validate_ticket_prose(WORK_PLAN, get_collab_dir())
+            if prose_result["warnings"]:
+                # Convert ProseWarning dicts to strings for consistent warning format
+                prose_warnings = [
+                    f"[{w['rule_id']}] {w['rule_name']}: {w['suggestion']}"
+                    for w in prose_result["warnings"]
+                ]
+                warnings.setdefault("ticket_prose", []).extend(prose_warnings)
+        except ImportError:
+            pass  # Gracefully degrade if validator not available
 
     # Check scope violations
-    scope_errors, scope_warnings = _check_scope_for_validate(plan_content, log_status)
-    if scope_errors:
-        errors.setdefault("scope", []).extend(scope_errors)
-    if scope_warnings:
-        warnings.setdefault("scope", []).extend(scope_warnings)
+    if not seed_neutral:
+        scope_errors, scope_warnings = _check_scope_for_validate(
+            plan_content, log_status
+        )
+        if scope_errors:
+            errors.setdefault("scope", []).extend(scope_errors)
+        if scope_warnings:
+            warnings.setdefault("scope", []).extend(scope_warnings)
 
     # Check bus drift - heal first, then report any residual
-    try:
-        from scripts.state_projection_sync import sync_state_projection
+    if not seed_neutral:
+        try:
+            from scripts.state_projection_sync import sync_state_projection
 
-        sync_state_projection(
-            runtime_dir=get_runtime_dir() / "events",
-            collaboration_dir=get_collab_dir(),
-            ticket_id=get_plan_id(plan_content),
-        )
-    except Exception:  # noqa: S110 - sync is best-effort and must not block validate
-        pass
-    drift_warnings = _check_bus_drift(plan_content, log_status)
-    if drift_warnings:
-        warnings.setdefault("bus_drift", []).extend(drift_warnings)
+            sync_state_projection(
+                runtime_dir=get_runtime_dir() / "events",
+                collaboration_dir=get_collab_dir(),
+                ticket_id=get_plan_id(plan_content),
+            )
+        except Exception:  # noqa: S110 - sync is best-effort and must not block validate
+            pass
+        drift_warnings = _check_bus_drift(plan_content, log_status)
+        if drift_warnings:
+            warnings.setdefault("bus_drift", []).extend(drift_warnings)
 
     # Check invariants (pre and post-closure)
-    invariant_result = _check_invariants(plan_content, log_content, log_status)
-    if invariant_result["errors"]:
-        errors.setdefault("invariants", []).extend(invariant_result["errors"])
-    if invariant_result["warnings"]:
-        warnings.setdefault("invariants", []).extend(invariant_result["warnings"])
+    if not seed_neutral:
+        invariant_result = _check_invariants(plan_content, log_content, log_status)
+        if invariant_result["errors"]:
+            errors.setdefault("invariants", []).extend(invariant_result["errors"])
+        if invariant_result["warnings"]:
+            warnings.setdefault("invariants", []).extend(invariant_result["warnings"])
 
     total_errors = sum(len(errs) for errs in errors.values())
     total_warnings = sum(len(warns) for warns in warnings.values())
