@@ -290,6 +290,38 @@ class TestRecallObservations:
             result = recall_observations()
         assert result == []
 
+    def test_query_finds_old_observations_beyond_recent_window(
+        self, tmp_path: Path
+    ) -> None:
+        """Barrier: keyword recall must scan the FULL file, not a recent window.
+
+        Previous behavior read only limit*2 recent entries before filtering,
+        so a query matching only an old observation returned empty. This test
+        would fail under that window-then-filter implementation.
+        """
+        old_match = {
+            "signal": "ancient unique-needle finding",
+            "topic": "archaeology",
+            "timestamp": "2026-01-01T10:00:00Z",
+            "source": "audit",
+        }
+        recent_noise = [
+            {
+                "signal": f"recent noise {i}",
+                "topic": "noise",
+                "timestamp": f"2026-05-{(i % 28) + 1:02d}T10:00:00Z",
+                "source": "builder",
+            }
+            for i in range(20)
+        ]
+        # Oldest first in the file; the match is the very first line.
+        mem_dir = _make_memory_files(tmp_path, observations=[old_match, *recent_noise])
+        with patch("bus.memory_loader._get_memory_dir", return_value=mem_dir):
+            # limit=3 -> old window was 6 entries; the needle is 21 entries deep.
+            result = recall_observations(query="unique-needle", limit=3)
+        assert len(result) == 1
+        assert result[0]["signal"] == "ancient unique-needle finding"
+
 
 # =============================================================================
 # Tests for get_memory_tier_status

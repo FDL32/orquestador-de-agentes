@@ -97,6 +97,7 @@ def _read_observations(limit: int = _L1_FALLBACK_LIMIT) -> list[dict[str, Any]]:
     During: Parses JSONL lines, keeping only valid dict entries.
             Reads from the end of the file to get the most recent entries.
     After: Returns a list of up to ``limit`` observation dicts, newest first.
+           ``limit <= 0`` means unlimited (the whole file).
     """
     obs_file = _get_observations_file()
     if not obs_file.exists():
@@ -118,7 +119,8 @@ def _read_observations(limit: int = _L1_FALLBACK_LIMIT) -> list[dict[str, Any]]:
             entry = json.loads(line)
             if isinstance(entry, dict):
                 observations.append(entry)
-                if len(observations) >= limit:
+                # limit <= 0 means unlimited (read the whole file)
+                if limit > 0 and len(observations) >= limit:
                     break
         except json.JSONDecodeError:
             continue
@@ -296,9 +298,11 @@ def recall_observations(
     During: Reads observations, optionally filters by keyword match on signal.
     After: Returns a list of matching observation dicts (newest first), or empty list.
     """
-    observations = _read_observations(limit=limit * 2)  # Read extra for filtering room
-
     if query:
+        # Filter over the FULL file, then truncate. Reading only a recent
+        # window first (the previous behavior) made queries blind to older
+        # observations even though they exist in L1.
+        observations = _read_observations(limit=0)
         query_lower = query.lower()
         filtered = []
         for obs in observations:
@@ -309,7 +313,7 @@ def recall_observations(
                 filtered.append(obs)
         return filtered[:limit]
 
-    return observations[:limit]
+    return _read_observations(limit=limit)
 
 
 def get_memory_tier_status() -> dict[str, bool]:
