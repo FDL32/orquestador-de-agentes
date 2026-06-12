@@ -47,6 +47,7 @@ for _path in (str(_AGENT_DIR), str(_PROJECT_ROOT_DERIVED)):
 # WP-2026-122: Import project_root module for dynamic path resolution
 # Entry points set AGENT_PROJECT_ROOT env var after parsing --project-root
 # Import AFTER sys.path setup to ensure runtime/ is importable
+import closure_invariants  # noqa: E402 - sibling module in .agent/
 from bus.ticket_id import extract_all_ticket_ids  # noqa: E402
 from runtime.project_root import (  # noqa: E402
     get_agent_dir,
@@ -4352,161 +4353,70 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
     return 0
 
 
+# ── Closure invariants ───────────────────────────────────────────────────
+# Bodies extracted to .agent/closure_invariants.py (monolith decomposition).
+# These wrappers keep the module-global seams (BUS_AVAILABLE, event_bus,
+# _read_circuit_breaker, _read_builder_lock) that tests monkeypatch.
+
+
 def _check_bus_drift(plan_content: str, log_status: str) -> list[str]:
     """Check for drift between Markdown state and bus events."""
-    warnings = []
     if not BUS_AVAILABLE or not event_bus:
-        warnings.append("Event bus not available for drift detection")
-        return warnings
-
+        return ["Event bus not available for drift detection"]
     plan_id = get_plan_id(plan_content)
     if not plan_id or plan_id == "N/A":
-        warnings.append("No active ticket found for bus drift check")
-        return warnings
-
-    latest_state_event = event_bus.latest_event(
-        ticket_id=plan_id, event_type="STATE_CHANGED"
-    )
-    if latest_state_event:
-        bus_state = latest_state_event.payload.get(
-            "to_state"
-        ) or latest_state_event.payload.get("state")
-        if bus_state != log_status:
-            warnings.append(
-                f"Drift detected: Markdown state='{log_status}' vs Bus state='{bus_state}' for ticket {plan_id}"
-            )
-    else:
-        warnings.append(f"No STATE_CHANGED event found in bus for ticket {plan_id}")
-
-    return warnings
+        return ["No active ticket found for bus drift check"]
+    return closure_invariants.check_bus_drift(event_bus, plan_id, log_status)
 
 
 def _check_pre_closure_invariants(plan_id: str) -> list[str]:
     """Check pre-closure invariants (IN_PROGRESS, APPROVED, PENDING)."""
-    result = []
-    # Check: no BUILDER_EXIT should exist before close
     if not BUS_AVAILABLE or not event_bus:
-        return result
-    builder_exit = event_bus.latest_event(ticket_id=plan_id, event_type="BUILDER_EXIT")
-    if builder_exit:
-        result.append(
-            "BUILDER_EXIT exists but ticket not in READY_FOR_REVIEW/COMPLETED"
-        )
-    return result
+        return []
+    return closure_invariants.check_pre_closure_invariants(event_bus, plan_id)
 
 
 def _check_post_closure_built_exit(
     plan_id: str, log_status: str
 ) -> tuple[list[str], list[str]]:
     """Check BUILDER_EXIT invariant. Returns (errors, warnings)."""
-    errors, warnings = [], []
     if not BUS_AVAILABLE or not event_bus:
-        return errors, warnings
-
-    builder_exit = event_bus.latest_event(ticket_id=plan_id, event_type="BUILDER_EXIT")
-    if not builder_exit:
-        errors.append(
-            f"INVARIANT: Missing BUILDER_EXIT event for ticket {plan_id} in state {log_status}"
-        )
-    else:
-        # ticket_id is at event level, exit_reason and completion_summary are in payload
-        payload = builder_exit.payload
-        if not builder_exit.ticket_id:
-            errors.append(f"INVARIANT: BUILDER_EXIT missing ticket_id for {plan_id}")
-        if not payload.get("exit_reason"):
-            errors.append(
-                f"INVARIANT: BUILDER_EXIT missing required field exit_reason for {plan_id}"
-            )
-        if not payload.get("completion_summary"):
-            warnings.append(f"BUILDER_EXIT missing completion_summary for {plan_id}")
-    return errors, warnings
+        return [], []
+    return closure_invariants.check_post_closure_built_exit(
+        event_bus, plan_id, log_status
+    )
 
 
 def _check_post_closure_breaker(log_status: str) -> list[str]:
     """Check circuit breaker invariant. Returns errors."""
-    errors = []
-    breaker = _read_circuit_breaker()
-    if breaker.get("state") == "OPEN" and log_status == "READY_FOR_REVIEW":
-        errors.append("INVARIANT: Circuit breaker OPEN but ticket in READY_FOR_REVIEW")
-    return errors
+    return closure_invariants.check_post_closure_breaker(
+        _read_circuit_breaker(), log_status
+    )
 
 
 def _check_post_closure_lock(plan_id: str, log_status: str) -> list[str]:
     """Check builder lock invariant. Returns warnings."""
-    warnings = []
-    lock = _read_builder_lock()
-    if lock and lock.get("ticket_id") == plan_id and log_status == "COMPLETED":
-        warnings.append(f"Builder lock still held for completed ticket {plan_id}")
-    return warnings
+    return closure_invariants.check_post_closure_lock(
+        _read_builder_lock(), plan_id, log_status
+    )
 
 
 def _check_post_closure_state_changed(
     plan_id: str, log_status: str
 ) -> tuple[list[str], list[str]]:
     """Check STATE_CHANGED invariant. Returns (errors, warnings)."""
-    errors, warnings = [], []
     if not BUS_AVAILABLE or not event_bus:
-        return errors, warnings
-
-    state_event = event_bus.latest_event(ticket_id=plan_id, event_type="STATE_CHANGED")
-    if not state_event:
-        errors.append(f"INVARIANT: Missing STATE_CHANGED event for ticket {plan_id}")
-    else:
-        bus_state = state_event.payload.get("to_state")
-        if bus_state and bus_state != log_status:
-            warnings.append(
-                f"STATE_CHANGED to_state='{bus_state}' differs from log_status='{log_status}'"
-            )
-    return errors, warnings
+        return [], []
+    return closure_invariants.check_post_closure_state_changed(
+        event_bus, plan_id, log_status
+    )
 
 
 def _check_builder_exit_order(plan_id: str) -> list[str]:
-    """
-    Check that BUILDER_EXIT comes before STATE_CHANGED READY_FOR_REVIEW in sequence.
-    Returns warnings list (not errors, to avoid invalidating historical tickets).
-
-    This function checks the COMPLETE sequence of events, not just the latest.
-    For each STATE_CHANGED -> READY_FOR_REVIEW, there must be a BUILDER_EXIT
-    with a lower sequence number.
-    """
-    warnings = []
+    """BUILDER_EXIT must precede STATE_CHANGED READY_FOR_REVIEW (warnings)."""
     if not BUS_AVAILABLE or not event_bus:
-        return warnings
-
-    # Get all BUILDER_EXIT events for this ticket
-    builder_exits = event_bus.read_events(ticket_id=plan_id, event_type="BUILDER_EXIT")
-    if not builder_exits:
-        # No BUILDER_EXIT yet - invariant doesn't apply
-        return warnings
-
-    # Get all STATE_CHANGED events for this ticket with to_state=READY_FOR_REVIEW
-    state_events = event_bus.read_events(ticket_id=plan_id, event_type="STATE_CHANGED")
-    ready_for_review_events = [
-        e for e in state_events if e.payload.get("to_state") == "READY_FOR_REVIEW"
-    ]
-
-    if not ready_for_review_events:
-        # No STATE_CHANGED READY_FOR_REVIEW yet - invariant doesn't apply
-        return warnings
-
-    # Check order: for EACH STATE_CHANGED READY_FOR_REVIEW, there must be a
-    # BUILDER_EXIT with a lower sequence number.
-    # This detects inversions at any point in the sequence, not just the latest.
-    for ready_event in ready_for_review_events:
-        # Find if there's any BUILDER_EXIT before this STATE_CHANGED
-        has_prior_exit = any(
-            exit_event.sequence_number < ready_event.sequence_number
-            for exit_event in builder_exits
-        )
-
-        if not has_prior_exit:
-            warnings.append(
-                f"ORDER INVARIANT: STATE_CHANGED READY_FOR_REVIEW (seq={ready_event.sequence_number}) "
-                f"has no prior BUILDER_EXIT for ticket {plan_id}. "
-                f"BUILDER_EXIT should be emitted before STATE_CHANGED READY_FOR_REVIEW."
-            )
-
-    return warnings
+        return []
+    return closure_invariants.check_builder_exit_order(event_bus, plan_id)
 
 
 def _check_post_closure_invariants(plan_id: str, log_status: str) -> dict:
