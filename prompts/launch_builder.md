@@ -99,6 +99,7 @@ Ejecuta y registra salida real en `execution_log.md`:
 ```powershell
 python -m pytest {{TEST_FILES}} -v
 ruff check {{PYTHON_FILES_TOUCHED}}
+uv run ruff format --check {{PYTHON_FILES_TOUCHED}}
 python .agent/agent_controller.py --validate --json --project-root <repo_destino>
 ```
 
@@ -157,6 +158,7 @@ aportar diff, commit o evidencia nueva.
 - `validate --json` devuelve 0 errores y 0 warnings.
 - Los tests focales del ticket pasan.
 - `ruff check` pasa sobre los archivos Python tocados.
+- `uv run ruff format --check` pasa sobre los archivos Python tocados.
 - `pip-audit` pasa cuando aplica por tier o scope.
 - `{{CRITERIOS_ESPECIFICOS_DEL_TICKET}}`
 - El fix no introduce gates paralelos ni relaja gates existentes fuera de
@@ -178,6 +180,7 @@ aproximados ni recordados — copia los numeros de la salida de los comandos):
 ### Gates (comando exacto + resultado literal)
 - Tests: `python scripts/run_pytest_safe.py` -> <linea final literal, p.ej. "642 passed in 57s">
 - Ruff: `uv run ruff check <paths>` -> <salida literal>
+- Ruff format: `uv run ruff format --check <paths>` -> <salida literal>
 - State-leak: <silencioso | STATE LEAK detectado>
 
 ### Criterios binarios del ticket

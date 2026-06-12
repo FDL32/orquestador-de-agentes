@@ -87,6 +87,7 @@ python scripts/run_pytest_safe.py -- tests/test_[modulo].py -v
 
 # Verificar linting
 ruff check src/[archivo].py
+uv run ruff format --check src/[archivo].py
 ```
 
 **Si falla:** Corregir antes de continuar.
@@ -100,7 +101,7 @@ Antes de documentar la tarea como completada, ejecuta el skill `bui-self-audit`.
 1. Protocolo "ya existia" con cita de linea
 2. Completitud multi-archivo
 3. Checklist anti-regresion para ISS/code smell
-4. Gate completo ruff + pytest
+4. Gate completo ruff check + ruff format --check + pytest
 
 **Solo si `bui-self-audit` pasa completamente, continua al Paso 7.**
 
@@ -140,8 +141,9 @@ En `work_plan.md`:
 Si todas las tareas de la fase estan `[x]`:
 
 1. Ejecutar **Quality Gates completos**
-2. Si pasan -> Continuar con siguiente fase
-3. Si fallan -> Corregir antes de continuar
+2. Incluir `uv run ruff format --check` sobre los archivos Python tocados
+3. Si pasan -> Continuar con siguiente fase
+4. Si fallan -> Corregir antes de continuar
 
 ### Paso 10: Cierre Canonico (solo al completar el plan entero)
 
