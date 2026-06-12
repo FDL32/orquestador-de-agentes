@@ -8,6 +8,9 @@ Objectives:
 - limpiar residuos conocidos antes y despues del run
 - dejar log del ultimo run para diagnostico
 
+By default this runner executes a curated allowlist of stable test files.
+Pass explicit pytest args (for example ``-- tests``) to run discovery.
+
 WP-2026-122: Uses runtime.project_root for dynamic project root resolution.
 """
 
@@ -80,6 +83,7 @@ DEFAULT_PYTEST_ARGS = [
     "tests/test_guard_paths.py",
     "tests/unit/test_work_plan_schema.py",
     "tests/unit/test_run_gates_dispatch.py",
+    "tests/unit/test_run_pytest_safe.py",
     "tests/unit/test_check_deliverables_exist.py",
     "tests/unit/test_configuration_loading.py",
     "tests/unit/test_review_strategy_selection.py",
@@ -104,6 +108,8 @@ DEFAULT_PYTEST_ARGS = [
 ]
 
 LEVEL_CHOICES = {"unit", "integration", "all"}
+DEFAULT_ARGS_MODE = "default_allowlist"
+EXPLICIT_ARGS_MODE = "explicit_args"
 
 
 def iso_now() -> str:
@@ -382,10 +388,33 @@ def has_marker_arg(args: list[str]) -> bool:
     )
 
 
-def normalize_pytest_args(raw_args: list[str], level: str) -> list[str]:
+def strip_pytest_separator(raw_args: list[str]) -> list[str]:
     args = list(raw_args)
     if args and args[0] == "--":
         args = args[1:]
+    return args
+
+
+def pytest_args_mode(raw_args: list[str]) -> str:
+    return EXPLICIT_ARGS_MODE if strip_pytest_separator(raw_args) else DEFAULT_ARGS_MODE
+
+
+def default_test_file_count() -> int:
+    return sum(1 for arg in DEFAULT_PYTEST_ARGS if arg.endswith(".py"))
+
+
+def print_default_allowlist_notice(args_mode: str) -> None:
+    if args_mode != DEFAULT_ARGS_MODE:
+        return
+    print(
+        "[pytest-safe] Mode: default allowlist "
+        f"({default_test_file_count()} test files). "
+        "Pass explicit args after -- for discovery, e.g. -- tests."
+    )
+
+
+def normalize_pytest_args(raw_args: list[str], level: str) -> list[str]:
+    args = strip_pytest_separator(raw_args)
     args = args or list(DEFAULT_PYTEST_ARGS)
 
     if not has_marker_arg(args):
@@ -458,6 +487,7 @@ def main() -> int:
 
     lock = acquire_lock(force_unlock=args.force_unlock)
     run_dir = make_run_dir()
+    args_mode = pytest_args_mode(args.pytest_args)
     pytest_args = normalize_pytest_args(args.pytest_args, args.level)
     command = [sys.executable, "-m", "pytest", *pytest_args, f"--basetemp={run_dir}"]
 
@@ -465,6 +495,10 @@ def main() -> int:
         "started_at": iso_now(),
         "lock": lock,
         "level": args.level,
+        "args_mode": args_mode,
+        "default_allowlist_files": default_test_file_count()
+        if args_mode == DEFAULT_ARGS_MODE
+        else None,
         "pytest_args": pytest_args,
         "command": command,
         "cleanup_before": cleanup,
@@ -475,6 +509,7 @@ def main() -> int:
 
     try:
         if args.dry_run:
+            print_default_allowlist_notice(args_mode)
             print("Comando pytest:")
             print(" ".join(command))
             summary["status"] = "dry-run"
@@ -484,6 +519,7 @@ def main() -> int:
         print(f"[pytest-safe] Proyecto: {PROJECT_ROOT}")
         print(f"[pytest-safe] Lock: {LOCK_FILE}")
         print(f"[pytest-safe] Temp: {run_dir}")
+        print_default_allowlist_notice(args_mode)
         print(f"[pytest-safe] Ejecutando: {' '.join(command)}")
         state_snapshot = snapshot_canonical_state()
         exit_code = stream_pytest(command)

@@ -194,7 +194,9 @@ aproximados ni recordados — copia los numeros de la salida de los comandos):
 ```
 
 Reglas del informe:
-- Cifras de tests SOLO de `run_pytest_safe.py` (la suite canonica completa);
+- Cifras de tests SOLO de `run_pytest_safe.py` (suite canonica allowlist por defecto;
+  no la llames "suite completa" salvo que hayas pasado args explicitos de
+  descubrimiento, por ejemplo `-- tests`);
   no sumes conteos parciales de archivos sueltos.
 - No declares "pre-existente" ningun warning sin evidencia (`git stash` +
   re-ejecucion o referencia a commit anterior).
