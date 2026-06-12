@@ -2,8 +2,8 @@
 """Session Closeout Orchestrator - unified session close pipeline.
 
 Before (Pre-condiciones):
-    - El repositorio debe existir con la estructura .agent/ canónica.
-    - `events.jsonl` debe existir en `.agent/runtime/events/` (puede estar vacío).
+    - El repositorio debe existir con la estructura .agent/ canA3nica.
+    - `events.jsonl` debe existir en `.agent/runtime/events/` (puede estar vacAo).
     - `work_plan.md` debe existir en `.agent/collaboration/` como fallback de tickets.
     - Scripts orquestados (`prepush_check.py`, `local_audit.py`, etc.) deben existir
       en `scripts/` relativo a project_root.
@@ -29,10 +29,7 @@ After (Post-condiciones y Errores):
 from __future__ import annotations
 
 import argparse
-import json
-import os
 import re
-import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -41,77 +38,85 @@ from pathlib import Path
 from typing import Any
 
 
-# Bootstrap: repo_motor root must be importable when this file is executed by
 # absolute path while cwd points at repo_destino.
 _MOTOR_ROOT_BOOTSTRAP = Path(__file__).resolve().parent.parent
 if str(_MOTOR_ROOT_BOOTSTRAP) not in sys.path:
     sys.path.insert(0, str(_MOTOR_ROOT_BOOTSTRAP))
 
 from bus.ticket_id import TICKET_ID_PATTERN  # noqa: E402
+from scripts.closeout_steps.archival import (  # noqa: E402
+    step_archive_collaboration as _step_archive_collaboration_impl,
+    step_archive_event_bus as _step_archive_event_bus_impl,
+    step_archive_execution_log as _step_archive_execution_log_impl,
+    step_archive_manager_feedback as _step_archive_manager_feedback_impl,
+)
+from scripts.closeout_steps.gates import (  # noqa: E402
+    step_local_audit as _step_local_audit_impl,
+    step_manifest_check as _step_manifest_check_impl,
+    step_prepush_check as _step_prepush_check_impl,
+    step_validate_ticket_prose as _step_validate_ticket_prose_impl,
+)
+from scripts.closeout_steps.observations import (  # noqa: E402
+    step_memory_consolidate as _step_memory_consolidate_impl,
+    step_session_observations as _step_session_observations_impl,
+)
+from scripts.closeout_steps.rotation import (  # noqa: E402
+    is_lock_alive as _rotation_is_lock_alive,
+    parse_review_queue as _rotation_parse_review_queue,
+    step_cleanup_builder_session as _step_cleanup_builder_session_impl,
+    step_git_clean as _step_git_clean_impl,
+    step_rotate_review_queue as _step_rotate_review_queue_impl,
+)
+from scripts.closeout_steps.support import (  # noqa: E402
+    check_portability as _check_portability_impl,
+    check_versioned_filenames as _check_versioned_filenames_impl,
+    find_last_report_timestamp as _find_last_report_timestamp_impl,
+    generate_report as _generate_report_impl,
+    get_ticket_close_timestamps as _get_ticket_close_timestamps_impl,
+    parse_timestamp as _parse_timestamp_impl,
+    process_diagnostic as _process_diagnostic_impl,
+    read_events as _read_events_impl,
+    run_script as _run_script_impl,
+)
 
 
-# ---------------------------------------------------------------------------
 # Constants
-# ---------------------------------------------------------------------------
 
 TERMINAL_STATES = {"COMPLETED", "HUMAN_GATE"}
 
-# Lock files (relative to project_root)
 BUILDER_LOCK_REL = Path(".agent") / "runtime" / "builder_lock.txt"
 SUPERVISOR_LOCK_REL = Path(".agent") / "runtime" / "supervisor_lock.txt"
 
-# Review queue paths (relative to project_root)
 REVIEW_QUEUE_REL = Path(".agent") / "collaboration" / "review_queue.md"
 REVIEW_QUEUE_ARCHIVE_DIR_REL = Path(".agent") / "collaboration" / "archive"
 
-# Manager feedback paths (relative to project_root)
 MANAGER_FEEDBACK_ARCHIVE_DIR_REL = (
     Path(".agent") / "collaboration" / "archive" / "manager_feedback"
 )
 
-# Rotation constants
 KEEP_ENTRIES = 10
 SIZE_WARN_THRESHOLD = 50 * 1024  # 50 KB advisory threshold
 
-# Lock TTL (minutes) for liveness detection via mtime/started_at
 LOCK_TTL_MINUTES = 15
 
-# Directories to scan for absolute workspace paths (portability check)
 PORTABILITY_SCAN_DIRS = ("docs", "markdowns", "skills", ".agent/rules")
 
-# Additional specific entries to scan (files beyond the directories above)
 PORTABILITY_SCAN_EXTRA = ("README.md", "PROJECT.md")
 
-# Glob patterns to scan for hardcoded paths (combined with directories)
 PORTABILITY_SCAN_GLOBS = ("*.py", "*.ps1", "*.md", "MANIFEST*")
 
-# Report path (relative to project_root)
 REPORT_REL = Path(".agent") / "runtime" / "memory" / "session_close_report.md"
 DRY_RUN_REPORT_REL = Path(".agent") / "runtime" / "tmp" / "session_close_report.md"
 
-# Events file (relative to project_root)
 EVENTS_REL = Path(".agent") / "runtime" / "events" / "events.jsonl"
 
-# Work plan (relative to project_root)
 WORK_PLAN_REL = Path(".agent") / "collaboration" / "work_plan.md"
 
-# Scripts directory (relative to project_root)
 SCRIPTS_DIR = "scripts"
 
-# Ticket regex pattern — derived from canonical TICKET_ID_PATTERN (bus/ticket_id.py)
-# WT-2026-251a: extended from WP|WT-only to include 3-letter prefixes via TICKET_ID_PATTERN.
 TICKET_RE = re.compile(TICKET_ID_PATTERN)
 
-# Ticket ID in filename pattern (matches basenames of versioned files).
-# Accepts WT/WP (2-letter ticket prefixes), any 3-letter uppercase prefix (e.g. WOT),
-# AND the special "PLAN" file-naming prefix (not a ticket prefix — file convention only).
-# WT-2026-251a: extended [A-Z]{2,3} to replace the hard-coded WT|WP alternatives.
 TICKET_ID_FILENAME_RE = re.compile(r"(?i)(?:[A-Z]{2,3}|PLAN)[_-]\d{4}[_-]\d{3}[a-z]?")
-
-
-# ---------------------------------------------------------------------------
-# Data classes
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -146,44 +151,18 @@ class CloseoutReport:
         return "PASS"
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _run_script(
     script_name: str,
     args: list[str],
     project_root: Path,
     timeout: int = 120,
 ) -> subprocess.CompletedProcess[str]:
-    """Run a script from the scripts/ directory relative to project_root.
-
-    Before: script_name must be a filename in scripts/.
-    During: Resolves script path via motor_link (Model B) first; falls back to
-            local project_root/scripts/<name>. Constructs [sys.executable,
-            script_path, *args] and runs it with cwd=project_root,
-            capturing stdout/stderr as text.
-    After: Returns CompletedProcess. Caller handles exceptions.
-    """
-    try:
-        from runtime.motor_link import resolve_motor_script
-
-        motor_path = resolve_motor_script(project_root, script_name)
-        script_path = (
-            motor_path if motor_path else project_root / SCRIPTS_DIR / script_name
-        )
-    except ImportError:
-        script_path = project_root / SCRIPTS_DIR / script_name
-    cmd = [sys.executable, str(script_path), *args]
-    env = os.environ.copy()
-    env["AGENT_PROJECT_ROOT"] = str(project_root.resolve())
-    return subprocess.run(  # noqa: S603 - controlled script execution
-        cmd,
-        cwd=str(project_root),
-        env=env,
-        capture_output=True,
-        text=True,
+    """Run a script from the scripts/ directory relative to project_root."""
+    return _run_script_impl(
+        script_name,
+        args,
+        project_root,
+        scripts_dir=SCRIPTS_DIR,
         timeout=timeout,
     )
 
@@ -194,74 +173,22 @@ def _process_diagnostic(
     limit: int = 500,
 ) -> str:
     """Return actionable subprocess output, preferring stdout then stderr."""
-    output = (result.stdout or "").strip() or (result.stderr or "").strip()
-    return output[-limit:] if output else "No output"
+    return _process_diagnostic_impl(result, limit=limit)
 
 
 def _read_events(project_root: Path) -> list[dict[str, Any]]:
-    """Read all events from events.jsonl.
-
-    Before: events.jsonl may or may not exist.
-    During: Reads each line as JSON, skips malformed lines.
-    After: Returns list of event dicts sorted by sequence_number.
-    """
-    events_path = project_root / EVENTS_REL
-    if not events_path.exists():
-        return []
-    events: list[dict[str, Any]] = []
-    with open(events_path, encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                events.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-    events.sort(key=lambda e: e.get("sequence_number", 0))
-    return events
+    """Read all events from events.jsonl."""
+    return _read_events_impl(project_root, events_rel=EVENTS_REL)
 
 
 def _find_last_report_timestamp(project_root: Path) -> str | None:
-    """Find the timestamp from the most recent session_close_report.md.
-
-    Before: report may or may not exist in .agent/runtime/memory/.
-    During: Parses the '**Generated:**' line from the report.
-    After: Returns ISO timestamp string or None if no report found.
-    """
-    report_path = project_root / REPORT_REL
-    if not report_path.exists():
-        return None
-    try:
-        content = report_path.read_text(encoding="utf-8")
-    except OSError:
-        return None
-    # Match "**Generated:** 2026-05-27 00:00:00 UTC"
-    m = re.search(r"\*\*Generated:\*\*\s*(.+)", content)
-    if not m:
-        return None
-    return m.group(1).strip()
+    """Find the timestamp from the most recent session_close_report.md."""
+    return _find_last_report_timestamp_impl(project_root, report_rel=REPORT_REL)
 
 
 def _parse_timestamp(ts_str: str) -> datetime | None:
-    """Parse an ISO-ish timestamp string to datetime.
-
-    Before: ts_str is a non-empty string.
-    During: Tries multiple formats.
-    After: Returns datetime or None if unparseable.
-    """
-    for fmt in (
-        "%Y-%m-%d %H:%M:%S %Z",
-        "%Y-%m-%dT%H:%M:%S%z",
-        "%Y-%m-%dT%H:%M:%S.%f%z",
-        "%Y-%m-%dT%H:%M:%S",
-        "%Y-%m-%d %H:%M:%S",
-    ):
-        try:
-            return datetime.strptime(ts_str, fmt)
-        except ValueError:  # noqa: PERF203 - small fixed loop, no overhead concern
-            continue
-    return None
+    """Parse an ISO-ish timestamp string to datetime."""
+    return _parse_timestamp_impl(ts_str)
 
 
 def _resolve_session_window(
@@ -378,449 +305,74 @@ def _get_ticket_close_timestamps(
     events: list[dict[str, Any]],
     ticket_ids: list[str],
 ) -> dict[str, str]:
-    """Get the close timestamp for each ticket from STATE_CHANGED -> COMPLETED events.
-
-    Before: events is sorted by sequence_number.
-    During: Finds the latest STATE_CHANGED event with to_state=COMPLETED for each ticket.
-    After: Returns dict mapping ticket_id -> timestamp string.
-    """
-    close_ts: dict[str, str] = {}
-    for ev in events:
-        if ev.get("event_type") != "STATE_CHANGED":
-            continue
-        payload = ev.get("payload", {})
-        if payload.get("to_state") not in TERMINAL_STATES:
-            continue
-        tid = ev.get("ticket_id", "")
-        if tid in ticket_ids:
-            close_ts[tid] = ev.get("timestamp", "")
-    return close_ts
-
-
-# ---------------------------------------------------------------------------
-# Portability check
-# ---------------------------------------------------------------------------
-
-
-def _scan_file_for_absolute_paths(
-    file_path: Path, project_root: Path, home_str: str, root_str: str
-) -> list[str]:
-    """Scan a single file for absolute path references.
-
-    Before: file_path exists and is readable.
-    During: Reads file content, checks each line for home or project root paths.
-    After: Returns list of "rel_path:line_number" matches.
-    """
-    matches: list[str] = []
-    try:
-        content = file_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return matches
-    for i, line in enumerate(content.splitlines(), 1):
-        line_lower = line.replace("\\", "/").lower()
-        if home_str in line_lower or root_str in line_lower:
-            rel = file_path.relative_to(project_root)
-            matches.append(f"{rel}:{i}")
-    return matches
-
-
-def _scan_scan_dir_for_markdown(
-    project_root: Path, dir_name: str, home_str: str, root_str: str
-) -> list[str]:
-    """Scan a single directory recursively for *.md files with absolute paths."""
-    scan_dir = project_root / dir_name
-    if not scan_dir.exists():
-        return []
-    matches: list[str] = []
-    for md_file in scan_dir.rglob("*.md"):
-        matches.extend(
-            _scan_file_for_absolute_paths(md_file, project_root, home_str, root_str)
-        )
-    return matches
-
-
-def _scan_extra_files(
-    project_root: Path, extra_names: tuple[str, ...], home_str: str, root_str: str
-) -> list[str]:
-    """Scan explicit file names at project root for absolute paths."""
-    matches: list[str] = []
-    for extra_name in extra_names:
-        extra_path = project_root / extra_name
-        if extra_path.exists() and extra_path.is_file():
-            matches.extend(
-                _scan_file_for_absolute_paths(
-                    extra_path, project_root, home_str, root_str
-                )
-            )
-    return matches
-
-
-def _scan_globs_in_dirs(
-    project_root: Path,
-    dir_names: tuple[str, ...],
-    globs: tuple[str, ...],
-    home_str: str,
-    root_str: str,
-) -> list[str]:
-    """Scan directories with glob patterns for absolute paths."""
-    matches: list[str] = []
-    for scan_dir_name in dir_names:
-        scan_dir = project_root / scan_dir_name
-        if not scan_dir.exists():
-            continue
-        for pattern in globs:
-            for matched_file in scan_dir.rglob(pattern):
-                if matched_file.is_file():
-                    matches.extend(
-                        _scan_file_for_absolute_paths(
-                            matched_file, project_root, home_str, root_str
-                        )
-                    )
-    return matches
+    """Get the close timestamp for each ticket from terminal state changes."""
+    return _get_ticket_close_timestamps_impl(
+        events,
+        ticket_ids,
+        terminal_states=TERMINAL_STATES,
+    )
 
 
 def _check_portability(project_root: Path) -> StepResult:
-    """Check for absolute workspace paths in portable files.
-
-    Before: project_root is valid.
-    During: Scans docs/, markdowns/, skills/, scripts/, bus/, .agent/rules/
-            for absolute paths derived from Path.home() or project_root.resolve().
-            Also scans *.py, *.ps1, *.md, MANIFEST* globs and explicit files
-            like README.md, PROJECT.md.
-    After: Returns StepResult with WARN if matches found, PASS otherwise.
-    """
-    home_str = str(Path.home()).replace("\\", "/").lower()
-    root_str = str(project_root.resolve()).replace("\\", "/").lower()
-
-    matches: list[str] = []
-
-    # Scan directories recursively for markdown
-    for dir_name in PORTABILITY_SCAN_DIRS:
-        matches.extend(
-            _scan_scan_dir_for_markdown(project_root, dir_name, home_str, root_str)
-        )
-
-    # Scan extra explicit files
-    matches.extend(
-        _scan_extra_files(project_root, PORTABILITY_SCAN_EXTRA, home_str, root_str)
-    )
-
-    # Scan scripts/ and bus/ directories with glob patterns
-    matches.extend(
-        _scan_globs_in_dirs(
-            project_root,
-            ("scripts", "bus"),
-            PORTABILITY_SCAN_GLOBS,
-            home_str,
-            root_str,
-        )
-    )
-
-    # Scan MANIFEST* files at root
-    for manifest_file in project_root.glob("MANIFEST*"):
-        if manifest_file.is_file():
-            matches.extend(
-                _scan_file_for_absolute_paths(
-                    manifest_file, project_root, home_str, root_str
-                )
-            )
-
-    if matches:
-        detail = f"Absolute paths found in {len(matches)} file(s): " + ", ".join(
-            matches[:5]
-        )
-        if len(matches) > 5:
-            detail += f" (+{len(matches) - 5} more)"
-        return StepResult(name="portability_paths", status="WARN", detail=detail)
-
-    return StepResult(
-        name="portability_paths",
-        status="PASS",
-        detail="No absolute workspace paths found",
+    """Check for absolute workspace paths in portable files."""
+    return _check_portability_impl(
+        project_root,
+        portability_scan_dirs=PORTABILITY_SCAN_DIRS,
+        portability_scan_extra=PORTABILITY_SCAN_EXTRA,
+        portability_scan_globs=PORTABILITY_SCAN_GLOBS,
+        step_result_cls=StepResult,
     )
 
 
 def _check_versioned_filenames(motor_root: Path) -> StepResult:
-    """Check versioned filenames for embedded ticket IDs (WT-, WP-, PLAN-).
-
-    Before: motor_root is a valid git repository path pointing to the motor.
-    During: Runs ``git ls-files`` on motor_root, normalises paths to forward
-            slashes, and matches each basename against TICKET_ID_FILENAME_RE.
-            Only versioned (tracked) files are inspected; ignored files and
-            file contents are never read.
-    After: Returns StepResult with FAIL if any versioned filename contains a
-            ticket ID, PASS otherwise. WARN on git-or-filesystem errors.
-    """
-    try:
-        result = subprocess.run(
-            ["git", "ls-files"],  # noqa: S607 - git is always on PATH
-            cwd=str(motor_root),
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-        return StepResult(
-            name="versioned_filenames",
-            status="WARN",
-            detail=f"git ls-files could not run: {exc}",
-        )
-
-    if result.returncode != 0:
-        return StepResult(
-            name="versioned_filenames",
-            status="WARN",
-            detail=f"git ls-files returned exit {result.returncode}: {result.stderr}",
-        )
-
-    matches: list[str] = []
-    for line in result.stdout.strip().splitlines():
-        if not line.strip():
-            continue
-        # Normalise to forward slashes for consistent diagnostics
-        normalized = line.strip().replace("\\", "/")
-        basename = normalized.rsplit("/", 1)[-1]
-        if TICKET_ID_FILENAME_RE.search(basename):
-            matches.append(normalized)
-
-    if matches:
-        detail = (
-            f"Ticket IDs found in versioned filenames ({len(matches)}): "
-            + ", ".join(matches)
-        )
-        return StepResult(
-            name="versioned_filenames",
-            status="FAIL",
-            detail=detail,
-            blocking=False,
-        )
-
-    return StepResult(
-        name="versioned_filenames",
-        status="PASS",
-        detail="No ticket IDs found in versioned filenames",
+    """Check versioned filenames for embedded ticket IDs."""
+    return _check_versioned_filenames_impl(
+        motor_root,
+        subprocess_run=subprocess.run,
+        step_result_cls=StepResult,
+        ticket_id_filename_re=TICKET_ID_FILENAME_RE,
     )
-
-
-# ---------------------------------------------------------------------------
-# Report generation
-# ---------------------------------------------------------------------------
 
 
 def _generate_report(report: CloseoutReport, project_root: Path) -> Path:
-    """Generate the session close report markdown file.
-
-    Before: report has all steps populated.
-    During: Formats steps as a table. Dry-run previews go to runtime/tmp;
-            real reports go to runtime/memory.
-    After: Returns the path to the written report.
-    """
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    report.session_end = now
-
-    lines = [
-        "# Session Close Report",
-        "",
-        f"**Generated:** {now}",
-        f"**Dry Run:** {'Yes' if report.dry_run else 'No'}",
-        f"**Skip Slow:** {'Yes' if report.skip_slow else 'No'}",
-        "",
-        "## Session Window",
-        "",
-        f"- **Start:** {report.session_start or 'N/A'}",
-        f"- **End:** {now}",
-        "",
-        "## Tickets",
-        "",
-    ]
-    if report.tickets:
-        lines.extend(f"- {tid}" for tid in report.tickets)
-    else:
-        lines.append("- No tickets resolved")
-
-    lines.extend(
-        [
-            "",
-            "## Steps",
-            "",
-            "| # | Step | Status | Blocking | Detail |",
-            "|---|------|--------|----------|--------|",
-        ]
+    """Generate the session close report markdown file."""
+    return _generate_report_impl(
+        report,
+        project_root,
+        dry_run_report_rel=DRY_RUN_REPORT_REL,
+        report_rel=REPORT_REL,
     )
-    for i, step in enumerate(report.steps, 1):
-        blocking_str = "Yes" if step.blocking else "No"
-        detail_escaped = step.detail.replace("|", "\\|")
-        lines.append(
-            f"| {i} | {step.name} | {step.status} | {blocking_str} | {detail_escaped} |"
-        )
-
-    lines.extend(
-        [
-            "",
-            f"## Overall: {report.overall_status}",
-            "",
-        ]
-    )
-
-    # Add manual recommendations section
-    lines.extend(
-        [
-            "## Manual Recommendations",
-            "",
-            "The following checks are recommended but not automated in this pipeline:",
-            "",
-            "- `code-audit` — Deep code quality analysis (run manually if significant Python changes)",
-            "- `bui-self-audit` — Self-audit of builder output (run manually for complex tickets)",
-            "",
-        ]
-    )
-
-    report_rel = DRY_RUN_REPORT_REL if report.dry_run else REPORT_REL
-    report_path = project_root / report_rel
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text("\n".join(lines), encoding="utf-8")
-    return report_path
-
-
-# ---------------------------------------------------------------------------
-# Step executors
-# ---------------------------------------------------------------------------
 
 
 def _step_prepush_check(project_root: Path, dry_run: bool) -> StepResult:
-    """Run prepush_check.py as the blocking quality gate.
-
-    Before: prepush_check.py must exist in scripts/.
-    During: Runs the script with --project-root. Expects exit 0 for pass.
-    After: Returns PASS if exit 0, FAIL otherwise.
-    """
-    if dry_run:
-        return StepResult(
-            name="prepush_check",
-            status="SKIP",
-            detail="Skipped in dry-run mode",
-            blocking=True,
-        )
-    try:
-        result = _run_script(
-            "prepush_check.py",
-            ["--project-root", str(project_root)],
-            project_root,
-            timeout=300,
-        )
-        if result.returncode == 0:
-            return StepResult(
-                name="prepush_check",
-                status="PASS",
-                detail="All blocking quality checks passed",
-                blocking=True,
-            )
-        detail = _process_diagnostic(result)
-        return StepResult(
-            name="prepush_check",
-            status="FAIL",
-            detail=f"Quality gate failed (exit {result.returncode}): {detail}",
-            blocking=True,
-        )
-    except subprocess.TimeoutExpired:
-        return StepResult(
-            name="prepush_check",
-            status="FAIL",
-            detail="prepush_check.py timed out after 300s",
-            blocking=True,
-        )
-    except FileNotFoundError:
-        return StepResult(
-            name="prepush_check",
-            status="FAIL",
-            detail="prepush_check.py not found in scripts/",
-            blocking=True,
-        )
+    """Run prepush_check.py as the blocking quality gate."""
+    return _step_prepush_check_impl(
+        project_root,
+        dry_run,
+        run_script_fn=_run_script,
+        process_diagnostic_fn=_process_diagnostic,
+        step_result_cls=StepResult,
+    )
 
 
 def _step_local_audit(project_root: Path, dry_run: bool) -> StepResult:
-    """Run local_audit.py as an informational snapshot.
-
-    Before: local_audit.py must exist in scripts/.
-    During: Runs with --json --quick. Always returns PASS (informational).
-    After: Returns PASS with summary or WARN on error.
-    """
-    if dry_run:
-        return StepResult(
-            name="local_audit",
-            status="SKIP",
-            detail="Skipped in dry-run mode",
-        )
-    try:
-        result = _run_script(
-            "local_audit.py",
-            ["--json", "--quick"],
-            project_root,
-            timeout=120,
-        )
-        if result.returncode == 0:
-            return StepResult(
-                name="local_audit",
-                status="PASS",
-                detail="Local audit snapshot captured",
-            )
-        return StepResult(
-            name="local_audit",
-            status="WARN",
-            detail=f"Local audit returned exit {result.returncode}",
-        )
-    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-        return StepResult(
-            name="local_audit",
-            status="WARN",
-            detail=f"Local audit could not run: {exc}",
-        )
+    """Run local_audit.py as an informational snapshot."""
+    return _step_local_audit_impl(
+        project_root,
+        dry_run,
+        run_script_fn=_run_script,
+        step_result_cls=StepResult,
+    )
 
 
 def _step_validate_ticket_prose(project_root: Path, dry_run: bool) -> StepResult:
-    """Run validate_ticket_prose.py --json as informational check.
-
-    Before: validate_ticket_prose.py must exist in scripts/.
-    During: Runs with --json. Always returns PASS (informational, exit 0 always).
-    After: Returns PASS with summary.
-    """
-    if dry_run:
-        return StepResult(
-            name="validate_ticket_prose",
-            status="SKIP",
-            detail="Skipped in dry-run mode",
-        )
-    try:
-        result = _run_script(
-            "validate_ticket_prose.py",
-            ["--json"],
-            project_root,
-            timeout=60,
-        )
-        # validate_ticket_prose always exits 0; parse JSON for warnings
-        warnings = 0
-        if result.stdout:
-            try:
-                data = json.loads(result.stdout)
-                warnings = len(data.get("warnings", []))
-            except (json.JSONDecodeError, AttributeError):
-                pass
-        detail = (
-            f"Ticket prose validated, {warnings} warning(s)"
-            if warnings
-            else "Ticket prose validated, clean"
-        )
-        return StepResult(
-            name="validate_ticket_prose",
-            status="PASS" if warnings == 0 else "WARN",
-            detail=detail,
-        )
-    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-        return StepResult(
-            name="validate_ticket_prose",
-            status="WARN",
-            detail=f"Ticket prose validation could not run: {exc}",
-        )
+    """Run validate_ticket_prose.py --json as an informational check."""
+    return _step_validate_ticket_prose_impl(
+        project_root,
+        dry_run,
+        run_script_fn=_run_script,
+        step_result_cls=StepResult,
+    )
 
 
 def _step_session_observations(
@@ -829,897 +381,131 @@ def _step_session_observations(
     dry_run: bool,
     close_timestamps: dict[str, str],
 ) -> list[StepResult]:
-    """Run session_close_observations.py once per resolved ticket.
-
-    Before: session_close_observations.py must exist in scripts/.
-    During: Runs --ticket <id> for each ticket, in chronological close order.
-    After: Returns one StepResult per ticket.
-    """
-    results: list[StepResult] = []
-    if dry_run:
-        results.extend(
-            StepResult(
-                name=f"observations:{tid}",
-                status="SKIP",
-                detail="Skipped in dry-run mode",
-            )
-            for tid in ticket_ids
-        )
-        return results
-
-    # Sort tickets by close timestamp (earliest first)
-    sorted_tickets = sorted(
-        ticket_ids,
-        key=lambda t: close_timestamps.get(t, ""),
+    """Run session_close_observations.py once per resolved ticket."""
+    return _step_session_observations_impl(
+        project_root,
+        dry_run,
+        ticket_ids=ticket_ids,
+        close_timestamps=close_timestamps,
+        run_script_fn=_run_script,
+        process_diagnostic_fn=_process_diagnostic,
+        step_result_cls=StepResult,
     )
-
-    for tid in sorted_tickets:
-        try:
-            result = _run_script(
-                "session_close_observations.py",
-                ["--ticket", tid],
-                project_root,
-                timeout=120,
-            )
-            if result.returncode == 0:
-                results.append(
-                    StepResult(
-                        name=f"observations:{tid}",
-                        status="PASS",
-                        detail=f"Observations processed for {tid}",
-                    )
-                )
-            else:
-                detail = _process_diagnostic(result, limit=300)
-                results.append(
-                    StepResult(
-                        name=f"observations:{tid}",
-                        status="WARN",
-                        detail=f"Observations script returned exit {result.returncode} for {tid}: {detail}",
-                    )
-                )
-        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:  # noqa: PERF203 - small fixed loop
-            results.append(
-                StepResult(
-                    name=f"observations:{tid}",
-                    status="WARN",
-                    detail=f"Observations could not run for {tid}: {exc}",
-                )
-            )
-    return results
 
 
 def _step_memory_consolidate(project_root: Path, dry_run: bool) -> StepResult:
-    """Run memory_consolidate.py --verbose --apply.
-
-    Before: memory_consolidate.py must exist in scripts/.
-    During: Runs with --verbose --apply to consolidate observations.
-    After: Returns PASS or WARN.
-    """
-    if dry_run:
-        return StepResult(
-            name="memory_consolidate",
-            status="SKIP",
-            detail="Skipped in dry-run mode",
-        )
-    try:
-        result = _run_script(
-            "memory_consolidate.py",
-            ["--verbose", "--apply"],
-            project_root,
-            timeout=120,
-        )
-        if result.returncode == 0:
-            return StepResult(
-                name="memory_consolidate",
-                status="PASS",
-                detail="Memory consolidated successfully",
-            )
-        return StepResult(
-            name="memory_consolidate",
-            status="WARN",
-            detail=(
-                f"Memory consolidate returned exit {result.returncode}: "
-                f"{_process_diagnostic(result)}"
-            ),
-        )
-    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-        return StepResult(
-            name="memory_consolidate",
-            status="WARN",
-            detail=f"Memory consolidate could not run: {exc}",
-        )
+    """Run memory_consolidate.py --verbose --apply."""
+    return _step_memory_consolidate_impl(
+        project_root,
+        dry_run,
+        run_script_fn=_run_script,
+        process_diagnostic_fn=_process_diagnostic,
+        step_result_cls=StepResult,
+    )
 
 
 def _step_archive_collaboration(project_root: Path, dry_run: bool) -> StepResult:
-    """Run archive_collaboration_artifacts.py.
-
-    Before: archive_collaboration_artifacts.py must exist in scripts/.
-    During: Runs with --collaboration-dir pointing to .agent/collaboration.
-    After: Returns PASS or WARN.
-    """
-    if dry_run:
-        return StepResult(
-            name="archive_collaboration",
-            status="SKIP",
-            detail="Skipped in dry-run mode",
-        )
-    collab_dir = project_root / ".agent" / "collaboration"
-    try:
-        result = _run_script(
-            "archive_collaboration_artifacts.py",
-            ["--collaboration-dir", str(collab_dir)],
-            project_root,
-            timeout=60,
-        )
-        if result.returncode == 0:
-            return StepResult(
-                name="archive_collaboration",
-                status="PASS",
-                detail="Collaboration artifacts archived",
-            )
-        return StepResult(
-            name="archive_collaboration",
-            status="WARN",
-            detail=f"Archive collaboration returned exit {result.returncode}",
-        )
-    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-        return StepResult(
-            name="archive_collaboration",
-            status="WARN",
-            detail=f"Archive collaboration could not run: {exc}",
-        )
+    """Run archive_collaboration_artifacts.py."""
+    return _step_archive_collaboration_impl(
+        project_root,
+        dry_run,
+        run_script_fn=_run_script,
+        step_result_cls=StepResult,
+    )
 
 
 def _step_archive_execution_log(project_root: Path, dry_run: bool) -> StepResult:
-    """Run archive_execution_log.py.
-
-    Before: archive_execution_log.py must exist in scripts/.
-    During: Runs with default args.
-    After: Returns PASS or WARN.
-    """
-    if dry_run:
-        return StepResult(
-            name="archive_execution_log",
-            status="SKIP",
-            detail="Skipped in dry-run mode",
-        )
-    try:
-        result = _run_script(
-            "archive_execution_log.py",
-            [],
-            project_root,
-            timeout=60,
-        )
-        if result.returncode == 0:
-            return StepResult(
-                name="archive_execution_log",
-                status="PASS",
-                detail="Execution log archived",
-            )
-        return StepResult(
-            name="archive_execution_log",
-            status="WARN",
-            detail=f"Archive execution log returned exit {result.returncode}",
-        )
-    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-        return StepResult(
-            name="archive_execution_log",
-            status="WARN",
-            detail=f"Archive execution log could not run: {exc}",
-        )
+    """Run archive_execution_log.py."""
+    return _step_archive_execution_log_impl(
+        project_root,
+        dry_run,
+        run_script_fn=_run_script,
+        step_result_cls=StepResult,
+    )
 
 
 def _step_archive_event_bus(project_root: Path, dry_run: bool) -> StepResult:
-    """Run archive_event_bus.py --all-terminal.
-
-    Before: archive_event_bus.py must exist in scripts/.
-    During: Runs with --all-terminal to archive completed/human_gate tickets.
-    After: Returns PASS or WARN.
-    """
-    if dry_run:
-        return StepResult(
-            name="archive_event_bus",
-            status="SKIP",
-            detail="Skipped in dry-run mode",
-        )
-    try:
-        result = _run_script(
-            "archive_event_bus.py",
-            ["--all-terminal"],
-            project_root,
-            timeout=60,
-        )
-        if result.returncode == 0:
-            return StepResult(
-                name="archive_event_bus",
-                status="PASS",
-                detail="Event bus terminal tickets archived",
-            )
-        return StepResult(
-            name="archive_event_bus",
-            status="WARN",
-            detail=f"Archive event bus returned exit {result.returncode}",
-        )
-    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-        return StepResult(
-            name="archive_event_bus",
-            status="WARN",
-            detail=f"Archive event bus could not run: {exc}",
-        )
-
-
-# ---------------------------------------------------------------------------
-# Review queue rotation
-# ---------------------------------------------------------------------------
+    """Run archive_event_bus.py --all-terminal."""
+    return _step_archive_event_bus_impl(
+        project_root,
+        dry_run,
+        run_script_fn=_run_script,
+        step_result_cls=StepResult,
+    )
 
 
 def _is_lock_alive(lock_path: Path) -> bool:
-    """Check if a lock file is alive based on TTL and mtime.
-
-    Before: lock_path may or may not exist.
-    During: Reads the lock file as JSON. If it contains a 'started_at' field
-            within LOCK_TTL_MINUTES or the file's mtime is within
-            LOCK_TTL_MINUTES, considers the lock alive.
-            Does NOT use 'pid' (builder lock contract explicitly prohibits pid).
-    After: Returns True if the lock is recent, False if stale or absent.
-    """
-    if not lock_path.exists():
-        return False
-    try:
-        data = json.loads(lock_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return False
-
-    now = datetime.now(timezone.utc)
-
-    # Check 'started_at' field for TTL (takes precedence when present)
-    started_at_str = data.get("started_at")
-    if started_at_str:
-        try:
-            started_at = datetime.fromisoformat(started_at_str.replace("Z", "+00:00"))
-            age_minutes = (now - started_at).total_seconds() / 60
-            return age_minutes < LOCK_TTL_MINUTES
-        except (ValueError, TypeError):
-            # Malformed started_at; fall through to mtime
-            pass
-
-    # Fallback: check file mtime (only when no valid started_at)
-    try:
-        mtime = datetime.fromtimestamp(lock_path.stat().st_mtime, tz=timezone.utc)
-        age_minutes = (now - mtime).total_seconds() / 60
-        if age_minutes < LOCK_TTL_MINUTES:
-            return True
-    except OSError:
-        pass
-
-    return False
-
-
-def _is_entry_delimiter(line: str) -> bool:
-    """Check if a line marks the start of a new logical entry.
-
-    Recognized delimiters: '---' or '## ' prefix.
-    """
-    stripped = line.strip()
-    if stripped in ("---",) or stripped.startswith("---"):
-        return True
-    return bool(re.match(r"^##\s", line))
-
-
-def _split_header_and_entries(lines: list[str]) -> tuple[str, list[str]]:
-    """Split content lines into header and logical entries.
-
-    Before: lines are the split lines of review_queue.md.
-    During: Uses '---' as the primary header boundary. Everything before the
-            first '---' separator is the header (preserving any '## ' headings
-            within the header intact). After the first '---', both '---' and
-            '## ' serve as entry delimiters. If no '---' exists, falls back to
-            '## ' as the sole delimiter with everything before the first
-            '## ' as the header.
-            For '---' delimiters, the separator line itself is excluded.
-            For '## ' delimiters, the heading line is included in the entry.
-    After: Returns (header_text, list_of_entry_texts).
-    """
-    # Find '---' separators
-    dash_indices = [
-        i
-        for i, line in enumerate(lines)
-        if line.strip() in ("---",) or line.strip().startswith("---")
-    ]
-
-    if dash_indices:
-        # Header is everything before the first '---'
-        first_dash = dash_indices[0]
-        header = "\n".join(lines[:first_dash]).strip()
-
-        # After the first '---', both '---' and '## ' are entry delimiters
-        content_lines = lines[first_dash:]
-        delimiter_indices: list[int] = [
-            i for i, line in enumerate(content_lines) if _is_entry_delimiter(line)
-        ]
-
-        entries: list[str] = []
-        for idx, start in enumerate(delimiter_indices):
-            end = (
-                delimiter_indices[idx + 1]
-                if idx + 1 < len(delimiter_indices)
-                else len(content_lines)
-            )
-            entry_lines = content_lines[start:end]
-            stripped_line = content_lines[start].strip()
-            if stripped_line in ("---",) or stripped_line.startswith("---"):
-                entry_lines = entry_lines[1:]
-            entry_text = "\n".join(entry_lines).strip()
-            if entry_text:
-                entries.append(entry_text)
-
-        return header, entries
-
-    # No '---' found: fall back to '## ' as delimiter
-    hash_indices = [i for i, line in enumerate(lines) if bool(re.match(r"^##\s", line))]
-
-    if hash_indices:
-        header = "\n".join(lines[: hash_indices[0]]).strip()
-    else:
-        header = "\n".join(lines).strip()
-
-    entries: list[str] = []
-    for idx, start in enumerate(hash_indices):
-        end = hash_indices[idx + 1] if idx + 1 < len(hash_indices) else len(lines)
-        entry_text = "\n".join(lines[start:end]).strip()
-        if entry_text:
-            entries.append(entry_text)
-
-    return header, entries
+    """Check if a lock file is alive based on TTL and mtime."""
+    return _rotation_is_lock_alive(
+        lock_path,
+        lock_ttl_minutes=LOCK_TTL_MINUTES,
+    )
 
 
 def _parse_review_queue(content: str) -> tuple[str, list[str], str | None]:
-    """Parse review_queue.md into header, entries, and active ticket entry.
-
-    Before: content is the full text of review_queue.md.
-    During: Splits by '---' or '## ' delimiters. Everything before the first
-            delimiter (either '---' or '## ') is the header. Each block between
-            delimiters is an entry.
-    After: Returns (header_text, list_of_entries, active_ticket_entry_or_None).
-    """
-    lines = content.split("\n")
-    header, entries = _split_header_and_entries(lines)
-    # Active ticket detection is done at the call site via work_plan.md.
-    return header, entries, None
+    """Parse review_queue.md into header, entries, and active ticket entry."""
+    return _rotation_parse_review_queue(content)
 
 
-def _find_active_ticket_entry(
-    entries: list[str], active_ticket_id: str | None
-) -> tuple[int | None, str | None]:
-    """Find the entry matching the active ticket.
-
-    Before: entries is a list of entry strings; active_ticket_id may be None.
-    During: Searches each entry for a '- **Plan ID:** <active_ticket_id>' line.
-    After: Returns (index, entry_text) or (None, None).
-    """
-    if active_ticket_id is None:
-        return None, None
-    for i, entry in enumerate(entries):
-        if f"**Plan ID:** {active_ticket_id}" in entry:
-            return i, entry
-    return None, None
-
-
-def _step_rotate_review_queue(project_root: Path, dry_run: bool) -> StepResult:  # noqa: C901 - multiple condition checks
-    """Rotate review_queue.md: archive old entries, keep header + active + 10 recent.
-
-    Before: project_root is the repository root. review_queue.md may or may not exist.
-    During:
-        1. Check builder_lock.txt and supervisor_lock.txt for alive locks.
-        2. If any lock is alive, skip rotation and return advisory warning.
-        3. Read review_queue.md, parse header and entries by '---' delimiter.
-        4. Identify active ticket from work_plan.md.
-        5. Keep header, active ticket entry (if found and not already in top 10),
-           and up to 10 most recent logical entries.
-        6. Archive old entries to archive/review_queue_YYYY-MM-DD.md.
-        7. Write truncated content back.
-        8. If kept entries exceed 50 KB, emit warning advisory.
-    After: Returns StepResult with PASS, SKIP, or WARN.
-    """
-    if dry_run:
-        return StepResult(
-            name="rotate_review_queue",
-            status="SKIP",
-            detail="Skipped in dry-run mode",
-        )
-
-    review_queue_path = project_root / REVIEW_QUEUE_REL
-    if not review_queue_path.exists():
-        return StepResult(
-            name="rotate_review_queue",
-            status="SKIP",
-            detail="review_queue.md does not exist; nothing to rotate",
-        )
-
-    # --- Lock checks ---
-    builder_lock = project_root / BUILDER_LOCK_REL
-    supervisor_lock = project_root / SUPERVISOR_LOCK_REL
-
-    lock_alive = False
-    lock_detail_parts: list[str] = []
-
-    if _is_lock_alive(builder_lock):
-        lock_alive = True
-        lock_detail_parts.append("builder_lock.txt alive")
-    if _is_lock_alive(supervisor_lock):
-        lock_alive = True
-        lock_detail_parts.append("supervisor_lock.txt alive")
-
-    if lock_alive:
-        return StepResult(
-            name="rotate_review_queue",
-            status="SKIP",
-            detail=f"Skipped: lock(s) alive: {', '.join(lock_detail_parts)}",
-        )
-
-    # Advisory: no reusable Manager Bridge/Stop Hook detector exists
-    # The work_plan explicitly says: "If no reusable mechanism exists, log a
-    # warning advisory and proceed. Do not invent a fragile process detector."
-    print(
-        "[rotate_review_queue] Advisory: no reusable detector for Manager "
-        "Bridge/Stop Hook; proceeding with best-effort rotation",
-        file=sys.stderr,
-    )
-
-    # --- Parse review queue ---
-    try:
-        content = review_queue_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        return StepResult(
-            name="rotate_review_queue",
-            status="WARN",
-            detail=f"Could not read review_queue.md: {exc}",
-        )
-
-    header, entries, _active_entry = _parse_review_queue(content)
-
-    if not entries:
-        return StepResult(
-            name="rotate_review_queue",
-            status="SKIP",
-            detail="review_queue.md has no parsed entries; nothing to rotate",
-        )
-
-    # --- Identify active ticket entry ---
-    wpid = _resolve_active_ticket(project_root)
-    active_idx, active_entry = _find_active_ticket_entry(entries, wpid)
-
-    # --- Determine kept and archived ---
-    # Keep up to KEEP_ENTRIES most recent (last in list)
-    keep_start = max(0, len(entries) - KEEP_ENTRIES)
-    keep_entries = entries[keep_start:]
-    archived_entries = entries[:keep_start]
-
-    # If active entry is outside the keep window, prepend it
-    if active_idx is not None and active_idx < keep_start:
-        keep_entries.insert(0, active_entry)
-        # Also remove from archived if it was there
-        if active_idx < len(archived_entries):
-            archived_entries.remove(active_entry)
-
-    if not archived_entries:
-        # Even when nothing needs archiving, check if the kept content exceeds the
-        # size advisory threshold (AUDIT criterion TP-06).
-        kept_content = header + "\n"
-        for entry in keep_entries:
-            kept_content += "---\n\n" + entry + "\n\n"
-        kept_size_bytes = len(kept_content.encode("utf-8"))
-        if kept_size_bytes > SIZE_WARN_THRESHOLD:
-            return StepResult(
-                name="rotate_review_queue",
-                status="WARN",
-                detail=(
-                    f"Fewer entries than KEEP_ENTRIES; nothing to archive. "
-                    f"WARNING: kept entries exceed {SIZE_WARN_THRESHOLD // 1024} KB"
-                ),
-            )
-        return StepResult(
-            name="rotate_review_queue",
-            status="SKIP",
-            detail="Fewer entries than KEEP_ENTRIES; nothing to archive",
-        )
-
-    # --- Build archive file ---
-    archive_dir = project_root / REVIEW_QUEUE_ARCHIVE_DIR_REL
-    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    archive_path = archive_dir / f"review_queue_{date_str}.md"
-
-    archive_lines = [
-        f"# Archived Review Queue - {date_str}",
-        "",
-        f"Archived from review_queue.md on {date_str}.",
-        f"Total archived entries: {len(archived_entries)}",
-        "",
-    ]
-    for entry in archived_entries:
-        archive_lines.append("---")
-        archive_lines.append("")
-        archive_lines.append(entry)
-        archive_lines.append("")
-
-    try:
-        archive_dir.mkdir(parents=True, exist_ok=True)
-        # Append to existing archive if present (idempotent; avoids overwrite)
-        new_archive_content = "\n".join(archive_lines)
-        if archive_path.exists():
-            existing = archive_path.read_text(encoding="utf-8")
-            archive_path.write_text(
-                existing.rstrip("\n") + "\n\n" + new_archive_content,
-                encoding="utf-8",
-            )
-        else:
-            archive_path.write_text(new_archive_content, encoding="utf-8")
-    except OSError as exc:
-        return StepResult(
-            name="rotate_review_queue",
-            status="WARN",
-            detail=f"Could not write archive file: {exc}",
-        )
-
-    # --- Build truncated review queue ---
-    truncated_lines = [header, ""]
-    for entry in keep_entries:
-        truncated_lines.append("---")
-        truncated_lines.append("")
-        truncated_lines.append(entry)
-        truncated_lines.append("")
-
-    truncated_content = "\n".join(truncated_lines)
-
-    # Check size advisory
-    kept_size = len(truncated_content.encode("utf-8"))
-    size_warning = kept_size > SIZE_WARN_THRESHOLD
-
-    try:
-        review_queue_path.write_text(truncated_content, encoding="utf-8")
-    except OSError as exc:
-        return StepResult(
-            name="rotate_review_queue",
-            status="WARN",
-            detail=f"Could not write truncated review_queue.md: {exc}",
-        )
-
-    detail_parts = [
-        f"Archived {len(archived_entries)} entr(es)",
-        f"kept {len(keep_entries)} entr(es)",
-    ]
-    if size_warning:
-        detail_parts.append(
-            f"WARNING: kept entries exceed {SIZE_WARN_THRESHOLD // 1024} KB"
-        )
-    status = "WARN" if size_warning else "PASS"
-
-    return StepResult(
-        name="rotate_review_queue",
-        status=status,
-        detail="; ".join(detail_parts),
+def _step_rotate_review_queue(project_root: Path, dry_run: bool) -> StepResult:
+    """Rotate review_queue.md: archive old entries, keep header + active + recent."""
+    return _step_rotate_review_queue_impl(
+        project_root,
+        dry_run,
+        builder_lock_rel=BUILDER_LOCK_REL,
+        keep_entries=KEEP_ENTRIES,
+        lock_ttl_minutes=LOCK_TTL_MINUTES,
+        resolve_active_ticket_fn=_resolve_active_ticket,
+        review_queue_archive_dir_rel=REVIEW_QUEUE_ARCHIVE_DIR_REL,
+        review_queue_rel=REVIEW_QUEUE_REL,
+        size_warn_threshold=SIZE_WARN_THRESHOLD,
+        step_result_cls=StepResult,
+        supervisor_lock_rel=SUPERVISOR_LOCK_REL,
     )
 
 
-# ---------------------------------------------------------------------------
-# Manager feedback archival
-# ---------------------------------------------------------------------------
-
-
-def _can_prove_close(
-    ticket_id: str,
-    events: list[dict[str, Any]],
-) -> bool:
-    """Check if the bus provides unequivocal close/approval for a ticket.
-
-    Before: events is a sorted list of event dicts.
-    During: Looks for SUPERVISOR_CLOSED, STATE_CHANGED to COMPLETED (only),
-            STATE_CHANGED to READY_TO_CLOSE with source=manager-approve,
-            or REVIEW_DECISION with decision=approve.
-            HUMAN_GATE does NOT prove close: it is an escalation state, not
-            a final closure. Only manager-driven or supervisor-confirmed
-            transitions prove that a ticket was genuinely approved.
-    After: Returns True if close/approval is proven, False otherwise.
-    """
-    for ev in events:
-        if ev.get("ticket_id") != ticket_id:
-            continue
-        # SUPERVISOR_CLOSED is the canonical bus proof of full closure
-        if ev.get("event_type") == "SUPERVISOR_CLOSED":
-            return True
-        if ev.get("event_type") == "STATE_CHANGED":
-            payload = ev.get("payload", {})
-            to_state = payload.get("to_state")
-            # COMPLETED (not HUMAN_GATE) proves genuine close
-            if to_state == "COMPLETED":
-                return True
-            # READY_TO_CLOSE only proves close if source is manager-approve
-            if (
-                to_state == "READY_TO_CLOSE"
-                and payload.get("source") == "manager-approve"
-            ):
-                return True
-        if ev.get("event_type") == "REVIEW_DECISION":
-            payload = ev.get("payload", {})
-            if payload.get("decision") == "approve":
-                return True
-    return False
-
-
-def _find_manager_feedback_files(
-    collaboration_dir: Path,
-) -> list[Path]:
-    """Find all manager_feedback_*.md files in the collaboration directory.
-
-    Before: collaboration_dir exists.
-    During: Lists files matching the pattern manager_feedback_*.md.
-    After: Returns sorted list of matching file paths.
-    """
-    if not collaboration_dir.exists():
-        return []
-    return sorted(
-        entry
-        for entry in collaboration_dir.iterdir()
-        if (
-            entry.is_file()
-            and entry.name.startswith("manager_feedback_")
-            and entry.name.endswith(".md")
-        )
-    )
-
-
-def _extract_ticket_id_from_feedback(filename: str) -> str | None:
-    """Extract ticket ID from a manager_feedback filename.
-
-    Before: filename is a string like 'manager_feedback_WP-2026-155.md'.
-    During: Uses regex to extract the ticket ID portion.
-    After: Returns ticket ID string or None if not matched.
-    """
-    m = re.search(r"manager_feedback_(" + TICKET_ID_PATTERN + r")\.md$", filename)
-    if m:
-        return m.group(1)
-    return None
-
-
-def _step_archive_manager_feedback(  # noqa: C901 - multiple condition checks
+def _step_archive_manager_feedback(
     project_root: Path,
     dry_run: bool,
     events: list[dict[str, Any]],
 ) -> StepResult:
-    """Archive manager_feedback_* files for tickets with proven close/approval.
-
-    Before: events is a sorted list of event dicts from the bus.
-    During:
-        1. Find all manager_feedback_*.md files in collaboration dir.
-        2. For each, extract ticket ID and check bus for close/approval.
-        3. If proven, move to archive/manager_feedback/.
-        4. If not proven, keep in place.
-        5. Skip files that are already in the archive (idempotent).
-    After: Returns StepResult with PASS, SKIP, or WARN.
-    """
-    if dry_run:
-        return StepResult(
-            name="archive_manager_feedback",
-            status="SKIP",
-            detail="Skipped in dry-run mode",
-        )
-
-    collab_dir = project_root / ".agent" / "collaboration"
-    feedback_files = _find_manager_feedback_files(collab_dir)
-
-    if not feedback_files:
-        return StepResult(
-            name="archive_manager_feedback",
-            status="SKIP",
-            detail="No manager_feedback files found",
-        )
-
-    archive_dir = project_root / MANAGER_FEEDBACK_ARCHIVE_DIR_REL
-    archived: list[str] = []
-    kept: list[str] = []
-
-    for fb_path in feedback_files:
-        ticket_id = _extract_ticket_id_from_feedback(fb_path.name)
-        if ticket_id is None:
-            kept.append(f"{fb_path.name} (unparseable ticket ID)")
-            continue
-
-        if _can_prove_close(ticket_id, events):
-            # Archive the file
-            try:
-                archive_dir.mkdir(parents=True, exist_ok=True)
-                dest = archive_dir / fb_path.name
-                if dest.exists():
-                    # Idempotent: archive copy already exists; remove the live copy
-                    # so it does not remain in the active collaboration surface.
-                    fb_path.unlink()
-                    archived.append(
-                        f"{fb_path.name} (live copy removed; archive exists)"
-                    )
-                else:
-                    shutil.move(str(fb_path), str(dest))
-                    archived.append(fb_path.name)
-            except OSError as exc:
-                kept.append(f"{fb_path.name} (move failed: {exc})")
-        else:
-            kept.append(f"{fb_path.name} (close not proven)")
-
-    detail_parts: list[str] = []
-    if archived:
-        detail_parts.append(f"Archived {len(archived)} file(s)")
-    if kept:
-        detail_parts.append(f"Kept {len(kept)} file(s)")
-
-    if not archived:
-        status = "SKIP"
-        detail_parts.append("No files archived")
-    else:
-        status = "PASS"
-
-    return StepResult(
-        name="archive_manager_feedback",
-        status=status,
-        detail="; ".join(detail_parts),
+    """Archive manager_feedback_* files for tickets with proven close/approval."""
+    return _step_archive_manager_feedback_impl(
+        project_root,
+        dry_run,
+        events=events,
+        manager_feedback_archive_dir_rel=MANAGER_FEEDBACK_ARCHIVE_DIR_REL,
+        ticket_id_pattern=TICKET_ID_PATTERN,
+        step_result_cls=StepResult,
     )
 
 
 def _step_manifest_check(project_root: Path) -> StepResult:
-    """Verify MANIFEST.distribute exists.
-
-    Before: MANIFEST.distribute may live in repo_motor for Model B.
-    During: Resolves repo_motor via motor_destination_link, then checks the
-            legacy project root as fallback.
-    After: Returns PASS or FAIL.
-    """
-    manifest_root = project_root
-    try:
-        from runtime.motor_link import resolve_motor_root
-
-        motor_root = resolve_motor_root(project_root)
-        if motor_root is not None:
-            manifest_root = motor_root
-    except ImportError:
-        pass
-
-    manifest_path = manifest_root / "MANIFEST.distribute"
-    if manifest_path.exists():
-        location = "repo_motor" if manifest_root != project_root else "project root"
-        return StepResult(
-            name="manifest_check",
-            status="PASS",
-            detail=f"MANIFEST.distribute exists in {location}",
-        )
-    return StepResult(
-        name="manifest_check",
-        status="WARN",
-        detail="MANIFEST.distribute not found at project root",
+    """Verify MANIFEST.distribute exists."""
+    return _step_manifest_check_impl(
+        project_root,
+        False,
+        step_result_cls=StepResult,
     )
 
 
 def _step_cleanup_builder_session(project_root: Path, dry_run: bool) -> StepResult:
-    """Remove builder_session.json if it exists.
-
-    Before: builder_session.json may exist in .agent/runtime/.
-    During: Unconditionally removes the file.
-    After: builder_session.json no longer exists; ticket context is clean.
-    """
-    if dry_run:
-        return StepResult(
-            name="cleanup_builder_session",
-            status="SKIP",
-            detail="Skipped in dry-run mode",
-        )
-    session_path = project_root / ".agent" / "runtime" / "builder_session.json"
-    if session_path.exists():
-        try:
-            session_path.unlink()
-            return StepResult(
-                name="cleanup_builder_session",
-                status="PASS",
-                detail="builder_session.json removed",
-            )
-        except OSError as exc:
-            return StepResult(
-                name="cleanup_builder_session",
-                status="WARN",
-                detail=f"Could not remove builder_session.json: {exc}",
-            )
-    return StepResult(
-        name="cleanup_builder_session",
-        status="SKIP",
-        detail="builder_session.json already absent",
+    """Remove builder_session.json if it exists."""
+    return _step_cleanup_builder_session_impl(
+        project_root,
+        dry_run,
+        step_result_cls=StepResult,
     )
 
 
 def _step_git_clean(project_root: Path, dry_run: bool) -> StepResult:
-    """Verify git status --short is clean (except expected runtime files).
-
-    WT-2026-215: ejecuta git sobre motor_root (repositorio del motor), no
-    sobre project_root (workspace destino). Si motor_root no es resoluble,
-    reporta un WARN no bloqueante informativo (arquitectura workspace
-    activo + motor portable).
-
-    Before: project_root may or may not be a git repo; motor_root resolved
-        via motor_destination_link.json.
-    During: Runs git status --short on motor_root, filters out expected
-        runtime files.
-    After: Returns PASS if clean, WARN if dirty or non-repo (non-blocking).
-    """
-    if dry_run:
-        return StepResult(
-            name="git_clean",
-            status="SKIP",
-            detail="Skipped in dry-run mode",
-        )
-    try:
-        from runtime.motor_link import resolve_motor_root
-
-        motor_root = resolve_motor_root(project_root)
-        if motor_root is None:
-            return StepResult(
-                name="git_clean",
-                status="WARN",
-                detail="motor_root no resoluble (motor_destination_link.json ausente); "
-                "check de git saltado (no bloqueante)",
-            )
-        result = subprocess.run(
-            ["git", "status", "--short"],  # noqa: S607 - git is always on PATH
-            cwd=str(motor_root),
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if result.returncode != 0:
-            stderr_msg = (result.stderr or "").strip()
-            if "not a git repository" in stderr_msg.lower():
-                return StepResult(
-                    name="git_clean",
-                    status="WARN",
-                    detail="Workspace not a git repository (tolerated for workspace+motor architecture)",
-                )
-            return StepResult(
-                name="git_clean",
-                status="WARN",
-                detail=f"git status returned exit {result.returncode}: {stderr_msg}",
-            )
-        dirty_lines = [
-            line for line in result.stdout.strip().splitlines() if line.strip()
-        ]
-        # Filter out expected runtime files
-        expected_patterns = [
-            "session_close_report.md",
-            "CONSOLIDATION_REPORT.md",
-            "MEMORY.md",
-            "observations.jsonl",
-        ]
-        unexpected = [
-            line
-            for line in dirty_lines
-            if not any(pat in line for pat in expected_patterns)
-        ]
-        if not unexpected:
-            return StepResult(
-                name="git_clean",
-                status="PASS",
-                detail=f"Tree clean ({len(dirty_lines)} expected runtime file(s) dirty)",
-            )
-        return StepResult(
-            name="git_clean",
-            status="WARN",
-            detail=f"Tree dirty with {len(unexpected)} unexpected file(s): {unexpected[:3]}",
-        )
-    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-        return StepResult(
-            name="git_clean",
-            status="WARN",
-            detail=f"git status could not run: {exc} (tolerated for workspace+motor architecture)",
-        )
-
-
-# ---------------------------------------------------------------------------
-# Main orchestrator
-# ---------------------------------------------------------------------------
+    """Verify git status --short is clean (except expected runtime files)."""
+    return _step_git_clean_impl(
+        project_root,
+        dry_run,
+        subprocess_run=subprocess.run,
+        step_result_cls=StepResult,
+    )
 
 
 def run_closeout(
@@ -1735,12 +521,8 @@ def run_closeout(
     After: Returns exit code (0=success, 1=blocking failure).
     """
     report = CloseoutReport(dry_run=dry_run, skip_slow=skip_slow)
-
-    # --- Step 1: Resolve session window ---
     _window_start, window_src = _resolve_session_window(project_root)
     report.session_start = window_src
-
-    # --- Step 2: Resolve tickets ---
     ticket_ids, ticket_src = _resolve_tickets(project_root, explicit_tickets)
     report.tickets = ticket_ids
     report.steps.append(
@@ -1750,22 +532,14 @@ def run_closeout(
             detail=f"Source: {ticket_src}. Tickets: {ticket_ids or 'none'}",
         )
     )
-
-    # --- Step 3: Prepush check (blocking) ---
     prepush = _step_prepush_check(project_root, dry_run)
     report.steps.append(prepush)
     if prepush.status == "FAIL":
         # Write report and exit early
         _generate_report(report, project_root)
         return 1
-
-    # --- Step 4: Local audit (informational) ---
     report.steps.append(_step_local_audit(project_root, dry_run))
-
-    # --- Step 5: Validate ticket prose (informational) ---
     report.steps.append(_step_validate_ticket_prose(project_root, dry_run))
-
-    # --- Step 6: Session observations (per ticket) ---
     events = _read_events(project_root)
     close_ts = _get_ticket_close_timestamps(events, ticket_ids)
 
@@ -1782,8 +556,6 @@ def run_closeout(
                 detail="Skipped by --skip-slow",
             )
         )
-
-    # --- Step 7: Memory consolidation ---
     if not skip_slow:
         report.steps.append(_step_memory_consolidate(project_root, dry_run))
     else:
@@ -1794,23 +566,13 @@ def run_closeout(
                 detail="Skipped by --skip-slow",
             )
         )
-
-    # --- Step 8: Clean up builder session ---
     report.steps.append(_step_cleanup_builder_session(project_root, dry_run))
-
-    # --- Step 9: Archival ---
     report.steps.append(_step_archive_collaboration(project_root, dry_run))
-
-    # --- Step 9b: Review queue rotation (between archive_collaboration and archive_execution_log) ---
     report.steps.append(_step_rotate_review_queue(project_root, dry_run))
-
-    # --- Step 9c: Manager feedback archival ---
     report.steps.append(_step_archive_manager_feedback(project_root, dry_run, events))
 
     report.steps.append(_step_archive_execution_log(project_root, dry_run))
     report.steps.append(_step_archive_event_bus(project_root, dry_run))
-
-    # --- Step 10: Portability checks ---
     report.steps.append(_step_manifest_check(project_root))
     report.steps.append(_check_portability(project_root))
     try:
@@ -1844,11 +606,6 @@ def run_closeout(
     return 1 if report.overall_status == "FAIL" else 0
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
-
 def main() -> int:
     """CLI entry point for session_closeout.py.
 
@@ -1857,7 +614,7 @@ def main() -> int:
     After: Returns exit code from run_closeout().
     """
     parser = argparse.ArgumentParser(
-        description="Session Closeout Orchestrator — unified session close pipeline",
+        description="Session Closeout Orchestrator - unified session close pipeline",
     )
     parser.add_argument(
         "--project-root",
