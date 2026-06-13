@@ -33,6 +33,7 @@ scripts/memory_consolidate.py
 scripts/archive_collaboration_artifacts.py
 scripts/check_ruff_hook_scope.py
 scripts/run_gates_dispatch.py
+scripts/check_motor_pristine.py
 
 # =============================================================================
 # PROMPTS OPERATIVOS REFERENCIADOS POR SKILLS / BOOTSTRAP

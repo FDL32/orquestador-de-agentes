@@ -65,6 +65,10 @@ el repo que contiene los archivos modificados.
 En comandos del motor, resolver siempre rutas contra `MOTOR_ROOT`; no asumir que
 `agent_controller.py`, scripts o prompts existen en el cwd del `repo_destino`.
 
+Durante pipelines de destino, tratar `repo_motor` como read-only salvo ticket
+explicito. La barrera portable es `scripts/check_motor_pristine.py`: detectar
+siempre, restaurar nunca automaticamente.
+
 ## Preflight del destino
 
 Antes de arrancar cualquier ticket, aplicar
@@ -93,12 +97,36 @@ Antes de leer y ordenar tickets, cargar contexto real:
 
 | Fase | Rol | Prompts | Skills | Scripts / comandos |
 |---|---|---|---|---|
-| Bootstrap | Orquestador | `<MOTOR_ROOT>/prompts/destination_bootstrap.md`, `<MOTOR_ROOT>/prompts/orchestrator_pipeline.md`, `<MOTOR_ROOT>/prompts/audit_agent_output.md` | esta skill | `python <MOTOR_ROOT>/scripts/destination_context.py --bootstrap --project-root .`, `python <MOTOR_ROOT>/scripts/memory_context.py --status`, `--bootstrap`, `python <MOTOR_ROOT>/.agent/agent_controller.py --validate --json --project-root .` |
+| Bootstrap | Orquestador | `<MOTOR_ROOT>/prompts/destination_bootstrap.md`, `<MOTOR_ROOT>/prompts/orchestrator_pipeline.md`, `<MOTOR_ROOT>/prompts/audit_agent_output.md` | esta skill | `python <MOTOR_ROOT>/scripts/destination_context.py --bootstrap --project-root .`, `python <MOTOR_ROOT>/scripts/memory_context.py --status`, `--bootstrap`, `python <MOTOR_ROOT>/scripts/check_motor_pristine.py --snapshot --out orchestrator_pipeline/session_close/motor_before_<TICKET_ID>.json`, `python <MOTOR_ROOT>/.agent/agent_controller.py --validate --json --project-root .` |
 | Plan | Manager | `<MOTOR_ROOT>/prompts/audit_plan.md` | `<MOTOR_ROOT>/skills/man-create-work-plan/SKILL.md`, `<MOTOR_ROOT>/skills/grill-work-plan/SKILL.md` si hay dudas, `<MOTOR_ROOT>/skills/_shared/ticket-anti-patterns.md` | `python <MOTOR_ROOT>/.agent/agent_controller.py --reset-turn --force --project-root .`, `--bootstrap-ticket`, `--validate` |
 | Implementacion | Builder | `<MOTOR_ROOT>/prompts/launch_builder.md` | `<MOTOR_ROOT>/skills/bui-implement-from-plan/SKILL.md`, `<MOTOR_ROOT>/skills/bui-run-quality-gates/SKILL.md`, `<MOTOR_ROOT>/skills/bui-self-audit/SKILL.md` | gates del plan, `python <MOTOR_ROOT>/scripts/run_pytest_safe.py --project-root .`, `ruff`, `python <MOTOR_ROOT>/.agent/agent_controller.py --pre-handoff`, `--mark-ready` |
 | Review 1 | Manager | `<MOTOR_ROOT>/prompts/review_manager.md`, `<MOTOR_ROOT>/prompts/audit_agent_output.md` | `<MOTOR_ROOT>/skills/man-review-implementation/SKILL.md` | `git show`, `git status`, tests focales, `python <MOTOR_ROOT>/.agent/agent_controller.py --validate` |
 | Review 2 | Manager adversarial | `<MOTOR_ROOT>/prompts/review_manager.md`, `<MOTOR_ROOT>/prompts/audit_agent_output.md` | `<MOTOR_ROOT>/skills/man-review-implementation/SKILL.md`, `<MOTOR_ROOT>/skills/bui-self-audit/SKILL.md` como input critico | buscar counterexamples en diff real, revalidar bus/scope/gates |
-| Cierre | Orquestador | `<MOTOR_ROOT>/prompts/orchestrator_pipeline.md`, `<MOTOR_ROOT>/prompts/session_close_chat.md` | `<MOTOR_ROOT>/skills/session-close-observations/SKILL.md`, `<MOTOR_ROOT>/skills/man-session-closeout/SKILL.md`, `<MOTOR_ROOT>/skills/memory-consolidate/SKILL.md` si hay aprendizaje reusable | `python <MOTOR_ROOT>/scripts/memory_consolidate.py --apply --project-root .`, `python <MOTOR_ROOT>/.agent/agent_controller.py --session-close --dry-run --project-root .`, `--session-close --project-root .` |
+| Cierre | Orquestador | `<MOTOR_ROOT>/prompts/orchestrator_pipeline.md`, `<MOTOR_ROOT>/prompts/session_close_chat.md` | `<MOTOR_ROOT>/skills/session-close-observations/SKILL.md`, `<MOTOR_ROOT>/skills/man-session-closeout/SKILL.md`, `<MOTOR_ROOT>/skills/memory-consolidate/SKILL.md` si hay aprendizaje reusable | `python <MOTOR_ROOT>/scripts/memory_consolidate.py --apply --project-root .`, `python <MOTOR_ROOT>/.agent/agent_controller.py --session-close --dry-run --project-root .`, `python <MOTOR_ROOT>/.agent/agent_controller.py --session-close --project-root .` |
+
+## Integridad del motor
+
+Antes de cada ticket:
+
+- ejecutar `python <MOTOR_ROOT>/scripts/check_motor_pristine.py --snapshot --out orchestrator_pipeline/session_close/motor_before_<TICKET_ID>.json`.
+
+Despues de cada ticket:
+
+- ejecutar `python <MOTOR_ROOT>/scripts/check_motor_pristine.py --check --snapshot-file orchestrator_pipeline/session_close/motor_before_<TICKET_ID>.json --report orchestrator_pipeline/session_close/motor_after_<TICKET_ID>.json`.
+
+Si una escritura al motor es denegada por el harness:
+
+- no reintentar con otro metodo;
+- registrar `MOTOR_WRITE_DENIED` con `--record-denied`;
+- continuar si el ticket puede completarse sin tocar el motor;
+- bloquear solo si el ticket no puede cumplir sus criterios sin ese cambio.
+
+Si aparece `MOTOR_DIRTY_DETECTED`:
+
+- no restaurar automaticamente;
+- incluir `motor_head_before`, `motor_head_after`, `pre_existing_dirty`,
+  `motor_status_new`, status y diff stat en el informe;
+- separar evidencia git de explicacion del agente.
 
 ## Presupuesto operativo
 
@@ -158,6 +186,9 @@ El informe debe incluir:
 - decisiones relevantes;
 - decisiones tomadas por autonomia;
 - commits y repos afectados;
+- integridad del motor (`motor_head_before`, `motor_head_after`,
+  `pre_existing_dirty`, `motor_status_new`, `motor_status_after`,
+  `motor_diff_stat_after`, `denied_attempts`);
 - gates con comandos exactos y exit codes;
 - etiquetas de evidencia;
 - limpieza no destructiva realizada;

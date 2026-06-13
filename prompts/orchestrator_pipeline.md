@@ -9,7 +9,7 @@
 > source_of_truth: este prompt. La skill es wrapper operativo y mapa de
 > herramientas; si divergen, prevalece `prompts/orchestrator_pipeline.md`.
 >
-> **Topologia Model B:** el estado operativo vive en `repo_destino`; el motor
+> **Topologia motor externo (`repo_motor` + `repo_destino`):** el estado operativo vive en `repo_destino`; el motor
 > solo aporta tooling portable. No leas ni escribas estado vivo en
 > `<motor_root>/.agent/collaboration/`.
 
@@ -85,7 +85,49 @@ Politica de tracking de `orchestrator_pipeline/`:
   - `cleanup/` para residuos movidos;
   - `session_close/` para reportes y artefactos del cierre de sesion.
 
-## 0.a Bootstrap contextual y memoria
+## 0.a Motor read-only y deteccion portable
+
+Durante un pipeline de `repo_destino`, `repo_motor` es read-only salvo que el
+ticket activo declare explicitamente cambios en el motor. La base portable no
+depende del harness: detectar siempre, restaurar nunca automaticamente.
+
+Antes de cada ticket, capturar snapshot del motor:
+
+```powershell
+python <MOTOR_ROOT>/scripts/check_motor_pristine.py --snapshot --out orchestrator_pipeline/session_close/motor_before_<TICKET_ID>.json
+```
+
+Despues de cada ticket, verificar contra el snapshot:
+
+```powershell
+python <MOTOR_ROOT>/scripts/check_motor_pristine.py --check --snapshot-file orchestrator_pipeline/session_close/motor_before_<TICKET_ID>.json --report orchestrator_pipeline/session_close/motor_after_<TICKET_ID>.json
+```
+
+Usa `--strict` solo cuando el ticket no pueda cumplir sus criterios si el motor
+cambia. En modo normal, `MOTOR_DIRTY_DETECTED` no restaura ni detiene por si
+solo: obliga a registrar evidencia y decidir si el ticket puede continuar.
+
+Si un harness deniega una escritura al motor, no reintentes con otro metodo. No
+intentes `Bash`, scripts o rutas alternativas para saltar el bloqueo. Registra
+el intento:
+
+```powershell
+python <MOTOR_ROOT>/scripts/check_motor_pristine.py --record-denied --report orchestrator_pipeline/session_close/motor_denied_<TICKET_ID>.json --ticket <TICKET_ID> --operation <write|edit|commit|checkout|restore|clean> --path <path> --reason "<error de herramienta>"
+```
+
+Protocolos:
+
+- `MOTOR_WRITE_DENIED`: continuar si el ticket puede resolverse sin tocar el
+  motor; abrir follow-up si la mejora pertenece al motor.
+- `MOTOR_DIRTY_DETECTED`: separar evidencia git de explicacion del agente; no
+  cerrar cosmeticamente.
+- `pre_existing_dirty`: informativo; no bloquea si `motor_status_new` esta
+  vacio y `motor_head_changed` es `false`.
+- `PIPELINE_BLOCKED`: usar solo si el ticket no puede cumplir sus criterios de
+  aceptacion sin modificar el motor.
+- restauracion: nunca automatica; el humano decide con git.
+
+## 0.b Bootstrap contextual y memoria
 
 Antes de seleccionar tickets del backlog, el orquestador debe cargar contexto
 del sistema y del destino. No conviertas esto en lectura ritual: usa los
@@ -148,7 +190,7 @@ python <MOTOR_ROOT>/scripts/memory_context.py --recall --ticket <TICKET_ID>
 - memoria/filosofia motor revisada como referencia;
 - drift inicial detectado o `sin drift inicial`.
 
-## 0.b Regla de autonomia y limpieza segura
+## 0.c Regla de autonomia y limpieza segura
 
 Cuando un subagente tenga dudas, debe elegir la decision que mas se acerque a la
 filosofia de `<MOTOR_ROOT>/prompts/audit_agent_output.md`, aplicando estos 5
@@ -218,7 +260,7 @@ prompts paralelos si ya existe una superficie del motor para ese rol.
 
 | Fase | Rol | Prompts canonicos | Skills canonicas | Scripts / comandos |
 |---|---|---|---|---|
-| Bootstrap | ORQUESTADOR | `<MOTOR_ROOT>/prompts/destination_bootstrap.md`, `<MOTOR_ROOT>/prompts/orchestrator_pipeline.md`, `<MOTOR_ROOT>/prompts/audit_agent_output.md` | `<MOTOR_ROOT>/skills/orchestrate-pipeline/SKILL.md` | `destination_context.py --bootstrap --project-root .`, `memory_context.py --status`, `memory_context.py --bootstrap`, `python <MOTOR_ROOT>/.agent/agent_controller.py --validate --json --project-root .` |
+| Bootstrap | ORQUESTADOR | `<MOTOR_ROOT>/prompts/destination_bootstrap.md`, `<MOTOR_ROOT>/prompts/orchestrator_pipeline.md`, `<MOTOR_ROOT>/prompts/audit_agent_output.md` | `<MOTOR_ROOT>/skills/orchestrate-pipeline/SKILL.md` | `destination_context.py --bootstrap --project-root .`, `memory_context.py --status`, `memory_context.py --bootstrap`, `check_motor_pristine.py --snapshot`, `python <MOTOR_ROOT>/.agent/agent_controller.py --validate --json --project-root .` |
 | Plan | MANAGER | `<MOTOR_ROOT>/prompts/audit_plan.md` | `<MOTOR_ROOT>/skills/man-create-work-plan/SKILL.md`, `<MOTOR_ROOT>/skills/grill-work-plan/SKILL.md` si hay dudas de plan, `<MOTOR_ROOT>/skills/_shared/ticket-anti-patterns.md` | `python <MOTOR_ROOT>/.agent/agent_controller.py --reset-turn --force --project-root .`, `--bootstrap-ticket`, `--validate` |
 | Implementacion | BUILDER | `<MOTOR_ROOT>/prompts/launch_builder.md` | `<MOTOR_ROOT>/skills/bui-implement-from-plan/SKILL.md`, `<MOTOR_ROOT>/skills/bui-run-quality-gates/SKILL.md`, `<MOTOR_ROOT>/skills/bui-self-audit/SKILL.md` | gates del plan, `python <MOTOR_ROOT>/scripts/run_pytest_safe.py --project-root .`, `ruff`, `python <MOTOR_ROOT>/.agent/agent_controller.py --pre-handoff`, `--mark-ready` |
 | Review 1 | MANAGER | `<MOTOR_ROOT>/prompts/review_manager.md`, `<MOTOR_ROOT>/prompts/audit_agent_output.md` | `<MOTOR_ROOT>/skills/man-review-implementation/SKILL.md` | `git show`, `git status`, tests focales, `python <MOTOR_ROOT>/.agent/agent_controller.py --validate --json --project-root .` |
@@ -375,6 +417,7 @@ El Builder devuelve un `BUILDER REPORT` con:
 - files changed
 - gates ejecutados
 - exit codes
+- evidencia `check_motor_pristine.py --check` del motor
 - riesgos residuales
 - cualquier ampliacion de scope
 
@@ -514,6 +557,14 @@ El informe debe documentar:
 - ticket y deliverable_type;
 - commits y repos afectados;
 - archivos tocados;
+- metadatos de integridad del motor:
+  - `motor_head_before`;
+  - `motor_head_after`;
+  - `pre_existing_dirty`;
+  - `motor_status_new`;
+  - `motor_status_after`;
+  - `motor_diff_stat_after`;
+  - `denied_attempts`;
 - quality gates ejecutados, comandos exactos y exit codes;
 - decisiones relevantes de implementacion;
 - decisiones tomadas por autonomia y por que se eligio esa opcion;
@@ -554,6 +605,9 @@ Cada etiqueta de evidencia debe incluir al menos un artefacto concreto:
 - `bytes:` o comando de guard para encoding.
 
 Una etiqueta sin artefacto concreto cuenta como relato y no permite cierre.
+La explicacion del agente no sustituye la evidencia de
+`check_motor_pristine.py`: separa siempre `[EVIDENCIA: git_status]` de
+`[RELATO: agente_explicacion]`.
 
 Plantilla minima recomendada dentro de `closeout_{TICKET_ID}.md`:
 
@@ -563,6 +617,28 @@ Plantilla minima recomendada dentro de `closeout_{TICKET_ID}.md`:
 | Claim | Etiqueta de evidencia | Artefacto concreto |
 |---|---|---|
 | <claim> | <VERIFICADO EN TEST / GIT / BUS / ...> | `command: ...`, `exit_code: 0`, `path: ...`, `commit: ...` |
+```
+
+Plantilla minima de integridad del motor:
+
+```md
+## Integridad repo_motor
+
+| Campo | Valor |
+|---|---|
+| motor_head_before | `<sha completo>` (`<sha7>`) |
+| motor_head_after | `<sha completo>` (`<sha7>`) |
+| pre_existing_dirty | `<status heredado o ninguno>` |
+| motor_status_new | `<entradas nuevas o ninguna>` |
+| motor_status_after | `<salida git status --short o limpio>` |
+| motor_diff_stat_after | `<diff stat o limpio>` |
+| denied_attempts | `<MOTOR_WRITE_DENIED o ninguno>` |
+
+[EVIDENCIA: git_status]
+`path: orchestrator_pipeline/session_close/motor_after_<TICKET_ID>.json`
+
+[RELATO: agente_explicacion]
+`<explicacion separada, si existe>`
 ```
 
 Si hubo decisiones de autonomia relevantes, usar esta plantilla. Si no hubo,
