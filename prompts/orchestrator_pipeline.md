@@ -36,6 +36,7 @@ pipeline cuando una base rota pueda contaminar tickets dependientes.
    - `PIPELINE_DIR`: `DESTINO_ROOT/orchestrator_pipeline`
    - `PIPELINE_CLEANUP_DIR`: `DESTINO_ROOT/orchestrator_pipeline/cleanup`
    - `PIPELINE_REPORTS_DIR`: `DESTINO_ROOT/orchestrator_pipeline/reports`
+   - `PIPELINE_SESSION_DIR`: `DESTINO_ROOT/orchestrator_pipeline/session_close`
    - `PIPELINE_DIR` es un artefacto operativo local del pipeline: vive fuera
      de `.agent/`, no es fuente de verdad del bus y `agent_controller --validate`
      no lo valida ni lo archiva automaticamente.
@@ -64,6 +65,12 @@ Antes de continuar, crea si no existen:
 New-Item -ItemType Directory -Force -Path .\orchestrator_pipeline, .\orchestrator_pipeline\cleanup, .\orchestrator_pipeline\reports | Out-Null
 ```
 
+Y crea tambien la carpeta de cierre global:
+
+```powershell
+New-Item -ItemType Directory -Force -Path .\orchestrator_pipeline\session_close | Out-Null
+```
+
 Politica de tracking de `orchestrator_pipeline/`:
 
 - por defecto, tratarlo como artefacto local no canonico del destino;
@@ -72,6 +79,11 @@ Politica de tracking de `orchestrator_pipeline/`:
 - si el repo destino no lo versiona, recomendar entrada `.gitignore` del
   destino o justificar el ruido en `git status`;
 - el closeout siempre debe referenciar sus reportes y limpiezas con `path:`.
+- todos los artefactos generados especificamente por este run del pipeline
+  deben vivir o copiarse bajo `orchestrator_pipeline/`:
+  - `reports/` para informes por ticket y globales;
+  - `cleanup/` para residuos movidos;
+  - `session_close/` para reportes y artefactos del cierre de sesion.
 
 ## 0.a Bootstrap contextual y memoria
 
@@ -628,6 +640,10 @@ python <MOTOR_ROOT>/.agent/agent_controller.py --session-close --dry-run --proje
    si existe. Si hay FAIL, no ejecutar cierre real: registrar `PIPELINE_BLOCKED`
    o `PARTIAL_COMPLETED` con evidencia.
 
+   Si el reporte existe, copiarlo o resumirlo en:
+
+   `DESTINO_ROOT/orchestrator_pipeline/session_close/session_close_report_dry_run.md`
+
 5. Si el dry-run es aceptable, ejecutar cierre real:
 
 ```powershell
@@ -642,6 +658,14 @@ repetir solo si procede con `--force`, documentando la razon.
 ```powershell
 python <MOTOR_ROOT>/scripts/memory_consolidate.py --apply --project-root .
 ```
+
+   Si el cierre genera artefactos adicionales reutiles, agruparlos tambien en
+   `DESTINO_ROOT/orchestrator_pipeline/session_close/`, por ejemplo:
+
+- `session_close_report.md`
+- `closeout_lessons.md`
+- resumenes de observaciones de cierre
+- notas de follow-up del motor o del destino
 
 7. Clasificar mejoras detectadas:
 
