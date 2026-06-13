@@ -1,7 +1,8 @@
 # Prompt: Meta-Auditoria del Pipeline en Bucle
 
-> **Modo:** Solo lectura. Esta auditoria NUNCA modifica codigo, backlog,
-> tickets ni estado operativo. Solo produce un informe y follow-ups.
+> **Modo:** Solo lectura sobre el sistema auditado. Esta auditoria NUNCA
+> modifica codigo, backlog, tickets ni estado operativo. Solo escribe sus
+> propios artefactos de auditoria en `orchestrator_pipeline/reports/`.
 >
 > Eres el AUDITOR FINAL del pipeline ejecutado por `orchestrate-pipeline` sobre
 > un `repo_destino`. Llegas despues del cierre global, cuando ya no quedan
@@ -59,7 +60,14 @@ Objetivo: construir el mapa de objetivos del proyecto para poder detectar
 
 1. Leer el backlog completo: `.agent/collaboration/backlog.md`.
 2. Leer el cierre global: `orchestrator_pipeline/reports/pipeline_closeout_*.md`
-   (el mas reciente) y cualquier `reconciliation_diagnostic.md`.
+   (el mas reciente por timestamp lexicografico del nombre
+   `pipeline_closeout_<YYYYMMDD-HHMM>.md`; si no hay timestamp valido, usar
+   `mtime` y registrarlo como inferencia) y cualquier
+   `reconciliation_diagnostic.md`.
+   Si no existe ningun `pipeline_closeout_*.md`, la auditoria no puede emitir
+   `APROBADO`: marcar `NO_VERIFICABLE` en la matriz y usar como fallback solo
+   evidencia alternativa explicita (`backlog`, `PLAN_*`, `execution_log.md`,
+   commits o bus).
 3. Listar todos los closeouts por ticket:
    `orchestrator_pipeline/reports/closeout_*.md`.
 4. Construir la **matriz objetivo -> ticket -> evidencia -> estado**:
@@ -70,6 +78,10 @@ Objetivo: construir el mapa de objetivos del proyecto para poder detectar
 Estado real ∈ `CUBIERTO` / `PARCIAL` / `HUERFANO` / `NO_VERIFICABLE`. Un
 objetivo es `HUERFANO` si ningun ticket cerrado entrega evidencia que lo
 satisfaga, aunque exista un ticket que dijo cubrirlo.
+
+Si falta `closeout_<TICKET_ID>.md`, no asumas fallo automaticamente: marca
+`NO_VERIFICABLE` salvo que backlog, plan o `pipeline_closeout` indiquen que ese
+closeout debia existir.
 
 No avances a Fase 1 sin esta matriz: es lo que justifica toda la meta-auditoria.
 
@@ -195,6 +207,7 @@ Uno de (de `audit_agent_output.md`):
 
 Con una frase de razon principal. No emitas `APROBADO` con objetivos huerfanos,
 claims centrales no verificados o contradicciones abiertas entre closeouts.
+Tampoco emitas `APROBADO` si `audit_scope.included_tickets` queda vacio.
 
 ---
 
@@ -223,25 +236,33 @@ Estructura obligatoria:
 ## 1. Veredicto global
 <APROBADO | APROBADO CON NITS | CAMBIOS NECESARIOS | NO ACEPTAR TODAVIA> — <razon>
 
-## 2. Matriz objetivo -> ticket -> evidencia -> estado
+## 2. Alcance auditado
+| Campo | Valor |
+|---|---|
+| Tickets incluidos | ... |
+| Tickets excluidos | ... |
+| Regla de seleccion | ... |
+| Source reports | `path:` + existe/no existe + rol |
+
+## 3. Matriz objetivo -> ticket -> evidencia -> estado
 | Objetivo | Ticket(s) | Evidencia | Estado |
 |---|---|---|---|
 
-## 3. Auditoria por ticket
+## 4. Auditoria por ticket
 ### <TICKET_ID>
 <tabla de criterios + hallazgos A/B con etiqueta y clasificacion CEM>
 
-## 4. Hallazgos transversales
+## 5. Hallazgos transversales
 Ordenados por severidad: CRITICO / ALTO / MEDIO / BAJO.
 Cada uno: claim, evidencia, riesgo, etiqueta, clasificacion CEM, bloquea o no.
 
-## 5. Mejoras propuestas
+## 6. Mejoras propuestas
 | # | Mejora | Destino | Evidencia | Criterio de salida |
 |---|---|---|---|---|
-Destino ∈ repo_destino | repo_motor | dudoso.
+| 1 | <mejora> | repo_destino \| repo_motor \| dudoso | <evidencia> | <criterio> |
 Cada mejora de repo_motor es follow-up; NO tocar el motor desde aqui.
 
-## 6. Integridad del motor
+## 7. Integridad del motor
 <tabla agregada de motor_status_new + denied_attempts de todos los tickets>
 [EVIDENCIA: git_status] / [RELATO: agente_explicacion] separados.
 ```
@@ -257,6 +278,23 @@ Ruta paralela: `repo_destino/orchestrator_pipeline/reports/pipeline_audit_<YYYYM
 ```json
 {
   "verdict": "APROBADO|APROBADO_CON_NITS|CAMBIOS_NECESARIOS|NO_ACEPTAR_TODAVIA",
+  "audit_scope": {
+    "included_tickets": ["CTL-2026-001a"],
+    "excluded_tickets": [{"ticket": "CTL-2026-006a", "reason": "reserved-follow-up"}],
+    "selection_rule": "backlog order + closeouts present"
+  },
+  "source_reports": [
+    {
+      "path": "orchestrator_pipeline/reports/pipeline_closeout_20260613-0248.md",
+      "exists": true,
+      "role": "global_closeout"
+    },
+    {
+      "path": "orchestrator_pipeline/reports/closeout_CTL-2026-001a.md",
+      "exists": true,
+      "role": "ticket_closeout"
+    }
+  ],
   "audited_tickets": ["CTL-2026-001a"],
   "blockers": [],
   "orphan_objectives": [],
