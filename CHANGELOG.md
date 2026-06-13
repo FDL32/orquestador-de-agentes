@@ -1,3 +1,38 @@
+# 2026-06-13 - v9.17.0 System health audit protocol + audit-chain fixes
+
+### Added
+- `prompts/system_health_audit.md`, `skills/system-health-audit/` and
+  `scripts/collect_system_health.py`: periodic three-layer (repo_motor /
+  repo_destino / integration) system-health audit. The script is a deterministic
+  read-only COLLECTOR (no verdict); the agent is the AUDITOR. Motor executes,
+  destino conserves immutable evidence under
+  `.agent/audits/system_health/general_audit_YYYYMMDD[_HHMM]/` with a stable
+  `INDEX.md`. Exit codes 0/1/2/3; modes full/motor-only/auto; relativized
+  `findings.json`; `raw/` gitignored per audit folder. Wired into
+  `install_agent_system.py` (ensures the audits dir, idempotent; `audits` is a
+  destination-owned LOCAL_DIR) and `MANIFEST.workspace`.
+
+### Fixed
+- `tests/unit/test_review_budget_retry.py` (WOT-AUDIT-C1): the canonical suite was
+  red at HEAD because the WT-2026-221b evidence gate rejects docs-only/empty
+  packets before review; the retry/timeout/forensic tests now feed realistic
+  productive evidence (gate untouched) and a positive barrier locks the
+  docs-only -> CHANGES contract. Suite back to green (2580 passed).
+- `AGENTS.md`: corrected `check_motor_pristine --check` invocation to the real CLI
+  (`--snapshot-file`/`--report`).
+- `scripts/collect_system_health.py`: relativize Windows path variants and write a
+  per-folder `.gitignore` so `raw/` stays untracked.
+
+### Changed
+- Release metadata updated to `v9.17.0` across `pyproject.toml`,
+  `.agent/.version_manifest.json`, `README.md`, `AGENTS.md`, `CLAUDE.md` and
+  `PROJECT.md`.
+
+### Verification
+- `ruff` exit 0; encoding guard exit 0; `run_pytest_safe` exit_code=0 (2580
+  passed / 0 failed); collector tests (8) and install tests (41) green;
+  `discover_skills --check-contract` exit 0 with barrier proven on the new pair.
+
 # 2026-06-13 - v9.16.0 Autonomous pipeline, meta-audit and git publication audit
 
 ### Added

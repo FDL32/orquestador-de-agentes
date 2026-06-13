@@ -1,6 +1,6 @@
 # Project: orquestador_de_agentes
-**Version:** v9.16.0
-**State:** READY (2026-06-13) - Autonomous pipeline, meta-audit and git publication audit documented for portable motor use
+**Version:** v9.17.0
+**State:** READY (2026-06-13) - System health audit protocol (collector + skill + prompt) added; audit-chain fixes; suite green
 
 ## Current Cycle
 

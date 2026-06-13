@@ -58,7 +58,7 @@ No usar "workspace" a secas: el termino es ambiguo porque describe tanto el repo
 - `MANIFEST.distribute` define la frontera del motor central (codigo operativo).
 - `MANIFEST.workspace` define el contrato del workspace destino (estado, memoria, config).
 - Los comandos canonical y legacy se documentan por separado.
-- Estado actual: `v9.16.0` motor central + workspace destino, cierre canonico con suite verde, pipeline autonomo por chat, meta-auditoria, auditoria de publicacion Git, guard de integridad del motor, encoding guard endurecido y CEM v0 adoptado.
+- Estado actual: `v9.17.0` motor central + workspace destino, cierre canonico con suite verde, pipeline autonomo por chat, meta-auditoria, auditoria de publicacion Git, guard de integridad del motor, encoding guard endurecido y CEM v0 adoptado.
 - El motor vive una unica vez en `orquestador_de_agentes/`; los proyectos destino lo referencian externamente.
 
 ## MANIFEST.distribute y MANIFEST.workspace (WP-2026-111)

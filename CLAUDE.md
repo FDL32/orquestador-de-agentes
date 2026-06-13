@@ -6,7 +6,7 @@
 
 Claude Code is a supported backend for this template and can act as Builder or Manager depending on the active ticket.
 Prefer the current code and the canonical docs over memory or stale notes.
-Current portable release: `v9.16.0`, workspace+motor architecture stable with autonomous pipeline prompts, motor integrity guards, meta-audit, git publication audit, suite green, encoding guard hardened and CEM v0 adopted.
+Current portable release: `v9.17.0`, workspace+motor architecture stable with autonomous pipeline prompts, motor integrity guards, meta-audit, git publication audit, suite green, encoding guard hardened and CEM v0 adopted.
 This repository is the motor (code-only). The active workspace lives in an external project directory pointed to by `AGENT_PROJECT_ROOT` or `--project-root` (e.g. `z_scripts/` for motor development, or a destination project for deployments). Do not read or write `.agent/collaboration/` in this repo unless explicitly operating in standalone/test mode.
 
 ## Workflow
