@@ -1053,6 +1053,47 @@ def _read_deliverable_type(content: str, default: str = "code") -> str:
     return value
 
 
+_VALID_DELIVERY_AUTHORITIES = frozenset({"repo_motor", "repo_destino"})
+_DELIVERY_AUTHORITY_RE = re.compile(
+    r"(?:delivery_authority|repo\s+de\s+autoridad)\s*:?\**\s*"
+    r"(`?)(repo_motor|repo_destino)\1",
+    re.IGNORECASE,
+)
+
+
+def _read_delivery_authority(content: str, default: str = "repo_motor") -> str:
+    """Read the repo that owns code/mixed delivery evidence.
+
+    Before: work_plan.md may omit the field for legacy tickets.
+    During: Accepts either ``delivery_authority: repo_destino`` or the
+        Spanish contract line ``Repo de autoridad: repo_destino``.
+    After: Returns repo_motor by default to preserve the existing M3 behavior.
+    """
+    match = _DELIVERY_AUTHORITY_RE.search(content or "")
+    if not match:
+        return default
+    value = match.group(2).strip().lower()
+    if value not in _VALID_DELIVERY_AUTHORITIES:
+        return default
+    return value
+
+
+def _resolve_checkpoint_root(plan_content: str, deliverable_type: str) -> Path:
+    """Resolve the git repo that owns checkpoint M3 for code/mixed tickets."""
+    project_root = PROJECT_ROOT.resolve()
+    motor_root = _MOTOR_ROOT.resolve()
+    if deliverable_type in {"documentation", "research", "analysis"}:
+        return project_root
+    if (
+        _read_delivery_authority(plan_content) == "repo_destino"
+        and (project_root / ".git").exists()
+    ):
+        return project_root
+    if motor_root != project_root and (motor_root / ".git").exists():
+        return motor_root
+    return project_root
+
+
 # Keywords that indicate a generic/checkpoint commit (not a meaningful closeout)
 _CHECKPOINT_KEYWORDS = frozenset({"checkpoint", "pre-handoff", "wip", "interim"})
 
@@ -1144,7 +1185,9 @@ def _check_last_commit(project_root: Path, active_id: str) -> tuple[bool, str]:
         return False, "Git not available"
 
 
-def _resolve_closeout_commit_root(deliverable_type: str) -> Path:
+def _resolve_closeout_commit_root(
+    deliverable_type: str, plan_content: str | None = None
+) -> Path:
     """Resolve which git repo owns closeout commit validation.
 
     Before:
@@ -1152,7 +1195,7 @@ def _resolve_closeout_commit_root(deliverable_type: str) -> Path:
 
     During:
         - In motor/destino topology, code and mixed tickets validate against
-          repo_motor because productive commits land there.
+          the declared delivery authority. Legacy plans default to repo_motor.
         - Documentation/research/analysis keep using PROJECT_ROOT if they ever
           opt into commit validation in the future.
 
@@ -1161,6 +1204,9 @@ def _resolve_closeout_commit_root(deliverable_type: str) -> Path:
     """
     project_root = PROJECT_ROOT.resolve()
     motor_root = _MOTOR_ROOT.resolve()
+
+    if plan_content is not None:
+        return _resolve_checkpoint_root(plan_content, deliverable_type)
 
     if deliverable_type in {"documentation", "research", "analysis"}:
         return project_root
@@ -2335,13 +2381,18 @@ def _handle_check_completion() -> int:
     return 1
 
 
-def _fallback_checkpoint_motor(guard_result: dict, plan_id: str) -> dict:
+def _fallback_checkpoint_motor(
+    guard_result: dict, plan_id: str, plan_content: str = ""
+) -> dict:
     """WT-2026-232a: Fallback check for checkpoint tag in _MOTOR_ROOT.
 
-    In motor/destino topology, the checkpoint tag lives in repo_motor,
+    In legacy motor/destino topology, the checkpoint tag lives in repo_motor,
     not PROJECT_ROOT. The pre_handoff_guard.py script checks PROJECT_ROOT
-    only; this fallback retries in _MOTOR_ROOT when the guard fails.
+    only; this fallback retries in _MOTOR_ROOT when the guard fails. Plans
+    that declare repo_destino delivery authority are intentionally excluded.
     """
+    if _read_delivery_authority(plan_content) == "repo_destino":
+        return guard_result
     if (
         not guard_result.get("valid")
         and guard_result.get("missing_checkpoint")
@@ -2408,22 +2459,24 @@ def _run_pre_handoff_guard(plan_id: str, json_output: bool) -> dict:  # noqa: C9
             guard_result = {"valid": result.returncode == 0}
 
         # WT-2026-232a: Fallback check for checkpoint tag in _MOTOR_ROOT.
-        guard_result = _fallback_checkpoint_motor(guard_result, plan_id)
+        guard_result = _fallback_checkpoint_motor(
+            guard_result, plan_id, _plan_content_ph
+        )
 
-        # WT-2026-245b: When the guard passed without checking the tag (workspace
-        # has no .git in Model B), explicitly verify the checkpoint exists in
-        # _MOTOR_ROOT. Without this, --mark-ready would pass the guard but later
-        # fail in the motor scope gate with "Tag ... not found in motor repo".
+        # WT-2026-245b / WOT-AUDIT-M3: When the guard passed without checking
+        # the tag, explicitly verify the checkpoint exists in the delivery
+        # authority repo. Legacy code/mixed plans still resolve to _MOTOR_ROOT.
         # Skip this verification for non-code tickets (documentation/research/
-        # analysis) since they bypass the motor checkpoint in mark-ready.
+        # analysis) since they bypass checkpoint enforcement in mark-ready.
         if (
             not _is_non_code
             and guard_result.get("valid")
             and _MOTOR_ROOT.resolve() != PROJECT_ROOT.resolve()
             and not guard_result.get("missing_checkpoint")
         ):
+            _checkpoint_root = _resolve_checkpoint_root(_plan_content_ph, _dt_ph)
             cp_valid, _cp_files, cp_error = _resolve_motor_checkpoint_files(
-                _MOTOR_ROOT, plan_id
+                _checkpoint_root, plan_id
             )
             if not cp_valid:
                 guard_result["valid"] = False
@@ -2794,28 +2847,30 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
             },
         )
 
-    # --- WT-2026-232a: Motor-aware scope gate ---
-    # When motor/destino topology exists (different repos), check the motor
-    # checkpoint commit for scope compliance. Enables mark-ready to pass
-    # without --scope-override when productive changes are in repo_motor.
+    # --- WT-2026-232a / WOT-AUDIT-M3: authority-aware checkpoint scope gate ---
+    # When motor/destino topology exists (different repos), check the declared
+    # delivery authority checkpoint commit for scope compliance. Legacy plans
+    # default to repo_motor; destination-authority code/mixed plans validate
+    # against repo_destino without fabricating a motor commit.
     motor_root_mr = _MOTOR_ROOT.resolve()
     project_root_mr = PROJECT_ROOT.resolve()
     is_motor_topology = motor_root_mr != project_root_mr
-    motor_scope_pass = False
+    checkpoint_scope_pass = False
 
     if is_motor_topology:
         # For documentation/research/analysis tickets, skip motor checkpoint:
         # the evidence gate already verified declared deliverables exist on disk.
-        _non_code_ticket = _read_deliverable_type(plan_content) in {
-            "documentation",
-            "research",
-            "analysis",
-        }
+        _dt_mr = _read_deliverable_type(plan_content)
+        _non_code_ticket = _dt_mr in {"documentation", "research", "analysis"}
         if _non_code_ticket:
-            motor_scope_pass = True
+            checkpoint_scope_pass = True
         else:
+            checkpoint_root_mr = _resolve_checkpoint_root(plan_content, _dt_mr)
+            checkpoint_label = (
+                "Destination" if checkpoint_root_mr == project_root_mr else "Motor"
+            )
             cp_valid, cp_files, cp_error = _resolve_motor_checkpoint_files(
-                motor_root_mr, plan_id
+                checkpoint_root_mr, plan_id
             )
             if cp_valid and cp_files:
                 flt_motor_paths = _parse_raw_flt_paths(plan_content)
@@ -2825,39 +2880,51 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
                 inside_flt = motor_set & flt_set
 
                 if inside_flt and not outside_flt:
-                    # Full scope compliance: motor checkpoint files within FLT
+                    # Full scope compliance: checkpoint files within FLT
                     if not json_output:
                         print(
-                            f"[OK] Motor scope: {len(inside_flt)} files within "
+                            f"[OK] {checkpoint_label} scope: "
+                            f"{len(inside_flt)} files within "
                             "Files Likely Touched"
                         )
-                    motor_scope_pass = True
+                    checkpoint_scope_pass = True
                 elif outside_flt:
-                    # Motor checkpoint files outside FLT -> block (or override)
+                    # Checkpoint files outside FLT -> block (or override)
                     print(
-                        "[ERROR] Motor checkpoint has files outside Files Likely Touched:"
+                        f"[ERROR] {checkpoint_label} checkpoint has files "
+                        "outside Files Likely Touched:"
                     )
                     for f in sorted(outside_flt):
                         print(f"  - {f}")
                     if not scope_override:
                         print('Use --scope-override "reason" to proceed.')
                         return _fail_closeout(
-                            "motor_scope_outside_flt",
+                            "checkpoint_scope_outside_flt",
                             {"outside_flt": sorted(outside_flt)},
                         )
                     _record_scope_override(scope_override, outside_flt)
-                    motor_scope_pass = True
+                    checkpoint_scope_pass = True
                 # else: inside_flt empty, no outside_flt -> fall through to legacy
             elif not cp_valid:
-                # No valid checkpoint in motor topology -> block with bus events
-                _print_motor_checkpoint_guidance(plan_id, cp_error)
+                # No valid checkpoint in delivery authority repo -> block.
+                if checkpoint_root_mr == motor_root_mr:
+                    _print_motor_checkpoint_guidance(plan_id, cp_error)
+                else:
+                    print(
+                        f"[ERROR] No valid destination checkpoint for {plan_id}: "
+                        f"{cp_error}"
+                    )
+                    print(
+                        "Run --pre-handoff first to create "
+                        "checkpoint/review-<ticket> in repo_destino."
+                    )
                 return _fail_closeout(
-                    "motor_checkpoint_missing",
+                    "checkpoint_missing",
                     {"cp_error": cp_error},
                 )
             # cp_valid but cp_files empty -> fall through to legacy
 
-    if not motor_scope_pass:
+    if not checkpoint_scope_pass:
         # For the scope gate, supplement current git status with recent commits so
         # implementation files are found even when the tree is clean after hotfixes.
         _scope_changed = get_changed_files()
@@ -3118,6 +3185,8 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
     # while keeping project_root for live-surface detection (surfaces live in workspace).
     project_root = PROJECT_ROOT.resolve()
     motor_root = _MOTOR_ROOT.resolve()  # TP-11: declared before guard
+    _dt_ph = _read_deliverable_type(plan_content)
+    _delivery_authority_ph = _read_delivery_authority(plan_content)
     if (project_root / ".git").exists():
         git_root = project_root
     else:
@@ -3130,12 +3199,23 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
                 flush=True,
             )
             return 1
+    if (
+        _dt_ph not in {"documentation", "research", "analysis"}
+        and _delivery_authority_ph == "repo_destino"
+        and not (project_root / ".git").exists()
+    ):
+        print(
+            "[ERROR] delivery_authority=repo_destino requires PROJECT_ROOT to be "
+            "a git repository.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 1
 
     # --- WT-2026-239a: Docs/research/analysis early bypass ---
     # For non-code tickets, skip motor commit/tag/checkpoint and workspace
     # commit/tag. Only verify tree hygiene (excluding live surfaces).
     # WT-2026-240a: Block if motor has uncommitted productive changes.
-    _dt_ph = _read_deliverable_type(plan_content)
     if _dt_ph in {"documentation", "research", "analysis"}:
         # WT-2026-240a: Check motor hygiene before bypass
         _motor_dirty_docs = motor_uncommitted_productive(motor_root)
@@ -3265,6 +3345,14 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
     # Files Likely Touched, auto-commit in repo_motor. If outside FLT, block.
     motor_uncommitted = motor_uncommitted_productive(motor_root)
     if motor_uncommitted:
+        if _delivery_authority_ph == "repo_destino":
+            print(
+                "Productive changes in repo_motor during a repo_destino-authority "
+                "ticket:\n" + "\n".join(f"  {f}" for f in sorted(motor_uncommitted)),
+                file=sys.stderr,
+                flush=True,
+            )
+            return 1
         flt_motor_paths = _parse_raw_flt_paths(plan_content)
         # Normalize both sets to motor-relative forward-slash paths (TP-06)
         motor_set = {f.replace("\\", "/") for f in motor_uncommitted}
@@ -3401,11 +3489,10 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
         needs_tag = not tag_aligned
 
     # --- Step 2: Create/refresh checkpoint M3 tag ---
-    # WT-2026-245b: In Model B topology the tag must always live in repo_motor,
-    # not in the workspace git_root, so --mark-ready finds it via
-    # _resolve_motor_checkpoint_files(_MOTOR_ROOT, ...).
+    # WT-2026-245b / WOT-AUDIT-M3: In Model B topology legacy code/mixed tickets
+    # tag repo_motor, while repo_destino-authority tickets tag git_root.
     if needs_tag:
-        if motor_root != project_root:
+        if motor_root != project_root and _delivery_authority_ph != "repo_destino":
             # Model B: delegate to _try_motor_tag which always operates on motor_root
             tag_ok, tag_err = _try_motor_tag(motor_root, plan_id, json_output)
             if not tag_ok:
@@ -4018,7 +4105,7 @@ def _handle_manager_approve(  # noqa: C901 - flag handler intentionally branches
     # WP-2026-188: Validate last commit message for closeout hygiene
     # Block generic checkpoints, wrong/missing ticket IDs unless --force
     if not force_mode and _dt_ma not in {"documentation", "research", "analysis"}:
-        commit_root = _resolve_closeout_commit_root(_dt_ma)
+        commit_root = _resolve_closeout_commit_root(_dt_ma, plan_content)
         commit_valid, commit_reason = _check_last_commit(commit_root, ticket_id)
         if not commit_valid:
             warn_parts = [
