@@ -1,8 +1,8 @@
 # MEMORY
 
-Regenerated: 2026-06-09T10:18:17.751503+00:00
+Regenerated: 2026-06-13T09:11:22.024266+00:00
 
-Total observations: 71
+Total observations: 82
 
 - Adapter Pipeline Wp Split (1 observations)
 - Ap-Nn-Cross-Cutting-Architecture (1 observations)
@@ -10,6 +10,7 @@ Total observations: 71
 - Arranque (1 observations)
 - Auto-Improvement-Loop-Formalized (1 observations)
 - Bootstrap-Ticket-State-Contract (1 observations)
+- Builder-Brief-Live-Surface-Contract (1 observations)
 - Builder-Closeout-Hallucination (1 observations)
 - Builder-Manager-Mirror-Pattern (1 observations)
 - Builder-Window-Silent-Fail (1 observations)
@@ -23,6 +24,7 @@ Total observations: 71
 - Cem-False-Green (1 observations)
 - Cem-Proportional-Rigor (1 observations)
 - Cem-Relaunch-Continuity (1 observations)
+- Ci-Vs-Prepush-Coverage (1 observations)
 - Code-Ticket-Prehandoff-Packaging (1 observations)
 - Delivery-Hook-Mutation (2 observations)
 - Design-Pattern-Positive (1 observations)
@@ -30,13 +32,18 @@ Total observations: 71
 - Explicit Legacy Edit Missing From Diff (1 observations)
 - Future-Improvement-Diff-Based-Review (1 observations)
 - Future-Improvement-Memory-Categorization (1 observations)
+- Git-History-Scan-Dedup (1 observations)
 - Handoff-Blocked-Not-Crash (1 observations)
 - Lock Reentrancy Antipattern (1 observations)
 - Manager-Review-Rubric (5 observations)
+- Ndjson-Last-Decision-Wins (1 observations)
+- Opencode-Phase-Field-Location (1 observations)
 - Opencode-Runtime-Permission-Injection (1 observations)
 - Portable-Ticket-Filename-Boundary (1 observations)
+- Powershell-Bom-Encoding (1 observations)
 - Powershell-Strictmode-Dynamic-Properties (1 observations)
 - Projection-Probe-Debt (1 observations)
+- Prompt-Skill-Drift (1 observations)
 - Protocol-Key-Assumption (1 observations)
 - Repo-Motor-Portable-Root (1 observations)
 - Request Changes Requeue Deadlock (1 observations)
@@ -53,27 +60,20 @@ Total observations: 71
 - Skills-Taxonomy-V2 (1 observations)
 - State-Projection-Drift (1 observations)
 - State-Surface-Separation (1 observations)
+- Subprocess-Json-Stdout-Noise (1 observations)
 - Supervisor-Process-Staleness (1 observations)
 - Test-Linting-Policy (1 observations)
 - Test-Surrogate-Antipattern (1 observations)
 - Testability-Refactor-Scope-Drift (1 observations)
+- Ticket-Closeout-Debt (1 observations)
 - Ticket-Completion (1 observations)
 - Ticket-Contradiction-Sequence (1 observations)
 - Ticket-Gate-Placement (1 observations)
+- Ticket-Id-Parser (1 observations)
 - Ticket-Lineage-Rule (1 observations)
 - Ticket-Plan-Audit-Parity-Gap (1 observations)
 - Ticket-State-Enum-Contract (1 observations)
 - Ticket-Structure-Risk-Heuristic (1 observations)
-- Ticket-Unverifiable-Acceptance (1 observations)
-- Timeout Config Key Collision (1 observations)
-- Topology-Contract-Stub-Elevation (1 observations)
-- Unique Id Generation Smell (1 observations)
-- Validator-Enforce-Not-Observe (1 observations)
-- Windows-Precommit-Line-Endings (1 observations)
-
-## adapter_pipeline_wp_split
-- WP-2026-147: ticket originally mixed a read-only adapter (graph_context.py) with a full pipeline build (project_scanner.py). Corrected before Builder started. Rule: read-only adapter over existing art
-
 
 ---
 
