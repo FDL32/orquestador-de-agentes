@@ -29,6 +29,36 @@ def _write_canonical(tmp_path, name, content):
     (collab / name).write_text(content, encoding="utf-8")
 
 
+def _stub_productive_evidence(monkeypatch, bridge):
+    """WOT-AUDIT-C1: simulate a real code ticket with productive changes so the
+    WT-2026-221b evidence gate lets the review proceed.
+
+    These tests exercise the retry/timeout/forensic/persistence paths, which only
+    run once the review packet passes the evidence gate. Without a productive diff
+    the gate (correctly) short-circuits to CHANGES before any review happens. We do
+    NOT relax the gate here: we feed it a realistic productive classification, the
+    same shape `classify_review_packet` returns for a genuine code ticket.
+    """
+    monkeypatch.setattr(
+        bridge,
+        "classify_review_packet",
+        lambda tid: {
+            "bus_active": True,
+            "is_empty": False,
+            "is_docs_only": False,
+            "is_collaboration_only": False,
+            "productive_files": ["bus/review_bridge.py"],
+            "has_motor_evidence": True,
+            "has_destination_productive": False,
+            "deliverable_type": "code",
+            "reason": "productive evidence (test stub)",
+            "motor_diff_files": ["bus/review_bridge.py"],
+            "destination_diff_files": [],
+            "docs_only_files": [],
+        },
+    )
+
+
 def test_single_shot_prompt_includes_canonical(tmp_path, monkeypatch):
     _write_canonical(tmp_path, "work_plan.md", "# WP-X\n- **deliverable_type:** code\n")
     _write_canonical(tmp_path, "STATE.md", "STATE_CONTENT")
@@ -81,6 +111,7 @@ def test_retry_succeeds_on_second_attempt(tmp_path, monkeypatch):
     _write_canonical(tmp_path, "TURN.md", "t")
     _write_canonical(tmp_path, "execution_log.md", "### WP-X\n")
     bridge, _ = _make_bridge(tmp_path)
+    _stub_productive_evidence(monkeypatch, bridge)
     monkeypatch.setattr(
         bridge.state_ingest, "_latest_state", lambda tid: "READY_FOR_REVIEW"
     )
@@ -145,6 +176,7 @@ def test_retry_exhausted_timeout_becomes_transport_failed(tmp_path, monkeypatch)
     )
     monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
     monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
+    _stub_productive_evidence(monkeypatch, bridge)
 
     monkeypatch.setattr(
         bridge,
@@ -253,6 +285,7 @@ def test_forensic_event_emitted_per_attempt(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
     monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
+    _stub_productive_evidence(monkeypatch, bridge)
 
     monkeypatch.setattr(
         bridge, "_run_opencode_review", lambda **kw: ("DECISION: APPROVE\n", "", 0)
@@ -323,6 +356,7 @@ def test_review_attempt_persistence_creates_file(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
     monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
+    _stub_productive_evidence(monkeypatch, bridge)
 
     monkeypatch.setattr(
         bridge,
@@ -368,6 +402,7 @@ def test_review_emits_lightweight_event_with_log_path(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(bridge, "_git_diff_stat", lambda: "")
     monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "opencode")
+    _stub_productive_evidence(monkeypatch, bridge)
 
     long_stdout = "x" * 2000 + "DECISION: APPROVE"
 
@@ -650,3 +685,68 @@ def test_changes_counter_is_derived_from_bus(tmp_path):
         payload={"decision": "changes"},
     )
     assert bridge._count_prior_changes_from_bus("WP-X") == 1
+
+
+def test_evidence_gate_blocks_docs_only_review(tmp_path, monkeypatch):
+    """WOT-AUDIT-C1 / WT-2026-221b: a docs-only review packet is blocked.
+
+    Positive barrier for the evidence gate: when classify_review_packet reports a
+    docs-only packet, run_manager_review_cycle must return CHANGES, emit
+    REVIEW_EVIDENCE_BLOCKED, and never invoke the backend review. This locks the
+    contract so the inverse regression (docs-only silently APPROVED) cannot return.
+    """
+    _write_canonical(tmp_path, "work_plan.md", "- **deliverable_type:** code\n")
+    _write_canonical(tmp_path, "STATE.md", "s")
+    _write_canonical(tmp_path, "TURN.md", "t")
+    _write_canonical(tmp_path, "execution_log.md", "### WP-X\n")
+    bridge, bus = _make_bridge(tmp_path)
+    monkeypatch.setattr(
+        bridge.state_ingest, "_latest_state", lambda tid: "READY_FOR_REVIEW"
+    )
+    monkeypatch.setattr(
+        bridge,
+        "classify_review_packet",
+        lambda tid: {
+            "bus_active": True,
+            "is_empty": False,
+            "is_docs_only": True,
+            "is_collaboration_only": False,
+            "productive_files": [],
+            "has_motor_evidence": False,
+            "has_destination_productive": False,
+            "deliverable_type": "code",
+            "reason": "Ticket WP-X: all changes are docs-only (1 files).",
+            "docs_only_files": ["README.md"],
+            "motor_diff_files": [],
+            "destination_diff_files": ["README.md"],
+        },
+    )
+
+    called = {"review": 0}
+
+    def fail_if_called(**kw):
+        called["review"] += 1
+        return ("DECISION: APPROVE\n", "", 0)
+
+    monkeypatch.setattr(bridge, "_run_opencode_review", fail_if_called)
+
+    class DummySupervisor:
+        def transition_ticket(self, *args, **kwargs):
+            pass
+
+        def _is_supervisor_lock_stale(self):
+            return False
+
+        def requeue_ticket(self, ticket_id):
+            return True
+
+    result = bridge.run_manager_review_cycle(
+        ticket_id="WP-X", supervisor=DummySupervisor()
+    )
+
+    assert result.decision == ReviewDecision.CHANGES
+    # The gate must short-circuit BEFORE invoking the backend review.
+    assert called["review"] == 0
+    blocked = bus.read_events(ticket_id="WP-X", event_type="REVIEW_EVIDENCE_BLOCKED")
+    assert len(blocked) == 1
+    assert blocked[0].payload["classification"] == "docs_only"
