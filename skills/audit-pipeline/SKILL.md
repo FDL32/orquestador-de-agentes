@@ -1,7 +1,7 @@
 ---
 name: audit-pipeline
 version: 1.0.0
-description: Meta-auditoria read-only post-pipeline del trabajo en bucle en un repo_destino, con doble pasada adversarial e informe consolidado
+description: Meta-auditoria post-pipeline read-only sobre el sistema auditado en un repo_destino, con doble pasada adversarial e informe consolidado
 triggers: [/audit-pipeline, audit-pipeline, auditar-pipeline]
 author: agent
 role: manager
@@ -22,8 +22,9 @@ No es un tercer Review por ticket. Review 1 y Review 2 son intra-ticket y
 sincronicos. Esta skill es post-pipeline, retrospectiva y transversal: audita el
 cuerpo completo de trabajo cerrado y produce un informe consolidado.
 
-Es **read-only absoluto**: no reabre tickets, no toca backlog, codigo ni estado
-operativo. Solo reporta hallazgos y propone follow-ups.
+Es **read-only sobre el sistema auditado**: no reabre tickets, no toca backlog,
+codigo ni estado operativo. Solo escribe sus propios artefactos de auditoria y
+propone follow-ups.
 
 ## Cuando usarla
 
@@ -63,15 +64,17 @@ Igual que `orchestrate-pipeline`:
 
 ## Flujo
 
-1. **Fase 0 — Vision global:** leer `backlog.md` completo,
-   `pipeline_closeout_*.md` y todos los `closeout_*.md`. Construir la matriz
-   objetivo -> ticket -> evidencia -> estado.
-2. **Fase 1 — Doble pasada por ticket:**
+1. **Fase 0 - Vision global:** leer `backlog.md` completo, seleccionar el
+   `pipeline_closeout_*.md` mas reciente de forma deterministica y leer todos
+   los `closeout_*.md`. Construir la matriz objetivo -> ticket -> evidencia ->
+   estado. Si falta un closeout, marcar `NO_VERIFICABLE` salvo evidencia de
+   fallo. Si no hay cierre global, no emitir `APROBADO`.
+2. **Fase 1 - Doble pasada por ticket:**
    - Pasada A (verificacion): plan, implementacion, logs, tests, docs, closeout
      en cuatro ejes (implementacion, calidad codigo, calidad docs, alineacion).
    - Pasada B (refutacion): falso verde, scope creep, claims sin evidencia,
      fixtures irreales, estado canonico incoherente.
-3. **Fase 2 — Transversal:** dependencias, objetivos huerfanos, deuda no
+3. **Fase 2 - Transversal:** dependencias, objetivos huerfanos, deuda no
    retomada, contradicciones, drift de motor acumulado.
 4. **Veredicto global:** `APROBADO` / `APROBADO CON NITS` /
    `CAMBIOS NECESARIOS` / `NO ACEPTAR TODAVIA`.
@@ -99,7 +102,9 @@ Igual que `orchestrate-pipeline`:
 - `repo_destino/orchestrator_pipeline/reports/pipeline_audit_<timestamp>.md`
 - `repo_destino/orchestrator_pipeline/reports/pipeline_audit_<timestamp>.json`
 
-Estructura detallada de ambos en `prompts/audit_pipeline.md`.
+Estructura detallada de ambos en `prompts/audit_pipeline.md`. El Markdown debe
+incluir el alcance auditado y el JSON debe incluir `audit_scope` y
+`source_reports` con `path`, `exists` y `role`.
 
 ## Restriccion dura
 
