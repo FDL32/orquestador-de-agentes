@@ -73,6 +73,69 @@ Politica de tracking de `orchestrator_pipeline/`:
   destino o justificar el ruido en `git status`;
 - el closeout siempre debe referenciar sus reportes y limpiezas con `path:`.
 
+## 0.a Bootstrap contextual y memoria
+
+Antes de seleccionar tickets del backlog, el orquestador debe cargar contexto
+del sistema y del destino. No conviertas esto en lectura ritual: usa los
+comandos canonicos y lee solo los artefactos que aporten senal.
+
+1. Aplica el protocolo de destino:
+   `<MOTOR_ROOT>/prompts/destination_bootstrap.md`.
+2. Fija el root operativo para comandos que resuelven memoria o estado:
+
+```powershell
+$env:AGENT_PROJECT_ROOT = (Resolve-Path .).Path
+```
+
+3. Genera y lee el mapa compacto del destino:
+
+```powershell
+python <MOTOR_ROOT>/scripts/destination_context.py --bootstrap --project-root .
+```
+
+Leer despues:
+
+- `DESTINO_ROOT/.agent/context/destination_map.md`
+- `DESTINO_ROOT/PROJECT.md`
+- `DESTINO_ROOT/AGENTS.md` si existe
+- `DESTINO_ROOT/CLAUDE.md` si existe
+- `DESTINO_ROOT/.agent/collaboration/backlog.md`
+
+4. Carga memoria del `repo_destino` con el root operativo ya fijado:
+
+```powershell
+python <MOTOR_ROOT>/scripts/memory_context.py --status
+python <MOTOR_ROOT>/scripts/memory_context.py --bootstrap
+```
+
+Si `--status` muestra rutas o tiers del `repo_motor` en vez del
+`repo_destino`, el root no quedo fijado en esa shell: aborta, repite el paso 2
+y vuelve a ejecutar `memory_context.py`.
+
+Si hay ticket activo o se crea uno, prioriza memoria relevante:
+
+```powershell
+python <MOTOR_ROOT>/scripts/memory_context.py --recall --ticket <TICKET_ID>
+```
+
+5. Revisa memoria y filosofia del `repo_motor` solo como referencia, no como
+   estado operativo del ticket:
+
+- `<MOTOR_ROOT>/AGENTS.md`
+- `<MOTOR_ROOT>/prompts/audit_agent_output.md`
+- `<MOTOR_ROOT>/.agent/runtime/memory/MEMORY.md` si existe
+- `<MOTOR_ROOT>/.agent/runtime/memory/memory_rules.md` si existe
+- `<MOTOR_ROOT>/.agent/runtime/memory/memory_profile.md` si existe
+
+6. Antes de planificar, anota en el reporte de progreso:
+
+- `repo_destino` confirmado;
+- `MOTOR_ROOT` confirmado;
+- backlog encontrado;
+- memoria destino cargada o razon por la que no existe;
+- memoria/filosofia motor revisada como referencia;
+- drift inicial detectado o `sin drift inicial`.
+
 ## 0.b Regla de autonomia y limpieza segura
 
 Cuando un subagente tenga dudas, debe elegir la decision que mas se acerque a la
@@ -143,12 +206,12 @@ prompts paralelos si ya existe una superficie del motor para ese rol.
 
 | Fase | Rol | Prompts canonicos | Skills canonicas | Scripts / comandos |
 |---|---|---|---|---|
-| Bootstrap | ORQUESTADOR | `<MOTOR_ROOT>/prompts/destination_bootstrap.md`, `<MOTOR_ROOT>/prompts/orchestrator_pipeline.md` | `<MOTOR_ROOT>/skills/orchestrate-pipeline/SKILL.md` | `python <MOTOR_ROOT>/.agent/agent_controller.py --validate --json --project-root .` |
+| Bootstrap | ORQUESTADOR | `<MOTOR_ROOT>/prompts/destination_bootstrap.md`, `<MOTOR_ROOT>/prompts/orchestrator_pipeline.md`, `<MOTOR_ROOT>/prompts/audit_agent_output.md` | `<MOTOR_ROOT>/skills/orchestrate-pipeline/SKILL.md` | `destination_context.py --bootstrap --project-root .`, `memory_context.py --status`, `memory_context.py --bootstrap`, `python <MOTOR_ROOT>/.agent/agent_controller.py --validate --json --project-root .` |
 | Plan | MANAGER | `<MOTOR_ROOT>/prompts/audit_plan.md` | `<MOTOR_ROOT>/skills/man-create-work-plan/SKILL.md`, `<MOTOR_ROOT>/skills/grill-work-plan/SKILL.md` si hay dudas de plan, `<MOTOR_ROOT>/skills/_shared/ticket-anti-patterns.md` | `python <MOTOR_ROOT>/.agent/agent_controller.py --reset-turn --force --project-root .`, `--bootstrap-ticket`, `--validate` |
 | Implementacion | BUILDER | `<MOTOR_ROOT>/prompts/launch_builder.md` | `<MOTOR_ROOT>/skills/bui-implement-from-plan/SKILL.md`, `<MOTOR_ROOT>/skills/bui-run-quality-gates/SKILL.md`, `<MOTOR_ROOT>/skills/bui-self-audit/SKILL.md` | gates del plan, `python <MOTOR_ROOT>/scripts/run_pytest_safe.py --project-root .`, `ruff`, `python <MOTOR_ROOT>/.agent/agent_controller.py --pre-handoff`, `--mark-ready` |
 | Review 1 | MANAGER | `<MOTOR_ROOT>/prompts/review_manager.md`, `<MOTOR_ROOT>/prompts/audit_agent_output.md` | `<MOTOR_ROOT>/skills/man-review-implementation/SKILL.md` | `git show`, `git status`, tests focales, `python <MOTOR_ROOT>/.agent/agent_controller.py --validate --json --project-root .` |
 | Review 2 | MANAGER adversarial | `<MOTOR_ROOT>/prompts/review_manager.md`, `<MOTOR_ROOT>/prompts/audit_agent_output.md` | `<MOTOR_ROOT>/skills/man-review-implementation/SKILL.md`, `<MOTOR_ROOT>/skills/bui-self-audit/SKILL.md` como input critico | buscar counterexamples en diff real, bus, scope y gates |
-| Cierre | ORQUESTADOR | `<MOTOR_ROOT>/prompts/orchestrator_pipeline.md`, `<MOTOR_ROOT>/prompts/session_close_chat.md` si aplica a cierre de sesion | `<MOTOR_ROOT>/skills/man-session-closeout/SKILL.md`, `<MOTOR_ROOT>/skills/memory-consolidate/SKILL.md` si hay aprendizaje reusable | `memory_consolidate.py --apply --project-root .`, `agent_controller.py --validate --json --project-root .` |
+| Cierre | ORQUESTADOR | `<MOTOR_ROOT>/prompts/orchestrator_pipeline.md`, `<MOTOR_ROOT>/prompts/session_close_chat.md` | `<MOTOR_ROOT>/skills/session-close-observations/SKILL.md`, `<MOTOR_ROOT>/skills/man-session-closeout/SKILL.md`, `<MOTOR_ROOT>/skills/memory-consolidate/SKILL.md` si hay aprendizaje reusable | `python <MOTOR_ROOT>/scripts/memory_consolidate.py --apply --project-root .`, `python <MOTOR_ROOT>/.agent/agent_controller.py --session-close --dry-run --project-root .`, `python <MOTOR_ROOT>/.agent/agent_controller.py --session-close --project-root .` |
 
 Herramientas de auditoria complementarias:
 
@@ -524,7 +587,81 @@ Pendientes: <n>
 Proxima accion: <accion concreta>
 ```
 
-## 10. Estados terminales
+## 10. Cierre global del pipeline
+
+Cuando no queden tickets ejecutables, el orquestador debe cerrar el pipeline
+como sesion, no solo como suma de tickets.
+
+Precondiciones:
+
+- todos los tickets aplicables estan `COMPLETED`, `BLOCKED` o pospuestos por
+  dependencia documentada;
+- no hay Builder/Manager activo;
+- `validate` final ya fue ejecutado o el fallo esta documentado.
+
+1. Generar informe global:
+
+`DESTINO_ROOT/orchestrator_pipeline/reports/pipeline_closeout_<YYYYMMDD-HHMM>.md`
+
+Debe incluir:
+
+- tickets completados, bloqueados y pospuestos;
+- commits por ticket y repo;
+- informes `closeout_{TICKET_ID}.md`;
+- decisiones de autonomia repetidas o relevantes;
+- limpiezas no destructivas en `orchestrator_pipeline/cleanup/`;
+- mejoras candidatas para el `repo_motor`;
+- observaciones/memoria candidatas para el `repo_destino`;
+- riesgos residuales y follow-ups;
+- evidencia final de `validate`, git status, bus y memoria.
+
+2. Aplicar el protocolo canonico de cierre de chat:
+   `<MOTOR_ROOT>/prompts/session_close_chat.md`.
+
+3. Ejecutar cierre dry-run:
+
+```powershell
+python <MOTOR_ROOT>/.agent/agent_controller.py --session-close --dry-run --project-root .
+```
+
+4. Revisar el reporte dry-run en `.agent/runtime/tmp/session_close_report.md`
+   si existe. Si hay FAIL, no ejecutar cierre real: registrar `PIPELINE_BLOCKED`
+   o `PARTIAL_COMPLETED` con evidencia.
+
+5. Si el dry-run es aceptable, ejecutar cierre real:
+
+```powershell
+python <MOTOR_ROOT>/.agent/agent_controller.py --session-close --project-root .
+```
+
+Si `STATE.md` ya esta `COMPLETED` y el cierre responde `already_completed`,
+repetir solo si procede con `--force`, documentando la razon.
+
+6. Consolidar memoria cuando haya aprendizajes reusable:
+
+```powershell
+python <MOTOR_ROOT>/scripts/memory_consolidate.py --apply --project-root .
+```
+
+7. Clasificar mejoras detectadas:
+
+- `repo_destino`: observaciones locales, reglas de proyecto, deuda del
+  producto o tickets del backlog del destino;
+- `repo_motor`: bugs, mejoras de prompts/skills/scripts, gaps de tooling o
+  deuda generalizable;
+- `dudoso`: no promover a memoria estable sin evidencia adicional.
+
+No modifiques el `repo_motor` dentro de un ticket del `repo_destino` salvo que
+el backlog lo declare explicitamente. Si aparece una mejora del motor, crear
+follow-up con evidencia en el informe global.
+
+8. Verificar encoding del informe global:
+
+```powershell
+python <MOTOR_ROOT>/scripts/check_encoding_guard.py orchestrator_pipeline/reports/pipeline_closeout_<YYYYMMDD-HHMM>.md
+```
+
+## 11. Estados terminales
 
 | Estado | Significado |
 |---|---|
