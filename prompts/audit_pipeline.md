@@ -9,6 +9,7 @@
 > tickets ejecutables.
 
 contract_id: cid-audit-pipeline-v1
+Skill canonica: skills/audit-pipeline/SKILL.md
 source_of_truth: este prompt. La skill `skills/audit-pipeline/SKILL.md` es
 wrapper operativo; si divergen, prevalece este prompt.
 
