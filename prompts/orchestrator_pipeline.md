@@ -241,6 +241,82 @@ Si durante la implementacion o el cierre hace falta "limpiar" archivos:
 - solo borrar definitivamente si el ticket o el usuario lo ordenan de forma
   explicita.
 
+## 0.d Asignacion canonica de IDs de ticket
+
+Antes de crear, reescribir o materializar tickets desde el backlog, el
+orquestador debe derivar IDs desde el contrato del `repo_destino`, nunca desde
+el nombre semantico de una fase. Usa el `TICKET_PREFIX` ya confirmado en el
+paso 4 del bootstrap desde `DESTINO_ROOT/PROJECT.md`; no lo tomes de memoria.
+
+Formato canonico portable:
+
+```text
+<TICKET_PREFIX>-YYYY-NNNx
+```
+
+Donde:
+
+- `TICKET_PREFIX` se lee de `DESTINO_ROOT/PROJECT.md` (`Ticket prefix:`).
+  En el repo de dogfooding actual puede ser `WOT`, pero otros destinos tendran
+  otro prefijo. No hardcodear `WOT` en el pipeline.
+- `YYYY` es el ano operativo del ticket.
+- `NNN` es un numero decimal de tres digitos, consecutivo dentro del prefijo y
+  ano.
+- `x` es un sufijo alfabetico opcional para subfases (`a`, `b`, `c`, ...).
+
+El ano operativo se fija al inicio del run del pipeline desde la fecha del
+sistema. Todos los tickets nuevos de un mismo run usan ese ano, salvo que el
+pipeline se reanude explicitamente como un run nuevo en otro ano.
+
+Nota: el bus valida un patron mas amplio:
+`(?:WP|WT|[A-Z]{3})-\d{4}-[A-Za-z0-9]+`. Los tres digitos de `NNN` y el
+sufijo alfabetico simple son una convencion del pipeline para legibilidad y
+orden estable, no un requisito estricto del validador. No renombres IDs ya
+publicados solo porque usen una forma valida para el bus pero menos estricta
+que esta convencion.
+
+Regla de asignacion:
+
+1. Confirma `TICKET_PREFIX` (ya disponible del bootstrap; fuente:
+   `PROJECT.md`).
+2. Busca IDs existentes que cumplan el patron
+   `<TICKET_PREFIX>-YYYY-NNNx` en:
+   - `.agent/collaboration/backlog.md`;
+   - `.agent/collaboration/work_plan.md`;
+   - `.agent/collaboration/execution_log.md`;
+   - `CHANGELOG.md` si existe;
+   - memoria del destino (`.agent/runtime/memory/`) si existe;
+   - commits del `repo_destino` (`git log --oneline --grep <TICKET_PREFIX>-`).
+3. Determina el ultimo ID real emitido para ese prefijo/ano y asigna el
+   siguiente consecutivo. Si el ultimo del ano operativo actual es
+   `<PREFIX>-YYYY-001d`, el siguiente bloque nuevo empieza en
+   `<PREFIX>-YYYY-002a`. Si no hay IDs del ano operativo actual, el primer
+   bloque empieza en `<PREFIX>-YYYY-001a`.
+4. Si un backlog trae nombres no canonicos como `<PREFIX>-AUDIT-*` o
+   `<FASE>-<NOMBRE>`, tratarlos como `Alias historico`, `Titulo` o `Scope`,
+   nunca como ID principal del ticket nuevo. Historia de este destino:
+   `A2d`, `ORPHANS`, `CI` y `LOG-COMPACT` son aliases de fases, no IDs
+   canonicos.
+5. Antes de arrancar Builder, el `work_plan.md` debe tener:
+   - `ID` canonico;
+   - `deliverable_type`;
+   - `delivery_authority` cuando aplique (`repo_motor` o `repo_destino`);
+   - alias historico si el trabajo procede de una fase de auditoria.
+
+STOP conditions:
+
+- Si `PROJECT.md` no declara `Ticket prefix:`, detener con
+  `PIPELINE_BLOCKED`.
+- Si hay colision entre un ID nuevo y backlog/changelog/git/memoria, detener y
+  recalcular; no inventar una banda numerica arbitraria.
+- Si el cierre requeriria `--force` solo porque el ID no encaja con el patron
+  canonico, detener y renombrar el ticket antes de lanzar Builder solo si el
+  ticket aun no fue publicado (no hay commit en git con ese ID). `--force`
+  queda reservado para cierres historicos ya publicados, con justificacion
+  explicita.
+- Si el backlog mezcla IDs canonicos y aliases no canonicos como candidatos
+  `pending`, normalizar primero el backlog o bloquear el pipeline.
+
 ## 1. Capacidades requeridas
 
 Este prompt esta disenado para un agente con subagentes reales via `task tool`.
