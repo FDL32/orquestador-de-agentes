@@ -76,16 +76,29 @@ Si el preflight devuelve:
 - `NEEDS_RECONCILE`: reconciliar estado antes de Builder.
 - `PIPELINE_BLOCKED`: detener y pedir intervencion humana o decision de Manager.
 
+## Bootstrap contextual
+
+Antes de leer y ordenar tickets, cargar contexto real:
+
+- aplicar `<MOTOR_ROOT>/prompts/destination_bootstrap.md`;
+- fijar `AGENT_PROJECT_ROOT` al `repo_destino`;
+- ejecutar `python <MOTOR_ROOT>/scripts/destination_context.py --bootstrap --project-root .`;
+- leer `.agent/context/destination_map.md`;
+- cargar memoria del destino con `python <MOTOR_ROOT>/scripts/memory_context.py --status` y `--bootstrap`;
+- revisar `PROJECT.md`, `AGENTS.md`/`CLAUDE.md` si existen y `backlog.md`;
+- revisar `AGENTS.md`, `audit_agent_output.md` y memoria del motor solo como
+  filosofia/referencia, nunca como estado operativo del destino.
+
 ## Herramientas por fase
 
 | Fase | Rol | Prompts | Skills | Scripts / comandos |
 |---|---|---|---|---|
-| Bootstrap | Orquestador | `<MOTOR_ROOT>/prompts/destination_bootstrap.md`, `<MOTOR_ROOT>/prompts/orchestrator_pipeline.md` | esta skill | `python <MOTOR_ROOT>/.agent/agent_controller.py --validate --json --project-root .` |
+| Bootstrap | Orquestador | `<MOTOR_ROOT>/prompts/destination_bootstrap.md`, `<MOTOR_ROOT>/prompts/orchestrator_pipeline.md`, `<MOTOR_ROOT>/prompts/audit_agent_output.md` | esta skill | `python <MOTOR_ROOT>/scripts/destination_context.py --bootstrap --project-root .`, `python <MOTOR_ROOT>/scripts/memory_context.py --status`, `--bootstrap`, `python <MOTOR_ROOT>/.agent/agent_controller.py --validate --json --project-root .` |
 | Plan | Manager | `<MOTOR_ROOT>/prompts/audit_plan.md` | `<MOTOR_ROOT>/skills/man-create-work-plan/SKILL.md`, `<MOTOR_ROOT>/skills/grill-work-plan/SKILL.md` si hay dudas, `<MOTOR_ROOT>/skills/_shared/ticket-anti-patterns.md` | `python <MOTOR_ROOT>/.agent/agent_controller.py --reset-turn --force --project-root .`, `--bootstrap-ticket`, `--validate` |
 | Implementacion | Builder | `<MOTOR_ROOT>/prompts/launch_builder.md` | `<MOTOR_ROOT>/skills/bui-implement-from-plan/SKILL.md`, `<MOTOR_ROOT>/skills/bui-run-quality-gates/SKILL.md`, `<MOTOR_ROOT>/skills/bui-self-audit/SKILL.md` | gates del plan, `python <MOTOR_ROOT>/scripts/run_pytest_safe.py --project-root .`, `ruff`, `python <MOTOR_ROOT>/.agent/agent_controller.py --pre-handoff`, `--mark-ready` |
 | Review 1 | Manager | `<MOTOR_ROOT>/prompts/review_manager.md`, `<MOTOR_ROOT>/prompts/audit_agent_output.md` | `<MOTOR_ROOT>/skills/man-review-implementation/SKILL.md` | `git show`, `git status`, tests focales, `python <MOTOR_ROOT>/.agent/agent_controller.py --validate` |
 | Review 2 | Manager adversarial | `<MOTOR_ROOT>/prompts/review_manager.md`, `<MOTOR_ROOT>/prompts/audit_agent_output.md` | `<MOTOR_ROOT>/skills/man-review-implementation/SKILL.md`, `<MOTOR_ROOT>/skills/bui-self-audit/SKILL.md` como input critico | buscar counterexamples en diff real, revalidar bus/scope/gates |
-| Cierre | Orquestador | `<MOTOR_ROOT>/prompts/orchestrator_pipeline.md`, `<MOTOR_ROOT>/prompts/session_close_chat.md` si aplica a cierre de sesion | `<MOTOR_ROOT>/skills/man-session-closeout/SKILL.md`, `<MOTOR_ROOT>/skills/memory-consolidate/SKILL.md` si hay aprendizaje reusable | `python <MOTOR_ROOT>/scripts/memory_consolidate.py --apply --project-root .`, `python <MOTOR_ROOT>/.agent/agent_controller.py --validate` |
+| Cierre | Orquestador | `<MOTOR_ROOT>/prompts/orchestrator_pipeline.md`, `<MOTOR_ROOT>/prompts/session_close_chat.md` | `<MOTOR_ROOT>/skills/session-close-observations/SKILL.md`, `<MOTOR_ROOT>/skills/man-session-closeout/SKILL.md`, `<MOTOR_ROOT>/skills/memory-consolidate/SKILL.md` si hay aprendizaje reusable | `python <MOTOR_ROOT>/scripts/memory_consolidate.py --apply --project-root .`, `python <MOTOR_ROOT>/.agent/agent_controller.py --session-close --dry-run --project-root .`, `--session-close --project-root .` |
 
 ## Presupuesto operativo
 
@@ -157,6 +170,21 @@ equivalente). Etiquetas sin artefacto concreto cuentan como relato.
 
 Antes de cerrar, pasar `scripts/check_encoding_guard.py` sobre el informe de
 cierre. Si falla, corregir encoding antes de declarar cierre.
+
+## Cierre global del pipeline
+
+Cuando no queden tickets ejecutables, ejecutar cierre de sesion, no solo cierre
+de tickets:
+
+- generar `repo_destino/orchestrator_pipeline/reports/pipeline_closeout_<timestamp>.md`;
+- aplicar `<MOTOR_ROOT>/prompts/session_close_chat.md`;
+- ejecutar `python <MOTOR_ROOT>/.agent/agent_controller.py --session-close --dry-run --project-root .`;
+- si el dry-run tiene FAIL, no ejecutar cierre real y documentar el bloqueo;
+- si el dry-run es aceptable, ejecutar `python <MOTOR_ROOT>/.agent/agent_controller.py --session-close --project-root .`;
+- consolidar memoria del destino si hay aprendizaje reusable;
+- clasificar mejoras como `repo_destino`, `repo_motor` o `dudoso`;
+- crear follow-ups para mejoras del motor en vez de tocar el motor desde un
+  ticket de destino no declarado.
 
 ## Contrato de fallo
 
