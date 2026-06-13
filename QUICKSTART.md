@@ -319,6 +319,17 @@ Prefer `scripts/run_pytest_safe.py` for normal Windows runs. Use raw `pytest` on
 
 El comando `--health` proporciona un resumen operativo derivado de manifests y estado canónico.
 
+### Auditoría de salud del sistema (periódica, tras cambios)
+
+```powershell
+python scripts/collect_system_health.py --motor-root <repo_motor> --project-root <repo_destino> --mode auto
+```
+
+El motor ejecuta el recolector (read-only); el agente completa el juicio adversarial
+con la skill `/audit-system-health` (`prompts/system_health_audit.md`). La evidencia
+inmutable queda en `<repo_destino>/.agent/audits/system_health/general_audit_YYYYMMDD[_HHMM]/`.
+El recolector NO emite veredicto: solo recolecta evidencia y señales críticas.
+
 ### Session close (canonical entrypoint)
 
 Al final de una sesión de trabajo, usa el controlador directamente en lugar de invocar scripts sueltos:
