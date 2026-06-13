@@ -102,7 +102,12 @@ def _relativize(text: str, roots: dict[str, Path]) -> str:
     for label, root in roots.items():
         if root is None:
             continue
-        for variant in {str(root), str(root).replace("\\", "/")}:
+        root_text = str(root)
+        for variant in {
+            root_text,
+            root_text.replace("\\", "/"),
+            root_text.replace("/", "\\"),
+        }:
             out = out.replace(variant, f"<{label}>")
     return out
 
