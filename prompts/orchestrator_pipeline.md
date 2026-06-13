@@ -761,7 +761,48 @@ follow-up con evidencia en el informe global.
 python <MOTOR_ROOT>/scripts/check_encoding_guard.py orchestrator_pipeline/reports/pipeline_closeout_<YYYYMMDD-HHMM>.md
 ```
 
-## 11. Estados terminales
+## 11. Meta-auditoria final (read-only)
+
+Despues del cierre global, ejecutar una meta-auditoria del pipeline completo.
+Fuente de verdad: `<MOTOR_ROOT>/prompts/audit_pipeline.md`. Skill operativa:
+`<MOTOR_ROOT>/skills/audit-pipeline/SKILL.md` (trigger `/audit-pipeline`).
+
+No es un tercer Review por ticket. Review 1 y Review 2 son intra-ticket y
+sincronicos; esta auditoria es post-pipeline, retrospectiva y transversal: ve el
+cuerpo completo de trabajo cerrado.
+
+Es read-only absoluto:
+
+- NO reabre tickets ni modifica `backlog.md`, planes, codigo o estado operativo;
+- NO restaura motor ni destino;
+- solo reporta hallazgos y propone follow-ups con criterio de salida.
+
+Flujo (detalle en `audit_pipeline.md`):
+
+1. Fase 0: leer backlog completo y `pipeline_closeout_*.md`; construir matriz
+   objetivo -> ticket -> evidencia -> estado.
+2. Fase 1: por ticket, doble pasada adversarial (A verifica, B refuta) en cuatro
+   ejes: implementacion, calidad de codigo, calidad de documentacion, alineacion
+   con objetivos del plan.
+3. Fase 2: transversal (dependencias, objetivos huerfanos, deuda no retomada,
+   contradicciones, drift de motor agregado).
+4. Veredicto global: `APROBADO` / `APROBADO CON NITS` / `CAMBIOS NECESARIOS` /
+   `NO ACEPTAR TODAVIA`.
+
+Los closeouts son relato del pipeline: re-derivar desde git, plan y logs. Separar
+`[EVIDENCIA: <fuente>]` de `[RELATO: agente_explicacion]`. Usar
+`scripts/check_motor_pristine.py` como evidencia de integridad del motor.
+
+Salidas, en el mismo turno del veredicto:
+
+- `orchestrator_pipeline/reports/pipeline_audit_<YYYYMMDD-HHMM>.md`;
+- `orchestrator_pipeline/reports/pipeline_audit_<YYYYMMDD-HHMM>.json`.
+
+Pasar `check_encoding_guard.py` sobre el informe antes de declarar la auditoria
+cerrada. Los follow-ups del informe no se ejecutan automaticamente: el humano
+decide si reabrir un ticket o adoptar una mejora.
+
+## 12. Estados terminales
 
 | Estado | Significado |
 |---|---|

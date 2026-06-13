@@ -39,6 +39,7 @@ scripts/check_motor_pristine.py
 # PROMPTS OPERATIVOS REFERENCIADOS POR SKILLS / BOOTSTRAP
 # =============================================================================
 prompts/audit_agent_output.md
+prompts/audit_pipeline.md
 prompts/audit_plan.md
 prompts/destination_bootstrap.md
 prompts/launch_builder.md

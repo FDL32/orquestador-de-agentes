@@ -103,6 +103,7 @@ Antes de leer y ordenar tickets, cargar contexto real:
 | Review 1 | Manager | `<MOTOR_ROOT>/prompts/review_manager.md`, `<MOTOR_ROOT>/prompts/audit_agent_output.md` | `<MOTOR_ROOT>/skills/man-review-implementation/SKILL.md` | `git show`, `git status`, tests focales, `python <MOTOR_ROOT>/.agent/agent_controller.py --validate` |
 | Review 2 | Manager adversarial | `<MOTOR_ROOT>/prompts/review_manager.md`, `<MOTOR_ROOT>/prompts/audit_agent_output.md` | `<MOTOR_ROOT>/skills/man-review-implementation/SKILL.md`, `<MOTOR_ROOT>/skills/bui-self-audit/SKILL.md` como input critico | buscar counterexamples en diff real, revalidar bus/scope/gates |
 | Cierre | Orquestador | `<MOTOR_ROOT>/prompts/orchestrator_pipeline.md`, `<MOTOR_ROOT>/prompts/session_close_chat.md` | `<MOTOR_ROOT>/skills/session-close-observations/SKILL.md`, `<MOTOR_ROOT>/skills/man-session-closeout/SKILL.md`, `<MOTOR_ROOT>/skills/memory-consolidate/SKILL.md` si hay aprendizaje reusable | `python <MOTOR_ROOT>/scripts/memory_consolidate.py --apply --project-root .`, `python <MOTOR_ROOT>/.agent/agent_controller.py --session-close --dry-run --project-root .`, `python <MOTOR_ROOT>/.agent/agent_controller.py --session-close --project-root .` |
+| Meta-auditoria | Auditor (read-only) | `<MOTOR_ROOT>/prompts/audit_pipeline.md`, `<MOTOR_ROOT>/prompts/audit_agent_output.md`, `<MOTOR_ROOT>/prompts/review_manager.md` | `<MOTOR_ROOT>/skills/audit-pipeline/SKILL.md` | `git show --stat`, `ruff check`, tests focales, `python <MOTOR_ROOT>/scripts/check_motor_pristine.py --check`, `python <MOTOR_ROOT>/scripts/check_encoding_guard.py` |
 
 ## Integridad del motor
 
@@ -216,6 +217,21 @@ de tickets:
 - clasificar mejoras como `repo_destino`, `repo_motor` o `dudoso`;
 - crear follow-ups para mejoras del motor en vez de tocar el motor desde un
   ticket de destino no declarado.
+
+## Fase final: meta-auditoria read-only
+
+Despues del cierre global, cuando ya no quedan tickets ejecutables, ejecutar la
+meta-auditoria con `<MOTOR_ROOT>/skills/audit-pipeline/SKILL.md` (trigger
+`/audit-pipeline`).
+
+Es read-only: audita el cuerpo completo de trabajo cerrado, no reabre tickets ni
+modifica backlog/codigo/estado. Produce:
+
+- `repo_destino/orchestrator_pipeline/reports/pipeline_audit_<timestamp>.md`;
+- `repo_destino/orchestrator_pipeline/reports/pipeline_audit_<timestamp>.json`.
+
+No confundir con Review 1/2: aquellos son intra-ticket; esta es post-pipeline y
+transversal. Sus follow-ups no se ejecutan automaticamente: el humano decide.
 
 ## Contrato de fallo
 
