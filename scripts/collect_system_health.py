@@ -239,6 +239,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI orchestratio
     try:
         out_dir = _unique_out_dir(base_out)
         (out_dir / "raw").mkdir(parents=True, exist_ok=False)
+        # raw/ may leak personal paths/PII; keep it out of git by default
+        # (v1 will sanitize it; until then it must not be versioned).
+        (out_dir / ".gitignore").write_text("raw/\n", encoding="utf-8")
     except (OSError, RuntimeError) as exc:
         print(f"[collect] ERROR: cannot create output dir: {exc}", file=sys.stderr)
         return 2

@@ -131,6 +131,10 @@ def test_main_motor_only_creates_skeletons_and_relativized_findings(
     assert "NO es verde global" in (out / "04_quality_gates.md").read_text(
         encoding="utf-8"
     )
+    # raw/ must be kept out of git (it can leak personal paths/PII).
+    gitignore = out / ".gitignore"
+    assert gitignore.exists()
+    assert "raw/" in gitignore.read_text(encoding="utf-8")
 
 
 def test_main_full_mode_requires_destino_returns_3(tmp_path, monkeypatch):
