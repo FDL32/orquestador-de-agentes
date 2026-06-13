@@ -41,7 +41,9 @@ PROJECT_AGENT = REPO_ROOT / ".agent"
 
 # Directories to preserve in the project instance.
 # LOCAL_DIRS: data belonging to the user, never synchronized from the motor.
-LOCAL_DIRS = {"collaboration", "runtime"}
+# "audits" holds periodic system-health audits the destination conserves
+# (the motor executes them); they are destination-owned and never synced/pruned.
+LOCAL_DIRS = {"collaboration", "runtime", "audits"}
 
 # Paths deposited once by the installer; afterwards they belong to the destination.
 # INSTALLER_MANAGED_PATHS: deposited once, then owned by destination.
@@ -957,6 +959,9 @@ def copy_destination_bootstrap(
         context_dir.mkdir(parents=True, exist_ok=True)
         print(f"[INFO] Ensured context directory: {context_dir}")
 
+    # 1b. Ensure system-health audits directory (always, before any early return)
+    _ensure_system_health_audits_dir(project_agent, dry_run=dry_run)
+
     # 2. Deposit destination_context.json only if not exists
     config_file = project_agent / "config" / "destination_context.json"
     if config_file.exists():
@@ -978,6 +983,27 @@ def copy_destination_bootstrap(
         encoding="utf-8",
     )
     print(f"[INFO] Created default {config_file}")
+
+
+def _ensure_system_health_audits_dir(
+    project_agent: Path, dry_run: bool = False
+) -> None:
+    """Ensure the destination keeps periodic system-health audits (never overwrite).
+
+    Before: project_agent (.agent/ dir) exists.
+    During: Creates .agent/audits/system_health/ if absent. The motor executes the
+            audit (collect_system_health.py); the destination conserves the
+            evidence here. Existing audit folders are never touched.
+    After: .agent/audits/system_health/ exists. Idempotent: second call is no-op.
+    """
+    audits_dir = project_agent / "audits" / "system_health"
+    if audits_dir.exists():
+        return
+    if dry_run:
+        print(f"[DRY-RUN] Would create audits directory: {audits_dir}")
+        return
+    audits_dir.mkdir(parents=True, exist_ok=True)
+    print(f"[INFO] Ensured system-health audits directory: {audits_dir}")
 
 
 def install_agent_system(

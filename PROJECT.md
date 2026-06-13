@@ -70,6 +70,17 @@ The system integrates `repomix` as a compressed context layer for agent bootstra
 
 - Destination projects declare `Ticket prefix: XXX` in their local `PROJECT.md` (or via `--install --prefix XXX`) and use `XXX-YYYY-NNN`; this motor keeps `WP-YYYY-NNN`.
 
+## System Health Audits
+
+- Auditoria periodica de salud en tres capas (`repo_motor`, `repo_destino`,
+  integracion) tras cambios. **El motor ejecuta; el destino conserva la evidencia.**
+- Recolector determinista read-only: `scripts/collect_system_health.py` (es
+  RECOLECTOR, no auditor; el juicio adversarial lo hace el agente via skill
+  `/audit-system-health` y `prompts/system_health_audit.md`).
+- Evidencia inmutable en el destino: `.agent/audits/system_health/general_audit_YYYYMMDD[_HHMM]/`
+  con indice estable `INDEX.md`. No se sobrescriben auditorias previas.
+- Suite roja bloquea el saneo ejecutable, no la documentacion de la auditoria.
+
 ## Ticket System Contract
 
 - Every new plan starts from a base ticket ending in `a`.
