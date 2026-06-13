@@ -2538,6 +2538,17 @@ class TestExternalMotorCheckpointTopology:
 - `.agent/agent_controller.py`
 - `tests/test_agent_controller.py`
 """
+    _DESTINO_PLAN_CONTENT = f"""# Work Plan
+
+## Metadata
+- **ID:** {_PLAN_ID}
+- **Estado:** APPROVED
+- **deliverable_type:** code
+- **delivery_authority:** repo_destino
+
+## Files Likely Touched
+- `app.py`
+"""
 
     @staticmethod
     def _init_git_repo(repo_path: Path) -> None:
@@ -2834,6 +2845,197 @@ class TestExternalMotorCheckpointTopology:
         assert "marked as ready" in output.lower() or "Motor scope" in output, (
             f"Unexpected output: {output}"
         )
+
+    def test_pre_handoff_repo_destino_authority_tags_workspace(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """repo_destino-authority tickets must create M3 in the destination repo."""
+        motor_repo = tmp_path / "motor"
+        workspace = tmp_path / "workspace"
+        self._init_git_repo(motor_repo)
+        self._init_git_repo(workspace)
+        self._create_execution_log(workspace)
+
+        (workspace / ".agent" / "collaboration" / "work_plan.md").write_text(
+            self._DESTINO_PLAN_CONTENT
+        )
+        subprocess.run(
+            ["git", "add", ".agent"],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "Add operational state"],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+        )
+        (workspace / "app.py").write_text("print('destino')\n")
+
+        monkeypatch.setattr(agent_controller, "_MOTOR_ROOT", motor_repo)
+        monkeypatch.setattr(agent_controller, "PROJECT_ROOT", workspace)
+        monkeypatch.setattr(
+            agent_controller,
+            "read_file",
+            lambda path: (
+                self._DESTINO_PLAN_CONTENT
+                if "work_plan" in str(path).lower()
+                else (
+                    "# Execution Log\n\n**Estado:** IN_PROGRESS\n"
+                    if "execution_log" in str(path).lower()
+                    else ""
+                )
+            ),
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "_ensure_active_builder_round",
+            lambda plan_id: (True, 1, None),
+        )
+        monkeypatch.setattr(agent_controller, "BUS_AVAILABLE", False)
+        monkeypatch.setattr(agent_controller, "_reset_circuit_breaker", lambda _: None)
+        monkeypatch.setattr(
+            agent_controller, "_capture_builder_session", lambda *a, **kw: None
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "get_changed_files",
+            lambda: {str((workspace / "app.py").resolve())},
+        )
+
+        import bus.evidence
+
+        monkeypatch.setattr(
+            bus.evidence,
+            "motor_uncommitted_productive",
+            lambda root: set(),
+        )
+
+        code, output = self._capture_output(
+            lambda: agent_controller._handle_pre_handoff(json_output=False)
+        )
+
+        assert code == 0, f"pre-handoff failed: {output}"
+
+        tag_in_ws = subprocess.run(
+            ["git", "rev-parse", f"checkpoint/review-{self._PLAN_ID}^{{}}"],
+            capture_output=True,
+            text=True,
+            cwd=workspace,
+        )
+        assert tag_in_ws.returncode == 0, (
+            f"Tag should exist in workspace: {tag_in_ws.stderr}"
+        )
+
+        tag_in_motor = subprocess.run(
+            ["git", "rev-parse", f"checkpoint/review-{self._PLAN_ID}^{{}}"],
+            capture_output=True,
+            text=True,
+            cwd=motor_repo,
+        )
+        assert tag_in_motor.returncode != 0, "Tag should NOT exist in motor repo"
+
+    def test_mark_ready_repo_destino_authority_uses_workspace_checkpoint(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """repo_destino-authority mark-ready must not require a motor commit."""
+        motor_repo = tmp_path / "motor"
+        workspace = tmp_path / "workspace"
+        self._init_git_repo(motor_repo)
+        self._init_git_repo(workspace)
+        self._create_execution_log(workspace)
+
+        (workspace / ".agent" / "collaboration" / "work_plan.md").write_text(
+            self._DESTINO_PLAN_CONTENT
+        )
+        subprocess.run(
+            ["git", "add", ".agent"],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "Add operational state"],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+        )
+        (workspace / "app.py").write_text("print('destino')\n")
+        subprocess.run(
+            ["git", "add", "app.py"], cwd=workspace, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", f"feat({self._PLAN_ID}): destination delivery"],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "tag",
+                "-a",
+                f"checkpoint/review-{self._PLAN_ID}",
+                "-m",
+                f"Checkpoint M3 for {self._PLAN_ID}",
+            ],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+        )
+
+        monkeypatch.setattr(agent_controller, "_MOTOR_ROOT", motor_repo)
+        monkeypatch.setattr(agent_controller, "PROJECT_ROOT", workspace)
+        monkeypatch.setattr(
+            agent_controller,
+            "read_file",
+            lambda path: (
+                self._DESTINO_PLAN_CONTENT
+                if "work_plan" in str(path).lower()
+                else (
+                    "# Execution Log\n\n**Estado:** IN_PROGRESS\n"
+                    if "execution_log" in str(path).lower()
+                    else ""
+                )
+            ),
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "_ensure_active_builder_round",
+            lambda plan_id: (True, 1, None),
+        )
+        monkeypatch.setattr(agent_controller, "BUS_AVAILABLE", False)
+        monkeypatch.setattr(
+            agent_controller, "_check_implementation_evidence", lambda plan_id: []
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "_run_pre_handoff_guard",
+            lambda plan_id, json_output: {"valid": True},
+        )
+        monkeypatch.setattr(
+            agent_controller, "_emit_builder_exit", lambda *a, **kw: None
+        )
+        monkeypatch.setattr(
+            agent_controller, "_sync_mark_ready_targets", lambda *a, **kw: None
+        )
+        monkeypatch.setattr(agent_controller, "_reset_circuit_breaker", lambda _: None)
+        monkeypatch.setattr(
+            agent_controller, "_release_builder_lock", lambda *a, **kw: None
+        )
+        monkeypatch.setattr(
+            agent_controller, "_auto_archive_closed_artifacts", lambda: None
+        )
+
+        code, output = self._capture_output(
+            lambda: agent_controller._handle_mark_ready(
+                scope_override=None, json_output=False, force_mode=False
+            )
+        )
+
+        assert code == 0, f"mark-ready failed: {output}"
+        assert "Destination scope" in output
 
     def test_mark_ready_blocks_when_checkpoint_missing_in_motor(
         self, tmp_path: Path, monkeypatch
