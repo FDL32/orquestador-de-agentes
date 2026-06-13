@@ -172,6 +172,23 @@ def _matches_pattern(path: Path, patterns: set[str]) -> bool:
     return False
 
 
+def _is_excluded_relative_path(rel_str: str) -> bool:
+    """Check project-relative path exclusions for generated/non-product surfaces."""
+    rel_posix = rel_str.replace("\\", "/")
+    excluded_prefixes = (
+        ".agent/runtime/tmp",
+        "tests/sandbox/test_runtime",
+        "agent_system",
+    )
+    excluded_fragments = (
+        "collaboration/archive",
+        "collaboration/_archive",
+    )
+    return rel_posix.startswith(excluded_prefixes) or any(
+        fragment in rel_posix for fragment in excluded_fragments
+    )
+
+
 def _is_excluded(path: Path, project_root: Path) -> bool:
     """Check if path should be excluded from scan."""
     # Check directory exclusions
@@ -185,17 +202,7 @@ def _is_excluded(path: Path, project_root: Path) -> bool:
     # Check specific path-based exclusions (relative to project root)
     try:
         rel_str = str(path.relative_to(project_root))
-        # Exclude .agent runtime subdirectories (but not .agent/config or .agent/collaboration surfaces)
-        if rel_str.startswith(".agent/runtime/tmp") or rel_str.startswith(
-            ".agent\\runtime\\tmp"
-        ):
-            return True
-        if "collaboration/archive" in rel_str or "collaboration\\archive" in rel_str:
-            return True
-        if "collaboration/_archive" in rel_str or "collaboration\\_archive" in rel_str:
-            return True
-        # Exclude external agent_system project
-        if rel_str.startswith("agent_system") or rel_str.startswith("agent_system\\"):
+        if _is_excluded_relative_path(rel_str):
             return True
     except ValueError:
         # Path not relative to project_root - skip relative checks
