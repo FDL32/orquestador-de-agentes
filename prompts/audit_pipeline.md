@@ -326,9 +326,9 @@ Ruta paralela: `repo_destino/orchestrator_pipeline/reports/pipeline_audit_<YYYYM
 {
   "verdict": "APROBADO|APROBADO_CON_NITS|CAMBIOS_NECESARIOS|NO_ACEPTAR_TODAVIA",
   "audit_scope": {
-    "agent_project_root": "C:/Users/fdl/Proyectos_Python/Crear_Texto_LLM",
-    "motor_root": "C:/Users/fdl/Proyectos_Python/orquestador_de_agentes",
-    "repo_destino": "C:/Users/fdl/Proyectos_Python/Crear_Texto_LLM",
+    "agent_project_root": "<repo_destino>",
+    "motor_root": "<repo_motor>",
+    "repo_destino": "<repo_destino>",
     "included_tickets": ["CTL-2026-001a"],
     "excluded_tickets": [{"ticket": "CTL-2026-006a", "reason": "reserved-follow-up"}],
     "selection_rule": "backlog order + closeouts present",
@@ -380,15 +380,15 @@ Ruta paralela: `repo_destino/orchestrator_pipeline/reports/pipeline_audit_<YYYYM
   "integrity_events": [
     {
       "code": "INTEGRITY_VIOLATION_DETECTED|MOTOR_WRITE_DENIED",
-      "path": "C:/Users/fdl/Proyectos_Python/orquestador_de_agentes",
+      "path": "<repo_motor>",
       "evidence": "git_status|denied_attempt",
       "blocks_verdict": true
     }
   ],
   "runtime_topology": {
-    "agent_project_root": "C:/Users/fdl/Proyectos_Python/Crear_Texto_LLM",
-    "motor_root": "C:/Users/fdl/Proyectos_Python/orquestador_de_agentes",
-    "repo_destino": "C:/Users/fdl/Proyectos_Python/Crear_Texto_LLM",
+    "agent_project_root": "<repo_destino>",
+    "motor_root": "<repo_motor>",
+    "repo_destino": "<repo_destino>",
     "self_integrity_check": "MOTOR_PRISTINE_OK"
   },
   "improvements": [

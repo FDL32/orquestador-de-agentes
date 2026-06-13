@@ -1,11 +1,16 @@
 # Project: orquestador_de_agentes
-**Version:** v9.15.0
-**State:** READY (2026-06-12) - E0-E6 audit batch implemented and closeout path unified for chat and bus
+**Version:** v9.16.0
+**State:** READY (2026-06-13) - Autonomous pipeline, meta-audit and git publication audit documented for portable motor use
 
 ## Current Cycle
 
 - E0-E6 audit batch VERIFIED (2026-06-12). Tickets `WT-2026-248b` through
   `WT-2026-255a` are implemented across `repo_motor` and `repo_destino`.
+- v9.16.0 release consolidation (2026-06-13): chat-driven backlog
+  orchestration now has a canonical pipeline prompt/skill, motor writes are
+  detected with `check_motor_pristine.py`, `/audit-pipeline` provides a
+  read-only meta-audit phase, and `/audit-git-publication` classifies
+  publishable vs excluded vs human-decision files before making a repo public.
 - Chat closeout now converges on the canonical `--session-close` pipeline.
   `prompts/session_close_chat.md` documents dry-run, real execution, report
   review and `--force` idempotency for an already completed ticket.

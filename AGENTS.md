@@ -58,7 +58,7 @@ No usar "workspace" a secas: el termino es ambiguo porque describe tanto el repo
 - `MANIFEST.distribute` define la frontera del motor central (codigo operativo).
 - `MANIFEST.workspace` define el contrato del workspace destino (estado, memoria, config).
 - Los comandos canonical y legacy se documentan por separado.
-- Estado actual: `v9.15.0` motor central + workspace destino, cierre canonico con suite verde, encoding guard endurecido y CEM v0 adoptado.
+- Estado actual: `v9.16.0` motor central + workspace destino, cierre canonico con suite verde, pipeline autonomo por chat, meta-auditoria, auditoria de publicacion Git, guard de integridad del motor, encoding guard endurecido y CEM v0 adoptado.
 - El motor vive una unica vez en `orquestador_de_agentes/`; los proyectos destino lo referencian externamente.
 
 ## MANIFEST.distribute y MANIFEST.workspace (WP-2026-111)
@@ -90,8 +90,13 @@ append `--project-root <destino>` to commands that operate on project state.
 - Estado del sistema: `python .agent/agent_controller.py [--project-root <workspace>]`
 - Auditoria local: `python scripts/local_audit.py [--project-root <workspace>]`
 - Memoria consolidada: `python scripts/memory_consolidate.py [--apply|--dry-run] [--project-root <workspace>]`
+- Integridad del motor: `python scripts/check_motor_pristine.py --snapshot --motor-root <repo_motor> --out <snapshot.json>` y despues `python scripts/check_motor_pristine.py --check --before <snapshot.json> --motor-root <repo_motor> --out <result.json>`
+- Auditoria de publicacion Git: `python scripts/classify_publication.py --repo-root <repo_destino> --out <repo_destino>/orchestrator_pipeline/reports/publication_manifest.json`
 - Migrar config: `python .agent/agents_config.py --migrate [--dry-run] [--project-root <workspace>]`
 - Comparar con repo GitHub: skill `/repo-compare`
+- Orquestar backlog por chat: skill `/pipeline` (`prompts/orchestrator_pipeline.md`)
+- Meta-auditar pipeline cerrado: skill `/audit-pipeline`
+- Auditar publicacion Git: skill `/audit-git-publication`
 - Interaccion por terminal: `python scripts/ticket_supervisor.py --reactive [--project-root <workspace>]`
 - Tests: `python scripts/run_pytest_safe.py [--project-root <workspace>]`
   - NO usar `python -m pytest` directo sobre tests que importan el controller:

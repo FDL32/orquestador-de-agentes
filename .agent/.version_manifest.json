@@ -1,9 +1,9 @@
 {
-  "agent_core_version": "v9.15.0",
+  "agent_core_version": "v9.16.0",
   "template_version": "1.0.0",
   "status": "canonical",
   "confidence": "high",
-  "last_updated": "2026-06-04T00:00:00+02:00",
+  "last_updated": "2026-06-13T00:00:00+02:00",
   "components": {
     "agent_controller": "1.0.0",
     "hooks": "1.0.0",
