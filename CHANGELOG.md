@@ -1,3 +1,36 @@
+# 2026-06-13 - v9.16.0 Autonomous pipeline, meta-audit and git publication audit
+
+### Added
+- `prompts/orchestrator_pipeline.md` and `skills/orchestrate-pipeline/`:
+  canonical chat-driven backlog pipeline for `repo_destino` projects, including
+  bootstrap/context loading, adversarial Builder/Manager loops, non-destructive
+  cleanup under `orchestrator_pipeline/`, and session-close artifact grouping.
+- `scripts/check_motor_pristine.py`: portable motor integrity detector for
+  before/after ticket gates. It reports new motor dirtiness, HEAD changes,
+  denied write attempts and diff stats without restoring files automatically.
+- `prompts/audit_pipeline.md` and `skills/audit-pipeline/`: read-only
+  meta-audit phase for completed pipelines, with CEM evidence labels,
+  deterministic closeout selection, per-ticket integrity breakdown, and
+  Markdown/JSON decision artifacts.
+- `scripts/classify_publication.py`, `prompts/audit_git_publication.md` and
+  `skills/audit-git-publication/`: dry-run git publication audit that
+  classifies publishable, excluded, tracked-exclusion, redaction and
+  human-decision files; scans tree/history for secrets; separates security
+  blockers, tool errors and human-intervention exit codes.
+
+### Changed
+- Release metadata updated to `v9.16.0` across `pyproject.toml`,
+  `uv.lock`, `.agent/.version_manifest.json`, `README.md`, `AGENTS.md`,
+  `CLAUDE.md` and `PROJECT.md`.
+- `prompts/audit_pipeline.md`: examples now use portable placeholders
+  (`<repo_destino>`, `<repo_motor>`) instead of host-specific absolute paths.
+
+### Verification
+- `ruff` and focused pytest gates passed for the new motor integrity,
+  pipeline audit and git publication audit surfaces during implementation.
+- Skill validation, skill collision checks, prompt/skill contract checks and
+  encoding guard passed for the new prompts, skills and scripts.
+
 # 2026-06-12 - E0-E6 audit closeout and canonical chat session closure
 
 ### Added
