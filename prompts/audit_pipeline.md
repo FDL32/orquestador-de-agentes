@@ -50,6 +50,9 @@ Antes de auditar, confirmar igual que `orchestrate-pipeline`:
 
 El motor es read-only. Usa `scripts/check_motor_pristine.py` como evidencia de
 integridad, nunca para restaurar.
+El informe debe declarar `AGENT_PROJECT_ROOT`, `MOTOR_ROOT`, `repo_destino` y el
+resultado de `check_motor_pristine.py` ejecutado durante la auditoria. Si las
+rutas no apuntan al destino/motor esperados, no emitas `APROBADO`.
 
 ---
 
@@ -69,7 +72,9 @@ Objetivo: construir el mapa de objetivos del proyecto para poder detectar
    evidencia alternativa explicita (`backlog`, `PLAN_*`, `execution_log.md`,
    commits o bus).
 3. Listar todos los closeouts por ticket:
-   `orchestrator_pipeline/reports/closeout_*.md`.
+   `orchestrator_pipeline/reports/closeout_*.md`. Si hay multiples closeouts
+   para el mismo ticket, usar el mas reciente por timestamp lexicografico del
+   nombre y registrar los descartados en `source_reports`.
 4. Construir la **matriz objetivo -> ticket -> evidencia -> estado**:
 
 | Objetivo backlog | Ticket(s) que lo cubren | Evidencia esperada | Estado real |
@@ -81,7 +86,8 @@ satisfaga, aunque exista un ticket que dijo cubrirlo.
 
 Si falta `closeout_<TICKET_ID>.md`, no asumas fallo automaticamente: marca
 `NO_VERIFICABLE` salvo que backlog, plan o `pipeline_closeout` indiquen que ese
-closeout debia existir.
+closeout debia existir. Si debia existir y falta, registra
+`EVIDENCIA_AUSENTE` con `path:` esperado y fuente que lo exige.
 
 No avances a Fase 1 sin esta matriz: es lo que justifica toda la meta-auditoria.
 
@@ -94,11 +100,16 @@ Para cada ticket cerrado, en orden de backlog, ejecuta DOS pasadas.
 ### Insumos por ticket (re-derivar, no confiar)
 
 - `PLAN_<TICKET_ID>.md` o `work_plan.md` archivado: lo prometido.
+- `deliverable_type` del plan: `code` / `mixed` / `documentation` /
+  `research` / `analysis`. Modula los gates de la pasada A.
 - `execution_log.md`: lo ejecutado (bitacora).
 - git real: `git show --stat <commit>`, `git show --name-only <commit>`,
   `git log --oneline` con el ticket en el mensaje: lo que de verdad cambio.
 - `closeout_<TICKET_ID>.md`: lo reportado (a refutar).
 - Bus si existe: `.agent/runtime/events/events.jsonl`.
+- Si el ticket afirma corregir bug/regresion: evidencia de fallo previo en
+  `execution_log.md`, tests o bus. Si no existe, la barrera queda como
+  `INFERENCIA RAZONABLE` o "barrera no demostrada", no como hecho verificado.
 
 ### Pasada A: verificacion (cuatro ejes)
 
@@ -107,10 +118,15 @@ Contrasta el triangulo plan ↔ ejecucion+git ↔ closeout en cuatro ejes:
 1. **Implementacion:** el diff entrega lo que el plan prometio. Existe commit
    con el ticket. El diff toca solo lo declarado en `Files Likely Touched` o
    justificado.
-2. **Calidad de codigo:** re-ejecuta los gates focales baratos derivados del
-   diff (`ruff check <py tocados>`, tests focales del ticket). Exit codes
-   reales, no enmascarados por pipe. Sin floor assertions ni mock drift en los
-   tests declarados como evidencia.
+2. **Calidad segun `deliverable_type`:**
+   - `code` / `mixed`: re-ejecuta gates focales baratos derivados del diff
+     (`ruff check <py tocados>`, tests focales del ticket). Exit codes reales,
+     no enmascarados por pipe. Sin floor assertions ni mock drift. Si tests
+     modificados o usados como evidencia contienen mocks/patches, compara sus
+     firmas/rutas contra el codigo real.
+   - `documentation` / `research` / `analysis`: no exijas `ruff`/`pytest` salvo
+     que el plan toque codigo; verifica existencia y contenido de los artefactos
+     documentales declarados.
 3. **Calidad de documentacion:** el closeout tiene etiquetas de evidencia con
    artefacto concreto (`path:`, `commit:`, `command:`+`exit_code:`). Encoding
    limpio (`check_encoding_guard.py`). Sin claims sin artefacto.
@@ -134,6 +150,16 @@ Hereda la consigna de Review 2: intenta tumbar la conclusion de la pasada A.
 
 Si la pasada B no encuentra blockers, confirma la conclusion de A para ese
 ticket.
+
+### Validacion de alcance tecnico
+
+Cuando haya diff vivo o commit asociado, contrasta los archivos tocados contra
+`audit_scope_patterns` y `audit_scope_description`. No uses `git diff` como
+unica fuente: en un pipeline ya cerrado el diff puede estar vacio porque los
+cambios ya estan commiteados. Si no hay diff vivo, usa `git show --name-only`,
+`git log`, closeouts, `Files Likely Touched` y bus como fuentes alternativas.
+Deriva `audit_scope_patterns` desde `Files Likely Touched` del `work_plan.md` si
+el closeout global no las declara explicitamente.
 
 ### Salida por ticket
 
@@ -165,9 +191,22 @@ Lo que ningun review por-ticket puede ver:
   `execution_log.md` y nunca convertida en ticket ni cerrada.
 - **Contradicciones entre closeouts:** dos tickets que afirman lo contrario
   sobre el mismo archivo, estado o contrato.
+- **Clasificacion CEM transversal:** cada hallazgo transversal debe declarar
+  Clase CEM (A regresion de contrato / B fuga de estado / C deriva de fixture /
+  D entorno-infraestructura / otro).
 - **Drift de motor acumulado:** sumar `motor_status_new` y `denied_attempts` de
   todos los `motor_after_*.json`; si el motor quedo sucio sin ticket que lo
-  declarara, reportarlo como `[EVIDENCIA: git_status]`, nunca restaurar.
+  declarara, reportarlo como `[EVIDENCIA: git_status]`, nunca restaurar. El
+  JSON debe conservar breakdown por ticket en `motor_integrity.per_ticket`.
+
+Estados de integridad:
+
+- `INTEGRITY_VIOLATION_DETECTED`: `check_motor_pristine.py` o git evidencian
+  cambios reales en el motor que no estaban declarados.
+- `MOTOR_WRITE_DENIED`: existe intento bloqueado de escritura sobre el motor;
+  no implica motor sucio, pero debe quedar registrado.
+- `EVIDENCIA_AUSENTE`: un artefacto requerido por backlog, plan, closeout global
+  o criterio de salida no existe en disco.
 
 ---
 
@@ -239,9 +278,14 @@ Estructura obligatoria:
 ## 2. Alcance auditado
 | Campo | Valor |
 |---|---|
+| AGENT_PROJECT_ROOT | ... |
+| MOTOR_ROOT | ... |
+| repo_destino | ... |
 | Tickets incluidos | ... |
 | Tickets excluidos | ... |
 | Regla de seleccion | ... |
+| Scope patterns | ... |
+| Scope description | ... |
 | Source reports | `path:` + existe/no existe + rol |
 
 ## 3. Matriz objetivo -> ticket -> evidencia -> estado
@@ -254,7 +298,8 @@ Estructura obligatoria:
 
 ## 5. Hallazgos transversales
 Ordenados por severidad: CRITICO / ALTO / MEDIO / BAJO.
-Cada uno: claim, evidencia, riesgo, etiqueta, clasificacion CEM, bloquea o no.
+Cada uno: claim, evidencia, riesgo, etiqueta, Clase CEM, subtipo, impacto,
+barrera faltante y si bloquea o no.
 
 ## 6. Mejoras propuestas
 | # | Mejora | Destino | Evidencia | Criterio de salida |
@@ -268,8 +313,9 @@ Cada mejora de repo_motor es follow-up; NO tocar el motor desde aqui.
 ```
 
 Antes de declarar la auditoria cerrada, pasar
-`python <MOTOR_ROOT>/scripts/check_encoding_guard.py` sobre el informe. Si falla,
-corregir encoding.
+`python <MOTOR_ROOT>/scripts/check_encoding_guard.py` sobre el informe `.md`. Si
+el JSON contiene texto libre, pasarlo tambien sobre el `.json`. Si falla,
+corregir encoding antes de emitir veredicto.
 
 ## Salida 2: decision artifact JSON
 
@@ -279,9 +325,18 @@ Ruta paralela: `repo_destino/orchestrator_pipeline/reports/pipeline_audit_<YYYYM
 {
   "verdict": "APROBADO|APROBADO_CON_NITS|CAMBIOS_NECESARIOS|NO_ACEPTAR_TODAVIA",
   "audit_scope": {
+    "agent_project_root": "C:/Users/fdl/Proyectos_Python/Crear_Texto_LLM",
+    "motor_root": "C:/Users/fdl/Proyectos_Python/orquestador_de_agentes",
+    "repo_destino": "C:/Users/fdl/Proyectos_Python/Crear_Texto_LLM",
     "included_tickets": ["CTL-2026-001a"],
     "excluded_tickets": [{"ticket": "CTL-2026-006a", "reason": "reserved-follow-up"}],
-    "selection_rule": "backlog order + closeouts present"
+    "selection_rule": "backlog order + closeouts present",
+    "audit_scope_patterns": [
+      ".agent/collaboration/**",
+      "engine/**",
+      "tests/**"
+    ],
+    "audit_scope_description": "Tickets CTL cerrados por el pipeline sobre memoria, workflow y estado canonico del repo_destino."
   },
   "source_reports": [
     {
@@ -295,14 +350,65 @@ Ruta paralela: `repo_destino/orchestrator_pipeline/reports/pipeline_audit_<YYYYM
       "role": "ticket_closeout"
     }
   ],
+  "source_snapshot": [
+    {
+      "path": ".agent/collaboration/backlog.md",
+      "exists": true,
+      "size_bytes": 12345,
+      "sha256": "optional"
+    },
+    {
+      "path": ".agent/runtime/events/events.jsonl",
+      "exists": true,
+      "size_bytes": 67890,
+      "sha256": "optional"
+    }
+  ],
   "audited_tickets": ["CTL-2026-001a"],
   "blockers": [],
+  "missing_evidence": [
+    {
+      "code": "EVIDENCIA_AUSENTE",
+      "path": "orchestrator_pipeline/reports/closeout_CTL-2026-003a.md",
+      "required_by": "pipeline_closeout",
+      "impact": "ticket no verificable"
+    }
+  ],
   "orphan_objectives": [],
   "cross_findings": [],
-  "improvements": [
-    {"target": "repo_motor", "summary": "...", "exit_criterion": "..."}
+  "integrity_events": [
+    {
+      "code": "INTEGRITY_VIOLATION_DETECTED|MOTOR_WRITE_DENIED",
+      "path": "C:/Users/fdl/Proyectos_Python/orquestador_de_agentes",
+      "evidence": "git_status|denied_attempt",
+      "blocks_verdict": true
+    }
   ],
-  "motor_integrity": {"dirty": false, "denied_attempts": 0}
+  "runtime_topology": {
+    "agent_project_root": "C:/Users/fdl/Proyectos_Python/Crear_Texto_LLM",
+    "motor_root": "C:/Users/fdl/Proyectos_Python/orquestador_de_agentes",
+    "repo_destino": "C:/Users/fdl/Proyectos_Python/Crear_Texto_LLM",
+    "self_integrity_check": "MOTOR_PRISTINE_OK"
+  },
+  "improvements": [
+    {
+      "severity": "CRITICO|ALTO|MEDIO|BAJO",
+      "target": "repo_motor",
+      "summary": "...",
+      "exit_criterion": "..."
+    }
+  ],
+  "motor_integrity": {
+    "dirty": false,
+    "denied_attempts": 0,
+    "per_ticket": {
+      "CTL-2026-001a": {
+        "dirty": false,
+        "denied_attempts": 0,
+        "motor_status_new": []
+      }
+    }
+  }
 }
 ```
 
@@ -315,6 +421,9 @@ turno en que emites el veredicto.
 
 - No conviertas un closeout verde en "el ticket es correcto" sin re-derivar.
 - No marques un objetivo como cubierto por la sola existencia de un ticket.
+- No exijas `ruff`/`pytest` a tickets no-code salvo que hayan tocado codigo.
+- No tomes `git diff` vacio como prueba de ausencia de cambios ya commiteados.
+- No audites con motor/arbol sucio sin registrarlo en integridad.
 - No restaures motor ni destino aunque detectes suciedad: solo reporta.
 - No reabras tickets ni edites backlog: solo follow-ups.
 - No mezcles inferencia con hecho ni etiqueta sin artefacto.

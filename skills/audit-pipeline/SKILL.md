@@ -61,21 +61,29 @@ Igual que `orchestrate-pipeline`:
 - `AGENT_PROJECT_ROOT`: apunta al `repo_destino`.
 - El motor es read-only; `scripts/check_motor_pristine.py` es evidencia de
   integridad, nunca restauracion.
+- El informe debe declarar `AGENT_PROJECT_ROOT`, `MOTOR_ROOT`, `repo_destino` y
+  el resultado del self-integrity check.
 
 ## Flujo
 
 1. **Fase 0 - Vision global:** leer `backlog.md` completo, seleccionar el
    `pipeline_closeout_*.md` mas reciente de forma deterministica y leer todos
-   los `closeout_*.md`. Construir la matriz objetivo -> ticket -> evidencia ->
-   estado. Si falta un closeout, marcar `NO_VERIFICABLE` salvo evidencia de
-   fallo. Si no hay cierre global, no emitir `APROBADO`.
+   los `closeout_*.md`. Si hay multiples closeouts de un ticket, usar el mas
+   reciente y registrar descartados. Construir la matriz objetivo -> ticket ->
+   evidencia -> estado. Si falta un closeout, marcar `NO_VERIFICABLE` salvo
+   evidencia de fallo; si el artefacto era obligatorio, registrar
+   `EVIDENCIA_AUSENTE`. Si no hay cierre global, no emitir `APROBADO`.
 2. **Fase 1 - Doble pasada por ticket:**
-   - Pasada A (verificacion): plan, implementacion, logs, tests, docs, closeout
-     en cuatro ejes (implementacion, calidad codigo, calidad docs, alineacion).
+   - Pasada A (verificacion): plan, `deliverable_type`, implementacion, logs,
+     tests/gates proporcionales, docs, closeout en cuatro ejes. Para bugs o
+     regresiones, buscar evidencia de fallo previo; para `code`/`mixed` con
+     mocks, revisar mock-drift contra codigo real.
    - Pasada B (refutacion): falso verde, scope creep, claims sin evidencia,
      fixtures irreales, estado canonico incoherente.
 3. **Fase 2 - Transversal:** dependencias, objetivos huerfanos, deuda no
-   retomada, contradicciones, drift de motor acumulado.
+   retomada, contradicciones, drift de motor acumulado e integridad
+   (`INTEGRITY_VIOLATION_DETECTED` / `MOTOR_WRITE_DENIED`). Cada hallazgo
+   transversal declara Clase CEM.
 4. **Veredicto global:** `APROBADO` / `APROBADO CON NITS` /
    `CAMBIOS NECESARIOS` / `NO ACEPTAR TODAVIA`.
 5. **Emitir informe + JSON** en el mismo turno.
@@ -103,8 +111,11 @@ Igual que `orchestrate-pipeline`:
 - `repo_destino/orchestrator_pipeline/reports/pipeline_audit_<timestamp>.json`
 
 Estructura detallada de ambos en `prompts/audit_pipeline.md`. El Markdown debe
-incluir el alcance auditado y el JSON debe incluir `audit_scope` y
-`source_reports` con `path`, `exists` y `role`.
+incluir el alcance auditado y el JSON debe incluir `audit_scope`,
+`audit_scope_patterns`, `audit_scope_description`, `source_reports` con `path`,
+`exists` y `role`, `missing_evidence`, `integrity_events`,
+`motor_integrity.per_ticket`, `runtime_topology`, `source_snapshot` e
+`improvements[].severity`.
 
 ## Restriccion dura
 
