@@ -90,7 +90,7 @@ append `--project-root <destino>` to commands that operate on project state.
 - Estado del sistema: `python .agent/agent_controller.py [--project-root <workspace>]`
 - Auditoria local: `python scripts/local_audit.py [--project-root <workspace>]`
 - Memoria consolidada: `python scripts/memory_consolidate.py [--apply|--dry-run] [--project-root <workspace>]`
-- Integridad del motor: `python scripts/check_motor_pristine.py --snapshot --motor-root <repo_motor> --out <snapshot.json>` y despues `python scripts/check_motor_pristine.py --check --before <snapshot.json> --motor-root <repo_motor> --out <result.json>`
+- Integridad del motor: `python scripts/check_motor_pristine.py --snapshot --motor-root <repo_motor> --out <snapshot.json>` y despues `python scripts/check_motor_pristine.py --check --snapshot-file <snapshot.json> --report <result.json> --motor-root <repo_motor>`
 - Auditoria de publicacion Git: `python scripts/classify_publication.py --repo-root <repo_destino> --out <repo_destino>/orchestrator_pipeline/reports/publication_manifest.json`
 - Migrar config: `python .agent/agents_config.py --migrate [--dry-run] [--project-root <workspace>]`
 - Comparar con repo GitHub: skill `/repo-compare`
