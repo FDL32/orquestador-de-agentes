@@ -24,7 +24,10 @@ Estas operando sobre un `repo_destino` del motor `orquestador_de_agentes`.
    La salida aporta en un solo comando: errores de estado, drift plan/log,
    warnings de prosa del ticket activo, invariantes del bus y prefijo de
    tickets. Triarla antes de tocar nada.
-6. Continua con `rg` y lectura directa de archivos bajo demanda.
+6. Si el usuario pide implantar varios tickets desde `backlog.md` por chat,
+   usa `<motor_root>/prompts/orchestrator_pipeline.md` y la skill
+   `<motor_root>/skills/orchestrate-pipeline/SKILL.md` (`/pipeline`).
+7. Continua con `rg` y lectura directa de archivos bajo demanda.
 
 ## Vocabulario canonico
 
@@ -66,3 +69,4 @@ Actualiza este archivo cuando:
 - Cambia la interfaz de `destination_context.py`.
 - Se anade o quita un paso canonico del flujo de bootstrap.
 - Cambia el formato de `motor_destination_link.json`.
+- Cambia el flujo `/pipeline` o su skill asociada.

@@ -35,6 +35,18 @@ scripts/check_ruff_hook_scope.py
 scripts/run_gates_dispatch.py
 
 # =============================================================================
+# PROMPTS OPERATIVOS REFERENCIADOS POR SKILLS / BOOTSTRAP
+# =============================================================================
+prompts/audit_agent_output.md
+prompts/audit_plan.md
+prompts/destination_bootstrap.md
+prompts/launch_builder.md
+prompts/orchestrator_pipeline.md
+prompts/review_manager.md
+prompts/session_bootstrap.md
+prompts/session_close_chat.md
+
+# =============================================================================
 # SKILLS (micro-habilidades reutilizables)
 # =============================================================================
 skills/
@@ -156,7 +168,7 @@ skills/
 #   bus/
 #   graphify-out/
 #   Microsoft/
-#   prompts/
+#   prompts/ (excepto prompts operativos allowlistados arriba)
 #   templates/
 #   tests/
 #   tools/
