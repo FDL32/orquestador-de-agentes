@@ -52,19 +52,30 @@ def test_launcher_file_exists() -> None:
 def test_launcher_powershell_parses_cleanly() -> None:
     """Run PowerShell's parser over the launcher; fail on any syntax error.
 
-    Uses `Get-Command -Syntax` which forces a parse of the script
-    without invoking it. A clean parse prints the parameter signature;
-    a syntax error returns non-zero and prints a ParserError to stderr.
+    Uses the PowerShell AST parser directly instead of `Get-Command -Syntax`.
+    `Get-Command` loads the script as a command and can be blocked by Windows
+    ExecutionPolicy even when the file is syntactically valid.
     """
     powershell = _resolve_powershell()
     assert powershell is not None  # already guarded by skipif
+    snippet = f"""
+$errors = $null
+$tokens = $null
+[System.Management.Automation.Language.Parser]::ParseFile(
+    '{LAUNCHER.as_posix()}', [ref]$tokens, [ref]$errors) > $null
+if (@($errors).Count -eq 0) {{ 'PARSED-OK' }} else {{
+    @($errors | ForEach-Object {{ $_.Message }}) | ConvertTo-Json -Compress
+    exit 1
+}}
+"""
 
     result = subprocess.run(
         [
             powershell,
             "-NoProfile",
+            "-NonInteractive",
             "-Command",
-            f"Get-Command -Syntax -Name '{LAUNCHER.as_posix()}'; if ($?) {{ 'PARSED-OK' }}",
+            snippet,
         ],
         capture_output=True,
         text=True,

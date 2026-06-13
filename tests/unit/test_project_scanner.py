@@ -81,6 +81,20 @@ class TestIsExcluded:
         path = project_root / "data.bin"
         assert _is_excluded(path, project_root) is True
 
+    def test_excludes_generated_pytest_runtime(self):
+        """Generated pytest runtime sandboxes are not project content."""
+        project_root = Path("/tmp/test")
+        path = (
+            project_root
+            / "tests"
+            / "sandbox"
+            / "test_runtime"
+            / "session_123"
+            / "factory"
+            / "generated.py"
+        )
+        assert _is_excluded(path, project_root) is True
+
 
 class TestCategorizeFile:
     """Test categorize_file function."""
