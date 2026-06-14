@@ -59,6 +59,25 @@ def read_deliverable_type() -> str:
     return value
 
 
+def has_local_tests(project_root: Path) -> bool:
+    """Return True if the project has a local pytest suite to run.
+
+    Before: project_root is a resolved path.
+    During: Checks for a ``tests`` directory containing at least one
+            ``test_*.py`` or ``*_test.py`` file (structural detection, no pytest
+            collection). Host-extends destinos that retired their vendored
+            ``tests/`` (WOT-2026-002c A2d) have none.
+    After: Returns a bool; no side effects.
+    """
+    tests_dir = project_root / "tests"
+    if not tests_dir.is_dir():
+        return False
+    for pattern in ("test_*.py", "*_test.py"):
+        if next(tests_dir.rglob(pattern), None) is not None:
+            return True
+    return False
+
+
 def run_code_gates() -> int:
     # 1. ruff check (linter)
     print("[dispatch] Running ruff check .")
@@ -79,13 +98,20 @@ def run_code_gates() -> int:
         print("[dispatch] ruff format --check failed: ejecuta 'ruff format .'")
         return rc_fmt
 
-    # 2. pytest-safe
-    print("[dispatch] Running pytest-safe")
-    rc_pytest = subprocess.run(  # noqa: S603
-        [sys.executable, "scripts/run_pytest_safe.py"], cwd=PROJECT_ROOT
-    ).returncode
-    if rc_pytest != 0:
-        return rc_pytest
+    # 2. pytest-safe (skip auditably when the destino has no local tests)
+    if has_local_tests(PROJECT_ROOT):
+        print("[dispatch] Running pytest-safe")
+        rc_pytest = subprocess.run(  # noqa: S603
+            [sys.executable, "scripts/run_pytest_safe.py"], cwd=PROJECT_ROOT
+        ).returncode
+        if rc_pytest != 0:
+            return rc_pytest
+    else:
+        print(
+            f"[dispatch] No local tests under {PROJECT_ROOT / 'tests'}; "
+            "skipping pytest-safe (destino sin tests locales). "
+            "CI uses validate-state."
+        )
 
     # 3. conditional pip-audit
     try:
