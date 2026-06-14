@@ -11,6 +11,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import subprocess
 import textwrap
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from scripts.install_agent_system import (
     detect_destination_residues,
     merge_memory_rules,
     parse_wing_sections,
+    prune_residues,
     sync_memory_rules,
 )
 
@@ -461,8 +463,6 @@ def test_sync_dry_run_reports_without_deleting(tmp_path):
     # Add a residue
     (dest_agent / "unknown.tmp").write_text("data", encoding="utf-8")
 
-    from scripts.install_agent_system import prune_residues
-
     residues = detect_destination_residues(source_agent, dest_agent)
     assert "unknown.tmp" in {r.as_posix() for r in residues}
 
@@ -473,6 +473,82 @@ def test_sync_dry_run_reports_without_deleting(tmp_path):
     assert "unknown.tmp" in pruned_names
     # But the file must still exist
     assert (dest_agent / "unknown.tmp").exists(), "Dry-run must not delete files"
+
+
+def test_prune_residues_skips_git_tracked_agent_docs_and_prunes_untracked(
+    tmp_path, capsys
+):
+    """Strict prune must preserve tracked destino docs while pruning untracked residue."""
+    source_root = tmp_path / "source"
+    dest_root = tmp_path / "dest"
+    source_agent = _create_minimal_agent_dir(source_root)
+    dest_agent = _create_minimal_agent_dir(dest_root)
+
+    subprocess.run(
+        ["git", "init"],
+        cwd=dest_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    docs_dir = dest_agent / "docs"
+    docs_dir.mkdir(parents=True)
+    tracked_doc = docs_dir / "resource_precedence.md"
+    tracked_doc.write_text("# tracked deliverable\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", ".agent/docs/resource_precedence.md"],
+        cwd=dest_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    untracked_dir = dest_agent / "tmp_cache"
+    untracked_dir.mkdir()
+    (untracked_dir / "garbage.txt").write_text("junk\n", encoding="utf-8")
+
+    residues = detect_destination_residues(source_agent, dest_agent)
+    residue_names = {r.as_posix() for r in residues}
+    assert "docs" in residue_names
+    assert "tmp_cache" in residue_names
+
+    pruned = prune_residues(dest_agent, residues, dry_run=False, interactive=False)
+    pruned_names = {r.as_posix() for r in pruned}
+
+    assert "docs" not in pruned_names
+    assert "tmp_cache" in pruned_names
+    assert docs_dir.exists()
+    assert tracked_doc.exists()
+    assert not untracked_dir.exists()
+
+    out = capsys.readouterr().out
+    assert "[SKIP] residue is git-tracked" in out
+    assert ".agent/docs" in out
+
+
+def test_prune_residues_fails_safe_when_git_tracked_status_unknown(
+    tmp_path, monkeypatch, capsys
+):
+    """If tracked status cannot be determined, prune must abort safely."""
+    source_agent = _create_minimal_agent_dir(tmp_path / "source")
+    dest_agent = _create_minimal_agent_dir(tmp_path / "dest")
+    residue = dest_agent / "unknown.tmp"
+    residue.write_text("data", encoding="utf-8")
+
+    residues = detect_destination_residues(source_agent, dest_agent)
+    assert "unknown.tmp" in {r.as_posix() for r in residues}
+
+    monkeypatch.setattr(
+        "scripts.install_agent_system._git_tracked_relpaths", lambda _: None
+    )
+
+    pruned = prune_residues(dest_agent, residues, dry_run=False, interactive=False)
+
+    assert pruned == []
+    assert residue.exists()
+    out = capsys.readouterr().out
+    assert "cannot determine git-tracked status" in out
 
 
 # ---------------------------------------------------------------------------

@@ -430,9 +430,77 @@ def _prune_selected_residues(
     return removed
 
 
+def _git_tracked_relpaths(repo_root: Path) -> set[str] | None:
+    """Return git-tracked paths (repo-relative posix) under repo_root.
+
+    Before: repo_root is a directory path.
+    During: If repo_root is not a git repo, returns an empty set (nothing tracked).
+            Otherwise runs ``git ls-files`` and parses the NUL-separated output.
+    After: Returns the tracked set, or None if tracked status cannot be
+           determined (git binary missing or command failed). Callers must treat
+           None as "do not prune" (fail-safe).
+    """
+    if not (repo_root / ".git").exists():
+        return set()
+    git_exe = shutil.which("git")
+    if not git_exe:
+        return None
+    try:
+        result = subprocess.run(  # noqa: S603
+            [git_exe, "-C", str(repo_root), "ls-files", "-z"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return {entry for entry in result.stdout.split("\0") if entry}
+
+
+def _filter_git_tracked_residues(
+    repo_root: Path, agent_dir: Path, residues: list[Path]
+) -> list[Path]:
+    """Return only the residues that are safe to prune (not git-tracked).
+
+    Contract (WOT-2026-003d): the installer must never prune a path that git
+    tracks in the destination, whether or not it is in MANIFEST.workspace. This
+    protects destino-keep deliverables (e.g. .agent/docs/) that the manifest does
+    not list. Fail-safe: if tracked status cannot be determined, nothing is
+    pruned. Prints an auditable line per protected path.
+    """
+    tracked = _git_tracked_relpaths(repo_root)
+    if tracked is None:
+        print(
+            "[WARN] cannot determine git-tracked status (git unavailable); "
+            "skipping residue prune for safety (WOT-2026-003d fail-safe)"
+        )
+        return []
+    safe: list[Path] = []
+    for rel in residues:
+        repo_rel = (agent_dir / rel).relative_to(repo_root).as_posix()
+        is_tracked = repo_rel in tracked or any(
+            entry.startswith(repo_rel + "/") for entry in tracked
+        )
+        if is_tracked:
+            print(
+                f"[SKIP] residue is git-tracked (destino-keep), not pruning: {repo_rel}"
+            )
+        else:
+            safe.append(rel)
+    return safe
+
+
 def prune_residues(
     dest: Path, residues: list[Path], dry_run: bool, interactive: bool
 ) -> list[Path]:
+    if not residues:
+        return []
+
+    # WOT-2026-003d: never prune git-tracked destino paths. dest is <destino>/.agent,
+    # so its parent is the destination repo root.
+    residues = _filter_git_tracked_residues(dest.parent, dest, residues)
     if not residues:
         return []
 
