@@ -22,7 +22,7 @@ PROTECTED_PATH_PATTERNS = (
     r"privada",
     r"secrets?",
     r"credentials?",
-    r"\.git",
+    r"(^|/)\.git(/|$)",
     r"\.env",
     r"token",
     r"api[_-]key",
@@ -148,7 +148,7 @@ def _is_protected_path(
     if filename in PROTECTED_FILENAMES:
         return True, f"archivo protegido: {filename}"
 
-    path_str = str(path_obj)
+    path_str = _normalize(str(path_obj))
     pattern = _matches_any_pattern(path_str, PROTECTED_PATH_PATTERNS)
     if pattern:
         return True, f"ruta protegida por patron: {pattern}"

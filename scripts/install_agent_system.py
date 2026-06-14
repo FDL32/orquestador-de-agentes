@@ -844,6 +844,50 @@ def copy_repomix_config(
     return True
 
 
+def copy_gitleaks_config(
+    template_root: Path,
+    destination_root: Path,
+    dry_run: bool = False,
+) -> bool:
+    """
+    Copy the portable gitleaks seed to destination_root/.gitleaks.toml (no-clobber).
+
+    Before: template_root/agent_system/templates/gitleaks.config.toml may exist;
+            destination_root is a valid path.
+    During: If destination_root/.gitleaks.toml already exists, skips (no-clobber)
+            to preserve a destino-customized config. Otherwise copies the seed.
+            If the template is missing, logs a warning and returns False.
+    After: destination_root/.gitleaks.toml exists (seed or pre-existing custom),
+           unless the template was missing.
+
+    Args:
+        template_root: Path to the motor central repository root.
+        destination_root: Path to the destination project root.
+        dry_run: If True, simulate without writing.
+
+    Returns:
+        True if copied or skipped via no-clobber (or dry-run); False if template missing.
+    """
+    source = template_root / "agent_system" / "templates" / "gitleaks.config.toml"
+    dest = destination_root / ".gitleaks.toml"
+
+    if not source.exists():
+        print(f"[WARN] gitleaks seed template not found at {source}")
+        return False
+
+    if dest.exists():
+        print(f"[SKIP] .gitleaks.toml ya existe (no-clobber): {dest}")
+        return True
+
+    if dry_run:
+        print(f"[DRY-RUN] Would copy .gitleaks.toml seed to {dest}")
+        return True
+
+    shutil.copy2(source, dest)
+    print(f"[INFO] Copied .gitleaks.toml seed to {dest}")
+    return True
+
+
 def copy_project_template(
     template_root: Path,
     destination_root: Path,
@@ -1072,6 +1116,9 @@ def install_agent_system(
     # Copy repomix.config.json to destination workspace root
     copy_repomix_config(template_root, destination_root, dry_run=dry_run)
 
+    # Seed a portable .gitleaks.toml to the destination (no-clobber)
+    copy_gitleaks_config(template_root, destination_root, dry_run=dry_run)
+
     integrity_ok = ensure_hooks_config_integrity(project_agent, dry_run=dry_run)
 
     if dry_run:
@@ -1179,6 +1226,9 @@ def sync_agent_system(  # noqa: C901
 
     # Copy repomix.config.json to destination workspace root (idempotent)
     copy_repomix_config(template_root, destination_root, dry_run=dry_run)
+
+    # Seed a portable .gitleaks.toml to the destination (no-clobber, idempotent)
+    copy_gitleaks_config(template_root, destination_root, dry_run=dry_run)
 
     integrity_ok = ensure_hooks_config_integrity(project_agent, dry_run=dry_run)
 

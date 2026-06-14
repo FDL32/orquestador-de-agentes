@@ -413,3 +413,53 @@ class TestGuardHookProfiles:
         assert minimal_patterns != standard_patterns
         assert standard_patterns != strict_patterns
         assert minimal_patterns != strict_patterns
+
+
+class TestGitSegmentMatch:
+    r"""WOT-2026-004b: the .git protection must match the internal git dir as a
+    path segment, NOT as a substring. Barrier against the over-match where the
+    old pattern r"\.git" blocked legitimate .github/.gitleaks.toml/.gitignore."""
+
+    def setup_method(self):
+        _clean_workspace()
+        self.repo_root = (TEST_WORKSPACE / "repo").resolve()
+        self.repo_root.mkdir(parents=True, exist_ok=True)
+
+    def teardown_method(self):
+        _clean_workspace()
+
+    def test_dotgit_lookalikes_not_blocked(self):
+        # These all contain the substring ".git" but are NOT the internal git dir.
+        # With the old r"\.git" substring pattern every one of these was blocked
+        # (fail-closed over-match). This test fails against the old pattern.
+        for rel in (
+            ".github/workflows/ci.yml",
+            ".gitleaks.toml",
+            ".gitignore",
+            ".gitattributes",
+            ".gitmodules",
+        ):
+            target = self.repo_root / rel
+            blocked, reason = _is_protected_path(
+                str(target), DEFAULT_ALLOWLIST, {}, repo_root=self.repo_root
+            )
+            assert blocked is False, f"{rel} should NOT be blocked (reason: {reason})"
+
+    def test_internal_git_dir_still_blocked(self):
+        # The internal .git directory must remain protected.
+        for rel in (".git/config", ".git/HEAD", ".git/refs/heads/main"):
+            target = self.repo_root / rel
+            blocked, reason = _is_protected_path(
+                str(target), DEFAULT_ALLOWLIST, {}, repo_root=self.repo_root
+            )
+            assert blocked is True, f"{rel} must be blocked"
+            assert "protegida por patron" in reason
+
+    def test_bare_dotgit_path_blocked(self):
+        # A path whose final segment is exactly ".git" is the repo dir itself.
+        target = self.repo_root / "sub" / ".git"
+        blocked, reason = _is_protected_path(
+            str(target), DEFAULT_ALLOWLIST, {}, repo_root=self.repo_root
+        )
+        assert blocked is True
+        assert "protegida por patron" in reason

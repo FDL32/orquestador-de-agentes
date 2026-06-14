@@ -16,6 +16,7 @@ from pathlib import Path
 
 from scripts.install_agent_system import (
     copy_destination_bootstrap,
+    copy_gitleaks_config,
     copy_project_template,
     copy_tree,
     detect_destination_residues,
@@ -644,3 +645,71 @@ def test_destination_context_json_survives_residue_detection(tmp_path):
         f"destination_context.json should be excluded by INSTALLER_BOOTSTRAP_PATHS, "
         f"got residues: {residue_names}"
     )
+
+
+# ---------------------------------------------------------------------------
+# copy_gitleaks_config (WOT-2026-004b): portable seed, no-clobber
+# ---------------------------------------------------------------------------
+
+
+def _make_gitleaks_template(
+    template_root: Path, body: str = "title = 'seed'\n"
+) -> Path:
+    src = template_root / "agent_system" / "templates" / "gitleaks.config.toml"
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_text(body, encoding="utf-8")
+    return src
+
+
+def test_copy_gitleaks_config_creates_when_absent(tmp_path):
+    template_root = tmp_path / "motor"
+    dest_root = tmp_path / "dest"
+    dest_root.mkdir()
+    _make_gitleaks_template(template_root, "title = 'seed'\n")
+
+    result = copy_gitleaks_config(template_root, dest_root, dry_run=False)
+
+    dest = dest_root / ".gitleaks.toml"
+    assert result is True
+    assert dest.exists()
+    assert dest.read_text(encoding="utf-8") == "title = 'seed'\n"
+
+
+def test_copy_gitleaks_config_no_clobber_when_present(tmp_path):
+    template_root = tmp_path / "motor"
+    dest_root = tmp_path / "dest"
+    dest_root.mkdir()
+    _make_gitleaks_template(template_root, "title = 'seed'\n")
+
+    custom = dest_root / ".gitleaks.toml"
+    custom.write_text("title = 'destino custom'\n", encoding="utf-8")
+
+    result = copy_gitleaks_config(template_root, dest_root, dry_run=False)
+
+    # No-clobber: existing destino config preserved verbatim.
+    assert result is True
+    assert custom.read_text(encoding="utf-8") == "title = 'destino custom'\n"
+
+
+def test_copy_gitleaks_config_missing_template_returns_false(tmp_path):
+    template_root = tmp_path / "motor"
+    (template_root / "agent_system" / "templates").mkdir(parents=True)
+    dest_root = tmp_path / "dest"
+    dest_root.mkdir()
+
+    result = copy_gitleaks_config(template_root, dest_root, dry_run=False)
+
+    assert result is False
+    assert not (dest_root / ".gitleaks.toml").exists()
+
+
+def test_copy_gitleaks_config_dry_run_does_not_write(tmp_path):
+    template_root = tmp_path / "motor"
+    dest_root = tmp_path / "dest"
+    dest_root.mkdir()
+    _make_gitleaks_template(template_root)
+
+    result = copy_gitleaks_config(template_root, dest_root, dry_run=True)
+
+    assert result is True
+    assert not (dest_root / ".gitleaks.toml").exists()

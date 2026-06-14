@@ -1,0 +1,36 @@
+# gitleaks seed config (portable) - bundled by the motor, provisioned to destinos
+# por scripts/install_agent_system.py (copy_gitleaks_config, no-clobber).
+#
+# Este seed es GENERICO. Extiende el ruleset por defecto de gitleaks (no lo
+# reemplaza) y solo neutraliza una clase ESTRUCTURAL de falso positivo comun a
+# cualquier destino: SHAs git de 40 hex que aparecen en superficies de LOG
+# OPERATIVO y que la regla `generic-api-key` marca como posible credencial
+# ("generic-api-key-on-SHA").
+#
+# Politica generic-api-key-on-SHA:
+# - Los logs operativos del sistema (.agent/collaboration, .agent/runtime,
+#   orchestrator_pipeline, execution_log.md, CHANGELOG.md) son append-only y
+#   referencian commits por su SHA. No son almacenes de secretos: el contrato del
+#   proyecto prohibe commitear credenciales y exige ***REDACTED*** en logs.
+# - Por eso se permiten por PATH esas superficies, en vez de por un regex amplio
+#   de 40-hex (que ocultaria credenciales reales en CUALQUIER ruta del repo).
+# - Falsos positivos por VALOR concreto (placeholders didacticos, un SHA publico
+#   puntual de un repo externo, etc.) NO van aqui: se añaden por destino en su
+#   propio `.gitleaks.toml`, con regex del valor exacto y justificacion. El
+#   installer es no-clobber: nunca pisa el `.gitleaks.toml` ya personalizado de
+#   un destino.
+
+title = "motor gitleaks seed (portable, generic)"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "generic-api-key-on-SHA: superficies de log operativo append-only que referencian SHAs git"
+paths = [
+  '''(^|/)\.agent/collaboration/''',
+  '''(^|/)\.agent/runtime/''',
+  '''(^|/)orchestrator_pipeline/''',
+  '''(^|/)execution_log\.md$''',
+  '''(^|/)CHANGELOG\.md$''',
+]
