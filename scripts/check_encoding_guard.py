@@ -27,28 +27,56 @@ def _staged_relative_paths() -> list[str]:
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
+def _explicit_paths(args: list[str]) -> list[Path]:
+    files: list[Path] = []
+    for raw in args:
+        candidate = Path(raw).resolve()
+        if candidate.exists() and candidate.is_file():
+            files.append(candidate)
+    return files
+
+
+def _display_path(path: Path) -> str:
+    try:
+        return path.relative_to(ROOT).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _allowlist_relative(path: Path) -> str | None:
+    try:
+        return path.relative_to(ROOT).as_posix()
+    except ValueError:
+        return None
+
+
 def main() -> int:
     from scripts.encoding_guard import (
         file_issues,
+        has_utf8_bom,
         is_allowlisted,
         iter_staged_files,
-        relative_path,
     )
 
-    staged_files = iter_staged_files(_staged_relative_paths())
-    if not staged_files:
+    explicit_files = _explicit_paths(sys.argv[1:])
+    files_to_check = explicit_files or iter_staged_files(_staged_relative_paths())
+
+    if not files_to_check:
         return 0
 
     errors: list[str] = []
-    for file_path in staged_files:
-        rel = relative_path(file_path)
+    for file_path in files_to_check:
+        rel = _display_path(file_path)
         mojibake, q_in_word = file_issues(file_path)
-        if is_allowlisted(rel):
+        rel_for_allowlist = _allowlist_relative(file_path)
+        if rel_for_allowlist is not None and is_allowlisted(rel_for_allowlist):
             if not mojibake and not q_in_word:
                 errors.append(
                     f"Allowlist entry is now clean and should be removed: {rel}"
                 )
             continue
+        if has_utf8_bom(file_path):
+            errors.append(f"UTF-8 BOM detected in {rel}")
         if mojibake:
             errors.append(f"Mojibake detected in {rel}: {mojibake[:12]}")
         if q_in_word:

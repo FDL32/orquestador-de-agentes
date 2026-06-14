@@ -1,11 +1,15 @@
 """Tests to ensure no encoding corruption exists in operational files."""
 
+import subprocess
+import sys
+
 import pytest
 from scripts.encoding_guard import (
     ALLOWLIST,
     ROOT,
     collect_files_to_check,
     file_issues,
+    has_utf8_bom,
     is_in_scope,
     relative_path,
 )
@@ -63,3 +67,29 @@ def test_hook_scope_matches_test_scope_for_core_files(relative):
         f"Regression fixture missing from test scope: {relative}"
     )
     assert is_in_scope(relative), f"Hook scope should include: {relative}"
+
+
+def test_has_utf8_bom_detects_bom(tmp_path):
+    file_path = tmp_path / "bom.md"
+    file_path.write_bytes(b"\xef\xbb\xbf# hello\n")
+    assert has_utf8_bom(file_path) is True
+
+
+def test_check_encoding_guard_explicit_path_blocks_bom(tmp_path):
+    file_path = tmp_path / "bom.md"
+    file_path.write_bytes(b"\xef\xbb\xbf# hello\n")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "check_encoding_guard.py"),
+            str(file_path),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "UTF-8 BOM detected" in result.stderr

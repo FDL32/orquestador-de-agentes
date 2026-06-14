@@ -125,6 +125,10 @@ def load_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def has_utf8_bom(path: Path) -> bool:
+    return path.read_bytes().startswith(b"\xef\xbb\xbf")
+
+
 def file_issues(path: Path) -> tuple[list[str], list[str]]:
     text = load_text(path)
     return find_mojibake(text), find_q_in_word(text)
