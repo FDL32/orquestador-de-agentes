@@ -9,6 +9,7 @@ usando un sandbox repo-local estable para no tocar el estado real del proyecto.
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 from collections.abc import Generator
@@ -17,14 +18,37 @@ from pathlib import Path
 import pytest
 
 
+def _rmtree_robust(path: Path) -> None:
+    """rmtree que tolera archivos read-only de Windows (p.ej. packs de .git)."""
+
+    def _handler(func, p, _exc):
+        os.chmod(p, stat.S_IWRITE)
+        func(p)
+
+    if not path.exists():
+        return
+    try:
+        shutil.rmtree(path, onexc=_handler)  # Python 3.12+
+    except TypeError:
+        shutil.rmtree(path, onerror=_handler)  # Python 3.10-3.11
+
+
 PROJECT_ROOT = Path(__file__).parent.parent
 SANDBOX_ROOT = PROJECT_ROOT / ".tmp" / "sandbox_completion_test"
 SANDBOX_AGENT = SANDBOX_ROOT / ".agent"
 SANDBOX_COLLAB = SANDBOX_AGENT / "collaboration"
 
 # Archivos a copiar en el sandbox
+# Incluye los modulos hermanos que agent_controller importa al cargar
+# (closure_invariants, motor_checkpoint, state_validation): tras la
+# descomposicion del monolito el sandbox dejo de copiarlos y los tests
+# integration (deseleccionados por defecto) fallaban con ModuleNotFoundError.
 FILES_TO_COPY = [
     PROJECT_ROOT / ".agent" / "agent_controller.py",
+    PROJECT_ROOT / ".agent" / "closure_invariants.py",
+    PROJECT_ROOT / ".agent" / "motor_checkpoint.py",
+    PROJECT_ROOT / ".agent" / "scope_gate.py",
+    PROJECT_ROOT / ".agent" / "state_validation.py",
     PROJECT_ROOT / ".agent" / "completion_checker.py",
     PROJECT_ROOT / ".agent" / "completion_common.py",
     PROJECT_ROOT / ".agent" / "hooks" / "stop_hook.py",
@@ -60,8 +84,7 @@ def sandbox() -> Generator[Path, None, None]:
     El sandbox se limpia al finalizar el test.
     """
     # Limpiar si existe previamente
-    if SANDBOX_ROOT.exists():
-        shutil.rmtree(SANDBOX_ROOT)
+    _rmtree_robust(SANDBOX_ROOT)
 
     try:
         # Crear estructura
@@ -85,12 +108,28 @@ def sandbox() -> Generator[Path, None, None]:
 
         # Runtime module is resolved via PYTHONPATH pointing to motor root
 
+        # WOT-2026-003a: git-init the sandbox so it reflects a real checkout
+        # (the destination CI checks out a git repo). The runtime bus
+        # (events.jsonl) stays absent on purpose -- that is the scenario under
+        # test: validate must not fail just because the gitignored bus is not
+        # present in the checkout.
+        _git = ["git", "-c", "user.email=test@example.com", "-c", "user.name=test"]
+        subprocess.run([*_git, "init", "-q"], cwd=SANDBOX_ROOT, check=True)
+        subprocess.run(
+            [*_git, "add", "-A"], cwd=SANDBOX_ROOT, check=True, capture_output=True
+        )
+        subprocess.run(
+            [*_git, "commit", "-q", "-m", "sandbox init"],
+            cwd=SANDBOX_ROOT,
+            check=True,
+            capture_output=True,
+        )
+
         yield SANDBOX_ROOT
 
     finally:
         # Limpiar sandbox al finalizar
-        if SANDBOX_ROOT.exists():
-            shutil.rmtree(SANDBOX_ROOT)
+        _rmtree_robust(SANDBOX_ROOT)
 
 
 def write_sandbox_file(sandbox: Path, rel_path: str, content: str) -> None:
@@ -127,7 +166,8 @@ def test_approved_ready_for_review_handoff(sandbox: Path) -> None:
     Valida que:
     1. El controller devuelve MANAGER / REVIEW_WORK
     2. No hay advisory espurio de completitud
-    3. La validaciÃƒÂ³n falla cerrado si falta el bus esperado en sandbox
+    3. WOT-2026-003a: con el bus runtime ausente (checkout/CI), validate NO
+       falla; las invariantes del bus se reportan como warnings no verificables.
     """
     # Preparar estado de ejemplo sano
     write_sandbox_file(
@@ -180,10 +220,14 @@ def test_approved_ready_for_review_handoff(sandbox: Path) -> None:
     assert "\u26a0\ufe0f" not in result.stdout
     assert "\u274c" not in result.stdout
 
-    # 2. Ejecutar validaciÃƒÂ³n
+    # 2. Ejecutar validacion
     validate_result = run_controller(sandbox, "--validate", "--json", "--force")
-    assert validate_result.returncode == 1, (
-        f"ValidaciÃƒÂ³n fallÃƒÂ³: {validate_result.stderr}"
+    # WOT-2026-003a: el sandbox no siembra el bus runtime (events.jsonl es
+    # gitignored), igual que un checkout fresco / CI. Las invariantes que
+    # dependen del bus son NO VERIFICABLES en ese contexto, no violadas: deben
+    # reportarse como warnings, no como errores. Por tanto validate NO falla.
+    assert validate_result.returncode == 0, (
+        f"validate no debe fallar por bus ausente: {validate_result.stderr}\n{validate_result.stdout}"
     )
 
     try:
@@ -193,20 +237,18 @@ def test_approved_ready_for_review_handoff(sandbox: Path) -> None:
         print(f"STDERR:\n{validate_result.stderr}")
         raise
 
-    # Validar que los archivos Markdown son sanos. El sandbox no siembra bus,
-    # por lo que el contrato actual debe reportar drift de bus de forma explicita.
-    assert validate_output["errors"] == {
-        "work_plan.md": [],
-        "execution_log.md": [],
-        "notifications.md": [],
-        "TURN.md": [],
-        "consistency": [],
-        "host_project_prefix": [],
-        "invariants": [
-            "INVARIANT: Missing BUILDER_EXIT event for ticket TEST-000 in state READY_FOR_REVIEW",
-            "INVARIANT: Missing STATE_CHANGED event for ticket TEST-000",
-        ],
-    }
+    # Sin errores de ninguna categoria: la invariante del bus es no verificable
+    # (bus ausente en el checkout), no violada -> no debe contribuir errores.
+    total_errors = sum(len(v) for v in validate_output["errors"].values())
+    assert total_errors == 0, (
+        f"validate no debe tener errores: {validate_output['errors']}"
+    )
+    assert "invariants" not in validate_output["errors"], validate_output["errors"]
+    # Las invariantes del bus quedan como warnings 'no verificable'.
+    assert any(
+        "Cannot verify BUILDER_EXIT" in w
+        for w in validate_output["warnings"].get("invariants", [])
+    ), validate_output["warnings"]
     assert validate_output["warnings"]["bus_drift"] == [
         "No STATE_CHANGED event found in bus for ticket TEST-000"
     ]

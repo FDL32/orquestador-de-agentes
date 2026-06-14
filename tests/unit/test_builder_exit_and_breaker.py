@@ -216,14 +216,42 @@ class TestInvariants:
             assert len(result["errors"]) == 0
 
     def test_invariants_post_closure_missing_builder_exit(self):
-        """Post-cierre sin BUILDER_EXIT debe generar error."""
+        """Bus presente con eventos del ticket pero sin BUILDER_EXIT -> error."""
+        plan_content = "# Work Plan\n\n**ID:** WP-2026-065\n\n**Estado:** APPROVED"
+        log_content = "# Execution Log\n\n**Estado:** READY_FOR_REVIEW"
+        # Some other event exists for the ticket, so the bus IS present and can
+        # verify the invariant: the missing BUILDER_EXIT is a real violation.
+        other_event = MagicMock()
+        mock_bus = MagicMock()
+        mock_bus.latest_event = MagicMock(return_value=None)
+        mock_bus.read_events = MagicMock(return_value=[other_event])
+        with patch("agent_controller.event_bus", mock_bus):
+            result = _check_invariants(plan_content, log_content, "READY_FOR_REVIEW")
+            assert any("Missing BUILDER_EXIT" in err for err in result["errors"])
+
+    def test_invariants_post_closure_absent_bus_is_warning_not_error(self):
+        """WOT-2026-003a: bus ausente (sin eventos del ticket) -> warning, no error.
+
+        Reproduce el caso checkout/CI: el ticket esta COMPLETED en el estado
+        versionado, pero el bus runtime (events.jsonl, gitignored) no esta en el
+        checkout. La invariante es no verificable, no violada.
+        """
         plan_content = "# Work Plan\n\n**ID:** WP-2026-065\n\n**Estado:** APPROVED"
         log_content = "# Execution Log\n\n**Estado:** READY_FOR_REVIEW"
         mock_bus = MagicMock()
         mock_bus.latest_event = MagicMock(return_value=None)
+        mock_bus.read_events = MagicMock(return_value=[])  # bus absent for ticket
         with patch("agent_controller.event_bus", mock_bus):
             result = _check_invariants(plan_content, log_content, "READY_FOR_REVIEW")
-            assert any("Missing BUILDER_EXIT" in err for err in result["errors"])
+            assert not any("Missing BUILDER_EXIT" in err for err in result["errors"]), (
+                f"absent bus must not error: {result['errors']}"
+            )
+            assert not any(
+                "Missing STATE_CHANGED" in err for err in result["errors"]
+            ), f"absent bus must not error: {result['errors']}"
+            assert any("Cannot verify BUILDER_EXIT" in w for w in result["warnings"]), (
+                f"absent bus must warn: {result['warnings']}"
+            )
 
     def test_invariants_post_closure_with_builder_exit(self):
         """Post-cierre con BUILDER_EXIT valido debe estar OK."""
