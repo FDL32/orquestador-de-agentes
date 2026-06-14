@@ -1,8 +1,8 @@
 # MEMORY
 
-Regenerated: 2026-06-13T09:15:22.981301+00:00
+Regenerated: 2026-06-14T20:52:14.069379+00:00
 
-Total observations: 82
+Total observations: 90
 
 - Adapter Pipeline Wp Split (1 observations)
 - Ap-Nn-Cross-Cutting-Architecture (1 observations)
@@ -14,6 +14,7 @@ Total observations: 82
 - Builder-Closeout-Hallucination (1 observations)
 - Builder-Manager-Mirror-Pattern (1 observations)
 - Builder-Window-Silent-Fail (1 observations)
+- Bus-Absent-Is-Unverifiable (1 observations)
 - Bus-First-Read-Authority (1 observations)
 - Bus-Import-Boundary (1 observations)
 - Bus-Recovery-Rule (1 observations)
@@ -26,14 +27,18 @@ Total observations: 82
 - Cem-Relaunch-Continuity (1 observations)
 - Ci-Vs-Prepush-Coverage (1 observations)
 - Code-Ticket-Prehandoff-Packaging (1 observations)
+- Delivery-Authority-Drives-Closure (1 observations)
 - Delivery-Hook-Mutation (2 observations)
 - Design-Pattern-Positive (1 observations)
 - Dispatcher Global Side Effect (1 observations)
+- Evidence-Gate-Fixture-Contract (1 observations)
 - Explicit Legacy Edit Missing From Diff (1 observations)
+- False-Green-Is-Not-Evidence (1 observations)
 - Future-Improvement-Diff-Based-Review (1 observations)
 - Future-Improvement-Memory-Categorization (1 observations)
 - Git-History-Scan-Dedup (1 observations)
 - Handoff-Blocked-Not-Crash (1 observations)
+- Host-Extends-Resolver-Audit-First (1 observations)
 - Lock Reentrancy Antipattern (1 observations)
 - Manager-Review-Rubric (5 observations)
 - Ndjson-Last-Decision-Wins (1 observations)
@@ -42,6 +47,7 @@ Total observations: 82
 - Portable-Ticket-Filename-Boundary (1 observations)
 - Powershell-Bom-Encoding (1 observations)
 - Powershell-Strictmode-Dynamic-Properties (1 observations)
+- Premise-Verification-Before-Implementation (1 observations)
 - Projection-Probe-Debt (1 observations)
 - Prompt-Skill-Drift (1 observations)
 - Protocol-Key-Assumption (1 observations)
@@ -55,6 +61,7 @@ Total observations: 82
 - Safe-Suite-Coverage-Gap (1 observations)
 - Scanner Corpus Scope (1 observations)
 - Security-Gate-Fail-Open (1 observations)
+- Security-Hook-Fail-Closed (1 observations)
 - Session-Close-Manual-Gap (1 observations)
 - Silent Subprocess Failure Pattern (1 observations)
 - Skills-Taxonomy-V2 (1 observations)
@@ -62,18 +69,11 @@ Total observations: 82
 - State-Surface-Separation (1 observations)
 - Subprocess-Json-Stdout-Noise (1 observations)
 - Supervisor-Process-Staleness (1 observations)
+- System-Health-Audit-Protocol (1 observations)
 - Test-Linting-Policy (1 observations)
 - Test-Surrogate-Antipattern (1 observations)
 - Testability-Refactor-Scope-Drift (1 observations)
 - Ticket-Closeout-Debt (1 observations)
-- Ticket-Completion (1 observations)
-- Ticket-Contradiction-Sequence (1 observations)
-- Ticket-Gate-Placement (1 observations)
-- Ticket-Id-Parser (1 observations)
-- Ticket-Lineage-Rule (1 observations)
-- Ticket-Plan-Audit-Parity-Gap (1 observations)
-- Ticket-State-Enum-Contract (1 observations)
-- Ticket-Structure-Risk-Heuristic (1 observations)
 
 ---
 

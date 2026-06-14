@@ -64,7 +64,65 @@
 
 ## Confirmados
 
-_Vacío. Los ítems pasan directamente de Pendientes a motor cuando se implemente la herramienta._
+### 2026-06-14 | origen: proceso | estado: generalizable
+- learning: "Antes de implementar un ticket que describe un estado pasado del sistema, reproduce su premisa en modo read-only y re-scopea si es falsa. La solucion correcta puede estar en un hazard distinto del relato original."
+- evidencia: "WOT-2026-003d; `python scripts/install_agent_system.py --sync --dry-run`; commit `ff05b8d`; review independiente de 003d."
+- razon: "En esta sesion, el dry-run desmintio la premisa historica de 003d y redirigio el trabajo al riesgo real: prune de rutas trackeadas del destino. Es un juicio reusable de seguridad y alcance."
+- propuesta de aplicacion en herramienta:
+  - `prompts/orchestrator_pipeline.md`
+  - `prompts/audit_pipeline.md`
+  - `prompts/audit_post_change_system_health.md`
+- decision del usuario: aceptado
+
+### 2026-06-14 | origen: contrato | estado: generalizable
+- learning: "En topologia host-extends, retirar copias motor-provides exige auditar primero resolvers vivos, hooks y CI del destino. El contrato documental no basta para declarar segura la limpieza."
+- evidencia: "WOT-2026-003b; WOT-2026-003c; WOT-2026-005b; WOT-2026-005c; `prompts/destination_bootstrap.md`; `prompts/audit_post_change_system_health.md`."
+- razon: "La sesion mostro que un destino puede seguir apuntando a superficies locales ya retiradas aunque el modelo host-extends este bien documentado. Esto sigue siendo juicio operativo reusable."
+- propuesta de aplicacion en herramienta:
+  - `prompts/destination_bootstrap.md`
+  - `skills/orchestrate-pipeline/references/destination-preflight.md`
+  - `prompts/audit_post_change_system_health.md`
+- decision del usuario: aceptado
+
+### 2026-06-14 | origen: contrato | estado: generalizable
+- learning: "Los gates de cierre y de alcance deben respetar `delivery_authority`. Un ticket code o mixed del repo_destino no puede exigir evidencia productiva en repo_motor para cerrar de forma canonica."
+- evidencia: "Bloqueo estructural detectado en la cadena WOT-2026-003x; uso de `delivery_authority` en `work_plan.md`; cierre de tickets destino-authority sin commit productivo en motor."
+- razon: "Es un contrato estructural del sistema multi-repo: el repositorio de autoridad del deliverable determina donde debe vivir la evidencia canonicamente exigible."
+- propuesta de aplicacion en herramienta:
+  - `.agent/agent_controller.py`
+  - `bus/motor_checkpoint.py`
+  - `prompts/orchestrator_pipeline.md`
+- decision del usuario: aceptado
+
+### 2026-06-14 | origen: bug-fix | estado: generalizable
+- learning: "Un hook de seguridad que no puede resolver su guard debe fallar cerrado. Si sale con `exit 0` por dependencia ausente, la barrera es falsa y el sistema queda fail-open."
+- evidencia: "WOT-2026-003b; WOT-2026-003c; `scripts/check_claude_settings_portability.py`; `.agent/hooks/claude_guard_entry.py`; tests de 003c."
+- razon: "Este principio ya quedo endurecido por barrera; la memoria debe conservar el por que y donde vive, no tratarlo como opinion abierta."
+- propuesta de aplicacion en herramienta:
+  - `scripts/check_claude_settings_portability.py`
+  - `.agent/hooks/claude_guard_entry.py`
+  - `prompts/audit_post_change_system_health.md`
+- decision del usuario: aceptado
+
+### 2026-06-14 | origen: bug-fix | estado: generalizable
+- learning: "Un test o gate verde sin assert real ni parsing correcto no es evidencia. Los false-greens deben tratarse como deuda critica y cerrarse con barreras explicitas."
+- evidencia: "WOT-2026-006a; `pytest.ini` con `error::PytestReturnNotNoneWarning`; WOT-2026-006b; `scripts/check_encoding_guard.py` con chequeo de rutas explicitas."
+- razon: "Este principio tambien quedo endurecido por barreras. La memoria conserva la regla y el puntero a la barrera para evitar futuras re-derivaciones ingenuas."
+- propuesta de aplicacion en herramienta:
+  - `pytest.ini`
+  - `scripts/check_encoding_guard.py`
+  - `prompts/audit_agent_output.md`
+- decision del usuario: aceptado
+
+### 2026-06-14 | origen: contrato | estado: generalizable
+- learning: "En CI o clone fresco, ausencia del bus runtime debe clasificarse como no verificable, no como violacion dura. Error solo cuando el bus del ticket esta presente y falta el evento requerido."
+- evidencia: "WOT-2026-003a; CHANGELOG v9.17.1; `tests/test_completion_integration.py`; prompts de auditoria completa y post-change actualizados en 005c y 005d."
+- razon: "La sesion endurecio el comportamiento del validador y ademas lo llevo a la capa de auditoria. La memoria debe conservar el contrato y el contexto de uso."
+- propuesta de aplicacion en herramienta:
+  - `.agent/agent_controller.py`
+  - `tests/test_completion_integration.py`
+  - `prompts/audit_complete_motor_destination.md`
+- decision del usuario: aceptado
 
 ## Archivados
 
