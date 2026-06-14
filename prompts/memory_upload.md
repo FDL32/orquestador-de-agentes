@@ -57,6 +57,43 @@ Si afecta a ambos, dilo explícitamente.
 
 La promoción de `engine`/`meta` al `repo_motor` es **siempre manual y con confirmación humana**.
 
+## Decisión de destino de memoria (obligatoria antes de escribir)
+
+Antes de escribir cualquier memoria, declara EXPLÍCITAMENTE su destino. No basta con
+"guardar en memoria": las tres memorias tienen contratos distintos y no son intercambiables.
+
+| Destino | Qué es | Portable / validable | Cuándo |
+|---------|--------|----------------------|--------|
+| `Claude privada` | Memoria personal de Claude Code (`~/.claude/.../memory/`) | NO portable, NO validada por el schema del motor | Hábito transversal del usuario/equipo; no es estado del proyecto |
+| `portable motor` | `repo_motor/.agent/runtime/memory/observations.jsonl` (wings `engine`/`meta`) | Portable + validable por schema; se propaga a destinos via sync | Invariante o contrato generalizable; SIEMPRE con confirmación humana |
+| `portable destino` | `repo_destino/.agent/runtime/memory/observations.jsonl` (wing `project`) | Portable al destino + validable por schema; no sale del destino | Aprendizaje local del proyecto destino |
+
+Reglas de decisión (binarias):
+
+1. **Declara el destino antes de escribir** (`Claude privada`, `portable motor`,
+   `portable destino`, o `varias` con desglose por entrada). Sin destino declarado, no
+   escribas: vuelve a la propuesta.
+2. **Evidencia requerida por destino:** una memoria portable (motor o destino) exige
+   evidencia verificable (diff, commit, test, exit code, evento de bus o ruta real). Una
+   memoria `Claude privada` puede ser preferencia/hábito sin artefacto, pero entonces NO es
+   promovible a portable tal cual.
+3. **Promoción a `observations.jsonl` (portable):** solo si la entrada valida contra el
+   schema canónico (`skills/_shared/ap-schema.md`) Y contra el consumidor real del motor
+   (`bus/memory_loader.py`). Si no valida o no hay evidencia, etiquétala `NO PROMOVIBLE`
+   con el motivo y déjala en `Claude privada` o como deuda explícita con ticket.
+4. **Aprendizaje útil pero privado:** si durante el ciclo guardaste algo en `Claude
+   privada`, decide EXPLÍCITAMENTE si debe promoverse a portable. Si sí, aplica las reglas
+   2-3. Si no, registra por qué se queda privado (no promovible / fuera de contrato).
+
+### Drift de schema en `observations.jsonl`
+
+Si `observations.jsonl` (motor o destino) está en **drift de schema** respecto a
+`skills/_shared/ap-schema.md` (campos no canónicos, `applies_to` inválido, taxonomías
+equivalentes mezcladas), **NO añadas nuevas entradas portables**: abre primero un ticket de
+migración de schema y deja el aprendizaje como `NO PROMOVIBLE` (o en `Claude privada`) hasta
+que el schema esté reconciliado. Añadir entradas nuevas sobre un schema en drift amplía la
+deuda en vez de cerrarla.
+
 ## Formato de la propuesta
 
 Antes de escribir nada, dame una propuesta con estos campos:
