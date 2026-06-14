@@ -1319,10 +1319,12 @@ def sync_agent_system(  # noqa: C901
         print(
             f"\n[DRY-RUN] Sync plan: {len(copied)} top-level entries would be copied/updated."
         )
-        print(f"[DRY-RUN] Residues to prune: {len(residues)}")
+        print(f"[DRY-RUN] Residues detected: {len(residues)}")
         if pruned:
             mode = "interactive" if prune else "automatic (strict)"
             print(f"[DRY-RUN] Residues selected for cleanup ({mode}): {len(pruned)}")
+        else:
+            print("[DRY-RUN] Residues selected for cleanup: 0")
         return 0
 
     # Validate hooks config integrity (critical for "no drift" policy)
