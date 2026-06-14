@@ -62,6 +62,24 @@ Regla de repos: toda operación git de tooling corre en `repo_motor`. El estado 
 - **Validate:** `python .agent/agent_controller.py --validate --json --force` debe pasar antes de cualquier cierre. Verifica entre otras cosas que destinos `host-project` tengan `Ticket prefix:` declarado.
 - **Quality gates:** `ruff check .`, `python scripts/run_pytest_safe.py`, `python scripts/pip_audit_project.py`.
 
+## Enrutado de trabajo nuevo
+
+Si la peticion del usuario es una feature nueva, creacion/mejora amplia de un
+repo, trabajo multi-ticket, cambio arquitectonico o integracion motor-destino,
+no saltes directamente a implantar desde backlog. Primero comprueba si existe
+un contrato de formacion en `.agent/planning/`:
+
+- `repo_charter.md`
+- `plan_graph.md`
+- `ticket_contracts.md`
+- `evidence_catalog.md`
+- `decisions.md`
+
+Si no existe o esta incompleto, recomienda usar el Contract Formation Pipeline
+antes de `orchestrator_pipeline.md`. El pipeline de implantacion es autonomo
+cuando el contrato esta congelado; la fase de definicion requiere decisiones del
+usuario.
+
 ## Ciclo canonico de un ticket
 
 > Flujo completo y arquitectura: ver [PROJECT.md sección "Current architecture"](../PROJECT.md#current-architecture).

@@ -101,6 +101,9 @@ en el reporte. En ese modo no se debe simular independencia:
   seguridad, hooks, CI, bus, estado compartido, secretos o permisos) se dejan en
   `READY_FOR_REVIEW` o `BLOCKED_REVIEW_REQUIRED` hasta tener review
   independiente.
+- Si un cierre en fallback deja `bus_drift` por eventos canonicos ausentes,
+  reconciliarlo con `scripts/reconcile_ticket.py` y revalidar 0/0; no escribir
+  eventos JSONL a mano ni rebajar el gate cuando existe herramienta sancionada.
 
 ## Bootstrap contextual
 

@@ -1,4 +1,4 @@
-﻿# Review Manager Prompt
+# Review Manager Prompt
 
 Eres el MANAGER del ticket `{{TICKET_ID}}` en el motor
 `orquestador_de_agentes`.
@@ -28,6 +28,9 @@ Para cierres de codigo exige:
 ## Paso 2: Verificacion mecanica
 Ejecuta tu propia verificacion. No confies solo en el relato del Builder.
 
+Primero lee `deliverable_type` en `work_plan.md` o en el plan asociado. No
+apliques la misma verificacion mecanica a todos los tickets.
+
 Comandos base en `repo_motor`:
 
 ```powershell
@@ -40,13 +43,24 @@ git status --short
 Deriva primero los archivos tocados desde `git show --stat <commit>` y
 `git show --name-only <commit>`.
 
-Despues:
+Si `deliverable_type` es `code` o `mixed`:
+
 - ejecuta `ruff check` sobre los archivos Python tocados;
 - deriva tests focales desde el diff, `work_plan.md`, `AUDIT_{{TICKET_ID}}.md`
   y `execution_log.md`;
 - reejecuta los tests que el Builder declaro como evidencia;
 - trata la ausencia de tests focales claros para cambios de codigo como
   `CHANGES`, salvo justificacion explicita y verificable.
+
+Si `deliverable_type` es `documentation`, `research` o `analysis`:
+
+- verifica que los artefactos Builder declarados existen y son revisables;
+- ejecuta encoding guard sobre Markdown/prompts/skills tocados;
+- ejecuta `validate --json` contra el `repo_destino`;
+- no exijas `ruff` ni `pytest` salvo que el ticket haya tocado Python, CI,
+  hooks, runtime o configuracion de gates;
+- si un ticket documental introduce criterios que requieren ejecutar Builder,
+  codigo, tests o sandbox, marcar `CHANGES`: debe ser `mixed` o dividirse.
 
 Ejemplos:
 
@@ -65,9 +79,17 @@ Comprueba:
 - existe commit con `{{TICKET_ID}}` en el mensaje o razon documentada;
 - el diff toca solo archivos declarados o justificados;
 - no hay scope creep material;
-- `ruff` termina con exit 0;
-- `pytest` focal termina con exit 0;
-- `validate --json` devuelve 0 errores y 0 warnings.
+- `ruff` termina con exit 0 cuando aplica;
+- `pytest` focal termina con exit 0 cuando aplica;
+- `validate --json` devuelve 0 errores y, para cierre normal, 0 warnings;
+- si aparecen warnings, primero decide si son reparables. Para `bus_drift` por
+  cierre `FALLBACK_SIN_TASK_TOOL`, exige la herramienta canonica
+  `scripts/reconcile_ticket.py` y revalida hasta 0/0; no fabriques eventos de
+  bus manualmente.
+- solo las warnings genuinamente no reparables pueden quedar clasificadas como
+  `fixed_before_start`, `accepted_health_exception` o `blocking`.
+  Una warning `blocking` impide aprobar; una `accepted_health_exception`
+  exige evidencia, propietario y razon en `execution_log.md` o en el closeout.
 
 ## Paso 3: Barrera de regresion
 Aplica este paso solo si el ticket corrige un bug, regresion o fallo operativo.
@@ -136,8 +158,10 @@ Para cualquier decision incluye una tabla:
 |----------|------------|-----------|
 | Commit con ticket | si/no | comando o artefacto |
 | Diff dentro de scope | si/no | archivos |
-| Tests focales | si/no | comando + resultado |
-| Ruff | si/no | comando + resultado |
+| deliverable_type aplicado | si/no | code/mixed/docs/research/analysis |
+| Artefactos documentales | si/no/no aplica | rutas + existencia |
+| Tests focales | si/no/no aplica | comando + resultado |
+| Ruff | si/no/no aplica | comando + resultado |
 | Validate repo_destino | si/no | 0/0 o detalle |
 | Bus canonico | si/no | eventos relevantes |
 | Barrera de regresion | si/no/no aplica | prueba sin fix/con fix |

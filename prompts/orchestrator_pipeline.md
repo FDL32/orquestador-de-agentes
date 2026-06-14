@@ -350,6 +350,10 @@ Politica de cierre en `FALLBACK_SIN_TASK_TOOL`:
 - el closeout global debe listar todos los tickets ejecutados en fallback y su
   estado de independencia: `independent_reviewed`, `human_override` o
   `ready_for_review_only`.
+- Si un cierre en fallback deja `bus_drift` o falta de eventos canonicos, usar
+  `scripts/reconcile_ticket.py` para reconciliar la historia operativa y volver
+  a ejecutar `validate --json` hasta 0 errores / 0 warnings. No escribir eventos
+  JSONL a mano ni degradar el gate cuando existe reconciliacion canonica.
 
 ## 1.b Herramientas por fase
 
@@ -405,6 +409,44 @@ Para cada ticket pendiente del backlog:
 2. Si tiene dependencia no completada, posponer.
 3. Si una dependencia esta `BLOCKED`, no arrancar el ticket dependiente.
 4. Leer la entrada completa del ticket en `DESTINO_ROOT/.agent/collaboration/backlog.md`.
+
+## 2.a Contract Formation gate
+
+Antes de convertir una entrada de backlog en `work_plan.md`, decide si ya existe
+contrato suficiente o si hace falta Contract Formation.
+
+Un ticket puede pasar directamente a Manager plan solo si su entrada de backlog
+incluye, de forma explicita:
+
+- objetivo y alcance;
+- `deliverable_type`;
+- `delivery_authority` cuando aplique;
+- premisa verificable;
+- criterios binarios;
+- STOP conditions;
+- dependencias y superficies probables.
+
+Si el trabajo es una feature nueva, un repo nuevo, una mejora multi-ticket o una
+familia que modifica arquitectura, seguridad, CI, bus, estado compartido,
+instalacion o integracion motor-destino, buscar primero contrato de genesis en:
+
+- `DESTINO_ROOT/.agent/planning/repo_charter.md`;
+- `DESTINO_ROOT/.agent/planning/plan_graph.md`;
+- `DESTINO_ROOT/.agent/planning/ticket_contracts.md`;
+- `DESTINO_ROOT/.agent/planning/evidence_catalog.md`;
+- `DESTINO_ROOT/.agent/planning/decisions.md`.
+
+Si esos artefactos no existen o no cubren el ticket, no improvises un
+`work_plan.md` desde backlog crudo. Detente con `CONTRACT_FORMATION_REQUIRED`
+y pide/abre el pipeline de formacion de contrato:
+`<MOTOR_ROOT>/prompts/contract_formation_pipeline.md` cuando exista.
+
+Mientras `contract_formation_pipeline.md` no exista, el fallback seguro es:
+
+- documentar que el ticket requiere Contract Formation;
+- no lanzar Builder;
+- convertir la necesidad en ticket documental del motor o del destino, segun
+  `delivery_authority`.
 
 ## 3. Manager: crear plan detallado
 
@@ -622,8 +664,15 @@ Solo cerrar si:
 
 - Manager emite `APROBADO`;
 - se cumplio la regla de doble revision cuando aplica;
-- validate devuelve 0 errores y 0 warnings, o las warnings estan justificadas
-  como deuda no bloqueante en `execution_log.md`;
+- validate devuelve 0 errores y, para cierre normal, 0 warnings;
+- si quedan warnings, primero corregir las reparables. En particular, `bus_drift`
+  causado por cierre `FALLBACK_SIN_TASK_TOOL` se resuelve con
+  `scripts/reconcile_ticket.py` y nueva validacion 0/0;
+- solo warnings genuinamente no reparables pueden quedar clasificadas como
+  `fixed_before_start`, `accepted_health_exception` o `blocking`. Una warning
+  `blocking` impide cerrar; una `accepted_health_exception` exige evidencia,
+  propietario y razon en `execution_log.md` o closeout. No fabricar eventos de
+  bus para convertir una warning en falso 0;
 - bus y proyecciones estan alineados;
 - commit(s) con `{TICKET_ID}` son visibles en el repo correcto.
 
@@ -646,7 +695,25 @@ python <MOTOR_ROOT>/scripts/memory_consolidate.py --apply --project-root .
 python <MOTOR_ROOT>/.agent/agent_controller.py --validate --json --project-root .
 ```
 
-7. Emitir informe de cierre obligatorio en:
+7. Ejecutar pending-contract recheck sobre tickets pendientes:
+
+- Releer `DESTINO_ROOT/.agent/collaboration/backlog.md`.
+- Para cada ticket `pending` o `deferred` que dependa del ticket cerrado, o que
+  toque superficies/interfaz/config compartidas con el ticket cerrado, revalidar
+  su premisa contra el estado actual.
+- Si existe `.agent/planning/ticket_contracts.md`, comprobar tambien su
+  `context_baseline`, `Premise Re-check`, `Forbidden Surfaces` y dependencias.
+- Si una premisa ya no es cierta, no sigas con el siguiente ticket como si nada:
+  marcarlo en el informe como `CONTRACT_INVALID` o `NEEDS_REBASE`, crear o
+  actualizar `orchestrator_pipeline/reports/contract_recheck_{TICKET_ID}.md`, y
+  devolverlo al Manager/Contract Formation.
+
+Este paso es obligatorio aunque no exista aun tooling automatico. Si no hay
+contratos de planning, registrar `pending-contract recheck: no planning
+contracts present` y revisar solo dependencias/superficies declaradas en
+backlog.
+
+8. Emitir informe de cierre obligatorio en:
 
 `DESTINO_ROOT/orchestrator_pipeline/reports/closeout_{TICKET_ID}.md`
 
@@ -669,7 +736,12 @@ El informe debe documentar:
 - cualquier limpieza realizada y que archivos se movieron a `cleanup/`;
 - riesgos residuales;
 - deuda o follow-ups detectados;
-- validacion final (`validate`, estado git, bus si aplica).
+- validacion final (`validate`, estado git, bus si aplica);
+- resultado del pending-contract recheck:
+  - tickets revisados;
+  - tickets no afectados;
+  - tickets marcados `CONTRACT_INVALID` o `NEEDS_REBASE`;
+  - evidencia usada.
 
 Antes de cerrar, verificar encoding UTF-8 limpio del informe y de los artefactos
 tocados por el pipeline:

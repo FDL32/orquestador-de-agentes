@@ -54,11 +54,12 @@ Despues decide que evidencia minima exige. Un cierre requiere mas evidencia que 
 | Tipo de output | Evidencia minima |
 |----------------|------------------|
 | cierre | diff revisable, estado git, gates ejecutados, exit code real y bus/estado canonico si aplica |
-| plan | contrato canonico, archivos fuente nombrados, criterios binarios, riesgos de root/topologia y gates acordes con `deliverable_type` (artefacto verificable para doc/research; diff + commit para code) |
+| plan | contrato canonico, archivos fuente nombrados, criterios binarios, riesgos de root/topologia, alineacion con charter cuando exista y gates acordes con `deliverable_type` (artefacto verificable para doc/research; diff + commit para code) |
 | codigo de bus/orquestacion | diff, tests gobernantes, validacion de estado canonico, regression check proporcional y prueba de barrera cuando el cambio corrige un bug real |
 | claim de tests | comando exacto, contexto de ejecucion, exit code no enmascarado y arbol limpio si es evidencia de cierre |
 | comentario/review o propuesta | claims separados de inferencias y al menos una evidencia o limitacion explicita |
-| tipos no cubiertos arriba (codigo, propuesta arquitectonica, documentacion/memoria, otro) | al menos un claim separado de inferencia, una evidencia verificable o limitacion explicita, y criterio de riesgo proporcional |
+| propuesta arquitectonica | evidencia o limitacion explicita, alternativas consideradas, impacto en arquitectura/seguridad/autonomia y riesgos de colision con trabajo pendiente |
+| tipos no cubiertos arriba (codigo, documentacion/memoria, otro) | al menos un claim separado de inferencia, una evidencia verificable o limitacion explicita, y criterio de riesgo proporcional |
 
 ---
 
@@ -83,6 +84,39 @@ Si hay cambios propuestos o aplicados:
 - El cambio mezcla familias que deberian ir separadas?
 - El diff es revisable o es ruido de re-encoding?
 - Hay scope creep escondido?
+
+### 2.b Intent Audit
+
+Cuando exista `repo_charter.md`, `plan_graph.md`, `ticket_contracts.md` o una
+decision `DEC-*`, contrasta el output contra la intencion del proyecto, no solo
+contra el ticket local:
+
+- El cambio cumple el ticket pero contradice `Product Intent`?
+- Rompe algun `Non-Goal`, `Architecture Constraint`, `Quality Bar` o
+  `Security Constraint`?
+- Aumenta acoplamiento, latencia, superficie de seguridad o dependencia humana
+  sin que el contrato lo justifique?
+- Requiere que el usuario escriba codigo o edite contratos tecnicos cuando el
+  producto prometia que solo decidiria?
+- Si hay `failure_modes` o Negative Audit Checklist, alguno se activa?
+
+Si no existe charter, dilo. No inventes intencion: marca `Intent Audit: no
+verificable` y recomienda Contract Formation si el riesgo es estrategico.
+
+### 2.c Impact Simulation
+
+Para cambios multi-ticket, arquitectura, CI, hooks, instalacion, bus, estado
+compartido o integracion motor-destino, simula el impacto antes de aceptar:
+
+- Que otros tickets activos o pendientes dependen de las superficies tocadas?
+- Hay cambios de interfaz, schema, config global o archivos compartidos?
+- El cambio invalida premisas de tickets pendientes?
+- El plan deberia serializarse en vez de paralelizarse?
+- Existe `context_baseline` o evidencia equivalente para comparar antes/despues?
+
+Si no puedes verificar el impacto por falta de backlog/plan_graph, marca el
+riesgo como `NO VERIFICADO` o `INFERENCIA RAZONABLE`; no lo presentes como
+aprobado.
 
 ### 3. Tests y gates
 
@@ -122,6 +156,14 @@ Si el output habla de tickets, Builder, Manager, review o cierre:
 - Hay eventos reales de `BUILDER_EXIT`, `STATE_CHANGED`, `MANAGER_REVIEWING`, `REVIEW_DECISION`?
 - El agente confundio `repo_motor` con `repo_destino`?
 - El relaunch valida `AGENT_PROJECT_ROOT` antes de abrir nueva ventana?
+- Para `validate --json`, 0 errores es obligatorio y el cierre normal debe
+  tender a 0 warnings. Si hay warnings, primero exige reparar las que tengan
+  herramienta canonica (por ejemplo `bus_drift` por fallback mediante
+  `scripts/reconcile_ticket.py`). Solo warnings genuinamente no reparables
+  pueden clasificarse como `fixed_before_start`, `accepted_health_exception` o
+  `blocking`; una warning `blocking` invalida el cierre, y una
+  `accepted_health_exception` requiere evidencia, propietario y razon. No
+  aceptes fabricacion manual de eventos de bus para borrar warnings.
 
 ### 6. Encoding y texto operativo
 
