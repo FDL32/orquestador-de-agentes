@@ -52,6 +52,15 @@
 .agent/audits/system_health/INDEX.md
 .agent/audits/system_health/
 
+# Contract Formation (genesis) - contratos de planificacion del destino.
+# Superficie destino-keep generada por el Contract Formation Pipeline v0
+# (repo_charter, plan_graph, ticket_contracts, evidence_catalog, decisions,
+# contract_gaps/). Analoga a .agent/audits/system_health/: el proceso la
+# produce, el destino la conserva. Su persistencia tambien queda protegida del
+# prune por el guard git-tracked del instalador (WOT-2026-003d).
+# Ver docs/contract_formation/ y prompts/contract_formation_pipeline.md.
+.agent/planning/
+
 # Configuracion del sistema
 .agent/config/hooks_config.json
 
