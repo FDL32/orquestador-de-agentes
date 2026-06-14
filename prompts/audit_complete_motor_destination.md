@@ -113,6 +113,10 @@ Lee primero, como minimo:
 - `skills/graphify/SKILL.md`
 - `skills/repo-compare/SKILL.md`
 - `skills/local-audit/SKILL.md`
+- `prompts/destination_bootstrap.md`
+- `skills/orchestrate-pipeline/SKILL.md`
+- `skills/orchestrate-pipeline/references/destination-preflight.md`
+- `skills/system-health-audit/SKILL.md`
 
 Amplia despues solo donde haya evidencia de que una zona soporta una parte
 critica del comportamiento del sistema.
@@ -244,6 +248,9 @@ Busca roturas de continuidad entre esas fases.
 - comportamiento Windows/Linux si hay evidencia
 - acoplamiento a herramientas concretas
 - riesgos para instalar el motor en otros destinos
+- resolvers y bootstraps, no solo imports: para cualquier destino, auditar que hooks,
+  CI, launchers y scripts resuelven el motor por referencia (link / `AGENT_PROJECT_ROOT`)
+  y no contra copias locales retirables (ver `destination-preflight.md`, checks 7-8)
 
 ### 6. Calidad de codigo y diseño
 
@@ -254,7 +261,8 @@ Busca roturas de continuidad entre esas fases.
 - funciones con demasiadas responsabilidades
 - scripts de mantenimiento que esconden deuda estructural
 - modulos fragiles
-- fail-open validators
+- fail-open en validators, hooks, launchers, CI y fallback/stubs de topologia (un guard,
+  hook o validador que `exit 0` cuando su dependencia no resuelve es un fallo critico)
 - debt estructural
 - pruebas utiles vs cosmeticas
 - consistencia entre contrato documentado y comportamiento real
@@ -281,6 +289,12 @@ Si detectas un artefacto operativo grande, como `execution_log.md`, distingue:
 - si los errores son explicables
 - si la memoria ayuda o mete ruido
 - si el cierre canonico deja un estado auditable
+- distingue `bus ausente / no verificable` de `bus presente / evento violado`: en CI o
+  clone limpio el bus runtime puede no existir; no marques violacion de invariante donde
+  solo hay ausencia de evidencia (ni vendas verde por esa ausencia)
+- memoria por capas: evalua por separado memoria Claude privada, portable motor y
+  portable destino; comprueba si el schema real de `observations.jsonl` permite promocion
+  antes de recomendar promover (contrato en `prompts/memory_upload.md`)
 
 ### 8. Eficiencia del sistema como herramienta de creacion de proyectos
 
