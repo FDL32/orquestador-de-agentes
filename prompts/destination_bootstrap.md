@@ -47,6 +47,25 @@ El estado operativo (tickets, memoria) vive en `repo_destino`.
 - Si el usuario pide algo que ya existe, revisa primero antes de proponer nada nuevo.
 - Usa `rg` para busquedas rapidas en el arbol; combo `rg` + `read` para entender
   archivos sin cargar el arbol completo.
+
+## Preflight de seguridad (host-extends)
+
+Antes de operar cualquier ticket que toque hooks, CI o install (o que retire copias
+motor-provides), confirma EXPLICITAMENTE, ademas de los pasos anteriores:
+
+1. Topologia resuelta: `repo_motor`, `repo_destino` y `AGENT_PROJECT_ROOT` (o
+   `.agent/config/motor_destination_link.json`) apuntan al destino correcto. Sin esto, no
+   arranques Builder.
+2. Settings Claude portables y guard fail-closed: si existe un `.claude/settings.json`
+   trackeado, corre `python <motor_root>/scripts/check_claude_settings_portability.py
+   .claude/settings.json`. Debe pasar: sin `permissions.allow` trackeado, hook de escritura
+   presente, entrypoint canonico fail-closed.
+3. Resolvers vivos: para cualquier retirada de copias locales (`scripts/`, `skills/`,
+   `agent_system/`, `.agent/hooks/`), verifica que ningun consumidor vivo (hook, CI,
+   launcher) resuelve aun contra la copia a retirar. `install --sync` NO es un mecanismo
+   seguro de poda host-extends hasta cerrar WOT-2026-003d.
+
+Si cualquiera falla, detente y reporta antes de tocar codigo.
 ```
 
 ---

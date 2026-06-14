@@ -80,6 +80,13 @@ Si el preflight devuelve:
 - `NEEDS_RECONCILE`: reconciliar estado antes de Builder.
 - `PIPELINE_BLOCKED`: detener y pedir intervencion humana o decision de Manager.
 
+Para tickets que tocan hooks, CI o install (o que retiran copias motor-provides), el
+preflight incluye ademas (ver `references/destination-preflight.md`, checks 7-8):
+portabilidad de `.claude/settings.json` via
+`check_claude_settings_portability.py`, hook de escritura fail-closed, y verificacion de
+resolvers vivos antes de retirar copias locales. `install --sync` no es poda host-extends
+segura hasta cerrar WOT-2026-003d.
+
 ## Bootstrap contextual
 
 Antes de leer y ordenar tickets, cargar contexto real:

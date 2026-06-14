@@ -44,6 +44,22 @@ operativo, archivos de estado zombies o backlog no alineado.
    - warnings requieren decision explicita: blocker, deuda no bloqueante o
      limpieza previa.
 
+7. Confirmar portabilidad de settings y guard fail-closed (host-extends):
+   - si existe `.claude/settings.json` trackeado, correr
+     `python <MOTOR_ROOT>/scripts/check_claude_settings_portability.py .claude/settings.json`;
+   - reportar como bloqueo: `permissions.allow` trackeado (grants personales), hook de
+     escritura ausente, o entrypoint canonico fail-open (exit 0 sin guard resoluble);
+   - no arrancar Builder de tickets de hooks/CI/install con el gate en rojo.
+
+8. Confirmar integridad de resolvers (host-extends):
+   - para cualquier retirada de copias motor-provides (`scripts/`, `skills/`,
+     `agent_system/`, `.agent/hooks/`), verificar que ningun consumidor vivo (hook, CI,
+     launcher) resuelve aun contra la copia a retirar;
+   - si el preflight no puede distinguir invocador vivo de referencia historica, exigir
+     evidencia manual en el `work_plan` antes de Builder;
+   - `install --sync` NO es poda host-extends segura: re-vendoriza el bundle completo. No
+     usarlo como poda hasta cerrar WOT-2026-003d.
+
 ## Politica sobre archivos de estado
 
 Archivos como `.session_state.json`, `STATE.md`, `TURN.md` y `backlog.md` no se
