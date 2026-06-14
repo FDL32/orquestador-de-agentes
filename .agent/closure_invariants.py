@@ -17,6 +17,30 @@ module globals (monkeypatched by tests) remain the single seam.
 from __future__ import annotations
 
 
+def bus_has_ticket_events(event_bus, plan_id: str) -> bool:
+    """True if the runtime bus holds any event for this ticket.
+
+    WOT-2026-003a: Distinguishes two levels the validator must not conflate:
+    versioned destination state (work_plan/STATE/execution_log) vs runtime
+    evidence (the gitignored event bus). When the bus has NO event for the
+    ticket, the runtime bus is absent from this context -- e.g. a fresh
+    checkout / CI run where ``.agent/runtime/events/events.jsonl`` is not
+    present. In that case bus-dependent invariants are *unverifiable* and must
+    be reported as warnings, not asserted as violations. When the bus DOES
+    hold events for the ticket but the required one is missing, that is a real
+    violation (error).
+
+    Before: ``event_bus`` is a live bus; ``plan_id`` is non-empty.
+    During: Reads the ticket's events; never mutates.
+    After: Returns True if at least one event exists for the ticket, else
+    False (including when the bus read fails for any reason).
+    """
+    try:
+        return bool(event_bus.read_events(ticket_id=plan_id))
+    except Exception:
+        return False
+
+
 def check_bus_drift(event_bus, plan_id: str, log_status: str) -> list[str]:
     """Check for drift between Markdown state and bus events.
 
@@ -60,9 +84,15 @@ def check_post_closure_built_exit(
     warnings: list[str] = []
     builder_exit = event_bus.latest_event(ticket_id=plan_id, event_type="BUILDER_EXIT")
     if not builder_exit:
-        errors.append(
-            f"INVARIANT: Missing BUILDER_EXIT event for ticket {plan_id} in state {log_status}"
-        )
+        if bus_has_ticket_events(event_bus, plan_id):
+            errors.append(
+                f"INVARIANT: Missing BUILDER_EXIT event for ticket {plan_id} in state {log_status}"
+            )
+        else:
+            warnings.append(
+                f"Cannot verify BUILDER_EXIT for ticket {plan_id} in state {log_status}: "
+                "runtime bus has no events for this ticket (bus absent in this context)"
+            )
     else:
         # ticket_id is at event level, exit_reason and completion_summary are in payload
         payload = builder_exit.payload
@@ -103,7 +133,15 @@ def check_post_closure_state_changed(
     warnings: list[str] = []
     state_event = event_bus.latest_event(ticket_id=plan_id, event_type="STATE_CHANGED")
     if not state_event:
-        errors.append(f"INVARIANT: Missing STATE_CHANGED event for ticket {plan_id}")
+        if bus_has_ticket_events(event_bus, plan_id):
+            errors.append(
+                f"INVARIANT: Missing STATE_CHANGED event for ticket {plan_id}"
+            )
+        else:
+            warnings.append(
+                f"Cannot verify STATE_CHANGED for ticket {plan_id}: "
+                "runtime bus has no events for this ticket (bus absent in this context)"
+            )
     else:
         bus_state = state_event.payload.get("to_state")
         if bus_state and bus_state != log_status:
