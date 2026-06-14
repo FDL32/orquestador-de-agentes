@@ -1,5 +1,5 @@
 # Project: orquestador_de_agentes
-**Version:** v9.17.0
+**Version:** v9.17.1
 **State:** READY (2026-06-13) - System health audit protocol (collector + skill + prompt) added; audit-chain fixes; suite green
 
 ## Current Cycle

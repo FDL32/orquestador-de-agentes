@@ -517,7 +517,7 @@ wheels = [
 
 [[package]]
 name = "orquestacion-agentes"
-version = "9.17.0"
+version = "9.17.1"
 source = { virtual = "." }
 
 [package.dev-dependencies]
