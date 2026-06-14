@@ -1,4 +1,4 @@
-# Prompt: Auditoria de Salud del Sistema (System Health Audit)
+# Prompt: Auditoria de Salud Post-Cambio del Sistema (Post-Change System Health Audit)
 
 contract_id: cid-system-health-audit-v0
 Skill canonica: skills/system-health-audit/SKILL.md
@@ -32,8 +32,8 @@ doc/CLI cuando exista evidencia verificable). Archivado y saneo SALEN como
 tickets, nunca se ejecutan en la misma pasada.
 
 Hereda `prompts/audit_agent_output.md` (CEM v0, evidencia antes que relato, doble
-pasada adversarial) y `prompts/system_audit_master.md` (dimensiones de auditoria,
-formato de hallazgos, plan por tickets).
+pasada adversarial) y `prompts/audit_complete_motor_destination.md` (dimensiones
+de auditoria, formato de hallazgos, plan por tickets).
 
 ## Donde viven las cosas
 

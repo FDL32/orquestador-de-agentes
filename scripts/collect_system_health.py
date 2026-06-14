@@ -156,7 +156,7 @@ HEADER_TEMPLATE = """# {title}
 ---
 
 > Esqueleto generado por collect_system_health.py ({schema}). El agente debe
-> rellenar los hallazgos aplicando prompts/system_health_audit.md.
+> rellenar los hallazgos aplicando prompts/audit_post_change_system_health.md.
 """
 
 SKELETON_FILES = {

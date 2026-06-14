@@ -27,7 +27,7 @@
 # 2026-06-13 - v9.17.0 System health audit protocol + audit-chain fixes
 
 ### Added
-- `prompts/system_health_audit.md`, `skills/system-health-audit/` and
+- `prompts/audit_post_change_system_health.md`, `skills/system-health-audit/` and
   `scripts/collect_system_health.py`: periodic three-layer (repo_motor /
   repo_destino / integration) system-health audit. The script is a deterministic
   read-only COLLECTOR (no verdict); the agent is the AUDITOR. Motor executes,

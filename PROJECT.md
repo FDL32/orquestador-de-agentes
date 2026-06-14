@@ -76,7 +76,7 @@ The system integrates `repomix` as a compressed context layer for agent bootstra
   integracion) tras cambios. **El motor ejecuta; el destino conserva la evidencia.**
 - Recolector determinista read-only: `scripts/collect_system_health.py` (es
   RECOLECTOR, no auditor; el juicio adversarial lo hace el agente via skill
-  `/audit-system-health` y `prompts/system_health_audit.md`).
+  `/audit-system-health` y `prompts/audit_post_change_system_health.md`).
 - Evidencia inmutable en el destino: `.agent/audits/system_health/general_audit_YYYYMMDD[_HHMM]/`
   con indice estable `INDEX.md`. No se sobrescriben auditorias previas.
 - Suite roja bloquea el saneo ejecutable, no la documentacion de la auditoria.

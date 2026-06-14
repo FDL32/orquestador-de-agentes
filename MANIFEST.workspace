@@ -48,7 +48,7 @@
 # Auditorias de salud del sistema (el motor ejecuta, el destino conserva).
 # Cada ejecucion crea general_audit_YYYYMMDD[_HHMM]/ INMUTABLE. Versionar
 # *.md, findings.json, INDEX.md. raw/ queda gitignored por defecto (puede
-# filtrar rutas personales/PII; ver prompts/system_health_audit.md).
+# filtrar rutas personales/PII; ver prompts/audit_post_change_system_health.md).
 .agent/audits/system_health/INDEX.md
 .agent/audits/system_health/
 

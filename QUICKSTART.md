@@ -326,7 +326,7 @@ python scripts/collect_system_health.py --motor-root <repo_motor> --project-root
 ```
 
 El motor ejecuta el recolector (read-only); el agente completa el juicio adversarial
-con la skill `/audit-system-health` (`prompts/system_health_audit.md`). La evidencia
+con la skill `/audit-system-health` (`prompts/audit_post_change_system_health.md`). La evidencia
 inmutable queda en `<repo_destino>/.agent/audits/system_health/general_audit_YYYYMMDD[_HHMM]/`.
 El recolector NO emite veredicto: solo recolecta evidencia y señales críticas.
 

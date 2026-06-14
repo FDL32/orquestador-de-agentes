@@ -9,7 +9,7 @@ stage: review
 writes_memory: false
 quality_gate: false
 tags: [core, audit, health, system]
-source_prompt: prompts/system_health_audit.md
+source_prompt: prompts/audit_post_change_system_health.md
 contract_id: cid-system-health-audit-v0
 ---
 
@@ -19,11 +19,20 @@ Skill para auditar periodicamente la salud de TODO el sistema multi-agente tras
 hacer cambios en el motor y/o en un repo destino. Cubre tres capas: `repo_motor`,
 `repo_destino` e integracion motor+destino.
 
+## Mapa de nombres
+
+- **Prompt:** `prompts/audit_post_change_system_health.md` (instruccion
+  detallada para el agente auditor).
+- **Skill:** `skills/system-health-audit/` (paquete operativo estable).
+- **Trigger:** `/audit-system-health` (API humana corta y estable).
+- **Salida:** `.agent/audits/system_health/` en el repo destino (categoria
+  persistente de evidencia, no nombre de prompt).
+
 ## Fuente canonica
 
 Leer y aplicar:
 
-- `<MOTOR_ROOT>/prompts/system_health_audit.md`
+- `<MOTOR_ROOT>/prompts/audit_post_change_system_health.md`
 
 Ese prompt prevalece si esta skill diverge.
 
