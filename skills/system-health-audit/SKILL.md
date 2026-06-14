@@ -55,6 +55,13 @@ Ese prompt prevalece si esta skill diverge.
 - **No debilitar `guard_paths`**: escribir con cwd en el destino o allowlist
   ultra-acotado a `.agent/audits/system_health/**`.
 - **Suite roja bloquea saneo ejecutable**, no la documentacion de la auditoria.
+- **Integracion host-extends (Fase 5):** cuando el cambio toca hooks, CI, install o
+  retirada de copias, exigir tabla de Resolver integrity (consumidores vivos hacia
+  `agent_system/`/`scripts/`/`skills/`/`.agent/hooks/` locales), revisar
+  `.claude/settings.json` + `.agent/hooks/claude_guard_entry.py` +
+  `scripts/check_claude_settings_portability.py`, y prueba de comportamiento del hook
+  de escritura (externo bloquea, interno benigno permite, link/motor ausente falla
+  cerrado). `install --sync` no es poda host-extends segura hasta cerrar WOT-2026-003d.
 
 ## Distincion con skills hermanas
 

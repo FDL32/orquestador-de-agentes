@@ -52,7 +52,7 @@ general_audit_YYYYMMDD[_HHMM]/
   00_scope.md                 # topologia, HEADs, comandos, cobertura, limitaciones
   01_motor_audit.md           # hallazgos del repo_motor
   02_workspace_audit.md       # hallazgos del repo_destino
-  03_integration_audit.md     # motor+destino: link, install/sync, bus, clone limpio
+  03_integration_audit.md     # motor+destino: link, install/sync, bus, clone limpio, tabla Resolver integrity (host-extends)
   04_quality_gates.md         # ruff, pytest-safe (cobertura declarada), encoding, validate
   05_archive_plan.md          # KEEP/ARCHIVE/DELETE por ruta + evidencia + riesgo + rollback
   06_tickets.md               # un ticket por familia, criterio binario, STOP, gates
@@ -107,10 +107,28 @@ guards, memoria/proceso. Triangular intencion/codigo/operacion.
 copias indebidas de `scripts/`/`skills/`/`agent_system/`, `.agent/collaboration`,
 `.agent/runtime/memory`, `_legacy`, archivos reservados o basura, estado operativo
 activo vs historico.
+Verificar que el `.claude/settings.json` TRACKEADO no contiene grants personales
+(`permissions.allow`): los grants utiles viven en `settings.local.json` gitignored.
 
 ### Fase 5 — Auditoria de integracion
 install/sync, controller con `--project-root`, bus/events, memory loader,
 publication audit, guard_paths, regeneracion de link en clone limpio.
+
+Cuando el cambio toca host-extends, hooks, CI, install o retirada de copias, ademas:
+- **Integridad de resolvers (tabla obligatoria):** para cada copia local candidata a
+  retirar, buscar consumidores vivos que resuelvan contra `agent_system/`, `scripts/`,
+  `skills/` y `.agent/hooks/` locales ANTES de declarar segura la retirada. No declarar
+  "sin equivalente" sin grep citado en las cuatro superficies.
+- **Settings y guard fail-closed:** revisar `.claude/settings.json`,
+  `.agent/hooks/claude_guard_entry.py` y correr
+  `scripts/check_claude_settings_portability.py` contra el settings del destino.
+- **Prueba de comportamiento del hook de escritura (no basta leer el codigo):** payload
+  externo debe BLOQUEAR (exit 2); payload interno benigno debe PERMITIR (exit 0);
+  link/motor ausente debe FALLAR CERRADO (exit 2).
+- **CI y launchers:** revisar workflows del destino y launchers que resuelven el motor.
+- **install --sync NO es poda host-extends segura** (re-vendoriza el bundle completo) hasta
+  cerrar WOT-2026-003d; si la auditoria propone borrar installer-managed, exigir demo o
+  fixture de clone limpio.
 
 ### Fase 6 — Archive plan
 KEEP / ARCHIVE / DELETE con evidencia POR RUTA, riesgo y rollback. NO ejecutar
