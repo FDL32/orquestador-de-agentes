@@ -1,3 +1,29 @@
+# 2026-06-14 - v9.17.1 validate tolerates an absent runtime bus (CI un-red)
+
+### Fixed
+- `validate` no longer fails when the runtime event bus is absent from the
+  context -- a fresh checkout / CI run, where `.agent/runtime/events/events.jsonl`
+  is gitignored and not present. The BUILDER_EXIT/STATE_CHANGED closure
+  invariants now distinguish "bus has the ticket's events but the required one is
+  missing" (real, verifiable violation -> error) from "bus has no events for the
+  ticket" (unverifiable -> warning `Cannot verify ...`). Previously this
+  conflated versioned destination state with runtime evidence and left the
+  destination CI permanently red on every COMPLETED ticket. Operational
+  behaviour (bus present) is unchanged; the runtime bus is NOT committed.
+  Verified end-to-end: fixed validate against a bus-less destination clone ->
+  errors=0 (was 2); destination CI re-run went green. (WOT-2026-003a)
+- `tests/test_completion_integration.py`: repaired the integration sandbox, which
+  had bit-rotted after the `agent_controller` monolith decomposition (missing
+  sibling-module copies -> `ModuleNotFoundError`) and was not git-initialised.
+  Now copies `closure_invariants`/`motor_checkpoint`/`scope_gate`/
+  `state_validation`, git-inits the sandbox (realistic checkout), asserts the new
+  no-bus contract, and uses a Windows-safe rmtree for the `.git` teardown.
+
+### Changed
+- Release metadata updated to `v9.17.1` across `pyproject.toml`,
+  `.agent/.version_manifest.json`, `README.md`, `AGENTS.md`, `CLAUDE.md` and
+  `PROJECT.md`.
+
 # 2026-06-13 - v9.17.0 System health audit protocol + audit-chain fixes
 
 ### Added

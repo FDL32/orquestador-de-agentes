@@ -51,7 +51,7 @@ This is a **reference** setup, not a constraint. Swap any role for another backe
 
 ## Current state
 
-- **Version**: `v9.17.0`
+- **Version**: `v9.17.1`
 - **Status**: Stable. Canonical close complete; autonomous pipeline/meta-audit/publication-audit flows documented; suite green and CEM v0 adopted.
 - **Last work**: Autonomous backlog pipeline, motor integrity guard, read-only meta-audit, git publication audit, and portable session closeout checks.
 - **Tests**: latest full-suite baseline recorded in collaboration history: 2231 passed, 22 skipped. Ruff clean.
