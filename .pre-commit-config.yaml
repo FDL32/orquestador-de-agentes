@@ -69,6 +69,17 @@ repos:
         pass_filenames: false
         stages: [pre-commit]
 
+      # WOT-2026-003c: tracked .claude/settings.json must stay portable (no
+      # personal permissions.allow) and any write-gating hook must FAIL CLOSED
+      # (never exit 0 when its guard cannot be resolved). Prevents the A2d-class
+      # regression where a removed guard left the hook silently allowing writes.
+      - id: check-claude-settings-portability
+        name: check claude settings portability
+        entry: python scripts/check_claude_settings_portability.py .claude/settings.json
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
       # pip-audit: auditoria CVE desde uv.lock (todos los grupos).
       # El wrapper exporta uv.lock a requirements.txt temporal y llama pip-audit -r.
       # Garantia: audita la superficie real del proyecto, no el Python del sistema.
