@@ -334,6 +334,23 @@ Si `task tool` no existe:
 - si el ticket exige independencia real de revision, detente y pide relanzar con
   una superficie que soporte subagentes.
 
+Politica de cierre en `FALLBACK_SIN_TASK_TOOL`:
+
+- `documentation`, `research` y `analysis` pueden cerrarse en fallback si
+  pasan sus gates y el informe declara explicitamente que la independencia fue
+  reducida.
+- `code` y `mixed` pueden implementarse en fallback, pero no cerrarse ni
+  pushearse sin una revision independiente hecha por un agente/persona que no
+  haya implementado el cambio, salvo aprobacion humana explicita de cierre con
+  rigor reducido.
+- tickets de alto blast radius (`install --sync`, migraciones, borrados,
+  seguridad, hooks, CI, bus, estado compartido, secretos o permisos) deben
+  detenerse en `READY_FOR_REVIEW` o `BLOCKED_REVIEW_REQUIRED` cuando solo exista
+  fallback secuencial.
+- el closeout global debe listar todos los tickets ejecutados en fallback y su
+  estado de independencia: `independent_reviewed`, `human_override` o
+  `ready_for_review_only`.
+
 ## 1.b Herramientas por fase
 
 Los agentes deben cargar las herramientas canonicas de cada fase. No improvises

@@ -87,6 +87,21 @@ portabilidad de `.claude/settings.json` via
 resolvers vivos antes de retirar copias locales. `install --sync` no es poda host-extends
 segura hasta cerrar WOT-2026-003d.
 
+## Fallback sin subagentes
+
+Si la superficie actual no ofrece `task tool`, declarar `FALLBACK_SIN_TASK_TOOL`
+en el reporte. En ese modo no se debe simular independencia:
+
+- tickets `documentation`, `research` y `analysis` pueden cerrarse con gates y
+  evidencia proporcional, declarando la independencia reducida;
+- tickets `code` y `mixed` pueden implementarse, pero el cierre y el push
+  requieren revision independiente externa al implementador o aprobacion humana
+  explicita de cierre con rigor reducido;
+- tickets de alto blast radius (`install --sync`, migraciones, borrados,
+  seguridad, hooks, CI, bus, estado compartido, secretos o permisos) se dejan en
+  `READY_FOR_REVIEW` o `BLOCKED_REVIEW_REQUIRED` hasta tener review
+  independiente.
+
 ## Bootstrap contextual
 
 Antes de leer y ordenar tickets, cargar contexto real:
