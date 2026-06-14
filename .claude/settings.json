@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python -c \"import sys,subprocess; from pathlib import Path; cwd=Path('.').resolve(); root=next((p for p in [cwd]+list(cwd.parents) if (p/'.claude').exists()),cwd); cands=[root/'.agent'/'hooks'/'guard_paths.py', root/'agent_system'/'.agent'/'hooks'/'guard_paths.py']; hook=next((p for p in cands if p.exists()),None); data=sys.stdin.buffer.read(); sys.exit(subprocess.run([sys.executable,str(hook)],input=data,cwd=str(root)).returncode) if hook else (sys.stderr.write('SECURITY HOOK INACTIVE: guard_paths.py not found; blocking write (fail-closed).'),sys.exit(2))\""
+            "command": "python -c \"import sys,json,subprocess; from pathlib import Path; r=next((p for p in [Path('.').resolve()]+list(Path('.').resolve().parents) if (p/'.claude').exists()),Path('.').resolve()); e=r/'.agent'/'hooks'/'claude_guard_entry.py'; l=r/'.agent'/'config'/'motor_destination_link.json'; e=e if e.exists() else ((Path(json.loads(l.read_text(encoding='utf-8'))['motor_root'])/'.agent'/'hooks'/'claude_guard_entry.py') if l.exists() else e); sys.exit(subprocess.run([sys.executable,str(e)],input=sys.stdin.buffer.read(),cwd=str(r)).returncode) if e.exists() else (sys.stderr.write('SECURITY HOOK INACTIVE: claude_guard_entry.py not found; write blocked (fail-closed).'),sys.exit(2))\""
           }
         ]
       }

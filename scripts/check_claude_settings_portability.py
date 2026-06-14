@@ -1,21 +1,27 @@
-"""Portability/security gate for tracked .claude/settings.json (WOT-2026-003c).
+"""Portability/security gate for a tracked .claude/settings.json (WOT-2026-003c).
 
-Two invariants for a *tracked* (versioned) Claude settings file:
+Invariants enforced on a *tracked* (versioned) Claude settings file:
 
 1. No personal permission grants. ``permissions.allow`` is operator config and
    must live in the gitignored ``settings.local.json``, never in the tracked
    file (otherwise paths/domains/broad grants propagate to every clone).
 
-2. No fail-open security hooks. A PreToolUse hook that gates Write/Edit/MultiEdit
-   must FAIL CLOSED (non-zero exit) when its guard cannot be resolved. A hook
-   that falls back to ``sys.exit(0)`` when the guard is missing silently allows
-   writes while appearing protected (false green). This is verified
-   dynamically: each relevant hook is executed in an isolated temp dir (no
-   ``.claude``/link to resolve a guard) with a benign payload; it must exit
-   non-zero.
+2. A write guard MUST exist. There has to be a PreToolUse hook whose matcher
+   covers Write, Edit AND MultiEdit. A *deleted* guard is as unsafe as a
+   fail-open one, so an absent/partial hook is a violation.
 
-Before: a path to a ``.claude/settings.json`` (or a dir/repo-root containing one).
-During: parses JSON; runs each gating hook command in an isolated sandbox.
+3. The hook command must be the canonical entrypoint bootstrap
+   (``claude_guard_entry.canonical_hook_command()``) -- nothing else. This is a
+   STATIC check: the gate never executes the (potentially arbitrary) command
+   string from the file it audits.
+
+4. The canonical entrypoint itself must FAIL CLOSED. ``claude_guard_entry.py``
+   (a trusted, versioned script) is executed in an isolated sandbox with no
+   resolvable guard and must exit non-zero -- catching a fail-open regression
+   in the entrypoint without ever running an untrusted settings command.
+
+Before: a path to a ``.claude/settings.json`` (or a dir/repo-root with one).
+During: parses JSON; static checks; one subprocess of the *trusted* entrypoint.
 After: prints violations and returns exit code 0 (clean) or 1 (violations).
 """
 
@@ -28,17 +34,21 @@ import tempfile
 from pathlib import Path
 
 
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_ENTRYPOINT = _PROJECT_ROOT / ".agent" / "hooks" / "claude_guard_entry.py"
+
+# Import the canonical entrypoint module (single source of truth for the
+# allowed hook command).
+sys.path.insert(0, str(_PROJECT_ROOT / ".agent" / "hooks"))
+import claude_guard_entry  # noqa: E402
+
+
 _GATING_TOKENS = ("Write", "Edit", "MultiEdit")
 _BENIGN_PAYLOAD = b'{"tool_name":"Write","tool_input":{"file_path":"x.txt"}}'
 
 
 def check_no_personal_grants(settings: dict) -> list[str]:
-    """Return violations if the tracked settings hold personal permission grants.
-
-    Before: ``settings`` is the parsed settings.json dict.
-    During: inspects ``permissions.allow``.
-    After: returns a list of violation strings (empty if clean).
-    """
+    """Violations if the tracked settings hold personal permission grants."""
     violations: list[str] = []
     allow = settings.get("permissions", {}).get("allow") or []
     if allow:
@@ -50,54 +60,85 @@ def check_no_personal_grants(settings: dict) -> list[str]:
     return violations
 
 
-def _iter_gating_hook_commands(settings: dict):
-    """Yield (matcher, command) for PreToolUse command-hooks that gate writes."""
-    for entry in settings.get("hooks", {}).get("PreToolUse", []):
-        matcher = entry.get("matcher", "")
-        if not any(tok in matcher for tok in _GATING_TOKENS):
-            continue
-        for hook in entry.get("hooks", []):
-            if hook.get("type") == "command" and hook.get("command"):
-                yield matcher, hook["command"]
+def _gating_entries(settings: dict) -> list[dict]:
+    """PreToolUse entries whose matcher references a write tool."""
+    return [
+        entry
+        for entry in settings.get("hooks", {}).get("PreToolUse", [])
+        if any(tok in entry.get("matcher", "") for tok in _GATING_TOKENS)
+    ]
 
 
-def check_hooks_fail_closed(settings: dict) -> list[str]:
-    """Return violations for any write-gating hook that does NOT fail closed.
+def check_write_guard_present(settings: dict) -> list[str]:
+    """Require a PreToolUse hook covering Write, Edit AND MultiEdit.
 
-    Before: ``settings`` is the parsed settings.json dict.
-    During: runs each gating hook command in an isolated temp dir (no resolvable
-        guard) with a benign payload; a secure hook must exit non-zero there.
-    After: returns a list of violation strings (empty if all fail closed).
+    An absent or partial write guard is a violation: a deleted barrier is as
+    dead as a fail-open one.
     """
-    violations: list[str] = []
-    for matcher, command in _iter_gating_hook_commands(settings):
-        with tempfile.TemporaryDirectory(prefix="claude_hook_gate_") as sandbox:
-            try:
-                # shell=True is intentional: the gate must execute the hook
-                # command exactly as Claude Code runs it (a shell command
-                # string), to observe its real fail-open/closed behaviour. The
-                # command comes from the repo's own tracked settings.json, run
-                # against a benign payload in an isolated sandbox.
-                result = subprocess.run(  # noqa: S602
-                    command,
-                    shell=True,
-                    input=_BENIGN_PAYLOAD,
-                    cwd=sandbox,
-                    capture_output=True,
-                    timeout=30,
-                )
-            except subprocess.TimeoutExpired:
-                violations.append(
-                    f"hook (matcher={matcher!r}) timed out; cannot confirm fail-closed"
-                )
-                continue
-            if result.returncode == 0:
-                violations.append(
-                    f"FAIL-OPEN hook (matcher={matcher!r}): exited 0 with no resolvable "
-                    "guard; a security hook must fail closed (non-zero) when its guard "
-                    "is missing"
-                )
-    return violations
+    entries = _gating_entries(settings)
+    if not entries:
+        return [
+            "no PreToolUse hook gates writes; a tracked settings.json must keep a "
+            "Write|Edit|MultiEdit guard (a deleted guard is as unsafe as fail-open)"
+        ]
+    covered: set[str] = set()
+    for entry in entries:
+        matcher = entry.get("matcher", "")
+        covered |= {tok for tok in _GATING_TOKENS if tok in matcher}
+    missing = [tok for tok in _GATING_TOKENS if tok not in covered]
+    if missing:
+        return [f"write-guard matcher does not cover: {', '.join(missing)}"]
+    return []
+
+
+def check_command_is_canonical(settings: dict) -> list[str]:
+    """Each write-gating hook command must equal the canonical entrypoint bootstrap.
+
+    Static check: rejects arbitrary commands in tracked settings without ever
+    executing them.
+    """
+    canonical = claude_guard_entry.canonical_hook_command()
+    non_canonical = any(
+        hook.get("type") == "command" and hook.get("command") != canonical
+        for entry in _gating_entries(settings)
+        for hook in entry.get("hooks", [])
+    )
+    if non_canonical:
+        return [
+            "write-gating hook command is not the canonical claude_guard_entry "
+            "bootstrap; arbitrary commands in a tracked settings.json are rejected"
+        ]
+    return []
+
+
+def check_entrypoint_fails_closed() -> list[str]:
+    """The canonical entrypoint must exit non-zero with no resolvable guard."""
+    if not _ENTRYPOINT.exists():
+        return [f"canonical entrypoint missing: {_ENTRYPOINT}"]
+    with tempfile.TemporaryDirectory(prefix="claude_guard_gate_") as sandbox:
+        # Mark the sandbox itself as a repo root (a .claude with NO guard/link)
+        # so the entrypoint resolves repo_root HERE and finds no guard --
+        # robust regardless of where the system temp dir lives (e.g. a hermetic
+        # test env whose TMP is inside a real repo).
+        (Path(sandbox) / ".claude").mkdir()
+        try:
+            # Trusted: runs the repo's own canonical entrypoint (no shell, no
+            # settings-supplied string) to verify it fails closed.
+            result = subprocess.run(  # noqa: S603
+                [sys.executable, str(_ENTRYPOINT), sandbox],
+                input=_BENIGN_PAYLOAD,
+                cwd=sandbox,
+                capture_output=True,
+                timeout=30,
+            )
+        except subprocess.TimeoutExpired:
+            return ["canonical entrypoint timed out; cannot confirm fail-closed"]
+    if result.returncode == 0:
+        return [
+            "canonical entrypoint exited 0 with no resolvable guard "
+            "(fail-open regression in claude_guard_entry.py)"
+        ]
+    return []
 
 
 def check_settings_file(path: Path) -> list[str]:
@@ -108,7 +149,12 @@ def check_settings_file(path: Path) -> list[str]:
         settings = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as exc:
         return [f"{path}: cannot parse settings JSON ({exc})"]
-    return check_no_personal_grants(settings) + check_hooks_fail_closed(settings)
+    return (
+        check_no_personal_grants(settings)
+        + check_write_guard_present(settings)
+        + check_command_is_canonical(settings)
+        + check_entrypoint_fails_closed()
+    )
 
 
 def _resolve_settings_path(arg: str | None) -> Path:
