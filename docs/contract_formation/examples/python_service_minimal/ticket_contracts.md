@@ -18,6 +18,8 @@
   - python --version >= 3.10
   - uv add fastapi uvicorn --dry-run no genera conflicto
   - No existe ya un service.py que requiera merge
+- **Context Baseline Evidence:** git_head, git_status, validate_result,
+  local_audit_result (si hay comando), generated_at.
 - **Files Likely Touched:**
   - Builder: service.py (nuevo)
   - Builder: pyproject.toml (anadir fastapi, uvicorn)

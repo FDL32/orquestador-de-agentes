@@ -215,7 +215,7 @@ class TestValidateContractGap:
             "- **gap_type:** premise_false\n"
             "- **description:** something\n"
             "- **evidence:** log output\n"
-            "- **action:** reopen\n"
+            "- **requested_resolution:** reopen\n"
         )
         f = FIXTURES / "invalid" / "tmp_gap_valid.md"
         f.write_text(content)
@@ -305,7 +305,7 @@ class TestMainCLI:
     def test_cli_gap_good(self):
         from scripts.validate_contract_formation import main
 
-        content = "- **ticket_id:** T-001\n- **gap_type:** premise_false\n- **description:** x\n- **evidence:** y\n- **action:** z\n"
+        content = "- **ticket_id:** T-001\n- **gap_type:** premise_false\n- **description:** x\n- **evidence:** y\n- **requested_resolution:** z\n"
         f = FIXTURES / "invalid" / "tmp_gap_cli.md"
         f.write_text(content)
         rc = main(["--gap", str(f)])
@@ -334,4 +334,108 @@ class TestMainCLI:
         captured = capsys.readouterr()
         assert (
             "revalidate: python scripts/validate_contract_formation.py" in captured.out
+        )
+
+
+# ===========================================================================
+# Canonical template regression + new required fields
+# (WOT-2026-007c independent review follow-up)
+# ===========================================================================
+
+TEMPLATES = (
+    Path(__file__).resolve().parents[2] / "docs" / "contract_formation" / "templates"
+)
+
+_COMPLETE_TICKET_LINES = [
+    "## T-OK-001 -- complete contract",
+    "- **status:** frozen",
+    "- **Objective-Link:** OBJ-001",
+    "- **Plan-Link:** PLAN-001",
+    "- **Premise:** the repo is in a known state",
+    "- **Premise Re-check (read-only):** run a read-only command",
+    "- **Context Baseline Evidence:** git_head, validate_result, generated_at",
+    "- **Forbidden Surfaces:** no extra surfaces",
+    "- **DoD:** ruff passes and tests are green",
+    "- **STOP conditions:** stop and escalate if blocked",
+    "- **CONTRACT_GAP behavior:** emit CG file and block",
+    "- **Builder clarification budget:** 0",
+]
+_COMPLETE_TICKET = chr(10).join(_COMPLETE_TICKET_LINES) + chr(10)
+
+
+class TestCanonicalTemplates:
+    """The validator must not reject the canonical templates the motor publishes.
+
+    This is the regression barrier requested in the WOT-2026-007c review: if a
+    template field is renamed (e.g. requested_resolution -> action) or the
+    validator drifts away from the published contract, these tests break.
+    """
+
+    def test_charter_template_passes(self):
+        res = VResult()
+        validate_repo_charter(str(TEMPLATES / "repo_charter.md"), res)
+        assert res.ok, (
+            f"charter template must pass, got {[e.field_ for e in res.errors]}"
+        )
+
+    def test_gap_template_passes(self):
+        res = VResult()
+        validate_contract_gap(str(TEMPLATES / "contract_gap.md"), res)
+        assert res.ok, f"gap template must pass, got {[e.field_ for e in res.errors]}"
+
+    def test_ticket_template_passes(self):
+        res = VResult()
+        validate_ticket_contracts(str(TEMPLATES / "ticket_contract.md"), res)
+        assert res.ok, (
+            f"ticket template must pass, got {[e.field_ for e in res.errors]}"
+        )
+
+    def test_gap_template_uses_requested_resolution(self):
+        text = (TEMPLATES / "contract_gap.md").read_text(encoding="utf-8")
+        assert "requested_resolution" in text, (
+            "canonical gap template field drifted; validator GAP_REQUIRED must follow"
+        )
+
+
+class TestNewRequiredTicketFields:
+    """Premise Re-check and Context Baseline are DoD-required per WOT-2026-007c.
+
+    A barrier test: an otherwise-complete contract that drops one of these fields
+    must fail. Without the field in TICKET_REQUIRED, these tests would not fail.
+    """
+
+    def _write(self, tmp_path, content):
+        f = tmp_path / "ticket.md"
+        f.write_text(content, encoding="utf-8")
+        return f
+
+    def test_complete_ticket_passes(self, tmp_path):
+        res = VResult()
+        f = self._write(tmp_path, _COMPLETE_TICKET)
+        validate_ticket_contracts(str(f), res)
+        assert res.ok, (
+            f"complete ticket must pass, got {[e.field_ for e in res.errors]}"
+        )
+
+    def test_missing_premise_recheck_fails(self, tmp_path):
+        content = _COMPLETE_TICKET.replace(
+            "- **Premise Re-check (read-only):** run a read-only command", ""
+        )
+        res = VResult()
+        f = self._write(tmp_path, content)
+        validate_ticket_contracts(str(f), res)
+        assert any("Premise Re-check" in e.field_ for e in res.errors), (
+            "must report missing Premise Re-check"
+        )
+
+    def test_missing_context_baseline_fails(self, tmp_path):
+        content = _COMPLETE_TICKET.replace(
+            "- **Context Baseline Evidence:** git_head, validate_result, generated_at",
+            "",
+        )
+        res = VResult()
+        f = self._write(tmp_path, content)
+        validate_ticket_contracts(str(f), res)
+        assert any("Context Baseline" in e.field_ for e in res.errors), (
+            "must report missing Context Baseline"
         )

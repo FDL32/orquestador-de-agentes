@@ -47,6 +47,8 @@ TICKET_REQUIRED = [
     "Objective-Link",
     "Plan-Link",
     "Premise",
+    "Premise Re-check",
+    "Context Baseline",
     "Forbidden Surfaces",
     "DoD",
     "STOP conditions",
@@ -76,10 +78,10 @@ def _chk_ticket(block: str, tid: str, fp: str, res: VResult) -> None:
 
 def validate_ticket_contracts(fp: str, res: VResult) -> None:
     content = Path(fp).read_text(encoding="utf-8")
-    blocks = re.split(r"\n(?=##\s+[A-Z])", content)
+    blocks = re.split(r"\n(?=##\s+(?:<?[A-Z]))", content)
     found = False
     for block in blocks:
-        m = re.match(r"##\s+([A-Z][A-Z0-9_\-]+)\b", block.strip())
+        m = re.match(r"##\s+(<[A-Z][A-Z0-9_\-]+>|[A-Z][A-Z0-9_\-]+\b)", block.strip())
         if m:
             found = True
             _chk_ticket(block, m.group(1), fp, res)
@@ -164,7 +166,13 @@ def validate_plan_graph(fp: str, res: VResult) -> None:
             )
 
 
-GAP_REQUIRED = ["ticket_id", "gap_type", "description", "evidence", "action"]
+GAP_REQUIRED = [
+    "ticket_id",
+    "gap_type",
+    "description",
+    "evidence",
+    "requested_resolution",
+]
 
 
 def validate_contract_gap(fp: str, res: VResult) -> None:
