@@ -305,6 +305,32 @@ class TestValidateAll:
         assert result.passed is False
         assert result.is_blocking is False  # Still non-blocking
 
+    def test_validate_all_uses_motor_path_when_running_in_destino(
+        self, tmp_path: Path
+    ) -> None:
+        """Destination preflight must execute the motor-owned validate_all script."""
+        mock_result = subprocess.CompletedProcess(
+            args=["python", "validate_all.py"],
+            returncode=0,
+            stdout="All validations passed\n",
+            stderr="",
+        )
+        motor_root = tmp_path / "motor"
+        validate_all = motor_root / "skills" / "validate_all.py"
+        validate_all.parent.mkdir(parents=True, exist_ok=True)
+        validate_all.write_text("# stub\n", encoding="utf-8")
+
+        with (
+            patch("runtime.motor_link.resolve_motor_root", return_value=motor_root),
+            patch("subprocess.run", return_value=mock_result) as mock_run,
+        ):
+            result = run_validate_all(tmp_path)
+
+        assert result.passed is True
+        called_cmd = mock_run.call_args.args[0]
+        assert called_cmd[1] == str(validate_all)
+        assert mock_run.call_args.kwargs["cwd"] == tmp_path
+
 
 class TestPreflightCheckIntegration:
     """Integration tests for the full preflight check."""

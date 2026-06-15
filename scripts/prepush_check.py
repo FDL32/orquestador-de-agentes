@@ -307,8 +307,20 @@ def run_validate_all(project_root: Path) -> CheckResult:
     Returns:
         CheckResult con el estado (siempre no-bloqueante).
     """
+    validate_all_path = _MOTOR_ROOT / "skills" / "validate_all.py"
+    try:
+        from runtime.motor_link import resolve_motor_root
+
+        resolved_motor_root = resolve_motor_root(project_root)
+        if resolved_motor_root is not None:
+            candidate = resolved_motor_root / "skills" / "validate_all.py"
+            if candidate.exists():
+                validate_all_path = candidate
+    except ImportError:
+        pass
+
     result = run_subprocess_check(
-        cmd=[sys.executable, "skills/validate_all.py"],
+        cmd=[sys.executable, str(validate_all_path)],
         name="Validate All (informacional)",
         project_root=project_root,
     )
