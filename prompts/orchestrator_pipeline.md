@@ -937,6 +937,27 @@ python <MOTOR_ROOT>/.agent/agent_controller.py --session-close --project-root .
 Si `STATE.md` ya esta `COMPLETED` y el cierre responde `already_completed`,
 repetir solo si procede con `--force`, documentando la razon.
 
+5.b. Revalidacion post-archive obligatoria:
+
+```powershell
+python <MOTOR_ROOT>/.agent/agent_controller.py --validate --json --project-root .
+```
+
+El pipeline no queda "cerrado en verde" hasta que esta validacion posterior al
+archivado este en `0 errors / 0 warnings`.
+
+Si el cierre real deja `bus_drift` para el ticket terminal recien archivado,
+la salida correcta no es "aceptar la warning": hay que reconciliar de forma
+canonica y repetir la validacion.
+
+```powershell
+python <MOTOR_ROOT>/scripts/reconcile_ticket.py --project-root . --ticket <TICKET_ID> --reason "post-session-close bus drift"
+python <MOTOR_ROOT>/.agent/agent_controller.py --validate --json --project-root .
+```
+
+Usa esta reparacion solo como ajuste post-close del runtime tras `session-close`;
+no sustituye el cierre normal del Builder ni del Manager.
+
 6. Consolidar memoria cuando haya aprendizajes reusable:
 
 ```powershell

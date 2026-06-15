@@ -62,6 +62,27 @@ review_queue.md, archivado de manager_feedback, archivado de execution_log
 y del bus, manifest check y git clean. El reporte queda en
 `.agent/runtime/` y debe revisarse antes de dar el cierre por bueno.
 
+Paso obligatorio post-cierre: tras el cierre real, reejecuta:
+
+```powershell
+python .agent/agent_controller.py --validate --json --project-root <repo_destino>
+```
+
+El cierre solo cuenta como "verde real" si esta validacion final queda en
+`0 errors / 0 warnings`.
+
+Si despues del archivado del bus aparece `bus_drift` para el ticket ya
+cerrado, no lo clasifiques como "warning aceptable" ni lo tapes con relato:
+reconcilia de forma canonica y vuelve a validar.
+
+```powershell
+python scripts/reconcile_ticket.py --project-root <repo_destino> --ticket <TICKET_ID> --reason "post-session-close bus drift"
+python .agent/agent_controller.py --validate --json --project-root <repo_destino>
+```
+
+`reconcile_ticket.py` en este caso es via de reparacion post-close, no cierre
+normal del Builder.
+
 Nota de idempotencia: si `STATE.md` ya esta en `COMPLETED` (ticket cerrado
 antes del cierre de sesion), anade `--force` o el comando devolvera
 `already_completed` sin ejecutar ningun paso.
@@ -143,10 +164,13 @@ Etiqueta cada claim importante con una de estas marcas:
    - separacion `local` / `generalizable` / `dudoso`
    - follow-ups pequenos vs deuda estructural
    - scripts concretos a ejecutar o revisar para completar el cierre
+   - revalidacion post-archive y, si aplica, reconciliacion canonica del ticket
 
 6. Ejecutar un checklist final de cierre
    - verificar que el estado final es coherente antes de dar la sesion por
      cerrada
+   - no aceptar como cierre final un reporte PASS si la validacion viva
+     posterior al archivado no esta en `0/0`
 
 ## Reglas no negociables
 
@@ -195,6 +219,10 @@ Responde en este orden:
 - observaciones y learnings clasificados sin mezcla indebida
 - `closeout_lessons.md` preparado si aplica
 - `local_audit.py` revisado si el cierre toca estado operativo
+- `agent_controller.py --validate --json --project-root <repo_destino>` en
+  `0 errors / 0 warnings` despues del cierre real
+- si aparecio `bus_drift` post-archive, `reconcile_ticket.py` ejecutado y
+  validacion repetida con resultado limpio
 - sin duplicados claros entre prompt y skill para el mismo proceso
 
 ### 6. Veredicto final
