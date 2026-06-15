@@ -57,21 +57,25 @@ def exclude_files(
 _DOC_DELIVERABLE_TYPES = frozenset({"analysis", "documentation", "research"})
 
 
+def _looks_like_path_token(token: str) -> bool:
+    if not token or " " in token:
+        return False
+    if token.startswith("."):
+        return True
+    if "/" in token or "\\" in token:
+        return True
+    basename = token.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    return "." in basename
+
+
+def _normalize_flt_line(line: str) -> str:
+    return line.lstrip("*- ").replace("`", "").replace('"', "").replace("'", "").strip()
+
+
 def _extract_section_paths(
     lines: list[str], heading: str, project_root: Path
 ) -> set[str]:
     """Extract resolved paths from a markdown section identified by heading."""
-
-    def _looks_like_path_token(token: str) -> bool:
-        if not token or " " in token:
-            return False
-        if token.startswith("."):
-            return True
-        if "/" in token or "\\" in token:
-            return True
-        basename = token.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-        return "." in basename
-
     in_section = False
     files: set[str] = set()
     for line in lines:
@@ -82,17 +86,92 @@ def _extract_section_paths(
         if in_section and line.startswith("## "):
             break
         if in_section and line and not line.startswith("---"):
-            normalized = (
-                line.lstrip("*- ")
-                .replace("`", "")
-                .replace('"', "")
-                .replace("'", "")
-                .strip()
-            )
+            normalized = _normalize_flt_line(line)
             if normalized and _looks_like_path_token(normalized):
                 path = (project_root / normalized).resolve()
                 files.add(str(path))
     return files
+
+
+def _parse_flt_section(
+    lines: list[str],
+) -> tuple[bool, list[tuple[str | None, str]]]:
+    """Scan the FLT section and return (has_namespaces, [(namespace, raw_path)]).
+
+    Namespace is ``"motor"``, ``"destino"``, ``"unknown"``, or ``None`` (flat).
+    Only yields lines that look like path tokens.
+    """
+    in_flt = False
+    current_ns: str | None = None
+    has_namespaces = False
+    entries: list[tuple[str | None, str]] = []
+
+    for line in lines:
+        stripped = line.strip()
+        if "## Files Likely Touched" in stripped and stripped.startswith("## "):
+            in_flt = True
+            current_ns = None
+            continue
+        if in_flt and stripped.startswith("## ") and not stripped.startswith("### "):
+            break
+        if not in_flt:
+            continue
+        if stripped.startswith("### "):
+            heading = stripped[4:].strip().lower()
+            current_ns = (
+                "motor"
+                if heading == "repo_motor"
+                else "destino"
+                if heading == "repo_destino"
+                else "unknown"
+            )
+            has_namespaces = True
+            continue
+        if not stripped or stripped.startswith("---"):
+            continue
+        normalized = _normalize_flt_line(stripped)
+        if normalized and _looks_like_path_token(normalized):
+            entries.append((current_ns, normalized))
+
+    return has_namespaces, entries
+
+
+def parse_flt_namespaced(
+    work_plan_content: str,
+    *,
+    motor_root: Path,
+    project_root: Path,
+    delivery_authority: str = "repo_motor",
+) -> dict[str, set[str]]:
+    """Parse FLT section with optional namespace sub-headings.
+
+    Returns a dict with keys ``"motor"`` and ``"destino"``, each holding a
+    set of resolved absolute paths for that namespace.
+
+    Namespace rules:
+    - ``### repo_motor`` lines are resolved against ``motor_root``.
+    - ``### repo_destino`` lines are resolved against ``project_root``.
+    - Flat lines (no sub-heading) are routed by ``delivery_authority``.
+    - Unknown sub-headings are skipped.
+    """
+    lines = work_plan_content.split("\n")
+    _, entries = _parse_flt_section(lines)
+    motor_files: set[str] = set()
+    destino_files: set[str] = set()
+
+    for ns, normalized in entries:
+        if ns == "motor":
+            motor_files.add(str((motor_root / normalized).resolve()))
+        elif ns == "destino":
+            destino_files.add(str((project_root / normalized).resolve()))
+        elif ns == "unknown":
+            pass
+        elif delivery_authority == "repo_destino":
+            destino_files.add(str((project_root / normalized).resolve()))
+        else:
+            motor_files.add(str((motor_root / normalized).resolve()))
+
+    return {"motor": motor_files, "destino": destino_files}
 
 
 def parse_files_likely_touched(

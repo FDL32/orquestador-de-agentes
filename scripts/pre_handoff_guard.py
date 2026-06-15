@@ -269,8 +269,34 @@ def check_checkpoint_alignment(project_root: Path, ticket_id: str) -> tuple[bool
         return (True, False)
 
 
-def parse_files_likely_touched(project_root: Path) -> set[str]:
-    """Parsear Files Likely Touched desde work_plan.md."""
+def _read_delivery_authority_local(content: str) -> str:
+    """Read delivery_authority field from work_plan content."""
+    import re
+
+    pattern = re.compile(
+        r"delivery_authority\s*:?\**\s*(?:repo_destino|destino)",
+        re.IGNORECASE,
+    )
+    if pattern.search(content):
+        return "repo_destino"
+    return "repo_motor"
+
+
+def parse_files_likely_touched(
+    project_root: Path,
+    motor_root: Path | None = None,
+) -> set[str]:
+    """Parsear Files Likely Touched desde work_plan.md.
+
+    Namespace-aware (WOT-2026-009b): si el work_plan declara
+    ``### repo_motor`` / ``### repo_destino``, las rutas se resuelven
+    contra el root correcto. Sin namespace, backward-compat: rutas contra
+    project_root (destino) o motor_root segun delivery_authority.
+
+    Args:
+        project_root: Destino root (workspace activo).
+        motor_root: Motor root. Si None, se usa project_root como fallback.
+    """
     work_plan = project_root / ".agent" / "collaboration" / "work_plan.md"
     if not work_plan.exists():
         return set()
@@ -280,9 +306,13 @@ def parse_files_likely_touched(project_root: Path) -> set[str]:
     except OSError:
         return set()
 
-    lines = content.split("\n")
-    in_section = False
-    files = set()
+    effective_motor_root = motor_root if motor_root is not None else project_root
+    delivery_authority = _read_delivery_authority_local(content)
+
+    # Try namespace-aware parsing first
+    motor_files: set[str] = set()
+    destino_files: set[str] = set()
+    has_namespaces = False
 
     def _looks_like_path_token(token: str) -> bool:
         if not token or " " in token:
@@ -294,25 +324,78 @@ def parse_files_likely_touched(project_root: Path) -> set[str]:
         basename = token.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
         return "." in basename
 
+    def _normalize(line: str) -> str:
+        return (
+            line.lstrip("*- ")
+            .replace("`", "")
+            .replace('"', "")
+            .replace("'", "")
+            .strip()
+        )
+
+    lines = content.split("\n")
+    in_flt = False
+    current_ns: str | None = None
+
     for line in lines:
-        line = line.strip()
-        if "## Files Likely Touched" in line:
+        stripped = line.strip()
+        if "## Files Likely Touched" in stripped and stripped.startswith("## "):
+            in_flt = True
+            current_ns = None
+            continue
+        if in_flt and stripped.startswith("## ") and not stripped.startswith("### "):
+            break
+        if not in_flt:
+            continue
+        if stripped.startswith("### "):
+            heading = stripped[4:].strip().lower()
+            if heading == "repo_motor":
+                current_ns = "motor"
+                has_namespaces = True
+            elif heading == "repo_destino":
+                current_ns = "destino"
+                has_namespaces = True
+            else:
+                current_ns = "unknown"
+            continue
+        if not stripped or stripped.startswith("---"):
+            continue
+        normalized = _normalize(stripped)
+        if not normalized or not _looks_like_path_token(normalized):
+            continue
+        if current_ns == "motor":
+            motor_files.add(str((effective_motor_root / normalized).resolve()))
+        elif current_ns == "destino":
+            destino_files.add(str((project_root / normalized).resolve()))
+        elif current_ns == "unknown":
+            pass
+        else:
+            # Flat: route by delivery_authority
+            if delivery_authority == "repo_destino":
+                destino_files.add(str((project_root / normalized).resolve()))
+            else:
+                motor_files.add(str((effective_motor_root / normalized).resolve()))
+
+    if has_namespaces:
+        # Return union when motor_root given; destino-only otherwise for scope_discrepancy
+        if motor_root is not None:
+            return motor_files | destino_files
+        return destino_files
+
+    # Legacy flat parsing: all paths against project_root (backward-compat)
+    files: set[str] = set()
+    in_section = False
+    for line in lines:
+        line_s = line.strip()
+        if "## Files Likely Touched" in line_s:
             in_section = True
             continue
-        if in_section and line.startswith("## "):
+        if in_section and line_s.startswith("## "):
             break
-        if in_section and line and not line.startswith("---"):
-            normalized = (
-                line.lstrip("*- ")
-                .replace("`", "")
-                .replace('"', "")
-                .replace("'", "")
-                .strip()
-            )
+        if in_section and line_s and not line_s.startswith("---"):
+            normalized = _normalize(line_s)
             if normalized and _looks_like_path_token(normalized):
-                path = (project_root / normalized).resolve()
-                files.add(str(path))
-
+                files.add(str((project_root / normalized).resolve()))
     return files
 
 
@@ -325,9 +408,19 @@ def get_scope_discrepancy(
     return discrepancy
 
 
-def run_guard(project_root: Path, ticket_id: str) -> dict:
+def run_guard(
+    project_root: Path,
+    ticket_id: str,
+    motor_root: Path | None = None,
+) -> dict:
     """
     Ejecutar el guard de handoff.
+
+    Args:
+        project_root: Destino root (workspace activo).
+        ticket_id: Ticket ID.
+        motor_root: Motor root para resolver rutas ``### repo_motor`` en FLT
+            namespaced. Si None, scope_discrepancy solo cubre rutas de destino.
 
     Returns:
         dict con:
@@ -387,7 +480,9 @@ def run_guard(project_root: Path, ticket_id: str) -> dict:
     # - Todo cambio no vivo ensucia el arbol.
     # - Los cambios fuera de scope se reportan adicionalmente como observacion.
 
-    files_likely_touched = parse_files_likely_touched(project_root)
+    files_likely_touched = parse_files_likely_touched(
+        project_root, motor_root=motor_root
+    )
 
     dirty_files = set()
     scope_discrepancy = set()
@@ -445,6 +540,12 @@ def main() -> int:
         help="Ticket ID (e.g., WP-2026-167)",
     )
     parser.add_argument(
+        "--motor-root",
+        type=str,
+        default=None,
+        help="Motor root directory (for FLT namespace resolution of repo_motor paths)",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="Output result as JSON",
@@ -454,6 +555,7 @@ def main() -> int:
 
     project_root = get_project_root(args.project_root)
     ticket_id = args.ticket_id
+    motor_root = Path(args.motor_root).resolve() if args.motor_root else None
 
     # Verificar que estamos en un repo git
     if not (project_root / ".git").exists():
@@ -474,7 +576,7 @@ def main() -> int:
             print("[WARN] Repository is not git-managed. Skipping guard checks.")
         return 0
 
-    result = run_guard(project_root, ticket_id)
+    result = run_guard(project_root, ticket_id, motor_root=motor_root)
 
     if args.json:
         print(json.dumps(result, indent=2))

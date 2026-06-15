@@ -134,13 +134,19 @@ def parse_raw_flt_paths(plan_content: str) -> set[str]:  # noqa: C901
     against PROJECT_ROOT. It returns raw relative paths normalized to forward
     slashes, suitable for comparison with motor_uncommitted_productive() output.
 
+    Namespace-aware (WOT-2026-009b): when the FLT section contains
+    ``### repo_motor`` / ``### repo_destino`` sub-headings, only lines under
+    ``### repo_motor`` (or flat lines with no sub-heading) are returned.
+    Lines under ``### repo_destino`` are excluded — they are not motor paths.
+
     Before: plan_content contains a ``## Files Likely Touched`` section.
-    During: Scans lines, normalizes backticks/quotes, strips bullets.
+    During: Scans lines, tracks sub-heading namespace, normalizes paths.
     After: Returns set of motor-relative paths with forward slashes.
     """
     lines = plan_content.split("\n")
     in_section = False
     paths: set[str] = set()
+    current_ns: str | None = None  # None = flat
 
     def _looks_like_path_token(token: str) -> bool:
         if not token or " " in token:
@@ -153,25 +159,40 @@ def parse_raw_flt_paths(plan_content: str) -> set[str]:  # noqa: C901
         return "." in basename
 
     for line in lines:
-        line = line.strip()
-        if "## Files Likely Touched" in line:
+        stripped = line.strip()
+        if "## Files Likely Touched" in stripped and stripped.startswith("## "):
             in_section = True
+            current_ns = None
             continue
-        if in_section and line.startswith("## "):
+        if (
+            in_section
+            and stripped.startswith("## ")
+            and not stripped.startswith("### ")
+        ):
             break
-        if in_section and line and not line.startswith("---"):
-            normalized = (
-                line.lstrip("*- ")
-                .replace("`", "")
-                .replace('"', "")
-                .replace("'", "")
-                .strip()
-            )
-            if normalized and _looks_like_path_token(normalized):
-                p = normalized.replace("\\", "/")
-                if p.startswith("./"):
-                    p = p[2:]
-                paths.add(p)
+        if not in_section:
+            continue
+        if stripped.startswith("### "):
+            heading = stripped[4:].strip().lower()
+            current_ns = heading  # "repo_motor", "repo_destino", or other
+            continue
+        if not stripped or stripped.startswith("---"):
+            continue
+        # Skip lines under ### repo_destino or unknown sub-headings
+        if current_ns is not None and current_ns != "repo_motor":
+            continue
+        normalized = (
+            stripped.lstrip("*- ")
+            .replace("`", "")
+            .replace('"', "")
+            .replace("'", "")
+            .strip()
+        )
+        if normalized and _looks_like_path_token(normalized):
+            p = normalized.replace("\\", "/")
+            if p.startswith("./"):
+                p = p[2:]
+            paths.add(p)
     return paths
 
 

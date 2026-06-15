@@ -325,6 +325,41 @@ def parse_files_likely_touched(
     )
 
 
+def parse_flt_namespaced(work_plan_content: str) -> dict[str, set[str]]:
+    """Return FLT paths split by namespace (motor / destino)."""
+    da = _read_delivery_authority(work_plan_content)
+    motor = (
+        _MOTOR_ROOT.resolve()
+        if (_MOTOR_ROOT / ".git").exists()
+        else PROJECT_ROOT.resolve()
+    )
+    return scope_gate.parse_flt_namespaced(
+        work_plan_content,
+        motor_root=motor,
+        project_root=PROJECT_ROOT.resolve(),
+        delivery_authority=da,
+    )
+
+
+def get_productive_changed_files(delivery_authority: str) -> set[str] | None:
+    """Return changed files from the productive root for the given delivery_authority.
+
+    For repo_motor tickets: returns files changed in motor_root (motor diff).
+    For repo_destino tickets: returns files changed in project_root (destino diff).
+    """
+    if delivery_authority == "repo_motor" and (_MOTOR_ROOT / ".git").exists():
+        return scope_gate.get_changed_files(
+            project_root=_MOTOR_ROOT.resolve(),
+            motor_root=None,
+            run_fn=subprocess.run,
+        )
+    return scope_gate.get_changed_files(
+        project_root=PROJECT_ROOT.resolve(),
+        motor_root=None,
+        run_fn=subprocess.run,
+    )
+
+
 def _git_log_recent_files(git_root: Path, n: int = 10) -> set[str]:
     return scope_gate.git_log_recent_files(git_root, n=n, run_fn=subprocess.run)
 
@@ -2533,16 +2568,19 @@ def _run_pre_handoff_guard(plan_id: str, json_output: bool) -> dict:  # noqa: C9
             print("[WARN] pre_handoff_guard.py not found; skipping guard check")
             return {"valid": True}
 
+        cmd = [
+            sys.executable,
+            str(guard_script),
+            "--project-root",
+            str(PROJECT_ROOT),
+            "--ticket-id",
+            plan_id,
+            "--json",
+        ]
+        if _MOTOR_ROOT != PROJECT_ROOT and (_MOTOR_ROOT / ".git").exists():
+            cmd += ["--motor-root", str(_MOTOR_ROOT)]
         result = subprocess.run(
-            [
-                sys.executable,
-                str(guard_script),
-                "--project-root",
-                str(PROJECT_ROOT),
-                "--ticket-id",
-                plan_id,
-                "--json",
-            ],
+            cmd,
             capture_output=True,
             text=True,
             cwd=PROJECT_ROOT,
@@ -3857,17 +3895,64 @@ def _check_invariants(plan_content: str, log_content: str, log_status: str) -> d
 def _check_scope_for_validate(
     plan_content: str, log_status: str
 ) -> tuple[list[str], list[str]]:
-    """Check scope violations for validate command. Returns (errors, warnings)."""
+    """Check scope violations for validate command. Returns (errors, warnings).
+
+    WOT-2026-009b: Uses productive diff root based on delivery_authority.
+    For repo_motor tickets, validates motor diff against FLT motor paths.
+    For repo_destino tickets, validates destino diff against FLT destino paths.
+    Includes topology note in warnings when authority is repo_motor so the
+    operator knows which root and subsection was validated.
+    """
     errors, warnings = [], []
     if "READY_FOR_REVIEW" in log_status:
-        changed_files = get_changed_files()
-        gate_result = check_scope_gate(plan_content, changed_files, _exclude_files())
-        if not gate_result["valid"]:
-            # Scope violations in READY_FOR_REVIEW are warnings only, not errors
-            warnings.extend(
-                [f"Out of scope: {f}" for f in sorted(gate_result["out_of_scope"])]
+        da = _read_delivery_authority(plan_content)
+        changed_files = get_productive_changed_files(da)
+
+        if da == "repo_motor":
+            # For motor tickets: validate motor diff against repo_motor FLT paths.
+            # Use parse_flt_namespaced to get the motor bucket, then gate.
+            flt = parse_flt_namespaced(plan_content)
+            motor_whitelist = flt["motor"]
+            if not motor_whitelist:
+                warnings.append(
+                    "scope: No ### repo_motor paths declared in Files Likely Touched "
+                    f"(delivery_authority={da}). "
+                    "Add a ### repo_motor subsection or flat FLT paths. "
+                    "Re-validate: python .agent/agent_controller.py --validate --json "
+                    "--project-root <destino>"
+                )
+            else:
+                relevant = changed_files or set()
+                out_of_scope = relevant - motor_whitelist
+                if out_of_scope:
+                    motor_root_str = str(_MOTOR_ROOT.resolve())
+
+                    def _to_rel(p: str) -> str:
+                        try:
+                            return str(Path(p).relative_to(motor_root_str))
+                        except ValueError:
+                            return p
+
+                    warnings.extend(
+                        [
+                            f"Out of scope (motor): {_to_rel(f)}"
+                            for f in sorted(out_of_scope)
+                        ]
+                    )
+            warnings.append(
+                f"scope: validated motor diff against ### repo_motor FLT "
+                f"(delivery_authority={da}, motor_root={_MOTOR_ROOT})"
             )
-        warnings.extend([f"Warning: {w}" for w in gate_result["warnings"]])
+        else:
+            changed_files_destino = get_changed_files()
+            gate_result = check_scope_gate(
+                plan_content, changed_files_destino, _exclude_files()
+            )
+            if not gate_result["valid"]:
+                warnings.extend(
+                    [f"Out of scope: {f}" for f in sorted(gate_result["out_of_scope"])]
+                )
+            warnings.extend([f"Warning: {w}" for w in gate_result["warnings"]])
     return errors, warnings
 
 
