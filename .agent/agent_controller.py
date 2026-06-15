@@ -316,12 +316,17 @@ def _exclude_files() -> set[str]:
 
 
 def parse_files_likely_touched(
-    work_plan_content: str, *, deliverable_type: str = "code"
+    work_plan_content: str, *, deliverable_type: str | None = None
 ) -> set[str]:
+    dt = (
+        deliverable_type
+        if deliverable_type is not None
+        else _read_deliverable_type(work_plan_content)
+    )
     return scope_gate.parse_files_likely_touched(
         work_plan_content,
         project_root=PROJECT_ROOT.resolve(),
-        deliverable_type=deliverable_type,
+        deliverable_type=dt,
     )
 
 
@@ -1581,9 +1586,7 @@ def _check_implementation_evidence(plan_id: str) -> list[str]:  # noqa: C901
     # 3. Best-effort: check Files Likely Touched
     try:
         if plan_content:
-            likely_files = parse_files_likely_touched(
-                plan_content, deliverable_type=_read_deliverable_type(plan_content)
-            )
+            likely_files = parse_files_likely_touched(plan_content)
             if likely_files and all_files:
                 likely_basenames = {Path(f).name for f in likely_files}
                 matched = any(
@@ -3531,9 +3534,7 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
     live_files, live_dirs = _build_live_surface_sets(project_root)
 
     # Parse Files Likely Touched (inline, already in this module)
-    files_likely_touched = parse_files_likely_touched(
-        plan_content, deliverable_type=_read_deliverable_type(plan_content)
-    )
+    files_likely_touched = parse_files_likely_touched(plan_content)
 
     # Get changed files and filter out live surfaces
     changed_files = get_changed_files() or set()
@@ -3898,61 +3899,57 @@ def _check_scope_for_validate(
     """Check scope violations for validate command. Returns (errors, warnings).
 
     WOT-2026-009b: Uses productive diff root based on delivery_authority.
-    For repo_motor tickets, validates motor diff against FLT motor paths.
+    For repo_motor tickets, validates motor diff against FLT ### repo_motor paths.
     For repo_destino tickets, validates destino diff against FLT destino paths.
-    Includes topology note in warnings when authority is repo_motor so the
-    operator knows which root and subsection was validated.
+    Only emits warnings when there are actual scope violations; a clean motor
+    gate produces no warnings.
     """
     errors, warnings = [], []
-    if "READY_FOR_REVIEW" in log_status:
-        da = _read_delivery_authority(plan_content)
-        changed_files = get_productive_changed_files(da)
+    if "READY_FOR_REVIEW" not in log_status:
+        return errors, warnings
 
-        if da == "repo_motor":
-            # For motor tickets: validate motor diff against repo_motor FLT paths.
-            # Use parse_flt_namespaced to get the motor bucket, then gate.
-            flt = parse_flt_namespaced(plan_content)
-            motor_whitelist = flt["motor"]
-            if not motor_whitelist:
-                warnings.append(
-                    "scope: No ### repo_motor paths declared in Files Likely Touched "
-                    f"(delivery_authority={da}). "
-                    "Add a ### repo_motor subsection or flat FLT paths. "
-                    "Re-validate: python .agent/agent_controller.py --validate --json "
-                    "--project-root <destino>"
-                )
-            else:
-                relevant = changed_files or set()
-                out_of_scope = relevant - motor_whitelist
-                if out_of_scope:
-                    motor_root_str = str(_MOTOR_ROOT.resolve())
+    da = _read_delivery_authority(plan_content)
 
-                    def _to_rel(p: str) -> str:
-                        try:
-                            return str(Path(p).relative_to(motor_root_str))
-                        except ValueError:
-                            return p
-
-                    warnings.extend(
-                        [
-                            f"Out of scope (motor): {_to_rel(f)}"
-                            for f in sorted(out_of_scope)
-                        ]
-                    )
+    if da == "repo_motor":
+        flt = parse_flt_namespaced(plan_content)
+        motor_whitelist = flt["motor"]
+        if not motor_whitelist:
             warnings.append(
-                f"scope: validated motor diff against ### repo_motor FLT "
-                f"(delivery_authority={da}, motor_root={_MOTOR_ROOT})"
+                "scope: No repo_motor paths in Files Likely Touched "
+                f"(delivery_authority={da}). "
+                "Add a ### repo_motor subsection or flat FLT paths. "
+                "Re-validate: python .agent/agent_controller.py --validate --json "
+                "--project-root <destino>"
             )
         else:
-            changed_files_destino = get_changed_files()
-            gate_result = check_scope_gate(
-                plan_content, changed_files_destino, _exclude_files()
-            )
-            if not gate_result["valid"]:
+            changed_files = get_productive_changed_files(da) or set()
+            out_of_scope = changed_files - motor_whitelist
+            if out_of_scope:
+                motor_root_str = str(_MOTOR_ROOT.resolve())
+
+                def _to_rel(p: str) -> str:
+                    try:
+                        return str(Path(p).relative_to(motor_root_str))
+                    except ValueError:
+                        return p
+
                 warnings.extend(
-                    [f"Out of scope: {f}" for f in sorted(gate_result["out_of_scope"])]
+                    [
+                        f"Out of scope (motor): {_to_rel(f)}"
+                        for f in sorted(out_of_scope)
+                    ]
                 )
-            warnings.extend([f"Warning: {w}" for w in gate_result["warnings"]])
+    else:
+        changed_files_destino = get_changed_files()
+        gate_result = check_scope_gate(
+            plan_content, changed_files_destino, _exclude_files()
+        )
+        if not gate_result["valid"]:
+            warnings.extend(
+                [f"Out of scope: {f}" for f in sorted(gate_result["out_of_scope"])]
+            )
+        warnings.extend([f"Warning: {w}" for w in gate_result["warnings"]])
+
     return errors, warnings
 
 

@@ -269,17 +269,14 @@ def check_checkpoint_alignment(project_root: Path, ticket_id: str) -> tuple[bool
         return (True, False)
 
 
-def _read_delivery_authority_local(content: str) -> str:
-    """Read delivery_authority field from work_plan content."""
-    import re
+def _import_scope_gate():
+    """Import scope_gate from the motor .agent/ directory."""
+    agent_dir = Path(__file__).resolve().parent.parent / ".agent"
+    if str(agent_dir) not in sys.path:
+        sys.path.insert(0, str(agent_dir))
+    import scope_gate as _sg
 
-    pattern = re.compile(
-        r"delivery_authority\s*:?\**\s*(?:repo_destino|destino)",
-        re.IGNORECASE,
-    )
-    if pattern.search(content):
-        return "repo_destino"
-    return "repo_motor"
+    return _sg
 
 
 def parse_files_likely_touched(
@@ -288,14 +285,13 @@ def parse_files_likely_touched(
 ) -> set[str]:
     """Parsear Files Likely Touched desde work_plan.md.
 
-    Namespace-aware (WOT-2026-009b): si el work_plan declara
-    ``### repo_motor`` / ``### repo_destino``, las rutas se resuelven
-    contra el root correcto. Sin namespace, backward-compat: rutas contra
-    project_root (destino) o motor_root segun delivery_authority.
+    Delegates to scope_gate.parse_flt_namespaced (WOT-2026-009b) so there
+    is a single canonical FLT parser. Returns the union of motor and destino
+    paths when motor_root is provided, otherwise destino-only paths.
 
     Args:
         project_root: Destino root (workspace activo).
-        motor_root: Motor root. Si None, se usa project_root como fallback.
+        motor_root: Motor root for ### repo_motor path resolution.
     """
     work_plan = project_root / ".agent" / "collaboration" / "work_plan.md"
     if not work_plan.exists():
@@ -306,85 +302,45 @@ def parse_files_likely_touched(
     except OSError:
         return set()
 
+    try:
+        sg = _import_scope_gate()
+    except ImportError:
+        # Fallback: flat FLT parsing against project_root (pre-009b behavior)
+        return sg_fallback_parse(content, project_root)
+
     effective_motor_root = motor_root if motor_root is not None else project_root
-    delivery_authority = _read_delivery_authority_local(content)
+    da = _read_delivery_authority_from_content(content)
+    buckets = sg.parse_flt_namespaced(
+        content,
+        motor_root=effective_motor_root,
+        project_root=project_root,
+        delivery_authority=da,
+    )
+    # When motor_root is explicit: return union (scope covers both repos).
+    # When motor_root is absent (standalone/test context): return all resolved
+    # paths so scope_discrepancy still works — flat paths landed in "motor"
+    # bucket because effective_motor_root == project_root.
+    return buckets["motor"] | buckets["destino"]
 
-    # Try namespace-aware parsing first
-    motor_files: set[str] = set()
-    destino_files: set[str] = set()
-    has_namespaces = False
 
-    def _looks_like_path_token(token: str) -> bool:
-        if not token or " " in token:
-            return False
-        if token.startswith("."):
-            return True
-        if "/" in token or "\\" in token:
-            return True
-        basename = token.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-        return "." in basename
+def _read_delivery_authority_from_content(content: str) -> str:
+    """Read delivery_authority field from work_plan content."""
+    import re
 
-    def _normalize(line: str) -> str:
-        return (
-            line.lstrip("*- ")
-            .replace("`", "")
-            .replace('"', "")
-            .replace("'", "")
-            .strip()
-        )
+    if re.search(
+        r"delivery_authority\s*:?\**\s*(?:repo_destino|destino)",
+        content,
+        re.IGNORECASE,
+    ):
+        return "repo_destino"
+    return "repo_motor"
 
+
+def sg_fallback_parse(content: str, project_root: Path) -> set[str]:
+    """Flat FLT parser fallback when scope_gate is not importable."""
     lines = content.split("\n")
-    in_flt = False
-    current_ns: str | None = None
-
-    for line in lines:
-        stripped = line.strip()
-        if "## Files Likely Touched" in stripped and stripped.startswith("## "):
-            in_flt = True
-            current_ns = None
-            continue
-        if in_flt and stripped.startswith("## ") and not stripped.startswith("### "):
-            break
-        if not in_flt:
-            continue
-        if stripped.startswith("### "):
-            heading = stripped[4:].strip().lower()
-            if heading == "repo_motor":
-                current_ns = "motor"
-                has_namespaces = True
-            elif heading == "repo_destino":
-                current_ns = "destino"
-                has_namespaces = True
-            else:
-                current_ns = "unknown"
-            continue
-        if not stripped or stripped.startswith("---"):
-            continue
-        normalized = _normalize(stripped)
-        if not normalized or not _looks_like_path_token(normalized):
-            continue
-        if current_ns == "motor":
-            motor_files.add(str((effective_motor_root / normalized).resolve()))
-        elif current_ns == "destino":
-            destino_files.add(str((project_root / normalized).resolve()))
-        elif current_ns == "unknown":
-            pass
-        else:
-            # Flat: route by delivery_authority
-            if delivery_authority == "repo_destino":
-                destino_files.add(str((project_root / normalized).resolve()))
-            else:
-                motor_files.add(str((effective_motor_root / normalized).resolve()))
-
-    if has_namespaces:
-        # Return union when motor_root given; destino-only otherwise for scope_discrepancy
-        if motor_root is not None:
-            return motor_files | destino_files
-        return destino_files
-
-    # Legacy flat parsing: all paths against project_root (backward-compat)
-    files: set[str] = set()
     in_section = False
+    files: set[str] = set()
     for line in lines:
         line_s = line.strip()
         if "## Files Likely Touched" in line_s:
@@ -393,8 +349,14 @@ def parse_files_likely_touched(
         if in_section and line_s.startswith("## "):
             break
         if in_section and line_s and not line_s.startswith("---"):
-            normalized = _normalize(line_s)
-            if normalized and _looks_like_path_token(normalized):
+            normalized = (
+                line_s.lstrip("*- ")
+                .replace("`", "")
+                .replace('"', "")
+                .replace("'", "")
+                .strip()
+            )
+            if normalized and "." in normalized.rsplit("/", 1)[-1]:
                 files.add(str((project_root / normalized).resolve()))
     return files
 
