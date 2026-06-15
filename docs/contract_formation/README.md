@@ -16,6 +16,10 @@ implante sin preguntar.
    contratos `frozen` pasan a `work_plan.md`.
 3. **Auditoria adversarial:** `prompts/audit_agent_output.md` 2.b (`Intent
    Audit`) y 2.c (`Impact Simulation`) — fuente canonica; aqui no se redefinen.
+   Prompts especializados por artefacto (WOT-2026-007d), que enrutan ese marco:
+   [`audit_cf_repo_charter.md`](../../prompts/audit_cf_repo_charter.md),
+   [`audit_cf_plan_graph.md`](../../prompts/audit_cf_plan_graph.md),
+   [`audit_cf_ticket_contract.md`](../../prompts/audit_cf_ticket_contract.md).
 
 ## Plantillas
 

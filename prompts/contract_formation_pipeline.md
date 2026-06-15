@@ -84,6 +84,15 @@ estan en `<MOTOR_ROOT>/docs/contract_formation/templates/`.
 6. **Auditoria adversarial.** El Auditor aplica `Intent Audit` (2.b) e `Impact
    Simulation` (2.c) de `audit_agent_output.md`, mas la `Negative Audit
    Checklist` del charter. Mueve el contrato a `status: review`.
+
+   Prompts de auditoria especializados por artefacto (WOT-2026-007d). Heredan
+   el marco de `audit_agent_output.md` 2.b/2.c; no lo redefinen:
+
+   | Fase / artefacto | Auditoria |
+   |------------------|-----------|
+   | Charter / idea | `prompts/audit_cf_repo_charter.md` |
+   | Plan graph | `prompts/audit_cf_plan_graph.md` |
+   | Ticket contract | `prompts/audit_cf_ticket_contract.md` |
 7. **Freeze & handoff.** Solo cuando el contrato pasa auditoria se marca
    `status: frozen`. Solo contratos `frozen` pueden convertirse en
    `work_plan.md` (ver seccion 8). `CONTRACT_GAP` es la unica via para
