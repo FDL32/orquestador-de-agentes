@@ -2,7 +2,7 @@
 
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 # Add the agent directory to path for imports
@@ -229,8 +229,9 @@ class TestCheckScopeGate:
 
 
 class TestHandleMarkReadyScopeGate:
-    """Test that --mark-ready stops on zero-overlap scope failures."""
+    """Test that --mark-ready stops on guard failures before any closeout."""
 
+    @patch("agent_controller.BUS_AVAILABLE", True)
     @patch("agent_controller._emit_builder_exit")
     @patch("agent_controller._auto_archive_closed_artifacts")
     @patch("agent_controller._sync_mark_ready_targets")
@@ -239,7 +240,7 @@ class TestHandleMarkReadyScopeGate:
     @patch("agent_controller._check_circuit_breaker")
     @patch("agent_controller.get_changed_files", return_value=set())
     @patch("agent_controller.read_file")
-    def test_mark_ready_blocks_on_zero_overlap(
+    def test_mark_ready_blocks_before_closeout(
         self,
         mock_read_file,
         mock_get_changed_files,
@@ -250,7 +251,22 @@ class TestHandleMarkReadyScopeGate:
         mock_archive,
         mock_emit_exit,
     ):
-        """Test --mark-ready returns failure before any closeout side effects."""
+        """--mark-ready blocks before any closeout side effect.
+
+        With no productive diff and a boilerplate execution_log, the
+        unconditional implementation-evidence gate (WP-2026-188 Phase 4) blocks
+        the handoff. The contract being protected is that a blocked mark-ready:
+          - returns 1,
+          - performs NO ticket closeout (archive / sync targets / reset breaker),
+          - releases the Builder lock so the supervisor can recover, and
+          - records exactly one BUILDER_EXIT for the blocked round.
+
+        ``agent_controller.event_bus`` is a lazily-initialized module singleton
+        that leaks across tests (it is never reset). We patch it explicitly to a
+        stub so the bus-available path is exercised deterministically regardless
+        of suite ordering, instead of depending on whether a prior test happened
+        to initialize the global.
+        """
         plan_content = """# Work Plan
 
 **ID:** WP-2026-142
@@ -274,15 +290,25 @@ class TestHandleMarkReadyScopeGate:
         mock_read_file.side_effect = _read_side_effect
         mock_check_breaker.return_value = {"open": False, "reason": None}
 
-        result = _handle_mark_ready(
-            scope_override=None, json_output=False, force_mode=False
-        )
+        # Deterministic bus-available stub: read_events returns [] so no prior
+        # bus state is derived, while emit()/_emit_builder_exit fire on block.
+        stub_bus = MagicMock()
+        stub_bus.read_events.return_value = []
+
+        with patch("agent_controller.event_bus", stub_bus):
+            result = _handle_mark_ready(
+                scope_override=None, json_output=False, force_mode=False
+            )
 
         assert result == 1
-        mock_emit_exit.assert_not_called()
+        # No closeout: the ticket must NOT be closed when a guard blocks.
         mock_archive.assert_not_called()
         mock_sync_targets.assert_not_called()
         mock_reset_breaker.assert_not_called()
+        # A blocked round is recorded as a single BUILDER_EXIT so the supervisor
+        # can recover; this is the failure-recording path, not a success close.
+        mock_emit_exit.assert_called_once()
+        assert "blocked" in mock_emit_exit.call_args.kwargs["exit_reason"]
         # mark-ready failure is terminal for this Builder round, so the
         # controller must release the lock to allow supervisor recovery.
         mock_release_lock.assert_called_once_with("WP-2026-142", expected_round=None)
