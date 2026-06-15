@@ -10,6 +10,11 @@ class TicketState(str, Enum):
     READY_TO_CLOSE = "READY_TO_CLOSE"
     COMPLETED = "COMPLETED"
     BLOCKED = "BLOCKED"
+    # WOT-2026-007f: CONTRACT_BLOCKED is set when a Builder emits a CONTRACT_GAP
+    # event. The ticket is frozen until Contract Formation resolves the gap.
+    # This state is reversible: once the contract is updated and re-frozen,
+    # the ticket can be reopened (transitions back to IN_PROGRESS).
+    CONTRACT_BLOCKED = "CONTRACT_BLOCKED"
     UNKNOWN = "UNKNOWN"
 
     @classmethod
@@ -30,14 +35,18 @@ class TicketState(str, Enum):
     def is_work_state(cls, state: TicketState) -> bool:
         """Check if a state is a work state (can transition to review).
 
-        Work states: IN_PROGRESS, READY_FOR_REVIEW, BLOCKED, HUMAN_GATE.
+        Work states: IN_PROGRESS, READY_FOR_REVIEW, BLOCKED, HUMAN_GATE,
+        CONTRACT_BLOCKED.
         These states represent active work or pending human action.
+        CONTRACT_BLOCKED is included because it is reversible: once the contract
+        gap is resolved, the ticket transitions back to a work state.
         """
         return state in {
             cls.IN_PROGRESS,
             cls.READY_FOR_REVIEW,
             cls.BLOCKED,
             cls.HUMAN_GATE,
+            cls.CONTRACT_BLOCKED,
         }
 
 
@@ -79,4 +88,10 @@ class StateMachine:
                 return StateMachine._state_from_review_decision(payload)
             if event_type == "APPROVAL_RESOLVED":
                 return StateMachine._state_from_approval_resolved(payload)
+            # WOT-2026-007f: CONTRACT_GAP event transitions the ticket to
+            # CONTRACT_BLOCKED, freezing it until Contract Formation resolves
+            # the gap.  This is checked AFTER terminal/approved events so a
+            # later resolution can override it.
+            if event_type == "CONTRACT_GAP":
+                return TicketState.CONTRACT_BLOCKED
         return TicketState.UNKNOWN

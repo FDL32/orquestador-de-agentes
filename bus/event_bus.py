@@ -369,6 +369,73 @@ class EventBus:
                 file=sys.stderr,
             )
 
+    # WOT-2026-007f: valid gap types for CONTRACT_GAP events.
+    VALID_GAP_TYPES: frozenset[str] = frozenset(
+        {"premise_false", "forbidden_surface_needed", "missing_acceptance"}
+    )
+
+    def emit_contract_gap(
+        self,
+        *,
+        ticket_id: str,
+        gap_type: str,
+        cg_file_path: str,
+        actor: str = "BUILDER",
+    ) -> EventRecord | None:
+        """Emit a CONTRACT_GAP event with reentry guard.
+
+        Before:
+            - ticket_id must be a non-empty string identifying the blocked ticket.
+            - gap_type must be one of: premise_false, forbidden_surface_needed,
+              missing_acceptance.
+            - cg_file_path must be the path (relative or absolute) to the
+              CG-<ticket_id>.md file (not its contents).
+
+        During:
+            - Validates gap_type against VALID_GAP_TYPES; returns None on invalid.
+            - Checks event history: if a CONTRACT_GAP event with the same
+              ticket_id and gap_type already exists in the bus, returns None
+              (reentry guard — prevents spurious duplicates for the same gap).
+            - Builds a payload with exactly {ticket_id, gap_type, cg_file_path}
+              and calls the standard emit().
+
+        After:
+            - Returns the EventRecord if the event was written to the bus.
+            - Returns None if gap_type is invalid or if a duplicate was detected
+              by the reentry guard.
+            - The bus remains append-only; this method never removes events.
+        """
+        if gap_type not in self.VALID_GAP_TYPES:
+            print(
+                f"[event_bus] BLOCKED CONTRACT_GAP: invalid gap_type '{gap_type}'. "
+                f"Valid: {sorted(self.VALID_GAP_TYPES)}",
+                file=sys.stderr,
+            )
+            return None
+
+        # Reentry guard: one CONTRACT_GAP per (ticket_id, gap_type) pair.
+        existing = self.read_events(ticket_id=ticket_id, event_type="CONTRACT_GAP")
+        for record in existing:
+            if record.payload.get("gap_type") == gap_type:
+                print(
+                    f"[event_bus] BLOCKED CONTRACT_GAP reentry: ticket={ticket_id}, "
+                    f"gap_type={gap_type} already recorded in bus.",
+                    file=sys.stderr,
+                )
+                return None
+
+        payload = {
+            "ticket_id": ticket_id,
+            "gap_type": gap_type,
+            "cg_file_path": cg_file_path,
+        }
+        return self.emit(
+            event_type="CONTRACT_GAP",
+            ticket_id=ticket_id,
+            actor=actor,
+            payload=payload,
+        )
+
     def read_events(
         self,
         *,

@@ -1672,6 +1672,82 @@ def _validate_git_presence() -> list[str]:
     ]
 
 
+def _validate_contract_gap_coherence(plan_content: str) -> list[str]:
+    """WOT-2026-007f: Validate CONTRACT_GAP event ↔ CG-*.md file coherence.
+
+    Before:
+        - plan_content is the content of work_plan.md (may be empty).
+        - BUS_AVAILABLE controls whether the event bus can be queried.
+        - The agent dir is resolved via get_agent_dir().
+
+    During:
+        - Extracts the active ticket_id from plan_content.
+        - Reads CONTRACT_GAP events from the bus for that ticket.
+        - Scans contract_gaps/ directory for CG-<ticket_id>.md files.
+        - Compares the two surfaces for coherence.
+
+    After:
+        - Returns [] if both surfaces agree (both present or both absent).
+        - Returns an error string if event present without CG file, or CG file
+          present without event (incoherent projection).
+        - Returns [] if ticket_id cannot be determined (no active ticket).
+        - Never raises; all exceptions are caught and reported as errors.
+    """
+    errors: list[str] = []
+
+    # Skip if bus is unavailable
+    if not BUS_AVAILABLE:
+        return errors
+
+    # Determine active ticket_id
+    ticket_id = get_plan_id(plan_content).strip()
+    if not ticket_id or ticket_id.lower() in ("n/a", "none", "unknown", ""):
+        return errors
+
+    # Check bus for CONTRACT_GAP events
+    bus = _get_event_bus()
+    if bus is None:
+        return errors
+
+    try:
+        contract_gap_events = bus.read_events(
+            ticket_id=ticket_id, event_type="CONTRACT_GAP"
+        )
+        # Guard: read_events must return a list (not a mock or unexpected type).
+        # If the bus is mocked in tests or returns an unexpected type, skip.
+        if not isinstance(contract_gap_events, list):
+            return errors
+        has_bus_event = bool(contract_gap_events)
+    except Exception as exc:
+        errors.append(f"CONTRACT_GAP coherence: error reading bus events: {exc}")
+        return errors
+
+    # Check contract_gaps/ directory for CG-<ticket_id>.md
+    contract_gaps_dir = get_agent_dir() / "planning" / "contract_gaps"
+    cg_pattern = f"CG-{ticket_id}.md"
+    try:
+        has_cg_file = (contract_gaps_dir / cg_pattern).exists()
+    except Exception as exc:
+        errors.append(f"CONTRACT_GAP coherence: error scanning contract_gaps/: {exc}")
+        return errors
+
+    # Coherence check: both must agree
+    if has_bus_event and not has_cg_file:
+        errors.append(
+            f"CONTRACT_GAP incoherence: bus has CONTRACT_GAP event for {ticket_id} "
+            f"but {cg_pattern} not found in contract_gaps/. "
+            "Create the CG file or remove the stale bus event."
+        )
+    elif has_cg_file and not has_bus_event:
+        errors.append(
+            f"CONTRACT_GAP incoherence: {cg_pattern} exists in contract_gaps/ "
+            f"but no CONTRACT_GAP event found in bus for {ticket_id}. "
+            "Emit the CONTRACT_GAP event or remove the stale CG file."
+        )
+
+    return errors
+
+
 def validate_state_files() -> dict[str, list[str]]:
     """Valida el formato y consistencia cruzada de los archivos de estado."""
     return {
@@ -4795,6 +4871,12 @@ def _handle_validate(json_output: bool) -> int:  # noqa: C901
             errors.setdefault("invariants", []).extend(invariant_result["errors"])
         if invariant_result["warnings"]:
             warnings.setdefault("invariants", []).extend(invariant_result["warnings"])
+
+    # WOT-2026-007f: Check CONTRACT_GAP event ↔ CG-*.md file coherence.
+    if not seed_neutral:
+        cg_errors = _validate_contract_gap_coherence(plan_content)
+        if cg_errors:
+            errors.setdefault("contract_gap", []).extend(cg_errors)
 
     total_errors = sum(len(errs) for errs in errors.values())
     total_warnings = sum(len(warns) for warns in warnings.values())
