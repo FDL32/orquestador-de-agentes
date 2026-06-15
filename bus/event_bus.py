@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from bus.redact import redact_payload
 from bus.state_machine import TicketState
+from bus.ticket_id import is_valid_ticket_id
 
 
 @dataclass(slots=True)
@@ -385,7 +386,9 @@ class EventBus:
         """Emit a CONTRACT_GAP event with reentry guard.
 
         Before:
-            - ticket_id must be a non-empty string identifying the blocked ticket.
+            - ticket_id must be a valid canonical ticket id (is_valid_ticket_id);
+              this also forecloses path-guard bypass via a crafted ticket_id such
+              as "../outside".
             - gap_type must be one of: premise_false, forbidden_surface_needed,
               missing_acceptance.
             - cg_file_path must be the canonical *relative* path to the CG file,
@@ -394,6 +397,7 @@ class EventBus:
               coherence validator can locate the file deterministically.
 
         During:
+            - Validates ticket_id against is_valid_ticket_id; returns None on invalid.
             - Validates gap_type against VALID_GAP_TYPES; returns None on invalid.
             - Validates cg_file_path against the canonical relative form; returns
               None on any non-canonical value (absolute, traversal, wrong name).
@@ -406,10 +410,18 @@ class EventBus:
 
         After:
             - Returns the EventRecord if the event was written to the bus.
-            - Returns None if gap_type or cg_file_path is invalid, or if a
-              duplicate was detected by the reentry guard.
+            - Returns None if ticket_id, gap_type or cg_file_path is invalid, or
+              if a duplicate was detected by the reentry guard.
             - The bus remains append-only; this method never removes events.
         """
+        if not is_valid_ticket_id(ticket_id):
+            print(
+                f"[event_bus] BLOCKED CONTRACT_GAP: invalid ticket_id '{ticket_id}'. "
+                "Must match the canonical ticket-id pattern.",
+                file=sys.stderr,
+            )
+            return None
+
         if gap_type not in self.VALID_GAP_TYPES:
             print(
                 f"[event_bus] BLOCKED CONTRACT_GAP: invalid gap_type '{gap_type}'. "

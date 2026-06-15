@@ -125,3 +125,48 @@ def _clear_runtime_project_root_cache() -> None:
     finally:
         if callable(clear):
             clear()
+
+
+# Real motor bus file: tests must never leave it mutated (WOT-2026-007f review).
+_MOTOR_EVENTS_FILE = AGENT_DIR / "runtime" / "events" / "events.jsonl"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_controller_event_bus() -> None:
+    """Barrier (WOT-2026-007f review): isolate the agent_controller event bus.
+
+    Closes two leaks that share the same root cause (an unmanaged module-level
+    singleton + a real-motor bus path):
+
+      1. ``agent_controller.event_bus`` is a lazily-initialized module global
+         that is never reset. A test that initializes it leaks the instance into
+         later tests and changes their behavior (e.g. whether a blocked
+         mark-ready emits a BUILDER_EXIT). Reset it to None around every test.
+      2. The controller resolves its bus path from ``runtime.project_root``
+         (the real motor) regardless of a test patching
+         ``agent_controller.PROJECT_ROOT``. Controller tests can therefore write
+         events into the REAL motor ``events.jsonl``. Snapshot that file and
+         restore it after each test so the suite never leaves the motor dirty.
+
+    Verified barrier: with this fixture active, a full suite run leaves
+    ``git status`` clean on ``.agent/runtime/events/events.jsonl``.
+    """
+    ac = sys.modules.get("agent_controller")
+    if ac is not None:
+        ac.event_bus = None
+
+    before = _MOTOR_EVENTS_FILE.read_bytes() if _MOTOR_EVENTS_FILE.exists() else None
+    try:
+        yield
+    finally:
+        ac = sys.modules.get("agent_controller")
+        if ac is not None:
+            ac.event_bus = None
+        after = _MOTOR_EVENTS_FILE.read_bytes() if _MOTOR_EVENTS_FILE.exists() else None
+        if before != after:
+            # A test mutated the real motor bus: restore so the motor stays clean.
+            if before is None:
+                _MOTOR_EVENTS_FILE.unlink(missing_ok=True)
+            else:
+                _MOTOR_EVENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+                _MOTOR_EVENTS_FILE.write_bytes(before)

@@ -1672,7 +1672,7 @@ def _validate_git_presence() -> list[str]:
     ]
 
 
-def _validate_contract_gap_coherence(plan_content: str) -> list[str]:
+def _validate_contract_gap_coherence(plan_content: str) -> list[str]:  # noqa: C901
     """WOT-2026-007f: Validate CONTRACT_GAP event ↔ CG-*.md file coherence.
 
     Before:
@@ -1721,6 +1721,19 @@ def _validate_contract_gap_coherence(plan_content: str) -> list[str]:
     except Exception as exc:
         errors.append(f"CONTRACT_GAP coherence: error reading bus events: {exc}")
         return errors
+
+    # WOT-2026-007f review: emit_contract_gap enforces a canonical cg_file_path,
+    # but legacy or tampered events may carry a non-canonical path. Verify the
+    # stored payload path of every event matches contract_gaps/CG-<ticket_id>.md.
+    canonical_cg_path = f"contract_gaps/CG-{ticket_id}.md"
+    for event in contract_gap_events:
+        stored_path = str(event.payload.get("cg_file_path", "")).replace("\\", "/")
+        if stored_path != canonical_cg_path:
+            errors.append(
+                f"CONTRACT_GAP path incoherence for {ticket_id}: event payload "
+                f"cg_file_path='{stored_path}' != canonical '{canonical_cg_path}'. "
+                "Re-emit the event with the canonical relative path."
+            )
 
     # Check contract_gaps/ directory for CG-<ticket_id>.md
     contract_gaps_dir = get_agent_dir() / "planning" / "contract_gaps"

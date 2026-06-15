@@ -57,7 +57,9 @@ def gap_env(tmp_path: Path):
     events_path = runtime_dir / "events.jsonl"
     state_md_path = collab_dir / "STATE.md"
     work_plan_path = collab_dir / "work_plan.md"
-    work_plan_path.write_text("# Work Plan\n- **ID:** T-007F-TEST\n", encoding="utf-8")
+    work_plan_path.write_text(
+        "# Work Plan\n- **ID:** WOT-2026-007t\n", encoding="utf-8"
+    )
 
     class Env:
         def __init__(self):
@@ -65,7 +67,7 @@ def gap_env(tmp_path: Path):
             self.collab_dir = collab_dir
             self.events_path = events_path
             self.state_md = state_md_path
-            self.ticket_id = "T-007F-TEST"
+            self.ticket_id = "WOT-2026-007t"
             self.bus = EventBus(runtime_dir)
 
     return Env()
@@ -76,8 +78,17 @@ def gap_env(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def _emit_contract_gap_raw(events_path: Path, ticket_id: str, gap_type: str) -> None:
-    """Write a CONTRACT_GAP event directly to the JSONL bus (for probe tests)."""
+def _emit_contract_gap_raw(
+    events_path: Path,
+    ticket_id: str,
+    gap_type: str,
+    cg_file_path: str | None = None,
+) -> None:
+    """Write a CONTRACT_GAP event directly to the JSONL bus (for probe tests).
+
+    Bypasses emit_contract_gap validation so tests can simulate legacy or
+    tampered events (e.g. a non-canonical stored cg_file_path).
+    """
     event = {
         "event_id": "test-id",
         "event_type": "CONTRACT_GAP",
@@ -87,7 +98,7 @@ def _emit_contract_gap_raw(events_path: Path, ticket_id: str, gap_type: str) -> 
         "payload": {
             "ticket_id": ticket_id,
             "gap_type": gap_type,
-            "cg_file_path": f"contract_gaps/CG-{ticket_id}.md",
+            "cg_file_path": cg_file_path or f"contract_gaps/CG-{ticket_id}.md",
         },
         "schema_version": "1.0",
         "sequence_number": 1,
@@ -104,13 +115,13 @@ def _emit_contract_gap_raw(events_path: Path, ticket_id: str, gap_type: str) -> 
 def test_premise_false_produces_contract_blocked(bus: EventBus) -> None:
     """gap_type=premise_false must block the ticket as CONTRACT_BLOCKED."""
     result = bus.emit_contract_gap(
-        ticket_id="T-007F-001",
+        ticket_id="WOT-2026-007a",
         gap_type="premise_false",
-        cg_file_path="contract_gaps/CG-T-007F-001.md",
+        cg_file_path="contract_gaps/CG-WOT-2026-007a.md",
     )
     assert result is not None, "emit_contract_gap must return an EventRecord"
 
-    events = bus.read_events(ticket_id="T-007F-001")
+    events = bus.read_events(ticket_id="WOT-2026-007a")
     derived = StateMachine.derive_state_from_events([e.to_dict() for e in events])
     assert derived == TicketState.CONTRACT_BLOCKED, (
         f"Expected CONTRACT_BLOCKED, got {derived}"
@@ -128,13 +139,13 @@ def test_premise_false_produces_contract_blocked(bus: EventBus) -> None:
 def test_forbidden_surface_needed_produces_contract_blocked(bus: EventBus) -> None:
     """gap_type=forbidden_surface_needed must block the ticket."""
     result = bus.emit_contract_gap(
-        ticket_id="T-007F-001",
+        ticket_id="WOT-2026-007a",
         gap_type="forbidden_surface_needed",
-        cg_file_path="contract_gaps/CG-T-007F-001.md",
+        cg_file_path="contract_gaps/CG-WOT-2026-007a.md",
     )
     assert result is not None
 
-    events = bus.read_events(ticket_id="T-007F-001")
+    events = bus.read_events(ticket_id="WOT-2026-007a")
     derived = StateMachine.derive_state_from_events([e.to_dict() for e in events])
     assert derived == TicketState.CONTRACT_BLOCKED
     assert derived != TicketState.COMPLETED
@@ -148,13 +159,13 @@ def test_forbidden_surface_needed_produces_contract_blocked(bus: EventBus) -> No
 def test_missing_acceptance_produces_contract_blocked(bus: EventBus) -> None:
     """gap_type=missing_acceptance must block the ticket."""
     result = bus.emit_contract_gap(
-        ticket_id="T-007F-001",
+        ticket_id="WOT-2026-007a",
         gap_type="missing_acceptance",
-        cg_file_path="contract_gaps/CG-T-007F-001.md",
+        cg_file_path="contract_gaps/CG-WOT-2026-007a.md",
     )
     assert result is not None
 
-    events = bus.read_events(ticket_id="T-007F-001")
+    events = bus.read_events(ticket_id="WOT-2026-007a")
     derived = StateMachine.derive_state_from_events([e.to_dict() for e in events])
     assert derived == TicketState.CONTRACT_BLOCKED
     assert derived != TicketState.COMPLETED
@@ -168,14 +179,14 @@ def test_missing_acceptance_produces_contract_blocked(bus: EventBus) -> None:
 def test_contract_gap_payload_keys_exact(bus: EventBus) -> None:
     """CONTRACT_GAP payload must contain exactly the three canonical keys."""
     result = bus.emit_contract_gap(
-        ticket_id="T-007F-001",
+        ticket_id="WOT-2026-007a",
         gap_type="premise_false",
-        cg_file_path="contract_gaps/CG-T-007F-001.md",
+        cg_file_path="contract_gaps/CG-WOT-2026-007a.md",
     )
     assert result is not None, "emit_contract_gap must return an EventRecord"
 
     # Read back from bus to verify what was persisted
-    events = bus.read_events(ticket_id="T-007F-001", event_type="CONTRACT_GAP")
+    events = bus.read_events(ticket_id="WOT-2026-007a", event_type="CONTRACT_GAP")
     assert len(events) == 1
     payload = events[0].payload
     assert set(payload.keys()) == {"ticket_id", "gap_type", "cg_file_path"}, (
@@ -191,21 +202,21 @@ def test_contract_gap_payload_keys_exact(bus: EventBus) -> None:
 def test_contract_gap_reentry_guard_blocks_duplicate(bus: EventBus) -> None:
     """Second emit with same ticket_id + gap_type must be blocked."""
     first = bus.emit_contract_gap(
-        ticket_id="T-007F-001",
+        ticket_id="WOT-2026-007a",
         gap_type="premise_false",
-        cg_file_path="contract_gaps/CG-T-007F-001.md",
+        cg_file_path="contract_gaps/CG-WOT-2026-007a.md",
     )
     assert first is not None, "First emit must succeed"
 
     second = bus.emit_contract_gap(
-        ticket_id="T-007F-001",
+        ticket_id="WOT-2026-007a",
         gap_type="premise_false",
-        cg_file_path="contract_gaps/CG-T-007F-001.md",
+        cg_file_path="contract_gaps/CG-WOT-2026-007a.md",
     )
     assert second is None, "Reentry guard must block duplicate CONTRACT_GAP"
 
     # Only one event in bus
-    events = bus.read_events(ticket_id="T-007F-001", event_type="CONTRACT_GAP")
+    events = bus.read_events(ticket_id="WOT-2026-007a", event_type="CONTRACT_GAP")
     assert len(events) == 1
 
 
@@ -217,13 +228,13 @@ def test_contract_gap_reentry_guard_blocks_duplicate(bus: EventBus) -> None:
 def test_contract_gap_invalid_gap_type_rejected(bus: EventBus) -> None:
     """emit_contract_gap must return None for an unknown gap_type."""
     result = bus.emit_contract_gap(
-        ticket_id="T-007F-001",
+        ticket_id="WOT-2026-007a",
         gap_type="invented_gap",
-        cg_file_path="contract_gaps/CG-T-007F-001.md",
+        cg_file_path="contract_gaps/CG-WOT-2026-007a.md",
     )
     assert result is None, "Invalid gap_type must be rejected"
 
-    events = bus.read_events(ticket_id="T-007F-001", event_type="CONTRACT_GAP")
+    events = bus.read_events(ticket_id="WOT-2026-007a", event_type="CONTRACT_GAP")
     assert len(events) == 0
 
 
@@ -235,13 +246,13 @@ def test_contract_gap_invalid_gap_type_rejected(bus: EventBus) -> None:
 @pytest.mark.parametrize(
     "bad_path",
     [
-        "C:/abs/CG-T-007F-001.md",  # absolute (windows)
-        "/abs/CG-T-007F-001.md",  # absolute (posix)
-        "../CG-T-007F-001.md",  # parent traversal
-        "contract_gaps/../CG-T-007F-001.md",  # embedded traversal
-        "other/CG-T-007F-001.md",  # wrong directory
+        "C:/abs/CG-WOT-2026-007a.md",  # absolute (windows)
+        "/abs/CG-WOT-2026-007a.md",  # absolute (posix)
+        "../CG-WOT-2026-007a.md",  # parent traversal
+        "contract_gaps/../CG-WOT-2026-007a.md",  # embedded traversal
+        "other/CG-WOT-2026-007a.md",  # wrong directory
         "contract_gaps/CG-WRONG.md",  # wrong filename for ticket
-        "contract_gaps/CG-T-007F-001.txt",  # wrong extension
+        "contract_gaps/CG-WOT-2026-007a.txt",  # wrong extension
     ],
     # Explicit, filesystem-safe ids: the raw paths contain ':' and '/' which
     # break the tmp_path factory's per-node directory name on Windows.
@@ -260,25 +271,57 @@ def test_contract_gap_rejects_non_canonical_cg_path(
 ) -> None:
     """emit_contract_gap must reject any cg_file_path != contract_gaps/CG-<ticket>.md."""
     result = bus.emit_contract_gap(
-        ticket_id="T-007F-001",
+        ticket_id="WOT-2026-007a",
         gap_type="premise_false",
         cg_file_path=bad_path,
     )
     assert result is None, f"Non-canonical cg_file_path must be rejected: {bad_path}"
-    assert bus.read_events(ticket_id="T-007F-001", event_type="CONTRACT_GAP") == []
+    assert bus.read_events(ticket_id="WOT-2026-007a", event_type="CONTRACT_GAP") == []
 
 
 def test_contract_gap_stores_normalized_canonical_path(bus: EventBus) -> None:
     """A backslash-variant canonical path is accepted and stored normalized."""
     result = bus.emit_contract_gap(
-        ticket_id="T-007F-001",
+        ticket_id="WOT-2026-007a",
         gap_type="premise_false",
-        cg_file_path="contract_gaps\\CG-T-007F-001.md",
+        cg_file_path="contract_gaps\\CG-WOT-2026-007a.md",
     )
     assert result is not None
-    events = bus.read_events(ticket_id="T-007F-001", event_type="CONTRACT_GAP")
+    events = bus.read_events(ticket_id="WOT-2026-007a", event_type="CONTRACT_GAP")
     assert len(events) == 1
-    assert events[0].payload["cg_file_path"] == "contract_gaps/CG-T-007F-001.md"
+    assert events[0].payload["cg_file_path"] == "contract_gaps/CG-WOT-2026-007a.md"
+
+
+# ---------------------------------------------------------------------------
+# Test 6c: invalid ticket_id is rejected (closes path-guard bypass)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "bad_ticket",
+    [
+        "../outside",  # traversal smuggled via ticket_id
+        "not a ticket",  # free text
+        "WOT-2026-007a/../evil",  # path injection
+        "",  # empty
+        "lowercase-2026-001",  # bad prefix
+    ],
+    ids=["traversal", "free-text", "path-injection", "empty", "bad-prefix"],
+)
+def test_contract_gap_rejects_invalid_ticket_id(bus: EventBus, bad_ticket: str) -> None:
+    """emit_contract_gap must reject any ticket_id that is not a canonical id.
+
+    A crafted ticket_id like "../outside" would otherwise make the canonical
+    path contract_gaps/CG-../outside.md and smuggle traversal past the path
+    guard. is_valid_ticket_id forecloses that.
+    """
+    result = bus.emit_contract_gap(
+        ticket_id=bad_ticket,
+        gap_type="premise_false",
+        cg_file_path=f"contract_gaps/CG-{bad_ticket}.md",
+    )
+    assert result is None, f"Invalid ticket_id must be rejected: {bad_ticket!r}"
+    assert bus.read_events(event_type="CONTRACT_GAP") == []
 
 
 # ---------------------------------------------------------------------------
@@ -335,7 +378,7 @@ def test_validate_coherence_event_without_cg_file(tmp_path: Path, monkeypatch) -
     event into a bus, leaves contract_gaps/ empty, and asserts the validator
     returns the incoherence error.
     """
-    ticket_id = "T-007F-CG-A"
+    ticket_id = "WOT-2026-007b"
     agent_dir = tmp_path / ".agent"
     runtime_dir = agent_dir / "runtime" / "events"
     runtime_dir.mkdir(parents=True)
@@ -364,7 +407,7 @@ def test_validate_coherence_event_without_cg_file(tmp_path: Path, monkeypatch) -
 
 def test_validate_coherence_cg_file_without_event(tmp_path: Path, monkeypatch) -> None:
     """_validate_contract_gap_coherence: CG file present, bus event absent -> error."""
-    ticket_id = "T-007F-CG-B"
+    ticket_id = "WOT-2026-007c"
     agent_dir = tmp_path / ".agent"
     runtime_dir = agent_dir / "runtime" / "events"
     runtime_dir.mkdir(parents=True)
@@ -391,7 +434,7 @@ def test_validate_coherence_cg_file_without_event(tmp_path: Path, monkeypatch) -
 
 def test_validate_coherence_both_present_no_error(tmp_path: Path, monkeypatch) -> None:
     """Both the bus event and the CG file present -> coherent -> no errors."""
-    ticket_id = "T-007F-CG-OK"
+    ticket_id = "WOT-2026-007d"
     agent_dir = tmp_path / ".agent"
     runtime_dir = agent_dir / "runtime" / "events"
     runtime_dir.mkdir(parents=True)
@@ -411,6 +454,46 @@ def test_validate_coherence_both_present_no_error(tmp_path: Path, monkeypatch) -
     errors = agent_controller._validate_contract_gap_coherence(plan_content)
 
     assert errors == [], f"Coherent state must produce no errors, got: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# Test 9c: validator flags a stored non-canonical cg_file_path (legacy/tampered)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_coherence_flags_non_canonical_stored_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A legacy/tampered event whose stored cg_file_path is non-canonical -> error.
+
+    emit_contract_gap now rejects bad paths, so this event is written raw to
+    simulate an event that predates the guard. The validator must still catch
+    the non-canonical stored path even though the CG file itself exists.
+    """
+    ticket_id = "WOT-2026-007e"
+    agent_dir = tmp_path / ".agent"
+    runtime_dir = agent_dir / "runtime" / "events"
+    runtime_dir.mkdir(parents=True)
+    cg_dir = agent_dir / "planning" / "contract_gaps"
+    cg_dir.mkdir(parents=True)
+    # Canonical CG file present (so the present/absent check passes).
+    (cg_dir / f"CG-{ticket_id}.md").write_text("x", encoding="utf-8")
+    # Raw event with a NON-canonical stored path (absolute, smuggled).
+    _emit_contract_gap_raw(
+        runtime_dir / "events.jsonl",
+        ticket_id,
+        "premise_false",
+        cg_file_path="/abs/evil.md",
+    )
+
+    local_bus = EventBus(runtime_dir)
+    _patch_coherence_seams(monkeypatch, agent_dir, local_bus)
+    plan_content = f"# Work Plan\n- **ID:** {ticket_id}\n"
+    errors = agent_controller._validate_contract_gap_coherence(plan_content)
+
+    assert any("path incoherence" in e for e in errors), (
+        f"Validator must flag the stored non-canonical path, got: {errors}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -446,9 +529,9 @@ def test_state_machine_derives_contract_blocked_from_raw_event() -> None:
         {
             "event_type": "CONTRACT_GAP",
             "payload": {
-                "ticket_id": "T-007F-001",
+                "ticket_id": "WOT-2026-007a",
                 "gap_type": "forbidden_surface_needed",
-                "cg_file_path": "contract_gaps/CG-T-007F-001.md",
+                "cg_file_path": "contract_gaps/CG-WOT-2026-007a.md",
             },
         },
     ]
