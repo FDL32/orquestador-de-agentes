@@ -131,8 +131,45 @@ def _clear_runtime_project_root_cache() -> None:
 _MOTOR_EVENTS_FILE = AGENT_DIR / "runtime" / "events" / "events.jsonl"
 
 
+def _restore_motor_bus_if_changed(
+    events_file: Path,
+    before: bytes | None,
+) -> bool:
+    """Restore a mutated motor bus snapshot and report whether it changed."""
+    after = events_file.read_bytes() if events_file.exists() else None
+    if before == after:
+        return False
+    if before is None:
+        events_file.unlink(missing_ok=True)
+    else:
+        events_file.parent.mkdir(parents=True, exist_ok=True)
+        events_file.write_bytes(before)
+    return True
+
+
+def _enforce_motor_bus_isolation(
+    events_file: Path,
+    before: bytes | None,
+    nodeid: str,
+) -> None:
+    """Restore a leaked motor bus and fail with the contaminating test id."""
+    if _restore_motor_bus_if_changed(events_file, before):
+        pytest.fail(
+            "Test mutated the real motor event bus and was isolated: "
+            f"{nodeid}. Patch agent_controller.event_bus or "
+            "runtime.project_root to a temporary bus.",
+            pytrace=False,
+        )
+
+
+@pytest.fixture
+def motor_bus_isolation_guard():
+    """Expose the exact isolation enforcement function for barrier tests."""
+    return _enforce_motor_bus_isolation
+
+
 @pytest.fixture(autouse=True)
-def _isolate_controller_event_bus() -> None:
+def _isolate_controller_event_bus(request: pytest.FixtureRequest) -> None:
     """Barrier (WOT-2026-007f review): isolate the agent_controller event bus.
 
     Closes two leaks that share the same root cause (an unmanaged module-level
@@ -145,8 +182,9 @@ def _isolate_controller_event_bus() -> None:
       2. The controller resolves its bus path from ``runtime.project_root``
          (the real motor) regardless of a test patching
          ``agent_controller.PROJECT_ROOT``. Controller tests can therefore write
-         events into the REAL motor ``events.jsonl``. Snapshot that file and
-         restore it after each test so the suite never leaves the motor dirty.
+         events into the REAL motor ``events.jsonl``. Snapshot that file,
+         restore it after each test, and fail the contaminating test so the leak
+         cannot hide behind a green suite.
 
     Verified barrier: with this fixture active, a full suite run leaves
     ``git status`` clean on ``.agent/runtime/events/events.jsonl``.
@@ -162,11 +200,8 @@ def _isolate_controller_event_bus() -> None:
         ac = sys.modules.get("agent_controller")
         if ac is not None:
             ac.event_bus = None
-        after = _MOTOR_EVENTS_FILE.read_bytes() if _MOTOR_EVENTS_FILE.exists() else None
-        if before != after:
-            # A test mutated the real motor bus: restore so the motor stays clean.
-            if before is None:
-                _MOTOR_EVENTS_FILE.unlink(missing_ok=True)
-            else:
-                _MOTOR_EVENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-                _MOTOR_EVENTS_FILE.write_bytes(before)
+        _enforce_motor_bus_isolation(
+            _MOTOR_EVENTS_FILE,
+            before,
+            request.node.nodeid,
+        )
