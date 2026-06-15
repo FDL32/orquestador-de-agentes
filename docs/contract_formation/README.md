@@ -32,9 +32,11 @@ del motor):
 | [`templates/evidence_catalog.md`](templates/evidence_catalog.md) | `.agent/planning/evidence_catalog.md` |
 | [`templates/ticket_contract.md`](templates/ticket_contract.md) | bloque en `.agent/planning/ticket_contracts.md` |
 | [`templates/contract_gap.md`](templates/contract_gap.md) | `.agent/planning/contract_gaps/CG-<TICKET_ID>.md` |
+| [`templates/plan_graph.md`](templates/plan_graph.md) | `.agent/planning/plan_graph.md` |
 
-`decisions.md` (cola de `DEC-*`) y `plan_graph.md` siguen el schema del prompt
-(secciones 6 y 7). Plantillas dedicadas: ampliacion en `WOT-2026-007d/007e`.
+`decisions.md` (cola de `DEC-*`) sigue el schema del prompt (seccion 6).
+`plan_graph.md` tiene plantilla dedicada (endurecida en `WOT-2026-007e`):
+Impact Simulation obligatoria, `paralelizable: yes/no/after` y Merge Regression Audit.
 
 ## Principios no negociables
 

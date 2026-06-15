@@ -157,7 +157,14 @@ Regla: solo paralelizar planes con superficies e interfaces disjuntas o con
 dependencias compartidas estabilizadas por contrato. Si no se puede probar
 independencia, degradar a `requires_serialization` (no asumir paralelo).
 Cada ticket derivado recibe `Forbidden Surfaces` calculables desde el plan.
-(El endurecimiento mecanico de paralelismo es `WOT-2026-007e`.)
+`Paralelizable` solo admite `yes` | `no` | `after PLAN-00x` (WOT-2026-007e).
+
+**Merge Regression Audit (WOT-2026-007e):** antes de integrar dos planes que
+tocaron superficies vecinas o `shared_dependencies`, ejecuta una auditoria
+transversal de regresion sobre la **union** (no plan por plan): revalida los
+invariantes cross-plan y corre los gates sobre el merge. Si falla, el
+paralelismo era ilegitimo: re-clasifica a `requires_serialization` y abre
+`CONTRACT_GAP`. Plantilla dedicada: `docs/contract_formation/templates/plan_graph.md`.
 
 ## 8. Handoff a ejecucion (contrato con orchestrator_pipeline.md)
 
