@@ -388,27 +388,45 @@ class EventBus:
             - ticket_id must be a non-empty string identifying the blocked ticket.
             - gap_type must be one of: premise_false, forbidden_surface_needed,
               missing_acceptance.
-            - cg_file_path must be the path (relative or absolute) to the
-              CG-<ticket_id>.md file (not its contents).
+            - cg_file_path must be the canonical *relative* path to the CG file,
+              exactly ``contract_gaps/CG-<ticket_id>.md`` (not its contents).
+              Absolute paths and parent traversal (``..``) are rejected so the
+              coherence validator can locate the file deterministically.
 
         During:
             - Validates gap_type against VALID_GAP_TYPES; returns None on invalid.
+            - Validates cg_file_path against the canonical relative form; returns
+              None on any non-canonical value (absolute, traversal, wrong name).
             - Checks event history: if a CONTRACT_GAP event with the same
               ticket_id and gap_type already exists in the bus, returns None
               (reentry guard — prevents spurious duplicates for the same gap).
             - Builds a payload with exactly {ticket_id, gap_type, cg_file_path}
-              and calls the standard emit().
+              (the stored cg_file_path is the normalized canonical form) and
+              calls the standard emit().
 
         After:
             - Returns the EventRecord if the event was written to the bus.
-            - Returns None if gap_type is invalid or if a duplicate was detected
-              by the reentry guard.
+            - Returns None if gap_type or cg_file_path is invalid, or if a
+              duplicate was detected by the reentry guard.
             - The bus remains append-only; this method never removes events.
         """
         if gap_type not in self.VALID_GAP_TYPES:
             print(
                 f"[event_bus] BLOCKED CONTRACT_GAP: invalid gap_type '{gap_type}'. "
                 f"Valid: {sorted(self.VALID_GAP_TYPES)}",
+                file=sys.stderr,
+            )
+            return None
+
+        # Canonical path guard (WOT-2026-007f review): the payload must carry the
+        # canonical relative CG path so the coherence validator can resolve it.
+        # Reject absolute paths, parent traversal, and any non-canonical form.
+        canonical_cg_path = f"contract_gaps/CG-{ticket_id}.md"
+        normalized_cg_path = cg_file_path.replace("\\", "/").strip()
+        if normalized_cg_path != canonical_cg_path:
+            print(
+                f"[event_bus] BLOCKED CONTRACT_GAP: non-canonical cg_file_path "
+                f"'{cg_file_path}'. Expected '{canonical_cg_path}'.",
                 file=sys.stderr,
             )
             return None
@@ -427,7 +445,7 @@ class EventBus:
         payload = {
             "ticket_id": ticket_id,
             "gap_type": gap_type,
-            "cg_file_path": cg_file_path,
+            "cg_file_path": canonical_cg_path,
         }
         return self.emit(
             event_type="CONTRACT_GAP",

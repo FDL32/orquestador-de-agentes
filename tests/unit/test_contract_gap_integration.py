@@ -16,11 +16,23 @@ DoD coverage:
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
 from bus.event_bus import EventBus
 from bus.state_machine import StateMachine, TicketState
+
+
+# agent_controller lives under .agent/ and exposes _validate_contract_gap_coherence,
+# the validator under test. Mirror the sys.path setup used by test_scope_gate.py.
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_AGENT_DIR = _PROJECT_ROOT / ".agent"
+for _p in (str(_PROJECT_ROOT), str(_AGENT_DIR)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+import agent_controller  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -216,6 +228,60 @@ def test_contract_gap_invalid_gap_type_rejected(bus: EventBus) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Test 6b: non-canonical cg_file_path is rejected (payload-path security)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "bad_path",
+    [
+        "C:/abs/CG-T-007F-001.md",  # absolute (windows)
+        "/abs/CG-T-007F-001.md",  # absolute (posix)
+        "../CG-T-007F-001.md",  # parent traversal
+        "contract_gaps/../CG-T-007F-001.md",  # embedded traversal
+        "other/CG-T-007F-001.md",  # wrong directory
+        "contract_gaps/CG-WRONG.md",  # wrong filename for ticket
+        "contract_gaps/CG-T-007F-001.txt",  # wrong extension
+    ],
+    # Explicit, filesystem-safe ids: the raw paths contain ':' and '/' which
+    # break the tmp_path factory's per-node directory name on Windows.
+    ids=[
+        "abs-windows",
+        "abs-posix",
+        "parent-traversal",
+        "embedded-traversal",
+        "wrong-dir",
+        "wrong-filename",
+        "wrong-ext",
+    ],
+)
+def test_contract_gap_rejects_non_canonical_cg_path(
+    bus: EventBus, bad_path: str
+) -> None:
+    """emit_contract_gap must reject any cg_file_path != contract_gaps/CG-<ticket>.md."""
+    result = bus.emit_contract_gap(
+        ticket_id="T-007F-001",
+        gap_type="premise_false",
+        cg_file_path=bad_path,
+    )
+    assert result is None, f"Non-canonical cg_file_path must be rejected: {bad_path}"
+    assert bus.read_events(ticket_id="T-007F-001", event_type="CONTRACT_GAP") == []
+
+
+def test_contract_gap_stores_normalized_canonical_path(bus: EventBus) -> None:
+    """A backslash-variant canonical path is accepted and stored normalized."""
+    result = bus.emit_contract_gap(
+        ticket_id="T-007F-001",
+        gap_type="premise_false",
+        cg_file_path="contract_gaps\\CG-T-007F-001.md",
+    )
+    assert result is not None
+    events = bus.read_events(ticket_id="T-007F-001", event_type="CONTRACT_GAP")
+    assert len(events) == 1
+    assert events[0].payload["cg_file_path"] == "contract_gaps/CG-T-007F-001.md"
+
+
+# ---------------------------------------------------------------------------
 # Test 7: state_projection_sync derives CONTRACT_BLOCKED from CONTRACT_GAP event
 # ---------------------------------------------------------------------------
 
@@ -250,18 +316,32 @@ def test_state_projection_sync_derives_contract_blocked(gap_env) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_validate_coherence_event_without_cg_file(tmp_path: Path) -> None:
-    """--validate must error when CONTRACT_GAP event exists but CG file is absent.
+def _patch_coherence_seams(monkeypatch, agent_dir: Path, bus: EventBus) -> None:
+    """Point _validate_contract_gap_coherence at a tmp agent dir + given bus.
 
-    Tests the coherence rule directly: event present & CG file absent -> error.
+    The validator reads BUS_AVAILABLE, calls _get_event_bus(), and scans
+    get_agent_dir()/planning/contract_gaps/. Patching these three seams makes
+    the test exercise the real validator deterministically.
     """
+    monkeypatch.setattr(agent_controller, "BUS_AVAILABLE", True)
+    monkeypatch.setattr(agent_controller, "_get_event_bus", lambda: bus)
+    monkeypatch.setattr(agent_controller, "get_agent_dir", lambda: agent_dir)
+
+
+def test_validate_coherence_event_without_cg_file(tmp_path: Path, monkeypatch) -> None:
+    """_validate_contract_gap_coherence: bus event present, CG file absent -> error.
+
+    Exercises the REAL validator (not pre-baked booleans): emits a CONTRACT_GAP
+    event into a bus, leaves contract_gaps/ empty, and asserts the validator
+    returns the incoherence error.
+    """
+    ticket_id = "T-007F-CG-A"
     agent_dir = tmp_path / ".agent"
     runtime_dir = agent_dir / "runtime" / "events"
     runtime_dir.mkdir(parents=True)
+    # contract_gaps/ exists but holds no CG file for this ticket.
+    (agent_dir / "planning" / "contract_gaps").mkdir(parents=True)
 
-    ticket_id = "T-007F-CG-TEST"
-
-    # Emit CONTRACT_GAP event into the bus (no CG file)
     local_bus = EventBus(runtime_dir)
     local_bus.emit_contract_gap(
         ticket_id=ticket_id,
@@ -269,20 +349,12 @@ def test_validate_coherence_event_without_cg_file(tmp_path: Path) -> None:
         cg_file_path=f"contract_gaps/CG-{ticket_id}.md",
     )
 
-    # Check coherence surfaces
-    contract_gaps_dir = agent_dir / "planning" / "contract_gaps"
-    cg_file = contract_gaps_dir / f"CG-{ticket_id}.md"
-    has_bus_event = bool(
-        local_bus.read_events(ticket_id=ticket_id, event_type="CONTRACT_GAP")
-    )
-    has_cg_file = cg_file.exists()
+    _patch_coherence_seams(monkeypatch, agent_dir, local_bus)
+    plan_content = f"# Work Plan\n- **ID:** {ticket_id}\n"
+    errors = agent_controller._validate_contract_gap_coherence(plan_content)
 
-    assert has_bus_event is True
-    assert has_cg_file is False
-    # Coherence rule: event present without CG file -> incoherent
-    assert has_bus_event and not has_cg_file, (
-        "Should detect incoherence: event without CG file"
-    )
+    assert len(errors) == 1, f"Expected exactly one coherence error, got: {errors}"
+    assert "not found in contract_gaps" in errors[0]
 
 
 # ---------------------------------------------------------------------------
@@ -290,35 +362,55 @@ def test_validate_coherence_event_without_cg_file(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_validate_coherence_cg_file_without_event(tmp_path: Path) -> None:
-    """--validate must error when CG file exists but no CONTRACT_GAP event in bus."""
+def test_validate_coherence_cg_file_without_event(tmp_path: Path, monkeypatch) -> None:
+    """_validate_contract_gap_coherence: CG file present, bus event absent -> error."""
+    ticket_id = "T-007F-CG-B"
     agent_dir = tmp_path / ".agent"
     runtime_dir = agent_dir / "runtime" / "events"
     runtime_dir.mkdir(parents=True)
-
-    ticket_id = "T-007F-CG-TEST2"
-
-    # Create CG file without any bus event
-    contract_gaps_dir = agent_dir / "planning" / "contract_gaps"
-    contract_gaps_dir.mkdir(parents=True)
-    cg_file = contract_gaps_dir / f"CG-{ticket_id}.md"
-    cg_file.write_text(
+    cg_dir = agent_dir / "planning" / "contract_gaps"
+    cg_dir.mkdir(parents=True)
+    (cg_dir / f"CG-{ticket_id}.md").write_text(
         f"# CG-{ticket_id}\n- **ticket_id:** {ticket_id}\n", encoding="utf-8"
     )
 
-    local_bus = EventBus(runtime_dir)
-    has_bus_event = bool(
-        local_bus.read_events(ticket_id=ticket_id, event_type="CONTRACT_GAP")
-    )
-    has_cg_file = cg_file.exists()
+    empty_bus = EventBus(runtime_dir)  # no events emitted
 
-    assert has_bus_event is False
-    assert has_cg_file is True
-    # Coherence rule: file present, event absent -> error expected
-    coherence_error_expected = has_cg_file and not has_bus_event
-    assert coherence_error_expected is True, (
-        "Should detect incoherence: CG file without event"
+    _patch_coherence_seams(monkeypatch, agent_dir, empty_bus)
+    plan_content = f"# Work Plan\n- **ID:** {ticket_id}\n"
+    errors = agent_controller._validate_contract_gap_coherence(plan_content)
+
+    assert len(errors) == 1, f"Expected exactly one coherence error, got: {errors}"
+    assert "no CONTRACT_GAP event found in bus" in errors[0]
+
+
+# ---------------------------------------------------------------------------
+# Test 9b: _validate_contract_gap_coherence: both present -> no error (boundary)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_coherence_both_present_no_error(tmp_path: Path, monkeypatch) -> None:
+    """Both the bus event and the CG file present -> coherent -> no errors."""
+    ticket_id = "T-007F-CG-OK"
+    agent_dir = tmp_path / ".agent"
+    runtime_dir = agent_dir / "runtime" / "events"
+    runtime_dir.mkdir(parents=True)
+    cg_dir = agent_dir / "planning" / "contract_gaps"
+    cg_dir.mkdir(parents=True)
+    (cg_dir / f"CG-{ticket_id}.md").write_text(f"# CG-{ticket_id}\n", encoding="utf-8")
+
+    local_bus = EventBus(runtime_dir)
+    local_bus.emit_contract_gap(
+        ticket_id=ticket_id,
+        gap_type="missing_acceptance",
+        cg_file_path=f"contract_gaps/CG-{ticket_id}.md",
     )
+
+    _patch_coherence_seams(monkeypatch, agent_dir, local_bus)
+    plan_content = f"# Work Plan\n- **ID:** {ticket_id}\n"
+    errors = agent_controller._validate_contract_gap_coherence(plan_content)
+
+    assert errors == [], f"Coherent state must produce no errors, got: {errors}"
 
 
 # ---------------------------------------------------------------------------
