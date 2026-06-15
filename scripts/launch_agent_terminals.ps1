@@ -864,15 +864,31 @@ function Is-BuilderRunningInProject {
 }
 
 function Stop-ProjectAgentProcesses {
-    param([Parameter(Mandatory)] [string]$ProjectRoot)
+    param(
+        [Parameter(Mandatory)] [string]$ProjectRoot,
+        [switch]$BuilderOnly
+    )
 
     $normalizedRoot = [regex]::Escape((Resolve-Path -LiteralPath $ProjectRoot).Path)
-    $staleProcessPatterns = @(
-        'ticket_supervisor\.py',
-        'manager_review_bridge\.py',
-        'kilo\.exe\s+run\s+--auto',
-        'builder_lock\.txt'
-    )
+    $staleProcessPatterns = if ($BuilderOnly) {
+        @(
+            'AGENT_BUILDER_TICKET',
+            'AGENT_BUILDER_ROUND',
+            'opencode(?:\.exe)?\s+run\b.*--agent\s+builder',
+            'builder_lock\.txt'
+        )
+    }
+    else {
+        @(
+            'ticket_supervisor\.py',
+            'manager_review_bridge\.py',
+            'kilo\.exe\s+run\s+--auto',
+            'AGENT_BUILDER_TICKET',
+            'AGENT_BUILDER_ROUND',
+            'opencode(?:\.exe)?\s+run\b.*--agent\s+builder',
+            'builder_lock\.txt'
+        )
+    }
 
     $staleProcesses = @()
     try {
@@ -886,17 +902,45 @@ function Stop-ProjectAgentProcesses {
     }
     catch {
         Write-Warning "No se pudieron inspeccionar procesos viejos del proyecto; se continuara sin esa limpieza. Detalle: $($_.Exception.Message)"
-        return
+        return [pscustomobject]@{
+            ProcessesStopped = 0
+            BuilderLockRemoved = $false
+            BuilderSessionRemoved = $false
+        }
     }
 
+    $stoppedCount = 0
     foreach ($process in $staleProcesses) {
         try {
             Write-Warning "Cerrando sesion vieja del proyecto: PID $($process.ProcessId) -> $($process.Name)"
             Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
+            $stoppedCount += 1
         }
         catch {
             Write-Warning "No se pudo cerrar el proceso $($process.ProcessId): $($_.Exception.Message)"
         }
+    }
+
+    $builderLockRemoved = $false
+    $builderSessionRemoved = $false
+    if ($BuilderOnly -and $stoppedCount -gt 0) {
+        $builderLockPath = Join-Path $ProjectRoot '.agent\runtime\builder_lock.txt'
+        if (Test-Path -LiteralPath $builderLockPath) {
+            Remove-Item -LiteralPath $builderLockPath -Force -ErrorAction SilentlyContinue
+            $builderLockRemoved = $true
+        }
+
+        $builderSessionPath = Join-Path $ProjectRoot '.agent\runtime\builder_session.json'
+        if (Test-Path -LiteralPath $builderSessionPath) {
+            Remove-Item -LiteralPath $builderSessionPath -Force -ErrorAction SilentlyContinue
+            $builderSessionRemoved = $true
+        }
+    }
+
+    return [pscustomobject]@{
+        ProcessesStopped = $stoppedCount
+        BuilderLockRemoved = $builderLockRemoved
+        BuilderSessionRemoved = $builderSessionRemoved
     }
 }
 
@@ -1689,6 +1733,13 @@ if ($LaunchBuilder) {
     $activeRole = Get-ActiveRole -ProjectRoot $ProjectRoot
     $launchBuilderAnyway = -not [string]::IsNullOrWhiteSpace($BuilderPrompt)
     if ($activeRole -eq 'BUILDER' -or $launchBuilderAnyway) {
+        $builderCleanup = Stop-ProjectAgentProcesses -ProjectRoot $ProjectRoot -BuilderOnly
+        if ($builderCleanup.ProcessesStopped -gt 0) {
+            Write-Host ("Limpieza previa de Builder: procesos cerrados={0}, builder_lock={1}, builder_session={2}" -f `
+                $builderCleanup.ProcessesStopped,
+                $builderCleanup.BuilderLockRemoved,
+                $builderCleanup.BuilderSessionRemoved)
+        }
         $lockPath = Join-Path $ProjectRoot '.agent\runtime\builder_lock.txt'
         Remove-StaleLegacyLock -LockPath $lockPath -MaxAgeSeconds 300 | Out-Null
         if (-not (Is-BuilderRunningInProject -ProjectRoot $ProjectRoot)) {
