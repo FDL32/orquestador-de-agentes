@@ -529,9 +529,11 @@ o `research`, el validate acepta `## Builder` / `## Read/inspect only` /
 `## Manager-only` como superficie canonica de archivos sin emitir warning.
 Si el plan usa `## Files Likely Touched` en su lugar, tambien es valido.
 
-Este gate es fail-closed: ninguna excepcion se documenta en Markdown. Si el
-override es necesario, debe emitirse como evento auditable del bus con owner,
-razon y alcance antes de lanzar Builder.
+Este gate es fail-closed como protocolo de prompt obligatorio (WOT-2026-009a).
+El enforcement runtime (bloqueo mecanico en launcher/supervisor si validate != 0/0)
+queda como follow-up -- ningun ticket actual introduce ese bloqueo automatico todavia.
+Si el override es excepcional y documentado, debe registrarse como evento auditable
+del bus con owner, razon y alcance antes de lanzar Builder.
 
 ## 4. Builder: implementar
 

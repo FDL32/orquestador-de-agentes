@@ -1546,7 +1546,9 @@ def _check_implementation_evidence(plan_id: str) -> list[str]:  # noqa: C901
     # 3. Best-effort: check Files Likely Touched
     try:
         if plan_content:
-            likely_files = parse_files_likely_touched(plan_content)
+            likely_files = parse_files_likely_touched(
+                plan_content, deliverable_type=_read_deliverable_type(plan_content)
+            )
             if likely_files and all_files:
                 likely_basenames = {Path(f).name for f in likely_files}
                 matched = any(
@@ -3491,7 +3493,9 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
     live_files, live_dirs = _build_live_surface_sets(project_root)
 
     # Parse Files Likely Touched (inline, already in this module)
-    files_likely_touched = parse_files_likely_touched(plan_content)
+    files_likely_touched = parse_files_likely_touched(
+        plan_content, deliverable_type=_read_deliverable_type(plan_content)
+    )
 
     # Get changed files and filter out live surfaces
     changed_files = get_changed_files() or set()
