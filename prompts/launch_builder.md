@@ -16,6 +16,21 @@ python <MOTOR_ROOT>/.agent/agent_controller.py --validate --json --project-root 
 Si ese gate no paso 0 errors / 0 warnings, no implementes: reporta
 `PREFLIGHT_FAILED` con el output exacto al Orquestador y detente.
 
+Ademas del `validate`, el Builder DEBE verificar antes de tocar codigo que el
+runtime operativo ya esta bootstrappeado para `{{TICKET_ID}}` en el
+`repo_destino`:
+
+- `work_plan.md` activo apunta a `{{TICKET_ID}}`;
+- la proyeccion activa (`STATE.md`, `TURN.md`, `execution_log.md` cuando
+  aplique) no sigue anclada a un ticket anterior;
+- el bus/proyecciones no describen otro ticket como activo.
+
+Si esa alineacion no existe, no improvises ni "continues igual": reporta
+`RUNTIME_NOT_BOOTSTRAPPED` con evidencia concreta y detente. Evidencia minima:
+contenido literal de `STATE.md` y `TURN.md` en el momento del check, mas la
+ruta del `work_plan.md` activo inspeccionado. Un `validate 0/0` de un ticket
+anterior NO autoriza a implementar `{{TICKET_ID}}`.
+
 ## Rol y limites
 - Implementa solo `{{TICKET_ID}}`.
 - No toques: `{{NON_GOALS_UNA_LINEA}}`.
@@ -77,6 +92,10 @@ Reglas:
 - No crear un segundo gate si el contrato pide unificar uno existente.
 - No relajar gates existentes salvo que el ticket lo pida explicitamente.
 - No mezclar follow-ups ni tickets adyacentes.
+- Si durante la ejecucion detectas que `STATE.md`, `work_plan.md`, `TURN.md` o
+  la proyeccion del ticket activo cambiaron externamente y ya no apuntan a
+  `{{TICKET_ID}}`, detente inmediatamente, reporta `EXTERNAL_STATE_DRIFT` al
+  Orquestador y espera instruccion explicita antes de continuar.
 
 ## Fase 2: Tests
 Anade o ajusta tests en:
@@ -147,6 +166,18 @@ Antes de `mark-ready`:
 - si hay herencia operativa de un ticket anterior en `.agent/collaboration/` del `repo_motor`, limpiala primero en un commit previo separado para que no contamine el scope gate.
 - si `mark-ready` dice que `checkpoint/review-<ticket>` esta `stale` o que esperaba `HEAD`, no uses override: relanza `--pre-handoff` para recrear M3 en el commit actual y luego repite `mark-ready`.
 
+Contrato de handoff canonico:
+
+- No declares `READY_FOR_REVIEW` por narrativa, intuicion o por tener tests verdes.
+- El handoff solo existe cuando `--mark-ready` completa con exito y deja
+  evidencia canonica de `BUILDER_EXIT` + `STATE_CHANGED` hacia
+  `READY_FOR_REVIEW`.
+- Si no puedes emitir esos eventos canonicos desde el flujo actual, no cierres
+  ni maquilles el estado: detente y reporta `HANDOFF_IMPOSSIBLE`.
+- `scripts/reconcile_ticket.py` NO forma parte del cierre normal del Builder.
+  Es una herramienta de recuperacion/reconciliacion para Orquestador o Manager
+  cuando la historia operativa ya quedo desalineada.
+
 Handoff:
 
 ```powershell
@@ -194,6 +225,13 @@ aproximados ni recordados — copia los numeros de la salida de los comandos):
 - Ruff format: `uv run ruff format --check <paths>` -> <salida literal>
 - State-leak: <silencioso | STATE LEAK detectado>
 
+### Bus / handoff
+- Active ticket before: <ticket real observado en proyecciones/bus>
+- `--pre-handoff`: `<comando exacto>` -> <salida literal>
+- `--mark-ready`: `<comando exacto>` -> <salida literal>
+- Events emitted: <BUILDER_EXIT presente/no, STATE_CHANGED presente/no, estado destino>
+- Derived state after: <estado real final observado>
+
 ### Criterios binarios del ticket
 - [x|✗] <cada criterio del work_plan, marcado contra evidencia>
 
@@ -213,6 +251,8 @@ Reglas del informe:
   re-ejecucion o referencia a commit anterior).
 - Si un criterio no se cumple, marcalo con ✗ y explica: el Manager decide,
   no lo ocultes.
+- No reportes `READY_FOR_REVIEW` si el bus/proyecciones no lo confirman con
+  evidencia literal del handoff.
 - **Check de encoding (obligatorio en la seccion Gates):** todo archivo nuevo
   o tocado debe quedar en UTF-8 limpio sin mojibake ni puntuacion tipografica
   (em-dash, comillas curvas: usa `-` y `"` ASCII). Verifica y reporta:

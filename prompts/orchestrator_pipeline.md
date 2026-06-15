@@ -582,9 +582,19 @@ El Builder devuelve un `BUILDER REPORT` con:
 - files changed
 - gates ejecutados
 - exit codes
+- ticket activo antes del handoff
+- salida literal de `--pre-handoff` y `--mark-ready`
+- evidencia de `BUILDER_EXIT` + `STATE_CHANGED -> READY_FOR_REVIEW`
+- estado derivado final observado
 - evidencia `check_motor_pristine.py --check` del motor
 - riesgos residuales
 - cualquier ampliacion de scope
+
+En flujo chat-driven, si el Builder no tiene lectura directa del bus del
+`repo_destino`, debe al menos devolver la salida literal de `--mark-ready` y
+las proyecciones activas observadas. La confirmacion final de eventos en bus
+queda a cargo del Orquestador o del Manager desde el `repo_destino`; no se
+acepta sustituirla por narrativa.
 
 ## 5. Manager: revisar implementacion
 
@@ -676,6 +686,9 @@ Contrato de fallo explicito:
 
 - Si Builder falla, no entrega commit verificable, no emite gates con exit code
   real o no puede ejecutar `--mark-ready`, el pipeline no cierra el ticket.
+- Si Builder detecta `RUNTIME_NOT_BOOTSTRAPPED`, `EXTERNAL_STATE_DRIFT` o no
+  puede demostrar `BUILDER_EXIT` + `STATE_CHANGED`, el pipeline no cierra el
+  ticket y debe volver a bootstrap/alineacion, no a cierre cosmetico.
 - Si Review 1 o Review 2 emite `CHANGES` o `BLOCKED`, el pipeline no cierra el
   ticket.
 - En cualquier fallo, reabrir el ciclo con diagnostico accionable en
