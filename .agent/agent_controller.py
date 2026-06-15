@@ -315,10 +315,13 @@ def _exclude_files() -> set[str]:
     )
 
 
-def parse_files_likely_touched(work_plan_content: str) -> set[str]:
+def parse_files_likely_touched(
+    work_plan_content: str, *, deliverable_type: str = "code"
+) -> set[str]:
     return scope_gate.parse_files_likely_touched(
         work_plan_content,
         project_root=PROJECT_ROOT.resolve(),
+        deliverable_type=deliverable_type,
     )
 
 
@@ -337,11 +340,13 @@ def get_changed_files() -> set[str] | None:
 def check_scope_gate(
     work_plan_content: str, changed_files: set[str] | None, exclude_files: set[str]
 ) -> dict:
+    dt = _read_deliverable_type(work_plan_content)
     return scope_gate.check_scope_gate(
         work_plan_content,
         changed_files,
         exclude_files,
         parse_files_likely_touched_fn=parse_files_likely_touched,
+        deliverable_type=dt,
     )
 
 

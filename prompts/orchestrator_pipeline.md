@@ -510,6 +510,29 @@ Validate:
 Si el plan queda `BLOCKED`, registrar la causa y pasar al siguiente ticket solo
 si no hay dependientes directos que requieran ese ticket.
 
+## 3.b Pre-Builder preflight gate (WOT-2026-009a)
+
+Antes de spawnear Builder, ejecuta el validate en modo equivalente al handoff:
+
+```powershell
+python <MOTOR_ROOT>/.agent/agent_controller.py --validate --json --project-root .
+```
+
+Criterio de aceptacion:
+- `errors: 0` y `warnings: {}` (objeto vacio): Builder puede arrancar.
+- Si hay errors o warnings: **PIPELINE_BLOCKED**. El plan necesita correccion
+  antes de lanzar Builder. No seguir adelante; escalar al Manager con el output
+  exacto del validate.
+
+Nota de scope gate deliverable-aware: para tickets `analysis`, `documentation`
+o `research`, el validate acepta `## Builder` / `## Read/inspect only` /
+`## Manager-only` como superficie canonica de archivos sin emitir warning.
+Si el plan usa `## Files Likely Touched` en su lugar, tambien es valido.
+
+Este gate es fail-closed: ninguna excepcion se documenta en Markdown. Si el
+override es necesario, debe emitirse como evento auditable del bus con owner,
+razon y alcance antes de lanzar Builder.
+
 ## 4. Builder: implementar
 
 Spawnea BUILDER con un prompt compuesto desde:

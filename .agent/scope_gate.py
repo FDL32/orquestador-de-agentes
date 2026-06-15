@@ -54,13 +54,13 @@ def exclude_files(
     return excluded
 
 
-def parse_files_likely_touched(
-    work_plan_content: str, *, project_root: Path
+_DOC_DELIVERABLE_TYPES = frozenset({"analysis", "documentation", "research"})
+
+
+def _extract_section_paths(
+    lines: list[str], heading: str, project_root: Path
 ) -> set[str]:
-    """Parse Files Likely Touched entries and resolve them against project_root."""
-    lines = work_plan_content.split("\n")
-    in_section = False
-    files = set()
+    """Extract resolved paths from a markdown section identified by heading."""
 
     def _looks_like_path_token(token: str) -> bool:
         if not token or " " in token:
@@ -72,9 +72,11 @@ def parse_files_likely_touched(
         basename = token.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
         return "." in basename
 
+    in_section = False
+    files: set[str] = set()
     for line in lines:
         line = line.strip()
-        if "## Files Likely Touched" in line:
+        if f"## {heading}" in line:
             in_section = True
             continue
         if in_section and line.startswith("## "):
@@ -90,6 +92,27 @@ def parse_files_likely_touched(
             if normalized and _looks_like_path_token(normalized):
                 path = (project_root / normalized).resolve()
                 files.add(str(path))
+    return files
+
+
+def parse_files_likely_touched(
+    work_plan_content: str,
+    *,
+    project_root: Path,
+    deliverable_type: str = "code",
+) -> set[str]:
+    """Parse Files Likely Touched entries and resolve them against project_root.
+
+    For analysis/documentation/research tickets that use ``## Builder`` /
+    ``## Read/inspect only`` / ``## Manager-only`` instead of
+    ``## Files Likely Touched``, falls back to parsing the ``## Builder``
+    section so the scope gate receives a real whitelist and does not emit a
+    spurious "No Files Likely Touched" warning.
+    """
+    lines = work_plan_content.split("\n")
+    files = _extract_section_paths(lines, "Files Likely Touched", project_root)
+    if not files and deliverable_type in _DOC_DELIVERABLE_TYPES:
+        files = _extract_section_paths(lines, "Builder", project_root)
     return files
 
 
@@ -166,6 +189,7 @@ def check_scope_gate(
     exclude_files: set[str],
     *,
     parse_files_likely_touched_fn,
+    deliverable_type: str = "code",
 ) -> dict:
     """Check if changed files stay within the declared Files Likely Touched scope."""
     if changed_files is None:
@@ -178,7 +202,9 @@ def check_scope_gate(
             "blocked_reason": None,
         }
 
-    whitelist = parse_files_likely_touched_fn(work_plan_content)
+    whitelist = parse_files_likely_touched_fn(
+        work_plan_content, deliverable_type=deliverable_type
+    )
     if not whitelist:
         return {
             "valid": True,

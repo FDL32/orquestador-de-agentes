@@ -5,6 +5,17 @@ Eres el BUILDER del ticket `{{TICKET_ID}}` en el motor `orquestador_de_agentes`.
 Skill canonica: skills/bui-implement-from-plan/SKILL.md
 contract_id: cid-bui-implement-v1
 
+## Preflight (WOT-2026-009a)
+
+El Orquestador debe haber ejecutado el validate preflight antes de llegar aqui:
+
+```powershell
+python <MOTOR_ROOT>/.agent/agent_controller.py --validate --json --project-root <DESTINO>
+```
+
+Si ese gate no paso 0 errors / 0 warnings, no implementes: reporta
+`PREFLIGHT_FAILED` con el output exacto al Orquestador y detente.
+
 ## Rol y limites
 - Implementa solo `{{TICKET_ID}}`.
 - No toques: `{{NON_GOALS_UNA_LINEA}}`.
