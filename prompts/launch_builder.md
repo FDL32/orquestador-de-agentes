@@ -55,8 +55,8 @@ anterior NO autoriza a implementar `{{TICKET_ID}}`.
 ## Tipo de entrega
 Lee `deliverable_type` en `work_plan.md` antes de decidir gates y evidencia.
 
-- Si es `code`, entrega diff/commit productivo del ticket y evidencia de tests,
-  ruff y gates aplicables.
+- Si es `code`, entrega diff/commit productivo del ticket y evidencia de tests
+  focales reales de la superficie tocada, mas los gates aplicables.
 - Si es `mixed`, cumple el contrato de `code` y verifica tambien los artefactos
   documentales declarados.
 - Si es `documentation`, `research` o `analysis`, no fabriques cambios de codigo
@@ -104,6 +104,13 @@ Anade o ajusta tests en:
 
 No crees archivos de test paralelos si el contrato nombra archivos existentes.
 
+Los tests focales deben corresponder a la superficie real tocada, no a una
+aproximacion comoda. Ejemplos:
+- Python runtime/controller -> tests unitarios o de integracion del modulo.
+- PowerShell launcher -> barreras sintacticas/estructurales y tests del script
+  o del supervisor que cubran ese flujo.
+- Markdown/prompts -> no inventes pytest; aplica solo gates documentales.
+
 Tests minimos:
 - Test de regresion: debe fallar sin el fix y pasar con el fix.
 - Verificacion del test de regresion: usa worktree temporal o checkout parcial
@@ -132,6 +139,12 @@ ruff check {{PYTHON_FILES_TOUCHED}}
 uv run ruff format --check {{PYTHON_FILES_TOUCHED}}
 python .agent/agent_controller.py --validate --json --project-root <repo_destino>
 ```
+
+`ruff` y `ruff format` aplican solo si el ticket toca archivos Python. Si el
+ticket toca solo PowerShell, shell, Markdown, prompts u otras superficies no
+Python, no presentes `ruff` como gate principal: registra el gate realmente
+relevante para esa superficie (por ejemplo parser AST de PowerShell, tests del
+launcher o existencia/validate documental).
 
 Si el contrato marca `validate` como `Manager gate`, no lo ejecutes desde el Builder.
 El Manager lo correra desde `repo_destino`.
@@ -199,8 +212,8 @@ aportar diff, commit o evidencia nueva.
 ## Criterio binario de salida
 - `validate --json` devuelve 0 errores y 0 warnings.
 - Los tests focales del ticket pasan.
-- `ruff check` pasa sobre los archivos Python tocados.
-- `uv run ruff format --check` pasa sobre los archivos Python tocados.
+- `ruff check` pasa sobre los archivos Python tocados, cuando aplique.
+- `uv run ruff format --check` pasa sobre los archivos Python tocados, cuando aplique.
 - `pip-audit` pasa cuando aplica por tier o scope.
 - `{{CRITERIOS_ESPECIFICOS_DEL_TICKET}}`
 - El fix no introduce gates paralelos ni relaja gates existentes fuera de
@@ -220,9 +233,9 @@ aproximados ni recordados — copia los numeros de la salida de los comandos):
 - Lineas: <archivo>: <antes> -> <despues> (medido con wc -l, no estimado)
 
 ### Gates (comando exacto + resultado literal)
-- Tests: `python scripts/run_pytest_safe.py` -> <linea final literal, p.ej. "642 passed in 57s">
-- Ruff: `uv run ruff check <paths>` -> <salida literal>
-- Ruff format: `uv run ruff format --check <paths>` -> <salida literal>
+- Tests: `<comando focal real de la superficie tocada>` -> <linea final literal>
+- Ruff: `uv run ruff check <paths>` -> <salida literal, o "no aplica: ticket sin Python tocado">
+- Ruff format: `uv run ruff format --check <paths>` -> <salida literal, o "no aplica: ticket sin Python tocado">
 - State-leak: <silencioso | STATE LEAK detectado>
 
 ### Bus / handoff
