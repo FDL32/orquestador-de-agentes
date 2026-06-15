@@ -148,6 +148,155 @@ class TestValidatePlanGraph:
         assert any("shared_dependencies" in ff for ff in fields)
         f.unlink()
 
+    # ---- WOT-2026-007g: paralelizable strict validation ----
+
+    def test_invalid_paralelizable_free_text_fails(self, tmp_path):
+        """'no -- unico plan' concatenated to the value is rejected."""
+        content = (
+            "## PLAN-001 -- Example\n\n"
+            "## Impact Simulation\n\n"
+            "| Plan | Superficies | Shared deps | Conflicto esperado | Mitigacion | Paralelizable |\n"
+            "|------|-------------|------------|--------------------|-------------|---------------|\n"
+            "| PLAN-001 | a.py | none | ninguno | serializar | no -- unico plan |\n"
+            "\n"
+            "## Merge Regression Audit\n\nN/A\n"
+        )
+        f = tmp_path / "paralelizable_free_text.md"
+        f.write_text(content, encoding="utf-8")
+        res = VResult()
+        validate_plan_graph(str(f), res)
+        assert not res.ok
+        fields = [(e.field_, e.reason) for e in res.errors]
+        assert any("paralelizable" in fld for fld, _ in fields), (
+            "Should report invalid paralelizable value"
+        )
+        reasons = [r for _, r in fields if "paralelizable" in _]
+        assert any("no -- unico plan" in r for r in reasons), (
+            "Error must mention the invalid value"
+        )
+
+    def test_valid_paralelizable_yes_passes(self, tmp_path):
+        content = (
+            "## PLAN-001 -- Example\n\n"
+            "## Impact Simulation\n\n"
+            "| Plan | Superficies | Shared deps | Conflicto esperado | Mitigacion | Paralelizable |\n"
+            "|------|-------------|------------|--------------------|-------------|---------------|\n"
+            "| PLAN-001 | a.py | none | ninguno | serializar | yes |\n"
+            "\n"
+            "## Merge Regression Audit\n\nN/A\n"
+        )
+        f = tmp_path / "paralelizable_yes.md"
+        f.write_text(content, encoding="utf-8")
+        res = VResult()
+        validate_plan_graph(str(f), res)
+        paralelizable_errors = [e for e in res.errors if "paralelizable" in e.field_]
+        assert len(paralelizable_errors) == 0, (
+            f"yes should be valid, got: {paralelizable_errors}"
+        )
+
+    def test_valid_paralelizable_no_passes(self, tmp_path):
+        content = (
+            "## PLAN-001 -- Example\n\n"
+            "## Impact Simulation\n\n"
+            "| Plan | Superficies | Shared deps | Conflicto esperado | Mitigacion | Paralelizable |\n"
+            "|------|-------------|------------|--------------------|-------------|---------------|\n"
+            "| PLAN-001 | a.py | none | ninguno | serializar | no |\n"
+            "\n"
+            "## Merge Regression Audit\n\nN/A\n"
+        )
+        f = tmp_path / "paralelizable_no.md"
+        f.write_text(content, encoding="utf-8")
+        res = VResult()
+        validate_plan_graph(str(f), res)
+        paralelizable_errors = [e for e in res.errors if "paralelizable" in e.field_]
+        assert len(paralelizable_errors) == 0
+
+    def test_valid_paralelizable_after_plan_passes(self, tmp_path):
+        content = (
+            "## PLAN-001 -- Example\n\n"
+            "## PLAN-002 -- Dep\n\n"
+            "## Impact Simulation\n\n"
+            "| Plan | Superficies | Shared deps | Conflicto esperado | Mitigacion | Paralelizable |\n"
+            "|------|-------------|------------|--------------------|-------------|---------------|\n"
+            "| PLAN-001 | a.py | none | ninguno | serializar | yes |\n"
+            "| PLAN-002 | b.py | none | lock conflict | wait | after PLAN-001 |\n"
+            "\n"
+            "## Merge Regression Audit\n\nN/A\n"
+        )
+        f = tmp_path / "paralelizable_after_plan.md"
+        f.write_text(content, encoding="utf-8")
+        res = VResult()
+        validate_plan_graph(str(f), res)
+        paralelizable_errors = [e for e in res.errors if "paralelizable" in e.field_]
+        assert len(paralelizable_errors) == 0, (
+            f"after PLAN-001 should be valid, got: {paralelizable_errors}"
+        )
+
+    def test_valid_paralelizable_after_plan_002_passes(self, tmp_path):
+        content = (
+            "## PLAN-001 -- First\n\n"
+            "## PLAN-002 -- Second\n\n"
+            "## Impact Simulation\n\n"
+            "| Plan | Superficies | Shared deps | Conflicto esperado | Mitigacion | Paralelizable |\n"
+            "|------|-------------|------------|--------------------|-------------|---------------|\n"
+            "| PLAN-001 | a.py | none | ninguno | serializar | yes |\n"
+            "| PLAN-002 | b.py | none | lock conflict | wait | after PLAN-002 |\n"
+            "\n"
+            "## Merge Regression Audit\n\nN/A\n"
+        )
+        f = tmp_path / "paralelizable_after_plan_002.md"
+        f.write_text(content, encoding="utf-8")
+        res = VResult()
+        validate_plan_graph(str(f), res)
+        paralelizable_errors = [e for e in res.errors if "paralelizable" in e.field_]
+        assert len(paralelizable_errors) == 0
+
+    def test_paralelizable_with_parallelism_notes_column_passes(self, tmp_path):
+        """parallelism_notes as a separate column must not interfere with
+        Paralelizable validation (WOT-2026-007g review, MEDIUM blocker)."""
+        content = (
+            "## PLAN-001 -- First\n\n"
+            "## PLAN-002 -- Second\n\n"
+            "## Impact Simulation\n\n"
+            "| Plan | Superficies | Shared deps | Conflicto esperado | Mitigacion | Paralelizable | parallelism_notes |\n"
+            "|------|-------------|------------|--------------------|-------------|---------------|-------------------|\n"
+            "| PLAN-001 | a.py | none | ninguno | serializar | yes | unico plan |\n"
+            "| PLAN-002 | b.py | none | lock conflict | wait | after PLAN-001 | depende de PLAN-001 |\n"
+            "\n"
+            "## Merge Regression Audit\n\nN/A\n"
+        )
+        f = tmp_path / "parallelism_notes_col.md"
+        f.write_text(content, encoding="utf-8")
+        res = VResult()
+        validate_plan_graph(str(f), res)
+        paralelizable_errors = [e for e in res.errors if "paralelizable" in e.field_]
+        assert len(paralelizable_errors) == 0, (
+            f"parallelism_notes column must not cause false positives, "
+            f"got: {paralelizable_errors}"
+        )
+
+    # ---- WOT-2026-007g: Merge Regression Audit ----
+
+    def test_missing_merge_regression_audit_fails(self, tmp_path):
+        content = (
+            "## PLAN-001 -- Example\n\n"
+            "## Impact Simulation\n\n"
+            "| Plan | Superficies | Shared deps | Conflicto esperado | Mitigacion | Paralelizable |\n"
+            "|------|-------------|------------|--------------------|-------------|---------------|\n"
+            "| PLAN-001 | a.py | none | ninguno | serializar | no |\n"
+            "\n"
+            "## Forbidden Surfaces\n\nN/A\n"
+        )
+        f = tmp_path / "no_merge_audit.md"
+        f.write_text(content, encoding="utf-8")
+        res = VResult()
+        validate_plan_graph(str(f), res)
+        assert not res.ok
+        fields = [e.field_ for e in res.errors]
+        assert any("Merge Regression Audit" in ff for ff in fields), (
+            "Should report missing Merge Regression Audit section"
+        )
+
 
 # ===========================================================================
 # ticket_contracts
@@ -394,6 +543,15 @@ class TestCanonicalTemplates:
         text = (TEMPLATES / "contract_gap.md").read_text(encoding="utf-8")
         assert "requested_resolution" in text, (
             "canonical gap template field drifted; validator GAP_REQUIRED must follow"
+        )
+
+    def test_plan_graph_template_passes(self):
+        """The canonical plan_graph template must pass the updated validator
+        (WOT-2026-007g: paralelizable strict values + Merge Regression Audit)."""
+        res = VResult()
+        validate_plan_graph(str(TEMPLATES / "plan_graph.md"), res)
+        assert res.ok, (
+            f"plan_graph template must pass, got {[e.field_ for e in res.errors]}"
         )
 
 

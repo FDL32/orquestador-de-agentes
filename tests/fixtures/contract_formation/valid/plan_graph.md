@@ -15,10 +15,19 @@
 
 | Plan | Superficies | Shared deps | Conflicto esperado | Mitigacion | Paralelizable |
 |------|-------------|------------|--------------------|-------------|---------------|
-| PLAN-001 | service.py, pyproject.toml | pyproject.toml (si proyecto mayor) | Otro plan que toque pyproject.toml al mismo tiempo | Serializar | no -- unico plan |
+| PLAN-001 | service.py, pyproject.toml | pyproject.toml (si proyecto mayor) | Otro plan que toque pyproject.toml al mismo tiempo | Serializar | no |
 
 Colision detectada: si existiera PLAN-002 tocando pyproject.toml,
 habria conflicto de lock. Decision: serializar.
+
+---
+
+## Merge Regression Audit
+
+No aplica con un unico plan. Si se anadiera PLAN-002 sobre pyproject.toml,
+antes de integrar ambos: revalidar que el lock resuelve sin conflicto y
+correr la suite sobre la union, no por plan. Si falla, re-clasificar a
+requires_serialization y abrir CONTRACT_GAP.
 
 ---
 

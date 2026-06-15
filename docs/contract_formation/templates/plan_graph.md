@@ -21,7 +21,7 @@ Tabla obligatoria, salida auditable (no relato). Una fila por plan:
 
 | Plan | Superficies | Shared deps | Conflicto esperado | Mitigacion | Paralelizable |
 |------|-------------|-------------|--------------------|------------|---------------|
-| PLAN-001 | <archivos/interfaces> | <deps compartidas> | <colision concreta> | <como se evita> | yes / no / after PLAN-00x |
+| PLAN-001 | <archivos/interfaces> | <deps compartidas> | <colision concreta> | <como se evita> | yes |
 
 Reglas mecanicas:
 

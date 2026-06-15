@@ -15,7 +15,7 @@
 
 | Plan | Superficies | Shared deps | Conflicto esperado | Mitigacion | Paralelizable |
 |------|-------------|------------|--------------------|-------------|---------------|
-| PLAN-001 | service.py, pyproject.toml | pyproject.toml (si proyecto mayor) | Otro plan que toque pyproject.toml al mismo tiempo | Serializar | no -- unico plan |
+| PLAN-001 | service.py, pyproject.toml | pyproject.toml (si proyecto mayor) | Otro plan que toque pyproject.toml al mismo tiempo | Serializar | no |
 
 Colision detectada: si existiera PLAN-002 tocando pyproject.toml,
 habria conflicto de lock. Paralelizable = no (unico plan); un futuro

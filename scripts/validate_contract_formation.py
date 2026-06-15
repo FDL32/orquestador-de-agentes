@@ -128,6 +128,56 @@ def validate_repo_charter(fp: str, res: VResult) -> None:
         res.add(fp, "Non-Goals", "Seccion Non-Goals vacia o insuficiente (< 20 chars)")
 
 
+VALID_PARALELIZABLE_RE = re.compile(r"^\s*(yes|no|after\s+PLAN-\d+)\s*$", re.IGNORECASE)
+
+TABLE_PLAN_ROW_RE = re.compile(r"^\|\s*PLAN-\d+.*\|$", re.IGNORECASE | re.MULTILINE)
+
+
+def _find_paralelizable_column_index(impact_body: str) -> int | None:
+    """Parse the Impact Simulation table header and return the column index
+    whose header label matches 'paralelizable' (case-insensitive).
+
+    Returns None if no matching header column is found.
+    """
+    for line in impact_body.split("\n"):
+        ls = line.strip()
+        if ls.startswith("|") and not ls.startswith("|-"):
+            cells = [c.strip().lower() for c in ls.split("|")[1:-1]]
+            for i, cell in enumerate(cells):
+                if "paralelizable" in cell:
+                    return i
+    return None
+
+
+def _validate_paralelizable_values(fp: str, impact_body: str, res: VResult) -> None:
+    """Validate strict paralelizable values in Impact Simulation table rows.
+
+    Locates the Paralelizable column by header name (not position) and
+    validates each data row's value against the strict regex.
+    """
+    col_index = _find_paralelizable_column_index(impact_body)
+    if col_index is None:
+        # Column not found by header; the column-name existence check in
+        # validate_plan_graph will catch missing "paralelizable".
+        return
+    for line in impact_body.split("\n"):
+        ls = line.strip()
+        if TABLE_PLAN_ROW_RE.match(ls):
+            cells = [c.strip() for c in ls.split("|")]
+            # cells[0] is empty (before first |), cells[-1] is empty (after last |)
+            real_cells = cells[1:-1]
+            if col_index < len(real_cells):
+                paralelizable_val = real_cells[col_index]
+                pid = real_cells[0]
+                if not VALID_PARALELIZABLE_RE.match(paralelizable_val):
+                    res.add(
+                        fp,
+                        f"Impact Simulation:{pid}:paralelizable",
+                        f"Valor de paralelizable invalido: '{paralelizable_val}'. "
+                        "Valores permitidos: yes, no, after PLAN-00x",
+                    )
+
+
 def validate_plan_graph(fp: str, res: VResult) -> None:
     content = Path(fp).read_text(encoding="utf-8")
     if not re.findall(r"##\s+PLAN-\d+", content):
@@ -152,9 +202,18 @@ def validate_plan_graph(fp: str, res: VResult) -> None:
                     f"Impact Simulation:{col}",
                     f"Columna '{col}' ausente en tabla Impact Simulation",
                 )
+        # --- Strict paralelizable value validation ---
+        impact_full = impact_m.group(1) if impact_m else ""
+        _validate_paralelizable_values(fp, impact_full, res)
     if "forbidden surfaces" not in content.lower():
         res.add(
             fp, "Forbidden Surfaces", "Seccion Forbidden Surfaces ausente en plan_graph"
+        )
+    if "merge regression audit" not in content.lower():
+        res.add(
+            fp,
+            "Merge Regression Audit",
+            "Seccion Merge Regression Audit ausente (obligatoria en plan_graph)",
         )
     for pm in re.finditer(r"##\s+(PLAN-\d+)(.*?)(?=\n##|\Z)", content, re.DOTALL):
         pid, pbody = pm.group(1), pm.group(2)
