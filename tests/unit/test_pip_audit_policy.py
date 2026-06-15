@@ -73,3 +73,54 @@ def test_should_run_pip_audit_with_uv_lock(tmp_path):
     run_audit, reason = should_run_pip_audit(tmp_path)
     assert run_audit is True
     assert "uv.lock" in reason
+
+
+def test_empty_authority_bucket_keeps_conservative_fallback(tmp_path):
+    content = """
+- **delivery_authority:** repo_motor
+
+## Files Likely Touched
+
+### repo_destino
+- `requirements-dev.txt`
+"""
+    _write_work_plan(tmp_path, content)
+    run_audit, reason = should_run_pip_audit(tmp_path)
+    assert run_audit is True
+    assert "No files found" in reason
+
+
+def test_should_run_for_motor_dependency_when_namespaced(tmp_path):
+    content = """
+- **delivery_authority:** repo_motor
+
+## Files Likely Touched
+
+### repo_motor
+- `pyproject.toml`
+
+### repo_destino
+- `.agent/docs/taxonomy.md`
+"""
+    _write_work_plan(tmp_path, content)
+    run_audit, reason = should_run_pip_audit(tmp_path)
+    assert run_audit is True
+    assert "pyproject.toml" in reason
+
+
+def test_should_skip_when_motor_bucket_has_no_dependency_surface(tmp_path):
+    content = """
+- **delivery_authority:** repo_motor
+
+## Files Likely Touched
+
+### repo_motor
+- `scripts/run_gates_dispatch.py`
+
+### repo_destino
+- `requirements-dev.txt`
+"""
+    _write_work_plan(tmp_path, content)
+    run_audit, reason = should_run_pip_audit(tmp_path)
+    assert run_audit is False
+    assert "No dependency manifests found" in reason

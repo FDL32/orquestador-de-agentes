@@ -3,7 +3,18 @@
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
+
+
+_PROJECT_ROOT_BOOTSTRAP = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT_BOOTSTRAP) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT_BOOTSTRAP))
+_AGENT_DIR = _PROJECT_ROOT_BOOTSTRAP / ".agent"
+if str(_AGENT_DIR) not in sys.path:
+    sys.path.insert(0, str(_AGENT_DIR))
+
+import scope_gate  # noqa: E402
 
 
 DEPENDENCY_SURFACE_PATTERNS = [
@@ -18,42 +29,18 @@ DEPENDENCY_SURFACE_PATTERNS = [
 ]
 
 
-def _looks_like_path_token(token: str) -> bool:
-    if not token or " " in token:
-        return False
-    if token.startswith("."):
-        return True
-    if "/" in token or "\\" in token:
-        return True
-    basename = token.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-    return "." in basename
-
-
 def _parse_files_likely_touched(work_plan_content: str) -> set[str]:
-    """Parse Files Likely Touched from work_plan.md."""
-    lines = work_plan_content.split("\n")
-    in_section = False
-    files = set()
+    """Parse productive raw FLT paths from work_plan.md.
 
-    for line in lines:
-        line = line.strip()
-        if "## Files Likely Touched" in line:
-            in_section = True
-            continue
-        if in_section and line.startswith("## "):
-            break  # next section
-        if in_section and line and not line.startswith("---"):
-            # normalize: remove backticks, quotes, bullets, trim
-            normalized = (
-                line.lstrip("*- ")
-                .replace("`", "")
-                .replace('"', "")
-                .replace("'", "")
-                .strip()
-            )
-            if normalized and _looks_like_path_token(normalized):
-                files.add(normalized)
-    return files
+    Delegates to the canonical scope_gate parser and selects only the bucket
+    relevant for the active delivery_authority.
+    """
+    delivery_authority = scope_gate.read_delivery_authority(work_plan_content)
+    return scope_gate.parse_flt_raw_paths(
+        work_plan_content,
+        delivery_authority=delivery_authority,
+        target="authority",
+    )
 
 
 def should_run_pip_audit(project_root: Path | None = None) -> tuple[bool, str]:

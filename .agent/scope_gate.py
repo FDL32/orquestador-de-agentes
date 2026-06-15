@@ -8,6 +8,7 @@ globals.
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -55,6 +56,11 @@ def exclude_files(
 
 
 _DOC_DELIVERABLE_TYPES = frozenset({"analysis", "documentation", "research"})
+_DELIVERY_AUTHORITY_RE = re.compile(
+    r"(?:delivery_authority|repo\s+de\s+autoridad)"
+    r"\**\s*:?\s*\**\s*(`?)(repo_motor|repo_destino)\1",
+    re.IGNORECASE,
+)
 
 
 def _looks_like_path_token(token: str) -> bool:
@@ -70,6 +76,21 @@ def _looks_like_path_token(token: str) -> bool:
 
 def _normalize_flt_line(line: str) -> str:
     return line.lstrip("*- ").replace("`", "").replace('"', "").replace("'", "").strip()
+
+
+def _normalize_raw_flt_path(path: str) -> str:
+    normalized = path.replace("\\", "/")
+    if normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized
+
+
+def read_delivery_authority(content: str, default: str = "repo_motor") -> str:
+    """Read delivery_authority from markdown metadata or prose."""
+    match = _DELIVERY_AUTHORITY_RE.search(content or "")
+    if not match:
+        return default
+    return match.group(2).strip().lower()
 
 
 def _extract_section_paths(
@@ -154,24 +175,78 @@ def parse_flt_namespaced(
     - Flat lines (no sub-heading) are routed by ``delivery_authority``.
     - Unknown sub-headings are skipped.
     """
+    buckets = parse_flt_raw_buckets(
+        work_plan_content, delivery_authority=delivery_authority
+    )
+    motor_files: set[str] = set()
+    destino_files: set[str] = set()
+
+    for normalized in buckets["motor"]:
+        motor_files.add(str((motor_root / normalized).resolve()))
+    for normalized in buckets["destino"]:
+        destino_files.add(str((project_root / normalized).resolve()))
+
+    return {"motor": motor_files, "destino": destino_files}
+
+
+def parse_flt_raw_buckets(
+    work_plan_content: str, *, delivery_authority: str = "repo_motor"
+) -> dict[str, set[str]]:
+    """Parse FLT into raw normalized path buckets without resolving roots.
+
+    Returns a dict with ``motor`` and ``destino`` keys. Namespace rules match
+    :func:`parse_flt_namespaced`, but paths remain relative and normalized with
+    forward slashes so downstream consumers can choose their own root.
+    """
     lines = work_plan_content.split("\n")
     _, entries = _parse_flt_section(lines)
     motor_files: set[str] = set()
     destino_files: set[str] = set()
 
-    for ns, normalized in entries:
+    for ns, raw_path in entries:
+        normalized = _normalize_raw_flt_path(raw_path)
         if ns == "motor":
-            motor_files.add(str((motor_root / normalized).resolve()))
+            motor_files.add(normalized)
         elif ns == "destino":
-            destino_files.add(str((project_root / normalized).resolve()))
+            destino_files.add(normalized)
         elif ns == "unknown":
-            pass
+            continue
         elif delivery_authority == "repo_destino":
-            destino_files.add(str((project_root / normalized).resolve()))
+            destino_files.add(normalized)
         else:
-            motor_files.add(str((motor_root / normalized).resolve()))
+            motor_files.add(normalized)
 
     return {"motor": motor_files, "destino": destino_files}
+
+
+def parse_flt_raw_paths(
+    work_plan_content: str,
+    *,
+    delivery_authority: str = "repo_motor",
+    target: str = "authority",
+) -> set[str]:
+    """Return raw normalized FLT paths for one target view.
+
+    ``target`` may be:
+    - ``"authority"``: bucket for the productive repo declared by
+      ``delivery_authority``.
+    - ``"motor"`` / ``"destino"``: explicit bucket.
+    - ``"all"``: union of both buckets.
+    """
+    buckets = parse_flt_raw_buckets(
+        work_plan_content, delivery_authority=delivery_authority
+    )
+    if target == "motor":
+        return set(buckets["motor"])
+    if target == "destino":
+        return set(buckets["destino"])
+    if target == "all":
+        return buckets["motor"] | buckets["destino"]
+    if target != "authority":
+        raise ValueError(f"Unknown FLT raw target: {target}")
+    if delivery_authority == "repo_destino":
+        return set(buckets["destino"])
+    return set(buckets["motor"])
 
 
 def parse_files_likely_touched(

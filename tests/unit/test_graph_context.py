@@ -298,6 +298,21 @@ class TestExtractFilesLikelyTouched:
         content = "## Files Likely Touched\n## Next Section\n"
         assert extract_files_likely_touched(content) == set()
 
+    def test_extract_namespaced_union(self) -> None:
+        """Namespaced FLT should include motor and destino raw paths."""
+        content = """- **delivery_authority:** repo_motor
+
+## Files Likely Touched
+
+### repo_motor
+- .agent/scope_gate.py
+
+### repo_destino
+- .agent/docs/taxonomy.md
+"""
+        files = extract_files_likely_touched(content)
+        assert files == {".agent/scope_gate.py", ".agent/docs/taxonomy.md"}
+
 
 class TestGetImmediateNeighbors:
     """Tests for get_immediate_neighbors function."""

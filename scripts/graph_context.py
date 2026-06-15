@@ -31,7 +31,11 @@ from typing import Any
 _MOTOR_ROOT_BOOTSTRAP = Path(__file__).resolve().parent.parent
 if str(_MOTOR_ROOT_BOOTSTRAP) not in sys.path:
     sys.path.insert(0, str(_MOTOR_ROOT_BOOTSTRAP))
+_AGENT_DIR = _MOTOR_ROOT_BOOTSTRAP / ".agent"
+if str(_AGENT_DIR) not in sys.path:
+    sys.path.insert(0, str(_AGENT_DIR))
 
+import scope_gate  # noqa: E402
 from bus.ticket_id import TICKET_ID_PATTERN  # noqa: E402
 
 
@@ -190,24 +194,12 @@ def extract_files_likely_touched(work_plan_content: str) -> set[str]:
     During: Finds the section and extracts file paths.
     After: Returns set of file paths or empty set if section not found.
     """
-    lines = work_plan_content.split("\n")
-    in_section = False
-    files = set()
-
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("## Files Likely Touched"):
-            in_section = True
-            continue
-        if in_section:
-            if stripped.startswith("## "):
-                break
-            if stripped.startswith("- "):
-                file_path = stripped[2:].strip().strip("`")
-                if file_path and not file_path.startswith("#"):
-                    files.add(file_path)
-
-    return files
+    delivery_authority = scope_gate.read_delivery_authority(work_plan_content)
+    return scope_gate.parse_flt_raw_paths(
+        work_plan_content,
+        delivery_authority=delivery_authority,
+        target="all",
+    )
 
 
 def get_immediate_neighbors(graph: dict[str, Any], target_files: set[str]) -> set[str]:

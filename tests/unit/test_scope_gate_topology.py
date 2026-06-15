@@ -177,6 +177,37 @@ def test_unknown_namespace_lines_ignored():
 
 
 # ---------------------------------------------------------------------------
+# parse_flt_raw_paths / parse_flt_raw_buckets tests
+# ---------------------------------------------------------------------------
+
+
+def test_raw_buckets_keep_namespaces_separate():
+    result = scope_gate.parse_flt_raw_buckets(
+        _NAMESPACED_BOTH, delivery_authority="repo_motor"
+    )
+    assert result["motor"] == {".agent/scope_gate.py"}
+    assert result["destino"] == {".agent/docs/foo.md"}
+
+
+def test_raw_paths_authority_target_uses_delivery_authority():
+    result = scope_gate.parse_flt_raw_paths(
+        _FLAT_DESTINO_AUTH,
+        delivery_authority="repo_destino",
+        target="authority",
+    )
+    assert result == {".agent/docs/foo.md"}
+
+
+def test_raw_paths_all_target_returns_union():
+    result = scope_gate.parse_flt_raw_paths(
+        _NAMESPACED_BOTH,
+        delivery_authority="repo_motor",
+        target="all",
+    )
+    assert result == {".agent/scope_gate.py", ".agent/docs/foo.md"}
+
+
+# ---------------------------------------------------------------------------
 # parse_raw_flt_paths (motor_checkpoint) namespace-aware tests
 # ---------------------------------------------------------------------------
 

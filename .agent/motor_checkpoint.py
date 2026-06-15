@@ -20,6 +20,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import scope_gate
+
 
 # Global noqa for subprocess lint rules - all calls use hardcoded command lists
 # ruff: noqa: S603,S607
@@ -127,7 +129,7 @@ def path_is_under(child: Path, parent: Path) -> bool:
         return False
 
 
-def parse_raw_flt_paths(plan_content: str) -> set[str]:  # noqa: C901
+def parse_raw_flt_paths(plan_content: str) -> set[str]:
     """Parse Files Likely Touched returning motor-relative paths with /.
 
     Unlike parse_files_likely_touched(), this function does NOT resolve paths
@@ -143,57 +145,11 @@ def parse_raw_flt_paths(plan_content: str) -> set[str]:  # noqa: C901
     During: Scans lines, tracks sub-heading namespace, normalizes paths.
     After: Returns set of motor-relative paths with forward slashes.
     """
-    lines = plan_content.split("\n")
-    in_section = False
-    paths: set[str] = set()
-    current_ns: str | None = None  # None = flat
-
-    def _looks_like_path_token(token: str) -> bool:
-        if not token or " " in token:
-            return False
-        if token.startswith("."):
-            return True
-        if "/" in token or "\\" in token:
-            return True
-        basename = token.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-        return "." in basename
-
-    for line in lines:
-        stripped = line.strip()
-        if "## Files Likely Touched" in stripped and stripped.startswith("## "):
-            in_section = True
-            current_ns = None
-            continue
-        if (
-            in_section
-            and stripped.startswith("## ")
-            and not stripped.startswith("### ")
-        ):
-            break
-        if not in_section:
-            continue
-        if stripped.startswith("### "):
-            heading = stripped[4:].strip().lower()
-            current_ns = heading  # "repo_motor", "repo_destino", or other
-            continue
-        if not stripped or stripped.startswith("---"):
-            continue
-        # Skip lines under ### repo_destino or unknown sub-headings
-        if current_ns is not None and current_ns != "repo_motor":
-            continue
-        normalized = (
-            stripped.lstrip("*- ")
-            .replace("`", "")
-            .replace('"', "")
-            .replace("'", "")
-            .strip()
-        )
-        if normalized and _looks_like_path_token(normalized):
-            p = normalized.replace("\\", "/")
-            if p.startswith("./"):
-                p = p[2:]
-            paths.add(p)
-    return paths
+    return scope_gate.parse_flt_raw_paths(
+        plan_content,
+        delivery_authority="repo_motor",
+        target="motor",
+    )
 
 
 def resolve_motor_checkpoint_files(
