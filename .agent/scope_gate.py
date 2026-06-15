@@ -262,6 +262,63 @@ def get_changed_files(
         return None
 
 
+def check_cross_root_contamination(
+    *,
+    other_root: Path,
+    other_exclude: set[str],
+    run_fn=subprocess.run,
+) -> dict[str, set[str]]:
+    """Return productive vs operational files found in the non-authority root.
+
+    Before: other_root is a directory; it does not need to be a git repo when
+        run_fn is injected (useful for tests).
+    During: runs git status --porcelain -z in other_root directly; splits
+        results by other_exclude into operational (excluded, OK) vs productive
+        (not excluded, contamination).
+    After: returns {"productive": set[str], "operational": set[str]} with
+        absolute paths. Empty sets if git unavailable or no changes.
+    """
+    try:
+        result = run_fn(
+            ["git", "status", "--porcelain", "-z"],
+            capture_output=True,
+            text=True,
+            cwd=other_root,
+        )
+    except FileNotFoundError:
+        return {"productive": set(), "operational": set()}
+    if result.returncode != 0 or not result.stdout:
+        return {"productive": set(), "operational": set()}
+    changed: set[str] = set()
+    entries = result.stdout.split("\0")
+    index = 0
+    while index < len(entries):
+        entry = entries[index]
+        if not entry:
+            index += 1
+            continue
+        if len(entry) >= 3:
+            status = entry[:2]
+            path = entry[3:] if entry[2] == " " else entry[2:]
+            if status[0] == "R" and index + 1 < len(entries):
+                new_path = entries[index + 1]
+                if new_path:
+                    changed.add(new_path)
+                index += 2
+                continue
+            changed.add(path)
+        index += 1
+    productive: set[str] = set()
+    operational: set[str] = set()
+    for rel in changed:
+        abs_path = str((other_root / rel).resolve())
+        if abs_path in other_exclude:
+            operational.add(abs_path)
+        else:
+            productive.add(abs_path)
+    return {"productive": productive, "operational": operational}
+
+
 def check_scope_gate(
     work_plan_content: str,
     changed_files: set[str] | None,

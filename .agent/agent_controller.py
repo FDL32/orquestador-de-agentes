@@ -377,6 +377,37 @@ def get_changed_files() -> set[str] | None:
     )
 
 
+def _check_cross_root_contamination(
+    delivery_authority: str,
+) -> dict[str, set[str]]:
+    """Check for productive files in the non-authority root.
+
+    WOT-2026-009c: reciprocal isolation guard (observability layer in validate).
+    For repo_motor tickets: inspects repo_destino for productive changes.
+    For repo_destino tickets: inspects repo_motor for productive changes.
+    Returns {"productive": set[str], "operational": set[str]}.
+    """
+    if delivery_authority == "repo_motor":
+        other_root = PROJECT_ROOT.resolve()
+        other_exclude = _exclude_files()
+    else:
+        if not (_MOTOR_ROOT / ".git").exists():
+            return {"productive": set(), "operational": set()}
+        other_root = _MOTOR_ROOT.resolve()
+        collab = other_root / ".agent" / "collaboration"
+        agent_dir = other_root / ".agent"
+        context_dir = agent_dir / "context"
+        other_exclude = scope_gate.exclude_files(
+            collab_dir=collab,
+            agent_dir=agent_dir,
+            context_dir=context_dir,
+        )
+    return scope_gate.check_cross_root_contamination(
+        other_root=other_root,
+        other_exclude=other_exclude,
+    )
+
+
 def check_scope_gate(
     work_plan_content: str, changed_files: set[str] | None, exclude_files: set[str]
 ) -> dict:
@@ -3903,6 +3934,10 @@ def _check_scope_for_validate(
     For repo_destino tickets, validates destino diff against FLT destino paths.
     Only emits warnings when there are actual scope violations; a clean motor
     gate produces no warnings.
+
+    WOT-2026-009c: Adds reciprocal isolation check. After the authority-side
+    gate, inspects the non-authority root for productive (non-operational)
+    changes and emits contaminacion_productiva warnings if found.
     """
     errors, warnings = [], []
     if "READY_FOR_REVIEW" not in log_status:
@@ -3949,6 +3984,15 @@ def _check_scope_for_validate(
                 [f"Out of scope: {f}" for f in sorted(gate_result["out_of_scope"])]
             )
         warnings.extend([f"Warning: {w}" for w in gate_result["warnings"]])
+
+    # WOT-2026-009c: reciprocal isolation — inspect non-authority root
+    cross = _check_cross_root_contamination(da)
+    if cross["productive"]:
+        other = "repo_destino" if da == "repo_motor" else "repo_motor"
+        warnings.extend(
+            f"contaminacion_productiva ({other}): {f}"
+            for f in sorted(cross["productive"])
+        )
 
     return errors, warnings
 

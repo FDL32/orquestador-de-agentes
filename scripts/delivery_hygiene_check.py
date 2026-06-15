@@ -310,16 +310,111 @@ def check_git_tree_clean(project_root: Path) -> HygieneResult:
     )
 
 
+def check_cross_root_isolation(
+    project_root: Path,
+    motor_root: Path,
+    delivery_authority: str,
+) -> HygieneResult:
+    """Verify no productive files exist in the non-authority root.
+
+    WOT-2026-009c: reciprocal isolation guard for delivery hygiene.
+
+    Before: both project_root and motor_root must be valid directories.
+    During: imports scope_gate from motor .agent/; runs check_cross_root_contamination
+        on the non-authority root; filters with that root's operational exclude set.
+    After: returns HygieneResult.passed=False if productive (non-operational)
+        files found in non-authority root. Operational files are reported but
+        do not cause failure.
+    """
+    try:
+        agent_dir = motor_root / ".agent"
+        if str(agent_dir) not in sys.path:
+            sys.path.insert(0, str(agent_dir))
+        import scope_gate as sg
+    except ImportError:
+        return HygieneResult(
+            passed=True,
+            message="Aislamiento reciproco: scope_gate no importable (skip)",
+        )
+
+    if delivery_authority == "repo_motor":
+        other_root = project_root.resolve()
+    else:
+        other_root = motor_root.resolve()
+
+    collab = other_root / ".agent" / "collaboration"
+    agent_d = other_root / ".agent"
+    context_d = agent_d / "context"
+    try:
+        other_exclude = sg.exclude_files(
+            collab_dir=collab,
+            agent_dir=agent_d,
+            context_dir=context_d,
+        )
+    except Exception:
+        other_exclude = set()
+
+    cross = sg.check_cross_root_contamination(
+        other_root=other_root,
+        other_exclude=other_exclude,
+    )
+
+    other_name = "repo_destino" if delivery_authority == "repo_motor" else "repo_motor"
+
+    if cross["productive"]:
+        return HygieneResult(
+            passed=False,
+            message=f"CONTAMINACION PRODUCTIVA EN {other_name.upper()}",
+            details=[
+                f"contaminacion_productiva: {f}" for f in sorted(cross["productive"])
+            ],
+        )
+
+    details = None
+    if cross["operational"]:
+        details = [
+            f"excluded_operational (OK): {f}" for f in sorted(cross["operational"])
+        ]
+    return HygieneResult(
+        passed=True,
+        message=f"Aislamiento reciproco OK (sin contaminacion en {other_name})",
+        details=details,
+    )
+
+
+def _read_delivery_authority(project_root: Path) -> str:
+    """Read delivery_authority from work_plan.md in project_root."""
+    import re
+
+    wp = project_root / ".agent" / "collaboration" / "work_plan.md"
+    if not wp.exists():
+        return "repo_motor"
+    try:
+        content = wp.read_text(encoding="utf-8")
+    except OSError:
+        return "repo_motor"
+    if re.search(
+        r"delivery_authority\s*:?\**\s*(?:repo_destino|destino)",
+        content,
+        re.IGNORECASE,
+    ):
+        return "repo_destino"
+    return "repo_motor"
+
+
 def run_delivery_hygiene_check(  # noqa: C901
     project_root: Path | None = None,
     *,
     check_tree: bool = True,
+    motor_root: Path | None = None,
 ) -> int:
     """Ejecuta todas las verificaciones de higiene de entrega.
 
     Args:
         project_root: Raiz del proyecto. Si None, usa el directorio actual.
         check_tree: Si True, verifica que el arbol Git este limpio.
+        motor_root: Motor root para check de aislamiento reciproco (WOT-2026-009c).
+            Si None, omite el check de contaminacion cruzada.
 
     Returns:
         Exit code: 0 si todas las verificaciones pasan, 1 si alguna falla.
@@ -351,6 +446,14 @@ def run_delivery_hygiene_check(  # noqa: C901
     # Verificacion 3: arbol limpio (opcional, puede desactivarse)
     if check_tree:
         result = check_git_tree_clean(project_root)
+        results.append(result)
+        if not result.passed:
+            all_passed = False
+
+    # Verificacion 4: aislamiento reciproco motor/destino (WOT-2026-009c)
+    if motor_root is not None and motor_root.resolve() != project_root.resolve():
+        da = _read_delivery_authority(project_root)
+        result = check_cross_root_isolation(project_root, motor_root, da)
         results.append(result)
         if not result.passed:
             all_passed = False
@@ -395,12 +498,19 @@ def main() -> int:
         action="store_true",
         help="Omitir verificacion de arbol limpio (solo config)",
     )
+    parser.add_argument(
+        "--motor-root",
+        type=Path,
+        default=None,
+        help="Motor root para check de aislamiento reciproco (WOT-2026-009c)",
+    )
 
     args = parser.parse_args()
 
     return run_delivery_hygiene_check(
         project_root=args.project_root,
         check_tree=not args.no_tree_check,
+        motor_root=args.motor_root,
     )
 
 

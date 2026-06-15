@@ -393,6 +393,10 @@ def run_guard(
             - dirty_files: list[str] (archivos que ensucian el arbol)
             - scope_discrepancy: list[str] (archivos fuera de scope, no bloqueante)
             - checkpoint_tag: str | None (tag del checkpoint M3 si existe)
+            - cross_root_contamination: list[str] (archivos productivos en repo
+              contrario; bloquea si no vacio) [WOT-2026-009c]
+            - excluded_operational: list[str] (archivos operativos en repo
+              contrario; excluidos, informativo) [WOT-2026-009c]
     """
     result = {
         "valid": True,
@@ -403,6 +407,8 @@ def run_guard(
         "scope_discrepancy": [],
         "checkpoint_tag": None,
         "ticket_id": ticket_id,
+        "cross_root_contamination": [],
+        "excluded_operational": [],
     }
 
     # 1. Verificar checkpoint M3 alignment
@@ -480,6 +486,54 @@ def run_guard(
         result["scope_discrepancy"] = sorted(
             str(Path(f).relative_to(project_root)) for f in scope_discrepancy
         )
+
+    # 6. WOT-2026-009c: reciprocal isolation guard — inspect non-authority root.
+    # Bloquea si hay archivos productivos (no-operativos) en el repo contrario.
+    if motor_root is not None and motor_root.resolve() != project_root.resolve():
+        work_plan_path = project_root / ".agent" / "collaboration" / "work_plan.md"
+        if work_plan_path.exists():
+            try:
+                plan_content = work_plan_path.read_text(encoding="utf-8")
+            except OSError:
+                plan_content = ""
+            da = _read_delivery_authority_from_content(plan_content)
+            try:
+                sg = _import_scope_gate()
+                if da == "repo_motor":
+                    other_root = project_root.resolve()
+                    collab = other_root / ".agent" / "collaboration"
+                    agent_d = other_root / ".agent"
+                    context_d = agent_d / "context"
+                    other_exclude = sg.exclude_files(
+                        collab_dir=collab,
+                        agent_dir=agent_d,
+                        context_dir=context_d,
+                    )
+                else:
+                    other_root = motor_root.resolve()
+                    collab = other_root / ".agent" / "collaboration"
+                    agent_d = other_root / ".agent"
+                    context_d = agent_d / "context"
+                    other_exclude = sg.exclude_files(
+                        collab_dir=collab,
+                        agent_dir=agent_d,
+                        context_dir=context_d,
+                    )
+                cross = sg.check_cross_root_contamination(
+                    other_root=other_root,
+                    other_exclude=other_exclude,
+                )
+                if cross["productive"]:
+                    other_name = "repo_destino" if da == "repo_motor" else "repo_motor"
+                    result["valid"] = False
+                    result["cross_root_contamination"] = sorted(
+                        f"contaminacion_productiva ({other_name}): {f}"
+                        for f in cross["productive"]
+                    )
+                if cross["operational"]:
+                    result["excluded_operational"] = sorted(cross["operational"])
+            except (ImportError, Exception):  # noqa: S110
+                pass
 
     return result
 
