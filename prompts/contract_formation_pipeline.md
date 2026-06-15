@@ -190,9 +190,16 @@ ejecucion (la integracion runtime del gap es `WOT-2026-007f`, fuera de v0).
 ## 11. Limites conocidos de v0
 
 - Provisional hasta ratificacion en `WOT-2026-007b`.
-- Sin runtime/tooling automatico: validador de contratos es `WOT-2026-007c`;
-  prompts/skills de auditoria de idea/plan/ticket son `WOT-2026-007d`;
-  plan_graph avanzado es `WOT-2026-007e`; `CONTRACT_GAP` runtime es `WOT-2026-007f`.
+- Validador de contratos: `scripts/validate_contract_formation.py` (WOT-2026-007c,
+  stdlib-only). Valida `repo_charter`, `plan_graph`, `ticket_contracts` y
+  `CONTRACT_GAP` contra el contrato de esta seccion. Uso:
+  `python scripts/validate_contract_formation.py <archivo>...` (autodetecta tipo) o
+  `--charter/--plan/--tickets/--gap <archivo>`. Exit 0 = ok; exit 1 = errores, cada
+  uno con archivo, campo, razon y comando de revalidacion (gate self-service).
+  Fixtures de referencia en `tests/fixtures/contract_formation/{valid,invalid}/`.
+- Pendiente de runtime/tooling automatico: prompts/skills de auditoria de
+  idea/plan/ticket son `WOT-2026-007d`; plan_graph avanzado es `WOT-2026-007e`;
+  `CONTRACT_GAP` runtime es `WOT-2026-007f`.
 - `.agent/planning/` declarado destino-keep en `MANIFEST.workspace` (decision de
   007a). Su persistencia tambien queda protegida por el guard git-tracked del
   instalador (WOT-2026-003d).
