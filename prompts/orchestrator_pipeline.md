@@ -1070,3 +1070,64 @@ ORQUESTADOR
 El orquestador coordina y verifica. Manager y Builder producen artefactos
 separados. El motor aporta prompts, skills y scripts; el destino conserva el
 estado operativo.
+
+## Gate de publicacion pre-push para repo_destino (WOT-2026-009f)
+
+**Regla:** Un commit que modifica `.agent/collaboration/` de un ticket activo
+no se publica a `main` sin que `--validate --json` este limpio (0 errors).
+Un estado `APPROVED` pre-Builder no es publicable a main por defecto.
+
+**Incidente de origen:** `0081fb6` — publico `work_plan.md` en `APPROVED` sin
+alinear `execution_log / TURN / STATE`; CI fallo con
+`DRIFT: plan=APPROVED pero log=COMPLETED`.
+
+### Comando canonico pre-push
+
+```bash
+python <MOTOR_ROOT>/scripts/check_destino_publish_ready.py \
+  --project-root <repo_destino> \
+  --motor-root <repo_motor>
+```
+
+Codigos de salida:
+
+| Exit | Significado | Accion recomendada |
+|------|-------------|--------------------|
+| 0 | validate 0/0 y estado publicable | publicar |
+| 1 | errors > 0 (drift activo) | resolver errores; no publicar |
+| 2 | validate 0/0 pero STATUS=APPROVED (pre-Builder) | esperar a READY_FOR_REVIEW/COMPLETED |
+| 3 | error de configuracion | verificar rutas motor/destino |
+
+### Cuando ejecutar la gate
+
+- **Obligatorio:** antes de `git push origin main` en `repo_destino` cuando
+  el commit toca `.agent/collaboration/`.
+- **Recomendado:** como paso previo en cualquier publicacion de destino,
+  aunque el commit parezca solo documental.
+
+### Semantica de APPROVED publicable vs no-publicable
+
+`APPROVED` significa que el Manager aprobo el plan pero el Builder aun no
+implemento. En ese estado, `execution_log`, `TURN` y `STATE` pueden ser
+incoherentes con el plan recien aprobado. Por tanto:
+
+- **APPROVED no es publicable a main** como estado aislado.
+- Si se necesita checkpoint en APPROVED, usar rama separada o esperar al
+  cierre canonico del ciclo Builder.
+- `READY_FOR_REVIEW` y `COMPLETED` son publicables si validate da 0/0.
+
+### Integracion CI (referencia)
+
+Para enforcar la gate en GitHub Actions, agregar un step al workflow del
+repo_destino:
+
+```yaml
+- name: Gate pre-push destino
+  run: |
+    python _motor/scripts/check_destino_publish_ready.py \
+      --project-root . \
+      --motor-root _motor
+```
+
+`exit 1` falla el job automaticamente. `exit 2` (APPROVED) puede configurarse
+como advertencia con `|| true` si se prefiere no bloquear CI en ese caso.
