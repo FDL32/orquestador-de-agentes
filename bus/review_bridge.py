@@ -46,6 +46,27 @@ from .utils import count_trailing_changes
 OS_NAME = os.name
 ARGV_PROMPT_THRESHOLD = 8000
 
+
+def _resolve_strategy_file(collaboration_dir: Path, ticket_id: str) -> Path | None:
+    """Resolve the strategy artifact for a ticket, canonical first.
+
+    WOT-2026-010a: the canonical strategy artifact is STRATEGY_WOT-<ID>.md.
+    Legacy tickets used PLAN_<prefix>-<ID>.md. Return the first that exists,
+    preferring canonical. Returns None if neither exists.
+
+    Before: collaboration_dir is a directory; ticket_id is a ticket ID string.
+    During: probes STRATEGY_<id>.md then PLAN_<id>.md on disk.
+    After: returns the existing Path, or None.
+    """
+    strategy = collaboration_dir / f"STRATEGY_{ticket_id}.md"
+    if strategy.exists():
+        return strategy
+    legacy = collaboration_dir / f"PLAN_{ticket_id}.md"
+    if legacy.exists():
+        return legacy
+    return None
+
+
 # Re-exported from bus/review_observations.py for backward compatibility.
 MAX_RUBRIC_OBSERVATIONS = review_observations.MAX_RUBRIC_OBSERVATIONS
 MAX_OBSERVATION_SIGNAL_CHARS = review_observations.MAX_OBSERVATION_SIGNAL_CHARS
@@ -389,10 +410,12 @@ class ReviewBridge:
         ]
         ticket_id = self.state_ingest._get_active_ticket_id()
         if ticket_id:
-            plan_file = collaboration_dir / f"PLAN_{ticket_id}.md"
+            # WOT-2026-010a: canonical STRATEGY_WOT-* / AUDIT_WOT-*, with
+            # legacy-compat fallback to PLAN_* for historical tickets.
+            strategy_file = _resolve_strategy_file(collaboration_dir, ticket_id)
             audit_file = collaboration_dir / f"AUDIT_{ticket_id}.md"
-            if plan_file.exists():
-                files.append(plan_file)
+            if strategy_file and strategy_file.exists():
+                files.append(strategy_file)
             if audit_file.exists():
                 files.append(audit_file)
         return [f for f in files if f.exists()]
@@ -1171,8 +1194,14 @@ class ReviewBridge:
             )
         )
 
-        # P4: PLAN + AUDIT opcionales
-        for name in (f"PLAN_{ticket_id}.md", f"AUDIT_{ticket_id}.md"):
+        # P4: STRATEGY + AUDIT opcionales.
+        # WOT-2026-010a: canonical STRATEGY_WOT-* / AUDIT_WOT-*, con fallback
+        # legacy a PLAN_* / AUDIT_WP-* / AUDIT_WT- para tickets historicos.
+        for name in (
+            f"STRATEGY_{ticket_id}.md",  # canonical
+            f"PLAN_{ticket_id}.md",  # legacy-compat
+            f"AUDIT_{ticket_id}.md",
+        ):
             content = self.state_ingest._read_canonical_optional(name)
             if content is not None:
                 sections.append((name, content))
@@ -1287,7 +1316,7 @@ class ReviewBridge:
             "\n--- SYSTEM GENERATED & ARCHIVED ARTIFACTS ---\n"
             "Note: The Manager must treat the following files as system-generated or routinely archived.\n"
             "Deletions, moves to _archive/, or overwrites of these files are expected automated behaviors, not suspicious manual deletions:\n"
-            "- PLAN_WP-*.md, AUDIT_WP-*.md\n"
+            "- STRATEGY_WOT-*.md, AUDIT_WOT-*.md (canonical); PLAN_WP-*.md, PLAN_WT-*.md, AUDIT_WP-*.md, AUDIT_WT-*.md (legacy-compat)\n"
             "- review_queue.md, notifications.md\n"
             "- archive_collaboration_artifacts.py\n"
             "- .session_state.json\n"

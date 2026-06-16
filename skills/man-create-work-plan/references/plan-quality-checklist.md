@@ -27,9 +27,9 @@ Usa esta checklist antes de aprobar cualquier `work_plan.md`. Las preguntas son 
 - [ ] No hay criterios del tipo "observable", "correcto" o "estable" sin una forma concreta de comprobarlos.
 - [ ] Si una fase crea un script invocable, el plan declara flags, exit codes esperados y el comportamiento de `--help` antes de entregarlo.
 - [ ] Si una fase define una secuencia de checks, cada check se clasifica de forma explicita como `bloqueante` o `informativo`.
-- [ ] El `AUDIT_WP` replica exactamente los criterios relevantes del `PLAN_WP`.
-- [ ] El `PLAN_WP` no contiene secciones de verificacion como `## TP Check`, `## Evidencia` o `## Blockers`; esas secciones viven en el `AUDIT_WP`.
-- [ ] El `TP Check` del `AUDIT_WP` usa `TP-01:`..`TP-05:` en formato canonico y no sustituye la verificacion del plan por criterios de diseno del entregable.
+- [ ] El `AUDIT_WOT` replica exactamente los criterios relevantes del `STRATEGY_WOT`.
+- [ ] El `STRATEGY_WOT` no contiene secciones de verificacion como `## TP Check`, `## Evidencia` o `## Blockers`; esas secciones viven en el `AUDIT_WOT`.
+- [ ] El `TP Check` del `AUDIT_WOT` usa `TP-01:`..`TP-05:` en formato canonico y no sustituye la verificacion del plan por criterios de diseno del entregable.
 
 ## TP Check
 

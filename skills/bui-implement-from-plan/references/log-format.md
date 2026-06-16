@@ -14,7 +14,7 @@
 
 ## Metadata
 
-- **Plan ID:** WP-XXX
+- **Plan ID:** WOT-XXX
 
 - **Ejecutado por:** Builder
 

@@ -76,7 +76,7 @@ Estructura obligatoria:
 # Plan de Trabajo: [Título]
 
 ## Metadata
-- **ID:** WP-[YYYY]-[NNN]
+- **ID:** WOT-[YYYY]-[NNN][x]
 - **Estado:** 🟡 IN_PLANNING
 - **deliverable_type:** code | documentation | research | analysis | mixed
 - **Creado:** [FECHA]
@@ -193,7 +193,7 @@ Checklist antes de aprobar:
 - [ ] No hay contradiccion entre `Descripcion` y `Criterios de Aceptacion` de la misma fase; si difieren, reconciliarlos explicitamente antes de aprobar — nunca asumir que uno manda sobre el otro sin corregir el texto
 - [ ] Todo criterio verificable de una fase tiene su comando o accion correspondiente en la seccion `Calidad`; si un criterio de aceptacion no aparece ahi, el Manager puede aprobarlo sin haberlo verificado
 - [ ] Si un comando se usa en dos modos distintos (p.ej. `--dry-run` vs ejecucion real, `--force` vs sin flag), la Descripcion especifica explicitamente cual es la accion de la fase y cual es la comprobacion previa, en ese orden; si el plan usa `--dry-run`, la fase real debe existir como paso separado — dry-run nunca sustituye la ejecucion real ni cuenta como validacion de cierre
-- [ ] Si `work_plan.md` y `PLAN_WP-*.md` coexisten, el resumen corto no puede contradecir al largo en ningun punto operativo (comandos, flags, orden de pasos); si difieren, el largo (work_plan.md) manda y el corto debe regenerarse antes de aprobar
+- [ ] Si `work_plan.md` y `STRATEGY_WOT-*.md` coexisten, el resumen corto no puede contradecir al largo en ningun punto operativo (comandos, flags, orden de pasos); si difieren, el largo (work_plan.md) manda y el corto debe regenerarse antes de aprobar
 - [ ] Si una fase depende de actualizar `PROJECT.md` o `CHANGELOG.md` manualmente, la Descripcion especifica quien lo actualiza (Builder/Manager) y con que criterio o contenido minimo; la ambiguedad aqui produce fases declaradas completas sin que los archivos se hayan tocado
 - [ ] El estado de `STATE.md` y `execution_log.md` debe usar el enum valido del controller para cierre o avance (`APPROVED`, `IN_PROGRESS`, `READY_FOR_REVIEW`, `COMPLETED`, etc.); `IDLE` solo sirve como sentinel de workspace sin ticket activo y no debe usarse para cerrar un ticket del motor
 
@@ -202,7 +202,7 @@ Cambiar estado: `🟡 IN_PLANNING` → `🟢 APPROVED`
 Añadir notificación:
 ```markdown
 ## 📨 [FECHA] Handoff: Manager → Builder
-**Plan:** WP-XXX
+**Plan:** WOT-XXX
 **Acción requerida:** Implementar según work_plan.md
 **Estado:** PENDING
 ```
@@ -211,14 +211,14 @@ Añadir notificación:
 
 Preparar la documentacion para el Builder NO es solo aprobar el work_plan.
 Son SIETE artefactos. Omitir uno deja el ciclo incompleto. Error recurrente:
-olvidar `PLAN_WP-*.md` y `AUDIT_WP-*.md`.
+olvidar `STRATEGY_WOT-*.md` y `AUDIT_WOT-*.md`.
 
 Checklist obligatorio, en orden:
 
-0. `TP Check` en `AUDIT_WP` — verificar contra `../../_shared/ticket-anti-patterns.md` antes de aprobar el `work_plan`.
+0. `TP Check` en `AUDIT_WOT` — verificar contra `../../_shared/ticket-anti-patterns.md` antes de aprobar el `work_plan`.
 1. `work_plan.md` — contenido completo + `Estado: APPROVED`.
-2. `PLAN_WP-XXXX.md` — estrategia tecnica del ticket (en `.agent/collaboration/`).
-3. `AUDIT_WP-XXXX.md` — criterios que el Manager verificara en el review.
+2. `STRATEGY_WOT-XXXX.md` — estrategia tecnica del ticket (en `.agent/collaboration/`).
+3. `AUDIT_WOT-XXXX.md` — criterios que el Manager verificara en el review.
 4. `execution_log.md` — `Estado: IN_PROGRESS`, bitacora inicializada.
 5. `TURN.md` — regenerar a `ROL=BUILDER`:
    `python .agent/agent_controller.py --reset-turn --force`
@@ -238,8 +238,8 @@ launcher abrira su ventana del Builder.
 
 El handoff al Builder genera/actualiza, sin omitir ninguno:
 1. `work_plan.md` (APPROVED)
-2. `PLAN_WP-XXXX.md` (estrategia tecnica)
-3. `AUDIT_WP-XXXX.md` (criterios de auditoria)
+2. `STRATEGY_WOT-XXXX.md` (estrategia tecnica)
+3. `AUDIT_WOT-XXXX.md` (criterios de auditoria)
 4. `execution_log.md` (IN_PROGRESS)
 5. `TURN.md` + `STATE.md` (regenerados con `--reset-turn`)
 6. Bus: evento `STATE_CHANGED -> IN_PROGRESS`

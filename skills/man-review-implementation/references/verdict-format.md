@@ -29,8 +29,8 @@ Plan completado satisfactoriamente. Proceder a siguiente tarea.
 ## CAMBIOS REQUERIDOS
 
 ```markdown
-### 🔄 REV-002: Cambios Solicitados - WP-2026-001
-- **Plan ID:** WP-2026-001
+### 🔄 REV-002: Cambios Solicitados - WOT-2026-001
+- **Plan ID:** WOT-2026-001
 - **Tipo:** CHANGES_REQUESTED
 - **Prioridad:** Media
 - **Estado:** ⏳ PENDING

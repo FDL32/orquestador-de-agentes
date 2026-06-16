@@ -54,7 +54,7 @@ Fuente compartida para Builder y Manager. Cada entrada debe leerse como una regl
 
 - **Descripcion:** El plan y el audit no describen exactamente la misma secuencia, los mismos archivos o los mismos criterios de aceptacion. Incluye tambien la paridad interna del propio AUDIT: sus Blockers, Evidencia esperada y TP Check deben usar los mismos verbos y condiciones que las Fases del PLAN.
 - **Por que rompe al Builder:** El Builder puede satisfacer una superficie y fallar la otra; el Manager termina revisando dos contratos distintos.
-- **Senal de deteccion:** Un criterio aparece en `PLAN_WP` pero no en `AUDIT_WP`, o el audit introduce una condicion extra no presente en el plan. Tambien: un Blocker del AUDIT usa un verbo distinto al de la Fase correspondiente ("anadir" cuando la Fase dice "verificar y completar").
+- **Senal de deteccion:** Un criterio aparece en `STRATEGY_WOT` pero no en `AUDIT_WOT`, o el audit introduce una condicion extra no presente en el plan. Tambien: un Blocker del AUDIT usa un verbo distinto al de la Fase correspondiente ("anadir" cuando la Fase dice "verificar y completar").
 
 ❌ Ejemplo malo:
 > El plan exige `SUPERVISOR_RESTARTED`, pero el audit solo pide "trazabilidad del reinicio" sin decir que evento o payload buscar. O: el Blocker dice "anadir tres observaciones" cuando la Fase ya fue corregida a "verificar y completar".

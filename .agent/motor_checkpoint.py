@@ -48,11 +48,17 @@ LIVE_SURFACES_REL = {
     "PROJECT.md",
 }
 
+# WOT-2026-010a nomenclatura:
+#   canonical:     STRATEGY_WOT-, AUDIT_WOT-
+#   legacy-compat: PLAN_WP-, PLAN_WT-, AUDIT_WP-, AUDIT_WT-
+# Se conservan ambos: los historicos siguen excluidos del dirty-tree del handoff.
 WORKSPACE_EXCLUDED_PREFIXES = {
-    ".agent/collaboration/PLAN_WP-",
-    ".agent/collaboration/PLAN_WT-",
-    ".agent/collaboration/AUDIT_WP-",
-    ".agent/collaboration/AUDIT_WT-",
+    ".agent/collaboration/STRATEGY_WOT-",  # canonical
+    ".agent/collaboration/AUDIT_WOT-",  # canonical
+    ".agent/collaboration/PLAN_WP-",  # legacy-compat
+    ".agent/collaboration/PLAN_WT-",  # legacy-compat
+    ".agent/collaboration/AUDIT_WP-",  # legacy-compat
+    ".agent/collaboration/AUDIT_WT-",  # legacy-compat
     ".agent/collaboration/manager_feedback_",
     # WT-2026-249b: BUILDER_BRIEF_ artefacts are operational handoff files
     # generated for the active ticket. They must not block --pre-handoff.

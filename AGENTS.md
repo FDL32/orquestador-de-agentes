@@ -42,6 +42,33 @@ No usar "workspace" a secas: el termino es ambiguo porque describe tanto el repo
 
 **Regla de `AGENT_PROJECT_ROOT`:** el motor se invoca siempre con esta variable apuntando al `workspace_activo`. Sin ella, el motor usa modo code-only y bloquea escrituras operativas.
 
+### Glosario de nomenclatura de ticket (WOT-2026-010a)
+
+Nomenclatura canonica de identificadores y artefactos de ticket. "Plan" se
+reserva para la familia completa; el artefacto de estrategia de un ticket es
+`STRATEGY_`, no `PLAN_`.
+
+| Termino | Descripcion |
+|---------|-------------|
+| `WOT-YYYY-NNNx` | **Prefijo canonico de ticket** (tres letras). Ej. `WOT-2026-010a`. Es el ID que usan generadores, validadores y bus. |
+| `WP-` / `WT-` | **Legacy historico.** Prefijos de tickets antiguos (161 `WP-`, 72 `WT-`). NO se migran en masa; los consumidores los aceptan como `legacy-compat`. |
+| familia / plan | El plan/familia completo, ej. `WOT-2026-009` agrupa `009a..009g`. "Plan" NUNCA designa el artefacto de un ticket individual. |
+| `work_plan.md` | **Contrato operativo del ticket activo.** Una unica copia viva en `.agent/collaboration/`. Lo lee el scope gate y lo ejecuta el Builder. Sin cambio de nombre. |
+| `STRATEGY_WOT-<ID>.md` | **Estrategia tecnica del ticket** (opcional). Sustituye al antiguo `PLAN_WT-<ID>.md`. Libera "PLAN" para la familia. Legacy: `PLAN_WP-*`, `PLAN_WT-*`. |
+| `AUDIT_WOT-<ID>.md` | **Criterios de auditoria del ticket.** Solo cambia el prefijo `WT->WOT`. Legacy: `AUDIT_WP-*`, `AUDIT_WT-*`. |
+
+**Clases de patron para consumidores de codigo** (archivador, pre-handoff guard,
+validador de prosa, review bridge, motor_checkpoint):
+- `canonical`: `STRATEGY_WOT-*`, `AUDIT_WOT-*`.
+- `legacy-compat`: `PLAN_WP-*`, `PLAN_WT-*`, `AUDIT_WP-*`, `AUDIT_WT-*`. Se
+  conservan con alias de transicion; eliminarlos dejaria sin archivar los
+  tickets historicos.
+
+**Prompt de auditoria de contrato:** `prompts/audit_ticket_contract.md` (antes
+`prompts/audit_plan.md`, ahora stub alias). Audita el contrato/plan operativo
+del ticket ANTES de Builder; no confundir con review de implementacion, bus,
+cierre o publicacion.
+
 ### Distincion critica: `.agent/collaboration/` del motor vs del destino
 
 | Ubicacion | Rol | Contenido |

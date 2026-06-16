@@ -84,7 +84,7 @@ usuario.
 
 > Flujo completo y arquitectura: ver [PROJECT.md sección "Current architecture"](../PROJECT.md#current-architecture).
 
-1. Manager crea `work_plan.md` (DRAFT) y opcionalmente `PLAN_WP-XXXX.md` (estrategia tecnica) + `AUDIT_WP-XXXX.md` (criterios de auditoria). User aprueba editando work_plan a APPROVED.
+1. Manager crea `work_plan.md` (DRAFT) y opcionalmente `STRATEGY_WOT-XXXX.md` (estrategia tecnica) + `AUDIT_WOT-XXXX.md` (criterios de auditoria). User aprueba editando work_plan a APPROVED.
    - En un proyecto destino, el ID debe usar el namespace local definido en `PROJECT.md` (`XXX-YYYY-NNN`), no el del motor. El instalador puede escribir este prefijo con `--install --prefix XXX`.
 2. Builder implementa. El launcher envuelve el runner en try/finally: al salir (crash, fin normal o timeout), ejecuta automaticamente `--pre-handoff` y `--mark-ready --json --force`, que emiten `BUILDER_EXIT` y `STATE_CHANGED -> READY_FOR_REVIEW` al bus. El Builder no necesita ejecutar el cierre manualmente.
 3. Bridge dispara OpenCode review automaticamente. Si aprueba -> cascada hasta COMPLETED.

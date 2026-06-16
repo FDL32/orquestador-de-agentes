@@ -522,7 +522,7 @@ Usa los campos reales del protocolo cuando propongas tickets:
 - `Non-goals`
 - `deliverable_type`
 - criterio binario de cierre
-- referencia al `AUDIT_WT-*` esperado
+- referencia al `AUDIT_WOT-*` esperado (legacy-compat: `AUDIT_WT-*`, `AUDIT_WP-*`)
 
 Usa el `work_plan.md` vigente como referencia de formato y granularidad.
 

@@ -4,7 +4,7 @@
 # Plan de Trabajo: [Título]
 
 ## Metadata
-- **ID:** WP-[YYYY]-[NNN]
+- **ID:** WOT-[YYYY]-[NNN][x]
 - **Estado:** 🟡 IN_PLANNING
 - **deliverable_type:** code | documentation | research | analysis | mixed
 - **Creado:** [YYYY-MM-DD]

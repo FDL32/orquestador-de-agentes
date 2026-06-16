@@ -137,7 +137,7 @@ Si hay problemas menores:
 ```markdown
 ### REV-[ID]: Cambios Solicitados
 
-- **Plan ID:** WT-XXX
+- **Plan ID:** WOT-XXX
 - **Tipo:** CHANGES
 - **Prioridad:** [Alta/Media/Baja]
 - **Estado:** PENDING

@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Archive closed PLAN/AUDIT artifacts from .agent/collaboration/.
+"""Archive closed strategy/audit artifacts from .agent/collaboration/.
 
-This script moves historical PLAN_WP-*.md and AUDIT_WP-*.md files
-from the active collaboration surface to an internal archive directory,
-keeping only the current ticket's support files in place.
+This script moves closed ticket strategy/audit files from the active
+collaboration surface to an internal archive directory, keeping only the
+current ticket's support files in place. It matches both the canonical
+nomenclature (STRATEGY_WOT-*.md, AUDIT_WOT-*.md) and legacy-compat names
+(PLAN_WP-*.md, PLAN_WT-*.md, AUDIT_WP-*.md, AUDIT_WT-*.md) so historical
+tickets are still archived (WOT-2026-010a).
 
 Goals:
 - Keep the portable bundle copyable without dragging old ticket forensics.
@@ -29,9 +32,15 @@ if str(_PROJECT_ROOT_BOOTSTRAP) not in sys.path:
 from bus.ticket_id import TICKET_ID_PATTERN, WORKPLAN_ID_PATTERN  # noqa: E402
 
 
-# Patterns to match PLAN and AUDIT files — derived from canonical TICKET_ID_PATTERN
-# so letter-suffix IDs (e.g. WT-2026-221a) are matched.
-PLAN_RE = re.compile(r"^PLAN_(" + TICKET_ID_PATTERN + r")\.md$")
+# Patterns to match strategy/PLAN and AUDIT files — derived from canonical
+# TICKET_ID_PATTERN so letter-suffix IDs (e.g. WOT-2026-010a) are matched.
+#
+# WOT-2026-010a nomenclature:
+#   canonical:     STRATEGY_WOT-<ID>.md, AUDIT_WOT-<ID>.md
+#   legacy-compat: PLAN_WP-<ID>.md, PLAN_WT-<ID>.md, AUDIT_WP-<ID>.md, AUDIT_WT-<ID>.md
+# Both classes are archived; legacy is retained so historical tickets still match.
+STRATEGY_RE = re.compile(r"^STRATEGY_(" + TICKET_ID_PATTERN + r")\.md$")
+PLAN_RE = re.compile(r"^PLAN_(" + TICKET_ID_PATTERN + r")\.md$")  # legacy-compat
 AUDIT_RE = re.compile(r"^AUDIT_(" + TICKET_ID_PATTERN + r")\.md$")
 
 # Regex to extract ticket ID from manager_feedback filenames
@@ -48,8 +57,14 @@ ACTIVE_ONLY_FILES = {
 
 
 def parse_wp_number(filename: str) -> str | None:
-    """Extract ticket ID from filename (e.g., 'PLAN_WT-2026-221a.md' -> 'WT-2026-221a')."""
-    for pattern in (PLAN_RE, AUDIT_RE):
+    """Extract ticket ID from a strategy/plan/audit filename.
+
+    Examples:
+        'STRATEGY_WOT-2026-010a.md' -> 'WOT-2026-010a' (canonical)
+        'PLAN_WT-2026-221a.md'      -> 'WT-2026-221a'  (legacy-compat)
+        'AUDIT_WOT-2026-010a.md'    -> 'WOT-2026-010a' (canonical)
+    """
+    for pattern in (STRATEGY_RE, PLAN_RE, AUDIT_RE):
         match = pattern.match(filename)
         if match:
             return match.group(1)

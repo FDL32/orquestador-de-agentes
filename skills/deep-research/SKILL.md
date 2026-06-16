@@ -36,8 +36,8 @@ Leer los siguientes archivos para establecer la linea base:
 - `PROJECT.md` - estado actual y decisiones del proyecto
 - `.agent/collaboration/work_plan.md` - ticket activo
 - `.agent/collaboration/execution_log.md` - registro de implementacion
-- `.agent/collaboration/PLAN_WP-*.md` - estrategia del ticket (si existe)
-- `.agent/collaboration/AUDIT_WP-*.md` - criterios de auditoria (si existe)
+- `.agent/collaboration/STRATEGY_WOT-*.md` - estrategia del ticket (si existe; legacy-compat: `PLAN_WP-*.md`, `PLAN_WT-*.md`)
+- `.agent/collaboration/AUDIT_WOT-*.md` - criterios de auditoria (si existe; legacy-compat: `AUDIT_WP-*.md`, `AUDIT_WT-*.md`)
 - `.agent/runtime/memory/observations.jsonl` - memoria acumulada (ultimas 20 entradas)
 
 ### Fase 2: Identificar gaps

@@ -55,11 +55,18 @@ LIVE_SURFACES_REL = {
 
 # Patrones glob de archivos excluidos del workspace (AGENTS.md: Excluidos del workspace)
 # Estos archivos son historicos/transitorios y no deben bloquear el handoff.
+#
+# WOT-2026-010a nomenclatura:
+#   canonical:     STRATEGY_WOT-, AUDIT_WOT-
+#   legacy-compat: PLAN_WP-, PLAN_WT-, AUDIT_WP-, AUDIT_WT-
+# Se conservan ambos: los historicos siguen excluidos del dirty-tree del handoff.
 WORKSPACE_EXCLUDED_PREFIXES = {
-    ".agent/collaboration/PLAN_WP-",
-    ".agent/collaboration/AUDIT_WP-",
-    ".agent/collaboration/AUDIT_WT-",
-    ".agent/collaboration/PLAN_WT-",
+    ".agent/collaboration/STRATEGY_WOT-",  # canonical
+    ".agent/collaboration/AUDIT_WOT-",  # canonical
+    ".agent/collaboration/PLAN_WP-",  # legacy-compat
+    ".agent/collaboration/AUDIT_WP-",  # legacy-compat
+    ".agent/collaboration/AUDIT_WT-",  # legacy-compat
+    ".agent/collaboration/PLAN_WT-",  # legacy-compat
     ".agent/collaboration/manager_feedback_",
 }
 

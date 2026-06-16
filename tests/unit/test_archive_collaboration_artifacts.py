@@ -222,6 +222,21 @@ def test_parse_wp_number_letter_suffix() -> None:
     assert mod.parse_wp_number("manager_feedback_WT-2026-249b.md") is None
 
 
+def test_parse_wp_number_canonical_strategy() -> None:
+    """WOT-2026-010a: canonical STRATEGY_WOT-* must be recognized for archival.
+
+    The strategy artifact was renamed PLAN_WT-<ID> -> STRATEGY_WOT-<ID>. The
+    archiver must match the canonical name; legacy PLAN_* still matches too.
+    """
+    # Canonical strategy artifact
+    assert mod.parse_wp_number("STRATEGY_WOT-2026-010a.md") == "WOT-2026-010a"
+    # Canonical audit artifact
+    assert mod.parse_wp_number("AUDIT_WOT-2026-010a.md") == "WOT-2026-010a"
+    # Legacy strategy still matches (compat retained)
+    assert mod.parse_wp_number("PLAN_WP-2026-100.md") == "WP-2026-100"
+    assert mod.parse_wp_number("PLAN_WT-2026-221a.md") == "WT-2026-221a"
+
+
 def test_extract_ticket_id_from_feedback_letter_suffix() -> None:
     """extract_ticket_id_from_feedback must handle letter-suffix IDs."""
     assert (

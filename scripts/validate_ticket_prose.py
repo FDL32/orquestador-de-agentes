@@ -452,19 +452,22 @@ def detect_audit_missing_tp_check(collab_dir: Path) -> list[ProseWarning]:
     After: Retorna lista de warnings con regla TP-STRUCT-01.
     """
     warnings = []
-    # Buscar AUDIT del ticket activo
+    # Buscar AUDIT del ticket activo.
+    # WOT-2026-010a: canonical AUDIT_WOT-*.md ya queda cubierto por el glob de
+    # tres letras AUDIT_[A-Z]{3}-*.md. Los globs WP-/WT- se conservan como
+    # legacy-compat para tickets historicos.
     audit_files = (
-        list(collab_dir.glob("AUDIT_WP-*.md"))
-        + list(collab_dir.glob("AUDIT_WT-*.md"))
-        + list(collab_dir.glob("AUDIT_[A-Z][A-Z][A-Z]-*.md"))
+        list(collab_dir.glob("AUDIT_[A-Z][A-Z][A-Z]-*.md"))  # canonical (AUDIT_WOT-*)
+        + list(collab_dir.glob("AUDIT_WP-*.md"))  # legacy-compat
+        + list(collab_dir.glob("AUDIT_WT-*.md"))  # legacy-compat
     )
     if not audit_files:
         warnings.append(
             ProseWarning(
                 rule_id="TP-STRUCT-01",
                 rule_name="audit-missing-tp-check",
-                evidence="No se encontro AUDIT_WP-*.md, AUDIT_WT-*.md ni AUDIT_<XXX>-*.md en .agent/collaboration/",
-                suggestion="Crea un AUDIT_WP-*.md, AUDIT_WT-*.md o AUDIT_<XXX>-*.md con seccion '## TP Check' que verifique los 5 TP-P.",
+                evidence="No se encontro AUDIT_WOT-*.md (canonical) ni AUDIT_WP-*.md/AUDIT_WT-*.md (legacy) en .agent/collaboration/",
+                suggestion="Crea un AUDIT_WOT-*.md con seccion '## TP Check' que verifique los 5 TP-P.",
             )
         )
         return warnings
@@ -482,7 +485,7 @@ def detect_audit_missing_tp_check(collab_dir: Path) -> list[ProseWarning]:
             ProseWarning(
                 rule_id="TP-STRUCT-01",
                 rule_name="audit-missing-tp-check",
-                evidence="AUDIT_WP-*.md, AUDIT_WT-*.md o AUDIT_<XXX>-*.md existe pero no contiene seccion '## TP Check'",
+                evidence="AUDIT_WOT-*.md (canonical) o AUDIT_WP-*/AUDIT_WT-* (legacy) existe pero no contiene seccion '## TP Check'",
                 suggestion="Anade '## TP Check' al AUDIT con verificacion de TP-01 a TP-05.",
             )
         )
@@ -512,10 +515,12 @@ def detect_audit_malformed_tp_check(collab_dir: Path) -> list[ProseWarning]:
     After: Retorna lista de warnings con regla TP-STRUCT-02.
     """
     warnings = []
+    # WOT-2026-010a: canonical AUDIT_WOT-*.md cubierto por el glob de tres
+    # letras; WP-/WT- conservados como legacy-compat.
     audit_files = (
-        list(collab_dir.glob("AUDIT_WP-*.md"))
-        + list(collab_dir.glob("AUDIT_WT-*.md"))
-        + list(collab_dir.glob("AUDIT_[A-Z][A-Z][A-Z]-*.md"))
+        list(collab_dir.glob("AUDIT_[A-Z][A-Z][A-Z]-*.md"))  # canonical (AUDIT_WOT-*)
+        + list(collab_dir.glob("AUDIT_WP-*.md"))  # legacy-compat
+        + list(collab_dir.glob("AUDIT_WT-*.md"))  # legacy-compat
     )
     if not audit_files:
         return warnings

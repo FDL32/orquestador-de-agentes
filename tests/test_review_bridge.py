@@ -12,7 +12,42 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from bus.event_bus import EventBus
-from bus.review_bridge import ReviewBridge, ReviewDecision
+from bus.review_bridge import ReviewBridge, ReviewDecision, _resolve_strategy_file
+
+
+def test_resolve_strategy_file_prefers_canonical(tmp_path: Path) -> None:
+    """WOT-2026-010a: _resolve_strategy_file prefers STRATEGY_WOT-* over legacy PLAN_*."""
+    collab = tmp_path
+    ticket = "WOT-2026-010a"
+    # Only canonical present
+    canonical = collab / f"STRATEGY_{ticket}.md"
+    canonical.write_text("strategy")
+    assert _resolve_strategy_file(collab, ticket) == canonical
+
+
+def test_resolve_strategy_file_legacy_fallback(tmp_path: Path) -> None:
+    """Legacy PLAN_<ID>.md is used when no canonical STRATEGY_ exists."""
+    collab = tmp_path
+    ticket = "WT-2026-221a"
+    legacy = collab / f"PLAN_{ticket}.md"
+    legacy.write_text("legacy plan")
+    assert _resolve_strategy_file(collab, ticket) == legacy
+
+
+def test_resolve_strategy_file_canonical_wins_over_legacy(tmp_path: Path) -> None:
+    """When both exist, canonical STRATEGY_ takes precedence."""
+    collab = tmp_path
+    ticket = "WOT-2026-010a"
+    canonical = collab / f"STRATEGY_{ticket}.md"
+    canonical.write_text("strategy")
+    legacy = collab / f"PLAN_{ticket}.md"
+    legacy.write_text("legacy")
+    assert _resolve_strategy_file(collab, ticket) == canonical
+
+
+def test_resolve_strategy_file_none_when_missing(tmp_path: Path) -> None:
+    """Returns None when neither canonical nor legacy strategy file exists."""
+    assert _resolve_strategy_file(tmp_path, "WOT-2026-999z") is None
 
 
 @pytest.fixture

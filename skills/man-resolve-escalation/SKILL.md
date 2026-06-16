@@ -80,7 +80,7 @@ Para cada opción presentada por el Builder (o identificadas):
 
 ```markdown
 ### 🚨 ESC-[ID]: [Título Corto] - RESUELTO
-- **Plan ID:** WP-XXX
+- **Plan ID:** WOT-XXX
 - **Tipo:** ESCALATION
 - **Urgencia:** 🔴/🟡/🟢 [Alta/Media/Baja]
 - **Estado:** ✅ RESOLVED
