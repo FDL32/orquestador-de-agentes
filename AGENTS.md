@@ -166,6 +166,20 @@ append `--project-root <destino>` to commands that operate on project state.
 - Mantiene la raiz limpia: no metas basura temporal en el arbol portable.
 - Usa `.agent/collaboration/work_plan.md` y `.agent/collaboration/execution_log.md` para el estado canonico.
 
+### Convencion de encoding y gap v1 (WOT-2026-010e)
+
+- **Preferir Write/Edit sobre heredoc** para contenido no-ASCII en archivos de
+  texto (`.md`, `.py`, `.json`, `.toml`, `.yaml`, `.yml`, `.sh`, `.ps1`, `.txt`,
+  `.xml`). El hook `encoding_post_write_hook.py` detecta BOM, mojibake y
+  question-mark corruption tras cada escritura nativa del agente.
+- **Gap v1 conocido:** Bash/heredoc NO esta cubierto por el hook. Las
+  escrituras dentro de `Bash`/`RunInTerminal` quedan cubiertas por convencion
+  operativa + `check_encoding_guard.py` antes de handoff/commit.
+- `TEXT_EXTENSIONS` en `scripts/encoding_guard.py` es la fuente de verdad de
+  sufijos texto. No derivarla de `GLOB_PATTERNS`.
+- `scripts/check_encoding_guard.py` sigue siendo la autoridad de cierre; el
+  hook es defensa en profundidad, no su sustituto.
+
 ## Archivado de colaboracion (WP-2026-100)
 
 - `scripts/archive_collaboration_artifacts.py` mueve `PLAN_WP-*.md` y `AUDIT_WP-*.md` cerrados a `.agent/collaboration/_archive/plan_audit/`.

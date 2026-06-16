@@ -8,6 +8,22 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 AGENT_DIR = ROOT / ".agent"
 
+TEXT_EXTENSIONS = frozenset(
+    {
+        ".md",
+        ".py",
+        ".json",
+        ".jsonl",
+        ".toml",
+        ".yaml",
+        ".yml",
+        ".sh",
+        ".ps1",
+        ".txt",
+        ".xml",
+    }
+)
+
 SUSPICIOUS_CODEPOINTS = {
     0x00C3,
     0x00C2,
