@@ -338,3 +338,48 @@ def test_pre_handoff_passes_with_clean_motor(
     assert "Uncommitted productive changes in repo_motor:" not in stderr_text
     if result == 1:
         assert "Uncommitted productive changes" not in stderr_text
+
+
+def test_pre_handoff_fails_closed_when_work_plan_guard_raises(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """WOT-2026-009g fail-closed: gate 2 must BLOCK if the helper raises.
+
+    A broken work_plan commit guard must never let _handle_pre_handoff proceed
+    to a successful return — that would reopen the 008b false green.
+    """
+    import agent_controller
+
+    motor = tmp_path / "motor"
+    dest = tmp_path / "dest"
+    init_git_repo(motor)
+    init_git_repo(dest)
+
+    collab_dir = dest / ".agent" / "collaboration"
+    collab_dir.mkdir(parents=True, exist_ok=True)
+    wp = _create_work_plan(collab_dir, "WT-2026-228a")
+    exec_log = collab_dir / "execution_log.md"
+    exec_log.write_text("# Execution Log\n\n**Estado:** IN_PROGRESS\n\n")
+    _git(["add", str(wp)], cwd=dest)
+    _git(["commit", "-m", "add work_plan"], cwd=dest)
+
+    monkeypatch.setattr(agent_controller, "PROJECT_ROOT", dest)
+    monkeypatch.setattr(agent_controller, "WORK_PLAN", collab_dir / "work_plan.md")
+    monkeypatch.setattr(agent_controller, "EXEC_LOG", exec_log)
+    monkeypatch.setattr(agent_controller, "_MOTOR_ROOT", motor)
+    monkeypatch.setattr(agent_controller, "BUS_AVAILABLE", False)
+
+    def _raise(**_kwargs):
+        raise RuntimeError("simulated guard failure")
+
+    monkeypatch.setattr(
+        agent_controller.motor_checkpoint, "assert_work_plan_committed", _raise
+    )
+
+    result = agent_controller._handle_pre_handoff(json_output=False)
+
+    assert result == 1, (
+        f"Fail-closed: a raising guard must block the handoff, got {result}"
+    )
+    stderr_text = capsys.readouterr().err
+    assert "work_plan commit guard could not run" in stderr_text

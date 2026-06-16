@@ -414,6 +414,7 @@ def run_guard(
         "missing_checkpoint": False,
         "checkpoint_misaligned": False,
         "uncommitted_work_plan": False,
+        "work_plan_guard_error": None,
         "dirty_files": [],
         "scope_discrepancy": [],
         "checkpoint_tag": None,
@@ -440,6 +441,11 @@ def run_guard(
     # This is a separate rule from dirty_tree: work_plan.md is exempt from
     # generic dirty-tree detection (it is a live surface), but it MUST be
     # committed as the active ticket contract before --mark-ready proceeds.
+    #
+    # Fail-closed: this guard IS the barrier that closes the 008b false green.
+    # If the helper cannot run (import drift, API change, bug), we must BLOCK
+    # the handoff with a diagnostic, never silently pass. Silencing here would
+    # reopen exactly the false green this ticket exists to close.
     try:
         mc = _import_motor_checkpoint()
         wp_ok, wp_diag = mc.assert_work_plan_committed(
@@ -450,8 +456,14 @@ def run_guard(
             result["valid"] = False
             result["uncommitted_work_plan"] = True
             result["work_plan_remediation"] = wp_diag.get("remediation", "")
-    except (ImportError, Exception):  # noqa: S110
-        pass
+    except Exception as exc:
+        # Fail-closed: a broken guard must not become a silent pass.
+        result["valid"] = False
+        result["work_plan_guard_error"] = (
+            f"{type(exc).__name__}: {exc}. "
+            "Pre-handoff blocked because the work_plan commit guard could not "
+            "run. Fix the guard or its import before retrying --mark-ready."
+        )
 
     # 3. Obtener superficies vivas (archivos y directorios)
     live_files, live_dirs = get_live_surfaces_absolute(project_root)
@@ -656,6 +668,10 @@ def main() -> int:
                 )
                 print(
                     f"    Fix: {result.get('work_plan_remediation', 'git add .agent/collaboration/work_plan.md && git commit')}"
+                )
+            if result.get("work_plan_guard_error"):
+                print(
+                    f"  - work_plan commit guard error: {result['work_plan_guard_error']}"
                 )
             if result["dirty_tree"]:
                 print(f"  - Dirty tree: {', '.join(result['dirty_files'])}")

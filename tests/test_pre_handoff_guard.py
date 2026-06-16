@@ -741,3 +741,54 @@ class TestWorkPlanCommitGuard:
             f"result={result}"
         )
         assert result.get("uncommitted_work_plan") is False
+
+    def test_guard_fails_closed_when_helper_raises(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Fail-closed: if assert_work_plan_committed raises, run_guard must BLOCK.
+
+        A broken guard must never become a silent pass — that would reopen the
+        008b false green. Monkeypatch the helper to raise and confirm run_guard
+        returns valid=False with a work_plan_guard_error diagnostic.
+        """
+        import sys
+
+        sys.path.insert(0, str(SCRIPT_PATH.parent))
+        import pre_handoff_guard
+        from pre_handoff_guard import run_guard
+
+        repo = tmp_path / "repo"
+        init_git_repo(repo)
+
+        collab = repo / ".agent" / "collaboration"
+        collab.mkdir(parents=True, exist_ok=True)
+        wp = collab / "work_plan.md"
+        wp.write_text("# Work Plan\n- deliverable_type: code\n")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "Add work_plan"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        create_checkpoint_tag(repo, "checkpoint/review-WOT-2026-TEST")
+
+        # Force the helper to raise, simulating API drift / bug.
+        class _BrokenModule:
+            @staticmethod
+            def assert_work_plan_committed(**_kwargs):
+                raise RuntimeError("simulated guard failure")
+
+        monkeypatch.setattr(
+            pre_handoff_guard, "_import_motor_checkpoint", lambda: _BrokenModule()
+        )
+
+        result = run_guard(repo, "WOT-2026-TEST", motor_root=repo)
+
+        assert result["valid"] is False, (
+            "Fail-closed: a raising helper must block the handoff, not pass. "
+            f"result={result}"
+        )
+        assert result.get("work_plan_guard_error"), (
+            "Expected work_plan_guard_error diagnostic when helper raises."
+        )

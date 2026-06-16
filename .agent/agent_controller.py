@@ -3386,10 +3386,33 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
     # (2) motor auto-commit, (3) idempotent no-op.
     # work_plan.md stays in LIVE_SURFACES_REL (exempt from dirty-tree); this is
     # an additional, separate rule: "the active contract must be committed".
-    _wp_ok, _wp_diag = motor_checkpoint.assert_work_plan_committed(
-        project_root=project_root,
-        motor_root=motor_root,
-    )
+    #
+    # Fail-closed: this check IS the barrier closing the 008b false green. If
+    # the helper raises (API drift, bug), BLOCK with a diagnostic instead of
+    # letting an unhandled traceback or a silent pass reopen the false green.
+    try:
+        _wp_ok, _wp_diag = motor_checkpoint.assert_work_plan_committed(
+            project_root=project_root,
+            motor_root=motor_root,
+        )
+    except Exception as _wp_exc:
+        print(
+            "[ERROR] Pre-handoff blocked: work_plan commit guard could not run "
+            f"({type(_wp_exc).__name__}: {_wp_exc}). Fix the guard before retrying.",
+            file=sys.stderr,
+            flush=True,
+        )
+        if BUS_AVAILABLE and event_bus:
+            event_bus.emit(
+                event_type="HANDOFF_BLOCKED",
+                ticket_id=plan_id,
+                actor="BUILDER",
+                payload={
+                    "reason": "work_plan_guard_error",
+                    "error": f"{type(_wp_exc).__name__}: {_wp_exc}",
+                },
+            )
+        return 1
     if not _wp_ok:
         _wp_path = _wp_diag.get("path", ".agent/collaboration/work_plan.md")
         _wp_remediation = _wp_diag.get(
