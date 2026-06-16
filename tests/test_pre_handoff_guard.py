@@ -1048,3 +1048,65 @@ class TestRunnerWritesTestedSha:
         ok, diag = pre_handoff_guard.assert_canonical_suite_green(motor, "code")
         assert ok is False
         assert "stale" in diag.get("reason", "").lower()
+
+
+class TestCanonicalSuiteDiagPropagation:
+    """WOT-2026-010c review fix: the structured diag must reach the CLI/JSON.
+
+    The controller's _fail_closeout propagates guard_result["canonical_suite"],
+    so the script must emit it in --json output when the suite is not fresh-green.
+    """
+
+    def test_cli_json_includes_canonical_suite_diag(self, tmp_path: Path) -> None:
+        repo = tmp_path / "repo"
+        init_git_repo(repo)
+        collab = repo / ".agent" / "collaboration"
+        collab.mkdir(parents=True, exist_ok=True)
+        (collab / "work_plan.md").write_text(
+            "# Work Plan\n- **deliverable_type:** code\n", encoding="utf-8"
+        )
+        subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "wp"], cwd=repo, check=True, capture_output=True
+        )
+        create_checkpoint_tag(repo, "checkpoint/review-WOT-2026-TEST")
+        # Red suite (exit_code 1) fresh against HEAD.
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True
+        ).stdout.strip()
+        d = repo / ".agent" / "runtime" / "pytest-safe"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "last-run.json").write_text(
+            json.dumps(
+                {"status": "finished", "exit_code": 1, "tested_commit_sha": head}
+            ),
+            encoding="utf-8",
+        )
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT_PATH),
+                "--project-root",
+                str(repo),
+                "--ticket-id",
+                "WOT-2026-TEST",
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=repo,
+        )
+        output = json.loads(result.stdout)
+        assert output["valid"] is False
+        cs = output.get("canonical_suite")
+        assert cs is not None, "canonical_suite must be present in CLI JSON"
+        assert cs.get("canonical_suite_required") is True
+        # The structured self-service fields must all be present.
+        for field in (
+            "reason",
+            "remediation",
+            "last_run_json",
+            "canonical_suite_error",
+        ):
+            assert field in cs, f"missing {field} in canonical_suite diag"

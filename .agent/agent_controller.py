@@ -2679,6 +2679,19 @@ def _run_pre_handoff_guard(plan_id: str, json_output: bool) -> dict:  # noqa: C9
                     print(
                         f"  - Dirty tree: {', '.join(guard_result.get('dirty_files', []))}"
                     )
+                # WOT-2026-010c: surface the canonical-suite gate diagnostic so
+                # the operator sees why the handoff is blocked and how to fix it.
+                _cs = guard_result.get("canonical_suite") or {}
+                if _cs.get("canonical_suite_required") and _cs.get("reason") not in (
+                    None,
+                    "fresh_green",
+                    "deliverable_type_skip",
+                ):
+                    print(f"  - Canonical suite not fresh-green: {_cs.get('reason')}")
+                    if _cs.get("canonical_suite_error"):
+                        print(f"    {_cs['canonical_suite_error']}")
+                    if _cs.get("remediation"):
+                        print(f"    Fix: {_cs['remediation']}")
                 if guard_result.get("scope_discrepancy"):
                     print(
                         f"  - Scope discrepancy (non-blocking): "
@@ -3012,6 +3025,10 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
                 "missing_checkpoint": guard_result.get("missing_checkpoint", False),
                 "dirty_files": guard_result.get("dirty_files", []),
                 "scope_discrepancy": guard_result.get("scope_discrepancy", []),
+                # WOT-2026-010c: propagate the structured canonical-suite diag
+                # (last_run_json, reason, remediation, canonical_suite_error) so
+                # the closeout failure payload is self-service, not opaque.
+                "canonical_suite": guard_result.get("canonical_suite"),
             },
         )
 
