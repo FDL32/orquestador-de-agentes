@@ -46,6 +46,8 @@ LEGACY_TAG_RE = re.compile(r"legacy-compat|ticket historico|legacy \(retro", re.
 # is teaching/creating nomenclature and must use WOT-.
 GENERATOR_SIGNAL_RE = re.compile(
     r"--ticket(?:-id)?\s+(?:WP|WT)-"
+    r"|--help.*(?:WP|WT)-"
+    r"|usage:.*(?:WP|WT)-"
     r"|Plan ID:?\**\s*(?:WP|WT)-"
     r"|\*\*ID:\*\*\s*(?:WP|WT)-"
     r"|Ticket relacionado:.*(?:WP|WT)-"
@@ -59,6 +61,9 @@ GENERATOR_SIGNAL_RE = re.compile(
 
 SCAN_DIRS = ("prompts", "skills", "scripts")
 SCAN_SUFFIXES = {".md", ".py", ".ps1", ".txt"}
+# sandbox/ is skipped intentionally: it is a scratch area, not a canonical
+# surface for live prompts/skills/scripts. If a sandbox artefact is promoted to
+# product, it must move out of sandbox/ before this gate is expected to police it.
 SKIP_PARTS = {"__pycache__", "sandbox", ".ruff_cache"}
 
 
