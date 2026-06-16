@@ -83,6 +83,15 @@ NON_TERMINAL_STATES = frozenset(
 )
 
 
+# PAUSED state support (WOT-2026-010d)
+# PAUSED is a non-terminal state that blocks handoffs to incompatible states.
+NON_TERMINAL_STATES |= frozenset(
+    {
+        TicketState.PAUSED,
+    }
+)
+
+
 @dataclass(slots=True)
 class SupervisorState:
     active_ticket: str | None = None

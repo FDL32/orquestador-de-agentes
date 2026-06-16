@@ -4,21 +4,20 @@ from enum import Enum
 
 
 class TicketState(str, Enum):
+    """Estados validos de un ticket en el sistema multi-agente."""
+
     IN_PROGRESS = "IN_PROGRESS"
     READY_FOR_REVIEW = "READY_FOR_REVIEW"
+    BLOCKED = "BLOCKED"
     HUMAN_GATE = "HUMAN_GATE"
     READY_TO_CLOSE = "READY_TO_CLOSE"
     COMPLETED = "COMPLETED"
-    BLOCKED = "BLOCKED"
+    PAUSED = "PAUSED"
     # WOT-2026-007f: CONTRACT_BLOCKED is set when a Builder emits a CONTRACT_GAP
     # event. The ticket is frozen until Contract Formation resolves the gap.
     # This state is reversible: once the contract is updated and re-frozen,
     # the ticket can be reopened (transitions back to IN_PROGRESS).
     CONTRACT_BLOCKED = "CONTRACT_BLOCKED"
-    # WOT-2026-010d: PAUSED is a work state representing a ticket temporarily
-    # halted (e.g., to address an urgent hotfix). It is reversible: Builder can
-    # resume from PAUSED back to IN_PROGRESS using --resume-ticket.
-    PAUSED = "PAUSED"
     UNKNOWN = "UNKNOWN"
 
     @classmethod
@@ -101,3 +100,17 @@ class StateMachine:
             if event_type == "CONTRACT_GAP":
                 return TicketState.CONTRACT_BLOCKED
         return TicketState.UNKNOWN
+
+
+# Non-terminal states (used by supervisor, builder_locks, projector)
+NON_TERMINAL_STATES: frozenset[TicketState] = frozenset(
+    {
+        TicketState.IN_PROGRESS,
+        TicketState.READY_FOR_REVIEW,
+        TicketState.BLOCKED,
+        TicketState.HUMAN_GATE,
+        TicketState.READY_TO_CLOSE,
+        TicketState.CONTRACT_BLOCKED,
+        TicketState.PAUSED,
+    }
+)
