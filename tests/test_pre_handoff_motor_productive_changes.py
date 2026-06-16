@@ -239,9 +239,12 @@ def test_pre_handoff_auto_commits_motor_dirty_within_flt(
 
     collab_dir = dest / ".agent" / "collaboration"
     collab_dir.mkdir(parents=True, exist_ok=True)
-    _create_work_plan(collab_dir, "WT-2026-228a")
+    wp = _create_work_plan(collab_dir, "WT-2026-228a")
     exec_log = collab_dir / "execution_log.md"
     exec_log.write_text("# Execution Log\n\n**Estado:** IN_PROGRESS\n\n")
+    # WOT-2026-009g: work_plan.md must be committed before handoff
+    _git(["add", str(wp)], cwd=dest)
+    _git(["commit", "-m", "add work_plan WT-2026-228a"], cwd=dest)
 
     monkeypatch.setattr(agent_controller, "PROJECT_ROOT", dest)
     monkeypatch.setattr(agent_controller, "WORK_PLAN", collab_dir / "work_plan.md")
@@ -285,9 +288,12 @@ def test_pre_handoff_blocks_on_motor_untracked(
 
     collab_dir = dest / ".agent" / "collaboration"
     collab_dir.mkdir(parents=True, exist_ok=True)
-    _create_work_plan(collab_dir, "WT-2026-228a")
+    wp = _create_work_plan(collab_dir, "WT-2026-228a")
     exec_log = collab_dir / "execution_log.md"
     exec_log.write_text("# Execution Log\n\n**Estado:** IN_PROGRESS\n\n")
+    # WOT-2026-009g: work_plan.md must be committed before handoff
+    _git(["add", str(wp)], cwd=dest)
+    _git(["commit", "-m", "add work_plan WT-2026-228a"], cwd=dest)
 
     monkeypatch.setattr(agent_controller, "PROJECT_ROOT", dest)
     monkeypatch.setattr(agent_controller, "WORK_PLAN", collab_dir / "work_plan.md")

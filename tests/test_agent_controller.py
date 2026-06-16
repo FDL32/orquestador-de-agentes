@@ -2612,6 +2612,23 @@ class TestExternalMotorCheckpointTopology:
         self._init_git_repo(workspace)  # workspace also has .git in this topology
         self._create_work_plan(workspace)
         self._create_execution_log(workspace)
+        # WOT-2026-009g: work_plan.md must be committed before handoff
+        subprocess.run(
+            [
+                "git",
+                "add",
+                str(workspace / ".agent" / "collaboration" / "work_plan.md"),
+            ],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "add work_plan"],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+        )
 
         # Create a productive file in motor repo (simulating code changes)
         (motor_repo / "src").mkdir(parents=True, exist_ok=True)

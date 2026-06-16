@@ -279,6 +279,16 @@ def _import_scope_gate():
     return _sg
 
 
+def _import_motor_checkpoint():
+    """Import motor_checkpoint from the motor .agent/ directory."""
+    agent_dir = Path(__file__).resolve().parent.parent / ".agent"
+    if str(agent_dir) not in sys.path:
+        sys.path.insert(0, str(agent_dir))
+    import motor_checkpoint as _mc
+
+    return _mc
+
+
 def parse_files_likely_touched(
     project_root: Path,
     motor_root: Path | None = None,
@@ -403,6 +413,7 @@ def run_guard(
         "dirty_tree": False,
         "missing_checkpoint": False,
         "checkpoint_misaligned": False,
+        "uncommitted_work_plan": False,
         "dirty_files": [],
         "scope_discrepancy": [],
         "checkpoint_tag": None,
@@ -425,7 +436,24 @@ def run_guard(
     else:
         result["checkpoint_tag"] = f"checkpoint/review-{ticket_id}"
 
-    # 2. Obtener superficies vivas (archivos y directorios)
+    # 2. WOT-2026-009g: work_plan.md must be committed at handoff time.
+    # This is a separate rule from dirty_tree: work_plan.md is exempt from
+    # generic dirty-tree detection (it is a live surface), but it MUST be
+    # committed as the active ticket contract before --mark-ready proceeds.
+    try:
+        mc = _import_motor_checkpoint()
+        wp_ok, wp_diag = mc.assert_work_plan_committed(
+            project_root=project_root,
+            motor_root=motor_root if motor_root is not None else project_root,
+        )
+        if not wp_ok:
+            result["valid"] = False
+            result["uncommitted_work_plan"] = True
+            result["work_plan_remediation"] = wp_diag.get("remediation", "")
+    except (ImportError, Exception):  # noqa: S110
+        pass
+
+    # 3. Obtener superficies vivas (archivos y directorios)
     live_files, live_dirs = get_live_surfaces_absolute(project_root)
 
     # 3. Obtener archivos cambiados
@@ -620,6 +648,14 @@ def main() -> int:
                     f"    Fix: git tag -d checkpoint/review-{ticket_id}"
                     f" && git tag -a checkpoint/review-{ticket_id}"
                     f' -m "Checkpoint M3 for {ticket_id}"'
+                )
+            if result.get("uncommitted_work_plan"):
+                print(
+                    "  - work_plan.md no está commiteado. "
+                    "El contrato activo debe estar commiteado antes del handoff."
+                )
+                print(
+                    f"    Fix: {result.get('work_plan_remediation', 'git add .agent/collaboration/work_plan.md && git commit')}"
                 )
             if result["dirty_tree"]:
                 print(f"  - Dirty tree: {', '.join(result['dirty_files'])}")

@@ -70,6 +70,10 @@ def _setup_multi_repo(
     runtime_dir = dest / ".agent" / "runtime"
     runtime_dir.mkdir(parents=True, exist_ok=True)
 
+    # WOT-2026-009g: work_plan.md must be committed before handoff
+    _git(["add", str(wp)], cwd=dest)
+    _git(["commit", "-m", f"add work_plan for {ticket_id}"], cwd=dest)
+
     plan_content = wp.read_text()
     return motor, dest, wp, exec_log, plan_content
 

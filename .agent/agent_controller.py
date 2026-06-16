@@ -3380,6 +3380,42 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
         )
         return 1
 
+    # --- WOT-2026-009g: work_plan.md must be committed before any handoff ---
+    # This check runs once, after project_root/motor_root are resolved and BEFORE
+    # the three successful-return branches: (1) docs/research/analysis bypass,
+    # (2) motor auto-commit, (3) idempotent no-op.
+    # work_plan.md stays in LIVE_SURFACES_REL (exempt from dirty-tree); this is
+    # an additional, separate rule: "the active contract must be committed".
+    _wp_ok, _wp_diag = motor_checkpoint.assert_work_plan_committed(
+        project_root=project_root,
+        motor_root=motor_root,
+    )
+    if not _wp_ok:
+        _wp_path = _wp_diag.get("path", ".agent/collaboration/work_plan.md")
+        _wp_remediation = _wp_diag.get(
+            "remediation", "git add .agent/collaboration/work_plan.md && git commit"
+        )
+        print(
+            f"[ERROR] Pre-handoff blocked: {_wp_path} is not committed.\n"
+            f"  uncommitted_work_plan: true\n"
+            f"  Fix: {_wp_remediation}",
+            file=sys.stderr,
+            flush=True,
+        )
+        if BUS_AVAILABLE and event_bus:
+            event_bus.emit(
+                event_type="HANDOFF_BLOCKED",
+                ticket_id=plan_id,
+                actor="BUILDER",
+                payload={
+                    "reason": "uncommitted_work_plan",
+                    "uncommitted_work_plan": True,
+                    "path": _wp_path,
+                    "remediation": _wp_remediation,
+                },
+            )
+        return 1
+
     # --- WT-2026-239a: Docs/research/analysis early bypass ---
     # For non-code tickets, skip motor commit/tag/checkpoint and workspace
     # commit/tag. Only verify tree hygiene (excluding live surfaces).

@@ -630,3 +630,114 @@ class TestPreHandoffGuard:
         assert output["valid"] is True
         assert output["dirty_tree"] is False
         assert output["checkpoint_misaligned"] is False
+
+
+class TestWorkPlanCommitGuard:
+    """Integration tests for WOT-2026-009g: work_plan.md must be committed at handoff.
+
+    Uses run_guard() directly (not CLI) so tests do not depend on motor_checkpoint
+    being importable from the script's sys.path — the function path is what matters.
+    """
+
+    def test_guard_fails_when_work_plan_uncommitted(self, tmp_path: Path) -> None:
+        """Barrier 008b: work_plan.md modified (not committed) must block guard.
+
+        Before fix: work_plan.md was in LIVE_SURFACES_REL and skipped by
+        dirty-tree check -> guard returned valid=True (false green).
+        After fix: assert_work_plan_committed detects it -> valid=False,
+        uncommitted_work_plan=True.
+        """
+        import sys
+
+        sys.path.insert(0, str(SCRIPT_PATH.parent))
+        from pre_handoff_guard import run_guard
+
+        repo = tmp_path / "repo"
+        init_git_repo(repo)
+
+        # Create and commit work_plan.md
+        collab = repo / ".agent" / "collaboration"
+        collab.mkdir(parents=True, exist_ok=True)
+        wp = collab / "work_plan.md"
+        wp.write_text("# Work Plan\n- deliverable_type: code\n")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "Add work_plan"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        create_checkpoint_tag(repo, "checkpoint/review-WOT-2026-TEST")
+
+        # Simulate 008b incident: modify work_plan.md without committing
+        wp.write_text("# Updated plan - NOT committed\n")
+
+        result = run_guard(repo, "WOT-2026-TEST", motor_root=repo)
+
+        assert result["valid"] is False
+        assert result.get("uncommitted_work_plan") is True
+
+    def test_guard_passes_when_work_plan_committed(self, tmp_path: Path) -> None:
+        """Control: work_plan.md committed + clean tree -> guard passes."""
+        import sys
+
+        sys.path.insert(0, str(SCRIPT_PATH.parent))
+        from pre_handoff_guard import run_guard
+
+        repo = tmp_path / "repo"
+        init_git_repo(repo)
+
+        collab = repo / ".agent" / "collaboration"
+        collab.mkdir(parents=True, exist_ok=True)
+        wp = collab / "work_plan.md"
+        wp.write_text("# Work Plan\n- deliverable_type: code\n")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "Add work_plan"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        create_checkpoint_tag(repo, "checkpoint/review-WOT-2026-TEST")
+
+        result = run_guard(repo, "WOT-2026-TEST", motor_root=repo)
+
+        assert result["valid"] is True
+        assert result.get("uncommitted_work_plan") is False
+
+    def test_guard_passes_live_surfaces_dirty_work_plan_committed(
+        self, tmp_path: Path
+    ) -> None:
+        """Non-regression: work_plan.md committed + STATE/TURN dirty -> still passes."""
+        import sys
+
+        sys.path.insert(0, str(SCRIPT_PATH.parent))
+        from pre_handoff_guard import run_guard
+
+        repo = tmp_path / "repo"
+        init_git_repo(repo)
+
+        collab = repo / ".agent" / "collaboration"
+        collab.mkdir(parents=True, exist_ok=True)
+        wp = collab / "work_plan.md"
+        wp.write_text("# Work Plan\n- deliverable_type: code\n")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "Add work_plan"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        create_checkpoint_tag(repo, "checkpoint/review-WOT-2026-TEST")
+
+        # Dirty live surfaces (must not cause failure)
+        (collab / "STATE.md").write_text("ACTIVE_TICKET: TEST\n")
+        (collab / "TURN.md").write_text("# TURN\nROL: BUILDER\n")
+
+        result = run_guard(repo, "WOT-2026-TEST", motor_root=repo)
+
+        assert result["valid"] is True, (
+            f"Live-surface dirty must not block when work_plan.md is committed. "
+            f"result={result}"
+        )
+        assert result.get("uncommitted_work_plan") is False

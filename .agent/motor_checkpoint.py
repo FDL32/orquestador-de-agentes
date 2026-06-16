@@ -67,6 +67,48 @@ LIVE_SURFACE_DIRS = {
 }
 
 
+def assert_work_plan_committed(
+    project_root: Path,
+    motor_root: Path,
+) -> tuple[bool, dict]:
+    """Check that .agent/collaboration/work_plan.md is committed at handoff time.
+
+    Before: project_root and motor_root are Paths; scope_gate is importable.
+    During: Delegates to scope_gate.get_changed_files (canonical git parser).
+            Resolves the absolute path of work_plan.md and checks if it appears
+            in the changed-file set. NO new git parser is created.
+    After: Returns (True, {}) when work_plan.md is clean (committed).
+           Returns (False, diag) when work_plan.md is uncommitted, where diag
+           contains uncommitted_work_plan=True, path, and remediation command.
+    """
+    changed = scope_gate.get_changed_files(
+        project_root=project_root,
+        motor_root=motor_root,
+    )
+    if changed is None:
+        # No git repo found — cannot verify; let caller decide
+        return True, {}
+
+    wp_path = (project_root / ".agent" / "collaboration" / "work_plan.md").resolve()
+    wp_abs = str(wp_path)
+    # git status --porcelain may report a parent directory for entirely untracked
+    # subtrees (e.g. ".agent/" instead of each file inside). Check both the
+    # exact path and whether any reported path is a parent of work_plan.md.
+    wp_dirty = wp_abs in changed or any(
+        path_is_under(wp_path, Path(c)) for c in changed
+    )
+    if wp_dirty:
+        return False, {
+            "uncommitted_work_plan": True,
+            "path": ".agent/collaboration/work_plan.md",
+            "remediation": (
+                "git add .agent/collaboration/work_plan.md && "
+                'git commit -m "chore: commit active work_plan before handoff"'
+            ),
+        }
+    return True, {}
+
+
 def build_live_surface_sets(
     project_root: Path,
 ) -> tuple[set[str], set[str]]:
