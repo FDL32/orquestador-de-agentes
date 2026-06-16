@@ -13,6 +13,24 @@ sin decision. La auditoria es **dry-run only**: no ejecuta `git add`, `git rm`,
 Hereda `prompts/audit_agent_output.md`: evidencia antes que relato, CEM v0,
 doble pasada adversarial y barrera verificada.
 
+## Encaje en el ciclo de vida del destino
+
+Esta auditoria prepara una primera publicacion o una revision de exposicion de
+un `repo_destino`. No instala el destino ni valida el estado operativo del
+ticket activo.
+
+Usa las herramientas en este orden segun el objetivo:
+
+1. Instalacion/sync del destino: `skills/setup-agent-system/SKILL.md`.
+2. Bootstrap operativo: `prompts/destination_bootstrap.md`.
+3. Gate pre-push de estado vivo: `scripts/check_destino_publish_ready.py`.
+4. Auditoria de publicacion Git: este prompt + `scripts/classify_publication.py`.
+
+`check_destino_publish_ready.py` y `classify_publication.py` no se sustituyen:
+el primero bloquea drift operativo antes de publicar commits del destino; el
+segundo clasifica secretos, PII, archivos privados, historia Git y decisiones
+pendientes antes de publicar el repositorio.
+
 ## Herramienta determinista
 
 Ejecuta:

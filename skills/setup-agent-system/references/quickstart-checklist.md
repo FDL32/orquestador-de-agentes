@@ -1,41 +1,34 @@
-# Checklist de Instalación Rápida
+# Legacy setup checklist
 
-## Pre-requisitos
-- [ ] Python 3.10+
-- [ ] Git instalado
-- [ ] `uv` instalado (`pip install uv`)
+This reference is retained only to identify the pre-host-extends setup flow.
+Do not use it as the current installation procedure.
 
-## Instalación
-- [ ] Ejecutar script de instalación o copiar manual
-- [ ] Verificar `.agent/` existe en `publica/repo/`
-- [ ] Verificar `.agent/rules/` existe con archivos modulares
+## Superseded instructions
 
-## Configuración de Agentes
-- [ ] Copiar archivos de `.agent/rules/common/` a ambos agentes
-- [ ] Copiar archivos de `.agent/rules/manager/` al agente Manager
-- [ ] Copiar archivos de `.agent/rules/builder/` al agente Builder
+The old checklist asked agents to:
 
-## Estructura de Seguridad
-- [ ] Crear carpeta `privada/`
-- [ ] Verificar `.gitignore` incluye `privada/`
+- copy `.agent/` manually into a destination project;
+- copy `.agent/rules/` into agent-specific instructions;
+- create `privada/` as part of agent-system setup;
+- run a local `.agent/agent_controller.py` without an explicit destination root.
 
-## Verificación
-- [ ] Ejecutar `python .agent/agent_controller.py`
-- [ ] Confirmar estado inicial: MANAGER / CREATE_PLAN
+Those steps are legacy. The current model uses one external `repo_motor` plus a
+linked `repo_destino`.
 
-## Primer Uso
-- [ ] Crear solicitud al Manager
-- [ ] Verificar que crea `work_plan.md`
-- [ ] Aprobar plan
-- [ ] Verificar que Builder implementa
+## Current source of truth
 
-## Solución de Problemas
+Use `skills/setup-agent-system/SKILL.md` for install/sync.
 
-### "No es tu turno"
-Verificar `TURN.md` y abrir el agente correcto.
+Expected current flow:
 
-### "No se encuentra .agent"
-Verificar ruta: debe estar en `publica/repo/.agent/`
+- run `scripts/install_agent_system.py --install --dest <repo_destino> --prefix <XXX>`;
+- keep `.agent/config/motor_destination_link.json` in the destination;
+- use `active_profile: host-project` for destination installs;
+- run operational commands with `--project-root <repo_destino>` or
+  `AGENT_PROJECT_ROOT=<repo_destino>`;
+- use `prompts/destination_bootstrap.md` only after the destination is installed.
 
-### Errores de import
-Verificar que `uv sync` se ejecutó correctamente.
+For Git/publication readiness, use:
+
+- `scripts/check_destino_publish_ready.py` for the operational pre-push gate;
+- `prompts/audit_git_publication.md` for first-publication exposure review.

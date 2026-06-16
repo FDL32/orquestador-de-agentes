@@ -27,7 +27,14 @@ Estas operando sobre un `repo_destino` del motor `orquestador_de_agentes`.
 6. Si el usuario pide implantar varios tickets desde `backlog.md` por chat,
    usa `<motor_root>/prompts/orchestrator_pipeline.md` y la skill
    `<motor_root>/skills/orchestrate-pipeline/SKILL.md` (`/pipeline`).
-7. Continua con `rg` y lectura directa de archivos bajo demanda.
+7. Si el destino aun no esta instalado o sincronizado con el motor, no uses
+   este bootstrap como sustituto del setup: aplica primero
+   `<motor_root>/skills/setup-agent-system/SKILL.md`.
+8. Si el objetivo es preparar el destino para Git/publicacion, distingue dos
+   gates:
+   - estado operativo publicable: `python <motor_root>/scripts/check_destino_publish_ready.py --project-root . --motor-root <motor_root>`;
+   - auditoria de primera publicacion: `<motor_root>/prompts/audit_git_publication.md`.
+9. Continua con `rg` y lectura directa de archivos bajo demanda.
 
 ## Vocabulario canonico
 
@@ -66,6 +73,15 @@ motor-provides), confirma EXPLICITAMENTE, ademas de los pasos anteriores:
    seguro de poda host-extends hasta cerrar WOT-2026-003d.
 
 Si cualquiera falla, detente y reporta antes de tocar codigo.
+
+## Encaje en el ciclo de vida del destino
+
+- Instalacion/sync: `skills/setup-agent-system/SKILL.md`.
+- Arranque de sesion en destino ya instalado: este prompt.
+- Ejecucion de backlog: `prompts/orchestrator_pipeline.md`.
+- Salud post-cambio motor+destino: `prompts/audit_post_change_system_health.md`.
+- Pre-publicacion operativa: `scripts/check_destino_publish_ready.py`.
+- Preparacion para publicacion Git: `prompts/audit_git_publication.md`.
 ```
 
 ---

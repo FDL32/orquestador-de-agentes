@@ -1,111 +1,149 @@
 ---
 name: setup-agent-system
-version: 2.0.0
-description: Instalar y configurar el sistema de agentes con flujo oficial por etapas y compatibilidad legacy Manager+Builder en un proyecto existente
+version: 2.1.0
+description: Instalar o sincronizar un repo_destino para usar el motor externo orquestador_de_agentes con link portable, perfil host-project y preflight verificable
 triggers: [/agent-setup, /agent-install, /init]
 author: agent
 role: user
 stage: setup
 writes_memory: false
 quality_gate: false
-tags: [core, system]
+tags: [core, system, destination, host-extends]
 ---
 
 # setup-agent-system
 
-Instala el sistema multi-agente en un proyecto Python existente.
+Prepara un `repo_destino` para consumir el motor externo
+`orquestador_de_agentes` sin copiar el motor completo ni convertir el estado del
+destino en estado del `repo_motor`.
 
-## Overview
+## Modelo vigente
 
-Configura el flujo oficial por etapas (`plan -> build -> review -> validate`) y mantiene compatibilidad con el flujo legacy Manager + Builder cuando haga falta.
+- `repo_motor`: raiz unica del motor portable.
+- `repo_destino`: proyecto que conserva `.agent/` con estado, memoria,
+  eventos y configuracion local.
+- El destino referencia al motor mediante
+  `.agent/config/motor_destination_link.json`.
+- Los comandos operativos que tocan estado del destino usan
+  `--project-root <repo_destino>` o `AGENT_PROJECT_ROOT=<repo_destino>`.
+- El perfil de agentes instalado en destino debe quedar como `host-project`,
+  no `engine-dev`.
 
-## Workflow
+## Cuando usarla
 
-### Paso 1: Verificar Requisitos
+Usar para:
 
-- Python 3.10+
-- Proyecto con estructura `src/`
-- Git inicializado
-- `uv` instalado
+- instalar el sistema en un destino nuevo;
+- sincronizar un destino ya instalado con el motor actual;
+- verificar que un destino quedo enlazado al motor correcto;
+- preparar el primer ciclo operativo antes de usar
+  `prompts/destination_bootstrap.md`.
 
-### Paso 2: Instalar Sistema
+No usar para:
 
-**Opción A: Script automático**
-```bash
-python orquestador_de_agentes/scripts/install_agent_system.py --install
-python orquestador_de_agentes/scripts/install_agent_system.py --sync
+- copiar manualmente `.agent/agent_controller.py`, `scripts/` o `skills/` como
+  codigo operativo del destino;
+- retirar copias legacy sin revisar consumidores vivos;
+- publicar el repo en Git. Para eso usa
+  `scripts/check_destino_publish_ready.py` como gate pre-push de drift
+  operativo, y `prompts/audit_git_publication.md` +
+  `skills/audit-git-publication/SKILL.md` (`/audit-git-publication`) para la
+  auditoria de primera publicacion publica.
+
+## Preflight
+
+1. Confirmar que el `repo_destino` tiene Git inicializado.
+2. Confirmar Python 3.10+ y `uv` si el proyecto lo requiere.
+3. Elegir o confirmar el `Ticket prefix:` del destino.
+4. Confirmar que no hay secretos reales en el arbol antes de instalar.
+5. Si existe `.claude/settings.json`, tratarlo como superficie sensible:
+   despues de instalar, debe pasar
+   `python <repo_motor>/scripts/check_claude_settings_portability.py .claude/settings.json`.
+
+## Instalacion
+
+Ejecutar desde el `repo_motor` o pasando rutas absolutas claras:
+
+```powershell
+python scripts/install_agent_system.py --install --dest <repo_destino> --prefix <XXX>
 ```
 
-**Opción B: Manual**
-```bash
-# Copiar directorio .agent/
-cp -r agent_system/.agent /ruta/al/proyecto/publica/repo/
+Si la version local del instalador difiere, ejecutar `--help` y usar el flag de
+destino equivalente. No improvisar copia manual del bundle.
 
-# Copiar reglas modulares
-cp -r agent_system/.agent/rules /ruta/al/proyecto/publica/repo/.agent/
+El instalador debe dejar como minimo:
+
+- `.agent/config/motor_destination_link.json`;
+- `.agent/config/agents.json` con `active_profile: host-project`;
+- `PROJECT.md` con `Ticket prefix: <XXX>` si se proporciono prefijo;
+- `.gitleaks.toml` seed si no existia configuracion local;
+- superficies destino-keep declaradas en `MANIFEST.workspace`.
+
+## Sincronizacion
+
+Para actualizar un destino ya instalado:
+
+```powershell
+python scripts/install_agent_system.py --sync --dest <repo_destino>
 ```
 
-### Paso 3: Configurar Reglas
+Reglas:
 
-Copiar contenido de archivos a los agentes:
+- no usar `--sync` como poda ciega de host-extends;
+- no borrar rutas trackeadas del destino;
+- si existe `.agent/host-setup.sh` o `.agent/host-setup.ps1`, revisar las
+  primeras lineas y pedir confirmacion humana salvo `--yes`;
+- si el hook falla, la sync falla.
 
-1. **Ambos agentes:** Copiar archivos de `.agent/rules/common/` a sus instrucciones
-2. **Agente Manager:** Copiar archivos de `.agent/rules/manager/` a sus instrucciones
-3. **Agente Builder:** Copiar archivos de `.agent/rules/builder/` a sus instrucciones
+## Verificacion posterior
 
-### Paso 4: Crear Carpeta Privada
+Desde el `repo_destino`:
 
-```bash
-mkdir -p /ruta/al/proyecto/privada
-touch /ruta/al/proyecto/privada/.gitkeep
+```powershell
+$env:AGENT_PROJECT_ROOT = (Resolve-Path .).Path
+python <repo_motor>/scripts/destination_context.py --bootstrap --project-root .
+python <repo_motor>/.agent/agent_controller.py --validate --json --project-root .
+python <repo_motor>/scripts/memory_context.py --status
 ```
 
-**Estructura plana:**
+Resultado esperado:
+
+- `destination_context.py` genera `.agent/context/destination_map.md`;
+- `validate --json` devuelve 0 errores antes de arrancar Builder;
+- `memory_context.py --status` resuelve memoria del destino, no del motor;
+- `motor_destination_link.json` apunta al `repo_motor` correcto.
+
+## Primer ciclo operativo
+
+1. Usar `prompts/destination_bootstrap.md` para arrancar una sesion en el
+   destino.
+2. Si se van a ejecutar varios tickets, usar
+   `prompts/orchestrator_pipeline.md` y
+   `skills/orchestrate-pipeline/SKILL.md`.
+3. Antes de publicar commits del destino que toquen `.agent/collaboration/`,
+   correr:
+
+```powershell
+python <repo_motor>/scripts/check_destino_publish_ready.py --project-root <repo_destino> --motor-root <repo_motor>
 ```
-privada/
-├── .env
-├── config.json
-└── .gitkeep
+
+4. Antes de una primera publicacion publica del repo, ejecutar la auditoria
+   dry-run:
+
+```powershell
+python <repo_motor>/scripts/classify_publication.py --repo-root <repo_destino> --out <repo_destino>/orchestrator_pipeline/reports/publication_manifest.json
 ```
 
-### Paso 5: Verificar Instalación
+Luego aplicar `prompts/audit_git_publication.md`; no publicar solo por tener
+un exit code verde de otro gate. La skill canonica para esa auditoria es
+`skills/audit-git-publication/SKILL.md` (`/audit-git-publication`).
 
-```bash
-cd /ruta/al/proyecto/publica/repo
-python .agent/agent_controller.py
-```
+## Contrato de fallo
 
-Debe mostrar:
-```
-ROL ACTIVO: MANAGER
-Plan: NINGUNO
-Acción: CREATE_PLAN
-```
-
-### Paso 6: Primer Ciclo
-
-1. **Usuario** → Solicita funcionalidad al Manager
-2. **Manager** → Crea `work_plan.md`
-3. **Usuario** → Aprueba plan
-4. **Builder** → Implementa según plan
-5. **Manager** → Revisa y aprueba
-6. **Usuario** → Recibe código listo
-
-## Output
-
-Sistema listo con:
-- `.agent/` con controller y workflows
-- `.manager_rules` y `.builder_rules`
-- `privada/` para credenciales
-- Quality Gates configurados
-
-## References
-
-- `references/quickstart-checklist.md` - Checklist de instalación
-- `EMPEZAR-AQUI.md` - Guía completa del sistema
-
-## Constraints
-
-- **SIEMPRE** copiar reglas a los agentes
-- **SIEMPRE** crear carpeta `privada/`
-- **SIEMPRE** verificar con `agent_controller.py`
+- Si falta `motor_destination_link.json`, el destino no esta bootstrappeado.
+- Si `validate --json` tiene errores, no arrancar Builder.
+- Si el root operativo apunta al motor en vez del destino, detenerse.
+- Si un setup requiere escribir rutas fuera del destino o del motor declarado,
+  pedir aprobacion humana.
+- Si una instruccion antigua recomienda copiar `.agent/`, `scripts/` o
+  `skills/` manualmente, tratarla como legacy y preferir el instalador.
