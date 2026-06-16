@@ -14,7 +14,7 @@ La observacion debe ser:
 **Ejemplos que PASAN**:
 - "Session-close observations skill creada con schema de 6 campos"
 - "Filtros de curacion: hecho, persistencia, utilidad repetida"
-- "WP-2026-132 conecta skill en project-finalize paso 9c-9d"
+- "WOT-2026-132 conecta skill en project-finalize paso 9c-9d"
 
 **Ejemplos que FALLAN**:
 - "Me parece que la memoria deberia ser mas eficiente" (opinion)
@@ -91,7 +91,7 @@ Una observacion es promovida a `observations.jsonl` cuando:
 ## Reglas de Promocion desde audit_findings
 
 Cuando `session_close_observations.py` se ejecuta con `--from-reviews`, aplica estas reglas
-sobre los hallazgos de `.agent/runtime/reviews/WP-XXXX-XXX/audit_findings.jsonl`:
+sobre los hallazgos de `.agent/runtime/reviews/WOT-XXXX-XXX/audit_findings.jsonl`:
 
 | Condicion | Promueve |
 |-----------|----------|

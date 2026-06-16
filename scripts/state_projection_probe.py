@@ -9,7 +9,7 @@ This probe validates whether the bus can serve as single source of truth
 for state projection, without mutating canonical files.
 
 Usage:
-    python scripts/state_projection_probe.py [--ticket-id WP-YYYY-NNN] [--json]
+    python scripts/state_projection_probe.py [--ticket-id WOT-YYYY-NNNx] [--json]
 
 Exit codes:
     0 - State matched or drift detected (informational)
@@ -107,7 +107,7 @@ def _extract_ticket_id_from_work_plan(work_plan_path: Path) -> str | None:
 
     content = work_plan_path.read_text(encoding="utf-8")
     for line in content.splitlines():
-        # Match both "**ID:** WP-2026-145" and "- **ID:** WP-2026-145"
+        # Match both "**ID:** WOT-2026-010a" and "- **ID:** WOT-2026-010a"
         if "**ID:**" in line:
             # Extract everything after the colon, strip markdown and whitespace
             parts = line.split(":", 1)

@@ -61,8 +61,9 @@ def _active_ticket_from_work_plan() -> str | None:
 
 def _active_ticket_from_work_plan_content(content: str) -> str | None:
     for line in content.splitlines():
-        # Match canonical work_plan fields: "- **ID:** WT-YYYY-NNN[a]"
-        # WT-2026-251a: derived from TICKET_ID_PATTERN to accept 3-letter prefixes.
+        # Match canonical work_plan fields: "- **ID:** WOT-YYYY-NNNx"
+        # WT-2026-251a: derived from TICKET_ID_PATTERN (canonical WOT-;
+        # WP-/WT- accepted as legacy-compat).
         canonical = re.search(
             r"\*\*(?:Plan\s+ID|ID):\*\*\s*(" + TICKET_ID_PATTERN + r")",
             line,
@@ -71,8 +72,9 @@ def _active_ticket_from_work_plan_content(content: str) -> str | None:
         if canonical:
             return canonical.group(1).strip().lstrip("*").rstrip("*").strip()
 
-        # Match "- **Plan activo:** WP-YYYY-XXX" or "- **Ticket activo:** WT-YYYY-XXX"
-        # WT-2026-251a: derived from TICKET_ID_PATTERN to accept 3-letter prefixes.
+        # Match "- **Plan activo:** WOT-YYYY-NNNx" or "- **Ticket activo:** WOT-YYYY-NNNx"
+        # WT-2026-251a: derived from TICKET_ID_PATTERN (canonical WOT-;
+        # WP-/WT- accepted as legacy-compat).
         match = re.search(
             r"(?:Plan|Ticket)\s+activo.*?:\*{0,2}\s*(" + TICKET_ID_PATTERN + r")",
             line,

@@ -56,7 +56,7 @@ Regla de repos: toda operación git de tooling corre en `repo_motor`. El estado 
 - **Roles:** Manager (OpenCode via `scripts/manager_review_bridge.py`, modelo configurable en `.agent/config/agents.json`) y Builder (OpenCode, modelo `opencode-go/deepseek-v4-flash`).
 - **Bus canonico:** `.agent/runtime/events/events.jsonl` (append-only, autoridad absoluta).
 - **Proyecciones:** `TURN.md`, `STATE.md`, `work_plan.md`, `execution_log.md` se derivan del bus.
-- **Namespaces de tickets:** motor `WP-YYYY-NNN`; destino `XXX-YYYY-NNN` con `Ticket prefix: XXX` declarado en el `PROJECT.md` local del destino.
+- **Namespaces de tickets:** motor `WOT-YYYY-NNNx` (canonical; `WP-`/`WT-` legacy historico); destino `XXX-YYYY-NNN` con `Ticket prefix: XXX` declarado en el `PROJECT.md` local del destino.
 - **Launcher:** `scripts/launch_agent_terminals.ps1` abre Supervisor + Bridge + Builder segun `TURN.md`. WP-2026-067 integro OpenCode con prompt compuesto desde ticket.
 - **Config de agentes:** `.agent/config/agents.json` mapea backend->ejecutable. Builder=opencode, Manager=opencode, Supervisor=default.
 - **Validate:** `python .agent/agent_controller.py --validate --json --force` debe pasar antes de cualquier cierre. Verifica entre otras cosas que destinos `host-project` tengan `Ticket prefix:` declarado.
@@ -97,7 +97,7 @@ usuario.
 - **Rigor proporcional:** ajusta gates y pruebas al blast radius y reversibilidad del cambio.
 - **Root/topologia antes de relaunch:** valida `AGENT_PROJECT_ROOT`, `repo_motor`, `repo_destino`, bus legible y ticket activo antes de abrir Builder.
 
-**Manager devuelve `inspect` / CHANGES fantasma:** la causa raiz se corrigio en WP-2026-120 (el parser JSON del bridge leia un schema inexistente). Ya NO es comportamiento esperado: si reaparece un `changes` con `attempt-N.md` de BLOCKERS vacios, es una regresion del parser en `bus/review_bridge.py` — investigarla, no normalizarla. Cierre manual canonico si hace falta: `python .agent/agent_controller.py --manager-approve --ticket WP-XXXX --force`.
+**Manager devuelve `inspect` / CHANGES fantasma:** la causa raiz se corrigio en WP-2026-120 (el parser JSON del bridge leia un schema inexistente). Ya NO es comportamiento esperado: si reaparece un `changes` con `attempt-N.md` de BLOCKERS vacios, es una regresion del parser en `bus/review_bridge.py` — investigarla, no normalizarla. Cierre manual canonico si hace falta: `python .agent/agent_controller.py --manager-approve --ticket WOT-XXXX --force`.
 
 ## Reglas no negociables
 
@@ -105,7 +105,7 @@ usuario.
 - **No mezcles chat y terminal** sin sincronizar TURN/STATE/execution_log.
 - **`.codex/` y `*.log` estan gitignorados** (rollouts con prompts sensibles). No los toques.
 - **OAuth race Codex:** Resuelto por WP-072 mediante el cambio al backend OpenCode. La dependencia de Codex como backend del Manager ha sido eliminada por defecto.
-- **Manager-approve CLI:** Se realiza mediante `python .agent/agent_controller.py --manager-approve --ticket WP-XXXX --force` (canonical closeout sin scripts ad-hoc).
+- **Manager-approve CLI:** Se realiza mediante `python .agent/agent_controller.py --manager-approve --ticket WOT-XXXX --force` (canonical closeout sin scripts ad-hoc).
 - **No abras WP nuevos sin instruccion explicita del usuario.**
 
 ## Comportamiento esperado

@@ -168,8 +168,9 @@ def extract_active_ticket_id(work_plan_content: str) -> str | None:
     Extract the active ticket ID from work_plan.md.
 
     Before: Requires work_plan.md content as string.
-    During: Searches for WP-YYYY-NNN pattern in metadata section.
-    After: Returns ticket ID (e.g., 'WP-2026-147') or None if not found.
+    During: Searches for the canonical ticket ID pattern (WOT-YYYY-NNNx;
+            legacy WP-/WT- still accepted) in the metadata section.
+    After: Returns ticket ID (e.g., 'WOT-2026-010a') or None if not found.
     """
     # WT-2026-251a: derived from TICKET_ID_PATTERN to accept 3-letter prefixes.
     match = re.search(r"\*\*ID:\*\*\s*(" + TICKET_ID_PATTERN + r")", work_plan_content)

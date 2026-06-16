@@ -18,8 +18,8 @@ El comando emite BUILDER_MILESTONE con milestone, tag y SHA verificable.
 Si la tag ya existe, hace skip con aviso y no falla.
 
 Uso:
-    python scripts/create_checkpoint.py --milestone M3 --ticket-id WP-2026-XXX
-    python scripts/create_checkpoint.py --milestone M3 --ticket-id WP-2026-XXX --json
+    python scripts/create_checkpoint.py --milestone M3 --ticket-id WOT-2026-XXX
+    python scripts/create_checkpoint.py --milestone M3 --ticket-id WOT-2026-XXX --json
 """
 
 import json
@@ -265,7 +265,7 @@ def main() -> int:
         "--ticket-id",
         type=str,
         required=True,
-        help="Ticket ID (e.g., WP-2026-167)",
+        help="Ticket ID (e.g., WOT-2026-010a)",
     )
     parser.add_argument(
         "--project-root",

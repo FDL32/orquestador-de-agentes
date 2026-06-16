@@ -262,7 +262,8 @@ def _resolve_active_ticket(project_root: Path) -> str | None:
     """Resolve the active ticket ID from work_plan.md.
 
     Before: work_plan.md must exist.
-    During: Searches for '- **ID:** WP-YYYY-NNN' pattern.
+    During: Searches for the canonical '- **ID:** WOT-YYYY-NNNx' pattern
+            (legacy WP-/WT- still accepted).
     After: Returns ticket ID string or None.
     """
     wp_path = project_root / WORK_PLAN_REL
@@ -669,13 +670,13 @@ def main() -> int:
         "--ticket",
         type=str,
         default=None,
-        help="Explicit ticket ID to audit (e.g., WT-2026-168)",
+        help="Explicit ticket ID to audit (e.g., WOT-2026-010a)",
     )
     parser.add_argument(
         "--tickets",
         type=str,
         default=None,
-        help="Comma-separated ticket IDs to audit (e.g., WT-2026-168,WT-2026-167)",
+        help="Comma-separated ticket IDs to audit (e.g., WOT-2026-010a,WOT-2026-009g)",
     )
 
     args = parser.parse_args()

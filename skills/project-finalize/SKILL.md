@@ -205,7 +205,7 @@ Este wrapper ejecuta en secuencia fija:
 
 ### Paso 9d: Builder genera observaciones de cierre de sesion
 
-- Ejecutar `python scripts/session_close_observations.py --ticket WP-2026-XXX --verbose`
+- Ejecutar `python scripts/session_close_observations.py --ticket WOT-2026-XXX --verbose`
 - Revisar `.agent/runtime/memory/session_close_report.md` para verificar:
   - Observaciones generadas y filtradas
   - Razones de rechazo (si las hay)

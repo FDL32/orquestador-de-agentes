@@ -145,9 +145,9 @@ Al final del reporte, después de "Acción Inmediata", emitir un bloque candidat
 
 Si decides adoptar alguna de las oportunidades anteriores, añade esta fila a `CREDITS.md` (tabla principal):
 
-| WP | Source | Pattern | License | Adapted vs Ported |
+| WOT | Source | Pattern | License | Adapted vs Ported |
 |----|--------|---------|---------|-------------------|
-| WP-XXXX-XXX (TBD) | [<owner/repo>@<sha-corto>](https://github.com/<owner>/<repo>/tree/<sha>) | <pattern name> | <license, [verify] si no comprobado> | <Adapted / Ported / Inspiration> |
+| WOT-XXXX-XXX (TBD) | [<owner/repo>@<sha-corto>](https://github.com/<owner>/<repo>/tree/<sha>) | <pattern name> | <license, [verify] si no comprobado> | <Adapted / Ported / Inspiration> |
 
 **Notas para completar:**
 - `WP`: rellenar al abrir el ticket que adopta la idea.

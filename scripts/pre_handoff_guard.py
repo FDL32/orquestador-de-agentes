@@ -16,7 +16,7 @@ Si hay archivos fuera de Files Likely Touched, los reporta como scope_discrepanc
 (no bloqueante, solo observacion).
 
 Uso:
-    python scripts/pre_handoff_guard.py --project-root /path --ticket-id WP-2026-XXX
+    python scripts/pre_handoff_guard.py --project-root /path --ticket-id WOT-2026-XXX
 """
 
 import json
@@ -600,7 +600,7 @@ def main() -> int:
         "--ticket-id",
         type=str,
         required=True,
-        help="Ticket ID (e.g., WP-2026-167)",
+        help="Ticket ID (e.g., WOT-2026-010a)",
     )
     parser.add_argument(
         "--motor-root",

@@ -260,7 +260,7 @@ El handoff al Builder genera/actualiza, sin omitir ninguno:
 
 ## TP Check obligatorio
 
-Antes de aprobar cualquier `work_plan.md`, el Manager debe rellenar en `AUDIT_WP-XXXX.md` una seccion `## TP Check` usando:
+Antes de aprobar cualquier `work_plan.md`, el Manager debe rellenar en `AUDIT_WOT-XXXX.md` una seccion `## TP Check` usando:
 
 1. `../../_shared/ticket-anti-patterns.md` como catalogo de referencia.
 2. `references/plan-quality-checklist.md` como checklist de aprobacion.

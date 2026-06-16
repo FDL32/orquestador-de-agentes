@@ -415,7 +415,7 @@ El Builder debe crear el checkpoint M3 (`checkpoint/review-<ticket>`) de forma e
 
 **Comando:**
 ```bash
-python scripts/create_checkpoint.py --milestone M3 --ticket-id WP-2026-XXX
+python scripts/create_checkpoint.py --milestone M3 --ticket-id WOT-2026-XXX
 ```
 
 **Checkpoints disponibles:**

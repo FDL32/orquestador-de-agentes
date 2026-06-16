@@ -141,7 +141,7 @@ Detectado por el guard de handoff (`pre_handoff_guard.py`) que bloquea si M3 fal
 
 ## Uso
 
-- Usa estas entradas como referencia al redactar el `## TP Check` del `AUDIT_WP-XXXX.md`.
+- Usa estas entradas como referencia al redactar el `## TP Check` del `AUDIT_WOT-XXXX.md`.
 - Formato abreviado esperado en el audit:
   - `TP-01: verificado - ...`
   - `TP-02: verificado - ...`

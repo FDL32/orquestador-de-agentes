@@ -7,7 +7,7 @@
   "timestamp": "2026-05-25T12:00:00Z",
   "signal": "Descripcion clara y concisa del hecho observado",
   "category": "convention",
-  "source_ticket": "WP-2026-132",
+  "source_ticket": "WOT-2026-132",
   "topic": "memory-management",
   "source": "session-close"
 }
@@ -34,8 +34,8 @@
 
 ### source_ticket (requerido)
 - **Tipo**: string
-- **Formato**: `WP-YYYY-NNN` o referencia equivalente
-- **Ejemplo**: `WP-2026-132`, `MAN-2026-045`
+- **Formato**: `WOT-YYYY-NNNx` (canonical; `WP-`/`WT-` legacy historico) o referencia equivalente
+- **Ejemplo**: `WOT-2026-010a`, `MAN-2026-045`
 
 ### topic (requerido)
 - **Tipo**: string
@@ -65,7 +65,7 @@
   "timestamp": "2026-05-25T12:00:00.000000Z",
   "signal": "Session-close observations skill creada con schema de 6 campos",
   "category": "fact",
-  "source_ticket": "WP-2026-132",
+  "source_ticket": "WOT-2026-132",
   "topic": "skill-creation",
   "source": "session-close"
 }
@@ -76,7 +76,7 @@
   "timestamp": "2026-05-25T12:05:00.000000Z",
   "signal": "Filtros de curacion: hecho, persistencia entre sesiones, utilidad repetida",
   "category": "convention",
-  "source_ticket": "WP-2026-132",
+  "source_ticket": "WOT-2026-132",
   "topic": "memory-filters",
   "source": "session-close"
 }

@@ -3,7 +3,7 @@
 ## APROBADO
 
 ```markdown
-### 🔍 REV-001: Revisión de WP-2026-001
+### 🔍 REV-001: Revisión de WOT-2026-001
 - **Fecha:** 2026-02-08 19:45
 - **Revisor:** Manager
 - **Veredicto:** ✅ APPROVED
@@ -51,7 +51,7 @@ Plan completado satisfactoriamente. Proceder a siguiente tarea.
 ### Aprobado
 ```markdown
 ## 📨 2026-02-08 19:45 - Revisión Completa
-**Plan:** WP-2026-001
+**Plan:** WOT-2026-001
 **Veredicto:** ✅ APPROVED
 **Acción requerida:** Proceder con siguiente tarea del plan
 **Estado:** ✅ COMPLETED
@@ -60,7 +60,7 @@ Plan completado satisfactoriamente. Proceder a siguiente tarea.
 ### Cambios Requeridos
 ```markdown
 ## 📨 2026-02-08 19:45 - Revisión con Cambios
-**Plan:** WP-2026-001
+**Plan:** WOT-2026-001
 **Veredicto:** 🔄 CHANGES_REQUESTED
 **Acción requerida:** Ver review_queue.md REV-002
 **Estado:** ⏳ PENDING

@@ -398,7 +398,7 @@ def process_candidates(
 def extract_candidates_from_ticket(ticket_id: str) -> list[dict[str, Any]]:
     """Extract candidate observations from work plan ticket.
 
-    Before: Requires ticket ID (e.g., WP-2026-132).
+    Before: Requires ticket ID (e.g., WOT-2026-010a).
     During: Reads work_plan.md and execution_log.md for events.
     After: Returns list of candidate observation dicts.
     """
@@ -519,7 +519,7 @@ def main() -> int:
         description="Generate curated observations at session close"
     )
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--ticket", type=str, help="Ticket ID (e.g., WP-2026-132)")
+    group.add_argument("--ticket", type=str, help="Ticket ID (e.g., WOT-2026-010a)")
     group.add_argument(
         "--candidates", type=str, help="Path to JSON file with candidate observations"
     )

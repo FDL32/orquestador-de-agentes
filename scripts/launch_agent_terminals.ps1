@@ -23,7 +23,8 @@ $ErrorActionPreference = 'Stop'
 
 # WT-2026-245c: Canonical ticket ID pattern for PowerShell runtime.
 # Must stay in sync with bus/ticket_id.py TICKET_ID_PATTERN.
-# Matches WP-XXXX-XXX, WT-XXXX-XXX, and three-letter-prefix tickets like CTL-XXXX-XXX.
+# Matches three-letter-prefix tickets like WOT-XXXX-XXX or CTL-XXXX-XXX (canonical);
+# WP-XXXX-XXX and WT-XXXX-XXX remain accepted as legacy-compat.
 $script:TicketIdPattern = '(?:WP|WT|[A-Z]{3})-\d{4}-[A-Za-z0-9]+'
 
 function Resolve-DestinationRoot {

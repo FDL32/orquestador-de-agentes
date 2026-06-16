@@ -58,7 +58,7 @@ Para cada evento significativo, crear una observacion con el schema base:
   "timestamp": "2026-05-25T12:00:00Z",
   "signal": "Descripcion clara y concisa del hecho",
   "category": "convention|decision|fact|pattern",
-  "source_ticket": "WP-2026-XXX",
+  "source_ticket": "WOT-2026-XXX",
   "topic": "tema principal",
   "source": "session-close"
 }
@@ -149,13 +149,13 @@ Esta skill se invoca en `project-finalize` entre:
 Comandos tipicos:
 ```bash
 # Modo ticket: extrae candidatos automaticos del work_plan.md activo
-python scripts/session_close_observations.py --ticket WP-2026-XXX
+python scripts/session_close_observations.py --ticket WOT-2026-XXX
 
 # Modo candidates: inyecta candidatos semanticos desde archivo JSON externo
 python scripts/session_close_observations.py --candidates candidates.json
 
 # Dry-run para previsualizar sin escribir
-python scripts/session_close_observations.py --ticket WP-2026-XXX --dry-run --verbose
+python scripts/session_close_observations.py --ticket WOT-2026-XXX --dry-run --verbose
 ```
 
 **Nota de exclusion mutua:** `--ticket` y `--candidates` son mutuamente excluyentes.

@@ -11,7 +11,7 @@ El archivo de output debe contener las siguientes secciones en orden:
 
 **Fecha:** YYYY-MM-DD
 **Autor:** <agente o humano>
-**Ticket relacionado:** WP-YYYY-NNN (si aplica)
+**Ticket relacionado:** WOT-YYYY-NNNx (si aplica)
 
 ## Contexto
 
@@ -82,7 +82,7 @@ Este path esta excluido de git. No commitear investigaciones.
 
 **Fecha:** 2026-05-27
 **Autor:** Builder
-**Ticket relacionado:** WP-2026-157
+**Ticket relacionado:** WOT-2026-157
 
 ## Contexto
 

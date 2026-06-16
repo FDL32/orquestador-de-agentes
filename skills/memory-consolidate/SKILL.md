@@ -144,7 +144,7 @@ If agents are appending during consolidation:
 
 ## References
 
-- Work Plan: `WP-2026-083` in `.agent/collaboration/work_plan.md`
+- Work Plan: `WP-2026-083` (legacy-compat: ticket historico de origen de esta skill; ver glosario WOT-2026-010a en AGENTS.md)
 - Origin: Oportunidad #4 from `garrytan/gbrain` repo-compare
 - V2 Backlog: LLM-based synthesis + cron scheduling
 

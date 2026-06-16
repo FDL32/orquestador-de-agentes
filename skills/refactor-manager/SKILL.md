@@ -321,4 +321,4 @@ Esta skill define el **protocolo** (5 fases). Los prompts operativos viven en ar
 
 - `.agent/rules/manager/refactoring-protocol.md` — Protocolo completo
 - `CLAUDE.md` sección 3l — Integración TICKET #010
-- `WP-2026-010` — Plan de implementación
+- `WP-2026-010` — Plan de implementación (legacy-compat: ticket historico de origen; ver glosario WOT-2026-010a)

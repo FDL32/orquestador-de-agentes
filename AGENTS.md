@@ -69,6 +69,25 @@ validador de prosa, review bridge, motor_checkpoint):
 del ticket ANTES de Builder; no confundir con review de implementacion, bus,
 cierre o publicacion.
 
+**Generador vs historia (regla de gate, WOT-2026-010a):** la gate de
+nomenclatura distingue dos usos muy distintos de un ID con prefijo legacy:
+
+- **Generador / ejemplo vivo** (DEBE usar `WOT-`): plantillas, placeholders,
+  ejemplos de comando, texto de `--help`, esquemas de formato (`source_ticket`,
+  `Plan ID`, `Ticket relacionado`, `--ticket WP-...`). Crean o enseñan
+  nomenclatura nueva. La gate FALLA si usan `WP-`/`WT-` sin etiqueta.
+- **Historia de commit** (legacy-compat implicito, NO se reescribe): un
+  comentario o docstring de la forma `# <TICKET>: <descripcion de lo que se
+  hizo>` documenta en que ticket historico se realizo un cambio. Reescribirlo
+  falsearia la trazabilidad. La gate lo PERMITE como legacy-compat por su forma
+  (`# <TICKET>:` o referencia historica), sin marca por-linea.
+- **Bloque legacy etiquetado** (legacy-compat explicito): un ejemplo que
+  conserva un ID historico a proposito para demostrar retrocompatibilidad debe
+  llevar una nota `legacy-compat (WOT-2026-010a): ...` cerca.
+
+Gate ejecutable: `scripts/check_ticket_nomenclature.py` clasifica cada hit y
+falla solo ante un generador/ejemplo vivo con prefijo legacy sin etiqueta.
+
 ### Distincion critica: `.agent/collaboration/` del motor vs del destino
 
 | Ubicacion | Rol | Contenido |

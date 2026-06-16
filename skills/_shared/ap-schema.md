@@ -26,12 +26,12 @@ Plantilla compartida para registrar anti-patrones de forma consistente entre Bui
   "timestamp": "ISO-8601",
   "topic": "kebab-del-patron",
   "signal": "Que fallo exactamente y que regla se deriva",
-  "source": "human_audit_WP-XXXX | session-YYYY-MM-DD",
+  "source": "human_audit_WOT-XXXX | session-YYYY-MM-DD",
   "domain": "security-gates | integration-tests | protocol-handlers | bus-architecture | review-quality | config-schema | testing | delivery-hygiene | builder-contract",
   "applies_to": "code | mixed | docs | all",
   "confidence": 0.95,
   "impact": "low | medium | high",
-  "source_ticket": "WP-YYYY-NNN",
+  "source_ticket": "WOT-YYYY-NNNx",
   "pattern_id": "AP-NN (opcional)",
   "recommended_followup": "descripcion de accion futura (opcional)"
 }
@@ -42,7 +42,7 @@ Plantilla compartida para registrar anti-patrones de forma consistente entre Bui
 - `timestamp` (string): ISO-8601 con zona horaria (ej. `2026-05-27T12:00:00Z`).
 - `topic` (string): identificador kebab-case del patron o hallazgo.
 - `signal` (string): descripcion clara de que fallo y que regla se deriva.
-- `source` (string): origen de la observacion (`human_audit_WP-XXXX`, `session-YYYY-MM-DD`, etc.).
+- `source` (string): origen de la observacion (`human_audit_WOT-XXXX`, `session-YYYY-MM-DD`, etc.).
 - `domain` (string): categoria estable del dominio (ver valores permitidos arriba).
 - `applies_to` (string): donde impacta la observacion (`code`, `mixed`, `docs`, `all`).
 - `confidence` (float): valor entre `0.0` y `1.0` que indica certeza del hallazgo.
@@ -76,18 +76,23 @@ Plantilla compartida para registrar anti-patrones de forma consistente entre Bui
   "timestamp": "2026-05-27T12:00:00Z",
   "topic": "protocol-key-assumption",
   "signal": "guard_paths leyo tool_calls/shell_command en vez de tool_input/command; produccion y tests compartian la misma suposicion erronea.",
-  "source": "human_audit_WP-2026-154",
+  "source": "human_audit_WOT-2026-154",
   "domain": "protocol-handlers",
   "applies_to": "code",
   "confidence": 0.95,
   "impact": "high",
-  "source_ticket": "WP-2026-154",
+  "source_ticket": "WOT-2026-154",
   "surface": [".agent/hooks/guard_paths.py", "tests/test_guard_paths.py"],
   "anti_pattern_id": "AP-09"
 }
 ```
 
 ## Ejemplo legacy (retrocompatible)
+
+> legacy-compat (WOT-2026-010a): este ejemplo conserva deliberadamente un ID
+> historico `WP-2026-132` para demostrar que el schema sigue aceptando
+> observaciones de tickets legacy. NO es un generador de nomenclatura nueva;
+> los IDs nuevos usan el prefijo canonico `WOT-`.
 
 ```json
 {
