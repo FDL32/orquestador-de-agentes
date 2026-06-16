@@ -88,6 +88,27 @@ def iso_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def _motor_head_sha() -> str | None:
+    """Return the motor HEAD SHA, or None if git is unavailable.
+
+    WOT-2026-010c: recorded in last-run.json so the handoff gate can verify the
+    run tested the exact commit being delivered. The runner lives in the motor
+    repo, so HEAD here is the motor delivery commit.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"],  # noqa: S607
+            cwd=_PROJECT_ROOT_BOOTSTRAP,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    sha = proc.stdout.strip()
+    return sha or None
+
+
 def ensure_runtime_dir() -> None:
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -475,6 +496,10 @@ def main() -> int:
         "command": command,
         "cleanup_before": cleanup,
         "run_dir": str(run_dir),
+        # WOT-2026-010c: record the motor HEAD this run tested, so the
+        # canonical-suite handoff gate can verify freshness by SHA (not by
+        # timestamp). Captured once at run start; the tree must not change.
+        "tested_commit_sha": _motor_head_sha(),
         "status": "started",
     }
     write_json(LAST_RUN_JSON, summary)

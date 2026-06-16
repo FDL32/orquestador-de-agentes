@@ -48,6 +48,43 @@ def create_checkpoint_tag(repo_path: Path, tag_name: str) -> None:
     )
 
 
+def write_green_last_run(repo_path: Path) -> None:
+    """Write a fresh-green last-run.json so the WOT-2026-010c gate passes.
+
+    Required precondition for any guard test that expects valid=True: the
+    canonical-suite gate demands status==finished + exit_code==0 +
+    tested_commit_sha==HEAD. Writes it against the repo's current HEAD.
+    """
+    # Replicate the motor .gitignore so the ephemeral artifact does not dirty
+    # the handoff tree (the real motor ignores .agent/runtime/pytest-safe/).
+    # Commit the .gitignore first so HEAD reflects a clean tree, then write the
+    # last-run.json (now ignored) against that committed HEAD.
+    gitignore = repo_path / ".gitignore"
+    existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+    if "pytest-safe" not in existing:
+        gitignore.write_text(
+            existing + "\n.agent/runtime/pytest-safe/\n", encoding="utf-8"
+        )
+        subprocess.run(["git", "add", ".gitignore"], cwd=repo_path, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "ignore pytest-safe runtime"],
+            cwd=repo_path,
+            capture_output=True,
+        )
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    d = repo_path / ".agent" / "runtime" / "pytest-safe"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "last-run.json").write_text(
+        json.dumps({"status": "finished", "exit_code": 0, "tested_commit_sha": head}),
+        encoding="utf-8",
+    )
+
+
 class TestPreHandoffGuard:
     """Tests for pre_handoff_guard.py script."""
 
@@ -79,6 +116,7 @@ class TestPreHandoffGuard:
         )
 
         # Create M3 checkpoint on HEAD after all commits
+        write_green_last_run(repo)
         create_checkpoint_tag(repo, "checkpoint/review-WP-2026-167")
 
         result = subprocess.run(
@@ -335,6 +373,7 @@ class TestPreHandoffGuard:
         )
 
         # Create M3 checkpoint on HEAD after all commits
+        write_green_last_run(repo)
         create_checkpoint_tag(repo, "checkpoint/review-WP-2026-167")
 
         # Modify them (should be ignored by guard)
@@ -393,6 +432,7 @@ class TestPreHandoffGuard:
         )
 
         # Create M3 checkpoint on HEAD after all commits
+        write_green_last_run(repo)
         create_checkpoint_tag(repo, "checkpoint/review-WP-2026-167")
 
         (report_dir / "session_close_report.md").write_text(
@@ -427,6 +467,7 @@ class TestPreHandoffGuard:
         init_git_repo(repo)
 
         # Create M3 checkpoint
+        write_green_last_run(repo)
         create_checkpoint_tag(repo, "checkpoint/review-WP-2026-167")
 
         # Create work_plan.md with limited scope
@@ -549,6 +590,7 @@ class TestPreHandoffGuard:
         )
 
         # Create M3 checkpoint
+        write_green_last_run(repo)
         create_checkpoint_tag(repo, "checkpoint/review-WP-2026-172")
 
         # Modify PROJECT.md (simulating operational cycle update)
@@ -601,6 +643,7 @@ class TestPreHandoffGuard:
         )
 
         # Create M3 checkpoint on HEAD after all commits
+        write_green_last_run(repo)
         create_checkpoint_tag(repo, "checkpoint/review-WP-2026-167")
 
         # Create ignored files
@@ -698,6 +741,7 @@ class TestWorkPlanCommitGuard:
             check=True,
             capture_output=True,
         )
+        write_green_last_run(repo)
         create_checkpoint_tag(repo, "checkpoint/review-WOT-2026-TEST")
 
         result = run_guard(repo, "WOT-2026-TEST", motor_root=repo)
@@ -728,6 +772,7 @@ class TestWorkPlanCommitGuard:
             check=True,
             capture_output=True,
         )
+        write_green_last_run(repo)
         create_checkpoint_tag(repo, "checkpoint/review-WOT-2026-TEST")
 
         # Dirty live surfaces (must not cause failure)
@@ -792,3 +837,214 @@ class TestWorkPlanCommitGuard:
         assert result.get("work_plan_guard_error"), (
             "Expected work_plan_guard_error diagnostic when helper raises."
         )
+
+
+class TestCanonicalSuiteGreenGate:
+    """WOT-2026-010c: handoff requires a fresh green run_pytest_safe.
+
+    The gate reads <motor>/.agent/runtime/pytest-safe/last-run.json and requires
+    status==finished + exit_code==0 + tested_commit_sha==HEAD(motor). Fail-closed.
+    deliverable_type doc/research/analysis -> auditable skip, not a block.
+    """
+
+    @staticmethod
+    def _write_last_run(motor: Path, payload: dict) -> Path:
+        d = motor / ".agent" / "runtime" / "pytest-safe"
+        d.mkdir(parents=True, exist_ok=True)
+        p = d / "last-run.json"
+        p.write_text(json.dumps(payload), encoding="utf-8")
+        return p
+
+    @staticmethod
+    def _head_sha(repo: Path) -> str:
+        r = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+        )
+        return r.stdout.strip()
+
+    def _import_guard(self):
+        import sys
+
+        sys.path.insert(0, str(SCRIPT_PATH.parent))
+        import pre_handoff_guard
+
+        return pre_handoff_guard
+
+    def test_missing_last_run_blocks(self, tmp_path: Path) -> None:
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+        ok, diag = guard.assert_canonical_suite_green(motor, "code")
+        assert ok is False
+        assert diag.get("canonical_suite_required") is True
+        assert "last_run_json" in diag
+        assert "remediation" in diag
+
+    def test_corrupt_json_blocks(self, tmp_path: Path) -> None:
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+        d = motor / ".agent" / "runtime" / "pytest-safe"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "last-run.json").write_text("{not valid json", encoding="utf-8")
+        ok, diag = guard.assert_canonical_suite_green(motor, "code")
+        assert ok is False
+        assert diag.get("canonical_suite_error")
+
+    def test_status_not_finished_blocks(self, tmp_path: Path) -> None:
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+        self._write_last_run(
+            motor,
+            {
+                "status": "started",
+                "exit_code": 0,
+                "tested_commit_sha": self._head_sha(motor),
+            },
+        )
+        ok, diag = guard.assert_canonical_suite_green(motor, "code")
+        assert ok is False
+        assert "finished" in diag.get("reason", "").lower()
+
+    def test_exit_code_nonzero_blocks(self, tmp_path: Path) -> None:
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+        self._write_last_run(
+            motor,
+            {
+                "status": "finished",
+                "exit_code": 1,
+                "tested_commit_sha": self._head_sha(motor),
+            },
+        )
+        ok, diag = guard.assert_canonical_suite_green(motor, "code")
+        assert ok is False
+        assert (
+            "exit_code" in diag.get("reason", "").lower()
+            or "failed" in diag.get("reason", "").lower()
+        )
+
+    def test_stale_sha_blocks(self, tmp_path: Path) -> None:
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+        # last-run against a different (old) sha, then a new commit moves HEAD
+        self._write_last_run(
+            motor,
+            {"status": "finished", "exit_code": 0, "tested_commit_sha": "deadbeef" * 5},
+        )
+        ok, diag = guard.assert_canonical_suite_green(motor, "code")
+        assert ok is False
+        assert (
+            "stale" in diag.get("reason", "").lower()
+            or "sha" in diag.get("reason", "").lower()
+        )
+
+    def test_fresh_green_passes(self, tmp_path: Path) -> None:
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+        self._write_last_run(
+            motor,
+            {
+                "status": "finished",
+                "exit_code": 0,
+                "tested_commit_sha": self._head_sha(motor),
+            },
+        )
+        ok, diag = guard.assert_canonical_suite_green(motor, "code")
+        assert ok is True, f"fresh green run must pass: {diag}"
+
+    def test_doc_deliverable_type_skips_auditable(self, tmp_path: Path) -> None:
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+        # No last-run.json at all; doc tickets must skip, not block.
+        for dt in ("documentation", "research", "analysis"):
+            ok, diag = guard.assert_canonical_suite_green(motor, dt)
+            assert ok is True, f"{dt} must skip, not block"
+            assert diag.get("canonical_suite_required") is False
+            assert diag.get("reason") == "deliverable_type_skip"
+
+    def test_run_guard_blocks_on_red_suite(self, tmp_path: Path) -> None:
+        """Integration: run_guard surfaces the red suite as valid=False."""
+        import sys
+
+        sys.path.insert(0, str(SCRIPT_PATH.parent))
+        from pre_handoff_guard import run_guard
+
+        repo = tmp_path / "repo"
+        init_git_repo(repo)
+        collab = repo / ".agent" / "collaboration"
+        collab.mkdir(parents=True, exist_ok=True)
+        wp = collab / "work_plan.md"
+        wp.write_text(
+            "# Work Plan\n- **deliverable_type:** code\n- **delivery_authority:** repo_motor\n",
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "wp"], cwd=repo, check=True, capture_output=True
+        )
+        create_checkpoint_tag(repo, "checkpoint/review-WOT-2026-TEST")
+        # Red suite: exit_code 1, fresh sha
+        head = self._head_sha(repo)
+        self._write_last_run(
+            repo, {"status": "finished", "exit_code": 1, "tested_commit_sha": head}
+        )
+
+        result = run_guard(repo, "WOT-2026-TEST", motor_root=repo)
+
+        assert result["valid"] is False
+        assert result.get("canonical_suite", {}).get("canonical_suite_required") is True
+
+
+class TestRunnerWritesTestedSha:
+    """WOT-2026-010c: run_pytest_safe records tested_commit_sha for the gate."""
+
+    def test_motor_head_sha_matches_git(self) -> None:
+        """run_pytest_safe._motor_head_sha returns the motor HEAD SHA."""
+        import sys
+
+        sys.path.insert(0, str(SCRIPT_PATH.parent))
+        import run_pytest_safe
+
+        motor_root = SCRIPT_PATH.parent.parent
+        expected = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=motor_root,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        assert run_pytest_safe._motor_head_sha() == expected
+
+    def test_gate_blocks_when_sha_differs_from_head(self, tmp_path: Path) -> None:
+        """If tested_commit_sha != HEAD, the gate blocks even with exit_code 0."""
+        import sys
+
+        sys.path.insert(0, str(SCRIPT_PATH.parent))
+        import pre_handoff_guard
+
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+        d = motor / ".agent" / "runtime" / "pytest-safe"
+        d.mkdir(parents=True, exist_ok=True)
+        # Green run but against an old/foreign sha.
+        (d / "last-run.json").write_text(
+            json.dumps(
+                {
+                    "status": "finished",
+                    "exit_code": 0,
+                    "tested_commit_sha": "0" * 40,
+                }
+            ),
+            encoding="utf-8",
+        )
+        ok, diag = pre_handoff_guard.assert_canonical_suite_green(motor, "code")
+        assert ok is False
+        assert "stale" in diag.get("reason", "").lower()

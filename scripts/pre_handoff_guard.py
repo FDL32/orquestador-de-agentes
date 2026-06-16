@@ -353,6 +353,161 @@ def _read_delivery_authority_from_content(content: str) -> str:
     return "repo_motor"
 
 
+def _read_deliverable_type_from_content(content: str) -> str:
+    """Read deliverable_type from work_plan content; default 'code'."""
+    import re
+
+    m = re.search(
+        r"deliverable_type\s*:?\**\s*(code|documentation|research|analysis|mixed)",
+        content,
+        re.IGNORECASE,
+    )
+    return m.group(1).lower() if m else "code"
+
+
+def _read_deliverable_type_from_active_plan(project_root: Path) -> str:
+    """Read deliverable_type from the active work_plan.md; default 'code'.
+
+    Fail-safe to 'code' (the stricter path) if the plan is missing/unreadable:
+    a code ticket requiring the canonical suite is the conservative default.
+    """
+    work_plan = project_root / ".agent" / "collaboration" / "work_plan.md"
+    try:
+        return _read_deliverable_type_from_content(
+            work_plan.read_text(encoding="utf-8")
+        )
+    except OSError:
+        return "code"
+
+
+# WOT-2026-010c: deliverable types that DO require a green canonical suite.
+_SUITE_REQUIRED_TYPES = {"code", "mixed"}
+
+
+def assert_canonical_suite_green(
+    motor_root: Path,
+    deliverable_type: str,
+) -> tuple[bool, dict]:
+    """Require a fresh green run_pytest_safe before handoff (WOT-2026-010c).
+
+    Reads <motor>/.agent/runtime/pytest-safe/last-run.json (the canonical
+    artifact written by run_pytest_safe.py) and requires:
+        status == "finished" AND exit_code == 0 AND tested_commit_sha == HEAD.
+
+    This closes the 010a gap: a focal-green close that left the canonical suite
+    RED reached READY_FOR_REVIEW because "passed" was cited without "0 failed".
+
+    Before: motor_root is the delivery repo; deliverable_type is the ticket type.
+    During: for documentation/research/analysis -> auditable skip. Otherwise reads
+            and validates the JSON; compares tested_commit_sha to motor HEAD.
+    After: returns (ok, diag). On block, diag carries canonical_suite_required,
+           reason, remediation, canonical_suite_error and last_run_json.
+    """
+    last_run = motor_root / ".agent" / "runtime" / "pytest-safe" / "last-run.json"
+
+    # Auditable skip for non-code deliverables.
+    if deliverable_type not in _SUITE_REQUIRED_TYPES:
+        return True, {
+            "canonical_suite_required": False,
+            "reason": "deliverable_type_skip",
+            "deliverable_type": deliverable_type,
+        }
+
+    base_diag = {
+        "canonical_suite_required": True,
+        "last_run_json": str(last_run),
+        "remediation": (
+            "Run the canonical suite from repo_motor and commit first: "
+            "python scripts/run_pytest_safe.py  "
+            "(read the tail and confirm '0 failed'); then retry --mark-ready. "
+            "Log: .agent/runtime/pytest-safe/last-run.log"
+        ),
+    }
+
+    if not last_run.exists():
+        return False, {
+            **base_diag,
+            "reason": "last_run_missing",
+            "canonical_suite_error": (
+                "No last-run.json: run_pytest_safe has not run for this commit."
+            ),
+        }
+
+    try:
+        data = json.loads(last_run.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        return False, {
+            **base_diag,
+            "reason": "last_run_unparseable",
+            "canonical_suite_error": f"last-run.json not parseable: {exc}",
+        }
+
+    status = data.get("status")
+    if status != "finished":
+        return False, {
+            **base_diag,
+            "reason": f"status_not_finished ({status!r})",
+            "canonical_suite_error": (
+                f"run_pytest_safe did not finish (status={status!r}); "
+                "the run crashed, was a dry-run, or is still in progress."
+            ),
+        }
+
+    exit_code = data.get("exit_code")
+    if exit_code != 0:
+        return False, {
+            **base_diag,
+            "reason": f"exit_code_nonzero ({exit_code!r}) -> failed > 0",
+            "canonical_suite_error": (
+                f"Canonical suite exit_code={exit_code!r}: there are failures, "
+                "errors, or a state-leak. Not 0 failed."
+            ),
+        }
+
+    tested_sha = data.get("tested_commit_sha")
+    head_ok, head_sha = resolve_git_head_sha_local(motor_root)
+    if not head_ok:
+        return False, {
+            **base_diag,
+            "reason": "motor_head_unresolved",
+            "canonical_suite_error": head_sha,
+        }
+    if not tested_sha or tested_sha != head_sha:
+        return False, {
+            **base_diag,
+            "reason": "stale_run (tested_commit_sha != motor HEAD)",
+            "canonical_suite_error": (
+                f"last-run tested {tested_sha!r} but motor HEAD is {head_sha!r}: "
+                "the suite did not run against the commit being delivered."
+            ),
+        }
+
+    return True, {
+        "canonical_suite_required": True,
+        "reason": "fresh_green",
+        "tested_commit_sha": tested_sha,
+        "exit_code": 0,
+    }
+
+
+def resolve_git_head_sha_local(repo: Path) -> tuple[bool, str]:
+    """Return (True, sha) for repo HEAD, or (False, error) if git fails."""
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        return False, f"git rev-parse HEAD failed in {repo}: {exc}"
+    sha = proc.stdout.strip()
+    if proc.returncode != 0 or not sha:
+        return False, f"Unable to resolve HEAD in {repo}"
+    return True, sha
+
+
 def sg_fallback_parse(content: str, project_root: Path) -> set[str]:
     """Flat FLT parser fallback when scope_gate is not importable."""
     lines = content.split("\n")
@@ -422,6 +577,7 @@ def run_guard(
         "checkpoint_misaligned": False,
         "uncommitted_work_plan": False,
         "work_plan_guard_error": None,
+        "canonical_suite": None,
         "dirty_files": [],
         "scope_discrepancy": [],
         "checkpoint_tag": None,
@@ -471,6 +627,30 @@ def run_guard(
             "Pre-handoff blocked because the work_plan commit guard could not "
             "run. Fix the guard or its import before retrying --mark-ready."
         )
+
+    # 2.b WOT-2026-010c: the canonical suite must be fresh-green before handoff.
+    # Separate, additional barrier (coexists with the M3 checkpoint and the
+    # work_plan-committed guard; does NOT replace _check_log_has_quality_gate_
+    # evidence in the controller). Reads run_pytest_safe's last-run.json and
+    # requires status==finished + exit_code==0 + tested_commit_sha==motor HEAD.
+    # Fail-closed: any error blocks with a self-service diagnostic.
+    _canon_motor = motor_root if motor_root is not None else project_root
+    try:
+        _dt = _read_deliverable_type_from_active_plan(project_root)
+        _suite_ok, _suite_diag = assert_canonical_suite_green(_canon_motor, _dt)
+        result["canonical_suite"] = _suite_diag
+        if not _suite_ok:
+            result["valid"] = False
+    except Exception as exc:
+        result["valid"] = False
+        result["canonical_suite"] = {
+            "canonical_suite_required": True,
+            "reason": "guard_error",
+            "canonical_suite_error": (
+                f"{type(exc).__name__}: {exc}. Canonical-suite gate could not "
+                "run; blocking handoff (fail-closed)."
+            ),
+        }
 
     # 3. Obtener superficies vivas (archivos y directorios)
     live_files, live_dirs = get_live_surfaces_absolute(project_root)
