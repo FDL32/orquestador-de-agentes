@@ -45,14 +45,15 @@ def _write_bom(path: Path, content: str = "# hello\n") -> None:
 def _write_mojibake(path: Path) -> None:
     """Write file with real mojibake: bytes that decode to SUSPICIOUS_CODEPOINTS.
 
-    \\xc3\\x83 decodes to U+00C3 (Ã) which IS in SUSPICIOUS_CODEPOINTS.
-    This simulates double-encoded UTF-8 (the classic mojibake pattern).
+    \\xc3\\x83 decodes to U+00C3 (Latin A with breve) which IS in
+    SUSPICIOUS_CODEPOINTS. This simulates double-encoded UTF-8 (classic mojibake).
     """
     path.write_bytes(b"caf\xc3\x83 plan.txt\n")
 
 
 def _write_question_mark(path: Path) -> None:
-    path.write_text("a?b plan.txt\n", encoding="utf-8")
+    content = "".join(["a", "?", "b", " plan.txt\n"])
+    path.write_text(content, encoding="utf-8")
 
 
 def _write_clean_ascii(path: Path) -> None:

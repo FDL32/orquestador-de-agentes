@@ -20,7 +20,7 @@ output.txt
 temp_output.txt
 
 # Runtime/logs generados
-.agent/runtime/pytest-safe/last-run.*
+.agent/runtime/pytest-safe/
 .agent/logs/*.log
 .agent/test_logs/
 tests/.test_workspace/
