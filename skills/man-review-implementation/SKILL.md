@@ -185,7 +185,7 @@ Si hay problemas menores:
 ```markdown
 ## [FECHA] Revision Completa: Manager -> Builder
 
-**Plan:** WT-XXX
+**Plan:** WOT-XXX
 **Veredicto:** [APPROVED | CHANGES]
 **Accion requerida:** [Ver feedback de review | Continuar con siguiente tarea]
 **Estado:** PENDING

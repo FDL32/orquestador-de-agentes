@@ -106,7 +106,7 @@ Para cada opción presentada por el Builder (o identificadas):
 
 ```markdown
 ## 📨 [FECHA] Escalación Resuelta: Manager → Builder
-**Plan:** WP-XXX
+**Plan:** WOT-XXX
 **Escalación:** ESC-[ID]
 **Decisión:** [Resumen en 1 línea]
 **Acción requerida:** Ver review_queue.md y continuar implementación

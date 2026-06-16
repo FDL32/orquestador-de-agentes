@@ -29,14 +29,27 @@ import sys
 from pathlib import Path
 
 
+# WOT-2026-010b: single exempted definition of the legacy-only ticket prefix.
+# This gate MUST detect legacy prefixes specifically, so it cannot import
+# bus.ticket_id.TICKET_ID_PATTERN (that pattern also accepts WOT-, defeating
+# the legacy-vs-canonical distinction this gate exists to enforce). The literal
+# lives here exactly once; every regex below is composed from it so the
+# forbidden pattern is centralized, not scattered across ~14 lines.
+_LEGACY_PREFIX = (
+    r"(?:WP|WT)-"  # ticket-id-exemption: gate must detect legacy-only prefixes
+)
+
 # Legacy ticket-id prefixes this gate watches for in active surfaces.
-LEGACY_HIT_RE = re.compile(r"\b(?:WP|WT)-(?:\d{4}|YYYY|XXXX)\b")
+# WOT-2026-010b: also match bare three-letter placeholder forms (no year) used
+# in command/plan examples. The 010a pattern only matched 4-digit/YYYY/XXXX
+# years and let three-letter placeholders slip through as a false negative.
+LEGACY_HIT_RE = re.compile(rf"\b{_LEGACY_PREFIX}(?:\d{{4}}|YYYY|XXXX|XXX)\b")
 
 # A line is treated as commit-history when it starts with one or more legacy
 # ticket IDs followed by ":" or ")" and then explanatory prose about the change.
 HISTORY_RE = re.compile(
-    r"^\s*#?\s*(?:WP|WT)-(?:\d{4})-[A-Za-z0-9]+"
-    r"(?:\s*/\s*(?:WP|WT)-\d{4}-[A-Za-z0-9]+)*\s*[:)]"
+    rf"^\s*#?\s*{_LEGACY_PREFIX}(?:\d{{4}})-[A-Za-z0-9]+"
+    rf"(?:\s*/\s*{_LEGACY_PREFIX}\d{{4}}-[A-Za-z0-9]+)*\s*[:)]"
 )
 
 # Markers that explicitly opt a line/region into legacy-compat.
@@ -45,17 +58,18 @@ LEGACY_TAG_RE = re.compile(r"legacy-compat|ticket historico|legacy \(retro", re.
 # Generator signals: if a legacy hit shares a line with any of these, the line
 # is teaching/creating nomenclature and must use WOT-.
 GENERATOR_SIGNAL_RE = re.compile(
-    r"--ticket(?:-id)?\s+(?:WP|WT)-"
-    r"|--help.*(?:WP|WT)-"
-    r"|usage:.*(?:WP|WT)-"
-    r"|Plan ID:?\**\s*(?:WP|WT)-"
-    r"|\*\*ID:\*\*\s*(?:WP|WT)-"
-    r"|Ticket relacionado:.*(?:WP|WT)-"
-    r"|source_ticket\"?\s*:\s*\"?(?:WP|WT)-"
-    r"|source\"?\s*:\s*\"?human_audit_(?:WP|WT)-"
-    r"|e\.g\.,?\s*(?:WP|WT)-"
-    r"|(?:WP|WT)-(?:YYYY|XXXX)"
-    r"|--milestone\s+\S+\s+--ticket-id\s+(?:WP|WT)-",
+    rf"--ticket(?:-id)?\s+{_LEGACY_PREFIX}"
+    rf"|--help.*{_LEGACY_PREFIX}"
+    rf"|usage:.*{_LEGACY_PREFIX}"
+    rf"|Plan ID:?\**\s*{_LEGACY_PREFIX}"
+    rf"|\*\*Plan:?\*\*\s*{_LEGACY_PREFIX}"
+    rf"|\*\*ID:\*\*\s*{_LEGACY_PREFIX}"
+    rf"|Ticket relacionado:.*{_LEGACY_PREFIX}"
+    rf'|source_ticket"?\s*:\s*"?{_LEGACY_PREFIX}'
+    rf'|source"?\s*:\s*"?human_audit_{_LEGACY_PREFIX}'
+    rf"|e\.g\.,?\s*{_LEGACY_PREFIX}"
+    rf"|{_LEGACY_PREFIX}(?:YYYY|XXXX)"
+    rf"|--milestone\s+\S+\s+--ticket-id\s+{_LEGACY_PREFIX}",
     re.I,
 )
 
