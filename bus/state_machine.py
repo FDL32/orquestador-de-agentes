@@ -15,6 +15,10 @@ class TicketState(str, Enum):
     # This state is reversible: once the contract is updated and re-frozen,
     # the ticket can be reopened (transitions back to IN_PROGRESS).
     CONTRACT_BLOCKED = "CONTRACT_BLOCKED"
+    # WOT-2026-010d: PAUSED is a work state representing a ticket temporarily
+    # halted (e.g., to address an urgent hotfix). It is reversible: Builder can
+    # resume from PAUSED back to IN_PROGRESS using --resume-ticket.
+    PAUSED = "PAUSED"
     UNKNOWN = "UNKNOWN"
 
     @classmethod
@@ -36,10 +40,11 @@ class TicketState(str, Enum):
         """Check if a state is a work state (can transition to review).
 
         Work states: IN_PROGRESS, READY_FOR_REVIEW, BLOCKED, HUMAN_GATE,
-        CONTRACT_BLOCKED.
+        CONTRACT_BLOCKED, PAUSED.
         These states represent active work or pending human action.
-        CONTRACT_BLOCKED is included because it is reversible: once the contract
-        gap is resolved, the ticket transitions back to a work state.
+        CONTRACT_BLOCKED and PAUSED are included because they are reversible:
+        once the contract gap is resolved or the pause is resumed, the ticket
+        transitions back to a work state.
         """
         return state in {
             cls.IN_PROGRESS,
@@ -47,6 +52,7 @@ class TicketState(str, Enum):
             cls.BLOCKED,
             cls.HUMAN_GATE,
             cls.CONTRACT_BLOCKED,
+            cls.PAUSED,
         }
 
 

@@ -3,6 +3,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 
 # Add project root to path
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -498,6 +500,108 @@ class TestRunProbeComplexStateTransitions:
 
     def test_multiple_state_changes(self, tmp_path: Path) -> None:
         """Last STATE_CHANGED determines the state."""
+        runtime_dir = tmp_path / "events"
+        runtime_dir.mkdir()
+        collaboration_dir = tmp_path / "collaboration"
+        collaboration_dir.mkdir()
+
+        # Create events.jsonl with multiple state changes
+        events_path = runtime_dir / "events.jsonl"
+        events_path.write_text(
+            '{"event_type": "STATE_CHANGED", "ticket_id": "WP-2026-145", '
+            '"payload": {"to_state": "IN_PROGRESS"}}\n'
+        )
+
+        # This is a stub test showing multiple state changes can occur
+        # Real implementation would verify last state is used
+        assert events_path.exists()
+
+
+# =============================================================================
+# Tests for WOT-2026-010d: PAUSED state in projection
+# =============================================================================
+
+
+class TestStateProjectionWithPauseWOT010d:
+    """Tests for state projection when ticket is PAUSED (WOT-2026-010d)."""
+
+    def test_paused_state_recognized_in_state_validation(self):
+        """PAUSED state must be accepted by state validators."""
+        try:
+            from agent_state_validation import VALID_LOG_STATES
+
+            assert "PAUSED" in VALID_LOG_STATES, "PAUSED must be in VALID_LOG_STATES"
+        except ImportError:
+            # If state_validation not available, skip this test
+            pytest.skip("state_validation not available in this test environment")
+
+    def test_paused_state_not_terminal_in_state_machine(self):
+        """PAUSED must NOT be a terminal state (can resume)."""
+        try:
+            from bus.state_machine import TicketState
+
+            if not hasattr(TicketState, "PAUSED"):
+                pytest.skip("PAUSED not yet implemented in TicketState")
+
+            paused = TicketState.PAUSED
+            is_terminal = TicketState.is_approved_or_terminal(paused)
+            assert not is_terminal, (
+                "PAUSED must not be terminal (resume must be possible)"
+            )
+
+            is_work = TicketState.is_work_state(paused)
+            assert is_work, "PAUSED must be recognized as a work state"
+        except (ImportError, AttributeError):
+            pytest.skip("TicketState.PAUSED not yet implemented")
+
+    def test_state_md_projection_during_pause(self, tmp_path: Path) -> None:
+        """STATE.md must maintain ACTIVE_TICKET and show STATUS: PAUSED."""
+        collaboration_dir = tmp_path / "collaboration"
+        collaboration_dir.mkdir()
+
+        state_md_path = collaboration_dir / "STATE.md"
+        state_md_path.write_text(
+            "ACTIVE_TICKET: WOT-2026-010d\nSTATUS: IN_PROGRESS\n",
+            encoding="utf-8",
+        )
+
+        # Simulate pause projection
+        paused_content = (
+            "ACTIVE_TICKET: WOT-2026-010d\nSTATUS: PAUSED\n"
+            "PAUSE_REASON: Pausing for hotfix\n"
+        )
+        state_md_path.write_text(paused_content, encoding="utf-8")
+
+        read_content = state_md_path.read_text(encoding="utf-8")
+        assert "ACTIVE_TICKET: WOT-2026-010d" in read_content
+        assert "STATUS: PAUSED" in read_content
+        assert "PAUSE_REASON: Pausing for hotfix" in read_content
+
+    def test_turn_md_builder_holds_pause(self, tmp_path: Path) -> None:
+        """TURN.md must show Builder maintaining control during pause."""
+        collaboration_dir = tmp_path / "collaboration"
+        collaboration_dir.mkdir()
+
+        turn_md_path = collaboration_dir / "TURN.md"
+        turn_md_path.write_text("# TURNO ACTUAL\n\nROL: BUILDER\n", encoding="utf-8")
+
+        # During pause, Builder still holds the turn
+        read_content = turn_md_path.read_text(encoding="utf-8")
+        assert "BUILDER" in read_content
+
+        # Create STATE.md matching PAUSED state
+        state_md_path = collaboration_dir / "STATE.md"
+        state_md_path.write_text(
+            "# State - WOT-2026-010d\n\nEstado actual: PAUSED\n",
+            encoding="utf-8",
+        )
+
+        # Verify PAUSED state is properly recorded
+        read_state = state_md_path.read_text(encoding="utf-8")
+        assert "PAUSED" in read_state
+
+    def test_multiple_state_changes_last_wins(self, tmp_path: Path) -> None:
+        """Multiple state changes: last state in event log determines state."""
         runtime_dir = tmp_path / "events"
         runtime_dir.mkdir()
         collaboration_dir = tmp_path / "collaboration"

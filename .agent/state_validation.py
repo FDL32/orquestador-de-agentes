@@ -41,6 +41,8 @@ VALID_LOG_STATES = {
     # WOT-2026-007f: CONTRACT_BLOCKED is set when a Builder emits a CONTRACT_GAP
     # event. The ticket is frozen pending Contract Formation resolution.
     "CONTRACT_BLOCKED",
+    # WOT-2026-010d: PAUSED is a reversible work state for paused tickets.
+    "PAUSED",
 }
 
 

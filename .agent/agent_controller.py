@@ -4620,6 +4620,409 @@ def _handle_resume_human_gate(ticket_id: str, json_output: bool) -> int:
     return 0
 
 
+def _handle_pause_ticket(ticket_id: str, reason: str, json_output: bool) -> int:  # noqa: C901
+    """Handle --pause-ticket flag (WOT-2026-010d).
+
+    Pauses the active ticket to address urgent hotfixes. Transitions from
+    IN_PROGRESS to PAUSED with mandatory reason, captures git state, emits
+    TICKET_PAUSED event, and writes canonical artifact in repo_destino.
+
+    Before: Requires matching ticket_id and non-empty reason.
+    During: Captures diff, creates stash if needed, emits TICKET_PAUSED.
+    After: Ticket in PAUSED state; artifact written to .agent/collaboration/paused/.
+
+    Returns 0 on success, 1 on validation failure.
+    """
+    if not ticket_id or ticket_id == "N/A":
+        msg = "No ticket_id provided. Use --ticket WOT-XXXX-NNNx"
+        if json_output:
+            print(json.dumps({"error": msg}, indent=2))
+        else:
+            print(f"[ERROR] {msg}")
+        return 1
+
+    if not reason or not reason.strip():
+        msg = "Pause reason is required. Use --reason 'description'"
+        if json_output:
+            print(json.dumps({"error": msg}, indent=2))
+        else:
+            print(f"[ERROR] {msg}")
+        return 1
+
+    current_plan_id = get_plan_id(read_file(WORK_PLAN))
+    if ticket_id != current_plan_id:
+        msg = f"Ticket {ticket_id} does not match active ticket {current_plan_id}"
+        if json_output:
+            print(json.dumps({"error": msg}, indent=2))
+        else:
+            print(f"[ERROR] {msg}")
+        return 1
+
+    # Check if already paused
+    import subprocess
+    from datetime import datetime, timezone
+
+    dest_root = resolve_project_root()
+    paused_dir = dest_root / ".agent" / "collaboration" / "paused"
+    paused_artifact = paused_dir / f"{ticket_id}.json"
+
+    if paused_artifact.exists():
+        msg = (
+            f"Ticket {ticket_id} is already paused. "
+            "Use --resume-ticket or --abort-paused-ticket."
+        )
+        if json_output:
+            print(json.dumps({"error": msg}, indent=2))
+        else:
+            print(f"[ERROR] {msg}")
+        return 1
+
+    # Capture git state
+    try:
+        # Get changed files
+        result = subprocess.run(
+            ["git", "status", "--short"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        changed_files = (
+            result.stdout.strip().split("\n") if result.stdout.strip() else []
+        )
+
+        # Get diff stat
+        diff_result = subprocess.run(
+            ["git", "diff", "--stat"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        diff_stat = diff_result.stdout.strip() if diff_result.stdout.strip() else ""
+
+        stash_ref = None
+        if changed_files and changed_files[0]:  # Tree is dirty
+            # Create stash
+            stash_result = subprocess.run(
+                ["git", "stash", "push", "-m", f"WOT-2026-010d pause: {reason}"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if stash_result.returncode == 0:
+                # Extract stash ref from git stash show
+                list_result = subprocess.run(
+                    ["git", "stash", "list"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if list_result.stdout.startswith("stash@{0}"):
+                    stash_ref = "stash@{0}"  # Reference, not the name
+                else:
+                    stash_ref = "stash"  # Fallback marker
+
+        # Get bus sequences
+        bus_last_seq = 0
+        ticket_last_seq = 0
+        if BUS_AVAILABLE and event_bus:
+            bus_last_seq = event_bus.get_last_sequence()
+            events = event_bus.read_events(ticket_id=ticket_id)
+            if events:
+                ticket_last_seq = events[-1].seq if hasattr(events[-1], "seq") else 0
+
+        # Write artifact
+        paused_dir.mkdir(parents=True, exist_ok=True)
+        artifact = {
+            "ticket_id": ticket_id,
+            "status": "PAUSED",
+            "reason": reason,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "repo": "motor",
+            "changed_paths": changed_files,
+            "diff_stat": diff_stat,
+            "stash_ref": stash_ref,
+            "wip_commit": None,
+            "bus_last_seq_global": bus_last_seq,
+            "ticket_last_seq": ticket_last_seq,
+            "state_snapshot": {},
+            "turn_snapshot": {},
+            "resume_instructions": "Use --resume-ticket to restore changes",
+        }
+
+        paused_artifact.write_text(json.dumps(artifact, indent=2))
+
+        # Emit bus event
+        if BUS_AVAILABLE and event_bus:
+            event_bus.emit(
+                event_type="TICKET_PAUSED",
+                ticket_id=ticket_id,
+                payload={
+                    "reason": reason,
+                    "changed_paths": changed_files,
+                    "stash_ref": stash_ref,
+                },
+            )
+
+        # Update STATE.md (keep ACTIVE_TICKET, change STATUS to PAUSED)
+        state_path = resolve_project_root() / ".agent" / "collaboration" / "STATE.md"
+        if state_path.exists():
+            state_text = state_path.read_text()
+            # Replace STATUS line
+            import re
+
+            state_text = re.sub(
+                r"STATUS:.*",
+                "STATUS: PAUSED",
+                state_text,
+            )
+            state_path.write_text(state_text)
+
+        if json_output:
+            print(
+                json.dumps(
+                    {
+                        "status": "paused",
+                        "ticket_id": ticket_id,
+                        "reason": reason,
+                        "artifact": str(paused_artifact),
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            print(f"[OK] Ticket {ticket_id} paused: {reason}")
+
+        return 0
+
+    except Exception as e:
+        msg = f"Pause failed: {e!s}"
+        if json_output:
+            print(json.dumps({"error": msg}, indent=2))
+        else:
+            print(f"[ERROR] {msg}")
+        return 1
+
+
+def _handle_resume_ticket(ticket_id: str, json_output: bool) -> int:  # noqa: C901
+    """Handle --resume-ticket flag (WOT-2026-010d).
+
+    Resumes a paused ticket: restores changes from stash, checks bus for
+    intervening events, emits TICKET_RESUMED, and transitions back to
+    IN_PROGRESS. Fails safely if conflicts detected.
+
+    Before: Requires matching ticket_id; pause artifact must exist and be valid.
+    During: Verifies stash/ref resoluble, checks bus for ticket-specific events.
+    After: Ticket returns to IN_PROGRESS; pause artifact deleted.
+
+    Returns 0 on success, 1 on validation failure.
+    """
+    if not ticket_id or ticket_id == "N/A":
+        msg = "No ticket_id provided. Use --ticket WOT-XXXX-NNNx"
+        if json_output:
+            print(json.dumps({"error": msg}, indent=2))
+        else:
+            print(f"[ERROR] {msg}")
+        return 1
+
+    current_plan_id = get_plan_id(read_file(WORK_PLAN))
+    if ticket_id != current_plan_id:
+        msg = f"Ticket {ticket_id} does not match active ticket {current_plan_id}"
+        if json_output:
+            print(json.dumps({"error": msg}, indent=2))
+        else:
+            print(f"[ERROR] {msg}")
+        return 1
+
+    # Check if pause artifact exists
+    import subprocess
+
+    dest_root = resolve_project_root()
+    paused_dir = dest_root / ".agent" / "collaboration" / "paused"
+    paused_artifact = paused_dir / f"{ticket_id}.json"
+
+    if not paused_artifact.exists():
+        msg = f"No pause artifact for {ticket_id}. Use --pause-ticket to pause first."
+        if json_output:
+            print(json.dumps({"error": msg}, indent=2))
+        else:
+            print(f"[ERROR] {msg}")
+        return 1
+
+    try:
+        # Load artifact
+        artifact = json.loads(paused_artifact.read_text())
+
+        # Check if bus advanced for this ticket
+        if BUS_AVAILABLE and event_bus:
+            ticket_last_seq_saved = artifact.get("ticket_last_seq", 0)
+            events = event_bus.read_events(ticket_id=ticket_id)
+            if events:
+                latest_seq = events[-1].seq if hasattr(events[-1], "seq") else 0
+                if latest_seq > ticket_last_seq_saved:
+                    msg = (
+                        f"Ticket {ticket_id} has advanced since pause "
+                        f"(saved seq {ticket_last_seq_saved}, now {latest_seq}). "
+                        "Cannot resume. Use --abort-paused-ticket or reopen manually."
+                    )
+                    if json_output:
+                        print(json.dumps({"error": msg}, indent=2))
+                    else:
+                        print(f"[ERROR] {msg}")
+                    return 1
+
+        # Restore stash if needed
+        stash_ref = artifact.get("stash_ref")
+        if stash_ref:
+            apply_result = subprocess.run(
+                ["git", "stash", "apply", stash_ref],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if apply_result.returncode != 0:
+                msg = (
+                    "Stash apply failed with conflicts. "
+                    "Tree left clean. Manual resolution required."
+                )
+                if json_output:
+                    print(json.dumps({"error": msg}, indent=2))
+                else:
+                    print(f"[ERROR] {msg}")
+                return 1
+
+        # Emit bus event
+        if BUS_AVAILABLE and event_bus:
+            event_bus.emit(
+                event_type="TICKET_RESUMED",
+                ticket_id=ticket_id,
+                payload={"from_paused": True},
+            )
+
+            # Transition back to IN_PROGRESS
+            _materialize_state_transition(
+                ticket_id=ticket_id,
+                to_state="IN_PROGRESS",
+                reason="Resumed from PAUSED state",
+                actor="BUILDER",
+                source="resume-ticket",
+            )
+
+        # Delete artifact
+        paused_artifact.unlink()
+
+        if json_output:
+            print(
+                json.dumps(
+                    {"status": "resumed", "ticket_id": ticket_id},
+                    indent=2,
+                )
+            )
+        else:
+            print(f"[OK] Ticket {ticket_id} resumed to IN_PROGRESS.")
+
+        return 0
+
+    except Exception as e:
+        msg = f"Resume failed: {e!s}"
+        if json_output:
+            print(json.dumps({"error": msg}, indent=2))
+        else:
+            print(f"[ERROR] {msg}")
+        return 1
+
+
+def _handle_abort_paused_ticket(ticket_id: str, reason: str, json_output: bool) -> int:  # noqa: C901
+    """Handle --abort-paused-ticket flag (WOT-2026-010d).
+
+    Aborts a paused ticket: records abort reason in artifact, cleans up stash,
+    and transitions to a terminal state or explicit abort marker.
+
+    Before: Requires matching ticket_id; pause artifact must exist.
+    During: Records abort reason, removes stash (if any).
+    After: Pause marked as aborted; stash discarded.
+
+    Returns 0 on success, 1 on validation failure.
+
+    NOTE: This is a v1 stub. Full abort workflow may require additional
+    cleanup or escalation logic in future versions.
+    """
+    if not ticket_id or ticket_id == "N/A":
+        msg = "No ticket_id provided. Use --ticket WOT-XXXX-NNNx"
+        if json_output:
+            print(json.dumps({"error": msg}, indent=2))
+        else:
+            print(f"[ERROR] {msg}")
+        return 1
+
+    current_plan_id = get_plan_id(read_file(WORK_PLAN))
+    if ticket_id != current_plan_id:
+        msg = f"Ticket {ticket_id} does not match active ticket {current_plan_id}"
+        if json_output:
+            print(json.dumps({"error": msg}, indent=2))
+        else:
+            print(f"[ERROR] {msg}")
+        return 1
+
+    # Check if pause artifact exists
+    import subprocess
+    from datetime import datetime, timezone
+
+    dest_root = resolve_project_root()
+    paused_dir = dest_root / ".agent" / "collaboration" / "paused"
+    paused_artifact = paused_dir / f"{ticket_id}.json"
+
+    if not paused_artifact.exists():
+        msg = f"No pause artifact for {ticket_id}. Nothing to abort."
+        if json_output:
+            print(json.dumps({"error": msg}, indent=2))
+        else:
+            print(f"[ERROR] {msg}")
+        return 1
+
+    try:
+        # Load and update artifact
+        artifact = json.loads(paused_artifact.read_text())
+        artifact["abort_reason"] = reason
+        artifact["aborted_at"] = datetime.now(timezone.utc).isoformat()
+        artifact["aborted_by"] = "BUILDER"
+        artifact["status"] = "ABORTED"
+
+        paused_artifact.write_text(json.dumps(artifact, indent=2))
+
+        # Try to discard stash
+        stash_ref = artifact.get("stash_ref")
+        if stash_ref and stash_ref != "stash":
+            subprocess.run(
+                ["git", "stash", "drop", stash_ref],
+                capture_output=True,
+                check=False,
+            )
+
+        if json_output:
+            print(
+                json.dumps(
+                    {
+                        "status": "aborted",
+                        "ticket_id": ticket_id,
+                        "reason": reason,
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            print(f"[OK] Pause for {ticket_id} aborted: {reason}")
+
+        return 0
+
+    except Exception as e:
+        msg = f"Abort failed: {e!s}"
+        if json_output:
+            print(json.dumps({"error": msg}, indent=2))
+        else:
+            print(f"[ERROR] {msg}")
+        return 1
+
+
 def _handle_reopen_terminal_ticket(  # noqa: C901 - flag handler validates bus state and projections
     ticket_id: str, json_output: bool
 ) -> int:
@@ -5434,6 +5837,9 @@ Action flags:
   --escalate-human-gate           Move a ticket to HUMAN_GATE.
   --resume-human-gate             Resume review from HUMAN_GATE.
   --reopen-terminal-ticket        Reopen the active COMPLETED ticket to IN_PROGRESS.
+  --pause-ticket                  Pause the active ticket temporarily (WOT-2026-010d).
+  --resume-ticket                 Resume a paused ticket (WOT-2026-010d).
+  --abort-paused-ticket           Abort a paused ticket (WOT-2026-010d).
   --session-close                 Close the current session.
   --recover                       Recover session state.
   --archive                       Archive old notifications.
@@ -5444,6 +5850,7 @@ Control flags:
   --project-root <path>       Destination project root.
   --ticket <ticket>           Ticket ID for actions that accept one.
   --tickets <ids>             Ticket list for session close.
+  --reason <text>             Pause reason (for --pause-ticket/--abort-paused-ticket).
   --skip-gates                Skip quality gates.
   --skip-slow                 Skip slow checks during session close.
   --reset-turn                Regenerate TURN.md.
@@ -5489,6 +5896,9 @@ def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
             "--escalate-human-gate",
             "--resume-human-gate",
             "--reopen-terminal-ticket",
+            "--pause-ticket",
+            "--resume-ticket",
+            "--abort-paused-ticket",
         }
     )
     if is_motor_code_only() and any(
@@ -5554,6 +5964,19 @@ def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
         if idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("--"):
             ticket_id = sys.argv[idx + 1]
 
+    # Parse --reason (used by pause-ticket and abort-paused-ticket)
+    reason = None
+    if "--reason" in sys.argv:
+        idx = sys.argv.index("--reason")
+        if idx + 1 >= len(sys.argv):
+            print("[ERROR] --reason requires a reason text.")
+            return 1
+        next_token = sys.argv[idx + 1]
+        if next_token.startswith("--"):
+            print("[ERROR] --reason requires text, not another flag.")
+            return 1
+        reason = next_token
+
     # Check for --resolve-launcher-roots (WT-2026-232a)
     if "--resolve-launcher-roots" in sys.argv:
         return _handle_resolve_launcher_roots(json_output)
@@ -5577,6 +6000,16 @@ def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
     # Check for --resume-human-gate (salida canonica de HUMAN_GATE)
     if "--resume-human-gate" in sys.argv:
         return _handle_resume_human_gate(ticket_id, json_output)
+
+    # WOT-2026-010d: Check for pause/resume ticket flags
+    if "--pause-ticket" in sys.argv:
+        return _handle_pause_ticket(ticket_id, reason, json_output)
+
+    if "--resume-ticket" in sys.argv:
+        return _handle_resume_ticket(ticket_id, json_output)
+
+    if "--abort-paused-ticket" in sys.argv:
+        return _handle_abort_paused_ticket(ticket_id, reason, json_output)
 
     # Check for --reopen-terminal-ticket (salida manual de tickets COMPLETED)
     if "--reopen-terminal-ticket" in sys.argv:
