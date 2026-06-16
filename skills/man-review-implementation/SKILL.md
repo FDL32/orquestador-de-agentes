@@ -1,4 +1,4 @@
-﻿---
+---
 name: code-review
 version: 2.0.0
 description: Revisar cambios de codigo contra arquitectura del proyecto

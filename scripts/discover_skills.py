@@ -69,7 +69,7 @@ def parse_frontmatter(path: Path) -> tuple[dict[str, Any], str | None]:
       - data is empty dict on any error
     """
     try:
-        with open(path, encoding="utf-8") as f:
+        with open(path, encoding="utf-8-sig") as f:
             content = f.read()
     except Exception as e:
         return {}, f"IO_ERROR: {e}"
