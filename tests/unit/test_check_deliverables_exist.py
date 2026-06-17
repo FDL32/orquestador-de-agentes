@@ -134,3 +134,37 @@ def test_read_inspect_only_and_manager_only_not_treated_as_deliverables(tmp_path
 
     code, output = _run_with_plan(plan, destino_root, motor_root=destino_root)
     assert code == 0, output
+
+
+def test_wot_010j_real_case_narrative_note_not_treated_as_deliverable(tmp_path):
+    """Regression: a narrative "Notas" bullet inside the FLT section that
+    happens to mention backticked filenames in prose (real WOT-2026-010j
+    work_plan.md content) must not be parsed as a declared deliverable just
+    because it starts with "-" and contains backticks."""
+    motor_root = tmp_path / "motor"
+    destino_root = tmp_path / "destino"
+    motor_root.mkdir()
+    destino_root.mkdir()
+
+    deliverable = motor_root / "docs" / "test_performance"
+    deliverable.mkdir(parents=True)
+    (deliverable / "test_performance_baseline_WOT-2026-010j.md").write_text(
+        "report", encoding="utf-8"
+    )
+    (destino_root / ".agent" / "collaboration").mkdir(parents=True)
+    (destino_root / ".agent" / "collaboration" / "work_plan.md").write_text(
+        "placeholder", encoding="utf-8"
+    )
+
+    plan = (
+        "## Files Likely Touched\n\n"
+        "### repo_motor\n"
+        "- `docs/test_performance/test_performance_baseline_WOT-2026-010j.md`\n\n"
+        "### repo_destino\n"
+        "- `.agent/collaboration/work_plan.md`\n\n"
+        "Notas (no forman parte del FLT parseable):\n"
+        "- Los scripts y tests inspeccionados (`scripts/run_pytest_safe.py`,\n"
+        "  `scripts/run_gates_dispatch.py`) son **read/inspect only**.\n"
+    )
+    code, output = _run_with_plan(plan, destino_root, motor_root=motor_root)
+    assert code == 0, output

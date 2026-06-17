@@ -232,20 +232,35 @@ def _flt_subheading_namespace(heading_lower: str) -> str | None:
 def _resolve_flt_bullet_tokens(
     stripped: str, current_root: Path, paths: set[Path]
 ) -> None:
-    """Extract backtick-quoted path tokens from one FLT bullet line."""
-    tokens = re.findall(r"`([^`]+)`", stripped)
-    for token in tokens:
-        token = token.strip().rstrip(",").strip()
-        if not token or token.endswith(("/", "\\")):
-            continue
-        if any(x in token for x in ["<", ">", "{", "}", "YYYY", "NNN"]):
-            continue
-        if not looks_like_path(token):
-            continue
-        p = Path(token)
-        if not p.is_absolute():
-            p = current_root / p
-        paths.add(p.resolve())
+    """Resolve a single FLT bullet line to a deliverable path, if it is one.
+
+    Mirrors scope_gate._normalize_flt_line / _looks_like_path_token: a bullet
+    is treated as a single declared path, not a bag of every backticked
+    substring on the line. This rejects narrative bullets that happen to
+    contain backticked filenames in prose (e.g. "Notas: los scripts
+    inspeccionados (`foo.py`, `bar.py`) son read-only"), since such lines
+    contain spaces once de-quoted and are therefore not a bare path token.
+    """
+    normalized = (
+        stripped.lstrip("*- ")
+        .replace("`", "")
+        .replace('"', "")
+        .replace("'", "")
+        .strip()
+    )
+    if not normalized or " " in normalized:
+        return
+    token = normalized.rstrip(",").strip()
+    if not token or token.endswith(("/", "\\")):
+        return
+    if any(x in token for x in ["<", ">", "{", "}", "YYYY", "NNN"]):
+        return
+    if not looks_like_path(token):
+        return
+    p = Path(token)
+    if not p.is_absolute():
+        p = current_root / p
+    paths.add(p.resolve())
 
 
 def _extract_flt_paths(content: str) -> set[Path]:
