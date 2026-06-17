@@ -489,6 +489,11 @@ class TestScanProjectRealProject:
 
         Marked as slow because it scans the entire project tree.
         Run with: pytest -m slow
+
+        Determinism of scan_project is already covered cheaply against a
+        synthetic tmp_path in test_scan_project_deterministic; repeating a
+        full real-tree scan here just to compare result == result2 doubles
+        the I/O cost of this test without adding new coverage (WOT-2026-010k).
         """
         from runtime.project_root import resolve_project_root
 
@@ -502,9 +507,3 @@ class TestScanProjectRealProject:
 
         # Should have importMap entries
         assert len(result["importMap"]["python_files"]) > 50
-
-        # Should be deterministic (run twice)
-        result2 = scan_project(project_root)
-        del result["generated"]
-        del result2["generated"]
-        assert result == result2
