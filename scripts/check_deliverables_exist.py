@@ -208,29 +208,106 @@ def _extract_paths_from_generic_sections(content: str) -> set[Path]:
     return paths
 
 
+_SKIP_SUBHEADER_MARKERS = ("read/inspect", "read-only", "read only", "manager only")
+
+
+def _flt_subheading_namespace(heading_lower: str) -> str | None:
+    """Classify a ### sub-heading under Files Likely Touched.
+
+    Recognizes both bare (``repo_motor``) and compound headings already in
+    use across the codebase (``repo_destino - Builder``,
+    ``repo_destino - Read/inspect only``) by checking the namespace as a
+    leading token rather than requiring an exact match, matching the
+    contract already exercised in tests/test_agent_controller.py.
+    Returns "motor", "destino", or None when no recognized namespace prefix
+    is present (caller falls back to delivery_authority).
+    """
+    if heading_lower.startswith("repo_motor"):
+        return "motor"
+    if heading_lower.startswith("repo_destino"):
+        return "destino"
+    return None
+
+
+def _resolve_flt_bullet_tokens(
+    stripped: str, current_root: Path, paths: set[Path]
+) -> None:
+    """Extract backtick-quoted path tokens from one FLT bullet line."""
+    tokens = re.findall(r"`([^`]+)`", stripped)
+    for token in tokens:
+        token = token.strip().rstrip(",").strip()
+        if not token or token.endswith(("/", "\\")):
+            continue
+        if any(x in token for x in ["<", ">", "{", "}", "YYYY", "NNN"]):
+            continue
+        if not looks_like_path(token):
+            continue
+        p = Path(token)
+        if not p.is_absolute():
+            p = current_root / p
+        paths.add(p.resolve())
+
+
 def _extract_flt_paths(content: str) -> set[Path]:
     """Resolve Files Likely Touched deliverables against their namespaced root.
 
     Before: content is the raw work_plan.md text.
-    During: Delegates to scope_gate.parse_flt_namespaced so this gate shares
-        the same namespace semantics as pre_handoff_guard / scope_gate
-        (### repo_motor resolves against motor_root, ### repo_destino and
-        flat/unnamespaced lines resolve per delivery_authority). Read/inspect
-        only, Manager-only and free-form notes never reach the FLT section
-        parser, so they cannot be misread as Builder deliverables.
-    After: Returns absolute, existing-or-not Paths rooted correctly per
-        namespace, instead of always rooting against PROJECT_ROOT.
+    During: Scans only the "## Files Likely Touched" section. Each ### sub
+        heading is classified by _flt_subheading_namespace (prefix match, so
+        compound headings like "repo_destino - Builder" still resolve);
+        Read/inspect only and Manager-only sub-headings are skipped entirely
+        regardless of namespace, matching the long-standing contract. Lines
+        with no recognized namespace sub-heading fall back to
+        delivery_authority (scope_gate.read_delivery_authority), same as
+        scope_gate.parse_flt_namespaced's flat-line behavior.
+    After: Returns absolute, existing-or-not Paths rooted against motor_root
+        for the motor namespace and PROJECT_ROOT for the destino namespace,
+        instead of always rooting against PROJECT_ROOT.
     """
     sg = _import_scope_gate()
     delivery_authority = sg.read_delivery_authority(content)
     motor_root = resolve_motor_root()
-    buckets = sg.parse_flt_namespaced(
-        content,
-        motor_root=motor_root,
-        project_root=PROJECT_ROOT,
-        delivery_authority=delivery_authority,
-    )
-    return {Path(p) for p in (buckets["motor"] | buckets["destino"])}
+    default_root = motor_root if delivery_authority == "repo_motor" else PROJECT_ROOT
+
+    paths: set[Path] = set()
+    in_flt = False
+    current_root: Path | None = None
+    skip_subsection = False
+
+    for line in content.splitlines():
+        stripped = line.strip()
+
+        if stripped.startswith("## Files Likely Touched"):
+            in_flt = True
+            current_root = default_root
+            skip_subsection = False
+            continue
+        if in_flt and stripped.startswith("## ") and not stripped.startswith("### "):
+            break
+        if not in_flt:
+            continue
+
+        if stripped.startswith("### "):
+            heading_lower = stripped[4:].strip().lower()
+            namespace = _flt_subheading_namespace(heading_lower)
+            if namespace == "motor":
+                current_root = motor_root
+            elif namespace == "destino":
+                current_root = PROJECT_ROOT
+            else:
+                current_root = default_root
+            skip_subsection = any(
+                marker in heading_lower for marker in _SKIP_SUBHEADER_MARKERS
+            )
+            continue
+
+        if skip_subsection or current_root is None:
+            continue
+
+        if stripped.startswith("-") or stripped.startswith("*"):
+            _resolve_flt_bullet_tokens(stripped, current_root, paths)
+
+    return paths
 
 
 def extract_paths_from_work_plan(content: str) -> set[Path]:
