@@ -262,6 +262,57 @@ def test_destino_root_accepted(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# WOT-2026-010i: _resolve_destino returns destination_root, not motor_root
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_destino_returns_destination_root_not_motor_root(
+    tmp_path: Path,
+) -> None:
+    """Semantic regression: _resolve_destino() must read destination_root from
+    motor_destination_link.json, never motor_root, when the two differ.
+
+    This blinds the 010e bug (reading the wrong field) even though the live
+    bug is already fixed. The test asserts the EXACT returned value, not merely
+    that something non-None comes back: it sets motor_root and destination_root
+    to two distinct, real directories and requires the destination one.
+    """
+    import os
+
+    from scripts.encoding_post_write_hook import _resolve_destino
+
+    motor_root = tmp_path / "motor"
+    destino_root = tmp_path / "destino"
+    motor_root.mkdir()
+    destino_root.mkdir()
+
+    link_dir = motor_root / ".agent" / "config"
+    link_dir.mkdir(parents=True)
+    (link_dir / "motor_destination_link.json").write_text(
+        __import__("json").dumps(
+            {
+                "motor_root": str(motor_root),
+                "destination_root": str(destino_root),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # Clear the env override so the link file is the source of truth.
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("AGENT_PROJECT_ROOT", None)
+        resolved = _resolve_destino(motor_root)
+
+    assert resolved == destino_root.resolve(), (
+        f"_resolve_destino must return destination_root "
+        f"({destino_root.resolve()}), got {resolved}"
+    )
+    # Explicit negative: it must NOT return motor_root even though that field
+    # is also present in the link file.
+    assert resolved != motor_root.resolve()
+
+
+# ---------------------------------------------------------------------------
 # filePath variant in tool_input
 # ---------------------------------------------------------------------------
 

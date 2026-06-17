@@ -536,6 +536,148 @@ def resolve_git_head_sha_local(repo: Path) -> tuple[bool, str]:
     return True, sha
 
 
+def _relativize_to_any_root(abs_path: str, roots: list[Path]) -> str:
+    """Return abs_path relative to the first matching root, else abs_path itself."""
+    p = Path(abs_path)
+    for root in roots:
+        if root == p or root in p.parents:
+            return str(p.relative_to(root))
+    return abs_path
+
+
+def check_forbidden_surfaces(
+    *,
+    changed_files: set[str],
+    project_root: Path,
+    motor_root: Path | None,
+) -> list[str]:
+    """Return changed files that hit a Forbidden Surface (WOT-2026-010i).
+
+    Forbidden Surfaces declared in work_plan.md are an executable handoff
+    contract: a diff that touches one of them must block handoff with a
+    diagnostic that names the route, not merely fail a later audit.
+
+    Before: changed_files are absolute path strings from the active git root;
+        work_plan.md exists under project_root.
+    During: parses ``## Forbidden Surfaces`` via scope_gate.parse_forbidden_surfaces
+        against both project_root and motor_root (when distinct), so a forbidden
+        path declared relative to either repo is matched.
+    After: returns a sorted list of absolute path strings present in BOTH the
+        diff and the forbidden set. Empty list means no violation.
+    """
+    work_plan = project_root / ".agent" / "collaboration" / "work_plan.md"
+    if not work_plan.exists():
+        return []
+    try:
+        content = work_plan.read_text(encoding="utf-8")
+    except OSError:
+        return []
+
+    try:
+        sg = _import_scope_gate()
+    except ImportError:
+        return []
+
+    forbidden: set[str] = sg.parse_forbidden_surfaces(
+        content, project_root=project_root
+    )
+    if motor_root is not None and motor_root.resolve() != project_root.resolve():
+        forbidden |= sg.parse_forbidden_surfaces(content, project_root=motor_root)
+
+    return sorted(changed_files & forbidden)
+
+
+def assert_ticket_commit_visible(
+    *,
+    ticket_id: str,
+    deliverable_type: str,
+    motor_root: Path,
+    n: int = 20,
+    run_fn=subprocess.run,
+) -> tuple[bool, dict]:
+    """Require a repo_motor commit that names the ticket (WOT-2026-010i).
+
+    A ``code``/``mixed`` review packet without a visible productive commit of
+    the ticket reached Manager in WOT-2026-010e. This barrier blocks handoff
+    unless one of the last ``n`` repo_motor commit messages contains the
+    ticket_id. Documentation/research/analysis tickets are exempt: they may
+    close on documental artifacts without a code commit.
+
+    Before: motor_root is the delivery repo (must be git); ticket_id is the
+        active ticket; deliverable_type drives whether the barrier applies.
+    During: runs ``git log -n --format=%H%x00%s`` in motor_root and scans
+        subjects for ticket_id.
+    After: returns (ok, diag). On block, diag carries reason, remediation and
+        the ticket_id. Fail-closed: a git failure for a code/mixed ticket blocks.
+    """
+    if deliverable_type not in _SUITE_REQUIRED_TYPES:
+        return True, {
+            "commit_visible_required": False,
+            "reason": "deliverable_type_exempt",
+            "deliverable_type": deliverable_type,
+        }
+
+    base_diag = {
+        "commit_visible_required": True,
+        "ticket_id": ticket_id,
+        "remediation": (
+            f"Commit the productive change in repo_motor with {ticket_id} in the "
+            f"message before handoff, e.g. git commit -m '{ticket_id}: <change>'. "
+            "If the delivery legitimately has no code commit, the ticket type "
+            "should not be code/mixed."
+        ),
+    }
+
+    try:
+        result = run_fn(
+            ["git", "log", f"-{n}", "--format=%H%x00%s"],
+            capture_output=True,
+            text=True,
+            cwd=motor_root,
+            timeout=30,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        return False, {
+            **base_diag,
+            "reason": "git_log_failed",
+            "commit_visible_error": (
+                f"Could not read repo_motor git log ({exc}); blocking "
+                "code/mixed handoff (fail-closed)."
+            ),
+        }
+
+    if result.returncode != 0:
+        return False, {
+            **base_diag,
+            "reason": "git_log_nonzero",
+            "commit_visible_error": (
+                f"git log returned {result.returncode} in {motor_root}; "
+                "blocking code/mixed handoff (fail-closed)."
+            ),
+        }
+
+    for line in result.stdout.split("\n"):
+        if not line.strip():
+            continue
+        # Subject is everything after the NUL separator.
+        subject = line.split("\0", 1)[-1]
+        if ticket_id in subject:
+            return True, {
+                "commit_visible_required": True,
+                "reason": "commit_visible",
+                "ticket_id": ticket_id,
+            }
+
+    return False, {
+        **base_diag,
+        "reason": "no_visible_commit",
+        "commit_visible_error": (
+            f"No commit in the last {n} repo_motor commits names {ticket_id}: "
+            "a code/mixed packet must carry a visible productive commit."
+        ),
+    }
+
+
 def sg_fallback_parse(content: str, project_root: Path) -> set[str]:
     """Flat FLT parser fallback when scope_gate is not importable."""
     lines = content.split("\n")
@@ -612,6 +754,8 @@ def run_guard(
         "ticket_id": ticket_id,
         "cross_root_contamination": [],
         "excluded_operational": [],
+        "forbidden_surface_violation": [],
+        "commit_visible": None,
     }
 
     # 1. Verificar checkpoint M3 alignment
@@ -680,6 +824,30 @@ def run_guard(
             ),
         }
 
+    # 2.c WOT-2026-010i: code/mixed packets must carry a visible productive
+    # commit naming the ticket in repo_motor. Doc-types are exempt. Fail-closed.
+    _cv_motor = motor_root if motor_root is not None else project_root
+    try:
+        _dt_cv = _read_deliverable_type_from_active_plan(project_root)
+        _cv_ok, _cv_diag = assert_ticket_commit_visible(
+            ticket_id=ticket_id,
+            deliverable_type=_dt_cv,
+            motor_root=_cv_motor,
+        )
+        result["commit_visible"] = _cv_diag
+        if not _cv_ok:
+            result["valid"] = False
+    except Exception as exc:
+        result["valid"] = False
+        result["commit_visible"] = {
+            "commit_visible_required": True,
+            "reason": "guard_error",
+            "commit_visible_error": (
+                f"{type(exc).__name__}: {exc}. Commit-visible gate could not "
+                "run; blocking handoff (fail-closed)."
+            ),
+        }
+
     # 3. Obtener superficies vivas (archivos y directorios)
     live_files, live_dirs = get_live_surfaces_absolute(project_root)
 
@@ -740,6 +908,20 @@ def run_guard(
     if scope_discrepancy:
         result["scope_discrepancy"] = sorted(
             str(Path(f).relative_to(project_root)) for f in scope_discrepancy
+        )
+
+    # 5.b WOT-2026-010i: a diff that touches a declared Forbidden Surface blocks
+    # handoff with a diagnostic naming the route. Executable contract, not prose.
+    forbidden_hits = check_forbidden_surfaces(
+        changed_files=non_ignored_changed,
+        project_root=project_root,
+        motor_root=motor_root,
+    )
+    if forbidden_hits:
+        result["valid"] = False
+        roots = [project_root] + ([motor_root] if motor_root is not None else [])
+        result["forbidden_surface_violation"] = sorted(
+            _relativize_to_any_root(f, roots) for f in forbidden_hits
         )
 
     # 6. WOT-2026-009c: reciprocal isolation guard — inspect non-authority root.
@@ -887,6 +1069,26 @@ def main() -> int:
             if result.get("work_plan_guard_error"):
                 print(
                     f"  - work_plan commit guard error: {result['work_plan_guard_error']}"
+                )
+            cv = result.get("commit_visible")
+            if cv and cv.get("reason") not in (
+                "commit_visible",
+                "deliverable_type_exempt",
+                None,
+            ):
+                print(
+                    f"  - Commit not visible for {ticket_id}: "
+                    f"{cv.get('commit_visible_error', cv.get('reason'))}"
+                )
+                print(f"    Fix: {cv.get('remediation', '')}")
+            if result.get("forbidden_surface_violation"):
+                print(
+                    "  - Forbidden Surface violation: "
+                    f"{', '.join(result['forbidden_surface_violation'])}"
+                )
+                print(
+                    "    Fix: revert changes to the forbidden route(s) above, or "
+                    "open a ticket whose Forbidden Surfaces do not list them."
                 )
             if result["dirty_tree"]:
                 print(f"  - Dirty tree: {', '.join(result['dirty_files'])}")

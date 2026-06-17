@@ -38,6 +38,27 @@ def init_git_repo(repo_path: Path) -> None:
     )
 
 
+def commit_ticket_marker(repo_path: Path, ticket_id: str) -> None:
+    """Create a commit whose message names the ticket (WOT-2026-010i).
+
+    The commit-visible barrier requires a repo_motor commit naming the active
+    ticket for code/mixed handoffs. Tests that drive run_guard end-to-end with
+    a code deliverable_type must therefore have such a commit, mirroring real
+    handoff flow where the Builder commits productive work before --mark-ready.
+    """
+    marker = repo_path / f".ticket_marker_{ticket_id}.txt"
+    marker.write_text(f"productive change for {ticket_id}\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", marker.name], cwd=repo_path, check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "commit", "-m", f"{ticket_id}: productive change"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+    )
+
+
 def create_checkpoint_tag(repo_path: Path, tag_name: str) -> None:
     """Create an annotated checkpoint tag."""
     subprocess.run(
@@ -48,13 +69,20 @@ def create_checkpoint_tag(repo_path: Path, tag_name: str) -> None:
     )
 
 
-def write_green_last_run(repo_path: Path) -> None:
+def write_green_last_run(repo_path: Path, ticket_id: str | None = None) -> None:
     """Write a fresh-green last-run.json so the WOT-2026-010c gate passes.
 
     Required precondition for any guard test that expects valid=True: the
     canonical-suite gate demands status==finished + exit_code==0 +
     tested_commit_sha==HEAD. Writes it against the repo's current HEAD.
+
+    WOT-2026-010i: when ``ticket_id`` is given, also lands a commit naming the
+    ticket BEFORE capturing HEAD, so the commit-visible barrier is satisfied
+    and the subsequent M3 checkpoint still aligns to the final HEAD.
     """
+    if ticket_id is not None:
+        commit_ticket_marker(repo_path, ticket_id)
+
     # Replicate the motor .gitignore so the ephemeral artifact does not dirty
     # the handoff tree (the real motor ignores .agent/runtime/pytest-safe/).
     # Commit the .gitignore first so HEAD reflects a clean tree, then write the
@@ -124,7 +152,7 @@ class TestPreHandoffGuard:
         )
 
         # Create M3 checkpoint on HEAD after all commits
-        write_green_last_run(repo)
+        write_green_last_run(repo, ticket_id="WP-2026-167")
         create_checkpoint_tag(repo, "checkpoint/review-WP-2026-167")
 
         result = subprocess.run(
@@ -381,7 +409,7 @@ class TestPreHandoffGuard:
         )
 
         # Create M3 checkpoint on HEAD after all commits
-        write_green_last_run(repo)
+        write_green_last_run(repo, ticket_id="WP-2026-167")
         create_checkpoint_tag(repo, "checkpoint/review-WP-2026-167")
 
         # Modify them (should be ignored by guard)
@@ -440,7 +468,7 @@ class TestPreHandoffGuard:
         )
 
         # Create M3 checkpoint on HEAD after all commits
-        write_green_last_run(repo)
+        write_green_last_run(repo, ticket_id="WP-2026-167")
         create_checkpoint_tag(repo, "checkpoint/review-WP-2026-167")
 
         (report_dir / "session_close_report.md").write_text(
@@ -475,7 +503,7 @@ class TestPreHandoffGuard:
         init_git_repo(repo)
 
         # Create M3 checkpoint
-        write_green_last_run(repo)
+        write_green_last_run(repo, ticket_id="WP-2026-167")
         create_checkpoint_tag(repo, "checkpoint/review-WP-2026-167")
 
         # Create work_plan.md with limited scope
@@ -598,7 +626,7 @@ class TestPreHandoffGuard:
         )
 
         # Create M3 checkpoint
-        write_green_last_run(repo)
+        write_green_last_run(repo, ticket_id="WP-2026-172")
         create_checkpoint_tag(repo, "checkpoint/review-WP-2026-172")
 
         # Modify PROJECT.md (simulating operational cycle update)
@@ -651,7 +679,7 @@ class TestPreHandoffGuard:
         )
 
         # Create M3 checkpoint on HEAD after all commits
-        write_green_last_run(repo)
+        write_green_last_run(repo, ticket_id="WP-2026-167")
         create_checkpoint_tag(repo, "checkpoint/review-WP-2026-167")
 
         # Create ignored files
@@ -749,7 +777,7 @@ class TestWorkPlanCommitGuard:
             check=True,
             capture_output=True,
         )
-        write_green_last_run(repo)
+        write_green_last_run(repo, ticket_id="WOT-2026-TEST")
         create_checkpoint_tag(repo, "checkpoint/review-WOT-2026-TEST")
 
         result = run_guard(repo, "WOT-2026-TEST", motor_root=repo)
@@ -780,7 +808,7 @@ class TestWorkPlanCommitGuard:
             check=True,
             capture_output=True,
         )
-        write_green_last_run(repo)
+        write_green_last_run(repo, ticket_id="WOT-2026-TEST")
         create_checkpoint_tag(repo, "checkpoint/review-WOT-2026-TEST")
 
         # Dirty live surfaces (must not cause failure)
@@ -1142,7 +1170,7 @@ class TestPreHandoffGuardWithPause(TestPreHandoffGuard):
         )
 
         # Create M3 checkpoint
-        write_green_last_run(repo)
+        write_green_last_run(repo, ticket_id="WOT-2026-010d")
         create_checkpoint_tag(repo, "checkpoint/review-WOT-2026-010d")
 
         result = subprocess.run(
@@ -1272,3 +1300,156 @@ class TestCanonicalSuiteDiagPropagation:
             "canonical_suite_error",
         ):
             assert field in cs, f"missing {field} in canonical_suite diag"
+
+
+# =============================================================================
+# WOT-2026-010i: Forbidden Surfaces handoff barrier
+# =============================================================================
+
+
+class TestForbiddenSurfacesBarrier:
+    """A diff touching a declared Forbidden Surface must block handoff."""
+
+    def _import_guard(self):
+        sys.path.insert(0, str(SCRIPT_PATH.parent))
+        import pre_handoff_guard
+
+        return pre_handoff_guard
+
+    @staticmethod
+    def _write_work_plan(repo: Path, forbidden_lines: str) -> None:
+        collab = repo / ".agent" / "collaboration"
+        collab.mkdir(parents=True, exist_ok=True)
+        (collab / "work_plan.md").write_text(
+            "# Work Plan\n\n"
+            "## Files Likely Touched\n\n"
+            "- `scripts/foo.py`\n\n"
+            "## Forbidden Surfaces\n\n"
+            f"{forbidden_lines}\n",
+            encoding="utf-8",
+        )
+
+    def test_changed_file_in_forbidden_blocks(self, tmp_path: Path) -> None:
+        guard = self._import_guard()
+        repo = tmp_path / "repo"
+        init_git_repo(repo)
+        self._write_work_plan(repo, "- `scripts/run_pytest_safe.py`\n")
+
+        changed = {str((repo / "scripts" / "run_pytest_safe.py").resolve())}
+        hits = guard.check_forbidden_surfaces(
+            changed_files=changed, project_root=repo, motor_root=None
+        )
+        assert hits, "a changed file in Forbidden Surfaces must be reported"
+        assert "run_pytest_safe.py" in hits[0]
+
+    def test_changed_file_not_forbidden_passes(self, tmp_path: Path) -> None:
+        guard = self._import_guard()
+        repo = tmp_path / "repo"
+        init_git_repo(repo)
+        self._write_work_plan(repo, "- `scripts/run_pytest_safe.py`\n")
+
+        changed = {str((repo / "scripts" / "foo.py").resolve())}
+        hits = guard.check_forbidden_surfaces(
+            changed_files=changed, project_root=repo, motor_root=None
+        )
+        assert hits == [], "a non-forbidden changed file must not be flagged"
+
+    def test_conceptual_forbidden_entry_not_a_false_path(self, tmp_path: Path) -> None:
+        """Conceptual entries like 'cache pytest' are not concrete paths and
+        must not produce spurious matches (no false positive from prose)."""
+        guard = self._import_guard()
+        repo = tmp_path / "repo"
+        init_git_repo(repo)
+        self._write_work_plan(repo, "- cache pytest\n- xdist/sharding\n")
+
+        changed = {str((repo / "scripts" / "foo.py").resolve())}
+        hits = guard.check_forbidden_surfaces(
+            changed_files=changed, project_root=repo, motor_root=None
+        )
+        assert hits == []
+
+
+# =============================================================================
+# WOT-2026-010i: commit-visible barrier for code/mixed
+# =============================================================================
+
+
+class TestCommitVisibleBarrier:
+    """code/mixed packets must carry a repo_motor commit naming the ticket."""
+
+    def _import_guard(self):
+        sys.path.insert(0, str(SCRIPT_PATH.parent))
+        import pre_handoff_guard
+
+        return pre_handoff_guard
+
+    @staticmethod
+    def _commit(repo: Path, message: str) -> None:
+        (repo / f"f_{abs(hash(message)) % 10000}.txt").write_text(message)
+        subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", message],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+
+    def test_code_without_visible_commit_blocks(self, tmp_path: Path) -> None:
+        guard = self._import_guard()
+        repo = tmp_path / "motor"
+        init_git_repo(repo)
+        self._commit(repo, "unrelated change without ticket")
+
+        ok, diag = guard.assert_ticket_commit_visible(
+            ticket_id="WOT-2026-010i",
+            deliverable_type="code",
+            motor_root=repo,
+        )
+        assert ok is False
+        assert diag.get("reason") == "no_visible_commit"
+        assert "WOT-2026-010i" in diag.get("remediation", "")
+
+    def test_mixed_with_visible_commit_passes(self, tmp_path: Path) -> None:
+        guard = self._import_guard()
+        repo = tmp_path / "motor"
+        init_git_repo(repo)
+        self._commit(repo, "WOT-2026-010i: harden handoff barriers")
+
+        ok, diag = guard.assert_ticket_commit_visible(
+            ticket_id="WOT-2026-010i",
+            deliverable_type="mixed",
+            motor_root=repo,
+        )
+        assert ok is True
+        assert diag.get("reason") == "commit_visible"
+
+    def test_analysis_exempt_without_commit(self, tmp_path: Path) -> None:
+        """Documentation/analysis tickets do not require a code commit."""
+        guard = self._import_guard()
+        repo = tmp_path / "motor"
+        init_git_repo(repo)
+        self._commit(repo, "unrelated change without ticket")
+
+        ok, diag = guard.assert_ticket_commit_visible(
+            ticket_id="WOT-2026-010i",
+            deliverable_type="analysis",
+            motor_root=repo,
+        )
+        assert ok is True
+        assert diag.get("reason") == "deliverable_type_exempt"
+
+    def test_git_failure_fails_closed_for_code(self, tmp_path: Path) -> None:
+        """A git failure for a code ticket must block (fail-closed), not pass."""
+        guard = self._import_guard()
+
+        def _boom(*_a, **_k):
+            raise FileNotFoundError("git not found")
+
+        ok, diag = guard.assert_ticket_commit_visible(
+            ticket_id="WOT-2026-010i",
+            deliverable_type="code",
+            motor_root=tmp_path,
+            run_fn=_boom,
+        )
+        assert ok is False
+        assert diag.get("reason") == "git_log_failed"

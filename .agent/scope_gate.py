@@ -249,6 +249,33 @@ def parse_flt_raw_paths(
     return set(buckets["motor"])
 
 
+def parse_forbidden_surfaces(
+    work_plan_content: str,
+    *,
+    project_root: Path,
+) -> set[str]:
+    """Parse the ``## Forbidden Surfaces`` section into resolved absolute paths.
+
+    WOT-2026-010i: Forbidden Surfaces are an executable handoff contract, not
+    just audit prose. This reuses :func:`_extract_section_paths` so the same
+    path-token heuristics that gate Files Likely Touched also gate forbidden
+    routes (a bullet with trailing prose is ignored, not silently treated as a
+    path).
+
+    Only entries that look like real path tokens are returned; conceptual
+    entries such as ``cache pytest`` or ``xdist/sharding`` that are not concrete
+    repo paths are not resolvable to a file and so do not appear here. The
+    handoff barrier matches changed files against the concrete paths only.
+
+    Before: work_plan_content is the raw markdown; project_root is the root the
+        relative forbidden paths resolve against.
+    During: scans the ``## Forbidden Surfaces`` heading; extracts path tokens.
+    After: returns a set of resolved absolute path strings (possibly empty).
+    """
+    lines = work_plan_content.split("\n")
+    return _extract_section_paths(lines, "Forbidden Surfaces", project_root)
+
+
 def parse_files_likely_touched(
     work_plan_content: str,
     *,
