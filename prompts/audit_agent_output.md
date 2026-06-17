@@ -12,6 +12,33 @@
 
 No aceptes auto-reportes como evidencia. Un output de agente solo es confiable si sus claims importantes se sostienen contra artefactos reales: diff, codigo, tests, exit code, bus, estado git, bytes o documentacion canonica.
 
+## Pre-requisito: Verificacion topologica DEL AUDITOR
+
+Antes de validar claims sobre archivos, estado o artefactos, verifica TU
+propia topologia. El auditor no esta exento del error que busca:
+
+1. **Confirma que miras el repositorio correcto.** Si el output audito habla
+   de `repo_destino`, verifica en `repo_destino`, no en `repo_motor` ni en
+   un seed/plantilla. Si habla de `workspace_activo`, resuelvelo via
+   `AGENT_PROJECT_ROOT` o `motor_destination_link.json`. Si ambos existen,
+   contrasta que apuntan al mismo root operativo.
+2. **Confirma que el archivo existe ANTES de evaluar su contenido.**
+   Usa una verificacion compatible con el entorno actual: `Test-Path`
+   (PowerShell), `test -f` (Unix), `ls`, `read_file` o equivalente. Si hay
+   duda de shell o portabilidad, usa una lectura real del archivo o un check
+   portable con Python/pathlib. No infieras existencia desde que un script
+   "reporta exito".
+3. **No confundas verificacion de encoding con verificacion de existencia.**
+   `check_encoding_guard.py` prueba encoding (mojibake, BOM, `?`), NO que
+   el archivo exista ni que se haya creado correctamente. Son dos checks
+   distintos; uno no cubre al otro.
+
+Si saltas esta verificacion, cualquier hallazgo sobre "archivo no existe" o
+"backlog no esta" puede ser un falso positivo causado por el auditor, no
+por el agente auditado.
+
+---
+
 Evalua con CEM v0:
 
 1. **Contrato antes que fix**
@@ -75,6 +102,16 @@ Extrae los claims importantes del output y contrastalos.
 
 Regla: no presentes inferencias como hechos confirmados.
 
+**Regla anti-cristalizacion:** Si un dato numerico, conteo o estimacion se
+presento originalmente como "sospecha", "provisional" o "pendiente de
+medicion", NO puede aparecer en la auditoria como hecho verificado sin una
+fuente de evidencia nueva. Ejemplo comun: "N archivos usan X"
+(sospecha) no se convierte en "VERIFICADO: N archivos usan X"
+solo porque el auditor repite el numero. Si la fuente original es un grep
+parcial o conteo manual sin ejecucion reproduible, clasificalo como
+`INFERENCIA RAZONABLE` y recomienda la medicion canonica (p.ej.
+`--durations=50`).
+
 ### 2. Diff, scope y artefactos
 
 Si hay cambios propuestos o aplicados:
@@ -137,6 +174,7 @@ Si el agente reporta tests:
 - Hay aserciones reales o floor assertions? Prefiere limites exactos, efectos verificables y `pytest.raises` cuando aplique.
 - El gate bloquea de verdad o solo "pasa" en estado limpio?
 - Si el cambio corrige un bug real, existe prueba de barrera suficiente: evidencia de que el test o guard habria fallado sin el fix?
+- **Claims de creacion/escritura de archivos:** Un agente reporta "archivo X creado" o "backlog escrito". Evidencia minima, despues de verificar topologia en la seccion 1: (1) el archivo existe y es legible con una verificacion compatible con el entorno actual (`Test-Path`, `test -f`, `read_file`, diff real o equivalente; Python/pathlib solo como fallback portable), (2) el contenido es consistente con lo declarado (no solo que exista, sino que tiene la estructura esperada). Un exit code de script o encoding guard NO sustituyen la verificacion de existencia. Si el output solo reporta exito sin evidencia de lectura, marca el claim como `NO VERIFICADO`.
 
 ### 4. Produccion vs tests
 
@@ -175,6 +213,20 @@ Para `.md`, `.py`, prompts, skills o documentacion operativa:
 - Si hay allowlist, distingue deuda real de datos intencionales.
 - Si hay hook, prueba que bloquea una corrupcion deliberada, no solo que pasa en limpio.
 
+**Criterio estricto: encoding NO es creacion ni existencia.**
+`check_encoding_guard.py` valida integridad de bytes en un archivo que YA
+EXISTE. No prueba que el agente haya creado el archivo, que tenga el
+contenido correcto, ni que este en la ruta declarada. Para claims de
+"archivo creado correctamente", exige evidencia en dos pasos:
+
+1. **Existencia/lectura real:** `Test-Path`, `read_file`, `cat` o diff que
+   muestre contenido. Esto confirma que el archivo existe y tiene contenido.
+2. **Encoding correcto:** `check_encoding_guard.py` o verificacion por bytes.
+
+Un claim como "encoding guard paso" NO cubre "archivo creado exitosamente".
+Si el agente solo reporta encoding, marca `INFERENCIA RAZONABLE` sobre la
+creacion y pide evidencia de existencia.
+
 ### 7. Autonomia del Builder
 
 La auditoria no debe convertir al Builder en un ejecutor asustado.
@@ -211,10 +263,14 @@ Cada hallazgo debe incluir una:
 - `VERIFICADO EN GIT`
 - `VERIFICADO POR BYTES`
 - `VERIFICADO EN DOCUMENTACION`
+- `VERIFICADO POR TOPOLOGIA` (archivo localizado en la ruta canonica correcta tras pre-requisito topologico)
 - `INFERENCIA RAZONABLE`
 - `NO VERIFICADO`
 
 No mezcles inferencia con hecho confirmado.
+`VERIFICADO POR TOPOLOGIA` complementa, no sustituye, a `VERIFICADO EN CODIGO`,
+`VERIFICADO EN TEST`, `VERIFICADO EN GIT` o evidencia equivalente.
+Aclara que verificaste en el root correcto; no basta por si solo.
 
 ---
 
@@ -223,7 +279,7 @@ No mezcles inferencia con hecho confirmado.
 Para cada problema importante, indica:
 
 - **Clase CEM canonica:** A regresion de contrato / B fuga de estado / C deriva de fixture / D entorno-infraestructura. Si no encaja, marca otro y explica.
-- **Subtipo observado:** falso verde / root equivocado / fixture irreal / scope creep / encoding / auto-reporte / estado canonico / gate ausente / otro.
+- **Subtipo observado:** falso verde / root equivocado / fixture irreal / scope creep / encoding / auto-reporte / estado canonico / gate ausente / topologia_del_auditor / root_equivocado / claim_provisional_cristalizado / existencia_vs_encoding / otro.
 - **Impacto de fallo:** codigo / tests / proceso / orquestacion / memoria / documentacion. No es el tipo de output auditado; es donde pega el riesgo.
 - **Barrera existente:** test, hook, prompt, bus, manager gate, review u otra.
 - **Barrera faltante:** que habria evitado el fallo.
