@@ -1061,6 +1061,8 @@ def write_file(path: Path, content: str) -> None:
 get_status = state_validation.get_status
 get_plan_id = state_validation.get_plan_id
 get_plan_type = state_validation.get_plan_type
+# WOT-2026-010f: single source of truth for invalid plan/ticket ids.
+is_invalid_plan_id = state_validation.is_invalid_plan_id
 
 
 def check_git_status() -> bool | None:
@@ -1777,7 +1779,7 @@ def _validate_contract_gap_coherence(plan_content: str) -> list[str]:  # noqa: C
 
     # Determine active ticket_id
     ticket_id = get_plan_id(plan_content).strip()
-    if not ticket_id or ticket_id.lower() in ("n/a", "none", "unknown", ""):
+    if is_invalid_plan_id(ticket_id):
         return errors
 
     # Check bus for CONTRACT_GAP events
@@ -2775,7 +2777,7 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
     from bus.state_machine import TicketState
 
     plan_content, log_content, plan_id = _load_mark_ready_context()
-    if not plan_id or plan_id == "N/A":
+    if is_invalid_plan_id(plan_id):
         print("[ERROR] No active plan found.")
         return 1
 
@@ -3170,7 +3172,7 @@ def _handle_bootstrap_ticket(json_output: bool) -> int:
     plan_content = read_file(WORK_PLAN)
     plan_id = get_plan_id(plan_content)
 
-    if not plan_id or plan_id == "N/A":
+    if is_invalid_plan_id(plan_id):
         if json_output:
             print(
                 json.dumps(
@@ -3310,8 +3312,49 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
         print("[ERROR] No work_plan.md found.", file=sys.stderr, flush=True)
         return 1
 
+    # --- WT-2026-248a: BOM autocorrection for .opencode/opencode.json ---
+    # WOT-2026-010f: this hygiene runs BEFORE the plan_id guard because it is
+    # infrastructure cleanup of a motor-owned file, independent of any ticket.
+    # The launcher finally-block may write the config via Set-Content -Encoding
+    # UTF8 which prepends the UTF-8 BOM (EF BB BF).  Detect the exact residual:
+    # bytes_actuales == BOM_UTF8 + bytes_head -- autocorrect if so.
+    #
+    # FLT gate: if .opencode/opencode.json is declared in Files Likely Touched,
+    # DO NOT autocorrect - the file is in scope and the Builder may have made
+    # legitimate changes. Fall through to normal scope/evidence rules.
+    _opencode_path = _MOTOR_ROOT / ".opencode" / "opencode.json"
+    if _opencode_path.exists():
+        _flt_paths = _parse_raw_flt_paths(plan_content)
+        _opencode_rel = ".opencode/opencode.json"
+        if _opencode_rel not in {p.replace("\\", "/") for p in _flt_paths}:
+            _bom_bytes = b"\xef\xbb\xbf"
+            try:
+                _head_proc = subprocess.run(
+                    ["git", "show", "HEAD:.opencode/opencode.json"],
+                    capture_output=True,
+                    cwd=_MOTOR_ROOT.resolve(),
+                    timeout=10,
+                )
+                if _head_proc.returncode == 0:
+                    _head_bytes = _head_proc.stdout
+                    _current_bytes = _opencode_path.read_bytes()
+                    _expected_bom_drift = _bom_bytes + _head_bytes
+                    if _current_bytes == _expected_bom_drift:
+                        # Autocorrect: restore exact HEAD bytes
+                        _opencode_path.write_bytes(_head_bytes)
+                        print(
+                            "[OK] Pre-handoff BOM autocorrected: "
+                            ".opencode/opencode.json restored to HEAD (removed BOM drift).",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                    # else: no autocorrection - fall through to normal logic
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                pass
+    # --- end WT-2026-248a BOM autocorrection ---
+
     plan_id = get_plan_id(plan_content)
-    if not plan_id or plan_id == "N/A":
+    if is_invalid_plan_id(plan_id):
         print("[ERROR] No active plan found.", file=sys.stderr, flush=True)
         return 1
 
@@ -3331,6 +3374,7 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
     if not round_ok:
         # WT-2026-242b: Orphan containment - if ticket is past IN_PROGRESS,
         # emit STALE_BUILDER_ORPHAN instead of HANDOFF_BLOCKED.
+        # This prevents stale shells from contaminating the bus post-success.
         was_orphan, msg = _maybe_handle_stale_builder_orphan(
             plan_id=plan_id,
             process_round=process_round,
@@ -3543,45 +3587,6 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
                 )
             )
         return 0
-
-    # --- WT-2026-248a: BOM autocorrection for .opencode/opencode.json ---
-    # The launcher finally-block may write the config via Set-Content -Encoding
-    # UTF8 which prepends the UTF-8 BOM (EF BB BF).  Detect the exact residual:
-    # bytes_actuales == BOM_UTF8 + bytes_head -- autocorrect if so, BLOCK otherwise.
-    #
-    # FLT gate: if .opencode/opencode.json is declared in Files Likely Touched,
-    # DO NOT autocorrect - the file is in scope and the Builder may have made
-    # legitimate changes. Fall through to normal scope/evidence rules.
-    _opencode_path = _MOTOR_ROOT / ".opencode" / "opencode.json"
-    if _opencode_path.exists():
-        _flt_paths = _parse_raw_flt_paths(plan_content)
-        _opencode_rel = ".opencode/opencode.json"
-        if _opencode_rel not in {p.replace("\\", "/") for p in _flt_paths}:
-            _bom_bytes = b"\xef\xbb\xbf"
-            try:
-                _head_proc = subprocess.run(
-                    ["git", "show", "HEAD:.opencode/opencode.json"],
-                    capture_output=True,
-                    cwd=motor_root,
-                    timeout=10,
-                )
-                if _head_proc.returncode == 0:
-                    _head_bytes = _head_proc.stdout
-                    _current_bytes = _opencode_path.read_bytes()
-                    _expected_bom_drift = _bom_bytes + _head_bytes
-                    if _current_bytes == _expected_bom_drift:
-                        # Autocorrect: restore exact HEAD bytes
-                        _opencode_path.write_bytes(_head_bytes)
-                        print(
-                            "[OK] Pre-handoff BOM autocorrected: "
-                            ".opencode/opencode.json restored to HEAD (removed BOM drift).",
-                            file=sys.stderr,
-                            flush=True,
-                        )
-                    # else: no autocorrection - fall through to normal logic
-            except (subprocess.TimeoutExpired, FileNotFoundError):
-                pass
-    # --- end WT-2026-248a BOM autocorrection ---
 
     # --- Commit-or-block for uncommitted productive motor changes ---
     # WT-2026-231a: Replace the simple barrier from WT-2026-228a with a
@@ -3876,7 +3881,7 @@ def _check_bus_drift(plan_content: str, log_status: str) -> list[str]:
     if not BUS_AVAILABLE or not event_bus:
         return ["Event bus not available for drift detection"]
     plan_id = get_plan_id(plan_content)
-    if not plan_id or plan_id == "N/A":
+    if is_invalid_plan_id(plan_id):
         return ["No active ticket found for bus drift check"]
     return closure_invariants.check_bus_drift(event_bus, plan_id, log_status)
 
@@ -3985,7 +3990,7 @@ def _check_invariants(plan_content: str, log_content: str, log_status: str) -> d
     result = {"errors": [], "warnings": []}
     plan_id = get_plan_id(plan_content)
 
-    if not plan_id or plan_id == "N/A":
+    if is_invalid_plan_id(plan_id):
         result["warnings"].append("No active plan for invariant check")
         return result
 
@@ -4270,7 +4275,7 @@ def _handle_manager_approve(  # noqa: C901 - flag handler intentionally branches
     - Ticket must be in READY_FOR_REVIEW state
     - Idempotent: returns already_completed if ticket already has SUPERVISOR_CLOSED event in bus
     """
-    if not ticket_id or ticket_id == "N/A":
+    if is_invalid_plan_id(ticket_id):
         if json_output:
             print(json.dumps({"error": "No ticket_id provided"}, indent=2))
         else:
@@ -4284,7 +4289,7 @@ def _handle_manager_approve(  # noqa: C901 - flag handler intentionally branches
     log_status = get_status(log_content, "**Estado:**")
 
     # Validate ticket_id matches active ticket
-    if not current_plan_id or current_plan_id == "N/A":
+    if is_invalid_plan_id(current_plan_id):
         if json_output:
             print(
                 json.dumps(
@@ -4300,9 +4305,7 @@ def _handle_manager_approve(  # noqa: C901 - flag handler intentionally branches
             print(
                 json.dumps(
                     {
-                        "error": f"Ticket {ticket_id} does not match active ticket {current_plan_id}",
-                        "provided_ticket": ticket_id,
-                        "active_ticket": current_plan_id,
+                        "error": f"Ticket {ticket_id} does not match active ticket {current_plan_id}"
                     },
                     indent=2,
                 )
@@ -4496,7 +4499,7 @@ def _handle_escalate_human_gate(ticket_id: str, json_output: bool) -> int:
     During: Calls _materialize_state_transition with to_state=HUMAN_GATE.
     After: All projections reflect HUMAN_GATE state, bus has STATE_CHANGED event.
     """
-    if not ticket_id or ticket_id == "N/A":
+    if is_invalid_plan_id(ticket_id):
         if json_output:
             print(json.dumps({"error": "No ticket_id provided"}, indent=2))
         else:
@@ -4506,7 +4509,7 @@ def _handle_escalate_human_gate(ticket_id: str, json_output: bool) -> int:
     plan_content = read_file(WORK_PLAN)
     current_plan_id = get_plan_id(plan_content)
 
-    if not current_plan_id or current_plan_id == "N/A":
+    if is_invalid_plan_id(current_plan_id):
         if json_output:
             print(json.dumps({"error": "No active ticket found"}, indent=2))
         else:
@@ -4563,7 +4566,7 @@ def _handle_resume_human_gate(ticket_id: str, json_output: bool) -> int:
     During: Verifies bus state, calls _materialize_state_transition.
     After: Ticket returns to READY_FOR_REVIEW for a fresh review cycle.
     """
-    if not ticket_id or ticket_id == "N/A":
+    if is_invalid_plan_id(ticket_id):
         if json_output:
             print(json.dumps({"error": "No ticket_id provided"}, indent=2))
         else:
@@ -4633,7 +4636,7 @@ def _handle_pause_ticket(ticket_id: str, reason: str, json_output: bool) -> int:
 
     Returns 0 on success, 1 on validation failure.
     """
-    if not ticket_id or ticket_id == "N/A":
+    if is_invalid_plan_id(ticket_id):
         msg = "No ticket_id provided. Use --ticket WOT-XXXX-NNNx"
         if json_output:
             print(json.dumps({"error": msg}, indent=2))
@@ -4816,7 +4819,7 @@ def _handle_resume_ticket(ticket_id: str, json_output: bool) -> int:  # noqa: C9
 
     Returns 0 on success, 1 on validation failure.
     """
-    if not ticket_id or ticket_id == "N/A":
+    if is_invalid_plan_id(ticket_id):
         msg = "No ticket_id provided. Use --ticket WOT-XXXX-NNNx"
         if json_output:
             print(json.dumps({"error": msg}, indent=2))
@@ -4946,7 +4949,7 @@ def _handle_abort_paused_ticket(ticket_id: str, reason: str, json_output: bool) 
     NOTE: This is a v1 stub. Full abort workflow may require additional
     cleanup or escalation logic in future versions.
     """
-    if not ticket_id or ticket_id == "N/A":
+    if is_invalid_plan_id(ticket_id):
         msg = "No ticket_id provided. Use --ticket WOT-XXXX-NNNx"
         if json_output:
             print(json.dumps({"error": msg}, indent=2))
@@ -4987,7 +4990,7 @@ def _handle_abort_paused_ticket(ticket_id: str, reason: str, json_output: bool) 
         artifact["aborted_by"] = "BUILDER"
         artifact["status"] = "ABORTED"
 
-        paused_artifact.write_text(json.dumps(artifact, indent=2))
+        paused_artifact.write_text(json.dumps(artifact, indent=2), encoding="utf-8")
 
         # Try to discard stash
         stash_ref = artifact.get("stash_ref")
@@ -5032,7 +5035,7 @@ def _handle_reopen_terminal_ticket(  # noqa: C901 - flag handler validates bus s
     Reopens the active ticket to IN_PROGRESS by bypassing the EventBus reentry
     guard intentionally. This is reserved for canonical repair flows.
     """
-    if not ticket_id or ticket_id == "N/A":
+    if is_invalid_plan_id(ticket_id):
         if json_output:
             print(json.dumps({"error": "No ticket_id provided"}, indent=2))
         else:
@@ -5186,7 +5189,7 @@ def _handle_request_changes(  # noqa: C901
       REVIEW_DECISION=changes is the direct antecedent. UNKNOWN falls back to
       execution_log path. Generic IN_PROGRESS without that antecedent fails closed.
     """
-    if not ticket_id or ticket_id == "N/A":
+    if is_invalid_plan_id(ticket_id):
         if json_output:
             print(json.dumps({"error": "No ticket_id provided"}, indent=2))
         else:
@@ -5198,7 +5201,7 @@ def _handle_request_changes(  # noqa: C901
     current_plan_id = get_plan_id(plan_content)
     log_status = get_status(log_content, "**Estado:**")
 
-    if not current_plan_id or current_plan_id == "N/A":
+    if is_invalid_plan_id(current_plan_id):
         if json_output:
             print(
                 json.dumps(
@@ -5752,7 +5755,7 @@ def _handle_get_closeout_skip(json_output: bool) -> int:
     derived from the bus, not authority.
     """
     _plan_content, _log_content, plan_id = _load_mark_ready_context()
-    if not plan_id or plan_id == "N/A":
+    if is_invalid_plan_id(plan_id):
         if json_output:
             print(json.dumps({"skip": False, "reason": "no_active_plan"}, indent=2))
         else:
@@ -5943,14 +5946,8 @@ def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
     ticket_id = None
     if "--ticket" in sys.argv:
         idx = sys.argv.index("--ticket")
-        if idx + 1 >= len(sys.argv):
-            print("[ERROR] --ticket requires a ticket ID.")
-            return 1
-        next_token = sys.argv[idx + 1]
-        if next_token.startswith("--"):
-            print("[ERROR] --ticket requires a ticket ID, not another flag.")
-            return 1
-        ticket_id = next_token
+        if idx + 1 >= len(sys.argv) and not sys.argv[idx + 1].startswith("--"):
+            ticket_id = sys.argv[idx + 1]
     elif "--manager-approve" in sys.argv:
         idx = sys.argv.index("--manager-approve")
         if idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("--"):

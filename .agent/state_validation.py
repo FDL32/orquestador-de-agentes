@@ -45,6 +45,31 @@ VALID_LOG_STATES = {
     "PAUSED",
 }
 
+# WOT-2026-010f: IDs de plan/ticket que NO designan un ticket real. Ningun
+# artefacto canonico (checkpoint M3, evento de bus, mutacion de estado) debe
+# materializarse para ellos. El seed neutro del motor usa ID=none
+# (is_seed_neutral_state), por lo que un guard que solo rechace "" y "N/A" deja
+# pasar "none"/"unknown" y crea ruido como checkpoint/review-none.
+# Fuente unica de verdad: los guards de agent_controller.py la consumen.
+INVALID_PLAN_IDS = frozenset({"", "n/a", "none", "unknown"})
+
+
+def is_invalid_plan_id(plan_id: str | None) -> bool:
+    """Return True if plan_id does not designate a real ticket.
+
+    Before: plan_id is a raw string read from work_plan.md (via get_plan_id)
+            or a CLI argument; may be None, empty, or a placeholder.
+    During: normalizes with strip().lower() and tests membership in
+            INVALID_PLAN_IDS. No I/O, no side effects.
+    After:  returns True for None/""/"n/a"/"none"/"unknown" (case/space
+            insensitive); False for any real ticket id (e.g. WOT-2026-001a).
+            Accepts both plan_id and ticket_id callers; the name follows the
+            established INVALID_PLAN_IDS constant.
+    """
+    if plan_id is None:
+        return True
+    return plan_id.strip().lower() in INVALID_PLAN_IDS
+
 
 # ---------------------------------------------------------------------------
 # Parsing helpers

@@ -52,8 +52,17 @@ def mock_bus_unavailable():
 # ============================================================================
 
 
-def _invoke_handler(json_output: bool = True) -> dict:
-    """Call _handle_get_closeout_skip and return parsed JSON from stdout."""
+def _invoke_handler(json_output: bool = True, plan_id: str = "WOT-2026-999z") -> dict:
+    """Call _handle_get_closeout_skip and return parsed JSON from stdout.
+
+    WOT-2026-010f: these tests exercise the BUS-derived skip logic, not the
+    invalid-plan-id guard. The handler now rejects placeholder ids
+    ("none"/"unknown"/"n/a"/"") via is_invalid_plan_id() before reaching the
+    bus, and the pytest sandbox work_plan.md carries the neutral seed id
+    "none". To keep testing the bus path we inject a valid plan_id by default
+    through _load_mark_ready_context. Tests that target the guard itself pass
+    an invalid `plan_id` (e.g. "N/A"/"none") to exercise the rejection path.
+    """
     # Capture stdout
     from io import StringIO
 
@@ -62,7 +71,11 @@ def _invoke_handler(json_output: bool = True) -> dict:
     old_stdout = sys.stdout
     sys.stdout = captured = StringIO()
     try:
-        ac._handle_get_closeout_skip(json_output=json_output)
+        with patch(
+            "agent_controller._load_mark_ready_context",
+            return_value=("", "", plan_id),
+        ):
+            ac._handle_get_closeout_skip(json_output=json_output)
         output = captured.getvalue().strip()
         return json.loads(output)
     finally:
@@ -210,14 +223,16 @@ class TestGetCloseoutSkipInProgress:
 
 
 class TestGetCloseoutSkipNoPlan:
-    """skip=false when there is no active plan."""
+    """skip=false when there is no active plan (WOT-2026-010f: incl. none/unknown)."""
 
-    def test_skip_false_no_active_plan(self):
-        """No plan_id → skip=false with reason 'no_active_plan'."""
-        with patch(
-            "agent_controller._load_mark_ready_context", return_value=("", "", "N/A")
-        ):
-            result = _invoke_handler()
+    @pytest.mark.parametrize("bad_id", ["N/A", "none", "None", "unknown", ""])
+    def test_skip_false_no_active_plan(self, bad_id):
+        """Invalid plan_id → skip=false with reason 'no_active_plan'.
+
+        WOT-2026-010f: the guard now rejects none/unknown/n/a/"" (not just
+        "N/A"), so a placeholder id never reaches the bus skip logic.
+        """
+        result = _invoke_handler(plan_id=bad_id)
         assert result["skip"] is False
         assert result["reason"] == "no_active_plan"
 
