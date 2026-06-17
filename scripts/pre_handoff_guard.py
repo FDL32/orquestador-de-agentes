@@ -482,10 +482,38 @@ def assert_canonical_suite_green(
             ),
         }
 
+    # WOT-2026-010q: require level=="all" so a focal run never satisfies handoff.
+    level = data.get("level")
+    if level != "all":
+        return False, {
+            **base_diag,
+            "reason": f"not_full_suite (level={level!r})",
+            "canonical_suite_error": (
+                f"last-run level={level!r}: only level='all' counts as the "
+                "canonical suite. Run: python scripts/run_pytest_safe.py --level all"
+            ),
+        }
+
+    # WOT-2026-010q: require args_mode=="default_discovery" so an explicit-args
+    # run (e.g. targeting a single test file) does not satisfy handoff either.
+    args_mode = data.get("args_mode")
+    if args_mode != "default_discovery":
+        return False, {
+            **base_diag,
+            "reason": f"not_full_suite (args_mode={args_mode!r})",
+            "canonical_suite_error": (
+                f"last-run args_mode={args_mode!r}: canonical suite requires "
+                "default_discovery (no explicit test paths). "
+                "Run: python scripts/run_pytest_safe.py --level all"
+            ),
+        }
+
     return True, {
         "canonical_suite_required": True,
         "reason": "fresh_green",
         "tested_commit_sha": tested_sha,
+        "level": level,
+        "args_mode": args_mode,
         "exit_code": 0,
     }
 

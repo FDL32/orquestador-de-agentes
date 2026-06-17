@@ -80,7 +80,15 @@ def write_green_last_run(repo_path: Path) -> None:
     d = repo_path / ".agent" / "runtime" / "pytest-safe"
     d.mkdir(parents=True, exist_ok=True)
     (d / "last-run.json").write_text(
-        json.dumps({"status": "finished", "exit_code": 0, "tested_commit_sha": head}),
+        json.dumps(
+            {
+                "status": "finished",
+                "exit_code": 0,
+                "tested_commit_sha": head,
+                "level": "all",
+                "args_mode": "default_discovery",
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -955,10 +963,76 @@ class TestCanonicalSuiteGreenGate:
                 "status": "finished",
                 "exit_code": 0,
                 "tested_commit_sha": self._head_sha(motor),
+                "level": "all",
+                "args_mode": "default_discovery",
             },
         )
         ok, diag = guard.assert_canonical_suite_green(motor, "code")
         assert ok is True, f"fresh green run must pass: {diag}"
+
+    def test_focal_level_unit_blocks(self, tmp_path: Path) -> None:
+        """WOT-2026-010q: level='unit' must block handoff even if fresh+green."""
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+        self._write_last_run(
+            motor,
+            {
+                "status": "finished",
+                "exit_code": 0,
+                "tested_commit_sha": self._head_sha(motor),
+                "level": "unit",
+                "args_mode": "default_discovery",
+            },
+        )
+        ok, diag = guard.assert_canonical_suite_green(motor, "code")
+        assert ok is False
+        assert "not_full_suite" in diag.get("reason", "")
+        assert "python scripts/run_pytest_safe.py --level all" in diag.get(
+            "canonical_suite_error", ""
+        )
+
+    def test_explicit_args_blocks(self, tmp_path: Path) -> None:
+        """WOT-2026-010q: level='all' + args_mode='explicit_args' must block handoff."""
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+        self._write_last_run(
+            motor,
+            {
+                "status": "finished",
+                "exit_code": 0,
+                "tested_commit_sha": self._head_sha(motor),
+                "level": "all",
+                "args_mode": "explicit_args",
+            },
+        )
+        ok, diag = guard.assert_canonical_suite_green(motor, "code")
+        assert ok is False
+        assert "not_full_suite" in diag.get("reason", "")
+        assert "python scripts/run_pytest_safe.py --level all" in diag.get(
+            "canonical_suite_error", ""
+        )
+
+    def test_canonical_suite_passes_all_fields(self, tmp_path: Path) -> None:
+        """WOT-2026-010q: level='all' + args_mode='default_discovery' allows handoff."""
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+        self._write_last_run(
+            motor,
+            {
+                "status": "finished",
+                "exit_code": 0,
+                "tested_commit_sha": self._head_sha(motor),
+                "level": "all",
+                "args_mode": "default_discovery",
+            },
+        )
+        ok, diag = guard.assert_canonical_suite_green(motor, "code")
+        assert ok is True, f"canonical suite must pass: {diag}"
+        assert diag.get("level") == "all"
+        assert diag.get("args_mode") == "default_discovery"
 
 
 # =============================================================================
