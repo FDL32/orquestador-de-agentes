@@ -2931,7 +2931,12 @@ def test_tick_does_not_call_reconcile_state(tmp_path, monkeypatch):
 
     WP-2026-170: the bridge must stop writing supervisor_state.json during
     its tick.  Spying on reconcile_state verifies it is never called.
+
+    WOT-2026-010o: isolate _state_path()/_checkpoint_path() so _tick() does
+    not read/write the real AGENT_PROJECT_ROOT's manager_bridge_state.json.
     """
+    _mock_bridge_state_path(monkeypatch, tmp_path)
+
     supervisor = _make_supervisor(tmp_path)
 
     # Spy on reconcile_state — count calls
