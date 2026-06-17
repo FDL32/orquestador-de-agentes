@@ -31,6 +31,35 @@ if "TEST_PROJECT_ROOT" in os.environ:
 WORK_PLAN = PROJECT_ROOT / ".agent" / "collaboration" / "work_plan.md"
 
 
+def _import_scope_gate():
+    """Import scope_gate from the motor .agent/ directory."""
+    agent_dir = Path(__file__).resolve().parent.parent / ".agent"
+    if str(agent_dir) not in sys.path:
+        sys.path.insert(0, str(agent_dir))
+    import scope_gate as _sg
+
+    return _sg
+
+
+def resolve_motor_root() -> Path:
+    """Resolve the motor root for namespaced FLT deliverables.
+
+    Before: PROJECT_ROOT must already be resolved (destino or standalone).
+    During: Honors TEST_MOTOR_ROOT for tests; otherwise delegates to
+        runtime.motor_link.resolve_motor_root against PROJECT_ROOT.
+    After: Returns an absolute Path. Falls back to PROJECT_ROOT when no
+        motor_destination_link.json exists (standalone/motor-as-root case),
+        matching the convention already used by pre_handoff_guard.
+    """
+    if "TEST_MOTOR_ROOT" in os.environ:
+        return Path(os.environ["TEST_MOTOR_ROOT"])
+
+    from runtime.motor_link import resolve_motor_root as _resolve
+
+    motor_root = _resolve(PROJECT_ROOT)
+    return motor_root if motor_root is not None else PROJECT_ROOT
+
+
 def looks_like_path(token: str) -> bool:
     """Determine if a token extracted from backticks looks like a file path candidate."""
     if not token or " " in token:
@@ -113,19 +142,18 @@ def _process_backtick_tokens(line: str, paths: set[Path]) -> None:
             paths.add(p.resolve())
 
 
-def extract_paths_from_work_plan(content: str) -> set[Path]:
-    paths = set()
+def _extract_paths_from_generic_sections(content: str) -> set[Path]:
+    """Extract deliverable paths from non-FLT sections (Deliverables, must create/modify).
+
+    Files Likely Touched is handled separately via _extract_flt_paths so that
+    motor/destino namespacing resolves against the correct root. This function
+    only covers the legacy free-form sections that never had namespace concerns.
+    """
+    paths: set[Path] = set()
     in_section = False
     skip_subsection = False
 
-    # Sections to scan
-    scan_keywords = {
-        "deliverables",
-        "files likely touched",
-        "must create",
-        "must modify",
-    }
-    # Sections to explicitly stop scanning
+    scan_keywords = {"deliverables", "must create", "must modify"}
     stop_headers = {
         "## tareas",
         "## acceptance criteria",
@@ -142,14 +170,11 @@ def extract_paths_from_work_plan(content: str) -> set[Path]:
         line_stripped = line.strip()
         line_lower = line_stripped.lower()
 
-        # Check for section boundaries (any header starts with '#')
         if line_stripped.startswith("#"):
-            # Check if this header stops the scanning
             if any(stop in line_lower for stop in stop_headers):
                 in_section = False
                 continue
 
-            # Check if this header starts the scanning
             if any(kw in line_lower for kw in scan_keywords):
                 in_section = True
                 skip_subsection = False
@@ -167,15 +192,12 @@ def extract_paths_from_work_plan(content: str) -> set[Path]:
                 )
                 continue
 
-            # A new top-level/section header resets scanning.
             in_section = False
             skip_subsection = False
 
-        # Also detect bold tags as section starters
         if any(f"**{kw}" in line_lower for kw in ["must create", "must modify"]):
             in_section = True
 
-        # Only process list items when in the correct section
         if in_section and (
             line_stripped.startswith("-") or line_stripped.startswith("*")
         ):
@@ -183,6 +205,37 @@ def extract_paths_from_work_plan(content: str) -> set[Path]:
                 continue
             _process_backtick_tokens(line_stripped, paths)
 
+    return paths
+
+
+def _extract_flt_paths(content: str) -> set[Path]:
+    """Resolve Files Likely Touched deliverables against their namespaced root.
+
+    Before: content is the raw work_plan.md text.
+    During: Delegates to scope_gate.parse_flt_namespaced so this gate shares
+        the same namespace semantics as pre_handoff_guard / scope_gate
+        (### repo_motor resolves against motor_root, ### repo_destino and
+        flat/unnamespaced lines resolve per delivery_authority). Read/inspect
+        only, Manager-only and free-form notes never reach the FLT section
+        parser, so they cannot be misread as Builder deliverables.
+    After: Returns absolute, existing-or-not Paths rooted correctly per
+        namespace, instead of always rooting against PROJECT_ROOT.
+    """
+    sg = _import_scope_gate()
+    delivery_authority = sg.read_delivery_authority(content)
+    motor_root = resolve_motor_root()
+    buckets = sg.parse_flt_namespaced(
+        content,
+        motor_root=motor_root,
+        project_root=PROJECT_ROOT,
+        delivery_authority=delivery_authority,
+    )
+    return {Path(p) for p in (buckets["motor"] | buckets["destino"])}
+
+
+def extract_paths_from_work_plan(content: str) -> set[Path]:
+    paths = _extract_paths_from_generic_sections(content)
+    paths |= _extract_flt_paths(content)
     return paths
 
 
