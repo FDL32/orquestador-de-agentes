@@ -61,3 +61,10 @@ Este archivo es la fuente compartida de referencia para Builder y Manager.
 ## AP-15 - Explicit sequence substitution
 - El plan especifica una secuencia de pasos exacta para una operacion critica (p.ej. `git tag -d` + `git tag -a`). El Builder la sustituye por un equivalente mas corto que produce el mismo resultado observable (p.ej. `git tag -f`) sin seguir el orden declarado.
 - Efecto: el Manager rechaza por incumplimiento de la decision arquitectonica aunque la funcionalidad sea correcta; el ticket acumula ciclos de CHANGES evitables.
+
+## AP-16 - Seam inventado / sobreingenieria por vocabulario (WOT-2026-010t)
+- Origen externo: `mattpocock/skills` `codebase-design` (MIT, Adapted). El vocabulario de diseno (seam, adapter, interface) es para DESCRIBIR lo que existe, no para exigir abstracciones que el proyecto no necesita.
+- Sintoma A (seam inventado): se introduce un seam o un adapter cuando NADA varia a traves de el. Regla: un adapter = seam hipotetico; **dos** adapters = seam real. Un adapter con un solo implementador (sin un segundo, ni un fake/mock de test que lo justifique) es indireccion sin valor.
+- Sintoma B (sobreingenieria por vocabulario): el review EXIGE crear interfaces, seams o capas nuevas "para que sea testeable/limpio" cuando el `deletion test` muestra que borrar la indireccion no reaparece complejidad en ningun caller. Eso es lo contrario del proposito: el vocabulario debe cazar pass-throughs (AP-03), no fabricarlos.
+- Efecto: crece la indireccion cognitiva sin leverage; el diff anade capas que un caller no necesita aprender. El Manager debe rechazar tanto el seam inventado del Builder como la exigencia de seam nuevo en su propio review.
+- Barrera de uso: aplicar el `deletion test` antes de pedir o aceptar una abstraccion nueva. Si borrarla no cambia comportamiento ni claridad, no se anade.

@@ -21,6 +21,7 @@ External ideas and patterns adopted in this project.
 | hotfix-2026-05-18-skill-collisions | [wshobson/agents@08ded5e](https://github.com/wshobson/agents/tree/08ded5e7b0fe57e7f40194775885eba539c3d8e7) | Agent/skill frontmatter collision detector (name + triggers uniqueness across plugins) | MIT | Ported (glob adapted to skills/*/SKILL.md; extended to also flag duplicate `triggers:` entries — original only checked `name:`) |
 | hotfix-2026-05-18-precommit | [deepset-ai/haystack@4c89081](https://github.com/deepset-ai/haystack/tree/4c890818ca293aed8cdeed2791d03c8957556c65) | Defensive pre-commit hook stack (check-ast, end-of-file-fixer, mixed-line-ending --fix=lf, trailing-whitespace) | Apache-2.0 | Adapted (selected 4 hooks from haystack's stack; LF normalization scoped to exclude PowerShell/cmd/bat scripts; runtime artifacts under `.agent/runtime/` excluded) |
 | WP-2026-110 | [obra/superpowers](https://github.com/obra/superpowers) | Formal skills for TDD and Debugging | MIT | Adapted (no code copied, process rules adapted to native z_scripts stack) |
+| WOT-2026-010t | [mattpocock/skills@dcfc232](https://github.com/mattpocock/skills/tree/dcfc2322f2f978113b1ec2dbbf50c00eda824519) | Deep-module design vocabulary (module/interface/seam/adapter/depth, deletion test, "interface is the test surface") from `skills/engineering/codebase-design` | MIT | Adapted (review-rubric vocabulary + AP-16 only, no code copied) |
 
 ---
 

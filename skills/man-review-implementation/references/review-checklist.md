@@ -59,6 +59,31 @@
 - [ ] AP-13 Supervisor stale process: si el ticket toca `bus/supervisor.py`, verificar que el proceso supervisor se reinició y que el nuevo comportamiento es observable en el bus (p.ej. `BUILDER_RELAUNCH_ATTEMPTED` con el outcome esperado); un test que pase no es evidencia suficiente si el proceso en memoria es el antiguo
 - [ ] AP-14 Closeout prompt hallucination: si el ticket modifica prompts de cierre de agente (launcher, `.opencode/agents/`, templates), verificar que las instrucciones dan únicamente el comando canónico completo sin mencionar nombres de parámetros internos que el agente pueda interpretar como flags CLI
 - [ ] AP-15 Explicit sequence substitution: si el plan especifica una secuencia de pasos exacta para una operación crítica (p.ej. `git tag -d` + `git tag -a`), verificar que el código implementa esa secuencia en ese orden; rechazar si se sustituyó por un equivalente más corto (p.ej. `git tag -f`) aunque el resultado observable sea idéntico
+- [ ] AP-16 Seam inventado / sobreingenieria por vocabulario: rechazar tanto un seam/adapter introducido sin que nada varie a traves de el (un adapter con un solo implementador) como la EXIGENCIA en review de crear interfaces/seams nuevos cuando el `deletion test` muestra que no reaparece complejidad; el vocabulario de diseno describe lo que existe, no fabrica indireccion
+
+## Vocabulario de diseno para review (WOT-2026-010t)
+
+> Origen externo: `mattpocock/skills` `codebase-design` (MIT, Adapted). Lenguaje
+> para DESCRIBIR lo que ya existe en el diff, NO para exigir abstracciones nuevas.
+> Detalle y ejemplo real: `docs/protocol/manager_review_design_vocabulary_WOT-2026-010t.md`.
+
+- [ ] **deep module:** la pieza tocada, esconde mucho comportamiento tras una
+      interfaz pequena? Si la interfaz es casi tan compleja como la
+      implementacion (shallow), es candidata a AP-03 (zero-logic wrapper).
+- [ ] **interface:** la review cubre TODO lo que un caller debe saber (firma +
+      invariantes + orden + modos de error + config requerida), no solo el tipo?
+- [ ] **seam:** el cambio introduce un seam (punto donde se altera comportamiento
+      sin editar ahi)? Regla: un adapter = seam hipotetico; dos adapters = seam
+      real. NO exijas un seam si nada varia a traves de el (sobreingenieria, AP-16).
+- [ ] **adapter:** lo etiquetado como adapter rellena un slot real de la
+      interfaz, o es indireccion sin variacion? Un adapter sin segundo
+      implementador es un seam inventado (AP-16).
+- [ ] **deletion test:** si borraras la pieza, reaparece complejidad en N callers
+      (gana su sitio) o desaparece sin coste (era pass-through -> AP-03)?
+- [ ] **interface is the test surface:** los tests cruzan el mismo seam que los
+      callers? Si para probar hay que ir POR DETRAS de la interfaz, la pieza
+      tiene la forma equivocada. NO uses esto para exigir mas mocks: usalo para
+      preguntar que contrato observable se prueba.
 
 ## Aprobacion y Nit
 - [ ] Aprobar cuando el cambio mejora la salud del codigo, aunque no sea perfecto: https://google.github.io/eng-practices/review/reviewer/standard.html
