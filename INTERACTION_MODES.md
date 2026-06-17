@@ -90,6 +90,17 @@ Rules:
 - Choose terminal-driven mode for repeatable sequential work and minimal manual handoffs.
 - If you switch modes mid-ticket, write the reason in `execution_log.md` and update `TURN.md`.
 
+## Foreground vs background for long-running suite commands
+
+Suites with expected duration under 10 minutes must run in foreground (direct
+`python scripts/run_pytest_safe.py ...`). Background mode (`run_in_background`)
+is reserved for operations where polling or progress verification is explicitly
+set up; without that, the agent sees only the total wait time, not the actual
+pytest duration, which makes timing measurements unreliable.
+
+Rule: **suites with expected duration < 10 min → foreground; background only
+with verifiable progress** (e.g., a Monitor task or explicit output file).
+
 ## Minimum terminal commands
 
 ```powershell
