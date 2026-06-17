@@ -56,7 +56,7 @@ Regla de repos: toda operación git de tooling corre en `repo_motor`. El estado 
 - **Roles:** Manager (OpenCode via `scripts/manager_review_bridge.py`, modelo configurable en `.agent/config/agents.json`) y Builder (OpenCode, modelo `opencode-go/deepseek-v4-flash`).
 - **Bus canonico:** `.agent/runtime/events/events.jsonl` (append-only, autoridad absoluta).
 - **Proyecciones:** `TURN.md`, `STATE.md`, `work_plan.md`, `execution_log.md` se derivan del bus.
-- **Namespaces de tickets:** motor `WOT-YYYY-NNNx` (canonical; `WP-`/`WT-` legacy historico); destino `XXX-YYYY-NNN` con `Ticket prefix: XXX` declarado en el `PROJECT.md` local del destino.
+- **Namespaces de tickets:** el `<PREFIX>` de ticket se lee del contrato del repo activo (`AGENTS.md`/`CLAUDE.md` autocargado del destino); `WOT-` es prefijo SOLO del motor/dogfooding, no universal. Motor usa `WOT-YYYY-NNNx` (canonical; `WP-`/`WT-` legacy historico); destino usa `XXX-YYYY-NNN` declarado en su contrato local. Verificacion via `agent_controller --validate`.
 - **Launcher:** `scripts/launch_agent_terminals.ps1` abre Supervisor + Bridge + Builder segun `TURN.md`. WP-2026-067 integro OpenCode con prompt compuesto desde ticket.
 - **Config de agentes:** `.agent/config/agents.json` mapea backend->ejecutable. Builder=opencode, Manager=opencode, Supervisor=default.
 - **Validate:** `python .agent/agent_controller.py --validate --json --force` debe pasar antes de cualquier cierre. Verifica entre otras cosas que destinos `host-project` tengan `Ticket prefix:` declarado.
@@ -85,7 +85,7 @@ usuario.
 > Flujo completo y arquitectura: ver [PROJECT.md sección "Current architecture"](../PROJECT.md#current-architecture).
 
 1. Manager crea `work_plan.md` (DRAFT) y opcionalmente `STRATEGY_WOT-XXXX.md` (estrategia tecnica) + `AUDIT_WOT-XXXX.md` (criterios de auditoria). User aprueba editando work_plan a APPROVED.
-   - En un proyecto destino, el ID debe usar el namespace local definido en `PROJECT.md` (`XXX-YYYY-NNN`), no el del motor. El instalador puede escribir este prefijo con `--install --prefix XXX`.
+   - En un proyecto destino, el ID debe usar el namespace local definido en el contrato del repo (`AGENTS.md`/`CLAUDE.md` autocargado del destino); verificacion via `agent_controller --validate`. `WOT-` es prefijo SOLO del motor/dogfooding. El instalador puede escribir este prefijo con `--install --prefix XXX`.
 2. Builder implementa. El launcher envuelve el runner en try/finally: al salir (crash, fin normal o timeout), ejecuta automaticamente `--pre-handoff` y `--mark-ready --json --force`, que emiten `BUILDER_EXIT` y `STATE_CHANGED -> READY_FOR_REVIEW` al bus. El Builder no necesita ejecutar el cierre manualmente.
 3. Bridge dispara OpenCode review automaticamente. Si aprueba -> cascada hasta COMPLETED.
 4. Markdowns se sincronizan a COMPLETED. Commit + push.

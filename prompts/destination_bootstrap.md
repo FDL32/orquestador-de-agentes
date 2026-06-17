@@ -47,6 +47,8 @@ Estas operando sobre un `repo_destino` del motor `orquestador_de_agentes`.
 Regla de repos: las operaciones git del tooling corren en `repo_motor`.
 El estado operativo (tickets, memoria) vive en `repo_destino`.
 
+**Regla de prefijo de tickets:** el `<PREFIX>` se lee del `AGENTS.md`/`CLAUDE.md` del repo activo (autocargado del destino). `WOT-` es prefijo SOLO del motor/dogfooding, no universal. Verificacion via `agent_controller --validate` (paso 5).
+
 ## Comportamiento esperado
 
 - Responde breve, optimizando tokens. Sin emojis.

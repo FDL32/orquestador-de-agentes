@@ -34,6 +34,7 @@ Asume y verifica explicitamente este modelo operativo:
 - `workspace_activo`: raiz operativa desde la que corre el ticket actual.
 - El motor debe permanecer agnostico y portable.
 - El estado operativo real vive en `.agent/` del `repo_destino`, no en el motor.
+- **Regla de prefijo de tickets:** el `<PREFIX>` se lee del contrato del repo activo (`AGENTS.md`/`CLAUDE.md` del destino). `WOT-` es prefijo SOLO del motor/dogfooding, no universal. Verificacion via `agent_controller --validate`.
 - El sistema debe funcionar tanto por bus/runtime como por chat.
 - Los tickets y planes deben servir tanto para ejecucion por bus como para
   conduccion manual por chat.

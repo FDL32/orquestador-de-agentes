@@ -42,6 +42,7 @@ de auditoria, formato de hallazgos, plan por tickets).
   `.agent/audits/system_health/general_audit_YYYYMMDD[_HHMM]/`
 - Cada ejecucion crea una carpeta INMUTABLE; no se sobrescriben auditorias previas.
 - Indice estable: `.agent/audits/system_health/INDEX.md`.
+- **Regla de prefijo de tickets:** el `<PREFIX>` se lee del contrato del repo activo (`AGENTS.md`/`CLAUDE.md`). `WOT-` es prefijo SOLO del motor/dogfooding. Verificacion via `agent_controller --validate`.
 - Si no hay `repo_destino` (modo motor-only), la salida va a una ruta `--out`
   explicita y se marca cobertura degradada.
 
