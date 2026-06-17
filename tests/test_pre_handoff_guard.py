@@ -1062,6 +1062,30 @@ class TestCanonicalSuiteGreenGate:
         assert diag.get("level") == "all"
         assert diag.get("args_mode") == "default_discovery"
 
+    def test_focal_selector_run_does_not_satisfy_handoff(self, tmp_path: Path) -> None:
+        """WOT-2026-010l no-regression: a focal --select-from-diff run records
+        args_mode=explicit_args (subset appended as explicit pytest args), so the
+        010q gate must still block it for --mark-ready. The focal selector is
+        ergonomia local only; it must never weaken the canonical handoff."""
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+        self._write_last_run(
+            motor,
+            {
+                "status": "finished",
+                "exit_code": 0,
+                "tested_commit_sha": self._head_sha(motor),
+                "level": "all",
+                # A focal run appends explicit test paths -> explicit_args.
+                "args_mode": "explicit_args",
+                "focal_selection": {"requested": True, "fell_open": False},
+            },
+        )
+        ok, diag = guard.assert_canonical_suite_green(motor, "code")
+        assert ok is False
+        assert "not_full_suite" in diag.get("reason", "")
+
 
 # =============================================================================
 # Tests for WOT-2026-010d: Pause/Resume functionality in pre_handoff_guard

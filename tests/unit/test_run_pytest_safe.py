@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
+
+import pytest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RUNNER_PATH = PROJECT_ROOT / "scripts" / "run_pytest_safe.py"
+SELECTION_PATH = PROJECT_ROOT / "scripts" / "test_selection.py"
 
 
 def load_runner_module():
@@ -15,6 +19,17 @@ def load_runner_module():
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_selection_module():
+    spec = importlib.util.spec_from_file_location("test_selection", SELECTION_PATH)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # Register before exec so @dataclass can resolve cls.__module__.
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -32,3 +47,140 @@ def test_explicit_args_are_not_reported_as_default_discovery() -> None:
 
     assert runner.pytest_args_mode(["--", "tests"]) == runner.EXPLICIT_ARGS_MODE
     assert runner.pytest_args_mode(["tests/unit"]) == runner.EXPLICIT_ARGS_MODE
+
+
+# WOT-2026-010l: focal diff-driven test selector barriers.
+
+
+def _make_run_fn(porcelain_z: str | None):
+    """Return a fake subprocess.run yielding the given porcelain -z stdout.
+
+    Passing ``None`` simulates ``git`` not being available (FileNotFoundError),
+    which is how the scope-gate seam signals "diff cannot be read".
+    """
+
+    def run_fn(cmd, **kwargs):
+        if porcelain_z is None:
+            raise FileNotFoundError("git")
+
+        class _Result:
+            stdout = porcelain_z
+
+        return _Result()
+
+    return run_fn
+
+
+def _porcelain(*paths: str) -> str:
+    # ``git status --porcelain -z`` separates entries with NUL; each entry is
+    # "XY <path>" and the stream is NUL-terminated.
+    return "".join(f" M {p}\0" for p in paths)
+
+
+def _repo_with_git(tmp_path: Path) -> Path:
+    repo = tmp_path / "motor"
+    (repo / ".git").mkdir(parents=True)
+    (repo / "tests" / "unit").mkdir(parents=True)
+    (repo / "tests" / "unit" / "test_run_pytest_safe.py").write_text(
+        "def test_x():\n    assert True\n", encoding="utf-8"
+    )
+    (repo / "tests" / "test_pre_handoff_guard.py").write_text(
+        "def test_y():\n    assert True\n", encoding="utf-8"
+    )
+    (repo / "scripts").mkdir()
+    return repo
+
+
+def test_selector_git_failure_falls_open(tmp_path: Path) -> None:
+    """Barrier: git diff fails -> fallback to canonical suite, auditable reason."""
+    sel = load_selection_module()
+    repo = _repo_with_git(tmp_path)
+    result = sel.select_focal_tests(
+        project_root=repo, motor_root=repo, run_fn=_make_run_fn(None)
+    )
+    assert result.is_fallback
+    assert result.reason.startswith("no_diff_available")
+    assert result.tests == []
+
+
+@pytest.mark.parametrize("structural", ["pyproject.toml", "pytest.ini", ".agent/x.py"])
+def test_selector_structural_change_falls_open(tmp_path: Path, structural: str) -> None:
+    """Barrier: a structural file change -> fallback to canonical suite."""
+    sel = load_selection_module()
+    repo = _repo_with_git(tmp_path)
+    run_fn = _make_run_fn(_porcelain(structural))
+    result = sel.select_focal_tests(project_root=repo, motor_root=repo, run_fn=run_fn)
+    assert result.is_fallback
+    assert result.reason.startswith("structural_change")
+
+
+def test_selector_unmapped_change_falls_open(tmp_path: Path) -> None:
+    """Barrier: a change with no safe test mapping -> fallback."""
+    sel = load_selection_module()
+    repo = _repo_with_git(tmp_path)
+    # A scripts module whose stem matches no test file under tests/.
+    run_fn = _make_run_fn(_porcelain("scripts/nonexistent_module.py"))
+    result = sel.select_focal_tests(project_root=repo, motor_root=repo, run_fn=run_fn)
+    assert result.is_fallback
+    assert result.reason.startswith("no_safe_mapping")
+
+
+def test_selector_empty_diff_falls_open(tmp_path: Path) -> None:
+    """Barrier: empty diff -> fallback to canonical suite."""
+    sel = load_selection_module()
+    repo = _repo_with_git(tmp_path)
+    result = sel.select_focal_tests(
+        project_root=repo, motor_root=repo, run_fn=_make_run_fn("")
+    )
+    assert result.is_fallback
+    assert result.reason.startswith("empty_diff")
+
+
+def test_selector_safe_subset_is_reproducible(tmp_path: Path) -> None:
+    """Positive: a changed test file and a scripts/<name>.py map to a subset."""
+    sel = load_selection_module()
+    repo = _repo_with_git(tmp_path)
+    run_fn = _make_run_fn(
+        _porcelain(
+            "tests/test_pre_handoff_guard.py",
+            "scripts/run_pytest_safe.py",
+        )
+    )
+    result = sel.select_focal_tests(project_root=repo, motor_root=repo, run_fn=run_fn)
+    assert result.is_subset
+    # Reproducible (sorted) and includes both the changed test and the
+    # name-mapped test for scripts/run_pytest_safe.py.
+    assert result.tests == sorted(result.tests)
+    assert "tests/test_pre_handoff_guard.py" in result.tests
+    assert "tests/unit/test_run_pytest_safe.py" in result.tests
+    # Re-running yields the identical subset.
+    again = sel.select_focal_tests(project_root=repo, motor_root=repo, run_fn=run_fn)
+    assert again.tests == result.tests
+
+
+def test_runner_resolve_focal_args_uses_real_selector() -> None:
+    """resolve_focal_args wires the real selector against the live repo diff.
+
+    It must return a (list, reason) tuple and never raise; whatever the live
+    working tree looks like, an unsafe/empty resolution falls open (empty list
+    + reason) rather than pass-opening silently.
+    """
+    runner = load_runner_module()
+    extra, reason = runner.resolve_focal_args([])
+    assert isinstance(extra, list)
+    # Invariant: a subset (non-empty extra, reason None) XOR a fallback
+    # (empty extra, reason set). Never both empty-and-no-reason (silent
+    # pass-open) nor both populated.
+    if extra:
+        assert reason is None
+    else:
+        assert reason is not None
+
+
+def test_selection_module_uses_scope_gate_seam_not_parallel_parser() -> None:
+    """Anti-pattern guard: the selector must reuse get_changed_files, not a new
+    git parser. It must not shell out to git directly."""
+    source = SELECTION_PATH.read_text(encoding="utf-8")
+    assert "scope_gate.get_changed_files" in source
+    assert "subprocess" not in source
+    assert '"git"' not in source

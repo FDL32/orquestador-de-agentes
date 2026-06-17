@@ -368,11 +368,86 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--select-from-diff",
+        action="store_true",
+        help=(
+            "WOT-2026-010l: ergonomia local. Propone un subset focal de tests "
+            "derivado del diff real del working tree. Si no puede resolver un "
+            "subset seguro, replega a la suite canonica completa con razon "
+            "auditable. NO satisface el handoff de 010q (produce args explicitos)."
+        ),
+    )
+    parser.add_argument(
         "pytest_args",
         nargs=argparse.REMAINDER,
         help="Argumentos extra para pytest. Usa -- para separarlos.",
     )
     return parser.parse_args()
+
+
+def resolve_focal_args(raw_args: list[str]) -> tuple[list[str], str | None]:
+    """Resolve focal pytest args from the working-tree diff (WOT-2026-010l).
+
+    Before: ``raw_args`` are the user's REMAINDER args (already stripped of the
+    leading ``--`` by the caller via :func:`strip_pytest_separator` when needed).
+    During: delegates to ``scripts/test_selection.select_focal_tests`` using the
+    canonical ``scope_gate`` diff seam (no parallel git parser). After: returns
+    ``(extra_args, None)`` with the selected test paths to append when a safe
+    subset exists, or ``([], reason)`` when it falls open to the canonical suite.
+    The reason is always auditable; selection never pass-opens silently.
+    """
+    import importlib.util
+
+    selection_path = _PROJECT_ROOT_BOOTSTRAP / "scripts" / "test_selection.py"
+    spec = importlib.util.spec_from_file_location("test_selection", selection_path)
+    if spec is None or spec.loader is None:
+        return (
+            [],
+            "selector_unavailable: could not load test_selection module; running the canonical full suite.",
+        )
+    module = importlib.util.module_from_spec(spec)
+    # Register before exec so @dataclass can resolve cls.__module__.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    result = module.select_focal_tests(
+        project_root=_PROJECT_ROOT_BOOTSTRAP,
+        motor_root=_PROJECT_ROOT_BOOTSTRAP,
+    )
+    if result.is_subset:
+        return list(result.tests), None
+    return [], result.reason
+
+
+def apply_focal_selection(
+    raw_pytest_args: list[str], *, select_from_diff: bool
+) -> tuple[list[str], str | None]:
+    """Apply opt-in focal selection (WOT-2026-010l) to the raw pytest args.
+
+    Before: ``raw_pytest_args`` are the user's REMAINDER args. When
+    ``select_from_diff`` is false this is a no-op (returns the args unchanged,
+    reason ``None``) — full additive backward-compat. During: when true, asks
+    :func:`resolve_focal_args` for a safe subset. After: a resolved subset is
+    appended as explicit pytest args (so ``args_mode`` becomes ``explicit_args``
+    and the 010q handoff gate keeps blocking the run); an unsafe/empty
+    resolution falls open to the canonical full suite, returning the original
+    args plus the auditable ``reason``.
+    """
+    if not select_from_diff:
+        return raw_pytest_args, None
+
+    focal_extra, focal_reason = resolve_focal_args(raw_pytest_args)
+    if focal_extra:
+        base = strip_pytest_separator(raw_pytest_args)
+        print(
+            "[pytest-safe] Focal selection (WOT-2026-010l): "
+            f"{len(focal_extra)} test file(s) from diff. This run is focal "
+            "and does NOT satisfy the 010q handoff gate."
+        )
+        return ["--", *base, *focal_extra], None
+
+    print(f"[pytest-safe] Focal selection fell open to full suite: {focal_reason}")
+    return raw_pytest_args, focal_reason
 
 
 def has_marker_arg(args: list[str]) -> bool:
@@ -480,8 +555,13 @@ def main() -> int:
 
     lock = acquire_lock(force_unlock=args.force_unlock)
     run_dir = make_run_dir()
-    args_mode = pytest_args_mode(args.pytest_args)
-    pytest_args = normalize_pytest_args(args.pytest_args, args.level)
+
+    raw_pytest_args, focal_reason = apply_focal_selection(
+        list(args.pytest_args), select_from_diff=args.select_from_diff
+    )
+
+    args_mode = pytest_args_mode(raw_pytest_args)
+    pytest_args = normalize_pytest_args(raw_pytest_args, args.level)
     command = [sys.executable, "-m", "pytest", *pytest_args, f"--basetemp={run_dir}"]
 
     summary = {
@@ -493,6 +573,13 @@ def main() -> int:
         if args_mode == DEFAULT_ARGS_MODE
         else None,
         "pytest_args": pytest_args,
+        # WOT-2026-010l: when focal selection ran, record whether it produced a
+        # subset or fell open, with the auditable reason.
+        "focal_selection": (
+            {"requested": True, "fell_open": bool(focal_reason), "reason": focal_reason}
+            if args.select_from_diff
+            else None
+        ),
         "command": command,
         "cleanup_before": cleanup,
         "run_dir": str(run_dir),
