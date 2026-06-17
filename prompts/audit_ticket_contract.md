@@ -65,6 +65,9 @@ Recorre ítem por ítem.
 
 8. **Files Likely Touched — paths relativos al motor**
    ¿Algún path empieza con `orquestador_de_agentes/`? Ese prefijo produce intersección vacía con `git diff --name-only` y bloquea `--mark-ready`. Los paths deben ser relativos al root del repo git del motor (`bus/redact.py`, no `orquestador_de_agentes/bus/redact.py`).
+   Cada bullet debe contener una unica ruta parseable. Si hace falta una aclaracion
+   (`o modulo equivalente`, `solo si...`, etc.), ponla en una linea separada sin
+   backticks de ruta: el parser de FLT espera una ruta por bullet.
 
 9. **Dual-contract sync (`work_plan.md` ↔ `STRATEGY_WOT-*`)**
    ¿Toda corrección está aplicada en ambos archivos? El scope gate lee `work_plan.md`; el Builder lee `STRATEGY_WOT-*` (legacy-compat: `PLAN_WT-*`, `PLAN_WP-*`). Una corrección en solo uno de los dos pasa inadvertida y requiere rondas adicionales.

@@ -165,6 +165,9 @@ append `--project-root <destino>` to commands that operate on project state.
 - Usa `pathlib` y `try/except` explicito para I/O.
 - Mantiene la raiz limpia: no metas basura temporal en el arbol portable.
 - Usa `.agent/collaboration/work_plan.md` y `.agent/collaboration/execution_log.md` para el estado canonico.
+- En `Files Likely Touched`, escribe una unica ruta parseable por bullet. Las
+  aclaraciones van en una linea separada; texto como `o modulo equivalente` en
+  el mismo bullet puede impedir que el parser de FLT reconozca la ruta.
 
 ### Convencion de encoding y gap v1 (WOT-2026-010e)
 
