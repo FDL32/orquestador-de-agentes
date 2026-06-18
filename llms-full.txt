@@ -655,7 +655,7 @@ Cuando termines la lectura, di "Sistema internalizado" y enumera en 5 lineas max
 ## Modo destination-hosted
 
 Si el agente opera sobre un `repo_destino` (proyecto que consume el motor como
-dependencia externa), NO uses este prompt. Usa en su lugar `destination_bootstrap.md`
+dependencia externa), NO uses este prompt. Usa en su lugar `orchestrator_destination_bootstrap.md`
 (prompts/orchestrator_destination_bootstrap.md), que proporciona el arranque canonico para
 destinos con resolucion de motor_root via `motor_destination_link.json`.
 

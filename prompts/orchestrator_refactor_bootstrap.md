@@ -1,6 +1,6 @@
 # Refactor Bootstrap Prompt
 
-Pega este bloque al iniciar una sesion de refactor / reingenieria / optimizacion sobre un proyecto Python. Hermano de `session_bootstrap.md`: apunta a archivos canonicos en lugar de embeber contenido para no gastar la ventana de contexto.
+Pega este bloque al iniciar una sesion de refactor / reingenieria / optimizacion sobre un proyecto Python. Hermano de `orchestrator_session_bootstrap.md`: apunta a archivos canonicos en lugar de embeber contenido para no gastar la ventana de contexto.
 
 ---
 

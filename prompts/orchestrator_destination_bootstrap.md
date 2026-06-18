@@ -97,7 +97,7 @@ Si cualquiera falla, detente y reporta antes de tocar codigo.
 ## Cuando NO usarlo
 
 - Si ya hay un `work_plan.md` activo IN_PROGRESS — el agente debe leer primero ese.
-- En el `repo_motor` (motor-root): usa `session_bootstrap.md` en su lugar.
+- En el `repo_motor` (motor-root): usa `orchestrator_session_bootstrap.md` en su lugar.
 - Si Repomix ya esta disponible y prefieres ese nivel de detalle.
 
 ## Mantenimiento

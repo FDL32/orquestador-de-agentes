@@ -1079,7 +1079,7 @@ ORQUESTADOR
   +-- Por cada ticket ejecutable
   |     |
   |     +-- MANAGER planifica con audit_ticket_contract.md
-  |     +-- BUILDER implementa con launch_builder.md
+  |     +-- BUILDER implementa con orchestrator_launch_builder.md
   |     +-- MANAGER revision 1 con manager_review.md + audit_agent_output.md
   |     +-- BUILDER corrige solo si hay CHANGES reales
   |     +-- MANAGER revision 2 independiente cuando aplique

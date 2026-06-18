@@ -630,3 +630,43 @@ class TestOrchestratorRename008h:
                 assert f"source_prompt: prompts/{legacy}.md" not in content, (
                     f"{skill_file} still binds to legacy {legacy}.md"
                 )
+
+    def test_no_live_prose_reference_to_legacy_names(self):
+        """Regression for the Manager CHANGES finding: a live prose reference
+        (bare `launch_builder.md` or `prompts/launch_builder.md`) in an
+        operational consumer must not survive. Stubs keep their own legacy name
+        (skipped), and historical docs (DEC, CHANGELOG) are out of scope.
+
+        This is the test that would have caught orchestrator_pipeline.md:1082.
+        """
+        root = Path(__file__).resolve().parents[1]
+        legacy_re = re.compile(
+            r"(?<![\w/])(?:" + "|".join(re.escape(n) for n in _ORCH_RENAMES) + r")\.md"
+        )
+        # Live operational consumers (NOT stubs, NOT historical docs).
+        live_consumers = [
+            root / "prompts" / f"{c}.md" for c in _ORCH_RENAMES.values()
+        ] + [
+            root / "prompts" / "orchestrator_pipeline.md",
+            root / "prompts" / "audit_complete_motor_destination.md",
+            root / "prompts" / "audit_git_publication.md",
+            root / "README.md",
+            root / "QUICKSTART.md",
+            root / "AGENTS.md",
+            root / "CLAUDE.md",
+        ]
+        live_consumers += list((root / "skills").rglob("SKILL.md"))
+
+        offenders = []
+        for path in live_consumers:
+            if not path.exists():
+                continue
+            for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                # A stub legitimately names itself in its "# Legacy alias:" header.
+                if line.lstrip().startswith("# Legacy alias:"):
+                    continue
+                if legacy_re.search(line):
+                    offenders.append(f"{path.name}:{i}: {line.strip()}")
+        assert not offenders, "live legacy prose references survive:\n" + "\n".join(
+            offenders
+        )
