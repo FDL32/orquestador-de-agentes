@@ -342,6 +342,93 @@ def _validate_skill_contract(skill_file: Path, bundle_root: Path) -> list[str]:
     )
 
 
+# --------------------------------------------------------------------------
+# WOT-2026-008d: naming convention gate (DEC-008D-001).
+# prompts -> snake_case ; skills -> kebab-case. The gate validates the live
+# prompt+skill surface and fails closed on a new non-conforming name.
+# Authority for naming lives here, not in check_skill_collisions.py.
+# --------------------------------------------------------------------------
+
+# Snake_case prompt filename stem: lowercase alnum groups joined by single "_".
+_PROMPT_NAME_RE = re.compile(r"^[a-z0-9]+(_[a-z0-9]+)*$")
+# Kebab-case skill dir name: lowercase alnum groups joined by single "-".
+_SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+# Known legacy names that violate the convention but are tolerated until their
+# atomic rename ticket. DEC-008D-001: review_manager -> manager_review is
+# deferred to 008e (6 live source_prompt/prose consumers). Empty this list when
+# 008e closes; --check-naming must then be green with no exceptions.
+KNOWN_LEGACY_NAMES: frozenset[str] = frozenset({"review_manager"})
+
+
+def _check_prompt_names(prompts_dir: Path) -> list[str]:
+    """Flag prompts/*.md stems that violate snake_case (DEC-008D-001)."""
+    if not prompts_dir.is_dir():
+        return []
+    out: list[str] = []
+    for path in sorted(prompts_dir.glob("*.md")):
+        stem = path.stem
+        if stem in KNOWN_LEGACY_NAMES or _PROMPT_NAME_RE.match(stem):
+            continue
+        out.append(
+            f"prompt '{path.name}' violates snake_case "
+            f"(DEC-008D-001): expected [a-z0-9]+(_[a-z0-9]+)*"
+        )
+    return out
+
+
+def _check_skill_names(skills_dir: Path) -> list[str]:
+    """Flag skills/<dir> names that violate kebab-case (DEC-008D-001)."""
+    if not skills_dir.is_dir():
+        return []
+    out: list[str] = []
+    for path in sorted(skills_dir.iterdir()):
+        if not path.is_dir() or path.name.startswith("_"):
+            continue
+        name = path.name
+        if name in KNOWN_LEGACY_NAMES or _SKILL_NAME_RE.match(name):
+            continue
+        out.append(
+            f"skill '{name}' violates kebab-case "
+            f"(DEC-008D-001): expected [a-z0-9]+(-[a-z0-9]+)*"
+        )
+    return out
+
+
+def check_naming(bundle_root: Path | None = None) -> list[str]:
+    """Return naming-convention violations on the live prompt+skill surface.
+
+    Before: bundle_root resolves to the motor root (auto if None). prompts/ and
+            skills/ may or may not exist.
+    During: validates every prompts/*.md stem against snake_case and every
+            skills/<dir> name against kebab-case (DEC-008D-001). Directories
+            starting with "_" (e.g. _shared) and non-.md files are skipped.
+            Names in KNOWN_LEGACY_NAMES are tolerated (declared legacy debt).
+    After: returns a list of human-readable violation strings (empty == clean).
+           No side effects, no I/O beyond directory listing.
+    """
+    if bundle_root is None:
+        bundle_root = _get_bundle_root()
+    return _check_prompt_names(bundle_root / "prompts") + _check_skill_names(
+        bundle_root / "skills"
+    )
+
+
+def _check_naming() -> int:
+    """CLI entry for --check-naming. Returns 0 if clean, 1 on any violation."""
+    violations = check_naming()
+    if violations:
+        for v in violations:
+            print(f"[NAMING] {v}", file=sys.stderr)
+        print(
+            f"[NAMING] {len(violations)} naming violation(s); see DEC-008D-001.",
+            file=sys.stderr,
+        )
+        return 1
+    print("[OK] All prompt/skill names conform to DEC-008D-001.")
+    return 0
+
+
 def _check_contract() -> int:
     """Validate bidirectional prompt<->skill contract for all skills with role: manager|builder.
 
@@ -580,6 +667,9 @@ def main() -> None:
 
     if "--check-contract" in sys.argv:
         raise SystemExit(_check_contract())
+
+    if "--check-naming" in sys.argv:
+        raise SystemExit(_check_naming())
 
     _dispatch_catalog_flags()
 

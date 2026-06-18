@@ -164,6 +164,18 @@ def main() -> int:
         print("[dispatch] Contract check FAILED: prompt<->skill alignment broken")
         return rc_contract
 
+    # Naming barrier (WOT-2026-008d / DEC-008D-001): fail closed on a new
+    # prompt/skill name outside the versioned convention. Independent of
+    # deliverable_type, same pattern as --check-contract.
+    print("[dispatch] Running discover_skills.py --check-naming")
+    rc_naming = subprocess.run(  # noqa: S603
+        [sys.executable, "scripts/discover_skills.py", "--check-naming"],
+        cwd=PROJECT_ROOT,
+    ).returncode
+    if rc_naming != 0:
+        print("[dispatch] Naming check FAILED: name outside DEC-008D-001 convention")
+        return rc_naming
+
     return 0
 
 

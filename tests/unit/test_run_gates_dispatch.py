@@ -93,3 +93,49 @@ def test_has_local_tests_true_with_test_suffix_nested(tmp_path):
         "def test_x():\n    assert True\n", encoding="utf-8"
     )
     assert dispatch.has_local_tests(tmp_path) is True
+
+
+# WOT-2026-008d: the dispatcher must run the naming gate as a barrier.
+
+
+def test_dispatch_wires_check_naming_barrier():
+    """Source-level: run_gates_dispatch invokes discover_skills --check-naming."""
+    source = (PROJECT_ROOT / "scripts" / "run_gates_dispatch.py").read_text(
+        encoding="utf-8"
+    )
+    assert "--check-naming" in source
+    assert "discover_skills.py" in source
+
+
+def test_dispatch_propagates_naming_failure(monkeypatch):
+    """Behavioral: a failing --check-naming makes main() return non-zero.
+
+    main() runs code/deliverable gates then the contract + naming barriers via
+    subprocess. We stub everything green except --check-naming, which fails, and
+    assert the failure propagates (fail-closed barrier).
+    """
+    calls: list[list[str]] = []
+
+    class _FakeCompleted:
+        def __init__(self, rc: int) -> None:
+            self.returncode = rc
+
+    def fake_run(cmd, *args, **kwargs):
+        calls.append(cmd)
+        # Fail only the naming check; everything else is green.
+        if "--check-naming" in cmd:
+            return _FakeCompleted(1)
+        return _FakeCompleted(0)
+
+    monkeypatch.setattr(dispatch, "read_deliverable_type", lambda: "documentation")
+    monkeypatch.setattr(dispatch.subprocess, "run", fake_run)
+
+    rc = dispatch.main()
+
+    assert rc == 1
+    # The naming barrier was actually invoked.
+    assert any("--check-naming" in c for c in calls)
+    # And it ran after the contract barrier (order preserved).
+    contract_idx = next(i for i, c in enumerate(calls) if "--check-contract" in c)
+    naming_idx = next(i for i, c in enumerate(calls) if "--check-naming" in c)
+    assert naming_idx > contract_idx
