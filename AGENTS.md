@@ -1,10 +1,18 @@
 # AGENTS.md - Instrucciones transversales
 
-## Agentes disponibles
+## Backends y roles
 
-- Claude Code: agente principal y supervisor.
-- Codex / GitHub Copilot: agentes soportados si leen este archivo dentro del arbol.
-- Goose / Claw: **[DEPRECATED - WT-2026-254a]** motores orquestados por `scripts/orquestador.py`. No usar en proyectos nuevos; reemplazados por Claude Code como agente principal.
+- **Backend IA:** producto o LLM que ejecuta trabajo. Ejemplos: Claude Code,
+  Codex y GitHub Copilot. Un backend IA puede encarnar varios roles segun el
+  turno del pipeline.
+- **Roles canonicos:** `orchestrator`, `manager`, `builder`, `auditor`, `user`.
+  Usa "rol builder" o "rol manager", no "agente builder".
+- **Supervisor:** actor runtime del bus ya existente (`bus/supervisor.py`,
+  eventos `actor="SUPERVISOR"`). No es sinonimo de orchestrator ni de backend IA.
+- **Artefactos:** prompts, skills, scripts, gates y DEC. No llamarlos agentes.
+- Claude Code: backend IA principal en esta instalacion.
+- Codex / GitHub Copilot: backends IA soportados si leen este archivo dentro del arbol.
+- Goose / Claw: **[DEPRECATED - WT-2026-254a]** motores orquestados por `scripts/orquestador.py`. No usar en proyectos nuevos; reemplazados por Claude Code como backend IA principal.
 
 ## Resumen del entorno
 
