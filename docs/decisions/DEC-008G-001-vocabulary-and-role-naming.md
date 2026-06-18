@@ -72,7 +72,8 @@ porque lo usan varios roles.
 ### 5. Tabla congelada de prompts
 
 Estado verificado del arbol `prompts/` al crear la DEC: 21 archivos fisicos,
-20 canonicos/operativos y 1 legacy stub (`review_manager.md`).
+19 canonicos/operativos y 2 legacy stubs (`audit_plan.md`,
+`review_manager.md`).
 
 | Archivo fisico | Clasificacion canonica | Nota |
 |----------------|------------------------|------|
@@ -91,7 +92,7 @@ Estado verificado del arbol `prompts/` al crear la DEC: 21 archivos fisicos,
 | `audit_complete_motor_destination.md` | `audit_*` family | transversal |
 | `audit_git_publication.md` | `audit_*` family | transversal |
 | `audit_pipeline.md` | `audit_*` family | transversal |
-| `audit_plan.md` | `audit_*` family | legacy stub alias |
+| `audit_plan.md` | `audit_*` family | legacy stub alias dentro de la familia audit |
 | `audit_post_change_system_health.md` | `audit_*` family | transversal |
 | `audit_ticket_contract.md` | `audit_*` family | canonico del contrato de ticket |
 | `memory_upload.md` | `memory_*` family | herramienta reutilizable |
@@ -99,8 +100,9 @@ Estado verificado del arbol `prompts/` al crear la DEC: 21 archivos fisicos,
 | `review_manager.md` | legacy stub alias | alias de `manager_review.md` |
 
 Resumen: 6 `orchestrator_*` relacionados (5 futuros renames y 1 ya canonico),
-1 `manager_*`, 11 `audit_*` family, 1 `memory_*` family,
-1 `contract_formation_*` family y 1 legacy stub.
+1 `manager_*`, 11 `audit_*` family (incluye `audit_plan.md` como stub-in-family),
+1 `memory_*` family, 1 `contract_formation_*` family y 1 legacy stub adicional
+(`review_manager.md`).
 
 ### 6. Plan de lotes con shims
 
