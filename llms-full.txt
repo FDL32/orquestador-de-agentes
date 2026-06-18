@@ -26,8 +26,8 @@ Repo: https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main
 
 ## Philosophy & onboarding
 
-- [session_bootstrap.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/prompts/session_bootstrap.md)
-- [refactor_bootstrap.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/prompts/refactor_bootstrap.md)
+- [orchestrator_session_bootstrap.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/prompts/orchestrator_session_bootstrap.md)
+- [orchestrator_refactor_bootstrap.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/prompts/orchestrator_refactor_bootstrap.md)
 
 ## Skills (read RESOLVER first)
 
@@ -60,11 +60,19 @@ If you fork, override the URL base before regenerating: `LLMS_REPO_BASE=https://
 ```markdown
 # AGENTS.md - Instrucciones transversales
 
-## Agentes disponibles
+## Backends y roles
 
-- Claude Code: agente principal y supervisor.
-- Codex / GitHub Copilot: agentes soportados si leen este archivo dentro del arbol.
-- Goose / Claw: motores orquestados por `scripts/orquestador.py`.
+- **Backend IA:** producto o LLM que ejecuta trabajo. Ejemplos: Claude Code,
+  Codex y GitHub Copilot. Un backend IA puede encarnar varios roles segun el
+  turno del pipeline.
+- **Roles canonicos:** `orchestrator`, `manager`, `builder`, `auditor`, `user`.
+  Usa "rol builder" o "rol manager", no "agente builder".
+- **Supervisor:** actor runtime del bus ya existente (`bus/supervisor.py`,
+  eventos `actor="SUPERVISOR"`). No es sinonimo de orchestrator ni de backend IA.
+- **Artefactos:** prompts, skills, scripts, gates y DEC. No llamarlos agentes.
+- Claude Code: backend IA principal en esta instalacion.
+- Codex / GitHub Copilot: backends IA soportados si leen este archivo dentro del arbol.
+- Goose / Claw: **[DEPRECATED - WT-2026-254a]** motores orquestados por `scripts/orquestador.py`. No usar en proyectos nuevos; reemplazados por Claude Code como backend IA principal.
 
 ## Resumen del entorno
 
@@ -76,49 +84,356 @@ If you fork, override the URL base before regenerating: `LLMS_REPO_BASE=https://
 ## Rutas importantes
 
 - `agent_system/`: codigo base de apoyo incluido con la plantilla.
+  - `agent_system/templates/repomix.config.json`: plantilla de configuracion de Repomix.
 - `scripts/`: utilidades de instalacion, upgrade, rollback y validacion.
 - `skills/`: micro-habilidades reutilizables.
-- `.agent/collaboration/`: estado operacional canonico.
+- `.agent/collaboration/`: estado operacional canonico — vive en el `repo_destino`, no en el motor. El motor contiene seeds neutros; apuntar al destino via `AGENT_PROJECT_ROOT` o `motor_destination_link.json`.
 - `.agent/runtime/memory/`: memoria persistente por proyecto.
+- `.agent/context/repomix.xml`: contexto comprimido del workspace generado por Repomix (bootstrapping).
 - `.agent/council/`: broker de consejo y auditoria paralela.
+- `.session/repomix_local.xml`: contexto local comprimido para comparacion acelerada (repo-compare skill).
+- `.session/repomix_remote.xml`: contexto remoto comprimido para comparacion acelerada (repo-compare skill).
 - `REPOSITORY_STRUCTURE.md`: mapa interno publicable del repositorio.
+
+## Vocabulario canonico
+
+No usar "workspace" a secas: el termino es ambiguo porque describe tanto el repo destino como el entorno multi-root del IDE.
+
+| Termino | Descripcion |
+|---------|-------------|
+| `repo_motor` | `orquestador_de_agentes/` — motor portable, fuente canonica del sistema. Tiene su propio repo git. No contiene estado operativo de tickets. |
+| `repo_destino` | El proyecto que usa el motor. Tiene su propio `.agent/` con estado operativo (tickets, memoria, config). Nunca comparte estado con otros destinos. |
+| `workspace_activo` | Raiz operativa con `.agent/` desde la que corre el ticket actual. En la topologia actual coincide con `repo_destino`. Se configura via `AGENT_PROJECT_ROOT` o `motor_destination_link.json`. |
+| `entorno_multi_root` | IDE abierto con `repo_motor` + `repo_destino` a la vez (VS Code multi-folder workspace). No es un concepto de codigo: solo describe el entorno de desarrollo. |
+
+**Regla de repos:** toda operacion git del tooling (diff, log, commit) corre con `cwd=repo_motor`. El estado operativo (tickets, memoria, events) vive en `repo_destino`.
+
+**Regla de `AGENT_PROJECT_ROOT`:** el motor se invoca siempre con esta variable apuntando al `workspace_activo`. Sin ella, el motor usa modo code-only y bloquea escrituras operativas.
+
+### Glosario de nomenclatura de ticket (WOT-2026-010a)
+
+Nomenclatura canonica de identificadores y artefactos de ticket. "Plan" se
+reserva para la familia completa; el artefacto de estrategia de un ticket es
+`STRATEGY_`, no `PLAN_`.
+
+| Termino | Descripcion |
+|---------|-------------|
+| `WOT-YYYY-NNNx` | **Prefijo canonico de ticket** (tres letras). Ej. `WOT-2026-010a`. Es el ID que usan generadores, validadores y bus. |
+| `WP-` / `WT-` | **Legacy historico.** Prefijos de tickets antiguos (161 `WP-`, 72 `WT-`). NO se migran en masa; los consumidores los aceptan como `legacy-compat`. |
+| familia / plan | El plan/familia completo, ej. `WOT-2026-009` agrupa `009a..009g`. "Plan" NUNCA designa el artefacto de un ticket individual. |
+| `work_plan.md` | **Contrato operativo del ticket activo.** Una unica copia viva en `.agent/collaboration/`. Lo lee el scope gate y lo ejecuta el Builder. Sin cambio de nombre. |
+| `STRATEGY_WOT-<ID>.md` | **Estrategia tecnica del ticket** (opcional). Sustituye al antiguo `PLAN_WT-<ID>.md`. Libera "PLAN" para la familia. Legacy: `PLAN_WP-*`, `PLAN_WT-*`. |
+| `AUDIT_WOT-<ID>.md` | **Criterios de auditoria del ticket.** Solo cambia el prefijo `WT->WOT`. Legacy: `AUDIT_WP-*`, `AUDIT_WT-*`. |
+
+**Clases de patron para consumidores de codigo** (archivador, pre-handoff guard,
+validador de prosa, review bridge, motor_checkpoint):
+- `canonical`: `STRATEGY_WOT-*`, `AUDIT_WOT-*`.
+- `legacy-compat`: `PLAN_WP-*`, `PLAN_WT-*`, `AUDIT_WP-*`, `AUDIT_WT-*`. Se
+  conservan con alias de transicion; eliminarlos dejaria sin archivar los
+  tickets historicos.
+
+**Prompt de auditoria de contrato:** `prompts/audit_ticket_contract.md` (antes
+`prompts/audit_plan.md`, ahora stub alias). Audita el contrato/plan operativo
+del ticket ANTES de Builder; no confundir con review de implementacion, bus,
+cierre o publicacion.
+
+**Generador vs historia (regla de gate, WOT-2026-010a):** la gate de
+nomenclatura distingue dos usos muy distintos de un ID con prefijo legacy:
+
+- **Generador / ejemplo vivo** (DEBE usar `WOT-`): plantillas, placeholders,
+  ejemplos de comando, texto de `--help`, esquemas de formato (`source_ticket`,
+  `Plan ID`, `Ticket relacionado`, `--ticket WP-...`). Crean o enseñan
+  nomenclatura nueva. La gate FALLA si usan `WP-`/`WT-` sin etiqueta.
+- **Historia de commit** (legacy-compat implicito, NO se reescribe): un
+  comentario o docstring de la forma `# <TICKET>: <descripcion de lo que se
+  hizo>` documenta en que ticket historico se realizo un cambio. Reescribirlo
+  falsearia la trazabilidad. La gate lo PERMITE como legacy-compat por su forma
+  (`# <TICKET>:` o referencia historica), sin marca por-linea.
+- **Bloque legacy etiquetado** (legacy-compat explicito): un ejemplo que
+  conserva un ID historico a proposito para demostrar retrocompatibilidad debe
+  llevar una nota `legacy-compat (WOT-2026-010a): ...` cerca.
+
+Gate ejecutable: `scripts/check_ticket_nomenclature.py` clasifica cada hit y
+falla solo ante un generador/ejemplo vivo con prefijo legacy sin etiqueta.
+
+### Distincion critica: `.agent/collaboration/` del motor vs del destino
+
+| Ubicacion | Rol | Contenido |
+|-----------|-----|-----------|
+| `repo_motor/.agent/collaboration/` | **Seed neutro** | Archivos en estado READY_TO_START/IDLE. Molde para nuevos destinos instalados. No contienen tickets activos. |
+| `repo_destino/.agent/collaboration/` | **Estado operativo activo** | `work_plan.md`, `execution_log.md`, `TURN.md`, `STATE.md`, `backlog.md` con el ticket real en curso. |
+
+**Nunca usar `repo_motor/.agent/collaboration/` como operativo.** El guard anti-drift bloquea escrituras operativas ahi sin `AGENT_PROJECT_ROOT`.
 
 ## Contrato de version y portabilidad
 
 - `pyproject.toml` define la version del paquete portable.
 - `.agent/.version_manifest.json` define la version tecnica del core.
+- `MANIFEST.distribute` define la frontera del motor central (codigo operativo).
+- `MANIFEST.workspace` define el contrato del workspace destino (estado, memoria, config).
 - Los comandos canonical y legacy se documentan por separado.
-- Estado actual: `v9.11.0` terminal-driven closeout completado, plantilla lista para copiar al siguiente proyecto.
-- Este repositorio se trata como autonomo al publicar; evita depender de rutas o metadatos del workspace padre en la documentacion publica.
+- Estado actual: `v9.17.1` motor central + workspace destino, cierre canonico con suite verde, pipeline autonomo por chat, meta-auditoria, auditoria de publicacion Git, guard de integridad del motor, encoding guard endurecido y CEM v0 adoptado.
+- El motor vive una unica vez en `orquestador_de_agentes/`; los proyectos destino lo referencian externamente.
+
+## MANIFEST.distribute y MANIFEST.workspace (WP-2026-111)
+
+Los archivos `MANIFEST.distribute` y `MANIFEST.workspace` en la raiz del repositorio definen el contrato estricto del motor central y el workspace destino:
+
+- **MANIFEST.distribute**: Define la frontera del motor central (codigo operativo del repo fuente). El motor NO se copia; este manifiesto delimita que rutas forman parte del codigo operativo.
+- **MANIFEST.workspace**: Define que se conserva EN el workspace destino (estado, memoria, eventos, configuracion del proyecto).
+- **Arquitectura**: El motor vive una unica vez en `orquestador_de_agentes/`; cada proyecto destino conserva solo su `.agent/` de workspace y referencia el motor externo.
+
+**Superficies vivas en `.agent/collaboration/`** (NO archivar, el codigo las escribe):
+- `work_plan.md`, `TURN.md`, `STATE.md`, `execution_log.md`, `notifications.md`, `review_queue.md`
+
+**Excluidos del workspace** (historial, runtime transitorio, caches):
+- `PLAN_WP-*.md`, `AUDIT_WP-*.md`, `_archive/`, `archive/`
+- `.agent/runtime/tmp/`, `uv-cache/`, `test_logs/`, `__pycache__/`, `reviews/`, `compare/`
+- `.ruff_cache/`, `.cache/`, `.uv-cache/`, `.venv/`
+- Logs y diagnosticos: `debug.log`, `opencode_models_error.log`
 
 ## Comandos principales
+
+When running from an external-motor destination workspace (repo_motor + repo_destino topology),
+append `--project-root <destino>` to commands that operate on project state.
 
 - Instalacion inicial: `python scripts/install_agent_system.py --install`
 - Sincronizacion estricta: `python scripts/install_agent_system.py --sync`
 - Sincronizacion interactiva: `python scripts/install_agent_system.py --sync --prune`
 - Vista previa: `python scripts/install_agent_system.py --sync --dry-run`
-- Estado del sistema: `python .agent/agent_controller.py`
-- Auditoria local: `python scripts/local_audit.py`
+- Estado del sistema: `python .agent/agent_controller.py [--project-root <workspace>]`
+- Auditoria local: `python scripts/local_audit.py [--project-root <workspace>]`
+- Memoria consolidada: `python scripts/memory_consolidate.py [--apply|--dry-run] [--project-root <workspace>]`
+- Integridad del motor: `python scripts/check_motor_pristine.py --snapshot --motor-root <repo_motor> --out <snapshot.json>` y despues `python scripts/check_motor_pristine.py --check --snapshot-file <snapshot.json> --report <result.json> --motor-root <repo_motor>`
+- Auditoria de publicacion Git: `python scripts/classify_publication.py --repo-root <repo_destino> --out <repo_destino>/orchestrator_pipeline/reports/publication_manifest.json`
+- Migrar config: `python .agent/agents_config.py --migrate [--dry-run] [--project-root <workspace>]`
 - Comparar con repo GitHub: skill `/repo-compare`
-- Interaccion por terminal: `python scripts/ticket_supervisor.py --reactive`
-- Tests: `python scripts/run_pytest_safe.py`
+- Orquestar backlog por chat: skill `/pipeline` (`prompts/orchestrator_pipeline.md`)
+- Meta-auditar pipeline cerrado: skill `/audit-pipeline`
+- Auditar publicacion Git: skill `/audit-git-publication`
+- Auditar salud del sistema post-cambio (motor+destino+integracion): skill `/audit-system-health`. Recolector determinista: `python scripts/collect_system_health.py --motor-root <repo_motor> --project-root <repo_destino> --mode auto`. El script RECOLECTA (read-only); el agente AUDITA. Salida en `<repo_destino>/.agent/audits/system_health/general_audit_YYYYMMDD[_HHMM]/`. Ver `prompts/audit_post_change_system_health.md`.
+- Interaccion por terminal: `python scripts/ticket_supervisor.py --reactive [--project-root <workspace>]`
+- Tests: `python scripts/run_pytest_safe.py [--project-root <workspace>]`
+  - NO usar `python -m pytest` directo sobre tests que importan el controller:
+    al insertar `.agent/` en sys.path, `runtime` puede resolver a
+    `.agent/runtime/` (que tiene `__init__.py`) en vez de `<motor>/runtime/`,
+    y la coleccion falla con `No module named 'runtime.project_root'`.
+    El runner seguro configura el entorno correcto y ademas incluye la
+    barrera de state-leak (falla si la suite muta `.agent/collaboration/`).
 - Calidad: `ruff check . && ruff format .`
 - Auditoria de dependencias: `python scripts/pip_audit_project.py`
+- Archivar colaboracion: `python scripts/archive_collaboration_artifacts.py [--dry-run] [--project-root <workspace>]`
 
 ## Convenciones
 
 - Lee `PROJECT.md` antes de tocar arquitectura o estado.
 - Lee `INTERACTION_MODES.md` antes de operar por chat o por terminal.
-- Para arrancar una sesion nueva con cualquier agente, usa el bootstrap canonico en `prompts/session_bootstrap.md` (apunta a archivos clave en lugar de embeber).
+- Para tickets que tocan sincronizacion de estado, bus, proyecciones o codigo topologia-aware (`repo_motor + repo_destino`), comprueba primero si el sintoma encaja con un patron documentado en `docs/KNOWN_FAILURE_PATTERNS.md` antes de proponer un fix nuevo.
+- Para arrancar una sesion nueva con cualquier agente, usa el bootstrap canonico en `prompts/orchestrator_session_bootstrap.md` (apunta a archivos clave en lugar de embeber).
 - Usa `pathlib` y `try/except` explicito para I/O.
 - Mantiene la raiz limpia: no metas basura temporal en el arbol portable.
 - Usa `.agent/collaboration/work_plan.md` y `.agent/collaboration/execution_log.md` para el estado canonico.
+- En `Files Likely Touched`, escribe una unica ruta parseable por bullet. Las
+  aclaraciones van en una linea separada; texto como `o modulo equivalente` en
+  el mismo bullet puede impedir que el parser de FLT reconozca la ruta.
+
+### Convencion de encoding y gap v1 (WOT-2026-010e)
+
+- **Preferir Write/Edit sobre heredoc** para contenido no-ASCII en archivos de
+  texto (`.md`, `.py`, `.json`, `.toml`, `.yaml`, `.yml`, `.sh`, `.ps1`, `.txt`,
+  `.xml`). El hook `encoding_post_write_hook.py` detecta BOM, mojibake y
+  question-mark corruption tras cada escritura nativa del agente.
+- **Gap v1 conocido:** Bash/heredoc NO esta cubierto por el hook. Las
+  escrituras dentro de `Bash`/`RunInTerminal` quedan cubiertas por convencion
+  operativa + `check_encoding_guard.py` antes de handoff/commit.
+- `TEXT_EXTENSIONS` en `scripts/encoding_guard.py` es la fuente de verdad de
+  sufijos texto. No derivarla de `GLOB_PATTERNS`.
+- `scripts/check_encoding_guard.py` sigue siendo la autoridad de cierre; el
+  hook es defensa en profundidad, no su sustituto.
+
+## Archivado de colaboracion (WP-2026-100)
+
+- `scripts/archive_collaboration_artifacts.py` mueve `PLAN_WP-*.md` y `AUDIT_WP-*.md` cerrados a `.agent/collaboration/_archive/plan_audit/`.
+- El ticket activo conserva solo sus documentos vivos en `collaboration/`.
+- El archivador es idempotente: segunda ejecucion = no-op.
+- Usa `--dry-run` para previsualizar sin modificar, `--list-active` para ver archivos activos.
+
+## Superficies vivas vs historicas en `.agent/collaboration/` (WP-2026-107)
+
+No todo lo que parece "viejo" en `collaboration/` es archivable. Distingue:
+
+- **Superficies vivas (NO archivar, las escribe el codigo en cada ciclo):**
+  - `archive/`: rotacion de snapshots de `notifications.md`. La escribe
+    `agent_controller.py` (`ARCHIVE_DIR`) cada vez que rota la proyeccion.
+    NO es legacy; borrarla rompe el controlador.
+  - `review_queue.md`: log vivo de reviews del Manager. Le hace append
+    `manager_review_bridge.py` (`_record_review`) en cada review.
+  - `notifications.md`: proyeccion viva validada por `--validate`. Solo se
+    resetea a placeholder, nunca se archiva entera.
+- **Superficie historica (`_archive/`):** solo cubre historicos de
+  `PLAN_WP-*.md` / `AUDIT_WP-*.md` cerrados (`_archive/plan_audit/`) y
+  snapshots legacy no operativos (`_archive/legacy/`). Su contenido puede
+  ser un registro unico (p.ej. `_archive/legacy/review_queue.md` conserva
+  reviews de WPs que el log vivo ya no tiene): verifica antes de borrar.
+
+Regla: antes de "limpiar" un archivo de `collaboration/`, comprueba si algun
+script lo escribe activamente. Si lo hace, es superficie viva.
+
+## Convenciones de docstrings y testing
+
+Adaptado de las directrices operativas open-source en `dify-agent`:
+
+### 1. Docstrings como especificación de ejecución (Docstrings-as-Spec)
+
+Cada función, clase o módulo operativo del sistema debe contar con un docstring claro y estructurado en **3 fases**. El agente o auditor contrastará la firma técnica con esta especificación semántica para asegurar el cumplimiento:
+- **Before (Pre-condiciones):** Qué estados, variables, archivos o privilegios requiere la función antes de invocarse.
+- **During (Proceso y Recursos):** Cuál es el flujo de transformación de datos, qué efectos colaterales (I/O, llamadas de red) realiza y qué recursos del sistema consume.
+- **After (Post-condiciones y Errores):** Qué salidas exactas se garantizan, cómo cambian los estados canónicos y qué excepciones específicas se interceptan y lanzan.
+
+### 2. Rúbrica de testing de alta fidelidad (Test Útil vs Basura)
+
+Para evitar la inflación artificial de cobertura sin validación lógica real, el Builder y los quality gates rechazarán cualquier test cosmético. Se define la siguiente rúbrica de aceptación:
+- **Test Inútil (descartable):** Aquel que solo hace aserciones pasivas como `assert obj is not None` o verifica constantes mocked estáticas sin desencadenar lógica real.
+- **Test Útil (aceptado):** Aquel que fuerza casos límite (boundary limits), valida transiciones reales de estado (en el Event Bus, archivos de configuración o memoria persistente) y verifica explícitamente el lanzamiento de excepciones esperadas (`pytest.raises`).
+
+**Anti-patrones de test que el Builder debe evitar y el Manager debe rechazar:**
+- **Mock drift:** el patch apunta a `X` pero el código llama a `Y` (distinta API). El test pasa sin probar nada real. Ejemplo: parchear `pathlib.Path.open` cuando el código usa el built-in `open()`.
+- **Floor assertion:** el umbral de una aserción numérica es satisfecho por el valor base sin la feature probada. Ejemplo: `assert score >= 150` cuando el score de recencia solo ya es `~20_000_000`.
+
+### 3. Anti-patrones de implementación
+
+- **Zero-logic wrapper:** una función cuyo cuerpo completo es una única llamada delegada 1:1 sin lógica propia debe ser inlineada o eliminada. Añade indirección cognitiva sin valor.
+
+## CEM v0 - Contrato, Evidencia y Memoria
+
+CEM es el contrato minimo para trabajar con agentes sin convertir cada ticket en burocracia. Se aplica con rigor proporcional al riesgo del cambio.
+
+- **Contrato antes que fix:** identifica que comportamiento canonico protege el cambio antes de tocar codigo o tests.
+- **Evidencia antes que relato:** ningun auto-reporte de agente es evidencia; usa diff, exit code, test, evento de bus, commit o artefacto verificable.
+- **Memoria despues de aprender:** si una familia de fallos puede repetirse, deja barrera automatica o deuda explicita con ticket y criterio de salida.
+- **Rigor proporcional:** docs y typos no cargan la misma ceremonia que bus, supervisor, seguridad, rutas o estado compartido.
+- **Barrera verificada:** un guard, hook o test nuevo no cuenta hasta demostrar que bloquea el fallo que promete bloquear.
+- **Fixtures realistas:** un test verde contra un fixture irreal es sospechoso; cuando el contrato sea operativo, contrasta contra artefactos reales.
+- **Gates self-service:** un gate preserva autonomia solo si explica que fallo, como reproducirlo y como volver a validar sin escalar al humano.
+- **Relaunch con root verificado:** antes de relanzar Builder, valida `AGENT_PROJECT_ROOT`, `repo_motor`, `repo_destino`, bus legible y ticket activo.
+
+Referencia ampliada: `.agent/rules/common/sustainable_engineering.md`.
+
+## Skills Formales de Proceso
+
+El repositorio define skills operativas formales para estructurar el trabajo del agente.
+Úsalas invocando sus triggers (ej. `/tdd`, `/debug`):
+
+- **Test-Driven Development (TDD)** (`skills/test-driven-development/SKILL.md`): Usar para asegurar cobertura y evitar regresiones en código nuevo o fixes. Obliga a escribir el test primero (Red), el código mínimo (Green) y refactorizar con calidad (`ruff` + `pytest`).
+- **Systematic Debugging** (`skills/systematic-debugging/SKILL.md`): Usar ante errores no triviales. Exige investigación de causa raíz antes de parchear y establece un límite estricto de 3 intentos antes de detener la iteración y cuestionar el entendimiento del problema.
+
+No uses estos skills si contradicen el flujo general (ej. usar TDD para escribir un README o depuración para un typo reportado por el linter).
+
+## Atribuciones externas (CREDITS.md)
+
+Cuando un WP incorpora una idea/patrón de un repositorio externo:
+
+1. **`repo-compare`** emite al final de su reporte un bloque candidato listo para pegar en `CREDITS.md`.
+2. El humano decide cuándo adoptar la idea y pega la fila correspondiente en `CREDITS.md` (raíz del repo).
+3. El WP que implementa la idea incluye `Origen externo:` o `Inspired by:` en `work_plan.md`.
+4. **`project-finalize` Paso 8d** verifica que la fila CREDITS exista antes de cerrar el WP. Si falta, bloquea el cierre.
+
+Formato: tabla compacta `| WP | Source | Pattern | License | Adapted vs Ported |`. Detalle en `CREDITS.md`.
+
+**Limitación conocida:** `CREDITS.md` vive en raíz; `scripts/install_agent_system.py` actualmente solo copia `.agent/`. Por tanto, esta convención **no se propaga automáticamente** a proyectos derivados. Si forks/derivados quieren la convención, deben replicar `CREDITS.md` + skills `repo-compare` y `project-finalize` manualmente.
 
 ## Memoria por proyecto
 
-- `.agent/runtime/memory/observations.jsonl` guarda observaciones persistentes.
-- `.agent/runtime/memory/MEMORY.md` es un indice humano, no reemplaza el estado canonico.
-- Regenera el indice solo de forma explicita.
+La memoria del proyecto sigue una jerarquia de tres niveles (L3 -> L2 -> L1),
+centralizada en `bus/memory_loader.py` para bootstrap, review bridge y pre-compact hook:
+
+- **L3 — `memory_profile.md`** (generado por `memory_consolidate.py --apply`): Perfil breve del proyecto con dominios activos, tickets referenciados y senales recientes. Cargado primero por `memory_loader.get_bootstrap_context()`.
+- **L2 — `memory_rules.md`** (generado por `memory_consolidate.py --apply`): Reglas deterministas organizadas por dominio, con IDs estables (R-XXX). Cargado por `memory_loader.get_review_context(domain)` para el review bridge.
+- **L1 — `observations.jsonl`**: Fuente de evidencia canonica. Contiene todas las observaciones persistentes. `memory_loader.recall_observations()` ofrece acceso directo con filtro opcional por keyword.
+- `MEMORY.md` es un indice humano acotado, con tope de 80 lineas. No es una fuente primaria.
+- `scripts/memory_consolidate.py` declara `MEMORY_MD_LINE_CAP = 80` y trunca el indice con un marcador visible cuando se supera el limite. Ademas genera L2 y L3 con `--apply`.
+- `bus/memory_loader.py` es la unica puerta de entrada: `get_bootstrap_context()` (L3 -> L2 -> L1), `get_review_context(domain)` (L2 por dominio), `get_compact_context()` (L3+L2).<｜｜DSML｜｜parameter name="endString" string="true">
+## deliverable_type (work_plan schema, V2)
+
+## deliverable_type (work_plan schema, V2)
+
+Cada `work_plan.md` declara `deliverable_type` en su sección Metadata. Valores:
+- `code` — el deliverable principal es código fuente (Python u otro).
+- `documentation` — markdown, AGENTS.md, READMEs.
+- `research` — análisis comparativos, reportes (gap analysis, repo-compare).
+- `analysis` — estudios técnicos, audits.
+- `mixed` — combinación legítima (ej. WP que toca código y docs).
+
+`agent_controller --validate` valida que exista el campo y no tenga valores inválidos.
+
+### Contrato operativo por tipo de ticket
+
+El `deliverable_type` no es decorativo: cambia que evidencia debe producir el
+Builder y que debe auditar el Manager.
+
+- `code`: requiere diff/commit productivo del ticket, tests/ruff aplicables y
+  evidencia de gates en `execution_log.md`.
+- `mixed`: requiere el contrato de `code` mas existencia verificable de los
+  artefactos no-codigo declarados.
+- `documentation` / `research` / `analysis`: no debe exigirse commit de codigo
+  ni pytest/ruff salvo que el plan toque codigo. El cierre se basa en artefactos
+  documentales declarados y una linea de evidencia en `execution_log.md` que
+  combine artefacto y gate final, por ejemplo:
+  `Reporte .agent/runtime/compare/<archivo>.md creado. Validate: exit code 0, 0 errors, 0 warnings.`
+
+En tickets documentales, separa explicitamente las superficies:
+- `Builder`: archivos que debe crear o modificar y que cuentan como entregables.
+- `Read/inspect only`: fuentes que puede leer pero no deben contar como
+  entregables ni como scope productivo.
+- `Manager-only`: gates o revisiones que ejecuta el Manager y no el Builder.
+
+Si el plan mezcla estas superficies, `check_deliverables_exist.py` puede bloquear
+el handoff o validar una evidencia equivocada. El plan debe dejar claro que existe
+en disco al final y que solo era contexto.
+
+## Quality gates dispatch by deliverable_type (WP-2026-089)
+
+`bui-run-quality-gates` invoca ahora `scripts/run_gates_dispatch.py` que lee `deliverable_type` del work_plan activo y dispatchea:
+
+- `code` / fallback → ruff + pytest-safe + pip-audit (condicional)
+- `mixed` → ambos sets (code gates + deliverable existence check)
+- `documentation` / `research` / `analysis` → solo deliverable existence check
+
+**Conditional pip-audit policy (WP-2026-092)**:
+Para los perfiles `code` y `mixed`, `pip-audit` se ejecutará de forma exclusiva cuando la lista `Files Likely Touched` dentro de `work_plan.md` incluya un archivo de manifiesto de dependencias (`pyproject.toml`, `uv.lock`, `requirements.txt`, etc). Si no hay cambios en la superficie de dependencias, la política emitirá un salto auditable, reduciendo latencia.
+
+**Pre-commit Ruff Scope Guard (WP-2026-093)**:
+Para evitar regresiones o cambios accidentales en `.pre-commit-config.yaml` que expandan el alcance de `ruff` y causen falsos positivos en tickets no-código (Markdown, documentación, análisis, etc.), se implementa `scripts/check_ruff_hook_scope.py`. Este script verifica que los hooks `ruff-check` y `ruff-format` permanezcan limitados estrictamente a Python (`types: [python]` o `files: \.py$`). Cualquier desviación detiene las gates de pytest inmediatamente.
+
+El dispatcher, sus políticas y guardias son stdlib only; no añaden dependencias.
+
+## Host-first skill precedence & Config Profiles (WP-2026-090)
+
+- **Host-first precedence**: Cuando el bundle `orquestador_de_agentes` se instala en un proyecto de destino (host), las skills definidas en el host (`<destino>/.agent/skills/`) toman precedencia absoluta sobre las homónimas del bundle (`orquestador_de_agentes/skills/`). El bundle actúa estrictamente como un fallback determinista.
+- **Config Profiles**: `agents.json` define `"active_profile"`. El repo local de desarrollo usa `"engine-dev"`. El instalador `install_agent_system.py` cambia automáticamente este valor a `"host-project"` en el destino durante `--install` o `--sync`.
+
+## Host setup hook (WP-2026-094)
+
+El proyecto destino puede declarar un script ejecutable `.agent/host-setup.sh`
+(o `.ps1` en Windows) que `scripts/install_agent_system.py` detecta tras la
+copia del bundle. Comportamiento:
+
+- Si el hook existe: el instalador muestra las primeras 20 líneas + pide
+  confirmación humana (`y/N`) antes de ejecutarlo. `--yes` salta el prompt.
+- Si el hook devuelve exit != 0: el install aborta y propaga el código.
+- Si el hook no existe: silencio (backward-compat absoluto).
+
+Plantillas: `.agent/host-setup.sh.example` / `.agent/host-setup.ps1.example`.
+Origen del patrón: OpenHands `.openhands/setup.sh` (MIT).
+
+## Pluggable manager review rubric by deliverable_type (WP-2026-091)
+
+- **Pluggable Prompts**: El Review Bridge (`bus/review_bridge.py`) lee el campo `deliverable_type` del plan de trabajo activo. En lugar de utilizar un prompt único y ciego, adapta el prompt de revisión enviado al backend OpenCode Manager:
+  - `code`: Verifica la correctitud del código, cobertura de tests y estándares de estilo.
+  - `mixed`: Combina la verificación técnica de código con la revisión estructural y exhaustiva de todos los entregables no-código declarados.
+  - `documentation` / `research` / `analysis`: Enfoca la revisión del Manager estrictamente en la claridad, profundidad, calidad e integridad estructural de los entregables documentales correspondientes, omitiendo criterios de código irrelevantes.
+- **Salida formal**: Se conserva estrictamente el contrato canónico de salida (`DECISION: APPROVE` o `DECISION: CHANGES`) para mantener la interoperabilidad total del bus de eventos y la máquina de estados.
+- **Fallback**: Si `deliverable_type` no está declarado o contiene un tipo desconocido, se activa un fallback seguro y automático a la estrategia `code`.
 
 ## Secretos y seguridad
 
@@ -126,6 +441,26 @@ If you fork, override the URL base before regenerating: `LLMS_REPO_BASE=https://
 - No toques `privada/`.
 - No desactives `guard_paths` para trabajar mas rapido.
 - No pidas dependencias nuevas sin aprobacion.
+- `OpenCode Permission Preflight`: si el ticket requiere modificar archivos
+  fuera de `.agent/collaboration/` o `scripts/` del `repo_destino` (por
+  ejemplo `PROJECT.md`, `AGENTS.md` o `CHANGELOG.md`), el plan o el arranque
+  debe verificar antes que esas rutas esten permitidas en
+  `.opencode/opencode.json` bajo `external_directory`. Si no lo estan, el
+  Builder debe bloquear el arranque con diagnostico claro en vez de continuar
+  ciego. En OpenCode, esa allowlist puede necesitar el root completo del
+  `repo_destino` (`repo_destino\*`) y no solo permisos por archivo, porque el
+  backend puede resolver la lectura como acceso al arbol externo completo.
+- La configuracion versionada de `.opencode/opencode.json` debe permanecer
+  portable y sin rutas absolutas del `repo_destino` actual. Los permisos
+  `external_directory` especificos del proyecto se inyectan en runtime desde el
+  launcher y se restauran al terminar; no deben quedar commiteados en el motor.
+
+## Robust Builder Relaunch (WP-2026-084)
+
+- **Liveness check**: El supervisor verifica si el Builder está vivo via PID + `tasklist` (Windows) antes de relanzar tras un CHANGES. Fallback: mtime <15 min.
+- **Flag `-ResumeBuilder`**: Launcher lo recibe del supervisor en requeue. Skip cleanup agresivo (`Stop-ProjectAgentProcesses`, `Remove-StaleRuntimeArtifacts`, `Assert-StartupAlignment`) para no matar Builder vivo.
+- **ADITIVIDAD**: Launcher sin `-ResumeBuilder` (primera apertura) comporta igual que antes. Cero regresión.
+- **Diagnóstico**: Supervisor captura stdout/stderr del launcher si falla, loggea a stderr con prefijo `[ticket-supervisor]`.
 
 ## Criterio de cierre
 
@@ -135,6 +470,7 @@ Considera una tarea cerrada solo cuando:
 1. `ruff`, `pytest` y `pip-audit` pasan.
 2. El codigo nuevo usa rutas y manejo de errores correctos.
 3. Las decisiones importantes quedan consolidadas en `PROJECT.md` o `CHANGELOG.md`.
+4. La revision aplica el principio de Google de aprobar cuando el cambio mejora la salud del codigo, aun si no es perfecto: https://google.github.io/eng-practices/review/reviewer/standard.html
 
 ```
 
@@ -149,8 +485,8 @@ Considera una tarea cerrada solo cuando:
 
 Claude Code is a supported backend for this template and can act as Builder or Manager depending on the active ticket.
 Prefer the current code and the canonical docs over memory or stale notes.
-Current portable release: `v9.9.0`, copy-ready after the terminal-driven closeout.
-Treat this repository as standalone when editing public docs or commands; do not assume a parent workspace is available.
+Current portable release: `v9.17.1`, workspace+motor architecture stable with autonomous pipeline prompts, motor integrity guards, meta-audit, git publication audit, suite green, encoding guard hardened and CEM v0 adopted.
+This repository is the motor (code-only). The active workspace lives in an external project directory pointed to by `AGENT_PROJECT_ROOT` or `--project-root` (e.g. `z_scripts/` for motor development, or a destination project for deployments). Do not read or write `.agent/collaboration/` in this repo unless explicitly operating in standalone/test mode.
 
 ## Workflow
 
@@ -162,7 +498,7 @@ For any non-trivial change:
 
 If you plan to run the template from terminal, read `QUICKSTART.md` first, then `INTERACTION_MODES.md`, and follow the terminal-driven flow.
 
-For a fresh agent onboarding (new conversation, new backend, post-compaction recovery), use the canonical bootstrap prompt at `prompts/session_bootstrap.md`. Paste it as the first message; it briefs the agent on roles, canonical files, recurring issues and behavior contract without burning context on docs.
+For a fresh agent onboarding (new conversation, new backend, post-compaction recovery), use the canonical bootstrap prompt at `prompts/orchestrator_session_bootstrap.md`. Paste it as the first message; it briefs the agent on roles, canonical files, recurring issues and behavior contract without burning context on docs.
 
 ## Useful commands
 
@@ -179,7 +515,7 @@ If a rule conflicts with the codebase, follow the code and record the discrepanc
 
 ```
 
-## prompts/session_bootstrap.md
+## prompts/orchestrator_session_bootstrap.md
 
 ```markdown
 # Session Bootstrap Prompt
@@ -193,38 +529,95 @@ Pega este bloque tal cual al iniciar una nueva conversacion con un agente nuevo 
 ```
 Eres el agente principal del sistema multi-agente del repositorio orquestador_de_agentes.
 
-## Lectura obligatoria antes de actuar
+## Arranque canonico: 2 comandos + lectura condicional
 
-Lee en este orden, sin omitir ninguno:
+El arranque NO es una lista de lecturas rituales: son dos comandos
+deterministas y despues se lee SOLO lo que el snapshot marque como
+relevante o con drift.
 
-0. `.agent/runtime/audit/AUDIT.md` si existe (snapshot estructurado del cierre anterior, ~40 lineas con version, plan activo, git posture, skills, WPs recientes, health). Si esta presente y fresco (mtime < 24h), puede sustituir los puntos 2-4 siguientes en sesiones rapidas. Si falta o esta stale, regenera con `python scripts/local_audit.py`.
-1. `CLAUDE.md` y `AGENTS.md` (instrucciones transversales).
-2. `QUICKSTART.md` (como arrancar el flujo terminal-driven).
-3. `PROJECT.md` y `CHANGELOG.md` (estado del proyecto, decisiones).
-4. `.agent/collaboration/TURN.md`, `STATE.md`, `work_plan.md`, `execution_log.md` (estado canonico).
-5. `.agent/runtime/memory/MEMORY.md` y `.agent/runtime/memory/observations.jsonl` (memoria persistente del proyecto).
+```powershell
+# 1. Snapshot estructurado fresco (version, plan activo, git posture,
+#    skills, WPs recientes, health — ~40 lineas):
+python scripts/local_audit.py
+# luego lee .agent/runtime/audit/AUDIT.md
+
+# 2. Contexto de memoria determinista (L3 perfil -> L2 reglas -> L1 fallback):
+python scripts/memory_context.py --bootstrap
+# Verifica rapidamente el estado de memoria cargada:
+python scripts/memory_context.py --status
+# Si hay ticket activo, prioriza memoria relevante con:
+# python scripts/memory_context.py --recall --ticket <TICKET_ID>
+```
+
+**Lectura condicional (solo si el snapshot lo pide):**
+- `CLAUDE.md`/`AGENTS.md`: ya los autocarga el entorno en la mayoria de
+  backends; leelos solo si tu backend no los inyecta.
+- `work_plan.md` + `execution_log.md`: solo si AUDIT.md muestra un ticket
+  activo no-COMPLETED.
+- `PROJECT.md`/`CHANGELOG.md`: solo si la tarea toca arquitectura o si
+  AUDIT.md reporta drift de version.
+- `QUICKSTART.md`: solo para operar el flujo terminal-driven.
+- `REPOSITORY_STRUCTURE.md`: solo para ubicar un subsistema desconocido.
+
+## Vocabulario canónico (no usar "workspace" a secas)
+
+| Término | Significado |
+|---------|-------------|
+| `repo_motor` | `orquestador_de_agentes/` — motor portable, fuente canónica |
+| `repo_destino` | El proyecto que usa el motor; tiene su propio `.agent/` |
+| `workspace_activo` | Raíz operativa con `.agent/` desde la que corre el ticket actual |
+| `entorno_multi_root` | IDE con `repo_motor` + `repo_destino` abiertos simultáneamente |
+
+Regla de repos: toda operación git de tooling corre en `repo_motor`. El estado operativo (tickets, memoria de proyecto) vive en `repo_destino`.
 
 ## Resumen breve del sistema
 
-- **Runtime activo:** `orquestador_de_agentes/` (repo portable).
+- **Runtime activo:** `orquestador_de_agentes/` (`repo_motor`, portable).
 - **Roles:** Manager (OpenCode via `scripts/manager_review_bridge.py`, modelo configurable en `.agent/config/agents.json`) y Builder (OpenCode, modelo `opencode-go/deepseek-v4-flash`).
 - **Bus canonico:** `.agent/runtime/events/events.jsonl` (append-only, autoridad absoluta).
 - **Proyecciones:** `TURN.md`, `STATE.md`, `work_plan.md`, `execution_log.md` se derivan del bus.
+- **Namespaces de tickets:** el `<PREFIX>` de ticket se lee del contrato del repo activo (`AGENTS.md`/`CLAUDE.md` autocargado del destino); `WOT-` es prefijo SOLO del motor/dogfooding, no universal. Motor usa `WOT-YYYY-NNNx` (canonical; `WP-`/`WT-` legacy historico); destino usa `XXX-YYYY-NNN` declarado en su contrato local. Verificacion via `agent_controller --validate`.
 - **Launcher:** `scripts/launch_agent_terminals.ps1` abre Supervisor + Bridge + Builder segun `TURN.md`. WP-2026-067 integro OpenCode con prompt compuesto desde ticket.
 - **Config de agentes:** `.agent/config/agents.json` mapea backend->ejecutable. Builder=opencode, Manager=opencode, Supervisor=default.
-- **Validate:** `python .agent/agent_controller.py --validate --json --force` debe pasar antes de cualquier cierre.
-- **Quality gates:** `ruff check .`, `python scripts/run_pytest_safe.py`, `pip-audit`.
+- **Validate:** `python .agent/agent_controller.py --validate --json --force` debe pasar antes de cualquier cierre. Verifica entre otras cosas que destinos `host-project` tengan `Ticket prefix:` declarado.
+- **Quality gates:** `ruff check .`, `python scripts/run_pytest_safe.py`, `python scripts/pip_audit_project.py`.
+
+## Enrutado de trabajo nuevo
+
+Si la peticion del usuario es una feature nueva, creacion/mejora amplia de un
+repo, trabajo multi-ticket, cambio arquitectonico o integracion motor-destino,
+no saltes directamente a implantar desde backlog. Primero comprueba si existe
+un contrato de formacion en `.agent/planning/`:
+
+- `repo_charter.md`
+- `plan_graph.md`
+- `ticket_contracts.md`
+- `evidence_catalog.md`
+- `decisions.md`
+
+Si no existe o esta incompleto, recomienda usar el Contract Formation Pipeline
+antes de `orchestrator_pipeline.md`. El pipeline de implantacion es autonomo
+cuando el contrato esta congelado; la fase de definicion requiere decisiones del
+usuario.
 
 ## Ciclo canonico de un ticket
 
 > Flujo completo y arquitectura: ver [PROJECT.md sección "Current architecture"](../PROJECT.md#current-architecture).
 
-1. Manager crea `work_plan.md` (DRAFT) y opcionalmente `PLAN_WP-XXXX.md` (estrategia tecnica) + `AUDIT_WP-XXXX.md` (criterios de auditoria). User aprueba editando work_plan a APPROVED.
-2. Builder implementa y al final ejecuta `python .agent/agent_controller.py --mark-ready --json --force` que emite `BUILDER_EXIT` y luego `STATE_CHANGED -> READY_FOR_REVIEW` al bus (orden fijado por WP-074).
+1. Manager crea `work_plan.md` (DRAFT) y opcionalmente `STRATEGY_WOT-XXXX.md` (estrategia tecnica) + `AUDIT_WOT-XXXX.md` (criterios de auditoria). User aprueba editando work_plan a APPROVED.
+   - En un proyecto destino, el ID debe usar el namespace local definido en el contrato del repo (`AGENTS.md`/`CLAUDE.md` autocargado del destino); verificacion via `agent_controller --validate`. `WOT-` es prefijo SOLO del motor/dogfooding. El instalador puede escribir este prefijo con `--install --prefix XXX`.
+2. Builder implementa. El launcher envuelve el runner en try/finally: al salir (crash, fin normal o timeout), ejecuta automaticamente `--pre-handoff` y `--mark-ready --json --force`, que emiten `BUILDER_EXIT` y `STATE_CHANGED -> READY_FOR_REVIEW` al bus. El Builder no necesita ejecutar el cierre manualmente.
 3. Bridge dispara OpenCode review automaticamente. Si aprueba -> cascada hasta COMPLETED.
 4. Markdowns se sincronizan a COMPLETED. Commit + push.
 
-**Manager devuelve `inspect`:** patron recurrente (WP-075, WP-076). El bridge ejecuta el review pero el parser no extrae `DECISION: APPROVE|CHANGES`. Workaround: verificar el trabajo manualmente (`git diff`, `--validate`, walk-through) y ejecutar `python .agent/agent_controller.py --manager-approve --ticket WP-XXXX --force` para disparar la cascada de cierre. No es fabricacion: el codigo del Builder esta bien, solo falla el handshake textual.
+## Reflejos CEM v0
+
+- **Contrato antes que fix:** identifica que comportamiento canonico protege el cambio antes de modificar codigo o tests.
+- **Evidencia antes que relato:** ningun auto-reporte de agente es evidencia; verifica con diff, test, exit code, bus o artefacto real.
+- **Rigor proporcional:** ajusta gates y pruebas al blast radius y reversibilidad del cambio.
+- **Root/topologia antes de relaunch:** valida `AGENT_PROJECT_ROOT`, `repo_motor`, `repo_destino`, bus legible y ticket activo antes de abrir Builder.
+
+**Manager devuelve `inspect` / CHANGES fantasma:** la causa raiz se corrigio en WP-2026-120 (el parser JSON del bridge leia un schema inexistente). Ya NO es comportamiento esperado: si reaparece un `changes` con `attempt-N.md` de BLOCKERS vacios, es una regresion del parser en `bus/review_bridge.py` — investigarla, no normalizarla. Cierre manual canonico si hace falta: `python .agent/agent_controller.py --manager-approve --ticket WOT-XXXX --force`.
 
 ## Reglas no negociables
 
@@ -232,7 +625,7 @@ Lee en este orden, sin omitir ninguno:
 - **No mezcles chat y terminal** sin sincronizar TURN/STATE/execution_log.
 - **`.codex/` y `*.log` estan gitignorados** (rollouts con prompts sensibles). No los toques.
 - **OAuth race Codex:** Resuelto por WP-072 mediante el cambio al backend OpenCode. La dependencia de Codex como backend del Manager ha sido eliminada por defecto.
-- **Manager-approve CLI:** Se realiza mediante `python .agent/agent_controller.py --manager-approve --ticket WP-XXXX --force` (canonical closeout sin scripts ad-hoc).
+- **Manager-approve CLI:** Se realiza mediante `python .agent/agent_controller.py --manager-approve --ticket WOT-XXXX --force` (canonical closeout sin scripts ad-hoc).
 - **No abras WP nuevos sin instruccion explicita del usuario.**
 
 ## Comportamiento esperado
@@ -259,6 +652,13 @@ Cuando termines la lectura, di "Sistema internalizado" y enumera en 5 lineas max
 - Si ya hay un `work_plan.md` activo IN_PROGRESS — el agente debe leer primero ese, no este bootstrap.
 - En llamadas one-shot a OpenCode/Codex desde el launcher — ahi sirve el prompt compuesto que ya genera `Get-OpenCodeBuilderPrompt`.
 
+## Modo destination-hosted
+
+Si el agente opera sobre un `repo_destino` (proyecto que consume el motor como
+dependencia externa), NO uses este prompt. Usa en su lugar `destination_bootstrap.md`
+(prompts/orchestrator_destination_bootstrap.md), que proporciona el arranque canonico para
+destinos con resolucion de motor_root via `motor_destination_link.json`.
+
 ## Mantenimiento
 
 Actualiza este archivo cuando:
@@ -274,10 +674,16 @@ No lo conviertas en sustituto de `PROJECT.md` o `CHANGELOG.md`: este bootstrap a
 
 ```markdown
 ---
-name: Local Audit
-version: 1.0.0
+name: local-audit
+version: 2.0.0
 description: Genera un snapshot rapido y estructurado del estado actual del repositorio, util para arranque de sesion y antes de comparaciones con otros repositorios.
-triggers: [/audit, /local-audit, /snapshot]
+triggers: [/local-audit, /repo-audit, /snapshot]
+author: agent
+role: shared
+stage: support
+writes_memory: false
+quality_gate: false
+tags: [core, system]
 ---
 
 # local-audit
@@ -322,15 +728,21 @@ Si el reporte indica que hay `Errors` o `Warnings` en la sección "Health Check"
 
 ```markdown
 ---
-name: Repo Compare
-version: 1.0.0
+name: repo-compare
+version: 2.1.0
 description: Comparar proyecto local con repositorio GitHub para detectar funcionalidades de alto valor
 triggers: [/repo-compare, /compare, /gh-compare]
+author: agent
+role: shared
+stage: support
+writes_memory: false
+quality_gate: false
+tags: [core, system]
 ---
 
 # repo-compare
 
-Skill para comparar el proyecto local (`z_scripts/`) con cualquier repositorio público de GitHub y detectar funcionalidades, utilidades o patrones de alto valor que se puedan incorporar.
+Skill para comparar el proyecto local (identificado desde `.agent/runtime/audit/AUDIT.md`) con cualquier repositorio público de GitHub y detectar funcionalidades, utilidades o patrones de alto valor que se puedan incorporar.
 
 Usa `.agent/runtime/audit/AUDIT.md` como **Fase 0 autoritativa** del contexto local, eliminando hallucinación sobre "qué ya existe". Lee el repo remoto vía GitHub MCP (`mcp__github__get_file_contents`, `mcp__github__search_code`).
 
@@ -346,9 +758,25 @@ Usa `.agent/runtime/audit/AUDIT.md` como **Fase 0 autoritativa** del contexto lo
 - Si el repo target es privado (MCP GitHub solo lee públicos).
 - Si el usuario solo quiere una búsqueda puntual de código (usar `mcp__github__search_code` directo).
 
+## Repomix Acceleration (WT-2026-182)
+
+Para acelerar la comparación, el skill puede usar `repomix` con `--compress` para generar
+vistas comprimidas del proyecto local y (opcionalmente) del remoto, reduciendo el consumo
+de tokens y eliminando la exploración manual.
+
+- **Local:** Ejecutar `npx repomix --style xml --compress --output .session/repomix_local.xml`
+  desde la raíz del proyecto. El resultado contendrá firmas de funciones y estructura
+  de directorios sin implementaciones (modo compress).
+- **Remoto:** Clonar el repositorio remoto a un directorio temporal, ejecutar repomix
+  en él y guardar el resultado en `.session/repomix_remote.xml`. Luego limpiar el clon.
+- **Config:** El proyecto debe tener un `repomix.config.json` en la raíz (provisionado
+  por `install_agent_system.py`) para personalizar patrones de ignorado y formato.
+- **Fallback:** Si `npx repomix` no está disponible o falla, continuar con el flujo
+  tradicional (AUDIT.md + MCP GitHub).
+
 ## Workflow (5 pasos)
 
-### Paso 1: Preflight AUDIT
+### Paso 1: Preflight AUDIT & Repomix Context
 - Verificar `.agent/runtime/audit/AUDIT.md`:
   - Si falta o `generated_at > 24h`: intentar ejecutar `python scripts/local_audit.py --quick` automáticamente.
   - Si el entorno no permite shell: pedir al usuario que lo ejecute.
@@ -371,10 +799,11 @@ Usa `.agent/runtime/audit/AUDIT.md` como **Fase 0 autoritativa** del contexto lo
 ### Paso 5: Output (Fase 3+4)
 - 3-5 oportunidades con plantilla canónica (ver `references/output-format.md`).
 - Cada oportunidad incluye:
-  - Campo `¿Ya existe en z_scripts?` citando ruta + sección de AUDIT.md (no `Yes/No` a secas).
+  - Campo `¿Ya existe en el proyecto local?` citando ruta + sección de AUDIT.md (no `Yes/No` a secas).
   - Campo `📎 Fuente verificada: [AUDIT.md sección X | GitHub: owner/repo/path:L# | Ambos]`.
 - Matriz final (Impacto / Esfuerzo / Encaje / Decisión).
 - Sección "Qué Ignorar" + "Acción Inmediata".
+- **Bloque candidato CREDITS** al final del reporte (ver `references/output-format.md` sección "Credits Block Template"): tabla con una fila Markdown lista para pegar en `CREDITS.md` cuando el humano decida adoptar la idea. **El agente NO escribe en CREDITS.md directamente** — solo emite el bloque sugerido.
 - Persistir output a `.agent/runtime/compare/<owner>-<repo>-<ref>-<YYYY-MM-DD>.md` (default `ref=HEAD`, idealmente capturar SHA real vía `mcp__github__list_commits` paginación 1).
 
 ## Constraints

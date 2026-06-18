@@ -10,12 +10,12 @@
 
 | kind | total |
 |------|-------|
-| prompt | 21 |
+| prompt | 26 |
 | reference | 33 |
 | script-consumer | 5 |
 | shared | 3 |
 | skill | 29 |
-| **total** | **91** |
+| **total** | **96** |
 
 ## Entradas
 
@@ -37,7 +37,12 @@
 | prompt | `prompts/launch_builder.md` | active | system | model-invoked | — |
 | prompt | `prompts/manager_review.md` | active | system | model-invoked | — |
 | prompt | `prompts/memory_upload.md` | active | system | model-invoked | — |
+| prompt | `prompts/orchestrator_destination_bootstrap.md` | active | system | model-invoked | — |
+| prompt | `prompts/orchestrator_launch_builder.md` | active | system | model-invoked | — |
 | prompt | `prompts/orchestrator_pipeline.md` | active | system | model-invoked | — |
+| prompt | `prompts/orchestrator_refactor_bootstrap.md` | active | system | model-invoked | — |
+| prompt | `prompts/orchestrator_session_bootstrap.md` | active | system | model-invoked | — |
+| prompt | `prompts/orchestrator_session_close_chat.md` | active | system | model-invoked | — |
 | prompt | `prompts/refactor_bootstrap.md` | active | system | model-invoked | — |
 | prompt | `prompts/review_manager.md` | active | system | model-invoked | — |
 | prompt | `prompts/session_bootstrap.md` | active | system | model-invoked | — |

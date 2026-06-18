@@ -460,18 +460,24 @@ class TestBootstrap:
         assert ctx == ""
 
     def test_session_bootstrap_references_real_bootstrap_command(self):
-        """TP-09: session_bootstrap.md references the real bootstrap CLI."""
+        """TP-09: the canonical bootstrap prompt references the real CLI.
+
+        WOT-2026-008h renamed session_bootstrap.md -> the orchestrator_* canonical;
+        the operational content lives there now, the legacy name is a stub.
+        """
         bootstrap_path = (
-            Path(__file__).resolve().parents[1] / "prompts" / "session_bootstrap.md"
+            Path(__file__).resolve().parents[1]
+            / "prompts"
+            / "orchestrator_session_bootstrap.md"
         )
-        assert bootstrap_path.exists(), "session_bootstrap.md not found"
+        assert bootstrap_path.exists(), "orchestrator_session_bootstrap.md not found"
 
         content = bootstrap_path.read_text(encoding="utf-8")
         assert "memory_context.py --bootstrap" in content, (
-            "session_bootstrap.md should reference the real bootstrap CLI"
+            "canonical bootstrap should reference the real bootstrap CLI"
         )
         assert "memory_context.py --status" in content, (
-            "session_bootstrap.md should reference the status command"
+            "canonical bootstrap should reference the status command"
         )
 
     def test_memory_context_cli_script_exists(self):
@@ -561,3 +567,66 @@ class TestLoaderFallback:
         assert "L2 content" in ctx
         # There should be a separator between them
         assert "---" in ctx
+
+
+# WOT-2026-008h: orchestrator prompt rename (5 prompts -> orchestrator_*).
+
+_ORCH_RENAMES = {
+    "launch_builder": "orchestrator_launch_builder",
+    "session_bootstrap": "orchestrator_session_bootstrap",
+    "session_close_chat": "orchestrator_session_close_chat",
+    "destination_bootstrap": "orchestrator_destination_bootstrap",
+    "refactor_bootstrap": "orchestrator_refactor_bootstrap",
+}
+_PROMPTS = Path(__file__).resolve().parents[1] / "prompts"
+
+
+class TestOrchestratorRename008h:
+    """Migration proof rests on canonicals + stubs + source_prompt + rg, NOT on
+    --check-naming (the legacy names are lexically valid, so naming stays green
+    regardless of whether the migration happened)."""
+
+    def test_canonical_prompts_exist(self):
+        for canon in _ORCH_RENAMES.values():
+            assert (_PROMPTS / f"{canon}.md").exists(), f"missing canonical {canon}"
+
+    def test_legacy_names_survive_as_stubs(self):
+        for legacy, canon in _ORCH_RENAMES.items():
+            path = _PROMPTS / f"{legacy}.md"
+            assert path.exists(), f"legacy stub {legacy}.md must survive"
+            content = path.read_text(encoding="utf-8")
+            assert "Legacy alias" in content, f"{legacy}.md must be a stub"
+            assert canon in content, f"{legacy}.md stub must point at {canon}"
+
+    def test_stub_does_not_duplicate_operational_content(self):
+        # The stub must NOT carry the real prompt body (avoid drift).
+        stub = (_PROMPTS / "session_bootstrap.md").read_text(encoding="utf-8")
+        assert "memory_context.py --bootstrap" not in stub
+
+    def test_builder_source_prompt_points_at_canonical(self):
+        skill = (
+            Path(__file__).resolve().parents[1]
+            / "skills"
+            / "bui-implement-from-plan"
+            / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        assert "source_prompt: prompts/orchestrator_launch_builder.md" in skill
+        assert "source_prompt: prompts/launch_builder.md" not in skill
+
+    def test_compat_not_dependent_on_known_legacy_names(self):
+        # The orchestrator legacy names must NOT live in KNOWN_LEGACY_NAMES: they
+        # are lexically valid on their own, so tolerance is not via hardcode.
+        from scripts.discover_skills import KNOWN_LEGACY_NAMES
+
+        for legacy in _ORCH_RENAMES:
+            assert legacy not in KNOWN_LEGACY_NAMES
+
+    def test_no_legacy_source_prompt_in_any_skill(self):
+        # Negative/regression: no live skill may still bind to a legacy prompt.
+        skills_dir = Path(__file__).resolve().parents[1] / "skills"
+        for skill_file in skills_dir.rglob("SKILL.md"):
+            content = skill_file.read_text(encoding="utf-8")
+            for legacy in _ORCH_RENAMES:
+                assert f"source_prompt: prompts/{legacy}.md" not in content, (
+                    f"{skill_file} still binds to legacy {legacy}.md"
+                )

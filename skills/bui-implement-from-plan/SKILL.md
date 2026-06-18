@@ -9,7 +9,7 @@ stage: implement
 writes_memory: false
 quality_gate: false
 tags: [core, system]
-source_prompt: prompts/launch_builder.md
+source_prompt: prompts/orchestrator_launch_builder.md
 contract_id: cid-bui-implement-v1
 ---
 

@@ -37,7 +37,7 @@ Usar para:
 - sincronizar un destino ya instalado con el motor actual;
 - verificar que un destino quedo enlazado al motor correcto;
 - preparar el primer ciclo operativo antes de usar
-  `prompts/destination_bootstrap.md`.
+  `prompts/orchestrator_destination_bootstrap.md`.
 
 No usar para:
 
@@ -115,7 +115,7 @@ Resultado esperado:
 
 ## Primer ciclo operativo
 
-1. Usar `prompts/destination_bootstrap.md` para arrancar una sesion en el
+1. Usar `prompts/orchestrator_destination_bootstrap.md` para arrancar una sesion en el
    destino.
 2. Si se van a ejecutar varios tickets, usar
    `prompts/orchestrator_pipeline.md` y

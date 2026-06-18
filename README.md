@@ -210,7 +210,7 @@ python .agent/agents_config.py --migrate [--dry-run]
 - `REPOSITORY_STRUCTURE.md` — internal layout and public boundary
 - `CHANGELOG.md` — change history (WP-by-WP)
 - `CREDITS.md` — external attributions (every WP with `Origen externo` has a row)
-- `prompts/session_bootstrap.md` — canonical onboarding prompt for fresh agent sessions
+- `prompts/orchestrator_session_bootstrap.md` — canonical onboarding prompt for fresh agent sessions
 
 ## License
 

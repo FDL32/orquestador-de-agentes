@@ -106,15 +106,15 @@ Lee primero, como minimo:
 - `.agent/collaboration/work_plan.md` si existe, para detectar trabajo activo
 - `.agent/collaboration/backlog.md` si existe, para evitar tickets duplicados
 - `.agent/runtime/audit/AUDIT.md` si existe
-- `prompts/session_bootstrap.md`
+- `prompts/orchestrator_session_bootstrap.md`
 - `prompts/manager_review.md`
-- `prompts/launch_builder.md`
+- `prompts/orchestrator_launch_builder.md`
 - `prompts/memory_upload.md`
 - `skills/code-audit/SKILL.md`
 - `skills/graphify/SKILL.md`
 - `skills/repo-compare/SKILL.md`
 - `skills/local-audit/SKILL.md`
-- `prompts/destination_bootstrap.md`
+- `prompts/orchestrator_destination_bootstrap.md`
 - `skills/orchestrate-pipeline/SKILL.md`
 - `skills/orchestrate-pipeline/references/destination-preflight.md`
 - `skills/system-health-audit/SKILL.md`

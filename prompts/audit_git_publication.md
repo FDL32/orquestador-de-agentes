@@ -22,7 +22,7 @@ ticket activo.
 Usa las herramientas en este orden segun el objetivo:
 
 1. Instalacion/sync del destino: `skills/setup-agent-system/SKILL.md`.
-2. Bootstrap operativo: `prompts/destination_bootstrap.md`.
+2. Bootstrap operativo: `prompts/orchestrator_destination_bootstrap.md`.
 3. Gate pre-push de estado vivo: `scripts/check_destino_publish_ready.py`.
 4. Auditoria de publicacion Git: este prompt + `scripts/classify_publication.py`.
 

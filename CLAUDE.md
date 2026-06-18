@@ -19,7 +19,7 @@ For any non-trivial change:
 
 If you plan to run the template from terminal, read `QUICKSTART.md` first, then `INTERACTION_MODES.md`, and follow the terminal-driven flow.
 
-For a fresh agent onboarding (new conversation, new backend, post-compaction recovery), use the canonical bootstrap prompt at `prompts/session_bootstrap.md`. Paste it as the first message; it briefs the agent on roles, canonical files, recurring issues and behavior contract without burning context on docs.
+For a fresh agent onboarding (new conversation, new backend, post-compaction recovery), use the canonical bootstrap prompt at `prompts/orchestrator_session_bootstrap.md`. Paste it as the first message; it briefs the agent on roles, canonical files, recurring issues and behavior contract without burning context on docs.
 
 ## Useful commands
 

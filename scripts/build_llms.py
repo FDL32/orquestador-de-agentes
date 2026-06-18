@@ -79,13 +79,13 @@ ENTRIES: list[tuple[str, str, str]] = [
         "Debugging & introspection",
     ),
     (
-        "session_bootstrap.md",
-        "prompts/session_bootstrap.md",
+        "orchestrator_session_bootstrap.md",
+        "prompts/orchestrator_session_bootstrap.md",
         "Philosophy & onboarding",
     ),
     (
-        "refactor_bootstrap.md",
-        "prompts/refactor_bootstrap.md",
+        "orchestrator_refactor_bootstrap.md",
+        "prompts/orchestrator_refactor_bootstrap.md",
         "Philosophy & onboarding",
     ),
     (
@@ -119,7 +119,7 @@ ENTRIES: list[tuple[str, str, str]] = [
 INLINE_IN_FULL: list[str] = [
     "AGENTS.md",
     "CLAUDE.md",
-    "prompts/session_bootstrap.md",
+    "prompts/orchestrator_session_bootstrap.md",
     "skills/local-audit/SKILL.md",
     "skills/repo-compare/SKILL.md",
 ]

@@ -315,7 +315,7 @@ Esta skill define el **protocolo** (5 fases). Los prompts operativos viven en ar
 
 - `PROMPT_TEMPLATE.md` — Meta-prompt largo: rol, invariantes, clasificacion A/B/C/D, preflight, criterios de aceptacion, plan de rollback. Pasalo como contexto base al agente ejecutor.
 - `EXECUTION_PROMPT.md` — Prompts cortos del dia a dia: analisis + plan, aplicar sub-fase, foco en zona concreta, auditoria "no hace falta refactor", tests de caracterizacion.
-- `../../prompts/refactor_bootstrap.md` — Paste-ready para arrancar una sesion nueva de refactor con cualquier backend.
+- `../../prompts/orchestrator_refactor_bootstrap.md` — Paste-ready para arrancar una sesion nueva de refactor con cualquier backend.
 
 ## Referencias
 

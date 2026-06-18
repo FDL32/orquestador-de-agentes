@@ -26,8 +26,8 @@ Repo: https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main
 
 ## Philosophy & onboarding
 
-- [session_bootstrap.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/prompts/session_bootstrap.md)
-- [refactor_bootstrap.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/prompts/refactor_bootstrap.md)
+- [orchestrator_session_bootstrap.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/prompts/orchestrator_session_bootstrap.md)
+- [orchestrator_refactor_bootstrap.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/prompts/orchestrator_refactor_bootstrap.md)
 
 ## Skills (read RESOLVER first)
 

@@ -26,7 +26,7 @@ Expected current flow:
 - use `active_profile: host-project` for destination installs;
 - run operational commands with `--project-root <repo_destino>` or
   `AGENT_PROJECT_ROOT=<repo_destino>`;
-- use `prompts/destination_bootstrap.md` only after the destination is installed.
+- use `prompts/orchestrator_destination_bootstrap.md` only after the destination is installed.
 
 For Git/publication readiness, use:
 

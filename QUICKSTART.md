@@ -2,7 +2,7 @@
 
 Use this file to start the template in a fresh project, relaunch the terminal-driven workflow, or begin the next planning cycle after canonical closure.
 
-> **Onboarding de agente nuevo:** si arrancas una sesion limpia con un agente que no conoce el repo, pega primero el bootstrap canonico en `prompts/session_bootstrap.md`. Eso lo orienta sobre roles, archivos canonicos y reglas sin gastar contexto cargando docs completas.
+> **Onboarding de agente nuevo:** si arrancas una sesion limpia con un agente que no conoce el repo, pega primero el bootstrap canonico en `prompts/orchestrator_session_bootstrap.md`. Eso lo orienta sobre roles, archivos canonicos y reglas sin gastar contexto cargando docs completas.
 > **Memoria existente:** antes de empezar, revisa `.agent/runtime/memory/MEMORY.md` (indice corto) y `.agent/runtime/memory/observations.jsonl` (historial completo). Si la memoria esta vacia o ausente, se construye al cerrar el primer ciclo.
 
 Namespace de tickets:
