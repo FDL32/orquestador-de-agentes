@@ -71,12 +71,13 @@ porque lo usan varios roles.
 
 ### 5. Tabla congelada de prompts
 
-Estado verificado del arbol `prompts/` al crear la DEC: 20 archivos fisicos,
-19 canonicos/operativos y 1 legacy stub.
+Estado verificado del arbol `prompts/` al crear la DEC: 21 archivos fisicos,
+20 canonicos/operativos y 1 legacy stub (`review_manager.md`).
 
 | Archivo fisico | Clasificacion canonica | Nota |
 |----------------|------------------------|------|
 | `launch_builder.md` | future `orchestrator_launch_builder.md` | rename en lote posterior |
+| `orchestrator_pipeline.md` | `orchestrator_pipeline.md` | ya canonico; pipeline transversal del orchestrator |
 | `session_bootstrap.md` | future `orchestrator_session_bootstrap.md` | rename en lote posterior |
 | `session_close_chat.md` | future `orchestrator_session_close_chat.md` | rename en lote posterior |
 | `destination_bootstrap.md` | future `orchestrator_destination_bootstrap.md` | rename en lote posterior |
@@ -97,8 +98,9 @@ Estado verificado del arbol `prompts/` al crear la DEC: 20 archivos fisicos,
 | `contract_formation_pipeline.md` | `contract_formation_*` family | pipeline transversal |
 | `review_manager.md` | legacy stub alias | alias de `manager_review.md` |
 
-Resumen: 5 futuros `orchestrator_*`, 1 `manager_*`, 12 `audit_*` family, 1
-`memory_*` family, 1 `contract_formation_*` family y 1 legacy stub.
+Resumen: 6 `orchestrator_*` relacionados (5 futuros renames y 1 ya canonico),
+1 `manager_*`, 11 `audit_*` family, 1 `memory_*` family,
+1 `contract_formation_*` family y 1 legacy stub.
 
 ### 6. Plan de lotes con shims
 
@@ -107,7 +109,7 @@ de consumidores antes/despues.
 
 | Ticket | Alcance propuesto | Nota |
 |--------|-------------------|------|
-| 008h | Renombrar 5 prompts de orchestrator | si el contrato confirma los consumidores |
+| 008h | Renombrar 5 prompts de orchestrator | `orchestrator_pipeline.md` ya es canonico y no entra en el rename |
 | 008i | Expandir `man-*` a `manager-*` | solo si la DEC final confirma que el coste compensa |
 | 008j | Expandir `bui-*` a `builder-*` | solo si la DEC final confirma que el coste compensa |
 | 008k | Formalizar `role: auditor` en frontmatter de skills auditoras | sin rename de directorio salvo nuevo contrato |
