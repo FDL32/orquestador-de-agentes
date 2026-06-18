@@ -310,6 +310,110 @@ def check_git_tree_clean(project_root: Path) -> HygieneResult:
     )
 
 
+# WOT-2026-010u: plan/audit artifact name prefixes that the archiver moves into
+# _archive/plan_audit/. A deletion of one of these with a matching untracked copy
+# under _archive/plan_audit/ is an UNCOMMITTED RENAME, not a normal dirty file.
+_ARCHIVABLE_PREFIXES = ("STRATEGY_", "AUDIT_", "PLAN_")
+_ARCHIVE_REL_DIR = ".agent/collaboration/_archive/plan_audit"
+
+
+def _basename(path: str) -> str:
+    return path.replace("\\", "/").rsplit("/", 1)[-1]
+
+
+def _is_archivable_collab_artifact(rel_path: str) -> bool:
+    p = rel_path.replace("\\", "/")
+    name = _basename(p)
+    return p.startswith(".agent/collaboration/") and name.startswith(
+        _ARCHIVABLE_PREFIXES
+    )
+
+
+def check_archive_rename_complete(project_root: Path) -> HygieneResult:
+    """Detect an uncommitted archival rename (WOT-2026-010u).
+
+    Before: ``archive_collaboration_artifacts.py`` moves a closed STRATEGY_/AUDIT_/
+    PLAN_ artifact into ``_archive/plan_audit/`` with ``shutil.move`` and does NOT
+    ``git add``/commit. Git then shows the original as deleted and the archived copy
+    as untracked -- a rename that was never recorded.
+
+    During: parse ``git status --porcelain``. A deleted collaboration artifact whose
+    basename also appears as an untracked file under ``_archive/plan_audit/`` is the
+    limbo state. A bare deletion WITHOUT an archived copy is a normal dirty file and
+    is NOT reported here (no false positive). Unrelated files are ignored.
+
+    After: returns ``passed=False`` with a stable reason ``archive_rename_uncommitted``
+    and a self-service remediation naming the exact ``git add``/``commit`` command.
+    Never auto-commits and never deletes anything.
+    """
+    try:
+        # --untracked-files=all so an untracked archived copy is listed as an
+        # individual file (git otherwise collapses a new dir like _archive/ to its
+        # top level, hiding the renamed artifact).
+        result = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all"],  # noqa: S607
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return HygieneResult(
+            passed=False,
+            message="GIT NO DISPONIBLE",
+            details=["El comando 'git' no esta disponible en PATH"],
+        )
+    if result.returncode != 0:
+        return HygieneResult(
+            passed=False,
+            message="ERROR AL EJECUTAR GIT STATUS",
+            details=[result.stderr.strip() or f"Exit code: {result.returncode}"],
+        )
+
+    deleted_artifacts: dict[str, str] = {}
+    archived_untracked: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        if len(line) < 4:
+            continue
+        code, path = line[:2], line[3:].strip().strip('"')
+        rel = path.replace("\\", "/")
+        # Deleted collaboration artifact (staged or unstaged delete).
+        if "D" in code and _is_archivable_collab_artifact(rel):
+            deleted_artifacts[_basename(rel)] = rel
+        # Untracked copy already sitting in the archive dir.
+        elif code == "??" and rel.startswith(_ARCHIVE_REL_DIR + "/"):
+            archived_untracked[_basename(rel)] = rel
+
+    pairs = [
+        (deleted_artifacts[name], archived_untracked[name])
+        for name in sorted(deleted_artifacts)
+        if name in archived_untracked
+    ]
+    if not pairs:
+        return HygieneResult(
+            passed=True,
+            message="Sin renames de archivado pendientes",
+        )
+
+    details = [
+        "archive_rename_uncommitted: el archivador movio artefactos cerrados a "
+        "_archive/plan_audit/ pero el rename no quedo commiteado (delete+untracked).",
+    ]
+    for old, new in pairs:
+        details.append(f"  origen: {old}")
+        details.append(f"  destino: {new}")
+    remediation_paths = " ".join(f"{old} {new}" for old, new in pairs)
+    details.append(
+        f"Remediacion (registra el rename, no borra): "
+        f'git add -- {remediation_paths} && git commit -m "chore: reconcile archival rename"'
+    )
+    return HygieneResult(
+        passed=False,
+        message="ARCHIVE_RENAME_UNCOMMITTED",
+        details=details,
+    )
+
+
 def check_cross_root_isolation(
     project_root: Path,
     motor_root: Path,
@@ -457,6 +561,14 @@ def run_delivery_hygiene_check(  # noqa: C901
         results.append(result)
         if not result.passed:
             all_passed = False
+
+    # Verificacion 5: rename de archivado pendiente (WOT-2026-010u). Independiente
+    # de check_tree: detecta el limbo delete+untracked que check_git_tree_clean
+    # solo reporta como dirty generico, nombrando la remediacion exacta del rename.
+    result = check_archive_rename_complete(project_root)
+    results.append(result)
+    if not result.passed:
+        all_passed = False
 
     # Imprimir reporte
     print("=" * 60)
