@@ -12,6 +12,23 @@
 
 No aceptes auto-reportes como evidencia. Un output de agente solo es confiable si sus claims importantes se sostienen contra artefactos reales: diff, codigo, tests, exit code, bus, estado git, bytes o documentacion canonica.
 
+## Frontera del auditor
+
+`audit_agent_output.md` audita **fidelidad del output contra contrato y
+evidencia**, no **logica de negocio** ni **calidad de la implementacion**
+salvo cuando el propio claim auditado afirma hechos sobre ellas.
+
+- Pregunta central del auditor: "esto que el agente dijo, esta sostenido por
+  artefactos reales?"
+- Pregunta que NO le toca resolver por defecto: "la solucion elegida es la
+  mejor, la arquitectura es elegante o la logica de negocio es correcta?"
+
+Esos juicios pertenecen a `manager_review.md` o al contrato del ticket. Si
+durante la auditoria aparece una duda de producto, arquitectura o
+conveniencia de implementacion, marcala como `fuera del alcance de
+fidelidad` o deriva al Manager en vez de reescribir el review de
+implementacion desde el prompt de output.
+
 ## Pre-requisito: Verificacion topologica DEL AUDITOR
 
 Antes de validar claims sobre archivos, estado o artefactos, verifica TU
