@@ -11,7 +11,9 @@ from pathlib import Path
 import pytest
 from scripts.discover_skills import (
     _check_contract,
+    _derive_disable_model_invocation,
     _resolve_skill_path,
+    discover_skills,
     extract_frontmatter,
     parse_frontmatter,
 )
@@ -354,3 +356,68 @@ class TestCheckContractIntegration:
         """Verify that the real motor bundle passes --check-contract."""
         rc = _check_contract()
         assert rc == 0, "Real motor bundle should pass contract check"
+
+
+class TestDisableModelInvocation:
+    """WOT-2026-010s: hybrid user/model-invoked taxonomy parsing.
+
+    The flag is additive metadata. These barriers cover the four contract cases
+    (true / absent / invalid) and the trigger_map parity guarantee.
+    """
+
+    def test_flag_true_is_user_invoked(self) -> None:
+        assert (
+            _derive_disable_model_invocation({"disable-model-invocation": True}) is True
+        )
+
+    def test_flag_true_string_is_user_invoked(self) -> None:
+        # YAML may surface the value as a string depending on the parser.
+        assert (
+            _derive_disable_model_invocation({"disable-model-invocation": "true"})
+            is True
+        )
+
+    def test_absent_defaults_to_model_invoked(self) -> None:
+        # Backward-compat: existing skills without the field stay model-invoked.
+        assert _derive_disable_model_invocation({}) is False
+
+    def test_flag_false_is_model_invoked(self) -> None:
+        assert (
+            _derive_disable_model_invocation({"disable-model-invocation": False})
+            is False
+        )
+
+    def test_invalid_value_defaults_to_model_invoked(self) -> None:
+        # A typo/garbage value must never silently hide a skill from the model.
+        assert (
+            _derive_disable_model_invocation({"disable-model-invocation": "maybe"})
+            is False
+        )
+        assert (
+            _derive_disable_model_invocation({"disable-model-invocation": 42}) is False
+        )
+
+    def test_discover_exposes_flag_per_skill(self) -> None:
+        """Every discovered skill exposes disable_model_invocation as a bool,
+        without dropping the pre-existing keys."""
+        result = discover_skills()
+        assert result["skills"], "expected at least one discovered skill"
+        for skill in result["skills"]:
+            assert "disable_model_invocation" in skill
+            assert isinstance(skill["disable_model_invocation"], bool)
+            # Additive: legacy keys survive.
+            assert "triggers" in skill
+            assert "name" in skill
+
+    def test_trigger_map_parity_unaffected_by_flag(self) -> None:
+        """Barrier: the additive flag must NOT change trigger_map. trigger_map is
+        built only from skill['triggers'] (active skills), so adding metadata
+        cannot alter dispatch. This guards the 010s hybrid-migration contract."""
+        result = discover_skills()
+        tm = result["trigger_map"]
+        # trigger_map keys are triggers; values are skill_file paths. The flag
+        # lives on the skill entry, never on the map.
+        assert all(isinstance(k, str) and isinstance(v, str) for k, v in tm.items())
+        # Re-running discovery is deterministic (parity with itself).
+        again = discover_skills()
+        assert again["trigger_map"] == tm

@@ -121,6 +121,9 @@ def _scan_skills_dir(directory: Path | None) -> dict[str, dict[str, Any]]:
             "status": _derive_status(fm),
             "owner": _derive_owner(fm),
             "aliases": list(triggers),
+            # WOT-2026-010s: hybrid user/model-invoked taxonomy. Additive metadata;
+            # does NOT affect trigger_map (triggers: stays the dispatch contract).
+            "disable_model_invocation": _derive_disable_model_invocation(fm),
         }
     return discovered
 
@@ -140,6 +143,25 @@ def _derive_status(fm: dict[str, Any]) -> str:
     raw = fm.get("status", DEFAULT_STATUS)
     value = raw.strip().lower() if isinstance(raw, str) else DEFAULT_STATUS
     return value if value in VALID_STATUS else DEFAULT_STATUS
+
+
+def _derive_disable_model_invocation(fm: dict[str, Any]) -> bool:
+    """Derive the user-invoked flag from frontmatter (WOT-2026-010s).
+
+    Backward-compatible hybrid taxonomy (inspired by mattpocock/skills
+    docs/invocation.md, MIT, Adapted): ``disable-model-invocation: true`` marks a
+    skill as user-invoked (the model must not auto-invoke it; a human or an
+    explicit trigger still can). Absence of the field defaults to ``False``
+    (model-invoked), so existing skills keep their current behaviour and
+    ``trigger_map`` is unaffected. A non-boolean/invalid value also defaults to
+    ``False`` so a typo never silently hides a skill from the model.
+    """
+    raw = fm.get("disable-model-invocation", False)
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        return raw.strip().lower() == "true"
+    return False
 
 
 def _derive_owner(fm: dict[str, Any]) -> str:
