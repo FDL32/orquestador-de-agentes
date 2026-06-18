@@ -45,16 +45,30 @@ prompt+skill, que es la que crea/ensena nomenclatura nueva.
 
 Las skills y prompts ligados a un rol del pipeline anteponen el actor:
 
-- `bui-` / `man-` para skills (forma corta, ya en uso).
-- En prompts, el actor va **primero**: `launch_builder`, no `builder_launch`;
-  la accion describe lo que el orquestador hace al actor.
+- `bui-` / `man-` para skills (forma corta, ya en uso; actor-primero por
+  construccion).
 
-**Regla canonica actor-primero:** cuando un artefacto nombra a un actor del
-pipeline (`manager`, `builder`) Y una accion, el actor va primero
-(`manager_review`, no `review_manager`). Esto agrupa alfabeticamente por actor
-y hace el inventario predecible. Forma corta (`man-`/`bui-`) y forma larga
-(`manager`/`builder`) son ambas validas; no se mezclan dentro de un mismo
-artefacto.
+**Regla canonica actor-primero:** cuando un artefacto empareja un actor del
+pipeline (`manager`, `builder`) con una **accion del pipeline** que el actor
+ejecuta (`review`, `implement`, `create`, `plan`, `audit`, `resolve`,
+`approve`), el actor va primero: `manager_review`, no `review_manager`. Esto
+agrupa alfabeticamente por actor y hace el inventario predecible.
+
+**Alcance preciso de la regla (evita over-matching, AP-16):**
+- La regla SOLO dispara cuando coexisten un token de actor Y un token de accion
+  de pipeline en orden actor-ultimo. `review_manager` la viola; `manager_review`
+  la cumple.
+- **No** dispara cuando `manager`/`builder` es un **sustantivo nucleo** sin
+  accion de pipeline emparejada. Ejemplo: `refactor-manager` (el "manager de
+  refactor"; `refactor` es un dominio, no una accion del pipeline) queda
+  conforme y NO se renombra.
+- **No** dispara con verbos que actuan SOBRE el actor desde el orquestador
+  (`launch`, `setup`, `resume`), que no son acciones que el actor ejecuta:
+  `launch_builder` queda conforme (el orquestador *lanza* al builder). Estos
+  verbos no estan en el set de acciones de pipeline, por eso la regla los ignora.
+
+Forma corta (`man-`/`bui-`) y forma larga (`manager`/`builder`) son ambas
+validas; no se mezclan dentro de un mismo artefacto.
 
 ### 3. Contrato de shim / frontmatter
 

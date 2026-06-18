@@ -11,8 +11,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import scripts.discover_skills as discover_skills
 from scripts.discover_skills import (
     KNOWN_LEGACY_NAMES,
+    _actor_order_violation,
     _check_naming,
     check_naming,
 )
@@ -77,14 +79,64 @@ class TestCheckNamingFailClosed:
         assert len(check_naming(root)) == 3
 
 
+class TestActorFirstRule:
+    """DEC-008D-001 central rule: actor precedes the pipeline action."""
+
+    def test_action_actor_order_flagged(self):
+        # review_manager (action_actor) violates; manager_review is the fix.
+        assert _actor_order_violation("review_manager", "_") is not None
+        assert _actor_order_violation("manager_review", "_") is None
+
+    def test_new_actor_last_case_fails_closed(self):
+        # A brand-new actor-last name (not legacy) must be detected.
+        assert _actor_order_violation("review_builder", "_") is not None
+        assert _actor_order_violation("audit-builder", "-") is not None
+
+    def test_head_noun_not_flagged(self):
+        # refactor-manager: manager is a head noun, no pipeline action present.
+        # Must NOT flag (AP-16 over-matching guard).
+        assert _actor_order_violation("refactor-manager", "-") is None
+
+    def test_launch_builder_exception(self):
+        # launch is not a pipeline action the actor performs -> clean.
+        assert _actor_order_violation("launch_builder", "_") is None
+
+    def test_short_form_actor_first_clean(self):
+        assert _actor_order_violation("man-review-implementation", "-") is None
+        assert _actor_order_violation("bui-implement-from-plan", "-") is None
+
+    def test_new_invalid_actor_name_flagged_via_check_naming(self, tmp_path):
+        # End-to-end: a non-legacy actor-last prompt is reported by check_naming.
+        root = _seed(tmp_path, prompts=["approve_manager"], skills=["good-skill"])
+        violations = check_naming(root)
+        assert len(violations) == 1
+        assert "actor-first" in violations[0]
+        assert "approve_manager" in violations[0]
+
+
 class TestKnownLegacyException:
     def test_legacy_name_tolerated(self, tmp_path):
         # review_manager is declared legacy debt (DEC-008D-001, deferred to 008e).
         assert "review_manager" in KNOWN_LEGACY_NAMES
         root = _seed(tmp_path, prompts=["review_manager"], skills=["good-skill"])
-        # Even though review_manager is technically snake_case-valid, this proves
-        # the exception path does not crash and keeps the tree clean.
+        # review_manager IS detected as an actor-first violation but tolerated
+        # as declared debt -> clean tree.
         assert check_naming(root) == []
+
+    def test_legacy_tolerance_masks_a_real_detection(self, tmp_path, monkeypatch):
+        """The legacy set must tolerate a REAL violation, not bypass the rule.
+
+        With review_manager in KNOWN_LEGACY_NAMES the tree is clean; remove it
+        and the same name must be detected as an actor-first violation. This
+        proves the gate enforces the DEC rule and the legacy set is debt, not a
+        silent pass.
+        """
+        root = _seed(tmp_path, prompts=["review_manager"], skills=["ok"])
+        assert check_naming(root) == []
+        monkeypatch.setattr(discover_skills, "KNOWN_LEGACY_NAMES", frozenset())
+        violations = check_naming(root)
+        assert len(violations) == 1
+        assert "actor-first" in violations[0]
 
     def test_legacy_skill_name_tolerated_even_if_nonconforming(self, tmp_path):
         # A genuinely non-conforming name in the legacy set must be tolerated.

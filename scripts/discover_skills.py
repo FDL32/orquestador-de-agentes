@@ -354,6 +354,21 @@ _PROMPT_NAME_RE = re.compile(r"^[a-z0-9]+(_[a-z0-9]+)*$")
 # Kebab-case skill dir name: lowercase alnum groups joined by single "-".
 _SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
+# Pipeline actor tokens (long form) for the DEC-008D-001 actor-first rule.
+# Short forms `man-`/`bui-` are already actor-first by construction; the rule
+# targets the long-form actors that can appear in either order.
+_ACTOR_TOKENS: frozenset[str] = frozenset({"manager", "builder"})
+
+# Pipeline ACTIONS the actor performs. The actor-first rule only fires when an
+# actor is paired with one of THESE verbs in actor-last order
+# (review_manager -> manager_review). This deliberately excludes head-noun uses
+# like `refactor-manager` (manager is the subject, not paired with a pipeline
+# action) to avoid AP-16 over-matching: a domain word (`refactor`) is not a
+# pipeline action, so refactor-manager is left alone.
+_PIPELINE_ACTIONS: frozenset[str] = frozenset(
+    {"review", "implement", "create", "plan", "audit", "resolve", "approve"}
+)
+
 # Known legacy names that violate the convention but are tolerated until their
 # atomic rename ticket. DEC-008D-001: review_manager -> manager_review is
 # deferred to 008e (6 live source_prompt/prose consumers). Empty this list when
@@ -361,24 +376,65 @@ _SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 KNOWN_LEGACY_NAMES: frozenset[str] = frozenset({"review_manager"})
 
 
+def _actor_order_violation(stem: str, sep: str) -> str | None:
+    """Return an actor-first violation message for `stem`, or None if clean.
+
+    DEC-008D-001 central rule: when a name pairs a pipeline actor with a
+    pipeline ACTION, the actor goes first. `review_manager` (action_actor)
+    violates; `manager_review` (actor_action) is clean. The rule fires ONLY when
+    BOTH an actor token and a pipeline action token are present and the actor is
+    not first — so `refactor-manager` (no pipeline action) and `launch_builder`
+    (launch is not a pipeline action the actor performs) are left alone.
+
+    Pure string analysis on the already-split tokens; no I/O.
+    """
+    tokens = stem.split(sep)
+    if len(tokens) < 2:
+        return None
+    if not (_ACTOR_TOKENS & set(tokens) and _PIPELINE_ACTIONS & set(tokens)):
+        return None
+    # Both an actor and a pipeline action are present: the actor must be first.
+    if tokens[0] in _ACTOR_TOKENS:
+        return None
+    actor = next(t for t in tokens if t in _ACTOR_TOKENS)
+    return (
+        f"violates actor-first (DEC-008D-001): actor '{actor}' must precede the "
+        f"pipeline action (expected '{actor}{sep}...', got '{stem}')"
+    )
+
+
+def _name_violation(
+    stem: str, lexical_re: re.Pattern[str], kind: str, sep: str
+) -> str | None:
+    """Return the first DEC-008D-001 violation for `stem`, or None if clean.
+
+    Runs two rules in order: (1) lexical form (snake/kebab) and (2) actor-first
+    ordering. A name is only clean if it passes BOTH. KNOWN_LEGACY_NAMES is
+    applied by the caller AFTER detection, so legacy names are recorded as
+    tolerated debt rather than silently treated as fully conformant.
+    """
+    expected = "[a-z0-9]+(_[a-z0-9]+)*" if sep == "_" else "[a-z0-9]+(-[a-z0-9]+)*"
+    style = "snake_case" if sep == "_" else "kebab-case"
+    if not lexical_re.match(stem):
+        return f"{kind} '{stem}' violates {style} (DEC-008D-001): expected {expected}"
+    return _actor_order_violation(stem, sep)
+
+
 def _check_prompt_names(prompts_dir: Path) -> list[str]:
-    """Flag prompts/*.md stems that violate snake_case (DEC-008D-001)."""
+    """Flag prompts/*.md stems that violate DEC-008D-001 (snake_case + actor-first)."""
     if not prompts_dir.is_dir():
         return []
     out: list[str] = []
     for path in sorted(prompts_dir.glob("*.md")):
         stem = path.stem
-        if stem in KNOWN_LEGACY_NAMES or _PROMPT_NAME_RE.match(stem):
-            continue
-        out.append(
-            f"prompt '{path.name}' violates snake_case "
-            f"(DEC-008D-001): expected [a-z0-9]+(_[a-z0-9]+)*"
-        )
+        violation = _name_violation(stem, _PROMPT_NAME_RE, "prompt", "_")
+        if violation and stem not in KNOWN_LEGACY_NAMES:
+            out.append(violation)
     return out
 
 
 def _check_skill_names(skills_dir: Path) -> list[str]:
-    """Flag skills/<dir> names that violate kebab-case (DEC-008D-001)."""
+    """Flag skills/<dir> names that violate DEC-008D-001 (kebab-case + actor-first)."""
     if not skills_dir.is_dir():
         return []
     out: list[str] = []
@@ -386,12 +442,9 @@ def _check_skill_names(skills_dir: Path) -> list[str]:
         if not path.is_dir() or path.name.startswith("_"):
             continue
         name = path.name
-        if name in KNOWN_LEGACY_NAMES or _SKILL_NAME_RE.match(name):
-            continue
-        out.append(
-            f"skill '{name}' violates kebab-case "
-            f"(DEC-008D-001): expected [a-z0-9]+(-[a-z0-9]+)*"
-        )
+        violation = _name_violation(name, _SKILL_NAME_RE, "skill", "-")
+        if violation and name not in KNOWN_LEGACY_NAMES:
+            out.append(violation)
     return out
 
 
