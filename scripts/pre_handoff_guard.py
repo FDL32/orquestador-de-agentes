@@ -924,6 +924,27 @@ def run_guard(
             _relativize_to_any_root(f, roots) for f in forbidden_hits
         )
 
+    # 5.c WOT-2026-010u: an uncommitted archival rename (closed STRATEGY_/AUDIT_/
+    # PLAN_ moved to _archive/plan_audit/ but never committed) blocks handoff early,
+    # at the point that causes it, instead of surfacing as contaminacion_productiva
+    # on the NEXT ticket. _archive/plan_audit/ is excluded from the dirty_tree check
+    # above, so this dedicated barrier is what catches the limbo.
+    try:
+        from delivery_hygiene_check import check_archive_rename_complete
+
+        _rename_result = check_archive_rename_complete(project_root)
+        if not _rename_result.passed:
+            result["valid"] = False
+            result["archive_rename_uncommitted"] = _rename_result.details or [
+                _rename_result.message
+            ]
+    except Exception as exc:
+        result["valid"] = False
+        result["archive_rename_guard_error"] = (
+            f"check_archive_rename_complete no pudo ejecutarse: {exc}. "
+            "Barrera fail-closed (WOT-2026-010u)."
+        )
+
     # 6. WOT-2026-009c: reciprocal isolation guard — inspect non-authority root.
     # Bloquea si hay archivos productivos (no-operativos) en el repo contrario.
     if motor_root is not None and motor_root.resolve() != project_root.resolve():
@@ -1089,6 +1110,14 @@ def main() -> int:
                 print(
                     "    Fix: revert changes to the forbidden route(s) above, or "
                     "open a ticket whose Forbidden Surfaces do not list them."
+                )
+            if result.get("archive_rename_uncommitted"):
+                print("  - Archive rename uncommitted (WOT-2026-010u):")
+                for line in result["archive_rename_uncommitted"]:
+                    print(f"      {line}")
+            if result.get("archive_rename_guard_error"):
+                print(
+                    f"  - Archive rename guard error: {result['archive_rename_guard_error']}"
                 )
             if result["dirty_tree"]:
                 print(f"  - Dirty tree: {', '.join(result['dirty_files'])}")

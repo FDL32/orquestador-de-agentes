@@ -785,6 +785,48 @@ class TestWorkPlanCommitGuard:
         assert result["valid"] is True
         assert result.get("uncommitted_work_plan") is False
 
+    def test_guard_blocks_uncommitted_archive_rename(self, tmp_path: Path) -> None:
+        """WOT-2026-010u: an uncommitted archival rename (closed AUDIT_ moved to
+        _archive/plan_audit/ without committing) blocks the handoff guard itself,
+        not only the pre-push hygiene check. This is the contract requirement:
+        block at the cierre/handoff that causes the limbo."""
+        import sys
+
+        sys.path.insert(0, str(SCRIPT_PATH.parent))
+        from pre_handoff_guard import run_guard
+
+        repo = tmp_path / "repo"
+        init_git_repo(repo)
+        collab = repo / ".agent" / "collaboration"
+        collab.mkdir(parents=True, exist_ok=True)
+        wp = collab / "work_plan.md"
+        wp.write_text("# Work Plan\n- deliverable_type: code\n")
+        # A previously-closed ticket's audit artifact, committed so a later move
+        # shows up as a delete.
+        audit = collab / "AUDIT_WOT-2026-PREV.md"
+        audit.write_text("prev audit\n")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "seed"], cwd=repo, check=True, capture_output=True
+        )
+        write_green_last_run(repo, ticket_id="WOT-2026-TEST")
+        create_checkpoint_tag(repo, "checkpoint/review-WOT-2026-TEST")
+
+        # Simulate the archiver: move into _archive/plan_audit/ WITHOUT committing.
+        archive_dir = collab / "_archive" / "plan_audit"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        (archive_dir / "AUDIT_WOT-2026-PREV.md").write_text(audit.read_text())
+        audit.unlink()
+
+        result = run_guard(repo, "WOT-2026-TEST", motor_root=repo)
+
+        assert result["valid"] is False
+        diag = result.get("archive_rename_uncommitted")
+        assert diag, "guard must report the uncommitted archival rename"
+        blob = " ".join(diag)
+        assert "archive_rename_uncommitted" in blob
+        assert "AUDIT_WOT-2026-PREV.md" in blob
+
     def test_guard_passes_live_surfaces_dirty_work_plan_committed(
         self, tmp_path: Path
     ) -> None:
