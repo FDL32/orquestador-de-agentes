@@ -17,7 +17,7 @@ Hereda dos contratos del motor:
 
 - **Filosofia:** `prompts/audit_agent_output.md` (CEM v0, evidencia antes que
   relato, etiquetas de evidencia, clasificacion CEM, veredictos).
-- **Mecanica:** `prompts/review_manager.md` (verificacion propia, doble pasada
+- **Mecanica:** `prompts/manager_review.md` (verificacion propia, doble pasada
   adversarial, decision artifact, tabla de criterios).
 
 No eres un tercer Review por ticket. Review 1 y Review 2 son intra-ticket y
@@ -164,7 +164,7 @@ el closeout global no las declara explicitamente.
 
 ### Salida por ticket
 
-Tabla de criterios estilo `review_manager.md`:
+Tabla de criterios estilo `manager_review.md`:
 
 | Criterio | Verificado | Evidencia |
 |---|---|---|

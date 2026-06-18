@@ -369,11 +369,39 @@ _PIPELINE_ACTIONS: frozenset[str] = frozenset(
     {"review", "implement", "create", "plan", "audit", "resolve", "approve"}
 )
 
-# Known legacy names that violate the convention but are tolerated until their
-# atomic rename ticket. DEC-008D-001: review_manager -> manager_review is
-# deferred to 008e (6 live source_prompt/prose consumers). Empty this list when
-# 008e closes; --check-naming must then be green with no exceptions.
-KNOWN_LEGACY_NAMES: frozenset[str] = frozenset({"review_manager"})
+# Known legacy names tolerated by HARDCODE until their atomic rename ticket.
+# WOT-2026-008e emptied this: review_manager -> manager_review is now tolerated
+# declaratively via `legacy_aliases:` frontmatter in prompts/manager_review.md
+# (see _declared_prompt_aliases), not by hardcode. Keep this empty; a name only
+# belongs here if there is no canonical artifact yet to declare its alias.
+KNOWN_LEGACY_NAMES: frozenset[str] = frozenset()
+
+
+def _declared_prompt_aliases(prompts_dir: Path) -> set[str]:
+    """Collect legacy stub names declared via prompt frontmatter (WOT-2026-008e).
+
+    Before: prompts_dir may or may not exist.
+    During: parse each prompts/*.md frontmatter with the existing
+            parse_frontmatter(); collect every entry of `legacy_aliases:` into a
+            flat set. This is the declarative replacement for KNOWN_LEGACY_NAMES:
+            a canonical prompt (e.g. manager_review.md) declares the legacy stem
+            (review_manager) it supersedes, and --check-naming tolerates a stub
+            file whose stem is in this set.
+    After: returns a set of legacy alias stems (empty if none / no dir). No
+           side effects beyond reading files.
+    """
+    aliases: set[str] = set()
+    if not prompts_dir.is_dir():
+        return aliases
+    for path in sorted(prompts_dir.glob("*.md")):
+        fm, _ = parse_frontmatter(path)
+        declared = fm.get("legacy_aliases", [])
+        if isinstance(declared, str):
+            declared = [declared]
+        for alias in declared:
+            if isinstance(alias, str) and alias.strip():
+                aliases.add(alias.strip())
+    return aliases
 
 
 def _actor_order_violation(stem: str, sep: str) -> str | None:
@@ -421,14 +449,20 @@ def _name_violation(
 
 
 def _check_prompt_names(prompts_dir: Path) -> list[str]:
-    """Flag prompts/*.md stems that violate DEC-008D-001 (snake_case + actor-first)."""
+    """Flag prompts/*.md stems that violate DEC-008D-001 (snake_case + actor-first).
+
+    A violating stem is tolerated only if it is a declared legacy alias: either
+    in KNOWN_LEGACY_NAMES (hardcode, now empty) or in the `legacy_aliases:`
+    frontmatter of some canonical prompt (WOT-2026-008e declarative path).
+    """
     if not prompts_dir.is_dir():
         return []
+    tolerated = KNOWN_LEGACY_NAMES | _declared_prompt_aliases(prompts_dir)
     out: list[str] = []
     for path in sorted(prompts_dir.glob("*.md")):
         stem = path.stem
         violation = _name_violation(stem, _PROMPT_NAME_RE, "prompt", "_")
-        if violation and stem not in KNOWN_LEGACY_NAMES:
+        if violation and stem not in tolerated:
             out.append(violation)
     return out
 

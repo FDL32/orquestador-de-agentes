@@ -107,7 +107,7 @@ Lee primero, como minimo:
 - `.agent/collaboration/backlog.md` si existe, para evitar tickets duplicados
 - `.agent/runtime/audit/AUDIT.md` si existe
 - `prompts/session_bootstrap.md`
-- `prompts/review_manager.md`
+- `prompts/manager_review.md`
 - `prompts/launch_builder.md`
 - `prompts/memory_upload.md`
 - `skills/code-audit/SKILL.md`

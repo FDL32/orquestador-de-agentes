@@ -11,21 +11,40 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import scripts.discover_skills as discover_skills
 from scripts.discover_skills import (
     KNOWN_LEGACY_NAMES,
     _actor_order_violation,
     _check_naming,
+    _declared_prompt_aliases,
     check_naming,
+    parse_frontmatter,
 )
 
 
-def _seed(root: Path, *, prompts: list[str], skills: list[str]) -> Path:
-    """Create an isolated motor-like tree with the given prompt/skill names."""
+def _seed(
+    root: Path,
+    *,
+    prompts: list[str],
+    skills: list[str],
+    prompt_aliases: dict[str, list[str]] | None = None,
+) -> Path:
+    """Create an isolated motor-like tree with the given prompt/skill names.
+
+    prompt_aliases maps a prompt stem to the legacy_aliases it declares in its
+    YAML frontmatter (WOT-2026-008e). A canonical prompt declaring an alias
+    makes --check-naming tolerate a stub whose stem is that alias.
+    """
+    prompt_aliases = prompt_aliases or {}
     pdir = root / "prompts"
     pdir.mkdir(parents=True, exist_ok=True)
     for name in prompts:
-        (pdir / f"{name}.md").write_text("# x\n", encoding="utf-8")
+        aliases = prompt_aliases.get(name)
+        if aliases:
+            alias_list = ", ".join(aliases)
+            body = f"---\nlegacy_aliases: [{alias_list}]\n---\n# x\n"
+        else:
+            body = "# x\n"
+        (pdir / f"{name}.md").write_text(body, encoding="utf-8")
     sdir = root / "skills"
     sdir.mkdir(parents=True, exist_ok=True)
     for name in skills:
@@ -114,35 +133,66 @@ class TestActorFirstRule:
         assert "approve_manager" in violations[0]
 
 
-class TestKnownLegacyException:
-    def test_legacy_name_tolerated(self, tmp_path):
-        # review_manager is declared legacy debt (DEC-008D-001, deferred to 008e).
-        assert "review_manager" in KNOWN_LEGACY_NAMES
-        root = _seed(tmp_path, prompts=["review_manager"], skills=["good-skill"])
-        # review_manager IS detected as an actor-first violation but tolerated
-        # as declared debt -> clean tree.
+class TestDeclarativeLegacyAlias:
+    """WOT-2026-008e: legacy stubs are tolerated via `legacy_aliases:` frontmatter
+    on the canonical prompt, NOT via the hardcoded KNOWN_LEGACY_NAMES."""
+
+    def test_known_legacy_names_is_empty(self):
+        # 008e moved tolerance from hardcode to frontmatter; the set is now empty.
+        assert frozenset() == KNOWN_LEGACY_NAMES
+
+    def test_stub_tolerated_when_canonical_declares_alias(self, tmp_path):
+        # manager_review.md declares legacy_aliases: [review_manager]; the stub
+        # review_manager.md is then tolerated even though it violates actor-first.
+        root = _seed(
+            tmp_path,
+            prompts=["manager_review", "review_manager"],
+            skills=["good-skill"],
+            prompt_aliases={"manager_review": ["review_manager"]},
+        )
         assert check_naming(root) == []
 
-    def test_legacy_tolerance_masks_a_real_detection(self, tmp_path, monkeypatch):
-        """The legacy set must tolerate a REAL violation, not bypass the rule.
+    def test_stub_fails_without_declared_alias(self, tmp_path):
+        """The barrier: the stub is tolerated ONLY because the alias is declared.
 
-        With review_manager in KNOWN_LEGACY_NAMES the tree is clean; remove it
-        and the same name must be detected as an actor-first violation. This
-        proves the gate enforces the DEC rule and the legacy set is debt, not a
-        silent pass.
+        Remove the declaration (canonical with no legacy_aliases) and the stub
+        review_manager.md must be detected as an actor-first violation. This
+        proves the gate enforces the DEC rule and the tolerance is a real,
+        declared compatibility surface — not a silent pass.
         """
-        root = _seed(tmp_path, prompts=["review_manager"], skills=["ok"])
+        # With declaration -> clean.
+        root = _seed(
+            tmp_path,
+            prompts=["manager_review", "review_manager"],
+            skills=["ok"],
+            prompt_aliases={"manager_review": ["review_manager"]},
+        )
         assert check_naming(root) == []
-        monkeypatch.setattr(discover_skills, "KNOWN_LEGACY_NAMES", frozenset())
-        violations = check_naming(root)
+        # Without declaration -> the stub re-surfaces as a violation.
+        root2 = _seed(
+            tmp_path / "nodecl",
+            prompts=["manager_review", "review_manager"],
+            skills=["ok"],
+        )
+        violations = check_naming(root2)
         assert len(violations) == 1
+        assert "review_manager" in violations[0]
         assert "actor-first" in violations[0]
 
-    def test_legacy_skill_name_tolerated_even_if_nonconforming(self, tmp_path):
-        # A genuinely non-conforming name in the legacy set must be tolerated.
-        bad = next(iter(KNOWN_LEGACY_NAMES))
-        root = _seed(tmp_path, prompts=["ok"], skills=[bad])
-        assert check_naming(root) == []
+    def test_parse_frontmatter_reads_real_legacy_aliases(self, tmp_path):
+        """parse_frontmatter() (reused, not a new parser) extracts legacy_aliases
+        from a canonical prompt's YAML frontmatter."""
+        root = _seed(
+            tmp_path,
+            prompts=["manager_review"],
+            skills=["ok"],
+            prompt_aliases={"manager_review": ["review_manager"]},
+        )
+        fm, err = parse_frontmatter(root / "prompts" / "manager_review.md")
+        assert err is None
+        assert fm.get("legacy_aliases") == ["review_manager"]
+        # And the collector surfaces it.
+        assert "review_manager" in _declared_prompt_aliases(root / "prompts")
 
 
 class TestCheckNamingCLI:

@@ -9,7 +9,7 @@ stage: review
 writes_memory: false
 quality_gate: false
 tags: [core, system]
-source_prompt: prompts/review_manager.md
+source_prompt: prompts/manager_review.md
 contract_id: cid-man-review-v2
 ---
 

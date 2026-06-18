@@ -10,12 +10,12 @@
 
 | kind | total |
 |------|-------|
-| prompt | 20 |
+| prompt | 21 |
 | reference | 33 |
 | script-consumer | 5 |
 | shared | 3 |
 | skill | 29 |
-| **total** | **90** |
+| **total** | **91** |
 
 ## Entradas
 
@@ -35,6 +35,7 @@
 | prompt | `prompts/contract_formation_pipeline.md` | active | system | model-invoked | — |
 | prompt | `prompts/destination_bootstrap.md` | active | system | model-invoked | — |
 | prompt | `prompts/launch_builder.md` | active | system | model-invoked | — |
+| prompt | `prompts/manager_review.md` | active | system | model-invoked | — |
 | prompt | `prompts/memory_upload.md` | active | system | model-invoked | — |
 | prompt | `prompts/orchestrator_pipeline.md` | active | system | model-invoked | — |
 | prompt | `prompts/refactor_bootstrap.md` | active | system | model-invoked | — |

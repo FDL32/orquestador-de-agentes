@@ -12,6 +12,7 @@ import pytest
 from scripts.discover_skills import (
     _check_contract,
     _derive_disable_model_invocation,
+    _get_bundle_root,
     _resolve_skill_path,
     discover_skills,
     extract_frontmatter,
@@ -356,6 +357,25 @@ class TestCheckContractIntegration:
         """Verify that the real motor bundle passes --check-contract."""
         rc = _check_contract()
         assert rc == 0, "Real motor bundle should pass contract check"
+
+    def test_manager_review_binding_after_rename(self) -> None:
+        """WOT-2026-008e: man-review-implementation binds to manager_review.md and
+        the canonical prompt keeps the anchor + contract_id literals in its body
+        (the contract-check searches both by substring/regex MULTILINE)."""
+        bundle = _get_bundle_root()
+        skill = bundle / "skills" / "man-review-implementation" / "SKILL.md"
+        assert "source_prompt: prompts/manager_review.md" in skill.read_text(
+            encoding="utf-8"
+        )
+        canonical = (bundle / "prompts" / "manager_review.md").read_text(
+            encoding="utf-8"
+        )
+        # Literals must live in the BODY (not migrated into the YAML block).
+        assert "Skill canonica: skills/man-review-implementation/SKILL.md" in canonical
+        assert "contract_id: cid-man-review-v2" in canonical
+        # And the legacy stub still resolves (frontmatter declares the alias).
+        fm, _ = parse_frontmatter(bundle / "prompts" / "manager_review.md")
+        assert fm.get("legacy_aliases") == ["review_manager"]
 
 
 class TestDisableModelInvocation:

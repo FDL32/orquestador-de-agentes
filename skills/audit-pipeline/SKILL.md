@@ -49,7 +49,7 @@ Leer y aplicar:
 - `prompts/audit_pipeline.md`
 
 Ese prompt es la fuente de verdad. Hereda filosofia de
-`prompts/audit_agent_output.md` y mecanica de `prompts/review_manager.md`. Si
+`prompts/audit_agent_output.md` y mecanica de `prompts/manager_review.md`. Si
 algo diverge, prevalece `prompts/audit_pipeline.md`.
 
 ## Topologia obligatoria
@@ -93,7 +93,7 @@ Igual que `orchestrate-pipeline`:
 | Fase | Rol | Prompts | Scripts / comandos |
 |---|---|---|---|
 | Vision global | Auditor | `<MOTOR_ROOT>/prompts/audit_pipeline.md` | leer `backlog.md`, `orchestrator_pipeline/reports/*.md` |
-| Por ticket A/B | Auditor | `<MOTOR_ROOT>/prompts/audit_agent_output.md`, `<MOTOR_ROOT>/prompts/review_manager.md` | `git show --stat`, `git log --oneline`, `ruff check`, tests focales, `<MOTOR_ROOT>/scripts/check_encoding_guard.py` |
+| Por ticket A/B | Auditor | `<MOTOR_ROOT>/prompts/audit_agent_output.md`, `<MOTOR_ROOT>/prompts/manager_review.md` | `git show --stat`, `git log --oneline`, `ruff check`, tests focales, `<MOTOR_ROOT>/scripts/check_encoding_guard.py` |
 | Transversal | Auditor | `<MOTOR_ROOT>/prompts/audit_pipeline.md` | `<MOTOR_ROOT>/scripts/check_motor_pristine.py --check`, leer `motor_after_*.json` |
 | Informe | Auditor | `<MOTOR_ROOT>/prompts/audit_pipeline.md` | `<MOTOR_ROOT>/scripts/check_encoding_guard.py` sobre el informe |
 

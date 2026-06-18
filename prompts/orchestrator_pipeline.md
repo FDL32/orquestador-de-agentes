@@ -365,8 +365,8 @@ prompts paralelos si ya existe una superficie del motor para ese rol.
 | Bootstrap | ORQUESTADOR | `<MOTOR_ROOT>/prompts/destination_bootstrap.md`, `<MOTOR_ROOT>/prompts/orchestrator_pipeline.md`, `<MOTOR_ROOT>/prompts/audit_agent_output.md` | `<MOTOR_ROOT>/skills/orchestrate-pipeline/SKILL.md` | `destination_context.py --bootstrap --project-root .`, `memory_context.py --status`, `memory_context.py --bootstrap`, `check_motor_pristine.py --snapshot`, `python <MOTOR_ROOT>/.agent/agent_controller.py --validate --json --project-root .` |
 | Plan | MANAGER | `<MOTOR_ROOT>/prompts/audit_ticket_contract.md` | `<MOTOR_ROOT>/skills/man-create-work-plan/SKILL.md`, `<MOTOR_ROOT>/skills/grill-work-plan/SKILL.md` si hay dudas de plan, `<MOTOR_ROOT>/skills/_shared/ticket-anti-patterns.md` | `python <MOTOR_ROOT>/.agent/agent_controller.py --reset-turn --force --project-root .`, `--bootstrap-ticket`, `--validate` |
 | Implementacion | BUILDER | `<MOTOR_ROOT>/prompts/launch_builder.md` | `<MOTOR_ROOT>/skills/bui-implement-from-plan/SKILL.md`, `<MOTOR_ROOT>/skills/bui-run-quality-gates/SKILL.md`, `<MOTOR_ROOT>/skills/bui-self-audit/SKILL.md` | gates del plan, `python <MOTOR_ROOT>/scripts/run_pytest_safe.py` (con `AGENT_PROJECT_ROOT=.` y `cwd=<repo_destino>`), `ruff`, `python <MOTOR_ROOT>/.agent/agent_controller.py --pre-handoff`, `--mark-ready` |
-| Review 1 | MANAGER | `<MOTOR_ROOT>/prompts/review_manager.md`, `<MOTOR_ROOT>/prompts/audit_agent_output.md` | `<MOTOR_ROOT>/skills/man-review-implementation/SKILL.md` | `git show`, `git status`, tests focales, `python <MOTOR_ROOT>/.agent/agent_controller.py --validate --json --project-root .` |
-| Review 2 | MANAGER adversarial | `<MOTOR_ROOT>/prompts/review_manager.md`, `<MOTOR_ROOT>/prompts/audit_agent_output.md` | `<MOTOR_ROOT>/skills/man-review-implementation/SKILL.md`, `<MOTOR_ROOT>/skills/bui-self-audit/SKILL.md` como input critico | buscar counterexamples en diff real, bus, scope y gates |
+| Review 1 | MANAGER | `<MOTOR_ROOT>/prompts/manager_review.md`, `<MOTOR_ROOT>/prompts/audit_agent_output.md` | `<MOTOR_ROOT>/skills/man-review-implementation/SKILL.md` | `git show`, `git status`, tests focales, `python <MOTOR_ROOT>/.agent/agent_controller.py --validate --json --project-root .` |
+| Review 2 | MANAGER adversarial | `<MOTOR_ROOT>/prompts/manager_review.md`, `<MOTOR_ROOT>/prompts/audit_agent_output.md` | `<MOTOR_ROOT>/skills/man-review-implementation/SKILL.md`, `<MOTOR_ROOT>/skills/bui-self-audit/SKILL.md` como input critico | buscar counterexamples en diff real, bus, scope y gates |
 | Cierre | ORQUESTADOR | `<MOTOR_ROOT>/prompts/orchestrator_pipeline.md`, `<MOTOR_ROOT>/prompts/session_close_chat.md` | `<MOTOR_ROOT>/skills/session-close-observations/SKILL.md`, `<MOTOR_ROOT>/skills/man-session-closeout/SKILL.md`, `<MOTOR_ROOT>/skills/memory-consolidate/SKILL.md` si hay aprendizaje reusable | `python <MOTOR_ROOT>/scripts/memory_consolidate.py --apply --project-root .`, `python <MOTOR_ROOT>/.agent/agent_controller.py --session-close --dry-run --project-root .`, `python <MOTOR_ROOT>/.agent/agent_controller.py --session-close --project-root .` |
 
 Herramientas de auditoria complementarias:
@@ -600,7 +600,7 @@ acepta sustituirla por narrativa.
 
 Spawnea MANAGER con un prompt compuesto desde:
 
-- `<MOTOR_ROOT>/prompts/review_manager.md`
+- `<MOTOR_ROOT>/prompts/manager_review.md`
 - `<MOTOR_ROOT>/prompts/audit_agent_output.md`
 - `<MOTOR_ROOT>/skills/man-review-implementation/SKILL.md`
 - `DESTINO_ROOT/.agent/collaboration/work_plan.md`
@@ -1080,7 +1080,7 @@ ORQUESTADOR
   |     |
   |     +-- MANAGER planifica con audit_ticket_contract.md
   |     +-- BUILDER implementa con launch_builder.md
-  |     +-- MANAGER revision 1 con review_manager.md + audit_agent_output.md
+  |     +-- MANAGER revision 1 con manager_review.md + audit_agent_output.md
   |     +-- BUILDER corrige solo si hay CHANGES reales
   |     +-- MANAGER revision 2 independiente cuando aplique
   |     +-- cierre canonico o BLOCKED
