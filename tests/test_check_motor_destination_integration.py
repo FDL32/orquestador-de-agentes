@@ -24,6 +24,7 @@ from scripts.check_motor_destination_integration import (
     check_link,
     main,
     run_integration,
+    run_publication_audit,
 )
 
 
@@ -83,6 +84,29 @@ class TestCheckLink:
         ok, diag = check_link(destino, None)
         assert ok is True
         assert "coherent" in diag
+
+    def test_nonexistent_motor_root_fails_at_link(self, tmp_path):
+        # A motor_root that does not exist on disk is a config error caught at
+        # the link check, not degraded into the pre-push gate.
+        destino = _seed_destino(tmp_path, motor_root=tmp_path / "no_such_motor")
+        ok, diag = check_link(destino, None)
+        assert ok is False
+        assert "does not exist on disk" in diag
+
+    def test_nonexistent_motor_root_maps_to_exit_3(self, tmp_path, monkeypatch):
+        # End-to-end: the wrapper returns EXIT_CONFIG_ERROR (3), honoring its own
+        # exit-code contract, instead of EXIT_CHECK_FAILED from the gate.
+        destino = _seed_destino(tmp_path, motor_root=tmp_path / "no_such_motor")
+        called = {"gate": False}
+
+        def _gate(argv):
+            called["gate"] = True
+            return 0
+
+        monkeypatch.setattr(wrapper, "publish_ready_main", _gate)
+        rc = run_integration(destino, None, audit_publication=False)
+        assert rc == EXIT_CONFIG_ERROR
+        assert called["gate"] is False  # short-circuits before the gate.
 
 
 class TestCheckAuthority:
@@ -253,6 +277,72 @@ class TestPublicationAuditOptIn:
         )
         rc = run_integration(destino, None, audit_publication=True)
         assert rc == EXIT_CHECK_FAILED
+
+
+class TestPublicationAuditVerdict:
+    """run_publication_audit must honor the manifest verdict, not just secrets."""
+
+    def test_clean_verdict_passes(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            wrapper,
+            "build_manifest",
+            lambda repo_root, scan_history=True, out_path=None: {
+                "verdict": "LISTO_PARA_PUBLICAR",
+                "tree_secret_scan": {"findings": []},
+                "history_secret_scan": {"findings": []},
+                "blocked_reasons": [],
+            },
+        )
+        ok, diag = run_publication_audit(tmp_path)
+        assert ok is True
+        assert "clean" in diag
+
+    def test_redactions_verdict_passes(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            wrapper,
+            "build_manifest",
+            lambda repo_root, scan_history=True, out_path=None: {
+                "verdict": "LISTO_CON_REDACTIONS",
+                "tree_secret_scan": {"findings": []},
+                "history_secret_scan": {"findings": []},
+                "blocked_reasons": [],
+            },
+        )
+        ok, _ = run_publication_audit(tmp_path)
+        assert ok is True
+
+    def test_non_secret_blocker_fails(self, tmp_path, monkeypatch):
+        # The KEY case: no secrets, but verdict is non-publishable (e.g. motor
+        # root guard). The old code returned "clean"; now it must fail.
+        monkeypatch.setattr(
+            wrapper,
+            "build_manifest",
+            lambda repo_root, scan_history=True, out_path=None: {
+                "verdict": "NO_ACEPTAR_TODAVIA",
+                "tree_secret_scan": {"findings": []},
+                "history_secret_scan": {"findings": []},
+                "blocked_reasons": [{"code": "MOTOR_ROOT_PUBLICATION_GUARD"}],
+            },
+        )
+        ok, diag = run_publication_audit(tmp_path)
+        assert ok is False
+        assert "NO_ACEPTAR_TODAVIA" in diag
+        assert "MOTOR_ROOT_PUBLICATION_GUARD" in diag
+
+    def test_secret_finding_still_fails(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            wrapper,
+            "build_manifest",
+            lambda repo_root, scan_history=True, out_path=None: {
+                "verdict": "BLOQUEADO_POR_SECRETO",
+                "tree_secret_scan": {"findings": [{"path": "x"}]},
+                "history_secret_scan": {"findings": []},
+                "blocked_reasons": [{"code": "BLOQUEADO_POR_SECRETO"}],
+            },
+        )
+        ok, diag = run_publication_audit(tmp_path)
+        assert ok is False
+        assert "secrets(tree=1" in diag
 
 
 class TestMainCLI:

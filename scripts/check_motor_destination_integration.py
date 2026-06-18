@@ -126,6 +126,12 @@ def check_link(project_root: Path, motor_root_arg: Path | None) -> tuple[bool, s
                 f"[LINK] link motor_root {motor_root} does not match "
                 f"--motor-root {motor_root_arg}"
             )
+        # The resolved motor_root must exist on disk. Validating it here keeps a
+        # missing motor_root as a config error (exit 3) instead of letting it
+        # degrade into the pre-push gate's generic failure (which we map to 1).
+        effective_motor = motor_root_arg if motor_root_arg is not None else motor_root
+        if not Path(effective_motor).exists():
+            return False, f"[LINK] motor_root does not exist on disk: {effective_motor}"
     except (OSError, ValueError) as exc:
         return False, f"[LINK] could not resolve link roots: {exc}"
     return True, f"[LINK] motor_root + destination_root coherent ({motor_root})"
@@ -139,23 +145,34 @@ def check_destination_context(project_root: Path) -> tuple[bool, str]:
     return True, "[CONTEXT] destination context resolves motor link."
 
 
+# Manifest verdicts that mean the repo is publishable. Anything else (secrets,
+# NO_ACEPTAR_TODAVIA, DECIDE_PENDING, ...) is a blocking audit finding, even when
+# no secret was found (e.g. MOTOR_ROOT_PUBLICATION_GUARD).
+_PUBLISHABLE_VERDICTS = frozenset({"LISTO_PARA_PUBLICAR", "LISTO_CON_REDACTIONS"})
+
+
 def run_publication_audit(motor_root: Path) -> tuple[bool, str]:
     """Optional first-publication audit. Delegates to build_manifest (dry-run).
 
-    Only runs behind --audit-publication. Never mutates the repo. Reports a
-    finding (ok=False) if the manifest flags secrets in tree or history.
+    Only runs behind --audit-publication. Never mutates the repo. Evaluates the
+    manifest's own verdict/blocked_reasons (not just secret findings): the
+    manifest can be non-publishable without secrets (e.g. motor-root guard,
+    dirty tree, pending decisions). The audit passes only when the verdict is
+    publishable.
     """
     manifest = build_manifest(motor_root, scan_history=True, out_path=None)
+    verdict = manifest.get("verdict")
+    if verdict in _PUBLISHABLE_VERDICTS:
+        return True, f"[AUDIT] publication audit clean (verdict={verdict})."
+    reasons = manifest.get("blocked_reasons") or []
+    codes = ", ".join(r.get("code", "?") for r in reasons) or "none"
     tree = manifest.get("tree_secret_scan", {}).get("findings") or []
     history = manifest.get("history_secret_scan", {}).get("findings") or []
-    findings = len(tree) + len(history)
-    if findings:
-        return False, (
-            f"[AUDIT] publication audit found {findings} secret finding(s) "
-            f"(tree={len(tree)}, history={len(history)}); "
-            f"verdict={manifest.get('verdict')}."
-        )
-    return True, "[AUDIT] publication audit clean (no secret findings)."
+    return False, (
+        f"[AUDIT] publication NOT acceptable: verdict={verdict}; "
+        f"blocked_reasons=[{codes}]; "
+        f"secrets(tree={len(tree)}, history={len(history)})."
+    )
 
 
 def run_integration(
