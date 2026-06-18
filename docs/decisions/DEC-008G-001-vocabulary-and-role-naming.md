@@ -78,7 +78,7 @@ Estado verificado del arbol `prompts/` al crear la DEC: 21 archivos fisicos,
 | Archivo fisico | Clasificacion canonica | Nota |
 |----------------|------------------------|------|
 | `launch_builder.md` | future `orchestrator_launch_builder.md` | rename en lote posterior |
-| `orchestrator_pipeline.md` | `orchestrator_pipeline.md` | ya canonico; pipeline transversal del orchestrator |
+| `orchestrator_pipeline.md` | `orchestrator_pipeline.md` | ya canonico; no se renombra; pipeline transversal del orchestrator |
 | `session_bootstrap.md` | future `orchestrator_session_bootstrap.md` | rename en lote posterior |
 | `session_close_chat.md` | future `orchestrator_session_close_chat.md` | rename en lote posterior |
 | `destination_bootstrap.md` | future `orchestrator_destination_bootstrap.md` | rename en lote posterior |
