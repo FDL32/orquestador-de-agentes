@@ -410,8 +410,15 @@ def _catalog_entry(
     status: str = DEFAULT_STATUS,
     owner: str = "system",
     aliases: list[str] | None = None,
+    disable_model_invocation: bool = False,
 ) -> dict[str, Any]:
-    """Build one canonical catalog entry. canonical_source == path (no renames)."""
+    """Build one canonical catalog entry. canonical_source == path (no renames).
+
+    WOT-2026-008c: ``invocation`` reflects the hybrid taxonomy from WOT-2026-010s.
+    ``disable_model_invocation: true`` -> ``user-invoked``; otherwise
+    ``model-invoked``. Only skills carry the flag; other kinds default to
+    model-invoked (the model may reach them).
+    """
     rel = _rel(path, root)
     return {
         "kind": kind,
@@ -420,6 +427,7 @@ def _catalog_entry(
         "owner": owner,
         "canonical_source": rel,
         "aliases": sorted(aliases) if aliases else [],
+        "invocation": "user-invoked" if disable_model_invocation else "model-invoked",
     }
 
 
@@ -443,6 +451,7 @@ def build_catalog(bundle_root: Path | None = None) -> dict[str, Any]:
             status=skill.get("status", DEFAULT_STATUS),
             owner=skill.get("owner", "system"),
             aliases=skill.get("aliases", []),
+            disable_model_invocation=skill.get("disable_model_invocation", False),
         )
         for skill in discovered.values()
     ]
@@ -502,13 +511,15 @@ def render_index(catalog: dict[str, Any]) -> str:
         "",
         "## Entradas",
         "",
-        "| kind | path | status | owner | aliases |",
-        "|------|------|--------|-------|---------|",
+        "| kind | path | status | owner | invocation | aliases |",
+        "|------|------|--------|-------|------------|---------|",
     ]
     for e in catalog["entries"]:
         aliases = ", ".join(e["aliases"]) if e["aliases"] else "—"
+        invocation = e.get("invocation", "model-invoked")
         lines.append(
-            f"| {e['kind']} | `{e['path']}` | {e['status']} | {e['owner']} | {aliases} |"
+            f"| {e['kind']} | `{e['path']}` | {e['status']} | {e['owner']} "
+            f"| {invocation} | {aliases} |"
         )
     lines.append("")
     return "\n".join(lines)

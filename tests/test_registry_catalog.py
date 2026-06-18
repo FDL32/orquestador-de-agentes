@@ -110,11 +110,40 @@ class TestCatalog:
 
     def test_catalog_entries_have_required_fields(self):
         catalog = build_catalog()
-        required = {"kind", "path", "status", "owner", "canonical_source", "aliases"}
+        required = {
+            "kind",
+            "path",
+            "status",
+            "owner",
+            "canonical_source",
+            "aliases",
+            "invocation",
+        }
         for e in catalog["entries"]:
             assert required <= set(e.keys()), f"missing fields in {e}"
             # 008c does no renames: canonical_source == path.
             assert e["canonical_source"] == e["path"]
+            # WOT-2026-008c: invocation reflects the hybrid taxonomy (010s).
+            assert e["invocation"] in ("user-invoked", "model-invoked")
+
+    def test_catalog_invocation_parity_with_discovery(self):
+        """WOT-2026-008c: a skill's catalog invocation must match its
+        disable_model_invocation flag from discovery (010s metadata)."""
+        catalog = build_catalog()
+        disc = {
+            s["path"]: s.get("disable_model_invocation", False)
+            for s in discover_skills()["skills"]
+        }
+        for e in catalog["entries"]:
+            if e["kind"] != "skill":
+                continue
+            skill_dir = e["path"].rsplit("/SKILL.md", 1)[0]
+            matching = [
+                v for k, v in disc.items() if k.replace("\\", "/").endswith(skill_dir)
+            ]
+            if matching:
+                expected = "user-invoked" if matching[0] else "model-invoked"
+                assert e["invocation"] == expected
 
     def test_catalog_skill_status_parity_with_discovery(self):
         """Catalog skill status must match what discover_skills derives."""
