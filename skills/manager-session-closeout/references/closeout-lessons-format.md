@@ -19,7 +19,7 @@
 
 ### Actions for next planning cycle
 
-- `man-create-work-plan` reads this file before creating the next plan
+- `manager-create-work-plan` reads this file before creating the next plan
 - The file should include only durable lessons, not raw logs
 - Prefer short, direct bullets
 

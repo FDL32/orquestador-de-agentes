@@ -216,4 +216,4 @@ Cuando el ticket corre dentro de `orquestador_de_agentes`:
 - El Builder recibe este `PROMPT_TEMPLATE.md` como contexto operativo.
 - Cada sub-fase aprobada se convierte en un lote dentro de `work_plan.md`.
 - La validacion final se cruza con `bui-run-quality-gates` y `bui-self-audit`.
-- El cierre se delega a `man-review-implementation` + `project-finalize`.
+- El cierre se delega a `manager-review-implementation` + `project-finalize`.

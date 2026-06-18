@@ -13,7 +13,7 @@ source_prompt: prompts/manager_review.md
 contract_id: cid-man-review-v2
 ---
 
-# man-review-implementation
+# manager-review-implementation
 
 Skill para revisar trabajo del Builder segun el plan aprobado y criterios de calidad.
 

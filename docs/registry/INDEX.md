@@ -56,15 +56,15 @@
 | reference | `skills/create-agent-skill/references/frontmatter-template.md` | active | system | shared | model-invoked | — |
 | reference | `skills/create-agent-skill/references/skill-anatomy.md` | active | system | shared | model-invoked | — |
 | reference | `skills/deep-research/references/research-template.md` | active | system | shared | model-invoked | — |
-| reference | `skills/man-create-work-plan/references/plan-quality-checklist.md` | active | system | shared | model-invoked | — |
-| reference | `skills/man-create-work-plan/references/plan-template.md` | active | system | shared | model-invoked | — |
-| reference | `skills/man-create-work-plan/references/risk-guide.md` | active | system | shared | model-invoked | — |
-| reference | `skills/man-resolve-escalation/references/escalation-levels.md` | active | system | shared | model-invoked | — |
-| reference | `skills/man-review-implementation/references/review-checklist.md` | active | system | shared | model-invoked | — |
-| reference | `skills/man-review-implementation/references/verdict-format.md` | active | system | shared | model-invoked | — |
-| reference | `skills/man-session-closeout/references/closeout-lessons-format.md` | active | system | shared | model-invoked | — |
-| reference | `skills/man-session-closeout/references/scope-taxonomy.md` | active | system | shared | model-invoked | — |
-| reference | `skills/man-session-closeout/references/upstream-learnings-format.md` | active | system | shared | model-invoked | — |
+| reference | `skills/manager-create-work-plan/references/plan-quality-checklist.md` | active | system | shared | model-invoked | — |
+| reference | `skills/manager-create-work-plan/references/plan-template.md` | active | system | shared | model-invoked | — |
+| reference | `skills/manager-create-work-plan/references/risk-guide.md` | active | system | shared | model-invoked | — |
+| reference | `skills/manager-resolve-escalation/references/escalation-levels.md` | active | system | shared | model-invoked | — |
+| reference | `skills/manager-review-implementation/references/review-checklist.md` | active | system | shared | model-invoked | — |
+| reference | `skills/manager-review-implementation/references/verdict-format.md` | active | system | shared | model-invoked | — |
+| reference | `skills/manager-session-closeout/references/closeout-lessons-format.md` | active | system | shared | model-invoked | — |
+| reference | `skills/manager-session-closeout/references/scope-taxonomy.md` | active | system | shared | model-invoked | — |
+| reference | `skills/manager-session-closeout/references/upstream-learnings-format.md` | active | system | shared | model-invoked | — |
 | reference | `skills/orchestrate-pipeline/references/destination-preflight.md` | active | system | shared | model-invoked | — |
 | reference | `skills/project-finalize/references/closeout-checklist.md` | active | system | shared | model-invoked | — |
 | reference | `skills/project-finalize/references/closeout-modes.md` | active | system | shared | model-invoked | — |
@@ -100,10 +100,10 @@
 | skill | `skills/graphify/SKILL.md` | active | agent | shared | model-invoked | /graphify, graph, map |
 | skill | `skills/grill-work-plan/SKILL.md` | active | agent | manager | model-invoked | /grill, /grill-plan, grill-wp |
 | skill | `skills/local-audit/SKILL.md` | active | agent | auditor | model-invoked | /local-audit, /repo-audit, /snapshot |
-| skill | `skills/man-create-work-plan/SKILL.md` | active | agent | manager | model-invoked | /plan, /schedule, create-plan |
-| skill | `skills/man-resolve-escalation/SKILL.md` | active | agent | manager | model-invoked | /escalate, /resolve, escalation |
-| skill | `skills/man-review-implementation/SKILL.md` | active | agent | manager | model-invoked | /approve, /review, code-review |
-| skill | `skills/man-session-closeout/SKILL.md` | active | agent | manager | model-invoked | /close-session, /closeout, /session-closeout |
+| skill | `skills/manager-create-work-plan/SKILL.md` | active | agent | manager | model-invoked | /plan, /schedule, create-plan |
+| skill | `skills/manager-resolve-escalation/SKILL.md` | active | agent | manager | model-invoked | /escalate, /resolve, escalation |
+| skill | `skills/manager-review-implementation/SKILL.md` | active | agent | manager | model-invoked | /approve, /review, code-review |
+| skill | `skills/manager-session-closeout/SKILL.md` | active | agent | manager | model-invoked | /close-session, /closeout, /session-closeout |
 | skill | `skills/memory-consolidate/SKILL.md` | active | agent | shared | model-invoked | /consolidate, /dream-cycle, /memory |
 | skill | `skills/orchestrate-pipeline/SKILL.md` | active | agent | shared | model-invoked | /pipeline, ejecutar-backlog, implantar-planes, orchestrate-pipeline, run-backlog |
 | skill | `skills/project-finalize/SKILL.md` | active | agent | shared | model-invoked | /finalize, /finish, close |

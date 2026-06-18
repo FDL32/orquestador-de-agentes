@@ -16,8 +16,8 @@ Use one entry per learning awaiting confirmation.
 - learning: "..."
 - razon: "..."
 - propuesta de aplicacion en herramienta:
-  - `skills/man-create-work-plan/SKILL.md`
-  - `skills/man-create-work-plan/references/plan-quality-checklist.md`
+  - `skills/manager-create-work-plan/SKILL.md`
+  - `skills/manager-create-work-plan/references/plan-quality-checklist.md`
 - decision del usuario: pendiente
 ```
 

@@ -409,11 +409,12 @@ class TestCheckContractIntegration:
         assert rc == 0, "Real motor bundle should pass contract check"
 
     def test_manager_review_binding_after_rename(self) -> None:
-        """WOT-2026-008e: man-review-implementation binds to manager_review.md and
-        the canonical prompt keeps the anchor + contract_id literals in its body
-        (the contract-check searches both by substring/regex MULTILINE)."""
+        """WOT-2026-008e/008i: manager-review-implementation binds to
+        manager_review.md and the canonical prompt keeps the anchor + contract_id
+        literals in its body (contract-check searches by substring/regex
+        MULTILINE). The skill dir is manager-* since the 008i rename."""
         bundle = _get_bundle_root()
-        skill = bundle / "skills" / "man-review-implementation" / "SKILL.md"
+        skill = bundle / "skills" / "manager-review-implementation" / "SKILL.md"
         assert "source_prompt: prompts/manager_review.md" in skill.read_text(
             encoding="utf-8"
         )
@@ -421,7 +422,9 @@ class TestCheckContractIntegration:
             encoding="utf-8"
         )
         # Literals must live in the BODY (not migrated into the YAML block).
-        assert "Skill canonica: skills/man-review-implementation/SKILL.md" in canonical
+        assert (
+            "Skill canonica: skills/manager-review-implementation/SKILL.md" in canonical
+        )
         assert "contract_id: cid-man-review-v2" in canonical
         # And the legacy stub still resolves (frontmatter declares the alias).
         fm, _ = parse_frontmatter(bundle / "prompts" / "manager_review.md")

@@ -38,7 +38,7 @@ Usar cuando el usuario pida:
 
 No usar para:
 
-- revisar un unico ticket en curso (usar `man-review-implementation`);
+- revisar un unico ticket en curso (usar `manager-review-implementation`);
 - conducir el bucle de implantacion (usar `orchestrate-pipeline`);
 - corregir o reabrir trabajo (esta skill no escribe estado operativo).
 

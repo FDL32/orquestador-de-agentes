@@ -11,7 +11,7 @@ quality_gate: false
 tags: [core, system]
 ---
 
-# man-resolve-escalation
+# manager-resolve-escalation
 
 Skill para resolver bloqueos técnicos o decisiones arquitectónicas escaladas por el Builder.
 

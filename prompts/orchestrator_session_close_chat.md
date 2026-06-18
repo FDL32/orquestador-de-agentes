@@ -22,7 +22,7 @@ Lee en este orden:
 2. `.agent/runtime/memory/UPSTREAM_LEARNINGS.md` si existe
 3. `skills/project-finalize/SKILL.md`
 4. `skills/session-close-observations/SKILL.md`
-5. `skills/man-session-closeout/SKILL.md`
+5. `skills/manager-session-closeout/SKILL.md`
 6. `skills/version-changelog/SKILL.md`
 7. `AGENTS.md` si no viene ya autocargado por el entorno/agente
 
@@ -38,7 +38,7 @@ skills canonicas como fuente de verdad:
 
 - `project-finalize` para secuencia de cierre
 - `session-close-observations` para observaciones persistentes
-- `man-session-closeout` para learnings y puente al siguiente ciclo
+- `manager-session-closeout` para learnings y puente al siguiente ciclo
 - `version-changelog` para version y CHANGELOG si aplica
 
 ### Comando canonico del cierre operativo
@@ -114,7 +114,7 @@ Aplica estos principios durante todo el cierre:
 
 - `session-close-observations`: genera observaciones curadas para
   `observations.jsonl`. Son **datos verificables** del proyecto.
-- `man-session-closeout`: genera `closeout_lessons.md` y clasifica learnings.
+- `manager-session-closeout`: genera `closeout_lessons.md` y clasifica learnings.
   Son **interpretaciones y decisiones humanas** sobre lo aprendido.
 
 No mezcles observaciones con learnings. Si hay duda, trata primero la senal

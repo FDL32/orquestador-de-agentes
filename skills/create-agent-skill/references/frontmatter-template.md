@@ -1,4 +1,4 @@
-﻿# Template de Frontmatter
+# Template de Frontmatter
 
 ## Básico (Obligatorio)
 
@@ -32,7 +32,7 @@ difficulty: beginner        # beginner/intermediate/advanced
 
 ### Skill del Manager
 ```yaml
-name: man-create-work-plan
+name: manager-create-work-plan
 version: 1.0.0
 description: Crear planes de trabajo estructurados
 author: agent-system

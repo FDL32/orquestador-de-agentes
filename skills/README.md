@@ -14,9 +14,9 @@ Flujo minimo de mejora continua:
 - el Builder implementa desde el plan aprobado
 - el Manager revisa y deja observaciones o bloqueos
 - `session-close-observations` convierte aprendizajes en memoria
-- `man-session-closeout` clasifica learnings de cierre y separa alcance local/generalizable
+- `manager-session-closeout` clasifica learnings de cierre y separa alcance local/generalizable
 - `review_bridge` inyecta memoria curada en revisiones futuras
-- `bui-implement-from-plan/references/code-rules.md` y `man-review-implementation` reflejan las reglas activas
+- `bui-implement-from-plan/references/code-rules.md` y `manager-review-implementation` reflejan las reglas activas
 - `_shared/anti-patterns.md` mantiene el inventario canonicamente numerado AP-01..AP-14
 
 ## 2. Tabla operativa
@@ -25,9 +25,9 @@ Flujo minimo de mejora continua:
 |---|---|---|---|---|---|
 | `grill-work-plan` | `manager` | `plan` | `false` | `false` | Interrogacion pre-plan para resolver terminologia ambigua antes de crear un work plan |
 | `setup-agent-system` | `user` | `setup` | `false` | `false` | Instalar y configurar el sistema de agentes con flujo oficial por etapas y compatibilidad legacy Manager+Builder en un proyecto existente |
-| `man-create-work-plan` | `manager` | `plan` | `false` | `false` | Crear planes de implementacion estructurados con fases, tareas y criterios de aceptacion |
-| `man-review-implementation` | `manager` | `review` | `false` | `false` | Revisar trabajo del Builder segun el plan aprobado y criterios de calidad |
-| `man-resolve-escalation` | `manager` | `review` | `false` | `false` | Resolver bloqueos y escalaciones del Builder con decisiones documentadas |
+| `manager-create-work-plan` | `manager` | `plan` | `false` | `false` | Crear planes de implementacion estructurados con fases, tareas y criterios de aceptacion |
+| `manager-review-implementation` | `manager` | `review` | `false` | `false` | Revisar trabajo del Builder segun el plan aprobado y criterios de calidad |
+| `manager-resolve-escalation` | `manager` | `review` | `false` | `false` | Resolver bloqueos y escalaciones del Builder con decisiones documentadas |
 | `bui-implement-from-plan` | `builder` | `implement` | `false` | `false` | Ejecutar un plan aprobado |
 | `bui-write-deliverable` | `builder` | `implement` | `false` | `false` | Generar un deliverable markdown (no-codigo) desde descripcion y criterios de aceptacion |
 | `bui-run-quality-gates` | `builder` | `quality` | `false` | `true` | Validar codigo con ruff y pytest segun el tipo de entregable |
@@ -39,7 +39,7 @@ Flujo minimo de mejora continua:
 | `project-finalize` | `shared` | `close` | `false` | `false` | Cierre profesional con auditoria, limpieza, documentacion, versionado y verificacion final |
 | `version-changelog` | `shared` | `close` | `false` | `false` | Gestion semantica de versiones y CHANGELOG.md siguiendo SemVer y Keep a Changelog |
 | `session-close-observations` | `shared` | `close` | `true` | `false` | Generar observaciones curadas al final de cada sesion para memoria auto-mejorable |
-| `man-session-closeout` | `manager` | `close` | `true` | `false` | Cerrar sesiones con learnings clasificados por scope y puente hacia mejora continua |
+| `manager-session-closeout` | `manager` | `close` | `true` | `false` | Cerrar sesiones con learnings clasificados por scope y puente hacia mejora continua |
 | `memory-consolidate` | `shared` | `memory` | `true` | `false` | Dedupe, filter y archive de `observations.jsonl` |
 | `create-agent-skill` | `shared` | `meta` | `false` | `false` | Meta-skill para crear nuevas micro-skills siguiendo el estandar Agent Skills |
 | `graphify` | `shared` | `support` | `false` | `false` | Construir grafo de conocimiento persistente del codebase para exploracion eficiente |
@@ -63,18 +63,18 @@ bug / finding humano
 Fuentes y destinos:
 - `observations.jsonl` guarda aprendizajes persistentes
 - `session-close-observations` consolida aprendizajes al cerrar sesion
-- `man-session-closeout` clasifica learnings de cierre y prepara el puente hacia el motor
+- `manager-session-closeout` clasifica learnings de cierre y prepara el puente hacia el motor
 - `review_bridge` inyecta memoria curada en el prompt del Manager
 - `code-rules.md` del Builder recoge reglas preventivas
-- `man-review-implementation` usa el inventario AP-01..AP-14 como checklist bloqueante
+- `manager-review-implementation` usa el inventario AP-01..AP-14 como checklist bloqueante
 - `skills/_shared/anti-patterns.md` es la referencia compartida para Builder y Manager
 
 ## 4. Indice compacto
 
 ### Manager
-- `man-create-work-plan` - plan
-- `man-review-implementation` - review
-- `man-resolve-escalation` - review
+- `manager-create-work-plan` - plan
+- `manager-review-implementation` - review
+- `manager-resolve-escalation` - review
 
 ### Builder
 - `bui-implement-from-plan` - implement
@@ -90,7 +90,7 @@ Fuentes y destinos:
 - `project-finalize` - close
 - `version-changelog` - close
 - `session-close-observations` - close
-- `man-session-closeout` - close
+- `manager-session-closeout` - close
 - `memory-consolidate` - memory
 - `create-agent-skill` - meta
 - `graphify` - support

@@ -153,7 +153,7 @@ def step_upstream_learnings_ttl(
     """Warn about pending upstream learnings whose TTL is about to expire.
 
     UPSTREAM_LEARNINGS.md entries under '## Pendientes de revision' carry a
-    'ttl_wps: N' counter decremented by man-session-closeout. Without an
+    'ttl_wps: N' counter decremented by manager-session-closeout. Without an
     automatic consumer they used to expire silently; this step surfaces
     entries with ttl_wps <= 1 (numeric) so the human can triage them
     before archival.

@@ -11,7 +11,7 @@ quality_gate: false
 tags: [core, system]
 ---
 
-# man-create-work-plan
+# manager-create-work-plan
 
 Skill para crear planes de trabajo detallados que el Builder pueda ejecutar.
 
@@ -256,7 +256,7 @@ El handoff al Builder genera/actualiza, sin omitir ninguno:
 
 - `references/plan-quality-checklist.md` - Checklist de calidad para planes y audits
 - `../../_shared/ticket-anti-patterns.md` - Catalogo TP compartido para prompts de Manager y Builder
-- `../man-session-closeout/SKILL.md` - Cierre de sesion y puente de learnings
+- `../manager-session-closeout/SKILL.md` - Cierre de sesion y puente de learnings
 
 ## TP Check obligatorio
 

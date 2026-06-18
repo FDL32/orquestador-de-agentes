@@ -252,9 +252,9 @@ Al finalizar el interrogatorio:
 - `CONTEXT.md` - Glosario de dominio (opcional, solo si aporta valor)
 - `.agent/decisions/` - ADRs existentes (para referencia de formato)
 
-## Integration opcional con man-create-work-plan
+## Integration opcional con manager-create-work-plan
 
-Esta skill es independiente y NO se integra obligatoriamente en `man-create-work-plan`.
+Esta skill es independiente y NO se integra obligatoriamente en `manager-create-work-plan`.
 
 Si el Manager quiere usarla opcionalmente:
 1. Verificar si hay ambiguedad en el requerimiento

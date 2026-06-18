@@ -59,7 +59,11 @@ class TestCheckNamingClean:
         root = _seed(
             tmp_path,
             prompts=["launch_builder", "session_bootstrap", "audit_bus"],
-            skills=["bui-implement-from-plan", "man-review-implementation", "graphify"],
+            skills=[
+                "bui-implement-from-plan",
+                "manager-review-implementation",
+                "graphify",
+            ],
         )
         assert check_naming(root) == []
 
@@ -206,3 +210,64 @@ class TestCheckNamingCLI:
     def test_check_naming_missing_dirs_is_clean(self, tmp_path):
         # No prompts/ or skills/ at all => nothing to validate => clean.
         assert check_naming(tmp_path) == []
+
+
+class TestNoLiveManSkillRefs008i:
+    """WOT-2026-008i barrier: no live operational consumer may reference the old
+    man-* skill dir names after the rename to manager-*. Mirrors the 008h prose
+    barrier. History/memory/DEC/changelog/tests are tolerated."""
+
+    def test_no_live_ref_to_legacy_man_skill_dirs(self):
+        import re
+
+        root = Path(__file__).resolve().parents[1]
+        legacy = (
+            "man-create-work-plan",
+            "man-resolve-escalation",
+            "man-review-implementation",
+            "man-session-closeout",
+        )
+        pat = re.compile(
+            r"\bman-(?:create-work-plan|resolve-escalation|"
+            r"review-implementation|session-closeout)\b"
+        )
+        # Tolerated: history, runtime, memory, DEC, changelog, backups, tests.
+        tolerated_parts = (
+            "/sandbox/",
+            "/_archive/",
+            "/.git/",
+            "/backups/",
+            "/runtime/",
+            "graphify-out",
+            ".venv",
+            "__pycache__",
+            "/memory/",
+            "CHANGELOG.md",
+            "DEC-008B-002",
+            "DEC-008D-001",
+            "/tests/",
+            "baseline_008i",
+            "/.agent/context/",
+        )
+        offenders = []
+        for p in root.rglob("*"):
+            if not p.is_file() or p.suffix not in (
+                ".md",
+                ".py",
+                ".txt",
+                ".json",
+                ".toml",
+            ):
+                continue
+            s = str(p).replace("\\", "/")
+            if any(t in s for t in tolerated_parts):
+                continue
+            try:
+                txt = p.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            for i, line in enumerate(txt.splitlines(), 1):
+                if pat.search(line):
+                    offenders.append(f"{s}:{i}: {line.strip()}")
+        assert not offenders, "live man-* skill refs survive:\n" + "\n".join(offenders)
+        assert legacy  # names documented for traceability

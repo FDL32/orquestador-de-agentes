@@ -216,12 +216,12 @@ Este wrapper ejecuta en secuencia fija:
 
 ### Paso 9d.5: Manager clasifica learnings de cierre
 
-- Si el cierre genero learnings que deben separarse por alcance, ejecutar `man-session-closeout`
+- Si el cierre genero learnings que deben separarse por alcance, ejecutar `manager-session-closeout`
 - Revisar `closeout_lessons.md` y la cola de learnings upstream antes de consolidar memoria
 - Clasificar cada learning como `local`, `generalizable` o `dudoso`
 - Aplicar TTL de 3 WPs a los items `dudoso`
 - Preparar el puente humano hacia el siguiente ciclo de planificacion
-- **Skill relacionada**: `man-session-closeout`
+- **Skill relacionada**: `manager-session-closeout`
 
 ### Paso 9e: Builder ejecuta consolidación de memoria (opcional)
 
@@ -270,9 +270,9 @@ Si el proyecto termina o cambia de manos, dejar explicito:
 - `../version-changelog/SKILL.md` - Versionado y changelog
 - `../bui-self-audit/SKILL.md` - Auditoria obligatoria del Builder
 - `../bui-run-quality-gates/SKILL.md` - Quality gates finales
-- `../man-review-implementation/SKILL.md` - Revision final del Manager
+- `../manager-review-implementation/SKILL.md` - Revision final del Manager
 - `../session-close-observations/SKILL.md` - Generar observaciones de cierre
-- `../man-session-closeout/SKILL.md` - Clasificar learnings de cierre y preparar el puente humano
+- `../manager-session-closeout/SKILL.md` - Clasificar learnings de cierre y preparar el puente humano
 - `../memory-consolidate/SKILL.md` - Consolidacion de memoria
 
 ## Constraints

@@ -4,7 +4,7 @@
 > MIT, **Adapted** (no se copio texto largo ni codigo). Fila en `CREDITS.md`.
 > Este protocolo da al Manager lenguaje preciso para DESCRIBIR el diff, no para
 > exigir arquitectura nueva. Checklist accionable: ver
-> `skills/man-review-implementation/references/review-checklist.md`. Anti-patron:
+> `skills/manager-review-implementation/references/review-checklist.md`. Anti-patron:
 > AP-16 en `skills/_shared/anti-patterns.md`.
 
 ## Glosario operativo (uso en review)

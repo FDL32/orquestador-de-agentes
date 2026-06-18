@@ -30,7 +30,7 @@ ACTIVE_OPERATIONAL_DOCS = [
     ROOT / "skills" / "bui-run-quality-gates" / "SKILL.md",
     ROOT / "skills" / "bui-implement-from-plan" / "SKILL.md",
     ROOT / "skills" / "bui-self-audit" / "SKILL.md",
-    ROOT / "skills" / "man-review-implementation" / "SKILL.md",
+    ROOT / "skills" / "manager-review-implementation" / "SKILL.md",
     ROOT / "skills" / "bui-run-quality-gates" / "references" / "common-fixes.md",
     ROOT / "skills" / "bui-implement-from-plan" / "references" / "log-format.md",
 ]

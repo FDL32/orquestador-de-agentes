@@ -1,5 +1,5 @@
 ---
-name: man-session-closeout
+name: manager-session-closeout
 version: 1.1.0
 description: Cierre de sesion del Manager con propuesta de learnings, clasificacion local/generalizable/dudoso y puente de mejora continua para el motor
 triggers: [/closeout, /session-closeout, /close-session]
@@ -11,7 +11,7 @@ quality_gate: false
 tags: [core, system, improvement-loop, close]
 ---
 
-# man-session-closeout
+# manager-session-closeout
 
 Skill del Manager para cerrar sesiones con mejora continua de doble bucle: captura local de learnings, clasificacion humana y puente controlado hacia el motor.
 
@@ -110,7 +110,7 @@ El usuario debe poder responder por item con una de estas acciones:
 
 ### Paso 4: Preparar contexto para el siguiente ciclo
 
-Escribir `closeout_lessons.md` como resumen puente para el siguiente `man-create-work-plan`.
+Escribir `closeout_lessons.md` como resumen puente para el siguiente `manager-create-work-plan`.
 
 ### Paso 5: Cerrar y reportar
 
@@ -133,7 +133,7 @@ La skill no escribe por stdout como producto final. Su efecto esperado es:
 - [references/scope-taxonomy.md](references/scope-taxonomy.md)
 - [references/closeout-lessons-format.md](references/closeout-lessons-format.md)
 - `../session-close-observations/SKILL.md`
-- `../man-create-work-plan/SKILL.md`
+- `../manager-create-work-plan/SKILL.md`
 - `../project-finalize/SKILL.md`
 
 ## Constraints
@@ -147,5 +147,5 @@ La skill no escribe por stdout como producto final. Su efecto esperado es:
 ## Related Skills
 
 - `session-close-observations`
-- `man-create-work-plan`
+- `manager-create-work-plan`
 - `project-finalize`

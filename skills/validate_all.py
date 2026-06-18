@@ -56,7 +56,10 @@ AP_REFS: dict[str, tuple[Path, str]] = {
         "Builder code rules",
     ),
     "review-checklist": (
-        SKILLS_DIR / "man-review-implementation" / "references" / "review-checklist.md",
+        SKILLS_DIR
+        / "manager-review-implementation"
+        / "references"
+        / "review-checklist.md",
         "Manager review checklist",
     ),
 }
