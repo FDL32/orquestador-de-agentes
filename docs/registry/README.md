@@ -27,7 +27,8 @@ enriquecido. Cada entrada declara:
 | `kind` | layout: `skill` / `prompt` / `reference` / `shared` / `script-consumer` |
 | `path` | ruta relativa al motor |
 | `status` | frontmatter `status:`; default `active`; soporta `active`/`deprecated`/`draft` |
-| `owner` | frontmatter `author`, fallback `role`, default `system` |
+| `owner` | frontmatter `author`, fallback `role`, default `system` (quién lo creó) |
+| `role` | frontmatter `role:`, default `shared` (qué rol del pipeline lo posee: `auditor`/`manager`/`builder`/...). Separado de `owner` desde WOT-2026-008k |
 | `canonical_source` | == `path` (008c no renombra) |
 | `aliases` | frontmatter `triggers` (los triggers son los alias de invocación) |
 

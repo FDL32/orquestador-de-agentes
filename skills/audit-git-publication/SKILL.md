@@ -4,7 +4,7 @@ version: 1.0.0
 description: Auditoria dry-run de un repo Git antes de publicarlo, detectando secretos en tree e historia, archivos privados trackeados, rutas/PII, DECIDE pendiente y acciones manuales necesarias
 triggers: [/audit-git-publication, audit-git-publication, auditar-publicacion-git, publicar-git]
 author: agent
-role: manager
+role: auditor
 stage: review
 writes_memory: false
 quality_gate: false

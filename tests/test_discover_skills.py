@@ -349,6 +349,56 @@ class TestCheckContract:
         rc = _check_contract()
         assert rc == 0
 
+    def test_auditor_contract_valid(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """WOT-2026-008k: role: auditor opts into the contract (enforced)."""
+        bundle = tmp_path / "motor"
+        (bundle / "skills" / "audit-x").mkdir(parents=True)
+        (bundle / "prompts").mkdir(parents=True)
+        (bundle / "skills" / "audit-x" / "SKILL.md").write_text(
+            "---\nname: audit-x\nrole: auditor\nsource_prompt: prompts/aud.md\n"
+            "contract_id: cid-aud-v1\n---\n"
+        )
+        (bundle / "prompts" / "aud.md").write_text(
+            "# Aud\nSkill canonica: skills/audit-x/SKILL.md\ncontract_id: cid-aud-v1\n"
+        )
+        monkeypatch.setattr("scripts.discover_skills._get_bundle_root", lambda: bundle)
+        assert _check_contract() == 0
+
+    def test_auditor_contract_enforced_not_silently_skipped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The anti-false-green guarantee: an auditor skill with a broken
+        contract_id must FAIL, proving auditor is genuinely in the opt-in and not
+        skipped like role: shared."""
+        bundle = tmp_path / "motor"
+        (bundle / "skills" / "audit-x").mkdir(parents=True)
+        (bundle / "prompts").mkdir(parents=True)
+        (bundle / "skills" / "audit-x" / "SKILL.md").write_text(
+            "---\nname: audit-x\nrole: auditor\nsource_prompt: prompts/aud.md\n"
+            "contract_id: cid-aud-v1\n---\n"
+        )
+        # Prompt declares a DIFFERENT contract_id -> contract must fail.
+        (bundle / "prompts" / "aud.md").write_text(
+            "# Aud\nSkill canonica: skills/audit-x/SKILL.md\ncontract_id: cid-WRONG\n"
+        )
+        monkeypatch.setattr("scripts.discover_skills._get_bundle_root", lambda: bundle)
+        assert _check_contract() == 1
+
+    def test_shared_role_still_skips_contract(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """role: shared (no contract) is not in the opt-in -> skipped, not failed.
+        Guards the two shared->auditor skills that have no source_prompt."""
+        bundle = tmp_path / "motor"
+        (bundle / "skills" / "shared-x").mkdir(parents=True)
+        (bundle / "skills" / "shared-x" / "SKILL.md").write_text(
+            "---\nname: shared-x\nrole: shared\n---\n"
+        )
+        monkeypatch.setattr("scripts.discover_skills._get_bundle_root", lambda: bundle)
+        assert _check_contract() == 0
+
 
 class TestCheckContractIntegration:
     """Integration tests using the real bundle root."""

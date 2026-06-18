@@ -4,7 +4,7 @@ version: 1.0.0
 description: Meta-auditoria post-pipeline read-only sobre el sistema auditado en un repo_destino, con doble pasada adversarial e informe consolidado
 triggers: [/audit-pipeline, audit-pipeline, auditar-pipeline]
 author: agent
-role: manager
+role: auditor
 stage: review
 writes_memory: false
 quality_gate: false

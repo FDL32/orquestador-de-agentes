@@ -4,7 +4,7 @@ version: 2.0.0
 description: Genera un snapshot rapido y estructurado del estado actual del repositorio, util para arranque de sesion y antes de comparaciones con otros repositorios.
 triggers: [/local-audit, /repo-audit, /snapshot]
 author: agent
-role: shared
+role: auditor
 stage: support
 writes_memory: false
 quality_gate: false

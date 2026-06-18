@@ -4,7 +4,7 @@ version: 2.1.0
 description: Auditoría sistemática de código Python detectando dead code, technical debt, y archivos inactivos usando vulture, deadcode, ruff y git log
 triggers: [/code-audit, code-quality, /deadcode]
 author: agent
-role: shared
+role: auditor
 stage: review
 writes_memory: false
 quality_gate: false

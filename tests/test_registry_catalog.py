@@ -14,6 +14,7 @@ from scripts.discover_skills import (
     DEFAULT_STATUS,
     VALID_STATUS,
     _derive_owner,
+    _derive_role,
     _derive_status,
     build_catalog,
     check_index_stale,
@@ -67,6 +68,15 @@ class TestDerivedMetadata:
         assert _derive_owner({"role": "builder"}) == "builder"
         assert _derive_owner({}) == "system"
 
+    def test_role_is_separate_from_owner(self):
+        # WOT-2026-008k: role comes from frontmatter `role`, default shared, and
+        # is independent of owner (which prefers author).
+        fm = {"author": "agent", "role": "auditor"}
+        assert _derive_role(fm) == "auditor"
+        assert _derive_owner(fm) == "agent"  # owner unchanged, coexists with role
+        assert _derive_role({}) == "shared"
+        assert _derive_role({"role": "builder"}) == "builder"
+
 
 class TestStatusDispatchEffect:
     """deprecated/draft skills stay in the catalog but do not bind triggers."""
@@ -115,6 +125,7 @@ class TestCatalog:
             "path",
             "status",
             "owner",
+            "role",
             "canonical_source",
             "aliases",
             "invocation",
@@ -125,6 +136,39 @@ class TestCatalog:
             assert e["canonical_source"] == e["path"]
             # WOT-2026-008c: invocation reflects the hybrid taxonomy (010s).
             assert e["invocation"] in ("user-invoked", "model-invoked")
+            # WOT-2026-008k: role is always a non-empty string (default shared).
+            assert isinstance(e["role"], str) and e["role"]
+
+    def test_catalog_role_parity_with_discovery(self):
+        """WOT-2026-008k: a skill's catalog role must match the frontmatter role
+        from discovery, exposed separately from owner."""
+        catalog = build_catalog()
+        disc = {s["path"]: s.get("role") for s in discover_skills()["skills"]}
+        for e in catalog["entries"]:
+            if e["kind"] != "skill":
+                continue
+            skill_dir = e["path"].rsplit("/SKILL.md", 1)[0]
+            matching = [
+                v for k, v in disc.items() if k.replace("\\", "/").endswith(skill_dir)
+            ]
+            if matching:
+                assert e["role"] == matching[0]
+
+    def test_audit_skills_are_role_auditor(self):
+        """WOT-2026-008k: the five audit skills own role auditor; bui-self-audit
+        stays builder (owned by the builder for self-audit, not the auditor)."""
+        catalog = build_catalog()
+        by_path = {e["path"].replace("\\", "/"): e for e in catalog["entries"]}
+        for name in (
+            "audit-git-publication",
+            "audit-pipeline",
+            "system-health-audit",
+            "code-audit",
+            "local-audit",
+        ):
+            entry = by_path[f"skills/{name}/SKILL.md"]
+            assert entry["role"] == "auditor", f"{name} should be role auditor"
+        assert by_path["skills/bui-self-audit/SKILL.md"]["role"] == "builder"
 
     def test_catalog_invocation_parity_with_discovery(self):
         """WOT-2026-008c: a skill's catalog invocation must match its

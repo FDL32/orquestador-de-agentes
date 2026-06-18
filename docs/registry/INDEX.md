@@ -19,101 +19,101 @@
 
 ## Entradas
 
-| kind | path | status | owner | invocation | aliases |
-|------|------|--------|-------|------------|---------|
-| prompt | `prompts/audit_agent_output.md` | active | system | model-invoked | — |
-| prompt | `prompts/audit_bus.md` | active | system | model-invoked | — |
-| prompt | `prompts/audit_cf_plan_graph.md` | active | system | model-invoked | — |
-| prompt | `prompts/audit_cf_repo_charter.md` | active | system | model-invoked | — |
-| prompt | `prompts/audit_cf_ticket_contract.md` | active | system | model-invoked | — |
-| prompt | `prompts/audit_complete_motor_destination.md` | active | system | model-invoked | — |
-| prompt | `prompts/audit_git_publication.md` | active | system | model-invoked | — |
-| prompt | `prompts/audit_pipeline.md` | active | system | model-invoked | — |
-| prompt | `prompts/audit_plan.md` | active | system | model-invoked | — |
-| prompt | `prompts/audit_post_change_system_health.md` | active | system | model-invoked | — |
-| prompt | `prompts/audit_ticket_contract.md` | active | system | model-invoked | — |
-| prompt | `prompts/contract_formation_pipeline.md` | active | system | model-invoked | — |
-| prompt | `prompts/destination_bootstrap.md` | active | system | model-invoked | — |
-| prompt | `prompts/launch_builder.md` | active | system | model-invoked | — |
-| prompt | `prompts/manager_review.md` | active | system | model-invoked | — |
-| prompt | `prompts/memory_upload.md` | active | system | model-invoked | — |
-| prompt | `prompts/orchestrator_destination_bootstrap.md` | active | system | model-invoked | — |
-| prompt | `prompts/orchestrator_launch_builder.md` | active | system | model-invoked | — |
-| prompt | `prompts/orchestrator_pipeline.md` | active | system | model-invoked | — |
-| prompt | `prompts/orchestrator_refactor_bootstrap.md` | active | system | model-invoked | — |
-| prompt | `prompts/orchestrator_session_bootstrap.md` | active | system | model-invoked | — |
-| prompt | `prompts/orchestrator_session_close_chat.md` | active | system | model-invoked | — |
-| prompt | `prompts/refactor_bootstrap.md` | active | system | model-invoked | — |
-| prompt | `prompts/review_manager.md` | active | system | model-invoked | — |
-| prompt | `prompts/session_bootstrap.md` | active | system | model-invoked | — |
-| prompt | `prompts/session_close_chat.md` | active | system | model-invoked | — |
-| reference | `skills/audit-pipeline/references/audit-checklist.md` | active | system | model-invoked | — |
-| reference | `skills/bui-implement-from-plan/references/code-rules.md` | active | system | model-invoked | — |
-| reference | `skills/bui-implement-from-plan/references/log-format.md` | active | system | model-invoked | — |
-| reference | `skills/bui-run-quality-gates/references/common-fixes.md` | active | system | model-invoked | — |
-| reference | `skills/code-audit/references/audit-report-template.md` | active | system | model-invoked | — |
-| reference | `skills/code-audit/references/audit-tools-guide.md` | active | system | model-invoked | — |
-| reference | `skills/create-agent-skill/references/frontmatter-template.md` | active | system | model-invoked | — |
-| reference | `skills/create-agent-skill/references/skill-anatomy.md` | active | system | model-invoked | — |
-| reference | `skills/deep-research/references/research-template.md` | active | system | model-invoked | — |
-| reference | `skills/man-create-work-plan/references/plan-quality-checklist.md` | active | system | model-invoked | — |
-| reference | `skills/man-create-work-plan/references/plan-template.md` | active | system | model-invoked | — |
-| reference | `skills/man-create-work-plan/references/risk-guide.md` | active | system | model-invoked | — |
-| reference | `skills/man-resolve-escalation/references/escalation-levels.md` | active | system | model-invoked | — |
-| reference | `skills/man-review-implementation/references/review-checklist.md` | active | system | model-invoked | — |
-| reference | `skills/man-review-implementation/references/verdict-format.md` | active | system | model-invoked | — |
-| reference | `skills/man-session-closeout/references/closeout-lessons-format.md` | active | system | model-invoked | — |
-| reference | `skills/man-session-closeout/references/scope-taxonomy.md` | active | system | model-invoked | — |
-| reference | `skills/man-session-closeout/references/upstream-learnings-format.md` | active | system | model-invoked | — |
-| reference | `skills/orchestrate-pipeline/references/destination-preflight.md` | active | system | model-invoked | — |
-| reference | `skills/project-finalize/references/closeout-checklist.md` | active | system | model-invoked | — |
-| reference | `skills/project-finalize/references/closeout-modes.md` | active | system | model-invoked | — |
-| reference | `skills/project-finalize/references/closeout-plan-template.md` | active | system | model-invoked | — |
-| reference | `skills/repo-compare/references/filter-criteria.md` | active | system | model-invoked | — |
-| reference | `skills/repo-compare/references/output-format.md` | active | system | model-invoked | — |
-| reference | `skills/scaffold-python-project/references/gitignore-template.md` | active | system | model-invoked | — |
-| reference | `skills/scaffold-python-project/references/pyproject-template.md` | active | system | model-invoked | — |
-| reference | `skills/secure-existing-project/references/cascade-config-pattern.md` | active | system | model-invoked | — |
-| reference | `skills/secure-existing-project/references/security-checklist.md` | active | system | model-invoked | — |
-| reference | `skills/session-close-observations/references/filter-rules.md` | active | system | model-invoked | — |
-| reference | `skills/session-close-observations/references/schema.md` | active | system | model-invoked | — |
-| reference | `skills/setup-agent-system/references/quickstart-checklist.md` | active | system | model-invoked | — |
-| reference | `skills/version-changelog/references/changelog-template.md` | active | system | model-invoked | — |
-| reference | `skills/version-changelog/references/semver-decision-guide.md` | active | system | model-invoked | — |
-| script-consumer | `bus/skill_resolver.py` | active | system | model-invoked | — |
-| script-consumer | `scripts/check_skill_collisions.py` | active | system | model-invoked | — |
-| script-consumer | `scripts/discover_skills.py` | active | system | model-invoked | — |
-| script-consumer | `scripts/run_gates_dispatch.py` | active | system | model-invoked | — |
-| script-consumer | `scripts/validate_agent_config.py` | active | system | model-invoked | — |
-| shared | `skills/_shared/anti-patterns.md` | active | system | model-invoked | — |
-| shared | `skills/_shared/ap-schema.md` | active | system | model-invoked | — |
-| shared | `skills/_shared/ticket-anti-patterns.md` | active | system | model-invoked | — |
-| skill | `skills/audit-git-publication/SKILL.md` | active | agent | model-invoked | /audit-git-publication, audit-git-publication, auditar-publicacion-git, publicar-git |
-| skill | `skills/audit-pipeline/SKILL.md` | active | agent | model-invoked | /audit-pipeline, audit-pipeline, auditar-pipeline |
-| skill | `skills/bui-implement-from-plan/SKILL.md` | active | agent | model-invoked | /code, /implement, implement |
-| skill | `skills/bui-run-quality-gates/SKILL.md` | active | agent | model-invoked | /check, /gates, quality-gates |
-| skill | `skills/bui-self-audit/SKILL.md` | active | agent | model-invoked | /inspect, /self-audit, audit |
-| skill | `skills/bui-write-deliverable/SKILL.md` | active | agent | model-invoked | /deliverable, /write-deliverable, /write-doc |
-| skill | `skills/code-audit/SKILL.md` | active | agent | model-invoked | /code-audit, /deadcode, code-quality |
-| skill | `skills/create-agent-skill/SKILL.md` | active | agent | model-invoked | /create-skill, /new, skill-create |
-| skill | `skills/deep-research/SKILL.md` | active | agent | model-invoked | /deep-research, /pre-plan-research, /research |
-| skill | `skills/graphify/SKILL.md` | active | agent | model-invoked | /graphify, graph, map |
-| skill | `skills/grill-work-plan/SKILL.md` | active | agent | model-invoked | /grill, /grill-plan, grill-wp |
-| skill | `skills/local-audit/SKILL.md` | active | agent | model-invoked | /local-audit, /repo-audit, /snapshot |
-| skill | `skills/man-create-work-plan/SKILL.md` | active | agent | model-invoked | /plan, /schedule, create-plan |
-| skill | `skills/man-resolve-escalation/SKILL.md` | active | agent | model-invoked | /escalate, /resolve, escalation |
-| skill | `skills/man-review-implementation/SKILL.md` | active | agent | model-invoked | /approve, /review, code-review |
-| skill | `skills/man-session-closeout/SKILL.md` | active | agent | model-invoked | /close-session, /closeout, /session-closeout |
-| skill | `skills/memory-consolidate/SKILL.md` | active | agent | model-invoked | /consolidate, /dream-cycle, /memory |
-| skill | `skills/orchestrate-pipeline/SKILL.md` | active | agent | model-invoked | /pipeline, ejecutar-backlog, implantar-planes, orchestrate-pipeline, run-backlog |
-| skill | `skills/project-finalize/SKILL.md` | active | agent | model-invoked | /finalize, /finish, close |
-| skill | `skills/refactor-manager/SKILL.md` | active | agent | model-invoked | /refactor, refactor, refactor-manager |
-| skill | `skills/repo-compare/SKILL.md` | active | agent | model-invoked | /compare, /gh-compare, /repo-compare |
-| skill | `skills/scaffold-python-project/SKILL.md` | active | agent | model-invoked | /new-project, /scaffold, /scaffold-python |
-| skill | `skills/secure-existing-project/SKILL.md` | active | agent | model-invoked | /harden, /secure, /security-audit |
-| skill | `skills/session-close-observations/SKILL.md` | active | agent | model-invoked | /close-observations, /generate-observations, /session-close |
-| skill | `skills/setup-agent-system/SKILL.md` | active | agent | model-invoked | /agent-install, /agent-setup, /init |
-| skill | `skills/system-health-audit/SKILL.md` | active | agent | model-invoked | /audit-system-health, auditar-salud-sistema, system-health-audit |
-| skill | `skills/systematic-debugging/SKILL.md` | active | agent | model-invoked | /debug, /systematic-debugging, debug |
-| skill | `skills/test-driven-development/SKILL.md` | active | agent | model-invoked | /tdd, /test-driven, tdd |
-| skill | `skills/version-changelog/SKILL.md` | active | agent | model-invoked | /changelog, /release, version |
+| kind | path | status | owner | role | invocation | aliases |
+|------|------|--------|-------|------|------------|---------|
+| prompt | `prompts/audit_agent_output.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/audit_bus.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/audit_cf_plan_graph.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/audit_cf_repo_charter.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/audit_cf_ticket_contract.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/audit_complete_motor_destination.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/audit_git_publication.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/audit_pipeline.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/audit_plan.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/audit_post_change_system_health.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/audit_ticket_contract.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/contract_formation_pipeline.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/destination_bootstrap.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/launch_builder.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/manager_review.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/memory_upload.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/orchestrator_destination_bootstrap.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/orchestrator_launch_builder.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/orchestrator_pipeline.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/orchestrator_refactor_bootstrap.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/orchestrator_session_bootstrap.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/orchestrator_session_close_chat.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/refactor_bootstrap.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/review_manager.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/session_bootstrap.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/session_close_chat.md` | active | system | shared | model-invoked | — |
+| reference | `skills/audit-pipeline/references/audit-checklist.md` | active | system | shared | model-invoked | — |
+| reference | `skills/bui-implement-from-plan/references/code-rules.md` | active | system | shared | model-invoked | — |
+| reference | `skills/bui-implement-from-plan/references/log-format.md` | active | system | shared | model-invoked | — |
+| reference | `skills/bui-run-quality-gates/references/common-fixes.md` | active | system | shared | model-invoked | — |
+| reference | `skills/code-audit/references/audit-report-template.md` | active | system | shared | model-invoked | — |
+| reference | `skills/code-audit/references/audit-tools-guide.md` | active | system | shared | model-invoked | — |
+| reference | `skills/create-agent-skill/references/frontmatter-template.md` | active | system | shared | model-invoked | — |
+| reference | `skills/create-agent-skill/references/skill-anatomy.md` | active | system | shared | model-invoked | — |
+| reference | `skills/deep-research/references/research-template.md` | active | system | shared | model-invoked | — |
+| reference | `skills/man-create-work-plan/references/plan-quality-checklist.md` | active | system | shared | model-invoked | — |
+| reference | `skills/man-create-work-plan/references/plan-template.md` | active | system | shared | model-invoked | — |
+| reference | `skills/man-create-work-plan/references/risk-guide.md` | active | system | shared | model-invoked | — |
+| reference | `skills/man-resolve-escalation/references/escalation-levels.md` | active | system | shared | model-invoked | — |
+| reference | `skills/man-review-implementation/references/review-checklist.md` | active | system | shared | model-invoked | — |
+| reference | `skills/man-review-implementation/references/verdict-format.md` | active | system | shared | model-invoked | — |
+| reference | `skills/man-session-closeout/references/closeout-lessons-format.md` | active | system | shared | model-invoked | — |
+| reference | `skills/man-session-closeout/references/scope-taxonomy.md` | active | system | shared | model-invoked | — |
+| reference | `skills/man-session-closeout/references/upstream-learnings-format.md` | active | system | shared | model-invoked | — |
+| reference | `skills/orchestrate-pipeline/references/destination-preflight.md` | active | system | shared | model-invoked | — |
+| reference | `skills/project-finalize/references/closeout-checklist.md` | active | system | shared | model-invoked | — |
+| reference | `skills/project-finalize/references/closeout-modes.md` | active | system | shared | model-invoked | — |
+| reference | `skills/project-finalize/references/closeout-plan-template.md` | active | system | shared | model-invoked | — |
+| reference | `skills/repo-compare/references/filter-criteria.md` | active | system | shared | model-invoked | — |
+| reference | `skills/repo-compare/references/output-format.md` | active | system | shared | model-invoked | — |
+| reference | `skills/scaffold-python-project/references/gitignore-template.md` | active | system | shared | model-invoked | — |
+| reference | `skills/scaffold-python-project/references/pyproject-template.md` | active | system | shared | model-invoked | — |
+| reference | `skills/secure-existing-project/references/cascade-config-pattern.md` | active | system | shared | model-invoked | — |
+| reference | `skills/secure-existing-project/references/security-checklist.md` | active | system | shared | model-invoked | — |
+| reference | `skills/session-close-observations/references/filter-rules.md` | active | system | shared | model-invoked | — |
+| reference | `skills/session-close-observations/references/schema.md` | active | system | shared | model-invoked | — |
+| reference | `skills/setup-agent-system/references/quickstart-checklist.md` | active | system | shared | model-invoked | — |
+| reference | `skills/version-changelog/references/changelog-template.md` | active | system | shared | model-invoked | — |
+| reference | `skills/version-changelog/references/semver-decision-guide.md` | active | system | shared | model-invoked | — |
+| script-consumer | `bus/skill_resolver.py` | active | system | shared | model-invoked | — |
+| script-consumer | `scripts/check_skill_collisions.py` | active | system | shared | model-invoked | — |
+| script-consumer | `scripts/discover_skills.py` | active | system | shared | model-invoked | — |
+| script-consumer | `scripts/run_gates_dispatch.py` | active | system | shared | model-invoked | — |
+| script-consumer | `scripts/validate_agent_config.py` | active | system | shared | model-invoked | — |
+| shared | `skills/_shared/anti-patterns.md` | active | system | shared | model-invoked | — |
+| shared | `skills/_shared/ap-schema.md` | active | system | shared | model-invoked | — |
+| shared | `skills/_shared/ticket-anti-patterns.md` | active | system | shared | model-invoked | — |
+| skill | `skills/audit-git-publication/SKILL.md` | active | agent | auditor | model-invoked | /audit-git-publication, audit-git-publication, auditar-publicacion-git, publicar-git |
+| skill | `skills/audit-pipeline/SKILL.md` | active | agent | auditor | model-invoked | /audit-pipeline, audit-pipeline, auditar-pipeline |
+| skill | `skills/bui-implement-from-plan/SKILL.md` | active | agent | builder | model-invoked | /code, /implement, implement |
+| skill | `skills/bui-run-quality-gates/SKILL.md` | active | agent | builder | model-invoked | /check, /gates, quality-gates |
+| skill | `skills/bui-self-audit/SKILL.md` | active | agent | builder | model-invoked | /inspect, /self-audit, audit |
+| skill | `skills/bui-write-deliverable/SKILL.md` | active | agent | builder | model-invoked | /deliverable, /write-deliverable, /write-doc |
+| skill | `skills/code-audit/SKILL.md` | active | agent | auditor | model-invoked | /code-audit, /deadcode, code-quality |
+| skill | `skills/create-agent-skill/SKILL.md` | active | agent | shared | model-invoked | /create-skill, /new, skill-create |
+| skill | `skills/deep-research/SKILL.md` | active | agent | shared | model-invoked | /deep-research, /pre-plan-research, /research |
+| skill | `skills/graphify/SKILL.md` | active | agent | shared | model-invoked | /graphify, graph, map |
+| skill | `skills/grill-work-plan/SKILL.md` | active | agent | manager | model-invoked | /grill, /grill-plan, grill-wp |
+| skill | `skills/local-audit/SKILL.md` | active | agent | auditor | model-invoked | /local-audit, /repo-audit, /snapshot |
+| skill | `skills/man-create-work-plan/SKILL.md` | active | agent | manager | model-invoked | /plan, /schedule, create-plan |
+| skill | `skills/man-resolve-escalation/SKILL.md` | active | agent | manager | model-invoked | /escalate, /resolve, escalation |
+| skill | `skills/man-review-implementation/SKILL.md` | active | agent | manager | model-invoked | /approve, /review, code-review |
+| skill | `skills/man-session-closeout/SKILL.md` | active | agent | manager | model-invoked | /close-session, /closeout, /session-closeout |
+| skill | `skills/memory-consolidate/SKILL.md` | active | agent | shared | model-invoked | /consolidate, /dream-cycle, /memory |
+| skill | `skills/orchestrate-pipeline/SKILL.md` | active | agent | shared | model-invoked | /pipeline, ejecutar-backlog, implantar-planes, orchestrate-pipeline, run-backlog |
+| skill | `skills/project-finalize/SKILL.md` | active | agent | shared | model-invoked | /finalize, /finish, close |
+| skill | `skills/refactor-manager/SKILL.md` | active | agent | shared | model-invoked | /refactor, refactor, refactor-manager |
+| skill | `skills/repo-compare/SKILL.md` | active | agent | shared | model-invoked | /compare, /gh-compare, /repo-compare |
+| skill | `skills/scaffold-python-project/SKILL.md` | active | agent | shared | model-invoked | /new-project, /scaffold, /scaffold-python |
+| skill | `skills/secure-existing-project/SKILL.md` | active | agent | shared | model-invoked | /harden, /secure, /security-audit |
+| skill | `skills/session-close-observations/SKILL.md` | active | agent | shared | model-invoked | /close-observations, /generate-observations, /session-close |
+| skill | `skills/setup-agent-system/SKILL.md` | active | agent | user | model-invoked | /agent-install, /agent-setup, /init |
+| skill | `skills/system-health-audit/SKILL.md` | active | agent | auditor | model-invoked | /audit-system-health, auditar-salud-sistema, system-health-audit |
+| skill | `skills/systematic-debugging/SKILL.md` | active | agent | shared | model-invoked | /debug, /systematic-debugging, debug |
+| skill | `skills/test-driven-development/SKILL.md` | active | agent | shared | model-invoked | /tdd, /test-driven, tdd |
+| skill | `skills/version-changelog/SKILL.md` | active | agent | shared | model-invoked | /changelog, /release, version |

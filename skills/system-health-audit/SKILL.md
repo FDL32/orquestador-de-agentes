@@ -4,7 +4,7 @@ version: 0.1.0
 description: Auditoria periodica de salud del sistema multi-agente en tres capas (repo_motor, repo_destino, integracion) tras cambios; script recolector determinista + juicio adversarial del agente, read-only por defecto
 triggers: [/audit-system-health, system-health-audit, auditar-salud-sistema]
 author: agent
-role: manager
+role: auditor
 stage: review
 writes_memory: false
 quality_gate: false

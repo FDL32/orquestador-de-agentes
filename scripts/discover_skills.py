@@ -120,6 +120,11 @@ def _scan_skills_dir(directory: Path | None) -> dict[str, dict[str, Any]]:
             # WOT-2026-008c: logical-authority metadata derived from frontmatter.
             "status": _derive_status(fm),
             "owner": _derive_owner(fm),
+            # WOT-2026-008k: pipeline role exposed separately from owner. owner is
+            # "who authored" (author, fallback role); role is "which pipeline role
+            # owns the artifact" (frontmatter role, default "shared"). They may
+            # coincide when no author is declared.
+            "role": _derive_role(fm),
             "aliases": list(triggers),
             # WOT-2026-010s: hybrid user/model-invoked taxonomy. Additive metadata;
             # does NOT affect trigger_map (triggers: stays the dispatch contract).
@@ -171,6 +176,19 @@ def _derive_owner(fm: dict[str, Any]) -> str:
         if isinstance(val, str) and val.strip():
             return val.strip()
     return "system"
+
+
+def _derive_role(fm: dict[str, Any]) -> str:
+    """Derive the pipeline role from frontmatter `role`, default 'shared'.
+
+    WOT-2026-008k: role is exposed separately from owner so the catalog/INDEX can
+    show which pipeline role owns a skill (e.g. auditor) independently of who
+    authored it. Does not change _derive_owner semantics.
+    """
+    val = fm.get("role")
+    if isinstance(val, str) and val.strip():
+        return val.strip()
+    return "shared"
 
 
 def _auto_host_skills_dir(bundle_root: Path) -> Path | None:
@@ -261,6 +279,15 @@ def _error(message: str) -> list[str]:
     return [message]
 
 
+# Roles whose skills opt into the bidirectional prompt<->skill contract once they
+# declare source_prompt/contract_id. WOT-2026-008k added "auditor" so the three
+# contract-validated audit skills (audit-git-publication, audit-pipeline,
+# system-health-audit) keep their source_prompt/contract_id enforcement after
+# moving from role: manager to role: auditor. Shared->auditor skills without a
+# contract still pass (the source_prompt/contract_id guard below lets them).
+CONTRACT_OPT_IN_ROLES = ("manager", "builder", "auditor")
+
+
 def _validate_frontmatter_contract_opt_in(
     skill_file: Path, bundle_root: Path
 ) -> tuple[dict[str, Any] | None, str | None]:
@@ -273,7 +300,7 @@ def _validate_frontmatter_contract_opt_in(
         return None, f"{rel}: YAML invalido ({fm_error})"
 
     role = fm.get("role", "")
-    if role not in ("manager", "builder"):
+    if role not in CONTRACT_OPT_IN_ROLES:
         return None, None
 
     source_prompt = fm.get("source_prompt", "")
@@ -583,6 +610,7 @@ def _catalog_entry(
     *,
     status: str = DEFAULT_STATUS,
     owner: str = "system",
+    role: str = "shared",
     aliases: list[str] | None = None,
     disable_model_invocation: bool = False,
 ) -> dict[str, Any]:
@@ -599,6 +627,7 @@ def _catalog_entry(
         "path": rel,
         "status": status,
         "owner": owner,
+        "role": role,
         "canonical_source": rel,
         "aliases": sorted(aliases) if aliases else [],
         "invocation": "user-invoked" if disable_model_invocation else "model-invoked",
@@ -624,6 +653,7 @@ def build_catalog(bundle_root: Path | None = None) -> dict[str, Any]:
             root,
             status=skill.get("status", DEFAULT_STATUS),
             owner=skill.get("owner", "system"),
+            role=skill.get("role", "shared"),
             aliases=skill.get("aliases", []),
             disable_model_invocation=skill.get("disable_model_invocation", False),
         )
@@ -685,15 +715,16 @@ def render_index(catalog: dict[str, Any]) -> str:
         "",
         "## Entradas",
         "",
-        "| kind | path | status | owner | invocation | aliases |",
-        "|------|------|--------|-------|------------|---------|",
+        "| kind | path | status | owner | role | invocation | aliases |",
+        "|------|------|--------|-------|------|------------|---------|",
     ]
     for e in catalog["entries"]:
         aliases = ", ".join(e["aliases"]) if e["aliases"] else "—"
         invocation = e.get("invocation", "model-invoked")
+        role = e.get("role", "shared")
         lines.append(
             f"| {e['kind']} | `{e['path']}` | {e['status']} | {e['owner']} "
-            f"| {invocation} | {aliases} |"
+            f"| {role} | {invocation} | {aliases} |"
         )
     lines.append("")
     return "\n".join(lines)
