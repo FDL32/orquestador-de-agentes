@@ -1,3 +1,14 @@
+# 2026-06-20 - Hermes operational context bundle
+
+### Added
+- `prompts/hermes_soul.md`: concise canonical Hermes identity and safety
+  contract, aligned with current `repo_motor` / `repo_destino` vocabulary.
+- `scripts/hermes_build_context_bundle.py`: deterministic generator for the
+  Hermes soul, motor-context snapshot, closeout snapshot and integrity
+  manifest with motor version, source commit and SHA-256 hashes.
+- `tests/test_hermes_build_context_bundle.py`: real-git coverage for generated
+  metadata, source extraction, hashes and missing-section failure.
+
 # 2026-06-19 - Encoding + closeout hardening (Windows)
 
 ### Fixed

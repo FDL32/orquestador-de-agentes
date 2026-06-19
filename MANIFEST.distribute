@@ -35,6 +35,7 @@ scripts/check_ruff_hook_scope.py
 scripts/run_gates_dispatch.py
 scripts/check_motor_pristine.py
 scripts/classify_publication.py
+scripts/hermes_build_context_bundle.py
 
 # =============================================================================
 # PROMPTS OPERATIVOS REFERENCIADOS POR SKILLS / BOOTSTRAP
@@ -43,6 +44,7 @@ prompts/audit_agent_output.md
 prompts/audit_git_publication.md
 prompts/audit_pipeline.md
 prompts/audit_ticket_contract.md
+prompts/hermes_soul.md
 prompts/manager_review.md
 prompts/orchestrator_destination_bootstrap.md
 prompts/orchestrator_launch_builder.md
