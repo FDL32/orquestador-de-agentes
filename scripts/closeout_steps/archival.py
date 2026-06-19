@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from scripts.session_closeout import StepResult
 
+from scripts.delivery_hygiene_check import check_archive_rename_complete
+
 
 def step_archive_collaboration(
     project_root: Path,
@@ -36,6 +38,21 @@ def step_archive_collaboration(
             timeout=60,
         )
         if result.returncode == 0:
+            # WOT-2026-011a: fail closed in the SAME closeout that leaves an
+            # uncommitted archival rename. The archiver moves STRATEGY_/AUDIT_/
+            # PLAN_ artifacts into _archive/plan_audit/ via shutil.move without a
+            # git commit; the resulting delete+untracked limbo only surfaced on
+            # the NEXT ticket's validate (010w, 011d needed manual reconcile).
+            # Reuse the canonical detection (single source of truth); never
+            # auto-commit, never delete.
+            rename = check_archive_rename_complete(project_root)
+            if not rename.passed:
+                detail = "; ".join([rename.message, *(rename.details or [])])
+                return step_result_cls(
+                    name="archive_collaboration",
+                    status="FAIL",
+                    detail=detail,
+                )
             return step_result_cls(
                 name="archive_collaboration",
                 status="PASS",

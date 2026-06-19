@@ -22,6 +22,9 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
+from scripts.closeout_steps.archival import (
+    step_archive_collaboration as _step_archive_collaboration_impl,
+)
 from scripts.session_closeout import (
     DRY_RUN_REPORT_REL,
     REPORT_REL,
@@ -808,3 +811,121 @@ class TestCheckVersionedFilenames:
             result = _check_versioned_filenames(tmp_path)
         assert result.status == "FAIL"
         assert "PLAN_WT-2026-233c.md" in result.detail
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-011a: closeout fails closed on an uncommitted archival rename.
+# Regression must reproduce the REAL closeout mutation (run the archiver), not
+# an empty mock: the archiver moves a closed AUDIT_/STRATEGY_ artifact into
+# _archive/plan_audit/ without committing, and step_archive_collaboration must
+# turn that delete+untracked limbo into a blocking FAIL.
+# ---------------------------------------------------------------------------
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+
+def _init_destino_repo(repo: Path) -> None:
+    repo.mkdir(parents=True, exist_ok=True)
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "t@e.com")
+    _git(repo, "config", "user.name", "T")
+    (repo / "README.md").write_text("# repo", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "init")
+
+
+def _seed_collab_with_closed_artifact(repo: Path) -> None:
+    """Active ticket A in work_plan.md + a committed AUDIT_ for closed ticket B.
+    The archiver moves B (non-active) into _archive/plan_audit/ without committing.
+    """
+    collab = repo / ".agent" / "collaboration"
+    collab.mkdir(parents=True, exist_ok=True)
+    (collab / "work_plan.md").write_text(
+        "# work_plan.md -- WOT-2026-011a" + chr(10), encoding="utf-8"
+    )
+    (collab / "AUDIT_WOT-2026-999z.md").write_text("closed audit", encoding="utf-8")
+    _git(repo, "add", "--", ".agent/collaboration/work_plan.md")
+    _git(repo, "add", "--", ".agent/collaboration/AUDIT_WOT-2026-999z.md")
+    _git(repo, "commit", "-m", "seed collaboration")
+
+
+class TestArchiveRenameFailsClosed011a:
+    """The barrier lives at the mutation point and reuses the canonical helper.
+
+    The test runs the REAL archiver against a real git repo via a run_script_fn
+    that points at the motor script (production resolves it the same way through
+    runtime.motor_link). The archiver performs the genuine shutil.move, so the
+    delete+untracked limbo is real, not mocked.
+    """
+
+    @staticmethod
+    def _real_archiver_runner():
+        import sys
+
+        scripts_dir = Path(__file__).resolve().parents[1] / "scripts"
+
+        def run_script_fn(script_name, args, project_root, timeout=60):
+            script_path = scripts_dir / script_name
+            return subprocess.run(
+                [sys.executable, str(script_path), *args],
+                cwd=str(project_root),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+
+        return run_script_fn
+
+    def _run_step(self, repo: Path) -> StepResult:
+        return _step_archive_collaboration_impl(
+            repo,
+            False,
+            run_script_fn=self._real_archiver_runner(),
+            step_result_cls=StepResult,
+        )
+
+    def test_uncommitted_rename_blocks_in_real_closeout(self, tmp_path: Path) -> None:
+        repo = tmp_path / "destino"
+        _init_destino_repo(repo)
+        _seed_collab_with_closed_artifact(repo)
+
+        result = self._run_step(repo)
+
+        # The archiver actually moved the closed artifact (real mutation).
+        moved = repo / ".agent/collaboration/_archive/plan_audit/AUDIT_WOT-2026-999z.md"
+        assert moved.exists(), "archiver must have moved the closed artifact"
+        assert not (repo / ".agent/collaboration/AUDIT_WOT-2026-999z.md").exists()
+
+        # And the closeout step fails closed with the stable reason + remediation.
+        assert result.status == "FAIL", result.detail
+        assert "archive_rename_uncommitted" in result.detail
+        assert "git add" in result.detail and "git commit" in result.detail
+        # No auto-commit: the rename is still in limbo for the operator to resolve.
+        out = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        assert "_archive/plan_audit/AUDIT_WOT-2026-999z.md" in out
+
+    def test_clean_archive_still_passes(self, tmp_path: Path) -> None:
+        # No closed artifact to move: the archiver is a no-op and the tree stays
+        # clean, so the step keeps returning PASS (no false positive).
+        repo = tmp_path / "destino"
+        _init_destino_repo(repo)
+        collab = repo / ".agent" / "collaboration"
+        collab.mkdir(parents=True, exist_ok=True)
+        (collab / "work_plan.md").write_text(
+            "# work_plan.md -- WOT-2026-011a" + chr(10), encoding="utf-8"
+        )
+        _git(repo, "add", "--", ".agent/collaboration/work_plan.md")
+        _git(repo, "commit", "-m", "seed clean collaboration")
+
+        result = self._run_step(repo)
+
+        assert result.status == "PASS", result.detail
+        assert "archive_rename_uncommitted" not in result.detail

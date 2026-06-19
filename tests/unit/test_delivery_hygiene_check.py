@@ -132,3 +132,20 @@ def test_clean_tree_passes(tmp_path: Path) -> None:
     result = dhc.check_archive_rename_complete(repo)
     assert result.passed is True
     assert "pendientes" in result.message
+
+
+def test_stable_reason_is_contract_for_closeout_011a(tmp_path: Path) -> None:
+    """WOT-2026-011a depends on the stable reason `archive_rename_uncommitted`
+    surfacing in details so the closeout step can forward it verbatim. Lock it
+    so a future edit to the helper cannot silently drop the contract string."""
+    repo = tmp_path / "destino"
+    _init_git_repo(repo)
+    _collab(repo)
+    _commit_artifact(repo, ".agent/collaboration/STRATEGY_WOT-2026-999z.md", "s")
+    _simulate_archiver_move(repo, "STRATEGY_WOT-2026-999z.md")
+
+    result = dhc.check_archive_rename_complete(repo)
+
+    assert result.passed is False
+    assert result.message == "ARCHIVE_RENAME_UNCOMMITTED"
+    assert any("archive_rename_uncommitted" in d for d in (result.details or []))
