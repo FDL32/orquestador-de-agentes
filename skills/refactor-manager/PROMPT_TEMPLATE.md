@@ -215,5 +215,5 @@ Cuando el ticket corre dentro de `orquestador_de_agentes`:
 - El Manager invoca esta skill via `skills/refactor-manager/SKILL.md` (5 fases canonicas).
 - El Builder recibe este `PROMPT_TEMPLATE.md` como contexto operativo.
 - Cada sub-fase aprobada se convierte en un lote dentro de `work_plan.md`.
-- La validacion final se cruza con `bui-run-quality-gates` y `bui-self-audit`.
+- La validacion final se cruza con `builder-run-quality-gates` y `builder-self-audit`.
 - El cierre se delega a `manager-review-implementation` + `project-finalize`.

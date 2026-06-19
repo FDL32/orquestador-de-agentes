@@ -27,12 +27,12 @@ ACTIVE_OPERATIONAL_DOCS = [
     AGENT_DIR / "README.md",
     AGENT_DIR / "workflows" / "manager_workflow.md",
     AGENT_DIR / "workflows" / "builder_workflow.md",
-    ROOT / "skills" / "bui-run-quality-gates" / "SKILL.md",
-    ROOT / "skills" / "bui-implement-from-plan" / "SKILL.md",
-    ROOT / "skills" / "bui-self-audit" / "SKILL.md",
+    ROOT / "skills" / "builder-run-quality-gates" / "SKILL.md",
+    ROOT / "skills" / "builder-implement-from-plan" / "SKILL.md",
+    ROOT / "skills" / "builder-self-audit" / "SKILL.md",
     ROOT / "skills" / "manager-review-implementation" / "SKILL.md",
-    ROOT / "skills" / "bui-run-quality-gates" / "references" / "common-fixes.md",
-    ROOT / "skills" / "bui-implement-from-plan" / "references" / "log-format.md",
+    ROOT / "skills" / "builder-run-quality-gates" / "references" / "common-fixes.md",
+    ROOT / "skills" / "builder-implement-from-plan" / "references" / "log-format.md",
 ]
 
 # LEGACY/TEMPLATES: Archivos historicos o plantillas (NO instrucciones vigentes)

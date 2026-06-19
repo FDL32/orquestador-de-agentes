@@ -11,7 +11,7 @@ quality_gate: false
 tags: [core, system]
 ---
 
-# bui-write-deliverable
+# builder-write-deliverable
 
 Skill genérica para producir deliverables markdown. Pensada como prueba de
 que el bus puede operar tareas no-código sin tocar el engine.

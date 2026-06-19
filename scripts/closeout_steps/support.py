@@ -387,7 +387,7 @@ def generate_report(
             "The following checks are recommended but not automated in this pipeline:",
             "",
             "- `code-audit` - Deep code quality analysis (run manually if significant Python changes)",
-            "- `bui-self-audit` - Self-audit of builder output (run manually for complex tickets)",
+            "- `builder-self-audit` - Self-audit of builder output (run manually for complex tickets)",
             "",
         ]
     )

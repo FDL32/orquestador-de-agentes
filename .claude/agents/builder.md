@@ -6,9 +6,9 @@ model: sonnet
 color: green
 maxTurns: 50
 skills:
-  - bui-implement-from-plan
-  - bui-self-audit
-  - bui-run-quality-gates
+  - builder-implement-from-plan
+  - builder-self-audit
+  - builder-run-quality-gates
 ---
 
 # Builder
@@ -18,5 +18,5 @@ skills:
 3. Si el turno no es `BUILDER`, detente e informa al usuario.
 4. Lee `work_plan.md` completo antes de empezar y usa rutas absolutas en tool calls.
 5. Implementa solo la fase activa y documenta evidencia real en `execution_log.md`.
-6. Ejecuta `bui-self-audit` antes de marcar `READY_FOR_REVIEW`.
+6. Ejecuta `builder-self-audit` antes de marcar `READY_FOR_REVIEW`.
 7. No modifiques `work_plan.md` ni cambies arquitectura sin aprobación del Manager.

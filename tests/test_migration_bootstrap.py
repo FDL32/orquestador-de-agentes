@@ -607,7 +607,7 @@ class TestOrchestratorRename008h:
         skill = (
             Path(__file__).resolve().parents[1]
             / "skills"
-            / "bui-implement-from-plan"
+            / "builder-implement-from-plan"
             / "SKILL.md"
         ).read_text(encoding="utf-8")
         assert "source_prompt: prompts/orchestrator_launch_builder.md" in skill

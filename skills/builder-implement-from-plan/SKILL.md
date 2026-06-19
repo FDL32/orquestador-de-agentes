@@ -1,5 +1,5 @@
 ---
-name: bui-implement-from-plan
+name: builder-implement-from-plan
 version: 2.0.0
 description: Implementar nueva funcionalidad basado en especificacion
 triggers: [/implement, implement, /code]
@@ -13,7 +13,7 @@ source_prompt: prompts/orchestrator_launch_builder.md
 contract_id: cid-bui-implement-v1
 ---
 
-# bui-implement-from-plan
+# builder-implement-from-plan
 
 Skill para implementar codigo segun un plan de trabajo aprobado.
 
@@ -92,18 +92,18 @@ ruff format --check src/[archivo].py
 
 **Si falla:** Corregir antes de continuar.
 
-### Paso 6: Ejecutar bui-self-audit (OBLIGATORIO)
+### Paso 6: Ejecutar builder-self-audit (OBLIGATORIO)
 
-Antes de documentar la tarea como completada, ejecuta el skill `bui-self-audit`.
+Antes de documentar la tarea como completada, ejecuta el skill `builder-self-audit`.
 
-`bui-self-audit` cubre:
+`builder-self-audit` cubre:
 
 1. Protocolo "ya existia" con cita de linea
 2. Completitud multi-archivo
 3. Checklist anti-regresion para ISS/code smell
 4. Gate completo ruff check + ruff format --check + pytest
 
-**Solo si `bui-self-audit` pasa completamente, continua al Paso 7.**
+**Solo si `builder-self-audit` pasa completamente, continua al Paso 7.**
 
 ### Paso 7: Documentar en execution_log.md
 

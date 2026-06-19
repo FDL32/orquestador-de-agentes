@@ -147,8 +147,8 @@ Si el WP no tiene origen externo (es trabajo propio del proyecto): este paso es 
 
 ### Paso 9: Builder hace la verificacion final
 
-- Ejecutar `bui-run-quality-gates`
-- Ejecutar `bui-self-audit`
+- Ejecutar `builder-run-quality-gates`
+- Ejecutar `builder-self-audit`
 - Hacer smoke test de instalacion o ejecucion en entorno limpio si es viable
 - Verificar documentacion contra comandos, rutas y outputs reales
 - Registrar evidencia final en `execution_log.md`
@@ -268,8 +268,8 @@ Si el proyecto termina o cambia de manos, dejar explicito:
 - `references/closeout-plan-template.md` - Esqueleto del plan de cierre
 - `references/closeout-checklist.md` - Checklist minimo, recomendado y avanzado
 - `../version-changelog/SKILL.md` - Versionado y changelog
-- `../bui-self-audit/SKILL.md` - Auditoria obligatoria del Builder
-- `../bui-run-quality-gates/SKILL.md` - Quality gates finales
+- `../builder-self-audit/SKILL.md` - Auditoria obligatoria del Builder
+- `../builder-run-quality-gates/SKILL.md` - Quality gates finales
 - `../manager-review-implementation/SKILL.md` - Revision final del Manager
 - `../session-close-observations/SKILL.md` - Generar observaciones de cierre
 - `../manager-session-closeout/SKILL.md` - Clasificar learnings de cierre y preparar el puente humano

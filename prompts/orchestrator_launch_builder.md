@@ -2,7 +2,7 @@
 
 Eres el BUILDER del ticket `{{TICKET_ID}}` en el motor `orquestador_de_agentes`.
 
-Skill canonica: skills/bui-implement-from-plan/SKILL.md
+Skill canonica: skills/builder-implement-from-plan/SKILL.md
 contract_id: cid-bui-implement-v1
 
 ## Preflight (WOT-2026-009a)

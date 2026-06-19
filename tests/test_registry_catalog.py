@@ -155,7 +155,7 @@ class TestCatalog:
                 assert e["role"] == matching[0]
 
     def test_audit_skills_are_role_auditor(self):
-        """WOT-2026-008k: the five audit skills own role auditor; bui-self-audit
+        """WOT-2026-008k: the five audit skills own role auditor; builder-self-audit
         stays builder (owned by the builder for self-audit, not the auditor)."""
         catalog = build_catalog()
         by_path = {e["path"].replace("\\", "/"): e for e in catalog["entries"]}
@@ -168,7 +168,7 @@ class TestCatalog:
         ):
             entry = by_path[f"skills/{name}/SKILL.md"]
             assert entry["role"] == "auditor", f"{name} should be role auditor"
-        assert by_path["skills/bui-self-audit/SKILL.md"]["role"] == "builder"
+        assert by_path["skills/builder-self-audit/SKILL.md"]["role"] == "builder"
 
     def test_catalog_invocation_parity_with_discovery(self):
         """WOT-2026-008c: a skill's catalog invocation must match its

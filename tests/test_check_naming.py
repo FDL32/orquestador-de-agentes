@@ -60,7 +60,7 @@ class TestCheckNamingClean:
             tmp_path,
             prompts=["launch_builder", "session_bootstrap", "audit_bus"],
             skills=[
-                "bui-implement-from-plan",
+                "builder-implement-from-plan",
                 "manager-review-implementation",
                 "graphify",
             ],
@@ -271,3 +271,63 @@ class TestNoLiveManSkillRefs008i:
                     offenders.append(f"{s}:{i}: {line.strip()}")
         assert not offenders, "live man-* skill refs survive:\n" + "\n".join(offenders)
         assert legacy  # names documented for traceability
+
+
+class TestNoLiveBuiSkillRefs008j:
+    """WOT-2026-008j barrier: no live operational consumer may reference the old
+    bui-* skill dir names after the rename to builder-*. Mirrors the 008i
+    barrier. History/memory/DEC/changelog/tests are tolerated."""
+
+    def test_no_live_ref_to_legacy_bui_skill_dirs(self):
+        import re
+
+        root = Path(__file__).resolve().parents[1]
+        legacy = (
+            "bui-implement-from-plan",
+            "bui-run-quality-gates",
+            "bui-self-audit",
+            "bui-write-deliverable",
+        )
+        pat = re.compile(
+            r"\bbui-(?:implement-from-plan|run-quality-gates|self-audit|"
+            r"write-deliverable)\b"
+        )
+        tolerated_parts = (
+            "/sandbox/",
+            "/_archive/",
+            "/.git/",
+            "/backups/",
+            "/runtime/",
+            "graphify-out",
+            ".venv",
+            "__pycache__",
+            "/memory/",
+            "CHANGELOG.md",
+            "DEC-008B-002",
+            "DEC-008D-001",
+            "/tests/",
+            "baseline_008j",
+            "/.agent/context/",
+        )
+        offenders = []
+        for p in root.rglob("*"):
+            if not p.is_file() or p.suffix not in (
+                ".md",
+                ".py",
+                ".txt",
+                ".json",
+                ".toml",
+            ):
+                continue
+            s = str(p).replace("\\", "/")
+            if any(t in s for t in tolerated_parts):
+                continue
+            try:
+                txt = p.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            for i, line in enumerate(txt.splitlines(), 1):
+                if pat.search(line):
+                    offenders.append(f"{s}:{i}: {line.strip()}")
+        assert not offenders, "live bui-* skill refs survive:\n" + "\n".join(offenders)
+        assert legacy

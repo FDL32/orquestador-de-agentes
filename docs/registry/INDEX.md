@@ -48,9 +48,9 @@
 | prompt | `prompts/session_bootstrap.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/session_close_chat.md` | active | system | shared | model-invoked | — |
 | reference | `skills/audit-pipeline/references/audit-checklist.md` | active | system | shared | model-invoked | — |
-| reference | `skills/bui-implement-from-plan/references/code-rules.md` | active | system | shared | model-invoked | — |
-| reference | `skills/bui-implement-from-plan/references/log-format.md` | active | system | shared | model-invoked | — |
-| reference | `skills/bui-run-quality-gates/references/common-fixes.md` | active | system | shared | model-invoked | — |
+| reference | `skills/builder-implement-from-plan/references/code-rules.md` | active | system | shared | model-invoked | — |
+| reference | `skills/builder-implement-from-plan/references/log-format.md` | active | system | shared | model-invoked | — |
+| reference | `skills/builder-run-quality-gates/references/common-fixes.md` | active | system | shared | model-invoked | — |
 | reference | `skills/code-audit/references/audit-report-template.md` | active | system | shared | model-invoked | — |
 | reference | `skills/code-audit/references/audit-tools-guide.md` | active | system | shared | model-invoked | — |
 | reference | `skills/create-agent-skill/references/frontmatter-template.md` | active | system | shared | model-invoked | — |
@@ -90,10 +90,10 @@
 | shared | `skills/_shared/ticket-anti-patterns.md` | active | system | shared | model-invoked | — |
 | skill | `skills/audit-git-publication/SKILL.md` | active | agent | auditor | model-invoked | /audit-git-publication, audit-git-publication, auditar-publicacion-git, publicar-git |
 | skill | `skills/audit-pipeline/SKILL.md` | active | agent | auditor | model-invoked | /audit-pipeline, audit-pipeline, auditar-pipeline |
-| skill | `skills/bui-implement-from-plan/SKILL.md` | active | agent | builder | model-invoked | /code, /implement, implement |
-| skill | `skills/bui-run-quality-gates/SKILL.md` | active | agent | builder | model-invoked | /check, /gates, quality-gates |
-| skill | `skills/bui-self-audit/SKILL.md` | active | agent | builder | model-invoked | /inspect, /self-audit, audit |
-| skill | `skills/bui-write-deliverable/SKILL.md` | active | agent | builder | model-invoked | /deliverable, /write-deliverable, /write-doc |
+| skill | `skills/builder-implement-from-plan/SKILL.md` | active | agent | builder | model-invoked | /code, /implement, implement |
+| skill | `skills/builder-run-quality-gates/SKILL.md` | active | agent | builder | model-invoked | /check, /gates, quality-gates |
+| skill | `skills/builder-self-audit/SKILL.md` | active | agent | builder | model-invoked | /inspect, /self-audit, audit |
+| skill | `skills/builder-write-deliverable/SKILL.md` | active | agent | builder | model-invoked | /deliverable, /write-deliverable, /write-doc |
 | skill | `skills/code-audit/SKILL.md` | active | agent | auditor | model-invoked | /code-audit, /deadcode, code-quality |
 | skill | `skills/create-agent-skill/SKILL.md` | active | agent | shared | model-invoked | /create-skill, /new, skill-create |
 | skill | `skills/deep-research/SKILL.md` | active | agent | shared | model-invoked | /deep-research, /pre-plan-research, /research |

@@ -194,4 +194,4 @@ Cuando el ticket corre dentro de `orquestador_de_agentes`:
 - El Builder recibe este `PROMPT_TEMPLATE.md` como contexto operativo.
 - El output se persiste a `.agent/runtime/compare/` (gitignored).
 - Las oportunidades aprobadas se convierten en WPs futuros.
-- La validación final se cruza con `bui-run-quality-gates` y `bui-self-audit`.
+- La validación final se cruza con `builder-run-quality-gates` y `builder-self-audit`.

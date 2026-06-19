@@ -52,7 +52,7 @@ AP_CANONICAL_PATH = SKILLS_DIR / "_shared" / "anti-patterns.md"
 
 AP_REFS: dict[str, tuple[Path, str]] = {
     "code-rules": (
-        SKILLS_DIR / "bui-implement-from-plan" / "references" / "code-rules.md",
+        SKILLS_DIR / "builder-implement-from-plan" / "references" / "code-rules.md",
         "Builder code rules",
     ),
     "review-checklist": (

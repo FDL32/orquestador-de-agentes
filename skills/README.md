@@ -16,7 +16,7 @@ Flujo minimo de mejora continua:
 - `session-close-observations` convierte aprendizajes en memoria
 - `manager-session-closeout` clasifica learnings de cierre y separa alcance local/generalizable
 - `review_bridge` inyecta memoria curada en revisiones futuras
-- `bui-implement-from-plan/references/code-rules.md` y `manager-review-implementation` reflejan las reglas activas
+- `builder-implement-from-plan/references/code-rules.md` y `manager-review-implementation` reflejan las reglas activas
 - `_shared/anti-patterns.md` mantiene el inventario canonicamente numerado AP-01..AP-14
 
 ## 2. Tabla operativa
@@ -28,10 +28,10 @@ Flujo minimo de mejora continua:
 | `manager-create-work-plan` | `manager` | `plan` | `false` | `false` | Crear planes de implementacion estructurados con fases, tareas y criterios de aceptacion |
 | `manager-review-implementation` | `manager` | `review` | `false` | `false` | Revisar trabajo del Builder segun el plan aprobado y criterios de calidad |
 | `manager-resolve-escalation` | `manager` | `review` | `false` | `false` | Resolver bloqueos y escalaciones del Builder con decisiones documentadas |
-| `bui-implement-from-plan` | `builder` | `implement` | `false` | `false` | Ejecutar un plan aprobado |
-| `bui-write-deliverable` | `builder` | `implement` | `false` | `false` | Generar un deliverable markdown (no-codigo) desde descripcion y criterios de aceptacion |
-| `bui-run-quality-gates` | `builder` | `quality` | `false` | `true` | Validar codigo con ruff y pytest segun el tipo de entregable |
-| `bui-self-audit` | `builder` | `review` | `false` | `false` | Auto-auditoria obligatoria antes de reportar cualquier tarea como completada |
+| `builder-implement-from-plan` | `builder` | `implement` | `false` | `false` | Ejecutar un plan aprobado |
+| `builder-write-deliverable` | `builder` | `implement` | `false` | `false` | Generar un deliverable markdown (no-codigo) desde descripcion y criterios de aceptacion |
+| `builder-run-quality-gates` | `builder` | `quality` | `false` | `true` | Validar codigo con ruff y pytest segun el tipo de entregable |
+| `builder-self-audit` | `builder` | `review` | `false` | `false` | Auto-auditoria obligatoria antes de reportar cualquier tarea como completada |
 | `test-driven-development` | `shared` | `implement` | `false` | `false` | Metodologia Red/Green/Refactor para mantener la base de codigo libre de regresiones |
 | `systematic-debugging` | `shared` | `implement` | `false` | `false` | Proceso riguroso de cuatro fases para diagnosticar y corregir errores |
 | `code-audit` | `shared` | `review` | `false` | `false` | Auditoria sistematica de dead code, deuda tecnica y archivos inactivos |
@@ -77,10 +77,10 @@ Fuentes y destinos:
 - `manager-resolve-escalation` - review
 
 ### Builder
-- `bui-implement-from-plan` - implement
-- `bui-write-deliverable` - implement
-- `bui-run-quality-gates` - quality
-- `bui-self-audit` - review
+- `builder-implement-from-plan` - implement
+- `builder-write-deliverable` - implement
+- `builder-run-quality-gates` - quality
+- `builder-self-audit` - review
 
 ### Compartidas
 - `test-driven-development` - implement

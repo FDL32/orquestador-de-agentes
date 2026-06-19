@@ -333,7 +333,7 @@ en disco al final y que solo era contexto.
 
 ## Quality gates dispatch by deliverable_type (WP-2026-089)
 
-`bui-run-quality-gates` invoca ahora `scripts/run_gates_dispatch.py` que lee `deliverable_type` del work_plan activo y dispatchea:
+`builder-run-quality-gates` invoca ahora `scripts/run_gates_dispatch.py` que lee `deliverable_type` del work_plan activo y dispatchea:
 
 - `code` / fallback → ruff + pytest-safe + pip-audit (condicional)
 - `mixed` → ambos sets (code gates + deliverable existence check)

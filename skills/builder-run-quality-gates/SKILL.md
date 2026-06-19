@@ -11,7 +11,7 @@ quality_gate: true
 tags: [core, system]
 ---
 
-# bui-run-quality-gates
+# builder-run-quality-gates
 
 Skill para ejecutar la batería de gates correspondiente al tipo de deliverable del WP activo. Dispatchea automáticamente — el agente solo invoca el wrapper.
 

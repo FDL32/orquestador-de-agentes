@@ -24,7 +24,7 @@ Skill documental para investigacion previa que produce contexto estructurado ant
 
 ## When NOT to activate
 
-- Si ya existe un work plan aprobado (usar `bui-implement-from-plan`).
+- Si ya existe un work plan aprobado (usar `builder-implement-from-plan`).
 - Si la tarea es simple y no requiere investigacion (typos, cambios cosméticos).
 - Si el contexto ya esta documentado en `PROJECT.md`, `AUDIT.md` o `execution_log.md`.
 
