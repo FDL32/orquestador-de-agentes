@@ -1,3 +1,26 @@
+# 2026-06-19 - Encoding + closeout hardening (Windows)
+
+### Fixed
+- `scripts/closeout_steps`: three `subprocess.run(..., text=True)` call sites
+  decoded child output with the Windows default codec (cp1252), so a closeout
+  script or `git` command emitting a high byte (em dash, non-ASCII path) raised
+  `UnicodeDecodeError` and aborted `--session-close`. Added
+  `encoding="utf-8", errors="replace"` to `support.py:run_script`,
+  `support.py:check_versioned_filenames` and `rotation.py:step_git_clean`.
+  Regression test runs a real subprocess emitting UTF-8 (verified
+  FAIL-without/PASS-with). Local to `closeout_steps`; controller and
+  reader-thread unchanged. (WOT-2026-010w)
+
+### Changed
+- `scripts/encoding_guard.py` now detects ASCII control characters `<32`
+  (excluding `\t`/`\n`/`\r`) as a distinct corruption class, alongside the
+  existing BOM/mojibake/question-mark detection. `file_issues()` returns a
+  3-tuple `(mojibake, q_in_word, control_chars)`; the CLI
+  (`check_encoding_guard.py`) and the post-write hook
+  (`encoding_post_write_hook.py`) both report and block on control chars. Closes
+  the gap where control bytes `<32` slipped past the guard to packaging
+  (observed in 008f/008j). (WOT-2026-010v)
+
 # 2026-06-14 - v9.17.1 validate tolerates an absent runtime bus (CI un-red)
 
 ### Fixed
