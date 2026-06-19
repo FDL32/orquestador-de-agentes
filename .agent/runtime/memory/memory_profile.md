@@ -1,17 +1,17 @@
 # Memory Profile (L3)
 
-Total observations: 90
+Total observations: 93
 
 High-level profile of project memory for quick context loading. This is the first memory tier loaded (before L2 rules and L1 raw observations).
 
 ## Active Domains
 
 - architecture: 12 observations
-- delivery-hygiene: 7 observations
+- delivery-hygiene: 9 observations
 - builder-contract: 7 observations
+- testing: 6 observations
 - review-quality: 6 observations
 - manager-review-rubric: 5 observations
-- testing: 5 observations
 - bus-architecture: 4 observations
 - meta: 3 observations
 
@@ -23,6 +23,8 @@ High-level profile of project memory for quick context loading. This is the firs
 - WOT-2026-003f
 - WOT-2026-005b
 - WOT-2026-006a
+- WOT-2026-010v
+- WOT-2026-010w
 - WOT-AUDIT
 - WOT-AUDIT-C1
 - WP-2026-140
@@ -43,6 +45,9 @@ High-level profile of project memory for quick context loading. This is the firs
 
 ## Recent Signals
 
+- [encoding-control-chars-distinct-class] BOM/mojibake (bytes>127) y control chars ASCII<32 son clases de corrupcion distintas; un guard que solo cubre la primera deja pasar la segunda a packa (session-close)
+- [suite-timeout-relaunch-not-sandbox] VERIFICADO: ~15 tests de relaunch no overridean BUILDER_START_VERIFY_TIMEOUT_SECONDS (bus/builder_relaunch.py:30 default 20.0s); collection 0.95s desc (session-close)
+- [archival-limbo-moves-without-commit] archive_collaboration_artifacts.py mueve STRATEGY_/AUDIT_ via shutil.move sin commit -> delete+untracked -> guard 010u dispara contaminacion_productiv (session-close)
 - [premise-verification-before-implementation] Before implementing a ticket that describes a past system state, reproduce its premise read-only first and re-scope if the premise is false. In WOT-20 (session-close)
 - [host-extends-resolver-audit-first] In host-extends topology, removing motor-provides copies is not safe until the destination is audited for live resolvers, hooks, CI references, and la (session-close)
 - [delivery-authority-drives-closure] Closure gates and scope gates in a multi-repo system must respect delivery_authority. A code or mixed ticket owned by repo_destino cannot require prod (session-close)
@@ -50,6 +55,3 @@ High-level profile of project memory for quick context loading. This is the firs
 - [false-green-is-not-evidence] A green test or gate with no real assert path or with broken explicit-input parsing is not evidence. False-greens must be treated as critical debt and (session-close)
 - [bus-absent-is-unverifiable] In CI or a fresh clone, an absent runtime bus means closure invariants are unverifiable, not violated. Raise an error only when the bus for the ticket (session-close)
 - [ci-vs-prepush-coverage] Pre-push local puede quedar verde aunque la suite completa de CI falle; los guards que solo corren en CI deben tener verificacion local focalizada cua (session-close)
-- [verified-barrier] Un guard nuevo no cuenta como barrera verificada hasta que exista un test o fixture que demuestre que bloquea el fallo prometido. (session-close)
-- [git-history-scan-dedup] Los escaneos de historia Git deben deduplicar por blob SHA o contenido equivalente; deduplicar por par commit-path no reduce trabajo y escala mal. (session-close)
-- [subprocess-json-stdout-noise] Los tests de integracion que ejecutan agent_controller.py como subproceso en Windows pueden fallar si stdout mezcla banners humanos con JSON; el contr (session-close)

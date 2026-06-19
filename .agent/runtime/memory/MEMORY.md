@@ -1,12 +1,13 @@
 # MEMORY
 
-Regenerated: 2026-06-14T20:52:14.069379+00:00
+Regenerated: 2026-06-19T12:00:23.975718+00:00
 
-Total observations: 90
+Total observations: 93
 
 - Adapter Pipeline Wp Split (1 observations)
 - Ap-Nn-Cross-Cutting-Architecture (1 observations)
 - Architecture (1 observations)
+- Archival-Limbo-Moves-Without-Commit (1 observations)
 - Arranque (1 observations)
 - Auto-Improvement-Loop-Formalized (1 observations)
 - Bootstrap-Ticket-State-Contract (1 observations)
@@ -31,6 +32,7 @@ Total observations: 90
 - Delivery-Hook-Mutation (2 observations)
 - Design-Pattern-Positive (1 observations)
 - Dispatcher Global Side Effect (1 observations)
+- Encoding-Control-Chars-Distinct-Class (1 observations)
 - Evidence-Gate-Fixture-Contract (1 observations)
 - Explicit Legacy Edit Missing From Diff (1 observations)
 - False-Green-Is-Not-Evidence (1 observations)
@@ -68,12 +70,10 @@ Total observations: 90
 - State-Projection-Drift (1 observations)
 - State-Surface-Separation (1 observations)
 - Subprocess-Json-Stdout-Noise (1 observations)
+- Suite-Timeout-Relaunch-Not-Sandbox (1 observations)
 - Supervisor-Process-Staleness (1 observations)
 - System-Health-Audit-Protocol (1 observations)
 - Test-Linting-Policy (1 observations)
-- Test-Surrogate-Antipattern (1 observations)
-- Testability-Refactor-Scope-Drift (1 observations)
-- Ticket-Closeout-Debt (1 observations)
 
 ---
 
