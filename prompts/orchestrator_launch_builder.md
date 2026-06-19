@@ -38,8 +38,9 @@ anterior NO autoriza a implementar `{{TICKET_ID}}`.
   una `Builder Access Surface` que prohiba leer paths reales del `repo_destino`.
   En ese caso, usa el contrato ya inyectado en este prompt y no pidas permisos extra.
   - `.agent/collaboration/work_plan.md`
-  - `.agent/collaboration/PLAN_{{TICKET_ID}}.md`
+  - `.agent/collaboration/STRATEGY_WOT-{{TICKET_ID}}.md`
   - `.agent/collaboration/AUDIT_{{TICKET_ID}}.md`
+  - legacy-compat solo si existe: `.agent/collaboration/PLAN_{{TICKET_ID}}.md`
 - Trata `Files Likely Touched` del `work_plan.md` como whitelist operativa. Si el
   ticket indica que esos paths son relativos a `repo_motor`, resuelvelos contra
   `repo_motor`, no contra el `repo_destino` activo.
