@@ -62,9 +62,9 @@ Goal:
 5. **Reconcile the next-session startup chain.** Ask: did this session change
    anything the startup system describes? Concretely — canonical paths or
    commands, agent backends/models, the ticket cycle flow, or the root cause of
-   a bug that `prompts/session_bootstrap.md` still presents as "expected
+   a bug that `prompts/orchestrator_session_bootstrap.md` still presents as "expected
    behavior". If yes:
-   - Update `prompts/session_bootstrap.md` so it points at the new reality
+   - Update `prompts/orchestrator_session_bootstrap.md` so it points at the new reality
      (it points, it does not embed).
    - Update or delete affected entries in `.agent/runtime/memory/` — memory
      holds only stable knowledge; volatile state (active ticket, version,

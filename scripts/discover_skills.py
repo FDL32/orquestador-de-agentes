@@ -661,8 +661,14 @@ def build_catalog(bundle_root: Path | None = None) -> dict[str, Any]:
     ]
 
     # Prompts, references and shared docs.
+    # WOT-2026-011d: prompt lifecycle is derived from a real source in the file
+    # (frontmatter `status:`) via the same _derive_status() used for skills, not
+    # assumed "active" by layout. Vocabulary stays active|deprecated|draft: a
+    # legacy stub declaring `status: deprecated` no longer publishes as active.
     entries += [
-        _catalog_entry("prompt", p, root)
+        _catalog_entry(
+            "prompt", p, root, status=_derive_status(parse_frontmatter(p)[0])
+        )
         for p in sorted((root / "prompts").glob("*.md"))
     ]
     entries += [

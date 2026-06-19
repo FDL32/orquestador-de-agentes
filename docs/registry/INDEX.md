@@ -10,12 +10,12 @@
 
 | kind | total |
 |------|-------|
-| prompt | 27 |
+| prompt | 20 |
 | reference | 33 |
 | script-consumer | 5 |
 | shared | 3 |
 | skill | 29 |
-| **total** | **97** |
+| **total** | **90** |
 
 ## Entradas
 
@@ -29,13 +29,10 @@
 | prompt | `prompts/audit_complete_motor_destination.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/audit_git_publication.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/audit_pipeline.md` | active | system | shared | model-invoked | — |
-| prompt | `prompts/audit_plan.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/audit_portability_legacy_surface.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/audit_post_change_system_health.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/audit_ticket_contract.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/contract_formation_pipeline.md` | active | system | shared | model-invoked | — |
-| prompt | `prompts/destination_bootstrap.md` | active | system | shared | model-invoked | — |
-| prompt | `prompts/launch_builder.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/manager_review.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/memory_upload.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/orchestrator_destination_bootstrap.md` | active | system | shared | model-invoked | — |
@@ -44,10 +41,6 @@
 | prompt | `prompts/orchestrator_refactor_bootstrap.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/orchestrator_session_bootstrap.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/orchestrator_session_close_chat.md` | active | system | shared | model-invoked | — |
-| prompt | `prompts/refactor_bootstrap.md` | active | system | shared | model-invoked | — |
-| prompt | `prompts/review_manager.md` | active | system | shared | model-invoked | — |
-| prompt | `prompts/session_bootstrap.md` | active | system | shared | model-invoked | — |
-| prompt | `prompts/session_close_chat.md` | active | system | shared | model-invoked | — |
 | reference | `skills/audit-pipeline/references/audit-checklist.md` | active | system | shared | model-invoked | — |
 | reference | `skills/builder-implement-from-plan/references/code-rules.md` | active | system | shared | model-invoked | — |
 | reference | `skills/builder-implement-from-plan/references/log-format.md` | active | system | shared | model-invoked | — |

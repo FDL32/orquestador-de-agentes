@@ -12,7 +12,7 @@
   read-only meta-audit phase, and `/audit-git-publication` classifies
   publishable vs excluded vs human-decision files before making a repo public.
 - Chat closeout now converges on the canonical `--session-close` pipeline.
-  `prompts/session_close_chat.md` documents dry-run, real execution, report
+  `prompts/orchestrator_session_close_chat.md` documents dry-run, real execution, report
   review and `--force` idempotency for an already completed ticket.
 - Review decisions use a structured decision artifact as the primary channel
   with parser fallback; `bus/decision_parser.py` is the extracted compatibility

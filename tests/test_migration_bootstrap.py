@@ -581,6 +581,60 @@ _ORCH_RENAMES = {
 _PROMPTS = Path(__file__).resolve().parents[1] / "prompts"
 
 
+# WOT-2026-011d: full legacy stub retirement (5 orchestrator + audit_plan +
+# review_manager). The stubs were repointed to canonical and deleted.
+
+_RETIRED_STUBS_011D = {
+    "audit_plan": "audit_ticket_contract",
+    "destination_bootstrap": "orchestrator_destination_bootstrap",
+    "launch_builder": "orchestrator_launch_builder",
+    "refactor_bootstrap": "orchestrator_refactor_bootstrap",
+    "review_manager": "manager_review",
+    "session_bootstrap": "orchestrator_session_bootstrap",
+    "session_close_chat": "orchestrator_session_close_chat",
+}
+
+
+class TestLegacyStubRetirement011d:
+    """Proof rests on: stub deleted + canonical present + no operational
+    consumer (MANIFEST + live docs) still points at the legacy name."""
+
+    def test_all_seven_stubs_deleted(self):
+        for legacy in _RETIRED_STUBS_011D:
+            assert not (_PROMPTS / f"{legacy}.md").exists(), (
+                f"{legacy}.md must be deleted (WOT-2026-011d)"
+            )
+
+    def test_all_canonicals_present(self):
+        for canon in _RETIRED_STUBS_011D.values():
+            assert (_PROMPTS / f"{canon}.md").exists(), f"missing canonical {canon}"
+
+    def test_manifest_repointed_to_canonical(self):
+        root = Path(__file__).resolve().parents[1]
+        manifest = (root / "MANIFEST.distribute").read_text(encoding="utf-8")
+        for legacy, canon in _RETIRED_STUBS_011D.items():
+            assert f"prompts/{legacy}.md" not in manifest, (
+                f"MANIFEST still lists retired stub {legacy}.md"
+            )
+            assert f"prompts/{canon}.md" in manifest, (
+                f"MANIFEST missing canonical {canon}.md"
+            )
+
+    def test_live_doc_consumers_repointed(self):
+        # The operational docs that pointed at a stub must now point at canonical.
+        root = Path(__file__).resolve().parents[1]
+        checks = {
+            ".claude/rules/00-startup.md": "session_bootstrap",
+            "PROJECT.md": "session_close_chat",
+            "CLOSURE_MODEL.md": "session_bootstrap",
+        }
+        for rel, legacy in checks.items():
+            text = (root / rel).read_text(encoding="utf-8")
+            assert f"prompts/{legacy}.md" not in text, (
+                f"{rel} still references retired stub {legacy}.md"
+            )
+
+
 class TestOrchestratorRename008h:
     """Migration proof rests on canonicals + stubs + source_prompt + rg, NOT on
     --check-naming (the legacy names are lexically valid, so naming stays green
@@ -590,18 +644,14 @@ class TestOrchestratorRename008h:
         for canon in _ORCH_RENAMES.values():
             assert (_PROMPTS / f"{canon}.md").exists(), f"missing canonical {canon}"
 
-    def test_legacy_names_survive_as_stubs(self):
-        for legacy, canon in _ORCH_RENAMES.items():
+    def test_legacy_stubs_are_retired(self):
+        # WOT-2026-011d: the orchestrator legacy stubs were repointed and then
+        # deleted (0 non-historical consumers). The canonicals carry the body.
+        for legacy in _ORCH_RENAMES:
             path = _PROMPTS / f"{legacy}.md"
-            assert path.exists(), f"legacy stub {legacy}.md must survive"
-            content = path.read_text(encoding="utf-8")
-            assert "Legacy alias" in content, f"{legacy}.md must be a stub"
-            assert canon in content, f"{legacy}.md stub must point at {canon}"
-
-    def test_stub_does_not_duplicate_operational_content(self):
-        # The stub must NOT carry the real prompt body (avoid drift).
-        stub = (_PROMPTS / "session_bootstrap.md").read_text(encoding="utf-8")
-        assert "memory_context.py --bootstrap" not in stub
+            assert not path.exists(), (
+                f"legacy stub {legacy}.md must be retired (WOT-2026-011d)"
+            )
 
     def test_builder_source_prompt_points_at_canonical(self):
         skill = (

@@ -24,6 +24,9 @@ from scripts.discover_skills import (
 )
 
 
+NL_ = chr(10)
+
+
 def _make_skill(
     skills_dir: Path,
     name: str,
@@ -239,6 +242,67 @@ class TestIndexStaleGate:
     def test_render_is_deterministic(self):
         catalog = build_catalog()
         assert render_index(catalog) == render_index(catalog)
+
+
+class TestPromptLifecycle011d:
+    """WOT-2026-011d: prompt status is derived from a real source in the file
+    (frontmatter `status:`), not assumed active by layout. Regression: a stub
+    declaring `status: deprecated` must NOT publish as active."""
+
+    def _seed_prompts(self, tmp_path: Path) -> Path:
+        (tmp_path / "skills" / "alpha").mkdir(parents=True)
+        _make_skill(tmp_path / "skills", "alpha", triggers="/alpha", status="active")
+        prompts = tmp_path / "prompts"
+        prompts.mkdir()
+        # Plain prompt: no frontmatter -> active (backward compatible).
+        (prompts / "canonical_one.md").write_text(
+            "# Canonical Prompt" + NL_, encoding="utf-8"
+        )
+        # Deprecated stub: frontmatter status -> deprecated.
+        (prompts / "legacy_stub.md").write_text(
+            "---"
+            + NL_
+            + "status: deprecated"
+            + NL_
+            + "---"
+            + NL_
+            + "# Legacy alias"
+            + NL_,
+            encoding="utf-8",
+        )
+        return tmp_path
+
+    def test_deprecated_prompt_not_active(self, tmp_path):
+        root = self._seed_prompts(tmp_path)
+        catalog = build_catalog(root)
+        by_path = {e["path"]: e for e in catalog["entries"] if e["kind"] == "prompt"}
+        assert by_path["prompts/legacy_stub.md"]["status"] == "deprecated"
+
+    def test_plain_prompt_defaults_active(self, tmp_path):
+        root = self._seed_prompts(tmp_path)
+        catalog = build_catalog(root)
+        by_path = {e["path"]: e for e in catalog["entries"] if e["kind"] == "prompt"}
+        # Backward compatibility: a prompt without frontmatter stays active.
+        assert by_path["prompts/canonical_one.md"]["status"] == "active"
+
+    def test_lifecycle_uses_only_supported_vocabulary(self, tmp_path):
+        # A draft prompt is honored; an invalid value falls back to active so a
+        # typo never hides a prompt. Taxonomy is not widened.
+        prompts = tmp_path / "prompts"
+        prompts.mkdir(parents=True)
+        (tmp_path / "skills").mkdir()
+        (prompts / "drafty.md").write_text(
+            "---" + NL_ + "status: draft" + NL_ + "---" + NL_ + "# d" + NL_,
+            encoding="utf-8",
+        )
+        (prompts / "typo.md").write_text(
+            "---" + NL_ + "status: retired" + NL_ + "---" + NL_ + "# t" + NL_,
+            encoding="utf-8",
+        )
+        catalog = build_catalog(tmp_path)
+        by_path = {e["path"]: e for e in catalog["entries"] if e["kind"] == "prompt"}
+        assert by_path["prompts/drafty.md"]["status"] == "draft"
+        assert by_path["prompts/typo.md"]["status"] == "active"
 
 
 def _seed_minimal_motor(tmp_path: Path) -> Path:

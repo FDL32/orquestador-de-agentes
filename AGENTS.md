@@ -72,8 +72,8 @@ validador de prosa, review bridge, motor_checkpoint):
   conservan con alias de transicion; eliminarlos dejaria sin archivar los
   tickets historicos.
 
-**Prompt de auditoria de contrato:** `prompts/audit_ticket_contract.md` (antes
-`prompts/audit_plan.md`, ahora stub alias). Audita el contrato/plan operativo
+**Prompt de auditoria de contrato:** `prompts/audit_ticket_contract.md` (renombrado
+desde `audit_plan.md`; stub retirado en WOT-2026-011d). Audita el contrato/plan operativo
 del ticket ANTES de Builder; no confundir con review de implementacion, bus,
 cierre o publicacion.
 

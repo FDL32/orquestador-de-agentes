@@ -42,19 +42,14 @@ scripts/classify_publication.py
 prompts/audit_agent_output.md
 prompts/audit_git_publication.md
 prompts/audit_pipeline.md
-prompts/audit_plan.md
+prompts/audit_ticket_contract.md
+prompts/manager_review.md
 prompts/orchestrator_destination_bootstrap.md
 prompts/orchestrator_launch_builder.md
 prompts/orchestrator_pipeline.md
 prompts/orchestrator_refactor_bootstrap.md
 prompts/orchestrator_session_bootstrap.md
 prompts/orchestrator_session_close_chat.md
-# Legacy stub aliases (compat, retirada en ticket posterior; ver DEC-008G-001)
-prompts/review_manager.md
-prompts/launch_builder.md
-prompts/session_bootstrap.md
-prompts/session_close_chat.md
-prompts/destination_bootstrap.md
 
 # =============================================================================
 # SKILLS (micro-habilidades reutilizables)

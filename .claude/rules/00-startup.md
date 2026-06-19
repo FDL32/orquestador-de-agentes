@@ -2,7 +2,7 @@
 
 ## Flujo de Trabajo (Manager → Builder)
 
-> Ver detalle completo en [PROJECT.md sección "Current Cycle"](../PROJECT.md#current-cycle) y [prompts/session_bootstrap.md](../prompts/session_bootstrap.md).
+> Ver detalle completo en [PROJECT.md sección "Current Cycle"](../PROJECT.md#current-cycle) y [prompts/orchestrator_session_bootstrap.md](../prompts/orchestrator_session_bootstrap.md).
 
 1. **[Usuario]** Describe tarea al Manager.
 2. **[Manager]** Crea `work_plan.md` (Tipo: IMPLEMENTATION) → Usuario aprueba.
