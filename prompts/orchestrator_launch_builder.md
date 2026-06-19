@@ -75,6 +75,21 @@ Confirma en codigo antes de modificar archivos:
 
 `{{SEAMS_Y_ARCHIVOS_A_CONFIRMAR}}`
 
+Si en Fase 0 detectas prompts, skills, scripts u otros artefactos versionados
+en el `repo_motor` que parezcan legacy o destino-only, NO los retires ni los
+mezcles con el ticket activo. Distingue explicitamente:
+
+- `legacy-stub-declared`: artefacto con marcador explicito como
+  `# Legacy alias:`
+- `canonical-motor`: artefacto canonico vivo del motor
+- `candidate-to-retire` / `candidate-to-extract`: sospecha de deuda o
+  portabilidad no resuelta
+
+Si aparece uno de esos casos:
+- no lo toques salvo que este en `Files Likely Touched` y el ticket lo pida;
+- registralo en `execution_log.md` como hallazgo de portabilidad/legacy;
+- propone follow-up en vez de ampliar el scope del ticket actual.
+
 Registra en `execution_log.md`:
 - seams confirmados;
 - hallazgos relevantes;

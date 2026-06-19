@@ -10,12 +10,12 @@
 
 | kind | total |
 |------|-------|
-| prompt | 26 |
+| prompt | 27 |
 | reference | 33 |
 | script-consumer | 5 |
 | shared | 3 |
 | skill | 29 |
-| **total** | **96** |
+| **total** | **97** |
 
 ## Entradas
 
@@ -30,6 +30,7 @@
 | prompt | `prompts/audit_git_publication.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/audit_pipeline.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/audit_plan.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/audit_portability_legacy_surface.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/audit_post_change_system_health.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/audit_ticket_contract.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/contract_formation_pipeline.md` | active | system | shared | model-invoked | — |
