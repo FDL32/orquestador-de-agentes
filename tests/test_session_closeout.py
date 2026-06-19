@@ -130,6 +130,39 @@ def test_run_script_exports_agent_project_root(
     assert captured["env"]["AGENT_PROJECT_ROOT"] == str(tmp_path.resolve())
 
 
+def test_run_script_captures_high_utf8_output_without_decode_error(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """WOT-2026-010w: run_script must decode child output as UTF-8, not the
+    Windows default (cp1252). A script that prints an em dash (U+2014, a high
+    byte under cp1252) used to raise UnicodeDecodeError and abort --session-close.
+    This runs the REAL subprocess (no mock) so the encoding fix is exercised."""
+    script = tmp_path / "emits_emdash.py"
+    # The child writes UTF-8 bytes straight to its stdout buffer, simulating a
+    # closeout script that emits non-ASCII (em dash U+2014, curly quotes). The
+    # parent (run_script) must decode these as UTF-8, not the Windows cp1252
+    # default which raised UnicodeDecodeError and aborted --session-close.
+    script.write_text(
+        "import sys\n"
+        'sys.stdout.buffer.write("plan \\u2014 done \\u201cok\\u201d\\n"'
+        ".encode('utf-8'))\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "runtime.motor_link.resolve_motor_script",
+        lambda project_root, script_name: script,
+    )
+
+    # Must not raise UnicodeDecodeError; output is captured as UTF-8 text.
+    result = _run_script("emits_emdash.py", [], tmp_path)
+
+    assert result.returncode == 0
+    assert isinstance(result.stdout, str)
+    assert "—" in result.stdout  # the em dash survived the UTF-8 round-trip
+
+
 class TestFindLastReportTimestamp:
     """Tests for session window resolution from last report."""
 

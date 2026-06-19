@@ -43,6 +43,8 @@ def run_script(
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=timeout,
     )
 
@@ -286,6 +288,8 @@ def check_versioned_filenames(
             cwd=str(motor_root),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
