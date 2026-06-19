@@ -109,6 +109,32 @@ def find_q_in_word(text: str) -> list[str]:
     return matches
 
 
+# ASCII control chars (<32) that are legitimate in text files: tab, line feed,
+# carriage return. Everything else below 0x20 (e.g. 0x00 NUL, 0x07 BEL, 0x0B VT,
+# 0x0C FF) is corruption — the class that slipped past the guard in WOT-2026-008f
+# and 008j because the guard only inspected codepoints >127 (mojibake/BOM).
+_ALLOWED_CONTROL_CHARS = frozenset({"\t", "\n", "\r"})
+
+
+def find_control_chars(text: str) -> list[str]:
+    """Return snippets around disallowed ASCII control chars (<32, not tab/LF/CR).
+
+    Each snippet shows the control char as ``<0xNN>`` with up to 3 chars of
+    following context, deduplicated, so the report is human-readable. CRLF is
+    fine because both \\r and \\n are allowed.
+    """
+    snippets: list[str] = []
+    for idx, ch in enumerate(text):
+        if ord(ch) >= 32 or ch in _ALLOWED_CONTROL_CHARS:
+            continue
+        marker = f"<0x{ord(ch):02X}>"
+        tail = text[idx + 1 : idx + 4].replace("\n", "\\n").replace("\r", "\\r")
+        snippet = marker + tail
+        if snippet not in snippets:
+            snippets.append(snippet)
+    return snippets
+
+
 def is_excluded(relative: str) -> bool:
     return any(fnmatch(relative, pattern) for pattern in EXCLUDE_PATTERNS)
 
@@ -145,9 +171,16 @@ def has_utf8_bom(path: Path) -> bool:
     return path.read_bytes().startswith(b"\xef\xbb\xbf")
 
 
-def file_issues(path: Path) -> tuple[list[str], list[str]]:
+def file_issues(path: Path) -> tuple[list[str], list[str], list[str]]:
+    """Return (mojibake, question_mark, control_char) issue snippets for path.
+
+    WOT-2026-010v: the third element is the disallowed ASCII control chars found
+    in the file. Consumers (check_encoding_guard.py CLI, encoding_post_write_hook)
+    unpack all three and inherit control-char detection without a parallel
+    detector.
+    """
     text = load_text(path)
-    return find_mojibake(text), find_q_in_word(text)
+    return find_mojibake(text), find_q_in_word(text), find_control_chars(text)
 
 
 def iter_staged_files(paths: list[str]) -> list[Path]:

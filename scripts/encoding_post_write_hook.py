@@ -111,7 +111,7 @@ def _check_in_process(file_path: Path) -> tuple[int, list[str]]:
     if file_path.suffix.lower() not in TEXT_EXTENSIONS:
         return 0, []
     try:
-        mojibake, q_in_word = file_issues(file_path)
+        mojibake, q_in_word, control_chars = file_issues(file_path)
         bom = has_utf8_bom(file_path)
     except UnicodeDecodeError as exc:
         return 0, [
@@ -138,7 +138,13 @@ def _check_in_process(file_path: Path) -> tuple[int, list[str]]:
             "ACTION: recover intended character from source/context, do not "
             f"blindly replace ? in {rel}."
         )
-    has_error = bom or bool(mojibake) or bool(q_in_word)
+    if control_chars:
+        diagnostics.append(
+            f"ERROR control_chars: {rel}: {control_chars[:8]}\n"
+            "ACTION: remove ASCII control chars (<0x20, not tab/LF/CR); they "
+            f"usually come from a corrupted heredoc/paste in {rel}."
+        )
+    has_error = bom or bool(mojibake) or bool(q_in_word) or bool(control_chars)
     return 1 if has_error else 0, diagnostics
 
 

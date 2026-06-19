@@ -50,13 +50,31 @@ def _allowlist_relative(path: Path) -> str | None:
         return None
 
 
+def _collect_file_errors(file_path) -> list[str]:
+    """Return all encoding errors for one file (BOM/mojibake/q-mark/control)."""
+    from scripts.encoding_guard import file_issues, has_utf8_bom, is_allowlisted
+
+    rel = _display_path(file_path)
+    mojibake, q_in_word, control_chars = file_issues(file_path)
+    rel_for_allowlist = _allowlist_relative(file_path)
+    if rel_for_allowlist is not None and is_allowlisted(rel_for_allowlist):
+        if not mojibake and not q_in_word and not control_chars:
+            return [f"Allowlist entry is now clean and should be removed: {rel}"]
+        return []
+    errors: list[str] = []
+    if has_utf8_bom(file_path):
+        errors.append(f"UTF-8 BOM detected in {rel}")
+    if mojibake:
+        errors.append(f"Mojibake detected in {rel}: {mojibake[:12]}")
+    if q_in_word:
+        errors.append(f"Question-mark corruption detected in {rel}: {q_in_word[:12]}")
+    if control_chars:
+        errors.append(f"Control chars detected in {rel}: {control_chars[:12]}")
+    return errors
+
+
 def main() -> int:
-    from scripts.encoding_guard import (
-        file_issues,
-        has_utf8_bom,
-        is_allowlisted,
-        iter_staged_files,
-    )
+    from scripts.encoding_guard import iter_staged_files
 
     explicit_files = _explicit_paths(sys.argv[1:])
     files_to_check = explicit_files or iter_staged_files(_staged_relative_paths())
@@ -66,23 +84,7 @@ def main() -> int:
 
     errors: list[str] = []
     for file_path in files_to_check:
-        rel = _display_path(file_path)
-        mojibake, q_in_word = file_issues(file_path)
-        rel_for_allowlist = _allowlist_relative(file_path)
-        if rel_for_allowlist is not None and is_allowlisted(rel_for_allowlist):
-            if not mojibake and not q_in_word:
-                errors.append(
-                    f"Allowlist entry is now clean and should be removed: {rel}"
-                )
-            continue
-        if has_utf8_bom(file_path):
-            errors.append(f"UTF-8 BOM detected in {rel}")
-        if mojibake:
-            errors.append(f"Mojibake detected in {rel}: {mojibake[:12]}")
-        if q_in_word:
-            errors.append(
-                f"Question-mark corruption detected in {rel}: {q_in_word[:12]}"
-            )
+        errors.extend(_collect_file_errors(file_path))
 
     if errors:
         print("Encoding guard blocked this commit:", file=sys.stderr)

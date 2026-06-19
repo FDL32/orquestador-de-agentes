@@ -13,6 +13,8 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = ROOT / "scripts"
@@ -62,6 +64,11 @@ def _write_clean_ascii(path: Path) -> None:
 
 def _write_emdash(path: Path) -> None:
     path.write_text("The plan \u2014 a good one\n", encoding="utf-8")
+
+
+def _write_control_chars(path: Path, control_byte: bytes = b"\x07") -> None:
+    """Write a text file with a disallowed ASCII control char (WOT-2026-010v)."""
+    path.write_bytes(b"agent" + control_byte + b"controller\n")
 
 
 def _run_hook(
@@ -134,6 +141,32 @@ def test_question_mark_corruption_detected(tmp_path: Path) -> None:
     assert "ERROR" in result._decoded_stderr
     assert "question_mark_corruption" in result._decoded_stderr
     assert "ACTION:" in result._decoded_stderr
+
+
+@pytest.mark.parametrize("control_byte", [b"\x00", b"\x07", b"\x0b", b"\x0c"])
+def test_control_chars_detected_as_error(tmp_path: Path, control_byte: bytes) -> None:
+    """WOT-2026-010v: the post-write hook fails on disallowed ASCII control chars
+    in a text file (inherited from the shared file_issues, no parallel detector)."""
+    ctrl_file = tmp_path / "data.md"
+    _write_control_chars(ctrl_file, control_byte)
+    payload = _make_payload(tool_input={"file_path": str(ctrl_file)})
+    result = _run_hook(payload)
+    assert result.returncode != 0
+    assert "ERROR" in result._decoded_stderr
+    assert "control_chars" in result._decoded_stderr
+    assert "ACTION:" in result._decoded_stderr
+
+
+def test_tab_lf_cr_pass_clean(tmp_path: Path) -> None:
+    """Tab, LF, CR and CRLF must not be flagged as control-char corruption."""
+    ok_file = tmp_path / "fine.md"
+    ok_file.write_bytes(b"a\tb\nc\r\nd\re\n")
+    payload = _make_payload(tool_input={"file_path": str(ok_file)})
+    result = _run_hook(payload)
+    assert result.returncode == 0, (
+        f"Expected exit 0 for tab/LF/CR file.\nstderr: {result._decoded_stderr}"
+    )
+    assert "control_chars" not in result._decoded_stderr
 
 
 # ---------------------------------------------------------------------------
