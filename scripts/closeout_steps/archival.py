@@ -30,6 +30,23 @@ def step_archive_collaboration(
             detail="Skipped in dry-run mode",
         )
     collab_dir = project_root / ".agent" / "collaboration"
+
+    def _rename_limbo_detail() -> str | None:
+        # WOT-2026-011a: fail closed in the SAME closeout that leaves an
+        # uncommitted archival rename. The archiver moves STRATEGY_/AUDIT_/PLAN_
+        # artifacts into _archive/plan_audit/ via shutil.move without a git
+        # commit; the resulting delete+untracked limbo only surfaced on the NEXT
+        # ticket's validate (010w, 011d needed manual reconcile). The limbo is
+        # what gates fail-closed, NOT the archiver exit code: a PARTIAL move
+        # followed by a non-zero exit or a timeout leaves the exact same limbo,
+        # so the check runs on every path where files may have moved. Reuse the
+        # canonical detection (single source of truth); never auto-commit,
+        # never delete. Returns the actionable detail when blocking, else None.
+        rename = check_archive_rename_complete(project_root)
+        if rename.passed:
+            return None
+        return "; ".join([rename.message, *(rename.details or [])])
+
     try:
         result = run_script_fn(
             "archive_collaboration_artifacts.py",
@@ -37,22 +54,16 @@ def step_archive_collaboration(
             project_root,
             timeout=60,
         )
+        # A partial move can precede a non-zero exit, so check the limbo first
+        # regardless of returncode.
+        limbo = _rename_limbo_detail()
+        if limbo is not None:
+            return step_result_cls(
+                name="archive_collaboration",
+                status="FAIL",
+                detail=limbo,
+            )
         if result.returncode == 0:
-            # WOT-2026-011a: fail closed in the SAME closeout that leaves an
-            # uncommitted archival rename. The archiver moves STRATEGY_/AUDIT_/
-            # PLAN_ artifacts into _archive/plan_audit/ via shutil.move without a
-            # git commit; the resulting delete+untracked limbo only surfaced on
-            # the NEXT ticket's validate (010w, 011d needed manual reconcile).
-            # Reuse the canonical detection (single source of truth); never
-            # auto-commit, never delete.
-            rename = check_archive_rename_complete(project_root)
-            if not rename.passed:
-                detail = "; ".join([rename.message, *(rename.details or [])])
-                return step_result_cls(
-                    name="archive_collaboration",
-                    status="FAIL",
-                    detail=detail,
-                )
             return step_result_cls(
                 name="archive_collaboration",
                 status="PASS",
@@ -63,7 +74,23 @@ def step_archive_collaboration(
             status="WARN",
             detail=f"Archive collaboration returned exit {result.returncode}",
         )
-    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+    except subprocess.TimeoutExpired as exc:
+        # The archiver may have moved some artifacts before timing out: a
+        # half-done move is still a fail-closed limbo, not a benign WARN.
+        limbo = _rename_limbo_detail()
+        if limbo is not None:
+            return step_result_cls(
+                name="archive_collaboration",
+                status="FAIL",
+                detail=limbo,
+            )
+        return step_result_cls(
+            name="archive_collaboration",
+            status="WARN",
+            detail=f"Archive collaboration could not run: {exc}",
+        )
+    except FileNotFoundError as exc:
+        # Script never ran -> no mutation possible -> nothing to fail closed on.
         return step_result_cls(
             name="archive_collaboration",
             status="WARN",

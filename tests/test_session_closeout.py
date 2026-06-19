@@ -912,6 +912,84 @@ class TestArchiveRenameFailsClosed011a:
         ).stdout
         assert "_archive/plan_audit/AUDIT_WOT-2026-999z.md" in out
 
+    @staticmethod
+    def _partial_move_runner(returncode=None, timeout=False):
+        """run_script_fn that performs the archiver's real shutil.move on the
+        closed artifact (the limbo-creating mutation) and THEN signals failure:
+        either a non-zero returncode or a TimeoutExpired. Models a partial
+        archive that did not exit cleanly."""
+        import shutil
+        from types import SimpleNamespace
+
+        def run_script_fn(script_name, args, project_root, timeout_arg=60, **kw):
+            collab = Path(project_root) / ".agent" / "collaboration"
+            src = collab / "AUDIT_WOT-2026-999z.md"
+            if src.exists():
+                dest = collab / "_archive" / "plan_audit" / src.name
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(src), str(dest))
+            if timeout:
+                raise subprocess.TimeoutExpired(cmd="archiver", timeout=60)
+            return SimpleNamespace(returncode=returncode, stdout="", stderr="boom")
+
+        return run_script_fn
+
+    def _run_step_with(self, repo: Path, runner) -> StepResult:
+        return _step_archive_collaboration_impl(
+            repo,
+            False,
+            run_script_fn=runner,
+            step_result_cls=StepResult,
+        )
+
+    def test_partial_move_then_nonzero_exit_fails_closed(self, tmp_path: Path) -> None:
+        # Fail-open hole guard: a partial move + non-zero exit must NOT degrade to
+        # WARN (which session_closeout maps to exit 0). The limbo gates fail-closed
+        # regardless of the archiver exit code.
+        repo = tmp_path / "destino"
+        _init_destino_repo(repo)
+        _seed_collab_with_closed_artifact(repo)
+
+        result = self._run_step_with(repo, self._partial_move_runner(returncode=2))
+
+        assert result.status == "FAIL", result.detail
+        assert "archive_rename_uncommitted" in result.detail
+
+    def test_partial_move_then_timeout_fails_closed(self, tmp_path: Path) -> None:
+        # Same hole via TimeoutExpired: a half-done move before a timeout is still
+        # a blocking limbo, not a benign WARN.
+        repo = tmp_path / "destino"
+        _init_destino_repo(repo)
+        _seed_collab_with_closed_artifact(repo)
+
+        result = self._run_step_with(repo, self._partial_move_runner(timeout=True))
+
+        assert result.status == "FAIL", result.detail
+        assert "archive_rename_uncommitted" in result.detail
+
+    def test_nonzero_exit_without_limbo_stays_warn(self, tmp_path: Path) -> None:
+        # No false positive: a non-zero exit that did NOT leave a rename limbo
+        # keeps the prior WARN behavior (no over-blocking).
+        repo = tmp_path / "destino"
+        _init_destino_repo(repo)
+        collab = repo / ".agent" / "collaboration"
+        collab.mkdir(parents=True, exist_ok=True)
+        (collab / "work_plan.md").write_text(
+            "# work_plan.md -- WOT-2026-011a" + chr(10), encoding="utf-8"
+        )
+        _git(repo, "add", "--", ".agent/collaboration/work_plan.md")
+        _git(repo, "commit", "-m", "seed")
+
+        from types import SimpleNamespace
+
+        def runner(script_name, args, project_root, timeout_arg=60, **kw):
+            return SimpleNamespace(returncode=3, stdout="", stderr="x")
+
+        result = self._run_step_with(repo, runner)
+
+        assert result.status == "WARN", result.detail
+        assert "archive_rename_uncommitted" not in result.detail
+
     def test_clean_archive_still_passes(self, tmp_path: Path) -> None:
         # No closed artifact to move: the archiver is a no-op and the tree stays
         # clean, so the step keeps returning PASS (no false positive).
