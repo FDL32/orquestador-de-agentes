@@ -1437,7 +1437,11 @@ function Set-OpenCodeExternalPermission {
             Add-Member -NotePropertyName $permissionPath -NotePropertyValue 'allow' -Force
     }
 
-    $config | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $ConfigPath -Encoding UTF8
+    # WOT-2026-011j: BOM-safe write. Set-Content/Out-File -Encoding UTF8 en PS 5.1
+    # SIEMPRE antepone BOM (root cause verificada en WOT-2026-011c). Se usa el
+    # patron BOM-safe canonico de WT-2026-248a: UTF8Encoding($false) via WriteAllText.
+    $configJson = $config | ConvertTo-Json -Depth 8
+    [IO.File]::WriteAllText($ConfigPath, $configJson, (New-Object System.Text.UTF8Encoding $false))
 }
 
 
@@ -1901,7 +1905,9 @@ try { $opencodeRunCommand } finally {
                 round        = $currentRound
                 pid          = $builderPid
             }
-            $builderLockState | ConvertTo-Json -Depth 4 | Out-File -LiteralPath $lockPath -Encoding UTF8
+            # WOT-2026-011j: BOM-safe write (ver nota en Set-OpenCodeExternalPermission).
+            $builderLockJson = $builderLockState | ConvertTo-Json -Depth 4
+            [IO.File]::WriteAllText($lockPath, $builderLockJson, (New-Object System.Text.UTF8Encoding $false))
         }
         else {
             Write-Host 'Builder: no lanzado - ya esta ejecutandose en este proyecto'

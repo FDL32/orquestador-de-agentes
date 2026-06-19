@@ -369,3 +369,33 @@ def test_normal_launch_without_flags_still_launches_supervisor() -> None:
     assert "if ($LaunchSupervisor) {" in content
     assert "Start-AgentWindow -Title 'Supervisor'" in content
     assert "Supervisor: lanzado con ticket_supervisor.py --reactive" in content
+
+
+def test_launcher_inscope_json_writes_are_bom_safe() -> None:
+    """WOT-2026-011j regression barrier: the two in-scope JSON writes (opencode
+    config + builder lock) must NOT use Set-Content/Out-File -Encoding UTF8 (PS 5.1
+    always prepends a BOM; root cause verified in WOT-2026-011c). They must use the
+    canonical BOM-safe pattern from WT-2026-248a (UTF8Encoding($false) via
+    WriteAllText). Fails on the pre-fix source, passes after the fix."""
+    content = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    # No in-scope BOM-prone write survives (ignore comment lines).
+    bom_prone = [
+        line
+        for line in content.splitlines()
+        if re.search(r"(Set-Content|Out-File).*-Encoding\s+UTF8", line)
+        and not line.lstrip().startswith("#")
+    ]
+    assert not bom_prone, f"BOM-prone PowerShell writes still in-scope: {bom_prone}"
+
+    # The opencode config write uses the BOM-safe pattern.
+    assert (
+        "[IO.File]::WriteAllText($ConfigPath, $configJson, "
+        "(New-Object System.Text.UTF8Encoding $false))" in content
+    ), "opencode config write must use UTF8Encoding($false) WriteAllText"
+
+    # The builder lock write uses the BOM-safe pattern.
+    assert (
+        "[IO.File]::WriteAllText($lockPath, $builderLockJson, "
+        "(New-Object System.Text.UTF8Encoding $false))" in content
+    ), "builder lock write must use UTF8Encoding($false) WriteAllText"
