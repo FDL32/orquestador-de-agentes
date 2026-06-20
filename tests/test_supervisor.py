@@ -1326,6 +1326,11 @@ def test_relaunch_uses_resume_flag(tmp_path, monkeypatch):
     y afirmar los cuatro flags: -LaunchBuilder, -OnlyBuilder, -ResumeBuilder
     y -SkipSupervisorWait.
     """
+    # WOT-2026-011b: pin the relaunch verify timeout so the timed path is
+    # deterministic and does not pay the 20s host default when no builder
+    # lock appears. Reuses the canonical BUILDER_START_VERIFY_TIMEOUT_SECONDS
+    # seam; the productive default stays 20.0 in bus/builder_relaunch.py.
+    monkeypatch.setenv("BUILDER_START_VERIFY_TIMEOUT_SECONDS", "0.5")
     import subprocess
     import sys
 
@@ -3670,6 +3675,12 @@ def test_relaunch_seam_allows_monkeypatch_without_pytest_check(tmp_path, monkeyp
     This verifies the key design decision: the seam enables tests to control
     subprocess behavior without depending on the old PYTEST_CURRENT_TEST global check.
     """
+
+    # WOT-2026-011b: pin the relaunch verify timeout so the timed path is
+    # deterministic and does not pay the 20s host default when no builder
+    # lock appears. Reuses the canonical BUILDER_START_VERIFY_TIMEOUT_SECONDS
+    # seam; the productive default stays 20.0 in bus/builder_relaunch.py.
+    monkeypatch.setenv("BUILDER_START_VERIFY_TIMEOUT_SECONDS", "0.5")
 
     from bus.supervisor import SequentialTicketSupervisor
 
@@ -6384,3 +6395,63 @@ class TestMaterializeTurnBlockersV2:
 
         content = turn_path.read_text(encoding="utf-8")
         assert "## Blockers from Manager" not in content
+
+
+# WOT-2026-011b: deterministic relaunch verify timeout (seam barrier).
+
+
+def test_verify_timeout_seam_reads_env_var(monkeypatch):
+    """The canonical seam BUILDER_START_VERIFY_TIMEOUT_SECONDS overrides the host
+    default. FAIL-without: if the seam stopped reading the env, the timed relaunch
+    path would always pay the 20s default (the flakiness 011b removes)."""
+    import bus.builder_relaunch as br
+
+    monkeypatch.setenv("BUILDER_START_VERIFY_TIMEOUT_SECONDS", "0.5")
+    assert br._get_verify_timeout() == 0.5
+
+
+def test_verify_timeout_default_preserved(monkeypatch):
+    """The productive default must stay 20.0 when no env var is set (no semantic
+    change to relaunch behavior in production)."""
+    import bus.builder_relaunch as br
+
+    monkeypatch.delenv("BUILDER_START_VERIFY_TIMEOUT_SECONDS", raising=False)
+    assert br._get_verify_timeout() == br._BUILDER_START_VERIFY_TIMEOUT_DEFAULT
+    assert br._BUILDER_START_VERIFY_TIMEOUT_DEFAULT == 20.0
+
+
+def test_verify_timeout_invalid_env_falls_back_to_default(monkeypatch):
+    """A bad env value must fall back to the productive default, never crash."""
+    import bus.builder_relaunch as br
+
+    for bad in ("", "abc", "0", "-5"):
+        monkeypatch.setenv("BUILDER_START_VERIFY_TIMEOUT_SECONDS", bad)
+        assert br._get_verify_timeout() == br._BUILDER_START_VERIFY_TIMEOUT_DEFAULT
+
+
+def test_verify_builder_start_bounded_by_env_not_host_default(tmp_path, monkeypatch):
+    """The timed verify path returns within the seam timeout, not the 20s default.
+    FAIL-without (env ignored): this would take ~20s; PASS-with: it returns under
+    the pinned 0.5s budget. Proves determinism independent of the host default."""
+    import time as _time
+
+    import bus.builder_relaunch as br
+    from bus.event_bus import EventBus
+
+    monkeypatch.setenv("BUILDER_START_VERIFY_TIMEOUT_SECONDS", "0.5")
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    runtime_dir.mkdir(parents=True)
+    bus = EventBus(runtime_dir / "events" / "events.jsonl")
+
+    started = _time.perf_counter()
+    # No builder_lock.txt -> the loop polls until the (pinned) deadline.
+    _outcome, _ = br._verify_builder_start(
+        runtime_dir=runtime_dir,
+        event_bus=bus,
+        ticket_id="WOT-TEST",
+        relaunch_started_at=datetime.now(timezone.utc),
+        expected_round=0,
+    )
+    elapsed = _time.perf_counter() - started
+    # Bounded by the 0.5s seam (+ poll slack), nowhere near the 20s host default.
+    assert elapsed < 5.0, f"verify path paid host default, not env seam: {elapsed:.1f}s"
