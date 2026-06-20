@@ -64,6 +64,9 @@ GLOB_PATTERNS = [
     "skills/**/*.md",
     "prompts/**/*.md",
     "scripts/**/*.py",
+    # WOT-2026-011f: bring real PowerShell sources under the repo-wide guard so
+    # BOM/mojibake in .ps1 is caught (the launcher carried both pre-011f).
+    "scripts/**/*.ps1",
     ".claude/**/*.md",
     "runtime/**/*.py",
     "bus/**/*.py",

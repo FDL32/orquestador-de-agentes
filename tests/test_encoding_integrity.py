@@ -139,3 +139,41 @@ def test_check_encoding_guard_explicit_path_allows_tab_lf_cr(tmp_path):
     )
 
     assert result.returncode == 0, result.stderr
+
+
+# WOT-2026-011f: PowerShell sources are under the repo-wide guard scope.
+
+
+def test_launcher_ps1_is_in_guard_scope():
+    """The real launcher .ps1 must be inside the guard's repo-wide scope, so its
+    BOM/mojibake would be caught (it carried both before 011f). PASS-with: the
+    GLOB now includes scripts/**/*.ps1, so the launcher is collected."""
+    launcher = ROOT / "scripts" / "launch_agent_terminals.ps1"
+    assert is_in_scope(relative_path(launcher)), (
+        "launch_agent_terminals.ps1 must be in encoding-guard scope (GLOB)"
+    )
+    assert launcher in set(collect_files_to_check()), (
+        "launcher .ps1 must be collected by the repo-wide guard sweep"
+    )
+
+
+def test_launcher_ps1_is_clean_no_bom_no_mojibake():
+    """The launcher itself must be UTF-8 clean after 011f: no BOM, no mojibake."""
+    launcher = ROOT / "scripts" / "launch_agent_terminals.ps1"
+    assert not has_utf8_bom(launcher), "launcher must have no UTF-8 BOM"
+    mojibake, _q_in_word, control_chars = file_issues(launcher)
+    assert not mojibake, f"launcher mojibake: {mojibake[:12]}"
+    assert not control_chars, f"launcher control chars: {control_chars[:12]}"
+
+
+def test_dirty_ps1_would_be_blocked(tmp_path):
+    """FAIL-without barrier: a .ps1 carrying BOM + mojibake (the pre-011f launcher
+    state) is detected by the guard's issue scanner. Proves the .ps1 scope is real,
+    not cosmetic. If the launcher regressed to BOM+mojibake, the parametrized
+    test_no_encoding_corruption_in_file would fail because it is now in scope."""
+    dirty = tmp_path / "dirty.ps1"
+    # BOM + classic double-encoded mojibake ('canÃ³nico') as the launcher had.
+    dirty.write_bytes("﻿# artefacto canÃ³nico\n".encode())
+    assert has_utf8_bom(dirty), "fixture must carry a BOM"
+    mojibake, _q, _c = file_issues(dirty)
+    assert mojibake, "guard must flag mojibake in a dirty .ps1"

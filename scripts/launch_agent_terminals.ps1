@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     # Default deferred to after param-binding because $PSScriptRoot,
     # $PSCommandPath, and $MyInvocation.MyCommand.Path can all be empty/null
@@ -88,7 +88,7 @@ if (-not $ProjectRoot) {
 
 Set-StrictMode -Version Latest
 
-# WP-2026-176: Motor code root â€” always derived from this script's location.
+# WP-2026-176: Motor code root - always derived from this script's location.
 # Code files (agents_config.py, bus/, .agent/) live in the motor, not in the workspace.
 # Defined here so all functions can reference it via $script:_MotorCodeRoot.
 $_scriptDirForMotor = if ($PSScriptRoot) { $PSScriptRoot } elseif ($PSCommandPath) { Split-Path -Parent $PSCommandPath } else { $null }
@@ -97,7 +97,7 @@ $script:_MotorCodeRoot = if ($_scriptDirForMotor) { (Resolve-Path (Join-Path $_s
 # OnlyBuilder: when invoked from supervisor requeue (subprocess), force-disable
 # the other launchers. Avoids the PowerShell 5.1 SwitchParameter cast issue
 # where `-LaunchSupervisor:$false` or `:0` arrive as strings via argv and fail
-# to bind. This switch is additive â€” interactive launching unaffected.
+# to bind. This switch is additive - interactive launching unaffected.
 if ($OnlyBuilder) {
     $LaunchSupervisor = $false
     $LaunchBridge = $false
@@ -160,7 +160,7 @@ function Assert-CanonicalProjectRoot {
     foreach ($relative in $requiredPaths) {
         $absolute = Join-Path $resolvedRoot $relative
         if (-not (Test-Path -LiteralPath $absolute)) {
-            throw "Falta el artefacto canÃ³nico requerido: $relative"
+            throw "Falta el artefacto canonico requerido: $relative"
         }
     }
 
@@ -268,8 +268,8 @@ function Get-CurrentBuilderRound {
     try {
         $state = Get-Content -LiteralPath $supervisorStatePath -Raw | ConvertFrom-Json
         $round = [int](Get-OptionalPropertyValue -Object $state -Names @('loop_current_round'))
-        # Para Builder inicial, si round=0 (no requeue aÃºn), es BR1
-        # Si round=1, significa que ya hubo un requeue, asÃ­ que prÃ³ximo Builder es BR2, etc.
+        # Para Builder inicial, si round=0 (no requeue aun), es BR1
+        # Si round=1, significa que ya hubo un requeue, asi que proximo Builder es BR2, etc.
         return [Math]::Max(1, $round + 1)
     }
     catch {
@@ -1537,7 +1537,7 @@ if (-not $ResumeBuilder) {
     Stop-ProjectAgentProcesses -ProjectRoot $ProjectRoot
     Write-Host 'Limpieza previa: sesiones viejas del proyecto cerradas antes del nuevo arranque'
 
-    # WT-2026-214: Preflight reconcile — detect drift between runtime and bus,
+    # WT-2026-214: Preflight reconcile - detect drift between runtime and bus,
     # decide between cleanup-local and canonical reconcile BEFORE destructive
     # repair operations. This must happen before Assert-StartupAlignment or
     # Repair-StartupSupervisorState delete the stale state evidence.
