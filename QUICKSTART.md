@@ -317,6 +317,14 @@ python .agent/agent_controller.py --health
 
 Prefer `scripts/run_pytest_safe.py` for normal Windows runs. Use raw `pytest` only for targeted diagnostics when the environment is already safe.
 
+**Loop rapido vs cierre canonico (WOT-2026-011g).** El `pytest` crudo, `-k`,
+`--select-from-diff` o `--level unit` son `loop rapido`: diagnostico local, no
+evidencia de cierre. El `cierre canonico` de un ticket exige la suite canonica
+(`python scripts/run_pytest_safe.py --level all` contra el commit que se entrega,
+`last-run.json` con `tested_commit_sha == HEAD` y `exit_code=0`), `validate 0/0` y
+`mark-ready` con eventos reales. Nunca presentes evidencia de loop rapido como
+handoff o cierre. Politica canonica en `prompts/orchestrator_launch_builder.md`.
+
 El comando `--health` proporciona un resumen operativo derivado de manifests y estado canónico.
 
 ### Auditoría de salud del sistema (periódica, tras cambios)

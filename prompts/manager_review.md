@@ -84,6 +84,13 @@ Comprueba:
 - no hay scope creep material;
 - `ruff` termina con exit 0 cuando aplica;
 - `pytest` focal termina con exit 0 cuando aplica;
+- **loop rapido vs cierre canonico:** un `pytest` focal verde, `--select-from-diff`,
+  un test aislado o una corrida de background NO sustituyen la suite canonica del
+  ticket. Para aprobar un cierre de `code`/`mixed`, exige la suite canonica
+  (`run_pytest_safe --level all`, `last-run.json` con `tested_commit_sha == HEAD`
+  y `exit_code=0`); rechaza con `CHANGES` cualquier handoff que presente evidencia
+  de loop rapido como si fuera cierre canonico. Definicion canonica en
+  `prompts/orchestrator_launch_builder.md` (seccion Loop rapido vs cierre canonico).
 - `validate --json` devuelve 0 errores y, para cierre normal, 0 warnings;
 - si aparecen warnings, primero decide si son reparables. Para `bus_drift` por
   cierre `FALLBACK_SIN_TASK_TOOL`, exige la herramienta canonica

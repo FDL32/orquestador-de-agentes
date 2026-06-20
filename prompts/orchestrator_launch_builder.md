@@ -174,6 +174,28 @@ python scripts/pip_audit_project.py
 
 La validacion del `repo_destino` debe cerrar en `0 errors` y `0 warnings`.
 
+## Loop rapido vs cierre canonico (politica WOT-2026-011g)
+
+Esta es la fuente canonica de la distincion; los demas prompts y `QUICKSTART.md`
+deben usar esta misma terminologia.
+
+- **Loop rapido** = diagnostico local. Reruns focales (`pytest -k`,
+  `--select-from-diff`, un archivo suelto), `--level unit`, mediciones de
+  wall-clock en background, o tests aislados verdes. Sirve para iterar mientras
+  trabajas. NO es evidencia de cierre: NO autoriza declarar suite canonica,
+  `READY_FOR_REVIEW` ni handoff.
+- **Cierre canonico** = la unica evidencia que autoriza handoff/cierre:
+  - suite canonica `python scripts/run_pytest_safe.py --level all` con
+    `last-run.json` en `status=finished`, `exit_code=0`, `level=all`,
+    `args_mode=default_discovery` y `tested_commit_sha == HEAD` (commit que se entrega);
+  - `validate --json --project-root <repo_destino>` en `0 errors / 0 warnings`;
+  - `--mark-ready` con eventos reales `BUILDER_EXIT` + `STATE_CHANGED -> READY_FOR_REVIEW`;
+  - cuando aplique, cierre canonico real (`--manager-approve`) confirmado por el bus.
+
+Regla dura: nunca presentes evidencia de loop rapido como sustituto de cierre
+canonico. Una suite focal verde, una corrida de background o un `last-run.json`
+de un commit anterior NO cuentan como suite canonica del ticket.
+
 Para `documentation`, `research` o `analysis`, el gate minimo es:
 - existencia de cada artefacto declarado para Builder;
 - `validate --json --project-root <repo_destino>` con salida final registrada;

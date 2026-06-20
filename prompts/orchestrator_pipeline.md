@@ -219,6 +219,12 @@ Reglas derivadas:
 - pedir evidencia antes de aceptar relato;
 - preferir el cambio minimo verificable;
 - evitar falso verde, scope creep y cierres con estado ambiguo;
+- distinguir `loop rapido` (diagnostico local: reruns focales, `--level unit`,
+  background, tests aislados) de `cierre canonico` (suite canonica en HEAD,
+  `validate 0/0`, `mark-ready` con eventos reales y `manager-approve` cuando
+  aplique). El loop rapido nunca autoriza handoff ni publicacion; la orquestacion
+  solo trata como cerrable la evidencia canonica. Definicion canonica en
+  `<MOTOR_ROOT>/prompts/orchestrator_launch_builder.md`;
 - si hay ambiguedad no bloqueante, avanzar con el supuesto mas seguro y
   documentarlo explicitamente;
 - si hay conflicto entre velocidad y robustez, priorizar robustez.
