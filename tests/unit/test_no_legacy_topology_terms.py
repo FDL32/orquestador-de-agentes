@@ -20,6 +20,7 @@ LEGACY_PATTERN = re.compile(
 )
 EXCLUDED_PATHS = {
     Path("CHANGELOG.md"),
+    Path("tests/unit/test_no_legacy_topology_terms.py"),
 }
 EXCLUDED_PARTS = {
     ".agent",
@@ -39,6 +40,23 @@ def _is_excluded(relative_path: Path) -> bool:
     if relative_path in EXCLUDED_PATHS:
         return True
     return any(part in EXCLUDED_PARTS for part in relative_path.parts)
+
+
+def _is_ignored_negative_assert(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped.startswith("assert "):
+        return False
+    return " not in " in stripped
+
+
+def _has_live_legacy_match(content: str) -> bool:
+    for line in content.splitlines():
+        if not LEGACY_PATTERN.search(line):
+            continue
+        if _is_ignored_negative_assert(line):
+            continue
+        return True
+    return False
 
 
 def _iter_candidate_files(root: Path):
@@ -79,7 +97,7 @@ def test_repo_has_no_live_retired_topology_terms() -> None:
             content = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             continue
-        if LEGACY_PATTERN.search(content):
+        if _has_live_legacy_match(content):
             matches.append(relative_path.as_posix())
 
     assert matches == [], f"Retired topology terminology still present: {matches}"
@@ -134,3 +152,13 @@ def test_iter_candidate_files_does_not_descend_into_excluded_dirs(
     )
     unpruned = {p.name for p in _iter_candidate_files(tmp_path)}
     assert "inside.py" in unpruned
+
+
+def test_negative_assertions_are_not_treated_as_live_legacy_terms() -> None:
+    content = 'assert "Model B" not in context\n'
+    assert _has_live_legacy_match(content) is False
+
+
+def test_positive_live_legacy_terms_still_fail() -> None:
+    content = 'message = "Model B is still the active name"\n'
+    assert _has_live_legacy_match(content) is True

@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import scripts.pip_audit_policy as pip_audit_policy
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 spec = importlib.util.spec_from_file_location(
@@ -47,12 +49,19 @@ def test_read_deliverable_type_unknown_fallback(tmp_path, monkeypatch, capsys):
     assert "unknown type" in err
 
 
+def test_read_delivery_authority_from_work_plan(tmp_path, monkeypatch):
+    fake_plan = tmp_path / "work_plan.md"
+    fake_plan.write_text("- **delivery_authority:** repo_destino\n", encoding="utf-8")
+    monkeypatch.setattr(dispatch, "WORK_PLAN", fake_plan)
+    assert dispatch.read_delivery_authority() == "repo_destino"
+
+
 def test_run_code_gates_uses_project_pip_audit_wrapper():
     """The dispatcher must share the same dependency-audit surface as pre-commit."""
     source = (PROJECT_ROOT / "scripts" / "run_gates_dispatch.py").read_text(
         encoding="utf-8"
     )
-    assert "scripts/pip_audit_project.py" in source
+    assert "pip_audit_project.py" in source
     assert '"uv", "run", "pip-audit", "."' not in source
     assert "uv run pip-audit ." not in source
 
@@ -139,3 +148,133 @@ def test_dispatch_propagates_naming_failure(monkeypatch):
     contract_idx = next(i for i, c in enumerate(calls) if "--check-contract" in c)
     naming_idx = next(i for i, c in enumerate(calls) if "--check-naming" in c)
     assert naming_idx > contract_idx
+
+
+def test_run_code_gates_repo_motor_uses_motor_root_and_absolute_pytest(
+    monkeypatch, tmp_path
+):
+    motor = tmp_path / "motor"
+    destino = tmp_path / "destino"
+    (motor / "tests").mkdir(parents=True)
+    destino.mkdir()
+
+    calls: list[tuple[list[str], Path, dict[str, str] | None]] = []
+
+    class _FakeCompleted:
+        def __init__(self, rc: int) -> None:
+            self.returncode = rc
+
+    def fake_run(cmd, *args, **kwargs):
+        calls.append((cmd, Path(kwargs["cwd"]), kwargs.get("env")))
+        return _FakeCompleted(0)
+
+    monkeypatch.setattr(dispatch, "PROJECT_ROOT", destino)
+    monkeypatch.setattr(dispatch, "MOTOR_ROOT", motor)
+    monkeypatch.setattr(dispatch, "MOTOR_SCRIPTS_DIR", motor / "scripts")
+    monkeypatch.setattr(dispatch.subprocess, "run", fake_run)
+    monkeypatch.setattr(dispatch, "has_local_tests", lambda root: root == motor)
+    monkeypatch.setattr(
+        pip_audit_policy,
+        "should_run_pip_audit",
+        lambda project_root: (False, "skip"),
+    )
+
+    rc = dispatch.run_code_gates("repo_motor")
+
+    assert rc == 0
+    assert calls[0][0][:4] == [dispatch.sys.executable, "-m", "ruff", "check"]
+    assert calls[0][1] == motor
+    pytest_cmd, pytest_cwd, pytest_env = calls[2]
+    assert pytest_cmd == [
+        dispatch.sys.executable,
+        str(motor / "scripts" / "run_pytest_safe.py"),
+    ]
+    assert pytest_cwd == motor
+    assert pytest_env is not None
+    assert pytest_env["AGENT_PROJECT_ROOT"] == str(motor)
+
+
+def test_run_deliverable_gates_uses_motor_script_and_destino_root(
+    monkeypatch, tmp_path
+):
+    motor = tmp_path / "motor"
+    destino = tmp_path / "destino"
+    motor.mkdir()
+    destino.mkdir()
+
+    calls: list[tuple[list[str], Path, dict[str, str] | None]] = []
+
+    class _FakeCompleted:
+        def __init__(self, rc: int) -> None:
+            self.returncode = rc
+
+    def fake_run(cmd, *args, **kwargs):
+        calls.append((cmd, Path(kwargs["cwd"]), kwargs.get("env")))
+        return _FakeCompleted(0)
+
+    monkeypatch.setattr(dispatch, "PROJECT_ROOT", destino)
+    monkeypatch.setattr(dispatch, "MOTOR_ROOT", motor)
+    monkeypatch.setattr(dispatch, "MOTOR_SCRIPTS_DIR", motor / "scripts")
+    monkeypatch.setattr(dispatch.subprocess, "run", fake_run)
+
+    rc = dispatch.run_deliverable_gates()
+
+    assert rc == 0
+    cmd, cwd, env = calls[0]
+    assert cmd == [
+        dispatch.sys.executable,
+        str(motor / "scripts" / "check_deliverables_exist.py"),
+    ]
+    assert cwd == motor
+    assert env is not None
+    assert env["AGENT_PROJECT_ROOT"] == str(destino)
+
+
+def test_main_runs_barriers_from_motor_with_destino_project_root(monkeypatch, tmp_path):
+    motor = tmp_path / "motor"
+    destino = tmp_path / "destino"
+    motor.mkdir()
+    destino.mkdir()
+
+    calls: list[list[str]] = []
+
+    class _FakeCompleted:
+        def __init__(self, rc: int) -> None:
+            self.returncode = rc
+
+    def fake_run(cmd, *args, **kwargs):
+        calls.append(cmd)
+        return _FakeCompleted(0)
+
+    monkeypatch.setattr(dispatch, "PROJECT_ROOT", destino)
+    monkeypatch.setattr(dispatch, "MOTOR_ROOT", motor)
+    monkeypatch.setattr(dispatch, "MOTOR_SCRIPTS_DIR", motor / "scripts")
+    monkeypatch.setattr(dispatch, "read_deliverable_type", lambda: "documentation")
+    monkeypatch.setattr(dispatch, "read_delivery_authority", lambda: "repo_motor")
+    monkeypatch.setattr(dispatch.subprocess, "run", fake_run)
+
+    rc = dispatch.main()
+
+    assert rc == 0
+    assert calls == [
+        [
+            dispatch.sys.executable,
+            str(motor / "scripts" / "check_deliverables_exist.py"),
+        ],
+        [
+            dispatch.sys.executable,
+            str(motor / "scripts" / "discover_skills.py"),
+            "--check-contract",
+        ],
+        [
+            dispatch.sys.executable,
+            str(motor / "scripts" / "discover_skills.py"),
+            "--check-naming",
+        ],
+        [
+            dispatch.sys.executable,
+            str(motor / "scripts" / "check_backlog_contract.py"),
+            "--project-root",
+            str(destino),
+        ],
+    ]
