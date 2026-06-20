@@ -38,8 +38,9 @@ def sandbox():
     shutil.copytree(_RUNTIME_DIR, runtime_dir)
     shutil.copytree(_BUS_DIR, root / "bus")
 
-    controller_src = _REAL_CONTROLLER.read_text(encoding="utf-8")
-    (agent_dir / "agent_controller.py").write_text(controller_src, encoding="utf-8")
+    # WOT-2026-013a: no longer copy the controller into the sandbox. Tests run
+    # the real motor controller with --project-root <root>, so a copy would only
+    # reintroduce the __file__-based topology drift.
 
     yield root, agent_dir, collab_dir
     shutil.rmtree(root, ignore_errors=True)
@@ -47,15 +48,21 @@ def sandbox():
 
 def _run(agent_dir: Path, root: Path, *args: str) -> dict | None:
     """Run the sandbox controller and return parsed JSON output."""
+    # WOT-2026-013a: run the REAL motor controller pointed at the sandbox via
+    # --project-root, instead of a copy. A copied controller resolves its project
+    # from __file__.parent.parent -> the sandbox (no scripts/prompts) -> no JSON.
+    # The real controller resolves to the motor and --project-root targets the
+    # sandbox state, removing the topology drift without touching the controller.
     result = subprocess.run(
         [
             sys.executable,
-            str(agent_dir / "agent_controller.py"),
+            str(_REAL_CONTROLLER),
             "--json",
             "--force",
+            "--project-root",
+            str(root),
             *args,
         ],
-        cwd=str(root),
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -188,15 +195,17 @@ def test_validate_returns_empty_arrays(sandbox):
         },
     )
 
+    # WOT-2026-013a: real controller + --project-root (see _run docstring).
     result = subprocess.run(
         [
             sys.executable,
-            str(agent_dir / "agent_controller.py"),
+            str(_REAL_CONTROLLER),
             "--validate",
             "--json",
             "--force",
+            "--project-root",
+            str(root),
         ],
-        cwd=str(root),
         capture_output=True,
         text=True,
         encoding="utf-8",
