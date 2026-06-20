@@ -301,6 +301,11 @@ Reglas del informe:
   (limbo del archivador). Un arbol sucio invalida ese claim.
 - Cada criterio binario debe citar evidencia concreta: comando, archivo, exit code,
   evento o artefacto. No uses `[x]` genericos sin anclar la prueba.
+- No llames `FAIL-sin/PASS-con` a cualquier barrera nueva solo por existir en el
+  diff. Usa esa etiqueta solo cuando hayas verificado explicitamente el mismo
+  comportamiento sin el fix y con el fix. Si el ticket anade tests o barreras
+  nuevas que no fueron ejercidas en ambos estados, reportalas por separado como
+  `barreras nuevas` y distingue esa lista de la evidencia pre-fix/post-fix.
 - Si una verificacion da un resultado inesperado, ambiguo o no concluyente,
   reportalo como hallazgo explicito; no lo omitas ni lo redondees a verde.
 - No declares "pre-existente" ningun warning sin evidencia (`git stash` +
