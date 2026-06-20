@@ -132,7 +132,7 @@ Tests minimos:
 - Verificacion del test de regresion: usa worktree temporal o checkout parcial
   solo con `git status --short` limpio; revierte el conjunto minimo de archivos
   centrales a la version pre-fix, ejecuta el test y confirma FAIL; restaura
-  inmediatamente y confirma PASS con el fix. Registra ambos resultados en
+  inmediatamente despues y confirma PASS con el fix. Registra ambos resultados en
   `execution_log.md`.
 - Test negativo: sin la condicion requerida, el sistema bloquea o clasifica
   correctamente.
@@ -239,19 +239,20 @@ aportar diff, commit o evidencia nueva.
 ## Informe de salida (obligatorio en flujo por chat)
 
 Tu ultimo mensaje al Manager DEBE ser este bloque, con valores reales (no
-aproximados ni recordados — copia los numeros de la salida de los comandos):
+aproximados ni recordados; copia los numeros de la salida de los comandos):
 
 ```markdown
-## BUILDER REPORT — {{TICKET_ID}}
+## BUILDER REPORT - {{TICKET_ID}}
 
 ### Diff
-- Archivos tocados: <lista exacta de `git status --short`>
-- Lineas: <archivo>: <antes> -> <despues> (medido con wc -l, no estimado)
+- Archivos tocados: <lista exacta derivada de `git show --name-only <commit>` o `git diff --name-only <base>..<head>`>
+- Lineas: <archivo>: <antes> -> <despues> (medido sobre archivos realmente presentes en el diff; no estimado)
 
 ### Gates (comando exacto + resultado literal)
 - Tests: `<comando focal real de la superficie tocada>` -> <linea final literal>
 - Ruff: `uv run ruff check <paths>` -> <salida literal, o "no aplica: ticket sin Python tocado">
 - Ruff format: `uv run ruff format --check <paths>` -> <salida literal, o "no aplica: ticket sin Python tocado">
+- Suite canonica: `<comando o artefacto canonico leido>` -> <nivel, sha, exit code y linea final literal>
 - State-leak: <silencioso | STATE LEAK detectado>
 
 ### Bus / handoff
@@ -262,23 +263,49 @@ aproximados ni recordados — copia los numeros de la salida de los comandos):
 - Derived state after: <estado real final observado>
 
 ### Criterios binarios del ticket
-- [x|✗] <cada criterio del work_plan, marcado contra evidencia>
+- [x|✗] <cada criterio del work_plan, marcado contra evidencia literal>
 
 ### Desviaciones y justificaciones CEM
 - <ninguna | lista con justificacion>
 
 ### Estado de entrega
-- <staged sin commit | commit <sha>> — el commit final lo decide el Manager
+- <staged sin commit | commit <sha>> - el commit final lo decide el Manager
 ```
 
 Reglas del informe:
+- `Archivos tocados` se deriva de `git show --name-only <commit>` o del diff real
+  entregado; no cites archivos "tocados sin cambios netos" ni archivos ausentes
+  del commit.
+- `Lineas` se reporta solo para archivos presentes en el diff real. Si un archivo
+  no cambio en el commit, no lo incluyas en la metrica.
 - Cifras de tests SOLO de `run_pytest_safe.py` (suite canonica allowlist por defecto;
   no la llames "suite completa" salvo que hayas pasado args explicitos de
   descubrimiento, por ejemplo `-- tests`);
   no sumes conteos parciales de archivos sueltos.
+- La suite canonica se lee desde `repo_motor/.agent/runtime/pytest-safe/last-run.json`
+  y `last-run.log`, y solo cuenta si `tested_commit_sha == HEAD`, `level=all`,
+  `args_mode=default_discovery` y `exit_code=0`.
+- Una suite verde de un commit anterior NO cuenta. Si haces un commit nuevo en
+  `repo_motor`, debes re-correr `python scripts/run_pytest_safe.py --level all`
+  antes de reportar la suite canonica del ticket.
+- `Active ticket before`, `Events emitted` y `Derived state after` se derivan de
+  `STATE.md`, `TURN.md` y `repo_destino/.agent/runtime/events/events.jsonl`; no
+  los reconstruyas de memoria.
+- NO declares `Derived state after = READY_FOR_REVIEW` salvo que
+  `events.jsonl` contenga literalmente `BUILDER_EXIT` y `STATE_CHANGED` hacia
+  `READY_FOR_REVIEW`. Sin esos eventos, el estado reportado es el que dicen
+  `STATE.md` y el bus, no el que esperabas obtener.
+- Antes de afirmar "ambos repos limpios", ejecuta `git status --short` en
+  `repo_motor` y en `repo_destino`, y reconcilia cualquier patron
+  `D .agent/collaboration/...` + `?? .agent/collaboration/_archive/...`
+  (limbo del archivador). Un arbol sucio invalida ese claim.
+- Cada criterio binario debe citar evidencia concreta: comando, archivo, exit code,
+  evento o artefacto. No uses `[x]` genericos sin anclar la prueba.
+- Si una verificacion da un resultado inesperado, ambiguo o no concluyente,
+  reportalo como hallazgo explicito; no lo omitas ni lo redondees a verde.
 - No declares "pre-existente" ningun warning sin evidencia (`git stash` +
   re-ejecucion o referencia a commit anterior).
-- Si un criterio no se cumple, marcalo con ✗ y explica: el Manager decide,
+- Si un criterio no se cumple, marcalo con `✗` y explica: el Manager decide,
   no lo ocultes.
 - No reportes `READY_FOR_REVIEW` si el bus/proyecciones no lo confirman con
   evidencia literal del handoff.
