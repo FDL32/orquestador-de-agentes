@@ -184,3 +184,67 @@ def test_selection_module_uses_scope_gate_seam_not_parallel_parser() -> None:
     assert "scope_gate.get_changed_files" in source
     assert "subprocess" not in source
     assert '"git"' not in source
+
+
+# WOT-2026-011e: opt-in xdist for an explicit unit subset, auditable fallback.
+
+
+def test_xdist_enabled_for_explicit_unit_subset() -> None:
+    """xdist runs only for level=unit + default discovery; reports workers."""
+    mod = load_runner_module()
+    workers, meta = mod.resolve_xdist("auto", "unit", mod.DEFAULT_ARGS_MODE)
+    assert workers is not None and workers >= 2
+    assert meta["enabled"] is True
+    assert meta["workers"] == workers
+    assert meta["fallback_reason"] is None
+
+
+def test_xdist_explicit_worker_count() -> None:
+    mod = load_runner_module()
+    workers, meta = mod.resolve_xdist("4", "unit", mod.DEFAULT_ARGS_MODE)
+    assert workers == 4
+    assert meta["enabled"] is True
+
+
+def test_xdist_not_requested_is_serial_backward_compat() -> None:
+    """No flag -> serial, no xdist, backward compatible."""
+    mod = load_runner_module()
+    workers, meta = mod.resolve_xdist(None, "unit", mod.DEFAULT_ARGS_MODE)
+    assert workers is None
+    assert meta["enabled"] is False
+    assert meta["requested"] is False
+    assert meta["fallback_reason"] == "not_requested"
+
+
+def test_xdist_falls_back_to_serial_on_level_all() -> None:
+    """The canonical close path (level=all) must NEVER parallelize."""
+    mod = load_runner_module()
+    workers, meta = mod.resolve_xdist("auto", "all", mod.DEFAULT_ARGS_MODE)
+    assert workers is None
+    assert meta["enabled"] is False
+    assert "level=unit" in meta["fallback_reason"]
+
+
+def test_xdist_falls_back_on_non_default_discovery() -> None:
+    """Explicit/focal args are not the unit subset -> serial fallback."""
+    mod = load_runner_module()
+    workers, meta = mod.resolve_xdist("auto", "unit", "explicit_args")
+    assert workers is None
+    assert meta["enabled"] is False
+    assert "default-discovery" in meta["fallback_reason"]
+
+
+def test_xdist_falls_back_on_invalid_value() -> None:
+    """A bad worker value falls back to serial with an auditable reason, never crashes."""
+    mod = load_runner_module()
+    workers, meta = mod.resolve_xdist("abc", "unit", mod.DEFAULT_ARGS_MODE)
+    assert workers is None
+    assert meta["enabled"] is False
+    assert "invalid" in meta["fallback_reason"]
+
+
+def test_xdist_falls_back_on_too_few_workers() -> None:
+    mod = load_runner_module()
+    workers, meta = mod.resolve_xdist("1", "unit", mod.DEFAULT_ARGS_MODE)
+    assert workers is None
+    assert "needs >=2" in meta["fallback_reason"]

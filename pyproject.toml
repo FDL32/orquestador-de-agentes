@@ -25,6 +25,7 @@ dev = [
     "tomli>=2.4.1",
     "vulture>=2.0",
     "deadcode>=2.0",
+    "pytest-xdist>=3.6",
 ]
 
 [tool.ruff]

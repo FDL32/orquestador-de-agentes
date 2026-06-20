@@ -378,6 +378,17 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--xdist-workers",
+        default=None,
+        metavar="N|auto",
+        help=(
+            "WOT-2026-011e: opt-in local de paralelizacion con pytest-xdist. "
+            "Solo se habilita para subset unitario explicito (--level unit + "
+            "descubrimiento por defecto). Fuera de ese contrato cae a serial con "
+            "razon auditable. NO cambia el camino canonico de cierre (--level all)."
+        ),
+    )
+    parser.add_argument(
         "pytest_args",
         nargs=argparse.REMAINDER,
         help="Argumentos extra para pytest. Usa -- para separarlos.",
@@ -481,6 +492,57 @@ def print_default_discovery_notice(args_mode: str) -> None:
     )
 
 
+def resolve_xdist(
+    requested: str | None, level: str, args_mode: str
+) -> tuple[int | None, dict]:
+    """Decide whether xdist runs, with an auditable fallback (WOT-2026-011e).
+
+    Before: ``requested`` is the raw --xdist-workers value (None == not asked).
+    During: xdist is enabled ONLY for an explicit unit subset
+        (level == "unit" AND args_mode == default discovery). Any other scope
+        (integration/all, explicit/focal args, bad value) falls back to serial
+        with a stable reason. "auto" maps to min(8, max(2, cpu//2)).
+    After: returns (workers or None, metadata dict). workers is None == serial.
+        Never silently pass-opens: the metadata always carries why.
+    """
+    meta = {
+        "requested": requested is not None,
+        "requested_value": requested,
+        "enabled": False,
+        "workers": None,
+        "fallback_reason": None,
+    }
+    if requested is None:
+        meta["fallback_reason"] = "not_requested"
+        return None, meta
+    if level != "unit":
+        meta["fallback_reason"] = f"xdist only for level=unit (got level={level!r})"
+        return None, meta
+    if args_mode != DEFAULT_ARGS_MODE:
+        meta["fallback_reason"] = (
+            f"xdist only for default-discovery subset (got args_mode={args_mode!r})"
+        )
+        return None, meta
+
+    raw = requested.strip().lower()
+    if raw == "auto":
+        cpu = os.cpu_count() or 2
+        workers = min(8, max(2, cpu // 2))
+    else:
+        try:
+            workers = int(raw)
+        except ValueError:
+            meta["fallback_reason"] = f"invalid --xdist-workers value {requested!r}"
+            return None, meta
+        if workers < 2:
+            meta["fallback_reason"] = f"xdist needs >=2 workers (got {workers})"
+            return None, meta
+
+    meta["enabled"] = True
+    meta["workers"] = workers
+    return workers, meta
+
+
 def normalize_pytest_args(raw_args: list[str], level: str) -> list[str]:
     args = strip_pytest_separator(raw_args)
     args = args or list(DEFAULT_PYTEST_ARGS)
@@ -562,7 +624,18 @@ def main() -> int:
 
     args_mode = pytest_args_mode(raw_pytest_args)
     pytest_args = normalize_pytest_args(raw_pytest_args, args.level)
-    command = [sys.executable, "-m", "pytest", *pytest_args, f"--basetemp={run_dir}"]
+    # WOT-2026-011e: opt-in xdist for an explicit unit subset only; auditable
+    # fallback to serial otherwise. Never touches the canonical close path.
+    xdist_workers, xdist_meta = resolve_xdist(args.xdist_workers, args.level, args_mode)
+    xdist_flags = ["-n", str(xdist_workers)] if xdist_workers else []
+    command = [
+        sys.executable,
+        "-m",
+        "pytest",
+        *xdist_flags,
+        *pytest_args,
+        f"--basetemp={run_dir}",
+    ]
 
     summary = {
         "started_at": iso_now(),
@@ -580,6 +653,9 @@ def main() -> int:
             if args.select_from_diff
             else None
         ),
+        # WOT-2026-011e: xdist request/enablement metadata so review can see
+        # whether parallelization ran, with how many workers, or why it fell back.
+        "xdist": xdist_meta,
         "command": command,
         "cleanup_before": cleanup,
         "run_dir": str(run_dir),
