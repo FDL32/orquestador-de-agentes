@@ -214,3 +214,56 @@ class TestHookCIAlignment:
 
         # CI must use pre-push stage
         assert "--hook-stage pre-push" in ci_precommit
+
+    # WOT-2026-010x: gitleaks must run via the OSS CLI, never the license-gated action.
+
+    @staticmethod
+    def _gitleaks_step(ci_config: dict[str, Any]) -> dict[str, Any]:
+        """Return the Run Gitleaks step from the security-audit workflow."""
+        steps = ci_config["jobs"]["security-audit"]["steps"]
+        for step in steps:
+            if "gitleaks" in str(step.get("name", "")).lower():
+                return step
+        raise AssertionError("No 'Run Gitleaks' step found in security-audit.yml")
+
+    def test_gitleaks_does_not_use_licensed_action(self, ci_config: dict[str, Any]):
+        """FAIL-without barrier: the workflow must NOT re-introduce the license-gated
+        gitleaks/gitleaks-action@v2. A regression to that action would fail CI on
+        missing GITLEAKS_LICENSE."""
+        step = self._gitleaks_step(ci_config)
+        uses = str(step.get("uses", ""))
+        assert "gitleaks-action" not in uses, (
+            f"gitleaks step must not use the licensed action, got uses={uses!r}"
+        )
+
+    def test_gitleaks_runs_oss_cli(self, ci_config: dict[str, Any]):
+        """PASS-with barrier: the gitleaks step runs the OSS CLI explicitly
+        (gitleaks detect), not an opaque action surface."""
+        step = self._gitleaks_step(ci_config)
+        run = str(step.get("run", ""))
+        assert run, "gitleaks step must have an explicit `run:` CLI invocation"
+        assert "gitleaks detect" in run, (
+            "gitleaks step must invoke the OSS CLI `gitleaks detect`"
+        )
+
+    def test_gitleaks_is_fail_closed(self, ci_config: dict[str, Any]):
+        """The CLI invocation must be fail-closed: a found leak fails the step."""
+        run = str(self._gitleaks_step(ci_config).get("run", ""))
+        assert "--exit-code 1" in run, (
+            "gitleaks detect must use --exit-code 1 to stay fail-closed on a leak"
+        )
+
+    def test_gitleaks_reuses_existing_config(self, ci_config: dict[str, Any]):
+        """The CLI reuses the existing portable seed config; no new policy surface."""
+        run = str(self._gitleaks_step(ci_config).get("run", ""))
+        assert "agent_system/templates/gitleaks.config.toml" in run, (
+            "gitleaks must reuse the existing portable seed config"
+        )
+
+    def test_gitleaks_step_has_no_license_or_token(self, ci_config: dict[str, Any]):
+        """The gitleaks step must not depend on GITLEAKS_LICENSE or a GITHUB_TOKEN
+        secret (the whole point of dropping the licensed action)."""
+        step = self._gitleaks_step(ci_config)
+        env = step.get("env", {}) or {}
+        assert "GITLEAKS_LICENSE" not in env, "gitleaks step must not need a license"
+        assert "GITHUB_TOKEN" not in env, "gitleaks step must not need a GITHUB_TOKEN"

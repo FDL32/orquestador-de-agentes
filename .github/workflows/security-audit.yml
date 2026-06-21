@@ -33,7 +33,17 @@ jobs:
     - name: Run pre-commit hooks (pre-push stage)
       run: uv run pre-commit run --all-files --hook-stage pre-push
 
-    - name: Run Gitleaks
-      uses: gitleaks/gitleaks-action@v2
+    - name: Run Gitleaks (OSS CLI)
+      # WOT-2026-010x: replace gitleaks/gitleaks-action@v2 (license-gated) with the
+      # OSS gitleaks CLI. No GITLEAKS_LICENSE, no GITHUB_TOKEN for this step, no JS
+      # action runtime. Reuses the existing portable seed config; fail-closed:
+      # `gitleaks detect --exit-code 1` exits non-zero (and the step fails) on a leak.
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITLEAKS_VERSION: "8.30.1"
+      run: |
+        set -euo pipefail
+        url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+        curl -sSfL "$url" -o gitleaks.tar.gz
+        tar -xzf gitleaks.tar.gz gitleaks
+        ./gitleaks version
+        ./gitleaks detect --source . --config agent_system/templates/gitleaks.config.toml --redact --exit-code 1 --log-opts="--all"
