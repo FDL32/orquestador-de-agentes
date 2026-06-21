@@ -64,6 +64,16 @@
 
 ## Confirmados
 
+### 2026-06-21 | origen: proceso | estado: generalizable
+- learning: "Tras `reconcile_ticket.py` despues de `--session-close`, no cristalices un `bus_drift` observado en una validacion intermedia. Relee el bus y repite `agent_controller.py --validate --json` antes de declararlo persistente o abrir un follow-up."
+- evidencia: "Sesion de cierre 2026-06-21; `scripts/reconcile_ticket.py --project-root <repo_destino> --ticket WOT-2026-013d --reason \"post-session-close bus drift\"`; validacion final posterior en `0 errors / 0 warnings`."
+- razon: "El archivado del bus y la reconciliacion pueden dejar una ventana transitoria donde `validate` observa un estado intermedio. Promover ese estado provisional a deuda de tooling crea follow-ups falsos."
+- propuesta de aplicacion en herramienta:
+  - `prompts/audit_agent_output.md`
+  - `prompts/orchestrator_session_close_chat.md`
+  - `skills/manager-session-closeout/SKILL.md`
+- decision del usuario: aceptado
+
 ### 2026-06-14 | origen: proceso | estado: generalizable
 - learning: "Antes de implementar un ticket que describe un estado pasado del sistema, reproduce su premisa en modo read-only y re-scopea si es falsa. La solucion correcta puede estar en un hazard distinto del relato original."
 - evidencia: "WOT-2026-003d; `python scripts/install_agent_system.py --sync --dry-run`; commit `ff05b8d`; review independiente de 003d."
