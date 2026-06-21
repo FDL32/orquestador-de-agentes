@@ -7,6 +7,7 @@ import pytest
 from scripts.project_scanner import (
     _is_excluded,
     _matches_pattern,
+    _safe_walk,
     categorize_file,
     detect_framework_hints,
     extract_imports,
@@ -507,3 +508,53 @@ class TestScanProjectRealProject:
 
         # Should have importMap entries
         assert len(result["importMap"]["python_files"]) > 50
+
+
+class TestConcurrentDeleteRobustness:
+    """WOT-2026-013d: project scanning must tolerate subtrees that vanish
+    mid-traversal (the xdist FileNotFoundError root cause) and must never descend
+    into the volatile pytest sandbox."""
+
+    def test_safe_walk_prunes_sandbox_subtree(self, tmp_path):
+        """_safe_walk must NOT descend into tests/sandbox/test_runtime."""
+        (tmp_path / "pkg").mkdir()
+        (tmp_path / "pkg" / "real.py").write_text("x = 1")
+        sandbox = tmp_path / "tests" / "sandbox" / "test_runtime" / "session_999"
+        sandbox.mkdir(parents=True)
+        (sandbox / "volatile.py").write_text("y = 2")
+
+        found = {p.name for p in _safe_walk(tmp_path)}
+        assert "real.py" in found
+        assert "volatile.py" not in found, (
+            "scanner descended into the volatile sandbox subtree (013d regression)"
+        )
+
+    def test_safe_walk_tolerates_vanished_subdir(self, tmp_path, monkeypatch):
+        """FAIL-without/PASS-with: a subdir deleted DURING the walk must not crash
+        _safe_walk. A bare project_root.rglob('*') raises FileNotFoundError here;
+        _safe_walk (os.walk + onerror) must survive and yield the surviving files."""
+        (tmp_path / "keep").mkdir()
+        (tmp_path / "keep" / "a.py").write_text("a = 1")
+        doomed = tmp_path / "doomed"
+        doomed.mkdir()
+        (doomed / "b.py").write_text("b = 1")
+
+        import os as _os
+
+        real_scandir = _os.scandir
+
+        def _scandir_then_delete(path):
+            # When os.walk scans the root, delete `doomed` so descending into it
+            # raises the FileNotFoundError that the bare rglob could not survive.
+            it = real_scandir(path)
+            if Path(path) == tmp_path and doomed.exists():
+                import shutil as _sh
+
+                _sh.rmtree(doomed, ignore_errors=True)
+            return it
+
+        monkeypatch.setattr(_os, "scandir", _scandir_then_delete)
+
+        # Must not raise; surviving file is still found.
+        found = {p.name for p in _safe_walk(tmp_path)}
+        assert "a.py" in found

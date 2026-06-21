@@ -54,9 +54,35 @@ def _restore_env(name: str, value: str | None) -> None:
         os.environ[name] = value
 
 
+def _purge_orphan_session_dirs(keep_pid: int) -> int:
+    """WOT-2026-013d: remove stale session_<PID> sandboxes from dead runs.
+
+    The per-session sandbox lives under tests/sandbox/test_runtime/session_<PID>.
+    When a run's finalizer does not execute (killed process, crash), its dir is
+    orphaned and accumulates (566 observed at 013d baseline), inflating the latency
+    and FS-race surface of any tree walk. This is the conftest-managed hygiene the
+    013d contract requires: deterministic cleanup of the sandbox noise, expressed
+    as a fixture/harness -- never manual edits to the sandbox tree.
+
+    Removes every session_* dir except the current pid's. Returns the count purged.
+    """
+    if not TEST_RUNTIME_ROOT.is_dir():
+        return 0
+    purged = 0
+    keep = f"session_{keep_pid}"
+    for entry in TEST_RUNTIME_ROOT.iterdir():
+        if entry.name.startswith("session_") and entry.name != keep:
+            shutil.rmtree(entry, ignore_errors=True)
+            if not entry.exists():
+                purged += 1
+    return purged
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _project_temp_environment() -> None:
     """Keep pytest temp activity inside the project sandbox."""
+    # WOT-2026-013d: purge orphan session dirs from dead runs before this session.
+    _purge_orphan_session_dirs(os.getpid())
     original_tempdir = tempfile.tempdir
     original_env = {
         "TMPDIR": os.environ.get("TMPDIR"),

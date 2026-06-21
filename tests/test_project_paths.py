@@ -10,7 +10,7 @@ from pathlib import Path
 # Add agent_system to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "agent_system"))
 
-from scripts.project_paths import ProjectPathsResolver
+from scripts.project_paths import ProjectPathsResolver, _find_agent_dirs
 
 
 def _make_agent_dir(base: Path) -> Path:
@@ -166,3 +166,50 @@ class TestProjectPathsResolver:
         assert result["project_root"] == str(tmp_path.resolve())
         assert result["agent_dir"] == str(agent_dir)
         assert result["drift_detected"] is False
+
+
+class TestFindAgentDirsRobustness:
+    """WOT-2026-013d: _find_agent_dirs must replace the bare rglob('.agent') that
+    crashed when a sandbox subtree vanished mid-scan under xdist, prune the volatile
+    sandbox, and find nested .agent dirs."""
+
+    def test_finds_nested_agent_dirs(self, tmp_path):
+        _make_agent_dir(tmp_path)
+        _make_agent_dir(tmp_path / "sub")
+        found = {d.resolve() for d in _find_agent_dirs(tmp_path)}
+        assert (tmp_path / ".agent").resolve() in found
+        assert (tmp_path / "sub" / ".agent").resolve() in found
+
+    def test_prunes_sandbox_subtree(self, tmp_path):
+        _make_agent_dir(tmp_path)
+        sandbox_agent = tmp_path / "tests" / "sandbox" / "test_runtime" / "session_9"
+        _make_agent_dir(sandbox_agent)
+        found = {d.resolve() for d in _find_agent_dirs(tmp_path)}
+        assert (tmp_path / ".agent").resolve() in found
+        assert sandbox_agent.resolve() / ".agent" not in found, (
+            "resolver descended into the volatile sandbox subtree (013d regression)"
+        )
+
+    def test_tolerates_vanished_subdir(self, tmp_path, monkeypatch):
+        """FAIL-without/PASS-with: a subdir deleted during the walk must not crash
+        _find_agent_dirs (bare rglob raised FileNotFoundError here)."""
+        _make_agent_dir(tmp_path)
+        doomed = tmp_path / "doomed"
+        doomed.mkdir()
+        (doomed / "x.txt").write_text("x")
+
+        import os as _os
+
+        real_scandir = _os.scandir
+
+        def _scandir_then_delete(path):
+            it = real_scandir(path)
+            if Path(path) == tmp_path and doomed.exists():
+                import shutil as _sh
+
+                _sh.rmtree(doomed, ignore_errors=True)
+            return it
+
+        monkeypatch.setattr(_os, "scandir", _scandir_then_delete)
+        found = {d.resolve() for d in _find_agent_dirs(tmp_path)}
+        assert (tmp_path / ".agent").resolve() in found

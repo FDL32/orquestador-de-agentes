@@ -14,6 +14,7 @@ for that specific line.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -39,6 +40,52 @@ _FORBIDDEN_PATTERN = "(?:WP|WT)-"
 _EXEMPTION_MARKER = "# ticket-id-exemption:"
 
 
+# WOT-2026-013d: directories pruned before descending, so this test's own scan
+# never enters the volatile pytest sandbox (tests/sandbox/test_runtime/session_*)
+# that concurrent xdist workers delete mid-traversal.
+_PRUNE_DIRS = {
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".mypy_cache",
+    "node_modules",
+    "build",
+    "dist",
+}
+
+
+def _safe_scan_py(directory: Path) -> list[Path]:
+    """WOT-2026-013d: robustly collect *.py under ``directory``, sorted.
+
+    Replaces ``directory.rglob("*.py")`` (which raised FileNotFoundError when a
+    sandbox subtree vanished mid-scan under xdist). Prunes the volatile pytest
+    sandbox and other non-product dirs before descending, and tolerates entries
+    that disappear during the walk. Sorted output preserves deterministic order.
+    """
+    found: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(
+        str(directory), onerror=lambda _e: None
+    ):
+        current = Path(dirpath)
+        kept = []
+        for d in dirnames:
+            if d in _PRUNE_DIRS:
+                continue
+            try:
+                rel = (current / d).relative_to(_MOTOR_ROOT).as_posix()
+            except ValueError:
+                rel = ""
+            if rel.startswith("tests/sandbox/test_runtime"):
+                continue
+            kept.append(d)
+        dirnames[:] = kept
+        found.extend(current / fname for fname in filenames if fname.endswith(".py"))
+    return sorted(found)
+
+
 def _collect_violations() -> list[tuple[str, int, str]]:
     """Scan .py files and collect lines containing the forbidden pattern.
 
@@ -49,7 +96,7 @@ def _collect_violations() -> list[tuple[str, int, str]]:
         directory = _MOTOR_ROOT / scan_dir
         if not directory.is_dir():
             continue
-        for py_file in sorted(directory.rglob("*.py")):
+        for py_file in _safe_scan_py(directory):
             if py_file.resolve() in _EXEMPT_FILES:
                 continue
             try:

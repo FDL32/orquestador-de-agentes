@@ -6,7 +6,63 @@ Centralized logic for resolving canonical project root and agent directory.
 Detects path drift and ensures consistent path handling across scripts.
 """
 
+import os
 from pathlib import Path
+
+
+# WOT-2026-013d: directories pruned before descending in the robust .agent walk.
+# Mirrors the volatile/non-product subtrees that must never be entered, so a
+# concurrently-deleted subdir (e.g. tests/sandbox/test_runtime/session_<PID>)
+# cannot raise FileNotFoundError mid-traversal.
+_WALK_PRUNE_DIRS = {
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".mypy_cache",
+    "node_modules",
+    "build",
+    "dist",
+    "backups",
+}
+_WALK_PRUNE_REL_PREFIXES = (
+    "tests/sandbox/test_runtime",
+    ".agent/runtime/tmp",
+)
+
+
+def _find_agent_dirs(project_root: Path) -> list[Path]:
+    """WOT-2026-013d: robustly find ``.agent`` dirs under ``project_root``.
+
+    Replaces ``project_root.rglob(".agent")`` (which raises FileNotFoundError /
+    PermissionError when a subtree vanishes mid-scan under concurrent xdist
+    workers). Uses ``os.walk`` with an error-swallowing callback and prunes
+    volatile/non-product subtrees before descending. ``backups`` is excluded to
+    match the prior ``"backups" not in d.parts`` filter at the call site.
+    """
+    found: list[Path] = []
+    root_str = str(project_root)
+    for dirpath, dirnames, _files in os.walk(root_str, onerror=lambda _e: None):
+        current = Path(dirpath)
+        kept = []
+        for d in dirnames:
+            if d in _WALK_PRUNE_DIRS:
+                continue
+            try:
+                rel = (current / d).relative_to(project_root).as_posix()
+            except ValueError:
+                rel = ""
+            if rel and rel.startswith(_WALK_PRUNE_REL_PREFIXES):
+                continue
+            kept.append(d)
+        if ".agent" in kept:
+            found.append(current / ".agent")
+            # No need to descend into an .agent we already recorded.
+            kept = [d for d in kept if d != ".agent"]
+        dirnames[:] = kept
+    return found
 
 
 class ProjectPathsResolver:
@@ -54,9 +110,11 @@ class ProjectPathsResolver:
         # Check for drift: multiple operational .agent roots in the tree.
         # Sandbox fixtures are ignored because they are intentionally duplicated
         # for tests and must not block the canonical runtime root.
+        # WOT-2026-013d: robust walk instead of bare rglob(".agent"), which raised
+        # FileNotFoundError when a sandbox subtree vanished mid-scan under xdist.
         all_agent_dirs = [
             d
-            for d in project_root.rglob(".agent")
+            for d in _find_agent_dirs(project_root)
             if d.is_dir() and "backups" not in d.parts
         ]
 

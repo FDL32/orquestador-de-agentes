@@ -20,7 +20,9 @@ Output:
 import ast
 import hashlib
 import json
+import os
 import sys
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -216,6 +218,53 @@ def _is_excluded(path: Path, project_root: Path) -> bool:
     return bool(path.suffix and path.suffix not in INCLUDE_EXTENSIONS)
 
 
+def _is_excluded_dir(dirpath: Path, project_root: Path) -> bool:
+    """WOT-2026-013d: whether a directory should be pruned before descending.
+
+    Mirrors the directory-level exclusions of ``_is_excluded`` so a robust walk
+    can PRUNE excluded subtrees (e.g. ``tests/sandbox/test_runtime``, ``.git``,
+    ``.venv``) instead of descending into them. Pruning the volatile pytest
+    sandbox at the directory boundary is what removes the root cause: the walk no
+    longer enters per-worker ``session_<PID>`` dirs that other xdist workers
+    delete mid-traversal.
+    """
+    name = dirpath.name
+    if name in EXCLUDE_DIRS or name.endswith(".egg-info"):
+        return True
+    try:
+        rel_str = str(dirpath.relative_to(project_root))
+    except ValueError:
+        return False
+    return _is_excluded_relative_path(rel_str)
+
+
+def _safe_walk(project_root: Path) -> Iterator[Path]:
+    """WOT-2026-013d: yield files under ``project_root`` robustly.
+
+    Replaces bare ``project_root.rglob(...)`` (which raises FileNotFoundError /
+    PermissionError when a subdirectory vanishes mid-scan under concurrent
+    workers, before the post-rglob exclusion filter can run).
+
+    Two defenses, both required:
+      1. PRUNE excluded directories before descending (``_is_excluded_dir``), so
+         the volatile ``tests/sandbox/test_runtime`` subtree is never entered.
+      2. Tolerate entries that disappear between listing and use: ``os.walk`` with
+         an ``onerror`` that swallows transient FS races, and a per-entry guard.
+
+    Yields absolute Paths to files (not directories). The caller still applies
+    ``_is_excluded`` per file for the file-level filters.
+    """
+    root_str = str(project_root)
+    for dirpath, dirnames, filenames in os.walk(root_str, onerror=lambda _e: None):
+        current = Path(dirpath)
+        # Prune excluded subtrees in place so os.walk does not descend into them.
+        dirnames[:] = [
+            d for d in dirnames if not _is_excluded_dir(current / d, project_root)
+        ]
+        for fname in filenames:
+            yield current / fname
+
+
 def sha256_file(path: Path) -> str:
     """Compute SHA256 hash of file content."""
     h = hashlib.sha256()
@@ -341,7 +390,11 @@ def _collect_local_modules(project_root: Path) -> dict[str, str]:
     """
     local_modules: dict[str, str] = {}
 
-    for py_file in project_root.rglob("*.py"):
+    # WOT-2026-013d: robust walk (prunes the volatile pytest sandbox, tolerates
+    # concurrent deletes) instead of bare rglob.
+    for py_file in _safe_walk(project_root):
+        if py_file.suffix != ".py":
+            continue
         if _is_excluded(py_file, project_root):
             continue
 
@@ -612,14 +665,20 @@ def scan_project(project_root: Path | None = None) -> dict[str, Any]:
     # Pre-compute local modules once (O(n) instead of O(n²))
     local_modules = _collect_local_modules(project_root)
 
-    for path in sorted(project_root.rglob("*")):
-        if not path.is_file():
-            continue
+    # WOT-2026-013d: robust walk (prunes the volatile pytest sandbox, tolerates
+    # concurrent deletes) instead of bare rglob; sorted() preserves determinism.
+    for path in sorted(_safe_walk(project_root)):
         if _is_excluded(path, project_root):
             continue
 
+        # A file listed by the walk can still vanish before we stat/hash it under
+        # concurrent workers; skip it rather than crash the whole scan.
+        try:
+            size = path.stat().st_size
+        except (FileNotFoundError, PermissionError, OSError):
+            continue
+
         rel = rel_path(path, project_root)
-        size = path.stat().st_size
         sha = sha256_file(path)
         category = categorize_file(path)
 
