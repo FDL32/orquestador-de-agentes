@@ -65,7 +65,7 @@
 
 > Origen externo: `mattpocock/skills` `codebase-design` (MIT, Adapted). Lenguaje
 > para DESCRIBIR lo que ya existe en el diff, NO para exigir abstracciones nuevas.
-> Detalle y ejemplo real: `docs/protocol/manager_review_design_vocabulary_WOT-2026-010t.md`.
+> Detalle y ejemplo real: `docs/protocol/manager_review_design_vocabulary.md`.
 
 - [ ] **deep module:** la pieza tocada, esconde mucho comportamiento tras una
       interfaz pequena? Si la interfaz es casi tan compleja como la
