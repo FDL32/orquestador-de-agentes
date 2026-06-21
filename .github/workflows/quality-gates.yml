@@ -37,5 +37,17 @@ jobs:
     - name: Run Ruff Lint Check
       run: uv run ruff check .
 
+    # Canonical serial run: the real gate. Must stay serial (no xdist), matching
+    # the runner default and the --level all close path. Do NOT add --xdist-workers here.
     - name: Run Pytest Safe
       run: uv run python scripts/run_pytest_safe.py
+
+    # WOT-2026-010m: additive, non-blocking xdist pilot. Consumes the opt-in
+    # capability from 011e (--xdist-workers) to observe parallel-run timing/health
+    # in CI WITHOUT making xdist the gate. continue-on-error is REQUIRED: the unit
+    # subset still has known non-parallel-safe tests (documented in 011e), so the
+    # pilot may fail non-deterministically; it must never fail the job. Turning
+    # xdist into a default or into the canonical run is out of scope (that is 011i).
+    - name: Run Pytest (xdist pilot, non-blocking)
+      continue-on-error: true
+      run: uv run python scripts/run_pytest_safe.py --level unit --xdist-workers auto
