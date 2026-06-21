@@ -1040,6 +1040,60 @@ def _auto_archive_closed_artifacts() -> None:
         print(f"[WARN] Auto-archive failed: {exc}")
 
 
+def _check_mark_ready_archive_rename() -> dict | None:
+    """Detect an uncommitted archival rename left by mark-ready's auto-archive.
+
+    WOT-2026-011h. Before: ``_auto_archive_closed_artifacts()`` has just run and
+    may have moved closed STRATEGY_/AUDIT_/PLAN_ artifacts into _archive/plan_audit/
+    without committing, leaving the ``D old + ?? new`` limbo. During: reuse the
+    canonical 011a/010u detector ``check_archive_rename_complete`` against the root
+    whose git tree tracks the collaboration artifacts (PROJECT_ROOT). After: return
+    None when clean (no false positive on an unrelated dirty file), or a dict with
+    the stable reason ``archive_rename_uncommitted`` and the exact reconcile command
+    when the limbo is present. Fail closed: if the detector cannot run, return a
+    block dict rather than silently passing (guard parity with pre_handoff_guard).
+    """
+    project_root = Path(str(PROJECT_ROOT))
+    if not (project_root / ".git").exists():
+        # No git tree tracking the artifacts here: nothing this guard can assert.
+        return None
+    try:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "delivery_hygiene_check",
+            _MOTOR_ROOT / "scripts" / "delivery_hygiene_check.py",
+        )
+        if not (spec and spec.loader):
+            return {
+                "status": "blocked",
+                "reason": "archive_rename_guard_error",
+                "details": [
+                    "No se pudo cargar delivery_hygiene_check para verificar el "
+                    "archivado de mark-ready (WOT-2026-011h, fail-closed)."
+                ],
+            }
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        rename_result = module.check_archive_rename_complete(project_root)
+    except Exception as exc:
+        return {
+            "status": "blocked",
+            "reason": "archive_rename_guard_error",
+            "details": [
+                f"check_archive_rename_complete no pudo ejecutarse: {exc}. "
+                "Barrera fail-closed (WOT-2026-011h)."
+            ],
+        }
+    if rename_result.passed:
+        return None
+    return {
+        "status": "blocked",
+        "reason": "archive_rename_uncommitted",
+        "details": list(rename_result.details) or [rename_result.message],
+    }
+
+
 # Utility functions
 def read_file(path: Path) -> str:
     """Lee un archivo si existe, retorna string vacio si no."""
@@ -3142,6 +3196,23 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
 
     # Auto-archive closed PLAN/AUDIT artifacts (idempotent, no-op if nothing to archive)
     _auto_archive_closed_artifacts()
+
+    # WOT-2026-011h: the auto-archive above moves closed STRATEGY_/AUDIT_/PLAN_
+    # artifacts with shutil.move and does NOT commit, so it can leave the same
+    # `D old + ?? new` limbo that 011a closed for --session-close. The pre-handoff
+    # guard ran BEFORE this archive, so it cannot catch a limbo that mark-ready
+    # itself creates. Reuse the exact stable detector (archive_rename_uncommitted)
+    # and fail closed BEFORE emitting READY_FOR_REVIEW. No auto-commit: the fix is
+    # to surface the reconcile command, never to record the rename automatically.
+    archive_block = _check_mark_ready_archive_rename()
+    if archive_block is not None:
+        if json_output:
+            print(json.dumps(archive_block, indent=2))
+        else:
+            print(f"[ERROR] {archive_block['reason']}")
+            for line in archive_block.get("details", []):
+                print(f"  {line}")
+        return 1
 
     _sync_mark_ready_targets(plan_id, plan_content, current_round=process_round)
 

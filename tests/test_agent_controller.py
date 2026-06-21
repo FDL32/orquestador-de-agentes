@@ -2768,6 +2768,7 @@ class TestExternalMotorCheckpointTopology:
         )
 
         # Monkey-patch the controller to use our temp repos
+        self._seed_archival_detector(motor_repo)
         monkeypatch.setattr(agent_controller, "_MOTOR_ROOT", motor_repo)
         monkeypatch.setattr(agent_controller, "PROJECT_ROOT", workspace)
 
@@ -2862,6 +2863,252 @@ class TestExternalMotorCheckpointTopology:
         assert "marked as ready" in output.lower() or "Motor scope" in output, (
             f"Unexpected output: {output}"
         )
+
+    def _setup_mark_ready_motor_topology(
+        self, tmp_path: Path, monkeypatch
+    ) -> tuple[Path, Path]:
+        """Wire a real motor+workspace topology for a passing --mark-ready run.
+
+        WOT-2026-011h helper: reproduces the green path of
+        test_mark_ready_finds_checkpoint_in_motor (productive motor commit, M3 tag,
+        all collaborators patched to no-op) and returns (motor_repo, workspace).
+        Callers override _auto_archive_closed_artifacts to inject (or not) the
+        archival limbo, exercising the REAL mark-ready path, not a helper in isolation.
+        """
+        motor_repo = tmp_path / "motor"
+        workspace = tmp_path / "workspace"
+        self._init_git_repo(motor_repo)
+        self._init_git_repo(workspace)
+        self._create_work_plan(workspace)
+        self._create_execution_log(workspace)
+
+        (motor_repo / "src").mkdir(parents=True, exist_ok=True)
+        (motor_repo / "src" / "module.py").write_text("# productive change")
+        subprocess.run(
+            ["git", "add", "."], cwd=motor_repo, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", f"feat({self._PLAN_ID}): implement fix"],
+            cwd=motor_repo,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "tag",
+                "-a",
+                f"checkpoint/review-{self._PLAN_ID}",
+                "-m",
+                f"Checkpoint M3 for {self._PLAN_ID}",
+            ],
+            cwd=motor_repo,
+            check=True,
+            capture_output=True,
+        )
+
+        self._seed_archival_detector(motor_repo)
+
+        monkeypatch.setattr(agent_controller, "_MOTOR_ROOT", motor_repo)
+        monkeypatch.setattr(agent_controller, "PROJECT_ROOT", workspace)
+        monkeypatch.setattr(
+            agent_controller,
+            "read_file",
+            lambda path: (
+                self._PLAN_CONTENT
+                if "work_plan" in str(path).lower()
+                else (
+                    "# Execution Log\n\n**Estado:** IN_PROGRESS\n"
+                    if "execution_log" in str(path).lower()
+                    else ""
+                )
+            ),
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "_ensure_active_builder_round",
+            lambda plan_id: (True, 1, None),
+        )
+        monkeypatch.setattr(agent_controller, "BUS_AVAILABLE", False)
+        monkeypatch.setattr(
+            agent_controller, "_check_implementation_evidence", lambda plan_id: []
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "_run_pre_handoff_guard",
+            lambda plan_id, json_output: {"valid": True},
+        )
+        monkeypatch.setattr(
+            agent_controller, "_emit_builder_exit", lambda *a, **kw: None
+        )
+        monkeypatch.setattr(
+            agent_controller, "_sync_mark_ready_targets", lambda *a, **kw: None
+        )
+        monkeypatch.setattr(
+            agent_controller, "_reset_circuit_breaker", lambda plan_id: None
+        )
+        monkeypatch.setattr(
+            agent_controller, "_release_builder_lock", lambda *a, **kw: None
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "_read_deliverable_type",
+            lambda content, default="code": "code",
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "_parse_raw_flt_paths",
+            lambda content: {
+                ".agent/agent_controller.py",
+                "tests/test_agent_controller.py",
+                "src/module.py",
+            },
+        )
+        return motor_repo, workspace
+
+    @staticmethod
+    def _seed_archival_detector(motor_repo: Path) -> None:
+        """Copy the real delivery_hygiene_check into a patched motor_repo.
+
+        WOT-2026-011h: --mark-ready now resolves check_archive_rename_complete from
+        _MOTOR_ROOT/scripts. Tests that patch _MOTOR_ROOT to a temp dir must seed the
+        detector there, otherwise the new fail-closed guard (correctly) blocks.
+        """
+        import shutil as _shutil
+
+        real_motor_root = Path(agent_controller.__file__).resolve().parent.parent
+        (motor_repo / "scripts").mkdir(parents=True, exist_ok=True)
+        _shutil.copy2(
+            real_motor_root / "scripts" / "delivery_hygiene_check.py",
+            motor_repo / "scripts" / "delivery_hygiene_check.py",
+        )
+
+    @staticmethod
+    def _inject_archival_limbo(workspace: Path) -> None:
+        """Create the real `D old + ?? new` archival limbo in the workspace git.
+
+        Commits a closed STRATEGY_ artifact, then moves it into _archive/plan_audit/
+        with shutil.move WITHOUT committing -- exactly what _auto_archive_closed_artifacts
+        does. Git then shows the original as deleted and the archived copy as untracked.
+        """
+        import shutil
+
+        collab = workspace / ".agent" / "collaboration"
+        collab.mkdir(parents=True, exist_ok=True)
+        artifact = collab / "STRATEGY_WT-2026-245b.md"
+        artifact.write_text("# closed strategy\n")
+        subprocess.run(
+            ["git", "add", str(artifact)],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "add closed STRATEGY artifact"],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+        )
+        archive_dir = collab / "_archive" / "plan_audit"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(artifact), str(archive_dir / artifact.name))
+
+    def test_mark_ready_blocks_when_archive_leaves_uncommitted_rename(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """WOT-2026-011h FAIL-without: if mark-ready's auto-archive leaves the
+        `D old + ?? new` limbo, mark-ready must fail closed with the stable reason
+        archive_rename_uncommitted, BEFORE reaching READY_FOR_REVIEW."""
+        _motor, workspace = self._setup_mark_ready_motor_topology(tmp_path, monkeypatch)
+
+        # The auto-archive step is what creates the limbo in the real path.
+        monkeypatch.setattr(
+            agent_controller,
+            "_auto_archive_closed_artifacts",
+            lambda: self._inject_archival_limbo(workspace),
+        )
+
+        code, output = self._capture_output(
+            lambda: agent_controller._handle_mark_ready(
+                scope_override=None, json_output=False, force_mode=False
+            )
+        )
+
+        assert code == 1, f"mark-ready should block on archival limbo: {output}"
+        assert "archive_rename_uncommitted" in output, (
+            f"diagnostic must carry the stable reason: {output}"
+        )
+        # Remediation must name origin, destino and the exact reconcile command.
+        assert "STRATEGY_WT-2026-245b.md" in output
+        assert "_archive/plan_audit/" in output
+        assert "git add" in output and "git commit" in output, (
+            f"diagnostic must surface the reconcile command, not auto-commit: {output}"
+        )
+        # And it must NOT have auto-committed the rename (no auto-commit invariant):
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            cwd=workspace,
+            capture_output=True,
+            text=True,
+        )
+        assert "STRATEGY_WT-2026-245b.md" in status.stdout, (
+            "the rename must remain uncommitted (the guard never auto-commits)"
+        )
+
+    def test_mark_ready_clean_archive_reaches_ready_for_review(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """WOT-2026-011h PASS-with: a clean auto-archive (no limbo) must still reach
+        READY_FOR_REVIEW. No false positive from the new barrier."""
+        _motor, _workspace = self._setup_mark_ready_motor_topology(
+            tmp_path, monkeypatch
+        )
+        # Clean archive: no-op (nothing to archive) -> no limbo.
+        monkeypatch.setattr(
+            agent_controller, "_auto_archive_closed_artifacts", lambda: None
+        )
+
+        code, output = self._capture_output(
+            lambda: agent_controller._handle_mark_ready(
+                scope_override=None, json_output=False, force_mode=False
+            )
+        )
+
+        assert code == 0, f"clean mark-ready must pass: {output}"
+        assert "archive_rename_uncommitted" not in output
+
+    def test_mark_ready_archive_guard_fails_closed_on_detector_error(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """WOT-2026-011h: the new guard must fail closed if the detector cannot run
+        (guard parity with pre_handoff_guard), never silently pass."""
+        _motor, _workspace = self._setup_mark_ready_motor_topology(
+            tmp_path, monkeypatch
+        )
+        monkeypatch.setattr(
+            agent_controller, "_auto_archive_closed_artifacts", lambda: None
+        )
+
+        # Force the guard's internal detector load to raise; the guard must block.
+        import importlib
+
+        real_spec_from_file = importlib.util.spec_from_file_location
+
+        def _fake_spec(name, location, *a, **kw):
+            if "delivery_hygiene_check" in str(location):
+                raise RuntimeError("simulated detector load failure")
+            return real_spec_from_file(name, location, *a, **kw)
+
+        monkeypatch.setattr(importlib.util, "spec_from_file_location", _fake_spec)
+
+        code, output = self._capture_output(
+            lambda: agent_controller._handle_mark_ready(
+                scope_override=None, json_output=False, force_mode=False
+            )
+        )
+
+        assert code == 1, f"guard must fail closed on detector error: {output}"
+        assert "archive_rename_guard_error" in output
 
     def test_pre_handoff_repo_destino_authority_tags_workspace(
         self, tmp_path: Path, monkeypatch
@@ -3002,6 +3249,7 @@ class TestExternalMotorCheckpointTopology:
             capture_output=True,
         )
 
+        self._seed_archival_detector(motor_repo)
         monkeypatch.setattr(agent_controller, "_MOTOR_ROOT", motor_repo)
         monkeypatch.setattr(agent_controller, "PROJECT_ROOT", workspace)
         monkeypatch.setattr(
@@ -3162,6 +3410,7 @@ class TestExternalMotorCheckpointTopology:
         self._create_execution_log(workspace)
 
         # Monkey-patch the controller to use our temp repos
+        self._seed_archival_detector(motor_repo)
         monkeypatch.setattr(agent_controller, "_MOTOR_ROOT", motor_repo)
         monkeypatch.setattr(agent_controller, "PROJECT_ROOT", workspace)
 
