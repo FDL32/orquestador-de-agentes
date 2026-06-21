@@ -97,6 +97,17 @@ def _monkeypatch_mark_ready(
     monkeypatch.setattr(agent_controller, "WORK_PLAN", wp)
     monkeypatch.setattr(agent_controller, "EXEC_LOG", exec_log)
     monkeypatch.setattr(agent_controller, "_MOTOR_ROOT", motor)
+    # WOT-2026-011h: --mark-ready now resolves check_archive_rename_complete from
+    # _MOTOR_ROOT/scripts; the patched motor must carry the real detector or the
+    # new fail-closed guard (correctly) blocks. Seed it from the real motor.
+    import shutil as _shutil
+
+    real_motor_root = Path(agent_controller.__file__).resolve().parent.parent
+    (motor / "scripts").mkdir(parents=True, exist_ok=True)
+    _shutil.copy2(
+        real_motor_root / "scripts" / "delivery_hygiene_check.py",
+        motor / "scripts" / "delivery_hygiene_check.py",
+    )
     monkeypatch.setattr(agent_controller, "BUS_AVAILABLE", False)
     monkeypatch.setattr(
         agent_controller,
