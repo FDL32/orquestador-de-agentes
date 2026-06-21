@@ -3110,6 +3110,50 @@ class TestExternalMotorCheckpointTopology:
         assert code == 1, f"guard must fail closed on detector error: {output}"
         assert "archive_rename_guard_error" in output
 
+    def test_check_mark_ready_archive_rename_blocks_on_dirty_detector(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """WOT-2026-011h robust barrier: `_check_mark_ready_archive_rename` itself
+        must return a block dict (stable reason archive_rename_uncommitted) when the
+        detector reports an uncommitted rename, and None when clean.
+
+        This tests the guard helper DIRECTLY with an injected detector, so it is
+        FAIL-without/PASS-with by construction: it does not depend on git seeding,
+        the full mark-ready flow, or _MOTOR_ROOT resolution. If the 011h helper is
+        removed (controller reverted), this test errors at attribute access; if the
+        helper stops mapping a failed detector to the stable reason, it fails.
+        """
+        # The helper must exist (controller carries the 011h fix). With the
+        # controller reverted (no 011h), this attribute is gone and the test errors.
+        assert hasattr(agent_controller, "_check_mark_ready_archive_rename"), (
+            "011h helper _check_mark_ready_archive_rename is missing"
+        )
+
+        # Use the REAL detector (delivery_hygiene_check) over a temp git repo.
+        # _MOTOR_ROOT must carry the real script so the helper resolves it; PROJECT_ROOT
+        # is the temp repo whose tree we make dirty/clean.
+        real_motor_root = Path(agent_controller.__file__).resolve().parent.parent
+        repo = tmp_path / "repo"
+        self._init_git_repo(repo)
+        monkeypatch.setattr(agent_controller, "_MOTOR_ROOT", real_motor_root)
+        monkeypatch.setattr(agent_controller, "PROJECT_ROOT", repo)
+
+        # CLEAN tree first -> helper must return None (no false positive).
+        assert agent_controller._check_mark_ready_archive_rename() is None, (
+            "clean tree must not trigger the archival-rename guard"
+        )
+
+        # Now create the REAL `D old + ?? new` limbo and re-check -> must block.
+        self._inject_archival_limbo(repo)
+        block = agent_controller._check_mark_ready_archive_rename()
+        assert block is not None, (
+            "guard must block when the archival rename is uncommitted"
+        )
+        assert block["reason"] == "archive_rename_uncommitted", block
+        assert any(
+            "origen:" in d or "STRATEGY_WT-2026-245b.md" in d for d in block["details"]
+        ), f"diagnostic must name the renamed artifact: {block}"
+
     def test_pre_handoff_repo_destino_authority_tags_workspace(
         self, tmp_path: Path, monkeypatch
     ) -> None:
