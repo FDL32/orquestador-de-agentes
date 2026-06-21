@@ -204,7 +204,12 @@ class TestFindAgentDirsRobustness:
 
         def _scandir_then_delete(path):
             it = real_scandir(path)
-            if Path(path) == tmp_path and doomed.exists():
+            # On Linux, scandir may receive a directory fd (int) from os.walk.
+            if isinstance(path, (str, bytes, _os.PathLike)) and doomed.exists():
+                scan_root = Path(path)
+            else:
+                scan_root = None
+            if scan_root == tmp_path and doomed.exists():
                 import shutil as _sh
 
                 _sh.rmtree(doomed, ignore_errors=True)
