@@ -30,6 +30,21 @@ WP-2026-066 aligns the recovered baseline with integration tests by either updat
 
 **Reason:** Depended on `STATE_FILE` constant and controller patterns that do not exist in the recovered baseline. The Manager/Builder loop is now validated through the bus-first event contract and terminal-driven workflows.
 
+## Retired: tests/deprecated/ (Goose integration suite)
+
+**Status:** RETIRED in WOT-2026-013f
+
+**Files removed:**
+- `tests/deprecated/test_goose_triggers.py`
+- `tests/deprecated/test_goose_realworld.py`
+- `tests/deprecated/__init__.py`
+
+**Reason:** These tests covered the Goose orchestration engine, which was deprecated by **WT-2026-254a** (Claude Code is now the primary AI backend). Both files carried the header `# DEPRECATED (WT-2026-254a): Goose integration deprecated. Moved from scripts/ to tests/deprecated/.`
+
+**Why removal is safe (zero impact on canonical collection):** The directory was already excluded from the runner via `norecursedirs = ... tests/deprecated ...` in `pytest.ini`, so these files were never collected by `python scripts/run_pytest_safe.py` nor by `python -m pytest tests`. Pruning them does **not** reduce the canonical test count: collect-only stays at 3111 before and after (verified in the WOT-2026-013f execution log). No live consumer references `tests/deprecated/` — `scripts/cleanup_legacy.py` resolves its `OLD_SCRIPT_NAMES` only against `scripts/` (not this directory), and the only other references are in gitignored generated cache (`graphify-out/`) and a historical, already-deprecated note in `.claude/rules/03-skills-discovery.md`.
+
+**Audit source:** WOT-2026-013e suite audit (`docs/test_performance/test_suite_audit_WOT-2026-013e.md`) classified `tests/deprecated/` as a `legacy candidate` and proposed this prune as follow-up FU-013E-2.
+
 ## Known Debt
 
-No outstanding test debt remains after WP-2026-066. All retired tests are documented here with clear justification.
+No outstanding test debt remains after WOT-2026-013f. All retired tests are documented here with clear justification.
