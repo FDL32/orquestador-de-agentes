@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import os
 import shutil
+import stat
 import sys
 import tempfile
 from pathlib import Path
@@ -54,27 +55,73 @@ def _restore_env(name: str, value: str | None) -> None:
         os.environ[name] = value
 
 
+def _force_remove_readonly(func, path, _exc) -> None:
+    """rmtree error handler: clear the read-only bit and retry the removal.
+
+    WOT-2026-013i. On Windows ``shutil.rmtree`` raises ``PermissionError``
+    (WinError 5) on read-only files -- notably the ``.git/objects/*`` entries that
+    git itself marks read-only inside test-fixture repos. The 013d purge used
+    ``ignore_errors=True``, which SWALLOWED these errors: it spent ~39s walking the
+    tree and removed nothing, so orphan session dirs accumulated indefinitely (575
+    observed) and inflated every later session's setup. This handler chmods the
+    offending path writable and retries ``func`` (unlink/rmdir), so the purge
+    actually deletes the tree instead of silently failing.
+    """
+    try:
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+    except OSError:
+        # Truly undeletable (locked by a live process): leave it. The next
+        # session retries; the purge remains best-effort and never raises.
+        pass
+
+
+def _rmtree_robust(target: Path) -> bool:
+    """Remove a tree, clearing read-only bits on error. Returns True if gone.
+
+    Replaces ``shutil.rmtree(target, ignore_errors=True)``: instead of silently
+    swallowing every error (which left read-only ``.git`` trees undeleted), it
+    routes failures through ``_force_remove_readonly`` to chmod+retry. Compatible
+    with both the pre-3.12 ``onerror(func, path, exc_info)`` API and the 3.12+
+    ``onexc(func, path, exc)`` API. Never raises; reports whether the path is gone.
+    """
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(target, onexc=_force_remove_readonly)
+    else:
+        shutil.rmtree(
+            target,
+            onerror=lambda func, path, exc: _force_remove_readonly(func, path, exc),
+        )
+    return not target.exists()
+
+
 def _purge_orphan_session_dirs(keep_pid: int) -> int:
-    """WOT-2026-013d: remove stale session_<PID> sandboxes from dead runs.
+    """WOT-2026-013d/013i: remove stale session_<PID> sandboxes from dead runs.
 
     The per-session sandbox lives under tests/sandbox/test_runtime/session_<PID>.
     When a run's finalizer does not execute (killed process, crash), its dir is
-    orphaned and accumulates (566 observed at 013d baseline), inflating the latency
-    and FS-race surface of any tree walk. This is the conftest-managed hygiene the
-    013d contract requires: deterministic cleanup of the sandbox noise, expressed
-    as a fixture/harness -- never manual edits to the sandbox tree.
+    orphaned and accumulates (566 observed at 013d baseline, 575 at 013i),
+    inflating the latency and FS-race surface of any tree walk. This is the
+    conftest-managed hygiene the 013d contract requires: deterministic cleanup of
+    the sandbox noise, expressed as a fixture/harness -- never manual edits to the
+    sandbox tree.
 
-    Removes every session_* dir except the current pid's. Returns the count purged.
+    WOT-2026-013i: removal goes through ``_rmtree_robust`` so read-only ``.git``
+    fixture trees are actually deleted (the prior ``ignore_errors=True`` made the
+    purge a no-op on Windows). Removes every session_* dir except the current
+    pid's. Returns the count actually purged.
     """
     if not TEST_RUNTIME_ROOT.is_dir():
         return 0
     purged = 0
     keep = f"session_{keep_pid}"
     for entry in TEST_RUNTIME_ROOT.iterdir():
-        if entry.name.startswith("session_") and entry.name != keep:
-            shutil.rmtree(entry, ignore_errors=True)
-            if not entry.exists():
-                purged += 1
+        if (
+            entry.name.startswith("session_")
+            and entry.name != keep
+            and _rmtree_robust(entry)
+        ):
+            purged += 1
     return purged
 
 
@@ -102,7 +149,9 @@ def _project_temp_environment() -> None:
         tempfile.tempdir = original_tempdir
         for key, value in original_env.items():
             _restore_env(key, value)
-        shutil.rmtree(SESSION_RUNTIME_ROOT, ignore_errors=True)
+        # WOT-2026-013i: robust removal so this session's own read-only .git
+        # fixtures are deleted, preventing it from becoming the next orphan.
+        _rmtree_robust(SESSION_RUNTIME_ROOT)
 
 
 @pytest.fixture(autouse=True)
@@ -131,7 +180,9 @@ def tmp_path(
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     """Remove the session runtime once pytest finishes."""
-    shutil.rmtree(SESSION_RUNTIME_ROOT, ignore_errors=True)
+    # WOT-2026-013i: robust removal (read-only .git fixtures) instead of the
+    # silent ignore_errors no-op that let orphans accumulate.
+    _rmtree_robust(SESSION_RUNTIME_ROOT)
 
 
 @pytest.fixture(autouse=True)
