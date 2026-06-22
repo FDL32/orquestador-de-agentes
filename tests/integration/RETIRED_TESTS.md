@@ -43,7 +43,7 @@ WP-2026-066 aligns the recovered baseline with integration tests by either updat
 
 **Why removal is safe (zero impact on canonical collection):** The directory was already excluded from the runner via `norecursedirs = ... tests/deprecated ...` in `pytest.ini`, so these files were never collected by `python scripts/run_pytest_safe.py` nor by `python -m pytest tests`. Pruning them does **not** reduce the canonical test count: collect-only stays at 3111 before and after (verified in the WOT-2026-013f execution log). No live consumer references `tests/deprecated/` — `scripts/cleanup_legacy.py` resolves its `OLD_SCRIPT_NAMES` only against `scripts/` (not this directory), and the only other references are in gitignored generated cache (`graphify-out/`) and a historical, already-deprecated note in `.claude/rules/03-skills-discovery.md`.
 
-**Audit source:** WOT-2026-013e suite audit (`docs/test_performance/test_suite_audit_WOT-2026-013e.md`) classified `tests/deprecated/` as a `legacy candidate` and proposed this prune as follow-up FU-013E-2.
+**Audit source:** WOT-2026-013e suite audit (`docs/test_performance/test_suite_audit.md`) classified `tests/deprecated/` as a `legacy candidate` and proposed this prune as follow-up FU-013E-2.
 
 ## Known Debt
 
