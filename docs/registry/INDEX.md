@@ -10,12 +10,12 @@
 
 | kind | total |
 |------|-------|
-| prompt | 20 |
+| prompt | 21 |
 | reference | 33 |
 | script-consumer | 5 |
 | shared | 3 |
 | skill | 29 |
-| **total** | **90** |
+| **total** | **91** |
 
 ## Entradas
 
@@ -33,6 +33,7 @@
 | prompt | `prompts/audit_post_change_system_health.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/audit_ticket_contract.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/contract_formation_pipeline.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/hermes_soul.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/manager_review.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/memory_upload.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/orchestrator_destination_bootstrap.md` | active | system | shared | model-invoked | — |
