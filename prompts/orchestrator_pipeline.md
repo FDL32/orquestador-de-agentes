@@ -432,6 +432,15 @@ incluye, de forma explicita:
 - STOP conditions;
 - dependencias y superficies probables.
 
+> **Autoridad del FLT (WOT-2026-013j):** el `Files Likely Touched` canonico vive
+> EXCLUSIVAMENTE en el contrato frozen (`ticket_contracts.md`) y, una vez
+> materializado, en `work_plan.md`. La ficha del backlog puede **resumir o
+> referenciar** las superficies probables, pero NO debe re-declarar un bloque
+> `Files Likely Touched:` propio: dos copias divergen y obligan a reconciliar el
+> packet a mano (patron recurrente en 013h/013i). `scripts/check_backlog_contract.py`
+> falla cerrado si una ficha detallada re-declara FLT. Al materializar el
+> `work_plan.md`, toma el FLT del contrato frozen, nunca de la ficha del backlog.
+
 Si el trabajo es una feature nueva, un repo nuevo, una mejora multi-ticket o una
 familia que modifica arquitectura, seguridad, CI, bus, estado compartido,
 instalacion o integracion motor-destino, buscar primero contrato de genesis en:

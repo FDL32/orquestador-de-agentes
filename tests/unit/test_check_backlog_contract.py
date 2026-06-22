@@ -114,6 +114,42 @@ def test_malformed_ficha_header_blocks(tmp_path: Path) -> None:
     assert any("malformed ficha header" in e for e in errs)
 
 
+def test_ficha_redeclaring_flt_blocks(tmp_path: Path) -> None:
+    """WOT-2026-013j: a detailed ficha that re-declares 'Files Likely Touched'
+    must be blocked. The FLT is owned by the frozen contract, not the backlog.
+
+    FAIL-without-fix: the gate only checked the table + ficha headers, so a
+    declarative FLT bullet in the ficha body passed silently (the recurring
+    013h/013i drift). PASS-with-fix: the gate fails closed naming the ficha.
+    """
+    ficha = (
+        "### WOT-2026-001a - ficha que re-declara FLT\n"
+        "- **Problema:** algo\n"
+        "- **Files Likely Touched:**\n"
+        "  - repo_motor: `scripts/foo.py`\n"
+    )
+    root = _write_backlog(tmp_path, _VALID_ROWS, ficha)
+    errs = cbc.validate_backlog(root / ".agent" / "collaboration" / "backlog.md")
+    assert any("re-declares 'Files Likely Touched'" in e for e in errs), errs
+    assert any("WOT-2026-001a" in e for e in errs), errs
+
+
+def test_ficha_prose_mention_of_flt_is_allowed(tmp_path: Path) -> None:
+    """Negative companion: merely MENTIONING 'Files Likely Touched' in prose
+    inside another bullet (not as a declarative key) must NOT be blocked. The
+    ficha may reference the concept; it just may not own the FLT declaration.
+    """
+    ficha = (
+        "### WOT-2026-001a - ficha que solo menciona FLT en prosa\n"
+        "- **Problema:** las fichas re-declaran el `Files Likely Touched` "
+        "que vive en el contrato frozen.\n"
+        "- **Objetivo:** definir una sola fuente de verdad.\n"
+    )
+    root = _write_backlog(tmp_path, _VALID_ROWS, ficha)
+    errs = cbc.validate_backlog(root / ".agent" / "collaboration" / "backlog.md")
+    assert not any("re-declares 'Files Likely Touched'" in e for e in errs), errs
+
+
 def test_missing_vista_rapida_section_blocks(tmp_path: Path) -> None:
     collab = tmp_path / ".agent" / "collaboration"
     collab.mkdir(parents=True, exist_ok=True)

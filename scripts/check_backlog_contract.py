@@ -64,6 +64,16 @@ _TABLE_HEADER_COLS = (
 )
 _FICHA_RE = re.compile(r"^### (WOT|WP|WT)-\d{4}-\w+(?:\s+-\s+.+)?$")
 
+# WOT-2026-013j: a detailed ficha must NOT re-declare Files Likely Touched. The
+# canonical FLT lives ONLY in the frozen contract (ticket_contracts.md) and then
+# work_plan.md; a ficha that re-declares it drifts and forces manual packet
+# reconcile (recurring in 013h/013i). We block a DECLARATIVE FLT bullet -- a list
+# key like ``- **Files Likely Touched...:**`` -- not a prose mention of the term
+# inside another bullet (e.g. ``- **Problema:** ... `Files Likely Touched` ...``),
+# which only references the concept and is allowed. The ficha may summarize or
+# point to the contract; it may not own the FLT.
+_FLT_DECLARATION_RE = re.compile(r"^\s*[-*]\s*\*\*Files Likely Touched", re.IGNORECASE)
+
 
 def resolve_destino_root(cli_value: str | None) -> tuple[Path | None, str | None]:
     """Resolve the destino root strictly. Returns (root, error).
@@ -176,14 +186,36 @@ def validate_backlog(backlog_path: Path) -> list[str]:
         if react_err:
             errors.append(f"{ticket}: {react_err}")
 
-    # Validate every ficha header is well formed (### WOT-/WT-...).
+    errors.extend(_check_ficha_bodies(content))
+    return errors
+
+
+def _check_ficha_bodies(content: str) -> list[str]:
+    """Validate ficha headers and that no ficha body re-declares FLT.
+
+    WOT-2026-012b checked only that ``### WOT-...`` headers are well formed.
+    WOT-2026-013j adds: a detailed ficha must not re-declare Files Likely Touched
+    (owned by the frozen contract, never the backlog body). Tracks the current
+    ficha so a violation names its owner ticket.
+    """
+    errors: list[str] = []
+    current_ficha = "<before any ficha>"
     for line in content.splitlines():
         is_ticket_ficha = line.startswith("### ") and (
             "WOT-" in line or "WT-" in line or "WP-" in line
         )
-        if is_ticket_ficha and not _FICHA_RE.match(line.rstrip()):
-            errors.append(f"malformed ficha header: {line.rstrip()!r}")
-
+        if is_ticket_ficha:
+            current_ficha = line.rstrip().lstrip("# ").strip()
+            if not _FICHA_RE.match(line.rstrip()):
+                errors.append(f"malformed ficha header: {line.rstrip()!r}")
+            continue
+        if _FLT_DECLARATION_RE.match(line):
+            errors.append(
+                f"{current_ficha}: ficha re-declares 'Files Likely Touched' "
+                f"({line.strip()!r}). The FLT is owned by the frozen contract "
+                "(ticket_contracts.md/work_plan.md), not the backlog. Replace the "
+                "declarative bullet with a reference to the contract."
+            )
     return errors
 
 
