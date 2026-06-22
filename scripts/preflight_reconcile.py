@@ -48,7 +48,7 @@ MOTOR_ROOT = Path(__file__).resolve().parents[1]
 if str(MOTOR_ROOT) not in sys.path:
     sys.path.insert(0, str(MOTOR_ROOT))
 
-from bus.state_machine import StateMachine  # noqa: E402
+from bus.state_machine import StateMachine, is_terminal_state  # noqa: E402
 
 
 RUNTIME_REL = Path(".agent") / "runtime"
@@ -134,12 +134,11 @@ def _resolve_prev_ticket_id(
 def _terminal_state(state: str) -> bool:
     """Check if a state is terminal (irreversible).
 
-    Mirrors reconcile_ticket.py TERMINAL_STATES logic: COMPLETED is the
-    canonical irreversible state from the state machine. CLOSED is also
-    recognised for tickets that received SUPERVISOR_CLOSED without a
-    preceding STATE_CHANGED->COMPLETED.
+    WOT-2026-013n: delegates to the shared terminality authority
+    (bus.state_machine.is_terminal_state), which recognises COMPLETED,
+    SUPERSEDED, BLOCKED_FINAL and the legacy bare literal "CLOSED".
     """
-    return state.upper() in {"COMPLETED", "CLOSED"}
+    return is_terminal_state(state)
 
 
 def derive_preflight_decision(

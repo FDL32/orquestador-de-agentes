@@ -34,6 +34,7 @@ if str(_PROJECT_ROOT_BOOTSTRAP) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT_BOOTSTRAP))
 
 from bus.event_bus import EventBus  # noqa: E402
+from bus.state_machine import terminal_state_strings  # noqa: E402
 
 # WP-2026-122 / WP-2026-155: Centralized path resolution via runtime.project_root
 from runtime.project_root import resolve_project_root  # noqa: E402
@@ -42,7 +43,10 @@ from runtime.project_root import resolve_project_root  # noqa: E402
 _PROJECT_ROOT = resolve_project_root()
 EVENTS_DIR = _PROJECT_ROOT / ".agent" / "runtime" / "events"
 
-TERMINAL_STATES = {"COMPLETED", "HUMAN_GATE"}
+# WOT-2026-013n: archivable terminals = shared irreversible authority
+# (COMPLETED, SUPERSEDED, BLOCKED_FINAL + legacy CLOSED) plus HUMAN_GATE,
+# which this rotation script intentionally archives as an escalation close.
+TERMINAL_STATES = set(terminal_state_strings()) | {"HUMAN_GATE"}
 
 
 def _iter_terminal_tickets(event_bus: EventBus) -> list[str]:

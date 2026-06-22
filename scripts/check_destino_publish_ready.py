@@ -42,7 +42,16 @@ from pathlib import Path
 
 
 _NOT_PUBLISHABLE_STATUSES = {"APPROVED"}
-_PUBLISHABLE_STATUSES = {"COMPLETED", "READY_FOR_REVIEW", "IDLE", "BLOCKED"}
+# WOT-2026-013n: honest non-success terminals (SUPERSEDED, BLOCKED_FINAL) are
+# publishable like COMPLETED — a ticket closed honestly does not block publish.
+_PUBLISHABLE_STATUSES = {
+    "COMPLETED",
+    "SUPERSEDED",
+    "BLOCKED_FINAL",
+    "READY_FOR_REVIEW",
+    "IDLE",
+    "BLOCKED",
+}
 
 
 def _resolve_motor_root(project_root: Path, motor_root_arg: str | None) -> Path | None:

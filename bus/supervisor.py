@@ -56,7 +56,7 @@ from .builder_lifecycle import (
 )
 from .event_bus import EventBus
 from .exceptions import ConcurrentStateError
-from .state_machine import StateMachine, TicketState
+from .state_machine import NON_TERMINAL_STATES, StateMachine, TicketState
 from .ticket_id import (
     LOOSE_PATTERN,
     NEXT_TICKET_PATTERN,
@@ -69,27 +69,12 @@ from .ticket_id import (
 )
 
 
-# Non-terminal states: supervisor must preserve active_ticket while bus is in these states.
-# Execution log may lag behind the bus, so we never clear active_ticket based solely on
-# execution_log status when the bus confirms a non-terminal state.
-NON_TERMINAL_STATES = frozenset(
-    {
-        TicketState.READY_FOR_REVIEW,
-        TicketState.READY_TO_CLOSE,
-        TicketState.IN_PROGRESS,
-        TicketState.BLOCKED,
-        TicketState.HUMAN_GATE,
-    }
-)
-
-
-# PAUSED state support (WOT-2026-010d)
-# PAUSED is a non-terminal state that blocks handoffs to incompatible states.
-NON_TERMINAL_STATES |= frozenset(
-    {
-        TicketState.PAUSED,
-    }
-)
+# WOT-2026-013n: supervisor no longer maintains a divergent local list of
+# non-terminal states. It consumes NON_TERMINAL_STATES from bus.state_machine
+# (the shared terminality authority). This also fixes a latent divergence: the
+# old local list omitted CONTRACT_BLOCKED, so a frozen ticket was wrongly treated
+# as terminal by _is_state_terminal. The authority includes CONTRACT_BLOCKED and
+# PAUSED, and (by complement) treats SUPERSEDED / BLOCKED_FINAL as terminal.
 
 
 @dataclass(slots=True)

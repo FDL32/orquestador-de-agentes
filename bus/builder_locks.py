@@ -18,18 +18,25 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .event_bus import EventBus
-from .state_machine import TicketState
+from .state_machine import NON_SUCCESS_TERMINAL_STATES, TicketState
 
 
 REQUEUE_CLAIMS_DIRNAME = "requeue_claims"
 _REQUEUE_CLAIM_TTL_ENV = "TICKET_SUPERVISOR_REQUEUE_CLAIM_TTL_SECONDS"
 
-RELAUNCH_BLOCKED_STATES = frozenset(
-    {
-        TicketState.HUMAN_GATE,
-        TicketState.READY_TO_CLOSE,
-        TicketState.COMPLETED,
-    }
+# WOT-2026-013n: relaunch/requeue is blocked for HUMAN_GATE, READY_TO_CLOSE and
+# every irreversible terminal. The honest non-success terminals (SUPERSEDED,
+# BLOCKED_FINAL) must block relaunch exactly like COMPLETED — a superseded or
+# blocked-final ticket is closed and must never be requeued as active work.
+RELAUNCH_BLOCKED_STATES = (
+    frozenset(
+        {
+            TicketState.HUMAN_GATE,
+            TicketState.READY_TO_CLOSE,
+            TicketState.COMPLETED,
+        }
+    )
+    | NON_SUCCESS_TERMINAL_STATES
 )
 
 MANAGER_STALE_TIMEOUT = 600

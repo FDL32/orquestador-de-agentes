@@ -227,3 +227,42 @@ class TestRequeueEdgeCases:
                 expected_revision=revision,
                 ticket_id="WP-2026-999",
             )
+
+    def test_relaunch_blocked_includes_non_success_terminals(self):
+        """WOT-2026-013n: SUPERSEDED and BLOCKED_FINAL block relaunch like COMPLETED."""
+        from bus.supervisor import RELAUNCH_BLOCKED_STATES
+
+        assert TicketState.SUPERSEDED in RELAUNCH_BLOCKED_STATES
+        assert TicketState.BLOCKED_FINAL in RELAUNCH_BLOCKED_STATES
+
+    def test_non_success_terminals_not_in_non_terminal_states(self):
+        """SUPERSEDED / BLOCKED_FINAL must NOT count as non-terminal (active)."""
+        from bus.supervisor import NON_TERMINAL_STATES
+
+        assert TicketState.SUPERSEDED not in NON_TERMINAL_STATES
+        assert TicketState.BLOCKED_FINAL not in NON_TERMINAL_STATES
+
+    @pytest.mark.parametrize("terminal", ["SUPERSEDED", "BLOCKED_FINAL"])
+    def test_requeue_ticket_blocks_non_success_terminal(
+        self, mock_supervisor: SequentialTicketSupervisor, terminal: str
+    ):
+        """requeue_ticket does not relaunch a ticket in a non-success terminal."""
+        mock_supervisor.save_state(
+            SupervisorState(active_ticket="WP-2026-999", loop_current_round=1)
+        )
+        calls: list[str] = []
+
+        def fake_current_state(ticket_id: str):
+            return TicketState[terminal]
+
+        def fake_relaunch(ticket_id: str) -> bool:
+            calls.append(ticket_id)
+            return True
+
+        mock_supervisor._current_state = fake_current_state  # type: ignore[method-assign]
+        mock_supervisor._relaunch_builder = fake_relaunch  # type: ignore[method-assign]
+
+        result = mock_supervisor.requeue_ticket("WP-2026-999", trigger_seq=42)
+
+        assert result is False
+        assert calls == []

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from scripts.session_closeout import StepResult
 
+from bus.state_machine import is_terminal_state
 from scripts.delivery_hygiene_check import check_archive_rename_complete
 
 
@@ -191,7 +192,9 @@ def _can_prove_close(
         if ev.get("event_type") == "STATE_CHANGED":
             payload = ev.get("payload", {})
             to_state = payload.get("to_state")
-            if to_state == "COMPLETED":
+            # WOT-2026-013n: any irreversible terminal (COMPLETED / SUPERSEDED /
+            # BLOCKED_FINAL / legacy CLOSED) confirms a bus close.
+            if is_terminal_state(to_state):
                 return True
             if (
                 to_state == "READY_TO_CLOSE"

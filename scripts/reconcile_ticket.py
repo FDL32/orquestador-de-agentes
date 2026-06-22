@@ -30,7 +30,7 @@ if str(MOTOR_ROOT) not in sys.path:
     sys.path.insert(0, str(MOTOR_ROOT))
 
 from bus.event_bus import EventBus  # noqa: E402
-from bus.state_machine import StateMachine  # noqa: E402
+from bus.state_machine import StateMachine, terminal_state_strings  # noqa: E402
 
 
 RUNTIME_REL = Path(".agent") / "runtime"
@@ -43,7 +43,9 @@ SUPERVISOR_LOCK_REL = RUNTIME_REL / "supervisor_lock.txt"
 BUILDER_SESSION_REL = RUNTIME_REL / "builder_session.json"
 REQUEUE_CLAIMS_REL = RUNTIME_REL / "requeue_claims"
 
-TERMINAL_STATES = {"COMPLETED", "CLOSED"}
+# WOT-2026-013n: terminality from the shared authority (includes COMPLETED,
+# SUPERSEDED, BLOCKED_FINAL + legacy "CLOSED" literal).
+TERMINAL_STATES = set(terminal_state_strings())
 
 
 @dataclass(slots=True)

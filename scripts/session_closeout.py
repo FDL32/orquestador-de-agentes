@@ -43,6 +43,8 @@ _MOTOR_ROOT_BOOTSTRAP = Path(__file__).resolve().parent.parent
 if str(_MOTOR_ROOT_BOOTSTRAP) not in sys.path:
     sys.path.insert(0, str(_MOTOR_ROOT_BOOTSTRAP))
 
+# Constants
+from bus.state_machine import terminal_state_strings  # noqa: E402
 from bus.ticket_id import TICKET_ID_PATTERN  # noqa: E402
 from scripts.closeout_steps.archival import (  # noqa: E402
     _can_prove_close as _archival_can_prove_close,
@@ -84,9 +86,8 @@ from scripts.closeout_steps.support import (  # noqa: E402
 )
 
 
-# Constants
-
-TERMINAL_STATES = {"COMPLETED", "HUMAN_GATE"}
+# WOT-2026-013n: align with shared terminality authority + HUMAN_GATE (close ts).
+TERMINAL_STATES = set(terminal_state_strings()) | {"HUMAN_GATE"}
 
 BUILDER_LOCK_REL = Path(".agent") / "runtime" / "builder_lock.txt"
 SUPERVISOR_LOCK_REL = Path(".agent") / "runtime" / "supervisor_lock.txt"

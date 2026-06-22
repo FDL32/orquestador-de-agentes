@@ -95,6 +95,21 @@ def _render_turn_for_state(ticket_id: str, state: TicketState) -> str:
             f"Ticket {ticket_id} cerrado. Crea el siguiente work_plan.md.",
             "COMPLETED",
         ),
+        # WOT-2026-013n: honest non-success terminals fall on the terminal side
+        # of the launcher, exactly like COMPLETED — the ticket is closed and the
+        # next move is MANAGER/CREATE_PLAN, NOT a relaunch of this ticket.
+        TicketState.SUPERSEDED: (
+            "MANAGER",
+            "CREATE_PLAN",
+            f"Ticket {ticket_id} cerrado como SUPERSEDED. Crea el siguiente work_plan.md.",
+            "SUPERSEDED",
+        ),
+        TicketState.BLOCKED_FINAL: (
+            "MANAGER",
+            "CREATE_PLAN",
+            f"Ticket {ticket_id} cerrado como BLOCKED_FINAL. Crea el siguiente work_plan.md.",
+            "BLOCKED_FINAL",
+        ),
         TicketState.BLOCKED: (
             "SUPERVISOR",
             "BLOCKED",
@@ -224,6 +239,10 @@ def _role_action_for_state(state: TicketState) -> tuple[str, str]:
         TicketState.HUMAN_GATE: ("SUPERVISOR", "HUMAN_GATE"),
         TicketState.COMPLETED: ("MANAGER", "CREATE_PLAN"),
         TicketState.BLOCKED: ("SUPERVISOR", "BLOCKED"),
+        # WOT-2026-013n: honest non-success terminals -> terminal side of the
+        # launcher (MANAGER/CREATE_PLAN), like COMPLETED. Never a relaunch.
+        TicketState.SUPERSEDED: ("MANAGER", "CREATE_PLAN"),
+        TicketState.BLOCKED_FINAL: ("MANAGER", "CREATE_PLAN"),
     }
     return mapping.get(state, ("BUILDER", "IMPLEMENT"))
 

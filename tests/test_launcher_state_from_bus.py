@@ -4,6 +4,7 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
 from bus.event_bus import EventBus
 from bus.state_machine import TicketState
 
@@ -314,3 +315,28 @@ def test_derive_launcher_state_drift_fallback_when_bus_empty(tmp_path: Path) -> 
 
     # Falls through to UNKNOWN state
     assert "reconciled" not in state
+
+
+# WOT-2026-013n: honest non-success terminals fall on the terminal side of the
+# launcher (MANAGER / CREATE_PLAN), exactly like COMPLETED — never a relaunch.
+@pytest.mark.parametrize("terminal", ["SUPERSEDED", "BLOCKED_FINAL"])
+def test_derive_launcher_state_sends_non_success_terminals_to_manager(
+    tmp_path: Path, terminal: str
+) -> None:
+    ticket_id = "WT-2026-239a"
+    _write_work_plan(tmp_path, ticket_id)
+    event_bus = EventBus(runtime_dir=tmp_path / ".agent" / "runtime" / "events")
+    event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="SUPERVISOR",
+        payload={"from_state": "READY_FOR_REVIEW", "to_state": terminal},
+    )
+
+    state = derive_launcher_state(tmp_path)
+
+    assert state["state"] == terminal
+    # Terminal side: next move is MANAGER/CREATE_PLAN, NOT BUILDER/IMPLEMENT.
+    assert state["role"] == "MANAGER"
+    assert state["action"] == "CREATE_PLAN"
+    assert state["role"] != "BUILDER"
