@@ -886,10 +886,31 @@ class TestArchiveRenameFailsClosed011a:
             step_result_cls=StepResult,
         )
 
-    def test_uncommitted_rename_blocks_in_real_closeout(self, tmp_path: Path) -> None:
+    def test_real_archiver_stages_rename_and_step_passes(self, tmp_path: Path) -> None:
+        """WOT-2026-013h: the REAL archiver now stages the rename, so the closeout
+        step PASSES with no inherited limbo -- and crucially without committing.
+
+        Before 013h this same path returned FAIL (the archiver left ``D old +
+        ?? new`` and the 011a barrier blocked, forcing a manual reconcile that the
+        NEXT ticket inherited). After 013h the archiver stages both sides, the
+        canonical detector passes, and the step returns PASS. The 011a fail-closed
+        barrier itself stays intact -- it is still exercised by the partial-move /
+        timeout tests below, which create the limbo without staging.
+        """
         repo = tmp_path / "destino"
         _init_destino_repo(repo)
         _seed_collab_with_closed_artifact(repo)
+
+        def _head() -> str:
+            return subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+
+        head_before = _head()
 
         result = self._run_step(repo)
 
@@ -898,11 +919,16 @@ class TestArchiveRenameFailsClosed011a:
         assert moved.exists(), "archiver must have moved the closed artifact"
         assert not (repo / ".agent/collaboration/AUDIT_WOT-2026-999z.md").exists()
 
-        # And the closeout step fails closed with the stable reason + remediation.
-        assert result.status == "FAIL", result.detail
-        assert "archive_rename_uncommitted" in result.detail
-        assert "git add" in result.detail and "git commit" in result.detail
-        # No auto-commit: the rename is still in limbo for the operator to resolve.
+        # The step PASSES: the archiver staged the rename, so there is no limbo.
+        assert result.status == "PASS", result.detail
+        assert "archive_rename_uncommitted" not in result.detail
+
+        # No opaque auto-commit: HEAD is unchanged. The staged rename rides the
+        # closeout's own documentation commit.
+        head_after = _head()
+        assert head_after == head_before, "archiver must not create a commit"
+
+        # The rename is in the index (staged), not in the D+?? limbo.
         out = subprocess.run(
             ["git", "status", "--porcelain", "--untracked-files=all"],
             cwd=repo,
@@ -910,7 +936,9 @@ class TestArchiveRenameFailsClosed011a:
             text=True,
             check=True,
         ).stdout
-        assert "_archive/plan_audit/AUDIT_WOT-2026-999z.md" in out
+        # No untracked archived copy and no unstaged delete remain.
+        assert "?? .agent/collaboration/_archive/plan_audit/" not in out
+        assert " D .agent/collaboration/AUDIT_WOT-2026-999z.md" not in out
 
     @staticmethod
     def _partial_move_runner(returncode=None, timeout=False):

@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -116,6 +117,57 @@ def get_archive_dir(collaboration_dir: Path) -> Path:
     return collaboration_dir / "_archive" / "plan_audit"
 
 
+def _find_git_root(start: Path) -> Path | None:
+    """Return the git work-tree root containing ``start``, or None.
+
+    Walks upward from ``start`` looking for a ``.git`` entry (dir or file, the
+    latter for worktrees/submodules). Returns the first ancestor that has one.
+    """
+    current = start.resolve()
+    for candidate in (current, *current.parents):
+        if (candidate / ".git").exists():
+            return candidate
+    return None
+
+
+def _stage_archival_rename(src: Path, dest: Path) -> None:
+    """Stage both sides of an archival rename so it is not left in git limbo.
+
+    WOT-2026-013h. Before: ``archive_collaboration_artifacts`` has just
+    ``shutil.move``d a closed STRATEGY_/AUDIT_/PLAN_ artifact from the live
+    collaboration surface into ``_archive/plan_audit/``. With no ``git add`` the
+    tree shows ``D <src>`` + ``?? <dest>`` -- the ``archive_rename_uncommitted``
+    limbo that ``check_archive_rename_complete`` blocks on, inherited by the NEXT
+    ticket's mark-ready (the recurring 013e->013f->013g reconcile).
+
+    During: run ``git add -- <src> <dest>`` from the work-tree root so git records
+    the move as a staged rename (``R``). This is **stage only, never commit**: the
+    staged rename rides into the closeout's documentation commit naturally, so no
+    opaque auto-commit is introduced and the historical artifact stays traceable.
+
+    After: the limbo pair is gone (no ``D``+``??``); the canonical detector passes.
+    Best-effort and fail-open by design: if there is no git tree or git is
+    unavailable/errors, the move still stands and the fail-closed barrier in
+    closeout/mark-ready remains the safety net -- we never raise here.
+    """
+    git_root = _find_git_root(dest.parent)
+    if git_root is None:
+        return
+    try:
+        subprocess.run(  # noqa: S603
+            ["git", "add", "--", str(src), str(dest)],  # noqa: S607
+            cwd=git_root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        # No git, git not on PATH, or it errored: leave the move as-is. The
+        # closeout/mark-ready fail-closed guard still catches an unstaged limbo.
+        return
+
+
 def archive_collaboration_artifacts(
     collaboration_dir: Path,
     dry_run: bool = False,
@@ -152,7 +204,12 @@ def archive_collaboration_artifacts(
 
             # Move file to archive
             dest = archive_dir / file_path.name
+            src_before_move = file_path
             shutil.move(str(file_path), str(dest))
+            # WOT-2026-013h: stage the rename so the move is not left as a
+            # D+?? limbo that the next ticket's mark-ready inherits. Stage
+            # only, never commit (the rename rides the closeout commit).
+            _stage_archival_rename(src_before_move, dest)
             result["archived"].append(str(file_path))
         except Exception as exc:
             result["errors"].append({"file": str(file_path), "error": str(exc)})
