@@ -448,11 +448,38 @@ class TestCloseoutReportOverallStatus:
         )
         assert report.overall_status == "WARN"
 
-    def test_failure_gives_fail(self) -> None:
+    def test_blocking_failure_gives_fail(self) -> None:
+        """A FAILED step that is blocking=True yields FAIL."""
         report = CloseoutReport(
             steps=[
                 StepResult(name="a", status="PASS"),
-                StepResult(name="b", status="FAIL"),
+                StepResult(name="b", status="FAIL", blocking=True),
+            ]
+        )
+        assert report.overall_status == "FAIL"
+
+    def test_non_blocking_failure_gives_warn(self) -> None:
+        """WOT-2026-013m: a FAILED step that is blocking=False must NOT force FAIL.
+
+        Before 013m, overall_status returned FAIL on ANY FAIL regardless of the
+        blocking flag, so a non-blocking finding (e.g. versioned_filenames)
+        tumbaba --session-close con exit 1. Now it degrades to WARN: informative,
+        not blocking. This is the regression that fails without the fix.
+        """
+        report = CloseoutReport(
+            steps=[
+                StepResult(name="a", status="PASS"),
+                StepResult(name="versioned_filenames", status="FAIL", blocking=False),
+            ]
+        )
+        assert report.overall_status == "WARN"
+
+    def test_blocking_fail_wins_over_non_blocking_fail(self) -> None:
+        """If any blocking step fails, overall is FAIL even amid non-blocking fails."""
+        report = CloseoutReport(
+            steps=[
+                StepResult(name="a", status="FAIL", blocking=False),
+                StepResult(name="b", status="FAIL", blocking=True),
             ]
         )
         assert report.overall_status == "FAIL"

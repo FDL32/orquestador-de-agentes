@@ -146,11 +146,19 @@ class CloseoutReport:
 
     @property
     def overall_status(self) -> str:
-        """Overall status: FAIL if any blocking step failed, WARN if any warn, else PASS."""
-        statuses = [s.status for s in self.steps]
-        if "FAIL" in statuses:
+        """Overall status, honoring each step's ``blocking`` flag (WOT-2026-013m).
+
+        FAIL only if a step that FAILED is ``blocking=True``. A FAILED step that
+        is ``blocking=False`` (e.g. ``versioned_filenames``) is informative and
+        degrades to WARN, not FAIL: it must not force ``--session-close`` to
+        exit 1 when no genuinely blocking gate failed. Before 013m this returned
+        FAIL on ANY FAIL regardless of the flag, contradicting this docstring and
+        blocking sessions on non-blocking findings.
+        """
+        if any(s.status == "FAIL" and s.blocking for s in self.steps):
             return "FAIL"
-        if "WARN" in statuses:
+        statuses = [s.status for s in self.steps]
+        if "FAIL" in statuses or "WARN" in statuses:
             return "WARN"
         return "PASS"
 
