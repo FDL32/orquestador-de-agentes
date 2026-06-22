@@ -1263,8 +1263,13 @@ class TestPreHandoffGuardWithPause(TestPreHandoffGuard):
 class TestRunnerWritesTestedSha:
     """WOT-2026-010c: run_pytest_safe records tested_commit_sha for the gate."""
 
-    def test_motor_head_sha_matches_git(self) -> None:
-        """run_pytest_safe._motor_head_sha returns the motor HEAD SHA."""
+    def test_delivery_head_sha_matches_git(self) -> None:
+        """_delivery_head_sha returns the delivery repo HEAD.
+
+        In this motor-test context (no AGENT_PROJECT_ROOT, delivery_authority
+        defaults to repo_motor), the delivery repo is the motor, so it returns
+        the motor HEAD.
+        """
         import sys
 
         sys.path.insert(0, str(SCRIPT_PATH.parent))
@@ -1277,7 +1282,7 @@ class TestRunnerWritesTestedSha:
             capture_output=True,
             text=True,
         ).stdout.strip()
-        assert run_pytest_safe._motor_head_sha() == expected
+        assert run_pytest_safe._delivery_head_sha() == expected
 
     def test_gate_blocks_when_sha_differs_from_head(self, tmp_path: Path) -> None:
         """If tested_commit_sha != HEAD, the gate blocks even with exit_code 0."""

@@ -353,6 +353,33 @@ def _read_delivery_authority_from_content(content: str) -> str:
     return "repo_motor"
 
 
+def resolve_delivery_root(
+    *,
+    project_root: Path,
+    motor_root: Path | None,
+    delivery_authority: str,
+) -> Path:
+    """Resolve the repo where the ticket deliverable actually lands.
+
+    The close-gate barriers (canonical suite freshness and visible productive
+    commit) must be evaluated against the repo that holds the deliverable, which
+    is decided by ``delivery_authority``, NOT by whether ``motor_root`` was
+    passed. In motor-external topology a ``repo_destino`` code ticket keeps its
+    productive commit and its run_pytest_safe ``last-run.json`` in the destination
+    (``project_root``); the motor only hosts the engine code.
+
+    Before: project_root is the active workspace (destination); motor_root is the
+        engine repo or None (standalone/test); delivery_authority is read from the
+        active work_plan ('repo_destino' or 'repo_motor').
+    During: pure path selection, no I/O.
+    After: returns project_root when delivery_authority == 'repo_destino';
+        otherwise motor_root if set, else project_root (standalone fallback).
+    """
+    if delivery_authority == "repo_destino":
+        return project_root
+    return motor_root if motor_root is not None else project_root
+
+
 def _read_deliverable_type_from_content(content: str) -> str:
     """Read deliverable_type from work_plan content; default 'code'."""
     import re
@@ -380,6 +407,21 @@ def _read_deliverable_type_from_active_plan(project_root: Path) -> str:
         return "code"
 
 
+def _read_delivery_authority_from_active_plan(project_root: Path) -> str:
+    """Read delivery_authority from the active work_plan.md; default 'repo_motor'.
+
+    Fail-safe to 'repo_motor' (the legacy assumption) if the plan is missing or
+    unreadable, preserving pre-existing behavior for single-repo deliveries.
+    """
+    work_plan = project_root / ".agent" / "collaboration" / "work_plan.md"
+    try:
+        return _read_delivery_authority_from_content(
+            work_plan.read_text(encoding="utf-8")
+        )
+    except OSError:
+        return "repo_motor"
+
+
 # WOT-2026-010c: deliverable types that DO require a green canonical suite.
 _SUITE_REQUIRED_TYPES = {"code", "mixed"}
 
@@ -397,9 +439,12 @@ def assert_canonical_suite_green(
     This closes the 010a gap: a focal-green close that left the canonical suite
     RED reached READY_FOR_REVIEW because "passed" was cited without "0 failed".
 
-    Before: motor_root is the delivery repo; deliverable_type is the ticket type.
+    Before: motor_root is the delivery repo (resolved by delivery_authority:
+            the motor for motor-delivered tickets, the destination for
+            repo_destino tickets); deliverable_type is the ticket type.
     During: for documentation/research/analysis -> auditable skip. Otherwise reads
-            and validates the JSON; compares tested_commit_sha to motor HEAD.
+            and validates the JSON; compares tested_commit_sha to the delivery
+            repo HEAD.
     After: returns (ok, diag). On block, diag carries canonical_suite_required,
            reason, remediation, canonical_suite_error and last_run_json.
     """
@@ -475,10 +520,11 @@ def assert_canonical_suite_green(
     if not tested_sha or tested_sha != head_sha:
         return False, {
             **base_diag,
-            "reason": "stale_run (tested_commit_sha != motor HEAD)",
+            "reason": "stale_run (tested_commit_sha != delivery HEAD)",
             "canonical_suite_error": (
-                f"last-run tested {tested_sha!r} but motor HEAD is {head_sha!r}: "
-                "the suite did not run against the commit being delivered."
+                f"last-run tested {tested_sha!r} but delivery repo HEAD is "
+                f"{head_sha!r}: the suite did not run against the commit being "
+                "delivered."
             ),
         }
 
@@ -804,12 +850,17 @@ def run_guard(
     # Separate, additional barrier (coexists with the M3 checkpoint and the
     # work_plan-committed guard; does NOT replace _check_log_has_quality_gate_
     # evidence in the controller). Reads run_pytest_safe's last-run.json and
-    # requires status==finished + exit_code==0 + tested_commit_sha==motor HEAD.
+    # requires status==finished + exit_code==0 + tested_commit_sha==delivery HEAD.
+    # The delivery repo is resolved by delivery_authority (LEA topology fix):
+    # a repo_destino code ticket keeps its suite + commit in the destination.
     # Fail-closed: any error blocks with a self-service diagnostic.
-    _canon_motor = motor_root if motor_root is not None else project_root
+    _da = _read_delivery_authority_from_active_plan(project_root)
+    _delivery_root = resolve_delivery_root(
+        project_root=project_root, motor_root=motor_root, delivery_authority=_da
+    )
     try:
         _dt = _read_deliverable_type_from_active_plan(project_root)
-        _suite_ok, _suite_diag = assert_canonical_suite_green(_canon_motor, _dt)
+        _suite_ok, _suite_diag = assert_canonical_suite_green(_delivery_root, _dt)
         result["canonical_suite"] = _suite_diag
         if not _suite_ok:
             result["valid"] = False
@@ -825,14 +876,16 @@ def run_guard(
         }
 
     # 2.c WOT-2026-010i: code/mixed packets must carry a visible productive
-    # commit naming the ticket in repo_motor. Doc-types are exempt. Fail-closed.
-    _cv_motor = motor_root if motor_root is not None else project_root
+    # commit naming the ticket in the delivery repo. Doc-types are exempt.
+    # The delivery repo is resolved by delivery_authority (LEA topology fix):
+    # a repo_destino code ticket carries its commit in the destination, not the
+    # motor. Fail-closed.
     try:
         _dt_cv = _read_deliverable_type_from_active_plan(project_root)
         _cv_ok, _cv_diag = assert_ticket_commit_visible(
             ticket_id=ticket_id,
             deliverable_type=_dt_cv,
-            motor_root=_cv_motor,
+            motor_root=_delivery_root,
         )
         result["commit_visible"] = _cv_diag
         if not _cv_ok:

@@ -88,17 +88,54 @@ def iso_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def _motor_head_sha() -> str | None:
-    """Return the motor HEAD SHA, or None if git is unavailable.
+def _delivery_authority() -> str:
+    """Read delivery_authority from the active work_plan under PROJECT_ROOT.
+
+    Default 'repo_motor' (legacy single-repo behavior) if missing/unreadable.
+    """
+    work_plan = _PROJECT_ROOT / ".agent" / "collaboration" / "work_plan.md"
+    try:
+        content = work_plan.read_text(encoding="utf-8")
+    except OSError:
+        return "repo_motor"
+    import re
+
+    if re.search(
+        r"delivery_authority\s*:?\**\s*(?:repo_destino|destino)",
+        content,
+        re.IGNORECASE,
+    ):
+        return "repo_destino"
+    return "repo_motor"
+
+
+def _delivery_repo_root() -> Path:
+    """Repo whose HEAD the suite is delivered against (LEA topology fix).
+
+    A repo_destino code ticket keeps its productive commit in the destination
+    (PROJECT_ROOT). Otherwise the delivery repo is the motor where the runner
+    lives. The pre-handoff gate resolves the same root by delivery_authority, so
+    the stamped tested_commit_sha matches what the gate compares against.
+    """
+    if _delivery_authority() == "repo_destino":
+        return _PROJECT_ROOT
+    return _PROJECT_ROOT_BOOTSTRAP
+
+
+def _delivery_head_sha() -> str | None:
+    """Return the delivery repo HEAD SHA, or None if git is unavailable.
 
     WOT-2026-010c: recorded in last-run.json so the handoff gate can verify the
-    run tested the exact commit being delivered. The runner lives in the motor
-    repo, so HEAD here is the motor delivery commit.
+    run tested the exact commit being delivered. The delivery repo is resolved
+    by delivery_authority: the motor for motor-delivered tickets, the destination
+    for repo_destino tickets (so the gate's delivery-HEAD comparison matches).
+
+    Renamed from _motor_head_sha: it no longer always returns the motor HEAD.
     """
     try:
         proc = subprocess.run(
             ["git", "rev-parse", "HEAD"],  # noqa: S607
-            cwd=_PROJECT_ROOT_BOOTSTRAP,
+            cwd=_delivery_repo_root(),
             capture_output=True,
             text=True,
             timeout=10,
@@ -662,7 +699,7 @@ def main() -> int:
         # WOT-2026-010c: record the motor HEAD this run tested, so the
         # canonical-suite handoff gate can verify freshness by SHA (not by
         # timestamp). Captured once at run start; the tree must not change.
-        "tested_commit_sha": _motor_head_sha(),
+        "tested_commit_sha": _delivery_head_sha(),
         "status": "started",
     }
     write_json(LAST_RUN_JSON, summary)
