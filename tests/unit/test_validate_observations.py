@@ -586,3 +586,30 @@ class TestIntegration:
         assert success is True
         assert len(errors) == 1
         assert "no existe" in errors[0].lower()
+
+
+class TestWOT2026013oContractDomains:
+    """WOT-2026-013o: the strict validator rejects non-enum domains and the
+    corrupt applies_to pattern with NO silent fallback. This guards the contract
+    decision: collaboration/test-performance are not silently accepted; they
+    must be migrated to canonical domains.
+    """
+
+    def test_non_enum_domains_are_rejected(self):
+        # collaboration / test-performance are NOT canonical -> must be rejected.
+        assert validate_domain("collaboration") is not None
+        assert validate_domain("test-performance") is not None
+
+    def test_canonical_targets_are_accepted(self):
+        # The migration targets ARE canonical.
+        assert validate_domain("delivery-hygiene") is None
+        assert validate_domain("bus-architecture") is None
+        assert validate_domain("testing") is None
+
+    def test_applies_to_rejects_domain_value(self):
+        # A domain value in applies_to (the corruption pattern) must be rejected.
+        assert validate_applies_to("review-quality") is not None
+        assert validate_applies_to("planning") is not None
+        # Canonical applies_to values pass.
+        for v in ("code", "mixed", "docs", "all"):
+            assert validate_applies_to(v) is None

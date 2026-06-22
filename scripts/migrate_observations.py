@@ -70,6 +70,18 @@ DOMAIN_MIGRATION_MAP: dict[str, str] = {
     "ticket-planning": "review-quality",
     "validator-design": "testing",
     "builder-control": "builder-contract",
+    # WOT-2026-013o: map non-enum domains to canonical ones (justified, no enum
+    # widening). collaboration -> delivery-hygiene (backlog/closeout hygiene) or
+    # bus-architecture (operational-state topology); test-performance -> testing.
+    "collaboration": "delivery-hygiene",
+    "test-performance": "testing",
+}
+
+# WOT-2026-013o: per-topic override when one source domain maps to >1 target.
+# "collaboration" splits: topology observations are bus-architecture, the rest
+# (backlog/closeout reconcile) are delivery-hygiene.
+DOMAIN_MIGRATION_TOPIC_OVERRIDE: dict[str, str] = {
+    "motor-destino-topology": "bus-architecture",
 }
 
 # Topic mapping for migrated entries (deterministic based on original domain).
@@ -133,6 +145,18 @@ def _has_valid_domain(entry: dict[str, Any]) -> bool:
     return isinstance(domain, str) and domain in VALID_DOMAINS
 
 
+def _has_valid_applies_to(entry: dict[str, Any]) -> bool:
+    """Check if entry has applies_to that belongs to the canonical enum.
+
+    WOT-2026-013o: the original keep-intact guard checked domain but NOT
+    applies_to, so 14 entries whose applies_to held a domain value (e.g.
+    'review-quality') were kept intact with a corrupt applies_to and never
+    repaired. An entry only stays intact if applies_to is also canonical.
+    """
+    value = entry.get("applies_to")
+    return isinstance(value, str) and value in ("code", "mixed", "docs", "all")
+
+
 def _is_canonical_and_valid(entry: dict[str, Any]) -> bool:
     """Check if entry should be kept intact (not migrated).
 
@@ -144,6 +168,7 @@ def _is_canonical_and_valid(entry: dict[str, Any]) -> bool:
     return (
         _passes_non_strict_validation(entry)
         and _has_valid_domain(entry)
+        and _has_valid_applies_to(entry)
         and not _is_repo_state(entry)
     )
 
@@ -323,7 +348,10 @@ def _migrate_entry(entry: dict[str, Any], index: int) -> dict[str, Any] | None: 
     # domain: apply migration map
     if "domain" in migrated:
         old_domain = migrated["domain"]
-        if old_domain in DOMAIN_MIGRATION_MAP:
+        topic_val = str(migrated.get("topic", ""))
+        if topic_val in DOMAIN_MIGRATION_TOPIC_OVERRIDE:
+            migrated["domain"] = DOMAIN_MIGRATION_TOPIC_OVERRIDE[topic_val]
+        elif old_domain in DOMAIN_MIGRATION_MAP:
             migrated["domain"] = DOMAIN_MIGRATION_MAP[old_domain]
         elif old_domain not in VALID_DOMAINS:
             # Domain not in VALID_DOMAINS and not in map - drop it

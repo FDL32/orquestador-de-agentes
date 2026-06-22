@@ -27,12 +27,14 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from bus import memory_loader as ml  # noqa: E402
 from scripts.migrate_observations import (  # noqa: E402
+    _is_canonical_and_valid,
     _is_repo_state,
     _migrate_entry,
     _normalize_applies_to,
     _normalize_timestamp,
     run_migration,
 )
+from scripts.validate_observations import validate_file  # noqa: E402
 
 
 # ─── Fixtures ───────────────────────────────────────────────────────────────
@@ -720,3 +722,103 @@ class TestOrchestratorRename008h:
         assert not offenders, "live legacy prose references survive:\n" + "\n".join(
             offenders
         )
+
+
+class TestWOT2026013oAppliesToCorruption:
+    """WOT-2026-013o: repair applies_to that holds a domain value + domain mapping.
+
+    Barrera de regresion: antes del fix, una entrada con domain canonico valido
+    pero applies_to corrupto (un valor de domain) era marcada KEPT INTACT y
+    nunca reparada -> --strict seguia fallando. El fix exige applies_to valido
+    para mantener intacta una entrada.
+    """
+
+    def _corrupt_applies_to_entry(self) -> dict:
+        # domain is valid; applies_to wrongly holds a domain value.
+        return {
+            "timestamp": "2026-06-22T10:00:00Z",
+            "topic": "corrupt-applies-to-case",
+            "domain": "review-quality",
+            "signal": "applies_to holds a domain value instead of code/docs/mixed/all.",
+            "source": "session-test",
+            "applies_to": "review-quality",
+            "confidence": 0.9,
+        }
+
+    def test_corrupt_applies_to_is_not_kept_intact(self):
+        """FAIL-without: pre-fix _is_canonical_and_valid ignored applies_to."""
+
+        entry = self._corrupt_applies_to_entry()
+        # An entry with corrupt applies_to must NOT be treated as canonical.
+        assert _is_canonical_and_valid(entry) is False
+
+    def test_migration_repairs_corrupt_applies_to(self, observations_path: Path):
+        """PASS-with: after migration the entry passes --strict and applies_to is canonical."""
+        _write_observations(observations_path, [self._corrupt_applies_to_entry()])
+        rc = run_migration(observations_path, apply=True)
+        assert rc == 0
+        success, errors = validate_file(observations_path, strict=True)
+        assert success, f"strict validation failed: {errors}"
+        migrated = [
+            json.loads(ln)
+            for ln in observations_path.read_text(encoding="utf-8").splitlines()
+            if ln.strip()
+        ]
+        assert migrated[0]["applies_to"] in ("code", "mixed", "docs", "all")
+        # domain (already valid) is preserved.
+        assert migrated[0]["domain"] == "review-quality"
+
+    def test_migration_maps_non_enum_domains(self, observations_path: Path):
+        """The 3 contract domains map to canonical ones (no silent fallback)."""
+        entries = [
+            {
+                "timestamp": "2026-06-22T10:00:00Z",
+                "topic": "backlog-reconcile-case",
+                "domain": "collaboration",
+                "signal": "Backlog reconcile after rescope.",
+                "source": "session-test",
+                "applies_to": "docs",
+                "confidence": 0.9,
+            },
+            {
+                "timestamp": "2026-06-22T10:00:00Z",
+                "topic": "motor-destino-topology",
+                "domain": "collaboration",
+                "signal": "Operational backlog lives in repo_destino.",
+                "source": "session-test",
+                "applies_to": "all",
+                "confidence": 0.9,
+            },
+            {
+                "timestamp": "2026-06-22T10:00:00Z",
+                "topic": "suite-performance",
+                "domain": "test-performance",
+                "signal": "Provisional suite-performance count.",
+                "source": "session-test",
+                "applies_to": "code",
+                "confidence": 0.9,
+            },
+        ]
+        _write_observations(observations_path, entries)
+        rc = run_migration(observations_path, apply=True)
+        assert rc == 0
+        success, errors = validate_file(observations_path, strict=True)
+        assert success, f"strict validation failed: {errors}"
+        by_topic = {
+            json.loads(ln)["topic"]: json.loads(ln)
+            for ln in observations_path.read_text(encoding="utf-8").splitlines()
+            if ln.strip()
+        }
+        assert by_topic["backlog-reconcile-case"]["domain"] == "delivery-hygiene"
+        # topic override: topology -> bus-architecture (not delivery-hygiene).
+        assert by_topic["motor-destino-topology"]["domain"] == "bus-architecture"
+        assert by_topic["suite-performance"]["domain"] == "testing"
+
+    def test_migration_idempotent_on_corrupt_then_clean(self, observations_path: Path):
+        """Idempotency: second run after repair is a no-op (already strict-valid)."""
+        _write_observations(observations_path, [self._corrupt_applies_to_entry()])
+        assert run_migration(observations_path, apply=True) == 0
+        first = observations_path.read_text(encoding="utf-8")
+        assert run_migration(observations_path, apply=True) == 0
+        second = observations_path.read_text(encoding="utf-8")
+        assert first == second
