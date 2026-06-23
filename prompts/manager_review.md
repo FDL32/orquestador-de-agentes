@@ -52,6 +52,12 @@ Si `deliverable_type` es `code` o `mixed`:
 - deriva tests focales desde el diff, `work_plan.md`, `AUDIT_{{TICKET_ID}}.md`
   y `execution_log.md`;
 - reejecuta los tests que el Builder declaro como evidencia;
+- si los tests focales requieren dependencias runtime del destino (por ejemplo
+  `openpyxl`) y fallan en tu entorno de review por `ModuleNotFoundError` o por
+  usar un interprete distinto al de la suite canonica, NO lo marques
+  automaticamente como defecto del ticket: primero contrasta el interprete y el
+  comando reales en `.agent/runtime/pytest-safe/last-run.json` y reproduce con
+  ese mismo Python o con el runtime declarado por el launcher del destino;
 - trata la ausencia de tests focales claros para cambios de codigo como
   `CHANGES`, salvo justificacion explicita y verificable.
 

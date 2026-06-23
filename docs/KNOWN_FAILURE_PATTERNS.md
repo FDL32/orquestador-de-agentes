@@ -218,6 +218,58 @@ estructurada en el payload canonico.
 
 - Garantizar blockers estructurados en todo `REVIEW_DECISION=CHANGES`.
 - O degradar el bloqueo a warning cuando falte estructura pero exista feedback
+
+---
+
+## FP-006: Falso blocker por interprete de review distinto al runtime canonico
+
+**Estado de evidencia:** VERIFICADO
+
+### Sintoma observable
+
+- El Manager reejecuta tests focales con una `venv` o Python distinto al que
+  uso `pytest-safe`.
+- Aparece `ModuleNotFoundError` para dependencias runtime del destino
+  (por ejemplo `openpyxl`) aunque:
+  - `ruff` pasa;
+  - `validate` esta en `0/0`;
+  - `last-run.json` muestra suite canonica verde en `HEAD`.
+
+### Contrato / realidad verificada
+
+- En tickets `repo_destino`, la evidencia canonica de suite vive en
+  `.agent/runtime/pytest-safe/last-run.json`.
+- El interprete autoridad para esa suite puede ser el Python del destino o el
+  resuelto por el launcher local, no necesariamente la `venv` del motor.
+- Un `ModuleNotFoundError` en el entorno del reviewer no demuestra por si solo
+  un defecto del ticket si el runtime canonico del destino si tiene la
+  dependencia y la suite fresca en `HEAD` pasa.
+
+### Causa raiz probable
+
+El review mezcla dos entornos distintos:
+
+- entorno del motor usado para inspeccion/auditoria;
+- entorno runtime del destino usado por `pytest-safe` o por el launcher
+  operativo del proyecto.
+
+### Mitigacion temporal
+
+- Leer `last-run.json` antes de emitir blocker.
+- Reproducir los focales con el mismo interprete que figura en `command` dentro
+  de `last-run.json`, o con el runtime explicitamente verificado por el launcher
+  del destino.
+- Si el fallo solo existe en la `venv` del motor, clasificarlo como mismatch de
+  entorno de review, no como regresion del ticket.
+
+### Fix estructural candidato
+
+- Hacer que `manager_review` recuerde explicitamente esta comprobacion.
+- Documentar en el destino las dependencias runtime verificadas por el launcher.
+
+### Tickets relacionados
+
+- `LEA-2026-001f`
   legible por otra via.
 
 ### Tickets relacionados
