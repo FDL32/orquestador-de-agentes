@@ -1,3 +1,27 @@
+# 2026-06-23 - Delivery-authority gate fix and review-runtime guidance
+
+### Added
+- `docs/KNOWN_FAILURE_PATTERNS.md`: `FP-006` documents the false blocker pattern
+  where a Manager reruns focal tests with a different interpreter than the
+  canonical destination runtime and sees `ModuleNotFoundError` even though the
+  stamped suite in `last-run.json` is green at `HEAD`.
+
+### Fixed
+- In external-motor / external-destination topology, the close gate and
+  `run_pytest_safe` now resolve the delivery repository from
+  `delivery_authority`. The stamped `tested_commit_sha`, canonical suite check
+  and visible-commit check all target the same repository, fixing the stale
+  handoff loop where the suite was checked against `repo_motor` while the
+  productive commit lived in `repo_destino`. (WOT-2026-013p)
+- `prompts/manager_review.md` now instructs the Manager to treat
+  interpreter-mismatch `ModuleNotFoundError` as a verification problem first,
+  not an automatic ticket defect, and to confirm the canonical runtime via
+  `.agent/runtime/pytest-safe/last-run.json` before blocking a review.
+
+### Verification
+- Guard/runner focused suites passed after the delivery-repository topology fix,
+  with stamped suite evidence matching the delivery `HEAD`.
+
 # 2026-06-20 - Hermes operational context bundle
 
 ### Added
