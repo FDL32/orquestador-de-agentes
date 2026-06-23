@@ -2,6 +2,17 @@
 
 ## Pendientes de revision
 
+### 2026-06-24 | origen: topologia | estado: generalizable | ttl_wps: N/A
+
+- learning: "No asumir que `orquestador_de_agentes_workspace` es un espejo operativo de `repo_motor`. En esta topologia concreta, `lea_libreria` es el `repo_destino` independiente del proyecto; `orquestador_de_agentes` contiene la herramienta activa y los fixes del motor; y `orquestador_de_agentes_workspace` es un repo de mejora del motor con layout divergente que debe auditarse antes de cualquier sincronizacion. Regla: ante tres repos coexistiendo, clasificar primero el rol de cada uno y decidir la direccion de sync desde evidencia en disco, nunca por nombre o intuicion."
+- evidencia: "Sesion LEA 2026-06-23/24: `orquestador_de_agentes` con commits `12fb4f4`, `bcff608` y `ae8abc6`; `lea_libreria` cerrado end-to-end como `repo_destino` independiente; auditoria de `_workspace` mostrando `scripts/` sin herramienta activa, `docs/` vacio y layout historico divergente."
+- razon: "Asumir que `_workspace` era un espejo atrasado del motor habria llevado a propagar cambios de herramienta a ciegas o a mover estado de LEA fuera de su destino correcto. El aprendizaje reusable no es una ruta local, sino la necesidad de verificar la topologia real antes de sincronizar entre repos nominalmente parecidos."
+- propuesta de aplicacion en herramienta:
+  - `prompts/memory_upload.md`
+  - `prompts/audit_agent_output.md`
+  - `prompts/audit_post_change_system_health.md`
+- decision del usuario: pendiente
+
 ### 2026-06-12 | origen: contrato | estado: generalizable | ttl_wps: N/A
 
 - learning: "El bootstrap en un destino real debe ejecutar la triada link + context map + validate (destination_bootstrap.md pasos 1-5); cualquier friccion observada durante ese arranque se trata como senal de integracion del motor y se convierte en fix o ticket del motor, no se normaliza."
