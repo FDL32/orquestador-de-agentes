@@ -370,3 +370,187 @@ aprobacion explicita.
 ### Tickets relacionados
 
 - `WT-2026-237a`
+
+---
+
+## FP-008: Claims sobre git emitidos desde un git bloqueado por dubious ownership
+
+**Estado de evidencia:** VERIFICADO EN PROCESO (sesion publicacion Crear_Texto_LLM, 2026-06-24)
+
+### Sintoma observable
+
+- El agente audita un `repo_destino` cuyo git el sandbox reporta con "dubious
+  ownership". Toda lectura git (`status`, `log`, `ls-files`) falla.
+- En vez de resolver el bloqueo, el agente emite claims como hechos: "el email
+  viajara al historial", "hay rutas absolutas en archivos versionados", "no pude
+  verificar git status". Son inferencias presentadas como verificaciones.
+
+### Contrato / realidad verificada
+
+- Un claim sobre estado git (email en historia, paths trackeados, secretos en
+  blobs) solo es valido si se sostiene contra `git log/status/ls-files` reales.
+- El bloqueo por dubious ownership NO es evidencia de nada; es un obstaculo
+  trivial de resolver, no una limitacion del repo.
+
+### Causa raiz probable
+
+Se acepta el primer obstaculo (git bloqueado) como frontera de la auditoria en
+vez de resolverlo. El relato sustituye a la evidencia.
+
+### Mitigacion temporal
+
+- Antes de cualquier claim sobre git en un destino:
+  `git config --global --add safe.directory "C:/ruta/al/repo_destino"`
+- Luego correr `git log/status/ls-files` reales y etiquetar como INFERENCIA solo
+  lo genuinamente no verificable.
+
+### Fix estructural candidato
+
+- El bootstrap de destino (`orchestrator_destination_bootstrap.md`) podria incluir
+  un preflight que resuelva `safe.directory` para el `destination_root` resuelto
+  desde `motor_destination_link.json`, dejando git legible desde el primer comando.
+
+### Tickets relacionados
+
+- (sesion ad-hoc, sin ticket; candidato a follow-up de bootstrap de destino)
+
+---
+
+## FP-009: mailmap de git filter-repo con identidad asumida en vez de verificada
+
+**Estado de evidencia:** VERIFICADO EN GIT (sesion publicacion Crear_Texto_LLM, 2026-06-24)
+
+### Sintoma observable
+
+- Se prepara `git filter-repo --mailmap` para reescribir el email del historial,
+  asumiendo el nombre del autor (ej. un nombre humano inventado) sin verificar.
+- Si el `name` del mailmap no coincide EXACTO con el de la historia, el rewrite
+  puede quedar incompleto y dejar commits con la identidad vieja.
+- Caso adicional GitHub: usar un noreply generico
+  (`noreply@users.noreply.github.com`) NO vincula los commits a la cuenta del
+  usuario. El formato correcto es `<id>+<username>@users.noreply.github.com`.
+
+### Contrato / realidad verificada
+
+- El nombre/email reales se leen de la historia, no se asumen:
+  `git log --all --format='%an <%ae>%n%cn <%ce>' | sort -u`.
+- El noreply de GitHub que vincula a la cuenta requiere el id numerico,
+  resoluble por la API de usuarios de GitHub o herramienta equivalente
+  (campo `id`).
+
+### Causa raiz probable
+
+Prisa por dejar el comando "listo" sin el precheck de identidad. El usuario
+esceptico lo marco como `NO VERIFICADO`.
+
+### Mitigacion temporal
+
+- Precheck obligatorio de identidades antes de construir el mailmap.
+- Resolver el id de GitHub del usuario antes de elegir el email noreply.
+
+### Fix estructural candidato
+
+- En cualquier skill/prompt de publicacion que reescriba email, exigir el
+  precheck `git log --all --format=...` y el id de GitHub como pasos previos
+  no salteables.
+
+### Tickets relacionados
+
+- (sesion ad-hoc, sin ticket)
+
+---
+
+## FP-010: classify_publication.py marca falso BLOQUEADO_POR_SECRETO por palabra-patron
+
+**Estado de evidencia:** VERIFICADO POR BYTES (sesion publicacion Crear_Texto_LLM, 2026-06-24)
+
+### Sintoma observable
+
+- `classify_publication.py` emite `BLOQUEADO_POR_SECRETO` sobre archivos que NO
+  contienen ningun secreto real:
+  - codigo que usa `api_key`, `Authorization`, `Bearer`, `X-API-KEY` como nombres
+    de variable/parametro leidos de `os.getenv(...)`, sin literal hardcodeado;
+  - tests de redaccion de secretos cuyas fixtures son secretos ficticios
+    deliberados (`sk-abcdef...`, JWT de ejemplo) para probar que `redact()` los
+    censura;
+  - documentos de auditoria que citan los patrones (`sk-...`, `AKIA...`) como
+    texto explicativo.
+
+### Contrato / realidad verificada
+
+- El veredicto del script es `[RELATO]` inicial, no evidencia final
+  (lo dice el propio `audit_git_publication.md`).
+- Un finding de secreto debe verificarse por bytes: buscar un literal largo
+  ASIGNADO (`=\s*['\"][A-Za-z0-9_\-]{20,}['\"]`). Si solo aparecen los nombres
+  de cabecera/variable, es falso positivo irreductible.
+
+### Causa raiz probable
+
+El clasificador hace match por patron lexico de palabras-cabecera, sin distinguir
+nombre de variable de valor asignado ni fixture de test de secreto vivo.
+
+### Mitigacion temporal
+
+- Verificar cada finding por bytes con `git cat-file -p <blob>` + grep del
+  patron real antes de tratarlo como secreto.
+- Falsos positivos irreductibles (codigo de producto legitimo): documentar como
+  `accepted_health_exception` con evidencia, propietario y razon. NO purgar
+  historia ni romper codigo para silenciar el patron.
+- Falsos positivos en legacy ya retirado del tree pero vivo en blobs de historia:
+  purgar la ruta legacy con `git filter-repo --invert-paths --path <legacy>/`.
+
+### Fix estructural candidato
+
+- Endurecer `classify_publication.py` para exigir un valor asignado (no solo la
+  palabra-cabecera) antes de marcar `secret_pattern`, y para allowlistar
+  fixtures de modulos de redaccion conocidos.
+
+### Tickets relacionados
+
+- (sesion ad-hoc, sin ticket; candidato a follow-up del clasificador)
+
+---
+
+## FP-011: guard_paths bloquea la memoria persistente del harness (deuda de infraestructura)
+
+**Estado de evidencia:** VERIFICADO EN CODIGO (sesion publicacion Crear_Texto_LLM, 2026-06-24)
+
+### Sintoma observable
+
+- El agente intenta escribir memoria persistente del harness en
+  `C:\Users\<user>\.claude\projects\<proj>\memory\*.md`.
+- El hook `guard_paths.py` bloquea con `guard_paths: fuera del repo`
+  (`.agent/hooks/guard_paths.py:144`, `_is_within_repo` falla) porque la ruta
+  de memoria del harness vive FUERA del arbol de cualquier `repo_root` por
+  diseno. Parquear el cwd en el motor no ayuda: el bloqueo es por la ruta
+  destino, no por el cwd.
+
+### Contrato / realidad verificada
+
+- El guard es fail-closed correcto: protege contra escrituras fuera del repo.
+- Pero la memoria del harness NO es estado del repo; es estado del agente y
+  debe poder escribirse. El guard no tiene allowlist para esa ruta.
+- Resultado: conflicto estructural. No es fallo de proceso del agente; es deuda
+  de infraestructura del guard.
+
+### Causa raiz probable
+
+`_is_protected_path` rechaza toda ruta no relativa a `repo_root` sin una
+allowlist explicita para el directorio de memoria del harness.
+
+### Mitigacion temporal
+
+- NO desactivar el guard ni abrir excepcion ad-hoc por escritura.
+- Persistir aprendizajes en una superficie DENTRO del repo del motor
+  (este archivo, `docs/`) hasta resolver el conflicto.
+
+### Fix estructural candidato
+
+- Anadir al guard una allowlist de la ruta de memoria del harness
+  (`~/.claude/projects/*/memory/`) como write_root permitido, o documentar
+  formalmente que esa ruta queda fuera del scope del guard estricto.
+- Requiere ticket explicito del motor (no abrir sin instruccion del usuario).
+
+### Tickets relacionados
+
+- (deuda abierta, sin ticket; requiere decision del usuario para abrir WP del motor)
