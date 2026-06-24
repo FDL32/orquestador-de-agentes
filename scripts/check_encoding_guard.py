@@ -51,14 +51,14 @@ def _allowlist_relative(path: Path) -> str | None:
 
 
 def _collect_file_errors(file_path) -> list[str]:
-    """Return all encoding errors for one file (BOM/mojibake/q-mark/control)."""
+    """Return all encoding errors for one file (BOM/mojibake/q-mark/text corruption)."""
     from scripts.encoding_guard import file_issues, has_utf8_bom, is_allowlisted
 
     rel = _display_path(file_path)
-    mojibake, q_in_word, control_chars = file_issues(file_path)
+    mojibake, q_in_word, text_corruption = file_issues(file_path)
     rel_for_allowlist = _allowlist_relative(file_path)
     if rel_for_allowlist is not None and is_allowlisted(rel_for_allowlist):
-        if not mojibake and not q_in_word and not control_chars:
+        if not mojibake and not q_in_word and not text_corruption:
             return [f"Allowlist entry is now clean and should be removed: {rel}"]
         return []
     errors: list[str] = []
@@ -68,8 +68,8 @@ def _collect_file_errors(file_path) -> list[str]:
         errors.append(f"Mojibake detected in {rel}: {mojibake[:12]}")
     if q_in_word:
         errors.append(f"Question-mark corruption detected in {rel}: {q_in_word[:12]}")
-    if control_chars:
-        errors.append(f"Control chars detected in {rel}: {control_chars[:12]}")
+    if text_corruption:
+        errors.append(f"Text corruption detected in {rel}: {text_corruption[:12]}")
     return errors
 
 

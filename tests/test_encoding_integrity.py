@@ -31,12 +31,14 @@ def test_no_encoding_corruption_in_file(file_path):
     if rel in ALLOWLIST:
         pytest.skip(f"Known dirty file pending cleanup: {rel}")
 
-    mojibake, q_in_word, control_chars = file_issues(file_path)
+    mojibake, q_in_word, text_corruption = file_issues(file_path)
     assert not mojibake, f"Mojibake detected in {rel}: {mojibake[:12]}"
     assert not q_in_word, (
         f"Question-mark corruption detected in {rel}: {q_in_word[:12]}"
     )
-    assert not control_chars, f"Control chars detected in {rel}: {control_chars[:12]}"
+    assert not text_corruption, (
+        f"Text corruption detected in {rel}: {text_corruption[:12]}"
+    )
 
 
 @pytest.mark.parametrize("relative", sorted(ALLOWLIST))
@@ -44,8 +46,8 @@ def test_known_dirty_files_still_need_cleanup(relative):
     file_path = ROOT / relative
     assert file_path.exists(), f"Allowlist entry missing: {relative}"
 
-    mojibake, q_in_word, control_chars = file_issues(file_path)
-    assert mojibake or q_in_word or control_chars, (
+    mojibake, q_in_word, text_corruption = file_issues(file_path)
+    assert mojibake or q_in_word or text_corruption, (
         f"Allowlist entry is now clean and should be removed: {relative}"
     )
 
@@ -118,7 +120,7 @@ def test_check_encoding_guard_explicit_path_blocks_control_chars(
     )
 
     assert result.returncode == 1
-    assert "Control chars detected" in result.stderr
+    assert "Text corruption detected" in result.stderr
 
 
 def test_check_encoding_guard_explicit_path_allows_tab_lf_cr(tmp_path):
@@ -141,6 +143,48 @@ def test_check_encoding_guard_explicit_path_allows_tab_lf_cr(tmp_path):
     assert result.returncode == 0, result.stderr
 
 
+def test_check_encoding_guard_blocks_tab_prefixed_path_bullet(tmp_path):
+    file_path = tmp_path / "corrupt.md"
+    file_path.write_text("- \ttests/unit/test_content_resolver.py\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "check_encoding_guard.py"),
+            str(file_path),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "Text corruption detected" in result.stderr
+    assert "<bullet-tab>" in result.stderr
+
+
+def test_check_encoding_guard_blocks_broken_backtick_path_bullet(tmp_path):
+    file_path = tmp_path / "corrupt.md"
+    file_path.write_text("- src/pipeline/`r\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "check_encoding_guard.py"),
+            str(file_path),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "Text corruption detected" in result.stderr
+    assert "`r" in result.stderr
+
+
 # WOT-2026-011f: PowerShell sources are under the repo-wide guard scope.
 
 
@@ -161,9 +205,9 @@ def test_launcher_ps1_is_clean_no_bom_no_mojibake():
     """The launcher itself must be UTF-8 clean after 011f: no BOM, no mojibake."""
     launcher = ROOT / "scripts" / "launch_agent_terminals.ps1"
     assert not has_utf8_bom(launcher), "launcher must have no UTF-8 BOM"
-    mojibake, _q_in_word, control_chars = file_issues(launcher)
+    mojibake, _q_in_word, text_corruption = file_issues(launcher)
     assert not mojibake, f"launcher mojibake: {mojibake[:12]}"
-    assert not control_chars, f"launcher control chars: {control_chars[:12]}"
+    assert not text_corruption, f"launcher text corruption: {text_corruption[:12]}"
 
 
 def test_dirty_ps1_would_be_blocked(tmp_path):

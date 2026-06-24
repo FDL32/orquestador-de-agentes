@@ -71,6 +71,14 @@ def _write_control_chars(path: Path, control_byte: bytes = b"\x07") -> None:
     path.write_bytes(b"agent" + control_byte + b"controller\n")
 
 
+def _write_tab_bullet_mangling(path: Path) -> None:
+    path.write_text("- \ttests/unit/test_content_resolver.py\n", encoding="utf-8")
+
+
+def _write_backtick_bullet_mangling(path: Path) -> None:
+    path.write_text("- src/pipeline/`r\n", encoding="utf-8")
+
+
 def _run_hook(
     payload: bytes, *, cwd: Path | None = None
 ) -> subprocess.CompletedProcess:
@@ -153,7 +161,7 @@ def test_control_chars_detected_as_error(tmp_path: Path, control_byte: bytes) ->
     result = _run_hook(payload)
     assert result.returncode != 0
     assert "ERROR" in result._decoded_stderr
-    assert "control_chars" in result._decoded_stderr
+    assert "text_corruption" in result._decoded_stderr
     assert "ACTION:" in result._decoded_stderr
 
 
@@ -166,7 +174,29 @@ def test_tab_lf_cr_pass_clean(tmp_path: Path) -> None:
     assert result.returncode == 0, (
         f"Expected exit 0 for tab/LF/CR file.\nstderr: {result._decoded_stderr}"
     )
-    assert "control_chars" not in result._decoded_stderr
+    assert "text_corruption" not in result._decoded_stderr
+
+
+def test_tab_prefixed_path_bullet_detected_as_error(tmp_path: Path) -> None:
+    mangled = tmp_path / "plan.md"
+    _write_tab_bullet_mangling(mangled)
+    payload = _make_payload(tool_input={"file_path": str(mangled)})
+    result = _run_hook(payload)
+    assert result.returncode != 0
+    assert "ERROR" in result._decoded_stderr
+    assert "text_corruption" in result._decoded_stderr
+    assert "<bullet-tab>" in result._decoded_stderr
+
+
+def test_broken_backtick_path_bullet_detected_as_error(tmp_path: Path) -> None:
+    mangled = tmp_path / "plan.md"
+    _write_backtick_bullet_mangling(mangled)
+    payload = _make_payload(tool_input={"file_path": str(mangled)})
+    result = _run_hook(payload)
+    assert result.returncode != 0
+    assert "ERROR" in result._decoded_stderr
+    assert "text_corruption" in result._decoded_stderr
+    assert "`r" in result._decoded_stderr
 
 
 # ---------------------------------------------------------------------------

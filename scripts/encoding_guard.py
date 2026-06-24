@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from fnmatch import fnmatch
 from functools import lru_cache
 from pathlib import Path
@@ -138,6 +139,48 @@ def find_control_chars(text: str) -> list[str]:
     return snippets
 
 
+_BROKEN_PATH_BULLET_RE = re.compile(r"^[./A-Za-z0-9_-]+(?:/[./A-Za-z0-9_-]+)*/`r$")
+
+
+def find_path_bullet_mangling(text: str) -> list[str]:
+    """Return narrow signatures of markdown path-bullet corruption.
+
+    This catches the two verified signatures from the CTL-2026-007a incident:
+
+    - a literal tab immediately after the bullet marker (`- <TAB>path`)
+    - a broken backtick fragment inside a path bullet (`- src/pipeline/`r`)
+
+    The detector is intentionally narrow so legitimate tabs elsewhere in the
+    file (for example, markdown tables) remain allowed.
+    """
+    snippets: list[str] = []
+    for raw_line in text.splitlines():
+        stripped = raw_line.lstrip()
+        if not stripped.startswith("- "):
+            continue
+
+        body = stripped[2:]
+        if body.startswith("\t"):
+            snippet = "<bullet-tab>" + body[:12].replace("\t", "<TAB>")
+            if snippet not in snippets:
+                snippets.append(snippet)
+
+        if _BROKEN_PATH_BULLET_RE.fullmatch(body):
+            snippet = body[-16:]
+            if snippet not in snippets:
+                snippets.append(snippet)
+    return snippets
+
+
+def find_text_corruption(text: str) -> list[str]:
+    """Return non-mojibake structural corruption snippets for a text file."""
+    findings: list[str] = []
+    for snippet in [*find_control_chars(text), *find_path_bullet_mangling(text)]:
+        if snippet not in findings:
+            findings.append(snippet)
+    return findings
+
+
 def is_excluded(relative: str) -> bool:
     return any(fnmatch(relative, pattern) for pattern in EXCLUDE_PATTERNS)
 
@@ -175,15 +218,15 @@ def has_utf8_bom(path: Path) -> bool:
 
 
 def file_issues(path: Path) -> tuple[list[str], list[str], list[str]]:
-    """Return (mojibake, question_mark, control_char) issue snippets for path.
+    """Return (mojibake, question_mark, text_corruption) issue snippets for path.
 
-    WOT-2026-010v: the third element is the disallowed ASCII control chars found
-    in the file. Consumers (check_encoding_guard.py CLI, encoding_post_write_hook)
-    unpack all three and inherit control-char detection without a parallel
-    detector.
+    The third element intentionally keeps the existing 3-tuple contract used by
+    the CLI guard and the post-write hook. It now covers both disallowed ASCII
+    control chars and the narrow path-bullet mangling signatures verified in
+    the CTL-2026-007a corrupted work-plan fixture.
     """
     text = load_text(path)
-    return find_mojibake(text), find_q_in_word(text), find_control_chars(text)
+    return find_mojibake(text), find_q_in_word(text), find_text_corruption(text)
 
 
 def iter_staged_files(paths: list[str]) -> list[Path]:
