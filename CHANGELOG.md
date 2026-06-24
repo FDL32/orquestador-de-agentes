@@ -1,3 +1,24 @@
+# 2026-06-24 - Publication-session failure patterns (FP-008..011)
+
+### Added
+- `docs/KNOWN_FAILURE_PATTERNS.md`: four patterns learned while preparing a
+  `repo_destino` (`Crear_Texto_LLM`) for its first private GitHub publication:
+  - `FP-008`: git claims emitted from a git blocked by "dubious ownership";
+    resolve `safe.directory` and read real `git log/status/ls-files` before
+    asserting anything about history, email or tracking.
+  - `FP-009`: `git filter-repo --mailmap` built with an assumed author identity
+    instead of one verified from history; includes the GitHub noreply
+    `<id>+<username>@users.noreply.github.com` form needed to link commits to an
+    account.
+  - `FP-010`: `classify_publication.py` raising a false `BLOQUEADO_POR_SECRETO`
+    by lexical word-pattern (`api_key`/`Authorization`/redaction-test fixtures);
+    verify by bytes for an assigned literal before treating a finding as a
+    secret, and document irreducible false positives as
+    `accepted_health_exception`.
+  - `FP-011`: `guard_paths` blocking the harness persistent-memory path
+    (`~/.claude/projects/*/memory/`) as "fuera del repo"; recorded as
+    infrastructure debt, learnings persisted inside the motor docs instead.
+
 # 2026-06-23 - Delivery-authority gate fix and review-runtime guidance
 
 ### Added
