@@ -554,3 +554,62 @@ allowlist explicita para el directorio de memoria del harness.
 ### Tickets relacionados
 
 - (deuda abierta, sin ticket; requiere decision del usuario para abrir WP del motor)
+
+---
+
+## FP-012: Mock-drift en test de upgrade -> falso verde sobre operacion destructiva
+
+**Estado de evidencia:** VERIFICADO POR BYTES
+
+### Sintoma observable
+
+- `tests/unit/test_upgrade.py` pasa en verde, pero NO ejercita las copias de
+  archivos reales del codigo bajo test.
+- La suite verde da confianza sobre una operacion destructiva (copia de arboles
+  con `shutil.copytree`/`copy2`) que en realidad nunca se intercepto.
+
+### Contrato / realidad verificada
+
+- `tests/unit/test_upgrade.py:12` importa `UpgradeManager` de
+  `scripts.upgrade_agent_system`.
+- Pero parchea `scripts.upgrade.shutil.copytree` / `scripts.upgrade.shutil.copy2`
+  (8 ocurrencias: lineas 46-47, 83-84, 112-113, 204-205) -> un MODULO DISTINTO.
+- El codigo bajo test llama `shutil` directo en
+  `scripts/upgrade_agent_system.py:148,151,199,202`. Esos `copytree`/`copy2`
+  NO se interceptan porque el patch apunta al `shutil` de `scripts.upgrade`,
+  no al de `scripts.upgrade_agent_system`.
+- `upgrade.py` y `upgrade_agent_system.py` son forks casi identicos, cada uno
+  con su `class UpgradeManager`. `README.md:104` declara canonico `upgrade.py`,
+  pero el test ejercita el otro fork.
+
+### Causa raiz probable
+
+Duplicacion estructural: dos forks de `UpgradeManager` (`upgrade.py` vs
+`upgrade_agent_system.py`) con `shutil` propio en cada modulo. El test mezcla
+import de un fork con patch del otro (anti-patron mock-drift documentado en
+AGENTS.md): el patch apunta a `X` pero el codigo llama a `Y`.
+
+### Mitigacion temporal
+
+- No fiarse del verde de `test_upgrade.py` como evidencia de que la copia de
+  archivos del upgrade esta cubierta.
+- Tratar el verde como falso verde hasta corregir el target del patch.
+
+### Fix estructural candidato
+
+- F2 (ticket `code`, prioridad alta): repuntar los patch a
+  `scripts.upgrade_agent_system.shutil.*` (el modulo realmente importado), o
+  resolver la duplicacion `UpgradeManager` (unificar forks) y alinear `README`.
+- Barrera de salida: el test debe FALLAR si se rompe `copytree`/`copy2` del
+  codigo bajo test (probar fail-sin-fix monkeypatcheando a raise).
+- Dependencia de orden: la promocion del aprendizaje a `observations.jsonl`
+  espera a F1 (migracion de schema via `scripts/migrate_observations.py`),
+  pendiente por schema drift de `applies_to`.
+
+### Tickets relacionados
+
+- F1 (pendiente de abrir): migracion de schema de `observations.jsonl`
+  (`scripts/migrate_observations.py --apply` + `validate_observations.py
+  --strict`). Desbloquea promover este patron a memoria portable.
+- F2 (pendiente de abrir): fix de este mock-drift + deduplicacion de
+  `UpgradeManager`.
