@@ -119,9 +119,14 @@ Próximo paso concreto para el equipo:
 
 **Próximo paso:** [Descripción de la tarea o WP para incorporar la oportunidad #1]
 
-**Comando sugerido:**
-```bash
-python scripts/orquestador.py --skill /refactor --query "Incorporar [funcionalidad] desde [owner/repo]"
+**Acción sugerida:**
+```text
+# Invoca la skill de refactor en Claude Code por su trigger:
+/refactor  (query: "Incorporar [funcionalidad] desde [owner/repo]")
+
+# [DEPRECATED - WT-2026-254a] La forma legacy
+#   python scripts/orquestador.py --skill /refactor --query "..."
+# pertenecia al motor Goose/Claw, deprecado. No usar en proyectos nuevos.
 ```
 
 **Criterio de aceptación:**

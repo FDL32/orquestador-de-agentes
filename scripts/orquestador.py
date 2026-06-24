@@ -3,12 +3,16 @@
 """
 Orquestador multi-agente v2.2
 
-Patron oficial:
+[DEPRECATED - WT-2026-254a] Goose y Claw estan deprecados como motores de
+orquestacion. Claude Code es el backend IA principal. Este script se conserva
+solo por compatibilidad historica; NO usar en proyectos nuevos.
+
+Patron legacy (historico, no recomendado):
     Claude Code (supervisor) -> orquestador.py -> goose | claw
 
-Engines soportados:
-    goose  - estable
-    claw   - experimental (contrato CLI en evolucion)
+Engines legacy (DEPRECATED, no usar):
+    goose  - legacy/deprecated (antes "estable")
+    claw   - legacy/deprecated (antes "experimental")
 
 Engine excluido:
     claude - Claude Code no puede invocarse a si mismo desde una sesion activa
@@ -179,9 +183,11 @@ class GooseAdapter(AdapterBase):
 
     @property
     def install_hint(self) -> str:
+        # [DEPRECATED - WT-2026-254a] Goose es un motor legacy retirado. No se
+        # dan instrucciones de instalacion: Claude Code es el backend principal.
         return (
-            "Instala Goose CLI desde https://goose-docs.ai o via PowerShell:\n"
-            "  Invoke-WebRequest -Uri https://raw.githubusercontent.com/aaif-goose/goose/main/download_cli.ps1 | iex"
+            "[DEPRECATED - WT-2026-254a] El motor Goose esta deprecado y no se "
+            "soporta su instalacion. Usa Claude Code como backend principal."
         )
 
 
@@ -193,10 +199,11 @@ class ClawAdapter(AdapterBase):
 
     @property
     def install_hint(self) -> str:
+        # [DEPRECATED - WT-2026-254a] Claw es un motor legacy retirado. No se
+        # dan instrucciones de compilacion: Claude Code es el backend principal.
         return (
-            "Claw es experimental. Compila desde fuente:\n"
-            "  git clone https://github.com/ultraworkers/claw-code\n"
-            "  cd claw-code/rust && cargo build --workspace"
+            "[DEPRECATED - WT-2026-254a] El motor Claw esta deprecado y no se "
+            "soporta su compilacion. Usa Claude Code como backend principal."
         )
 
 
@@ -652,12 +659,14 @@ def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(
-        description="Orquestador multi-agente v2.2 - Supervisor + Adapters"
+        description="[DEPRECATED - WT-2026-254a] Orquestador multi-agente v2.2 "
+        "(motores Goose/Claw, legacy). Claude Code es el backend principal."
     )
     parser.add_argument(
         "--engine",
         choices=list(ADAPTERS.keys()),
-        help="Engine a invocar: goose (estable) | claw (experimental)",
+        help="[DEPRECATED - WT-2026-254a] Engine legacy a invocar: goose | claw. "
+        "Deprecados; Claude Code es el backend principal. No usar en proyectos nuevos.",
     )
     parser.add_argument(
         "--skill",

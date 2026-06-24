@@ -1,8 +1,13 @@
 """
-Goose native skill integration for refactor-manager.
+[DEPRECATED - WT-2026-254a] Goose native skill integration for refactor-manager.
 
-Allows Goose to invoke RefactorManager directly without subprocess overhead.
-Handles skill invocation, phase management, and artifact collection.
+LEGACY / HISTORICAL REFERENCE ONLY. Goose and Claw are deprecated engines;
+Claude Code is the principal backend. This module is retained for backward
+compatibility and is exercised solely by tests/test_goose_native_skill.py
+(itself deprecation-marked). Do not use in new flows.
+
+Previously: allowed Goose to invoke RefactorManager directly without subprocess
+overhead, handling skill invocation, phase management and artifact collection.
 """
 
 import json
@@ -10,16 +15,19 @@ import json
 from agent_system.refactor_kit import RefactorManager
 
 
-def invoke(target: str, agent: str = "goose", work_dir: str = ".refactor") -> dict:
+def invoke(target: str, agent: str = "manual", work_dir: str = ".refactor") -> dict:
     """
-    Invoke refactor-manager as native Goose skill.
+    [DEPRECATED - WT-2026-254a] Invoke refactor-manager as a native skill.
+
+    Goose/Claw are legacy engines; ``agent`` now defaults to ``"manual"``
+    (Claude Code). Kept for historical/backward compatibility.
 
     Manager approval gates are built into RefactorManager.run(),
     so they will prompt Manager during execution.
 
     Args:
         target: File or module to refactor (required)
-        agent: AI agent (goose, claw, manual) - default: goose
+        agent: AI agent (manual, goose, claw) - default: manual; goose/claw legacy
         work_dir: Directory for refactoring artifacts - default: .refactor
 
     Returns:

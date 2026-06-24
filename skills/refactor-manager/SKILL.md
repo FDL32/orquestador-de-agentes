@@ -21,11 +21,11 @@ Basado en protocolo de Principal Engineer: separación estricta entre análisis,
 
 El Manager usa esta skill para refactorizar código de forma controlada:
 
-1. **Fase 1 (Análisis):** Goose lee código, identifica problemas, documenta hallazgos (sin modificar)
+1. **Fase 1 (Análisis):** el agente lee código, identifica problemas, documenta hallazgos (sin modificar)
 2. **Fase 2 (Plan):** Manager revisa hallazgos y aprueba cambio mínimo propuesto
-3. **Fase 3 (Refactor):** Goose ejecuta SOLO cambios aprobados
+3. **Fase 3 (Refactor):** el agente ejecuta SOLO cambios aprobados
 4. **Fase 4 (Validación):** Tests + ruff + regresión verifican cero impacto
-5. **Fase 5 (Iteración):** Si fallos, Goose propone fix mínimo (no reescribir)
+5. **Fase 5 (Iteración):** Si fallos, el agente propone fix mínimo (no reescribir)
 
 **Invariante:** Nunca cambiar comportamiento observable sin aprobación explícita.
 
@@ -52,7 +52,7 @@ Leer en orden:
 
 **Objetivo:** Entender antes de tocar.
 
-Tarea para Goose:
+Tarea para el agente:
 ```
 Analiza este archivo: [path]
 
@@ -76,7 +76,7 @@ Salida:
 - Hipótesis/incertidumbres
 ```
 
-Goose entrega reporte de análisis (NO código modificado).
+El agente entrega reporte de análisis (NO código modificado).
 
 **REGLA CRÍTICA:** Si hay dudas en fase 1 -> DETENERSE y preguntar.
 
@@ -93,7 +93,7 @@ Si continuar, pasar a FASE 2.
 
 **Objetivo:** Definir el cambio mínimo útil.
 
-Tarea para Goose:
+Tarea para el agente:
 ```
 Basándote en el análisis previo, propone UN refactor pequeño:
 
@@ -116,7 +116,7 @@ Salida:
 - Estrategia de validación
 ```
 
-Goose entrega propuesta de plan (sin código).
+El agente entrega propuesta de plan (sin código).
 
 ### Paso 6: Manager Aprueba Plan
 
@@ -131,7 +131,7 @@ Si no aprobado, iterar Fase 2 o abandonar.
 
 **Objetivo:** Aplicar SOLO el cambio definido.
 
-Tarea para Goose:
+Tarea para el agente:
 ```
 Implementa el plan aprobado:
 
@@ -146,7 +146,7 @@ Implementa el plan aprobado:
 Salida: Código modificado listo para validación
 ```
 
-Goose entrega código refactorizado.
+El agente entrega código refactorizado.
 
 **REGLA:** Si tentación de hacer "un cambio más" → DETENER y documentar para próxima iteración.
 
@@ -154,7 +154,7 @@ Goose entrega código refactorizado.
 
 **Objetivo:** Demostrar que no se rompió nada.
 
-Tarea para Goose + sistemas automáticos:
+Tarea para el agente + sistemas automáticos:
 ```
 Valida que el refactor no rompe nada:
 
@@ -246,7 +246,7 @@ Decisión final:
 - Validación final (código respetuoso con invariantes?)
 - Decisión final: aprobado/rechazado/ajustes
 
-### Goose (IA)
+### Agente IA (Claude Code)
 - Fase 1: Análisis (no escribir código)
 - Fase 2: Propuesta de plan (no escribir código)
 - Fase 3: Refactor controlado
@@ -262,29 +262,31 @@ Decisión final:
 ## Ejemplo: Refactorizar run_pytest_safe.py
 
 ```bash
-# Manager inicia
-python scripts/orquestador.py --skill /refactor \
-  --query "Refactoriza scripts/run_pytest_safe.py
+# Manager inicia invocando la skill por su trigger en Claude Code:
+#   /refactor  (query: "Refactoriza scripts/run_pytest_safe.py")
+#
+# Target: scripts/run_pytest_safe.py
+# Scope: Mejorar error handling (no cambiar comportamiento)
+# Constraint: Debe seguir 5 fases del protocolo
+# Manager rol: revisa cada fase
+#
+# [DEPRECATED - WT-2026-254a] La invocacion legacy via
+#   python scripts/orquestador.py --skill /refactor --query "..."
+# pertenecia al motor Goose/Claw, deprecado. No usar en proyectos nuevos.
 
-Target: scripts/run_pytest_safe.py
-Scope: Mejorar error handling (no cambiar comportamiento)
-Constraint: Debe seguir 5 fases del protocolo
-Manager rol: yo revisaré cada fase
-"
-
-# Goose ejecuta:
+# El agente ejecuta:
 # FASE 1: Analiza run_pytest_safe.py
 #   → Identifica: exception handling inconsistente, nombres confusos, etc
 #   → Documenta invariantes: exit codes (0=ok, 1=fail, 2=error)
 #   → Propone cambios: mejorar try/except, clarificar nombres
 #
 # FASE 2: Manager aprueba plan
-#   → Goose propone: agregar type hints, mejorar docstrings
+#   → El agente propone: agregar type hints, mejorar docstrings
 #   → Manager: "Aprobado, pero SOLO error handling, no type hints aún"
 #   → Plan ajustado: mínimo cambio
 #
 # FASE 3: Refactor
-#   → Goose aplica cambios aprobados
+#   → El agente aplica cambios aprobados
 #
 # FASE 4: Validación
 #   → Tests pasan? ✓
@@ -297,7 +299,7 @@ Manager rol: yo revisaré cada fase
 
 ## Troubleshooting
 
-**P: ¿Qué si Goose propone un cambio demasiado grande en FASE 2?**
+**P: ¿Qué si el agente propone un cambio demasiado grande en FASE 2?**
 R: Rechazar y pedir subdivisión. El plan debe ser mínimo.
 
 **P: ¿Qué si tests fallan en FASE 4?**

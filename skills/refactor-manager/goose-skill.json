@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "refactor-manager",
   "version": "1.0.0",
   "description": "5-phase code refactoring with Manager control at each step",
@@ -12,9 +12,9 @@
     },
     "agent": {
       "type": "str",
-      "description": "AI agent to use (goose, claw, or manual)",
-      "default": "goose",
-      "choices": ["goose", "claw", "manual"]
+      "description": "[DEPRECATED - WT-2026-254a] AI agent to use. 'goose' and 'claw' are legacy/deprecated engines; use 'manual' (Claude Code is the principal backend).",
+      "default": "manual",
+      "choices": ["manual", "goose", "claw"]
     },
     "work_dir": {
       "type": "str",
@@ -31,5 +31,6 @@
   ],
   "approval_gates": true,
   "manager_required": true,
-  "status": "production"
+  "status": "legacy-deprecated",
+  "deprecated": "WT-2026-254a: Goose/Claw native-skill manifest is legacy. Claude Code is the principal backend; kept only for historical/backward compatibility."
 }
