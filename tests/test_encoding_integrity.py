@@ -164,9 +164,12 @@ def test_check_encoding_guard_blocks_tab_prefixed_path_bullet(tmp_path):
     assert "<bullet-tab>" in result.stderr
 
 
-def test_check_encoding_guard_blocks_broken_backtick_path_bullet(tmp_path):
+@pytest.mark.parametrize("frag", ["`r", "`n", "`t"])
+def test_check_encoding_guard_blocks_broken_backtick_path_bullet(tmp_path, frag):
+    """WOT-2026-013q: the broken-backtick path-bullet fragment is caught for the
+    whole `[rnt] family (the same heredoc escape mechanism emits `r/`n/`t)."""
     file_path = tmp_path / "corrupt.md"
-    file_path.write_text("- src/pipeline/`r\n", encoding="utf-8")
+    file_path.write_text(f"- src/pipeline/{frag}\n", encoding="utf-8")
 
     result = subprocess.run(
         [
@@ -182,7 +185,31 @@ def test_check_encoding_guard_blocks_broken_backtick_path_bullet(tmp_path):
 
     assert result.returncode == 1
     assert "Text corruption detected" in result.stderr
-    assert "`r" in result.stderr
+    assert frag in result.stderr
+
+
+def test_check_encoding_guard_allows_legit_inline_code_bullet(tmp_path):
+    """WOT-2026-013q non-regression: a legitimate inline-code bullet and a clean
+    path bullet must NOT trip the path-bullet mangling detector."""
+    file_path = tmp_path / "clean.md"
+    file_path.write_text(
+        "- use `ruff` to lint\n- src/pipeline/content_resolver.py\n- the `-n` flag\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "check_encoding_guard.py"),
+            str(file_path),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 # WOT-2026-011f: PowerShell sources are under the repo-wide guard scope.

@@ -139,19 +139,26 @@ def find_control_chars(text: str) -> list[str]:
     return snippets
 
 
-_BROKEN_PATH_BULLET_RE = re.compile(r"^[./A-Za-z0-9_-]+(?:/[./A-Za-z0-9_-]+)*/`r$")
+# WOT-2026-013q: the broken-backtick fragment is the same heredoc/PowerShell
+# escape-literalization that produced `r (from \r) in CTL-2026-007a; the very
+# same mechanism emits `n (from \n) and `t (from \t) at the end of a path
+# bullet. Match the [rnt] family, EOL-anchored and path-shaped, so legitimate
+# inline-code bullets (e.g. ``- use `ruff` ``) never false-positive.
+_BROKEN_PATH_BULLET_RE = re.compile(r"^[./A-Za-z0-9_-]+(?:/[./A-Za-z0-9_-]+)*/`[rnt]$")
 
 
 def find_path_bullet_mangling(text: str) -> list[str]:
     """Return narrow signatures of markdown path-bullet corruption.
 
-    This catches the two verified signatures from the CTL-2026-007a incident:
+    This catches the signatures from the CTL-2026-007a incident:
 
     - a literal tab immediately after the bullet marker (`- <TAB>path`)
-    - a broken backtick fragment inside a path bullet (`- src/pipeline/`r`)
+    - a broken backtick fragment at the end of a path bullet from heredoc
+      escape literalization: ``- src/pipeline/`r`` and its same-mechanism
+      siblings ``/`n`` and ``/`t``.
 
     The detector is intentionally narrow so legitimate tabs elsewhere in the
-    file (for example, markdown tables) remain allowed.
+    file (for example, markdown tables) and inline-code bullets remain allowed.
     """
     snippets: list[str] = []
     for raw_line in text.splitlines():

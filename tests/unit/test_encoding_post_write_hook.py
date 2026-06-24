@@ -279,22 +279,23 @@ def test_empty_payload_skipped() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_path_outside_roots_warns(tmp_path: Path) -> None:
-    """A file under a path NOT under ROOT triggers WARN."""
-    # Use a sibling dir to ROOT so it's definitely outside allowed roots
-    outside = ROOT.parent / "_test_outside_anchor_foreign.py"
-    outside.write_text("x = 1\n", encoding="utf-8")
-    try:
-        payload = _make_payload(tool_input={"file_path": str(outside)})
-        result = _run_hook(payload)
-        assert result.returncode == 0
-        assert "WARN" in result._decoded_stderr or "INFO" in result._decoded_stderr
-        assert (
-            "encoding_guard_skipped" in result._decoded_stderr.lower()
-            or "ACTION:" in result._decoded_stderr
-        )
-    finally:
-        outside.unlink(missing_ok=True)
+def test_path_outside_roots_warns() -> None:
+    """A path NOT under ROOT (nor the destino) triggers the outside-roots WARN.
+
+    WOT-2026-013q: the hook classifies the path BEFORE reading the file (see
+    encoding_post_write_hook._process_paths), so the file need not exist. We pass
+    a synthetic absolute path on the drive anchor that is guaranteed outside both
+    ROOT and the destino, with NO filesystem write. This replaces the previous
+    ``ROOT.parent`` fixture, which failed on hosts where the repo's parent
+    directory is not writable, and cannot use the project's ``tmp_path`` /
+    ``tempfile`` because conftest redirects both UNDER ROOT.
+    """
+    outside = (Path(ROOT.anchor) / "_oa_foreign_not_under_root" / "x.py").resolve()
+    assert ROOT not in outside.parents, "synthetic path must be outside ROOT"
+    payload = _make_payload(tool_input={"file_path": str(outside)})
+    result = _run_hook(payload)
+    assert result.returncode == 0
+    assert "skipped_outside_allowed_roots" in result._decoded_stderr.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -304,24 +305,21 @@ def test_path_outside_roots_warns(tmp_path: Path) -> None:
 
 def test_destino_root_accepted(tmp_path: Path) -> None:
     """A file under AGENT_PROJECT_ROOT (outside ROOT) is accepted as valid."""
-    # Create a fake destino outside ROOT
-    destino = ROOT.parent / "_test_fake_destino_anchor"
-    destino.mkdir(exist_ok=True)
-    (destino / ".claude").mkdir(exist_ok=True)
+    # WOT-2026-013q: build the fake destino under pytest's tmp_path (isolated,
+    # writable, auto-cleaned) instead of ROOT.parent, so the test does not depend
+    # on the repo's parent directory being writable on the host.
+    destino = tmp_path / "_test_fake_destino_anchor"
+    destino.mkdir()
+    (destino / ".claude").mkdir()
     test_file = destino / "script.py"
     test_file.write_text("# clean\n", encoding="utf-8")
-    try:
-        payload = _make_payload(tool_input={"file_path": str(test_file)})
-        env = {**dict(__import__("os").environ), "AGENT_PROJECT_ROOT": str(destino)}
-        with patch.dict(__import__("os").environ, env, clear=False):
-            result = _run_hook(payload)
-        assert result.returncode == 0
-        # Should NOT warn about outside roots
-        assert "skipped_outside_allowed_roots" not in result._decoded_stderr.lower()
-    finally:
-        test_file.unlink(missing_ok=True)
-        (destino / ".claude").rmdir()
-        destino.rmdir()
+    payload = _make_payload(tool_input={"file_path": str(test_file)})
+    env = {**dict(__import__("os").environ), "AGENT_PROJECT_ROOT": str(destino)}
+    with patch.dict(__import__("os").environ, env, clear=False):
+        result = _run_hook(payload)
+    assert result.returncode == 0
+    # Should NOT warn about outside roots
+    assert "skipped_outside_allowed_roots" not in result._decoded_stderr.lower()
 
 
 # ---------------------------------------------------------------------------
