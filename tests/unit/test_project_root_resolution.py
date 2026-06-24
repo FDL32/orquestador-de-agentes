@@ -234,3 +234,72 @@ class TestImportSafety:
             assert root.exists()
         except ImportError as e:
             pytest.fail(f"Module not importable: {e}")
+
+
+class TestMangledRootGuard:
+    """CTL-2026-007b: fail closed on a mangled AGENT_PROJECT_ROOT.
+
+    A Windows absolute path mis-parsed as a single relative segment (because the
+    destination ran under a POSIX-flavoured interpreter) must NOT silently
+    resolve into a spurious directory under cwd. The guard detects the mangle
+    signature and raises ProjectRootError.
+    """
+
+    def test_is_mangled_root_detects_collapsed_absolute(self) -> None:
+        """Absolute-looking raw whose resolved tail is not the intended name."""
+        from runtime.project_root import _is_mangled_root
+
+        raw = r"C:\Users\fdl\Proyectos_Python\Crear_Texto_LLM"
+        # Simulate the POSIX-flavour mangle: the whole value collapsed into one
+        # segment joined under cwd, so the resolved tail is the raw blob, not
+        # "Crear_Texto_LLM".
+        mangled_resolved = Path.cwd() / "UsersfdlProyectos_PythonCrear_Texto_LLM"
+        assert _is_mangled_root(raw, mangled_resolved) is True
+
+    def test_is_mangled_root_accepts_genuine_absolute(self) -> None:
+        """A correctly resolved absolute path is not flagged."""
+        from runtime.project_root import _is_mangled_root
+
+        raw = r"C:\Users\fdl\Proyectos_Python\Crear_Texto_LLM"
+        good_resolved = Path(raw).resolve()
+        # Only meaningful where the local flavour parses C:\ as absolute; if it
+        # does, the guard must accept it. If it does not (POSIX flavour), the
+        # mangle detection legitimately fires and this assertion is skipped.
+        if good_resolved.is_absolute() and Path(raw).is_absolute():
+            assert _is_mangled_root(raw, good_resolved) is False
+
+    def test_is_mangled_root_allows_relative_legacy_root(self) -> None:
+        """A genuinely relative root (legacy/test usage) is allowed."""
+        from runtime.project_root import _is_mangled_root
+
+        assert (
+            _is_mangled_root("some/relative/root", Path("some/relative/root").resolve())
+            is False
+        )
+
+    def test_resolve_raises_on_mangled_env(self) -> None:
+        """resolve_project_root fails closed when the value is mangled.
+
+        Forces the mangle signature via _is_mangled_root so the test is
+        deterministic regardless of the running interpreter's path flavour.
+        """
+        import runtime.project_root as pr
+
+        clear_cache()
+        with (
+            patch.dict(os.environ, {"AGENT_PROJECT_ROOT": r"C:\Users\x\proj"}),
+            patch.object(pr, "_is_mangled_root", return_value=True),
+            pytest.raises(pr.ProjectRootError),
+        ):
+            pr.resolve_project_root()
+        clear_cache()
+
+    def test_resolve_succeeds_on_clean_env(self) -> None:
+        """A clean absolute root still resolves normally (no false positive)."""
+        import runtime.project_root as pr
+
+        clear_cache()
+        clean = Path(__file__).resolve().parent
+        with patch.dict(os.environ, {"AGENT_PROJECT_ROOT": str(clean)}):
+            assert pr.resolve_project_root() == clean
+        clear_cache()

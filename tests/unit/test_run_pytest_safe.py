@@ -248,3 +248,82 @@ def test_xdist_falls_back_on_too_few_workers() -> None:
     workers, meta = mod.resolve_xdist("1", "unit", mod.DEFAULT_ARGS_MODE)
     assert workers is None
     assert "needs >=2" in meta["fallback_reason"]
+
+
+# CTL-2026-007b (Fase 2.4): the canonical suite must run with the delivery
+# repo's interpreter so the destination's deps are present. These barriers fail
+# under the pre-fix behavior (command always used sys.executable).
+
+
+def _make_venv(root: Path) -> Path:
+    """Create a fake Windows-layout venv python under root; return its path."""
+    scripts = root / ".venv" / "Scripts"
+    scripts.mkdir(parents=True)
+    py = scripts / "python.exe"
+    py.write_text("", encoding="utf-8")
+    return py
+
+
+def test_venv_python_finds_windows_layout(tmp_path: Path) -> None:
+    mod = load_runner_module()
+    py = _make_venv(tmp_path)
+    assert mod._venv_python(tmp_path) == py
+
+
+def test_venv_python_finds_posix_layout(tmp_path: Path) -> None:
+    mod = load_runner_module()
+    binp = tmp_path / ".venv" / "bin"
+    binp.mkdir(parents=True)
+    py = binp / "python"
+    py.write_text("", encoding="utf-8")
+    assert mod._venv_python(tmp_path) == py
+
+
+def test_venv_python_absent_returns_none(tmp_path: Path) -> None:
+    mod = load_runner_module()
+    assert mod._venv_python(tmp_path) is None
+
+
+def test_resolve_test_interpreter_prefers_destination_venv(tmp_path: Path) -> None:
+    """When active root != motor and has a .venv, use the destination venv.
+
+    Pre-fix the command always used sys.executable; this asserts the new
+    selection so a regression back to sys.executable fails here.
+    """
+    mod = load_runner_module()
+    destino = tmp_path / "destino"
+    motor = tmp_path / "motor"
+    destino.mkdir()
+    motor.mkdir()
+    venv_py = _make_venv(destino)
+
+    mod._PROJECT_ROOT = destino
+    mod._PROJECT_ROOT_BOOTSTRAP = motor
+    assert mod.resolve_test_interpreter() == str(venv_py)
+    assert mod.resolve_test_interpreter() != sys.executable
+
+
+def test_resolve_test_interpreter_falls_back_to_sys_executable_for_motor(
+    tmp_path: Path,
+) -> None:
+    """Single-repo/motor case (active == motor): keep sys.executable."""
+    mod = load_runner_module()
+    motor = tmp_path / "motor"
+    motor.mkdir()
+    mod._PROJECT_ROOT = motor
+    mod._PROJECT_ROOT_BOOTSTRAP = motor
+    assert mod.resolve_test_interpreter() == sys.executable
+
+
+def test_resolve_test_interpreter_falls_back_when_destination_has_no_venv(
+    tmp_path: Path,
+) -> None:
+    """Destination without a .venv falls back to sys.executable (legacy)."""
+    mod = load_runner_module()
+    destino = tmp_path / "destino"
+    motor = tmp_path / "motor"
+    destino.mkdir()
+    motor.mkdir()
+    mod._PROJECT_ROOT = destino
+    mod._PROJECT_ROOT_BOOTSTRAP = motor
+    assert mod.resolve_test_interpreter() == sys.executable

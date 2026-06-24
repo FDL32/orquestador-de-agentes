@@ -122,6 +122,50 @@ def _delivery_repo_root() -> Path:
     return _PROJECT_ROOT_BOOTSTRAP
 
 
+def _venv_python(root: Path) -> Path | None:
+    """Return the venv interpreter under ``root`` if present, else None.
+
+    Supports both layouts: ``.venv/Scripts/python.exe`` (Windows) and
+    ``.venv/bin/python`` (POSIX).
+    """
+    candidates = (
+        root / ".venv" / "Scripts" / "python.exe",
+        root / ".venv" / "bin" / "python",
+    )
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def resolve_test_interpreter() -> str:
+    """Pick the interpreter that has the *delivery repo's* dependencies.
+
+    CTL-2026-007b (Fase 2.4): the canonical-suite gate was non-deterministic
+    because the suite ran under ``sys.executable`` (the motor's interpreter),
+    whose site-packages may or may not contain the destination's deps (e.g.
+    ``loguru``). When the destination has its own ``.venv``, running the suite
+    with the motor interpreter produced a spurious collection failure (exit 2),
+    leaving a misleading ``last-run.json``.
+
+    Before: PROJECT_ROOT is the active workspace (the destination when running
+        its suite); ``sys.executable`` is whatever launched this runner.
+    During: if the active workspace differs from the motor AND has a ``.venv``,
+        prefer that venv's python so the suite runs with the destination's
+        installed dependencies.
+    After: returns the interpreter path as a string. Falls back to
+        ``sys.executable`` for the single-repo/motor case or when no destination
+        venv exists (preserving legacy behavior).
+    """
+    active = _PROJECT_ROOT.resolve()
+    motor = _PROJECT_ROOT_BOOTSTRAP.resolve()
+    if active != motor:
+        venv_py = _venv_python(active)
+        if venv_py is not None:
+            return str(venv_py)
+    return sys.executable
+
+
 def _delivery_head_sha() -> str | None:
     """Return the delivery repo HEAD SHA, or None if git is unavailable.
 
@@ -665,8 +709,11 @@ def main() -> int:
     # fallback to serial otherwise. Never touches the canonical close path.
     xdist_workers, xdist_meta = resolve_xdist(args.xdist_workers, args.level, args_mode)
     xdist_flags = ["-n", str(xdist_workers)] if xdist_workers else []
+    # CTL-2026-007b (Fase 2.4): run the suite with the delivery repo's
+    # interpreter so the destination's deps are present. Falls back to
+    # sys.executable for the motor/single-repo case.
     command = [
-        sys.executable,
+        resolve_test_interpreter(),
         "-m",
         "pytest",
         *xdist_flags,

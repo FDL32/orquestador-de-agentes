@@ -196,6 +196,41 @@ Regla dura: nunca presentes evidencia de loop rapido como sustituto de cierre
 canonico. Una suite focal verde, una corrida de background o un `last-run.json`
 de un commit anterior NO cuentan como suite canonica del ticket.
 
+### Cierre cross-repo y replay closeout-only (CTL-2026-007b)
+
+Para un ticket `delivery_authority: repo_destino`, la suite canonica debe correr
+con el INTERPRETE del destino (sus deps), no con el del motor. `run_pytest_safe`
+ya elige el interprete del destino (`<destino>/.venv`) via
+`resolve_test_interpreter()` cuando el workspace activo difiere del motor; solo
+necesitas invocarlo con `AGENT_PROJECT_ROOT` apuntando al destino. El stamp
+`tested_commit_sha` se resuelve por `delivery_authority`: destino para
+`repo_destino`, motor para `repo_motor`.
+
+Replay closeout-only (p.ej. reactivar un ticket cuya feature ya esta commiteada,
+sin tocar codigo productivo):
+
+```powershell
+# 1) Suite canonica con el interprete del destino (lanzable desde el motor):
+$env:AGENT_PROJECT_ROOT = "C:\ruta\repo_destino"
+python C:\ruta\repo_motor\scripts\run_pytest_safe.py --level all
+#    Verifica last-run.json: status=finished, exit_code=0, level=all,
+#    args_mode=default_discovery, tested_commit_sha == HEAD del destino.
+
+# 2) validate desde cwd=repo_destino (evita falsos de resolucion):
+cd C:\ruta\repo_destino
+python C:\ruta\repo_motor\.agent\agent_controller.py --validate --json --project-root .
+
+# 3) Handoff canonico (no loop rapido):
+python C:\ruta\repo_motor\.agent\agent_controller.py --pre-handoff --project-root . --json --force
+python C:\ruta\repo_motor\.agent\agent_controller.py --mark-ready --project-root .
+```
+
+Si `validate` o el controller crean un directorio cuyo nombre deriva de la ruta
+abs del destino con separadores eliminados (p.ej. `Users***REDACTED***...`) bajo el motor,
+es el path-mangling de CTL-2026-007b: `resolve_project_root()` ahora falla
+cerrado ante esa entrada; usa forward-slashes en `--project-root` o un
+`AGENT_PROJECT_ROOT` valido para el interprete en uso.
+
 Para `documentation`, `research` o `analysis`, el gate minimo es:
 - existencia de cada artefacto declarado para Builder;
 - `validate --json --project-root <repo_destino>` con salida final registrada;

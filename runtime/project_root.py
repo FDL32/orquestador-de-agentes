@@ -27,7 +27,56 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
+
+
+class ProjectRootError(ValueError):
+    """AGENT_PROJECT_ROOT resolved to an unusable (likely mangled) value.
+
+    CTL-2026-007b: a Windows absolute path such as ``C:\\Users\\***REDACTED***\\proj`` can be
+    mis-parsed as a single *relative* segment when handled by a POSIX-flavoured
+    Path (the destination workspace ran under a different interpreter than the
+    motor). ``Path(value).resolve()`` then joins it under the current working
+    directory, producing a spurious sibling like
+    ``<cwd>/Users***REDACTED***Proyectos_PythonCrear_Texto_LLM`` that downstream writers
+    (scanner, session-tracker) materialize under the motor. Detecting the mangle
+    up front and failing closed is cheaper and safer than letting it pollute the
+    motor and then surface as a downstream symptom (e.g. a git_presence false
+    positive).
+    """
+
+
+def _is_mangled_root(raw: str, resolved: Path) -> bool:
+    """Return True when ``raw`` looks like an absolute path the local Path
+    flavour failed to parse as absolute (the CTL-2026-007b mangle).
+
+    Before: ``raw`` is the stripped AGENT_PROJECT_ROOT value; ``resolved`` is
+        ``Path(raw).resolve()`` under the active interpreter.
+    During: cross-checks the raw string against both path flavours. A value that
+        is absolute under Windows OR POSIX semantics but whose local
+        ``resolve()`` produced a path that does NOT end with the intended final
+        component is a mangle (the separators were swallowed and the whole value
+        collapsed into one relative segment joined under cwd).
+    After: returns True only for the mangle signature; returns False for genuine
+        absolute paths that resolve correctly under the local flavour. Never
+        raises.
+    """
+    looks_absolute = (
+        PureWindowsPath(raw).is_absolute() or PurePosixPath(raw).is_absolute()
+    )
+    if not looks_absolute:
+        # A genuinely relative root (legacy single-repo/test usage) is allowed;
+        # only an absolute value that failed to parse as absolute is a mangle.
+        return False
+    # The value looks like an absolute path under at least one flavour. The
+    # intended directory is its final component under whichever flavour treats
+    # it as absolute. If resolve() did NOT preserve that final component, the
+    # separators were swallowed and the whole value collapsed into one segment
+    # joined under cwd: that is the mangle.
+    win = PureWindowsPath(raw)
+    posix = PurePosixPath(raw)
+    intended_name = win.name if win.is_absolute() else posix.name
+    return resolved.name != intended_name
 
 
 @lru_cache(maxsize=1)
@@ -56,7 +105,19 @@ def resolve_project_root() -> Path:
     # Check environment variable first (set by entry points after CLI parsing)
     env_root = os.environ.get("AGENT_PROJECT_ROOT", "").strip()
     if env_root:
-        return Path(env_root).resolve()
+        resolved = Path(env_root).resolve()
+        # CTL-2026-007b: fail closed on a mangled absolute path rather than let
+        # it resolve into a spurious directory under the current working dir.
+        if _is_mangled_root(env_root, resolved):
+            raise ProjectRootError(
+                "AGENT_PROJECT_ROOT is an absolute path that the active Python "
+                f"flavour failed to parse as absolute: {env_root!r} resolved to "
+                f"{str(resolved)!r}. This would create a spurious directory under "
+                "the current working directory. Pass --project-root with forward "
+                "slashes (e.g. C:/Users/.../project) or set AGENT_PROJECT_ROOT to "
+                "a path valid for the running interpreter."
+            )
+        return resolved
 
     # Fallback: derive from this module's location
     # runtime/project_root.py -> runtime/ -> project root
