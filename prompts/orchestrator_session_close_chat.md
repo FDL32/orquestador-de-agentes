@@ -53,6 +53,13 @@ recomendado, no un gate bloqueante: para sesiones triviales o solo-docs puedes
 omitirlo. Si la corres y destapa un false-green o contradiccion, DETENTE y
 reconcilia antes de continuar con el cierre.
 
+> INVARIANTE (no convertir en mandatorio): este paso es RECOMENDADO y read-only.
+> No lo conviertas en gate bloqueante del cierre ni lo anadas a `prepush_check`,
+> `session_closeout.py` o cualquier gate de `--session-close`. Omitirlo NUNCA
+> debe impedir el cierre. Si un futuro ticket quiere hacerlo obligatorio, eso es
+> un cambio de contrato que requiere decision humana explicita, no una edicion
+> documental.
+
 ### Comando canonico del cierre operativo
 
 El pipeline completo de cierre vive en `scripts/session_closeout.py` y se
