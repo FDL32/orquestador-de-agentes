@@ -93,6 +93,47 @@ def read_delivery_authority(content: str, default: str = "repo_motor") -> str:
     return match.group(2).strip().lower()
 
 
+def _section_path_tokens(lines: list[str], heading: str) -> list[str]:
+    """Raw (unresolved) path tokens from a markdown section, in document order.
+
+    Content-only sibling of ``_extract_section_paths``: reuses the same FLT line
+    normalization and path-token heuristic but does NOT resolve against a
+    project_root, so it is safe for checks that only need the path text (e.g.
+    extension/congruence checks during ``--validate`` where no root is in scope).
+    """
+    in_section = False
+    tokens: list[str] = []
+    for raw in lines:
+        line = raw.strip()
+        if f"## {heading}" in line:
+            in_section = True
+            continue
+        if in_section and line.startswith("## "):
+            break
+        if in_section and line and not line.startswith("---"):
+            normalized = _normalize_flt_line(line)
+            if normalized and _looks_like_path_token(normalized):
+                tokens.append(normalized)
+    return tokens
+
+
+def files_likely_touched_tokens(
+    work_plan_content: str, *, deliverable_type: str = "code"
+) -> list[str]:
+    """Raw FLT/Builder path tokens for extension/congruence checks (no I/O).
+
+    Mirrors ``parse_files_likely_touched``'s section selection (FLT first, then
+    the ``## Builder`` section for doc-type tickets) but returns the unresolved
+    path text so callers can inspect extensions without a project_root. Does NOT
+    read ``## Read/inspect only`` — those are sources, not deliverables.
+    """
+    lines = work_plan_content.split("\n")
+    tokens = _section_path_tokens(lines, "Files Likely Touched")
+    if not tokens and deliverable_type in _DOC_DELIVERABLE_TYPES:
+        tokens = _section_path_tokens(lines, "Builder")
+    return tokens
+
+
 def _extract_section_paths(
     lines: list[str], heading: str, project_root: Path
 ) -> set[str]:

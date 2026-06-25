@@ -4002,3 +4002,64 @@ class TestBuilderBriefExclusion:
             assert "UPSTREAM_LEARNINGS" not in prefix, (
                 f"UPSTREAM_LEARNINGS must not be in excluded prefixes, found: {prefix}"
             )
+
+
+class TestDeliverableTypeFileCongruence:
+    """H-009: warn when a doc-type ticket lists a code file as a deliverable.
+
+    Single-direction, informational (never blocking) check. The false-positive
+    guard is critical: a .py listed only under '## Read/inspect only' is a source
+    to read, NOT a deliverable, and must NOT warn.
+    """
+
+    def test_doc_type_with_code_deliverable_warns(self):
+        import agent_controller
+
+        plan = (
+            "# WP\n"
+            "- **deliverable_type:** documentation\n"
+            "## Files Likely Touched\n"
+            "- docs/GUIDE.md\n"
+            "- scripts/thing.py\n"
+        )
+        warnings = agent_controller._check_deliverable_type(plan)
+        assert warnings, "doc-type ticket with a .py deliverable must warn"
+        assert "scripts/thing.py" in warnings[0]
+        assert "code deliverable" in warnings[0].lower()
+
+    def test_doc_type_code_only_under_read_only_does_not_warn(self):
+        """The .py is a source to read, not produced -> no false positive."""
+        import agent_controller
+
+        plan = (
+            "# WP\n"
+            "- **deliverable_type:** documentation\n"
+            "## Builder\n"
+            "- docs/REPORT.md\n"
+            "## Read/inspect only\n"
+            "- scripts/source.py\n"
+        )
+        assert agent_controller._check_deliverable_type(plan) == []
+
+    def test_code_type_with_py_does_not_warn(self):
+        """Single-direction: code/mixed are never flagged for listing .py."""
+        import agent_controller
+
+        plan = (
+            "# WP\n"
+            "- **deliverable_type:** code\n"
+            "## Files Likely Touched\n"
+            "- scripts/feature.py\n"
+        )
+        assert agent_controller._check_deliverable_type(plan) == []
+
+    def test_research_type_with_only_docs_does_not_warn(self):
+        import agent_controller
+
+        plan = (
+            "# WP\n"
+            "- **deliverable_type:** research\n"
+            "## Files Likely Touched\n"
+            "- .agent/runtime/compare/report.md\n"
+        )
+        assert agent_controller._check_deliverable_type(plan) == []

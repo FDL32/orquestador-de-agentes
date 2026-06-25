@@ -1169,7 +1169,40 @@ def _check_deliverable_type(content: str) -> list[str]:
             f"work_plan.md has unknown deliverable_type '{value}'. "
             f"Expected one of: {sorted(_VALID_DELIVERABLE_TYPES)}"
         ]
-    return []
+    return _check_deliverable_type_file_congruence(content, value)
+
+
+# Code-deliverable extensions: a doc-type ticket that declares one of these as a
+# Builder deliverable is likely mislabeled (or the file is a source to read, not
+# produce -- which belongs under '## Read/inspect only', not Files Likely Touched).
+_CODE_DELIVERABLE_SUFFIXES = (".py", ".js", ".ts", ".tsx", ".jsx")
+_DOC_DELIVERABLE_TYPES_CONGRUENCE = frozenset({"documentation", "research", "analysis"})
+
+
+def _check_deliverable_type_file_congruence(content: str, value: str) -> list[str]:
+    """Warn (never error) when a doc-type ticket lists a code file as deliverable.
+
+    Conservative single-direction check: only flags ``documentation`` /
+    ``research`` / ``analysis`` tickets whose Files Likely Touched (or Builder
+    section) names a code deliverable. It does NOT flag ``code``/``mixed`` with
+    no code file (legit for config/scaffolding tickets), and it ignores
+    ``## Read/inspect only`` sources by construction (``files_likely_touched_tokens``
+    never reads them). Informational only -- does not block ``--validate``.
+    """
+    if value not in _DOC_DELIVERABLE_TYPES_CONGRUENCE:
+        return []
+    tokens = scope_gate.files_likely_touched_tokens(content, deliverable_type=value)
+    code_deliverables = sorted(
+        {t for t in tokens if t.lower().endswith(_CODE_DELIVERABLE_SUFFIXES)}
+    )
+    if not code_deliverables:
+        return []
+    return [
+        f"work_plan.md deliverable_type='{value}' but Files Likely Touched lists "
+        f"code deliverable(s): {code_deliverables}. If these are sources to read "
+        "(not produce), move them under '## Read/inspect only'; if the ticket "
+        "actually produces code, use deliverable_type 'code' or 'mixed'."
+    ]
 
 
 def _read_deliverable_type(content: str, default: str = "code") -> str:
