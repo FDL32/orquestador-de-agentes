@@ -10,12 +10,12 @@
 
 | kind | total |
 |------|-------|
-| prompt | 21 |
+| prompt | 22 |
 | reference | 33 |
 | script-consumer | 5 |
 | shared | 3 |
-| skill | 29 |
-| **total** | **91** |
+| skill | 30 |
+| **total** | **93** |
 
 ## Entradas
 
@@ -42,6 +42,7 @@
 | prompt | `prompts/orchestrator_refactor_bootstrap.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/orchestrator_session_bootstrap.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/orchestrator_session_close_chat.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/orchestrator_session_close_full_audit.md` | active | system | shared | model-invoked | — |
 | reference | `skills/audit-pipeline/references/audit-checklist.md` | active | system | shared | model-invoked | — |
 | reference | `skills/builder-implement-from-plan/references/code-rules.md` | active | system | shared | model-invoked | — |
 | reference | `skills/builder-implement-from-plan/references/log-format.md` | active | system | shared | model-invoked | — |
@@ -106,6 +107,7 @@
 | skill | `skills/repo-compare/SKILL.md` | active | agent | shared | model-invoked | /compare, /gh-compare, /repo-compare |
 | skill | `skills/scaffold-python-project/SKILL.md` | active | agent | shared | model-invoked | /new-project, /scaffold, /scaffold-python |
 | skill | `skills/secure-existing-project/SKILL.md` | active | agent | shared | model-invoked | /harden, /secure, /security-audit |
+| skill | `skills/session-close-full-audit/SKILL.md` | active | agent | auditor | model-invoked | /close-full-audit, /session-close-full-audit, auditar-cierre-completo-sesion |
 | skill | `skills/session-close-observations/SKILL.md` | active | agent | shared | model-invoked | /close-observations, /generate-observations, /session-close |
 | skill | `skills/setup-agent-system/SKILL.md` | active | agent | user | model-invoked | /agent-install, /agent-setup, /init |
 | skill | `skills/system-health-audit/SKILL.md` | active | agent | auditor | model-invoked | /audit-system-health, auditar-salud-sistema, system-health-audit |
