@@ -10,6 +10,15 @@ Target surfaces (and ONLY these):
   - .agent/runtime/review_packets/                (<ticket>_attempt-N.md files)
   - .agent/runtime/memory/observations.jsonl.bak.*  (timestamped backup files)
 
+Recency semantics (WOT-2026-013v): "newest" is the mtime of each candidate ENTRY
+itself. For review_packets and observation baks the entry is a file, so its mtime
+is the artifact's own mtime. For reviews/ the entry is the ticket DIRECTORY, so
+recency is the DIRECTORY's mtime -- NOT the most recent file inside it ("last
+logical attempt"). On most filesystems a directory's mtime changes when direct
+entries are added/removed, not when nested files are edited, so the two can
+diverge. This is intentional and documented; ranking reviews/ by the newest
+nested file would be a separate, explicitly-approved change.
+
 Hard safety invariant: a candidate is selected for pruning ONLY if it is
 directly contained in one of the three fixed roots above. Versioned/useful
 history surfaces (events/archive, audits/system_health, collaboration/archive,
@@ -234,7 +243,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--keep-reviews",
         type=int,
         default=DEFAULT_KEEP_REVIEWS,
-        help=f"Keep the newest N review dirs (default {DEFAULT_KEEP_REVIEWS}).",
+        help=(
+            "Keep the newest N review dirs, ranked by DIRECTORY mtime "
+            "(not the newest file inside the dir; default "
+            f"{DEFAULT_KEEP_REVIEWS})."
+        ),
     )
     parser.add_argument(
         "--keep-packets",
@@ -283,6 +296,7 @@ def run(argv: list[str] | None = None) -> int:
 
     total = sum(len(v) for v in report.values())
     print(f"[{mode}] retention over 3 gitignored runtime surfaces")
+    print("  (reviews recency = DIRECTORY mtime, not the newest file inside the dir)")
     for surface in SURFACES:
         paths = report[surface.key]
         verb = "removed" if apply else "would remove"

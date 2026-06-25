@@ -166,6 +166,47 @@ class TestRuntimeRetentionSelection:
         assert select_candidates(workspace, _surface("observation_baks"), keep=5) == []
         assert select_candidates(workspace, _surface("observation_baks"), keep=99) == []
 
+    def test_review_directories_are_ranked_by_directory_mtime_not_nested_file_mtime(
+        self, tmp_path: Path
+    ) -> None:
+        """Construct two review dirs where DIRECTORY mtime and newest-inner-file
+        mtime DISAGREE, then prove the selector follows the DIRECTORY mtime.
+
+        - dir_new_dir: newest DIRECTORY mtime, but holds an OLD inner file.
+        - dir_old_dir: oldest DIRECTORY mtime, but holds a NEW inner file.
+        With keep=1, ranking by DIRECTORY mtime keeps dir_new_dir and prunes
+        dir_old_dir. If anyone silently switched to ranking by the newest nested
+        file, the kept/pruned sets would flip and this test FAILS.
+        """
+        reviews = tmp_path / ".agent" / "runtime" / "reviews"
+        reviews.mkdir(parents=True)
+        base = time.time()
+
+        dir_new_dir = reviews / "WT-2026-NEWDIR"
+        dir_new_dir.mkdir()
+        # OLD inner file, but we stamp the DIRECTORY as NEW (after creating the file).
+        old_inner = dir_new_dir / "decision.json"
+        old_inner.write_text("{}", encoding="utf-8")
+        os.utime(old_inner, (base - 1000, base - 1000))
+        os.utime(dir_new_dir, (base + 1000, base + 1000))
+
+        dir_old_dir = reviews / "WT-2026-OLDDIR"
+        dir_old_dir.mkdir()
+        # NEW inner file, but we stamp the DIRECTORY as OLD.
+        new_inner = dir_old_dir / "decision.json"
+        new_inner.write_text("{}", encoding="utf-8")
+        os.utime(new_inner, (base + 9999, base + 9999))
+        os.utime(dir_old_dir, (base - 9999, base - 9999))
+
+        pruned = select_candidates(tmp_path, _surface("reviews"), keep=1)
+        pruned_names = {p.name for p in pruned}
+
+        # By DIRECTORY mtime: NEWDIR (dir mtime newest) is kept, OLDDIR is pruned.
+        assert pruned_names == {"WT-2026-OLDDIR"}, pruned_names
+        # Guard against the per-nested-file interpretation: NEWDIR (old inner file)
+        # must NOT be the one pruned.
+        assert "WT-2026-NEWDIR" not in pruned_names
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # TestRuntimeRetentionCLI
@@ -349,3 +390,64 @@ def test_cli_subprocess_dry_run_is_hermetic(workspace: Path) -> None:
     assert result.returncode == 0, result.stderr
     assert "[DRY-RUN]" in result.stdout
     assert _surface_snapshot(workspace) == before
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# WOT-2026-013v: reviews/ recency semantics are DIRECTORY mtime (made explicit)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _help_text() -> str:
+    """The real --help output of the CLI (subprocess, no live workspace dep)."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(_MOTOR_ROOT / "scripts" / "prune_runtime_retention.py"),
+            "--help",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
+class TestRuntimeRetentionDocs:
+    """Nominal barriers locking the documented recency semantics of reviews/."""
+
+    def test_help_makes_directory_mtime_semantics_explicit(self) -> None:
+        """The --help must state that reviews/ is ranked by the DIRECTORY mtime.
+
+        Regression barrier: if the help stops spelling out "DIRECTORY" mtime for
+        reviews, the ambiguity returns and this test FAILS.
+        """
+        help_text = _help_text().lower()
+        assert "directory" in help_text
+        # The reviews keep-flag specifically must tie "review dirs" to dir mtime.
+        assert "review dirs" in help_text
+        # Must explicitly disclaim the per-nested-file reading.
+        assert "newest file inside" in help_text
+
+    def test_reviews_semantics_do_not_claim_last_logical_attempt(self) -> None:
+        """The help/docstring must NOT (re)claim a 'last logical attempt' or
+        per-inner-file semantics for reviews/.
+
+        Regression barrier: any wording that sells reviews recency as the newest
+        nested file / last logical attempt (without the explicit DIRECTORY
+        qualifier) FAILS this test.
+        """
+        from scripts import prune_runtime_retention as mod
+
+        sources = [_help_text(), mod.__doc__ or ""]
+        for src in sources:
+            low = src.lower()
+            # If "last logical attempt" appears at all, it must appear only as the
+            # NEGATED form ("not ... last logical attempt"), never as a claim.
+            if "last logical attempt" in low:
+                assert (
+                    "not the most recent file inside" in low or "not the newest" in low
+                ), src
+            # A bare "newest file inside the dir" claim is only allowed when negated.
+            if "newest file inside the dir" in low:
+                assert "not the newest file inside the dir" in low, src
