@@ -8,6 +8,7 @@ Tests the _handle_request_changes() function to ensure:
 """
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -395,3 +396,52 @@ class TestHandleRequestChangesRequeue:
             # Verify pending_requeue was derived from events[-1]
             # latest_event should not be called for this (only as fallback when events empty)
             mock_materialize.assert_called()
+
+
+# WOT-2026-013u: CLI-contract barrier for --request-changes exercising the REAL
+# --ticket parser via subprocess dispatch (parity with --manager-approve).
+_RC_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_RC_PARSED = "does not match active ticket"
+_RC_NOT_PARSED = "No ticket_id provided"
+_RC_FAKE_TICKET = "WOT-TEST-013U-RC"
+
+
+def _rc_run_controller(*args: str) -> subprocess.CompletedProcess:
+    controller = _RC_PROJECT_ROOT / ".agent" / "agent_controller.py"
+    workspace = _RC_PROJECT_ROOT.parent / "orquestador_de_agentes_workspace"
+    return subprocess.run(
+        [
+            sys.executable,
+            str(controller),
+            *args,
+            "--json",
+            "--force",
+            "--project-root",
+            str(workspace),
+        ],
+        cwd=_RC_PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_request_changes_accepts_ticket_flag() -> None:
+    """--request-changes --ticket <id> captures the id via the --ticket parser.
+
+    Mutation barrier: the inverted condition leaves ticket_id None ->
+    "No ticket_id provided" and this test FAILS. The fake ticket never matches the
+    active ticket, so the action fails cleanly without mutating the bus.
+    """
+    result = _rc_run_controller("--request-changes", "--ticket", _RC_FAKE_TICKET)
+    combined = result.stdout + result.stderr
+    assert _RC_PARSED in combined, combined
+    assert _RC_NOT_PARSED not in combined, combined
+
+
+def test_request_changes_positional_ticket_still_supported() -> None:
+    """Backward-compat: --request-changes <id> (positional) keeps working."""
+    result = _rc_run_controller("--request-changes", _RC_FAKE_TICKET)
+    combined = result.stdout + result.stderr
+    assert _RC_PARSED in combined, combined
+    assert _RC_NOT_PARSED not in combined, combined

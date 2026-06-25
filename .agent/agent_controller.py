@@ -5910,7 +5910,7 @@ Action flags:
   --request-changes <ticket>      Request changes for a ticket.
   --escalate-human-gate           Move a ticket to HUMAN_GATE.
   --resume-human-gate             Resume review from HUMAN_GATE.
-  --reopen-terminal-ticket        Reopen the active COMPLETED ticket to IN_PROGRESS.
+  --reopen-terminal-ticket <ticket>  Reopen the active COMPLETED ticket to IN_PROGRESS.
   --pause-ticket                  Pause the active ticket temporarily (WOT-2026-010d).
   --resume-ticket                 Resume a paused ticket (WOT-2026-010d).
   --abort-paused-ticket           Abort a paused ticket (WOT-2026-010d).
@@ -5922,7 +5922,9 @@ Action flags:
 
 Control flags:
   --project-root <path>       Destination project root.
-  --ticket <ticket>           Ticket ID for actions that accept one.
+  --ticket <ticket>           Ticket ID for actions that accept one
+                              (--manager-approve/--request-changes/--reopen-terminal-ticket
+                              accept either `--ticket <id>` or the positional `<id>` form).
   --tickets <ids>             Ticket list for session close.
   --reason <text>             Pause reason (for --pause-ticket/--abort-paused-ticket).
   --skip-gates                Skip quality gates.
@@ -6013,11 +6015,16 @@ def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
             return 1
         scope_override = next_token
 
-    # Parse --ticket (used by closeout/review/reopen action flags)
+    # Parse --ticket (used by closeout/review/reopen action flags).
+    # WOT-2026-013u: the guard must accept a value that EXISTS (idx + 1 in range)
+    # and is not another flag; the old `idx + 1 >= len(sys.argv)` was inverted and
+    # never captured the ticket, so `--manager-approve --ticket <id>` failed with
+    # "No ticket_id provided" while the positional form worked. --ticket takes
+    # precedence; the positional forms below remain supported (backward-compat).
     ticket_id = None
     if "--ticket" in sys.argv:
         idx = sys.argv.index("--ticket")
-        if idx + 1 >= len(sys.argv) and not sys.argv[idx + 1].startswith("--"):
+        if idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("--"):
             ticket_id = sys.argv[idx + 1]
     elif "--manager-approve" in sys.argv:
         idx = sys.argv.index("--manager-approve")

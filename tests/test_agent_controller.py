@@ -57,14 +57,79 @@ def test_agent_controller_help_lists_critical_flags() -> None:
         "--validate",
         "--manager-approve <ticket>",
         "--request-changes <ticket>",
+        # WOT-2026-013u: reopen consumes a ticket, so the help must show <ticket>.
+        "--reopen-terminal-ticket <ticket>",
         "--resume-human-gate",
         "--bootstrap-ticket",
         "--escalate-human-gate",
         "--pre-handoff",
     ):
         assert flag in result.stdout
+    # WOT-2026-013u: help must document BOTH the positional and the --ticket form
+    # for ticket actions, so neither is silently the only supported one.
+    assert "--ticket <id>" in result.stdout
+    assert "positional" in result.stdout
     assert "Traceback" not in result.stderr
     assert "error:" not in result.stderr.lower()
+
+
+# WOT-2026-013u: shared helper that exercises the REAL CLI dispatch (subprocess),
+# not the internal handlers, so the barriers cover the actual --ticket parser.
+def _run_controller(*args: str) -> subprocess.CompletedProcess:
+    controller = PROJECT_ROOT / ".agent" / "agent_controller.py"
+    workspace = PROJECT_ROOT.parent / "orquestador_de_agentes_workspace"
+    return subprocess.run(
+        [
+            sys.executable,
+            str(controller),
+            *args,
+            "--json",
+            "--force",
+            "--project-root",
+            str(workspace),
+        ],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+# A ticket id that cannot match the active ticket: the parser captures it, then
+# the action fails cleanly with "does not match active ticket" WITHOUT touching
+# the bus. "No ticket_id provided" is the pre-fix (inverted-condition) symptom.
+_PARSED_MARKER = "does not match active ticket"
+_NOT_PARSED_MARKER = "No ticket_id provided"
+_FAKE_TICKET = "WOT-TEST-013U-001"
+
+
+def test_ticket_parser_reads_control_flag_before_positional_fallback() -> None:
+    """--manager-approve --ticket <id> must capture the id via the --ticket parser.
+
+    Mutation barrier: reintroducing the inverted condition
+    `idx + 1 >= len(sys.argv)` makes ticket_id stay None, so the output flips to
+    "No ticket_id provided" and this test FAILS.
+    """
+    result = _run_controller("--manager-approve", "--ticket", _FAKE_TICKET)
+    combined = result.stdout + result.stderr
+    assert _PARSED_MARKER in combined, combined
+    assert _NOT_PARSED_MARKER not in combined, combined
+
+
+def test_reopen_terminal_ticket_accepts_ticket_flag() -> None:
+    """--reopen-terminal-ticket --ticket <id> must capture the id (parser path)."""
+    result = _run_controller("--reopen-terminal-ticket", "--ticket", _FAKE_TICKET)
+    combined = result.stdout + result.stderr
+    assert _PARSED_MARKER in combined, combined
+    assert _NOT_PARSED_MARKER not in combined, combined
+
+
+def test_reopen_terminal_ticket_positional_still_supported() -> None:
+    """Backward-compat: the positional form must keep working (not deprecated)."""
+    result = _run_controller("--reopen-terminal-ticket", _FAKE_TICKET)
+    combined = result.stdout + result.stderr
+    assert _PARSED_MARKER in combined, combined
+    assert _NOT_PARSED_MARKER not in combined, combined
 
 
 class TestReadFile:
