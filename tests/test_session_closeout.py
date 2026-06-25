@@ -573,6 +573,37 @@ class TestRunCloseout:
         ).read_text(encoding="utf-8")
         assert "ModuleNotFoundError" in content
 
+    def test_prepush_failure_announces_report_path_on_console(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """On prepush FAIL early-exit, the report path is announced to stderr.
+
+        Without it, `--session-close` exits 1 with no console output and the
+        operator cannot find where the failure detail was written (the report
+        FILE has the detail, but nothing points the caller to it). Mirrors the
+        success path's `[closeout] Report (...)` announcement.
+        """
+        _write_work_plan(tmp_path, "WP-2026-168")
+
+        def _mock_run(script_name, args, project_root, timeout=120):
+            if script_name == "prepush_check.py":
+                return subprocess.CompletedProcess(
+                    args=[], returncode=1, stdout="RUFF FAILED", stderr=""
+                )
+            return subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="ok", stderr=""
+            )
+
+        with patch("scripts.session_closeout._run_script", side_effect=_mock_run):
+            result = run_closeout(tmp_path, dry_run=False)
+
+        assert result == 1
+        captured = capsys.readouterr()
+        report_path = _generated_report_path(tmp_path, dry_run=False)
+        # The console (stderr) must point the caller to the report.
+        assert str(report_path) in captured.err
+        assert "FAIL" in captured.err
+
     def test_explicit_ticket_passed_through(self, tmp_path: Path) -> None:
         """Explicit tickets from CLI are used directly."""
         with patch(

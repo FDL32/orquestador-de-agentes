@@ -570,8 +570,12 @@ def run_closeout(
     prepush = _step_prepush_check(project_root, dry_run)
     report.steps.append(prepush)
     if prepush.status == "FAIL":
-        # Write report and exit early
-        _generate_report(report, project_root)
+        # Write report and exit early. Announce the report path to stderr (the
+        # success path below prints the same to stdout): without this, a caller
+        # like `agent_controller.py --session-close` sees exit 1 with NO console
+        # output and cannot find where the failure detail was written.
+        report_path = _generate_report(report, project_root)
+        print(f"[closeout] Report (FAIL): {report_path}", file=sys.stderr)
         return 1
     report.steps.append(_step_local_audit(project_root, dry_run))
     report.steps.append(_step_validate_ticket_prose(project_root, dry_run))
