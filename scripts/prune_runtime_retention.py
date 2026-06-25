@@ -9,6 +9,9 @@ Target surfaces (and ONLY these):
   - .agent/runtime/reviews/                       (one directory per ticket)
   - .agent/runtime/review_packets/                (<ticket>_attempt-N.md files)
   - .agent/runtime/memory/observations.jsonl.bak.*  (timestamped backup files)
+  - .agent/collaboration/archive/notifications_*.md  (archived notif snapshots,
+    WOT-2026-013k; name-filtered: notifications.md and every other archive file
+    are excluded)
 
 Recency semantics (WOT-2026-013v): "newest" is the mtime of each candidate ENTRY
 itself. For review_packets and observation baks the entry is a file, so its mtime
@@ -20,9 +23,13 @@ diverge. This is intentional and documented; ranking reviews/ by the newest
 nested file would be a separate, explicitly-approved change.
 
 Hard safety invariant: a candidate is selected for pruning ONLY if it is
-directly contained in one of the three fixed roots above. Versioned/useful
-history surfaces (events/archive, audits/system_health, collaboration/archive,
-collaboration/_archive) are NEVER reachable by the selector, by construction.
+directly contained in one of the fixed roots above AND, for name-filtered
+surfaces, matches the surface's pattern. Versioned/useful history surfaces
+(events/archive, audits/system_health, collaboration/_archive) are NEVER
+reachable. collaboration/archive/ is reachable ONLY for the
+notifications_<timestamp>.md family (WOT-2026-013k); every other file there
+(review_queue_*.md, manager_feedback, recovered_*, relaunch_capsules, ...) is
+never a candidate.
 
 Usage:
     python scripts/prune_runtime_retention.py --project-root <repo_destino> \
@@ -58,11 +65,20 @@ from pathlib import Path
 # Backup filename prefix inside the memory dir.
 _OBSERVATION_BAK_PREFIX = "observations.jsonl.bak."
 
+# WOT-2026-013k: archived notification snapshots live in collaboration/archive/
+# as `notifications_<timestamp>.md` (producer: agent_controller.archive_old_
+# notifications). The family is matched by BOTH a prefix and a suffix so the live
+# `notifications.md`, `review_queue_*.md`, `manager_feedback`, recovered_* and any
+# other collaboration/archive/ artifact are NEVER candidates.
+_NOTIFICATION_ARCHIVE_PREFIX = "notifications_"
+_NOTIFICATION_ARCHIVE_SUFFIX = ".md"
+
 # Default keep-counts: conservative. None of these may default to 0 (which would
 # delete everything); the operator opts into aggressiveness explicitly.
 DEFAULT_KEEP_REVIEWS = 20
 DEFAULT_KEEP_PACKETS = 20
 DEFAULT_KEEP_OBSERVATION_BAKS = 10
+DEFAULT_KEEP_NOTIFICATION_ARCHIVES = 20
 
 
 @dataclass(frozen=True)
@@ -83,6 +99,14 @@ SURFACES: tuple[Surface, ...] = (
         "runtime/memory",
         False,
         "keep_observation_baks",
+    ),
+    # WOT-2026-013k: archived notification snapshots, name-filtered so only the
+    # `notifications_<timestamp>.md` family is prunable (not other archive files).
+    Surface(
+        "notification_archives",
+        "collaboration/archive",
+        False,
+        "keep_notification_archives",
     ),
 )
 
@@ -111,13 +135,31 @@ def _is_contained(child: Path, root: Path) -> bool:
 # --- Candidate selection ----------------------------------------------------
 
 
-def _list_surface_entries(project_root: Path, surface: Surface) -> list[Path]:
-    """Return the direct entries of a surface that are prunable candidates.
+def _entry_is_candidate(surface: Surface, entry: Path) -> bool:
+    """Whether a direct child of a surface root qualifies as a prunable entry.
 
-    For `observation_baks`, only files matching the bak prefix qualify, so the
-    rest of the memory dir (MEMORY.md, observations.jsonl, archive/, ...) is
-    never a candidate.
+    Name-filtered surfaces accept ONLY their family, so unrelated siblings are
+    never candidates:
+      - observation_baks: files named ``observations.jsonl.bak.*`` (MEMORY.md,
+        observations.jsonl, archive/ are excluded).
+      - notification_archives: files named ``notifications_<ts>.md`` (the live
+        notifications.md, review_queue_*.md, manager_feedback, recovered_*, and
+        any other collaboration/archive/ file are excluded).
+      - other surfaces: dir-vs-file by ``surface.entry_is_dir``.
     """
+    if surface.key == "observation_baks":
+        return entry.is_file() and entry.name.startswith(_OBSERVATION_BAK_PREFIX)
+    if surface.key == "notification_archives":
+        return (
+            entry.is_file()
+            and entry.name.startswith(_NOTIFICATION_ARCHIVE_PREFIX)
+            and entry.name.endswith(_NOTIFICATION_ARCHIVE_SUFFIX)
+        )
+    return entry.is_dir() if surface.entry_is_dir else entry.is_file()
+
+
+def _list_surface_entries(project_root: Path, surface: Surface) -> list[Path]:
+    """Return the direct entries of a surface that are prunable candidates."""
     root = _surface_root(project_root, surface)
     if not root.is_dir():
         return []
@@ -129,15 +171,8 @@ def _list_surface_entries(project_root: Path, surface: Surface) -> list[Path]:
             continue
         if not _is_contained(entry, root) or entry.resolve() == root.resolve():
             continue
-        if surface.key == "observation_baks":
-            if entry.is_file() and entry.name.startswith(_OBSERVATION_BAK_PREFIX):
-                entries.append(entry)
-        elif surface.entry_is_dir:
-            if entry.is_dir():
-                entries.append(entry)
-        else:
-            if entry.is_file():
-                entries.append(entry)
+        if _entry_is_candidate(surface, entry):
+            entries.append(entry)
     return entries
 
 
@@ -178,9 +213,17 @@ def select_candidates(project_root: Path, surface: Surface, keep: int) -> list[P
 
 
 def select_all(project_root: Path, keeps: dict[str, int]) -> dict[str, list[Path]]:
-    """Select candidates for every surface. Returns {surface_key: [paths]}."""
+    """Select candidates for every surface. Returns {surface_key: [paths]}.
+
+    A surface whose keep-arg is absent from `keeps` is treated as keep-all (no
+    candidates): for a deletion tool, an omitted keep-count must NEVER fall
+    through to pruning. The CLI always supplies every keep via defaults.
+    """
     result: dict[str, list[Path]] = {}
     for surface in SURFACES:
+        if surface.keep_arg not in keeps:
+            result[surface.key] = []
+            continue
         keep = keeps[surface.keep_arg]
         result[surface.key] = select_candidates(project_root, surface, keep)
     return result
@@ -264,6 +307,16 @@ def _build_parser() -> argparse.ArgumentParser:
             f"(default {DEFAULT_KEEP_OBSERVATION_BAKS})."
         ),
     )
+    parser.add_argument(
+        "--keep-notification-archives",
+        type=int,
+        default=DEFAULT_KEEP_NOTIFICATION_ARCHIVES,
+        help=(
+            "Keep the newest N collaboration/archive/notifications_*.md snapshots "
+            f"(default {DEFAULT_KEEP_NOTIFICATION_ARCHIVES}); never touches "
+            "notifications.md or other archive files."
+        ),
+    )
     return parser
 
 
@@ -283,6 +336,7 @@ def run(argv: list[str] | None = None) -> int:
         "keep_reviews": args.keep_reviews,
         "keep_packets": args.keep_packets,
         "keep_observation_baks": args.keep_observation_baks,
+        "keep_notification_archives": args.keep_notification_archives,
     }
     try:
         selection = select_all(project_root, keeps)
@@ -295,7 +349,7 @@ def run(argv: list[str] | None = None) -> int:
     report = prune(selection, apply=apply)
 
     total = sum(len(v) for v in report.values())
-    print(f"[{mode}] retention over 3 gitignored runtime surfaces")
+    print(f"[{mode}] retention over 4 gitignored local surfaces")
     print("  (reviews recency = DIRECTORY mtime, not the newest file inside the dir)")
     for surface in SURFACES:
         paths = report[surface.key]

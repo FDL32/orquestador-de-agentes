@@ -79,11 +79,25 @@ def workspace(tmp_path: Path) -> Path:
     _touch_with_mtime(memory / "MEMORY.md", base - 100)
     _touch_with_mtime(memory / "archive" / "old_snapshot.md", base - 100, is_dir=False)
 
-    # Forbidden versioned/history surfaces, populated with OLD entries.
+    # collaboration/archive/: 5 prunable notifications_<ts>.md + decoys that must
+    # NEVER be candidates (WOT-2026-013k: only the notifications_ family is local).
+    collab_archive = agent / "collaboration" / "archive"
+    for i in range(5):
+        _touch_with_mtime(
+            collab_archive / f"notifications_2026010{i}_120000.md", base + i
+        )
+    # Decoys in collaboration/archive/ that share the dir but are NOT the family.
+    _touch_with_mtime(collab_archive / "review_queue_2026-06-11.md", base - 100)
+    _touch_with_mtime(collab_archive / "manager_feedback.md", base - 100)
+    _touch_with_mtime(collab_archive / "recovered_work_plan.md", base - 100)
+    _touch_with_mtime(collab_archive / "ancient.md", base - 1000)
+
+    # Forbidden versioned/history surfaces, populated with OLD entries. Note
+    # collaboration/archive/ is intentionally NOT here: it is reachable ONLY for
+    # the notifications_ family; its non-notification files are decoys above.
     for rel in (
         "runtime/events/archive",
         "audits/system_health",
-        "collaboration/archive",
         "collaboration/_archive/plan_audit",
     ):
         _touch_with_mtime(agent / rel / "ancient.md", base - 1000)
@@ -107,23 +121,42 @@ class TestRuntimeRetentionSelection:
         # Keep 0 everywhere so EVERY prunable entry surfaces as a candidate.
         selection = select_all(
             workspace,
-            {"keep_reviews": 0, "keep_packets": 0, "keep_observation_baks": 0},
+            {
+                "keep_reviews": 0,
+                "keep_packets": 0,
+                "keep_observation_baks": 0,
+                "keep_notification_archives": 0,
+            },
         )
         all_candidates = [p for paths in selection.values() for p in paths]
 
-        # Exactly the three surfaces are represented.
-        assert set(selection) == {"reviews", "review_packets", "observation_baks"}
+        # Exactly the four surfaces are represented (WOT-2026-013k added the 4th).
+        assert set(selection) == {
+            "reviews",
+            "review_packets",
+            "observation_baks",
+            "notification_archives",
+        }
         # 5 per surface, nothing more (decoys excluded).
         assert len(selection["reviews"]) == 5
         assert len(selection["review_packets"]) == 5
         assert len(selection["observation_baks"]) == 5
+        assert len(selection["notification_archives"]) == 5
 
         # No non-bak memory file is ever a candidate.
         for p in selection["observation_baks"]:
             assert p.name.startswith("observations.jsonl.bak.")
+        # Only the notifications_ family in collaboration/archive/ is a candidate.
+        for p in selection["notification_archives"]:
+            assert p.name.startswith("notifications_") and p.name.endswith(".md")
         cand_names = _names(all_candidates)
         assert "observations.jsonl" not in cand_names
         assert "MEMORY.md" not in cand_names
+        # collaboration/archive/ decoys must never be candidates.
+        assert "review_queue_2026-06-11.md" not in cand_names
+        assert "manager_feedback.md" not in cand_names
+        assert "recovered_work_plan.md" not in cand_names
+        assert "ancient.md" not in cand_names
 
         # No candidate lives outside the three target roots.
         target_roots = [workspace / ".agent" / s.rel_root for s in SURFACES]
@@ -206,6 +239,56 @@ class TestRuntimeRetentionSelection:
         # Guard against the per-nested-file interpretation: NEWDIR (old inner file)
         # must NOT be the one pruned.
         assert "WT-2026-NEWDIR" not in pruned_names
+
+    def test_notification_archives_are_collected_as_gitignored_local_surface(
+        self, workspace: Path
+    ) -> None:
+        """WOT-2026-013k: notifications_<ts>.md is the 4th selectable surface.
+
+        Regression: without the surface, notification_archives would be absent
+        from the selection (or empty), and this test FAILS.
+        """
+        selection = select_all(
+            workspace,
+            {
+                "keep_reviews": 99,
+                "keep_packets": 99,
+                "keep_observation_baks": 99,
+                "keep_notification_archives": 0,
+            },
+        )
+        assert "notification_archives" in selection
+        archives = selection["notification_archives"]
+        assert len(archives) == 5
+        for p in archives:
+            assert p.name.startswith("notifications_") and p.name.endswith(".md")
+            assert p.parent.name == "archive"
+
+    def test_keep_count_prunes_only_old_notification_archives(
+        self, workspace: Path
+    ) -> None:
+        """keep=N retains the N newest notifications_*.md and prunes only the rest,
+        deterministically; no non-notification file is ever returned."""
+        kept2 = select_candidates(workspace, _surface("notification_archives"), keep=2)
+        # 5 archives, keep 2 -> 3 oldest pruned.
+        assert len(kept2) == 3
+        assert _names(kept2) == {
+            "notifications_20260100_120000.md",
+            "notifications_20260101_120000.md",
+            "notifications_20260102_120000.md",
+        }
+        # keep >= count -> nothing pruned.
+        assert (
+            select_candidates(workspace, _surface("notification_archives"), keep=5)
+            == []
+        )
+        assert (
+            select_candidates(workspace, _surface("notification_archives"), keep=99)
+            == []
+        )
+        # Determinism.
+        again = select_candidates(workspace, _surface("notification_archives"), keep=2)
+        assert [p.name for p in kept2] == [p.name for p in again]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -302,7 +385,6 @@ class TestRuntimeRetentionSafety:
         forbidden_roots = [
             workspace / ".agent" / "runtime" / "events" / "archive",
             workspace / ".agent" / "audits" / "system_health",
-            workspace / ".agent" / "collaboration" / "archive",
             workspace / ".agent" / "collaboration" / "_archive",
         ]
         for cand in all_candidates:
@@ -313,15 +395,51 @@ class TestRuntimeRetentionSafety:
                 )
             assert cand.resolve() not in {r.resolve() for r in forbidden_roots}
 
-        # And an apply with max aggression must leave forbidden surfaces intact.
+        # And an apply with max aggression must leave fully-forbidden surfaces
+        # intact AND must never touch the non-notification archive decoys.
         forbidden_before = _forbidden_snapshot(workspace)
+        decoys_before = _archive_decoys_snapshot(workspace)
         prune(selection, apply=True)
         assert _forbidden_snapshot(workspace) == forbidden_before
+        assert _archive_decoys_snapshot(workspace) == decoys_before
 
     def test_keep_negative_is_rejected(self, workspace: Path) -> None:
         """A negative keep-count is a programming error, not a silent delete-all."""
         with pytest.raises(ValueError):
             select_candidates(workspace, _surface("reviews"), keep=-1)
+
+    def test_non_notification_collaboration_archive_files_are_never_selected(
+        self, workspace: Path
+    ) -> None:
+        """WOT-2026-013k: only the notifications_<ts>.md family in
+        collaboration/archive/ is prunable. review_queue_*.md, manager_feedback,
+        recovered_*, ancient.md and any other archive file are NEVER candidates,
+        even at maximum aggression (keep=0).
+
+        Regression: if the surface filter widened to all archive files (or to a
+        weaker pattern), these decoys would surface and this test FAILS.
+        """
+        archives = select_candidates(
+            workspace, _surface("notification_archives"), keep=0
+        )
+        names = {p.name for p in archives}
+        for decoy in (
+            "review_queue_2026-06-11.md",
+            "manager_feedback.md",
+            "recovered_work_plan.md",
+            "ancient.md",
+        ):
+            assert decoy not in names, f"{decoy} must never be selected"
+        # Every selected entry IS a notifications_ family file.
+        for p in archives:
+            assert p.name.startswith("notifications_") and p.name.endswith(".md")
+        # Apply at max aggression must leave the decoys on disk.
+        decoys_before = _archive_decoys_snapshot(workspace)
+        prune(
+            {"notification_archives": archives},
+            apply=True,
+        )
+        assert _archive_decoys_snapshot(workspace) == decoys_before
 
 
 # --- helpers ---------------------------------------------------------------
@@ -347,12 +465,16 @@ def _surface_snapshot(workspace: Path) -> dict[str, list[str]]:
 
 
 def _forbidden_snapshot(workspace: Path) -> dict[str, list[str]]:
-    """Sorted relative paths of everything under each forbidden root."""
+    """Sorted relative paths under each FULLY-forbidden root.
+
+    WOT-2026-013k: collaboration/archive/ is intentionally NOT here, because its
+    notifications_<ts>.md family is now a prunable surface. Its non-notification
+    decoys are asserted intact separately (see _archive_decoys_snapshot).
+    """
     snap: dict[str, list[str]] = {}
     for rel in (
         "runtime/events/archive",
         "audits/system_health",
-        "collaboration/archive",
         "collaboration/_archive",
     ):
         root = workspace / ".agent" / rel
@@ -363,6 +485,20 @@ def _forbidden_snapshot(workspace: Path) -> dict[str, list[str]]:
         )
         snap[rel] = files
     return snap
+
+
+def _archive_decoys_snapshot(workspace: Path) -> list[str]:
+    """Sorted names of the NON-notification files in collaboration/archive/ that
+    must always survive (never selected by the notifications_ surface)."""
+    root = workspace / ".agent" / "collaboration" / "archive"
+    if not root.is_dir():
+        return []
+    return sorted(
+        p.name
+        for p in root.iterdir()
+        if p.is_file()
+        and not (p.name.startswith("notifications_") and p.name.endswith(".md"))
+    )
 
 
 def test_cli_subprocess_dry_run_is_hermetic(workspace: Path) -> None:
