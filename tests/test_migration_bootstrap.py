@@ -724,7 +724,7 @@ class TestOrchestratorRename008h:
         )
 
 
-class TestWOT2026013oAppliesToCorruption:
+class TestWOT2026013sAppliesToCorruption:
     """WOT-2026-013s: repair applies_to that holds a domain value + domain mapping.
 
     Barrera de regresion: antes del fix, una entrada con domain canonico valido
