@@ -33,7 +33,7 @@ REQUIRED_FIELDS = {
     "quality_gate",
 }
 
-VALID_ROLES = {"builder", "manager", "shared", "user"}
+VALID_ROLES = {"builder", "manager", "shared", "user", "auditor"}
 VALID_STAGES = {
     "setup",
     "plan",
@@ -204,7 +204,9 @@ def _validate_field_content(frontmatter: dict[str, object]) -> list[str]:
 
     role = frontmatter.get("role")
     if not isinstance(role, str) or role not in VALID_ROLES:
-        errors.append("El campo 'role' debe ser uno de: builder, manager, shared, user")
+        errors.append(
+            "El campo 'role' debe ser uno de: builder, manager, shared, user, auditor"
+        )
 
     stage = frontmatter.get("stage")
     if not isinstance(stage, str) or stage not in VALID_STAGES:
