@@ -360,3 +360,72 @@ class TestLineEndingPreservation:
         raw = observations_path.read_bytes()
         assert b"\r\n" not in raw, "migrator must not introduce CRLF"
         assert raw.endswith(b"\n")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Rollback (Regla 3): restore from backup + abort when post-migration validate fails
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestRollbackOnValidationFailure:
+    """Regla 3 safety path: if --strict fails AFTER writing the migrated file,
+    the migrator must restore the exact pre-migration content from the backup
+    and return a non-zero exit (abort), never leaving a half-migrated file.
+
+    Adversarial-review gap (WOT-2026-013s): this barrier had no coverage in the
+    013s test file, so an untested rollback could mask a corrupt write. We force
+    the failure by monkeypatching the post-write validation to fail, with the
+    hardened guard in play (the entry below would otherwise migrate cleanly).
+    """
+
+    def test_rollback_restores_original_and_aborts(
+        self, observations_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        original_entry = {
+            "date": "2026-06-22",
+            "type": "rule",
+            "domain": "bus/recovery",
+            "summary": "Legacy entry that would migrate cleanly absent the forced fail.",
+        }
+        _write_observations(observations_path, [original_entry])
+        before_bytes = observations_path.read_bytes()
+
+        # Force the post-migration strict validation to fail -> Regla 3 restore.
+        monkeypatch.setattr(
+            "scripts.migrate_observations._run_strict_validation",
+            lambda *a, **k: False,
+        )
+
+        rc = run_migration(observations_path, apply=True)
+        assert rc == 1, "migrator must abort (exit 1) when post-write validation fails"
+
+        # The file must be byte-identical to the pre-migration content.
+        assert observations_path.read_bytes() == before_bytes
+        restored = json.loads(
+            observations_path.read_text(encoding="utf-8").splitlines()[0]
+        )
+        # Legacy fields survive because the migrated write was rolled back.
+        assert restored.get("date") == "2026-06-22"
+        assert "timestamp" not in restored
+
+    def test_backup_is_created_and_retained_after_rollback(
+        self, observations_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        _write_observations(
+            observations_path,
+            [
+                {
+                    "date": "2026-06-22",
+                    "type": "rule",
+                    "domain": "ticket-planning",
+                    "summary": "Backup retention check.",
+                }
+            ],
+        )
+        monkeypatch.setattr(
+            "scripts.migrate_observations._run_strict_validation",
+            lambda *a, **k: False,
+        )
+        assert run_migration(observations_path, apply=True) == 1
+        backups = list(observations_path.parent.glob("observations.jsonl.bak.*"))
+        assert backups, "a .bak.<timestamp> backup must exist (reversibility)"
