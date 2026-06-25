@@ -81,6 +81,18 @@ class TestLifecycleWorkflows:
         (source / ".claude" / "rules").mkdir(parents=True)
         (source / "QUICKSTART.md").write_text("# quickstart")
 
+        # WOT-2026-013t: the single owner (scripts.upgrade_agent_system) is
+        # manifest-first and BLOCKS legacy projects without a manifest. Provide the
+        # canonical manifests so this lifecycle test exercises the COMPLETED path
+        # under the owner's real contract (same setup the owner's unit tests use).
+        (project / ".agent" / "project_manifest.toml").write_text(
+            '[project]\nid = "lifecycle"\nname = "Lifecycle"\nversion = "v8.x"\n'
+        )
+        (project / ".agent" / ".version_manifest.json").write_text(
+            '{"agent_core_version": "v8.x", "template_version": "1.0.0", '
+            '"status": "canonical", "confidence": "high"}'
+        )
+
         upgrade_mgr = UpgradeManager(str(project), str(source))
 
         # 1. Dry-run check
@@ -130,12 +142,15 @@ class TestConcurrentUpgradeSafety:
         versions = [m.detect_current_version() for m in managers]
         assert all(v == versions[0] for v in versions)
 
-        with patch("scripts.upgrade.datetime") as mock_dt:
+        # WOT-2026-013t: UpgradeManager's single owner is scripts.upgrade_agent_system;
+        # patch the owner's datetime/shutil (re-exported by scripts.upgrade) so the
+        # patch reaches the code that actually runs the copies.
+        with patch("scripts.upgrade_agent_system.datetime") as mock_dt:
             times = [real_datetime(2026, 4, 27, 12, 0, i + 1) for i in range(3)]
             mock_dt.now.side_effect = times
             with (
-                patch("scripts.upgrade.shutil.copytree"),
-                patch("scripts.upgrade.shutil.copy2"),
+                patch("scripts.upgrade_agent_system.shutil.copytree"),
+                patch("scripts.upgrade_agent_system.shutil.copy2"),
             ):
                 backups = [m.backup_current_state() for m in managers]
 
@@ -181,13 +196,21 @@ class TestCrossScriptIntegration:
         assert plan["status"] == "READY_FOR_UPGRADE"
 
         # 3. UPGRADE (execution)
+        # WOT-2026-013t: the single owner (scripts.upgrade_agent_system) is
+        # manifest-first: a LEGACY project without a manifest is BLOCKED with a
+        # "Run migration first" message, NOT auto-upgraded. The old scripts.upgrade
+        # fork upgraded legacy projects laxly; consolidating onto the owner removes
+        # that lax path. This test now asserts the owner's real, safer contract.
         with patch.object(
             up_mgr, "verify_upgrade", return_value=(True, {"version_detected": True})
         ):
             exec_result = up_mgr.run_upgrade(dry_run=False)
-        assert exec_result["status"] == "COMPLETED"
+        assert exec_result["status"] == "BLOCKED"
+        assert "migration first" in exec_result["message"].lower()
+        assert exec_result["detection_mode"] == "legacy_markers"
 
-        # 4. ROLLBACK
+        # 4. ROLLBACK is still a valid standalone operation (independent of the
+        # blocked upgrade): the rollback manager restores from a backup.
         rb_mgr = RollbackManager(str(project))
         with patch.object(
             rb_mgr,
@@ -197,7 +220,7 @@ class TestCrossScriptIntegration:
             rb_result = rb_mgr.restore_backup("ts123")
         assert rb_result["status"] == "COMPLETED"
 
-        # 5. VERIFY
+        # 5. VERIFY: the project is still legacy v9.2 (upgrade was blocked).
         verify = detector.detect_version()
         assert verify["detected"] is True
-        assert verify["version"] == "v9.2.1+"
+        assert verify["version"] == "v9.2"

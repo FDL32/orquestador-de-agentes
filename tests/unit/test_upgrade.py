@@ -731,3 +731,47 @@ class TestUpgradeMockTargetBarrier:
         total = mock_copytree.call_count + mock_copy2.call_count
         assert total == len(UpgradeManager.CRITICAL_PATHS)
         assert total > 0
+
+
+class TestUpgradeSingleOwner:
+    """WOT-2026-013t: scripts.upgrade and scripts.upgrade_agent_system must expose
+    ONE editable owner of UpgradeManager, not two divergent forks.
+
+    Regression barrier: if scripts.upgrade reintroduces its own editable
+    UpgradeManager class (a second body of upgrade logic), these tests FAIL.
+    """
+
+    def test_single_owner_no_second_editable_class(self) -> None:
+        """The public entrypoint must re-export the OWNER's class, not a fork.
+
+        Mutation barrier: reintroducing `class UpgradeManager` in scripts/upgrade.py
+        makes the two names resolve to different objects and this assertion FAILS.
+        """
+        import scripts.upgrade as public
+        import scripts.upgrade_agent_system as owner
+
+        assert public.UpgradeManager is owner.UpgradeManager
+        # The single owner lives in scripts.upgrade_agent_system.
+        assert public.UpgradeManager.__module__ == "scripts.upgrade_agent_system"
+
+    def test_public_entrypoint_reexports_owner_copy_seam(self) -> None:
+        """scripts.upgrade re-exports the owner's shutil/datetime so a test that
+        patches scripts.upgrade.<name> reaches the code that runs the copies
+        (unambiguous copy seam, WOT-2026-013t)."""
+        import scripts.upgrade as public
+        import scripts.upgrade_agent_system as owner
+
+        assert public.shutil is owner.shutil
+        assert public.datetime is owner.datetime
+        assert public.main is owner.main
+
+    def test_upgrade_module_has_no_own_upgrade_manager_definition(self) -> None:
+        """scripts/upgrade.py must NOT define its own UpgradeManager body.
+
+        It re-exports the owner's class, so the class object's source module is
+        the owner, never scripts.upgrade. A reintroduced fork would set
+        __module__ back to "scripts.upgrade" and FAIL this test.
+        """
+        import scripts.upgrade as public
+
+        assert public.UpgradeManager.__module__ != "scripts.upgrade"

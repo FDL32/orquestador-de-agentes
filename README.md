@@ -102,6 +102,10 @@ The motor lives **once** in this repo. A destination project:
 - `pyproject.toml` → portable package version.
 - `.agent/.version_manifest.json` → installed core/system version.
 - Canonical upgrade scripts: `scripts/detect_version.py`, `scripts/upgrade.py`, `scripts/rollback.py`.
+  - `scripts/upgrade.py` is the public, documented entrypoint; the single owner of
+    the `UpgradeManager` logic is `scripts/upgrade_agent_system.py`, which
+    `scripts/upgrade.py` re-exports (WOT-2026-013t). There is no second editable
+    `UpgradeManager` fork.
 
 ## Main layers
 
