@@ -75,13 +75,73 @@ DOMAIN_MIGRATION_MAP: dict[str, str] = {
     # bus-architecture (operational-state topology); test-performance -> testing.
     "collaboration": "delivery-hygiene",
     "test-performance": "testing",
+    # WOT-2026-013s: explicit, justified mapping of the MOTOR's non-enum domains
+    # (uncovered_by_MAP) to canonical ones. No enum widening: every domain below
+    # is a semantic sub-case of an existing canonical domain (verified against
+    # each entry's signal, not by topic-substring guessing). Domains whose
+    # entries all converge on one target live here; domains whose entries
+    # diverge are split per-topic in DOMAIN_MIGRATION_TOPIC_OVERRIDE below.
+    #
+    # engine: single entry (bus-recovery-rule) about recovering a bus left short
+    #   of canonical termination -> bus-architecture.
+    "engine": "bus-architecture",
+    # review-bridge: single entry (evidence-gate-fixture-contract) about the
+    #   review_bridge evidence-gate rejecting docs-only/empty reviews -> a review
+    #   quality gate concern -> review-quality.
+    "review-bridge": "review-quality",
+    # session-closeout: both entries (session-close-manual-gap,
+    #   closeout-overall-status-ignores-blocking-flag) are about session/ticket
+    #   closeout mechanics and delivery completeness -> delivery-hygiene.
+    "session-closeout": "delivery-hygiene",
+    # security: single entry (security-gate-fail-open / AP-11) about a security
+    #   gate that must fail closed -> security-gates.
+    "security": "security-gates",
+    # supervisor-behavior: both entries (handoff-blocked-not-crash,
+    #   builder-window-silent-fail) are about supervisor relaunch / operational
+    #   bus-state recovery, not the Builder's own contract -> bus-architecture.
+    "supervisor-behavior": "bus-architecture",
+    # meta: all three entries (cem-auto-report-is-hypothesis, cem-false-green,
+    #   ticket-lineage-rule) are evidence/verification-quality and ticket-review
+    #   criteria -> review-quality.
+    "meta": "review-quality",
 }
 
 # WOT-2026-013o: per-topic override when one source domain maps to >1 target.
 # "collaboration" splits: topology observations are bus-architecture, the rest
 # (backlog/closeout reconcile) are delivery-hygiene.
+#
+# WOT-2026-013s: the MOTOR's "architecture" and "audit" domains are semantically
+# heterogeneous: their entries split across bus-architecture, review-quality and
+# delivery-hygiene. A single domain->target row would be a lie, so each entry is
+# classified per-topic by reading its signal (no topic-substring guessing). The
+# launcher entry under "engine-runtime" maps to config-schema by ROOT CAUSE:
+# unsafe access to JSON config properties parsed by ConvertFrom-Json under
+# StrictMode (decision WOT-2026-013s; not enum-widened for a single entry).
 DOMAIN_MIGRATION_TOPIC_OVERRIDE: dict[str, str] = {
     "motor-destino-topology": "bus-architecture",
+    # --- WOT-2026-013s: "architecture" split ---
+    # Operational bus-state / launch-relaunch-recovery topology -> bus-architecture.
+    "bus-first-read-authority": "bus-architecture",
+    "canonical-consumer-recovery": "bus-architecture",
+    "runtime-cleanup-vs-bus-reconciliation": "bus-architecture",
+    "cem-relaunch-continuity": "bus-architecture",
+    # Review-decision/validator provenance and Manager-review lessons -> review-quality.
+    "review-decision-provenance-contract": "review-quality",
+    "validator-enforce-not-observe": "review-quality",
+    "topology-contract-stub-elevation": "review-quality",
+    "host-extends-resolver-audit-first": "review-quality",
+    # What/where gets committed & filename/closeout hygiene in the motor -> delivery-hygiene.
+    "repo-motor-portable-root": "delivery-hygiene",
+    "portable-ticket-filename-boundary": "delivery-hygiene",
+    "opencode-runtime-permission-injection": "delivery-hygiene",
+    # --- WOT-2026-013s: "audit" split ---
+    # Audit/verification protocol (collector-vs-auditor) -> review-quality.
+    "system-health-audit-protocol": "review-quality",
+    # Closure-invariant verifiability semantics of the bus -> bus-architecture.
+    "bus-absent-is-unverifiable": "bus-architecture",
+    # --- WOT-2026-013s: "engine-runtime" launcher entry ---
+    # Root cause: unsafe access to parsed-JSON config props under StrictMode.
+    "powershell-strictmode-dynamic-properties": "config-schema",
 }
 
 # Topic mapping for migrated entries (deterministic based on original domain).
@@ -157,18 +217,64 @@ def _has_valid_applies_to(entry: dict[str, Any]) -> bool:
     return isinstance(value, str) and value in ("code", "mixed", "docs", "all")
 
 
+def _has_valid_source_ticket(entry: dict[str, Any]) -> bool:
+    """Check if entry has a non-empty string source_ticket.
+
+    WOT-2026-013s: same failure class as 013o's applies_to gap. The MOTOR holds
+    entries with a valid domain+applies_to but NO source_ticket; the old guard
+    kept them intact, so --strict failed on the missing required field and the
+    migrator never repaired them. An entry only stays intact if source_ticket is
+    present and non-empty (the migrator can derive it from source otherwise).
+    """
+    value = entry.get("source_ticket")
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _has_valid_impact(entry: dict[str, Any]) -> bool:
+    """Check if entry's impact field is absent or a valid enum value.
+
+    WOT-2026-013s: impact is optional, but if present --strict requires it to be
+    low/medium/high. Some MOTOR entries hold a free-text sentence in impact
+    (e.g. 'prevents false closes...'), which is a misplaced value, not a verdict.
+    Such entries must NOT be kept intact: they fall to migration where
+    _normalize_impact coerces the malformed value to the deterministic default.
+    """
+    value = entry.get("impact")
+    return value is None or (
+        isinstance(value, str) and value in ("low", "medium", "high")
+    )
+
+
+def _has_valid_anti_pattern_id(entry: dict[str, Any]) -> bool:
+    """Check if entry's anti_pattern_id is absent or matches the AP-NN format.
+
+    WOT-2026-013s: anti_pattern_id is optional, but if present --strict requires
+    the AP-NN shape. Entries with a non-canonical id (e.g. 'AP-D01') must fall to
+    migration, where _migrate_entry normalizes or drops it.
+    """
+    value = entry.get("anti_pattern_id")
+    return value is None or (
+        isinstance(value, str) and bool(re.match(r"^AP-\d{2}$", value))
+    )
+
+
 def _is_canonical_and_valid(entry: dict[str, Any]) -> bool:
     """Check if entry should be kept intact (not migrated).
 
     An entry is kept intact if:
     1. It passes non-strict validation (Rule 2)
     2. It has a valid domain in VALID_DOMAINS (decision arquitectonica)
-    3. It is not repo_state
+    3. Its applies_to is canonical (WOT-2026-013o)
+    4. Its source_ticket / impact / anti_pattern_id satisfy --strict (WOT-2026-013s)
+    5. It is not repo_state
     """
     return (
         _passes_non_strict_validation(entry)
         and _has_valid_domain(entry)
         and _has_valid_applies_to(entry)
+        and _has_valid_source_ticket(entry)
+        and _has_valid_impact(entry)
+        and _has_valid_anti_pattern_id(entry)
         and not _is_repo_state(entry)
     )
 
@@ -397,6 +503,12 @@ def _migrate_entry(entry: dict[str, Any], index: int) -> dict[str, Any] | None: 
         migrated["applies_to"] = DEFAULT_APPLIES_TO
     else:
         migrated["applies_to"] = _normalize_applies_to(migrated["applies_to"])
+
+    # WOT-2026-013s: impact is optional. Only normalize when present and invalid
+    # (free-text sentence misplaced into the enum field); never inject it where
+    # it was absent, to keep the migration schema-only for entries without it.
+    if "impact" in migrated and migrated["impact"] is not None:
+        migrated["impact"] = _normalize_impact(migrated["impact"])
 
     # Rule 7: source default
     if "source" not in migrated or not migrated["source"]:
@@ -628,7 +740,11 @@ def run_migration(  # noqa: C901
     # Write migrated entries
     new_lines = [json.dumps(e, ensure_ascii=False) for e in migrated_entries]
     output_text = "\n".join(new_lines) + "\n"
-    observations_path.write_text(output_text, encoding="utf-8")
+    # WOT-2026-013s: force LF newlines. The canonical observations.jsonl is
+    # LF-only; on Windows write_text(newline=None) would rewrite every line to
+    # CRLF, producing a noise-only diff (150 changed lines) and a CRLF working
+    # copy that .gitattributes then re-normalizes. newline="\n" keeps it LF.
+    observations_path.write_text(output_text, encoding="utf-8", newline="\n")
 
     # Validate after migration using strict mode
     validate_result = _run_strict_validation(observations_path)
