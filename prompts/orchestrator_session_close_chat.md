@@ -41,6 +41,18 @@ skills canonicas como fuente de verdad:
 - `manager-session-closeout` para learnings y puente al siguiente ciclo
 - `version-changelog` para version y CHANGELOG si aplica
 
+### Paso previo RECOMENDADO (no obligatorio): auditoria adversarial
+
+Antes del cierre operativo, si la sesion toco codigo del motor o del destino,
+considera correr la pasada adversarial de cierre `/close-full-audit`
+(`skills/session-close-full-audit/SKILL.md`, prompt
+`prompts/orchestrator_session_close_full_audit.md`). Audita los diffs de la
+sesion (false-green, root equivocado, fixture drift, scope creep, barreras
+mutation-verified) ANTES de cristalizar aprendizajes en memoria. Es read-only y
+recomendado, no un gate bloqueante: para sesiones triviales o solo-docs puedes
+omitirlo. Si la corres y destapa un false-green o contradiccion, DETENTE y
+reconcilia antes de continuar con el cierre.
+
 ### Comando canonico del cierre operativo
 
 El pipeline completo de cierre vive en `scripts/session_closeout.py` y se
