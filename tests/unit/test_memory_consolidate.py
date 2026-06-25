@@ -443,3 +443,57 @@ def test_generate_memory_profile_md_with_entries() -> None:
     assert "## Recent Signals" in content
     # Most recent entry should appear
     assert "Architecture decision recorded" in content or "session-close" in content
+
+
+def test_signal_truncation_marks_cut_in_projections() -> None:
+    """Long signals truncated in L1/L2/L3 projections carry the '...' marker.
+
+    The full signal always lives untruncated in observations.jsonl; the
+    generated projections (MEMORY.md, memory_rules.md header, memory_profile.md)
+    only bound display width. Before the fix these used bare slices ([:200],
+    [:80], [:150]) with NO marker, so a reader could not tell a line was cut.
+    Barrier: a >cap signal must produce the truncation marker in each projection.
+    """
+    from scripts.memory_consolidate import (
+        MAX_SIGNAL_MEMORY_MD,
+        MAX_SIGNAL_PROFILE,
+        SIGNAL_TRUNCATION_MARKER,
+        generate_memory_profile_md,
+        generate_memory_rules_md,
+        regen_memory_md,
+    )
+
+    now = datetime.now(timezone.utc)
+    # 250-char rule-like signal (contains "must be" so it promotes to an L2 rule;
+    # carries an explicit domain so _extract_rules_from_entries keeps it).
+    long_signal = (
+        "Rule R-999: the closeout report path must be announced to stderr on "
+        "prepush failure so the operator can locate the failure detail without "
+        "blind reruns, and this sentence is intentionally padded well beyond two "
+        "hundred and fifty characters to force truncation in every projection."
+    )
+    assert len(long_signal) > MAX_SIGNAL_MEMORY_MD
+    entry = {
+        "signal": long_signal,
+        "source": "builder",
+        "topic": "testing",
+        "domain": "testing",
+        "timestamp": now.isoformat(),
+    }
+
+    # L1 projection (MEMORY.md): truncated to 200 -> marker present.
+    _stats = {"kept": 1, "deduped": 0, "dropped": 0, "archived": 0}
+    memory_md = regen_memory_md([entry], _stats)
+    assert SIGNAL_TRUNCATION_MARKER in memory_md
+    assert long_signal not in memory_md  # the full untruncated signal is NOT inlined
+
+    # L3 projection (memory_profile.md): truncated to 150 -> marker present.
+    profile_md = generate_memory_profile_md([entry])
+    assert SIGNAL_TRUNCATION_MARKER in profile_md
+    assert long_signal[:MAX_SIGNAL_PROFILE].rstrip() in profile_md
+
+    # L2 (memory_rules.md): the #### header is truncated (marker present) but the
+    # FULL signal body is preserved right below it (no data loss).
+    rules_md = generate_memory_rules_md([entry])
+    assert SIGNAL_TRUNCATION_MARKER in rules_md
+    assert long_signal in rules_md  # full signal preserved in the rule body

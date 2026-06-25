@@ -47,6 +47,29 @@ MAX_L2_RULES = 30
 MAX_L3_DOMAINS = 8
 MAX_L3_OBSERVATIONS_PROFILE = 10
 
+# Signal display caps for generated projections (the full signal always
+# lives untruncated in observations.jsonl / memory_rules.md body; these only
+# bound the human-facing projection lines). A trailing marker signals the cut.
+MAX_SIGNAL_MEMORY_MD = 200
+MAX_SIGNAL_RULES_HEADER = 80
+MAX_SIGNAL_PROFILE = 150
+SIGNAL_TRUNCATION_MARKER = "..."
+
+
+def _truncate_signal(text: str, cap: int) -> str:
+    """Cap a signal for a projection line, marking when it was truncated.
+
+    Before: ``text`` may exceed ``cap``; ``cap`` > 0.
+    During: pure string op, no I/O.
+    After: returns ``text`` unchanged if within ``cap``; otherwise the first
+    ``cap`` chars (right-stripped) plus ``SIGNAL_TRUNCATION_MARKER`` so a
+    reader knows the projection is truncated and the full signal lives in
+    observations.jsonl.
+    """
+    if len(text) <= cap:
+        return text
+    return text[:cap].rstrip() + SIGNAL_TRUNCATION_MARKER
+
 
 def is_noise(signal: str) -> bool:
     """Check if signal should be dropped as noise."""
@@ -183,7 +206,7 @@ def regen_memory_md(entries: list[dict[str, Any]], stats: dict[str, int]) -> str
         )[:10]
         lines.append(f"## {topic}")
         for entry in topic_entries:
-            signal = entry.get("signal", "")[:200]
+            signal = _truncate_signal(entry.get("signal", ""), MAX_SIGNAL_MEMORY_MD)
             lines.append(f"- {signal}")
         lines.append("")
 
@@ -390,7 +413,8 @@ def generate_memory_rules_md(entries: list[dict[str, Any]]) -> str:
             lines.append(f"### Domain: {domain}")
             lines.append("")
             for rule in domain_rules:
-                lines.append(f"#### {rule['rule_id']}: {rule['signal'][:80].rstrip()}")
+                header = _truncate_signal(rule["signal"], MAX_SIGNAL_RULES_HEADER)
+                lines.append(f"#### {rule['rule_id']}: {header}")
                 lines.append("")
                 lines.append(rule["signal"])
                 lines.append("")
@@ -468,7 +492,7 @@ def generate_memory_profile_md(entries: list[dict[str, Any]]) -> str:
     lines.append("## Recent Signals")
     lines.append("")
     for entry in recent_signals:
-        signal = (entry.get("signal") or "")[:150]
+        signal = _truncate_signal(entry.get("signal") or "", MAX_SIGNAL_PROFILE)
         topic = entry.get("topic", "general")
         source = entry.get("source", "unknown")
         lines.append(f"- [{topic}] {signal} ({source})")
