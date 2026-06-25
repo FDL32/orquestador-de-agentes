@@ -261,8 +261,9 @@ def prune(selection: dict[str, list[Path]], *, apply: bool) -> dict[str, list[st
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Opt-in local retention for gitignored runtime artifacts "
-            "(reviews, review_packets, observations.jsonl.bak.*)."
+            "Opt-in local retention for gitignored local artifacts "
+            "(reviews, review_packets, observations.jsonl.bak.*, "
+            "collaboration/archive/notifications_*.md)."
         )
     )
     parser.add_argument(
