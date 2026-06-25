@@ -43,8 +43,8 @@ class TestUpgradeBackup:
 
         # Mock shutil to avoid actual file copies
         with (
-            patch("scripts.upgrade.shutil.copytree") as mock_copytree,
-            patch("scripts.upgrade.shutil.copy2") as mock_copy2,
+            patch("scripts.upgrade_agent_system.shutil.copytree") as mock_copytree,
+            patch("scripts.upgrade_agent_system.shutil.copy2") as mock_copy2,
         ):
             backup_path = manager.backup_current_state()
 
@@ -80,8 +80,8 @@ class TestUpgradeBackup:
         manager = UpgradeManager(str(project), str(source))
 
         with (
-            patch("scripts.upgrade.shutil.copytree") as mock_copytree,
-            patch("scripts.upgrade.shutil.copy2") as mock_copy2,
+            patch("scripts.upgrade_agent_system.shutil.copytree") as mock_copytree,
+            patch("scripts.upgrade_agent_system.shutil.copy2") as mock_copy2,
         ):
             manager.backup_current_state()
 
@@ -109,8 +109,8 @@ class TestUpgradeBackup:
             dt2 = real_datetime(2026, 4, 27, 12, 0, 2)
             mock_dt.now.side_effect = [dt1, dt2]
             with (
-                patch("scripts.upgrade.shutil.copytree"),
-                patch("scripts.upgrade.shutil.copy2"),
+                patch("scripts.upgrade_agent_system.shutil.copytree"),
+                patch("scripts.upgrade_agent_system.shutil.copy2"),
             ):
                 backup1 = manager.backup_current_state()
                 backup2 = manager.backup_current_state()
@@ -201,8 +201,8 @@ class TestUpgradeFailureHandling:
                 "backup_current_state",
                 return_value=project / ".agent" / "backups" / "test_backup",
             ),
-            patch("scripts.upgrade.shutil.copytree"),
-            patch("scripts.upgrade.shutil.copy2"),
+            patch("scripts.upgrade_agent_system.shutil.copytree"),
+            patch("scripts.upgrade_agent_system.shutil.copy2"),
         ):
             result = manager.run_upgrade(dry_run=False)
 
@@ -644,3 +644,90 @@ agent_dir = ".agent"
             result = manager.run_upgrade(dry_run=False)
 
         assert result["status"] == "COMPLETED"
+
+
+class TestUpgradeMockTargetBarrier:
+    """WOT-2026-013r barrier against FP-012 mock-drift (false green).
+
+    Root cause refined in Fase 0: scripts.upgrade.shutil IS
+    scripts.upgrade_agent_system.shutil (both do `import shutil`, so they share
+    the one cached shutil module object). The original patches targeted
+    scripts.upgrade.shutil.* -- a module the SUT does NOT import. They still
+    intercepted only by accident of the shared shutil object. The honest fix is
+    to patch the module the SUT actually imports; these barriers prove the
+    patch target protects the real SUT and that the copies are genuinely real.
+    """
+
+    def _legacy_project_with_critical_paths(self, tmp_path):
+        project = tmp_path / "project"
+        source = tmp_path / "source"
+        project.mkdir()
+        source.mkdir()
+        for cp in UpgradeManager.CRITICAL_PATHS:
+            full = project / cp
+            if cp.endswith("/"):
+                full.mkdir(parents=True, exist_ok=True)
+                (full / "file.txt").write_text(f"content in {cp}")
+            else:
+                full.parent.mkdir(parents=True, exist_ok=True)
+                full.write_text(f"content in {cp}")
+        (project / ".agent" / "agent_controller.py").write_text("#")
+        return UpgradeManager(str(project), str(source))
+
+    def test_patch_target_is_the_module_the_sut_imports(self):
+        """Binding barrier: the patched module must be UpgradeManager's own module.
+
+        FAIL-without-fix: if the patches point at a module the SUT does not import
+        (e.g. the old scripts.upgrade target, or any third module), this assertion
+        — and the real-copy barrier below — no longer prove the SUT is protected.
+        scripts.upgrade_agent_system is the module that defines UpgradeManager.
+        """
+        import importlib
+
+        sut_module_name = UpgradeManager.__module__
+        assert sut_module_name == "scripts.upgrade_agent_system", (
+            f"SUT module drifted: {sut_module_name}"
+        )
+        sut_module = importlib.import_module(sut_module_name)
+        # The SUT calls shutil.copytree/copy2 via its own module-level `shutil`.
+        assert hasattr(sut_module, "shutil"), "SUT must bind shutil at module level"
+        assert hasattr(sut_module.shutil, "copytree")
+        assert hasattr(sut_module.shutil, "copy2")
+
+    def test_backup_propagates_real_copytree_failure(self, tmp_path):
+        """Real-copy barrier: breaking copytree on the SUT's shutil must surface.
+
+        FAIL-without-fix demonstration: this monkeypatches copytree to raise on
+        scripts.upgrade_agent_system.shutil (the module the SUT imports). If the
+        backup flow truly performs the destructive copy through that module, the
+        error propagates. A test that patched a module the SUT does not use would
+        NOT see this raise — that is exactly the false green FP-012 warns about.
+        """
+        manager = self._legacy_project_with_critical_paths(tmp_path)
+
+        sentinel = RuntimeError("real copytree invoked on SUT shutil")
+        with (
+            patch("scripts.upgrade_agent_system.shutil.copytree", side_effect=sentinel),
+            pytest.raises(RuntimeError, match="real copytree invoked"),
+        ):
+            manager.backup_current_state()
+
+    def test_backup_invokes_real_copies_count(self, tmp_path):
+        """The intercepted calls must equal CRITICAL_PATHS, proving real coverage.
+
+        This is the strong assertion: copytree + copy2 call counts on the SUT's
+        own shutil must total len(CRITICAL_PATHS). With the wrong (non-imported)
+        target this would silently differ once the shared-shutil accident no
+        longer held (e.g. a future `from shutil import copytree`).
+        """
+        manager = self._legacy_project_with_critical_paths(tmp_path)
+
+        with (
+            patch("scripts.upgrade_agent_system.shutil.copytree") as mock_copytree,
+            patch("scripts.upgrade_agent_system.shutil.copy2") as mock_copy2,
+        ):
+            manager.backup_current_state()
+
+        total = mock_copytree.call_count + mock_copy2.call_count
+        assert total == len(UpgradeManager.CRITICAL_PATHS)
+        assert total > 0
