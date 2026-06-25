@@ -18,9 +18,10 @@ NO reimplementa la logica de las skills que orquesta. Es un wrapper contextual:
   `agent_controller.py --session-close`);
 - la promocion de memoria la gobierna `prompts/memory_upload.md`.
 
-Hereda `prompts/audit_agent_output.md` (CEM v0, evidencia antes que relato,
-doble pasada adversarial). MODO read-only por defecto: audita y propone el cambio
-minimo; no parchea salvo instruccion explicita.
+El contrato del auditor lo gobierna integramente `prompts/audit_agent_output.md`
+(CEM v0, evidencia antes que relato, doble pasada, frontera del auditor); este
+prompt NO lo reproduce, solo lo aplica al cierre de sesion. MODO read-only por
+defecto: audita y propone el cambio minimo; no parchea salvo instruccion explicita.
 
 Distincion con skills hermanas:
 - `system-health-audit` = salud de las 3 capas (es el Bloque 1 de esta pasada).
@@ -34,13 +35,11 @@ Distincion con skills hermanas:
 ## Prompt
 
 ```text
-Auditas el cierre de esta sesion como AUDITOR adversarial, no como narrador. Contrato CEM v0 vigente durante todo el cierre:
+Auditas el cierre de esta sesion como AUDITOR adversarial, no como narrador.
 
-- Evidencia antes que relato. Ningun auto-reporte de agente (tuyo o de un subagente) cuenta como evidencia. Solo cuentan: diff, exit code, salida real de test, evento de bus, commit/SHA, bytes en disco, estado git.
-- Etiqueta CADA hallazgo con VERIFICADO (cito el artefacto: diff/codigo/test/bus/git/bytes), INFERIDO (deduccion razonable sin artefacto directo) o NO VERIFICADO. Si no puedes etiquetar, no lo afirmes.
-- Responde con conclusiones + evidencia citada, no con volcados de archivos. No pegues archivos enteros; cita rutas, lineas, SHAs y exit codes.
+CONTRATO: rige `prompts/audit_agent_output.md` (CEM v0) en su totalidad; no se reproduce aqui. En una frase operativa: evidencia antes que relato (ningun auto-reporte cuenta; solo diff/exit-code/test/bus/SHA/bytes/git), etiqueta cada hallazgo VERIFICADO/INFERIDO/NO VERIFICADO, y responde con conclusiones + evidencia citada, no con volcados de archivos. Para los detalles del contrato (frontera del auditor, verificacion topologica, checklist esceptico, clasificacion CEM) lee el prompt fuente; no los repitas en tu reporte.
 
-REGLA DE PARADA (obligatoria): si cualquier gate sale en rojo, o si un hallazgo de auditoria contradice una afirmacion previa del Builder/Manager, DETENTE. No avances a la promocion de memoria. Surfacea la contradiccion explicitamente (claim original vs evidencia real) en vez de taparla. La memoria solo se promociona sobre una sesion verde y reconciliada.
+REGLA DE PARADA (especifica de esta pasada de cierre): si cualquier gate sale en rojo, o si un hallazgo contradice una afirmacion previa del Builder/Manager, DETENTE. No avances a la promocion de memoria. Surfacea la contradiccion explicitamente (claim original vs evidencia real) en vez de taparla. La memoria solo se promociona sobre una sesion verde y reconciliada.
 
 Ejecuta en este orden y reporta por bloque:
 
@@ -52,10 +51,10 @@ Ejecuta en este orden y reporta por bloque:
 == BLOQUE 2: PASADA ADVERSARIAL SOBRE EL CODIGO GENERADO ESTA SESION (el paso que faltaba) ==
 Esta es la barrera critica que el flujo anterior omitia: la salida del Builder nunca se validaba con escepticismo antes de cristalizar aprendizajes.
 
-4. `prompts/audit_agent_output.md` como pasada adversarial canonica (CEM v0) SOBRE LOS DIFFS DE ESTA SESION, no sobre codigo generico. MODO: solo lectura e inspeccion, NO implementacion (este prompt AUDITA y propone el cambio minimo; no parchea). Procedimiento:
-   - Enumera los commits/archivos productivos de la sesion (`git log`, `git diff --stat` con cwd=repo_motor). Cita SHAs y rutas reales.
-   - Para cada claim del Builder/Manager (test verde, gate pasado, bug arreglado), verifica contra el artefacto real y etiqueta VERIFICADO/INFERIDO/NO VERIFICADO. Caza false-green, root equivocado, fixture drift, scope creep, mock drift, floor assertion.
-   - Barrera mutation-verified: para cada guard/test nuevo que afirme bloquear un fallo, demuestra que FALLA sin el fix (revierte mentalmente o senala el caso que lo dispara). Un guard que no se demuestra que bloquea no cuenta como barrera.
+4. Aplica `prompts/audit_agent_output.md` (su checklist esceptico y clasificacion CEM completos) SOBRE LOS DIFFS DE ESTA SESION, no sobre codigo generico. MODO: solo lectura e inspeccion, NO implementacion. Encuadre especifico para el cierre (el resto lo da el prompt fuente):
+   - Encuadre: los "diffs" son los commits productivos de ESTA sesion. Enumeralos con `git log` / `git diff --stat` (cwd=repo_motor). Cita SHAs y rutas reales.
+   - Mira especialmente: false-green, root equivocado, fixture drift, scope creep, mock drift, floor assertion (todos definidos en el prompt fuente).
+   - Barrera mutation-verified: para cada guard/test nuevo que afirme bloquear un fallo, demuestra que FALLA sin el fix. Un guard que no se demuestra que bloquea no cuenta como barrera.
 5. Herramientas de EVIDENCIA de esta pasada (no son las 3 auditorias estructurales). El auditor PROPONE hallazgos; estas skills son consumidoras que IMPLEMENTAN solo si procede y con tu OK:
    - `skills/builder-self-audit/SKILL.md`: las 3 barreras secuenciales del Builder (sintaxis por tipo via py_compile/yaml.safe_load/json.load, completitud multi-archivo, frescura documental PROJECT.md/QUICKSTART.md/TURN.md/STATE.md) deben tener evidencia de salida real, no exit code de un pipe.
    - `skills/builder-run-quality-gates/SKILL.md`: confirma que los gates corrieron via `scripts/run_gates_dispatch.py` (dispatch por deliverable_type), NO invocando ruff/pytest directo (eso evade el audit trail).
