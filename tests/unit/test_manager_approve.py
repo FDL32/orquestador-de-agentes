@@ -4,6 +4,7 @@ import io
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -467,30 +468,40 @@ class TestManagerApprove:
 # WOT-2026-013u: CLI-contract barrier exercising the REAL --ticket parser via
 # subprocess dispatch (not _handle_manager_approve with a hardcoded string), so
 # it covers the parser branch the ticket fixes.
+#
+# Hermetic: builds its OWN throwaway project-root with a no-ticket work_plan, so
+# the barrier does NOT depend on the live dogfooding workspace. The robust signal
+# is "No ticket_id provided": present only when the parser fails to capture the
+# ticket (the pre-fix symptom, emitted before any work_plan lookup); absent once
+# the ticket is parsed (the flow then emits a different, downstream error).
 _MA_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_MA_PARSED = "does not match active ticket"
 _MA_NOT_PARSED = "No ticket_id provided"
 _MA_FAKE_TICKET = "WOT-TEST-013U-MA"
 
 
 def _ma_run_controller(*args: str) -> subprocess.CompletedProcess:
     controller = _MA_PROJECT_ROOT / ".agent" / "agent_controller.py"
-    workspace = _MA_PROJECT_ROOT.parent / "orquestador_de_agentes_workspace"
-    return subprocess.run(
-        [
-            sys.executable,
-            str(controller),
-            *args,
-            "--json",
-            "--force",
-            "--project-root",
-            str(workspace),
-        ],
-        cwd=_MA_PROJECT_ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    with tempfile.TemporaryDirectory() as tmp:
+        collab = Path(tmp) / ".agent" / "collaboration"
+        collab.mkdir(parents=True, exist_ok=True)
+        (collab / "work_plan.md").write_text(
+            "# Plan de Trabajo\n\nNo active ticket here.\n", encoding="utf-8"
+        )
+        return subprocess.run(
+            [
+                sys.executable,
+                str(controller),
+                *args,
+                "--json",
+                "--force",
+                "--project-root",
+                tmp,
+            ],
+            cwd=_MA_PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
 
 
 class TestManagerApproveCLIContract:
@@ -501,17 +512,21 @@ class TestManagerApproveCLIContract:
 
         Mutation barrier: reintroducing the inverted condition
         `idx + 1 >= len(sys.argv)` leaves ticket_id None -> "No ticket_id provided"
-        and this test FAILS. The fake ticket never matches the active ticket, so
-        the action fails cleanly without mutating the bus.
+        reappears and this test FAILS. Hermetic project-root, no live-state dep.
         """
         result = _ma_run_controller("--manager-approve", "--ticket", _MA_FAKE_TICKET)
         combined = result.stdout + result.stderr
-        assert _MA_PARSED in combined, combined
         assert _MA_NOT_PARSED not in combined, combined
 
     def test_manager_approve_positional_ticket_still_supported(self) -> None:
         """Backward-compat: --manager-approve <id> (positional) keeps working."""
         result = _ma_run_controller("--manager-approve", _MA_FAKE_TICKET)
         combined = result.stdout + result.stderr
-        assert _MA_PARSED in combined, combined
         assert _MA_NOT_PARSED not in combined, combined
+
+    def test_manager_approve_without_ticket_reports_missing(self) -> None:
+        """Negative control: with no ticket, "No ticket_id provided" appears,
+        proving the marker is real and the positive tests are not vacuous."""
+        result = _ma_run_controller("--manager-approve")
+        combined = result.stdout + result.stderr
+        assert _MA_NOT_PARSED in combined, combined

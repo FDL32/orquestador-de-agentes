@@ -17,6 +17,7 @@ functions are implemented.
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -75,61 +76,89 @@ def test_agent_controller_help_lists_critical_flags() -> None:
 
 # WOT-2026-013u: shared helper that exercises the REAL CLI dispatch (subprocess),
 # not the internal handlers, so the barriers cover the actual --ticket parser.
-def _run_controller(*args: str) -> subprocess.CompletedProcess:
-    controller = PROJECT_ROOT / ".agent" / "agent_controller.py"
-    workspace = PROJECT_ROOT.parent / "orquestador_de_agentes_workspace"
-    return subprocess.run(
-        [
-            sys.executable,
-            str(controller),
-            *args,
-            "--json",
-            "--force",
-            "--project-root",
-            str(workspace),
-        ],
-        cwd=PROJECT_ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-
-# A ticket id that cannot match the active ticket: the parser captures it, then
-# the action fails cleanly with "does not match active ticket" WITHOUT touching
-# the bus. "No ticket_id provided" is the pre-fix (inverted-condition) symptom.
-_PARSED_MARKER = "does not match active ticket"
+#
+# Hermetic: the helper builds its OWN throwaway project-root with a placeholder
+# work_plan (no active ticket), so the barrier does NOT depend on the live
+# dogfooding workspace state. The marker is "No ticket_id provided": it appears
+# ONLY when the parser fails to capture the ticket (the pre-fix inverted-condition
+# symptom, emitted BEFORE any work_plan lookup). When the parser captures the
+# ticket, the flow proceeds to the ticket lookup and emits a DIFFERENT error
+# (e.g. "No active ticket found in work_plan.md"), so the absence of
+# "No ticket_id provided" is a robust, state-independent signal that the ticket
+# was parsed. asserting on downstream errors like "does not match active ticket"
+# is FRAGILE because it depends on what ticket the work_plan holds.
 _NOT_PARSED_MARKER = "No ticket_id provided"
 _FAKE_TICKET = "WOT-TEST-013U-001"
+
+
+def _run_controller_hermetic(*args: str) -> subprocess.CompletedProcess:
+    controller = PROJECT_ROOT / ".agent" / "agent_controller.py"
+    with tempfile.TemporaryDirectory() as tmp:
+        collab = Path(tmp) / ".agent" / "collaboration"
+        collab.mkdir(parents=True, exist_ok=True)
+        # Placeholder work_plan with NO active ticket -> deterministic downstream
+        # error, independent of the live workspace.
+        (collab / "work_plan.md").write_text(
+            "# Plan de Trabajo\n\nNo active ticket here.\n", encoding="utf-8"
+        )
+        return subprocess.run(
+            [
+                sys.executable,
+                str(controller),
+                *args,
+                "--json",
+                "--force",
+                "--project-root",
+                tmp,
+            ],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+
+def _assert_ticket_parsed(result: subprocess.CompletedProcess) -> None:
+    """The parser captured the ticket iff "No ticket_id provided" is absent."""
+    combined = result.stdout + result.stderr
+    assert _NOT_PARSED_MARKER not in combined, combined
+
+
+def _assert_ticket_not_parsed(result: subprocess.CompletedProcess) -> None:
+    combined = result.stdout + result.stderr
+    assert _NOT_PARSED_MARKER in combined, combined
 
 
 def test_ticket_parser_reads_control_flag_before_positional_fallback() -> None:
     """--manager-approve --ticket <id> must capture the id via the --ticket parser.
 
     Mutation barrier: reintroducing the inverted condition
-    `idx + 1 >= len(sys.argv)` makes ticket_id stay None, so the output flips to
-    "No ticket_id provided" and this test FAILS.
+    `idx + 1 >= len(sys.argv)` makes ticket_id stay None, so "No ticket_id
+    provided" reappears and this test FAILS. Hermetic: own tmp project-root.
     """
-    result = _run_controller("--manager-approve", "--ticket", _FAKE_TICKET)
-    combined = result.stdout + result.stderr
-    assert _PARSED_MARKER in combined, combined
-    assert _NOT_PARSED_MARKER not in combined, combined
+    _assert_ticket_parsed(
+        _run_controller_hermetic("--manager-approve", "--ticket", _FAKE_TICKET)
+    )
+
+
+def test_ticket_parser_omitted_reports_no_ticket() -> None:
+    """Negative control: with NO ticket at all, the parser reports it (proves the
+    marker is real and not vacuously absent)."""
+    _assert_ticket_not_parsed(_run_controller_hermetic("--manager-approve"))
 
 
 def test_reopen_terminal_ticket_accepts_ticket_flag() -> None:
     """--reopen-terminal-ticket --ticket <id> must capture the id (parser path)."""
-    result = _run_controller("--reopen-terminal-ticket", "--ticket", _FAKE_TICKET)
-    combined = result.stdout + result.stderr
-    assert _PARSED_MARKER in combined, combined
-    assert _NOT_PARSED_MARKER not in combined, combined
+    _assert_ticket_parsed(
+        _run_controller_hermetic("--reopen-terminal-ticket", "--ticket", _FAKE_TICKET)
+    )
 
 
 def test_reopen_terminal_ticket_positional_still_supported() -> None:
     """Backward-compat: the positional form must keep working (not deprecated)."""
-    result = _run_controller("--reopen-terminal-ticket", _FAKE_TICKET)
-    combined = result.stdout + result.stderr
-    assert _PARSED_MARKER in combined, combined
-    assert _NOT_PARSED_MARKER not in combined, combined
+    _assert_ticket_parsed(
+        _run_controller_hermetic("--reopen-terminal-ticket", _FAKE_TICKET)
+    )
 
 
 class TestReadFile:
