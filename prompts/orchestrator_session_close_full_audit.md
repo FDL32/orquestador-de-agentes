@@ -48,6 +48,15 @@ Ejecuta en este orden y reporta por bloque:
 2. `prompts/audit_complete_motor_destination.md`. Analisis estrategico read-only de arquitectura/portabilidad/loop Builder-Manager. NO muta el arbol; produce blueprint de tickets para DESPUES, no acciones ahora.
 3. `prompts/audit_portability_legacy_surface.md`. Inventario read-only de stubs legacy y candidatos a extraer/retirar; propone follow-ups pequenos.
 
+3.bis REGISTRO DE FOLLOW-UPS DEL MOTOR (cierra el agujero: los follow-ups que proponen 1-3 NO pueden quedarse en el chat ni en la memoria de sesion; se persisten como tickets candidatos en el backlog del WORKSPACE de desarrollo del motor para que puedan desarrollarse despues). El motor (`repo_motor`) debe permanecer agnostico/portable: NUNCA se escribe un follow-up en `repo_motor` (ver `prompts/audit_portability_legacy_surface.md`). El destino del registro es el repo_destino del motor = su workspace de dogfooding.
+   - **Gate de evidencia (mismo umbral que el Bloque 4 para memoria):** un follow-up SOLO se registra si tiene evidencia verificable (SHA/diff/exit-code/cita de prompt/evento de bus). Sin evidencia -> se descarta o se degrada a observacion; no se infla el backlog con "seria bueno revisar X" especulativo.
+   - **Resolucion del workspace (portable, no hardcodear ruta):** leer `repo_motor/.agent/config/motor_destination_link.json` -> campo `destination_root`. Ese es el workspace de desarrollo del motor (su repo_destino de dogfooding). NO asumir una ruta literal.
+   - **Gate de presencia (barrera, no friccion):** verificar `Test-Path <destination_root>` (o `test -f` del `backlog.md`) ANTES de escribir.
+     - Si el workspace ESTA en el espacio de trabajo: escribir cada follow-up con evidencia en `<destination_root>/.agent/collaboration/backlog.md` -> (a) una fila en la tabla `Vista rapida` y (b) una ficha detallada. Campos minimos: `Ticket` (prefijo `WOT-`, siguiente id libre), `Estado: pending`, `delivery_authority: repo_motor`, `Origen: session-<fecha>-<slug>`, `Reactivation: -`, y el criterio binario de aceptacion + la evidencia que lo origino. Respetar el contrato de cola viva del propio `backlog.md` (estados permitidos, columna Reactivation).
+     - Si el workspace NO esta montado: DETENERSE y SOLICITAR al usuario que abra/monte el repo de desarrollo del motor (`destination_root`). NO escribir el follow-up en `repo_motor`, NI en el repo_destino de ESTA sesion, NI dejarlo solo en memoria. Emitir la ficha pegable como fallback explicito y marcar el registro como PENDIENTE.
+   - **Escribe el archivo, NO commitees:** el `backlog.md` del workspace lo commitea el humano/Manager por el canal del workspace (su contrato: "Escritura: humano o Manager"). El cierre del destino NO debe crear commits en el `.git` del workspace.
+   - Reporta: por cada follow-up, `[REGISTRADO en <ruta>:<ticket>]` o `[PENDIENTE - workspace no montado]`, con la evidencia citada.
+
 == BLOQUE 2: PASADA ADVERSARIAL SOBRE EL CODIGO GENERADO ESTA SESION (el paso que faltaba) ==
 Esta es la barrera critica que el flujo anterior omitia: la salida del Builder nunca se validaba con escepticismo antes de cristalizar aprendizajes.
 
@@ -87,6 +96,7 @@ PROPIEDAD DE ARTEFACTOS (quien escribe que, para evitar triple-write ciego):
 - `closeout_lessons.md`: puente para el siguiente manager-create-work-plan; lo posee manager-session-closeout.
 - `CHANGELOG.md` + ficheros de version: los posee version-changelog.
 - `MEMORY.md`: lo regenera memory-consolidate; no se edita a mano.
+- `backlog.md` del workspace del motor (`<destination_root>/.agent/collaboration/backlog.md`): lo escribe el Bloque 1.3.bis (follow-ups del motor con evidencia). Un follow-up-ticket NO es una entrada de memoria: registralo SOLO en el backlog, no lo dupliques en `observations.jsonl`/`UPSTREAM_LEARNINGS.md`. La memoria documenta el aprendizaje; el backlog agenda el trabajo. El cierre del destino escribe el archivo pero NO commitea el `.git` del workspace.
 
 VALIDACION FINAL: `python .agent/agent_controller.py --validate --json --project-root <repo_destino>` -> exige `0 errors / 0 warnings`. Reporta exit code real.
 

@@ -15,7 +15,7 @@ tags: [core, system]
 
 Skill para comparar el proyecto local (identificado desde `.agent/runtime/audit/AUDIT.md`) con cualquier repositorio público de GitHub y detectar funcionalidades, utilidades o patrones de alto valor que se puedan incorporar.
 
-Usa `.agent/runtime/audit/AUDIT.md` como **Fase 0 autoritativa** del contexto local, eliminando hallucinación sobre "qué ya existe". Lee el repo remoto vía GitHub MCP (`mcp__github__get_file_contents`, `mcp__github__search_code`).
+Usa `.agent/runtime/audit/AUDIT.md` como **Fase 0 autoritativa** del contexto local, eliminando hallucinación sobre "qué ya existe". Cuando exista, lee también `repo_charter.md` para filtrar oportunidades contra `Non-Goals`, `Quality Bar`, `Security Constraints` y restricciones de intent. Lee el repo remoto vía GitHub MCP (`mcp__github__get_file_contents`, `mcp__github__search_code`).
 
 ## When to activate
 
@@ -52,6 +52,9 @@ de tokens y eliminando la exploración manual.
   - Si falta o `generated_at > 24h`: intentar ejecutar `python scripts/local_audit.py --quick` automáticamente.
   - Si el entorno no permite shell: pedir al usuario que lo ejecute.
 - Cargar `AUDIT.md` como contexto Fase 0.
+- Intentar cargar `repo_charter.md` si existe. Rutas canónicas a probar, en orden: raíz del `repo_destino`, luego `.agent/planning/repo_charter.md`.
+  - Si existe, usarlo como filtro de intent y citar la sección concreta cuando una oportunidad se marque compatible.
+  - Si no existe en ninguna ruta, marcar `Intent Audit: no verificable` en el reporte y no inventar compatibilidad estratégica.
 
 ### Paso 2: Validar input
 - Requiere URL GitHub `https://github.com/<owner>/<repo>`.
@@ -71,9 +74,14 @@ de tokens y eliminando la exploración manual.
 - 3-5 oportunidades con plantilla canónica (ver `references/output-format.md`).
 - Cada oportunidad incluye:
   - Campo `¿Ya existe en el proyecto local?` citando ruta + sección de AUDIT.md (no `Yes/No` a secas).
+  - Campo `Compatibilidad con charter` citando sección concreta de `repo_charter.md`, o `Intent Audit: no verificable` si no existe charter.
+  - Campo `Nota de topología` indicando si la oportunidad parece afectar `repo_motor`, `repo_destino` o `ambos` antes de formalizar ticket. Glosario (ver `PROMPT_TEMPLATE.md §Reglas absolutas`): `repo_motor` = motor portable `orquestador_de_agentes/`; `repo_destino` = proyecto activo que lo consume; `ambos` = exige cambios coordinados en motor y destino.
   - Campo `📎 Fuente verificada: [AUDIT.md sección X | GitHub: owner/repo/path:L# | Ambos]`.
 - Matriz final (Impacto / Esfuerzo / Encaje / Decisión).
 - Sección "Qué Ignorar" + "Acción Inmediata".
+- La `Acción Inmediata` debe ser condicional:
+  - oportunidad simple/local -> `/refactor`
+  - oportunidad que toca arquitectura, topología motor/destino o seguridad -> `manager-create-work-plan`
 - **Bloque candidato CREDITS** al final del reporte (ver `references/output-format.md` sección "Credits Block Template"): tabla con una fila Markdown lista para pegar en `CREDITS.md` cuando el humano decida adoptar la idea. **El agente NO escribe en CREDITS.md directamente** — solo emite el bloque sugerido.
 - Persistir output a `.agent/runtime/compare/<owner>-<repo>-<ref>-<YYYY-MM-DD>.md` (default `ref=HEAD`, idealmente capturar SHA real vía `mcp__github__list_commits` paginación 1).
 

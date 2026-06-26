@@ -31,10 +31,21 @@ Cada oportunidad detectada debe seguir esta estructura:
   - Ejemplo: "AUDIT.md sección 4.2 menciona `scripts/local_audit.py` que ya recopila estado operativo".
   - Ejemplo: "AUDIT.md sección 3.1 no menciona nada similar en `skills/`".
 
+**Compatibilidad con charter**
+- **Estado:** [Compatible / Choca / [NO VERIFICADO] / Intent Audit: no verificable]
+- **Cita `repo_charter.md`:** [Sección X]: "[texto o paráfrasis de la restricción o criterio relevante]".
+  - Si no existe `repo_charter.md`, escribir explícitamente `Intent Audit: no verificable`.
+
 **📎 Fuente verificada:** [AUDIT.md sección X | GitHub: owner/repo/path:L# | Ambos]
 - `AUDIT.md sección X`: La evidencia viene del snapshot local.
 - `GitHub: owner/repo/path:L#`: La evidencia viene del repo remoto.
 - `Ambos`: Verificado en ambas fuentes (ej. patrón similar pero con diferencias).
+
+**Nota de topología (pre-ticket):**
+- [ ] Parece cambio solo de `repo_destino`
+- [ ] Parece cambio solo de `repo_motor`
+- [ ] Parece cambio en `ambos`
+- [ ] Requiere verificar topología antes de planificar
 
 **Dependencias nuevas:**
 - [ ] Ninguna
@@ -121,12 +132,16 @@ Próximo paso concreto para el equipo:
 
 **Acción sugerida:**
 ```text
-# Invoca la skill de refactor en Claude Code por su trigger:
+# Si la oportunidad es simple/local y NO toca arquitectura/topología/seguridad:
+# usar el skill vigente `refactor-manager` (trigger `/refactor`) en el backend actual
 /refactor  (query: "Incorporar [funcionalidad] desde [owner/repo]")
 
-# [DEPRECATED - WT-2026-254a] La forma legacy
+# Si la oportunidad toca arquitectura, topología repo_motor/repo_destino o seguridad:
+# abrir primero work-plan / ticket_contract con manager-create-work-plan
+
+# [DEPRECATED - WT-2026-254a] Lo deprecated es esta invocación legacy vía scripts/orquestador.py
 #   python scripts/orquestador.py --skill /refactor --query "..."
-# pertenecia al motor Goose/Claw, deprecado. No usar en proyectos nuevos.
+# pertenecía al motor Goose/Claw. No usar en proyectos nuevos.
 ```
 
 **Criterio de aceptación:**
@@ -235,3 +250,35 @@ Permite a los agentes entender rápidamente qué existe en el proyecto sin leer 
 
 **Decisión:** IGNORAR — [ya existe en el proyecto local]
 ```
+
+---
+
+## Ejemplo de conflicto con charter (oportunidad descartada por intent)
+
+Caso del modo de fallo: la funcionalidad NO existe en local y es técnicamente buena, pero **choca con una restricción del charter**. El campo `Compatibilidad con charter` debe rellenarse con `Choca` + cita, y la decisión cae a `IGNORAR` por intent (no por encaje técnico). Así se rellena de forma consistente entre agentes:
+
+```markdown
+### OPORTUNIDAD #N: Telemetría remota de uso (analytics opt-out)
+
+**Ubicación en repo target:** `telemetry/collector.py:1-80`
+**Fuente:** `mcp__github__get_file_contents` + verificación cruzada
+
+**¿Qué hace?**
+Envía métricas de uso (comandos, latencias, errores) a un endpoint remoto para análisis agregado, con opt-out por config.
+
+**¿Ya existe en el proyecto local?**
+- **Estado:** No
+- **Cita AUDIT.md:** AUDIT.md sección 5.x no menciona telemetría ni envío de datos a red.
+
+**Compatibilidad con charter**
+- **Estado:** Choca
+- **Cita `repo_charter.md`:** Sección `Security Constraints`: "ningún componente envía datos del usuario fuera de la máquina local". La telemetría remota viola esta restricción de forma directa, independientemente del opt-out.
+
+**📎 Fuente verificada:** Ambos (AUDIT.md sección 5.x + GitHub: owner/repo/telemetry/collector.py:L1-80)
+
+**Encaje técnico:** Alto (Python 3.10+, deps ligeras) — pero **irrelevante**: el conflicto de intent manda sobre el encaje técnico.
+
+**Decisión:** IGNORAR — choca con `Security Constraints` del charter (no por falta de encaje técnico, sino por intent). No abrir ticket.
+```
+
+> **Regla:** cuando `Compatibilidad con charter` = `Choca`, la `Decisión` es `IGNORAR` por intent aunque el encaje técnico sea Alto. El charter manda sobre la conveniencia técnica (ver `audit_agent_output.md §2.b Intent Audit`). Si el charter NO existe, el campo es `Intent Audit: no verificable` y la decisión se toma solo por criterio técnico.

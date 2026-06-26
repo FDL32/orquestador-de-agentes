@@ -14,7 +14,7 @@ Tu trabajo no es "leer todo el repo". Tu trabajo es identificar 3-5 oportunidade
 
 ## Objetivo general
 
-Comparar el proyecto local (`el proyecto local/`) con un repositorio público de GitHub para detectar funcionalidades, utilidades o patrones de alto valor que se puedan incorporar, preservando la integridad del contexto local (AUDIT.md como Fase 0).
+Comparar el proyecto local (`el proyecto local/`) con un repositorio público de GitHub para detectar funcionalidades, utilidades o patrones de alto valor que se puedan incorporar, preservando la integridad del contexto local (AUDIT.md como Fase 0) y filtrando contra el intent del proyecto cuando exista `repo_charter.md`.
 
 Prioridades, por orden:
 
@@ -32,13 +32,15 @@ Prioridades, por orden:
 - No usar web fetch ni búsqueda externa — solo MCP GitHub.
 - No commitear el output: persistir a `.agent/runtime/compare/` (gitignored).
 - No scriptear la skill en Python — es texto puro, el agente usa sus herramientas.
+- **Topología local para este prompt:** `repo_motor` = motor portable `orquestador_de_agentes/`; `repo_destino` = proyecto activo que consume el motor; `ambos` = la oportunidad probablemente exige cambios coordinados en motor y destino.
 
 ## Contexto inicial que debes leer
 
 1. `.agent/runtime/audit/AUDIT.md` — **Fase 0 obligatoria**. Contiene el snapshot del estado local.
-2. `skills/repo-compare/SKILL.md` — Workflow y constraints.
-3. `skills/repo-compare/references/filter-criteria.md` — Criterios de scoring.
-4. `skills/repo-compare/references/output-format.md` — Plantilla de output.
+2. `repo_charter.md` — si existe; usar para `Intent Audit` (`Non-Goals`, `Quality Bar`, `Security Constraints`).
+3. `skills/repo-compare/SKILL.md` — Workflow y constraints.
+4. `skills/repo-compare/references/filter-criteria.md` — Criterios de scoring.
+5. `skills/repo-compare/references/output-format.md` — Plantilla de output.
 
 ## Preflight obligatorio (Paso 1)
 
@@ -49,14 +51,17 @@ Antes de empezar:
    - Si `generated_at > 24h`: ejecutar `python scripts/local_audit.py --quick`.
    - Si el entorno no permite shell: pedir al usuario que lo ejecute.
 2. Cargar AUDIT.md completo como contexto Fase 0.
-3. **Repomix Context (WT-2026-182):** Ejecutar opcionalmente
+3. Si existe `repo_charter.md`, cargarlo y usarlo como filtro de intent.
+   - Toda oportunidad debe citar la sección concreta del charter usada para validar compatibilidad.
+   - Si no existe charter, escribir `Intent Audit: no verificable` en la oportunidad; no asumir compatibilidad.
+4. **Repomix Context (WT-2026-182):** Ejecutar opcionalmente
    `npx repomix --style xml --compress --config repomix.config.json --output .session/repomix_local.xml`
    desde la raíz del proyecto local. Si tiene éxito, cargar el XML comprimido como contexto
    adicional del proyecto local (firmas de funciones, estructura de directorios).
    - Si `npx` no está disponible o falla, continuar sin repomix (no bloqueante).
    - Para el repositorio remoto, clonar a un directorio temporal y ejecutar repomix allí,
      guardando el resultado como `.session/repomix_remote.xml`.
-4. Validar URL GitHub proporcionada: `https://github.com/<owner>/<repo>`.
+5. Validar URL GitHub proporcionada: `https://github.com/<owner>/<repo>`.
    - Si no se proporciona: pedir al usuario.
 
 ## Fase 1: Filtro rápido (scoring 0-5)
@@ -131,6 +136,8 @@ Generar **3-5 oportunidades** (ni menos, ni más). Usar plantilla de `references
 
 **Invariante anti-fabricación**: cada oportunidad DEBE incluir:
 - Campo `¿Ya existe en el proyecto local?` con cita explícita a AUDIT.md sección + ruta.
+- Campo `Compatibilidad con charter` con cita explícita a `repo_charter.md`, o `Intent Audit: no verificable` si no existe.
+- Campo `Nota de topología` indicando si parece afectar `repo_motor`, `repo_destino` o `ambos` antes del ticket formal.
 - Campo `📎 Fuente verificada:` con tipo de fuente (AUDIT.md, GitHub, o Ambos).
 
 ## Fase 4: Matriz final + Qué Ignorar + Acción Inmediata
@@ -154,12 +161,16 @@ Generar **3-5 oportunidades** (ni menos, ni más). Usar plantilla de `references
 
 **Acción sugerida:**
 ```text
-# Invoca la skill de refactor en Claude Code por su trigger:
+# Si la oportunidad es simple/local y NO toca arquitectura/topología/seguridad:
+# usar el skill vigente `refactor-manager` (trigger `/refactor`) en el backend actual
 /refactor  (query: "Incorporar [funcionalidad] desde [owner/repo]")
 
-# [DEPRECATED - WT-2026-254a] La forma legacy
+# Si toca arquitectura, topología repo_motor/repo_destino o seguridad:
+# abrir primero manager-create-work-plan / ticket_contract
+
+# [DEPRECATED - WT-2026-254a] Lo deprecated es esta invocación legacy vía scripts/orquestador.py
 #   python scripts/orquestador.py --skill /refactor --query "..."
-# pertenecia al motor Goose/Claw, deprecado. No usar en proyectos nuevos.
+# pertenecía al motor Goose/Claw. No usar en proyectos nuevos.
 ```
 
 ## Persistencia del output
