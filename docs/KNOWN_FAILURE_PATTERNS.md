@@ -279,7 +279,7 @@ El review mezcla dos entornos distintos:
 
 ---
 
-## FP-006: Rearranque desde fuente equivocada de verdad
+## FP-013: Rearranque desde fuente equivocada de verdad
 
 **Estado de evidencia:** INFERENCIA RAZONABLE
 

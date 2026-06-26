@@ -59,7 +59,7 @@ Ese prompt prevalece si esta skill diverge.
 ## Distincion con skills hermanas
 
 - `system-health-audit`: salud de las 3 capas (es el Bloque 1 de esta pasada).
-- `audit-pipeline`: meta-auditoria post-pipeline de UN ticket cerrado.
+- `audit-pipeline`: meta-auditoria post-pipeline TRANSVERSAL del backlog completo (TODOS los tickets cerrados, no uno solo).
 - `code-audit` / `builder-self-audit`: herramientas de evidencia del Bloque 2,
   no veredictos por si solas.
 - `manager-session-closeout` / `session-close-observations`: cierre operativo y

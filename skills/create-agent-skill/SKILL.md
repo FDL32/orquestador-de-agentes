@@ -58,8 +58,13 @@ Estructura obligatoria:
 name: nombre-skill
 version: 1.0.0
 description: Descripción clara de una línea
+triggers: [/comando, alias1, alias2]
 author: agent-system
+role: shared            # user | shared | manager | builder | auditor
+stage: support          # setup | plan | implement | quality | review | close | memory | support | meta
 tags: [tag1, tag2, tag3]
+writes_memory: false
+quality_gate: false
 ---
 
 # nombre-skill

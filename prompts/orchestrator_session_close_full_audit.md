@@ -25,7 +25,7 @@ defecto: audita y propone el cambio minimo; no parchea salvo instruccion explici
 
 Distincion con skills hermanas:
 - `system-health-audit` = salud de las 3 capas (es el Bloque 1 de esta pasada).
-- `audit-pipeline` = meta-auditoria post-pipeline de UN ticket cerrado.
+- `audit-pipeline` = meta-auditoria post-pipeline TRANSVERSAL del backlog completo (TODOS los tickets cerrados, no uno solo).
 - `audit_agent_output` = auditoria esceptica generica de output (es la
   herramienta del Bloque 2; aqui se aplica a los diffs de la sesion).
 - esta pasada = orquesta las anteriores + cierre + memoria en un cierre de sesion.

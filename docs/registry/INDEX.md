@@ -14,8 +14,8 @@
 | reference | 33 |
 | script-consumer | 5 |
 | shared | 3 |
-| skill | 30 |
-| **total** | **93** |
+| skill | 31 |
+| **total** | **94** |
 
 ## Entradas
 
@@ -84,6 +84,7 @@
 | shared | `skills/_shared/anti-patterns.md` | active | system | shared | model-invoked | — |
 | shared | `skills/_shared/ap-schema.md` | active | system | shared | model-invoked | — |
 | shared | `skills/_shared/ticket-anti-patterns.md` | active | system | shared | model-invoked | — |
+| skill | `skills/adopt-existing-project/SKILL.md` | active | agent | user | model-invoked | /adecuar-proyecto, /adopt-existing, /adopt-project |
 | skill | `skills/audit-git-publication/SKILL.md` | active | agent | auditor | model-invoked | /audit-git-publication, audit-git-publication, auditar-publicacion-git, publicar-git |
 | skill | `skills/audit-pipeline/SKILL.md` | active | agent | auditor | model-invoked | /audit-pipeline, audit-pipeline, auditar-pipeline |
 | skill | `skills/builder-implement-from-plan/SKILL.md` | active | agent | builder | model-invoked | /code, /implement, implement |

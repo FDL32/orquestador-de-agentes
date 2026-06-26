@@ -20,7 +20,7 @@ Lee estos archivos antes de evaluar nada. No asumas estados; verifica en fuente 
 
 Antes de interpretar eventos, confirma estas tres cosas:
 
-- `project_root` auditado: debe ser el workspace activo (`C:\Users\***REDACTED***\Proyectos_Python\z_scripts` en esta instalacion), no el motor.
+- `project_root` auditado: debe ser el workspace activo (`repo_destino`, resuelto via `AGENT_PROJECT_ROOT` o `.agent/config/motor_destination_link.json`; p.ej. en la instalacion del autor era `C:\Users\***REDACTED***\Proyectos_Python\z_scripts`), no el motor.
 - Bus leido: `.agent/runtime/events/events.jsonl` debe estar bajo el workspace activo.
 - Ticket activo: extraelo de `STATE.md` y `work_plan.md`; si difieren, documenta el drift antes de seguir.
 
@@ -179,7 +179,7 @@ El commit puede ser correcto. El problema puede ser exclusivamente de packaging.
 | `supervisor_lock.txt` existe, PID muerto | Lock huerfano; supervisor crasheo; el launcher lo eliminara en el proximo arranque |
 | `supervisor_lock.txt` ausente | Supervisor salio limpiamente (timeout o ciclo completado) |
 
-Comprueba que el `supervisor_lock.txt` este en el workspace (`.agent/runtime/` de z_scripts), no en el motor root. Si esta en el motor, el supervisor arranko con `project_root` incorrecto porque `AGENT_PROJECT_ROOT` no estaba seteado al importar `ticket_supervisor.py`.
+Comprueba que el `supervisor_lock.txt` este en el workspace (`.agent/runtime/` del repo_destino activo), no en el motor root. Si esta en el motor, el supervisor arranko con `project_root` incorrecto porque `AGENT_PROJECT_ROOT` no estaba seteado al importar `ticket_supervisor.py`.
 
 ### 10. TURN.md autosuficiente para el proximo ciclo
 
@@ -292,17 +292,21 @@ Independientemente del veredicto, cierra con dos bloques:
 Incluye comandos exactos con flags y rutas absolutas. Ejemplo para relaunch tras idle timeout:
 
 ```powershell
+# 0. Resolver la raiz del repo_destino activo (el workspace, NO el motor).
+#    Ejemplo de la instalacion del autor: C:\Users\***REDACTED***\Proyectos_Python\z_scripts
+$RepoDestino = (Resolve-Path .).Path
+
 # 1. Setear project root antes de lanzar el supervisor
-$env:AGENT_PROJECT_ROOT = 'C:\Users\***REDACTED***\Proyectos_Python\z_scripts'
+$env:AGENT_PROJECT_ROOT = $RepoDestino
 
 # 2. Relanzar sin Builder; el supervisor detectara el trigger CHANGES en bootstrap
 powershell -ExecutionPolicy Bypass -File `
   orquestador_de_agentes\scripts\launch_agent_terminals.ps1 `
-  -ProjectRoot 'C:\Users\***REDACTED***\Proyectos_Python\z_scripts' `
+  -ProjectRoot $RepoDestino `
   -LaunchBuilder 0
 
 # Alternativa: lanzar supervisor directamente con timeout ampliado
-$env:AGENT_PROJECT_ROOT = 'C:\Users\***REDACTED***\Proyectos_Python\z_scripts'
+$env:AGENT_PROJECT_ROOT = $RepoDestino
 python orquestador_de_agentes\scripts\ticket_supervisor.py --reactive --timeout 900
 ```
 

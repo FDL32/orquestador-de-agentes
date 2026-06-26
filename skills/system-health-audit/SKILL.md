@@ -65,7 +65,7 @@ Ese prompt prevalece si esta skill diverge.
 
 ## Distincion con skills hermanas
 
-- `audit-pipeline`: meta-auditoria post-pipeline de UN ticket cerrado.
+- `audit-pipeline`: meta-auditoria post-pipeline TRANSVERSAL del backlog completo (TODOS los tickets cerrados, no uno solo).
 - `audit-git-publication`: listo-para-publicar de un repo.
 - `local-audit`: snapshot rapido de estado (lo orquesta esta skill, no lo sustituye).
 - `system-health-audit` (esta): salud periodica de las 3 capas tras cambios.
