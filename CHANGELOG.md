@@ -1,3 +1,11 @@
+# 2026-06-26 - Repo-compare intent-gate + memory crystallization
+
+### Changed
+- `skills/repo-compare/SKILL.md`, `skills/repo-compare/PROMPT_TEMPLATE.md` and `skills/repo-compare/references/output-format.md`: `repo-compare` now consumes `repo_charter.md` when present, requires an explicit charter-compatibility citation (or `Intent Audit: no verificable`), adds a pre-ticket topology note (`repo_motor` / `repo_destino` / `ambos`), and makes the immediate handoff conditional: simple/local ideas may still use the current `refactor-manager` trigger `/refactor`, while architecture/topology/security ideas must route through `manager-create-work-plan`. Clarified that the deprecated path is the legacy `scripts/orquestador.py --skill /refactor ...` invocation, not the `/refactor` trigger itself. (`390756f`)
+
+### Added
+- `repo_motor/.agent/runtime/memory/observations.jsonl`: portable observation crystallizing the contract-first rule for future adoption of external repositories: compare opportunities against charter intent and topology before jumping straight to implementation. (`6114779`)
+
 # 2026-06-24 - Publication-session failure patterns (FP-008..011)
 
 ### Added
