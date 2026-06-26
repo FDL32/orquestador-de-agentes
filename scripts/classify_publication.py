@@ -254,35 +254,18 @@ def _collect_repo_files(
     repo_root: Path, runtime_excludes: set[str] | None = None
 ) -> RepoFiles:
     """Before: repo_root is git repo. During: query git. After: tracked/untracked."""
-    tracked = set(_normalize_path(line) for line in _git_lines(repo_root, "ls-files"))
-    all_files = _walk_repo_files(repo_root, runtime_excludes or set())
-    untracked = all_files - tracked
-    return RepoFiles(tracked=tracked, untracked=untracked)
-
-
-def _walk_repo_files(repo_root: Path, runtime_excludes: set[str]) -> set[str]:
-    """Before: repo_root exists. During: walk filesystem. After: repo paths."""
-    ignored_dirs = {
-        ".git",
-        ".venv",
-        "venv",
-        "__pycache__",
-        ".pytest_cache",
-        ".ruff_cache",
-        "node_modules",
+    excludes = runtime_excludes or set()
+    tracked = {
+        _normalize_path(line)
+        for line in _git_lines(repo_root, "ls-files")
+        if _normalize_path(line) not in excludes
     }
-    paths: set[str] = set()
-    for path in repo_root.rglob("*"):
-        if not path.is_file():
-            continue
-        rel_parts = path.relative_to(repo_root).parts
-        if any(part in ignored_dirs for part in rel_parts):
-            continue
-        rel_path = _normalize_path(path.relative_to(repo_root).as_posix())
-        if rel_path in runtime_excludes:
-            continue
-        paths.add(rel_path)
-    return paths
+    untracked = {
+        _normalize_path(line)
+        for line in _git_lines(repo_root, "ls-files", "--others", "--exclude-standard")
+        if _normalize_path(line) not in excludes
+    }
+    return RepoFiles(tracked=tracked, untracked=untracked)
 
 
 def _classify_file(

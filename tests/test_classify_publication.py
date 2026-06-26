@@ -12,6 +12,18 @@ def _git(repo: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
 
 
+def _git_stdout(repo: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return result.stdout
+
+
 def _init_repo(repo: Path) -> None:
     repo.mkdir()
     _git(repo, "init")
@@ -34,6 +46,59 @@ def test_blocks_fake_secret_in_working_tree(tmp_path: Path) -> None:
     assert manifest["verdict"] == "BLOQUEADO_POR_SECRETO"
     assert manifest["tree_secret_scan"]["ok"] is False
     assert manifest["tree_secret_scan"]["findings"][0]["path"] == "settings.txt"
+
+
+def test_tree_scan_ignores_gitignored_secret(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / ".gitignore").write_text("legacy_docs/\n", encoding="utf-8")
+    (repo / "legacy_docs").mkdir()
+    ignored_file = repo / "legacy_docs" / "old.md"
+    ignored_file.write_text(
+        "PUBLICATION_AUDIT_FAKE_SECRET=ignored-by-git\n", encoding="utf-8"
+    )
+
+    check_ignore = _git_stdout(repo, "check-ignore", "-v", "legacy_docs/old.md")
+
+    manifest = classify_publication.build_manifest(repo, scan_history=True)
+
+    flagged_paths = {
+        finding["path"] for finding in manifest["tree_secret_scan"]["findings"]
+    }
+    assert ".gitignore:1:legacy_docs/" in check_ignore
+    assert manifest["tree_secret_scan"]["ok"] is True
+    assert "legacy_docs/old.md" not in flagged_paths
+    assert manifest["verdict"] == "LISTO_PARA_PUBLICAR"
+
+
+def test_tree_scan_detects_tracked_secret(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "tracked-secret.txt").write_text(
+        "PUBLICATION_AUDIT_FAKE_SECRET=tracked\n", encoding="utf-8"
+    )
+    _git(repo, "add", "tracked-secret.txt")
+    _git(repo, "commit", "-m", "add tracked secret")
+
+    manifest = classify_publication.build_manifest(repo, scan_history=True)
+
+    assert manifest["verdict"] == "BLOQUEADO_POR_SECRETO"
+    assert manifest["tree_secret_scan"]["ok"] is False
+    assert manifest["tree_secret_scan"]["findings"][0]["path"] == "tracked-secret.txt"
+
+
+def test_tree_scan_detects_untracked_non_ignored_secret(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "new-secret.txt").write_text(
+        "PUBLICATION_AUDIT_FAKE_SECRET=untracked\n", encoding="utf-8"
+    )
+
+    manifest = classify_publication.build_manifest(repo, scan_history=True)
+
+    assert manifest["verdict"] == "BLOQUEADO_POR_SECRETO"
+    assert manifest["tree_secret_scan"]["ok"] is False
+    assert manifest["tree_secret_scan"]["findings"][0]["path"] == "new-secret.txt"
 
 
 def test_blocks_realistic_secret_patterns(tmp_path: Path) -> None:
