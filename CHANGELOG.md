@@ -5,6 +5,7 @@
 
 ### Added
 - `repo_motor/.agent/runtime/memory/observations.jsonl`: portable observation crystallizing the contract-first rule for future adoption of external repositories: compare opportunities against charter intent and topology before jumping straight to implementation. (`6114779`)
+- `skills/adopt-existing-project/SKILL.md`: new setup-stage skill (`/adopt-project`) that orchestrates the adaptation of a **pre-existing** Python project (legacy, embedded old engine, or no Git) to the portable motor. It is operational glue — it invokes `setup-agent-system`, `secure-existing-project` and `audit-git-publication` in the right order rather than reimplementing them — and adds the 5-phase checklist (topology → git/secrets anti-leak → validate 0/0 → canonical close of legacy WPs as historical → publication) plus the known motor frictions observed while adapting `Extractor_Facturas_PDF_Seguro` (tree-scan vs `.gitignore`, pytest-vs-unittest runner, scope-override for orchestration artifacts, scanner project-root coupling, entrypoint sync).
 
 # 2026-06-24 - Publication-session failure patterns (FP-008..011)
 
