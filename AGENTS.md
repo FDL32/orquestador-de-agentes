@@ -270,6 +270,24 @@ El repositorio define skills operativas formales para estructurar el trabajo del
 
 No uses estos skills si contradicen el flujo general (ej. usar TDD para escribir un README o depuración para un typo reportado por el linter).
 
+### Gobierno skill<->prompt: skill apunta, prompt gobierna (WOT-2026-014r / X-09)
+
+Cuando una skill tiene prompt canonico (declara `contract_id` + `source_prompt`/`source_of_truth`), la skill es
+PUNTERO operativo, no fuente normativa. PROHIBIDO re-declarar criterios normativos (gates, veredictos, estados,
+barreras) en la `SKILL.md`: viven una vez en el prompt y la skill remite. Si divergen, prevalece el prompt y la
+divergencia es un bug de la skill. Verificado en vivo: el SKILL de `manager-review-implementation` OMITIA
+mutation-verify (E3) y el de `orchestrate-pipeline` OMITIA el reconcile post-close (E6) por re-declarar en vez de
+apuntar.
+
+**Auditoria automatica (R2):** un linter/gate puede grepear las `SKILL.md` por marcadores normativos
+(`DECISION:`, `deliverable_type`, `0 errors`, `APROBADO|CHANGES|BLOCKER`, `exit code`). Un marcador en una skill
+que TIENE prompt canonico es candidato a re-declaracion: el gate exige que la skill REMITA al prompt (cita
+`contract_id`) en vez de definir el criterio. Si el criterio diverge del prompt -> hallazgo automatico, prevalece
+el prompt. Verificado (3a pasada): 9 `SKILL.md` contienen esos marcadores -- adopt-existing-project, audit-pipeline,
+builder-run-quality-gates, manager-create-work-plan, manager-review-implementation, orchestrate-pipeline,
+refactor-manager, session-close-full-audit, setup-agent-system -- candidatas a re-declaracion (una parte solo
+menciona el marcador). La matriz de ownership de artefactos asociada vive en `prompts/_shared/artifact_ownership.md`.
+
 ## Atribuciones externas (CREDITS.md)
 
 Cuando un WP incorpora una idea/patrón de un repositorio externo:
