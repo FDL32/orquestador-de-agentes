@@ -31,6 +31,10 @@ if str(_PROJECT_ROOT_BOOTSTRAP) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT_BOOTSTRAP))
 
 from bus.ticket_id import TICKET_ID_PATTERN, WORKPLAN_ID_PATTERN  # noqa: E402
+from scripts.manager_feedback_helpers import (  # noqa: E402
+    extract_ticket_id_from_feedback as _canonical_extract_ticket_id_from_feedback,
+    find_manager_feedback_files as _canonical_find_manager_feedback_files,
+)
 
 
 # Patterns to match strategy/PLAN and AUDIT files — derived from canonical
@@ -43,9 +47,6 @@ from bus.ticket_id import TICKET_ID_PATTERN, WORKPLAN_ID_PATTERN  # noqa: E402
 STRATEGY_RE = re.compile(r"^STRATEGY_(" + TICKET_ID_PATTERN + r")\.md$")
 PLAN_RE = re.compile(r"^PLAN_(" + TICKET_ID_PATTERN + r")\.md$")  # legacy-compat
 AUDIT_RE = re.compile(r"^AUDIT_(" + TICKET_ID_PATTERN + r")\.md$")
-
-# Regex to extract ticket ID from manager_feedback filenames
-MANAGER_FEEDBACK_RE = re.compile(r"^manager_feedback_(" + TICKET_ID_PATTERN + r")\.md$")
 
 # Files that must always remain in the active collaboration surface
 ACTIVE_ONLY_FILES = {
@@ -248,34 +249,27 @@ def list_active_collaboration_files(collaboration_dir: Path) -> list[str]:
 def find_manager_feedback_files(collaboration_dir: Path) -> list[Path]:
     """Find all manager_feedback_*.md files in the collaboration directory.
 
-    Before: collaboration_dir exists.
-    During: Lists files matching the pattern manager_feedback_*.md.
+    Thin wrapper around the canonical implementation in manager_feedback_helpers.
+    Before: collaboration_dir is the path to .agent/collaboration/.
+    During: Delegates to scripts.manager_feedback_helpers.find_manager_feedback_files.
     After: Returns sorted list of matching file paths.
     """
-    if not collaboration_dir.exists():
-        return []
-    return sorted(
-        entry
-        for entry in collaboration_dir.iterdir()
-        if (
-            entry.is_file()
-            and entry.name.startswith("manager_feedback_")
-            and entry.name.endswith(".md")
-        )
-    )
+    return _canonical_find_manager_feedback_files(collaboration_dir)
 
 
 def extract_ticket_id_from_feedback(filename: str) -> str | None:
     """Extract ticket ID from a manager_feedback filename.
 
+    Thin wrapper around the canonical implementation in manager_feedback_helpers,
+    pinning ticket_id_pattern to the project-canonical TICKET_ID_PATTERN.
     Before: filename is a string like 'manager_feedback_WP-2026-155.md'.
-    During: Uses MANAGER_FEEDBACK_RE to extract the ticket ID portion.
+    During: Delegates to scripts.manager_feedback_helpers.extract_ticket_id_from_feedback.
     After: Returns ticket ID string or None if not matched.
     """
-    match = MANAGER_FEEDBACK_RE.match(filename)
-    if match:
-        return match.group(1)
-    return None
+    return _canonical_extract_ticket_id_from_feedback(
+        filename,
+        ticket_id_pattern=TICKET_ID_PATTERN,
+    )
 
 
 def archive_manager_feedback(

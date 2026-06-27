@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -14,6 +13,10 @@ if TYPE_CHECKING:
 
 from bus.state_machine import is_terminal_state
 from scripts.delivery_hygiene_check import check_archive_rename_complete
+from scripts.manager_feedback_helpers import (
+    extract_ticket_id_from_feedback as _canonical_extract_ticket_id_from_feedback,
+    find_manager_feedback_files as _canonical_find_manager_feedback_files,
+)
 
 
 def step_archive_collaboration(
@@ -211,18 +214,11 @@ def _can_prove_close(
 def _find_manager_feedback_files(
     collaboration_dir: Path,
 ) -> list[Path]:
-    """Find all manager_feedback_*.md files in the collaboration directory."""
-    if not collaboration_dir.exists():
-        return []
-    return sorted(
-        entry
-        for entry in collaboration_dir.iterdir()
-        if (
-            entry.is_file()
-            and entry.name.startswith("manager_feedback_")
-            and entry.name.endswith(".md")
-        )
-    )
+    """Find all manager_feedback_*.md files in the collaboration directory.
+
+    Thin wrapper around the canonical implementation in manager_feedback_helpers.
+    """
+    return _canonical_find_manager_feedback_files(collaboration_dir)
 
 
 def _extract_ticket_id_from_feedback(
@@ -230,11 +226,14 @@ def _extract_ticket_id_from_feedback(
     *,
     ticket_id_pattern: str,
 ) -> str | None:
-    """Extract ticket ID from a manager_feedback filename."""
-    match = re.search(r"manager_feedback_(" + ticket_id_pattern + r")\.md$", filename)
-    if match:
-        return match.group(1)
-    return None
+    """Extract ticket ID from a manager_feedback filename.
+
+    Thin wrapper around the canonical implementation in manager_feedback_helpers.
+    """
+    return _canonical_extract_ticket_id_from_feedback(
+        filename,
+        ticket_id_pattern=ticket_id_pattern,
+    )
 
 
 def step_archive_manager_feedback(  # noqa: C901 - multiple condition checks
