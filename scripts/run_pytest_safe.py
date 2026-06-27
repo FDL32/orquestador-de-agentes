@@ -369,6 +369,84 @@ def make_run_dir() -> Path:
     return RUNTIME_DIR / f"run-{stamp}-{os.getpid()}"
 
 
+def probe_pytest(interpreter: str) -> bool:
+    """Return True if *interpreter* can import pytest.
+
+    WOT-2026-014b: runner-detection seam. Runs a fast subprocess against the
+    TARGET test interpreter (not the current process), so a destination whose
+    .venv has no pytest is detected independently of the motor environment.
+
+    Before: interpreter is the resolved test-interpreter path (string).
+    During: spawns <interpreter> -c "import pytest" with a 5-second
+        timeout; captures stdout+stderr without printing them.
+    After: returns True if returncode == 0; False otherwise (no pytest,
+        import error, or timeout). Never raises.
+    """
+    try:
+        result = subprocess.run(  # noqa: S603
+            [interpreter, "-c", "import pytest"],
+            capture_output=True,
+            timeout=5,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def select_test_runner(
+    interpreter: str,
+    pytest_args: list[str],
+    xdist_flags: list[str],
+    run_dir: Path,
+    *,
+    test_dir: str = "tests",
+    _probe: bool | None = None,
+) -> tuple[list[str], str]:
+    """Build the subprocess command for the resolved *interpreter*.
+
+    WOT-2026-014b: testable command-selection seam.  Probes whether the
+    target interpreter has pytest; falls back to python -m unittest
+    discover when it does not.
+
+    Before: interpreter is the resolved test-interpreter string; pytest_args
+        and xdist_flags are the already-normalized pytest argument lists;
+        run_dir is the per-run temp directory Path; test_dir is the directory
+        to pass to unittest discover -s; _probe overrides the pytest
+        probe result (test seam only -- do NOT use in production code).
+    During: calls probe_pytest(interpreter) unless _probe is supplied.
+        pytest branch: current command construction (byte-identical behavior).
+        unittest branch: omits xdist_flags (incompatible) and basetemp;
+            passes -s <test_dir> to unittest discover.
+    After: returns (command, runner) where runner is "pytest" or "unittest".
+        Never raises.  last-run.json callers may record the runner field for
+        observability without changing the gate-required fields.
+    """
+    has_pytest = probe_pytest(interpreter) if _probe is None else _probe
+
+    if has_pytest:
+        command = [
+            interpreter,
+            "-m",
+            "pytest",
+            *xdist_flags,
+            *pytest_args,
+            f"--basetemp={run_dir}",
+        ]
+        return command, "pytest"
+
+    # Fallback: unittest discover (ignores xdist_flags and basetemp --
+    # neither is meaningful for unittest).
+    command = [
+        interpreter,
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        test_dir,
+    ]
+    return command, "unittest"
+
+
 def stream_pytest(command: list[str]) -> int:
     lines: list[str] = []
 
@@ -712,14 +790,16 @@ def main() -> int:
     # CTL-2026-007b (Fase 2.4): run the suite with the delivery repo's
     # interpreter so the destination's deps are present. Falls back to
     # sys.executable for the motor/single-repo case.
-    command = [
+    # WOT-2026-014b: runner-detection seam. select_test_runner probes whether
+    # the resolved interpreter has pytest; falls back to unittest discover when
+    # it does not. Behavior is byte-identical for interpreters that DO have pytest.
+    command, _runner = select_test_runner(
         resolve_test_interpreter(),
-        "-m",
-        "pytest",
-        *xdist_flags,
-        *pytest_args,
-        f"--basetemp={run_dir}",
-    ]
+        pytest_args,
+        xdist_flags,
+        run_dir,
+        test_dir=default_test_target().rstrip("/"),
+    )
 
     summary = {
         "started_at": iso_now(),
@@ -747,6 +827,8 @@ def main() -> int:
         # canonical-suite handoff gate can verify freshness by SHA (not by
         # timestamp). Captured once at run start; the tree must not change.
         "tested_commit_sha": _delivery_head_sha(),
+        # WOT-2026-014b: informative field; does not change gate contract.
+        "runner": _runner,
         "status": "started",
     }
     write_json(LAST_RUN_JSON, summary)
