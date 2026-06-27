@@ -37,10 +37,10 @@ class TestSnapshotFileInfo:
 
     def test_snapshot_file_info_returns_dict(self):
         """snapshot_file_info devuelve dict con mtime_ns y size."""
-        from scripts.orquestador import snapshot_file_info
+        from scripts.scope_verification import snapshot_file_info
 
         mock_stat = _make_stat(mtime_ns=12345, size=512)
-        with patch("scripts.orquestador.os.stat", return_value=mock_stat):
+        with patch("scripts.scope_verification.os.stat", return_value=mock_stat):
             result = snapshot_file_info(Path("test.py"))
 
         assert isinstance(result, dict)
@@ -51,9 +51,9 @@ class TestSnapshotFileInfo:
 
     def test_snapshot_file_info_handles_missing_file(self):
         """snapshot_file_info maneja archivo inexistente."""
-        from scripts.orquestador import snapshot_file_info
+        from scripts.scope_verification import snapshot_file_info
 
-        with patch("scripts.orquestador.os.stat", side_effect=FileNotFoundError):
+        with patch("scripts.scope_verification.os.stat", side_effect=FileNotFoundError):
             result = snapshot_file_info(Path("missing.py"))
 
         assert result is None
@@ -64,20 +64,20 @@ class TestSnapshotPaths:
 
     def test_snapshot_paths_empty_list(self):
         """snapshot_paths con lista vacÃ­a devuelve dict vacÃ­o."""
-        from scripts.orquestador import snapshot_paths
+        from scripts.scope_verification import snapshot_paths
 
         result = snapshot_paths([])
         assert result == {}
 
     def test_snapshot_paths_captures_files(self):
         """snapshot_paths captura info de archivos existentes."""
-        from scripts.orquestador import snapshot_paths
+        from scripts.scope_verification import snapshot_paths
 
         mock_stat = _make_stat(mtime_ns=2000, size=256)
         test_path = Path("test.py")
 
         with (
-            patch("scripts.orquestador.os.stat", return_value=mock_stat),
+            patch("scripts.scope_verification.os.stat", return_value=mock_stat),
             patch.object(Path, "exists", return_value=True),
             patch.object(Path, "is_file", return_value=True),
             patch.object(Path, "is_dir", return_value=False),
@@ -92,7 +92,7 @@ class TestSnapshotPaths:
         """snapshot_paths expande directorios recursivamente."""
         from unittest.mock import MagicMock
 
-        from scripts.orquestador import snapshot_paths
+        from scripts.scope_verification import snapshot_paths
 
         mock_stat = _make_stat(mtime_ns=3000, size=512)
         file_a_str = "src/module_a.py"
@@ -110,7 +110,7 @@ class TestSnapshotPaths:
         mock_path_obj.rglob.return_value = [file_a, file_b]
 
         with (
-            patch("scripts.orquestador.os.stat", return_value=mock_stat),
+            patch("scripts.scope_verification.os.stat", return_value=mock_stat),
             patch.object(Path, "is_file", return_value=True),
             patch.object(Path, "is_dir", return_value=False),
         ):
@@ -125,7 +125,7 @@ class TestDetectChangedFiles:
 
     def test_detect_new_file(self):
         """Detecta archivo nuevo en after."""
-        from scripts.orquestador import detect_changed_files
+        from scripts.scope_verification import detect_changed_files
 
         before: dict = {}
         after = {"test.py": _make_file_info(mtime=1000)}
@@ -136,7 +136,7 @@ class TestDetectChangedFiles:
 
     def test_detect_modified_file(self):
         """Detecta archivo modificado (cambio de mtime."""
-        from scripts.orquestador import detect_changed_files
+        from scripts.scope_verification import detect_changed_files
 
         before = {"test.py": _make_file_info(mtime=1000)}
         after = {"test.py": _make_file_info(mtime=2000)}
@@ -147,7 +147,7 @@ class TestDetectChangedFiles:
 
     def test_no_changes(self):
         """Sin cambios devuelve lista vacÃ­a."""
-        from scripts.orquestador import detect_changed_files
+        from scripts.scope_verification import detect_changed_files
 
         info = _make_file_info(mtime=1000)
         before = {"test.py": info}
@@ -159,7 +159,7 @@ class TestDetectChangedFiles:
 
     def test_detect_removed_file(self):
         """Detecta archivo removido (en before pero no en after)."""
-        from scripts.orquestador import detect_changed_files
+        from scripts.scope_verification import detect_changed_files
 
         before = {"test.py": _make_file_info(mtime=1000)}
         after: dict = {}
@@ -179,7 +179,7 @@ class TestClassifyScope:
 
     def test_in_scope_root_allowlist(self):
         """Archivos en raÃ­z con allowlist '.' son in_scope."""
-        from scripts.orquestador import classify_scope
+        from scripts.scope_verification import classify_scope
 
         allowlist = {"write_roots": ["."]}
         touched = ["scripts/test.py", "src/main.py"]
@@ -191,7 +191,7 @@ class TestClassifyScope:
 
     def test_out_of_scope_specific_allowlist(self):
         """Archivos fuera de write_roots son out_of_scope."""
-        from scripts.orquestador import classify_scope
+        from scripts.scope_verification import classify_scope
 
         allowlist = {"write_roots": ["src"]}
         touched = ["src/main.py", "secrets/cred.py"]
@@ -203,7 +203,7 @@ class TestClassifyScope:
 
     def test_empty_allowlist_means_nothing_allowed(self):
         """Allowlist vacÃ­a implica nada permitido (todo out_of_scope)."""
-        from scripts.orquestador import classify_scope
+        from scripts.scope_verification import classify_scope
 
         allowlist: dict = {}
         touched = ["src/main.py"]
@@ -215,7 +215,7 @@ class TestClassifyScope:
 
     def test_allowlist_with_multiple_roots(self):
         """MÃºltiples raÃ­ces en allowlist."""
-        from scripts.orquestador import classify_scope
+        from scripts.scope_verification import classify_scope
 
         allowlist = {"write_roots": ["src", "tests", "docs"]}
         touched = ["src/a.py", "tests/b.py", "privada/c.py"]
@@ -228,7 +228,7 @@ class TestClassifyScope:
 
     def test_ticket_allowed_files_takes_priority(self):
         """Archivos permitidos del ticket tienen prioridad sobre allowlist."""
-        from scripts.orquestador import classify_scope
+        from scripts.scope_verification import classify_scope
 
         allowlist = {"write_roots": ["."]}  # Allowlist permisiva
         ticket_files = [Path("scripts/orquestador.py")]  # Ticket restrictivo
@@ -243,7 +243,7 @@ class TestClassifyScope:
 
     def test_ticket_allowed_files_exact_match(self):
         """Coincidencia exacta de archivos del ticket: solo archivos listados son in_scope."""
-        from scripts.orquestador import classify_scope
+        from scripts.scope_verification import classify_scope
 
         ticket_files = [Path("src/module.py"), Path("tests/test_module.py")]
         touched = ["src/module.py", "tests/test_module.py", "src/other.py"]
@@ -258,7 +258,7 @@ class TestClassifyScope:
 
     def test_ticket_allowed_files_nested(self):
         """Archivos en subdirectorios del ticket: solo el archivo exacto es in_scope."""
-        from scripts.orquestador import classify_scope
+        from scripts.scope_verification import classify_scope
 
         ticket_files = [Path("src/module/main.py")]
         touched = ["src/module/main.py", "src/module/sub.py"]
@@ -281,7 +281,7 @@ class TestGenerateScopeReport:
 
     def test_report_structure(self):
         """Reporte tiene estructura JSON correcta."""
-        from scripts.orquestador import generate_scope_report
+        from scripts.scope_verification import generate_scope_report
 
         report = generate_scope_report(
             in_scope=["src/a.py"],
@@ -299,7 +299,7 @@ class TestGenerateScopeReport:
 
     def test_report_is_json_serializable(self):
         """Reporte es serializable a JSON."""
-        from scripts.orquestador import generate_scope_report
+        from scripts.scope_verification import generate_scope_report
 
         report = generate_scope_report(
             in_scope=["src/a.py"],
@@ -322,7 +322,7 @@ class TestAllowlistPatterns:
 
     def test_wildcard_root_allows_all(self):
         """Allowlist con '.' permite todo el repo."""
-        from scripts.orquestador import classify_scope
+        from scripts.scope_verification import classify_scope
 
         allowlist = {"write_roots": ["."], "comment": "test"}
         touched = ["src/a.py", "tests/b.py", "docs/c.md", "scripts/d.py"]
@@ -334,7 +334,7 @@ class TestAllowlistPatterns:
 
     def test_nested_path_in_allowlist(self):
         """Rutas anidadas en allowlist."""
-        from scripts.orquestador import classify_scope
+        from scripts.scope_verification import classify_scope
 
         allowlist = {"write_roots": ["src/module", "tests/unit"]}
         touched = [
@@ -353,7 +353,7 @@ class TestAllowlistPatterns:
 
     def test_file_directly_in_allowlist(self):
         """Archivo especÃ­fico en allowlist."""
-        from scripts.orquestador import classify_scope
+        from scripts.scope_verification import classify_scope
 
         allowlist = {"write_roots": ["src/main.py", "tests/test_main.py"]}
         touched = ["src/main.py", "tests/test_main.py", "src/other.py"]
