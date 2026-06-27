@@ -72,7 +72,10 @@ Igual que `orchestrate-pipeline`:
    reciente y registrar descartados. Construir la matriz objetivo -> ticket ->
    evidencia -> estado. Si falta un closeout, marcar `NO_VERIFICABLE` salvo
    evidencia de fallo; si el artefacto era obligatorio, registrar
-   `EVIDENCIA_AUSENTE`. Si no hay cierre global, no emitir `APROBADO`.
+   `EVIDENCIA_AUSENTE`. Para la regla de emision de `APROBADO` cuando falta
+   el cierre global (distincion cierre manual vs artefacto esperado ausente),
+   aplicar el contrato de `prompts/audit_pipeline.md` (cid-audit-pipeline-v1),
+   Fase 0 paso 2.
 2. **Fase 1 - Doble pasada por ticket:**
    - Pasada A (verificacion): plan, `deliverable_type`, implementacion, logs,
      tests/gates proporcionales, docs, closeout en cuatro ejes. Para bugs o

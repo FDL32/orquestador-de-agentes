@@ -68,10 +68,30 @@ Objetivo: construir el mapa de objetivos del proyecto para poder detectar
    `pipeline_closeout_<YYYYMMDD-HHMM>.md`; si no hay timestamp valido, usar
    `mtime` y registrarlo como inferencia) y cualquier
    `reconciliation_diagnostic.md`.
-   Si no existe ningun `pipeline_closeout_*.md`, la auditoria no puede emitir
-   `APROBADO`: marcar `NO_VERIFICABLE` en la matriz y usar como fallback solo
-   evidencia alternativa explicita (`backlog`, `PLAN_*`, `execution_log.md`,
-   commits o bus).
+   Si no existe ningun `pipeline_closeout_*.md`, distinguir dos casos:
+
+   **Caso A — Cierre manual detectado:** si se cumplen las tres senales
+   simultaneamente: (a) no hay ningun `pipeline_closeout_*.md` reciente
+   alineado con los tickets auditados, (b) no hay `closeout_<TICKET>.md` para
+   esos tickets, y (c) existen commits git con el ID del ticket en el mensaje O
+   `execution_log.md` confirma cierre manual; entonces el cierre fue
+   ticket-a-ticket sin orquestacion de pipeline. En este caso: marcar
+   `NO_VERIFICABLE` en la matriz (la ausencia de `pipeline_closeout` por si
+   sola NO bloquea `APROBADO`) y documentar la via de fallback: usar
+   `execution_log.md` (bitacora del Builder) + commits git con el ticket +
+   `session_close_report.md` (cuando exista, generado por `--session-close`) +
+   `events.jsonl` (STATE_CHANGED terminales en el bus) como evidencia sustituta.
+   El veredicto se emite sobre esta evidencia de fallback, anotando que el
+   cierre fue manual. Si solo se cumple (a) sin (b) ni (c), tratar como
+   Caso B.
+
+   **Caso B — Artefacto esperado ausente:** si hay indicios de que
+   `orchestrate-pipeline` corrio (existe algun `pipeline_closeout_*.md` de
+   otra familia o el backlog/cierre global indica que el pipeline debia
+   producir closeouts) pero faltan los artefactos correspondientes a los
+   tickets auditados: registrar `EVIDENCIA_AUSENTE` con `path:` esperado y
+   fuente que lo exige. En este caso la ausencia bloquea `APROBADO` (rigor
+   pleno).
 3. Listar todos los closeouts por ticket:
    `orchestrator_pipeline/reports/closeout_*.md`. Si hay multiples closeouts
    para el mismo ticket, usar el mas reciente por timestamp lexicografico del
@@ -199,6 +219,11 @@ Lo que ningun review por-ticket puede ver:
   todos los `motor_after_*.json`; si el motor quedo sucio sin ticket que lo
   declarara, reportarlo como `[EVIDENCIA: git_status]`, nunca restaurar. El
   JSON debe conservar breakdown por ticket en `motor_integrity.per_ticket`.
+  En cierre manual (Caso A de Fase 0 paso 2), la ausencia de
+  `motor_after_*.json` es esperable (el orquestador no corrio); marcar
+  `NO_VERIFICABLE` para integridad del motor y documentar que la verificacion
+  de drift acumulado no aplica. Si el pipeline si corrio y faltan los
+  `motor_after_*.json`, tratar como `EVIDENCIA_AUSENTE` (Caso B).
 
 Estados de integridad:
 
@@ -248,6 +273,15 @@ Uno de (de `audit_agent_output.md`):
 Con una frase de razon principal. No emitas `APROBADO` con objetivos huerfanos,
 claims centrales no verificados o contradicciones abiertas entre closeouts.
 Tampoco emitas `APROBADO` si `audit_scope.included_tickets` queda vacio.
+
+En cierre manual (Caso A de Fase 0 paso 2), la ausencia de
+`pipeline_closeout_*.md` NO impide por si sola emitir `APROBADO`: el
+veredicto se emite sobre la evidencia de fallback documentada
+(`execution_log.md` + commits git + `session_close_report.md` cuando exista
++ bus `events.jsonl`), anotando que el cierre fue manual y que el veredicto es
+degradado. En cierre pipeline-driven (Caso B), la ausencia de
+`pipeline_closeout_*.md` o de `closeout_<TICKET>.md` esperados mantiene el
+bloqueo a `APROBADO` con `EVIDENCIA_AUSENTE`.
 
 ---
 
