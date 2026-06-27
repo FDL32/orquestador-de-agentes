@@ -54,7 +54,16 @@ Ejecuta en este orden y reporta por bloque:
    - **Gate de presencia (barrera, no friccion):** verificar `Test-Path <destination_root>` (o `test -f` del `backlog.md`) ANTES de escribir.
      - Si el workspace ESTA en el espacio de trabajo: escribir cada follow-up con evidencia en `<destination_root>/.agent/collaboration/backlog.md` -> (a) una fila en la tabla `Vista rapida` y (b) una ficha detallada. Campos minimos: `Ticket` (prefijo `WOT-`, siguiente id libre), `Estado: pending`, `delivery_authority: repo_motor`, `Origen: session-<fecha>-<slug>`, `Reactivation: -`, y el criterio binario de aceptacion + la evidencia que lo origino. Respetar el contrato de cola viva del propio `backlog.md` (estados permitidos, columna Reactivation).
      - Si el workspace NO esta montado: DETENERSE y SOLICITAR al usuario que abra/monte el repo de desarrollo del motor (`destination_root`). NO escribir el follow-up en `repo_motor`, NI en el repo_destino de ESTA sesion, NI dejarlo solo en memoria. Emitir la ficha pegable como fallback explicito y marcar el registro como PENDIENTE.
-   - **Escribe el archivo, NO commitees:** el `backlog.md` del workspace lo commitea el humano/Manager por el canal del workspace (su contrato: "Escritura: humano o Manager"). El cierre del destino NO debe crear commits en el `.git` del workspace.
+   - Regla unica de no-bloqueo del cierre (X-01/E4): durante el Bloque 1 NO escribas el follow-up
+     en disco. PREPARA cada ficha en borrador. La escritura real a
+     `<destination_root>/.agent/collaboration/backlog.md` ocurre en el Bloque 5 (post-cierre), DESPUES
+     de que `--session-close` termine en verde. Motivo verificado en vivo (E4): el Bloque 3 corre
+     `prepush_check --closeout-mode` -> `check_git_tree_clean`, cuya allowlist
+     `EXPECTED_CLOSEOUT_RUNTIME_ARTIFACTS` (4 entradas, NO incluye `backlog.md`, match por substring)
+     deja el arbol sucio y BLOQUEA el cierre (exit 1). NO se arregla ampliando la allowlist; se
+     arregla por ORDEN.
+   - **Escribe en Bloque 5, NO commitees:** cuando el cierre ya paso, escribe el backlog. Lo commitea
+     el humano/Manager (contrato cola viva). El cierre NO crea commits en el `.git` del workspace.
    - Reporta: por cada follow-up, `[REGISTRADO en <ruta>:<ticket>]` o `[PENDIENTE - workspace no montado]`, con la evidencia citada.
 
 == BLOQUE 2: PASADA ADVERSARIAL SOBRE EL CODIGO GENERADO ESTA SESION (el paso que faltaba) ==
@@ -74,6 +83,8 @@ Esta es la barrera critica que el flujo anterior omitia: la salida del Builder n
 PUNTO DE CONTROL antes del Bloque 3: la sesion debe estar VERDE y RECONCILIADA. Si el Bloque 2 destapa un false-green o una contradiccion, vuelve al Builder; NO continues.
 
 == BLOQUE 3: CIERRE CANONICO ==
+Invariante de arbol de cierre (v3 P1 delta): antes de correr `prepush_check`/`--session-close`, NINGUN write-surface no incluido en `EXPECTED_CLOSEOUT_RUNTIME_ARTIFACTS` puede haber sido modificado por este flujo (en particular `backlog.md`). Si lo fue, es un error de ORDEN del propio flujo: difiere esa escritura al post-cierre (Bloque 5). El gate no se relaja; el flujo se reordena.
+
 6. `prompts/orchestrator_session_close_chat.md` es el WRAPPER orquestador. NO reimplementes sus pasos en este prompt: las skills son la fuente canonica. Invoca el comando canonico unico, que ya orquesta todo el pipeline automaticamente:
    - `python .agent/agent_controller.py --session-close --dry-run --project-root <repo_destino>` (previsualiza, no muta), revisa el reporte.
    - `python .agent/agent_controller.py --session-close --project-root <repo_destino>` (ejecuta). Si `STATE.md` ya esta COMPLETED, anade `--force`.
@@ -96,7 +107,10 @@ PROPIEDAD DE ARTEFACTOS (quien escribe que, para evitar triple-write ciego):
 - `closeout_lessons.md`: puente para el siguiente manager-create-work-plan; lo posee manager-session-closeout.
 - `CHANGELOG.md` + ficheros de version: los posee version-changelog.
 - `MEMORY.md`: lo regenera memory-consolidate; no se edita a mano.
-- `backlog.md` del workspace del motor (`<destination_root>/.agent/collaboration/backlog.md`): lo escribe el Bloque 1.3.bis (follow-ups del motor con evidencia). Un follow-up-ticket NO es una entrada de memoria: registralo SOLO en el backlog, no lo dupliques en `observations.jsonl`/`UPSTREAM_LEARNINGS.md`. La memoria documenta el aprendizaje; el backlog agenda el trabajo. El cierre del destino escribe el archivo pero NO commitea el `.git` del workspace.
+- `backlog.md` del workspace del motor (`<destination_root>/.agent/collaboration/backlog.md`): lo prepara el Bloque 1.3.bis y lo escribe el Bloque 5 (post-cierre verde) (follow-ups del motor con evidencia). Un follow-up-ticket NO es una entrada de memoria: registralo SOLO en el backlog, no lo dupliques en `observations.jsonl`/`UPSTREAM_LEARNINGS.md`. La memoria documenta el aprendizaje; el backlog agenda el trabajo. El cierre del destino escribe el archivo pero NO commitea el `.git` del workspace.
+
+== BLOQUE 5: REGISTRO DIFERIDO DE FOLLOW-UPS (post-cierre verde) ==
+8. Con `--session-close` en verde y el arbol limpio, materializa los follow-ups PREPARADOS en 1.3bis: escribe fila Vista rapida + ficha en `backlog.md`, corre `check_backlog_contract.py`, reporta `[REGISTRADO en <ruta>:<ticket>]`. NO commitees. Registrar follow-ups nunca debe poder bloquear el cierre que los origino.
 
 VALIDACION FINAL: `python .agent/agent_controller.py --validate --json --project-root <repo_destino>` -> exige `0 errors / 0 warnings`. Reporta exit code real.
 
