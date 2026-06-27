@@ -21,6 +21,9 @@ def append_entry(entry: dict, log_path: Path) -> None:
           por linea.
 
     During:
+        - Valida que entry contiene los 3 campos de clave con valor no-None
+          (ticket, iteration_index, event). Si falta alguno, lanza ValueError
+          antes de tocar el disco (fail-loud, no perdida silenciosa).
         - Lee log_path si existe y extrae la clave (ticket, iteration_index,
           event) de cada linea JSON valida.
         - Si la clave de entry ya existe en el log: retorna sin error (no-op).
@@ -31,7 +34,9 @@ def append_entry(entry: dict, log_path: Path) -> None:
     After:
         - Si la clave era nueva: log_path contiene la nueva entrada al final.
         - Si la clave ya existia: log_path queda exactamente igual (idempotente).
-        - No lanza excepcion si la entrada es duplicada.
+        - Lanza ValueError si falta alguno de los campos de clave (ticket,
+          iteration_index, event) o su valor es None.
+        - No lanza excepcion si la entrada es duplicada (clave ya existe).
         - Lanza json.JSONDecodeError si una linea existente del log no es JSON
           valido (indicador de corrupcion, no se silencia).
 
@@ -40,6 +45,11 @@ def append_entry(entry: dict, log_path: Path) -> None:
                "iteration_index" y "event". Campos adicionales se preservan.
         log_path: Ruta al archivo JSONL del run-log.
     """
+    required = ("ticket", "iteration_index", "event")
+    missing = [k for k in required if entry.get(k) is None]
+    if missing:
+        raise ValueError(f"loop_run_log entry missing dedup key field(s): {missing}")
+
     existing_keys: set[tuple] = set()
 
     if log_path.exists():
@@ -137,5 +147,5 @@ def _cost_note() -> str:
     return (
         "cost_per_accepted_change = total_tokens / N, donde N = commits de cierre "
         "presentes en historia git del repo_destino 7 dias despues del merge, sin revert. "
-        "Verificacion determinista por historia git (no por estado de review)."
+        "Verificacion por historia git (heuristica: detecta revert por convencion de subject 'Revert'; un revert manual sin esa palabra no se detecta)."
     )

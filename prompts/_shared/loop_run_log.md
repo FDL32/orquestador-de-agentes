@@ -54,7 +54,7 @@ El denominador de eficiencia de un pipeline es:
 
 Donde N = numero de cambios cuyo commit de cierre sigue presente en la historia
 git del repo_destino 7 dias despues de su merge, sin commit de revert que lo
-anule. Verificacion determinista por historia git:
+anule. Verificacion por historia git (heuristica: detecta revert por convencion de subject 'Revert'; un revert manual sin esa palabra no se detecta):
 
 ```bash
 # 1. Obtener commits de cierre del pipeline:

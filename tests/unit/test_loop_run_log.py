@@ -10,6 +10,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 
 # Insertar la raiz del repo_motor en sys.path para importar scripts/loop_run_log
 _MOTOR_ROOT = Path(__file__).resolve().parents[2]
@@ -157,3 +159,45 @@ def test_append_entry_different_keys_both_stored(tmp_path: Path) -> None:
     assert parsed_b["iteration_index"] == 1
     assert parsed_a["tokens"] == 10
     assert parsed_b["tokens"] == 20
+
+
+def test_append_entry_missing_key_raises(tmp_path: Path) -> None:
+    """
+    BARRERA: append_entry debe lanzar ValueError si la entrada no tiene
+    alguno de los campos de clave (ticket, iteration_index, event).
+
+    Sin la validacion fail-loud, una entrada incompleta colisionaria con
+    otras entradas incompletas en la clave (None,...) y se perderian filas
+    silenciosamente. Este test blinda el fix.
+    """
+    log_path = tmp_path / "run.jsonl"
+
+    # Entrada sin el campo "event"
+    entry_no_event = {
+        "ticket": _TICKET,
+        "iteration_index": 0,
+        "timestamp_utc": "2026-06-27T09:00:00Z",
+        "tokens": 100,
+        "cost_source": "estimated",
+        "notes": "missing event field",
+    }
+    with pytest.raises(ValueError, match="missing dedup key field"):
+        append_entry(entry_no_event, log_path)
+
+    # Entrada sin el campo "ticket"
+    entry_no_ticket = {
+        "iteration_index": 0,
+        "timestamp_utc": "2026-06-27T09:00:00Z",
+        "event": "iteration_start",
+        "tokens": 100,
+        "cost_source": "estimated",
+        "notes": "missing ticket field",
+    }
+    with pytest.raises(ValueError, match="missing dedup key field"):
+        append_entry(entry_no_ticket, log_path)
+
+    # El log NO debe haber sido creado (fail antes de tocar disco)
+    assert not log_path.exists(), (
+        "El log fue creado pese a que la entrada era invalida; "
+        "se esperaba que el raise ocurriera antes de escribir."
+    )
