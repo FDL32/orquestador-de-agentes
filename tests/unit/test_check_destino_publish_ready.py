@@ -156,21 +156,39 @@ def test_resolves_motor_from_link_json(tmp_path):
 def test_resolve_motor_root_arg_branch_returns_resolved_path(tmp_path):
     """Barrier: the --motor-root arg branch must return a .resolve()-normalised path.
 
-    Mutation: the old code returned p (unresolved Path(motor_root_arg)). If that raw
-    return were reinjected, this assertion would fail for a path that needs normalisation
-    (e.g. on a case-insensitive Windows FS the resolved canonical casing differs, or
-    a path with a trailing separator resolves differently).
-    We verify that result == Path(arg).resolve(), NOT just Path(arg).
-    """
-    motor = tmp_path / "motor_dir"
-    motor.mkdir()
+    Feeds a path with a redundant "sub/.." component so that
+    Path(arg) != Path(arg).resolve() even on Windows (tmp_path/sub/.. keeps the
+    dotdot literally until resolve() collapses it).  The assertion
+    result != raw_path is therefore guaranteed to fail if the production
+    code returns the unresolved p instead of p.resolve().
 
-    result = cdr._resolve_motor_root(tmp_path, str(motor))
+    Mutation-verified: revert production to return p if p.exists() else None
+    and this test FAILS with:
+        AssertionError: assert WindowsPath("...motor_sub/..")
+                              != WindowsPath("...motor_sub/..")
+    """
+    # Create the subdirectory so the path with dotdot is traversable
+    sub = tmp_path / "motor_sub"
+    sub.mkdir()
+    # Build a non-canonical arg: tmp_path/motor_sub/..
+    raw_arg = str(tmp_path / "motor_sub" / "..")
+    raw_path = Path(raw_arg)
+
+    # Pre-condition: raw_path exists but is NOT yet normalised
+    assert raw_path.exists(), "path must exist for the arg branch to return non-None"
+    assert raw_path != raw_path.resolve(), (
+        "test pre-condition: raw path must differ from resolved (dotdot not collapsed)"
+    )
+
+    result = cdr._resolve_motor_root(tmp_path, raw_arg)
 
     assert result is not None
-    assert result == motor.resolve()
-    # Explicit normalisation check: resolve() is idempotent for existing paths
-    assert result == result.resolve()
+    # Must be the resolved (collapsed) path
+    assert result == raw_path.resolve()
+    # Must NOT be the raw (non-canonical) path
+    assert result != raw_path, (
+        "arg branch must call .resolve(): returned the raw non-canonical path"
+    )
 
 
 def test_resolve_motor_root_link_branch_delegates_to_canonical_helper(tmp_path):
