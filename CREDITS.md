@@ -25,6 +25,8 @@ External ideas and patterns adopted in this project.
 | WOT-2026-010s | [mattpocock/skills@dcfc232](https://github.com/mattpocock/skills/tree/dcfc2322f2f978113b1ec2dbbf50c00eda824519) | User-invoked vs model-invoked taxonomy (`disable-model-invocation` flag) from `docs/invocation.md` | MIT | Adapted (hybrid metadata support; our discovery/frontmatter model, no bundle/code copied, triggers: retained) |
 | WOT-2026-014s | [cobusgreyling/loop-engineering](https://github.com/cobusgreyling/loop-engineering) | 4-Condition Test pre-loop gate + Ralph Wiggum denylist (pasos 2 y 12 del roadmap Medium) | [verify] | Adapted (rubrica de prompt; no code copied) |
 
+| WOT-2026-014u | [cobusgreyling/loop-engineering](https://github.com/cobusgreyling/loop-engineering) | Economics of Loops: loop budget + idempotent run-log (paso 3; README loop-budget.md/loop-run-log.md) | [verify] | Adapted (templates + modulo idempotente, no code copied) |
+
 ---
 
 ## Convention
