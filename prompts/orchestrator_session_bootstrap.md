@@ -108,6 +108,7 @@ usuario.
 - **Manager-approve CLI:** Se realiza mediante `python .agent/agent_controller.py --manager-approve --ticket WOT-XXXX --force` (canonical closeout sin scripts ad-hoc).
 - **No abras WP nuevos sin instruccion explicita del usuario.**
 - **Gate de loop-readiness (WOT-2026-014s):** antes de activar /goal autonomo para cualquier ticket, aplicar `prompts/_shared/loop_readiness.md` (cid-loop-readiness-v0). Si NO_LOOPEABLE, no activar /goal y registrar la causa.
+- **Goal-checker aislado (WOT-2026-014t):** para /goal multi-ticket o con push, verificar cumplimiento con `prompts/audit_goal_completion.md` (cid-audit-goal-completion-v0); checker en fresh-context/modelo distinto, read-only, solo evidencia dura.
 
 ## Comportamiento esperado
 

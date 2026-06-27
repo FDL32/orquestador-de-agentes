@@ -1011,6 +1011,15 @@ follow-up con evidencia en el informe global.
 python <MOTOR_ROOT>/scripts/check_encoding_guard.py orchestrator_pipeline/reports/pipeline_closeout_<YYYYMMDD-HHMM>.md
 ```
 
+9. Verificar cumplimiento del /goal con checker aislado (si aplica):
+
+Para /goal autonomo multi-ticket o que termina en push/publicacion, verificar el
+cumplimiento con un checker AISLADO antes de emitir el resultado final:
+`prompts/audit_goal_completion.md` (cid-audit-goal-completion-v0).
+El checker corre en fresh-context o modelo distinto, read-only, y recibe solo
+el bundle de evidencia dura (predicado, resultado, commit_sha, validate_salida);
+NO recibe el transcript del ejecutor. Activar si P1 (>= 2 tickets) o P2 (push/deploy).
+
 ## 11. Meta-auditoria final (read-only)
 
 Despues del cierre global, ejecutar una meta-auditoria del pipeline completo.
