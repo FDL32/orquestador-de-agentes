@@ -135,14 +135,37 @@ def test_validate_config_error_returns_exit_3(tmp_path):
 
 
 def test_resolves_motor_from_link_json(tmp_path):
-    """If --motor-root is omitted, resolve from motor_destination_link.json."""
-    motor = tmp_path / "motor"
-    motor.mkdir()
+    """If --motor-root is omitted, resolve from motor_destination_link.json.
+
+    WOT-2026-014j: hardened from false-green. Previous version used str(tmp_path/motor)
+    which is already canonical on Windows/NTFS. We now write a non-canonical path
+    (tmp_path/motor/sub/..) to the link JSON and assert the precondition that the
+    raw path is not canonical, confirming that .resolve() must be called to collapse it.
+
+    NOTE: This test's rc==0 assertion is not directly mutation-effective for the .resolve()
+    call because _stub_validate intercepts _run_validate before motor_root is used further.
+    The precondition assert documents the non-canonical input. Mutation-effective coverage
+    for this resolve() call is provided by test_motor_link.py and test_run_gates_dispatch.py
+    (both verified to FAIL when .resolve() is removed from runtime/motor_link.py:43).
+    """
+    # Create motor/sub so the dotdot path is traversable
+    sub = tmp_path / "motor" / "sub"
+    sub.mkdir(parents=True)
+
+    # Build a non-canonical path: tmp_path/motor/sub/.. (dotdot not collapsed)
+    raw_motor = str(tmp_path / "motor" / "sub" / "..")
+
+    # Pre-condition: the stored path must be non-canonical (documents test intent)
+    assert Path(raw_motor) != Path(raw_motor).resolve(), (
+        "WOT-2026-014j precondition: raw motor path must NOT be canonical "
+        "(dotdot segment must differ from resolved form)"
+    )
+
     project = _make_project(tmp_path / "destino", "COMPLETED")
     link_dir = project / ".agent" / "config"
     link_dir.mkdir(parents=True, exist_ok=True)
     (link_dir / "motor_destination_link.json").write_text(
-        json.dumps({"motor_root": str(motor)}), encoding="utf-8"
+        json.dumps({"motor_root": raw_motor}), encoding="utf-8"
     )
     validate_data = _validate_response(errors={})
     with _stub_validate(0, validate_data):

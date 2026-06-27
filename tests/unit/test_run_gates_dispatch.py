@@ -308,18 +308,43 @@ def test_resolve_motor_root_path_delegates_to_canonical_helper(tmp_path, monkeyp
 def test_resolve_motor_root_path_returns_resolved_path(tmp_path):
     """Barrier: the returned path must be .resolve()-normalised.
 
-    Mutation: if the function returned candidate without .resolve() (old local reader),
-    this assertion would fail when the link json contains a non-canonical path.
+    WOT-2026-014j: hardened from false-green. Previous version used str(tmp_path/motor)
+    which is already canonical on Windows/NTFS, so Path(x)==Path(x).resolve() passed both
+    with and without the .resolve() in motor_link.py:43.
+
+    Fix: build a non-canonical raw_path with a ".." segment (tmp_path/motor/sub/..).
+    Path(raw_path) != Path(raw_path).resolve() because resolve() collapses the dotdot.
+    Without .resolve() in the production code, the returned path would retain the ".."
+    segment and result != raw_path.resolve() would FAIL.
+
+    Mutation-verified: removing .resolve() from runtime/motor_link.py:43 makes this test
+    FAIL (via the resolve_motor_root_path wrapper that delegates to resolve_motor_root).
     """
-    motor = tmp_path / "motor"
-    motor.mkdir()
+    # Create motor/sub so the dotdot path is traversable
+    sub = tmp_path / "motor" / "sub"
+    sub.mkdir(parents=True)
+
+    # Build a non-canonical path: tmp_path/motor/sub/.. (dotdot not collapsed)
+    raw_path = Path(str(tmp_path / "motor" / "sub" / ".."))
+
+    # Pre-condition: raw_path must differ from its resolved form (barrera real)
+    assert raw_path != raw_path.resolve(), (
+        "WOT-2026-014j precondition: raw path must NOT be canonical "
+        "(dotdot segment must differ from resolved form) for the test to exercise .resolve()"
+    )
+
     project = tmp_path / "project"
     (project / ".agent" / "config").mkdir(parents=True)
     link = project / ".agent" / "config" / "motor_destination_link.json"
-    link.write_text(json.dumps({"motor_root": str(motor)}), encoding="utf-8")
+    # Write the non-canonical path string into the link JSON
+    link.write_text(json.dumps({"motor_root": str(raw_path)}), encoding="utf-8")
 
     result = dispatch.resolve_motor_root_path(project)
 
-    assert result == motor.resolve()
-    # Explicit: result must be normalised (resolve() is idempotent for existing paths)
-    assert result == result.resolve()
+    # Must equal the canonical (resolved) form
+    assert result == raw_path.resolve()
+    # Must NOT be the raw non-canonical path (if .resolve() is absent, this FAILS)
+    assert result != raw_path, (
+        "resolve_motor_root_path must call .resolve() via motor_link: "
+        "returned the raw non-canonical path"
+    )
