@@ -179,10 +179,57 @@ def find_path_bullet_mangling(text: str) -> list[str]:
     return snippets
 
 
+def find_c1_controls(text: str) -> list[str]:
+    """Return snippets around C1 control codepoints (U+0080-U+009F) in decoded text.
+
+    WOT-2026-014d: C1 control characters are a distinct class from ASCII controls
+    (<32) and mojibake.  They are valid UTF-8 multibyte sequences so
+    ``content.decode('utf-8', errors='strict')`` does NOT flag them, yet they
+    indicate encoding corruption (typically CP1252-mismapped markers that were
+    stored as raw C1 bytes and re-read as UTF-8).  A separate check is required.
+
+    Each snippet shows the codepoint as ``<U+NNNN>`` with up to 3 chars of
+    following context, deduplicated for human readability.
+    """
+    snippets: list[str] = []
+    for idx, ch in enumerate(text):
+        if not (0x0080 <= ord(ch) <= 0x009F):
+            continue
+        marker = f"<U+{ord(ch):04X}>"
+        tail = text[idx + 1 : idx + 4].replace("\n", "\\n").replace("\r", "\\r")
+        snippet = marker + tail
+        if snippet not in snippets:
+            snippets.append(snippet)
+    return snippets
+
+
+def check_utf8_strict(path: Path) -> list[str]:
+    """Return a single-element list if the file has invalid UTF-8 byte sequences.
+
+    WOT-2026-014d: complementary layer for the C1 check.  ``find_c1_controls``
+    catches valid-UTF-8-but-wrong-class codepoints; this function catches a
+    different class: raw byte sequences that are NOT valid UTF-8 at all (e.g.
+    lone continuation bytes, overlong sequences).
+
+    Returns an empty list on clean files so the caller can use a uniform
+    ``if snippets`` test.
+    """
+    raw = path.read_bytes()
+    try:
+        raw.decode("utf-8", errors="strict")
+        return []
+    except UnicodeDecodeError as exc:
+        return [f"<invalid-utf8:{exc.start:#04x}:{exc.reason}>"]
+
+
 def find_text_corruption(text: str) -> list[str]:
     """Return non-mojibake structural corruption snippets for a text file."""
     findings: list[str] = []
-    for snippet in [*find_control_chars(text), *find_path_bullet_mangling(text)]:
+    for snippet in [
+        *find_control_chars(text),
+        *find_path_bullet_mangling(text),
+        *find_c1_controls(text),
+    ]:
         if snippet not in findings:
             findings.append(snippet)
     return findings
@@ -228,12 +275,27 @@ def file_issues(path: Path) -> tuple[list[str], list[str], list[str]]:
     """Return (mojibake, question_mark, text_corruption) issue snippets for path.
 
     The third element intentionally keeps the existing 3-tuple contract used by
-    the CLI guard and the post-write hook. It now covers both disallowed ASCII
-    control chars and the narrow path-bullet mangling signatures verified in
-    the CTL-2026-007a corrupted work-plan fixture.
+    the CLI guard and the post-write hook.  It now covers:
+    - disallowed ASCII control chars (<32, not tab/LF/CR)
+    - narrow path-bullet mangling signatures (CTL-2026-007a)
+    - C1 control codepoints (U+0080-U+009F) in decoded text (WOT-2026-014d)
+    - invalid UTF-8 byte sequences via strict-decode (WOT-2026-014d)
+
+    Note: ``check_utf8_strict`` operates on raw bytes before ``load_text``
+    (which uses errors='replace' semantics via UTF-8 read).  For files that are
+    already valid UTF-8 the strict check is a no-op.  For files with invalid
+    bytes it returns a diagnostic snippet appended to the third element so the
+    existing caller contract (3-tuple, third element is a list[str]) is preserved.
     """
+    strict_issues = check_utf8_strict(path)
+    if strict_issues:
+        # File has invalid UTF-8 bytes: load_text would raise UnicodeDecodeError.
+        # Return early with only the strict-decode diagnostic so callers receive
+        # a well-formed 3-tuple without an exception propagating.
+        return [], [], list(strict_issues)
     text = load_text(path)
-    return find_mojibake(text), find_q_in_word(text), find_text_corruption(text)
+    text_corruption = find_text_corruption(text)
+    return find_mojibake(text), find_q_in_word(text), text_corruption
 
 
 def iter_staged_files(paths: list[str]) -> list[Path]:

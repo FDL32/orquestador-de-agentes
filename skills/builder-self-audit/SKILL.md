@@ -52,7 +52,7 @@ NO usar para tareas de solo lectura o exploración.
 
 
 
-### Paso 1 À Verificación tipo-específica
+### Paso 1 — Verificación tipo-específica
 
 
 
@@ -68,9 +68,9 @@ python -m py_compile src/archivo.py
 
 ```
 
-- Ü Sin output Æ OK
+- ✅ Sin output → OK
 
-- Ý Hay output Æ Error de sintaxis. PARA. Corrige antes de continuar.
+- ❌ Hay output → Error de sintaxis. PARA. Corrige antes de continuar.
 
 
 
@@ -82,9 +82,9 @@ python -c "import yaml; yaml.safe_load(open('data/archivo.yaml', encoding='utf-8
 
 ```
 
-- Ü Imprime `OK` Æ válido
+- ✅ Imprime `OK` → válido
 
-- Ý Excepción Æ YAML inválido. PARA. Corrige antes de continuar.
+- ❌ Excepción → YAML inválido. PARA. Corrige antes de continuar.
 
 
 
@@ -96,9 +96,9 @@ python -c "import json; json.load(open('data/archivo.json', encoding='utf-8')); 
 
 ```
 
-- Ü Imprime `OK` Æ válido
+- ✅ Imprime `OK` → válido
 
-- Ý Excepción Æ JSON inválido. PARA. Corrige antes de continuar.
+- ❌ Excepción → JSON inválido. PARA. Corrige antes de continuar.
 
 
 
@@ -110,7 +110,7 @@ python -c "import json; json.load(open('data/archivo.json', encoding='utf-8')); 
 
 
 
-### Paso 2 À Protocolo "Ya Existía / Ya Estaba Hecho"
+### Paso 2 — Protocolo "Ya Existía / Ya Estaba Hecho"
 
 
 
@@ -132,7 +132,7 @@ Si la tarea del plan ya estaba implementada antes de que tocaras el código:
 
 2. **Verifica** que lo que existe cumple el criterio del plan, no solo que "algo con ese nombre existe".
 
-3. Si lo que existe es diferente al plan Æ implementa el plan y documenta la discrepancia.
+3. Si lo que existe es diferente al plan → implementa el plan y documenta la discrepancia.
 
 
 
@@ -144,7 +144,7 @@ Si la tarea del plan ya estaba implementada antes de que tocaras el código:
 
 
 
-### Paso 3 À Verificación de completitud multi-archivo
+### Paso 3 — Verificación de completitud multi-archivo
 
 
 
@@ -186,7 +186,7 @@ for f in archivos:
 
 
 
-Si hay FALTAs Æ la tarea no está completa. Completa los archivos que faltan.
+Si hay FALTAs → la tarea no está completa. Completa los archivos que faltan.
 
 
 
@@ -194,7 +194,7 @@ Si hay FALTAs Æ la tarea no está completa. Completa los archivos que faltan.
 
 
 
-### Paso 4 À Checklist anti-regresión (solo para ISS / code smell / refactor)
+### Paso 4 — Checklist anti-regresión (solo para ISS / code smell / refactor)
 
 
 
@@ -224,7 +224,7 @@ Para tareas de nueva funcionalidad o creación de archivos: omitir este paso.
 
 
 
-### Paso 4b À Reglas de contract para review estructurado
+### Paso 4b — Reglas de contract para review estructurado
 
 
 
@@ -248,7 +248,7 @@ Estas reglas refuerzan los pasos 1-4. No sustituyen la verificación tipo-espec�
 
 
 
-### Paso 5 À Verificación de frescura documental
+### Paso 5 — Verificación de frescura documental
 
 
 
@@ -268,11 +268,11 @@ Antes de ejecutar gates de calidad, verifica que la documentación operativa est
 
 
 
-Si hay drift Æ corrige la documentación antes de continuar. Frescura documental es obligatoria para reducir drift post-review.
+Si hay drift → corrige la documentación antes de continuar. Frescura documental es obligatoria para reducir drift post-review.
 
 
 
-### Paso 6 À Gate completo del proyecto
+### Paso 6 — Gate completo del proyecto
 
 
 
@@ -286,9 +286,9 @@ python scripts/run_pytest_safe.py
 
 
 
-- Ü Ambos pasan Æ puedes reportar
+- ✅ Ambos pasan → puedes reportar
 
-- Ý Alguno falla Æ corrige y vuelve al inicio del gate
+- ❌ Alguno falla → corrige y vuelve al inicio del gate
 
 
 
@@ -296,7 +296,7 @@ python scripts/run_pytest_safe.py
 
 
 
-### Paso 7 À Reportar en execution_log.md con evidencia real
+### Paso 7 — Reportar en execution_log.md con evidencia real
 
 
 
@@ -306,7 +306,7 @@ Solo si los pasos 1-6 pasaron sin errores, escribe en `execution_log.md` el outp
 
 ```markdown
 
-### Tarea X.Y À [Descripción] À VERIFICADO
+### Tarea X.Y — [Descripción] — VERIFICADO
 
 
 
@@ -324,15 +324,15 @@ Solo si los pasos 1-6 pasaron sin errores, escribe en `execution_log.md` el outp
 
 |-------------|---------|-----------|
 
-| Sintaxis Python | `py_compile src/foo.py` | Ü OK |
+| Sintaxis Python | `py_compile src/foo.py` | ✅ OK |
 
-| YAML válido | `yaml.safe_load('data/x.yaml')` | Ü OK |
+| YAML válido | `yaml.safe_load('data/x.yaml')` | ✅ OK |
 
-| Frescura documental | Verificación manual de PROJECT.md, QUICKSTART.md, TURN.md | Ü Sincronizado |
+| Frescura documental | Verificación manual de PROJECT.md, QUICKSTART.md, TURN.md | ✅ Sincronizado |
 
-| Ruff | `ruff check src/` | Ü All checks passed |
+| Ruff | `ruff check src/` | ✅ All checks passed |
 
-| Tests | `python scripts/run_pytest_safe.py` | Ü 12 passed, 0 failed |
+| Tests | `python scripts/run_pytest_safe.py` | ✅ 12 passed, 0 failed |
 
 
 
