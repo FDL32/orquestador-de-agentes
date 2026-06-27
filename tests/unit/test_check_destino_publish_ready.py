@@ -148,3 +148,53 @@ def test_resolves_motor_from_link_json(tmp_path):
     with _stub_validate(0, validate_data):
         rc = cdr.main(["--project-root", str(project)])
     assert rc == 0
+
+
+# WOT-2026-014e: mutation barriers — _resolve_motor_root canonical helper
+
+
+def test_resolve_motor_root_arg_branch_returns_resolved_path(tmp_path):
+    """Barrier: the --motor-root arg branch must return a .resolve()-normalised path.
+
+    Mutation: the old code returned p (unresolved Path(motor_root_arg)). If that raw
+    return were reinjected, this assertion would fail for a path that needs normalisation
+    (e.g. on a case-insensitive Windows FS the resolved canonical casing differs, or
+    a path with a trailing separator resolves differently).
+    We verify that result == Path(arg).resolve(), NOT just Path(arg).
+    """
+    motor = tmp_path / "motor_dir"
+    motor.mkdir()
+
+    result = cdr._resolve_motor_root(tmp_path, str(motor))
+
+    assert result is not None
+    assert result == motor.resolve()
+    # Explicit normalisation check: resolve() is idempotent for existing paths
+    assert result == result.resolve()
+
+
+def test_resolve_motor_root_link_branch_delegates_to_canonical_helper(tmp_path):
+    """Barrier: the link branch must delegate to runtime.motor_link.resolve_motor_root.
+
+    Mutation: if the function reopened motor_destination_link.json locally (old code),
+    patching runtime.motor_link.resolve_motor_root would have no effect and the
+    assertion on mock_resolve.called would FAIL.
+    """
+    from unittest.mock import patch as _patch
+
+    sentinel = tmp_path / "sentinel_motor"
+    sentinel.mkdir()
+
+    with _patch(
+        "runtime.motor_link.resolve_motor_root", return_value=sentinel.resolve()
+    ) as mock_resolve:
+        result = cdr._resolve_motor_root(tmp_path, None)
+
+    mock_resolve.assert_called_once_with(tmp_path)
+    assert result == sentinel.resolve()
+
+
+def test_resolve_motor_root_arg_branch_none_when_missing(tmp_path):
+    """Arg branch returns None when the supplied path does not exist."""
+    result = cdr._resolve_motor_root(tmp_path, str(tmp_path / "nonexistent_motor"))
+    assert result is None

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 import scripts.pip_audit_policy as pip_audit_policy
@@ -278,3 +279,47 @@ def test_main_runs_barriers_from_motor_with_destino_project_root(monkeypatch, tm
             str(destino),
         ],
     ]
+
+
+# WOT-2026-014e: mutation barrier — resolve_motor_root_path delegates to canonical helper
+
+
+def test_resolve_motor_root_path_delegates_to_canonical_helper(tmp_path, monkeypatch):
+    """Barrier: resolve_motor_root_path must call runtime.motor_link.resolve_motor_root.
+
+    Mutation barrier: if the function were reverted to reopen motor_destination_link.json
+    locally (without delegating), patching runtime.motor_link.resolve_motor_root would
+    have no effect and the assertion on the sentinel value would FAIL.
+    """
+    from unittest.mock import patch as _patch
+
+    sentinel = tmp_path / "sentinel_motor"
+    sentinel.mkdir()
+
+    with _patch(
+        "runtime.motor_link.resolve_motor_root", return_value=sentinel.resolve()
+    ) as mock_resolve:
+        result = dispatch.resolve_motor_root_path(tmp_path)
+
+    mock_resolve.assert_called_once_with(tmp_path)
+    assert result == sentinel.resolve()
+
+
+def test_resolve_motor_root_path_returns_resolved_path(tmp_path):
+    """Barrier: the returned path must be .resolve()-normalised.
+
+    Mutation: if the function returned candidate without .resolve() (old local reader),
+    this assertion would fail when the link json contains a non-canonical path.
+    """
+    motor = tmp_path / "motor"
+    motor.mkdir()
+    project = tmp_path / "project"
+    (project / ".agent" / "config").mkdir(parents=True)
+    link = project / ".agent" / "config" / "motor_destination_link.json"
+    link.write_text(json.dumps({"motor_root": str(motor)}), encoding="utf-8")
+
+    result = dispatch.resolve_motor_root_path(project)
+
+    assert result == motor.resolve()
+    # Explicit: result must be normalised (resolve() is idempotent for existing paths)
+    assert result == result.resolve()

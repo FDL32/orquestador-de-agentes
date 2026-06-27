@@ -122,3 +122,31 @@ def test_resolve_motor_script_returns_none_for_missing_script(
     _write_link_file(fake_project_root, fake_motor_root)
     result = resolve_motor_script(fake_project_root, "nonexistent_script.py")
     assert result is None
+
+
+# WOT-2026-014e: normalisation barrier for resolve_motor_root
+
+
+def test_resolve_motor_root_returns_resolved_path(
+    fake_project_root: Path, tmp_path: Path
+):
+    """Barrier: resolve_motor_root must return a .resolve()-normalised path.
+
+    Mutation: if the function returned Path(motor_root) without .resolve(), this assertion
+    would fail for a motor_root value stored in the link JSON with non-canonical
+    representation (e.g. different path separators or trailing components).
+    We write the raw str(motor) and verify the returned path is fully resolved.
+    """
+    motor = tmp_path / "real_motor"
+    motor.mkdir(parents=True)
+
+    link_path = fake_project_root / ".agent" / "config" / "motor_destination_link.json"
+    # Write the path as-is (str(motor) — may not be canonical on all FSes)
+    link_path.write_text(json.dumps({"motor_root": str(motor)}), encoding="utf-8")
+
+    result = resolve_motor_root(fake_project_root)
+
+    assert result is not None
+    assert result == motor.resolve()
+    # Explicit idempotency: a .resolve()-ed path resolves to itself
+    assert result == result.resolve()

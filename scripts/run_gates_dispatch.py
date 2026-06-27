@@ -9,7 +9,6 @@ WP-2026-122: Uses runtime.project_root for dynamic project root resolution.
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import subprocess
@@ -44,20 +43,18 @@ PROJECT_ROOT = resolve_project_root_path()
 
 
 def resolve_motor_root_path(project_root: Path) -> Path:
-    link_path = project_root / ".agent" / "config" / "motor_destination_link.json"
-    if not link_path.exists():
-        return _PROJECT_ROOT_BOOTSTRAP
-    try:
-        data = json.loads(link_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return _PROJECT_ROOT_BOOTSTRAP
-    motor_root = data.get("motor_root")
-    if not motor_root:
-        return _PROJECT_ROOT_BOOTSTRAP
-    candidate = Path(motor_root)
-    if candidate.exists():
-        return candidate.resolve()
-    return _PROJECT_ROOT_BOOTSTRAP
+    """Resolve motor root: delegates to runtime.motor_link.resolve_motor_root.
+
+    Before: project_root is the resolved destination workspace root.
+    During: Imports and calls the canonical helper (runtime.motor_link).
+            Falls back to _PROJECT_ROOT_BOOTSTRAP when no
+            motor_destination_link.json exists (standalone / motor-as-root).
+    After: Returns an absolute, .resolve()-normalised Path. Never returns None.
+    """
+    from runtime.motor_link import resolve_motor_root as _resolve
+
+    motor_root = _resolve(project_root)
+    return motor_root if motor_root is not None else _PROJECT_ROOT_BOOTSTRAP
 
 
 # WOT-2026-012b: distinguish project root (operational repo_destino) from

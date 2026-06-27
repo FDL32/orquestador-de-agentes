@@ -55,19 +55,23 @@ _PUBLISHABLE_STATUSES = {
 
 
 def _resolve_motor_root(project_root: Path, motor_root_arg: str | None) -> Path | None:
+    """Resolve motor root: arg > link (canonical helper).
+
+    Before: project_root is the resolved destination workspace root.
+            motor_root_arg is None or a CLI-supplied path string.
+    During: If motor_root_arg is provided, resolves it directly.
+            Otherwise delegates to runtime.motor_link.resolve_motor_root,
+            which reads motor_destination_link.json (single canonical reader).
+    After: Returns an absolute, .resolve()-normalised Path, or None when the
+           motor root cannot be found. The arg branch also calls .resolve()
+           so both paths return a normalised value.
+    """
     if motor_root_arg:
         p = Path(motor_root_arg)
-        return p if p.exists() else None
-    link = project_root / ".agent" / "config" / "motor_destination_link.json"
-    if link.exists():
-        try:
-            data = json.loads(link.read_text(encoding="utf-8"))
-            candidate = Path(data.get("motor_root", ""))
-            if candidate.exists():
-                return candidate
-        except (json.JSONDecodeError, OSError):
-            pass
-    return None
+        return p.resolve() if p.exists() else None
+    from runtime.motor_link import resolve_motor_root as _resolve
+
+    return _resolve(project_root)
 
 
 def _run_validate(motor_root: Path, project_root: Path) -> tuple[int, dict]:
