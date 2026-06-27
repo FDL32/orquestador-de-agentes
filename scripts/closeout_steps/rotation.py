@@ -10,6 +10,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+# WOT-2026-014a: import shared constant from delivery_hygiene_check instead of
+# redefining expected_patterns locally. Both gates stay in sync automatically.
+from scripts.delivery_hygiene_check import EXPECTED_CLOSEOUT_RUNTIME_ARTIFACTS
+
 
 if TYPE_CHECKING:
     from scripts.session_closeout import StepResult
@@ -386,12 +390,9 @@ def step_git_clean(
         dirty_lines = [
             line for line in result.stdout.strip().splitlines() if line.strip()
         ]
-        expected_patterns = [
-            "session_close_report.md",
-            "CONSOLIDATION_REPORT.md",
-            "MEMORY.md",
-            "observations.jsonl",
-        ]
+        # WOT-2026-014a: use shared constant imported from delivery_hygiene_check
+        # instead of a local list. step_git_clean and check_git_tree_clean now agree.
+        expected_patterns = EXPECTED_CLOSEOUT_RUNTIME_ARTIFACTS
         unexpected = [
             line
             for line in dirty_lines

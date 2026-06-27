@@ -35,7 +35,11 @@ def step_prepush_check(
     try:
         result = run_script_fn(
             "prepush_check.py",
-            ["--project-root", str(project_root)],
+            # WOT-2026-014a: pass --closeout-mode so check_git_tree_clean forgives
+            # expected runtime artifacts (session_close_report.md, etc.) that the
+            # closeout itself generates. Non-closeout callers of prepush_check do
+            # NOT pass this flag, preserving the general pre-push gate unchanged.
+            ["--project-root", str(project_root), "--closeout-mode"],
             project_root,
             timeout=300,
         )

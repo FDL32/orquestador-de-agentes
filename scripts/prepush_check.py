@@ -104,11 +104,21 @@ def run_subprocess_check(
     return CheckResult(name=name, passed=passed, output=output, is_blocking=True)
 
 
-def run_delivery_hygiene_check(project_root: Path) -> CheckResult:
+def run_delivery_hygiene_check(
+    project_root: Path,
+    expected_artifacts: list[str] | None = None,
+) -> CheckResult:
     """Ejecuta el check de higiene de entrega.
+
+    WOT-2026-014a: the optional expected_artifacts param is forwarded to
+    delivery_hygiene_check.run_delivery_hygiene_check so the closeout pre-push
+    gate can forgive known runtime artifacts. Default None preserves current
+    behavior (no forgiveness) for all non-closeout callers.
 
     Args:
         project_root: Raiz del proyecto donde ejecutar el check.
+        expected_artifacts: Optional allowlist forwarded to check_git_tree_clean.
+            Default None preserves current behavior (any dirty file fails).
 
     Returns:
         CheckResult con el estado de la higiene de entrega.
@@ -122,7 +132,10 @@ def run_delivery_hygiene_check(project_root: Path) -> CheckResult:
 
         f = io.StringIO()
         with redirect_stdout(f):
-            exit_code = run_delivery_hygiene_check(project_root=project_root)
+            exit_code = run_delivery_hygiene_check(
+                project_root=project_root,
+                expected_artifacts=expected_artifacts,
+            )
 
         output = f.getvalue()
         passed = exit_code == 0
@@ -335,11 +348,18 @@ def run_validate_all(project_root: Path) -> CheckResult:
 
 def run_preflight_check(
     project_root: Path | None = None,
+    expected_artifacts: list[str] | None = None,
 ) -> int:
     """Ejecuta todos los checks de preflight de entrega.
 
+    WOT-2026-014a: the optional expected_artifacts param is forwarded to
+    run_delivery_hygiene_check so the closeout pre-push gate can forgive known
+    runtime artifacts. Default None preserves current behavior (no forgiveness).
+
     Args:
         project_root: Raiz del proyecto. Si None, usa el directorio actual.
+        expected_artifacts: Optional allowlist forwarded to check_git_tree_clean.
+            Default None preserves current behavior (any dirty file fails).
 
     Returns:
         Exit code: 0 si todos los checks bloqueantes pasan, 1 si alguno falla.
@@ -353,7 +373,7 @@ def run_preflight_check(
 
     # Secuencia fija de checks bloqueantes
     # 1. Delivery Hygiene Check
-    results.append(run_delivery_hygiene_check(project_root))
+    results.append(run_delivery_hygiene_check(project_root, expected_artifacts))
 
     # 2. Ruff Check
     results.append(run_ruff_check(project_root))
@@ -444,10 +464,28 @@ Si el preflight falla:
         default=None,
         help="Raiz del proyecto (default: directorio actual)",
     )
+    parser.add_argument(
+        "--closeout-mode",
+        action="store_true",
+        default=False,
+        help=(
+            "WOT-2026-014a: pass EXPECTED_CLOSEOUT_RUNTIME_ARTIFACTS allowlist to "
+            "check_git_tree_clean. Only the closeout path should pass this flag; "
+            "the general pre-push gate MUST NOT pass it (default behavior unchanged)."
+        ),
+    )
 
     args = parser.parse_args()
 
-    return run_preflight_check(project_root=args.project_root)
+    artifacts: list[str] | None = None
+    if args.closeout_mode:
+        from scripts.delivery_hygiene_check import EXPECTED_CLOSEOUT_RUNTIME_ARTIFACTS
+
+        artifacts = EXPECTED_CLOSEOUT_RUNTIME_ARTIFACTS
+    return run_preflight_check(
+        project_root=args.project_root,
+        expected_artifacts=artifacts,
+    )
 
 
 if __name__ == "__main__":
