@@ -120,11 +120,19 @@ Ruta segura:
 - restaurar inmediatamente despues de la prueba;
 - no usar `git reset --hard` ni revertir cambios no relacionados.
 
-Resultado esperado:
-- sin fix: el test de regresion falla;
-- con fix: el test de regresion pasa.
+Resultado esperado (con EVIDENCIA de exit-code, no narrativa):
+- sin fix: el test de regresion FALLA -> registra `command:` y `exit_code:` != 0;
+- con fix: el test de regresion PASA -> registra `command:` y `exit_code:` == 0.
 
-Si el test pasa con y sin el fix, marcar falso-verde y emitir `CHANGES`.
+Formato obligatorio del par (mismo literal en este Paso 3, en el SKILL y en el review artifact):
+
+```
+mutation-verify:
+  sin_fix:  command: <cmd>   exit_code: <!=0>   # DEBE ser rojo
+  con_fix:  command: <cmd>   exit_code: 0       # DEBE ser verde
+```
+
+Si el test pasa con y sin el fix, marcar falso-verde y emitir `CHANGES`. La transicion PASS->FAIL al revertir el fix es OBLIGATORIA como evidencia para todo ticket code/mixed que corrige bug, regresion o introduce barrera nueva; un closeout que afirma la barrera sin el par de exit-codes del revert (el bloque `mutation-verify:` relleno) cuenta como relato, no evidencia (E3: 3 false-greens - 014e/014g/014a - solo se cazaron asi).
 
 Para tickets que no corrigen bugs, sustituye esta barrera por el criterio
 binario declarado en `AUDIT_{{TICKET_ID}}.md`.

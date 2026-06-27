@@ -121,6 +121,18 @@ estructurado (canal primario del bridge; el transcript es fallback):
 - En `CHANGES`, lista cada blocker como string breve en `blockers`.
 - Si no puedes escribir el archivo, emite igualmente el veredicto en texto.
 
+#### Barrera de regresion (SOLO bugfix/regresion/barrera-nueva)
+
+Aplica el Paso 3 de `prompts/manager_review.md` (fuente normativa, contract_id cid-man-review-v2): revierte el fix, el test debe FALLAR (exit != 0); restaura, debe PASAR (exit 0). Registra el par con el formato literal:
+
+```
+mutation-verify:
+  sin_fix:  command: <cmd>   exit_code: <!=0>   # DEBE ser rojo
+  con_fix:  command: <cmd>   exit_code: 0       # DEBE ser verde
+```
+
+Sin ese par de exit-codes reales no se emite `APROBADO` para code/mixed que corrigen bug. NO redeclares aqui los criterios normativos: viven en `prompts/manager_review.md` y esta skill solo remite (regla skill-apunta-prompt-gobierna).
+
 #### Opcion A: APROBADO
 
 Si pasa todos los gates y verificaciones:
