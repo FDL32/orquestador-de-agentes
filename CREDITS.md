@@ -23,6 +23,7 @@ External ideas and patterns adopted in this project.
 | WP-2026-110 | [obra/superpowers](https://github.com/obra/superpowers) | Formal skills for TDD and Debugging | MIT | Adapted (no code copied, process rules adapted to native z_scripts stack) |
 | WOT-2026-010t | [mattpocock/skills@dcfc232](https://github.com/mattpocock/skills/tree/dcfc2322f2f978113b1ec2dbbf50c00eda824519) | Deep-module design vocabulary (module/interface/seam/adapter/depth, deletion test, "interface is the test surface") from `skills/engineering/codebase-design` | MIT | Adapted (review-rubric vocabulary + AP-16 only, no code copied) |
 | WOT-2026-010s | [mattpocock/skills@dcfc232](https://github.com/mattpocock/skills/tree/dcfc2322f2f978113b1ec2dbbf50c00eda824519) | User-invoked vs model-invoked taxonomy (`disable-model-invocation` flag) from `docs/invocation.md` | MIT | Adapted (hybrid metadata support; our discovery/frontmatter model, no bundle/code copied, triggers: retained) |
+| WOT-2026-014s | [cobusgreyling/loop-engineering](https://github.com/cobusgreyling/loop-engineering) | 4-Condition Test pre-loop gate + Ralph Wiggum denylist (pasos 2 y 12 del roadmap Medium) | [verify] | Adapted (rubrica de prompt; no code copied) |
 
 ---
 

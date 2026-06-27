@@ -120,6 +120,11 @@ Cuando termines la lectura, di "Sistema internalizado" y enumera en 5 lineas max
 
 ---
 
+> **Gate de loop-readiness (WOT-2026-014s):** antes de activar /goal autonomo
+> para cualquier ticket, aplicar el gate `prompts/_shared/loop_readiness.md`
+> (cid-loop-readiness-v0). Si el resultado es NO_LOOPEABLE, no activar /goal y
+> registrar la causa en el log del ticket.
+
 ## Cuando usarlo
 
 - Primera interaccion con un agente nuevo en una sesion limpia.

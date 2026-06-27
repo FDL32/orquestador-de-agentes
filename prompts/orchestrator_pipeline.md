@@ -197,6 +197,12 @@ python <MOTOR_ROOT>/scripts/memory_context.py --recall --ticket <TICKET_ID>
 
 ## 0.c Regla de autonomia y limpieza segura
 
+> **Gate de loop-readiness (WOT-2026-014s):** antes de activar /goal autonomo para
+> un ticket, aplicar la rubrica
+> (cid-loop-readiness-v0). Si el resultado es NO_LOOPEABLE, el pipeline NO activa
+> /goal y registra la causa en el log del ticket. El veredicto es binario: LOOP_READY
+> habilita /goal; NO_LOOPEABLE lo bloquea con conteo objetivo visible.
+
 Cuando un subagente tenga dudas, debe elegir la decision que mas se acerque a la
 filosofia de `<MOTOR_ROOT>/prompts/audit_agent_output.md`, aplicando estos 5
 criterios CEM v0 en texto plano:
