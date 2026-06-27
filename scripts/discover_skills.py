@@ -499,7 +499,12 @@ def _check_prompt_names(prompts_dir: Path) -> list[str]:
 
 
 def _check_skill_names(skills_dir: Path) -> list[str]:
-    """Flag skills/<dir> names that violate DEC-008D-001 (kebab-case + actor-first)."""
+    """Flag skills/<dir> names that violate DEC-008D-001 (kebab-case + actor-first).
+
+    Also flags skills whose frontmatter name field does not equal the directory
+    name (WOT-2026-014g). This check is additive: it does not affect the
+    existing kebab-case/actor-first rules.
+    """
     if not skills_dir.is_dir():
         return []
     out: list[str] = []
@@ -510,6 +515,15 @@ def _check_skill_names(skills_dir: Path) -> list[str]:
         violation = _name_violation(name, _SKILL_NAME_RE, "skill", "-")
         if violation and name not in KNOWN_LEGACY_NAMES:
             out.append(violation)
+        # WOT-2026-014g: frontmatter name must equal directory name.
+        skill_file = path / "SKILL.md"
+        if skill_file.exists():
+            fm, _ = parse_frontmatter(skill_file)
+            fm_name = fm.get("name", "")
+            if fm_name and fm_name != path.name:
+                out.append(
+                    f"skill '{path.name}': frontmatter name='{fm_name}' != directory name='{path.name}'",
+                )
     return out
 
 

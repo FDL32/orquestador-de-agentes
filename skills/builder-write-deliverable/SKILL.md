@@ -1,5 +1,5 @@
 ---
-name: write-deliverable
+name: builder-write-deliverable
 version: 2.0.0
 description: Generar un deliverable markdown (no-código) dado descripción, output_path y acceptance criteria
 triggers: [/write-deliverable, /deliverable, /write-doc]

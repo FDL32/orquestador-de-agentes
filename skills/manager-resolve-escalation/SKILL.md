@@ -1,5 +1,5 @@
 ---
-name: resolve-escalation
+name: manager-resolve-escalation
 version: 2.0.0
 description: Skill para que el Manager resuelva bloqueos y escalaciones del Builder con decisiones documentadas
 triggers: [/escalate, escalation, /resolve]

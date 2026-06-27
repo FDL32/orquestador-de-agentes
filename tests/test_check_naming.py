@@ -50,7 +50,7 @@ def _seed(
     for name in skills:
         d = sdir / name
         d.mkdir(parents=True, exist_ok=True)
-        (d / "SKILL.md").write_text("---\nname: x\n---\nbody\n", encoding="utf-8")
+        (d / "SKILL.md").write_text(f"---\nname: {name}\n---\nbody\n", encoding="utf-8")
     return root
 
 

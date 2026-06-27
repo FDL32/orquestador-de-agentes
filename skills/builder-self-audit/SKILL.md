@@ -1,6 +1,6 @@
 ---
 
-name: self-audit
+name: builder-self-audit
 
 version: 2.0.0
 

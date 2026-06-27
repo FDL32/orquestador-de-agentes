@@ -1,5 +1,5 @@
 ---
-name: create-work-plan
+name: manager-create-work-plan
 version: 2.0.0
 description: Skill para que el Manager cree planes de implementación estructurados con fases, tareas y criterios de aceptación
 triggers: [/plan, create-plan, /schedule]

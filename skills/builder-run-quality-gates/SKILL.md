@@ -1,5 +1,5 @@
 ---
-name: run-quality-gates
+name: builder-run-quality-gates
 version: 2.0.0
 description: Ejecutar gates apropiados según deliverable_type del WP activo
 triggers: [/gates, quality-gates, /check]
