@@ -107,6 +107,7 @@ usuario.
 - **OAuth race Codex:** Resuelto por WP-072 mediante el cambio al backend OpenCode. La dependencia de Codex como backend del Manager ha sido eliminada por defecto.
 - **Manager-approve CLI:** Se realiza mediante `python .agent/agent_controller.py --manager-approve --ticket WOT-XXXX --force` (canonical closeout sin scripts ad-hoc).
 - **No abras WP nuevos sin instruccion explicita del usuario.**
+- **Gate de loop-readiness (WOT-2026-014s):** antes de activar /goal autonomo para cualquier ticket, aplicar `prompts/_shared/loop_readiness.md` (cid-loop-readiness-v0). Si NO_LOOPEABLE, no activar /goal y registrar la causa.
 
 ## Comportamiento esperado
 
@@ -119,11 +120,6 @@ Cuando termines la lectura, di "Sistema internalizado" y enumera en 5 lineas max
 ```
 
 ---
-
-> **Gate de loop-readiness (WOT-2026-014s):** antes de activar /goal autonomo
-> para cualquier ticket, aplicar el gate `prompts/_shared/loop_readiness.md`
-> (cid-loop-readiness-v0). Si el resultado es NO_LOOPEABLE, no activar /goal y
-> registrar la causa en el log del ticket.
 
 ## Cuando usarlo
 
