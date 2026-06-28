@@ -28,6 +28,7 @@ TEXT_EXTENSIONS = {
     ".cfg",
     ".css",
     ".csv",
+    ".distribute",
     ".env.example",
     ".example",
     ".gitignore",
@@ -35,6 +36,8 @@ TEXT_EXTENSIONS = {
     ".ini",
     ".js",
     ".json",
+    ".jsonl",
+    ".lock",
     ".md",
     ".ps1",
     ".py",
@@ -42,6 +45,7 @@ TEXT_EXTENSIONS = {
     ".toml",
     ".ts",
     ".txt",
+    ".workspace",
     ".yaml",
     ".yml",
 }
@@ -75,6 +79,30 @@ SECURITY_FIXTURE_PATHS = frozenset(
         "tests/test_persistence_redaction.py",
         "tests/test_classify_publication.py",
         "tests/test_event_bus.py",
+    }
+)
+# D5: Files in .agent/runtime/ that are tracked by design (WOT-2026-015c KEEP).
+# They remain in EXCLUDE_TRACKED but are removed from tracked_exclusions_need_human_action.
+RUNTIME_KEEP_TRACKED = frozenset(
+    {
+        ".agent/runtime/__init__.py",
+        ".agent/runtime/memory/memory_helpers.py",
+        ".agent/runtime/memory/memory_architecture.md",
+    }
+)
+# D6a: History blobs whose only paths are accepted by design (WOT-2026-015e).
+# The SKILL.md had a placeholder in an old commit; tree is already clean.
+HISTORY_ACCEPTED_PATHS = frozenset({"skills/adopt-existing-project/SKILL.md"})
+# D6b: Meta-documentation paths that document examples and real paths by design.
+# These are the motor's own operational docs; redaction_risk is suppressed for them.
+META_DOC_PATHS = frozenset(
+    {
+        "CHANGELOG.md",
+        "docs/KNOWN_FAILURE_PATTERNS.md",
+        "prompts/audit_git_publication.md",
+        "prompts/audit_post_change_system_health.md",
+        "scripts/classify_publication.py",
+        "skills/adopt-existing-project/SKILL.md",
     }
 )
 CRITICAL_SECRET_PATTERNS = [
@@ -114,7 +142,9 @@ REDACTION_PATTERNS = [
     re.compile(r"[A-Za-z]:\\Users\\[^\\\s]+"),
     re.compile(r"/home/[^/\s]+"),
     re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b"),
-    re.compile(r"\b[a-zA-Z0-9-]+\.local\b"),
+    re.compile(
+        r"\b(?!env\.local\b)[a-z0-9][a-z0-9.-]*\.local\b(?!\.[a-z0-9])", re.IGNORECASE
+    ),
 ]
 MAX_TEXT_BYTES = 1_000_000
 MAX_REDACTION_TARGETS_PER_FILE = 50
@@ -192,6 +222,14 @@ def _matches_any(path: str, patterns: list[str]) -> bool:
     return any(fnmatch(path, pattern) for pattern in patterns)
 
 
+def _is_tests_path(path: str) -> bool:
+    """Before: path is a repo-relative posix path. During: prefix check. After: True
+    if the path is under tests/ (redaction fixtures are expected there by design).
+    NOTE: this suppresses only redaction_risk; secret_risk is never suppressed.
+    """
+    return path.startswith("tests/")
+
+
 def _is_security_fixture_path(path: str) -> bool:
     """Before: path is a posix repo-relative path. During: exact case-sensitive
     membership against the named fixtures. After: True only for the exact
@@ -260,13 +298,22 @@ def _has_secret(text: str | None, path: str) -> bool:
 
 
 def _content_flags(text: str | None, rel_path: str) -> list[str]:
-    """Before: text may be None. During: scan. After: risk flags."""
+    """Before: text may be None. During: scan. After: risk flags.
+
+    D1: redaction_risk is suppressed for paths under tests/ (fixtures by design).
+        secret_risk is NEVER suppressed -- AKIA/sk- in tests/ still blocks.
+    D6b: redaction_risk is suppressed for META_DOC_PATHS (motor's own op docs).
+    """
     if text is None:
         return ["binary_or_large"]
     flags: list[str] = []
     if _has_secret(text, rel_path):
         flags.append("secret_risk")
-    if any(pattern.search(text) for pattern in REDACTION_PATTERNS):
+    if (
+        not _is_tests_path(rel_path)
+        and rel_path not in META_DOC_PATHS
+        and any(pattern.search(text) for pattern in REDACTION_PATTERNS)
+    ):
         flags.append("redaction_risk")
     return flags
 
@@ -417,6 +464,8 @@ def _scan_history_secrets(repo_root: Path) -> list[dict[str, Any]]:
     for blob_sha, paths in blob_paths.items():
         if all(_is_security_fixture_path(path) for path in paths):
             continue  # fixtures deliberately contain fake secret markers
+        if all(path in HISTORY_ACCEPTED_PATHS for path in paths):
+            continue  # D6a: history blob accepted by design (WOT-2026-015e)
         text = _git_show_text(repo_root, blob_sha)
         patterns = (
             CRITICAL_SECRET_PATTERNS
@@ -467,11 +516,17 @@ def _build_blocked_reasons(
         blocked_reasons.append(
             {"code": "DECIDE_PENDING", "count": len(buckets["DECIDE"])}
         )
-    if buckets["EXCLUDE_TRACKED"]:
+    # D5: RUNTIME_KEEP_TRACKED files are accepted-by-design and do not block.
+    tracked_pending = [
+        item["path"]
+        for item in buckets["EXCLUDE_TRACKED"]
+        if item["path"] not in RUNTIME_KEEP_TRACKED
+    ]
+    if tracked_pending:
         blocked_reasons.append(
             {
                 "code": "EXCLUDE_TRACKED_PENDING",
-                "count": len(buckets["EXCLUDE_TRACKED"]),
+                "count": len(tracked_pending),
             }
         )
     if not scan_history:
@@ -526,7 +581,13 @@ def _decide_verdict(
         or (is_motor_root and not allow_motor_root)
     ):
         return "NO_ACEPTAR_TODAVIA"
-    if buckets["DECIDE"] or buckets["EXCLUDE_TRACKED"]:
+    # D5: RUNTIME_KEEP_TRACKED files are accepted-by-design; exclude from verdict check.
+    tracked_pending_for_verdict = [
+        item
+        for item in buckets["EXCLUDE_TRACKED"]
+        if item["path"] not in RUNTIME_KEEP_TRACKED
+    ]
+    if buckets["DECIDE"] or tracked_pending_for_verdict:
         return "DECIDE_PENDING"
     if buckets["PUBLISH_WITH_REDACTIONS"]:
         return "LISTO_CON_REDACTIONS"
@@ -640,7 +701,9 @@ def build_manifest(
             item["path"] for item in buckets["EXCLUDE_UNTRACKED"]
         ),
         "tracked_exclusions_need_human_action": sorted(
-            item["path"] for item in buckets["EXCLUDE_TRACKED"]
+            item["path"]
+            for item in buckets["EXCLUDE_TRACKED"]
+            if item["path"] not in RUNTIME_KEEP_TRACKED
         ),
     }
 

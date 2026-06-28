@@ -99,3 +99,8 @@ checkpoint/
 .agent/runtime/memory/memory_rules.md
 .agent/runtime/memory/UPSTREAM_LEARNINGS.md
 .agent/runtime/memory/closeout_lessons.md
+
+# Artefactos locales de QA (WOT-2026-015e, MANIFEST.distribute EXPLICITAMENTE EXCLUIDO)
+/MI_PROYECTO.bat
+/validate_template.bat
+/VERIFY_VERSION.sh
