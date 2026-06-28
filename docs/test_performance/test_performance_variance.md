@@ -10,8 +10,7 @@
 python scripts/run_pytest_safe.py --level all -- --durations=50
 ```
 
-Ejecutado desde `repo_motor`
-(`C:\Users\***REDACTED***\Proyectos_Python\orquestador_de_agentes`).
+Ejecutado desde `repo_motor`.
 Arbol limpio al momento de medir (HEAD `849e7d52`, post-cierre de
 `WOT-2026-010q`). Corridas consecutivas sin concurrencia externa conocida.
 

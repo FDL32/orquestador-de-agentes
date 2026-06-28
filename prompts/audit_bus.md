@@ -20,7 +20,7 @@ Lee estos archivos antes de evaluar nada. No asumas estados; verifica en fuente 
 
 Antes de interpretar eventos, confirma estas tres cosas:
 
-- `project_root` auditado: debe ser el workspace activo (`repo_destino`, resuelto via `AGENT_PROJECT_ROOT` o `.agent/config/motor_destination_link.json`; p.ej. en la instalacion del autor era `C:\Users\***REDACTED***\Proyectos_Python\z_scripts`), no el motor.
+- `project_root` auditado: debe ser el workspace activo (`repo_destino`, resuelto via `AGENT_PROJECT_ROOT` o `.agent/config/motor_destination_link.json`; p.ej. el workspace de desarrollo del autor), no el motor.
 - Bus leido: `.agent/runtime/events/events.jsonl` debe estar bajo el workspace activo.
 - Ticket activo: extraelo de `STATE.md` y `work_plan.md`; si difieren, documenta el drift antes de seguir.
 
@@ -293,7 +293,7 @@ Incluye comandos exactos con flags y rutas absolutas. Ejemplo para relaunch tras
 
 ```powershell
 # 0. Resolver la raiz del repo_destino activo (el workspace, NO el motor).
-#    Ejemplo de la instalacion del autor: C:\Users\***REDACTED***\Proyectos_Python\z_scripts
+#    Ejemplo de la instalacion del autor: <WORKSPACE_ROOT>
 $RepoDestino = (Resolve-Path .).Path
 
 # 1. Setear project root antes de lanzar el supervisor
