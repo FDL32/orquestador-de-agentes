@@ -2,10 +2,8 @@
 # por scripts/install_agent_system.py (copy_gitleaks_config, no-clobber).
 #
 # Este seed es GENERICO. Extiende el ruleset por defecto de gitleaks (no lo
-# reemplaza) y solo neutraliza una clase ESTRUCTURAL de falso positivo comun a
-# cualquier destino: SHAs git de 40 hex que aparecen en superficies de LOG
-# OPERATIVO y que la regla `generic-api-key` marca como posible credencial
-# ("generic-api-key-on-SHA").
+# reemplaza) y neutraliza falsos positivos ESTRUCTURALES comunes a cualquier
+# destino.
 #
 # Politica generic-api-key-on-SHA:
 # - Los logs operativos del sistema (.agent/collaboration, .agent/runtime,
@@ -14,18 +12,22 @@
 #   proyecto prohibe commitear credenciales y exige ***REDACTED*** en logs.
 # - Por eso se permiten por PATH esas superficies, en vez de por un regex amplio
 #   de 40-hex (que ocultaria credenciales reales en CUALQUIER ruta del repo).
-# - Falsos positivos por VALOR concreto (placeholders didacticos, un SHA publico
-#   puntual de un repo externo, etc.) NO van aqui: se añaden por destino en su
-#   propio `.gitleaks.toml`, con regex del valor exacto y justificacion. El
-#   installer es no-clobber: nunca pisa el `.gitleaks.toml` ya personalizado de
-#   un destino.
+# - Falsos positivos por VALOR concreto (placeholders didacticos de tests, un SHA
+#   publico puntual de un repo externo, etc.) van por VALOR EXACTO en un bloque
+#   [[allowlists]].regexes propio, con justificacion. NUNCA por path de un test:
+#   un path-allowlist crea una zona ciega (un secreto REAL futuro en ese archivo
+#   pasaria sin bloquear). El installer es no-clobber: nunca pisa el
+#   .gitleaks.toml ya personalizado de un destino.
+#
+# NOTA gitleaks 8.x: [allowlist] (singular) esta deprecado y NO puede coexistir
+# con [[allowlists]] (plural). Este seed usa solo la forma plural.
 
 title = "motor gitleaks seed (portable, generic)"
 
 [extend]
 useDefault = true
 
-[allowlist]
+[[allowlists]]
 description = "generic-api-key-on-SHA: superficies de log operativo append-only que referencian SHAs git"
 paths = [
   '''(^|/)\.agent/collaboration/''',
@@ -33,4 +35,11 @@ paths = [
   '''(^|/)orchestrator_pipeline/''',
   '''(^|/)execution_log\.md$''',
   '''(^|/)CHANGELOG\.md$''',
+]
+
+[[allowlists]]
+description = "fixtures de secreto sinteticos de los tests del propio scanner de publicacion (NO credenciales reales). Allowlist por VALOR EXACTO, nunca por path: cualquier OTRO secreto en esos tests sigue bloqueando el gate."
+regexes = [
+  '''sk_live_0123456789abcdefXYZ''',
+  '''valorsincomillas0123456789abcd''',
 ]
