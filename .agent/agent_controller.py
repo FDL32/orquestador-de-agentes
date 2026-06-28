@@ -5618,7 +5618,12 @@ def _handle_validate(json_output: bool) -> int:  # noqa: C901
     total_warnings = sum(len(warns) for warns in warnings.values())
 
     if json_output:
-        output = {"errors": errors, "warnings": warnings}
+        output = {
+            "errors": errors,
+            "warnings": warnings,
+            "total_errors": total_errors,
+            "total_warnings": total_warnings,
+        }
         print(json.dumps(output, indent=2))
     else:
         if total_errors == 0 and total_warnings == 0:

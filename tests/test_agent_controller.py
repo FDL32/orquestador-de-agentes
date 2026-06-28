@@ -4063,3 +4063,95 @@ class TestDeliverableTypeFileCongruence:
             "- .agent/runtime/compare/report.md\n"
         )
         assert agent_controller._check_deliverable_type(plan) == []
+
+
+class TestValidateJsonTotals:
+    """WOT-2026-014q: _handle_validate JSON must expose total_errors and total_warnings as ints."""
+
+    def test_total_keys_expose_zero_not_category_count(self, tmp_path, monkeypatch):
+        """total_errors and total_warnings must be 0 when all categories are empty lists.
+
+        Anti-floor: with 7 empty categories, a naive len(errors) would return 7,
+        not 0. The fix exposes total_errors = sum(len(v) for v in errors.values()) = 0.
+        Without the fix, data["total_errors"] raises KeyError.
+        """
+        import agent_controller
+
+        # validate_state_files returns 7 categories all with empty lists
+        # A broken consumer counting len(errors) would get 7, not 0.
+        seven_empty_categories = {
+            "cat_a": [],
+            "cat_b": [],
+            "cat_c": [],
+            "cat_d": [],
+            "cat_e": [],
+            "cat_f": [],
+            "cat_g": [],
+        }
+        monkeypatch.setattr(
+            agent_controller, "validate_state_files", lambda: seven_empty_categories
+        )
+
+        # All other collaborators return neutral/empty results
+        # (same technique as TestTicketProseIntegration)
+        fake_work_plan = tmp_path / "work_plan.md"
+        fake_work_plan.write_text("# Plan\n", encoding="utf-8")
+        fake_collab = tmp_path / "collab"
+        fake_collab.mkdir()
+        monkeypatch.setattr(agent_controller, "WORK_PLAN", fake_work_plan)
+        monkeypatch.setattr(agent_controller, "get_collab_dir", lambda: fake_collab)
+
+        monkeypatch.setattr(
+            agent_controller, "_collect_deliverable_type_warnings", lambda x: {}
+        )
+        monkeypatch.setattr(agent_controller, "read_file", lambda x: "")
+        monkeypatch.setattr(agent_controller, "get_status", lambda x, y: "APPROVED")
+        monkeypatch.setattr(
+            agent_controller, "_check_scope_for_validate", lambda x, y: ([], [])
+        )
+        monkeypatch.setattr(agent_controller, "_check_bus_drift", lambda x, y: [])
+        monkeypatch.setattr(
+            agent_controller,
+            "_check_invariants",
+            lambda x, y, z: {"errors": [], "warnings": []},
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "_validate_contract_gap_coherence",
+            lambda x: [],
+        )
+
+        # Mock scripts.validate_ticket_prose (imported dynamically inside _handle_validate)
+        # Same technique as TestTicketProseIntegration: inject into sys.modules
+        mock_prose_module = type(
+            "MockProseModule",
+            (),
+            {
+                "validate_ticket_prose": staticmethod(
+                    lambda work_plan_path, collab_dir: {
+                        "warnings": [],
+                        "warning_count": 0,
+                    }
+                )
+            },
+        )()
+        monkeypatch.setitem(
+            sys.modules, "scripts.validate_ticket_prose", mock_prose_module
+        )
+
+        # Capture stdout and invoke _handle_validate
+        from io import StringIO
+
+        captured = StringIO()
+        old_stdout = sys.stdout
+        sys.stdout = captured
+        try:
+            exit_code = agent_controller._handle_validate(json_output=True)
+        finally:
+            sys.stdout = old_stdout
+
+        assert exit_code == 0
+        data = json.loads(captured.getvalue())
+        # Strict equality: 7 empty categories -> total 0, not 7
+        assert data["total_errors"] == 0
+        assert data["total_warnings"] == 0
