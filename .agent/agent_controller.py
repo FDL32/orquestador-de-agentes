@@ -3987,6 +3987,8 @@ def _check_bus_drift(plan_content: str, log_status: str) -> list[str]:
     plan_id = get_plan_id(plan_content)
     if is_invalid_plan_id(plan_id):
         return ["No active ticket found for bus drift check"]
+    if _ticket_events_archived(plan_id):
+        return []
     return closure_invariants.check_bus_drift(event_bus, plan_id, log_status)
 
 

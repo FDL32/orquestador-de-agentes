@@ -202,3 +202,40 @@ class TestBusDriftDetection:
         _handle_validate(json_output=False)
 
         mock_print.assert_any_call("[WARN] 1 advertencia(s) encontradas.")
+
+
+class TestBusDriftArchiveAware:
+    """Test that _check_bus_drift respects the archive early-return barrier."""
+
+    @patch("agent_controller._ticket_events_archived", return_value=True)
+    @patch("agent_controller.BUS_AVAILABLE", True)
+    @patch("agent_controller.event_bus")
+    def test_no_warning_when_events_archived(self, mock_bus, mock_archived):
+        """_check_bus_drift returns [] when the ticket archive file exists."""
+        from agent_controller import _check_bus_drift
+
+        plan_content = "**ID:** WP-2026-063\n**Estado:** APPROVED"
+        result = _check_bus_drift(plan_content, "READY_FOR_REVIEW")
+
+        assert result == [], f"Expected empty list when archived, got: {result}"
+        # closure_invariants.check_bus_drift must NOT be called
+        mock_bus.latest_event.assert_not_called()
+
+    @patch("agent_controller._ticket_events_archived", return_value=False)
+    @patch("agent_controller.BUS_AVAILABLE", True)
+    @patch("agent_controller.event_bus")
+    def test_warning_preserved_when_bus_empty_not_archived(
+        self, mock_bus, mock_archived
+    ):
+        """_check_bus_drift returns a non-empty list when bus has no STATE_CHANGED
+        and the ticket archive does not exist (regression guard)."""
+        from agent_controller import _check_bus_drift
+
+        mock_bus.latest_event.return_value = None
+
+        plan_content = "**ID:** WP-2026-063\n**Estado:** APPROVED"
+        result = _check_bus_drift(plan_content, "READY_FOR_REVIEW")
+
+        assert len(result) > 0, (
+            "Expected at least one warning when bus is empty and not archived"
+        )
