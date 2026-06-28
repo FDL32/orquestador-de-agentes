@@ -69,6 +69,14 @@ ALLOW_PUBLISH_PATTERNS = [
     ".env.example",
     "*.env.example",
 ]
+SECURITY_FIXTURE_PATHS = frozenset(
+    {
+        "tests/test_redact.py",
+        "tests/test_persistence_redaction.py",
+        "tests/test_classify_publication.py",
+        "tests/test_event_bus.py",
+    }
+)
 CRITICAL_SECRET_PATTERNS = [
     re.compile(r"PUBLICATION_AUDIT_FAKE_SECRET\s*=", re.IGNORECASE),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
@@ -76,9 +84,29 @@ CRITICAL_SECRET_PATTERNS = [
     re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"),
     re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"),
 ]
+# A credential-named variable bound to a code expression
+# (e.g. `token = normalized.rstrip(",").strip()`) must NOT be a false positive,
+# while real credential literals must still block fail-closed. The original
+# single pattern matched any `token = <16+ chars>` RHS, flagging ordinary code
+# such as `token = some_function(x)` because the variable name plus a long
+# expression satisfied it. The refinement keeps the broad match but adds a
+# negative lookahead right after the `:`/`=` operator that excludes ONLY the code
+# form -- an identifier immediately followed by `.attr` or `(call)`. So
+# `token = normalized.rstrip(...)` and `token = foo.bar(baz)` are exempt, but an
+# opaque credential value still blocks even when terminated by `;` `,` `)` or
+# trailing prose (the lookahead only fires on identifier-then-dot/paren, not on an
+# opaque blob like `AKIAIOSFODNN7EXAMPLEKEY1234`).
 GENERIC_SECRET_PATTERNS = [
+    # Broad credential-assignment match, but exclude RHS that is a code
+    # expression (an identifier immediately followed by ``.attr`` or ``(call)``).
+    # Fail-closed: an opaque value -- including one terminated by ``;`` ``,`` ``)``
+    # or trailing prose -- still matches; only ``token = foo.bar(...)`` style code
+    # is exempted. The negative lookahead sits right after the ``:``/``=`` operator
+    # so it inspects the start of the RHS before the value class consumes it.
     re.compile(
-        r"(?i)\b(api[_-]?key|token|secret|password)\b\s*[:=]\s*['\"]?[A-Za-z0-9_./+=-]{16,}"
+        r"(?i)\b(api[_-]?key|token|secret|password)\b\s*[:=]\s*"
+        r"(?![A-Za-z_]\w*\s*[.(])"  # NOT identifier-then-dot/paren (code expression)
+        r"['\"]?[A-Za-z0-9_./+=-]{16,}"
     ),
 ]
 SECRET_PATTERNS = CRITICAL_SECRET_PATTERNS + GENERIC_SECRET_PATTERNS
@@ -164,6 +192,21 @@ def _matches_any(path: str, patterns: list[str]) -> bool:
     return any(fnmatch(path, pattern) for pattern in patterns)
 
 
+def _is_security_fixture_path(path: str) -> bool:
+    """Before: path is a posix repo-relative path. During: exact case-sensitive
+    membership against the named fixtures. After: True only for the exact
+    redaction/publication test files that deliberately embed fake secret markers
+    to exercise the scanner. These are intentional fixtures, not leaked
+    credentials.
+
+    Uses exact set membership (NOT fnmatch): fnmatch applies os.path.normcase on
+    Windows/macOS, which case-folds and would exempt path variants like
+    ``Tests/Test_Redact.py``. A security allowlist must be platform-invariant, so
+    only the exact posix names are exempt -- case variants are scanned normally.
+    """
+    return path in SECURITY_FIXTURE_PATHS
+
+
 def _is_excluded(path: str) -> bool:
     """Before: path is posix. During: apply allowlist then denylist. After: bool."""
     return _matches_any(path, EXCLUDE_PATTERNS) and not _matches_any(
@@ -202,6 +245,8 @@ def _read_text_cached(repo_root: Path, rel_path: str, cache: TextCache) -> str |
 
 def _secret_patterns_for_path(path: str) -> list[re.Pattern[str]]:
     """Before: path is posix. During: choose strictness. After: regex list."""
+    if _is_security_fixture_path(path):
+        return []  # fixtures deliberately contain fake secret markers
     return (
         CRITICAL_SECRET_PATTERNS if _is_publish_allowlisted(path) else SECRET_PATTERNS
     )
@@ -370,6 +415,8 @@ def _scan_history_secrets(repo_root: Path) -> list[dict[str, Any]]:
             blob_paths.setdefault(blob_sha, []).append(rel_path)
 
     for blob_sha, paths in blob_paths.items():
+        if all(_is_security_fixture_path(path) for path in paths):
+            continue  # fixtures deliberately contain fake secret markers
         text = _git_show_text(repo_root, blob_sha)
         patterns = (
             CRITICAL_SECRET_PATTERNS

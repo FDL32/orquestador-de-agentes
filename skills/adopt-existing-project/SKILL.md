@@ -160,12 +160,24 @@ sin drift. El veredicto humano de la Pasada B prevalece sobre el exit-code del s
 > Estas son limitaciones REALES observadas. Cada una tiene un follow-up o workaround.
 > Documentarlas aquí evita que cada adecuación las redescubra a tropezones.
 
-- **`classify_publication.py` tree-scan NO respeta `.gitignore`** → da falsos
-  positivos de secretos por placeholders en archivos ignorados (p.ej.
-  `API_KEY=your_api_key_here` en docs legacy). El history-scan sí lo respeta.
-  **Workaround:** la Pasada B refuta cada flag verificando con
-  `git check-ignore` + `git ls-files` que el archivo no es publicable.
-  *(Candidato a fix del motor: tree-scan sobre `git ls-files`.)*
+- **`classify_publication.py` y los fixtures de seguridad de tests** → los
+  archivos de test de redacción/publicación (p.ej. `tests/test_redact.py`,
+  `tests/test_classify_publication.py`) embeben marcadores de secreto FALSOS a
+  propósito para ejercitar el scanner. **Resuelto** por la allowlist
+  `SECURITY_FIXTURE_PATHS` en `classify_publication.py`: esos paths nombrados se
+  eximen tanto en el tree-scan como en el history-scan, sin perder fail-closed
+  para cualquier otro path (un blob mixto fixture+no-fixture NO se exime).
+  Placeholder seguro en docs: usa `API_KEY=<API_KEY>`, no un valor opaco largo.
+
+- **Mecánica real de `.gitignore` en el tree-scan** (corrige una nota previa
+  imprecisa): `_collect_repo_files` usa
+  `git ls-files --others --exclude-standard`, así que SÍ respeta los archivos
+  *untracked* ignorados (no los escanea). PERO escanea los archivos *tracked*
+  aunque estén gitignored (un secreto ya commiteado se detecta aunque luego se
+  añada al `.gitignore`). El history-scan recorre blobs de toda la historia.
+  **Workaround para tracked-ignored legítimos:** la Pasada B refuta cada flag
+  con `git check-ignore` + `git ls-files` confirmando que el archivo no es
+  publicable y, si procede, rehaciendo el commit.
 
 - **`run_pytest_safe.py` asume pytest instalado** → falso rojo
   (`No module named pytest`) en destinos que usan `unittest` aunque la suite pase.

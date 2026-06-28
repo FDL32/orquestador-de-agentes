@@ -464,3 +464,193 @@ def test_out_path_is_excluded_from_manifest(tmp_path: Path) -> None:
         for item in bucket
     }
     assert "custom-report.json" not in all_paths
+
+
+# Deliberate fake secret marker used as a scanner fixture, not a real credential.
+_FIXTURE_SECRET = "sk-abcdefghijklmnopqrstuvwxyz0123456789\n"  # noqa: S105
+
+
+def test_security_fixture_tree_scan_is_allowlisted(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "tests").mkdir()
+    fixture = repo / "tests" / "test_redact.py"
+    fixture.write_text(_FIXTURE_SECRET, encoding="utf-8")
+    _git(repo, "add", "tests/test_redact.py")
+    _git(repo, "commit", "-m", "add security fixture")
+
+    manifest = classify_publication.build_manifest(repo, scan_history=True)
+
+    flagged = {f["path"] for f in manifest["tree_secret_scan"]["findings"]}
+    assert manifest["tree_secret_scan"]["ok"] is True
+    assert "tests/test_redact.py" not in flagged
+    assert manifest["verdict"] != "BLOQUEADO_POR_SECRETO"
+
+
+def test_non_allowlisted_fixture_path_still_blocks_tree(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "scripts").mkdir()
+    prod = repo / "scripts" / "prod.py"
+    prod.write_text(_FIXTURE_SECRET, encoding="utf-8")
+    _git(repo, "add", "scripts/prod.py")
+    _git(repo, "commit", "-m", "add prod secret")
+
+    manifest = classify_publication.build_manifest(repo, scan_history=True)
+
+    flagged = {f["path"] for f in manifest["tree_secret_scan"]["findings"]}
+    assert manifest["tree_secret_scan"]["ok"] is False
+    assert "scripts/prod.py" in flagged
+    assert manifest["verdict"] == "BLOQUEADO_POR_SECRETO"
+
+
+def test_security_fixture_history_scan_is_allowlisted(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "tests").mkdir()
+    fixture = repo / "tests" / "test_redact.py"
+    fixture.write_text(_FIXTURE_SECRET, encoding="utf-8")
+    _git(repo, "add", "tests/test_redact.py")
+    _git(repo, "commit", "-m", "add fixture secret")
+    fixture.write_text("# clean fixture\n", encoding="utf-8")
+    _git(repo, "add", "tests/test_redact.py")
+    _git(repo, "commit", "-m", "clean fixture tree")
+
+    manifest = classify_publication.build_manifest(repo, scan_history=True)
+
+    history_paths = {
+        path
+        for finding in manifest["history_secret_scan"]["findings"]
+        for path in finding["paths"]
+    }
+    assert "tests/test_redact.py" not in history_paths
+    assert manifest["verdict"] != "BLOQUEADO_POR_SECRETO"
+
+    # Contrast: same flow on a non-allowlisted path DOES surface in history.
+    prod_repo = tmp_path / "prod_repo"
+    _init_repo(prod_repo)
+    (prod_repo / "scripts").mkdir()
+    prod = prod_repo / "scripts" / "prod.py"
+    prod.write_text(_FIXTURE_SECRET, encoding="utf-8")
+    _git(prod_repo, "add", "scripts/prod.py")
+    _git(prod_repo, "commit", "-m", "add prod secret")
+    prod.write_text("# clean\n", encoding="utf-8")
+    _git(prod_repo, "add", "scripts/prod.py")
+    _git(prod_repo, "commit", "-m", "clean prod tree")
+
+    prod_manifest = classify_publication.build_manifest(prod_repo, scan_history=True)
+    prod_history_paths = {
+        path
+        for finding in prod_manifest["history_secret_scan"]["findings"]
+        for path in finding["paths"]
+    }
+    assert prod_manifest["tree_secret_scan"]["ok"] is True
+    assert prod_manifest["history_secret_scan"]["ok"] is False
+    assert "scripts/prod.py" in prod_history_paths
+    assert prod_manifest["verdict"] == "BLOQUEADO_POR_SECRETO"
+
+
+def test_allowlist_is_per_named_path_not_an_evasion(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "scripts").mkdir()
+    evil = repo / "scripts" / "evil.py"
+    evil.write_text("PUBLICATION_AUDIT_FAKE_SECRET=real\n", encoding="utf-8")
+    _git(repo, "add", "scripts/evil.py")
+    _git(repo, "commit", "-m", "add evil secret")
+
+    manifest = classify_publication.build_manifest(repo, scan_history=True)
+
+    tree_flagged = {f["path"] for f in manifest["tree_secret_scan"]["findings"]}
+    assert manifest["verdict"] == "BLOQUEADO_POR_SECRETO"
+    assert manifest["tree_secret_scan"]["ok"] is False
+    assert "scripts/evil.py" in tree_flagged
+
+    evil.write_text("# clean\n", encoding="utf-8")
+    _git(repo, "add", "scripts/evil.py")
+    _git(repo, "commit", "-m", "clean evil tree")
+
+    manifest_after = classify_publication.build_manifest(repo, scan_history=True)
+    history_paths = {
+        path
+        for finding in manifest_after["history_secret_scan"]["findings"]
+        for path in finding["paths"]
+    }
+    assert manifest_after["history_secret_scan"]["ok"] is False
+    assert "scripts/evil.py" in history_paths
+    assert manifest_after["verdict"] == "BLOQUEADO_POR_SECRETO"
+
+
+def test_generic_pattern_ignores_code_but_blocks_literal(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "scripts").mkdir()
+    parser = repo / "scripts" / "parser.py"
+    parser.write_text('token = normalized.rstrip(",").strip()\n', encoding="utf-8")
+    leak = repo / "scripts" / "leak.py"
+    leak.write_text('api_key = "sk_live_0123456789abcdefXYZ"\n', encoding="utf-8")
+    _git(repo, "add", "scripts/parser.py", "scripts/leak.py")
+    _git(repo, "commit", "-m", "add parser and leak")
+
+    manifest = classify_publication.build_manifest(repo, scan_history=True)
+
+    flagged = {f["path"] for f in manifest["tree_secret_scan"]["findings"]}
+    assert "scripts/parser.py" not in flagged
+    assert "scripts/leak.py" in flagged
+    assert manifest["tree_secret_scan"]["ok"] is False
+    assert manifest["verdict"] == "BLOQUEADO_POR_SECRETO"
+
+
+def test_generic_pattern_blocks_opaque_secret_with_trailing_punctuation(
+    tmp_path: Path,
+) -> None:
+    """Fail-closed regression guard: an opaque credential value terminated by a
+    statement separator (``;`` ``,`` ``)``) or trailing prose must still block.
+    A prior refinement anchored the unquoted branch at end-of-line and let these
+    leak. Each case is an opaque blob (no ``.``/``(`` in the value), not code.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "scripts").mkdir()
+    leaks = {
+        "semicolon.js": "const token = REALSECRET0123456789abcdef;\n",
+        "comma.py": "params = dict(token=REALSECRET0123456789abcdef, x=1)\n",
+        "prose.txt": "password = SuperSecretValue123456 this is prod\n",
+        "envfile.env": "TOKEN=valorsincomillas0123456789abcd\n",
+    }
+    for name, content in leaks.items():
+        (repo / "scripts" / name).write_text(content, encoding="utf-8")
+    _git(repo, "add", "scripts")
+    _git(repo, "commit", "-m", "add opaque-secret leak cases")
+
+    manifest = classify_publication.build_manifest(repo, scan_history=True)
+
+    flagged = {f["path"] for f in manifest["tree_secret_scan"]["findings"]}
+    for name in leaks:
+        assert f"scripts/{name}" in flagged, f"{name} must block (opaque secret)"
+    assert manifest["verdict"] == "BLOQUEADO_POR_SECRETO"
+
+
+def test_fixture_allowlist_is_case_sensitive_exact() -> None:
+    """Platform-invariance guard: the security-fixture allowlist must match the
+    exact posix path, never a case variant. On Windows ``fnmatch`` case-folds (via
+    ``os.path.normcase``), so ``Tests/Test_Redact.py`` could impersonate
+    ``tests/test_redact.py`` and publish a real fake-secret marker clean.
+
+    This probes the predicate directly (not via on-disk files): a case-insensitive
+    filesystem like Windows/NTFS collapses ``test_redact.py`` and
+    ``Test_Redact.py`` into one inode, so the widening can only be exercised at the
+    string level where the scanner actually compares repo-relative posix paths.
+    """
+    assert classify_publication._is_security_fixture_path("tests/test_redact.py")
+    # Case variants must NOT be exempt -- they are scanned normally and block.
+    assert not classify_publication._is_security_fixture_path("tests/Test_Redact.py")
+    assert not classify_publication._is_security_fixture_path("TESTS/TEST_REDACT.PY")
+    assert not classify_publication._is_security_fixture_path("tests/tEsT_rEdAcT.py")
+    # Similar-but-different names must NOT be exempt either.
+    assert not classify_publication._is_security_fixture_path(
+        "tests/test_redact_extra.py"
+    )
+    assert not classify_publication._is_security_fixture_path(
+        "src/tests/test_redact.py"
+    )
