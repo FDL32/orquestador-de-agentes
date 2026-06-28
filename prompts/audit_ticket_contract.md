@@ -89,6 +89,24 @@ Recorre ítem por ítem.
    Si el contrato congela un hecho externo como verificado sin (a) ni (b): FALLA.
    Ver sub-seccion `Premisas de hecho externo` en `Quality gates ejecutables`.
 
+12. **Formato de la seccion Metadata (lista-con-bold, no tabla)**
+   La seccion `## Metadata` del `work_plan.md` debe usar formato lista-con-bold,
+   no tabla markdown. El parser del controller (`_read_deliverable_type` y los
+   lectores de `**ID:**`/`**Estado:**`) busca literalmente `- **ID:**`,
+   `- **Estado:**`, `- **deliverable_type:**` en lineas de lista. Una tabla
+   `| Campo | Valor |` NO es parseable: `--bootstrap-ticket` falla con
+   `No active plan found` y `--validate` reporta estado `UNKNOWN` + `Falta campo
+   **ID:**` + `missing deliverable_type field`. Formato exigido:
+   ```
+   ## Metadata
+   - **ID:** WOT-2026-0XXx
+   - **Estado:** APPROVED
+   - **deliverable_type:** code
+   ```
+   Verificalo con un grep de `^\s*-\s*\*\*(ID|Estado|deliverable_type):` antes de
+   dar el PLAN por listo. Si la Metadata es tabla: FALLA con severidad ALTO
+   (bloquea el handoff antes de que Builder arranque).
+
 ---
 
 ## Verificaciones adicionales
