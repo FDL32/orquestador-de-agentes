@@ -824,6 +824,16 @@ evidencia:
 - `VERIFICADO POR BYTES`
 - `INFERENCIA RAZONABLE`
 - `NO VERIFICADO`
+- `VERIFICADO EN CI` — evidencia material que solo existe post-push (workflow CI
+  verde en el repositorio remoto). Es evidencia Manager-only: el Manager verifica
+  el run post-push y promueve el ticket a COMPLETED. Artefacto requerido:
+  `run_url:` (URL del workflow CI) y `commit:` (SHA del commit que disparo el run).
+- `PENDIENTE-POST-PUSH` — la barrera primaria de este claim es CI-only y aun no
+  existe localmente; se difiere a post-push. Distinta de `NO VERIFICADO` (relato
+  sin evidencia, que bloquea cierre): `PENDIENTE-POST-PUSH` es una clase honesta
+  que reconoce una barrera real pendiente y declara el ticket en
+  `CLOSED_PENDING_CI`. Artefacto requerido: `barrier:` (descripcion concreta de
+  la barrera pendiente) y `reason:` (por que no es reproducible localmente).
 
 Cada etiqueta de evidencia debe incluir al menos un artefacto concreto:
 
@@ -831,12 +841,24 @@ Cada etiqueta de evidencia debe incluir al menos un artefacto concreto:
 - `commit:` para evidencia git;
 - `command:` y `exit_code:` para gates;
 - `event_seq:` o `event_id:` para bus;
-- `bytes:` o comando de guard para encoding.
+- `bytes:` o comando de guard para encoding;
+- `run_url:` y `commit:` para `VERIFICADO EN CI`;
+- `barrier:` y `reason:` para `PENDIENTE-POST-PUSH`.
 
 Una etiqueta sin artefacto concreto cuenta como relato y no permite cierre.
 La explicacion del agente no sustituye la evidencia de
 `check_motor_pristine.py`: separa siempre `[EVIDENCIA: git_status]` de
 `[RELATO: agente_explicacion]`.
+
+**Regla de cierre CI-only (WOT-2026-014o):** Un ticket cuya Definition of Done
+primaria sea CI-only (verificable unicamente tras push en el sistema de CI
+remoto) no puede alcanzar estado `COMPLETED` local sin:
+(a) marcar la barrera como `PENDIENTE-POST-PUSH` con su artefacto `barrier:` y
+`reason:`, y (b) declarar el ticket en estado de pipeline `CLOSED_PENDING_CI`
+con re-verificacion post-push obligatoria. Esta regla no relaja validate,
+commit_visible ni la doble revision: cierra unicamente el hueco semantico donde
+antes solo existia `NO VERIFICADO` (que bloquea cierre) o una etiqueta
+`VERIFICADO EN *` optimista sobre evidencia que materialmente no existe todavia.
 
 Plantilla minima recomendada dentro de `closeout_{TICKET_ID}.md`:
 
@@ -1068,6 +1090,32 @@ decide si reabrir un ticket o adoptar una mejora.
 | `ALL_COMPLETED` | Todos los tickets aplicables terminaron `COMPLETED`. |
 | `PARTIAL_COMPLETED` | Hay tickets completados y otros bloqueados sin dependientes ejecutables. |
 | `PIPELINE_BLOCKED` | No queda ningun ticket ejecutable o hay 3 bloqueos consecutivos. |
+| `CLOSED_PENDING_CI` | Ticket cerrado localmente con todos los gates locales verdes, pero con una barrera primaria CI-only marcada `PENDIENTE-POST-PUSH` que exige re-verificacion post-push. |
+
+**Nota:** `CLOSED_PENDING_CI` es un estado de nivel pipeline (documental, definido en este
+prompt como `source_of_truth`). No es un miembro del enum `TicketState` en
+`bus/state_machine.py`; la propagacion al enum es follow-up WOT-2026-014p.
+
+**Distincion critica -- estado vs etiqueta:**
+- `CLOSED_PENDING_CI` es el **estado terminal de pipeline** del ticket.
+- `PENDIENTE-POST-PUSH` es la **etiqueta de evidencia** del claim CI-only en el
+  informe de cierre.
+No se fusionan: son niveles conceptuales distintos (ciclo de vida del ticket
+vs clase de evidencia de un claim concreto).
+
+**Garantia de salida de `CLOSED_PENDING_CI` (requisito declarado):**
+El estado no es un limbo permanente. Requiere owner y condicion de salida explicita:
+
+- **(a) Ruta de exito:** re-verificacion CI post-push con resultado verde ->
+  el Manager promueve el ticket a `COMPLETED` usando la etiqueta `VERIFICADO EN CI`
+  con `run_url:` y `commit:` como evidencia.
+- **(b) Ruta de fallo:** si la barrera CI no se cumple tras el push ->
+  el Manager revierte el ticket a `READY_FOR_REVIEW` para nueva iteracion del
+  Builder.
+
+El valor concreto del timeout para ambas rutas no se hardcodea en este prompt:
+no hay mecanismo de enforcement hasta que exista el enum de `TicketState`
+(WOT-2026-014p). Fijar el timeout concreto es follow-up de WOT-2026-014p.
 
 Reporte final:
 
