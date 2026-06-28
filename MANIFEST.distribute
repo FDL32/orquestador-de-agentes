@@ -88,9 +88,6 @@ skills/
 
 # Runtime - solo lo estructural, no transitorio
 .agent/runtime/__init__.py
-.agent/runtime/events/events.jsonl
-.agent/runtime/memory/observations.jsonl
-.agent/runtime/memory/MEMORY.md
 .agent/runtime/memory/memory_helpers.py
 
 # Collaboration - solo superficies vivas (NO historial)

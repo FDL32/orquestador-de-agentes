@@ -90,3 +90,12 @@ prompts/debug_*.md
 
 # Checkpoints
 checkpoint/
+
+# Runtime state generado en sesion (WOT-2026-015c) - NO distribuir con el motor
+.agent/runtime/events/events.jsonl
+.agent/runtime/memory/observations.jsonl
+.agent/runtime/memory/MEMORY.md
+.agent/runtime/memory/memory_profile.md
+.agent/runtime/memory/memory_rules.md
+.agent/runtime/memory/UPSTREAM_LEARNINGS.md
+.agent/runtime/memory/closeout_lessons.md
