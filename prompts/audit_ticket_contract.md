@@ -19,8 +19,8 @@ Lee estos archivos antes de evaluar nada.
 ### Estado del sistema
 
 - `.agent/collaboration/work_plan.md`
-- `.agent/collaboration/STRATEGY_WOT-<ID>.md` (legacy-compat: `PLAN_WT-<ID>.md`, `PLAN_WP-<ID>.md`)
-- `.agent/collaboration/AUDIT_WOT-<ID>.md` (legacy-compat: `AUDIT_WT-<ID>.md`, `AUDIT_WP-<ID>.md`)
+- `.agent/collaboration/STRATEGY_WOT-<ID>.md` (opcional; si existe -- legacy-compat: `PLAN_WT-<ID>.md`, `PLAN_WP-<ID>.md`)
+- `.agent/collaboration/AUDIT_WOT-<ID>.md` (opcional; si existe -- legacy-compat: `AUDIT_WT-<ID>.md`, `AUDIT_WP-<ID>.md`)
 - `.agent/collaboration/TURN.md`
 - `.agent/collaboration/execution_log.md`
 - `.agent/collaboration/STATE.md`
@@ -42,6 +42,15 @@ Lee el código fuente real de cualquier función, módulo o flag nombrado en el 
 
 Recorre ítem por ítem.
 
+> **Nota sobre STRATEGY/AUDIT opcionales:** STRATEGY_WOT-* y AUDIT_WOT-*
+> son opcionales segun el glosario canonico (AGENTS.md, WOT-2026-010a). Si NO
+> existen, los items 9 (dual-contract sync), la verificacion de correccion parcial
+> y la tabla de consistencia work_plan.md <-> STRATEGY/AUDIT NO aplican: marcalos
+> **N/A** en tu reporte (no como hallazgo). El work_plan.md por si solo es el
+> contrato minimo. Solo exige STRATEGY/AUDIT si el plan los referencia explicitamente
+> o su complejidad lo justifica; en ese caso registra la ausencia como hueco no
+> bloqueante, no como blocker.
+
 1. **Formato exacto de strings críticos**
    ¿El plan especifica literales exactos donde el motor los valida con regex? ¿O usa variantes aproximadas que fallarán silenciosamente?
 
@@ -55,7 +64,15 @@ Recorre ítem por ítem.
    ¿Cada guard o condición de seguridad tiene un test que lo cubre? "Cubierto por `--dry-run`" no cuenta.
 
 5. **Integración con flags existentes**
-   ¿Hay algún placeholder manual que ya podría rellenarse con un flag CLI existente?
+   ¿Hay algún placeholder manual (rellenar a mano, TODO, valor hardcodeado) que ya
+   podría automatizarse con un flag CLI existente? Para no adivinar el inventario,
+   enumeralo primero: `python .agent/agent_controller.py --help` (y
+   `grep -rn 'in sys.argv' .agent/agent_controller.py` para el controller -- NOTA:
+   agent_controller.py NO usa argparse, parsea sys.argv manualmente, por eso el
+   grep es 'in sys.argv' para el controller, NO 'add_argument') y
+   `grep -rn add_argument scripts/` para los scripts argparse. Si el placeholder
+   coincide con un flag ya soportado, emite hallazgo con el flag exacto. Si no
+   existe, el item NO aplica: no inventes uno.
 
 6. **Existencia de tests nombrados**
    Para cada test en "Tests Esperados": ¿ya existe en la suite (no-regresión) o es un deliverable nuevo? Marca cuál es cuál. Tests listados como nuevos que ya existen producen duplicados silenciosos.
@@ -83,11 +100,11 @@ Recorre ítem por ítem.
    `Manager-only`, confirma que solo `Builder` cuenta como entregable.
 
 11. **Premisas de hecho externo con barrera**
-   Toda premisa de hecho externo congelada en el contrato (versiones de actions
-   de CI, "verificado via API", runtimes/servicios de terceros) lleva (a) una
-   barrera local reproducible o (b) la etiqueta `PENDIENTE-POST-PUSH`?
-   Si el contrato congela un hecho externo como verificado sin (a) ni (b): FALLA.
-   Ver sub-seccion `Premisas de hecho externo` en `Quality gates ejecutables`.
+   Toda premisa que el ciclo local no puede verificar (CI remoto, APIs de terceros,
+   versiones de actions upstream, runtimes externos -- ver principio general en sub-seccion homologa) lleva barrera local reproducible o etiqueta de diferimiento?
+   Si congela un hecho externo como verificado sin ninguna de las dos: FALLA.
+   Criterio completo (opciones (a)/(b), tag canonico, artefactos obligatorios de la
+   etiqueta) en la sub-seccion Premisas de hecho externo bajo Quality gates ejecutables.
 
 12. **Formato de la seccion Metadata (lista-con-bold, no tabla)**
    La seccion `## Metadata` del `work_plan.md` debe usar formato lista-con-bold,
@@ -117,7 +134,9 @@ Para cada función nombrada en el PLAN, lee el archivo fuente real y confirma qu
 
 ### Corrección parcial en artefacto equivocado
 
-Si una corrección aparece aplicada en `work_plan.md` pero no en `STRATEGY_WOT-*` (o viceversa), señálalo como hallazgo explícito con el archivo donde falta replicarla; no lo trates como inconsistencia menor. Este patrón requirió rondas adicionales en tickets previos.
+Aplica el criterio del Checklist item 9 a nivel de hallazgo: si una corrección
+aparece solo en uno de los dos contratos, emite un hallazgo explícito nombrando
+el archivo donde falta replicarla (no lo degrades a inconsistencia menor).
 
 ### Packaging y handoff listos para review
 
@@ -158,12 +177,17 @@ reautenticar el backend del Manager y relanzar solo la revision/bridge, no Build
 - ¿El `--validate` usa el `--project-root` correcto para la topologia
   `repo_motor + repo_destino`?
 
-- ¿Los gates corresponden al `deliverable_type` declarado? Un ticket
-  documental debe cerrar por artefacto verificable + evidencia de validate, no
-  por pytest/ruff fabricados. Un ticket de codigo no debe escapar sin diff,
-  commit y tests aplicables.
+- ¿Los gates corresponden al `deliverable_type` declarado? (criterio en Checklist item 10;
+  profundiza en Preflight extra para tickets de codigo y Planes
+  documentales / research / analysis.)
 
 #### Premisas de hecho externo
+
+Una premisa de hecho externo es cualquier afirmacion del contrato sobre el estado
+de un sistema fuera del repo_motor que el ciclo builder->review->close local NO
+puede verificar de forma deterministica (CI remoto, APIs/servicios de terceros,
+contratos de actions/paquetes upstream, runtimes externos). Los siguientes son
+ejemplos, no una lista cerrada:
 
 Toda **premisa de hecho externo** congelada en el contrato (versiones de actions
 de CI, afirmaciones "verificado via API", runtimes de terceros, estado de un
@@ -179,6 +203,14 @@ servicio remoto) debe ir acompanada de UNA de las dos siguientes evidencias:
     NO puede validarla. Usar la etiqueta canonica definida en
     `prompts/orchestrator_pipeline.md` (WOT-2026-014o). El ticket permanece en
     estado `CLOSED_PENDING_CI` hasta la verificacion post-push.
+
+La opcion (b) NO es discrecional: solo es legitima si el hecho es genuinamente
+CI-only / no reproducible localmente. Si el hecho ES verificable con un comando
+local, la opcion (a) es OBLIGATORIA y (b) cuenta como escape ilegitimo (FALLA).
+La etiqueta PENDIENTE-POST-PUSH exige siempre los artefactos `barrier:` (barrera
+pendiente concreta) y `reason:` (por que no es reproducible localmente); una
+etiqueta sin esos artefactos cuenta como relato y FALLA (ver
+orchestrator_pipeline.md L831-861).
 
 **El gate FALLA** si el contrato congela un hecho externo sin barrera local ni
 etiqueta de diferimiento. Un "verificado via API" o un numero de version sin
@@ -288,6 +320,13 @@ Cada hallazgo incluye:
   - `INFERENCIA RAZONABLE` — deducido sin verificación directa en fuente
 
 > No presentes una inferencia como hecho confirmado.
+
+> **Ejemplo de hallazgo completo (formato exigido):**
+> - **[ALTO] work_plan.md / Files Likely Touched, linea 14** -- el path
+>   orquestador_de_agentes/bus/redact.py lleva prefijo de motor.
+>   - Como falla: interseccion vacia con git diff --name-only, bloquea --mark-ready.
+>   - Fix exacto: cambiar a bus/redact.py (relativo al root del repo git del motor).
+>   - Etiqueta de evidencia: VERIFICADO EN CODIGO .agent/scope_gate.py:<funcion que parsea FLT>
 
 ### 2. Huecos no bloqueantes pero rentables
 
