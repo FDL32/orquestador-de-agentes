@@ -82,6 +82,13 @@ Recorre ítem por ítem.
    Si el plan tiene subsecciones `Builder`, `Read/inspect only` o
    `Manager-only`, confirma que solo `Builder` cuenta como entregable.
 
+11. **Premisas de hecho externo con barrera**
+   Toda premisa de hecho externo congelada en el contrato (versiones de actions
+   de CI, "verificado via API", runtimes/servicios de terceros) lleva (a) una
+   barrera local reproducible o (b) la etiqueta `PENDIENTE-POST-PUSH`?
+   Si el contrato congela un hecho externo como verificado sin (a) ni (b): FALLA.
+   Ver sub-seccion `Premisas de hecho externo` en `Quality gates ejecutables`.
+
 ---
 
 ## Verificaciones adicionales
@@ -137,6 +144,34 @@ reautenticar el backend del Manager y relanzar solo la revision/bridge, no Build
   documental debe cerrar por artefacto verificable + evidencia de validate, no
   por pytest/ruff fabricados. Un ticket de codigo no debe escapar sin diff,
   commit y tests aplicables.
+
+#### Premisas de hecho externo
+
+Toda **premisa de hecho externo** congelada en el contrato (versiones de actions
+de CI, afirmaciones "verificado via API", runtimes de terceros, estado de un
+servicio remoto) debe ir acompanada de UNA de las dos siguientes evidencias:
+
+(a) **Barrera local reproducible:** un comando deterministico ejecutable antes del
+    push que verifica el hecho. Ejemplo: leer el campo `runs.using` del
+    `action.yml` correspondiente. El Builder puede ejercitarla en el ciclo local
+    antes del handoff.
+
+(b) **Etiqueta de diferimiento `PENDIENTE-POST-PUSH`:** reconoce que la evidencia
+    primaria es Manager-only/post-push y que el ciclo builder->review->close local
+    NO puede validarla. Usar la etiqueta canonica definida en
+    `prompts/orchestrator_pipeline.md` (WOT-2026-014o). El ticket permanece en
+    estado `CLOSED_PENDING_CI` hasta la verificacion post-push.
+
+**El gate FALLA** si el contrato congela un hecho externo sin barrera local ni
+etiqueta de diferimiento. Un "verificado via API" o un numero de version sin
+comando de verificacion son premisas de hecho externo que requieren (a) o (b).
+
+Justificacion: el item 3 del Checklist de madurez ("Criterio de cierre binario")
+pregunta si el criterio es un comando ejecutable pero no distingue un hecho
+localmente verificable de uno externo/post-push. Este gap dejo pasar el incidente
+real: un work_plan congelo versiones de actions afirmando "verificado via API" y
+CI post-push lo refuto. (Anclado a WOT-2026-014i / WOT-2026-014p; etiqueta
+PENDIENTE-POST-PUSH canonizada en WOT-2026-014o.)
 
 ### Preflight extra para tickets de codigo
 
