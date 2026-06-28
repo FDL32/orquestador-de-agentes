@@ -139,6 +139,34 @@ Detectado automaticamente por `delivery_hygiene_check.py`.
 
 Detectado por el guard de handoff (`pre_handoff_guard.py`) que bloquea si M3 falta. Ver `.agent/rules/builder/recovery.md`.
 
+## AP-D04 - Allowlist/exclusion como blind-spot de gate de seguridad
+
+- **Descripcion:** Se anade una allowlist o exclusion nueva a un gate de seguridad (secret-scan, publication gate, redaction) sin un test que demuestre que un input MALICIOSO REAL sigue bloqueando. La exclusion crea una zona ciega: archivos que el gate ya no inspecciona.
+- **Por que rompe al Builder:** el gate sigue dando verde, pero deja de proteger la superficie excluida. Un secreto real colocado en un path allowlistado pasaria sin deteccion, y el green es un falso positivo de seguridad.
+- **Senal de deteccion:** un diff anade un patron a `EXCLUDE_PATTERNS`, `allowlist`, `skip` o equivalente en un escaner de seguridad, y NO acompana un test con COMANDO LITERAL + FIXTURE PATH que pruebe que el input malicioso sigue bloqueando.
+
+❌ Ejemplo malo:
+> "Se anade `tests/fixtures/*` a `EXCLUDE_PATTERNS` de `classify_publication.py` para silenciar un falso positivo, sin probar que un AKIA real en otro path allowlistado sigue dando BLOQUEADO_POR_SECRETO."
+
+✅ Ejemplo bueno:
+> "La exclusion va acompanada de un test de regresion con comando y fixture literales: `python scripts/classify_publication.py --repo-root <fixture>` sobre `tests/fixtures/secret_in_allowlisted_path.txt` (que contiene un `AKIAIOSFODNN7EXAMPLE`) DEBE dar exit 1 / `BLOQUEADO_POR_SECRETO`. El test falla si la allowlist abre la zona ciega."
+
+Evidencia origen: WOT-2026-015e D4 -- `EXCLUDE_PATTERNS` creaba una zona ciega en el secret-scan de `classify_publication.py`; se corrigio con `git rm --cached` + `.gitignore` + un test de regresion que prueba que el secreto sigue bloqueando, en vez de excluir el path.
+
+## AP-D05 - Green local no-hermetico vs CI clon-limpio
+
+- **Descripcion:** Un test lee un artefacto versionado o de runtime del repo (con `Path(...).read_text()` o `assert ....exists()`) sin ser hermetico. Pasa en local porque el archivo existe en el arbol de trabajo, pero falla en un clon limpio de CI donde ese artefacto esta desindexado o ausente.
+- **Por que rompe al Builder:** el green local NO es evidencia de cierre: el contrato de calidad es el CI clon-limpio. Un test acoplado al estado del workspace vivo da un falso verde que se rompe en la siguiente pasada de CI, despues del handoff.
+- **Senal de deteccion:** un test nuevo hace `assert (repo / "alguna/ruta").exists()` o lee un archivo de `.agent/`, `.session/` o runtime sin crear su propia fixture en `tmp_path` ni hacer `pytest.skip` explicito si el artefacto es opcional/desindexado.
+
+❌ Ejemplo malo:
+> "`test_closeout_lessons` hace `assert (repo / '.agent/.../closeout_lessons.md').exists()`; el archivo existe local pero fue desindexado, asi que CI clon-limpio falla."
+
+✅ Ejemplo bueno:
+> "El test crea su propia fixture en `tmp_path`, o si el artefacto es opcional/desindexado hace `pytest.skip('artefacto desindexado; no presente en clon limpio')` en vez de un `assert .exists()` que da falso verde local."
+
+Evidencia origen: CI 6618177 fallo `tests/unit/test_closeout_lessons.py` (el `closeout_lessons.md` desindexado por 015c existia en local pero no en el clon limpio); fix b222bb1 (skip-si-ausente / hermeticidad). Cross-link: la nota CI/local de `scripts/preflight_closeout.py` (`ci_local_warning`) advierte de este mismo riesgo cuando hay runtime desindexado.
+
 ## Uso
 
 - Usa estas entradas como referencia al redactar el `## TP Check` del `AUDIT_WOT-XXXX.md`.

@@ -643,6 +643,26 @@ python <MOTOR_ROOT>/.agent/agent_controller.py --validate --json --project-root 
 Si el ticket corrige un bug real, el Manager exige una barrera proporcional:
 test, fixture, hook o reproduccion que habria fallado sin el fix.
 
+Mutation-verify CONDICIONAL: cuando el bug corregido sea de SEGURIDAD, BUS,
+ESTADO COMPARTIDO o GATES y sea REPRODUCIBLE de forma limpia (existe un test que
+falla de forma trivial sin el fix), la barrera no basta como relato: debe
+demostrarse por mutation-verify. Secuencia exacta:
+
+1. revertir el fix -> el test FALLA;
+2. restaurar el fix -> el test PASA.
+
+El Builder registra en `execution_log.md` los CUATRO exit codes en este orden:
+(a) exit del test SIN el fix (debe ser != 0), (b) el codigo concreto observado,
+(c) exit del test CON el fix restaurado (debe ser 0), (d) el codigo concreto
+observado. Sin esos 4 codigos la barrera es relato, no evidencia.
+
+Clausula de excepcion (es CONDICIONAL, no absoluto): si el bug no tiene un test
+de fallo trivial -- por ejemplo un path traversal o un caso que requiere un
+entorno no reproducible localmente -- se permite saltar el mutation-verify
+SIEMPRE que el Builder documente en `execution_log.md` por que NO es
+reproduciblemente trivial. Sin esa justificacion explicita, la ausencia de
+mutation-verify se trata como relato y el Manager emite `CHANGES`.
+
 El Manager emite decision artifact:
 
 `DESTINO_ROOT/.agent/runtime/reviews/decision_{TICKET_ID}.json`
@@ -681,6 +701,37 @@ Revision 2 debe ser explicitamente adversarial:
 - intenta refutar el cierre antes de confirmarlo;
 - si Rev2 repite exactamente los mismos checks y la misma narrativa de Rev1 sin
   nueva evidencia, la independencia es insuficiente.
+
+Fresh-context obligatorio para alto blast-radius: si el ticket es `code` o
+`mixed` y toca una superficie de alto blast-radius -- INSTALACION, CI, BUS,
+SEGURIDAD, HOOKS, MIGRACIONES o ESTADO COMPARTIDO -- la Revision 2 DEBE
+ejecutarse en un subagente fresh-context, SIN el transcript del Builder ni el
+historial de la sesion del Manager (mismo patron que la seccion 10 / 11, donde
+`audit_goal_completion.md` corre el checker en fresh-context y solo recibe el
+bundle de evidencia dura). El objetivo es que Rev2 no herede el sesgo de Rev1.
+
+Criterio operativo de independencia (reemplaza el vago "mismos checks"): Rev2
+debe aportar AL MENOS 2 SENALES NUEVAS frente a Rev1, elegidas de esta lista
+enumerada:
+
+1. counterexample concreto en el diff real;
+2. mutation-verify ejecutado (revertir fix -> test falla -> restaurar -> pasa);
+3. inspeccion de produccion distinta a la de Rev1;
+4. evidencia de bus / eventos (`events.jsonl`);
+5. historia git (log/show/blame relevante al cambio);
+6. fixture adversarial nuevo;
+7. verificacion de topologia / root (delivery_authority, repo_motor vs destino).
+
+Repetir `validate` / `ruff` / `pytest` sigue siendo OBLIGATORIO, pero NO cuenta
+como senal nueva ni penaliza: son el piso, no la independencia.
+
+DEUDA declarada: si la superficie de ejecucion no dispone de subagentes reales
+para aislar el contexto, la instruccion fresh-context es aspiracional; en ese
+caso marca explicitamente como DEUDA TECNICA la separacion real de contexto en
+`execution_log.md` y deja constancia de que Rev2 corrio en el mismo contexto.
+
+Este propio pipeline de proceso (cualquier ticket que edite CI, hooks,
+seguridad, bus o el motor de estado) ES alto blast-radius: aplica fresh-context.
 
 Excepcion: `documentation`, `research` y `analysis` pueden cerrar con una sola
 revision si el Manager lo justifica con evidencia documental y validate limpio.
