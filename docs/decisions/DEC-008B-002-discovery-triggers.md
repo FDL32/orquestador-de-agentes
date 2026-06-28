@@ -14,7 +14,7 @@ un híbrido.
 
 ## Matriz allowlist vs frontmatter real (derivada de fuentes vivas, 2026-06-16)
 
-Fuentes: `c:/Users/***REDACTED***/Proyectos_Python/orquestador_de_agentes_workspace/.agent/config/agents.json`
+Fuentes: `<WORKSPACE_ROOT>/.agent/config/agents.json`
 (`skill_allowlists`) y `discover_skills.py --json` post-fix (29/29 skills visibles).
 
 ### BUILDER allowlist (`skill_allowlists.BUILDER`)
