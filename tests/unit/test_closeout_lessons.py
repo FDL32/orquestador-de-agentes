@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 
 # Path constants
 CLOSEOUT_LESSONS_REL = Path(".agent") / "runtime" / "memory" / "closeout_lessons.md"
@@ -62,7 +64,16 @@ def _read_closeout_lessons() -> list[str]:
             motor_root / ".agent" / "runtime" / "memory" / "closeout_lessons.md"
         )
 
-    assert lessons_path.exists(), f"closeout_lessons.md not found at {lessons_path}"
+    if not lessons_path.exists():
+        # closeout_lessons.md is runtime state (untracked + gitignored since
+        # WOT-2026-015c, alongside MEMORY.md/observations.jsonl). On a clean
+        # clone (CI) it is absent by design; the motor regenerates it offline
+        # during session close. These tests validate its *content* when present,
+        # so skip rather than fail when there is no file to validate.
+        pytest.skip(
+            "closeout_lessons.md is untracked runtime state (WOT-2026-015c); "
+            "absent on a clean clone -- nothing to validate"
+        )
     return lessons_path.read_text(encoding="utf-8").splitlines()
 
 
