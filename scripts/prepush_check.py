@@ -346,9 +346,60 @@ def run_validate_all(project_root: Path) -> CheckResult:
     )
 
 
+def run_backlog_contract_check(project_root: Path) -> CheckResult:
+    """Gate bloqueante de cierre: la cola viva del backlog no tiene terminales.
+
+    WOT-2026-015g: el contrato de cola viva (backlog.md) prohibe estados
+    terminales (completed/done/closed/absorbed) en la tabla Vista rapida; deben
+    archivarse a _archive/backlog_done.md. `validate_backlog` (en
+    check_backlog_contract.py) YA detecta esto, pero hasta ahora ningun gate de
+    --session-close lo invocaba: el archivado dependia de un paso manual que se
+    omitio en 4 sesiones del 27-jun, dejando 10 completed en cola viva y el
+    contract en rojo solo visible al ejecutarlo a mano.
+
+    Este gate cierra ese hueco: se ejecuta SOLO en closeout-mode (la cola viva
+    solo se valida al cerrar sesion, no en cada push). Si hay violaciones, el
+    cierre se BLOQUEA (is_blocking=True) hasta archivar los terminales.
+
+    Before: project_root apunta al repo_destino con .agent/collaboration/backlog.md.
+    During: importa validate_backlog y lo aplica al backlog del destino.
+    After: CheckResult passed=True si no hay violaciones; False (bloqueante) si las hay.
+    """
+    name = "Backlog Contract Check (closeout)"
+    backlog = project_root / ".agent" / "collaboration" / "backlog.md"
+    if not backlog.exists():
+        # Sin backlog no hay cola viva que validar; no bloquea el cierre.
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=f"No backlog.md at {backlog} (skipped)",
+            is_blocking=True,
+        )
+    try:
+        from scripts.check_backlog_contract import validate_backlog
+    except ImportError:
+        from check_backlog_contract import validate_backlog  # type: ignore[no-redef]
+    violations = validate_backlog(backlog)
+    if violations:
+        detail = "\n".join(f"  - {v}" for v in violations)
+        output = (
+            f"{len(violations)} violation(s) in {backlog}:\n{detail}\n"
+            "Archive terminal tickets to _archive/backlog_done.md before closing "
+            "(see WOT-2026-015i)."
+        )
+        return CheckResult(name=name, passed=False, output=output, is_blocking=True)
+    return CheckResult(
+        name=name,
+        passed=True,
+        output="live queue contract holds",
+        is_blocking=True,
+    )
+
+
 def run_preflight_check(
     project_root: Path | None = None,
     expected_artifacts: list[str] | None = None,
+    closeout_mode: bool = False,
 ) -> int:
     """Ejecuta todos los checks de preflight de entrega.
 
@@ -356,10 +407,17 @@ def run_preflight_check(
     run_delivery_hygiene_check so the closeout pre-push gate can forgive known
     runtime artifacts. Default None preserves current behavior (no forgiveness).
 
+    WOT-2026-015g: closeout_mode=True adds run_backlog_contract_check as a
+    blocking gate so --session-close fails if the live backlog still holds
+    terminal tickets. Default False preserves the general pre-push behavior
+    (the live-queue contract is only enforced at session close).
+
     Args:
         project_root: Raiz del proyecto. Si None, usa el directorio actual.
         expected_artifacts: Optional allowlist forwarded to check_git_tree_clean.
             Default None preserves current behavior (any dirty file fails).
+        closeout_mode: When True, enforce the live backlog contract as a blocking
+            gate (session-close only). Default False leaves it off.
 
     Returns:
         Exit code: 0 si todos los checks bloqueantes pasan, 1 si alguno falla.
@@ -386,6 +444,10 @@ def run_preflight_check(
 
     # 5. Git Status Check
     results.append(run_git_status_check(project_root))
+
+    # 6. Backlog Contract Check (solo en cierre de sesion; bloqueante)
+    if closeout_mode:
+        results.append(run_backlog_contract_check(project_root))
 
     # Check informacional (no bloqueante)
     results.append(run_validate_all(project_root))
@@ -485,6 +547,7 @@ Si el preflight falla:
     return run_preflight_check(
         project_root=args.project_root,
         expected_artifacts=artifacts,
+        closeout_mode=args.closeout_mode,
     )
 
 
