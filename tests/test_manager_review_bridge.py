@@ -2107,14 +2107,20 @@ class TestSupervisorNonTerminalStates:
 
     def test_is_state_terminal_method(self, tmp_path):
         """Test _is_state_terminal correctly identifies terminal vs non-terminal states."""
-        from bus.state_machine import TicketState
+        from bus.state_machine import IRREVERSIBLE_TERMINAL_STATES, TicketState
         from bus.supervisor import NON_TERMINAL_STATES
 
-        # Non-terminal states should return False
+        # WOT-2026-015h: el sanity check trivial `state not in set()` (siempre
+        # True, RUF060) se sustituye por una verificacion REAL: ningun estado de
+        # NON_TERMINAL_STATES puede estar en los terminales irreversibles (fuente
+        # de verdad). Esto SI fallaria si las dos constantes divergieran.
+        assert NON_TERMINAL_STATES, "NON_TERMINAL_STATES no debe estar vacio"
         for state in NON_TERMINAL_STATES:
-            assert state not in set(), "Sanity check: NON_TERMINAL_STATES is not empty"  # noqa: RUF060
+            assert state not in IRREVERSIBLE_TERMINAL_STATES, (
+                f"{state} esta en NON_TERMINAL_STATES y en IRREVERSIBLE_TERMINAL_STATES"
+            )
 
-        # COMPLETED and UNKNOWN are terminal
+        # COMPLETED y UNKNOWN no son estados vivos: no deben estar aqui
         assert TicketState.COMPLETED not in NON_TERMINAL_STATES
         assert TicketState.UNKNOWN not in NON_TERMINAL_STATES
 
