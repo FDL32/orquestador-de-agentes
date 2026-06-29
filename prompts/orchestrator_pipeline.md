@@ -106,6 +106,10 @@ python <MOTOR_ROOT>/scripts/check_motor_pristine.py --check --snapshot-file orch
 Usa `--strict` solo cuando el ticket no pueda cumplir sus criterios si el motor
 cambia. En modo normal, `MOTOR_DIRTY_DETECTED` no restaura ni detiene por si
 solo: obliga a registrar evidencia y decidir si el ticket puede continuar.
+Un orquestador externo NO debe imponer `--strict` globalmente sobre todos los
+destinos: cada repo/ticket declara si el drift del motor es bloqueante. Si el
+patron se repite en varios destinos por la misma causa, se clasifica como fallo
+sistemico externo y se escala fuera del pipeline local.
 
 Si un harness deniega una escritura al motor, no reintentes con otro metodo. No
 intentes `Bash`, scripts o rutas alternativas para saltar el bloqueo. Registra
@@ -198,10 +202,21 @@ python <MOTOR_ROOT>/scripts/memory_context.py --recall --ticket <TICKET_ID>
 ## 0.c Regla de autonomia y limpieza segura
 
 > **Gate de loop-readiness (WOT-2026-014s):** antes de activar /goal autonomo para
-> un ticket, aplicar la rubrica `prompts/_shared/loop_readiness.md`
+> un ticket o subtarea, aplicar la rubrica `prompts/_shared/loop_readiness.md`
 > (cid-loop-readiness-v0). Si el resultado es NO_LOOPEABLE, el pipeline NO activa
 > /goal y registra la causa en el log del ticket. El veredicto es binario: LOOP_READY
 > habilita /goal; NO_LOOPEABLE lo bloquea con conteo objetivo visible.
+>
+> **Presupuesto y run-log (WOT-2026-014u):** todo /goal autonomo requiere declarar
+> `max_iterations` en el input del gate segun `prompts/_shared/loop_budget.md` y
+> registrar iteraciones en un `loop_run_log.jsonl` append-inmutable conforme a
+> `prompts/_shared/loop_run_log.md`. Sin presupuesto entero declarado, la tarea no
+> es LOOP_READY aunque parezca recurrente y verificable.
+>
+> **Autonomia por alcance:** una adopcion, sincronizacion o integracion completa
+> de un destino suele tocar mas de una superficie de estado compartido; por
+> defecto es supervisada por Manager. Solo sub-tareas estrechas que pasen el gate
+> pueden usar /goal autonomo.
 
 Cuando un subagente tenga dudas, debe elegir la decision que mas se acerque a la
 filosofia de `<MOTOR_ROOT>/prompts/audit_agent_output.md`, aplicando estos 5
@@ -457,6 +472,22 @@ instalacion o integracion motor-destino, buscar primero contrato de genesis en:
 - `DESTINO_ROOT/.agent/planning/evidence_catalog.md`;
 - `DESTINO_ROOT/.agent/planning/decisions.md`.
 
+Antes de congelar o materializar el ticket, ejecutar auditoria adversarial de
+contrato con `<MOTOR_ROOT>/prompts/audit_cf_ticket_contract.md`. El ticket solo
+puede avanzar a Manager plan si la decision es `APPROVE (frozen-ready)` y queda
+evidencia concreta de:
+
+- campos obligatorios completos (`status`, enlaces, Premise, Premise Re-check,
+  FLT, Forbidden Surfaces, DoD, STOP, CONTRACT_GAP y clarification budget);
+- premisa reproducible read-only;
+- DoD binario con comando/test y exit code;
+- `Builder clarification rate` esperado igual a 0;
+- coherencia con charter, plan_graph y Forbidden Surfaces.
+
+Si el Builder tendria que preguntar o asumir una decision de producto, no lo
+resuelvas durante ejecucion: devuelve el ticket a Contract Formation o crea un
+`DEC-*` segun corresponda.
+
 Si esos artefactos no existen o no cubren el ticket, no improvises un
 `work_plan.md` desde backlog crudo. Detente con `CONTRACT_FORMATION_REQUIRED`
 y pide/abre el pipeline de formacion de contrato:
@@ -473,6 +504,7 @@ Mientras `contract_formation_pipeline.md` no exista, el fallback seguro es:
 
 Spawnea MANAGER con un prompt compuesto desde:
 
+- `<MOTOR_ROOT>/prompts/audit_cf_ticket_contract.md` si el ticket procede de Contract Formation o tiene contrato frozen
 - `<MOTOR_ROOT>/prompts/audit_ticket_contract.md`
 - `<MOTOR_ROOT>/skills/manager-create-work-plan/SKILL.md`
 - `<MOTOR_ROOT>/skills/_shared/ticket-anti-patterns.md`
@@ -1140,8 +1172,17 @@ decide si reabrir un ticket o adoptar una mejora.
 |---|---|
 | `ALL_COMPLETED` | Todos los tickets aplicables terminaron `COMPLETED`. |
 | `PARTIAL_COMPLETED` | Hay tickets completados y otros bloqueados sin dependientes ejecutables. |
-| `PIPELINE_BLOCKED` | No queda ningun ticket ejecutable o hay 3 bloqueos consecutivos. |
+| `PIPELINE_BLOCKED` | No queda ningun ticket ejecutable en el repo_destino actual o hay 3 bloqueos consecutivos locales. |
 | `CLOSED_PENDING_CI` | Ticket cerrado localmente con todos los gates locales verdes, pero con una barrera primaria CI-only marcada `PENDIENTE-POST-PUSH` que exige re-verificacion post-push. |
+
+**Alcance de bloqueos en orquestadores externos:** el contador de 3 bloqueos
+consecutivos pertenece al `repo_destino` actual. Si una herramienta superior
+coordina varios destinos, puede continuar con otro destino tras registrar
+`PARTIAL_COMPLETED` o `PIPELINE_BLOCKED` local. Solo debe promover bloqueos
+locales a bloqueo sistemico externo cuando exista evidencia de patron repetido:
+misma herramienta del motor fallando en varios destinos, confusion de topologia
+motor/destino, escritura fuera del repo destino o incapacidad general de
+validar/publicar.
 
 **Nota:** `CLOSED_PENDING_CI` es un estado de nivel pipeline (documental, definido en este
 prompt como `source_of_truth`). No es un miembro del enum `TicketState` en
@@ -1207,6 +1248,7 @@ ORQUESTADOR
   |
   +-- Por cada ticket ejecutable
   |     |
+  |     +-- MANAGER audita contrato con audit_cf_ticket_contract.md si aplica
   |     +-- MANAGER planifica con audit_ticket_contract.md
   |     +-- BUILDER implementa con orchestrator_launch_builder.md
   |     +-- MANAGER revision 1 con manager_review.md + audit_agent_output.md
@@ -1238,6 +1280,20 @@ python <MOTOR_ROOT>/scripts/check_destino_publish_ready.py \
   --project-root <repo_destino> \
   --motor-root <repo_motor>
 ```
+
+Para declarar un repo listo para publicacion remota, combinar esta gate con
+clasificacion de publicacion y escaneo completo de historia:
+
+```bash
+python <MOTOR_ROOT>/scripts/classify_publication.py \
+  --repo-root <repo_destino> \
+  --out <repo_destino>/orchestrator_pipeline/reports/publication_manifest.json
+```
+
+No usar `--quick` ni `--no-history` para aprobar publicacion: esos modos saltan
+el escaneo de historia y no prueban que el repo sea publicable. Si se usan para
+diagnostico rapido, el resultado queda como evidencia parcial y no permite
+`LISTO_PARA_PUBLICAR`.
 
 Codigos de salida:
 

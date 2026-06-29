@@ -46,6 +46,9 @@ Lee antes de evaluar:
 8. **Intent Audit (rutado a 2.b):** contrasta el ticket contra `Non-Goals`,
    `Quality Bar` y `Security Constraints` del charter. Un ticket que cumple su DoD pero
    contradice un Non-Goal debe marcarse riesgo, no aprobarse.
+9. **Evidencia minima para frozen:** cada claim central del contrato necesita
+   artefacto concreto (`path:`, `command:` + `exit_code:`, `commit:` cuando
+   aplique). Una etiqueta sin artefacto es relato y no habilita `frozen`.
 
 ## Severidad de hallazgos
 
@@ -53,7 +56,8 @@ Lee antes de evaluar:
   reproducible; el ticket exige una decision de producto no resuelta; contradice un
   `Non-Goal`/`Security Constraint`.
 - **MAJOR:** `Forbidden Surfaces` no derivadas del plan; `deliverable_type` mal
-  clasificado; `CONTRACT_GAP behavior` ausente o vago.
+  clasificado; `CONTRACT_GAP behavior` ausente o vago; evidencia central sin
+  artefacto concreto.
 - **MINOR:** redaccion que no bloquea implantacion.
 - **NIT:** estilo u orden.
 
@@ -72,4 +76,5 @@ Entrega:
 - `DECISION: APPROVE (frozen-ready) | CHANGES`.
 - Hallazgos por severidad, cada uno con el campo del contrato afectado y la correccion.
 - Estimacion explicita del `Builder clarification rate` esperado y por que.
+- Tabla minima `Claim | Evidencia | Estado` para los claims centrales del contrato.
 - Si `CHANGES`, la lista de campos que el Manager debe completar antes de `frozen`.
