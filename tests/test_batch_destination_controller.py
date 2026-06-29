@@ -19,7 +19,7 @@ def _write(path: Path, text: str) -> None:
 def _adopted_repo(root: Path, motor_root: Path) -> None:
     _write(
         root / ".agent/config/motor_destination_link.json",
-        json.dumps({"motor_root": str(motor_root)}),
+        json.dumps({"motor_root": str(motor_root), "adopted": True}),
     )
     _write(root / "PROJECT.md", "Ticket prefix: TST\n")
 
@@ -42,6 +42,22 @@ def test_unadopted_repo_returns_adopt_destination(tmp_path: Path) -> None:
 
     assert row["states"]["adopted"] is False
     assert row["states"]["contract_formation_required"] is True
+    assert row["next_action"] == "ADOPT_DESTINATION"
+
+
+def test_link_with_adopted_false_returns_adopt_destination(tmp_path: Path) -> None:
+    motor_root = tmp_path / "motor"
+    repo = tmp_path / "repo"
+    _write(
+        repo / ".agent/config/motor_destination_link.json",
+        json.dumps({"motor_root": str(motor_root), "adopted": False}),
+    )
+
+    row = build_manifest([RepoSpec(path=repo, name="repo")], motor_root)["repos"][0]
+
+    assert row["states"]["adopted"] is False
+    assert row["motor"]["motor_root_declared_by_repo"] == str(motor_root)
+    assert row["motor"]["adopted_field"] is False
     assert row["next_action"] == "ADOPT_DESTINATION"
 
 

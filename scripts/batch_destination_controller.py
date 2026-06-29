@@ -132,17 +132,28 @@ def _run_command(
     }
 
 
-def _agent_link_motor_root(root: Path) -> str | None:
-    """Before: root may hold a link. During: read JSON. After: motor root or None."""
+def _agent_link_data(root: Path) -> dict[str, Any] | None:
+    """Before: root may hold a link. During: read JSON. After: link data or None."""
     link = root / ".agent/config/motor_destination_link.json"
     if not link.exists():
         return None
     try:
-        data = _read_json(link)
+        return _read_json(link)
     except (OSError, json.JSONDecodeError, ValueError):
+        return None
+
+
+def _agent_link_motor_root(data: dict[str, Any] | None) -> str | None:
+    """Before: parsed link data. During: read aliases. After: motor root or None."""
+    if data is None:
         return None
     value = data.get("motor_root") or data.get("MOTOR_ROOT") or data.get("repo_motor")
     return str(value) if value else None
+
+
+def _agent_link_adopted(data: dict[str, Any] | None) -> bool:
+    """Return true only when the destination link explicitly marks adoption done."""
+    return data is not None and data.get("adopted") is True
 
 
 def _ticket_contract_frozen(root: Path) -> bool:
@@ -273,10 +284,11 @@ def inspect_repo(
     ]
     evidence.extend(_evidence_path(root, relative) for relative in PLANNING_FILES)
 
-    agent_link_motor = _agent_link_motor_root(root)
+    agent_link_data = _agent_link_data(root)
+    agent_link_motor = _agent_link_motor_root(agent_link_data)
     planning_ready = all((root / relative).exists() for relative in PLANNING_FILES)
     contract_ready = planning_ready and _ticket_contract_frozen(root)
-    adopted = agent_link_motor is not None
+    adopted = _agent_link_adopted(agent_link_data) and agent_link_motor is not None
 
     validate_evidence: dict[str, Any] | None = None
     memory_evidence: dict[str, Any] | None = None
@@ -348,6 +360,9 @@ def inspect_repo(
             "motor_root_declared_by_repo": agent_link_motor,
             "motor_root_expected": str(motor_root.resolve()),
             "authorized_motor_write": spec.authorized_motor_write,
+            "adopted_field": None
+            if agent_link_data is None
+            else agent_link_data.get("adopted"),
         },
         "shared_surfaces": list(spec.shared_surfaces),
         "evidence": evidence,
