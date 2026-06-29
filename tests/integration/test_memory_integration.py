@@ -1,6 +1,7 @@
 """Integration tests for memory_consolidate.py and memory_loader.py."""
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -32,17 +33,25 @@ class TestMemoryLoaderIntegration:
             patch("scripts.memory_consolidate.MEMORY_PROFILE_MD", profile_file),
             patch("bus.memory_loader._get_memory_dir", return_value=memory_dir),
         ):
-            # 1. Create raw observations
+            # 1. Create raw observations.
+            # WOT-2026-015j: timestamps RELATIVOS a now() (no fecha fija). La
+            # consolidacion usa since=30d; una fecha fija (antes 2026-05-30) cae
+            # fuera de la ventana al pasar ~30 dias y el test se vuelve
+            # clock-coupled (archived 2, Kept 0). Usar now-1d garantiza que las
+            # observaciones esten siempre dentro de la ventana de 30 dias.
+            recent_ts = (datetime.now(timezone.utc) - timedelta(days=1)).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
             obs_data = [
                 {
-                    "timestamp": "2026-05-30T10:00:00Z",
+                    "timestamp": recent_ts,
                     "topic": "security",
                     "domain": "security-gates",
                     "signal": "Security gates must fail closed on invalid config. Silent permissive fallback is incredibly dangerous (AP-11).",
                     "source_ticket": "WP-001",
                 },
                 {
-                    "timestamp": "2026-05-30T10:05:00Z",
+                    "timestamp": recent_ts,
                     "topic": "testing",
                     "domain": "testing",
                     "signal": "Use pytest fixtures instead of setup methods for better maintainability and scoped resources (AP-12).",
