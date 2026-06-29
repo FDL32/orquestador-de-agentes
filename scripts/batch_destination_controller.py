@@ -156,6 +156,41 @@ def _agent_link_adopted(data: dict[str, Any] | None) -> bool:
     return data is not None and data.get("adopted") is True
 
 
+NESTED_PRODUCT_DIRS = (
+    "publica/repo",
+    "z_automatizacion/publica/repo",
+)
+EMBEDDED_LEGACY_DIRS = (
+    "agent_system",
+    "orquestacion_agentes",
+    "Orquestacion_agentes",
+)
+
+
+def _detect_needs_flatten(root: Path) -> dict[str, Any]:
+    """Detect provisional topology that must be flattened before Contract Formation.
+
+    WOT-2026-015d: a destination with nested product (real code under
+    publica/repo/ or z_automatizacion/publica/repo/ instead of the root) or an
+    embedded legacy engine (agent_system/, orquestacion_agentes/) will change
+    structure when flattened. Doing CF on it builds contracts on paths (src/,
+    tests/, FLT) that stop existing after the flatten.
+
+    Before: root is the destination repo root.
+    During: checks for known nested-product dirs and embedded legacy engines.
+    After: dict {needs_flatten: bool, signals: [..]} with the evidence found.
+    """
+    signals: list[str] = [
+        f"nested_product:{rel}" for rel in NESTED_PRODUCT_DIRS if (root / rel).is_dir()
+    ]
+    for rel in EMBEDDED_LEGACY_DIRS:
+        d = root / rel
+        # legacy engine = a dir that carries its own agent_controller.py
+        if d.is_dir() and (d / ".agent" / "agent_controller.py").exists():
+            signals.append(f"embedded_legacy:{rel}")
+    return {"needs_flatten": bool(signals), "signals": signals}
+
+
 def _ticket_contract_frozen(root: Path) -> bool:
     """Before: planning may exist. During: scan. After: True if a frozen contract."""
     contracts = root / ".agent/planning/ticket_contracts.md"
@@ -331,9 +366,11 @@ def inspect_repo(
     classified_verdict = _latest_manifest_verdict(root)
     audit_passed = _publication_audit_passed(root)
     closed_pending_ci = _has_closed_pending_ci(root)
+    flatten = _detect_needs_flatten(root)
 
     states = {
         "adopted": adopted,
+        "needs_flatten": flatten["needs_flatten"],
         "contract_ready": contract_ready,
         "contract_formation_required": not contract_ready,
         "agent_project_root_verified": agent_project_root_verified,
@@ -365,6 +402,7 @@ def inspect_repo(
             else agent_link_data.get("adopted"),
         },
         "shared_surfaces": list(spec.shared_surfaces),
+        "flatten_signals": flatten["signals"],
         "evidence": evidence,
         "next_action": _next_action(
             states=states,
@@ -384,6 +422,11 @@ def _next_action(
     After: a single next-action token."""
     if not states["adopted"]:
         return "ADOPT_DESTINATION"
+    if states.get("needs_flatten"):
+        # Topologia provisional (producto anidado / legacy embebido): aplanar
+        # ANTES de Contract Formation; los contratos asumirian rutas que dejaran
+        # de existir tras el aplanado (WOT-2026-015d).
+        return "RUN_FLATTEN"
     if not states["contract_ready"]:
         return "RUN_CONTRACT_FORMATION"
     if not ran_gates:
