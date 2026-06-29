@@ -33,6 +33,18 @@ def _contract_ready_repo(root: Path) -> None:
 # --- adoption / contract formation ---------------------------------------
 
 
+def test_unadopted_repo_returns_adopt_destination(tmp_path: Path) -> None:
+    motor_root = tmp_path / "motor"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    row = build_manifest([RepoSpec(path=repo, name="repo")], motor_root)["repos"][0]
+
+    assert row["states"]["adopted"] is False
+    assert row["states"]["contract_formation_required"] is True
+    assert row["next_action"] == "ADOPT_DESTINATION"
+
+
 def test_adopted_repo_still_requires_contract_formation(tmp_path: Path) -> None:
     motor_root = tmp_path / "motor"
     repo = tmp_path / "repo"
@@ -124,7 +136,7 @@ def test_publishable_requires_audit_pass_b(tmp_path: Path) -> None:
         json.dumps({"verdict": "LISTO_PARA_PUBLICAR"}),
     )
 
-    # Without Pass B closeout: integrated_local injected via gate-free helper path.
+    # Without Pass B closeout: integrated_local is proven by read-only gates.
     # Simulate local integration by running the read-only gate against a fake
     # controller that returns a clean (dict-shaped) validate payload.
     _install_fake_controller(motor_root, errors={}, warnings={})
