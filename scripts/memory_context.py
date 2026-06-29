@@ -40,9 +40,19 @@ from bus.memory_loader import (  # noqa: E402
 
 
 def _format_status() -> str:
-    """Format memory tier status as human-readable string."""
+    """Format memory tier status as human-readable string.
+
+    Includes the resolved ``Project root:`` so callers (and adoption gates) can
+    confirm the memory status was read against the intended destination, not the
+    motor. Without this line the root is invisible and downstream checks that
+    verify topology have nothing to assert against.
+    """
+    from runtime.project_root import resolve_project_root
+
     status = get_memory_tier_status()
     parts: list[str] = ["# Memory Tier Status", ""]
+    parts.append(f"Project root: {resolve_project_root()}")
+    parts.append("")
     for tier in ("l3", "l2", "l1"):
         label = {
             "l3": "L3 (memory_profile.md)",
