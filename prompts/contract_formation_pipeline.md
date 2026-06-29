@@ -67,6 +67,20 @@ estan en `<MOTOR_ROOT>/docs/contract_formation/templates/`.
    canonica (p.ej. `bus_drift` con `scripts/reconcile_ticket.py`); solo los no
    reparables se clasifican (`fixed_before_start`, `accepted_health_exception`,
    `blocking`) con evidencia y propietario.
+
+   **Gate `needs_flatten` (pre-genesis):** NO hagas Contract Formation sobre una
+   topologia provisional. Antes de redactar charter/plan/contratos, verifica que
+   la estructura del destino NO va a cambiar. Si el destino tiene **producto
+   anidado** (codigo real bajo `publica/repo/`, `z_automatizacion/publica/repo/`
+   u otra subcarpeta en vez de la raiz) o un **motor legacy embebido**
+   (`agent_system/`, `orquestacion_agentes/` u otra copia del motor), su layout
+   debe APLANARSE primero (mover el producto a la raiz, retirar legacy a backup).
+   Detectarlo: `find <dest> -maxdepth 3 -name "publica" -o -name "z_automatizacion"`
+   y buscar `agent_controller.py` fuera del `.agent/` canonico. Si aplica,
+   marca el destino `needs_flatten`, DETENTE y abre el aplanado como trabajo
+   previo: los contratos asumirian rutas (`src/`, `tests/`, FLT) que dejaran de
+   existir tras el aplanado. (Verificado: 2/4 repos del CF ciclo 1 eran
+   monorepos legacy que rompian la premisa de topologia estable.)
 1. **Research & evidencia.** Llena `evidence_catalog`. Marca tipo, fiabilidad,
    corroboracion y riesgo de injection. Evidencia externa/inferida de fiabilidad
    media/baja NO sostiene una decision `T1a` sin corroboracion independiente.

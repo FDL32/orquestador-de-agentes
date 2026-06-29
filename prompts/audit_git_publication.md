@@ -91,6 +91,17 @@ sentinela fake). No deben bloquear por placeholders genericos.
    el veredicto no puede ser publicable.
 9. Confirmar `is_motor_root=false` salvo que la auditoria sea explicitamente
    sobre el motor y se haya usado `--allow-motor-root`.
+10. **Set de datos derivado del repo real, no generico.** No asumas que los datos
+    sensibles son solo `.csv`/`.db`. Antes de confiar en el manifest, enumera las
+    EXTENSIONES reales de datos del repo en disco:
+    `find <repo> -maxdepth 3 \( -path "*/.venv" -o -path "*/.git" \) -prune -o
+    -type f \( -name "*.csv" -o -name "*.txt" -o -name "*.xls*" -o -name "*.docx"
+    -o -name "*.pdf" -o -name "*.sqlite*" -o -name "*.db" -o -name "*.xml" \)
+    -print`. Confirma con `git check-ignore -v` que cada familia detectada queda
+    cubierta. (Verificado: distintos destinos guardan datos en `.txt` (Amazon),
+    `.docx`/`.pdf` (Comunicaciones), `.xls` (Contabilidad); un set generico
+    csv/db habria dejado pasar fuga real.) Si una familia de datos del repo no
+    esta en el manifest ni en `.gitignore`, el veredicto no puede ser publicable.
 
 ## Pasada B: Refutacion
 

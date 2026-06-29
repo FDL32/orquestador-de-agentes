@@ -202,6 +202,17 @@ sin drift. El veredicto humano de la Pasada B prevalece sobre el exit-code del s
   cualquier lanzador, `grep` por el nombre del entrypoint viejo en TODO el repo y
   actualizar todos. En `.bat`, `%~dp0` YA termina en `\`: no añadir `.` ni `/`.
 
+- **Aplanado que mueve el producto a la raíz (rutas hardcodeadas en lanzadores).**
+  Cuando un destino se aplana (el producto sube de `publica/repo/` o
+  `z_automatizacion/publica/repo/` a la raíz), TODO lanzador con ruta absoluta o
+  relativa al subdirectorio viejo se rompe SILENCIOSAMENTE. **Check obligatorio,
+  antes y después del aplanado:** `grep -rl "publica/repo\|z_automatizacion"
+  --include="*.bat" --include="*.ps1" --include="*.sh" <dest>` y actualizar cada
+  ruta a la nueva ubicación (en `.bat` usar `cd /d "%~dp0"` para la raíz, sin
+  añadir `.`/`/`). (Verificado: `fiscal.bat` en Contabilidad apuntaba a
+  `...\z_automatizacion\publica\repo` y se habría roto al aplanar.) Sin este
+  check, el aplanado deja el proyecto sin punto de entrada funcional.
+
 ## Contrato de fallo
 
 - Si `check-ignore` no matchea un archivo sensible, **detente**: no se hace

@@ -46,7 +46,7 @@ El batch NO colapsa estados. Cada destino avanza por una cadena observable:
 
 | Estado | Quien lo decide | Evidencia |
 |---|---|---|
-| `adopted` | existe `.agent/config/motor_destination_link.json` | `path:` |
+| `adopted` | el link tiene `"adopted": true` (escrito por `mark_destination_adopted.py`) Y `motor_root` valido. La SOLA existencia de `.agent/config/motor_destination_link.json` NO basta | `path:` + `adopted:true` |
 | `contract_ready` | planning frozen + `audit_cf_ticket_contract.md` APPROVE | `path:` + decision |
 | `agent_project_root_verified` | `memory_context.py --status` refleja el repo | `command:` + `exit_code:` |
 | `integrated_local` | `check_destino_publish_ready.py` / validate 0/0 | `command:` + `exit_code:` |
@@ -208,7 +208,7 @@ Cada destino genera su seccion con:
 ## <destino>
 | Estado | Valor | Evidencia |
 |---|---|---|
-| adopted | si/no | `path:` |
+| adopted | si/no | `path:` + `adopted:true` (no basta que exista el link) |
 | contract_ready | si/no | `path:` + decision |
 | integrated_local | si/no | `command:` + `exit_code:` |
 | publication_classified | si/no | `path:` ([RELATO]) |
