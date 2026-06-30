@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WOT-2026-017a
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Titulo:** PRE_EXISTING_SUITE_RED - Comparacion por identidad de test-id en pre-handoff guard
 - **Asignado a:** Builder
