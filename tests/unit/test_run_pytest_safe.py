@@ -496,3 +496,76 @@ class TestFailedTestIdsInSummary:
         assert data.get("failed_test_ids") == failing_ids, (
             "failed_test_ids must contain the node-ids returned by stream_pytest"
         )
+
+    def test_baseline_carry_forward_from_previous_run(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """baseline_failed_test_ids is read from the PREVIOUS last-run.json.
+
+        Pre-populates last-run.json with failed_test_ids=[A, B], then calls
+        main() with a green run (exit_code=0, failed_ids=[]). Verifies that
+        the NEW last-run.json written by main() contains
+        baseline_failed_test_ids == [A, B], proving the carry-forward mechanism.
+        """
+        import json as _json
+
+        mod = load_runner_module()
+
+        # Wire isolated paths.
+        monkeypatch.setattr(mod, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(mod, "_PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(mod, "_PROJECT_ROOT_BOOTSTRAP", tmp_path)
+        last_run_json = (
+            tmp_path / ".agent" / "runtime" / "pytest-safe" / "last-run.json"
+        )
+        last_run_log = tmp_path / ".agent" / "runtime" / "pytest-safe" / "last-run.log"
+        last_run_json.parent.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(mod, "LAST_RUN_JSON", last_run_json)
+        monkeypatch.setattr(mod, "LAST_RUN_LOG", last_run_log)
+
+        # Pre-populate last-run.json with a previous red run.
+        prev_failed = [
+            "tests/foo/test_bar.py::TestFoo::test_a",
+            "tests/foo/test_bar.py::TestFoo::test_b",
+        ]
+        last_run_json.write_text(
+            _json.dumps(
+                {"status": "finished", "exit_code": 1, "failed_test_ids": prev_failed}
+            ),
+            encoding="utf-8",
+        )
+
+        # Stub helpers so main() runs without a real repo. Green run this time.
+        monkeypatch.setattr(mod, "stream_pytest", lambda cmd: (0, []))
+        monkeypatch.setattr(mod, "_delivery_head_sha", lambda: "abc123")
+        lock_obj = {
+            "pid": 0,
+            "started_at": "2026-01-01T00:00:00+00:00",
+            "cwd": str(tmp_path),
+        }
+        monkeypatch.setattr(mod, "acquire_lock", lambda force_unlock=False: lock_obj)
+        monkeypatch.setattr(mod, "release_lock", lambda: None)
+        monkeypatch.setattr(
+            mod, "cleanup_known_temp_dirs", lambda: {"removed": [], "failed": []}
+        )
+        monkeypatch.setattr(mod, "check_canonical_state_leak", lambda snap: [])
+        monkeypatch.setattr(mod, "snapshot_canonical_state", lambda: {})
+        monkeypatch.setattr(
+            mod,
+            "select_test_runner",
+            lambda interp, args, xdist, run_dir, test_dir: (["echo"], "pytest"),
+        )
+        monkeypatch.setattr(mod, "resolve_test_interpreter", lambda: sys.executable)
+        monkeypatch.setattr(sys, "argv", ["run_pytest_safe.py", "--level", "all"])
+
+        mod.main()
+
+        data = _json.loads(last_run_json.read_text(encoding="utf-8"))
+        assert data.get("exit_code") == 0
+        assert data.get("failed_test_ids") == [], (
+            "green run must write empty failed_test_ids"
+        )
+        assert data.get("baseline_failed_test_ids") == prev_failed, (
+            "baseline_failed_test_ids must carry-forward the failed_test_ids "
+            "from the previous last-run.json"
+        )

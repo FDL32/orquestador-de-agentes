@@ -821,6 +821,16 @@ def main() -> int:  # noqa: C901
     # WOT-2026-017a: capture the baseline failed_test_ids from the previous
     # last-run.json (if it exists and has the field) BEFORE this run overwrites
     # it. This becomes field B for the subset comparison in pre_handoff_guard.
+    #
+    # LIMITATION (R3 - carry-forward, not commit-base): baseline_failed_test_ids
+    # is the failed_test_ids of the run IMMEDIATELY PRECEDING this one, NOT
+    # necessarily the run against the ticket's base commit. If intermediate runs
+    # occurred during the ticket (e.g. a run with uncommitted work_plan.md that
+    # triggered spurious gate failures), those transient ids become the baseline
+    # for the NEXT run. The operational mitigation is to ensure that a clean run
+    # (against an unmodified tree, with all collaboration artifacts committed)
+    # executes immediately before handoff so that the baseline reflects the true
+    # pre-existing failure set, not transient states.
     _baseline_failed: list[str] = []
     if LAST_RUN_JSON.exists():
         try:

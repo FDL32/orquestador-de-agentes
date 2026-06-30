@@ -141,8 +141,18 @@ R3 - last-run.json gitignoreado: el archivo es gitignoreado y no versionado.
      Si el run base fue sobreescrito por un run intermedio del ticket, el
      baseline en disco puede no ser el del commit base del ticket. El diseno
      acepta esta limitacion (decision CEM vinculante: no re-run en caliente,
-     no archivo baseline separado). El fail-closed de D5c mitiga el caso
-     donde el campo failed_test_ids estaba ausente en el run que sobreescribio.
+     no archivo baseline separado).
+     NOTA DE IMPLEMENTACION (Builder WOT-2026-017a): el campo
+     baseline_failed_test_ids se captura como carry-forward del run
+     INMEDIATAMENTE ANTERIOR, no del commit base del ticket. Si durante el
+     ticket se corre la suite con el arbol sucio o con artefactos de
+     colaboracion sin commitear (p.ej. work_plan.md pendiente), ese run puede
+     introducir falsos-rojos en el baseline del run siguiente. D5c NO mitiga
+     este caso: D5c solo bloquea cuando failed_test_ids esta AUSENTE, no
+     cuando contiene ids de estado transitorio. La mitigacion correcta es
+     garantizar que el run que precede al handoff se ejecuta con arbol limpio
+     y todos los artefactos commiteados, de modo que el baseline refleje el
+     conjunto real de fallos pre-existentes.
 
 R4 - Tests flaky del motor: si un test flaky falla en el run post-cambio pero
      no estaba en el last-run.json pre-cambio, el handoff se bloquea por un
