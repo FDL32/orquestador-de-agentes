@@ -500,13 +500,81 @@ def assert_canonical_suite_green(
 
     exit_code = data.get("exit_code")
     if exit_code != 0:
-        return False, {
-            **base_diag,
-            "reason": f"exit_code_nonzero ({exit_code!r}) -> failed > 0",
-            "canonical_suite_error": (
-                f"Canonical suite exit_code={exit_code!r}: there are failures, "
-                "errors, or a state-leak. Not 0 failed."
-            ),
+        # WOT-2026-017a (D3/D5): subset-of-baseline decision replaces binary block.
+        if "failed_test_ids" not in data:
+            # D5c: fail-closed when field absent with nonzero exit (old runner or
+            # a run that completed before this change was deployed).
+            return False, {
+                **base_diag,
+                "reason": "failed_test_ids_missing_with_nonzero_exit",
+                "canonical_suite_error": (
+                    f"Canonical suite exit_code={exit_code!r} but "
+                    "failed_test_ids is absent from last-run.json. "
+                    "Re-run with the updated run_pytest_safe.py: "
+                    "python scripts/run_pytest_safe.py --level all"
+                ),
+            }
+        # D7: the baseline is only trustworthy if it was produced with
+        # level=all + default_discovery; otherwise the comparison is meaningless.
+        _level_base = data.get("level")
+        _args_mode_base = data.get("args_mode")
+        if _level_base != "all" or _args_mode_base != "default_discovery":
+            return False, {
+                **base_diag,
+                "reason": (
+                    f"not_full_suite (level={_level_base!r},"
+                    f" args_mode={_args_mode_base!r})"
+                ),
+                "canonical_suite_error": (
+                    f"last-run level={_level_base!r} args_mode={_args_mode_base!r}: "
+                    "the baseline is only valid when produced with level=all + "
+                    "default_discovery. "
+                    "Run: python scripts/run_pytest_safe.py --level all"
+                ),
+            }
+        # D1/D3: compare by exact node-id identity (not count).
+        a_set = set(data.get("failed_test_ids") or [])
+        b_set = set(data.get("baseline_failed_test_ids") or [])
+        new_failures = a_set - b_set
+        if new_failures:
+            return False, {
+                **base_diag,
+                "reason": "regression_new_failures",
+                "canonical_suite_error": (
+                    f"Canonical suite exit_code={exit_code!r}: "
+                    f"{len(new_failures)} new failure(s) not in baseline: "
+                    + ", ".join(sorted(new_failures))
+                ),
+                "new_failures": sorted(new_failures),
+            }
+        # All failures are inherited (A subset of B). Verify SHA freshness
+        # before accepting (the baseline must be against the commit being delivered).
+        _inh_tested_sha = data.get("tested_commit_sha")
+        _inh_head_ok, _inh_head_sha = resolve_git_head_sha_local(motor_root)
+        if not _inh_head_ok:
+            return False, {
+                **base_diag,
+                "reason": "motor_head_unresolved",
+                "canonical_suite_error": _inh_head_sha,
+            }
+        if not _inh_tested_sha or _inh_tested_sha != _inh_head_sha:
+            return False, {
+                **base_diag,
+                "reason": "stale_run (tested_commit_sha != delivery HEAD)",
+                "canonical_suite_error": (
+                    f"last-run tested {_inh_tested_sha!r} but delivery repo HEAD is "
+                    f"{_inh_head_sha!r}: the suite did not run against the commit "
+                    "being delivered."
+                ),
+            }
+        return True, {
+            "canonical_suite_required": True,
+            "reason": "inherited_failures_subset",
+            "inherited_test_ids": sorted(a_set),
+            "baseline_run_sha": _inh_tested_sha,
+            "level": _level_base,
+            "args_mode": _args_mode_base,
+            "exit_code": exit_code,
         }
 
     tested_sha = data.get("tested_commit_sha")

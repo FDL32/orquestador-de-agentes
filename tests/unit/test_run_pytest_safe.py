@@ -327,3 +327,172 @@ def test_resolve_test_interpreter_falls_back_when_destination_has_no_venv(
     mod._PROJECT_ROOT = destino
     mod._PROJECT_ROOT_BOOTSTRAP = motor
     assert mod.resolve_test_interpreter() == sys.executable
+
+
+# =============================================================================
+# WOT-2026-017a: failed_test_ids field in last-run.json (G4)
+# =============================================================================
+
+
+def _parse_failed_ids_from_lines(lines: list[str]) -> list[str]:
+    """Replicate the FAILED-line parser from stream_pytest for isolated testing.
+
+    stream_pytest builds the failed_ids list from lines using a regex.
+    We replicate the same contract here so we can test the parser without
+    invoking pytest or a subprocess.
+    """
+    import re
+
+    _failed_re = re.compile(r"^FAILED\s+(\S+)")
+    result = []
+    for line in lines:
+        m = _failed_re.match(line.rstrip())
+        if m:
+            result.append(m.group(1))
+    return result
+
+
+class TestFailedTestIdsParsing:
+    """G4: unit tests for the FAILED-line parser added by WOT-2026-017a.
+
+    Tests feed example lines directly to the parser without invoking pytest,
+    so they run in milliseconds and never spawn a subprocess.
+    """
+
+    def test_single_failed_line_parsed_correctly(self) -> None:
+        """A single FAILED line yields the correct node-id."""
+        lines = ["FAILED tests/foo/test_bar.py::TestFoo::test_one - AssertionError\n"]
+        result = _parse_failed_ids_from_lines(lines)
+        assert result == ["tests/foo/test_bar.py::TestFoo::test_one"]
+
+    def test_multiple_failed_lines_parsed_in_order(self) -> None:
+        """Multiple FAILED lines yield all node-ids in order."""
+        lines = [
+            "FAILED tests/foo/test_bar.py::TestFoo::test_one - AssertionError\n",
+            "FAILED tests/foo/test_bar.py::TestFoo::test_two - ValueError\n",
+            "FAILED tests/other/test_baz.py::test_top_level - RuntimeError\n",
+        ]
+        result = _parse_failed_ids_from_lines(lines)
+        assert result == [
+            "tests/foo/test_bar.py::TestFoo::test_one",
+            "tests/foo/test_bar.py::TestFoo::test_two",
+            "tests/other/test_baz.py::test_top_level",
+        ]
+
+    def test_non_failed_lines_are_ignored(self) -> None:
+        """Lines that do not start with FAILED are ignored."""
+        lines = [
+            "PASSED tests/foo/test_bar.py::TestFoo::test_ok\n",
+            "ERROR tests/foo/test_bar.py::TestFoo::test_err\n",
+            "tests/foo/test_bar.py::TestFoo::test_ok PASSED\n",
+            " FAILED tests/foo/test_bar.py::leading_space - note leading space\n",
+            "FAILED tests/foo/test_bar.py::TestFoo::test_real - AssertionError\n",
+        ]
+        result = _parse_failed_ids_from_lines(lines)
+        assert result == ["tests/foo/test_bar.py::TestFoo::test_real"]
+
+    def test_empty_stream_yields_empty_list(self) -> None:
+        """An empty stream (no lines) yields an empty list."""
+        assert _parse_failed_ids_from_lines([]) == []
+
+    def test_green_stream_yields_empty_list(self) -> None:
+        """A fully green stream (no FAILED lines) yields an empty list."""
+        lines = [
+            "PASSED tests/foo/test_bar.py::TestFoo::test_ok\n",
+            "1 passed in 0.12s\n",
+        ]
+        assert _parse_failed_ids_from_lines(lines) == []
+
+    def test_node_id_without_class_parsed_correctly(self) -> None:
+        """A top-level test (no class) is captured correctly."""
+        lines = ["FAILED tests/test_simple.py::test_func - AssertionError\n"]
+        result = _parse_failed_ids_from_lines(lines)
+        assert result == ["tests/test_simple.py::test_func"]
+
+    def test_first_token_only_captures_node_id_not_error_text(self) -> None:
+        """Only the first token after FAILED is the node-id; remainder is ignored."""
+        lines = [
+            "FAILED tests/foo/test_bar.py::TestFoo::test_one"
+            " - assert False != True (extra text here)\n"
+        ]
+        result = _parse_failed_ids_from_lines(lines)
+        assert result == ["tests/foo/test_bar.py::TestFoo::test_one"]
+
+
+class TestFailedTestIdsInSummary:
+    """G4: integration-level checks for failed_test_ids field in last-run.json.
+
+    These tests verify the contract without invoking the real pytest subprocess.
+    They patch stream_pytest to return controlled (returncode, failed_ids) tuples
+    and check that main() writes the expected fields to last-run.json.
+    """
+
+    def _stub_main(
+        self, mod, tmp_path: Path, monkeypatch, stream_return: tuple
+    ) -> None:
+        """Wire a tmp_path-isolated environment into the module and call main()."""
+        import json as _json
+
+        monkeypatch.setattr(mod, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(mod, "_PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(mod, "_PROJECT_ROOT_BOOTSTRAP", tmp_path)
+        last_run_json = (
+            tmp_path / ".agent" / "runtime" / "pytest-safe" / "last-run.json"
+        )
+        last_run_log = tmp_path / ".agent" / "runtime" / "pytest-safe" / "last-run.log"
+        last_run_json.parent.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(mod, "LAST_RUN_JSON", last_run_json)
+        monkeypatch.setattr(mod, "LAST_RUN_LOG", last_run_log)
+
+        monkeypatch.setattr(mod, "stream_pytest", lambda cmd: stream_return)
+        monkeypatch.setattr(mod, "_delivery_head_sha", lambda: "abc123")
+        lock_obj = {
+            "pid": 0,
+            "started_at": "2026-01-01T00:00:00+00:00",
+            "cwd": str(tmp_path),
+        }
+        monkeypatch.setattr(mod, "acquire_lock", lambda force_unlock=False: lock_obj)
+        monkeypatch.setattr(mod, "release_lock", lambda: None)
+        monkeypatch.setattr(
+            mod, "cleanup_known_temp_dirs", lambda: {"removed": [], "failed": []}
+        )
+        monkeypatch.setattr(mod, "check_canonical_state_leak", lambda snap: [])
+        monkeypatch.setattr(mod, "snapshot_canonical_state", lambda: {})
+        monkeypatch.setattr(
+            mod,
+            "select_test_runner",
+            lambda interp, args, xdist, run_dir, test_dir: (["echo"], "pytest"),
+        )
+        monkeypatch.setattr(mod, "resolve_test_interpreter", lambda: sys.executable)
+        monkeypatch.setattr(sys, "argv", ["run_pytest_safe.py", "--level", "all"])
+
+        mod.main()
+        return _json.loads(last_run_json.read_text(encoding="utf-8"))
+
+    def test_failed_test_ids_empty_when_exit_code_zero(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """When exit_code==0, failed_test_ids must be [] in last-run.json."""
+        mod = load_runner_module()
+        data = self._stub_main(mod, tmp_path, monkeypatch, stream_return=(0, []))
+        assert data.get("exit_code") == 0
+        assert data.get("failed_test_ids") == [], (
+            "failed_test_ids must be [] when exit_code==0"
+        )
+
+    def test_failed_test_ids_list_when_exit_code_nonzero(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """When exit_code!=0, failed_test_ids must contain the parsed node-ids."""
+        mod = load_runner_module()
+        failing_ids = [
+            "tests/foo/test_bar.py::TestFoo::test_one",
+            "tests/foo/test_bar.py::TestFoo::test_two",
+        ]
+        data = self._stub_main(
+            mod, tmp_path, monkeypatch, stream_return=(1, failing_ids)
+        )
+        assert data.get("exit_code") == 1
+        assert data.get("failed_test_ids") == failing_ids, (
+            "failed_test_ids must contain the node-ids returned by stream_pytest"
+        )

@@ -1524,3 +1524,318 @@ class TestCommitVisibleBarrier:
         )
         assert ok is False
         assert diag.get("reason") == "git_log_failed"
+
+
+# =============================================================================
+# WOT-2026-017a: PRE_EXISTING_SUITE_RED - subset-of-baseline barrier tests
+# =============================================================================
+
+
+class TestPreExistingSuiteRed:
+    """T1-T5 barrier tests for WOT-2026-017a (PRE_EXISTING_SUITE_RED).
+
+    The guard must distinguish pre-existing (inherited) failures from new
+    regressions using failed_test_ids and baseline_failed_test_ids in
+    last-run.json.
+    """
+
+    @staticmethod
+    def _write_last_run(motor: Path, payload: dict) -> None:
+        d = motor / ".agent" / "runtime" / "pytest-safe"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "last-run.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    @staticmethod
+    def _head_sha(repo: Path) -> str:
+        r = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+        )
+        return r.stdout.strip()
+
+    def _import_guard(self):
+        import sys
+
+        sys.path.insert(0, str(SCRIPT_PATH.parent))
+        import pre_handoff_guard
+
+        return pre_handoff_guard
+
+    def _base_payload(self, repo: Path, exit_code: int) -> dict:
+        """Return a minimal valid last-run payload for the given repo and exit_code."""
+        return {
+            "status": "finished",
+            "exit_code": exit_code,
+            "tested_commit_sha": self._head_sha(repo),
+            "level": "all",
+            "args_mode": "default_discovery",
+        }
+
+    # ------------------------------------------------------------------
+    # T1: inherited failure -> handoff PERMITTED
+    # ------------------------------------------------------------------
+
+    def test_t1_inherited_failure_permits_handoff(self, tmp_path: Path) -> None:
+        """T1: suite with a pre-existing failure that matches the baseline -> PERMITTED.
+
+        exit_code=1, failed_test_ids=[X], baseline_failed_test_ids=[X].
+        A.issubset(B) -> reason=inherited_failures_subset.
+        """
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+        commit_ticket_marker(motor, "WOT-2026-017a")
+
+        node_id = "tests/foo/test_bar.py::TestFoo::test_one"
+        payload = self._base_payload(motor, exit_code=1)
+        payload["failed_test_ids"] = [node_id]
+        payload["baseline_failed_test_ids"] = [node_id]
+        self._write_last_run(motor, payload)
+
+        ok, diag = guard.assert_canonical_suite_green(motor, "code")
+
+        assert ok is True, f"inherited failures must permit handoff: {diag}"
+        assert diag.get("reason") == "inherited_failures_subset", diag
+        assert node_id in diag.get("inherited_test_ids", []), diag
+        assert "baseline_run_sha" in diag, diag
+
+    # ------------------------------------------------------------------
+    # T2: new failure -> handoff BLOCKED
+    # ------------------------------------------------------------------
+
+    def test_t2_new_failure_blocks_handoff(self, tmp_path: Path) -> None:
+        """T2: suite with a new failure not in the baseline -> BLOCKED.
+
+        exit_code=1, failed_test_ids=[test_nuevo], baseline_failed_test_ids=[].
+        A - B != {} -> reason=regression_new_failures.
+        """
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+        commit_ticket_marker(motor, "WOT-2026-017a")
+
+        new_id = "tests/new_test.py::test_nuevo"
+        payload = self._base_payload(motor, exit_code=1)
+        payload["failed_test_ids"] = [new_id]
+        payload["baseline_failed_test_ids"] = []  # no pre-existing failures
+        self._write_last_run(motor, payload)
+
+        ok, diag = guard.assert_canonical_suite_green(motor, "code")
+
+        assert ok is False, f"new failure must block handoff: {diag}"
+        assert diag.get("reason") == "regression_new_failures", diag
+        assert new_id in diag.get("new_failures", []), diag
+
+    # ------------------------------------------------------------------
+    # T3: fail-closed sub-cases
+    # ------------------------------------------------------------------
+
+    def test_t3a_last_run_missing_blocks(self, tmp_path: Path) -> None:
+        """T3a: last-run.json absent -> BLOCKED (reason=last_run_missing)."""
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+
+        ok, diag = guard.assert_canonical_suite_green(motor, "code")
+
+        assert ok is False
+        assert diag.get("reason") == "last_run_missing"
+
+    def test_t3b_unparseable_json_blocks(self, tmp_path: Path) -> None:
+        """T3b: last-run.json with invalid JSON -> BLOCKED (reason=last_run_unparseable)."""
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+        d = motor / ".agent" / "runtime" / "pytest-safe"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "last-run.json").write_text("{not valid json", encoding="utf-8")
+
+        ok, diag = guard.assert_canonical_suite_green(motor, "code")
+
+        assert ok is False
+        assert "unparseable" in diag.get("reason", "").lower()
+
+    def test_t3c_failed_test_ids_absent_with_nonzero_blocks(
+        self, tmp_path: Path
+    ) -> None:
+        """T3c: exit_code!=0 but failed_test_ids absent -> BLOCKED (fail-closed D5c)."""
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+        payload = self._base_payload(motor, exit_code=1)
+        # Deliberately omit failed_test_ids to simulate an old-runner last-run.
+        self._write_last_run(motor, payload)
+
+        ok, diag = guard.assert_canonical_suite_green(motor, "code")
+
+        assert ok is False
+        assert diag.get("reason") == "failed_test_ids_missing_with_nonzero_exit", diag
+
+    def test_t3d_wrong_level_blocks(self, tmp_path: Path) -> None:
+        """T3d: level != 'all' with exit_code != 0 -> BLOCKED (not_full_suite).
+
+        D7: the baseline is only valid when produced with level=all +
+        default_discovery; a focal run must not satisfy the inheritance gate.
+        """
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+        payload = self._base_payload(motor, exit_code=1)
+        payload["level"] = "unit"  # wrong level
+        payload["failed_test_ids"] = ["tests/foo/test_bar.py::test_x"]
+        payload["baseline_failed_test_ids"] = ["tests/foo/test_bar.py::test_x"]
+        self._write_last_run(motor, payload)
+
+        ok, diag = guard.assert_canonical_suite_green(motor, "code")
+
+        assert ok is False
+        assert "not_full_suite" in diag.get("reason", ""), diag
+
+    # ------------------------------------------------------------------
+    # T4: MUTATION - same count, different test-id -> BLOCKED
+    # ------------------------------------------------------------------
+
+    def test_t4_mutation_same_count_different_id_blocks(self, tmp_path: Path) -> None:
+        """T4: test A goes red->green and test B goes green->red simultaneously.
+
+        Baseline has [test_A] failing; current run has [test_B] failing.
+        Conteo = 1 in both cases, but B is not in baseline -> BLOCKED.
+        Proves the comparison is by node-id identity, not count.
+        """
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+        commit_ticket_marker(motor, "WOT-2026-017a")
+
+        test_a = "tests/foo/test_bar.py::TestFoo::test_a"
+        test_b = "tests/foo/test_bar.py::TestFoo::test_b"
+
+        payload = self._base_payload(motor, exit_code=1)
+        payload["failed_test_ids"] = [test_b]  # B is now failing
+        payload["baseline_failed_test_ids"] = [test_a]  # A was failing before
+        self._write_last_run(motor, payload)
+
+        ok, diag = guard.assert_canonical_suite_green(motor, "code")
+
+        assert ok is False, f"Mutation (same count, different id) must block: {diag}"
+        assert diag.get("reason") == "regression_new_failures", diag
+        assert test_b in diag.get("new_failures", []), diag
+
+    # ------------------------------------------------------------------
+    # T5: guard regression test (mutation-verify)
+    # ------------------------------------------------------------------
+
+    def test_t5_guard_regression_binary_block_vs_subset(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """T5: verifies that the fix changed behavior in the correct direction.
+
+        Phase 1 (pre-fix simulation): monkeypatch assert_canonical_suite_green
+        to restore the binary block (if exit_code != 0: return False). Confirm
+        that with inherited failures (T1 scenario) the OLD behavior BLOCKS -
+        i.e. the bug is present without the fix.
+
+        Phase 2 (post-fix): use the real guard. Confirm that the same T1
+        scenario PERMITS, and that a T2 scenario (new failure) BLOCKS.
+        """
+        import sys
+
+        sys.path.insert(0, str(SCRIPT_PATH.parent))
+        import pre_handoff_guard
+
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+        commit_ticket_marker(motor, "WOT-2026-017a")
+
+        inherited_id = "tests/foo/test_bar.py::TestFoo::test_one"
+        new_id = "tests/foo/test_bar.py::TestFoo::test_two"
+
+        def _make_payload(exit_code: int, failed: list, baseline: list) -> dict:
+            head = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=motor,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            return {
+                "status": "finished",
+                "exit_code": exit_code,
+                "tested_commit_sha": head,
+                "level": "all",
+                "args_mode": "default_discovery",
+                "failed_test_ids": failed,
+                "baseline_failed_test_ids": baseline,
+            }
+
+        def _write(payload: dict) -> None:
+            d = motor / ".agent" / "runtime" / "pytest-safe"
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "last-run.json").write_text(json.dumps(payload), encoding="utf-8")
+
+        # --- Phase 1: simulate the OLD binary block -----------------------
+        # Monkeypatch assert_canonical_suite_green with the pre-fix behavior.
+        _original_fn = pre_handoff_guard.assert_canonical_suite_green
+
+        def _binary_block(motor_root, deliverable_type):
+            """Pre-fix implementation: exit_code != 0 always blocks."""
+            import json as _json
+
+            last_run = (
+                motor_root / ".agent" / "runtime" / "pytest-safe" / "last-run.json"
+            )
+            if not last_run.exists():
+                return False, {"reason": "last_run_missing"}
+            try:
+                data = _json.loads(last_run.read_text(encoding="utf-8"))
+            except Exception:
+                return False, {"reason": "last_run_unparseable"}
+            if data.get("status") != "finished":
+                return False, {"reason": "status_not_finished"}
+            # THE BUG: binary block without subset comparison
+            if data.get("exit_code") != 0:
+                return False, {
+                    "reason": "exit_code_nonzero (binary block)",
+                    "canonical_suite_error": "pre-fix behavior",
+                }
+            return True, {"reason": "fresh_green"}
+
+        monkeypatch.setattr(
+            pre_handoff_guard, "assert_canonical_suite_green", _binary_block
+        )
+
+        # T1 scenario with the pre-fix (binary) guard -> must BLOCK (bug lives)
+        _write(_make_payload(1, [inherited_id], [inherited_id]))
+        ok_pre, diag_pre = pre_handoff_guard.assert_canonical_suite_green(motor, "code")
+        assert ok_pre is False, (
+            "T5 pre-fix: binary block must reject inherited failures "
+            f"(the bug must be present without the fix): {diag_pre}"
+        )
+
+        # --- Phase 2: restore the real (post-fix) guard -------------------
+        monkeypatch.setattr(
+            pre_handoff_guard, "assert_canonical_suite_green", _original_fn
+        )
+
+        # T1 scenario with the fix -> must PERMIT
+        _write(_make_payload(1, [inherited_id], [inherited_id]))
+        ok_t1, diag_t1 = pre_handoff_guard.assert_canonical_suite_green(motor, "code")
+        assert ok_t1 is True, (
+            f"T5 post-fix: inherited failures must permit handoff: {diag_t1}"
+        )
+        assert diag_t1.get("reason") == "inherited_failures_subset", diag_t1
+
+        # T2 scenario with the fix -> must BLOCK
+        _write(_make_payload(1, [new_id], []))
+        ok_t2, diag_t2 = pre_handoff_guard.assert_canonical_suite_green(motor, "code")
+        assert ok_t2 is False, f"T5 post-fix: new failure must block handoff: {diag_t2}"
+        assert diag_t2.get("reason") == "regression_new_failures", diag_t2
+
+        # T4 scenario with the fix (mutation) -> must BLOCK
+        _write(_make_payload(1, [new_id], [inherited_id]))
+        ok_t4, diag_t4 = pre_handoff_guard.assert_canonical_suite_green(motor, "code")
+        assert ok_t4 is False, (
+            f"T5 post-fix: mutation (same count, different id) must block: {diag_t4}"
+        )
+        assert diag_t4.get("reason") == "regression_new_failures", diag_t4

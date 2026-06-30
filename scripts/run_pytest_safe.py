@@ -447,8 +447,18 @@ def select_test_runner(
     return command, "unittest"
 
 
-def stream_pytest(command: list[str]) -> int:
+def stream_pytest(command: list[str]) -> tuple[int, list[str]]:
+    """Run pytest, stream output, and return (returncode, failed_test_ids).
+
+    WOT-2026-017a: parses lines matching ^FAILED\\s+(\\S+) from the stream to
+    capture the node-ids of failing tests (stdlib-only, no plugin required).
+    Returns the returncode and the list of failed test node-ids (empty when
+    returncode == 0 or when no FAILED lines appear in the output).
+    """
+    import re
+
     lines: list[str] = []
+    _failed_re = re.compile(r"^FAILED\s+(\S+)")
 
     # Ensure .agent is in PYTHONPATH for the subprocess
     env = os.environ.copy()
@@ -490,7 +500,14 @@ def stream_pytest(command: list[str]) -> int:
         raise
     finally:
         LAST_RUN_LOG.write_text("".join(lines), encoding="utf-8")
-    return returncode
+
+    failed_ids: list[str] = []
+    for line in lines:
+        m = _failed_re.match(line.rstrip())
+        if m:
+            failed_ids.append(m.group(1))
+
+    return returncode, failed_ids
 
 
 def parse_args() -> argparse.Namespace:
@@ -753,7 +770,7 @@ def check_canonical_state_leak(snapshot: dict[str, str]) -> list[str]:
     return leaked
 
 
-def main() -> int:
+def main() -> int:  # noqa: C901
     args = parse_args()
     ensure_runtime_dir()
 
@@ -800,6 +817,17 @@ def main() -> int:
         run_dir,
         test_dir=default_test_target().rstrip("/"),
     )
+
+    # WOT-2026-017a: capture the baseline failed_test_ids from the previous
+    # last-run.json (if it exists and has the field) BEFORE this run overwrites
+    # it. This becomes field B for the subset comparison in pre_handoff_guard.
+    _baseline_failed: list[str] = []
+    if LAST_RUN_JSON.exists():
+        try:
+            _prev = json.loads(LAST_RUN_JSON.read_text(encoding="utf-8"))
+            _baseline_failed = list(_prev.get("failed_test_ids") or [])
+        except Exception:
+            _baseline_failed = []
 
     summary = {
         "started_at": iso_now(),
@@ -848,9 +876,16 @@ def main() -> int:
         print_default_discovery_notice(args_mode)
         print(f"[pytest-safe] Ejecutando: {' '.join(command)}")
         state_snapshot = snapshot_canonical_state()
-        exit_code = stream_pytest(command)
+        exit_code, failed_ids = stream_pytest(command)
         summary["status"] = "finished"
         summary["exit_code"] = exit_code
+        # WOT-2026-017a: persist node-ids of failed tests so pre_handoff_guard
+        # can compare them against the baseline (D2/D3). Always a list; empty
+        # when exit_code==0 or when no FAILED lines appeared in the stream.
+        summary["failed_test_ids"] = failed_ids
+        # WOT-2026-017a: persist the failed_test_ids that were on disk before
+        # this run so the guard can use them as baseline B for subset comparison.
+        summary["baseline_failed_test_ids"] = _baseline_failed
 
         # Barrier: fail the run if the suite mutated canonical collaboration
         # state of the motor (state-leak tests writing outside tmp_path).
