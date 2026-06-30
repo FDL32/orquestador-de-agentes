@@ -181,6 +181,26 @@ Si el agente reporta tests:
 - La suite corrio sola, sin concurrencia?
 - El arbol estaba limpio si la prueba era evidencia de cierre?
 - El test aislado contradice el global?
+- **Suite global roja en un ticket `code`/`mixed`:** si la suite canonica falla,
+  el auditor DEBE distinguir dos casos antes de aceptar o rechazar el cierre:
+  (a) REGRESION introducida por el ticket -- el fallo aparece por el diff actual;
+  evidencia: el test falla con el cambio y pasaba sin el (`git stash` + re-run, o
+  comparacion contra el commit base); o
+  (b) ROJO PRE-EXISTENTE del destino -- el fallo ya existia antes del ticket y es
+  ajeno a su superficie. Evidencia minima para clasificarlo (b): baseline previo
+  con el mismo fallo (el test falla en HEAD~ o sin el diff), lista concreta de los
+  tests rojos, y que el diff NO toque superficies relacionadas con esos tests.
+  No declares "pre-existente" sin esa evidencia (regla anti-cristalizacion).
+  REGLA CLAVE: la suite roja heredada NO aprueba el cierre por si sola; solo evita
+  atribuir falsamente la regresion al ticket. Distinguir y documentar el origen del
+  rojo NO es lo mismo que tolerarlo para cerrar. Si el rojo es heredado y NO existe
+  un mecanismo canonico de excepcion (baseline de fallos conocidos /
+  `PRE_EXISTING_SUITE_RED` / `accepted_health_exception` en el guard de handoff),
+  la salida correcta es `BLOCKED_HANDOFF` / `CONTRACT_GAP` con el follow-up del
+  guard -- NO reclasificar el ticket a un tipo que salte la suite, NI aprobar el
+  cierre automaticamente. Reclasificar para esquivar el gate, o aprobar el cierre
+  citando "rojo pre-existente" como si fuera excepcion, es `falso_verde`.
+  Subtipo CEM: `suite_roja_heredada`.
 - El verde depende de fixtures realistas o de stubs inventados?
 - Hay mock-drift? Compara mocks con el contrato observable de produccion: firma, shape de datos y efectos esperados.
 - Para scripts de infraestructura (PowerShell, shell, CI): el parseo sintactico
@@ -192,7 +212,21 @@ Si el agente reporta tests:
 - El gate bloquea de verdad o solo "pasa" en estado limpio?
 - Si el cambio corrige un bug real, existe prueba de barrera suficiente: evidencia de que el test o guard habria fallado sin el fix?
 - **Claims de creacion/escritura de archivos:** Un agente reporta "archivo X creado" o "backlog escrito". Evidencia minima, despues de verificar topologia en la seccion 1: (1) el archivo existe y es legible con una verificacion compatible con el entorno actual (`Test-Path`, `test -f`, `read_file`, diff real o equivalente; Python/pathlib solo como fallback portable), (2) el contenido es consistente con lo declarado (no solo que exista, sino que tiene la estructura esperada). Un exit code de script o encoding guard NO sustituyen la verificacion de existencia. Si el output solo reporta exito sin evidencia de lectura, marca el claim como `NO VERIFICADO`.
-- **Claims de ausencia de datos/secretos en repos SIN commits:** `git ls-files` lista el INDICE; en un repo recien creado con 0 commits y sin `git add`, devuelve vacio TRIVIALMENTE. Un `ls-files` vacio NO prueba "no hay datos sensibles", solo "no hay indice". (Verificado: en adopciones recientes, repos con 0 commits daban `ls-files` vacio mientras tenian `data/*.csv`/`*.txt` reales en disco.) Para verificar ausencia de fuga pre-publicacion, exige las tres: (1) existencia en DISCO con `find`/`Get-ChildItem` usando las EXTENSIONES reales del repo (no un set generico csv/db: detecta `.txt`/`.xls`/`.docx`/`.pdf`/`.sqlite` segun el repo), (2) `git status --porcelain` para ver candidatos a stage, (3) `git check-ignore -v` para confirmar cobertura del `.gitignore`. Antes de citar `ls-files` como evidencia de limpieza, comprueba `git rev-list --count HEAD`: si es 0, `ls-files` es NO CONCLUYENTE.
+- **Claims de "quedo en memoria" / "memoria subida":** "memoria" NO es un destino
+  unico. Un claim de persistencia de aprendizaje exige, ademas de la verificacion de
+  existencia anterior: (1) DESTINO EXACTO declarado y verificado -- `repo_motor`
+  (`<motor>/.agent/runtime/memory/observations.jsonl`, wing engine/meta),
+  `repo_destino` (`<destino>/.agent/runtime/memory/observations.jsonl`, wing project)
+  o `Claude privada` (`~/.claude/.../memory/*.md`, NO portable, NO validada por
+  schema); (2) si el destino es portable, el `observations.jsonl` EXISTE y contiene
+  el `topic` reclamado (`grep "topic":"<slug>"`); (3) `validate_observations.py`
+  exit 0 sobre ese archivo; (4) si el claim dice "portable", el archivo debe estar
+  VERSIONADO (`git ls-files`) o el output debe explicar por que es gitignored por
+  diseno (p.ej. memoria de runtime del motor). Un claim "quedo en memoria" sostenido
+  solo por archivos en `Claude privada` es FALSO VERDE si se presento como portable:
+  marca `NO VERIFICADO` la portabilidad y `VERIFICADO POR TOPOLOGIA` solo la copia
+  privada. Subtipo CEM: `memoria_no_portable`.
+- **Claims de ausencia de datos/secretos en repos SIN commits:** `git ls-files` lista el INDICE; en un repo recien creado con 0 commits y sin `git add`, devuelve vacio TRIVIALMENTE. Un `ls-files` vacio NO prueba "no hay datos sensibles", solo "no hay indice". (Verificado: en adopciones recientes, repos con 0 commits daban `ls-files` vacio mientras tenian `data/*.csv`/`*.txt` reales en disco.) Para verificar ausencia de fuga pre-publicacion, exige las tres: (1) existencia en DISCO con `find`/`Get-ChildItem` usando las EXTENSIONES reales del repo (no un set generico csv/db: detecta `.txt`/`.xls`/`.docx`/`.pdf`/`.sqlite` segun el repo), (2) `git status --porcelain` para ver candidatos a stage, (3) `git check-ignore -v` para confirmar cobertura del `.gitignore`. Antes de citar `ls-files` como evidencia de limpieza, comprueba `git rev-list --count HEAD`: si es 0, `ls-files` es NO CONCLUYENTE. Ademas, en un repo UNBORN, audita quien crea el PRIMER commit baseline: un ticket `documentation` de `Files Likely Touched` estrecho NO debe crear el baseline si eso arrastra el arbol entero (incluido ruido de build o superficies de otros tickets) e invalida premisas frozen de tickets dependientes (p.ej. un ticket cuyo contrato asume `git_head = sin commits`). Si el output reporta el ticket documental como `COMPLETED` con un commit-baseline propio en esas condiciones, es scope creep: el estado honesto es `VERIFIED_PENDING_BASELINE` (gates verdes, sin cierre canonico hasta que el ticket de higiene del baseline lo cree). Subtipo CEM: `baseline_prematuro`.
 - **`git check-ignore` sobre ARCHIVOS REALES, nunca sobre rutas ficticias:** correr `git check-ignore data/x.xls` (ruta inventada top-level) NO prueba que los datos esten ignorados: matchea el patron `data/*.xls` pero los archivos reales suelen vivir ANIDADOS (`data/2026/01/x.xls`), que un patron top-level NO cubre. (Verificado CG-COM-2026-002a: `.gitignore` con `data/*.xls`, 18 .xls/.xlsx de PII en `data/2025|2026/` -> 18 NO ignorados, fuga, mientras `check-ignore data/x.xls` daba falso verde.) Regla: itera `git check-ignore -q` sobre la SALIDA de `find <dir> -type f` (los archivos que existen de verdad), cuenta cuantos NO estan ignorados (debe ser 0), y confirma con `git add -n .` que ninguno se stagearia. Un DoD que verifica un patron string o una ruta ficticia esta verificando lo equivocado.
 
 ### 4. Produccion vs tests
@@ -298,7 +332,7 @@ Aclara que verificaste en el root correcto; no basta por si solo.
 Para cada problema importante, indica:
 
 - **Clase CEM canonica:** A regresion de contrato / B fuga de estado / C deriva de fixture / D entorno-infraestructura. Si no encaja, marca otro y explica.
-- **Subtipo observado:** falso verde / root equivocado / fixture irreal / scope creep / encoding / auto-reporte / estado canonico / gate ausente / topologia_del_auditor / root_equivocado / claim_provisional_cristalizado / existencia_vs_encoding / otro.
+- **Subtipo observado:** falso verde / root equivocado / fixture irreal / scope creep / encoding / auto-reporte / estado canonico / gate ausente / topologia_del_auditor / root_equivocado / claim_provisional_cristalizado / existencia_vs_encoding / memoria_no_portable / suite_roja_heredada / baseline_prematuro / otro.
 - **Impacto de fallo:** codigo / tests / proceso / orquestacion / memoria / documentacion. No es el tipo de output auditado; es donde pega el riesgo.
 - **Barrera existente:** test, hook, prompt, bus, manager gate, review u otra.
 - **Barrera faltante:** que habria evitado el fallo.
