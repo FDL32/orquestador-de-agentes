@@ -1660,7 +1660,15 @@ class TestPreExistingSuiteRed:
     def test_t3c_failed_test_ids_absent_with_nonzero_blocks(
         self, tmp_path: Path
     ) -> None:
-        """T3c: exit_code!=0 but failed_test_ids absent -> BLOCKED (fail-closed D5c)."""
+        """T3c: exit_code!=0 but failed_test_ids absent -> BLOCKED (fail-closed).
+
+        WOT-2026-017b (reopen): the old D5c-only reason
+        "failed_test_ids_missing_with_nonzero_exit" was subsumed into a single
+        discriminant that also catches the present-but-empty shape (see T6a/T6b).
+        The reason string changed to "nonzero_exit_but_no_failed_ids
+        (state-leak suspected)" but the blocking behavior for the absent-field
+        case (this test's intent) is unchanged: it still blocks.
+        """
         guard = self._import_guard()
         motor = tmp_path / "motor"
         init_git_repo(motor)
@@ -1671,7 +1679,10 @@ class TestPreExistingSuiteRed:
         ok, diag = guard.assert_canonical_suite_green(motor, "code")
 
         assert ok is False
-        assert diag.get("reason") == "failed_test_ids_missing_with_nonzero_exit", diag
+        assert (
+            diag.get("reason")
+            == "nonzero_exit_but_no_failed_ids (state-leak suspected)"
+        ), diag
 
     def test_t3d_wrong_level_blocks(self, tmp_path: Path) -> None:
         """T3d: level != 'all' with exit_code != 0 -> BLOCKED (not_full_suite).
@@ -1839,3 +1850,87 @@ class TestPreExistingSuiteRed:
             f"T5 post-fix: mutation (same count, different id) must block: {diag_t4}"
         )
         assert diag_t4.get("reason") == "regression_new_failures", diag_t4
+
+    # ------------------------------------------------------------------
+    # T6: WOT-2026-017b (reopen) - state-leak false-green adversarial tests
+    # ------------------------------------------------------------------
+
+    def test_t6a_present_empty_failed_ids_blocks_state_leak(
+        self, tmp_path: Path
+    ) -> None:
+        """T6a: exit_code!=0, failed_test_ids=[] (present but empty) -> BLOCKED.
+
+        This is the false-green bug found on review of WOT-2026-017a: pytest
+        crashed/was killed in a way that forced a nonzero exit_code without
+        enumerating any individual FAILED test (collection crash, OOM/SIGKILL,
+        or another state-leak). Before the fix, a_set=set() is always a
+        subset of any baseline -> new_failures={} -> the old code returned
+        (True, reason=inherited_failures_subset), permitting a handoff over an
+        opaque, unenumerated failure. The fix must block this regardless of
+        what the baseline contains (tested with an empty baseline AND a
+        non-empty baseline to prove the block does not depend on B).
+        """
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+        commit_ticket_marker(motor, "WOT-2026-017a")
+
+        payload = self._base_payload(motor, exit_code=1)
+        payload["failed_test_ids"] = []  # present, but empty: no ids enumerated
+        payload["baseline_failed_test_ids"] = [
+            "tests/foo/test_bar.py::TestFoo::test_one"
+        ]
+        self._write_last_run(motor, payload)
+
+        ok, diag = guard.assert_canonical_suite_green(motor, "code")
+
+        assert ok is False, (
+            f"state-leak (present-but-empty failed_test_ids) must block, "
+            f"not be treated as an inherited-failures subset: {diag}"
+        )
+        assert (
+            diag.get("reason")
+            == "nonzero_exit_but_no_failed_ids (state-leak suspected)"
+        ), diag
+
+        # Also confirm the block does not depend on the baseline being non-empty:
+        # an empty baseline is the worst case for the OLD bug (set() - set() = {}
+        # either way), so re-check with baseline_failed_test_ids=[] too.
+        payload["baseline_failed_test_ids"] = []
+        self._write_last_run(motor, payload)
+        ok2, diag2 = guard.assert_canonical_suite_green(motor, "code")
+        assert ok2 is False, f"state-leak must block with empty baseline too: {diag2}"
+        assert (
+            diag2.get("reason")
+            == "nonzero_exit_but_no_failed_ids (state-leak suspected)"
+        ), diag2
+
+    def test_t6b_absent_failed_ids_still_blocks_after_refactor(
+        self, tmp_path: Path
+    ) -> None:
+        """T6b: failed_test_ids absent (the original D5c case) still blocks.
+
+        Confirms the refactor that subsumed D5c into the single
+        nonzero_exit_but_no_failed_ids discriminant did not regress the
+        field-absent case (old-runner last-run.json without the field at all).
+        Same scenario as test_t3c_failed_test_ids_absent_with_nonzero_blocks;
+        kept here too as an explicit T6 pair so the adversarial intent (absent
+        vs present-empty are the same failure mode) is visible side by side.
+        """
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+        commit_ticket_marker(motor, "WOT-2026-017a")
+
+        payload = self._base_payload(motor, exit_code=1)
+        # failed_test_ids deliberately not set at all (field absent).
+        assert "failed_test_ids" not in payload
+        self._write_last_run(motor, payload)
+
+        ok, diag = guard.assert_canonical_suite_green(motor, "code")
+
+        assert ok is False, f"absent failed_test_ids must still block: {diag}"
+        assert (
+            diag.get("reason")
+            == "nonzero_exit_but_no_failed_ids (state-leak suspected)"
+        ), diag

@@ -501,16 +501,26 @@ def assert_canonical_suite_green(
     exit_code = data.get("exit_code")
     if exit_code != 0:
         # WOT-2026-017a (D3/D5): subset-of-baseline decision replaces binary block.
-        if "failed_test_ids" not in data:
-            # D5c: fail-closed when field absent with nonzero exit (old runner or
-            # a run that completed before this change was deployed).
+        # WOT-2026-017b (reopen): fail-closed when no node-ids were enumerated,
+        # whether the field is absent (old runner) OR present-but-empty (the
+        # suite failed without pytest reporting any individual FAILED test:
+        # a collection crash, OOM/SIGKILL, or another state-leak that forces
+        # exit_code != 0). `data.get(...) or []` normalizes both shapes to [],
+        # so this single check subsumes the old "field absent" discriminant:
+        # an opaque failure is an opaque failure regardless of which JSON shape
+        # produced it, and treating them differently would let a real state-leak
+        # masquerade as "no new failures" (a_set={} is always a subset of B).
+        if not (data.get("failed_test_ids") or []):
             return False, {
                 **base_diag,
-                "reason": "failed_test_ids_missing_with_nonzero_exit",
+                "reason": "nonzero_exit_but_no_failed_ids (state-leak suspected)",
                 "canonical_suite_error": (
                     f"Canonical suite exit_code={exit_code!r} but "
-                    "failed_test_ids is absent from last-run.json. "
-                    "Re-run with the updated run_pytest_safe.py: "
+                    "failed_test_ids is empty: the suite failed without "
+                    "enumerating any test (collection crash, OOM/SIGKILL, or a "
+                    "state-leak). This is an opaque failure, not an "
+                    "inherited-subset pass. Investigate the run log "
+                    "(.agent/runtime/pytest-safe/last-run.log), then re-run: "
                     "python scripts/run_pytest_safe.py --level all"
                 ),
             }
