@@ -155,3 +155,6 @@ FOLLOW-UP a abrir (ticket nuevo, p.ej. WOT-2026-017b): el guard debe leer el cam
 state_leak del last-run.json (y/o tratar exit_code!=0 con failed_test_ids=[] como
 fail-closed) y BLOQUEAR ese caso. No se incluye en 017a porque excede su contrato
 (distinguir rojo heredado de regresion por identidad de test-id), ya aprobado.
+
+
+Scope override: deuda tickets 015x previos sin pushear (commits pre-base 4f3d698); diff de codigo 017a acotado a guard/runner/tests; override evidenciado y auditable. Affected files: C:\Users\***REDACTED***\Proyectos_Python\orquestador_de_agentes\prompts\audit_agent_output.md, C:\Users\***REDACTED***\Proyectos_Python\orquestador_de_agentes\tests\integration\test_memory_integration.py, C:\Users\***REDACTED***\Proyectos_Python\orquestador_de_agentes\tests\test_manager_review_bridge.py

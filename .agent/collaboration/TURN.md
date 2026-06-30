@@ -1,6 +1,6 @@
 # TURNO ACTUAL
 
-**Ultima actualizacion:** 2026-06-12 18:05:00
+**Ultima actualizacion:** 2026-06-30 21:08:54
 
 ---
 
@@ -9,15 +9,15 @@
 | Campo | Valor |
 |-------|-------|
 | **ROL** | **MANAGER** |
-| **Plan ID** | none |
-| **Tipo** | SEED |
-| **Accion** | WAIT |
+| **Plan ID** | WOT-2026-017a |
+| **Tipo** | IMPLEMENT |
+| **Accion** | REVIEW_WORK |
 
 ---
 
 ## Instruccion
 
-> Seed neutro del motor. No hay ticket activo en `repo_motor`.
+> Builder completo WOT-2026-017a. Revisa el trabajo.
 
 ---
 
@@ -25,9 +25,9 @@
 
 | Archivo | Estado |
 |---------|--------|
-| work_plan.md | READY_TO_START |
-| execution_log.md | READY_TO_START |
+| work_plan.md | APPROVED |
+| execution_log.md | READY_FOR_REVIEW |
 
 ---
 
-*Preparado como seed neutro para nuevos destinos*
+*Preparado documentalmente para WOT-2026-017a*
