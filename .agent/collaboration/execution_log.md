@@ -331,3 +331,5 @@ gates D7/SHA. La unica decision con dos caminos validos (Opcion A vs B
 sobre T3c) fue resuelta explicitamente por aviso del coordinador en mitad
 de la tarea, antes de tocar el test, y documentada arriba con la
 justificacion completa.
+
+Scope override: reapertura 017a por falso-verde state-leak; fix d8dd16c aprobado por Review 1 + Review 2 fresh-context; deuda 015x previa sin pushear sigue out-of-scope. Affected files: C:\Users\***REDACTED***\Proyectos_Python\orquestador_de_agentes\prompts\audit_agent_output.md
