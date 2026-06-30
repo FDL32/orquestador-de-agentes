@@ -125,3 +125,33 @@ para este ticket delivery_authority=repo_motor debe tener exit_code=0.
 - scripts/preflight_closeout.py: NO tocado (firma no cambia).
 - .agent/collaboration/AUDIT_WOT-2026-017a.md: R3 actualizado con nota de
   implementacion carry-forward y aclaracion de que D5c no cubre falsos-rojos.
+
+---
+
+## Cierre: doble revision adversarial (HEAD c91c976)
+
+### Review 1 (Manager)
+Primera pasada: VEREDICTO CAMBIOS_REQUERIDOS. Hallazgos: (1) carry-forward sin test
+de cobertura; (2) decision arquitectonica (campo baseline_failed_test_ids) sin
+documentar; (3) AUDIT R3 malcitaba D5c como mitigacion. Tambien corrigio el analisis
+del orquestador: la contaminacion del baseline NO se propaga al proximo ticket (el
+siguiente run lee failed_test_ids, no baseline_failed_test_ids).
+Tras aplicar los 3 cambios (commit c91c976): VEREDICTO APROBADO.
+
+### Review 2 (fresh-context, independiente)
+VEREDICTO: APROBADO_PARA_HANDOFF. Sin ruta de falso-verde para regresiones de codigo
+(un test VERDE->ROJO siempre emite linea FAILED -> el parser la captura -> A-B!={} ->
+bloquea). Sin bypass. Mutacion (mismo conteo, distinta identidad) bloqueada. Gates
+pre-existentes (level/args_mode/SHA) intactos. 92/92 tests dirigidos, exit 0.
+
+### Hallazgo no bloqueante de Review 2 -> FOLLOW-UP (fuera de scope de 017a)
+CASO BORDE: exit_code=1 + failed_test_ids=[] + baseline cualquiera -> PERMITE handoff
+(porque {} es subconjunto de todo). Ocurre cuando la suite falla SIN que ningun test
+individual falle: state-leak (run_pytest_safe fuerza exit_code=1, l.908-913), errores
+de coleccion que pytest reporta como ERROR (no FAILED), o XPASS strict. NO es
+falso-verde para regresiones del codigo entregado (esas siempre emiten FAILED), pero
+SI deja pasar un state-leak activo. Riesgo medio, documentado.
+FOLLOW-UP a abrir (ticket nuevo, p.ej. WOT-2026-017b): el guard debe leer el campo
+state_leak del last-run.json (y/o tratar exit_code!=0 con failed_test_ids=[] como
+fail-closed) y BLOQUEAR ese caso. No se incluye en 017a porque excede su contrato
+(distinguir rojo heredado de regresion por identidad de test-id), ya aprobado.
