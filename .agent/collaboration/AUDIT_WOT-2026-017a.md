@@ -42,7 +42,17 @@ Sub-casos:
 T3a: last-run.json ausente -> (False, reason=last_run_missing).
 T3b: last-run.json no parseable (JSON invalido) -> (False, reason=last_run_unparseable).
 T3c: exit_code != 0 pero failed_test_ids AUSENTE en last-run.json ->
-     (False, reason=failed_test_ids_missing_with_nonzero_exit).
+     (False, reason=nonzero_exit_but_no_failed_ids (state-leak suspected)).
+     NOTA (WOT-2026-017b, reapertura): el reason original de T3c
+     (failed_test_ids_missing_with_nonzero_exit, D5c) fue SUBSUMIDO por un
+     discriminante unico que tambien cubre el caso failed_test_ids PRESENTE
+     pero VACIO ([]), que era un falso-verde real: con D5c solo el campo
+     ausente bloqueaba; el campo presente-vacio (suite que crashea sin
+     enumerar tests: coleccion rota, OOM/SIGKILL, state-leak) caia en
+     a_set=set() -> siempre subconjunto de cualquier baseline -> handoff
+     permitido erroneamente con reason=inherited_failures_subset. Ver T6
+     en tests/test_pre_handoff_guard.py (T6a: presente-vacio bloquea;
+     T6b: ausente sigue bloqueando tras el refactor).
 T3d: nivel o args_mode incorrectos en el run base -> (False, reason=not_full_suite).
 
 Resultado esperado en todos los sub-casos: bloqueo, sin degradar a warning.
