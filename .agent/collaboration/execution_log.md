@@ -157,7 +157,7 @@ fail-closed) y BLOQUEAR ese caso. No se incluye en 017a porque excede su contrat
 (distinguir rojo heredado de regresion por identidad de test-id), ya aprobado.
 
 
-Scope override: deuda tickets 015x previos sin pushear (commits pre-base 4f3d698); diff de codigo 017a acotado a guard/runner/tests; override evidenciado y auditable. Affected files: C:\Users\***REDACTED***\Proyectos_Python\orquestador_de_agentes\prompts\audit_agent_output.md, C:\Users\***REDACTED***\Proyectos_Python\orquestador_de_agentes\tests\integration\test_memory_integration.py, C:\Users\***REDACTED***\Proyectos_Python\orquestador_de_agentes\tests\test_manager_review_bridge.py
+Scope override: deuda tickets 015x previos sin pushear (commits pre-base 4f3d698); diff de codigo 017a acotado a guard/runner/tests; override evidenciado y auditable. Affected files: <REPO_ROOT>\prompts\audit_agent_output.md, <REPO_ROOT>\tests\integration\test_memory_integration.py, <REPO_ROOT>\tests\test_manager_review_bridge.py
 
 ---
 
@@ -332,6 +332,6 @@ sobre T3c) fue resuelta explicitamente por aviso del coordinador en mitad
 de la tarea, antes de tocar el test, y documentada arriba con la
 justificacion completa.
 
-Scope override: reapertura 017a por falso-verde state-leak; fix d8dd16c aprobado por Review 1 + Review 2 fresh-context; deuda 015x previa sin pushear sigue out-of-scope. Affected files: C:\Users\***REDACTED***\Proyectos_Python\orquestador_de_agentes\prompts\audit_agent_output.md
+Scope override: reapertura 017a por falso-verde state-leak; fix d8dd16c aprobado por Review 1 + Review 2 fresh-context; deuda 015x previa sin pushear sigue out-of-scope. Affected files: <REPO_ROOT>\prompts\audit_agent_output.md
 
 Manager approved canonical closeout for WOT-2026-017a

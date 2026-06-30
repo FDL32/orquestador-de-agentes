@@ -41,6 +41,8 @@ tests/.test_workspace/
 .agent/runtime/events/logs/
 .agent/collaboration/.session_state.json
 .agent/context/
+.agent/audits/
+orchestrator_pipeline/
 
 # Runtime local del CLI Goose (perfil, logs, config local del motor externo)
 .agent/runtime/goose/
