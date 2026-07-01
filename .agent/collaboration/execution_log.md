@@ -1,7 +1,7 @@
 # Execution Log - WOT-2026-016e
 
 **Ticket:** WOT-2026-016e - scope-override deja de escribir rutas absolutas locales
-**Estado:** IN_PROGRESS
+**Estado:** READY_FOR_REVIEW
 **HEAD al inicio del ticket:** 17244fc (tras cierre de 016h)
 
 ---
@@ -62,13 +62,17 @@ el patron `[A-Za-z]:\Users\...` de classify_publication.py. PASS.
 
 ### DoD(3) gates: ver seccion Gates canonicos.
 
-## Gates canonicos [se completa tras el commit + suite]
+## Gates canonicos (VERIFICADO)
 
-- Suite canonica run_pytest_safe --level all: [tras commit]
-- validate --json: [tras commit]
+- Commit: 1f667da ("WOT-2026-016e: scope-override deja de escribir rutas absolutas...").
+- Suite canonica run_pytest_safe --level all @ tested_commit_sha=1f667da (==HEAD):
+  status=finished, exit_code=0, level=all, args_mode=default_discovery,
+  failed_test_ids=[], baseline_failed_test_ids=[] (limpio total; 016i confirmado
+  cerrado: sin baseline rojo).
+- validate --json --project-root .: 0 errors / 0 warnings (exit 0).
 - ruff check/format: All checks passed / already formatted (exit 0) sobre scope_gate.py,
   agent_controller.py, test_scope_gate.py.
-- encoding guard (3 .py + work_plan + PLAN): exit 0.
+- encoding guard (3 .py + work_plan + PLAN + AUDIT): exit 0.
 
 ## Nota de alcance (forward-looking)
 
@@ -77,7 +81,36 @@ rutas absolutas (incl. la nota de scope-override de 016h en el commit 17244fc) N
 reescriben aqui: eso es responsabilidad de 016d/016g (filter-repo). 016e cierra la
 FUENTE que las genera.
 
-## Reviews
+## Reviews (VERIFICADO)
 
-- Review 1 (Manager): [tras commit]
-- Review 2 (fresh-context, gate de scope = alto blast-radius G3): [tras Rev1]
+- Review 1 (Manager, mecanica independiente): commit 1f667da con ticket id; git show
+  --name-only = solo FLT (scope_gate.py + agent_controller.py + test_scope_gate.py) +
+  artefactos de colaboracion; agent_controller.py = 1 sola linea (l.435
+  repo_root=PROJECT_ROOT.resolve()); sin scope creep. APROBADO.
+- Review 2 (adversarial, 3 senales nuevas frente a Rev1):
+  1) diff-content: el fix es SOLO rendering (nuevo _relativize_scope_path + render en
+     record_scope_override); la logica de DECISION del gate (que archivos estan fuera de
+     scope) NO cambia -> Forbidden Surface respetada.
+  2) diff exacto del controller: 1 linea, repo_root pasado en el choke point unico.
+  3) test-power: aserciones positivas Y negativas (str(repo_root) not in note,
+     _MOTOR_ROOT not in note, "\\" not in note), no floor assertions.
+  Sin counterexample. APROBADO.
+- DEUDA TECNICA (G3): 016e toca el gate de scope (alto blast-radius seguridad/
+  publicacion) -> Rev2 DEBERIA correr en subagente fresh-context. No se invoco aislamiento
+  de contexto por subagente; Rev2 corrio EN CONTEXTO con >=2 senales nuevas (independencia
+  de contenido satisfecha), separacion REAL de contexto declarada como deuda.
+- decision artifact: .agent/runtime/reviews/decision_WOT-2026-016e.json = APROBADO.
+
+## Handoff (G7) - VERIFICADO EN BUS
+
+- --pre-handoff --project-root . --json --force: status=success (M3 a HEAD).
+- --mark-ready: scope-override aplicado (arbol limpio -> heuristica de commits recientes
+  sobre-captura artefactos de 017a/016h y .gitignore, ajenos a 016e). Eventos reales:
+  BUILDER_EXIT (seq 30) + STATE_CHANGED IN_PROGRESS->READY_FOR_REVIEW (seq 31 BUILDER,
+  seq 32 SUPERVISOR). Estado derivado: READY_FOR_REVIEW.
+- EVIDENCIA VIVA de que el fix funciona: la nota de scope-override que mark-ready acaba de
+  escribir usa `<REPO_ROOT>/...` (SIN ruta absoluta ni username), a diferencia de la nota
+  de 016h que tenia `C:\Users\***REDACTED***\...`. El fix 016e esta activo en produccion.
+
+
+Scope override: 016e delivery is commit 1f667da touching only its FLT (scope_gate.py, agent_controller.py, tests/unit/test_scope_gate.py). Clean-tree recent-commit heuristic over-captured files from prior closed/handed-off tickets: AUDIT/PLAN_WOT-2026-017a.md + test_opencode_config_stability.py (016h 467fcdf/1a28fdc), .gitignore (f3db5e9 chore), scripts/pre_handoff_guard.py + tests/test_pre_handoff_guard.py (017a d8dd16c COMPLETED). No 016e change touches those.. Affected files: <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-017a.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-017a.md, <REPO_ROOT>/.gitignore, <REPO_ROOT>/scripts/pre_handoff_guard.py, <REPO_ROOT>/tests/test_opencode_config_stability.py, <REPO_ROOT>/tests/test_pre_handoff_guard.py
