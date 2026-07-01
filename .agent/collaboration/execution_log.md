@@ -1,7 +1,7 @@
 # Execution Log - WOT-2026-016e
 
 **Ticket:** WOT-2026-016e - scope-override deja de escribir rutas absolutas locales
-**Estado:** READY_FOR_REVIEW
+**Estado:** COMPLETED
 **HEAD al inicio del ticket:** 17244fc (tras cierre de 016h)
 
 ---
@@ -114,3 +114,5 @@ FUENTE que las genera.
 
 
 Scope override: 016e delivery is commit 1f667da touching only its FLT (scope_gate.py, agent_controller.py, tests/unit/test_scope_gate.py). Clean-tree recent-commit heuristic over-captured files from prior closed/handed-off tickets: AUDIT/PLAN_WOT-2026-017a.md + test_opencode_config_stability.py (016h 467fcdf/1a28fdc), .gitignore (f3db5e9 chore), scripts/pre_handoff_guard.py + tests/test_pre_handoff_guard.py (017a d8dd16c COMPLETED). No 016e change touches those.. Affected files: <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-017a.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-017a.md, <REPO_ROOT>/.gitignore, <REPO_ROOT>/scripts/pre_handoff_guard.py, <REPO_ROOT>/tests/test_opencode_config_stability.py, <REPO_ROOT>/tests/test_pre_handoff_guard.py
+
+Manager approved canonical closeout for WOT-2026-016e

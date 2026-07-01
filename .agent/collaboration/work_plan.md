@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WOT-2026-016e
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Titulo:** Scope-override deja de escribir rutas ABSOLUTAS locales en execution_log.md
 - **Asignado a:** Builder
