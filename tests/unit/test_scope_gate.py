@@ -22,6 +22,7 @@ from agent_controller import (  # noqa: E402
     get_changed_files,
     parse_files_likely_touched,
 )
+from scope_gate import record_scope_override  # noqa: E402
 
 
 # Use the same PROJECT_ROOT as the implementation resolves at runtime
@@ -344,3 +345,90 @@ class TestScopeGateHints:
         assert "This is expected (CL-08)" in output
         assert "--scope-override" in output
         assert ".agent/runtime/memory/" in output
+
+
+class TestRecordScopeOverrideNoAbsolutePaths:
+    """WOT-2026-016e: the scope override note must never persist absolute local
+    paths (which embed the local username) to execution_log.md / git history."""
+
+    def test_paths_inside_repo_are_relativized(self):
+        """Absolute paths under repo_root -> <REPO_ROOT>/rel/path, no absolute leak."""
+        repo_root = _MOTOR_ROOT
+        problem_files = {
+            str((repo_root / "scripts" / "foo.py").resolve()),
+            str((repo_root / "tests" / "bar.py").resolve()),
+        }
+        captured = {}
+
+        def _capture(status, note):
+            captured["status"] = status
+            captured["note"] = note
+            return True
+
+        record_scope_override(
+            "reason",
+            problem_files,
+            update_log_status_fn=_capture,
+            repo_root=repo_root,
+        )
+
+        note = captured["note"]
+        # The absolute repo root (which contains the username on this machine)
+        # must NOT appear in the persisted note.
+        assert str(repo_root) not in note
+        assert "<REPO_ROOT>/scripts/foo.py" in note
+        assert "<REPO_ROOT>/tests/bar.py" in note
+        # Forward slashes only; no backslash-style absolute Windows path.
+        assert "\\" not in note
+
+    def test_username_prefix_never_leaks(self):
+        """Regression: a Windows-style absolute path with a username must not
+        survive into the note verbatim (this is the exact bug of 016e)."""
+        repo_root = _MOTOR_ROOT
+        inside = str((repo_root / "a" / "b.py").resolve())
+        problem_files = {inside}
+        captured = {}
+
+        record_scope_override(
+            "r",
+            problem_files,
+            update_log_status_fn=lambda s, n: captured.setdefault("note", n),
+            repo_root=repo_root,
+        )
+        note = captured["note"]
+        assert "<REPO_ROOT>/a/b.py" in note
+        assert str(repo_root) not in note
+
+    def test_path_outside_repo_falls_back_to_basename(self):
+        """A path outside repo_root is rendered as basename only, never absolute."""
+        repo_root = _MOTOR_ROOT
+        # A path guaranteed to be outside the repo root.
+        outside = str((repo_root.parent / "some_other_repo" / "secret_dir").resolve())
+        outside_file = str(Path(outside) / "leaky.py")
+        captured = {}
+
+        record_scope_override(
+            "reason",
+            {outside_file},
+            update_log_status_fn=lambda s, n: captured.setdefault("note", n),
+            repo_root=repo_root,
+        )
+        note = captured["note"]
+        assert "leaky.py" in note
+        # Neither the absolute path nor its parent directory chain leaks.
+        assert outside not in note
+        assert str(repo_root.parent) not in note
+
+    def test_no_repo_root_falls_back_to_basename(self):
+        """Without repo_root, paths degrade to basename (never absolute)."""
+        captured = {}
+        abs_path = str((_MOTOR_ROOT / "x" / "y.py").resolve())
+
+        record_scope_override(
+            "reason",
+            {abs_path},
+            update_log_status_fn=lambda s, n: captured.setdefault("note", n),
+        )
+        note = captured["note"]
+        assert "y.py" in note
+        assert str(_MOTOR_ROOT) not in note

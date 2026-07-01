@@ -1,74 +1,86 @@
-# Work Plan - WOT-2026-016h
+# Work Plan - WOT-2026-016e
 
 ## Metadata
-- **ID:** WOT-2026-016h
+- **ID:** WOT-2026-016e
 - **Estado:** APPROVED
 - **deliverable_type:** code
-- **Titulo:** Aislar los tests de --pre-handoff que mutaban el bus real del motor
+- **Titulo:** Scope-override deja de escribir rutas ABSOLUTAS locales en execution_log.md
 - **Asignado a:** Builder
 - **delivery_authority:** repo_motor
-- **blocks:** WOT-2026-016e
 
 ## Objetivo
 
-`tests/test_opencode_config_stability.py` lanzaba `--pre-handoff` como SUBPROCESO
-contra el motor REAL (`_MOTOR_ROOT` derivado de `__file__`), lo que escribia en el
-`events.jsonl` real del motor y disparaba el guard de aislamiento
-(`_isolate_controller_event_bus`, `tests/conftest.py`) en TEARDOWN -> 5 ERRORS de
-teardown en la suite `--level all`. Como `run_pytest_safe.py` captura fallos con
-`^FAILED` y NO lineas `ERROR`, esos 5 ERRORS producen `exit_code=1` con
-`failed_test_ids` VACIO -> `pre_handoff_guard.assert_canonical_suite_green`
-fail-cierra (discriminante conjunto-vacio + senal-de-fallo). Esto bloquea el cierre
-canonico de CUALQUIER ticket code del motor, incluido WOT-2026-016e.
+Que el registro de scope-override deje de escribir RUTAS ABSOLUTAS locales
+(C:\Users\***REDACTED***\...) en execution_log.md. Es la FUENTE que re-ensucia la historia
+de git de AMBOS repos (motor y workspace): cada vez que el gate registra un
+override, embebe el username local en un archivo versionado. Cerrar esta fuente
+ANTES de limpiar la historia (016d/016g).
 
 ## Decision Arquitectonica
 
-Reescribir los 5 tests que ejercian `--pre-handoff` por subproceso para que corran
-IN-PROCESS (`agent_controller._handle_pre_handoff`) contra un MOTOR TEMPORAL en
-`tmp_path`, con `_MOTOR_ROOT`/`PROJECT_ROOT`/`WORK_PLAN`/`EXEC_LOG` monkeypatcheados.
-El bus se resuelve desde `get_agent_dir()` (motor-root derivado de `__file__`), NO
-redirigible por `--project-root`; la unica forma de aislarlo es apuntar el
-motor-root a un repo temporal. Patron canonico ya probado en
-`tests/test_pre_handoff_multirepo.py`. El 6o test (`TestLauncherNoBomDrift`) no
-ejerce `--pre-handoff` -> no se toca.
+El fix vive en `.agent/scope_gate.py:record_scope_override`, no en el controller.
+Motivo: hay DOS call sites en el controller (`_record_scope_override` en l.430 -
+usado por el injected fn del scope gate en l.443 - y la llamada directa del
+checkpoint en l.3179), y ambos delegan en `scope_gate.record_scope_override`.
+Relativizar dentro de esa unica funcion cubre los dos caminos con un solo cambio y
+mantiene la funcion pura (root inyectada por parametro keyword-only, testeable sin
+globals). NO se toca la logica de DECISION del scope gate: que archivos estan fuera
+de scope no cambia; solo COMO se registran sus rutas.
+
+Render elegido: paths dentro del repo -> `<REPO_ROOT>/rel/path` (forward slashes,
+marcador literal auto-documentado que classify_publication.py no marca como
+redaction_risk). Paths fuera del repo o no relativizables -> basename, NUNCA la
+ruta absoluta con username.
 
 ## Fases
 
 ### Fase 0 - Confirmar seams (VERIFICADO EN CODIGO)
-- El bus se resuelve desde `get_agent_dir()` = motor-root derivado de `__file__`
-  (`agent_controller.py`), NO redirigible por `--project-root`.
-- `run_pytest_safe.py` captura solo `^FAILED\s+(\S+)`, no `ERROR ...` (teardown).
-- `_isolate_controller_event_bus` (`tests/conftest.py`) falla en teardown cuando un
-  test muta el `events.jsonl` real.
+- scope_gate.py:537 formatea `f"Affected files: {', '.join(sorted(problem_files))}"`.
+- problem_files = out_of_scope | missing_from_diff (l.584-586), paths absolutos
+  resueltos (str((root / name).resolve())).
+- 2 call sites en el controller (l.430 injected, l.3179 checkpoint) -> ambos via
+  `_record_scope_override` -> `scope_gate.record_scope_override`.
+- Test existente: tests/unit/test_scope_gate.py.
 
-### Fase 1 - Reescritura in-process
-- Fixture `temp_motor` (`_TempMotor`): repo git real en `tmp_path`, seed de
-  `.opencode/opencode.json` con bytes reales de HEAD, work_plan+exec_log committeados
-  en el dest, monkeypatch de los 4 roots.
-- Los 5 tests que ejercian `--pre-handoff` por subproceso -> `_pre_handoff_inprocess`
-  (llama `agent_controller._handle_pre_handoff` con el bus singleton reseteado).
+### Fase 1 - Fix minimo en scope_gate.py
+- Anadir helper `_relativize_scope_path(path, repo_root)` (repo -> <REPO_ROOT>/rel;
+  fuera/no relativizable -> basename).
+- `record_scope_override`: parametro keyword-only `repo_root: Path | str | None`;
+  relativizar cada problem_file antes de formatear la nota.
+- Controller: `_record_scope_override` (l.430) pasa `repo_root=PROJECT_ROOT.resolve()`
+  (choke point unico -> cubre ambas call sites).
 
-### Fase 2 - Verificacion (mutation-verify)
-- Fichero en aislamiento con el fix: 6 passed, 0 errors.
-- Mutation: revertir a `_MOTOR_ROOT` real -> vuelven los 5 errors (6 passed, 5
-  errors); restaurar -> 6 passed, 0 errors.
-- `events.jsonl` real SIN cambios tras la corrida (git status del path vacio).
+### Fase 2 - Test de regresion + mutation-verify
+- tests/unit/test_scope_gate.py: clase TestRecordScopeOverrideNoAbsolutePaths con
+  4 casos (dentro del repo -> <REPO_ROOT>/rel; username nunca sobrevive; fuera del
+  repo -> basename; sin repo_root -> basename).
+- Mutation-verify: revertir scope_gate.py -> tests fallan (nota con ruta absoluta);
+  restaurar -> pasan. Registrado en execution_log.md.
+
+### Fase 3 - Verificacion final (DoD)
+- classify_publication.py sobre un log generado por el nuevo codigo -> NO
+  PUBLISH_WITH_REDACTIONS, verdict LISTO_PARA_PUBLICAR (repo tmp, prueba real).
+- suite canonica run_pytest_safe.py --level all verde + validate 0/0 + ruff
+  check/format + encoding guard.
 
 ## Criterios de aceptacion (DoD binario)
 
-1. `tests/test_opencode_config_stability.py` en aislamiento: 6 passed, 0 errors
-   (antes 6 passed, 5 errors).
-2. La corrida NO muta el `events.jsonl` real del motor (git status del path vacio).
-3. Suite canonica `run_pytest_safe.py --level all` sin esos 5 ERRORS de teardown +
-   validate 0/0 + ruff check/format + encoding limpios.
+1. Un `record_scope_override` con rutas absolutas de entrada escribe rutas
+   RELATIVAS/placeholder en el log (test con repo tmp + rutas absolutas).
+2. classify_publication.py sobre un log generado por el nuevo codigo NO marca
+   PUBLISH_WITH_REDACTIONS por ruta local.
+3. Suite canonica verde + validate 0/0 + ruff check/format + encoding limpios.
 
 ## Files Likely Touched
 
-- tests/test_opencode_config_stability.py
+- .agent/scope_gate.py
+- .agent/agent_controller.py
+- tests/unit/test_scope_gate.py
 
 ## Non-goals
 
-- NO tocar `run_pytest_safe.py` (que capture ERROR ademas de FAILED es otro ticket).
-- NO tocar `agent_controller.py` ni el guard de aislamiento del conftest.
-- NO tocar el 6o test (`TestLauncherNoBomDrift`), que no ejerce `--pre-handoff`.
-- NO mezclar con 016e (scope-override) ni con 016i (aislamiento de work_plan).
+- NO tocar la logica de DECISION del scope gate (que archivos estan fuera de scope
+  no cambia; solo COMO se registran sus rutas).
+- NO tocar el controller mas alla de pasar repo_root al choke point.
+- NO tocar ningun otro gate.
+- NO anadir flags de override o bypass.

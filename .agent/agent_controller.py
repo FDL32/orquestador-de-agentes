@@ -432,6 +432,7 @@ def _record_scope_override(scope_override: str, problem_files: set[str]) -> None
         scope_override,
         problem_files,
         update_log_status_fn=update_log_status,
+        repo_root=PROJECT_ROOT.resolve(),
     )
 
 

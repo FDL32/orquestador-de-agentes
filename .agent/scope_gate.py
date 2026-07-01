@@ -525,17 +525,43 @@ def check_scope_gate(
     }
 
 
+def _relativize_scope_path(path: str, repo_root: Path | None) -> str:
+    """Render a scope path without leaking absolute local paths (WOT-2026-016e).
+
+    The scope override note is persisted to execution_log.md, which is part of
+    the git history. Writing absolute paths there embeds the local username
+    (``C:\\Users\\<user>\\...``) into the history and re-contaminates the repo.
+
+    Paths inside ``repo_root`` are rendered as ``<REPO_ROOT>/rel/path`` with
+    forward slashes. Paths that are not relativizable (outside the repo, or when
+    ``repo_root`` is unknown) fall back to the basename, NEVER the absolute path.
+    """
+    if repo_root is not None:
+        try:
+            rel = Path(path).resolve().relative_to(repo_root)
+            return "<REPO_ROOT>/" + rel.as_posix()
+        except ValueError:
+            # Not under repo_root: fall back to basename (no username leak).
+            pass
+    return Path(path).name
+
+
 def record_scope_override(
     scope_override: str,
     problem_files: set[str],
     *,
     update_log_status_fn,
+    repo_root: Path | str | None = None,
 ) -> None:
-    """Persist a scope override note via the provided log callback."""
-    note = (
-        f"Scope override: {scope_override}. "
-        f"Affected files: {', '.join(sorted(problem_files))}"
-    )
+    """Persist a scope override note via the provided log callback.
+
+    ``repo_root`` is used to relativize the affected file paths so the note
+    persisted to execution_log.md never contains absolute local paths
+    (WOT-2026-016e). If omitted, paths fall back to their basename.
+    """
+    root = Path(repo_root).resolve() if repo_root is not None else None
+    rendered = sorted(_relativize_scope_path(p, root) for p in problem_files)
+    note = f"Scope override: {scope_override}. Affected files: {', '.join(rendered)}"
     update_log_status_fn("READY_FOR_REVIEW", note)
 
 
