@@ -5,18 +5,29 @@ Cobertura:
 2. Camino de fallo/abort: --pre-handoff bloquea cambio semantico real
 3. Prueba negativa: cambio semantico en opencode.json -> --pre-handoff NO autocorrige
 4. Mensaje de stderr de autocorreccion BOM
+
+WOT-2026-016h: los tests que ejercen `--pre-handoff` corren AHORA in-process contra
+un MOTOR TEMPORAL (tmp_path) con `_MOTOR_ROOT`/`PROJECT_ROOT`/`WORK_PLAN`/`EXEC_LOG`
+monkeypatcheados. Antes lanzaban `agent_controller.py --pre-handoff` como SUBPROCESO
+contra el motor REAL (`_MOTOR_ROOT` derivado de __file__), lo que escribia en el
+`events.jsonl` real del motor y disparaba el guard de aislamiento
+(`_isolate_controller_event_bus`, tests/conftest.py) en TEARDOWN (5 ERRORS). El bus
+del subproceso se resuelve desde el motor-root derivado de __file__ y NO es
+redirigible por `--project-root`; la unica forma de aislarlo es que el motor-root
+apunte a un repo temporal (patron canonico de tests/test_pre_handoff_multirepo.py).
 """
 
 import base64
 import json
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
+from tests.test_pre_handoff_guard import init_git_repo
 
-# Motor root (donde vive .opencode/opencode.json)
+
+# Motor root REAL (donde vive .opencode/opencode.json de referencia)
 _MOTOR_ROOT = Path(__file__).resolve().parent.parent
 _OPENCODE_PATH = _MOTOR_ROOT / ".opencode" / "opencode.json"
 _BOM = b"\xef\xbb\xbf"
@@ -27,8 +38,22 @@ _BOM = b"\xef\xbb\xbf"
 # ============================================================================
 
 
-def _git_show_head_opencode() -> bytes:
-    """Return the exact bytes of .opencode/opencode.json at HEAD."""
+def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", *args],
+        capture_output=True,
+        text=True,
+        cwd=cwd,
+        timeout=30,
+    )
+
+
+def _real_head_opencode_bytes() -> bytes:
+    """Return the exact bytes of the REAL motor .opencode/opencode.json at HEAD.
+
+    Used only as realistic seed content for the temp motor; the tests never
+    mutate the real file.
+    """
     result = subprocess.run(
         ["git", "show", "HEAD:.opencode/opencode.json"],
         capture_output=True,
@@ -39,46 +64,105 @@ def _git_show_head_opencode() -> bytes:
     return result.stdout
 
 
-def _git_diff_head_path(path: str) -> str:
-    """Run git diff HEAD -- <path> and return stdout."""
-    result = subprocess.run(
-        ["git", "diff", "HEAD", "--", path],
-        capture_output=True,
-        text=True,
-        cwd=_MOTOR_ROOT,
-        timeout=10,
+class _TempMotor:
+    """A temporary motor repo with a committed .opencode/opencode.json + work_plan.
+
+    Running ``agent_controller._handle_pre_handoff`` in-process with
+    ``_MOTOR_ROOT`` pointed here resolves the event bus to this temp dir, so the
+    real motor bus is never touched (WOT-2026-016h).
+    """
+
+    def __init__(self, motor: Path, dest: Path, work_plan: Path, exec_log: Path):
+        self.motor = motor
+        self.dest = dest
+        self.work_plan = work_plan
+        self.exec_log = exec_log
+        self.opencode_path = motor / ".opencode" / "opencode.json"
+
+    def head_opencode_bytes(self) -> bytes:
+        # capture_output without text=True -> exact bytes (BOM-sensitive).
+        raw = subprocess.run(
+            ["git", "show", "HEAD:.opencode/opencode.json"],
+            capture_output=True,
+            cwd=self.motor,
+            timeout=10,
+        )
+        assert raw.returncode == 0, f"git show failed: {raw.stderr.decode()}"
+        return raw.stdout
+
+    def diff_opencode(self) -> str:
+        return _git(
+            ["diff", "HEAD", "--", ".opencode/opencode.json"], cwd=self.motor
+        ).stdout
+
+
+@pytest.fixture
+def temp_motor(tmp_path: Path, monkeypatch) -> _TempMotor:
+    """Build a temp motor+dest, seed .opencode/opencode.json, monkeypatch roots.
+
+    Mirrors the canonical isolation pattern of tests/test_pre_handoff_multirepo.py:
+    a real git repo in tmp_path with ``_MOTOR_ROOT`` monkeypatched, so the
+    controller's bus resolves to the temp dir and the real motor bus is untouched.
+    """
+    import os as _os
+
+    import agent_controller
+
+    # Clear Builder session env vars so the test is independent of the runtime.
+    _os.environ.pop("AGENT_BUILDER_TICKET", None)
+    _os.environ.pop("AGENT_BUILDER_ROUND", None)
+
+    motor = tmp_path / "motor"
+    dest = tmp_path / "dest"
+    init_git_repo(motor)
+    init_git_repo(dest)
+
+    # Seed the temp motor's .opencode/opencode.json with realistic content and
+    # commit it, so `git show HEAD:.opencode/opencode.json` works in the temp repo.
+    opencode = motor / ".opencode" / "opencode.json"
+    opencode.parent.mkdir(parents=True, exist_ok=True)
+    opencode.write_bytes(_real_head_opencode_bytes())
+    _git(["add", ".opencode/opencode.json"], cwd=motor)
+    _git(["commit", "-m", "seed opencode.json"], cwd=motor)
+
+    # work_plan + exec_log live in dest (the delivery/collaboration repo).
+    collab = dest / ".agent" / "collaboration"
+    collab.mkdir(parents=True, exist_ok=True)
+    wp = collab / "work_plan.md"
+    wp.write_text(
+        "# Work Plan\n\n"
+        "## Metadata\n"
+        "- **ID:** WOT-2026-016h\n"
+        "- **Estado:** APPROVED\n"
+        "- **deliverable_type:** code\n\n"
+        "## Files Likely Touched\n- `tests/test_opencode_config_stability.py`\n"
     )
-    return result.stdout
+    exec_log = collab / "execution_log.md"
+    exec_log.write_text("# Execution Log\n\n**Estado:** IN_PROGRESS\n\n")
+    (dest / ".agent" / "runtime").mkdir(parents=True, exist_ok=True)
+    _git(["add", "."], cwd=dest)
+    _git(["commit", "-m", "add work_plan"], cwd=dest)
+
+    monkeypatch.setattr(agent_controller, "_MOTOR_ROOT", motor)
+    monkeypatch.setattr(agent_controller, "PROJECT_ROOT", dest)
+    monkeypatch.setattr(agent_controller, "WORK_PLAN", wp)
+    monkeypatch.setattr(agent_controller, "EXEC_LOG", exec_log)
+
+    return _TempMotor(motor, dest, wp, exec_log)
 
 
-def _pre_handoff() -> tuple[int, str, str]:
-    """Run agent_controller --pre-handoff and return (exit_code, stdout, stderr)."""
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(_MOTOR_ROOT / ".agent" / "agent_controller.py"),
-            "--pre-handoff",
-            "--json",
-            "--project-root",
-            str(_MOTOR_ROOT),
-        ],
-        capture_output=True,
-        text=True,
-        cwd=_MOTOR_ROOT,
-        timeout=30,
-    )
-    return result.returncode, result.stdout, result.stderr
+def _pre_handoff_inprocess(capsys) -> tuple[int, str, str]:
+    """Run agent_controller._handle_pre_handoff in-process; return (rc, out, err).
 
+    Resets the module-level event_bus singleton first (the autouse conftest
+    fixture also does this, but be explicit) so the temp _MOTOR_ROOT governs.
+    """
+    import agent_controller
 
-def _save_head_backup() -> bytes:
-    """Save the HEAD bytes for later restoration."""
-    return _git_show_head_opencode()
-
-
-def _restore_head() -> None:
-    """Restore .opencode/opencode.json to HEAD exactly."""
-    head_bytes = _git_show_head_opencode()
-    _OPENCODE_PATH.write_bytes(head_bytes)
+    agent_controller.event_bus = None
+    rc = agent_controller._handle_pre_handoff(json_output=True)
+    captured = capsys.readouterr()
+    return rc, captured.out, captured.err
 
 
 # ============================================================================
@@ -89,55 +173,57 @@ def _restore_head() -> None:
 class TestBomHappyPath:
     """Camino feliz: diff HEAD -- .opencode/opencode.json debe ser vacio."""
 
-    @pytest.fixture(autouse=True)
-    def _backup_and_restore(self):
-        """Backup HEAD bytes before test, restore after."""
-        self._head_backup = _save_head_backup()
-        yield
-        _restore_head()
-
-    def test_feliz_diff_vacio_tras_pre_handoff(self):
+    def test_feliz_diff_vacio_tras_pre_handoff(self, temp_motor, capsys):
         """Despues de --pre-handoff, git diff HEAD debe ser vacio."""
+        head = temp_motor.head_opencode_bytes()
         # Asegurar que el archivo en disco es identico a HEAD
-        _OPENCODE_PATH.write_bytes(self._head_backup)
+        temp_motor.opencode_path.write_bytes(head)
 
-        # Ejecutar pre-handoff
-        _exit_code, _stdout, _stderr = _pre_handoff()
+        _pre_handoff_inprocess(capsys)
+
         # pre-handoff puede fallar si no hay ticket activo, pero el diff debe ser cero
-        diff = _git_diff_head_path(".opencode/opencode.json")
-        assert diff == "", f"Expected empty diff after pre-handoff, but got:\n{diff}"
+        assert temp_motor.diff_opencode() == "", (
+            f"Expected empty diff after pre-handoff, got:\n{temp_motor.diff_opencode()}"
+        )
 
 
 # ============================================================================
-# Test 2: Launcher finally-block sin BOM drift
+# Test 2: Launcher finally-block sin BOM drift (no toca el bus; sin cambios)
 # ============================================================================
 
 
 class TestLauncherNoBomDrift:
-    """El finally-block del launcher usa [IO.File]::WriteAllBytes (no BOM)."""
+    """El finally-block del launcher usa [IO.File]::WriteAllBytes (no BOM).
+
+    Este test NO ejecuta --pre-handoff: valida solo el comportamiento de escritura
+    de bytes contra el .opencode/opencode.json del motor REAL (read-only + backup/
+    restore local), por lo que no toca el bus. Se mantiene tal cual.
+    """
 
     @pytest.fixture(autouse=True)
     def _backup_and_restore(self):
-        self._head_backup = _save_head_backup()
+        self._head_backup = _real_head_opencode_bytes()
         yield
-        _restore_head()
+        _OPENCODE_PATH.write_bytes(self._head_backup)
 
     def test_launcher_restore_is_bom_free(self):
         """Simular el finally-block del launcher: WriteAllBytes no introduce BOM."""
-        # Simular lo que hace el launcher en el finally-block
         b64 = base64.b64encode(self._head_backup).decode("ascii")
         decoded = base64.b64decode(b64)
 
-        # Escribir como lo haria el launcher (WriteAllBytes)
         _OPENCODE_PATH.write_bytes(decoded)
 
-        # Verificar: sin BOM
         actual = _OPENCODE_PATH.read_bytes()
         assert not actual.startswith(_BOM), "File should NOT start with BOM"
         assert actual == self._head_backup, "File must be byte-identical to HEAD"
 
-        # Diff debe ser vacio
-        diff = _git_diff_head_path(".opencode/opencode.json")
+        diff = subprocess.run(
+            ["git", "diff", "HEAD", "--", ".opencode/opencode.json"],
+            capture_output=True,
+            text=True,
+            cwd=_MOTOR_ROOT,
+            timeout=10,
+        ).stdout
         assert diff == "", f"Launcher restore introduced diff:\n{diff}"
 
 
@@ -149,35 +235,25 @@ class TestLauncherNoBomDrift:
 class TestPreHandoffBomAutocorrect:
     """--pre-handoff autocorrige solo el residuo BOM exacto permitido."""
 
-    @pytest.fixture(autouse=True)
-    def _backup_and_restore(self):
-        self._head_backup = _save_head_backup()
-        yield
-        _restore_head()
-
-    def test_autocorrect_bom_exacto(self):
+    def test_autocorrect_bom_exacto(self, temp_motor, capsys):
         """Si bytes_actuales == BOM + bytes_head, autocorrige y emite stderr."""
+        head = temp_motor.head_opencode_bytes()
         # Simular BOM drift: escribir BOM + HEAD
-        drifted = _BOM + self._head_backup
-        _OPENCODE_PATH.write_bytes(drifted)
+        temp_motor.opencode_path.write_bytes(_BOM + head)
 
-        # Ejecutar pre-handoff
-        _exit_code, _stdout, stderr = _pre_handoff()
+        _rc, _out, stderr = _pre_handoff_inprocess(capsys)
 
-        # Debe haber autocorreccion en stderr
         assert "[OK] Pre-handoff BOM autocorrected" in stderr, (
             f"Expected BOM autocorrect message in stderr, got:\n{stderr}"
         )
 
         # Archivo debe estar restaurado a HEAD
-        actual = _OPENCODE_PATH.read_bytes()
-        assert actual == self._head_backup, (
+        assert temp_motor.opencode_path.read_bytes() == head, (
             "File should be restored to HEAD after BOM autocorrect"
         )
-
-        # Diff debe ser vacio
-        diff = _git_diff_head_path(".opencode/opencode.json")
-        assert diff == "", f"Expected empty diff after BOM autocorrect, got:\n{diff}"
+        assert temp_motor.diff_opencode() == "", (
+            f"Expected empty diff after BOM autocorrect, got:\n{temp_motor.diff_opencode()}"
+        )
 
 
 # ============================================================================
@@ -188,42 +264,25 @@ class TestPreHandoffBomAutocorrect:
 class TestNegativeSemanticChange:
     """Cambio semantico real en opencode.json -> --pre-handoff NO autocorrige."""
 
-    @pytest.fixture(autouse=True)
-    def _backup_and_restore(self):
-        self._head_backup = _save_head_backup()
-        yield
-        _restore_head()
-
-    def test_no_autocorrect_semantic_change(self):
-        """Si el archivo tiene un cambio semantico REAL (no solo BOM), bloquea."""
-        # Leer HEAD, modificar un valor semantico
-        head_text = self._head_backup.decode("utf-8")
-        head_json = json.loads(head_text)
+    def test_no_autocorrect_semantic_change(self, temp_motor, capsys):
+        """Si el archivo tiene un cambio semantico REAL (no solo BOM), no lo revierte."""
+        head = temp_motor.head_opencode_bytes()
+        head_json = json.loads(head.decode("utf-8"))
         head_json["model"] = "opencode-go/modified-model-for-test"
-        modified_text = json.dumps(head_json, indent=2)
-        modified_bytes = modified_text.encode("utf-8")
+        modified_bytes = json.dumps(head_json, indent=2).encode("utf-8")
 
-        # Escribir modificacion semantica (sin BOM)
-        _OPENCODE_PATH.write_bytes(modified_bytes)
+        temp_motor.opencode_path.write_bytes(modified_bytes)
 
-        # Ejecutar pre-handoff
-        _exit_code, _stdout, stderr = _pre_handoff()
+        _rc, _out, stderr = _pre_handoff_inprocess(capsys)
 
-        # NO debe haber mensaje de autocorreccion BOM
         assert "[OK] Pre-handoff BOM autocorrected" not in stderr, (
             "Should NOT autocorrect semantic changes"
         )
-
-        # El archivo NO debe haber sido modificado por pre-handoff
-        actual = _OPENCODE_PATH.read_bytes()
-        assert actual != self._head_backup, (
+        assert temp_motor.opencode_path.read_bytes() != head, (
             "Semantic change should NOT be reverted by pre-handoff"
         )
-
-        # Diff debe mostrar el cambio semantico
-        diff = _git_diff_head_path(".opencode/opencode.json")
-        assert "modified-model-for-test" in diff, (
-            f"Expected semantic diff to be visible, got:\n{diff}"
+        assert "modified-model-for-test" in temp_motor.diff_opencode(), (
+            f"Expected semantic diff to be visible, got:\n{temp_motor.diff_opencode()}"
         )
 
 
@@ -235,28 +294,17 @@ class TestNegativeSemanticChange:
 class TestBomAutocorrectStderrMessage:
     """Verificar que el mensaje de autocorreccion BOM es visible en stderr."""
 
-    @pytest.fixture(autouse=True)
-    def _backup_and_restore(self):
-        self._head_backup = _save_head_backup()
-        yield
-        _restore_head()
+    def test_stderr_message_visible(self, temp_motor, capsys):
+        """El mensaje de autocorreccion debe aparecer en stderr, no en stdout."""
+        head = temp_motor.head_opencode_bytes()
+        temp_motor.opencode_path.write_bytes(_BOM + head)
 
-    def test_stderr_message_visible(self):
-        """El mensaje de autocorreccion debe aparecer en stderr."""
-        # Simular BOM drift
-        drifted = _BOM + self._head_backup
-        _OPENCODE_PATH.write_bytes(drifted)
+        _rc, stdout, stderr = _pre_handoff_inprocess(capsys)
 
-        # Ejecutar pre-handoff
-        _exit_code, _stdout, stderr = _pre_handoff()
-
-        # Verificar mensaje en stderr
         assert "[OK] Pre-handoff BOM autocorrected" in stderr
         assert ".opencode/opencode.json restored to HEAD" in stderr
         assert "(removed BOM drift)" in stderr
-
-        # Verificar que el mensaje NO esta en stdout
-        assert "[OK] Pre-handoff BOM autocorrected" not in _stdout
+        assert "[OK] Pre-handoff BOM autocorrected" not in stdout
 
 
 # ============================================================================
@@ -267,57 +315,34 @@ class TestBomAutocorrectStderrMessage:
 class TestLauncherFailurePath:
     """Reproduccion documental del camino de fallo del launcher."""
 
-    @pytest.fixture(autouse=True)
-    def _backup_and_restore(self):
-        self._head_backup = _save_head_backup()
-        yield
-        _restore_head()
-
-    def test_launcher_finally_block_no_bom(self):
-        """El finally-block del launcher NO introduce BOM (documentacion del camino de fallo).
+    def test_launcher_finally_block_no_bom(self, temp_motor, capsys):
+        """El finally-block del launcher NO introduce BOM (doc del camino de fallo).
 
         Camino de fallo anterior (antes de WT-2026-248a):
-        - Set-Content -Encoding UTF8 -> escribe BOM + contenido
-        - Resultado: .opencode/opencode.json tiene BOM extra
-        - git diff HEAD muestra diff
-
+        - Set-Content -Encoding UTF8 -> escribe BOM + contenido -> git diff muestra diff
         Camino corregido (despues de WT-2026-248a):
-        - [IO.File]::WriteAllBytes -> escribe bytes exactos sin BOM
-        - Resultado: .opencode/opencode.json es identico a HEAD
-        - git diff HEAD es vacio
+        - [IO.File]::WriteAllBytes -> bytes exactos sin BOM -> git diff vacio
         """
-        # Simular el finally-block corregido
-        b64 = base64.b64encode(self._head_backup).decode("ascii")
-        decoded = base64.b64decode(b64)
+        head = temp_motor.head_opencode_bytes()
 
-        # WriteAllBytes (sin BOM)
-        _OPENCODE_PATH.write_bytes(decoded)
+        # Simular el finally-block corregido (WriteAllBytes, sin BOM) -> diff vacio.
+        b64 = base64.b64encode(head).decode("ascii")
+        temp_motor.opencode_path.write_bytes(base64.b64decode(b64))
+        assert not temp_motor.opencode_path.read_bytes().startswith(_BOM)
+        assert temp_motor.diff_opencode() == ""
 
-        # Verificar: sin BOM, diff vacio
-        actual = _OPENCODE_PATH.read_bytes()
-        assert not actual.startswith(_BOM)
-        diff = _git_diff_head_path(".opencode/opencode.json")
-        assert diff == ""
-
-        # Simular el camino de fallo ANTES del fix (Set-Content -Encoding UTF8)
-        # Esto introduce BOM
-        text_content = self._head_backup.decode("utf-8")
-        # Set-Content -Encoding UTF8 en PowerShell escribe BOM
-        bom_content = _BOM + text_content.encode("utf-8")
-        _OPENCODE_PATH.write_bytes(bom_content)
-
-        # Ahora el diff NO es vacio (camino de fallo)
-        diff_before_fix = _git_diff_head_path(".opencode/opencode.json")
+        # Simular el camino de fallo ANTES del fix (Set-Content -Encoding UTF8 -> BOM).
+        temp_motor.opencode_path.write_bytes(_BOM + head)
+        diff_before_fix = temp_motor.diff_opencode()
         assert len(diff_before_fix) > 0, (
             "Before fix: diff should NOT be empty (BOM drift present)"
         )
 
-        # El pre-handoff autocorrige el BOM
-        _exit_code, _stdout, stderr = _pre_handoff()
+        # El pre-handoff autocorrige el BOM.
+        _rc, _out, stderr = _pre_handoff_inprocess(capsys)
         assert "[OK] Pre-handoff BOM autocorrected" in stderr
 
-        # Despues de autocorreccion, diff es vacio
-        diff_after_fix = _git_diff_head_path(".opencode/opencode.json")
-        assert diff_after_fix == "", (
-            f"After autocorrect: diff should be empty, got:\n{diff_after_fix}"
+        # Despues de autocorreccion, diff es vacio.
+        assert temp_motor.diff_opencode() == "", (
+            f"After autocorrect: diff should be empty, got:\n{temp_motor.diff_opencode()}"
         )

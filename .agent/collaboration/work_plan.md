@@ -1,90 +1,74 @@
-# Work Plan - WOT-2026-017a
+# Work Plan - WOT-2026-016h
 
 ## Metadata
-- **ID:** WOT-2026-017a
-- **Estado:** COMPLETED
+- **ID:** WOT-2026-016h
+- **Estado:** APPROVED
 - **deliverable_type:** code
-- **Titulo:** PRE_EXISTING_SUITE_RED - Comparacion por identidad de test-id en pre-handoff guard
+- **Titulo:** Aislar los tests de --pre-handoff que mutaban el bus real del motor
 - **Asignado a:** Builder
 - **delivery_authority:** repo_motor
+- **blocks:** WOT-2026-016e
 
 ## Objetivo
 
-Sustituir el bloqueo binario exit_code != 0 del guard assert_canonical_suite_green
-por una comparacion por identidad de test-id: el handoff se permite si y solo si el
-conjunto de fallos del ultimo run es SUBCONJUNTO del baseline de fallos pre-existentes.
-Requiere (a) persistir failed_test_ids en last-run.json dentro de run_pytest_safe.py,
-y (b) leer ese campo en pre_handoff_guard.py para la nueva logica de decision.
+`tests/test_opencode_config_stability.py` lanzaba `--pre-handoff` como SUBPROCESO
+contra el motor REAL (`_MOTOR_ROOT` derivado de `__file__`), lo que escribia en el
+`events.jsonl` real del motor y disparaba el guard de aislamiento
+(`_isolate_controller_event_bus`, `tests/conftest.py`) en TEARDOWN -> 5 ERRORS de
+teardown en la suite `--level all`. Como `run_pytest_safe.py` captura fallos con
+`^FAILED` y NO lineas `ERROR`, esos 5 ERRORS producen `exit_code=1` con
+`failed_test_ids` VACIO -> `pre_handoff_guard.assert_canonical_suite_green`
+fail-cierra (discriminante conjunto-vacio + senal-de-fallo). Esto bloquea el cierre
+canonico de CUALQUIER ticket code del motor, incluido WOT-2026-016e.
 
 ## Decision Arquitectonica
 
-El diseno elige parseo de lineas FAILED del stream de pytest (stdlib-only) como
-metodo de captura de node-ids, en lugar de --json-report (requiere plugin externo).
-La logica de decision es subconjunto de sets de string exactos, no conteo: cierra
-el vector de mutacion donde un test verde->rojo y otro rojo->verde producen el mismo
-conteo pero distinta identidad. Fail-closed en cada caso de baseline irresoluble.
+Reescribir los 5 tests que ejercian `--pre-handoff` por subproceso para que corran
+IN-PROCESS (`agent_controller._handle_pre_handoff`) contra un MOTOR TEMPORAL en
+`tmp_path`, con `_MOTOR_ROOT`/`PROJECT_ROOT`/`WORK_PLAN`/`EXEC_LOG` monkeypatcheados.
+El bus se resuelve desde `get_agent_dir()` (motor-root derivado de `__file__`), NO
+redirigible por `--project-root`; la unica forma de aislarlo es apuntar el
+motor-root a un repo temporal. Patron canonico ya probado en
+`tests/test_pre_handoff_multirepo.py`. El 6o test (`TestLauncherNoBomDrift`) no
+ejerce `--pre-handoff` -> no se toca.
 
 ## Fases
 
-### Fase 1 - Ampliar run_pytest_safe: persistir failed_test_ids
-- Modificar stream_pytest() en scripts/run_pytest_safe.py para parsear lineas
-  FAILED del stream y capturar los node-ids (regex: ^FAILED\s+(\S+)).
-- Cambiar firma: stream_pytest retorna tuple[int, list[str]] (returncode, failed_ids).
-- En main(), anadir campo ADITIVO failed_test_ids: list[str] al summary cuando
-  exit_code != 0; campo ausente cuando exit_code == 0.
-- Anadir tests en tests/unit/test_run_pytest_safe.py cubriendo parseo de FAILED,
-  campo ausente con exit_code==0, campo presente con exit_code!=0.
+### Fase 0 - Confirmar seams (VERIFICADO EN CODIGO)
+- El bus se resuelve desde `get_agent_dir()` = motor-root derivado de `__file__`
+  (`agent_controller.py`), NO redirigible por `--project-root`.
+- `run_pytest_safe.py` captura solo `^FAILED\s+(\S+)`, no `ERROR ...` (teardown).
+- `_isolate_controller_event_bus` (`tests/conftest.py`) falla en teardown cuando un
+  test muta el `events.jsonl` real.
 
-### Fase 2 - Actualizar pre_handoff_guard: logica de decision por identidad
-- En assert_canonical_suite_green (l.429 pre_handoff_guard.py):
-  sustituir if exit_code != 0: (l.502) por logica:
-  1. exit_code==0: PERMITIDO.
-  2. exit_code!=0 y failed_test_ids AUSENTE: BLOQUEA (fail-closed).
-  3. exit_code!=0 y failed_test_ids PRESENTE: comparar set actual vs last-run.json
-     base; si irresoluble: BLOQUEA; si subconjunto: PERMITIDO; si hay nuevos: BLOQUEA.
-- Preservar los 3 gates existentes sin alteracion: tested_commit_sha==HEAD,
-  level=all, args_mode=default_discovery.
-- NO anadir ningun flag de override o bypass.
+### Fase 1 - Reescritura in-process
+- Fixture `temp_motor` (`_TempMotor`): repo git real en `tmp_path`, seed de
+  `.opencode/opencode.json` con bytes reales de HEAD, work_plan+exec_log committeados
+  en el dest, monkeypatch de los 4 roots.
+- Los 5 tests que ejercian `--pre-handoff` por subproceso -> `_pre_handoff_inprocess`
+  (llama `agent_controller._handle_pre_handoff` con el bus singleton reseteado).
 
-### Fase 3 - Tests de barrera (obligatorios, con repos git reales en tmp_path)
-- T1: fallo HEREDADO (en baseline) -> handoff PERMITIDO.
-- T2: fallo NUEVO (no en baseline) -> handoff BLOQUEADO.
-- T3: baseline ausente o irresoluble -> BLOQUEA (fail-closed).
-- T4: MUTATION mismo conteo distinto test-id -> BLOQUEADO.
-- T5: regresion del guard: revertir fix minimo, confirmar bug vivo; restaurar,
-  confirmar bloqueo correcto.
+### Fase 2 - Verificacion (mutation-verify)
+- Fichero en aislamiento con el fix: 6 passed, 0 errors.
+- Mutation: revertir a `_MOTOR_ROOT` real -> vuelven los 5 errors (6 passed, 5
+  errors); restaurar -> 6 passed, 0 errors.
+- `events.jsonl` real SIN cambios tras la corrida (git status del path vacio).
 
-### Fase 4 - Verificacion final
-- Suite completa run_pytest_safe.py --level all. 0 regresiones.
+## Criterios de aceptacion (DoD binario)
 
-## Criterios de aceptacion
-
-1. scripts/run_pytest_safe.py persiste failed_test_ids: list[str] en last-run.json
-   cuando exit_code != 0. Campo ADITIVO; consumidores existentes no se rompen.
-2. assert_canonical_suite_green implementa comparacion por IDENTIDAD de test-id
-   (subconjunto de sets, no conteo).
-3. T1-T5 pasan en la suite del motor.
-4. 0 regresiones en la suite completa del motor (level=all, default_discovery).
-5. El campo failed existente en run_pytest_safe.py (limpieza de DIRECTORIOS,
-   l.275-284) NO se modifica ni renombra.
-6. Gates existentes (tested_commit_sha==HEAD, level=all, args_mode=default_discovery)
-   PRESERVADOS sin alteracion.
-7. Ningun flag de override o bypass anadido.
-8. Encoding ASCII/UTF-8 limpio en cada archivo modificado (gate check_encoding_guard).
+1. `tests/test_opencode_config_stability.py` en aislamiento: 6 passed, 0 errors
+   (antes 6 passed, 5 errors).
+2. La corrida NO muta el `events.jsonl` real del motor (git status del path vacio).
+3. Suite canonica `run_pytest_safe.py --level all` sin esos 5 ERRORS de teardown +
+   validate 0/0 + ruff check/format + encoding limpios.
 
 ## Files Likely Touched
 
-- scripts/run_pytest_safe.py
-- scripts/pre_handoff_guard.py
-- tests/test_pre_handoff_guard.py
-- tests/unit/test_run_pytest_safe.py
+- tests/test_opencode_config_stability.py
 
 ## Non-goals
 
-- Ningun cambio en repositorios destino (ADU u otros).
-- Los 3 gates existentes del guard (SHA, level, args_mode) se PRESERVAN sin alteracion.
-- Ningun flag de bypass, override ni --force-suite en ningun script del motor.
-- Ningun cambio de comportamiento de run_pytest_safe mas alla de ANADIR failed_test_ids.
-- Ningun archivo baseline separado (decision CEM vinculante, rechazada).
-- Re-run de la suite base en caliente (~98 min, fragil, rechazado por CEM).
-- ADU-004 o cualquier ticket de destino.
+- NO tocar `run_pytest_safe.py` (que capture ERROR ademas de FAILED es otro ticket).
+- NO tocar `agent_controller.py` ni el guard de aislamiento del conftest.
+- NO tocar el 6o test (`TestLauncherNoBomDrift`), que no ejerce `--pre-handoff`.
+- NO mezclar con 016e (scope-override) ni con 016i (aislamiento de work_plan).
