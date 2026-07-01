@@ -1,118 +1,101 @@
-# Execution Log - WOT-2026-016e
+# Execution Log - WOT-2026-016h
 
-**Ticket:** WOT-2026-016e - scope-override deja de escribir rutas absolutas locales
+**Ticket:** WOT-2026-016h - aislar tests de --pre-handoff que mutaban el bus real
 **Estado:** COMPLETED
-**HEAD al inicio del ticket:** 17244fc (tras cierre de 016h)
+**HEAD al inicio:** f3db5e9eed4c3b05b35c739f529f52f88742ad37
 
 ---
 
 ## Fase 0 - Seams confirmados (VERIFICADO EN CODIGO)
 
-- `.agent/scope_gate.py:record_scope_override` (pre-fix) formateaba
-  `f"Affected files: {', '.join(sorted(problem_files))}"` con rutas absolutas.
-- `problem_files` = `out_of_scope | missing_from_diff`, paths absolutos resueltos
-  (`str((root / name).resolve())`).
-- DOS call sites en el controller:
-  - `agent_controller.py:430` `_record_scope_override` (injected fn en l.443).
-  - `agent_controller.py:3179` checkpoint scope.
-  Ambos delegan en `scope_gate.record_scope_override` -> fix unico en scope_gate.py
-  cubre los dos; el controller solo pasa `repo_root` en el choke point (l.430).
-- Test existente: `tests/unit/test_scope_gate.py`.
+- El event bus se resuelve desde `get_agent_dir()` = motor-root derivado de
+  `__file__` en `agent_controller.py`; NO redirigible por `--project-root`. La
+  unica forma de aislarlo es apuntar el motor-root a un repo temporal.
+- `scripts/run_pytest_safe.py` captura fallos con `^FAILED\s+(\S+)`; NO matchea
+  lineas `ERROR ...` de teardown. 5 ERRORS + 0 FAILED -> exit 1 con
+  `failed_test_ids` vacio -> `pre_handoff_guard.assert_canonical_suite_green`
+  fail-cierra (discriminante conjunto-vacio + senal-de-fallo).
+- Guard de aislamiento: `_isolate_controller_event_bus` (`tests/conftest.py`) falla
+  en teardown cuando un test muta el `events.jsonl` real.
+- Patron canonico de aislamiento: `tests/test_pre_handoff_multirepo.py`.
 
-## Fase 1 - Fix minimo
+## Fase 1 - Reescritura in-process
 
-- `.agent/scope_gate.py`: helper `_relativize_scope_path(path, repo_root)`
-  (repo -> `<REPO_ROOT>/rel/path` posix; fuera/no relativizable -> basename).
-  `record_scope_override` gana keyword-only `repo_root: Path | str | None = None`;
-  relativiza cada problem_file antes de formatear la nota.
-- `.agent/agent_controller.py:430`: `_record_scope_override` pasa
-  `repo_root=PROJECT_ROOT.resolve()` (choke point unico -> cubre ambas call sites).
+- Fixture `temp_motor` (`_TempMotor`): repo git real en `tmp_path`, seed de
+  `.opencode/opencode.json` con los bytes reales de HEAD, work_plan+exec_log
+  committeados en el dest, monkeypatch de `_MOTOR_ROOT`/`PROJECT_ROOT`/
+  `WORK_PLAN`/`EXEC_LOG`.
+- Los 5 tests que ejercian `--pre-handoff` por SUBPROCESO contra el motor real ->
+  reescritos a `_pre_handoff_inprocess` (llama `agent_controller._handle_pre_handoff`
+  con el singleton `event_bus` reseteado, gobernado por el `_MOTOR_ROOT` temporal).
+- El 6o test (`TestLauncherNoBomDrift`) no ejerce `--pre-handoff` -> no se toca.
 
-## Fase 2 - Regresion + mutation-verify (VERIFICADO EN TEST)
+## Fase 2 - Verificacion + mutation-verify
 
-### T-regresion (tests/unit/test_scope_gate.py::TestRecordScopeOverrideNoAbsolutePaths)
-4 casos: dentro del repo -> `<REPO_ROOT>/rel`; el username nunca sobrevive; fuera
-del repo -> basename; sin repo_root -> basename. Con el fix: 21 passed (exit 0).
+### Fichero en aislamiento (con el fix)
+```
+.venv/Scripts/python.exe -m pytest tests/test_opencode_config_stability.py -q
+6 passed in 3.52s
+```
+Exit code: 0. `events.jsonl` real SIN cambios (git status del path vacio).
 
 ### Mutation-verify (par de exit-codes, re-emitido en el replay closeout)
 ```
 mutation-verify:
-  sin_fix:  command: pytest tests/unit/test_scope_gate.py::TestRecordScopeOverrideNoAbsolutePaths -q
-            exit_code: 1   # 4 failed; la nota generada contiene la ruta absoluta con username
-  con_fix:  command: pytest tests/unit/test_scope_gate.py::TestRecordScopeOverrideNoAbsolutePaths -q
-            exit_code: 0   # 4 passed
+  sin_fix:  command: .venv/Scripts/python.exe -m pytest tests/test_opencode_config_stability.py -q
+            exit_code: 1     # 6 passed, 5 errors de teardown (bus real mutado)
+  con_fix:  command: .venv/Scripts/python.exe -m pytest tests/test_opencode_config_stability.py -q
+            exit_code: 0     # 6 passed, 0 errors
 ```
-Evidencia del bug vivo (sin fix): la asercion falla mostrando
-`Affected files: C:\Users\***REDACTED***\Proyectos_Python\orquestador_de_agentes\x\y.py`
-(ruta absoluta con username presente). Restaurado -> 4 passed.
+Secuencia: revertir la reescritura (`git stash push -- tests/test_opencode_config_stability.py`)
+-> pre-fix con `_MOTOR_ROOT` real -> `6 passed, 5 errors`, exit 1 (vuelven los 5
+ERRORS de teardown con el mensaje "Test mutated the real motor event bus and was
+isolated"). Restaurar (`git stash pop`) -> `6 passed, 0 errors`, exit 0.
+Conclusion: la reescritura in-process elimina realmente los 5 ERRORS de teardown.
 
-## Fase 3 - DoD
+## Fase 3 - Gates canonicos (VERIFICADO)
 
-### DoD(1) rutas relativas en el log: cubierto por T-regresion. PASS.
-
-### DoD(2) classify_publication no marca PUBLISH_WITH_REDACTIONS
-Nota generada por el NUEVO `_relativize_scope_path` con paths absolutos de entrada:
-```
-GENERATED NOTE: Scope override: out of scope reason. Affected files: <REPO_ROOT>/scripts/foo.py, <REPO_ROOT>/tests/bar.py
-absolute-path/username leak: False
-uses <REPO_ROOT> marker    : True
-```
-La ruta absoluta con username NO aparece; el marcador `<REPO_ROOT>/...` no matchea
-el patron `[A-Za-z]:\Users\...` de classify_publication.py. PASS.
-
-### DoD(3) gates: ver seccion Gates canonicos.
-
-## Gates canonicos (VERIFICADO)
-
-- Commit: 1f667da ("WOT-2026-016e: scope-override deja de escribir rutas absolutas...").
-- Suite canonica run_pytest_safe --level all @ tested_commit_sha=1f667da (==HEAD):
+- Commit: 467fcdf ("WOT-2026-016h: aislar tests de --pre-handoff...").
+- Suite canonica `run_pytest_safe.py --level all` @ tested_commit_sha=467fcdf (==HEAD):
   status=finished, exit_code=0, level=all, args_mode=default_discovery,
-  failed_test_ids=[], baseline_failed_test_ids=[] (limpio total; 016i confirmado
-  cerrado: sin baseline rojo).
+  failed_test_ids=[]. Los 8 baseline_failed_test_ids (TestPreHandoff +
+  TestBuilderBriefExclusion) que estaban rojos por work_plan sucio AHORA pasan
+  (confirma la hipotesis 016i: commitear el work_plan los limpia). Los 5 ERRORS de
+  teardown de test_opencode_config_stability.py desaparecieron.
 - validate --json --project-root .: 0 errors / 0 warnings (exit 0).
-- ruff check/format: All checks passed / already formatted (exit 0) sobre scope_gate.py,
-  agent_controller.py, test_scope_gate.py.
-- encoding guard (3 .py + work_plan + PLAN + AUDIT): exit 0.
-
-## Nota de alcance (forward-looking)
-
-El fix 016e relativiza los overrides FUTUROS. Las notas historicas que YA contienen
-rutas absolutas (incl. la nota de scope-override de 016h en el commit 17244fc) NO se
-reescriben aqui: eso es responsabilidad de 016d/016g (filter-repo). 016e cierra la
-FUENTE que las genera.
+- ruff check tests/test_opencode_config_stability.py: All checks passed (exit 0).
+- ruff format --check: 1 file already formatted (exit 0).
+- encoding guard (test + STATE + work_plan + execution_log): exit 0.
 
 ## Reviews (VERIFICADO)
 
-- Review 1 (Manager, mecanica independiente): commit 1f667da con ticket id; git show
-  --name-only = solo FLT (scope_gate.py + agent_controller.py + test_scope_gate.py) +
-  artefactos de colaboracion; agent_controller.py = 1 sola linea (l.435
-  repo_root=PROJECT_ROOT.resolve()); sin scope creep. APROBADO.
-- Review 2 (adversarial, 3 senales nuevas frente a Rev1):
-  1) diff-content: el fix es SOLO rendering (nuevo _relativize_scope_path + render en
-     record_scope_override); la logica de DECISION del gate (que archivos estan fuera de
-     scope) NO cambia -> Forbidden Surface respetada.
-  2) diff exacto del controller: 1 linea, repo_root pasado en el choke point unico.
-  3) test-power: aserciones positivas Y negativas (str(repo_root) not in note,
-     _MOTOR_ROOT not in note, "\\" not in note), no floor assertions.
-  Sin counterexample. APROBADO.
-- DEUDA TECNICA (G3): 016e toca el gate de scope (alto blast-radius seguridad/
-  publicacion) -> Rev2 DEBERIA correr en subagente fresh-context. No se invoco aislamiento
-  de contexto por subagente; Rev2 corrio EN CONTEXTO con >=2 senales nuevas (independencia
-  de contenido satisfecha), separacion REAL de contexto declarada como deuda.
-- decision artifact: .agent/runtime/reviews/decision_WOT-2026-016e.json = APROBADO.
+- Review 1 (Manager, verificacion mecanica independiente): commit con ticket id OK;
+  git show --name-only 467fcdf = 4 archivos (test file + STATE/execution_log/work_plan
+  live surfaces); UNICO .py tocado = tests/test_opencode_config_stability.py (== FLT);
+  sin scope creep. APROBADO.
+- Review 2 (adversarial, >=2 senales nuevas frente a Rev1):
+  1) inspeccion de diff: `--pre-handoff` remanente solo en docstrings/comentarios y el
+     helper in-process; `_MOTOR_ROOT` a nivel modulo es SOLO semilla (git show
+     HEAD:.opencode) + monkeypatch (l.146) al motor temporal; sin subproceso al motor real.
+  2) bus/events: events.jsonl real SIN mutar tras el `--level all` completo (git status
+     del path vacio); ultimo evento pre-handoff = seq 25 (bootstrap 016h), sin eventos
+     inyectados por tests.
+  3) git-history: `git show --name-only 467fcdf` NO toca produccion (scope_gate/
+     agent_controller/motor_checkpoint/scripts intactos); diff = test-isolation puro.
+  Sin counterexample. 016h NO es alto blast-radius (solo internals de test, sin codigo
+  de produccion/gate/bus) -> fresh-context Rev2 no exigido por G3. APROBADO.
+- decision artifact: .agent/runtime/reviews/decision_WOT-2026-016h.json = APROBADO.
 
 ## Handoff (G7) - VERIFICADO EN BUS
 
-- --pre-handoff --project-root . --json --force: status=success (M3 a HEAD).
+- --pre-handoff --project-root . --json --force: status=success (M3 recreado a HEAD).
 - --mark-ready: scope-override aplicado (arbol limpio -> heuristica de commits recientes
-  sobre-captura artefactos de 017a/016h y .gitignore, ajenos a 016e). Eventos reales:
-  BUILDER_EXIT (seq 30) + STATE_CHANGED IN_PROGRESS->READY_FOR_REVIEW (seq 31 BUILDER,
-  seq 32 SUPERVISOR). Estado derivado: READY_FOR_REVIEW.
-- EVIDENCIA VIVA de que el fix funciona: la nota de scope-override que mark-ready acaba de
-  escribir usa `<REPO_ROOT>/...` (SIN ruta absoluta ni username), a diferencia de la nota
-  de 016h que tenia `C:\Users\***REDACTED***\...`. El fix 016e esta activo en produccion.
+  sobre-captura .gitignore [f3db5e9 chore] + pre_handoff_guard.py/test_pre_handoff_guard.py
+  [d8dd16c 017a COMPLETED], ajenos a 016h). Eventos reales: BUILDER_EXIT (seq 26) +
+  STATE_CHANGED IN_PROGRESS->READY_FOR_REVIEW (seq 27 BUILDER, seq 28 SUPERVISOR).
+  Estado derivado: READY_FOR_REVIEW.
 
 
-Scope override: 016e delivery is commit 1f667da touching only its FLT (scope_gate.py, agent_controller.py, tests/unit/test_scope_gate.py). Clean-tree recent-commit heuristic over-captured files from prior closed/handed-off tickets: AUDIT/PLAN_WOT-2026-017a.md + test_opencode_config_stability.py (016h 467fcdf/1a28fdc), .gitignore (f3db5e9 chore), scripts/pre_handoff_guard.py + tests/test_pre_handoff_guard.py (017a d8dd16c COMPLETED). No 016e change touches those.. Affected files: <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-017a.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-017a.md, <REPO_ROOT>/.gitignore, <REPO_ROOT>/scripts/pre_handoff_guard.py, <REPO_ROOT>/tests/test_opencode_config_stability.py, <REPO_ROOT>/tests/test_pre_handoff_guard.py
+Scope override: 016h delivery is commit 467fcdf touching only tests/test_opencode_config_stability.py (the FLT). Clean-tree recent-commit heuristic over-captured .gitignore (f3db5e9 chore, closed) and scripts/pre_handoff_guard.py + tests/test_pre_handoff_guard.py (d8dd16c WOT-2026-017a, COMPLETED). No 016h change touches those.. Affected files: C:\Users\***REDACTED***\Proyectos_Python\orquestador_de_agentes\.gitignore, C:\Users\***REDACTED***\Proyectos_Python\orquestador_de_agentes\scripts\pre_handoff_guard.py, C:\Users\***REDACTED***\Proyectos_Python\orquestador_de_agentes\tests\test_pre_handoff_guard.py
 
-Manager approved canonical closeout for WOT-2026-016e
+Manager approved canonical closeout for WOT-2026-016h
