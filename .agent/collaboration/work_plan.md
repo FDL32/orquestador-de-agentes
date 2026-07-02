@@ -1,80 +1,113 @@
-# Work Plan - WOT-2026-018b
+# Work Plan - WOT-2026-016b
 
 ## Metadata
-- **ID:** WOT-2026-018b
-- **Estado:** COMPLETED
+- **ID:** WOT-2026-016b
+- **Estado:** APPROVED
 - **deliverable_type:** code
-- **Titulo:** Aislar test_negative_no_commit_no_diff del work_plan.md real (hotfix preexisting gate unblock: CI rojo clavado en main)
+- **Titulo:** Hook pre-commit/pre-push con INSTALL_PYTHON obsoleto: detectar/regenerar cuando la ruta del interprete del hook no existe (repo movido)
 - **Asignado a:** Builder
 - **delivery_authority:** repo_motor
 
 ## Objetivo
 
-Desbloquear el gate de CI (suite canonica verde en main), que quedo CLAVADO en rojo:
-`tests/test_agent_controller.py::TestAgentControllerEvidence::test_negative_no_commit_no_diff`
-falla de forma determinista porque lee el `work_plan.md` REAL para calcular
-`deliverable_type`. Tras cerrar 018a (documentation), el work_plan committed en HEAD
-es documentation -> `non_code_ticket=True` -> `_check_implementation_evidence` retorna
-antes de emitir "No commit evidence" (early return, agent_controller.py ~L1705) -> el
-assert de L2282 falla en cada CI run mientras el ultimo ticket committed sea
-documentation/analysis/research.
+El hook generado por pre-commit hardcodea `INSTALL_PYTHON=<ruta al interprete>` en la
+plantilla (linea 7 de `.git/hooks/pre-commit` y `.git/hooks/pre-push`). Si el repo se MUEVE,
+esa ruta queda obsoleta y no existe en disco -> el hook cae al fallback `command -v pre-commit`
+del PATH, cuyo launcher puede estar roto (en esta maquina resuelve al shim conda roto
+`nsight-compute\python.bat`) -> commits/push fallan o resuelven ruidosamente al interprete
+equivocado.
 
-Clasificacion (finding_triage_protocol): bug PREEXISTENTE que bloquea gate obligatorio,
-fix de 1 linea, bajo riesgo, SOLO test, sin cambio de contrato/arquitectura ni
-produccion -> "preexisting gate unblock". El test hermano `test_semantic_parity_positive`
-ya usa el mismo patron de aislamiento (mockear `read_file`).
+Estado REAL de este repo (VERIFICADO EN VIVO 2026-07-02):
+- `.git/hooks/pre-commit` L7: `INSTALL_PYTHON='...\orquestador_de_agentes\.venv\Scripts\python.exe'`
+  -> la ruta EXISTE (regenerada en 017a). pre-commit funciona.
+- `.git/hooks/pre-push` L7: `INSTALL_PYTHON='...\z_scripts\orquestador_de_agentes\.venv\Scripts\python.exe'`
+  -> ruta OBSOLETA (el repo ya no vive en `z_scripts\`); NO existe. Hook roto vivo.
+
+El repo no detecta ni avisa de la ruta obsoleta: el siguiente repo movido reproducira el fallo.
+
+Clasificacion (finding_triage_protocol): ticket propio con contrato en backlog, deliverable
+`code`, bajo riesgo, superficie nueva acotada (un check + su test). No reescribe historia, no
+toca remoto, no versiona `.git/hooks/*`.
 
 ## Decision Arquitectonica
 
-- Causa raiz = defecto de AISLAMIENTO del test, NO de produccion. `_check_implementation_evidence`
-  se comporta correctamente; el test simplemente no aisla su lectura del work_plan real.
-- Fix = mockear `agent_controller.read_file` a `lambda x: ""` tras los setattr de roots, para
-  que `deliverable_type` sea vacio (-> non_code_ticket=False -> el flujo llega a "No commit
-  evidence"). Identico patron que el hermano en tests/test_agent_controller.py L410.
-- NO se toca produccion (agent_controller.py, bus/evidence.py): ampliarla seria scope creep.
+- El fix NO es versionar el hook generado (`.git/hooks/*` es local, no versionable) ni "arreglar
+  a mano" el pre-push (eso solo cura este repo, no la clase de bug). El fix es un CHECK que
+  detecta que el `INSTALL_PYTHON` de un hook generado no existe en disco y (a) FALLA con mensaje
+  accionable, o (b) REGENERA los hooks via `pre_commit install --overwrite`.
+- El check DEBE cubrir AMBOS tipos (pre-commit Y pre-push), no solo el que hoy esta bien.
+- Se implementa como script standalone `scripts/check_hook_interpreter.py` siguiendo la
+  convencion de `scripts/check_*.py` (funciones puras + `main(argv) -> int`, fail-closed,
+  UTF-8/ASCII). Modo por defecto `--check` (exit != 0 con mensaje si algun interprete falta);
+  modo `--fix` regenera via `pre_commit install --overwrite --hook-type pre-commit --hook-type
+  pre-push`.
+- Enganche en `.pre-commit-config.yaml` como hook LOCAL en stage `manual` (no automatico):
+  un hook automatico seria circular (el propio hook roto no puede invocar de forma fiable al
+  check). El stage manual lo hace ejecutable por tooling de instalacion / bajo demanda sin
+  anadir un gate obligatorio nuevo que relaje o duplique los existentes.
 
 ## Fases
 
-### Fase 1 - Fix del aislamiento
-- En `test_negative_no_commit_no_diff`, anadir
-  `monkeypatch.setattr(agent_controller, "read_file", lambda x: "")` tras los setattr de
-  `_MOTOR_ROOT`/`PROJECT_ROOT`, con comentario del porque.
+### Fase 0 - Diagnostico (COMPLETADO)
+- Confirmado: ningun codigo existente gestiona `INSTALL_PYTHON` ni corre `pre_commit install`
+  (grep 0 hits) -> superficie nueva, no modificacion de seam existente.
+- Confirmado formato estable de hook: L7 = `INSTALL_PYTHON='<path>'` en pre-commit y pre-push.
+- Confirmada convencion de `scripts/check_*.py` y de `tests/test_check_*.py` (repos git reales
+  en tmp_path via `subprocess`, import `from scripts import ...`).
 
-### Fase 2 - Verificacion (barrera FAIL-sin/PASS-con)
-- CON el mock: el test pasa (ambos asserts: "No commit evidence" + "No implementation evidence").
-- SIN el mock: el test vuelve a fallar cuando el work_plan real es documentation/analysis
-  (demuestra que el mock es la barrera, no cosmetico).
-- La clase entera `TestAgentControllerEvidence` sigue verde (no rompe hermanos).
+### Fase 1 - Implementacion
+- `scripts/check_hook_interpreter.py`:
+  - `parse_install_python(hook_text) -> str | None`: extrae la ruta de la linea
+    `INSTALL_PYTHON='...'` (tolera comillas simples/dobles y ausencia).
+  - `check_hook(hooks_dir, hook_type) -> HookStatus`: lee el hook, parsea, comprueba
+    `Path(interpreter).exists()`.
+  - `check_all(hooks_dir) -> list[HookStatus]` sobre `("pre-commit", "pre-push")`.
+  - `main(argv)`: `--hooks-dir` (default `<repo>/.git/hooks`), `--fix`. Sin `--fix`, exit 1 con
+    mensaje accionable si algun hook presente tiene interprete inexistente; exit 0 cuando cada
+    hook presente resuelve a un interprete existente (o el hook esta ausente). Con `--fix`,
+    ejecuta `pre_commit install --overwrite` y re-verifica.
+
+### Fase 2 - Tests (barrera FAIL-sin/PASS-con)
+- `tests/test_check_hook_interpreter.py`:
+  - hook con `INSTALL_PYTHON` inexistente -> `main` exit != 0 con mensaje (para pre-commit Y
+    pre-push por separado -> cubre ambos tipos, DoD #2).
+  - hook con `INSTALL_PYTHON` existente -> exit 0.
+  - hook ausente -> exit 0 (no falso positivo).
+  - MUTATION/barrera: comprobar que es la existencia del interprete lo que discrimina (mismo
+    hook, interprete valido -> pass; interprete borrado -> fail).
 
 ## Criterios de aceptacion
 
-Criterios binarios (DoD):
+Criterios binarios (DoD del backlog + refinados por evidencia en vivo):
 
-1. `test_negative_no_commit_no_diff` PASA independientemente del `deliverable_type` del
-   work_plan.md real (verificado con work_plan committed = documentation).
-2. BARRERA: sin el mock `read_file`, el test falla con work_plan real documentation/analysis
-   (FAIL-sin), y pasa con el mock (PASS-con). Ambos estados verificados.
-3. La clase `TestAgentControllerEvidence` completa sigue verde (8 passed).
-4. NO se toca produccion (`agent_controller.py`, `bus/evidence.py`): solo el archivo de test.
-5. `ruff check` + `ruff format --check` verdes sobre el test tocado.
-6. Suite canonica `run_pytest_safe.py --level all` exit 0 (el rojo clavado desaparece).
+1. Test que simula un hook con `INSTALL_PYTHON` a ruta INEXISTENTE y verifica que el check lo
+   DETECTA (exit != 0 con mensaje accionable, o regeneracion efectiva).
+2. El check cubre pre-commit Y pre-push (ambos tipos).
+3. BARRERA: con interprete valido el check pasa; con interprete inexistente falla (demuestra que
+   la existencia del interprete es el discriminante, no cosmetico).
+4. `check_encoding_guard.py` exit 0 sobre los archivos tocados.
+5. `ruff check` + `ruff format --check` verdes sobre los .py tocados.
+6. Suite canonica `run_pytest_safe.py --level all` exit 0 (tested_commit_sha == HEAD).
 7. `validate --json --project-root <motor>` = 0 errors / 0 warnings.
 
 ## Files Likely Touched
 
 ### repo_motor
-- `tests/test_agent_controller.py`
+- `scripts/check_hook_interpreter.py` (nuevo)
+- `tests/test_check_hook_interpreter.py` (nuevo)
+- `.pre-commit-config.yaml` (enganche del hook manual)
 
 ## Read/inspect only
 
-- `.agent/agent_controller.py` (`_check_implementation_evidence`, ~L1697-1733: el early return
-  por non_code_ticket que causa el sintoma).
-- `tests/test_agent_controller.py` L405-411 (patron de aislamiento del test hermano
-  `test_semantic_parity_positive`).
+- `.git/hooks/pre-commit`, `.git/hooks/pre-push` (formato del hook generado; NO versionar).
+- `scripts/check_motor_pristine.py`, `scripts/check_ruff_hook_scope.py` (convencion de check).
+- `tests/test_check_motor_pristine.py` (patron de test con repos reales).
 
 ## Non-goals
 
-- NO tocar `_check_implementation_evidence` ni la logica de produccion (el comportamiento en
-  produccion es correcto; el gap es del test). Ampliarla seria scope creep.
-- NO anadir otros mocks ni refactorizar el test mas alla de la linea de aislamiento.
-- NO mezclar con 016b (hook obsoleto) ni otros tickets de la serie.
+- NO versionar `.git/hooks/*` (es local, no versionable).
+- NO "arreglar" solo pre-push a mano (cura este repo, no la clase de bug).
+- NO anadir un gate automatico obligatorio nuevo ni relajar/duplicar gates existentes (el
+  enganche es stage `manual`).
+- NO tocar remoto ni reescribir historia.
+- NO mezclar con 016c/016e/016g/016m ni otros tickets de la serie.

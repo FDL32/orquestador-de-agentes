@@ -1,58 +1,63 @@
-# Execution Log - WOT-2026-018b
+# Execution Log - WOT-2026-016b
 
-**Ticket:** WOT-2026-018b - aislar test_negative_no_commit_no_diff del work_plan.md real (preexisting gate unblock)
-**Estado:** COMPLETED
-**HEAD al inicio:** 17f4c9f
+**Ticket:** WOT-2026-016b - Hook pre-commit/pre-push con INSTALL_PYTHON obsoleto: detectar/regenerar ruta de interprete inexistente (repo movido)
+**Estado:** IN_PROGRESS
+**HEAD al inicio:** 65af880
 
-> work_plan/execution_log de 018a (COMPLETED) preservados en
-> `work_plan_WOT-2026-018a.md` / `execution_log_WOT-2026-018a.md`.
+> execution_log de 018b (COMPLETED) preservado en `execution_log_WOT-2026-018b.md`.
 
 ---
 
 ## Bootstrap
 
-- Ticket 018b materializado como code (delivery_authority=repo_motor), FLT = tests/test_agent_controller.py.
-- Origen: CI rojo tras el push de 018a. El gate quedo CLAVADO en rojo porque el work_plan committed
-  en HEAD es 018a=documentation. Clasificacion por finding_triage_protocol: preexisting gate unblock
-  (1 linea, solo test, sin produccion) -> hotfix como ticket propio minimo (decision humana).
+- Ticket 016b materializado como code (delivery_authority=repo_motor).
+- FLT = scripts/check_hook_interpreter.py (nuevo) + tests/test_check_hook_interpreter.py (nuevo)
+  + .pre-commit-config.yaml (enganche hook manual).
+- Origen: WOT-2026-017a (2026-06-30/07-01) destapo que el hook generado hardcodea INSTALL_PYTHON;
+  tras mover el repo fuera de z_scripts\, la ruta quedo obsoleta y el hook caia al fallback roto.
 
-## Fase 0: Diagnostico (VERIFICADO)
+## Fase 0: Diagnostico (VERIFICADO EN VIVO)
 
-- `deliverable_type` real del work_plan committed en HEAD 17f4c9f = documentation -> non_code_ticket=True.
-- `_check_implementation_evidence` (agent_controller.py ~L1697-1705): `if non_code_ticket:` retorna
-  ANTES de la rama "No commit evidence" (~L1730) -> el assert de test L2282 falla.
-- El test NO mockea WORK_PLAN/read_file (solo _MOTOR_ROOT/PROJECT_ROOT) -> lee el work_plan real.
-- El hermano test_semantic_parity_positive (L410) SI aisla con `read_file -> ""`.
-- Los 3 archivos (test, agent_controller.py, bus/evidence.py) eran byte-identicos en 26958b7 y HEAD:
-  NO es regresion de 016f/018a; bug de aislamiento pre-existente destapado.
+- Reproducido el bug en este repo a HEAD 65af880:
+  - `.git/hooks/pre-commit` L7 INSTALL_PYTHON = `...\orquestador_de_agentes\.venv\Scripts\python.exe`
+    -> EXISTE en disco (ok, regenerado en 017a).
+  - `.git/hooks/pre-push` L7 INSTALL_PYTHON = `...\z_scripts\orquestador_de_agentes\.venv\Scripts\python.exe`
+    -> NO existe (`ls` confirma No such file). Hook roto vivo.
+- grep INSTALL_PYTHON / pre_commit install / hook-type sobre **/*.py -> 0 hits: ningun codigo
+  gestiona esto hoy. Superficie NUEVA, no modificacion de seam existente.
+- Convencion de scripts/check_*.py confirmada (check_motor_pristine.py, check_ruff_hook_scope.py):
+  funciones puras + main(argv)->int, fail-closed, UTF-8/ASCII, tests con repos reales en tmp_path.
 
-## Fase 1: Fix (EJECUTADO)
+## Fase 1: Implementacion (EJECUTADA)
 
-- `tests/test_agent_controller.py::test_negative_no_commit_no_diff`: anadido
-  `monkeypatch.setattr(agent_controller, "read_file", lambda x: "")` tras los setattr de roots,
-  con comentario explicativo (mismo patron que el hermano). Solo el archivo de test tocado.
+- `scripts/check_hook_interpreter.py`: parse_install_python (regex L7, comilla simple/doble),
+  check_hook/check_all sobre HOOK_TYPES=("pre-commit","pre-push"), main con --repo-root/--hooks-dir/--fix.
+  Sin --fix: exit 1 + mensaje accionable si algun interprete no existe; exit 0 si todos ok o ausentes.
+  Con --fix: regenera via `sys.executable -m pre_commit install --overwrite --hook-type pre-commit
+  --hook-type pre-push` y re-verifica. Nunca versiona .git/hooks/*.
+- `.pre-commit-config.yaml`: hook local `check-hook-interpreter` en stage `manual` (no automatico:
+  un hook automatico seria circular porque el propio hook roto no puede invocarlo con fiabilidad).
 
-## Fase 2: Verificacion (barrera FAIL-sin/PASS-con, VERDE)
+## Fase 2: Tests (barrera FAIL-sin/PASS-con, VERDE)
 
-- PASS-con-fix: `pytest ...test_negative_no_commit_no_diff` -> 1 passed.
-- Clase entera: `pytest ...TestAgentControllerEvidence` -> 8 passed.
-- FAIL-sin-fix (probado in-process): SIN el mock, con work_plan real documentation,
-  "No commit evidence" AUSENTE (por eso fallaba); CON el mock, presente + "No implementation
-  evidence" presente. El mock es la barrera, no cosmetico.
+- `tests/test_check_hook_interpreter.py` (8 tests):
+  - stale detectado por tipo (parametrizado pre-commit Y pre-push) -> exit 1. [DoD #1, #2]
+  - interprete existente -> exit 0; hook ausente -> exit 0 (no falso positivo).
+  - BARRERA: mismo texto de hook; solo la EXISTENCIA del interprete flipa PASS<->FAIL (borrar el
+    interprete -> exit 1). [DoD #3]
+  - mixto (pre-commit ok + pre-push stale) -> exit 1 (no "pasa" por tener uno bueno; forma del bug vivo).
 
 ## Evidencia de cierre (gates)
 
-- Focal: pytest test_negative_no_commit_no_diff -> 1 passed; TestAgentControllerEvidence -> 8 passed.
-- ruff check + ruff format --check sobre el test tocado -> pendiente de ejecutar en el commit.
-- Suite canonica run_pytest_safe.py --level all -> pendiente (debe dar exit 0, sin el rojo clavado).
-- validate --json -> pendiente (0/0).
+- LIVE run contra los hooks reales: `python scripts/check_hook_interpreter.py` -> exit 1, nombra
+  pre-push con la ruta z_scripts inexistente (caza el bug real).
+- Focal: `pytest tests/test_check_hook_interpreter.py -q` -> 8 passed.
+- ruff check -> All checks passed!; ruff format --check -> already formatted.
+- encoding guard sobre archivos tocados -> exit 0.
+- Suite canonica run_pytest_safe.py --level all -> pendiente (debe dar exit 0, tested_commit_sha==HEAD).
+- validate --json -> pendiente (0/0 tras commit).
 
 ## Estado actual
 
-- Fix aplicado y verificado focal. PENDIENTE: gates finales (ruff, suite canonica, validate) ->
-  commit con ID 018b -> mark-ready -> manager-approve -> push (CI vuelve verde).
-
-
-Scope override: Entrega productiva tests/test_agent_controller.py en commit 42e4ee4; e34ae23 archiva AUDIT_WOT-2026-018a.md (limpieza previa separada, no toca codigo). Suite canonica --level all VERDE sobre HEAD e34ae23 (3420 passed, exit 0, tested_commit_sha==HEAD). El scope gate over-captura el diff del commit de limpieza.. Affected files: <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016d.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016e.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-018a.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-016e.md, <REPO_ROOT>/.agent/runtime/memory/archive/observations.2026-07.jsonl, <REPO_ROOT>/prompts/_shared/finding_triage_protocol.md, <REPO_ROOT>/prompts/manager_review.md, <REPO_ROOT>/prompts/orchestrator_launch_builder.md, <REPO_ROOT>/prompts/orchestrator_pipeline.md, <REPO_ROOT>/prompts/orchestrator_session_close_full_audit.md
-
-Manager approved canonical closeout for WOT-2026-018b
+- Implementacion + tests verdes focal. PENDIENTE: commit con ID 016b (PATH saneado) -> re-correr
+  suite canonica -> validate 0/0 -> pre-handoff -> mark-ready -> manager-approve.

@@ -91,6 +91,17 @@ repos:
         pass_filenames: false
         stages: [pre-push, manual]
 
+      # check-hook-interpreter: detecta INSTALL_PYTHON obsoleto en los hooks
+      # generados (repo movido, WOT-2026-016b). Stage manual: un hook automatico
+      # seria circular (el propio hook roto no puede invocar de forma fiable al
+      # check). Ejecutable por tooling de instalacion o bajo demanda.
+      - id: check-hook-interpreter
+        name: check hook interpreter (INSTALL_PYTHON stale path)
+        entry: python scripts/check_hook_interpreter.py
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
       # vulture: verificacion no mutadora, solo manual
       - id: vulture
         name: vulture - dead code detection
