@@ -1164,7 +1164,10 @@ Salidas, en el mismo turno del veredicto:
 
 Pasar `check_encoding_guard.py` sobre el informe antes de declarar la auditoria
 cerrada. Los follow-ups del informe no se ejecutan automaticamente: el humano
-decide si reabrir un ticket o adoptar una mejora.
+decide si reabrir un ticket o adoptar una mejora. Antes de convertir un hallazgo
+en backlog/follow-up, clasificalo con `prompts/_shared/finding_triage_protocol.md`
+(mismo ticket, hotfix, follow-up, ticket nuevo o checkpoint humano); no
+materialices backlog sobre hallazgos sin triage.
 
 ## 12. Estados terminales
 

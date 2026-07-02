@@ -147,6 +147,27 @@ Verifica y etiqueta:
   `REVIEW_DECISION`, `SUPERVISOR_CLOSED`);
 - `execution_log.md` con comandos exactos, resultados y evidencia de gates.
 
+## Paso 4.bis: Triage de hallazgos fuera del contrato
+
+Si durante la review aparece un hallazgo nuevo que no estaba claramente dentro
+del contrato original, aplica `prompts/_shared/finding_triage_protocol.md` antes
+de decidir si es blocker, hotfix, mismo ticket o follow-up.
+
+Regla de review:
+- si bloquea el criterio de aceptacion o es regresion del diff actual, cuenta como
+  blocker del ticket actual (`CHANGES` hasta resolverlo);
+- si es bug preexistente que solo impide un gate obligatorio, puede tratarse como
+  hotfix de desbloqueo solo si cumple el protocolo (1-3 lineas, bajo riesgo, test
+  aislado, sin contrato/arquitectura nueva); si no, exige ticket nuevo;
+- si es deuda preexistente que no bloquea el deliverable, no contamines el
+  veredicto: registralo como sugerencia/backlog con evidencia;
+- si requiere ampliar contrato, FLT, arquitectura o superficie nueva, no lo metas
+  en el ticket actual: `CHANGES` solo si era necesario para cumplir el contrato;
+  si no, follow-up/Contract Formation.
+
+Incluye en el informe de salida la decision de triage cuando haya hallazgos de
+scope dudoso.
+
 ## Paso 5: Decision
 Emite uno de estos veredictos:
 

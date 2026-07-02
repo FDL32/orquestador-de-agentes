@@ -91,6 +91,11 @@ Si aparece uno de esos casos:
 - registralo en `execution_log.md` como hallazgo de portabilidad/legacy;
 - propone follow-up en vez de ampliar el scope del ticket actual.
 
+Para cualquier hallazgo nuevo de scope dudoso (no solo legacy), clasifica con
+`prompts/_shared/finding_triage_protocol.md` ANTES de tocar codigo/memoria/backlog:
+decide si es mismo ticket, hotfix de desbloqueo, follow-up, ticket nuevo o
+checkpoint humano. No amplies el scope en caliente.
+
 Registra en `execution_log.md`:
 - seams confirmados;
 - hallazgos relevantes;

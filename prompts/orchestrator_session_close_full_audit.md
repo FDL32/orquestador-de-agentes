@@ -80,6 +80,22 @@ Esta es la barrera critica que el flujo anterior omitia: la salida del Builder n
    - `skills/systematic-debugging/SKILL.md`: si la sesion agoto intentos de debug, revisa `execution_log.md` por marcadores de escalado (tope de 3 intentos); un cierre sobre premisa no resuelta es bandera.
    - `prompts/manager_review.md`: confirma que la verificacion mecanica del Manager dispatcho por deliverable_type (ruff/pytest si code|mixed; validate+encoding si docs|research|analysis). Aplicar el gate equivocado invalida la review.
 
+5.bis Triage obligatorio de hallazgos nuevos antes de memoria/backlog. Aplica
+   `prompts/_shared/finding_triage_protocol.md` a cada hallazgo del Bloque 2 antes
+   de convertirlo en accion:
+   - mismo ticket solo si bloquea el criterio de aceptacion o es regresion del
+     diff actual;
+   - hotfix autonomo solo para bug preexistente que bloquea gate obligatorio,
+     1-3 lineas, bajo riesgo, test aislado y sin cambio de contrato;
+   - backlog/follow-up si es deuda real con evidencia pero no bloquea el
+     deliverable;
+   - Contract Formation/ticket nuevo si requiere cambiar contrato, FLT,
+     arquitectura o superficie;
+   - checkpoint humano si es seguridad/PII/remoto, irreversible o alto
+     blast-radius.
+   Reporta la clasificacion elegida y la evidencia. No promociones memoria ni
+   registres backlog sobre hallazgos sin triage.
+
 PUNTO DE CONTROL antes del Bloque 3: la sesion debe estar VERDE y RECONCILIADA. Si el Bloque 2 destapa un false-green o una contradiccion, vuelve al Builder; NO continues.
 
 == BLOQUE 3: CIERRE CANONICO ==
