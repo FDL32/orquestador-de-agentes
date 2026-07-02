@@ -1,137 +1,133 @@
-# Work Plan - WOT-2026-016d
+# Work Plan - WOT-2026-016f
 
 ## Metadata
-- **ID:** WOT-2026-016d
+- **ID:** WOT-2026-016f
 - **Estado:** APPROVED
 - **deliverable_type:** analysis
-- **Titulo:** Redactar PII de la historia del MOTOR con git-filter-repo (email autoria -> noreply + identidad rota + rutas username)
+- **Titulo:** Publicar la redaccion del MOTOR al remoto GitHub (force-push coordinado + sync ref-a-ref: reemplazar historia vieja con PII por la historia limpia de 016d)
 - **Asignado a:** Builder
 - **delivery_authority:** repo_motor
-- **Type:** HISTORY (degradado de 'history' a 'analysis' por limitacion del enum del motor -- `_VALID_DELIVERABLE_TYPES = {code, documentation, research, analysis, mixed}` no incluye 'history'; naturaleza real del ticket = reescritura de historia git, no analisis de codigo)
+- **Type:** HISTORY/publicacion (degradado de 'history' a 'analysis' por el enum del motor -- `_VALID_DELIVERABLE_TYPES = {code, documentation, research, analysis, mixed}` no incluye 'history'; naturaleza real = publicacion de una reescritura de historia git, no analisis de codigo). Operacion IRREVERSIBLE, PUBLICA, de alto blast-radius: requiere checkpoint humano con GO explicito antes del force-push.
 
 ## Objetivo
 
-Reescribir la historia git del MOTOR (799 commits en HEAD f6eba22) con
-`git-filter-repo` para redactar 3 categorias de PII de autoria y de ruta,
-verificables con `git log --all` sobre el repo resultante:
+Publicar en el remoto GitHub `https://github.com/FDL32/orquestador-de-agentes.git`
+la historia local LIMPIA que 016d dejo `READY_FOR_REVIEW` (main @ `26958b7`,
+solo metadata noreply, username solo en 6 fixtures allowlisted), reemplazando la
+historia VIEJA sin redactar que el remoto aun expone. Es el ULTIMO paso vivo del
+motor: 016d redacto en local; 016f PUBLICA esa limpieza. 016f NO redacta.
 
-1. Mailmap de autoria: mapear el email `<OWNER_EMAIL>` (aparece en 1476
-   registros de metadata de commit segun `git log --all --format='%ae%n%ce'
-   | grep -c <OWNER_EMAIL>`) al alias GitHub
-   `128408907+FDL32@users.noreply.github.com`. Es un MAPEO (no un borrado):
-   preserva la autoria via el alias publico de GitHub y protege el email
-   real del dueno del repo.
-2. Mailmap de identidad rota: mapear `<BROKEN_ID_EMAIL>` en METADATA de commit (104
-   registros de autoria/committer, verificable con el mismo comando de
-   conteo sobre `%ae`/`%ce`) al mismo noreply de GitHub.
-3. Replace-text de ruta con username: reemplazar la ruta que contiene el
-   username `***REDACTED***` (85 commits detectados, con 6 variantes de separador/case:
-   `Users\***REDACTED***`, `Users/***REDACTED***`, `users\***REDACTED***`, `users/***REDACTED***`, y las 2 variantes
-   analogas con separador mixto) por un placeholder neutro en cada blob y
-   cada mensaje de commit del historial donde aparezca la ruta.
-
-Los 135 tags existentes se reescriben por defecto (comportamiento estandar
-de `git-filter-repo`, que reescribe refs/tags salvo `--no-tag-rename` o
-similar).
+Alcance confirmado por checkpoint READ-ONLY (2026-07-02) + decision humana:
+la PII vieja (`<OWNER_EMAIL>`, `<BROKEN_ID_EMAIL>`, rutas username) vive en el remoto
+NO solo en `main`, sino tambien en 2 ramas remotas huerfanas
+(`chore/deps-bump-2026-06-01`, `chore/deps-bump-2026-07-01`) y en los 66 tags
+remotos (cada tag cuelga de la historia vieja). Un force-push de solo `main` NO
+limpia el remoto. Decision humana: SYNC COMPLETO CONTROLADO ref-a-ref con lease
+(no `--mirror` ciego).
 
 ## Decision Arquitectonica
 
-Se usa `git-filter-repo` (no `git filter-branch`, deprecado y mas lento)
-porque soporta mailmap nativo (`--mailmap`) para (1) y (2) en una sola
-pasada, y `--replace-text` para (3) en la misma invocacion o en una pasada
-subsiguiente sobre el resultado. Las 2 categorias de mailmap (email real +
-identidad rota) se resuelven con el MISMO mecanismo (`--mailmap`) porque
-ambas son sustituciones de autoria; la ruta con username es un problema de
-contenido/blob distinto y usa `--replace-text`.
-
-Divergencia consciente con WOT-2026-016g (analogo en el repo WORKSPACE
-hermano, ya COMPLETED): alli se BORRO `<OWNER_EMAIL>` de la historia.
-Aqui se MAPEA a un alias noreply en vez de borrar, para preservar la
-autoria real del dueno del repo via el alias publico de GitHub. Ambos
-enfoques son validos para su contexto; esta decision queda registrada aqui
-y NO bloquea el ticket.
+- El remoto se alinea al local via operaciones ref-a-ref, NO `--mirror` a ciegas
+  (`--mirror` queda prohibido sin el inventario ref-a-ref, que ya existe:
+  `C:/tmp/016f_ref_inventory_<ts>.txt`). Cada ref divergente se decide
+  explicitamente.
+- `main`: force-replace con `--force-with-lease=refs/heads/main:<SHA_REMOTO>`
+  (aborta si el remoto cambio desde el snapshot).
+- 2 ramas remotas con PII (`chore/deps-bump-*`): se BORRAN del remoto (no existen
+  en local; contienen historia vieja con PII). Borrado explicito por ref.
+- Tags: los 66 tags remotos apuntan a la historia vieja; se reemplazan por los
+  135 tags locales limpios. Sin `--force` ciego a `--tags`; comparacion tag-a-tag
+  o lease por ref (ver Fase 3).
+- Ramas locales `backup/wt-2026-242a-pre-squash` y `regression-test-003d`: son
+  local-only y PII-free; se decide con el humano si se publican o se dejan solo
+  en local (por defecto NO se publican salvo GO explicito).
+- Repo privatizado (`private=true`, confirmado 2026-07-02) ANTES del push para
+  cortar la exposicion publica viva detectada en el checkpoint. El force-push
+  MITIGA hacia adelante; NO borra copias externas/cache/indexes ya filtradas
+  mientras el repo fue publico.
 
 ## Fases
 
-### Fase 1 - Preparacion y verificacion de conteos
-- Confirmar en el arbol de trabajo actual (HEAD f6eba22, `git status` limpio)
-  los 3 conteos citados en el Objetivo con comandos literales sobre
-  `git log --all --format='%ae|%ce|%an|%cn'` (autoria) y sobre el contenido
-  versionado para la ruta con username.
-- Preparar el archivo de mailmap con las 2 entradas (email real, identidad
-  rota) apuntando al mismo alias noreply.
-- Preparar la regla de `--replace-text` con las 6 variantes de la ruta.
+### Fase 0 - Preflight y checkpoint READ-ONLY (COMPLETADO 2026-07-02)
+- Preflight FAIL-CLOSED sobre `26958b7`: validate 0/0, arbol limpio, fsck exit 0,
+  metadata solo noreply en `main`, gh 2.92 autenticado. VERDE.
+- Checkpoint duro READ-ONLY: fetch aislado a `refs/remote-snapshot/*` (main NUNCA
+  tocado), snapshot `C:/tmp/016f_remote_snapshot_<ts>.txt`, inventario ref-a-ref
+  `C:/tmp/016f_ref_inventory_<ts>.txt`, branch protection (main NO protegida, 404),
+  re-scan username anclado (0 fuera de allowlist). VERDE.
+- Divergencia confirmada: LOCAL `26958b7` vs REMOTO `60baa66`, sin merge-base =
+  REEMPLAZO, no fast-forward.
 
-### Fase 2 - Ejecucion de git-filter-repo
-- Ejecutar `git-filter-repo` con `--mailmap <archivo>` y `--replace-text
-  <archivo>` sobre una copia de trabajo del repo (NO sobre el remoto; sin
-  push en este ticket).
-- Confirmar que los 135 tags fueron reescritos (no eliminados) via
-  `git tag | wc -l` antes/despues.
+### Fase 1 - GO packet + checkpoint humano
+- Presentar al humano: SHA local vs remoto, confirmacion de divergencia, snapshot,
+  inventario ref-a-ref, plan de push exacto (comandos literales por ref), estado
+  de proteccion, re-verificacion de limpieza. NO ejecutar sin GO explicito.
 
-### Fase 3 - Verificacion post-reescritura
-- `git log --all --format='%ae%n%ce'` no debe devolver ninguna coincidencia
-  de `<OWNER_EMAIL>` ni de `<BROKEN_ID_EMAIL>` en METADATA de commit.
-- El contenido con la ruta `***REDACTED***` (6 variantes) no debe aparecer en ningun
-  blob versionado ni mensaje de commit tras la reescritura
-  (`git grep` sobre `git rev-list --all`).
-- Las fixtures de test declaradas como Non-goals permanecen intactas y
-  verificables por conteo exacto (ver Non-goals).
+### Fase 2 - Force-push de `main` (ULTIMA accion escritora sobre historia; solo tras GO)
+- `git push --force-with-lease=refs/heads/main:<SHA_REMOTO> origin main`.
+
+### Fase 3 - Sync del resto de refs (solo tras GO, tras Fase 2)
+- Borrar ramas remotas con PII: `git push origin --delete chore/deps-bump-2026-06-01 chore/deps-bump-2026-07-01`.
+- Tags: comparar tag-a-tag local vs snapshot; empujar los 135 limpios y borrar del
+  remoto cualquier tag que ya no exista en local o que diverja, por ref con lease
+  o comparacion previa. Registrar la opcion usada.
+
+### Fase 4 - Verificacion post-push (el push NO es el final)
+- Re-clonar el remoto LIMPIO a un dir temporal fresco (no el local) y escanear PII:
+  metadata solo noreply, username anclado 0 fuera de allowlist, fsck limpio,
+  gitleaks == baseline. Verificar SOBRE EL CLON.
+- Confirmar que las 2 ramas PII ya no existen en el remoto y que los tags apuntan
+  a la historia limpia.
+- Limpiar en el LOCAL los refs `refs/remote-snapshot/*` y `refs/remotes/origin/*`
+  que trajeron la PII vieja al object-store, y `gc --prune=now` para no retener PII.
+- Mantener el repo privado. Decidir (separado) si se anade branch protection a main.
 
 ## Criterios de aceptacion
 
 Criterios binarios (DoD):
 
-1. `git log --all --format='%ae%n%ce' | grep -c <OWNER_EMAIL>` devuelve
-   `0` sobre el repo reescrito.
-2. `git log --all --format='%ae%n%ce' | grep -c <BROKEN_ID_EMAIL>` devuelve `0` sobre
-   el repo reescrito (identidad rota en METADATA).
-3. POST-CHECK DIFERENCIADO (RE-FIRMA 2026-07-01, RD1 supersede el criterio
-   original "0 global"): la ruta con el username aparece 0 veces FUERA de la
-   allowlist de 4 fixtures de redaccion, y PRESENTE (byte-identica al backup)
-   DENTRO de esos 4 fixtures. Detalle:
-   - Allowlist de 4 (el blob-callback NUNCA toca): `tests/test_persistence_redaction.py`,
-     `tests/test_redact.py`, `tests/unit/test_collect_system_health.py`,
-     `tests/unit/test_project_root_resolution.py` -> ruta username PRESENTE.
-   - Todo lo demas (incl. `tests/test_claude_memory_mirror.py`, redactado con
-     redaccion coordinada ruta+slug por RD3) -> ruta username y slug `Users-<user>-` = 0.
-   Motivo del cambio: aplicar "0 global incl. tests/" volveria tautologicos los
-   asserts `assert '...<user>...' not in output` de los 4 fixtures y degradaria
-   silenciosamente la logica de seguridad testeada.
-4. `git tag | wc -l` en el repo reescrito reporta 135 (mismos tags,
-   reescritos, no eliminados).
-5. Las fixtures de test (`Users\name`, `Users\x`, `<BROKEN_ID_EMAIL>` en CONTENIDO
-   de `tests/`, y la ruta username en los 4 fixtures allowlisted de RD2)
-   permanecen intactas: mismo conteo antes y despues de la reescritura,
-   byte-identicas al backup.
+1. `origin/main` (tras re-fetch limpio o re-clone) == `26958b7`; `git log` del
+   clon fresco no contiene `<OWNER_EMAIL>` ni `<BROKEN_ID_EMAIL>` en metadata (solo
+   noreply).
+2. Las ramas remotas `chore/deps-bump-2026-06-01` y `chore/deps-bump-2026-07-01`
+   ya NO existen en el remoto (`git ls-remote --heads origin` no las lista).
+3. Los tags del remoto apuntan a la historia limpia (0 tags remotos reachable
+   desde `60baa66` que sigan en el remoto; los tags publicados == los 135 locales
+   limpios byte-identicos).
+4. Sobre un RE-CLONE fresco del remoto: username anclado (5 formas) = 0 fuera de
+   la allowlist de 6 fixtures; fsck exit 0; gitleaks == baseline (0 delta).
+5. El repo permanece `private=true`.
+6. El force-push se ejecuto con `--force-with-lease` (o borrado explicito por ref),
+   NUNCA `--mirror` a ciegas; cada ref divergente decidido explicitamente.
 
 ## Files Likely Touched
 
-- N/A -- este ticket no produce codigo de aplicacion ni modifica archivos
-  del arbol de trabajo actual. El "entregable" es la historia git
-  reescrita (commits, blobs, tags) del propio repositorio MOTOR, no un
-  diff de archivos de contenido. Los comandos de `git-filter-repo` operan
-  sobre el `.git/` del repo, fuera del ambito de `Files Likely Touched`
-  tradicional.
+- N/A -- este ticket no produce codigo de aplicacion ni modifica archivos del
+  arbol de trabajo. El "entregable" es el estado del remoto GitHub (refs
+  publicados: main, tags, ramas borradas), no un diff de archivos. Los comandos
+  operan sobre el remoto y sobre `.git/`, fuera del ambito de `Files Likely
+  Touched` tradicional. Scope-override esperado (deliverable_type=HISTORY).
 
 ## Read/inspect only
 
-- `.git/` (historia completa, 799 commits, para auditoria de conteos antes
-  y despues de la reescritura).
-- `git log --all` (fuente de verdad para los 3 conteos del Objetivo).
+- `.git/` local (historia limpia @ `26958b7`, fuente de verdad de lo que se publica).
+- `refs/remote-snapshot/*`, `refs/remotes/origin/*` (snapshot READ-ONLY del remoto
+  viejo, para comparacion ref-a-ref; se limpian en Fase 4).
+- `C:/tmp/016f_remote_snapshot_<ts>.txt`, `C:/tmp/016f_ref_inventory_<ts>.txt`
+  (evidencia local del checkpoint; NO versionar, tienen rutas locales).
 
 ## Non-goals
 
-- NO ejecutar `git-filter-repo` sobre el repo WORKSPACE hermano (ese es
-  WOT-2026-016g, YA COMPLETED, con su propia decision de borrar en vez de
-  mapear).
-- NO hacer `git push` en ningun momento de este ticket; la reescritura
-  ocurre en un repo de trabajo local, sin publicar el resultado.
-- NO tocar backups existentes (`.agent/backups/` u otros) ni crear uno
-  nuevo como parte de este ticket.
-- NO redactar las fixtures de test que NO son PII real: `Users\name`,
-  `Users\x`, y las 3 apariciones de `<BROKEN_ID_EMAIL>` EN CONTENIDO de `tests/`
-  (configuraciones de `git config user.email` usadas como fixture, no
-  identidad real).
-- NO mezclar esta reescritura con ningun ticket de codigo/mixed pendiente
-  del motor; este ticket es exclusivamente de reescritura de historia.
+- NO redactar aqui. Si el local NO estuviera limpio -> ABORTAR (eso seria 016d).
+  016f solo PUBLICA lo que 016d dejo limpio.
+- NO `git pull`/`merge`/fetch-into-main NUNCA (reintroduciria PII vieja en `main`).
+  El fetch de comparacion va siempre a namespace aislado.
+- NO `--mirror` a ciegas. NO `push --force origin --tags` masivo sin comparacion
+  previa (no respeta lease).
+- NO force-push sin checkpoint humano y GO explicito. El force-push es la ULTIMA
+  accion escritora sobre historia.
+- NO publicar las ramas locales `backup/*` ni `regression-test-003d` salvo GO
+  explicito del humano.
+- NO cerrar 016d a COMPLETED antes de que el push este verificado sobre un clon
+  fresco (016d se mantiene READY_FOR_REVIEW como red de seguridad; su
+  `--manager-approve` va DESPUES del push verificado, por decision humana).
