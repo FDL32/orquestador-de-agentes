@@ -2276,6 +2276,12 @@ class TestAgentControllerEvidence:
 
         monkeypatch.setattr(agent_controller, "_MOTOR_ROOT", motor)
         monkeypatch.setattr(agent_controller, "PROJECT_ROOT", dest)
+        # WOT-2026-018b: aislar del work_plan.md REAL. Sin este mock, el test lee el
+        # deliverable_type del work_plan del repo; si es documentation/analysis/research,
+        # _check_implementation_evidence retorna antes de emitir "No commit evidence"
+        # (non_code_ticket -> early return) y el assert falla. El test hermano
+        # test_semantic_parity_positive ya usa este mismo patron.
+        monkeypatch.setattr(agent_controller, "read_file", lambda x: "")
 
         errors = agent_controller._check_implementation_evidence("WT-2026-999")
 

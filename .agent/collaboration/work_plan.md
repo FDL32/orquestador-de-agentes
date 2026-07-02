@@ -1,99 +1,80 @@
-# Work Plan - WOT-2026-018a
+# Work Plan - WOT-2026-018b
 
 ## Metadata
-- **ID:** WOT-2026-018a
-- **Estado:** COMPLETED
-- **deliverable_type:** documentation
-- **Titulo:** Protocolo canonico de triage de hallazgos (finding_triage_protocol) + integracion en los 4 prompts de autonomia
+- **ID:** WOT-2026-018b
+- **Estado:** APPROVED
+- **deliverable_type:** code
+- **Titulo:** Aislar test_negative_no_commit_no_diff del work_plan.md real (hotfix preexisting gate unblock: CI rojo clavado en main)
 - **Asignado a:** Builder
 - **delivery_authority:** repo_motor
 
 ## Objetivo
 
-Instalar un protocolo canonico y autonomo de triage de hallazgos: cuando durante
-un ticket, review, cierre o pipeline aparece un hallazgo nuevo de scope dudoso,
-el agente clasifica (mismo ticket / hotfix de desbloqueo / follow-up / ticket
-nuevo-Contract Formation / incidente PII-remoto / doc-memoria) ANTES de tocar
-codigo, memoria o backlog, y solo pide GO humano cuando el protocolo clasifique
-"hotfix urgente", "cambio irreversible/alto blast-radius" o incidente
-seguridad/PII/remoto.
+Desbloquear el gate de CI (suite canonica verde en main), que quedo CLAVADO en rojo:
+`tests/test_agent_controller.py::TestAgentControllerEvidence::test_negative_no_commit_no_diff`
+falla de forma determinista porque lee el `work_plan.md` REAL para calcular
+`deliverable_type`. Tras cerrar 018a (documentation), el work_plan committed en HEAD
+es documentation -> `non_code_ticket=True` -> `_check_implementation_evidence` retorna
+antes de emitir "No commit evidence" (early return, agent_controller.py ~L1705) -> el
+assert de L2282 falla en cada CI run mientras el ultimo ticket committed sea
+documentation/analysis/research.
 
-Motivacion: hoy existen piezas parciales (regla de no-mezclar-follow-ups en
-launch_builder, scope creep en manager_review, materializacion de backlog en
-pipeline, pause/resume en el controller) pero NO una matriz de decision explicita
-y unica. Este ticket la crea como shared y la referencia desde los 4 prompts que
-gobiernan la autonomia del agente, cubriendo las 4 fases: ejecucion (Builder),
-review (Manager), cierre de sesion y pipeline.
-
-Criterio verificable de exito: `grep -c finding_triage_protocol` devuelve 1 en cada
-uno de los 4 prompts; el shared existe con 0 bytes non-ascii; `check_encoding_guard.py`,
-`git diff --check` y `validate --json` cierran verdes (ver Criterios de aceptacion).
+Clasificacion (finding_triage_protocol): bug PREEXISTENTE que bloquea gate obligatorio,
+fix de 1 linea, bajo riesgo, SOLO test, sin cambio de contrato/arquitectura ni
+produccion -> "preexisting gate unblock". El test hermano `test_semantic_parity_positive`
+ya usa el mismo patron de aislamiento (mockear `read_file`).
 
 ## Decision Arquitectonica
 
-- Shared canonico nuevo en `prompts/_shared/finding_triage_protocol.md` con
-  `contract_id: cid-finding-triage-v0` (sigue el patron de `loop_hard_stop.md`).
-- Es PROTOCOLO DE DECISION, no barrera ejecutable: NO se anade gate automatico ni
-  test de `contract_id` en esta pasada (seria scope creep; no hay consumidor que
-  lo lea todavia). La matriz guia; no bloquea por si sola.
-- Se referencia desde los 4 prompts en el punto donde cada rol decide que hacer
-  con un hallazgo, no como bloque nuevo: launch_builder (regla de scope, Fase 0),
-  manager_review (Paso 4.bis antes de la Decision), session_close (paso 5.bis del
-  Bloque 2, antes del Bloque 3), pipeline (materializacion de follow-ups).
+- Causa raiz = defecto de AISLAMIENTO del test, NO de produccion. `_check_implementation_evidence`
+  se comporta correctamente; el test simplemente no aisla su lectura del work_plan real.
+- Fix = mockear `agent_controller.read_file` a `lambda x: ""` tras los setattr de roots, para
+  que `deliverable_type` sea vacio (-> non_code_ticket=False -> el flujo llega a "No commit
+  evidence"). Identico patron que el hermano en tests/test_agent_controller.py L410.
+- NO se toca produccion (agent_controller.py, bus/evidence.py): ampliarla seria scope creep.
 
 ## Fases
 
-### Fase 1 - Shared canonico
-- Crear `prompts/_shared/finding_triage_protocol.md`: matriz de 7 casos +
-  autonomia permitida + GO humano obligatorio + evidencia minima + nota operativa
-  motor-self (`AGENT_PROJECT_ROOT` / guard `is_motor_code_only` para pause/resume).
+### Fase 1 - Fix del aislamiento
+- En `test_negative_no_commit_no_diff`, anadir
+  `monkeypatch.setattr(agent_controller, "read_file", lambda x: "")` tras los setattr de
+  `_MOTOR_ROOT`/`PROJECT_ROOT`, con comentario del porque.
 
-### Fase 2 - Integracion en los 4 prompts
-- `manager_review.md`: Paso 4.bis (triage antes del veredicto CHANGES/hotfix/follow-up).
-- `orchestrator_session_close_full_audit.md`: paso 5.bis del Bloque 2 (triage antes
-  de convertir hallazgos en memoria/backlog). Numeracion 5.bis para no colisionar
-  con el "6." del Bloque 3.
-- `orchestrator_launch_builder.md`: referencia en la regla de scope de Fase 0.
-- `orchestrator_pipeline.md`: referencia en la materializacion de follow-ups.
-
-### Fase 3 - Verificacion documental
-- encoding guard exit 0; `git diff --check` limpio; `validate --json` 0/0;
-  los 4 prompts referencian el shared (`grep -c finding_triage_protocol` == 1 cada uno).
+### Fase 2 - Verificacion (barrera FAIL-sin/PASS-con)
+- CON el mock: el test pasa (ambos asserts: "No commit evidence" + "No implementation evidence").
+- SIN el mock: el test vuelve a fallar cuando el work_plan real es documentation/analysis
+  (demuestra que el mock es la barrera, no cosmetico).
+- La clase entera `TestAgentControllerEvidence` sigue verde (no rompe hermanos).
 
 ## Criterios de aceptacion
 
 Criterios binarios (DoD):
 
-1. `prompts/_shared/finding_triage_protocol.md` EXISTE, ASCII limpio (0 bytes
-   non-ascii, sin BOM), con la matriz de 7 casos y `contract_id: cid-finding-triage-v0`.
-2. Los 4 prompts (launch_builder, manager_review, session_close, pipeline)
-   referencian el shared: `grep -c finding_triage_protocol` == 1 en cada uno.
-3. Sin colision de numeracion en session_close (el triage es 5.bis, el Bloque 3
-   sigue en 6.).
-4. `check_encoding_guard.py` exit 0 sobre los 5 archivos.
-5. `git diff --check` limpio.
-6. `validate --json --project-root <motor>` = 0 errors / 0 warnings.
-7. Sin gate automatico nuevo ni test de contract_id (fuera de scope, evita creep).
+1. `test_negative_no_commit_no_diff` PASA independientemente del `deliverable_type` del
+   work_plan.md real (verificado con work_plan committed = documentation).
+2. BARRERA: sin el mock `read_file`, el test falla con work_plan real documentation/analysis
+   (FAIL-sin), y pasa con el mock (PASS-con). Ambos estados verificados.
+3. La clase `TestAgentControllerEvidence` completa sigue verde (8 passed).
+4. NO se toca produccion (`agent_controller.py`, `bus/evidence.py`): solo el archivo de test.
+5. `ruff check` + `ruff format --check` verdes sobre el test tocado.
+6. Suite canonica `run_pytest_safe.py --level all` exit 0 (el rojo clavado desaparece).
+7. `validate --json --project-root <motor>` = 0 errors / 0 warnings.
 
 ## Files Likely Touched
 
 ### repo_motor
-- `prompts/_shared/finding_triage_protocol.md` (nuevo)
-- `prompts/manager_review.md`
-- `prompts/orchestrator_session_close_full_audit.md`
-- `prompts/orchestrator_launch_builder.md`
-- `prompts/orchestrator_pipeline.md`
+- `tests/test_agent_controller.py`
 
 ## Read/inspect only
 
-- `prompts/_shared/loop_hard_stop.md` (patron de `contract_id` para shared).
-- `.agent/agent_controller.py` (guard `is_motor_code_only`, flags pause/resume) para
-  la nota operativa motor-self.
+- `.agent/agent_controller.py` (`_check_implementation_evidence`, ~L1697-1733: el early return
+  por non_code_ticket que causa el sintoma).
+- `tests/test_agent_controller.py` L405-411 (patron de aislamiento del test hermano
+  `test_semantic_parity_positive`).
 
 ## Non-goals
 
-- NO anadir gate automatico ni test que valide `contract_id` de `_shared/` (4 de 6
-  shared no lo tienen; sin consumidor que lo lea = scope creep).
-- NO tocar `agent_controller.py` ni codigo productivo: es solo superficie de prompts.
-- NO reescribir la numeracion completa del prompt de cierre (solo 5.bis, cambio minimo).
-- NO mezclar con el follow-up del test-isolation (evidence-test-leaks; ese es otro ticket).
+- NO tocar `_check_implementation_evidence` ni la logica de produccion (el comportamiento en
+  produccion es correcto; el gap es del test). Ampliarla seria scope creep.
+- NO anadir otros mocks ni refactorizar el test mas alla de la linea de aislamiento.
+- NO mezclar con 016b (hook obsoleto) ni otros tickets de la serie.
