@@ -1,7 +1,7 @@
 # Execution Log - WOT-2026-016d
 
 **Ticket:** WOT-2026-016d - redactar PII de la historia del MOTOR con git-filter-repo
-**Estado:** IN_PROGRESS
+**Estado:** READY_FOR_REVIEW
 **HEAD al inicio:** f6eba22
 
 ---
@@ -460,3 +460,6 @@ POST-CHECKS EN EL REAL (post-gc):
 ESTADO: motor real reescrito y limpio. Artefactos de colaboracion PII-free re-aplicados. NO mark-ready
 (pendiente NUEVA triple review: Rev1 + Rev2 fresh-context G3 + Manager). NO push (016f gobierna el
 force-push coordinado; el remoto GitHub sigue con historia VIEJA).
+
+
+Scope override: deliverable_type=HISTORY: el work_plan declara Files Likely Touched=N/A (la entrega es la historia git reescrita en .git/, no un diff de arbol). El scope gate compara contra un diff de arbol inaplicable a una reescritura de historia; commit 88ae76e solo re-aplica los 7 artefactos de colaboracion PII-free. Triple review verde: Rev1+Rev2/G3+Manager canonico APROBADO (decision_WOT-2026-016d.json).. Affected files: <REPO_ROOT>/.agent/agent_controller.py, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016e.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-017a.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-016e.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-017a.md, <REPO_ROOT>/.agent/runtime/memory/archive/observations.2026-07.jsonl, <REPO_ROOT>/.agent/scope_gate.py, <REPO_ROOT>/.gitignore, <REPO_ROOT>/tests/test_opencode_config_stability.py, <REPO_ROOT>/tests/unit/test_scope_gate.py, <REPO_ROOT>/tradicional.
