@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WOT-2026-018a
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** documentation
 - **Titulo:** Protocolo canonico de triage de hallazgos (finding_triage_protocol) + integracion en los 4 prompts de autonomia
 - **Asignado a:** Builder

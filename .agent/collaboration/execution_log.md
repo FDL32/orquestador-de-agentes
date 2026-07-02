@@ -1,7 +1,7 @@
 # Execution Log - WOT-2026-018a
 
 **Ticket:** WOT-2026-018a - protocolo canonico de triage de hallazgos + integracion en 4 prompts de autonomia
-**Estado:** IN_PROGRESS
+**Estado:** COMPLETED
 **HEAD al inicio:** 3522c9d
 
 > El execution_log de WOT-2026-016f (publicacion al remoto, COMPLETED) se preserva
@@ -64,3 +64,8 @@ checks passed.
 
 - Shared + integracion en 4 prompts EJECUTADO y verificado (documental).
 - Commit unico e13b1cf (10 archivos: 5 prompts + bus). PENDIENTE: mark-ready -> manager-approve.
+
+
+Scope override: deliverable_type=documentation. Mi commit e829e2a toca SOLO los 5 prompts (FLT repo_motor) + 5 artefactos de bus de 018a. Los archivos que el gate lista (agent_controller.py, scope_gate.py, AUDIT/PLAN 016d/016e, test_scope_gate.py, observations archive) NO estan en e829e2a (git show --name-only lo confirma); son over-captura del scope gate sobre base de diff amplia (bug conocido motor-markready-scope-overcaptura-arbol-limpio, mismo patron citado en el scope-override de 016d). Arbol limpio.. Affected files: <REPO_ROOT>/.agent/agent_controller.py, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016d.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016e.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-016e.md, <REPO_ROOT>/.agent/runtime/memory/archive/observations.2026-07.jsonl, <REPO_ROOT>/.agent/scope_gate.py, <REPO_ROOT>/prompts/_shared/finding_triage_protocol.md, <REPO_ROOT>/tests/unit/test_scope_gate.py
+
+Manager approved canonical closeout for WOT-2026-018a
