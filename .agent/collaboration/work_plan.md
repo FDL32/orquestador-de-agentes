@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WOT-2026-016b
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Titulo:** Hook pre-commit/pre-push con INSTALL_PYTHON obsoleto: detectar/regenerar cuando la ruta del interprete del hook no existe (repo movido)
 - **Asignado a:** Builder

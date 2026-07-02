@@ -1,7 +1,7 @@
 # Execution Log - WOT-2026-016b
 
 **Ticket:** WOT-2026-016b - Hook pre-commit/pre-push con INSTALL_PYTHON obsoleto: detectar/regenerar ruta de interprete inexistente (repo movido)
-**Estado:** IN_PROGRESS
+**Estado:** COMPLETED
 **HEAD al inicio:** 65af880
 
 > execution_log de 018b (COMPLETED) preservado en `execution_log_WOT-2026-018b.md`.
@@ -61,3 +61,8 @@
 
 - Implementacion + tests verdes focal. PENDIENTE: commit con ID 016b (PATH saneado) -> re-correr
   suite canonica -> validate 0/0 -> pre-handoff -> mark-ready -> manager-approve.
+
+
+Marked ready by Builder
+
+Manager approved canonical closeout for WOT-2026-016b
