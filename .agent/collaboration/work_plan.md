@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WOT-2026-018b
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Titulo:** Aislar test_negative_no_commit_no_diff del work_plan.md real (hotfix preexisting gate unblock: CI rojo clavado en main)
 - **Asignado a:** Builder

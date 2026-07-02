@@ -1,7 +1,7 @@
 # Execution Log - WOT-2026-018b
 
 **Ticket:** WOT-2026-018b - aislar test_negative_no_commit_no_diff del work_plan.md real (preexisting gate unblock)
-**Estado:** IN_PROGRESS
+**Estado:** COMPLETED
 **HEAD al inicio:** 17f4c9f
 
 > work_plan/execution_log de 018a (COMPLETED) preservados en
@@ -51,3 +51,8 @@
 
 - Fix aplicado y verificado focal. PENDIENTE: gates finales (ruff, suite canonica, validate) ->
   commit con ID 018b -> mark-ready -> manager-approve -> push (CI vuelve verde).
+
+
+Scope override: Entrega productiva tests/test_agent_controller.py en commit 42e4ee4; e34ae23 archiva AUDIT_WOT-2026-018a.md (limpieza previa separada, no toca codigo). Suite canonica --level all VERDE sobre HEAD e34ae23 (3420 passed, exit 0, tested_commit_sha==HEAD). El scope gate over-captura el diff del commit de limpieza.. Affected files: <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016d.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016e.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-018a.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-016e.md, <REPO_ROOT>/.agent/runtime/memory/archive/observations.2026-07.jsonl, <REPO_ROOT>/prompts/_shared/finding_triage_protocol.md, <REPO_ROOT>/prompts/manager_review.md, <REPO_ROOT>/prompts/orchestrator_launch_builder.md, <REPO_ROOT>/prompts/orchestrator_pipeline.md, <REPO_ROOT>/prompts/orchestrator_session_close_full_audit.md
+
+Manager approved canonical closeout for WOT-2026-018b
