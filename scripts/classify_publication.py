@@ -149,6 +149,48 @@ REDACTION_PATTERNS = [
 MAX_TEXT_BYTES = 1_000_000
 MAX_REDACTION_TARGETS_PER_FILE = 50
 
+# WOT-2026-016o (H1): REDACTION_PATTERNS matches that are legitimate
+# placeholders/redaction markers must not block the history gate. The list
+# mirrors the placeholder policy proven in the 2026-07 backup batch.
+HISTORY_PII_PLACEHOLDER_PATTERNS = [
+    re.compile(r"(?i)^[a-z]:\\users\\<user>"),
+    re.compile(r"(?i)^[a-z]:\\users\\\[tu_usuario\]"),
+    re.compile(r"^/home/user$"),
+    re.compile(r"^<redacted-email>$"),
+    re.compile(r"@example\.com$", re.IGNORECASE),
+    re.compile(r"@users\.noreply\.github\.com$", re.IGNORECASE),
+    re.compile(r"(?i)^(tu[-_][\w.]*|usuario|user|alias|tu_cuenta)@"),
+    re.compile(r"(?i)^env\.local$"),
+]
+MAX_HISTORY_PII_SAMPLES = 5
+
+
+def _is_pii_placeholder(match_text: str) -> bool:
+    """Before: match from REDACTION_PATTERNS. During: allowlist. After: bool."""
+    return any(p.search(match_text) for p in HISTORY_PII_PLACEHOLDER_PATTERNS)
+
+
+def _mask_pii_sample(match_text: str) -> str:
+    """Return an evidence sample without reproducing the full PII value."""
+    if len(match_text) <= 8:
+        return match_text[:2] + "***"
+    return match_text[:6] + "***" + match_text[-3:]
+
+
+def _collect_blob_pii_samples(text: str) -> list[str]:
+    """Before: blob text. During: REDACTION_PATTERNS minus placeholder allowlist.
+    After: up to MAX_HISTORY_PII_SAMPLES masked evidence samples."""
+    samples: list[str] = []
+    for pattern in REDACTION_PATTERNS:
+        for match in pattern.finditer(text):
+            candidate = match.group(0)
+            if _is_pii_placeholder(candidate):
+                continue
+            samples.append(_mask_pii_sample(candidate))
+            if len(samples) >= MAX_HISTORY_PII_SAMPLES:
+                return samples
+    return samples
+
 
 @dataclass(frozen=True)
 class RepoFiles:
@@ -433,17 +475,9 @@ def _git_show_text(repo_root: Path, object_ref: str) -> str | None:
     return result.stdout[:MAX_TEXT_BYTES]
 
 
-def _scan_history_secrets(repo_root: Path) -> list[dict[str, Any]]:
-    """Scan git history for secret-like content.
-
-    Before:
-        repo_root is a git repo.
-    During:
-        Iterates commits and tracked file snapshots with bounded text reads.
-    After:
-        Returns findings; no repository mutation.
-    """
-    findings: list[dict[str, Any]] = []
+def _collect_history_blob_paths(repo_root: Path) -> dict[str, list[str]]:
+    """Before: repo_root is a git repo. During: rev-list + ls-tree per commit.
+    After: map of blob sha -> repo-relative paths (excluded paths filtered)."""
     blob_paths: dict[str, list[str]] = {}
     for commit in _git_lines(repo_root, "rev-list", "--all"):
         for line in _git_lines(repo_root, "ls-tree", "-r", commit):
@@ -451,17 +485,33 @@ def _scan_history_secrets(repo_root: Path) -> list[dict[str, Any]]:
             meta_parts = meta.split()
             if len(meta_parts) < 3 or not raw_path:
                 continue
-            object_type = meta_parts[1]
-            blob_sha = meta_parts[2]
-            if object_type != "blob":
+            if meta_parts[1] != "blob":
                 continue
-            rel_path = raw_path
-            rel_path = _normalize_path(rel_path)
+            rel_path = _normalize_path(raw_path)
             if _is_excluded(rel_path):
                 continue
-            blob_paths.setdefault(blob_sha, []).append(rel_path)
+            blob_paths.setdefault(meta_parts[2], []).append(rel_path)
+    return blob_paths
 
-    for blob_sha, paths in blob_paths.items():
+
+def _scan_history_secrets(
+    repo_root: Path,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Scan git history for secret-like content.
+
+    Before:
+        repo_root is a git repo.
+    During:
+        Iterates commits and tracked file snapshots with bounded text reads.
+        WOT-2026-016o (H1): the same blob pass also applies REDACTION_PATTERNS
+        (emails, local user paths) with a placeholder allowlist, so PII in old
+        blobs no longer passes the gate silently.
+    After:
+        Returns (secret_findings, pii_findings); no repository mutation.
+    """
+    findings: list[dict[str, Any]] = []
+    pii_findings: list[dict[str, Any]] = []
+    for blob_sha, paths in _collect_history_blob_paths(repo_root).items():
         if all(_is_security_fixture_path(path) for path in paths):
             continue  # fixtures deliberately contain fake secret markers
         if all(path in HISTORY_ACCEPTED_PATHS for path in paths):
@@ -472,7 +522,9 @@ def _scan_history_secrets(repo_root: Path) -> list[dict[str, Any]]:
             if all(_is_publish_allowlisted(path) for path in paths)
             else SECRET_PATTERNS
         )
-        if text is not None and any(pattern.search(text) for pattern in patterns):
+        if text is None:
+            continue
+        if any(pattern.search(text) for pattern in patterns):
             unique_paths = sorted(set(paths))
             findings.append(
                 {
@@ -483,13 +535,33 @@ def _scan_history_secrets(repo_root: Path) -> list[dict[str, Any]]:
                     "evidence": "secret_pattern",
                 }
             )
-    return findings
+        # WOT-2026-016o: PII scan on the same blob (allowlisted placeholders
+        # excluded; samples masked to avoid reproducing the PII itself).
+        # D1: blobs whose every path lives under tests/ are fixtures by design
+        # (mirrors the tree-side redaction_risk suppression).
+        if all(_is_tests_path(path) for path in paths):
+            continue
+        pii_samples = _collect_blob_pii_samples(text)
+        if pii_samples:
+            unique_paths = sorted(set(paths))
+            pii_findings.append(
+                {
+                    "path": unique_paths[0],
+                    "paths": unique_paths,
+                    "scope": "history",
+                    "blob": blob_sha[:12],
+                    "evidence": "redaction_pattern",
+                    "samples": pii_samples,
+                }
+            )
+    return findings, pii_findings
 
 
 def _build_blocked_reasons(
     secret_findings: list[dict[str, Any]],
     tree_findings: list[dict[str, Any]],
     history_findings: list[dict[str, Any]],
+    history_pii_findings: list[dict[str, Any]],
     buckets: dict[str, list[dict[str, Any]]],
     scan_history: bool,
     dirty_during_scan: bool,
@@ -510,6 +582,17 @@ def _build_blocked_reasons(
                 "tree_secret_scan": bool(tree_findings),
                 "history_secret_scan": bool(history_findings),
                 "findings": secret_findings,
+            }
+        )
+    # WOT-2026-016o (H1): PII in old blobs needs a human decision (history
+    # rewrite or explicit acceptance); it is neither a tree redaction nor a
+    # secret, so it gets its own reason and forces human intervention.
+    if history_pii_findings:
+        blocked_reasons.append(
+            {
+                "code": "HISTORY_PII_PENDING",
+                "count": len(history_pii_findings),
+                "paths": sorted({f["path"] for f in history_pii_findings})[:10],
             }
         )
     if buckets["DECIDE"]:
@@ -564,6 +647,7 @@ def _build_blocked_reasons(
 
 def _decide_verdict(
     secret_findings: list[dict[str, Any]],
+    history_pii_findings: list[dict[str, Any]],
     buckets: dict[str, list[dict[str, Any]]],
     scan_history: bool,
     dirty_during_scan: bool,
@@ -587,7 +671,8 @@ def _decide_verdict(
         for item in buckets["EXCLUDE_TRACKED"]
         if item["path"] not in RUNTIME_KEEP_TRACKED
     ]
-    if buckets["DECIDE"] or tracked_pending_for_verdict:
+    # WOT-2026-016o: PII en historia exige decision humana (rewrite/aceptar).
+    if buckets["DECIDE"] or tracked_pending_for_verdict or history_pii_findings:
         return "DECIDE_PENDING"
     if buckets["PUBLISH_WITH_REDACTIONS"]:
         return "LISTO_CON_REDACTIONS"
@@ -633,7 +718,9 @@ def build_manifest(
         for rel_path in sorted(files.tracked | files.untracked)
     ]
     tree_findings = _scan_tree_secrets(root, files, text_cache)
-    history_findings = _scan_history_secrets(root) if scan_history else []
+    history_findings, history_pii_findings = (
+        _scan_history_secrets(root) if scan_history else ([], [])
+    )
     status_after = _git_status(root)
     head_after = _git_head(root)
     dirty_during_scan = status_before != status_after
@@ -653,6 +740,7 @@ def build_manifest(
         secret_findings,
         tree_findings,
         history_findings,
+        history_pii_findings,
         buckets,
         scan_history,
         dirty_during_scan,
@@ -666,6 +754,7 @@ def build_manifest(
     )
     verdict = _decide_verdict(
         secret_findings,
+        history_pii_findings,
         buckets,
         scan_history,
         dirty_during_scan,
@@ -694,6 +783,11 @@ def build_manifest(
             "enabled": scan_history,
             "ok": not history_findings,
             "findings": history_findings,
+        },
+        "history_pii_scan": {
+            "enabled": scan_history,
+            "ok": not history_pii_findings,
+            "findings": history_pii_findings,
         },
         "redactions_required": bool(buckets["PUBLISH_WITH_REDACTIONS"]),
         "publication_manifest": buckets,
