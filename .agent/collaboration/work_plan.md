@@ -16,6 +16,9 @@ Formalizar como script del motor el gate por-fila probado en la tanda backup 202
 aprendidos en vivo: B-TOCTOU, patron laxo de PII, scan de metadata git (que classify NO
 cubre: solo escanea blobs, no autores/committers) y abort en carpetas "- copia".
 Borrador de contrato: C:\tmp\MATRIZ_PUBLICACION_BACKUP_20260702.md.
+Verificacion del objetivo: `python scripts/check_publication_gate.py --repo-root <repo>
+--sibling <hermano>` devuelve exit 0 SOLO cuando repo y hermanos pasan los 6 checks;
+`pytest tests/test_check_publication_gate.py` = 7 passed (incluye el caso UNIDAD).
 
 ## Decision Arquitectonica
 
