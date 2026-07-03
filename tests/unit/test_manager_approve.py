@@ -464,6 +464,146 @@ class TestManagerApprove:
         assert result == 0
         assert captured_roots == [motor_root.resolve()]
 
+    def test_warn_message_is_actionable_and_shows_last_commit(
+        self, temp_bus: EventBus, mock_files: dict, tmp_path: Path
+    ) -> None:
+        """WOT-2026-016t: the WARN emitted when the last commit fails closeout
+        validation must be actionable, not just diagnostic.
+
+        Before the fix, the WARN never showed the offending commit's literal
+        text and did not distinguish the clean recommended path (commit +
+        retry) from --force (presented as if it were the only way out). This
+        barrier locks in all three: the structured reason, a stable clean-path
+        substring, and --force as a conscious alternative.
+        """
+        from agent_controller import _handle_manager_approve
+
+        structured_reason = (
+            "Commit references [WOT-2026-999] but active ticket is WP-TEST-001"
+        )
+
+        with (
+            patch("agent_controller.event_bus", temp_bus),
+            patch("agent_controller.BUS_AVAILABLE", True),
+            patch("agent_controller.WORK_PLAN", mock_files["work_plan"]),
+            patch("agent_controller.EXEC_LOG", mock_files["exec_log"]),
+            patch("agent_controller.TURN_FILE", mock_files["turn"]),
+            patch("agent_controller.STATE_FILE", mock_files["state"]),
+            patch("agent_controller.AGENT_DIR", tmp_path / ".agent"),
+            patch(
+                "agent_controller._check_last_commit",
+                return_value=(False, structured_reason),
+            ),
+        ):
+            captured_stderr = io.StringIO()
+            sys.stderr = captured_stderr
+            try:
+                result = _handle_manager_approve(
+                    "WP-TEST-001", json_output=False, force_mode=False
+                )
+            finally:
+                sys.stderr = sys.__stderr__
+
+        # Blocking behavior does NOT change: still a hard fail without --force.
+        assert result == 1
+
+        stderr_text = captured_stderr.getvalue()
+
+        # (a) the structured reason from _check_last_commit is still present.
+        assert structured_reason in stderr_text
+
+        # (b) a stable, literal clean-path substring is present. This fixes
+        # the exact wording Fase 2 produces (not a paraphrase), so reverting
+        # the message text is what the MUTATION barrier below detects.
+        assert "Recommended: commit your closeout referencing ticket" in stderr_text
+        assert "then retry --manager-approve" in stderr_text
+
+        # (c) --force is mentioned as a conscious alternative, not the only
+        # path offered.
+        assert "--force" in stderr_text
+        assert "Alternatively" in stderr_text
+
+    def test_warn_message_shows_real_last_commit_text_from_git(
+        self, temp_bus: EventBus, mock_files: dict, tmp_path: Path
+    ) -> None:
+        """Integration-style barrier: with a REAL git repo (not a mocked
+        _check_last_commit), the WARN must display the actual %s of the last
+        commit, proving the best-effort lookup is not a complacent mock.
+
+        Uses a generic 'checkpoint' commit message so the real
+        _check_last_commit / _validate_closeout_commit_message reject it
+        exactly like production would (keyword rule), without needing to
+        also fake ticket-ID extraction.
+        """
+        from agent_controller import _handle_manager_approve
+
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        subprocess.run(
+            ["git", "init"], cwd=repo_root, capture_output=True, text=True, check=True
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        (repo_root / "file.txt").write_text("content")
+        subprocess.run(
+            ["git", "add", "."],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        real_commit_message = "checkpoint: intermediate churn, not a real closeout"
+        subprocess.run(
+            ["git", "commit", "-m", real_commit_message],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        with (
+            patch("agent_controller.event_bus", temp_bus),
+            patch("agent_controller.BUS_AVAILABLE", True),
+            patch("agent_controller.WORK_PLAN", mock_files["work_plan"]),
+            patch("agent_controller.EXEC_LOG", mock_files["exec_log"]),
+            patch("agent_controller.TURN_FILE", mock_files["turn"]),
+            patch("agent_controller.STATE_FILE", mock_files["state"]),
+            patch("agent_controller.AGENT_DIR", tmp_path / ".agent"),
+            patch(
+                "agent_controller._resolve_closeout_commit_root",
+                return_value=repo_root,
+            ),
+        ):
+            captured_stderr = io.StringIO()
+            sys.stderr = captured_stderr
+            try:
+                result = _handle_manager_approve(
+                    "WP-TEST-001", json_output=False, force_mode=False
+                )
+            finally:
+                sys.stderr = sys.__stderr__
+
+        assert result == 1
+        stderr_text = captured_stderr.getvalue()
+        # The literal %s of the real commit must appear verbatim: proves the
+        # best-effort subprocess lookup in _handle_manager_approve returns the
+        # actual last commit, not a placeholder.
+        assert real_commit_message in stderr_text
+        assert "Recommended: commit your closeout referencing ticket" in stderr_text
+        assert "--force" in stderr_text
+
 
 # WOT-2026-013u: CLI-contract barrier exercising the REAL --ticket parser via
 # subprocess dispatch (not _handle_manager_approve with a hardcoded string), so

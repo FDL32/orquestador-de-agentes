@@ -4518,12 +4518,40 @@ def _handle_manager_approve(  # noqa: C901 - flag handler intentionally branches
         commit_root = _resolve_closeout_commit_root(_dt_ma, plan_content)
         commit_valid, commit_reason = _check_last_commit(commit_root, ticket_id)
         if not commit_valid:
+            # Best-effort lookup of the literal last-commit text, purely for
+            # display in the WARN message below. This is a separate, disposable
+            # query (not reused by _check_last_commit/_validate_closeout_commit_message):
+            # if git is unavailable or the query fails for any reason, silently
+            # skip that line instead of breaking the already-decided gate result.
+            last_commit_text = None
+            try:
+                _last_commit_result = subprocess.run(
+                    ["git", "log", "-1", "--format=%s"],
+                    capture_output=True,
+                    text=True,
+                    cwd=commit_root,
+                )
+                if _last_commit_result.returncode == 0:
+                    _stripped = _last_commit_result.stdout.strip()
+                    if _stripped:
+                        last_commit_text = _stripped
+            except Exception:
+                last_commit_text = None
+
             warn_parts = [
                 f"[WARN] Last commit validation failed: {commit_reason}",
-                f"[WARN] The last commit should reference ticket {ticket_id}",
-                "[WARN] with a meaningful message (not a generic checkpoint).",
-                "[WARN] Use --force to approve anyway.",
             ]
+            if last_commit_text is not None:
+                warn_parts.append(f'[WARN] Last commit found: "{last_commit_text}"')
+            warn_parts.extend(
+                [
+                    f"[WARN] Recommended: commit your closeout referencing ticket "
+                    f"{ticket_id} with a meaningful message (not a generic "
+                    f"checkpoint), then retry --manager-approve.",
+                    "[WARN] Alternatively, if the last commit legitimately cannot "
+                    "reference this ticket, use --force to approve anyway.",
+                ]
+            )
             warn_msg = "\n".join(warn_parts)
             print(warn_msg, file=sys.stderr, flush=True)
             return 1

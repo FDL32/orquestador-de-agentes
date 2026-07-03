@@ -1,134 +1,175 @@
-# Execution Log - WOT-2026-016s
+# Execution Log - WOT-2026-016t
 
-**Ticket:** WOT-2026-016s - mark-ready: el parser de Files Likely Touched descarta el path
-cuando el bullet lleva anotacion descriptiva tras la ruta.
-**Estado:** COMPLETED
-**HEAD al inicio:** 78b5ee0
+**Ticket:** WOT-2026-016t - manager-approve: el mensaje del WARN por commit invalido no es
+accionable (no muestra el commit encontrado ni distingue el camino limpio de --force).
+**Estado:** IN_PROGRESS
+**HEAD al inicio:** 44629c8
 **delivery_authority:** repo_motor | **deliverable_type:** code
 
-> execution_log de WOT-2026-015l (COMPLETED) preservado en
-> `execution_log_WOT-2026-015l.md` antes de este bootstrap.
+> execution_log de WOT-2026-016s (COMPLETED) preservado en
+> `execution_log_WOT-2026-016s.md` antes de este bootstrap.
 
-## Fase 0 - Diagnostico del Manager (EJECUTADA en fase de planificacion)
+## Fase 0 - Diagnostico (Orquestador + Manager, EJECUTADO)
 
-- Premisa original del backlog ("el parser no reconoce subsecciones repo_motor") verificada
-  como IMPRECISA. Causa raiz real confirmada en vivo:
-  scope_gate._looks_like_path_token('scripts/x.py (nuevo)') devuelve False porque rechaza
-  cualquier token con espacio, y _normalize_flt_line no separa el path de la anotacion
-  descriptiva que lo sigue.
-- Reproducido end-to-end sobre el work_plan.md real de WOT-2026-015l (subseccion repo_motor
-  + bullets anotados tipo "(nuevo, el gate)"): parse_files_likely_touched y
-  parse_flt_raw_buckets devuelven whitelist/buckets VACIOS sin el fix.
-- Fix propuesto simulado (monkeypatch de _normalize_flt_line con split en el primer espacio)
-  y verificado contra el propio work_plan.md de este ticket: resuelve correctamente los 3
-  paths del FLT al bucket "motor", bucket "destino" vacio.
-- Hallazgo colateral documentado como Non-goal (no corregido en este ticket):
-  scripts/check_deliverables_exist.py tiene _resolve_flt_bullet_tokens con el mismo bug
-  (su propio docstring dice que espeja el comportamiento de scope_gate).
+- Premisa del backlog ("el PRIMER intento tras mark-ready SIEMPRE da WARN, el SEGUNDO
+  cierra") verificada como IMPRECISA. El WARN NO es un bug de primer-vs-segundo intento.
+- Causa raiz real: el WARN en `_handle_manager_approve` (.agent/agent_controller.py ~4520)
+  se dispara cuando `_check_last_commit` rechaza el ULTIMO commit del repo. El gate ES
+  correcto (exige que el ultimo commit referencie el ticket con mensaje no generico). El
+  sintoma "segundo intento cierra" ocurria porque entre intentos cambiaba el ultimo commit
+  (un churn intermedio invalido quedaba primero; luego un commit valido lo reemplazaba).
+- En los cierres de 015l y 016s de esta sesion el WARN NUNCA se reprodujo, porque el ultimo
+  commit siempre fue `WOT-2026-XXX: <mensaje significativo>` (referencia el ticket).
+- Decision del usuario: el fix es de UX -- mejorar el TEXTO del mensaje (mostrar el commit
+  encontrado + distinguir camino limpio de --force), sin tocar la logica del gate.
 
-## Fase 1 - Implementacion (Builder)
+## Fase 1 - Re-verificacion (EJECUTADO, Builder)
 
-- Modificado `.agent/scope_gate.py::_normalize_flt_line`: tras el lstrip/replace/strip
-  actual, si el resultado no es vacio se le aplica `cleaned.split(" ", 1)[0]`, quedandose
-  solo con el primer token separado por espacio (el path) y descartando cualquier
-  anotacion descriptiva posterior. No se toco `_looks_like_path_token`, `_parse_flt_section`
-  ni ningun call-site (los 3 consumidores heredan el fix automaticamente al compartir la
-  funcion). Diff exacto (verificado con `git diff .agent/scope_gate.py` tras el fix y de
-  nuevo tras el mutation-verify, identico byte a byte ambas veces).
+- Localizacion por CONTENIDO (no solo numero de linea) en
+  `.agent/agent_controller.py`, HEAD=44629c8:
+  - `_CHECKPOINT_KEYWORDS` en linea 1264 (coincide con el plan, sin corrimiento).
+  - `_validate_closeout_commit_message` en linea 1267-1317 (coincide).
+  - `_check_last_commit` en linea 1320-1351: corre
+    `subprocess.run(["git", "log", "-1", "--format=%s"], capture_output=True, text=True, cwd=project_root)`
+    y delega en `_validate_closeout_commit_message`. Confirma el patron a reusar
+    en Fase 2 (misma llamada, mismo cwd=commit_root).
+  - `_handle_manager_approve` en linea 4370. El bloque WARN esta en linea
+    4517-4529 (coincide con el rango ~4520-4529 citado en el plan, sin
+    corrimiento real):
+    - L4517: `if not force_mode and _dt_ma not in {"documentation", "research", "analysis"}:`
+    - L4518: `commit_root = _resolve_closeout_commit_root(_dt_ma, plan_content)`
+      (confirma que `commit_root` esta disponible en el scope, tal como dice el
+      Diagnostico del plan).
+    - L4519: `commit_valid, commit_reason = _check_last_commit(commit_root, ticket_id)`
+    - L4520-4529: bloque `if not commit_valid:` con el mensaje original de 4
+      lineas (`warn_parts` + `warn_msg` + `print(..., file=sys.stderr, flush=True)` +
+      `return 1`).
+  - Ninguna de estas 4 localizaciones requirio ajuste de rango: el plan fue
+    escrito contra el mismo HEAD que el Builder retoma (44629c8), sin commits
+    intermedios que movieran las lineas.
 
-## Fase 2 - Tests + mutation-verify (Builder)
+- Cobertura actual de `tests/unit/test_manager_approve.py` (leido completo,
+  533 lineas, HEAD=44629c8) sobre el contenido del mensaje WARN: **NINGUNA**.
+  Evidencia (grep de todos los usos de `_check_last_commit` en el archivo):
+  - Los 9 tests de `TestManagerApprove` que parchean `_check_last_commit`
+    usan `return_value=(True, "")` (camino feliz, commit_valid=True) EXCEPTO:
+    - `test_documentation_ticket_bypasses_commit_check`: usa
+      `side_effect=RuntimeError(...)` para probar que la funcion NO se llama
+      en absoluto para tickets `documentation` (bypass del bloque completo,
+      no ejercita el WARN).
+    - `test_code_ticket_validates_last_commit_in_motor_root_for_external_motor_topology`:
+      usa `side_effect=_capture_commit_root` que SIEMPRE retorna `(True, "")`
+      (solo captura el `root` recibido para verificar topologia motor/destino;
+      tampoco ejercita el WARN).
+  - `test_blocks_if_not_ready_for_review` produce `result != 0` pero por una
+    rama de codigo DISTINTA (el guard de `READY_FOR_REVIEW` en linea ~4494,
+    antes de llegar al bloque de commit); tampoco pasa por `commit_valid=False`.
+  - Conclusion: 0 tests instancian `commit_valid=False` via mock de
+    `_check_last_commit`, por lo que 0 tests leen o capturan el `stderr`
+    producido por el bloque WARN (linea 4520-4529). El test nuevo de Fase 3
+    (mock `return_value=(False, "<razon>")` + captura de stderr) es cobertura
+    genuinamente NUEVA, no duplicada. Confirma la premisa del work_plan
+    (Fase 1, segundo punto).
 
-- `tests/unit/test_scope_gate.py::TestParseFilesLikelyTouched::test_parse_flt_with_trailing_annotation_after_path`
-  (nuevo): bullet `` - `scripts/foo.py` (nuevo, el gate) `` bajo `## Files Likely Touched`
-  (ruta plana, sin subseccion) -> `parse_files_likely_touched(content)` (wrapper de
-  `agent_controller`, que resuelve contra `PROJECT_ROOT` == `_MOTOR_ROOT` del test) devuelve
-  `{str((_MOTOR_ROOT / "scripts/foo.py").resolve())}`. Nota de ajuste respecto al nombre
-  literal del work_plan: el wrapper `agent_controller.parse_files_likely_touched` NO acepta
-  kwarg `project_root` (firma fija a `PROJECT_ROOT`); como el archivo de test importa ese
-  wrapper (no `scope_gate.parse_files_likely_touched` directamente) y `_MOTOR_ROOT` ya es
-  `PROJECT_ROOT.resolve()`, se llamo sin `project_root=` replicando el patron de los tests
-  preexistentes de la misma clase (`test_parse_simple_files`, etc.).
-- `tests/unit/test_scope_gate_topology.py::test_namespaced_motor_annotated_path_resolves`
-  (nuevo): fixture `_NAMESPACED_MOTOR_ANNOTATED` con subseccion `### repo_motor` y bullet
-  `` - `scripts/bar.py` (nuevo) `` -> `scope_gate.parse_flt_raw_buckets(...)` devuelve
-  `bucket["motor"] == {"scripts/bar.py"}` y `bucket["destino"] == set()`.
-- Regresion cero confirmada: familia completa de 4 archivos (test_scope_gate.py,
-  test_scope_gate_topology.py, test_scope_gate_deliverable_aware.py,
-  test_scope_gate_isolation.py) -> 55 passed, 0 failed.
+## Fase 2 - Fix del mensaje (EJECUTADO, Builder)
 
-### MUTATION-VERIFY (obligatorio, CEM)
+- Cambio aplicado EXCLUSIVAMENTE dentro del bloque `if not commit_valid:`
+  (`.agent/agent_controller.py`, linea 4520 en adelante). La condicion de
+  L4517 (`if not force_mode and _dt_ma not in {...}:`) y la llamada a
+  `_check_last_commit` en L4519 quedan byte-a-byte identicas (verificado por
+  lectura post-edicion).
+- Se agrego una consulta best-effort del texto literal del ultimo commit
+  DENTRO del propio `_handle_manager_approve` (subprocess.run con
+  `git log -1 --format=%s`, `cwd=commit_root` -- mismo comando y mismo cwd
+  que usa internamente `_check_last_commit`, pero una llamada SEPARADA y
+  desechable, solo para fines de presentacion). Envuelta en
+  `try/except Exception` silencioso: si `returncode != 0`, si el stdout esta
+  vacio tras strip(), o si la excepcion (ej. `FileNotFoundError` si git no
+  esta disponible) se dispara, `last_commit_text` queda `None` y esa linea del
+  mensaje simplemente se omite -- no se rompe el flujo ni cambia el `return 1`
+  ya decidido por el gate.
+- Nuevo `warn_parts` (4 lineas cuando se pudo obtener el commit, 3 si no):
+  1. `[WARN] Last commit validation failed: {commit_reason}` (sin cambios,
+     la razon estructurada existente).
+  2. `[WARN] Last commit found: "{last_commit_text}"` (NUEVA, solo si se pudo
+     obtener el commit).
+  3. `[WARN] Recommended: commit your closeout referencing ticket {ticket_id}
+     with a meaningful message (not a generic checkpoint), then retry
+     --manager-approve.` (NUEVA -- camino limpio explicito).
+  4. `[WARN] Alternatively, if the last commit legitimately cannot reference
+     this ticket, use --force to approve anyway.` (NUEVA -- --force
+     presentado como alternativa consciente, no como unica salida; contrasta
+     con "Alternatively" vs. el texto original que lo listaba como unica
+     instruccion final).
+- Prefijo `[WARN]` multi-linea mantenido en las 4 lineas. Mensajes en ingles
+  (convencion confirmada del archivo: se reviso el estilo de otros bloques
+  WARN/ERROR de cierre, ej. linea ~3097-3099 `[ERROR] --mark-ready blocked:
+  ... Complete the implementation before marking ready.`, mismo tono
+  directivo "Recommended action then retry"). `return 1` y
+  `print(warn_msg, file=sys.stderr, flush=True)` sin cambios.
+- `_check_last_commit`, `_validate_closeout_commit_message` y
+  `_CHECKPOINT_KEYWORDS` NO tocados (verificar con `git diff` acotado en
+  Fase 3/gates).
 
-Comando usado en las 4 corridas (mismo comando, fuente mutado/restaurado entre medias):
-`.venv/Scripts/python.exe -m pytest tests/unit/test_scope_gate.py -k trailing_annotation
-tests/unit/test_scope_gate_topology.py -k "trailing_annotation or annotated" -v`
+## Fase 3 - Tests + mutation-verify (EJECUTADO, Builder)
 
-1. (a) Test SIN fix (revertido manualmente `_normalize_flt_line` a la forma original de
-   una sola linea, sin el `.split(" ", 1)[0]`): **2 failed** (ambos tests nuevos), **exit
-   code 1**. Evidencia literal:
-   `AssertionError: assert set() == {'C:\\Users\\...\\scripts\\foo.py'}` (test 1) y
-   `AssertionError: assert set() == {'scripts/bar.py'}` (test 2).
-2. (b) Codigo observado: **1**.
-3. (c) Test CON fix restaurado (mismo texto exacto reaplicado): **2 passed**, **exit code
-   0**.
-4. (d) Codigo observado: **0**.
+- Tests nuevos anadidos a `tests/unit/test_manager_approve.py`
+  (clase `TestManagerApprove`, junto a los existentes):
+  1. `test_warn_message_is_actionable_and_shows_last_commit`: mockea
+     `_check_last_commit` con `return_value=(False, structured_reason)`,
+     captura stderr con `sys.stderr = io.StringIO()` / `try/finally`
+     restaurando `sys.stderr = sys.__stderr__` (mismo patron ya usado en el
+     archivo para stdout), llama `_handle_manager_approve("WP-TEST-001",
+     json_output=False, force_mode=False)`, verifica `result == 1` (el
+     bloqueo NO cambia) y 3 aserciones sobre `stderr_text`: (a) la razon
+     estructurada literal aparece; (b) subcadena literal fija
+     `"Recommended: commit your closeout referencing ticket"` +
+     `"then retry --manager-approve"`; (c) `"--force"` y `"Alternatively"`
+     presentes.
+  2. `test_warn_message_shows_real_last_commit_text_from_git`: test de
+     integracion con repo git REAL en `tmp_path` (no mock de
+     `_check_last_commit`), crea un commit generico
+     `"checkpoint: intermediate churn, not a real closeout"` (dispara la
+     regla de `_CHECKPOINT_KEYWORDS` real, sin necesidad de fingir extraccion
+     de ticket ID), parchea solo `_resolve_closeout_commit_root` para apuntar
+     al repo de fixture, y confirma que el `%s` REAL del commit aparece
+     verbatim en el stderr capturado -- evidencia de que la consulta
+     best-effort en `_handle_manager_approve` no es un mock complaciente sino
+     una llamada real a git. DECISION (punto 5 de Fase 3 / Fase 3 del plan):
+     se incluyo este test de integracion (no se omitio) porque el costo del
+     fixture es bajo (subprocess.run + git init de 3 comandos, ~0.3s) y da
+     evidencia end-to-end genuina que el mock del test 1 no puede dar por si
+     solo.
 
-Restauracion verificada: `git diff .agent/scope_gate.py` tras el mutation-verify es
-IDENTICO al diff capturado justo despues de aplicar el fix en Fase 1 (mismo patch, sin
-diferencias residuales de la mutacion temporal).
+- Barrera MUTATION (obligatoria, CEM) -- comando literal y resultados:
+  1. Se reverto manualmente el bloque `warn_parts` a su forma ORIGINAL de 4
+     lineas (`[WARN] Last commit validation failed: {commit_reason}` /
+     `[WARN] The last commit should reference ticket {ticket_id}` /
+     `[WARN] with a meaningful message (not a generic checkpoint).` /
+     `[WARN] Use --force to approve anyway.`), eliminando por completo el
+     bloque de obtencion best-effort del commit y el `warn_parts.extend(...)`.
+  2. Comando: `.venv/Scripts/python.exe -m pytest
+     tests/unit/test_manager_approve.py -k warn_message -v`
+     Resultado SIN FIX (rojo): `2 failed, 13 deselected in 0.32s`.
+     Exit code real de pytest (capturado con redireccion a archivo, no via
+     `tail`): **1**.
+     Fallo observado en `test_warn_message_shows_real_last_commit_text_from_git`:
+     `AssertionError: assert 'checkpoint: intermediate churn, not a real
+     closeout' in "[WARN] Last commit validation failed: Commit appears to be
+     a 'checkpoint' commit, not a meaningful closeout message\n[WARN] The
+     last commit should reference ticket WP-TEST-001\n[WARN] with a
+     meaningful message (not a generic checkpoint).\n[WARN] Use --force to
+     approve anyway.\n"` -- confirma que sin el fix ni el commit literal ni
+     la subcadena "Recommended" aparecen. `test_warn_message_is_actionable_and_shows_last_commit`
+     tambien fallo (misma causa, subcadenas nuevas ausentes).
+  3. Se reaplico el fix completo (restaurado desde copia identica verificada
+     con `diff` -- 0 diferencias contra la version post-Fase-2).
+  4. Mismo comando re-ejecutado. Resultado CON FIX (verde):
+     `2 passed, 13 deselected in 0.30s`. Exit code real de pytest: **0**.
 
-## Fase 3 - Verificacion end-to-end (Builder)
-
-- El `work_plan.md` real de WOT-2026-015l ya estaba sobrescrito por el bootstrap de este
-  ticket (015l era COMPLETED). El AUDIT_WOT-2026-015l.md no contiene el fragmento FLT
-  literal, asi que se reconstruyo via `git show a39cdea:.agent/collaboration/work_plan.md`
-  (commit deliverable de 015l citado en el work_plan de este ticket), extrayendo la seccion
-  `## Files Likely Touched` completa:
-  ```
-  ## Files Likely Touched
-
-  ### repo_motor
-  - `scripts/check_closeout_reconciliation.py` (nuevo, el gate)
-  - `tests/unit/test_check_closeout_reconciliation.py` (nuevo, fixtures A/B + mutation)
-
-  ## Non-goals
-  ```
-- Script de verificacion ejecutado desde el scratchpad de sesion (no forma parte del
-  repo): construye ese CONTENT literal y llama a
-  `scope_gate.parse_flt_raw_buckets(CONTENT, delivery_authority="repo_motor")` y
-  `scope_gate.parse_files_likely_touched(CONTENT, project_root=<repo_root>,
-  deliverable_type="code")`.
-- Resultado (exit 0):
-  - `buckets["motor"] == {"scripts/check_closeout_reconciliation.py",
-    "tests/unit/test_check_closeout_reconciliation.py"}` (NO vacio, 2 paths esperados).
-  - `buckets["destino"] == set()`.
-  - `parse_files_likely_touched(...)` devuelve el set con ambos paths resueltos contra
-    project_root.
-  - Confirma el sintoma original resuelto: sobre el FLT real de 015l (subseccion
-    repo_motor + bullets anotados), el whitelist deja de estar vacio.
-
-## Hallazgo colateral (Non-goal, ver work_plan) - NO corregido en este ticket
-
-`scripts/check_deliverables_exist.py::_resolve_flt_bullet_tokens` reimplementa el mismo
-criterio de rechazo (bullet con espacio tras normalizar -> descartado) y comparte el mismo
-bug de raiz (su propio docstring dice que espeja `scope_gate._normalize_flt_line` /
-`_looks_like_path_token`). Confirmado NO tocado en este ticket (Non-goal explicito del
-work_plan). Se deja anotado para que el Manager decida si abre ticket de seguimiento
-(mismo patron AP-D04, mismo fix, otro archivo).
-
-## Notas de handoff
-
-- El Manager (esta sesion) NO ejecuto `--reset-turn` ni `--bootstrap-ticket`: por
-  instruccion explicita del orquestador, esos pasos quedan a cargo del Orquestador
-  despues de este reporte. TURN.md/STATE.md aun reflejan el ciclo anterior (015l
-  COMPLETED / accion CREATE_PLAN) hasta que se ejecuten esos comandos.
-- Artefactos de handoff producidos por el Manager en esta sesion: work_plan.md
-  (APPROVED), AUDIT_WOT-2026-016s.md, este execution_log.md (IN_PROGRESS). Pendientes
-  antes de abrir la ventana del Builder: TURN.md/STATE.md regenerados y evento
-  STATE_CHANGED -> IN_PROGRESS emitido al bus.
-
-
-Scope override: over-captura de archivos de tickets ya cerrados (015l/016m/016o: AUDIT+check_closeout+check_publication) ajenos al diff real de 016s (4c79e8e = scope_gate.py + 2 tests scope_gate + proyecciones); el WARN de FLT ausente ya NO aparece = 016s dogfoodeado OK. Affected files: <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-015l.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016m.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016o.md, <REPO_ROOT>/.agent/runtime/memory/archive/observations.2026-07.jsonl, <REPO_ROOT>/scripts/check_closeout_reconciliation.py, <REPO_ROOT>/scripts/check_publication_gate.py, <REPO_ROOT>/tests/test_check_publication_gate.py, <REPO_ROOT>/tests/unit/test_check_closeout_reconciliation.py
-
-AUTO-REJECTED: Quality Gates fallaron
-
-Manager approved canonical closeout for WOT-2026-016s
+- Regresion cero confirmada: `.venv/Scripts/python.exe -m pytest
+  tests/unit/test_manager_approve.py -v` -> **15 passed in 1.05s**, exit
+  code **0**. Incluye los 9 tests preexistentes de camino feliz
+  (`return_value=(True, "")`) y
+  `test_code_ticket_validates_last_commit_in_motor_root_for_external_motor_topology`
+  (el `commit_root` capturado no cambio: sigue siendo `motor_root.resolve()`).
