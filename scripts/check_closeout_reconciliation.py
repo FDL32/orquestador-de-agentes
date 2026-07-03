@@ -66,8 +66,15 @@ _LIVE_STATES = {
     "awaiting-manager",
 }
 
-# Estados terminales que declaran un cierre en backlog_done.md.
-_TERMINAL_STATES = {"completed", "done", "closed", "superseded", "absorbed"}
+# Estados de backlog_done.md que AFIRMAN un cierre canonico completo -> el check
+# B les exige un SUPERVISOR_CLOSED en el bus. Se dejan FUERA a proposito
+# ``superseded`` y ``absorbed``: son cierres honestos por OTRA via (Ruta B /
+# supersession) que por diseno pueden no emitir eventos de bus (p.ej.
+# WT-2026-239a: el Manager emitio CHANGES y el scope migro a tickets hijos; el
+# bus se dejo sin cerrar a proposito "para no falsear historia"). Un superseded
+# honesto es lo CONTRARIO de un auto-reporte, asi que exigirle bus seria un
+# falso positivo.
+_CLOSURE_CLAIMING_STATES = {"completed", "done", "closed"}
 
 # IDs de ticket reconocidos (WOT/WP/WT-AAAA-suffix).
 _TICKET_ID_RE = re.compile(r"\b((?:WOT|WP|WT)-\d{4}-\w+)\b")
@@ -213,11 +220,13 @@ def read_live_backlog(project_root: Path) -> set[str]:
 
 
 def read_declared_done(project_root: Path) -> set[str]:
-    """IDs declarados terminales en la tabla ``| Ticket | Estado | Nota |``.
+    """IDs que AFIRMAN cierre completo en la tabla ``| Ticket | Estado | Nota |``.
 
-    Ausencia de backlog_done.md NO es error (un workspace joven puede no tener
-    aun historico): devuelve conjunto vacio. Solo cuenta filas cuyo Estado esta
-    en el vocabulario terminal.
+    Solo devuelve filas cuyo Estado esta en ``_CLOSURE_CLAIMING_STATES``
+    (completed/done/closed) -- los unicos que el check B exige respaldar con un
+    SUPERVISOR_CLOSED. ``superseded``/``absorbed`` se excluyen: son cierres
+    honestos por otra via que por diseno pueden no emitir eventos de bus.
+    Ausencia de backlog_done.md NO es error (workspace joven): conjunto vacio.
     """
     path = project_root / BACKLOG_DONE_REL
     if not path.exists():
@@ -233,7 +242,7 @@ def read_declared_done(project_root: Path) -> set[str]:
         if len(cells) < 2:
             continue
         ticket_cell, status_cell = cells[0], cells[1]
-        if status_cell.lower() not in _TERMINAL_STATES:
+        if status_cell.lower() not in _CLOSURE_CLAIMING_STATES:
             continue
         m = _TICKET_ID_RE.search(ticket_cell)
         if m:

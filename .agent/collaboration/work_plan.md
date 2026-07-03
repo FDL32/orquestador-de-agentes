@@ -83,11 +83,14 @@ mutation.
 
 1. Check A (drift): ningun `SUPERVISOR_CLOSED` del bus (vivo+archive) sigue como fila viva
    `pending`/`blocked` en `## Vista rapida`. Violacion enumerada con ticket_id + seq.
-2. Check B (orphan_declared): todo ticket terminal en `_archive/backlog_done.md` tiene su
-   `SUPERVISOR_CLOSED` en el bus. Violacion enumerada con ticket_id.
+2. Check B (orphan_declared): cada ticket que AFIRMA cierre completo (estado
+   `completed`/`done`/`closed`) en `_archive/backlog_done.md` y tuvo actividad en el bus
+   tiene su `SUPERVISOR_CLOSED`. Se eximen: historia pre-bus (cero eventos) y cierres
+   honestos por otra via (`superseded`/`absorbed`). Violacion enumerada con ticket_id.
 3. Union bus vivo + archive verificada por test (archive-only cuenta como cerrado).
 4. Fail-closed sin project-root y con bus ilegible (test).
-5. MUTATION de A y de B verificadas (cada assert es la barrera de su fixture).
+5. MUTATION de las 4 barreras verificadas (drift A, orphan B, archive-glob, superseded-FP):
+   cada assert es la barrera de su fixture (sin-fix -> el fixture falla).
 6. `--json` emite `{checks:{drift, orphan_declared}, all_pass}`; script no muta estado.
 7. ruff + format + encoding verdes; suite canonica `--level all` exit 0 con
    `tested_sha == HEAD`; validate 0/0.

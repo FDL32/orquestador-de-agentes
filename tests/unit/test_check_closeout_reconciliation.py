@@ -157,6 +157,22 @@ def test_orphan_declared_done_without_closed_event(tmp_path: Path) -> None:
     assert report["all_pass"] is False
 
 
+def test_superseded_without_closed_event_is_exempt(tmp_path: Path) -> None:
+    # A ticket declared 'superseded' (honest Route-B closure) may deliberately
+    # carry NO SUPERVISOR_CLOSED even with bus activity -> exempt from check B.
+    # Real case: WT-2026-239a (Manager emitted CHANGES; scope migrated to child
+    # tickets; bus left uncommitted on purpose "para no falsear historia").
+    root = _make_workspace(
+        tmp_path,
+        done_rows="| WT-2026-239a | superseded | cierre honesto Ruta B |\n",
+        live_events=[_event("WT-2026-239a", "STATE_CHANGED", 30)],
+    )
+    report = ccr.run_gate(root)
+    # MUTATION: if read_declared_done widened back to _TERMINAL_STATES (including
+    # superseded), this superseded-with-bus-activity would be flagged orphan.
+    assert report["checks"]["orphan_declared"]["pass"] is True
+
+
 def test_prebus_declared_is_exempt(tmp_path: Path) -> None:
     # A ticket declared terminal with ZERO bus events is pre-bus legacy, not an
     # auto-report -> exempt from check B.
