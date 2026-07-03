@@ -2,7 +2,7 @@
 
 **Ticket:** WOT-2026-016s - mark-ready: el parser de Files Likely Touched descarta el path
 cuando el bullet lleva anotacion descriptiva tras la ruta.
-**Estado:** READY_FOR_REVIEW
+**Estado:** COMPLETED
 **HEAD al inicio:** 78b5ee0
 **delivery_authority:** repo_motor | **deliverable_type:** code
 
@@ -128,3 +128,7 @@ work_plan). Se deja anotado para que el Manager decida si abre ticket de seguimi
 
 
 Scope override: over-captura de archivos de tickets ya cerrados (015l/016m/016o: AUDIT+check_closeout+check_publication) ajenos al diff real de 016s (4c79e8e = scope_gate.py + 2 tests scope_gate + proyecciones); el WARN de FLT ausente ya NO aparece = 016s dogfoodeado OK. Affected files: <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-015l.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016m.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016o.md, <REPO_ROOT>/.agent/runtime/memory/archive/observations.2026-07.jsonl, <REPO_ROOT>/scripts/check_closeout_reconciliation.py, <REPO_ROOT>/scripts/check_publication_gate.py, <REPO_ROOT>/tests/test_check_publication_gate.py, <REPO_ROOT>/tests/unit/test_check_closeout_reconciliation.py
+
+AUTO-REJECTED: Quality Gates fallaron
+
+Manager approved canonical closeout for WOT-2026-016s

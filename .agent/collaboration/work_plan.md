@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WOT-2026-016s
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Titulo:** mark-ready: el parser de Files Likely Touched descarta el path cuando el bullet lleva anotacion descriptiva tras la ruta
 - **Asignado a:** Builder
