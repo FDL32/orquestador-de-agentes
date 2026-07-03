@@ -173,3 +173,26 @@ accionable (no muestra el commit encontrado ni distingue el camino limpio de --f
   (`return_value=(True, "")`) y
   `test_code_ticket_validates_last_commit_in_motor_root_for_external_motor_topology`
   (el `commit_root` capturado no cambio: sigue siendo `motor_root.resolve()`).
+
+## Gates de cierre (exit codes — trazabilidad, finding de Review 1)
+
+- ruff check .agent/agent_controller.py tests/unit/test_manager_approve.py -> All checks passed! (exit 0)
+- ruff format --check (mismos archivos) -> 2 files already formatted (exit 0)
+- check_encoding_guard.py (archivos tocados) -> exit 0
+- run_pytest_safe.py --level all -> 3467 passed, 20 skipped, exit 0, sin state-leak,
+  tested_commit_sha == HEAD (275d804)
+- agent_controller.py --validate --json --project-root . -> total_errors 0, total_warnings 0
+
+## Dogfooding (verificacion end-to-end del mensaje nuevo)
+
+- Con un commit "checkpoint: intermediate wip" (invalido para closeout) en un repo git tmp,
+  el WARN nuevo muestra en vivo: razon estructurada + `[WARN] Last commit found: "checkpoint:
+  intermediate wip"` + `Recommended: commit your closeout referencing ticket ... then retry` +
+  `Alternatively ... use --force`. El operador ya no necesita correr `git log -1` a mano.
+
+## Review 1 (Manager): APROBADO
+- Mutation-verify re-ejecutado independientemente (2 failed sin fix / 15 passed con fix, restaurado
+  byte-identico). Diff acotado verificado (gate no tocado). Edge cases del try/except confirmados
+  (repo sin commits returncode 128, git ausente FileNotFoundError -> degradan sin romper).
+- Finding no-bloqueante: faltaba registrar los exit codes de los gates de cierre en este log
+  (esta seccion los añade).
