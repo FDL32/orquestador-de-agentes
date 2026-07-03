@@ -1,203 +1,176 @@
-# Execution Log - WOT-2026-016t
+# Execution Log - WOT-2026-016c
 
-**Ticket:** WOT-2026-016t - manager-approve: el mensaje del WARN por commit invalido no es
-accionable (no muestra el commit encontrado ni distingue el camino limpio de --force).
-**Estado:** COMPLETED
-**HEAD al inicio:** 44629c8
+**Ticket:** WOT-2026-016c - gate interno run_quality_gates usa `uv run pytest` (roto en este
+entorno) y reporta timeout/error de runner como "Tests fallando" (AUTO-REJECTED espurio).
+**Estado:** IN_PROGRESS
+**HEAD al inicio:** 7af63b4
 **delivery_authority:** repo_motor | **deliverable_type:** code
 
-> execution_log de WOT-2026-016s (COMPLETED) preservado en
-> `execution_log_WOT-2026-016s.md` antes de este bootstrap.
+> execution_log de WOT-2026-016t (COMPLETED) preservado en
+> `execution_log_WOT-2026-016t.md` antes de este bootstrap.
 
-## Fase 0 - Diagnostico (Orquestador + Manager, EJECUTADO)
+## Fase 0 - Diagnostico (Orquestador + Manager, EJECUTADO, reproducido EN VIVO)
 
-- Premisa del backlog ("el PRIMER intento tras mark-ready SIEMPRE da WARN, el SEGUNDO
-  cierra") verificada como IMPRECISA. El WARN NO es un bug de primer-vs-segundo intento.
-- Causa raiz real: el WARN en `_handle_manager_approve` (.agent/agent_controller.py ~4520)
-  se dispara cuando `_check_last_commit` rechaza el ULTIMO commit del repo. El gate ES
-  correcto (exige que el ultimo commit referencie el ticket con mensaje no generico). El
-  sintoma "segundo intento cierra" ocurria porque entre intentos cambiaba el ultimo commit
-  (un churn intermedio invalido quedaba primero; luego un commit valido lo reemplazaba).
-- En los cierres de 015l y 016s de esta sesion el WARN NUNCA se reprodujo, porque el ultimo
-  commit siempre fue `WOT-2026-XXX: <mensaje significativo>` (referencia el ticket).
-- Decision del usuario: el fix es de UX -- mejorar el TEXTO del mensaje (mostrar el commit
-  encontrado + distinguir camino limpio de --force), sin tocar la logica del gate.
+- Premisa del backlog ("timeout 120s en repos grandes") DOBLEMENTE FALSA.
+- Causa raiz real: `run_quality_gates` (.agent/agent_controller.py ~2049-2063) corre
+  `subprocess.run(["uv","run","pytest","-q"], timeout=120)`. En este entorno `uv run pytest`
+  FALLA EN ~0.06s con returncode 1 ("Failed to canonicalize script path"; VIRTUAL_ENV=miniconda3
+  desalineado del .venv). NO es timeout. `.venv/Scripts/python.exe -m pytest` da returncode 0
+  (suite 3467+ passed). El resto del repo usa `sys.executable` como runner (run_pytest_safe.py:166).
+- El mensaje `[FAIL] Pytest: Tests fallando` es ENGAÑOSO: los tests no fallan, el runner uv no
+  arranca. Marca passed=False -> AUTO-REJECTED.
+- El bloque pytest solo captura `except FileNotFoundError`, NO `subprocess.TimeoutExpired`
+  (el patron correcto ya existe en 3 sitios del archivo: ~1437, ~1521, ~3457).
+- Reproducido 2x EN VIVO esta sesion: bloqueo el manager-approve de 016s (revirtio el
+  **Estado:** del execution_log a IN_PROGRESS) e intermitente en 016t.
+- Decision del usuario: runner canonico (sys.executable) + capturar TimeoutExpired + mensaje
+  honesto (distinguir timeout/runner-error de test-failure real).
 
-## Fase 1 - Re-verificacion (EJECUTADO, Builder)
+## Fase 1 - Re-verificacion del diagnostico (Builder, EJECUTADO)
 
-- Localizacion por CONTENIDO (no solo numero de linea) en
-  `.agent/agent_controller.py`, HEAD=44629c8:
-  - `_CHECKPOINT_KEYWORDS` en linea 1264 (coincide con el plan, sin corrimiento).
-  - `_validate_closeout_commit_message` en linea 1267-1317 (coincide).
-  - `_check_last_commit` en linea 1320-1351: corre
-    `subprocess.run(["git", "log", "-1", "--format=%s"], capture_output=True, text=True, cwd=project_root)`
-    y delega en `_validate_closeout_commit_message`. Confirma el patron a reusar
-    en Fase 2 (misma llamada, mismo cwd=commit_root).
-  - `_handle_manager_approve` en linea 4370. El bloque WARN esta en linea
-    4517-4529 (coincide con el rango ~4520-4529 citado en el plan, sin
-    corrimiento real):
-    - L4517: `if not force_mode and _dt_ma not in {"documentation", "research", "analysis"}:`
-    - L4518: `commit_root = _resolve_closeout_commit_root(_dt_ma, plan_content)`
-      (confirma que `commit_root` esta disponible en el scope, tal como dice el
-      Diagnostico del plan).
-    - L4519: `commit_valid, commit_reason = _check_last_commit(commit_root, ticket_id)`
-    - L4520-4529: bloque `if not commit_valid:` con el mensaje original de 4
-      lineas (`warn_parts` + `warn_msg` + `print(..., file=sys.stderr, flush=True)` +
-      `return 1`).
-  - Ninguna de estas 4 localizaciones requirio ajuste de rango: el plan fue
-    escrito contra el mismo HEAD que el Builder retoma (44629c8), sin commits
-    intermedios que movieran las lineas.
+- Localizado por CONTENIDO (no solo numero de linea) en `.agent/agent_controller.py`:
+  - `def run_quality_gates(...)` en linea 2014 (coincide con el plan).
+  - Bloque ruff: lineas 2034-2047 (`["uv", "run", "ruff", "check", *dirs_to_check]`,
+    `except FileNotFoundError:`). Coincide con el plan, NO se toca.
+  - Bloque pytest: lineas 2049-2063, dentro de `if tests_dir.exists():` (linea 2049),
+    `subprocess.run(["uv", "run", "pytest", "-q"], capture_output=True, timeout=120,
+    cwd=PROJECT_ROOT)` (linea 2051-2056), `except FileNotFoundError:` unico (linea 2062).
+    Coincide EXACTO con el diagnostico del plan.
+  - `import sys` confirmado en linea 30 del archivo (`import subprocess` en linea 29).
+    Ambos ya importados a nivel de modulo -- no hace falta anadir imports.
+  - Patron existente `except (subprocess.TimeoutExpired, FileNotFoundError):` ya presente
+    en 3 sitios: lineas 1437, 1521 (con `# noqa: PERF203`), 3457. Confirma que el bloque
+    pytest (unico con `except FileNotFoundError:` solo) es la excepcion inconsistente.
+- Reproducido EN VIVO (comandos literales, cwd = repo root):
+  - `uv run pytest -q --co` -> returncode 1, `real 0m0.055s` (medido con `time`), stderr:
+    `warning: VIRTUAL_ENV=C:\Users\fdl\miniconda3 does not match the project environment
+    path .venv...` + `Failed to canonicalize script path`. Confirma: NO es timeout (120s),
+    es fallo instantaneo del runner uv.
+  - `.venv/Scripts/python.exe -m pytest --co -q` -> returncode 0, `real 0m1.464s`,
+    salida final: `3487 tests collected in 0.90s`. Confirma: el interprete canonico
+    recolecta la suite sin problema.
+- Conclusion: el comportamiento coincide 100% con lo descrito en el work_plan. No hay
+  divergencia que escalar al Manager. Se procede a Fase 2 (fix).
 
-- Cobertura actual de `tests/unit/test_manager_approve.py` (leido completo,
-  533 lineas, HEAD=44629c8) sobre el contenido del mensaje WARN: **NINGUNA**.
-  Evidencia (grep de todos los usos de `_check_last_commit` en el archivo):
-  - Los 9 tests de `TestManagerApprove` que parchean `_check_last_commit`
-    usan `return_value=(True, "")` (camino feliz, commit_valid=True) EXCEPTO:
-    - `test_documentation_ticket_bypasses_commit_check`: usa
-      `side_effect=RuntimeError(...)` para probar que la funcion NO se llama
-      en absoluto para tickets `documentation` (bypass del bloque completo,
-      no ejercita el WARN).
-    - `test_code_ticket_validates_last_commit_in_motor_root_for_external_motor_topology`:
-      usa `side_effect=_capture_commit_root` que SIEMPRE retorna `(True, "")`
-      (solo captura el `root` recibido para verificar topologia motor/destino;
-      tampoco ejercita el WARN).
-  - `test_blocks_if_not_ready_for_review` produce `result != 0` pero por una
-    rama de codigo DISTINTA (el guard de `READY_FOR_REVIEW` en linea ~4494,
-    antes de llegar al bloque de commit); tampoco pasa por `commit_valid=False`.
-  - Conclusion: 0 tests instancian `commit_valid=False` via mock de
-    `_check_last_commit`, por lo que 0 tests leen o capturan el `stderr`
-    producido por el bloque WARN (linea 4520-4529). El test nuevo de Fase 3
-    (mock `return_value=(False, "<razon>")` + captura de stderr) es cobertura
-    genuinamente NUEVA, no duplicada. Confirma la premisa del work_plan
-    (Fase 1, segundo punto).
+## Fase 2 - Fix del runner y captura de TimeoutExpired (Builder, EJECUTADO)
 
-## Fase 2 - Fix del mensaje (EJECUTADO, Builder)
+- Cambiado el comando del bloque pytest (linea ~2051-2052) de
+  `["uv", "run", "pytest", "-q"]` a `[sys.executable, "-m", "pytest", "-q"]`.
+- Cambiado `except FileNotFoundError:` (linea ~2062) a
+  `except (subprocess.TimeoutExpired, FileNotFoundError) as exc:`, distinguiendo con
+  `isinstance(exc, subprocess.TimeoutExpired)`:
+  - TimeoutExpired: `results["warnings"].append(f"[WARN] Pytest: timeout tras {exc.timeout}s
+    (no es fallo de tests)")`. NO se toca `results["passed"]` en esta rama (queda True si
+    nada mas lo puso en False), replicando la semantica actual de FileNotFoundError.
+  - FileNotFoundError: mensaje sin cambios, `results["summary"].append("[WARN] Pytest: No
+    instalado")`.
+- El bloque de ruff (2034-2047) queda sin diff (verificado con `git diff` acotado, ver
+  gates mas abajo).
+- `results["passed"]` solo se fuerza a False en la rama `if pytest_result.returncode != 0:`
+  del try (pytest SI corrio y devolvio fallo real), confirmado por inspeccion del diff.
 
-- Cambio aplicado EXCLUSIVAMENTE dentro del bloque `if not commit_valid:`
-  (`.agent/agent_controller.py`, linea 4520 en adelante). La condicion de
-  L4517 (`if not force_mode and _dt_ma not in {...}:`) y la llamada a
-  `_check_last_commit` en L4519 quedan byte-a-byte identicas (verificado por
-  lectura post-edicion).
-- Se agrego una consulta best-effort del texto literal del ultimo commit
-  DENTRO del propio `_handle_manager_approve` (subprocess.run con
-  `git log -1 --format=%s`, `cwd=commit_root` -- mismo comando y mismo cwd
-  que usa internamente `_check_last_commit`, pero una llamada SEPARADA y
-  desechable, solo para fines de presentacion). Envuelta en
-  `try/except Exception` silencioso: si `returncode != 0`, si el stdout esta
-  vacio tras strip(), o si la excepcion (ej. `FileNotFoundError` si git no
-  esta disponible) se dispara, `last_commit_text` queda `None` y esa linea del
-  mensaje simplemente se omite -- no se rompe el flujo ni cambia el `return 1`
-  ya decidido por el gate.
-- Nuevo `warn_parts` (4 lineas cuando se pudo obtener el commit, 3 si no):
-  1. `[WARN] Last commit validation failed: {commit_reason}` (sin cambios,
-     la razon estructurada existente).
-  2. `[WARN] Last commit found: "{last_commit_text}"` (NUEVA, solo si se pudo
-     obtener el commit).
-  3. `[WARN] Recommended: commit your closeout referencing ticket {ticket_id}
-     with a meaningful message (not a generic checkpoint), then retry
-     --manager-approve.` (NUEVA -- camino limpio explicito).
-  4. `[WARN] Alternatively, if the last commit legitimately cannot reference
-     this ticket, use --force to approve anyway.` (NUEVA -- --force
-     presentado como alternativa consciente, no como unica salida; contrasta
-     con "Alternatively" vs. el texto original que lo listaba como unica
-     instruccion final).
-- Prefijo `[WARN]` multi-linea mantenido en las 4 lineas. Mensajes en ingles
-  (convencion confirmada del archivo: se reviso el estilo de otros bloques
-  WARN/ERROR de cierre, ej. linea ~3097-3099 `[ERROR] --mark-ready blocked:
-  ... Complete the implementation before marking ready.`, mismo tono
-  directivo "Recommended action then retry"). `return 1` y
-  `print(warn_msg, file=sys.stderr, flush=True)` sin cambios.
-- `_check_last_commit`, `_validate_closeout_commit_message` y
-  `_CHECKPOINT_KEYWORDS` NO tocados (verificar con `git diff` acotado en
-  Fase 3/gates).
+## Fase 3 - Tests + mutation-verify (Builder, EJECUTADO)
 
-## Fase 3 - Tests + mutation-verify (EJECUTADO, Builder)
+Ver seccion "Tests nuevos" y "MUTATION-VERIFY" mas abajo para el detalle completo con
+comandos literales y exit codes.
 
-- Tests nuevos anadidos a `tests/unit/test_manager_approve.py`
-  (clase `TestManagerApprove`, junto a los existentes):
-  1. `test_warn_message_is_actionable_and_shows_last_commit`: mockea
-     `_check_last_commit` con `return_value=(False, structured_reason)`,
-     captura stderr con `sys.stderr = io.StringIO()` / `try/finally`
-     restaurando `sys.stderr = sys.__stderr__` (mismo patron ya usado en el
-     archivo para stdout), llama `_handle_manager_approve("WP-TEST-001",
-     json_output=False, force_mode=False)`, verifica `result == 1` (el
-     bloqueo NO cambia) y 3 aserciones sobre `stderr_text`: (a) la razon
-     estructurada literal aparece; (b) subcadena literal fija
-     `"Recommended: commit your closeout referencing ticket"` +
-     `"then retry --manager-approve"`; (c) `"--force"` y `"Alternatively"`
-     presentes.
-  2. `test_warn_message_shows_real_last_commit_text_from_git`: test de
-     integracion con repo git REAL en `tmp_path` (no mock de
-     `_check_last_commit`), crea un commit generico
-     `"checkpoint: intermediate churn, not a real closeout"` (dispara la
-     regla de `_CHECKPOINT_KEYWORDS` real, sin necesidad de fingir extraccion
-     de ticket ID), parchea solo `_resolve_closeout_commit_root` para apuntar
-     al repo de fixture, y confirma que el `%s` REAL del commit aparece
-     verbatim en el stderr capturado -- evidencia de que la consulta
-     best-effort en `_handle_manager_approve` no es un mock complaciente sino
-     una llamada real a git. DECISION (punto 5 de Fase 3 / Fase 3 del plan):
-     se incluyo este test de integracion (no se omitio) porque el costo del
-     fixture es bajo (subprocess.run + git init de 3 comandos, ~0.3s) y da
-     evidencia end-to-end genuina que el mock del test 1 no puede dar por si
-     solo.
+## Tests nuevos (TestRunQualityGates, tests/test_agent_controller.py)
 
-- Barrera MUTATION (obligatoria, CEM) -- comando literal y resultados:
-  1. Se reverto manualmente el bloque `warn_parts` a su forma ORIGINAL de 4
-     lineas (`[WARN] Last commit validation failed: {commit_reason}` /
-     `[WARN] The last commit should reference ticket {ticket_id}` /
-     `[WARN] with a meaningful message (not a generic checkpoint).` /
-     `[WARN] Use --force to approve anyway.`), eliminando por completo el
-     bloque de obtencion best-effort del commit y el `warn_parts.extend(...)`.
-  2. Comando: `.venv/Scripts/python.exe -m pytest
-     tests/unit/test_manager_approve.py -k warn_message -v`
-     Resultado SIN FIX (rojo): `2 failed, 13 deselected in 0.32s`.
-     Exit code real de pytest (capturado con redireccion a archivo, no via
-     `tail`): **1**.
-     Fallo observado en `test_warn_message_shows_real_last_commit_text_from_git`:
-     `AssertionError: assert 'checkpoint: intermediate churn, not a real
-     closeout' in "[WARN] Last commit validation failed: Commit appears to be
-     a 'checkpoint' commit, not a meaningful closeout message\n[WARN] The
-     last commit should reference ticket WP-TEST-001\n[WARN] with a
-     meaningful message (not a generic checkpoint).\n[WARN] Use --force to
-     approve anyway.\n"` -- confirma que sin el fix ni el commit literal ni
-     la subcadena "Recommended" aparecen. `test_warn_message_is_actionable_and_shows_last_commit`
-     tambien fallo (misma causa, subcadenas nuevas ausentes).
-  3. Se reaplico el fix completo (restaurado desde copia identica verificada
-     con `diff` -- 0 diferencias contra la version post-Fase-2).
-  4. Mismo comando re-ejecutado. Resultado CON FIX (verde):
-     `2 passed, 13 deselected in 0.30s`. Exit code real de pytest: **0**.
+Anadidos 3 tests nuevos junto a `test_run_quality_gates_returns_dict` (linea 327,
+existente, sin modificar):
+1. `test_run_quality_gates_uses_canonical_python_interpreter_for_pytest`: mockea
+   `agent_controller.subprocess.run` (MagicMock returncode=0 para ambas llamadas),
+   captura `call_args_list`, filtra la llamada cuyo comando contiene "pytest" y afirma
+   que `cmd[0] == sys.executable`, `cmd[1] == "-m"`, `cmd[2] == "pytest"` y que
+   `cmd[:3] != ["uv", "run", "pytest"]`. Tambien afirma `passed is True` y
+   `"[OK] Pytest"` en el summary.
+2. `test_run_quality_gates_pytest_timeout_is_not_reported_as_test_failure`: side_effect
+   que devuelve returncode=0 para ruff y lanza `subprocess.TimeoutExpired(cmd=cmd,
+   timeout=120)` para pytest. Afirma `passed is True` (ruff paso, timeout no fuerza
+   False), que algun mensaje en summary+warnings contiene "timeout" (case-insensitive)
+   y que NINGUNO contiene el texto exacto "[FAIL] Pytest: Tests fallando".
+3. `test_run_quality_gates_pytest_real_failure_reports_tests_fallando`: side_effect que
+   devuelve returncode=0 para ruff y returncode=1 (SIN excepcion) para pytest. Afirma
+   `passed is False` y que el summary SI contiene "[FAIL] Pytest: Tests fallando".
 
-- Regresion cero confirmada: `.venv/Scripts/python.exe -m pytest
-  tests/unit/test_manager_approve.py -v` -> **15 passed in 1.05s**, exit
-  code **0**. Incluye los 9 tests preexistentes de camino feliz
-  (`return_value=(True, "")`) y
-  `test_code_ticket_validates_last_commit_in_motor_root_for_external_motor_topology`
-  (el `commit_root` capturado no cambio: sigue siendo `motor_root.resolve()`).
+Gate: `.venv/Scripts/python.exe -m pytest tests/test_agent_controller.py -k
+RunQualityGates -v` -> **4 passed** (los 3 nuevos + el preexistente), exit 0.
 
-## Gates de cierre (exit codes — trazabilidad, finding de Review 1)
+## Regresion completa + hallazgo de state-leak preexistente (NO introducido por este ticket)
 
-- ruff check .agent/agent_controller.py tests/unit/test_manager_approve.py -> All checks passed! (exit 0)
-- ruff format --check (mismos archivos) -> 2 files already formatted (exit 0)
-- check_encoding_guard.py (archivos tocados) -> exit 0
-- run_pytest_safe.py --level all -> 3467 passed, 20 skipped, exit 0, sin state-leak,
-  tested_commit_sha == HEAD (275d804)
-- agent_controller.py --validate --json --project-root . -> total_errors 0, total_warnings 0
+`.venv/Scripts/python.exe -m pytest tests/test_agent_controller.py -v` con el arbol
+actual (work_plan.md/execution_log.md/STATE.md/TURN.md modificados, proyecciones vivas
+del propio ticket en curso) da **8 failed, 115 passed**. Los 8 fallos son EXCLUSIVAMENTE
+en `TestPreHandoff` (7) y `TestBuilderBriefExclusion::test_builder_brief_does_not_block_pre_handoff`
+(1), todos con el mismo sintoma: `[ERROR] Pre-handoff blocked:
+.agent/collaboration/work_plan.md is not committed`.
 
-## Dogfooding (verificacion end-to-end del mensaje nuevo)
+Verificado que es un state-leak PREEXISTENTE, no causado por el fix de este ticket:
+- `git stash push -u` (guarda TODOS los cambios, incl. `.agent/agent_controller.py` y
+  `tests/test_agent_controller.py`) -> arbol queda IDENTICO a HEAD (limpio).
+- `.venv/Scripts/python.exe -m pytest tests/test_agent_controller.py -k "TestPreHandoff
+  or TestBuilderBriefExclusion" -v` sobre el arbol limpio -> **17 passed, 0 failed**,
+  exit 0.
+- `git stash pop` -> cambios restaurados byte a byte (confirmado con `git status
+  --porcelain`, mismos 6 modified + 2 untracked que antes del stash).
+- Conclusion: estas clases leen el estado REAL de `git status`/`git diff` del repo (no
+  usan un `tmp_path` git-aislado), por lo que solo pasan con arbol limpio. Esto coincide
+  con el patron ya documentado en memoria de sesion ("test-isolation evidence bug",
+  WOT-2026-018b) de tests que quedan clavados rojos por leer estado real en vez de un
+  fixture aislado. NO es responsabilidad de este ticket (Non-goal: no se toca
+  TestPreHandoff ni el guard de pre-handoff); se anota como deuda para que el Manager
+  decida si abre seguimiento.
+- Verificacion aislada equivalente sin state-leak:
+  `.venv/Scripts/python.exe -m pytest tests/test_agent_controller.py -k "not
+  TestPreHandoff and not TestBuilderBriefExclusion" -v` -> **106 passed, 0 failed**,
+  exit 0 (arbol sucio con el fix aplicado, excluyendo solo las 2 clases con la
+  dependencia conocida de arbol-limpio). Esto confirma regresion cero del fix de
+  016c sobre el resto de la suite del archivo.
 
-- Con un commit "checkpoint: intermediate wip" (invalido para closeout) en un repo git tmp,
-  el WARN nuevo muestra en vivo: razon estructurada + `[WARN] Last commit found: "checkpoint:
-  intermediate wip"` + `Recommended: commit your closeout referencing ticket ... then retry` +
-  `Alternatively ... use --force`. El operador ya no necesita correr `git log -1` a mano.
+DEUDA ANOTADA (no implementada en este ticket, Non-goal respetado): considerar que
+`TestPreHandoff`/`TestBuilderBriefExclusion` usen un `tmp_path`/repo git aislado en vez
+de depender de `git status` del arbol de trabajo real, para no quedar rojos cuando hay
+un ticket legitimo en curso con proyecciones sin commitear.
 
-## Review 1 (Manager): APROBADO
-- Mutation-verify re-ejecutado independientemente (2 failed sin fix / 15 passed con fix, restaurado
-  byte-identico). Diff acotado verificado (gate no tocado). Edge cases del try/except confirmados
-  (repo sin commits returncode 128, git ausente FileNotFoundError -> degradan sin romper).
-- Finding no-bloqueante: faltaba registrar los exit codes de los gates de cierre en este log
-  (esta seccion los añade).
+## MUTATION-VERIFY (Blocker 3 del AUDIT: los 2 sub-cambios verificados POR SEPARADO)
 
+Comando usado en los 3 pasos (mismo en cada uno):
+`.venv/Scripts/python.exe -m pytest tests/test_agent_controller.py -k RunQualityGates -v`
 
-Scope override: over-captura de archivos de tickets ya cerrados y pusheados: 015l (AUDIT+check_closeout_reconciliation), 016m (AUDIT), 016s (scope_gate.py+tests scope_gate), 016m (check_publication_gate). El diff real de 016t es agent_controller.py + test_manager_approve.py (commits 275d804/3084459). El WARN de FLT ausente ya NO aparece (016s en produccion).. Affected files: <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-015l.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016m.md, <REPO_ROOT>/.agent/runtime/memory/archive/observations.2026-07.jsonl, <REPO_ROOT>/.agent/scope_gate.py, <REPO_ROOT>/scripts/check_closeout_reconciliation.py, <REPO_ROOT>/scripts/check_publication_gate.py, <REPO_ROOT>/tests/test_check_publication_gate.py, <REPO_ROOT>/tests/unit/test_check_closeout_reconciliation.py, <REPO_ROOT>/tests/unit/test_scope_gate.py, <REPO_ROOT>/tests/unit/test_scope_gate_topology.py
+**Baseline (fix completo aplicado, antes de mutar):** 4 passed, exit 0.
 
-Manager approved canonical closeout for WOT-2026-016t
+### Sub-cambio 1: runner (`["uv","run","pytest","-q"]` -> `[sys.executable,"-m","pytest","-q"]`)
+
+1. Revertido SOLO el comando (linea ~2052) a `["uv", "run", "pytest", "-q"]`, dejando la
+   captura `except (subprocess.TimeoutExpired, FileNotFoundError) as exc:` intacta.
+2. Comando -> **1 failed, 3 passed**, exit 1. Fallo exacto:
+   `test_run_quality_gates_uses_canonical_python_interpreter_for_pytest` ->
+   `AssertionError: assert 'uv' == 'C:\\...\\python.exe'` (linea 364). Los otros 3
+   (incl. el de timeout y el de fallo real) siguen en verde -- el mutante SOLO rompe el
+   test que blinda el sub-cambio 1, como exige el plan.
+3. Restaurado el comando a `[sys.executable, "-m", "pytest", "-q"]`.
+4. Comando -> **4 passed**, exit 0 (verde restaurado).
+
+### Sub-cambio 2: captura de TimeoutExpired (`except FileNotFoundError:` ->
+`except (subprocess.TimeoutExpired, FileNotFoundError) as exc:` con distincion de mensaje)
+
+1. Revertido SOLO el except (lineas ~2062-2067) a `except FileNotFoundError:` +
+   `results["summary"].append("[WARN] Pytest: No instalado")`, dejando el runner
+   `[sys.executable, "-m", "pytest", "-q"]` intacto.
+2. Comando -> **1 failed, 3 passed**, exit 1. Fallo exacto:
+   `test_run_quality_gates_pytest_timeout_is_not_reported_as_test_failure` ->
+   `subprocess.TimeoutExpired` NO controlada se propaga fuera de `run_quality_gates()`
+   y aborta el test (traceback: `.agent\agent_controller.py:2051: in run_quality_gates`).
+   Los otros 3 (incl. el del runner canonico y el de fallo real) siguen en verde -- el
+   mutante SOLO rompe el test que blinda el sub-cambio 2.
+3. Restaurado el except a `except (subprocess.TimeoutExpired, FileNotFoundError) as exc:`
+   con la distincion de mensaje completa.
+4. Comando -> **4 passed**, exit 0 (verde restaurado).
+
+### Verificacion de fuente identico tras ambas mutaciones
+
+`git diff .agent/agent_controller.py` tras restaurar ambos sub-cambios es BYTE A BYTE
+identico al diff del fix original (comparado visualmente linea por linea): mismo
+`+                [sys.executable, "-m", "pytest", "-q"],` y mismo bloque
+`+        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:` con las 4 lineas
+de distincion de mensaje. Ninguna mutacion dejo residuo.

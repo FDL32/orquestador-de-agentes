@@ -2049,7 +2049,7 @@ def run_quality_gates(plan_type: str = "IMPLEMENTATION") -> dict:
     if tests_dir.exists():
         try:
             pytest_result = subprocess.run(
-                ["uv", "run", "pytest", "-q"],
+                [sys.executable, "-m", "pytest", "-q"],
                 capture_output=True,
                 timeout=120,
                 cwd=PROJECT_ROOT,
@@ -2059,8 +2059,13 @@ def run_quality_gates(plan_type: str = "IMPLEMENTATION") -> dict:
                 results["summary"].append("[FAIL] Pytest: Tests fallando")
             else:
                 results["summary"].append("[OK] Pytest: Tests OK")
-        except FileNotFoundError:
-            results["summary"].append("[WARN] Pytest: No instalado")
+        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+            if isinstance(exc, subprocess.TimeoutExpired):
+                results["warnings"].append(
+                    f"[WARN] Pytest: timeout tras {exc.timeout}s (no es fallo de tests)"
+                )
+            else:
+                results["summary"].append("[WARN] Pytest: No instalado")
 
     if plan_type == "FINALIZATION":
         fin_results = run_finalization_checks()

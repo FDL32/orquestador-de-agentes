@@ -337,6 +337,74 @@ class TestRunQualityGates:
         assert "passed" in result
         assert "summary" in result
 
+    def test_run_quality_gates_uses_canonical_python_interpreter_for_pytest(self):
+        """WOT-2026-016c: pytest command uses sys.executable -m pytest, not uv run pytest."""
+        mock_run = MagicMock(
+            return_value=MagicMock(returncode=0, stdout=b"", stderr=b"")
+        )
+        with (
+            patch("agent_controller.read_file", return_value=""),
+            patch("agent_controller.subprocess.run", mock_run),
+        ):
+            result = run_quality_gates()
+
+        assert result["passed"] is True
+        assert any("[OK] Pytest" in line for line in result["summary"])
+
+        # Find the call that invoked pytest (not ruff)
+        pytest_calls = [
+            call
+            for call in mock_run.call_args_list
+            if call.args and "pytest" in call.args[0]
+        ]
+        assert len(pytest_calls) == 1, (
+            f"Expected exactly one pytest call, got {mock_run.call_args_list}"
+        )
+        pytest_cmd = pytest_calls[0].args[0]
+        assert pytest_cmd[0] == sys.executable
+        assert pytest_cmd[1] == "-m"
+        assert pytest_cmd[2] == "pytest"
+        assert pytest_cmd[:3] != ["uv", "run", "pytest"]
+
+    def test_run_quality_gates_pytest_timeout_is_not_reported_as_test_failure(self):
+        """WOT-2026-016c: TimeoutExpired on pytest is captured with an honest
+        message and does NOT force passed=False nor say 'Tests fallando'."""
+
+        def fake_run(cmd, *args, **kwargs):
+            if "pytest" in cmd:
+                raise subprocess.TimeoutExpired(cmd=cmd, timeout=120)
+            return MagicMock(returncode=0, stdout=b"", stderr=b"")
+
+        with (
+            patch("agent_controller.read_file", return_value=""),
+            patch("agent_controller.subprocess.run", side_effect=fake_run),
+        ):
+            result = run_quality_gates()
+
+        # ruff passed and the only event is a pytest timeout -> passed stays True
+        assert result["passed"] is True
+        all_messages = result["summary"] + result["warnings"]
+        assert any("timeout" in msg.lower() for msg in all_messages)
+        assert not any("[FAIL] Pytest: Tests fallando" in msg for msg in all_messages)
+
+    def test_run_quality_gates_pytest_real_failure_reports_tests_fallando(self):
+        """WOT-2026-016c: a real pytest failure (returncode != 0, no exception)
+        still reports passed=False and '[FAIL] Pytest: Tests fallando'."""
+
+        def fake_run(cmd, *args, **kwargs):
+            if "pytest" in cmd:
+                return MagicMock(returncode=1, stdout=b"", stderr=b"")
+            return MagicMock(returncode=0, stdout=b"", stderr=b"")
+
+        with (
+            patch("agent_controller.read_file", return_value=""),
+            patch("agent_controller.subprocess.run", side_effect=fake_run),
+        ):
+            result = run_quality_gates()
+
+        assert result["passed"] is False
+        assert any("[FAIL] Pytest: Tests fallando" in msg for msg in result["summary"])
+
 
 class TestHumanGateThreshold:
     """WP-2026-106 B-fix: HUMAN_GATE threshold is a single source of truth."""
