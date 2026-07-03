@@ -10,8 +10,8 @@
 
 ## Objetivo
 
-H1 (auditoria externa 2026-07-03, CONFIRMADO EN CODIGO): `_scan_history_secrets` itera todos
-los blobs de `rev-list --all` pero solo aplica SECRET_PATTERNS; REDACTION_PATTERNS (emails,
+H1 (auditoria externa 2026-07-03, CONFIRMADO EN CODIGO): `_scan_history_secrets` itera cada
+blob de `rev-list --all` pero solo aplica SECRET_PATTERNS; REDACTION_PATTERNS (emails,
 `C:\Users\...`, `/home/...`, `.local`) SOLO escanea el working tree (L315/327). Un email o
 ruta personal en blobs de commits antiguos pasa el gate con falso verde. En la tanda backup
 esto obligo a scans manuales paralelos (patron laxo) para cada repo.
