@@ -2061,6 +2061,20 @@ def _read_pytest_safe_verdict() -> dict:
             "verdict": "inconclusive",
             "detail": f"run no finalizado (status={stamp.get('status')})",
         }
+    # WOT-2026-016c (Rev2 nit): a partial run (`--level unit` or explicit paths)
+    # must NOT green-light the gate -- that would be a new false green with only
+    # a fraction of the suite. Require the canonical full-suite shape, the same
+    # criterion assert_canonical_suite_green enforces at pre-handoff.
+    level = stamp.get("level")
+    args_mode = stamp.get("args_mode")
+    if level != "all" or (args_mode is not None and args_mode != "default_discovery"):
+        return {
+            "verdict": "inconclusive",
+            "detail": (
+                f"cobertura parcial (level={level}, args_mode={args_mode}); "
+                "el gate solo confia en --level all con discovery por defecto"
+            ),
+        }
     if stamp.get("exit_code") == 0:
         return {"verdict": "green", "detail": "suite verde sobre HEAD"}
     failed = stamp.get("failed_test_ids") or []

@@ -428,6 +428,62 @@ class TestRunQualityGates:
             for msg in result["warnings"]
         )
 
+    def test_read_pytest_safe_verdict_partial_coverage_is_inconclusive(
+        self, tmp_path, monkeypatch
+    ):
+        """WOT-2026-016c (Rev2 nit): un stamp de cobertura PARCIAL (--level unit
+        o paths explicitos) NO debe dar green, aunque exit_code sea 0 y el sha
+        coincida con HEAD -- seria un falso verde con solo una fraccion de la
+        suite. Debe degradar a inconclusive (mismo criterio que
+        assert_canonical_suite_green: level==all + default_discovery)."""
+        import agent_controller as ac
+
+        # Repo git real con un commit, para que HEAD resuelva.
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "--allow-empty",
+                "-q",
+                "-m",
+                "base",
+            ],
+            cwd=tmp_path,
+            check=True,
+        )
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=tmp_path, capture_output=True, text=True
+        ).stdout.strip()
+        stamp_dir = tmp_path / ".agent" / "runtime" / "pytest-safe"
+        stamp_dir.mkdir(parents=True)
+        monkeypatch.setattr(ac, "PROJECT_ROOT", tmp_path)
+
+        def write_stamp(**over):
+            base = {
+                "tested_commit_sha": head,
+                "status": "finished",
+                "exit_code": 0,
+                "level": "all",
+                "args_mode": "default_discovery",
+            }
+            base.update(over)
+            (stamp_dir / "last-run.json").write_text(json.dumps(base), encoding="utf-8")
+
+        # level=all + discovery + exit 0 -> green (control).
+        write_stamp()
+        assert ac._read_pytest_safe_verdict()["verdict"] == "green"
+        # level=unit -> inconclusive aunque exit 0.
+        write_stamp(level="unit")
+        assert ac._read_pytest_safe_verdict()["verdict"] == "inconclusive"
+        # paths explicitos -> inconclusive aunque exit 0.
+        write_stamp(args_mode="explicit_paths")
+        assert ac._read_pytest_safe_verdict()["verdict"] == "inconclusive"
+
 
 class TestHumanGateThreshold:
     """WP-2026-106 B-fix: HUMAN_GATE threshold is a single source of truth."""

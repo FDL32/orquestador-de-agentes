@@ -216,3 +216,18 @@ Gates: ruff check All passed, ruff format aplicado, encoding exit 0, regresion
 test_agent_controller (sin TestPreHandoff/BuilderBriefExclusion, deuda de estado-real)
 107 passed. Dogfooding: run_quality_gates lee el stamp verde de HEAD -> [OK] Pytest suite
 verde, passed=True.
+
+## Re-review adversarial (CONFIRMA CIERRE) + nit de cobertura parcial
+
+Re-Review 2 (fresh-context) CONFIRMO CIERRE de los 3 problemas de la refutacion (no-op,
+falso-verde, WARN-invisible): probo empiricamente que un stamp red -> passed=False (falso
+verde cerrado) y que el pre-handoff canonico (assert_canonical_suite_green, fail-closed)
+neutraliza el WARN-invisible por redundancia.
+
+Hallazgo nuevo (no-bloqueante, pero cerrado): `_read_pytest_safe_verdict` daba `green` con
+un stamp de cobertura PARCIAL (level=unit o paths explicitos, exit 0), un falso-verde
+latente en el gate advisory (el cierre canonico lo filtra con test_focal_level_unit_blocks,
+pero el gate deberia ser honesto). FIX (paridad con assert_canonical_suite_green): el gate
+exige level==all + args_mode==default_discovery; cualquier otra cosa -> inconclusive.
+Test: test_read_pytest_safe_verdict_partial_coverage_is_inconclusive (green control +
+unit->inconclusive + explicit_paths->inconclusive). 6 tests del gate passed.
