@@ -2,7 +2,7 @@
 
 **Ticket:** WOT-2026-016t - manager-approve: el mensaje del WARN por commit invalido no es
 accionable (no muestra el commit encontrado ni distingue el camino limpio de --force).
-**Estado:** IN_PROGRESS
+**Estado:** COMPLETED
 **HEAD al inicio:** 44629c8
 **delivery_authority:** repo_motor | **deliverable_type:** code
 
@@ -196,3 +196,8 @@ accionable (no muestra el commit encontrado ni distingue el camino limpio de --f
   (repo sin commits returncode 128, git ausente FileNotFoundError -> degradan sin romper).
 - Finding no-bloqueante: faltaba registrar los exit codes de los gates de cierre en este log
   (esta seccion los añade).
+
+
+Scope override: over-captura de archivos de tickets ya cerrados y pusheados: 015l (AUDIT+check_closeout_reconciliation), 016m (AUDIT), 016s (scope_gate.py+tests scope_gate), 016m (check_publication_gate). El diff real de 016t es agent_controller.py + test_manager_approve.py (commits 275d804/3084459). El WARN de FLT ausente ya NO aparece (016s en produccion).. Affected files: <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-015l.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016m.md, <REPO_ROOT>/.agent/runtime/memory/archive/observations.2026-07.jsonl, <REPO_ROOT>/.agent/scope_gate.py, <REPO_ROOT>/scripts/check_closeout_reconciliation.py, <REPO_ROOT>/scripts/check_publication_gate.py, <REPO_ROOT>/tests/test_check_publication_gate.py, <REPO_ROOT>/tests/unit/test_check_closeout_reconciliation.py, <REPO_ROOT>/tests/unit/test_scope_gate.py, <REPO_ROOT>/tests/unit/test_scope_gate_topology.py
+
+Manager approved canonical closeout for WOT-2026-016t

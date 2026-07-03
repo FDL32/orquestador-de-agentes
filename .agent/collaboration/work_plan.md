@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WOT-2026-016t
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Titulo:** manager-approve: el mensaje del WARN por commit invalido no es accionable
   (no muestra el commit encontrado ni distingue el camino limpio de --force)
