@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WOT-2026-016p
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Titulo:** Proyecciones regenerables del motor con rutas absolutas en destinos: auto-gitignore en install/sync + generadores PII-safe (N7 + B-PROJ)
 - **Asignado a:** Builder

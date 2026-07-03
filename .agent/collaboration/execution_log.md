@@ -1,7 +1,7 @@
 # Execution Log - WOT-2026-016p
 
 **Ticket:** WOT-2026-016p - Proyecciones regenerables con rutas absolutas: auto-gitignore install/sync + generadores PII-safe (N7 + B-PROJ)
-**Estado:** IN_PROGRESS
+**Estado:** COMPLETED
 **HEAD al inicio:** 6af5677
 
 > execution_log de 016b (COMPLETED) preservado en `execution_log_WOT-2026-016b.md`.
@@ -56,3 +56,8 @@
 - Suite --level all a 520b03a: 3 failed en test_destination_context (asertaban el contrato
   VIEJO: ruta absoluta presente). Actualizados al contrato del ticket: nombre presente +
   ruta absoluta AUSENTE (asercion MAS fuerte, no relajacion). 26/26 verdes tras el cambio.
+
+
+Scope override: test_projections_pii_safe.py esta en el FLT del work_plan (parser no reconoce la subseccion, bug conocido de 016b); test_destination_context.py = actualizacion de 3 asserts al contrato nuevo del ticket, documentada en AUDIT/execution_log y entregada en commit a7d4a87 junto a 520b03a. Affected files: <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016b.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-018a.md, <REPO_ROOT>/.pre-commit-config.yaml, <REPO_ROOT>/prompts/_shared/finding_triage_protocol.md, <REPO_ROOT>/prompts/manager_review.md, <REPO_ROOT>/prompts/orchestrator_launch_builder.md, <REPO_ROOT>/prompts/orchestrator_pipeline.md, <REPO_ROOT>/prompts/orchestrator_session_close_full_audit.md, <REPO_ROOT>/scripts/check_hook_interpreter.py, <REPO_ROOT>/tests/test_agent_controller.py, <REPO_ROOT>/tests/test_check_hook_interpreter.py, <REPO_ROOT>/tests/test_destination_context.py, <REPO_ROOT>/tests/test_projections_pii_safe.py
+
+Manager approved canonical closeout for WOT-2026-016p
