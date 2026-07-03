@@ -1,73 +1,83 @@
-# Work Plan - WOT-2026-016o
+# Work Plan - WOT-2026-016m
 
 ## Metadata
-- **ID:** WOT-2026-016o
-- **Estado:** COMPLETED
+- **ID:** WOT-2026-016m
+- **Estado:** APPROVED
 - **deliverable_type:** code
-- **Titulo:** classify_publication: aplicar REDACTION_PATTERNS tambien a la historia (H1 history-blind a PII)
+- **Titulo:** Gate de publicacion por fila (cross-repo): script canonico con B-TOCTOU, patron laxo, metadata y hermanos (contrato probado en la tanda backup)
 - **Asignado a:** Builder
 - **delivery_authority:** repo_motor
 
 ## Objetivo
 
-H1 (auditoria externa 2026-07-03, CONFIRMADO EN CODIGO): `_scan_history_secrets` itera cada
-blob de `rev-list --all` pero solo aplica SECRET_PATTERNS; REDACTION_PATTERNS (emails,
-`C:\Users\...`, `/home/...`, `.local`) SOLO escanea el working tree (L315/327). Un email o
-ruta personal en blobs de commits antiguos pasa el gate con falso verde. En la tanda backup
-esto obligo a scans manuales paralelos (patron laxo) para cada repo.
+Formalizar como script del motor el gate por-fila probado en la tanda backup 2026-07-03
+(12 repos) y exigido por dos pasadas adversariales. Cubre el hueco original de 016m
+(falso-verde de UNIDAD: motor limpio + hermano sucio publico) MAS los endurecimientos
+aprendidos en vivo: B-TOCTOU, patron laxo de PII, scan de metadata git (que classify NO
+cubre: solo escanea blobs, no autores/committers) y abort en carpetas "- copia".
+Borrador de contrato: C:\tmp\MATRIZ_PUBLICACION_BACKUP_20260702.md.
 
 ## Decision Arquitectonica
 
-- El scan de PII de historia se integra en el MISMO recorrido de blobs de
-  `_scan_history_secrets` (cero coste extra de iteracion): la funcion pasa a devolver
-  `(secret_findings, pii_findings)`.
-- PII en historia NO es "secreto" (exit 1) ni redactable en working tree: exige decision
-  humana (rewrite o aceptar) -> nuevo blocked_reason `HISTORY_PII_PENDING` y el verdict cae a
-  `DECIDE_PENDING` (exit 3, intervencion humana). Precedencia: tras BLOQUEADO_POR_SECRETO.
-- ALLOWLIST de placeholders sobre el TEXTO del match (leccion de la tanda: las redacciones
-  legitimas `C:\Users\<user>`, `<redacted-email>`, `*@example.com`, `/home/user`, noreply,
-  `[TU_USUARIO]`, `tu-*@`, `usuario@` NO deben bloquear el gate); un blob solo se reporta si
-  tiene >=1 match NO-placeholder.
-- Fixtures de seguridad y HISTORY_ACCEPTED_PATHS conservan sus exenciones actuales.
-- Manifest: nueva clave `history_pii_scan: {enabled, ok, findings}` simetrica a
-  history_secret_scan; findings con muestras de match ENMASCARADAS (no reproducir PII entera).
+- `scripts/check_publication_gate.py`, NUEVO, offline y deterministico (sin red: la
+  verificacion private:true via API queda como CHECKLIST impresa para el humano, no como
+  llamada del script). Reusa `classify_publication.build_manifest` como libreria (hereda el
+  history-PII scan de 016o).
+- Checks por fila (fail-closed, exit 1 al primer grupo con hallazgos):
+  1. NOMBRE: la carpeta del repo matchea `* - copia*` -> ABORT (nunca origen de remoto).
+  2. ARBOL: `git status --porcelain` no vacio -> BLOCKED (B-TOCTOU exige arbol limpio).
+  3. CLASSIFY: build_manifest full-history; verdict != LISTO_PARA_PUBLICAR -> BLOCKED
+     (con blocked_reasons volcados).
+  4. PATRON LAXO: `users[^a-z0-9]{0,4}<term>` sobre `git grep` de `rev-list --all`, con
+     terms parametrizables (`--pii-term`, repetible; default = nombre de usuario del HOME
+     actual, derivado en runtime - NUNCA hardcodeado en el motor).
+  5. METADATA: autores/committers de toda la historia que no sean noreply/*.local/allowlist
+     (`--allow-email`, repetible) -> BLOCKED. Unico check que classify no puede dar.
+  6. HERMANOS: `--sibling <path>` (repetible): cada hermano debe pasar 1-5 tambien
+     (recursion sin hermanos anidados) -> el falso-verde de UNIDAD original.
+- Salida: JSON a stdout (verdict LISTO|BLOCKED, checks con evidencia, head sha, generated_at)
+  + checklist humana final (private:true via API pre/post push; "no ejecutar herramientas del
+  motor entre este gate y el push" = B-TOCTOU).
+- Exit: 0 solo LISTO; 1 BLOCKED; 2 error de ejecucion.
 
 ## Fases
 
-### Fase 0 - Diagnostico (COMPLETADO)
-- Codigo confirmado: patterns L141-147; history scan L436-487 (solo SECRET); verdict L565-595;
-  blocked_reasons L489-562; manifest L676-697. Ningun test toca los internals (rg 0).
+### Fase 0 - Diagnostico (COMPLETADO en tanda + 016o)
+- classify (con 016o) cubre blobs tree+history pero NO metadata git -> check 5 es valor unico.
+- gitleaks queda FUERA del script (binario externo no garantizado en CI); la matriz lo mantiene
+  como segunda herramienta MANUAL de la checklist.
 
 ### Fase 1 - Implementacion
-- `HISTORY_PII_PLACEHOLDER_PATTERNS` (allowlist compilada sobre el texto del match).
-- `_scan_history_secrets` devuelve tupla; caller desempaqueta; `_build_blocked_reasons` y
-  `_decide_verdict` reciben `history_pii_findings`; manifest emite `history_pii_scan`.
+- Script nuevo con funciones puras testables: `check_name`, `check_tree_clean`,
+  `check_classify`, `check_loose_pattern`, `check_metadata`, `run_gate(repo, siblings, ...)`.
 
-### Fase 2 - Tests (barrera FAIL-sin/PASS-con)
-- `tests/test_classify_history_pii.py` (repos git REALES en tmp_path, sin mock de subprocess):
-  - historia con email real en blob BORRADO del tree -> HISTORY_PII_PENDING + DECIDE_PENDING +
-    history_pii_scan.ok=False.
-  - historia solo con placeholders -> ok=True, sin bloqueo.
-  - MUTATION: monkeypatch REDACTION_PATTERNS=[] -> el hallazgo desaparece (el scan es la
-    barrera, no cosmetico).
+### Fase 2 - Tests (barrera + mutation)
+- `tests/test_check_publication_gate.py` (repos git reales en tmp_path):
+  - repo limpio -> exit 0 / LISTO.
+  - carpeta "x - copia" -> BLOCKED name.
+  - arbol sucio -> BLOCKED tree.
+  - email personal en metadata (autor real) -> BLOCKED metadata; MUTATION: quitar el check
+    (monkeypatch) -> pasa (demuestra que es el check unico que caza metadata).
+  - PII en historia de un HERMANO -> BLOCKED sibling (el caso UNIDAD original de 016m).
+  - patron laxo con term custom caza slug `Users-term` que classify no ve como ruta.
 
 ## Criterios de aceptacion
 
-1. Repo tmp cuya historia contiene email/ruta real en blob antiguo -> el gate lo DETECTA
-   (HISTORY_PII_PENDING; verdict != LISTO_PARA_PUBLICAR).
-2. Placeholders legitimos NO bloquean (allowlist verificada con test).
-3. MUTATION verificada: sin el scan, vuelve el falso verde.
-4. Sin PII reproducida entera en el manifest (matches enmascarados).
+1. Los 6 checks implementados con evidencia en el JSON de salida; exit 0 solo LISTO.
+2. Caso UNIDAD verificado: repo limpio + hermano con PII -> BLOCKED (test).
+3. MUTATION del check de metadata verificada.
+4. Sin username hardcodeado en el motor (default derivado en runtime; test lo verifica
+   leyendo el fuente).
 5. ruff + format + encoding verdes; suite canonica exit 0 sha==HEAD; validate 0/0.
 
 ## Files Likely Touched
 
 ### repo_motor
-- `scripts/classify_publication.py`
-- `tests/test_classify_history_pii.py` (nuevo)
+- `scripts/check_publication_gate.py` (nuevo)
+- `tests/test_check_publication_gate.py` (nuevo)
 
 ## Non-goals
-- NO tocar SECRET_PATTERNS ni la semantica de BLOQUEADO_POR_SECRETO.
-- NO tocar el tree-side REDACTION (L315/327) ni los buckets.
-- NO anadir rewrite automatico de historia (la decision es humana; esto es el detector).
-- NO mezclar con el gate por-fila (016m).
+- NO llamadas de red (gh API = checklist humana impresa).
+- NO integrar gitleaks en el script (segunda herramienta manual de la matriz).
+- NO reescrituras de historia ni fixes automaticos (es un GATE, detecta y bloquea).
+- NO tocar classify_publication (016o ya entrego su parte).
