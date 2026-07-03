@@ -2,7 +2,7 @@
 
 **Ticket:** WOT-2026-016c - gate interno run_quality_gates usa `uv run pytest` (roto en este
 entorno) y reporta timeout/error de runner como "Tests fallando" (AUTO-REJECTED espurio).
-**Estado:** IN_PROGRESS
+**Estado:** COMPLETED
 **HEAD al inicio:** 7af63b4
 **delivery_authority:** repo_motor | **deliverable_type:** code
 
@@ -231,3 +231,8 @@ pero el gate deberia ser honesto). FIX (paridad con assert_canonical_suite_green
 exige level==all + args_mode==default_discovery; cualquier otra cosa -> inconclusive.
 Test: test_read_pytest_safe_verdict_partial_coverage_is_inconclusive (green control +
 unit->inconclusive + explicit_paths->inconclusive). 6 tests del gate passed.
+
+
+Scope override: over-captura de archivos de tickets ya cerrados (015l AUDIT, 016s scope_gate.py+tests, 016t test_manager_approve). El diff real de 016c es agent_controller.py + test_agent_controller.py (commits 1772f90/de94dc2/b8fd623/9054728). 'subprocess.TimeoutExpired' es un falso path del FLT parser (token de prosa del work_plan), no un archivo.. Affected files: <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-015l.md, <REPO_ROOT>/.agent/scope_gate.py, <REPO_ROOT>/subprocess.TimeoutExpired, <REPO_ROOT>/tests/unit/test_manager_approve.py, <REPO_ROOT>/tests/unit/test_scope_gate.py, <REPO_ROOT>/tests/unit/test_scope_gate_topology.py
+
+Manager approved canonical closeout for WOT-2026-016c

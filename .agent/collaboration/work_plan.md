@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WOT-2026-016c
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Titulo:** Gate interno de agent_controller (uv run pytest) auto-rechaza el ticket con un
   mensaje falso de "Tests fallando" porque uv no arranca el script pytest en este entorno; no
