@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WOT-2026-016o
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Titulo:** classify_publication: aplicar REDACTION_PATTERNS tambien a la historia (H1 history-blind a PII)
 - **Asignado a:** Builder
