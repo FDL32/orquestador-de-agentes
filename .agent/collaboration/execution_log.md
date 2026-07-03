@@ -1,7 +1,7 @@
 # Execution Log - WOT-2026-016o
 
 **Ticket:** WOT-2026-016o - classify: REDACTION_PATTERNS tambien en historia (H1)
-**Estado:** IN_PROGRESS
+**Estado:** READY_FOR_REVIEW
 **HEAD al inicio:** 8742c6e
 
 > execution_log de 016p (COMPLETED) preservado en `execution_log_WOT-2026-016p.md`.
@@ -24,3 +24,6 @@
 
 ## Gates
 - ruff 0 / format ok / encoding 0. Suite canonica + validate: tras commit.
+
+
+Scope override: commits d4839b5 (entrega classify+test, ambos en FLT del work_plan; parser de FLT no reconoce subseccion, bug conocido) + c8e0aa1 (churn .md colaboracion). Affected files: <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016b.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016p.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-018a.md, <REPO_ROOT>/.pre-commit-config.yaml, <REPO_ROOT>/scripts/check_hook_interpreter.py, <REPO_ROOT>/scripts/destination_context.py, <REPO_ROOT>/scripts/install_agent_system.py, <REPO_ROOT>/scripts/project_scanner.py, <REPO_ROOT>/tests/test_check_hook_interpreter.py, <REPO_ROOT>/tests/test_classify_history_pii.py, <REPO_ROOT>/tests/test_destination_context.py, <REPO_ROOT>/tests/test_projections_pii_safe.py
