@@ -1,249 +1,215 @@
-# Work Plan - WOT-2026-016c
+# Work Plan - WOT-2026-016w
 
 ## Metadata
-- **ID:** WOT-2026-016c
-- **Estado:** COMPLETED
+- **ID:** WOT-2026-016w
+- **Estado:** APPROVED
 - **deliverable_type:** code
-- **Titulo:** Gate interno de agent_controller (uv run pytest) auto-rechaza el ticket con un
-  mensaje falso de "Tests fallando" porque uv no arranca el script pytest en este entorno; no
-  es un timeout de repos grandes.
+- **Titulo:** check_deliverables_exist.py descarta bullets FLT con anotacion (bug gemelo de 016s).
 - **Asignado a:** Builder
 - **delivery_authority:** repo_motor
 
 ## Objetivo
 
-Corregir run_quality_gates (.agent/agent_controller.py, funcion en ~2014-2071) para que
-invoque pytest con el interprete canonico del proyecto (sys.executable -m pytest, mismo
-patron que scripts/run_pytest_safe.py) en vez de ["uv", "run", "pytest"], capture
-subprocess.TimeoutExpired con un mensaje que la distinga de un fallo real de tests, y
-reporte "Tests fallando" UNICAMENTE cuando pytest devolvio un returncode de fallo de
-aserciones real -- nunca cuando el runner no pudo arrancar. Verificacion del objetivo
-(comando literal): .venv/Scripts/python.exe -m pytest tests/test_agent_controller.py -k
-RunQualityGates -v pasa, y una corrida manual de run_quality_gates() sobre este repo (con
-el uv roto tal como esta hoy en esta maquina) da passed=True con evidencia "[OK] Pytest:
-Tests OK" en vez del "[FAIL] Pytest: Tests fallando" espurio actual.
+Corregir _resolve_flt_bullet_tokens en scripts/check_deliverables_exist.py (~linea 232-263)
+para que un bullet de Files Likely Touched con anotacion descriptiva tras el path (por ejemplo
+scripts/x.py (nuevo, el gate)) se resuelva al path scripts/x.py y sea verificado en disco,
+en vez de descartarse silenciosamente por contener un espacio. El fix debe alcanzar paridad
+semantica con .agent/scope_gate.py::_normalize_flt_line (corregido en WOT-2026-016s), sin
+reintroducir el falso positivo que ese mismo filtro de espacio existe para evitar: bullets
+narrativos que mencionan paths entre backticks dentro de prosa (ej. "Notas: los scripts
+inspeccionados (foo.py, bar.py) son read-only").
 
-## Diagnostico (causa raiz verificada, reemplaza la premisa del backlog)
+Verificacion del objetivo (comando literal): `.venv/Scripts/python.exe -m pytest tests/unit/test_check_deliverables_exist.py -v` da 11 passed (9 preexistentes + 2 nuevos de paridad), incluyendo el test que prueba que un bullet anotado con `scripts/annotated_thing.py` ausente en disco produce `code == 1`.
 
-La ficha de backlog dice: "el gate interno (uv run pytest -q, timeout 120s) auto-rechaza el
-ticket por timeout en repos grandes (~3414 tests)". Verificado en vivo en esta sesion contra
-el codigo y el entorno real: esa premisa es DOBLEMENTE FALSA.
+## Diagnostico (causa raiz verificada en codigo, sesion 2026-07-03)
 
-- run_quality_gates (.agent/agent_controller.py:2014-2071) corre
-  subprocess.run(["uv", "run", "pytest", "-q"], capture_output=True, timeout=120,
-  cwd=PROJECT_ROOT) en el bloque 2049-2063.
-- Reproducido en vivo: "uv run pytest -q --co" en este repo termina con returncode 1 en
-  0.06 segundos (no en 120s), con el mensaje de uv "Failed to canonicalize script path"
-  (mas el warning previo "VIRTUAL_ENV=...miniconda3 does not match the project environment
-  path .venv"). NO es un timeout: uv no logra arrancar el script pytest como comando de
-  consola en este entorno (el VIRTUAL_ENV global apunta a un miniconda desalineado del
-  .venv del proyecto) y falla instantaneo.
-- El runner canonico ".venv/Scripts/python.exe -m pytest --co -q" da returncode 0 y
-  recolecta 3487 tests en ~1 segundo. Es el patron ya usado en el resto del repo:
-  scripts/run_pytest_safe.py:141-166 (resolve_test_interpreter) resuelve el interprete
-  del .venv (con fallback a sys.executable) y NUNCA usa uv run pytest; el propio
-  agent_controller.py ya usa sys.executable para invocar otros scripts del repo sobre
-  PROJECT_ROOT (ver linea ~2696, invocacion de pre_handoff_guard.py).
-- Consecuencia real: cuando el ticket esta en READY_FOR_REVIEW, _check_quality_gates
-  (linea ~2144, llamada desde determine_next_action ~2414) corre run_quality_gates, que
-  marca passed=False con el mensaje enganoso "[FAIL] Pytest: Tests fallando", y
-  _check_quality_gates emite AUTO-REJECTED (revierte execution_log.md a IN_PROGRESS)
-  aunque los 3487 tests de la suite real pasan al 100% bajo el interprete correcto. El
-  mensaje no distingue "el runner no arranco" de "un test fallo una asercion": ambos casos
-  hoy producen el mismo "[FAIL] Pytest: Tests fallando".
-- Gap adicional confirmado: el bloque de pytest en run_quality_gates solo captura
-  except FileNotFoundError (linea 2062); NO captura subprocess.TimeoutExpired. Si el
-  proceso SI llegase a colgarse hasta el timeout de 120s (escenario que la ficha original
-  asumia como causa, pero que no es lo que ocurre hoy), run_quality_gates lanzaria una
-  excepcion no controlada en vez de degradar a un resultado de gate con mensaje claro. El
-  resto del archivo ya tiene el patron de captura correcto en otros 3 sitios
-  (except (subprocess.TimeoutExpired, FileNotFoundError): en lineas ~1437, ~1521, ~3457),
-  asi que el bloque de pytest es la excepcion inconsistente, no la norma.
-- El bloque de ruff (linea 2035-2036, ["uv", "run", "ruff", "check", *dirs_to_check]) SI
-  funciona en este entorno: verificado en vivo, "uv run ruff check tests --exit-zero" da
-  returncode 0 y "All checks passed!". La diferencia es que uv run ruff invoca un binario
-  Rust instalado como entry point de consola (uv lo resuelve sin pasar por "canonicalizar
-  script path"), mientras que uv run pytest intenta resolver el script pytest de un modo
-  que falla con el VIRTUAL_ENV desalineado de esta maquina. No hay evidencia de que ruff
-  este roto; no se toca por consistencia especulativa.
+- scripts/check_deliverables_exist.py:244-252, dentro de _resolve_flt_bullet_tokens:
 
-## Decision Arquitectonica
+```python
+normalized = (
+    stripped.lstrip("*- ")
+    .replace("`", "")
+    .replace('"', "")
+    .replace("'", "")
+    .strip()
+)
+if not normalized or " " in normalized:
+    return
+```
 
-- Se toca EXCLUSIVAMENTE el bloque de pytest dentro de run_quality_gates
-  (.agent/agent_controller.py, lineas ~2049-2063 hoy; localizar por contenido, pueden variar
-  +/- lineas). El bloque de ruff (~2034-2047) NO se modifica: reproducido en vivo que
-  funciona en este entorno, y cambiarlo no tiene evidencia de bug que lo justifique dentro de
-  este ticket (alcance minimo, ver Non-goals).
-- El comando pytest pasa de ["uv", "run", "pytest", "-q"] a
-  [sys.executable, "-m", "pytest", "-q"]. Se usa sys.executable directamente (NO se
-  importa resolve_test_interpreter de scripts/run_pytest_safe.py): run_quality_gates
-  ya opera sobre PROJECT_ROOT con el interprete que lanzo el propio agent_controller.py
-  (mismo patron que la invocacion existente de pre_handoff_guard.py en linea ~2696), y
-  acoplar agent_controller.py a un import de scripts/ para este gate interno seria mayor
-  blast radius sin beneficio adicional -- run_quality_gates no tiene el escenario
-  multi-repo (motor vs destino con su propio .venv) que motivo resolve_test_interpreter
-  en primer lugar; corre siempre sobre el workspace activo del controller.
-- El try/except del bloque pasa de except FileNotFoundError a
-  except (subprocess.TimeoutExpired, FileNotFoundError) as exc:, replicando el patron ya
-  usado en el resto del archivo. Dentro de cada rama se distingue el mensaje:
-  - subprocess.TimeoutExpired: agrega a results["warnings"] (NO a results["errors"] ni
-    fuerza passed=False solo por esto) un mensaje del tipo
-    "[WARN] Pytest: timeout tras {N}s (no es fallo de tests)" (con {N} = exc.timeout), y
-    dado que un timeout es una senal de "no se pudo verificar", el gate lo trata igual que
-    hoy trata FileNotFoundError (no bloquea el plan, queda como warning informativo) --
-    consistente con que el mensaje actual de FileNotFoundError ("[WARN] Pytest: No
-    instalado") tampoco fuerza passed=False. Esto preserva la semantica existente: el gate
-    solo bloquea (passed=False) cuando pytest SI corrio y devolvio evidencia real de fallo.
-  - returncode != 0 (el runner SI arranco): se mantiene results["passed"] = False y el
-    mensaje pasa a "[FAIL] Pytest: Tests fallando" SOLO en este camino -- sigue siendo el
-    texto correcto porque aqui SI hubo una ejecucion real de pytest con fallo.
-  - returncode == 0: sin cambio, "[OK] Pytest: Tests OK".
-- No se cambia la firma de run_quality_gates, su valor de retorno (dict con las mismas
-  claves passed/errors/summary/warnings), ni el contrato consumido por
-  _check_quality_gates (linea ~2156) o determine_next_action. El AUTO-REJECT sigue
-  disparandose exactamente cuando passed=False; con el fix, passed=False ya no ocurre por
-  un uv roto, solo por un fallo real de pytest o de ruff.
+  Tras quitar el prefijo de bullet y los backticks/comillas, si la linea completa (path +
+  anotacion) contiene CUALQUIER espacio, la funcion descarta el bullet entero y retorna sin
+  anadir nada a paths. Un bullet "- `scripts/x.py` (nuevo, el gate)" normaliza a
+  "scripts/x.py (nuevo, el gate)", que contiene espacios y se descarta. El deliverable nunca
+  se verifica en disco: falso-verde en check_deliverables_exist para tickets documentation
+  o mixed cuyo FLT usa bullets anotados.
+- .agent/scope_gate.py:63-89 tiene el MISMO problema originalmente, corregido en
+  WOT-2026-016s (_normalize_flt_line, lineas 77-89): tras la misma limpieza de
+  backticks/comillas/bullet-prefix, la funcion se queda SOLO con el primer token separado por
+  espacio (cleaned.split(" ", 1)[0]) antes de que el caller aplique _looks_like_path_token
+  (linea 67-74: rechaza si hay espacio en el token, exige que empiece por punto, contenga
+  slash o backslash, o que el basename tenga un punto). El commit 4c79e8e (WOT-2026-016s) es
+  la fuente de este patron; no toco scripts/check_deliverables_exist.py (confirmado con
+  "git log --oneline -- scripts/check_deliverables_exist.py": solo muestra commits de
+  WOT-2026-010n, ninguno de WOT-2026-016s). El bug en check_deliverables_exist.py es real, no
+  corregido, y es el gemelo exacto del que 016s arreglo en scope_gate.py.
+- Matiz de diseno CONFIRMADO (no romper): el docstring de _resolve_flt_bullet_tokens
+  (lineas 235-243) documenta que el filtro de espacio existe para rechazar bullets
+  narrativos como "Notas: los scripts inspeccionados (foo.py, bar.py) son read-only". Ese
+  caso real esta cubierto por el test existente
+  tests/unit/test_check_deliverables_exist.py::test_wot_010j_real_case_narrative_note_not_treated_as_deliverable
+  (linea 139-170), que usa el bullet narrativo real de WOT-2026-010j y exige code == 0
+  (no tratarlo como deliverable faltante). El fix NO debe tocar ese comportamiento: tomar
+  solo el PRIMER TOKEN (patron 016s) preserva el rechazo porque el primer token de una
+  linea narrativa tipica ("Los", "Notas:", etc.) no pasa looks_like_path (no tiene punto ni
+  slash, o es una palabra corriente sin extension), mientras que el primer token de un
+  bullet anotado (scripts/x.py) SI pasa looks_like_path.
+- looks_like_path (mismo archivo, lineas 63-71) es el equivalente local de
+  _looks_like_path_token de scope_gate.py (lineas 66-74): ambas rechazan tokens con
+  espacio y exigen punto, slash o backslash. looks_like_path anade un filtro extra (rechaza
+  tokens UPPER_CASE con guion bajo, p.ej. constantes tipo YYYY_NNN) que no interfiere con el
+  fix: un path real como scripts/x.py nunca es upper-case-con-guion-bajo.
 
-## Fases
+## Alcance (cambio minimo, paridad con 016s)
 
-### Fase 1 - Re-verificacion del diagnostico (obligatoria antes de tocar codigo)
-- Releer .agent/agent_controller.py: run_quality_gates (~2014), el bloque de pytest
-  (~2049-2063), _check_quality_gates (~2144) y su propagacion a AUTO-REJECTED (~2156-2171).
-  Confirmar que las lineas citadas siguen describiendo el mismo codigo (pueden variar +/-
-  lineas por commits intermedios; localizar por contenido, no solo por numero de linea).
-- Re-ejecutar en vivo y documentar el resultado en execution_log.md antes de tocar codigo:
-  "uv run pytest -q --co" (esperar returncode != 0, fallo casi instantaneo, mensaje
-  "Failed to canonicalize script path") y ".venv/Scripts/python.exe -m pytest --co -q"
-  (esperar returncode 0). Si el comportamiento difiere de lo aqui descrito (p.ej. uv ya no
-  esta roto en la maquina del Builder), documentarlo explicitamente en execution_log.md y
-  escalar al Manager antes de continuar -- el fix asume que el problema es el runner, no un
-  timeout real.
+Modificar UNICAMENTE _resolve_flt_bullet_tokens en scripts/check_deliverables_exist.py
+para que, tras la limpieza actual de backticks/comillas/bullet-prefix, tome solo el primer
+token separado por espacio (normalized.split(" ", 1)[0] o equivalente) ANTES de aplicar el
+resto de las validaciones ya existentes (los caracteres <, >, {, }, YYYY, NNN, trailing
+slash, looks_like_path). El resto de la funcion (resolucion de Path, current_root,
+paths.add) no cambia. No se toca .agent/scope_gate.py (ya corregido en 016s) ni ningun otro
+archivo.
 
-### Fase 2 - Fix del runner y captura de TimeoutExpired
-- En run_quality_gates, dentro del bloque de pytest (~2049-2063):
-  1. Cambiar el comando de ["uv", "run", "pytest", "-q"] a
-     [sys.executable, "-m", "pytest", "-q"].
-  2. Cambiar except FileNotFoundError: a
-     except (subprocess.TimeoutExpired, FileNotFoundError) as exc: y, dentro del except,
-     distinguir con isinstance(exc, subprocess.TimeoutExpired): si es timeout, agregar a
-     results["warnings"] el mensaje "[WARN] Pytest: timeout tras {N}s (no es fallo de
-     tests)" (N = exc.timeout); si es FileNotFoundError, mantener el mensaje existente
-     "[WARN] Pytest: No instalado" sin cambios.
-  3. NO modificar el bloque de ruff (~2034-2047): queda con ["uv", "run", "ruff", "check",
-     *dirs_to_check] sin cambios (Decision Arquitectonica).
-  4. NO modificar la condicion "if tests_dir.exists():" que envuelve el bloque, ni el
-     timeout=120 (el valor del timeout no es el bug; se mantiene igual).
-- Confirmar por inspeccion de diff que results["passed"] solo se fuerza a False en la
-  rama de returncode != 0 del try (pytest SI corrio y fallo), nunca en la rama de
-  TimeoutExpired ni en la de FileNotFoundError.
+### Non-goals
 
-### Fase 3 - Tests (barrera + mutation)
-- En tests/test_agent_controller.py, dentro o junto a la clase TestRunQualityGates
-  (linea ~324, que ya contiene test_run_quality_gates_returns_dict), anadir tests nuevos
-  que mockeen agent_controller.subprocess.run con un side_effect/return_value por
-  escenario (patron patch("agent_controller.subprocess") ya usado en
-  test_run_quality_gates_returns_dict; para fijar el comando exacto invocado, capturar los
-  argumentos posicionales del mock, ej. mock_subprocess.run.call_args_list):
-  1. test_run_quality_gates_uses_canonical_python_interpreter_for_pytest (o nombre
-     equivalente): con subprocess.run mockeado devolviendo returncode=0 para ambas
-     llamadas (ruff y pytest), verificar que la llamada correspondiente a pytest usa
-     sys.executable y "-m" y "pytest" como primeros elementos del comando -- NO
-     "uv"/"run"/"pytest" como lista literal.
-  2. test_run_quality_gates_pytest_timeout_is_not_reported_as_test_failure (o nombre
-     equivalente): mockear subprocess.run con side_effect tal que la llamada de ruff
-     devuelva returncode=0 y la llamada de pytest levante
-     subprocess.TimeoutExpired(cmd=[...], timeout=120). Verificar: (a) el resultado NO
-     tiene results["passed"] == False causado por esta rama (si ruff paso y el unico
-     evento es el timeout de pytest, passed debe ser True, replicando la semantica actual
-     de FileNotFoundError que tampoco fuerza passed=False); (b) el summary/warnings
-     contiene un mensaje que incluye la palabra "timeout" y NO el texto exacto
-     "[FAIL] Pytest: Tests fallando".
-  3. test_run_quality_gates_pytest_real_failure_reports_tests_fallando (o nombre
-     equivalente): mockear subprocess.run con returncode=0 para ruff y returncode=1
-     (sin excepcion) para pytest. Verificar que results["passed"] is False y que el
-     summary SI contiene "[FAIL] Pytest: Tests fallando" -- este es el unico camino donde
-     ese texto debe seguir apareciendo.
-  4. Confirmar que test_run_quality_gates_returns_dict (ya existente, linea ~327) sigue
-     pasando sin modificacion (usa patch("agent_controller.subprocess") generico, un
-     MagicMock() sin side_effect especifico; su contrato -- dict con passed/summary --
-     no cambia).
-- Barrera MUTATION (obligatoria, CEM): revertir manualmente el cambio de comando (volver a
-  ["uv", "run", "pytest", "-q"]) y confirmar que el test del punto 1 FALLA (detecta que ya
-  no se usa sys.executable). Revertir por separado la captura de TimeoutExpired (volver a
-  except FileNotFoundError: solo) y confirmar que el test del punto 2 FALLA (la excepcion
-  no controlada se propaga o el mensaje cambia). Reaplicar ambos fixes y confirmar verde.
-  Documentar el comando exacto y el resultado (rojo sin fix / verde con fix) en
-  execution_log.md para cada uno de los dos sub-cambios por separado.
-- Confirmar que TODA la clase TestRunQualityGates y TestAutoRejectQualityGates (linea
-  ~2197, que mockea run_quality_gates a nivel de funcion completa) siguen en 100% passed
-  tras el fix -- estas ultimas no deben verse afectadas porque mockean run_quality_gates
-  entero, no subprocess.
-
-## Criterios de aceptacion
-
-1. El comando de pytest dentro de run_quality_gates usa [sys.executable, "-m", "pytest",
-   "-q"] en vez de ["uv", "run", "pytest", "-q"]. Verificable por inspeccion de diff y por
-   el test test_run_quality_gates_uses_canonical_python_interpreter_for_pytest (o nombre
-   equivalente documentado en execution_log.md).
-2. El bloque de pytest captura subprocess.TimeoutExpired ademas de FileNotFoundError, con
-   un mensaje que contiene la palabra "timeout" y que NO es igual a
-   "[FAIL] Pytest: Tests fallando". Un timeout NO fuerza results["passed"] = False por si
-   solo (misma semantica que FileNotFoundError hoy). Verificable con
-   test_run_quality_gates_pytest_timeout_is_not_reported_as_test_failure (o nombre
-   equivalente).
-3. Un returncode != 0 de pytest SIN excepcion (fallo real de tests) sigue produciendo
-   results["passed"] is False y el mensaje "[FAIL] Pytest: Tests fallando". Verificable
-   con test_run_quality_gates_pytest_real_failure_reports_tests_fallando (o nombre
-   equivalente).
-4. El bloque de ruff (["uv", "run", "ruff", "check", *dirs_to_check]) no tiene diff (0
-   lineas modificadas) -- verificable por git diff acotado a esas lineas.
-5. MUTATION: revertir el cambio de runner hace fallar el test del criterio 1; revertir por
-   separado la captura de TimeoutExpired hace fallar el test del criterio 2. Evidencia
-   rojo-sin-fix / verde-con-fix documentada en execution_log.md con el comando literal
-   para cada sub-cambio.
-6. Regresion cero: .venv/Scripts/python.exe -m pytest tests/test_agent_controller.py -v da
-   100% passed (ningun test preexistente se rompe, incluidos
-   test_run_quality_gates_returns_dict y toda TestAutoRejectQualityGates).
-7. Evidencia end-to-end en execution_log.md: una corrida manual de run_quality_gates()
-   (o del flujo completo via --validate/manager-approve) sobre este repo, con el uv tal
-   como esta hoy (roto para pytest), da passed=True con "[OK] Pytest: Tests OK" en el
-   summary -- confirmando que el sintoma original (AUTO-REJECT espurio) ya no ocurre.
-8. ruff check y ruff format --check sobre .agent/agent_controller.py y
-   tests/test_agent_controller.py: 0 errores.
-9. Suite canonica: scripts/run_pytest_safe.py --level all termina en exit 0, sin
-   state-leak (.agent/collaboration/ intacto tras la corrida salvo lo que este propio
-   ticket declare).
-10. .agent/agent_controller.py --validate --json --project-root . termina en exit 0, 0
-    errors, 0 warnings al cierre.
+- NO modificar .agent/scope_gate.py ni _normalize_flt_line (ya corregidos en WOT-2026-016s).
+- NO cambiar el filtro anti-narrativa mas alla de tomar el primer token: seguir rechazando
+  bullets cuyo primer token no sea un path (looks_like_path sigue siendo la gate final).
+- NO tocar _extract_paths_from_generic_sections, _process_backtick_tokens,
+  resolve_with_fallbacks ni ningun otro extractor del mismo archivo: el bug y el fix son
+  especificos de la seccion FLT namespaced (_resolve_flt_bullet_tokens / _extract_flt_paths).
+- NO anadir un nuevo modo de deteccion de anotaciones (parentesis, comas, etc.): el patron
+  "primer token" es identico al de 016s, no una heuristica nueva.
 
 ## Files Likely Touched
 
 ### repo_motor
-- .agent/agent_controller.py (fix del runner de pytest dentro de run_quality_gates,
-  bloque ~2049-2063: sys.executable -m pytest en vez de uv run pytest, captura de
-  subprocess.TimeoutExpired con mensaje distinguible; no toca el bloque de ruff ni la
-  firma publica de run_quality_gates ni _check_quality_gates)
-- tests/test_agent_controller.py (3 tests nuevos en/junto a TestRunQualityGates: runner
-  canonico, timeout no reportado como fallo, fallo real si reportado; con evidencia
-  mutation)
 
-## Non-goals
+- scripts/check_deliverables_exist.py
+- tests/unit/test_check_deliverables_exist.py
 
-- NO reescribir run_quality_gates entero: el bloque de ruff, el bloque de
-  validate_state_files, run_finalization_checks y la firma/valor de retorno de la funcion
-  quedan identicos.
-- NO cambiar la logica de AUTO-REJECT ni el flujo de determine_next_action:
-  _check_quality_gates sigue disparando AUTO-REJECTED bajo exactamente la misma condicion
-  (gate_result["passed"] is False); el fix cambia CUANDO passed es False (ya no por un uv
-  roto), no la mecanica de rechazo.
-- NO tocar scripts/run_pytest_safe.py: su patron (resolve_test_interpreter,
-  select_test_runner) es correcto y ya funciona; run_quality_gates usa sys.executable
-  directamente por las razones dadas en Decision Arquitectonica, sin importar ese modulo.
-- NO cambiar el bloque de ruff (["uv", "run", "ruff", ...]): funciona en este entorno
-  (verificado en vivo), no hay evidencia de bug que lo justifique dentro de este ticket.
-- NO cambiar el valor de timeout=120 del subprocess de pytest: el problema no era el
-  valor del timeout, era el comando que uv no podia arrancar.
-- NO abrir en este ticket el follow-up de unificar run_quality_gates con
-  scripts/run_pytest_safe.py (posible redundancia entre ambos runners): si el Builder lo
-  identifica como deuda real durante la implementacion, anotarlo en execution_log.md para
-  que el Manager decida si abre un ticket de seguimiento; no se implementa aqui.
+## Tests Esperados
+
+1. Nuevo test_wot_016w_flt_bullet_with_trailing_annotation_resolves_and_checked
+   (tests/unit/test_check_deliverables_exist.py): un work_plan.md con
+   "## Files Likely Touched" -> "### repo_motor" -> bullet
+   "- `scripts/annotated_thing.py` (nuevo, el gate)" donde scripts/annotated_thing.py
+   NO existe en disco debe dar code == 1 y el output debe mencionar annotated_thing.py
+   (paridad con test_namespaced_repo_motor_missing_deliverable_fails_closed, pero con
+   bullet anotado). Confirma criterio de aceptacion 1 del ticket (el deliverable se
+   resuelve y se comprueba su existencia) usando el caso "falta en disco" como prueba
+   directa: si la funcion siguiera descartando el bullet, el script no reportaria el
+   archivo faltante y daria code == 0 (falso-verde), que es exactamente el bug.
+2. Nuevo test_wot_016w_flt_bullet_with_trailing_annotation_passes_when_exists
+   (mismo archivo): mismo bullet anotado pero con scripts/annotated_thing.py SI presente en
+   disco (bajo motor_root) debe dar code == 0. Confirma que el path resuelto es el correcto
+   (scripts/annotated_thing.py, no la linea completa con anotacion, que nunca existiria
+   como archivo).
+3. No-regresion (ya existente, no se toca):
+   test_wot_010j_real_case_narrative_note_not_treated_as_deliverable debe seguir dando
+   code == 0 tras el fix (confirma que el filtro anti-narrativa sigue vivo). Ejecutar junto
+   al resto de la suite del archivo, no como test nuevo.
+4. MUTATION (documentado en execution_log.md, no como test pytest nuevo separado):
+   revertir temporalmente el fix (quitar el split en el primer token / volver a la
+   condicion original de "si hay espacio, return") y confirmar que
+   test_wot_016w_flt_bullet_with_trailing_annotation_resolves_and_checked (test 1) FALLA
+   (el script da code == 0 en vez de 1 porque el bullet se descarta silenciosamente);
+   restaurar el fix y confirmar que el mismo test PASA. Este es el criterio de aceptacion 3
+   del ticket. Usar el patron ya establecido en el repo (worktree/checkout parcial con
+   git status --short limpio antes y despues, o edicion temporal + git diff para confirmar
+   revertido 100% al estado post-fix); ver prompts/orchestrator_launch_builder.md, seccion
+   "Verificacion del test de regresion".
+
+## Criterios de Aceptacion (binarios)
+
+1. Un bullet FLT "scripts/x.py (anotacion)" se resuelve a scripts/x.py y
+   check_deliverables_exist comprueba su existencia. Verificado por los tests 1 y 2 de
+   "Tests Esperados": .venv/Scripts/python.exe -m pytest
+   tests/unit/test_check_deliverables_exist.py -k wot_016w_flt_bullet_with_trailing_annotation -v
+   pasa con 2 passed.
+2. Un bullet narrativo con espacios pero sin path como primer token sigue rechazado (no
+   reintroducir el falso positivo). Verificado por:
+   .venv/Scripts/python.exe -m pytest tests/unit/test_check_deliverables_exist.py -k
+   wot_010j_real_case_narrative_note_not_treated_as_deliverable -v pasa (1 passed).
+3. MUTATION: revertir el fix hace que
+   test_wot_016w_flt_bullet_with_trailing_annotation_resolves_and_checked FALLE; con el fix
+   restaurado, el mismo test PASA. Ambos resultados (FAIL-sin-fix, PASS-con-fix) quedan
+   registrados literalmente en execution_log.md con el comando exacto y el output relevante
+   (no basta con narrar "se verifico").
+4. Suite completa del archivo sigue verde: .venv/Scripts/python.exe -m pytest
+   tests/unit/test_check_deliverables_exist.py -v -> todos los tests pasan (9 preexistentes
+   + 2 nuevos = 11 passed), 0 failed.
+5. ruff check scripts/check_deliverables_exist.py tests/unit/test_check_deliverables_exist.py
+   -> exit code 0.
+6. uv run ruff format --check scripts/check_deliverables_exist.py
+   tests/unit/test_check_deliverables_exist.py -> exit code 0 (si uv no arranca en este
+   entorno segun el diagnostico de WOT-2026-016c, usar el formatter equivalente ya instalado
+   en .venv y documentar la sustitucion en execution_log.md; no declarar el gate como
+   "no aplica" sin evidencia).
+7. Suite canonica: python scripts/run_pytest_safe.py --level all con last-run.json en
+   status=finished, exit_code=0, level=all, args_mode=default_discovery y
+   tested_commit_sha == HEAD del commit que se entrega.
+8. validate (Manager gate, ver abajo) en 0 errors / 0 warnings.
+
+## Quality Gates
+
+- Builder ejecuta:
+  - .venv/Scripts/python.exe -m pytest tests/unit/test_check_deliverables_exist.py -v
+  - ruff check scripts/check_deliverables_exist.py tests/unit/test_check_deliverables_exist.py
+  - uv run ruff format --check scripts/check_deliverables_exist.py tests/unit/test_check_deliverables_exist.py
+  - .venv/Scripts/python.exe scripts/run_pytest_safe.py --level all
+- Manager gate (Builder NO lo ejecuta salvo diagnostico local):
+  - .venv/Scripts/python.exe .agent/agent_controller.py --validate --json --project-root .
+
+## STOP conditions
+
+- Si el fix requiere tocar .agent/scope_gate.py para que el test pase: DETENTE, es fuera de
+  scope (ya corregido en 016s); reporta el hallazgo en execution_log.md y no amplies el
+  ticket.
+- Si el test anti-narrativa existente
+  (test_wot_010j_real_case_narrative_note_not_treated_as_deliverable) empieza a fallar tras
+  el fix: DETENTE, el fix esta reintroduciendo el falso positivo que el ticket prohibe
+  explicitamente; no relajes ni borres ese test para forzar verde.
+- Si "uv run ruff format --check" no arranca en este entorno (mismo sintoma documentado en
+  WOT-2026-016c: uv desalineado del .venv), no lo declares "no aplica": usa
+  .venv/Scripts/python.exe -m ruff format --check <paths> como equivalente y documenta la
+  sustitucion con el output literal en execution_log.md.
+- Si run_pytest_safe.py --level all no cierra con tested_commit_sha == HEAD del commit
+  final: no reportes cierre canonico; re-corre tras el commit final antes de --mark-ready.
+
+## Riesgos
+
+- Bajo: cambio de una linea logica dentro de una funcion ya cubierta por 9 tests
+  existentes, con paridad exacta a un fix ya verificado (016s) en el mismo repo.
+- Medio: el filtro anti-narrativa es el unico invariante fragil; mitigado con test de
+  no-regresion explicito en Tests Esperados item 3 y STOP condition dedicada.
+
+## Decision Arquitectonica
+
+Por que tomar el primer token en vez de otra heuristica: WOT-2026-016s ya resolvio exactamente este problema en `.agent/scope_gate.py::_normalize_flt_line` con el mismo patron (`cleaned.split(" ", 1)[0]`), revisado y aprobado por el Manager en esa ronda. Replicar el patron exacto en `check_deliverables_exist.py` da paridad semantica entre los dos consumidores del mismo formato de bullet FLT, minimiza el diff (una linea logica) y reutiliza el razonamiento ya verificado de por que el primer token no rompe el filtro anti-narrativa (el primer token de una linea narrativa no pasa `looks_like_path`). Alternativas descartadas: ver Trade-offs Considerados abajo.
+
+## Trade-offs Considerados
+
+| Opcion | Pros | Contras | Decision |
+|--------|------|---------|----------|
+| Tomar el primer token, igual que 016s | Paridad exacta con el fix ya revisado y aprobado en scope_gate; cambio minimo de una linea | Trunca paths con espacios literales (edge case ya documentado como inerte en 016s) | Elegida |
+| Detectar anotacion por parentesis / heuristica nueva | Mas "inteligente" para casos no cubiertos | Heuristica nueva sin precedente revisado; mayor superficie de bug; diverge del patron gemelo | Descartada |
+
+## Criterios de Aceptacion Global
+- [ ] Bullet FLT anotado se resuelve y se verifica en disco (tests 1 y 2)
+- [ ] Bullet narrativo sigue rechazado (test 3, no-regresion)
+- [ ] Mutation FAIL-sin-fix / PASS-con-fix documentado en execution_log.md
+- [ ] Suite del archivo 11 passed, 0 failed
+- [ ] ruff check + ruff format --check en verde
+- [ ] Suite canonica run_pytest_safe.py --level all verde con tested_commit_sha == HEAD
+- [ ] validate --json 0 errors / 0 warnings (Manager gate)

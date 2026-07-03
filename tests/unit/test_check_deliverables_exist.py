@@ -136,6 +136,51 @@ def test_read_inspect_only_and_manager_only_not_treated_as_deliverables(tmp_path
     assert code == 0, output
 
 
+def test_wot_016w_flt_bullet_with_trailing_annotation_resolves_and_checked(tmp_path):
+    """Regression: WOT-2026-016w. A FLT bullet with a trailing descriptive
+    annotation after the path (e.g. "scripts/x.py (nuevo, el gate)") must be
+    resolved to the path and checked for existence on disk, not silently
+    discarded just because the full bullet line contains a space. Using a
+    missing deliverable here proves the resolver actually looked at the path:
+    if the bullet were still discarded, the script would report code == 0
+    (false-green) instead of catching the missing file."""
+    motor_root = tmp_path / "motor"
+    destino_root = tmp_path / "destino"
+    motor_root.mkdir()
+    destino_root.mkdir()
+
+    plan = (
+        "## Files Likely Touched\n\n"
+        "### repo_motor\n"
+        "- `scripts/annotated_thing.py` (nuevo, el gate)\n"
+    )
+    code, output = _run_with_plan(plan, destino_root, motor_root=motor_root)
+    assert code == 1
+    assert "annotated_thing.py" in output
+
+
+def test_wot_016w_flt_bullet_with_trailing_annotation_passes_when_exists(tmp_path):
+    """Companion to the regression above: the same annotated bullet resolves
+    to scripts/annotated_thing.py (not to the full line with the annotation,
+    which could never exist as a file) when that path is present on disk."""
+    motor_root = tmp_path / "motor"
+    destino_root = tmp_path / "destino"
+    motor_root.mkdir()
+    destino_root.mkdir()
+    (motor_root / "scripts").mkdir()
+    (motor_root / "scripts" / "annotated_thing.py").write_text(
+        "x = 1\n", encoding="utf-8"
+    )
+
+    plan = (
+        "## Files Likely Touched\n\n"
+        "### repo_motor\n"
+        "- `scripts/annotated_thing.py` (nuevo, el gate)\n"
+    )
+    code, output = _run_with_plan(plan, destino_root, motor_root=motor_root)
+    assert code == 0, output
+
+
 def test_wot_010j_real_case_narrative_note_not_treated_as_deliverable(tmp_path):
     """Regression: a narrative "Notas" bullet inside the FLT section that
     happens to mention backticked filenames in prose (real WOT-2026-010j

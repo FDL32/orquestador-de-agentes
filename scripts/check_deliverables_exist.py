@@ -236,10 +236,13 @@ def _resolve_flt_bullet_tokens(
 
     Mirrors scope_gate._normalize_flt_line / _looks_like_path_token: a bullet
     is treated as a single declared path, not a bag of every backticked
-    substring on the line. This rejects narrative bullets that happen to
+    substring on the line. After de-quoting, only the first whitespace-
+    separated token is kept (WOT-2026-016w), so a path followed by a
+    descriptive annotation (e.g. "scripts/x.py (nuevo, el gate)") still
+    resolves to the path. This still rejects narrative bullets that happen to
     contain backticked filenames in prose (e.g. "Notas: los scripts
-    inspeccionados (`foo.py`, `bar.py`) son read-only"), since such lines
-    contain spaces once de-quoted and are therefore not a bare path token.
+    inspeccionados (`foo.py`, `bar.py`) son read-only"), because their first
+    token does not pass looks_like_path below.
     """
     normalized = (
         stripped.lstrip("*- ")
@@ -248,8 +251,15 @@ def _resolve_flt_bullet_tokens(
         .replace("'", "")
         .strip()
     )
-    if not normalized or " " in normalized:
+    if not normalized:
         return
+    # WOT-2026-016w: a bullet may carry a trailing descriptive annotation after
+    # the path (e.g. "scripts/x.py (nuevo, el gate)"). Keep only the first
+    # whitespace-separated token (the path itself) so looks_like_path does not
+    # reject the whole bullet just because the annotation contains a space.
+    # Mirrors scope_gate._normalize_flt_line (WOT-2026-016s). Bullets without
+    # annotation have no second token, so this is a no-op for that case.
+    normalized = normalized.split(" ", 1)[0]
     token = normalized.rstrip(",").strip()
     if not token or token.endswith(("/", "\\")):
         return
