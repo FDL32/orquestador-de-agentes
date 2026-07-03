@@ -192,7 +192,9 @@ def test_build_map_includes_identity(tmp_path):
     """Map contains destination root and motor link info."""
     _write_link(tmp_path, ticket_prefix="WT")
     content = build_map(tmp_path, max_bytes=204800)
-    assert str(tmp_path.resolve()) in content
+    # WOT-2026-016p: la proyeccion es PII-safe - nombre presente, ruta ausente.
+    assert tmp_path.resolve().name in content
+    assert str(tmp_path.resolve()) not in content
     assert "destination-hosted" in content
     assert "Motor link:" in content
     assert "valid" in content
@@ -262,7 +264,9 @@ def test_build_map_small_budget_preserves_identity(tmp_path):
     # to force truncation of lower-priority sections
     content = build_map(tmp_path, max_bytes=1024)
     # Identity must be there
-    assert str(tmp_path.resolve()) in content
+    # WOT-2026-016p: la proyeccion es PII-safe - nombre presente, ruta ausente.
+    assert tmp_path.resolve().name in content
+    assert str(tmp_path.resolve()) not in content
     # Operational state must be there
     assert "WT-9999-NNN" in content
     assert "IN_PROGRESS" in content
@@ -315,7 +319,9 @@ def test_main_generates_map(tmp_path, capsys):
     map_file = tmp_path / ".agent" / "context" / "destination_map.md"
     assert map_file.exists()
     content = map_file.read_text(encoding="utf-8")
-    assert str(tmp_path.resolve()) in content
+    # WOT-2026-016p: la proyeccion es PII-safe - nombre presente, ruta ausente.
+    assert tmp_path.resolve().name in content
+    assert str(tmp_path.resolve()) not in content
     assert "Destination Context Map" in content
 
 

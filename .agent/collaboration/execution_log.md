@@ -50,3 +50,9 @@
 
 - pytest focal: 6 passed (+ naming 25 total). ruff check: 1 fixed, 0 remaining; format ok.
 - encoding guard exit 0. Suite canonica + validate: pendientes tras commit.
+
+## Hallazgo de suite (gestionado)
+
+- Suite --level all a 520b03a: 3 failed en test_destination_context (asertaban el contrato
+  VIEJO: ruta absoluta presente). Actualizados al contrato del ticket: nombre presente +
+  ruta absoluta AUSENTE (asercion MAS fuerte, no relajacion). 26/26 verdes tras el cambio.
