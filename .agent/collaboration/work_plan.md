@@ -1,86 +1,107 @@
-# Work Plan - WOT-2026-016m
+# Work Plan - WOT-2026-015l
 
 ## Metadata
-- **ID:** WOT-2026-016m
-- **Estado:** COMPLETED
+- **ID:** WOT-2026-015l
+- **Estado:** APPROVED
 - **deliverable_type:** code
-- **Titulo:** Gate de publicacion por fila (cross-repo): script canonico con B-TOCTOU, patron laxo, metadata y hermanos (contrato probado en la tanda backup)
+- **Titulo:** Gate de cierre: reconciliar backlog vs eventos SUPERVISOR_CLOSED del bus del workspace (bidireccional, anti auto-reporte)
 - **Asignado a:** Builder
 - **delivery_authority:** repo_motor
 
 ## Objetivo
 
-Formalizar como script del motor el gate por-fila probado en la tanda backup 2026-07-03
-(12 repos) y exigido por dos pasadas adversariales. Cubre el hueco original de 016m
-(falso-verde de UNIDAD: motor limpio + hermano sucio publico) MAS los endurecimientos
-aprendidos en vivo: B-TOCTOU, patron laxo de PII, scan de metadata git (que classify NO
-cubre: solo escanea blobs, no autores/committers) y abort en carpetas "- copia".
-Borrador de contrato: C:\tmp\MATRIZ_PUBLICACION_BACKUP_20260702.md.
-Verificacion del objetivo: `python scripts/check_publication_gate.py --repo-root <repo>
---sibling <hermano>` devuelve exit 0 SOLO cuando repo y hermanos pasan los 6 checks;
-`pytest tests/test_check_publication_gate.py` = 7 passed (incluye el caso UNIDAD).
+Barrera ejecutable read-only que reconcilie el estado declarado del backlog contra la
+fuente de verdad (los eventos `SUPERVISOR_CLOSED` del bus del WORKSPACE de dogfooding, no
+del motor). El sintoma se materializo 2x esta semana: 016b `completed` en el bus pero
+`pending` en el backlog ~1 dia, y el agujero de 016g en `_archive/backlog_done.md` que el
+Manager tuvo que tapar a mano.
+
+Verificacion del objetivo: `python scripts/check_closeout_reconciliation.py
+--project-root <workspace>` devuelve exit 0 solo cuando (A) ningun ticket cerrado en el bus
+sigue vivo en el backlog y (B) ningun ticket declarado en backlog_done carece de evento de
+bus; `pytest tests/unit/test_check_closeout_reconciliation.py` verde con fixtures A/B y
+mutation.
 
 ## Decision Arquitectonica
 
-- `scripts/check_publication_gate.py`, NUEVO, offline y deterministico (sin red: la
-  verificacion private:true via API queda como CHECKLIST impresa para el humano, no como
-  llamada del script). Reusa `classify_publication.build_manifest` como libreria (hereda el
-  history-PII scan de 016o).
-- Checks por fila (fail-closed, exit 1 al primer grupo con hallazgos):
-  1. NOMBRE: la carpeta del repo matchea `* - copia*` -> ABORT (nunca origen de remoto).
-  2. ARBOL: `git status --porcelain` no vacio -> BLOCKED (B-TOCTOU exige arbol limpio).
-  3. CLASSIFY: build_manifest full-history; verdict != LISTO_PARA_PUBLICAR -> BLOCKED
-     (con blocked_reasons volcados).
-  4. PATRON LAXO: `users[^a-z0-9]{0,4}<term>` sobre `git grep` de `rev-list --all`, con
-     terms parametrizables (`--pii-term`, repetible; default = nombre de usuario del HOME
-     actual, derivado en runtime - NUNCA hardcodeado en el motor).
-  5. METADATA: autores/committers de toda la historia que no sean noreply/*.local/allowlist
-     (`--allow-email`, repetible) -> BLOCKED. Unico check que classify no puede dar.
-  6. HERMANOS: `--sibling <path>` (repetible): cada hermano debe pasar 1-5 tambien
-     (recursion sin hermanos anidados) -> el falso-verde de UNIDAD original.
-- Salida: JSON a stdout (verdict LISTO|BLOCKED, checks con evidencia, head sha, generated_at)
-  + checklist humana final (private:true via API pre/post push; "no ejecutar herramientas del
-  motor entre este gate y el push" = B-TOCTOU).
-- Exit: 0 solo LISTO; 1 BLOCKED; 2 error de ejecucion.
+- `scripts/check_closeout_reconciliation.py`, NUEVO, offline, read-only y deterministico.
+  Patron AP-D04: NO reimplementa la lectura de bus -- reutiliza `preflight_reconcile`
+  (`_read_events_for_ticket`, y `bus.state_machine.StateMachine` para semantica de estados)
+  y el parseo de tabla viva de `check_backlog_contract` como referencia de formato.
+- **Fuentes (rutas relativas al `--project-root` = workspace):**
+  1. **Bus (verdad):** `SUPERVISOR_CLOSED` en `.agent/runtime/events/events.jsonl` (vivo)
+     MAS `.agent/runtime/events/archive/*.jsonl`. Union de ambos: 016o/016p viven SOLO en
+     archive -> mirar solo el vivo da falso negativo. Esquema del evento: `event_type`,
+     `ticket_id`, `sequence_number`, `actor`.
+  2. **Cola viva:** filas `pending`/`blocked` bajo `## Vista rapida` de
+     `.agent/collaboration/backlog.md` (solo tabla; nunca prosa ni comentarios HTML).
+  3. **Declarados cerrados (B):** tabla `| Ticket | Estado | Nota |` de
+     `.agent/collaboration/_archive/backlog_done.md`, filas con estado terminal
+     (`completed`/`done`/`closed`/`superseded`/`absorbed`).
+- **Fail-closed:** `--project-root` o `AGENT_PROJECT_ROOT` obligatorio; SIN fallback a
+  `__file__` (leer el bus relativo al motor = archivo equivocado; mismo patron y misma
+  razon que `check_backlog_contract.py`). Bus/backlog ilegible -> FAIL con diagnostico, no
+  silencio.
+- **Salida:** JSON a stdout con `--json`
+  (`{checks:{drift, orphan_declared}, all_pass, project_root, head}`) + render humano con un
+  finding por linea y fix accionable por violacion. No muta estado NUNCA.
+- **Exit:** 0 si A y B pasan; 1 si alguna viola; 1 tambien en error de lectura (fail-closed).
 
 ## Fases
 
-### Fase 0 - Diagnostico (COMPLETADO en tanda + 016o)
-- classify (con 016o) cubre blobs tree+history pero NO metadata git -> check 5 es valor unico.
-- gitleaks queda FUERA del script (binario externo no garantizado en CI); la matriz lo mantiene
-  como segunda herramienta MANUAL de la checklist.
+### Fase 0 - Diagnostico (COMPLETADO)
+- Bus fisico del workspace confirmado: `.agent/runtime/events/events.jsonl` (vivo, 11
+  SUPERVISOR_CLOSED) + `events/archive/*.jsonl` (181 archivos). Runtime GITIGNORED (estado
+  local). Esquema de evento verificado en vivo (015i seq 1298).
+- Contrato 012a/012b confirmado: los terminales NO permanecen en la cola viva (desaparecen);
+  por eso el drift real es "cerrado-en-bus pero aun-pending", no "declarado sin cerrar".
+- Fuente B confirmada: `_archive/backlog_done.md` con tabla `| Ticket | Estado | Nota |`
+  (016g ya presente = agujero tapado). 184 IDs.
 
 ### Fase 1 - Implementacion
-- Script nuevo con funciones puras testables: `check_name`, `check_tree_clean`,
-  `check_classify`, `check_loose_pattern`, `check_metadata`, `run_gate(repo, siblings, ...)`.
+- Funciones puras testables: `read_closed_from_bus(project_root) -> set[str]` (union vivo +
+  archive, filtrando `event_type == SUPERVISOR_CLOSED`), `read_live_backlog(project_root) ->
+  set[str]` (IDs pending/blocked de `## Vista rapida`), `read_declared_done(project_root) ->
+  set[str]` (IDs terminales de backlog_done), `run_gate(project_root) -> report`.
+- `run_gate`: check A = `closed_in_bus & live_backlog` (debe ser vacio); check B =
+  `declared_done - closed_in_bus` (debe ser vacio). Cada violacion -> finding con ticket_id
+  (+ sequence_number del evento cuando aplique).
 
 ### Fase 2 - Tests (barrera + mutation)
-- `tests/test_check_publication_gate.py` (repos git reales en tmp_path):
-  - repo limpio -> exit 0 / LISTO.
-  - carpeta "x - copia" -> BLOCKED name.
-  - arbol sucio -> BLOCKED tree.
-  - email personal en metadata (autor real) -> BLOCKED metadata; MUTATION: quitar el check
-    (monkeypatch) -> pasa (demuestra que es el check unico que caza metadata).
-  - PII en historia de un HERMANO -> BLOCKED sibling (el caso UNIDAD original de 016m).
-  - patron laxo con term custom caza slug `Users-term` que classify no ve como ruta.
+- `tests/unit/test_check_closeout_reconciliation.py`, con workspace sintetico en `tmp_path`
+  (events.jsonl + archive/*.jsonl + backlog.md + _archive/backlog_done.md minimos):
+  - happy path: bus y backlog coherentes -> exit 0 / all_pass.
+  - **fixture A:** ticket con SUPERVISOR_CLOSED en bus Y fila `pending` en Vista rapida ->
+    check drift dispara; MUTATION: revertir el assert A -> deja de disparar (verde espurio).
+  - **fixture B:** ticket en backlog_done SIN evento en el bus -> check orphan_declared
+    dispara; MUTATION: revertir el assert B -> deja de disparar.
+  - archive-only: un SUPERVISOR_CLOSED que vive SOLO en `archive/*.jsonl` cuenta como
+    cerrado (barrera contra el falso negativo de mirar solo el vivo).
+  - fail-closed: sin project-root -> error/exit != 0; bus ausente -> FAIL, no pass-open.
 
 ## Criterios de aceptacion
 
-1. Los 6 checks implementados con evidencia en el JSON de salida; exit 0 solo LISTO.
-2. Caso UNIDAD verificado: repo limpio + hermano con PII -> BLOCKED (test).
-3. MUTATION del check de metadata verificada.
-4. Sin username hardcodeado en el motor (default derivado en runtime; test lo verifica
-   leyendo el fuente).
-5. ruff + format + encoding verdes; suite canonica exit 0 sha==HEAD; validate 0/0.
+1. Check A (drift): ningun `SUPERVISOR_CLOSED` del bus (vivo+archive) sigue como fila viva
+   `pending`/`blocked` en `## Vista rapida`. Violacion enumerada con ticket_id + seq.
+2. Check B (orphan_declared): todo ticket terminal en `_archive/backlog_done.md` tiene su
+   `SUPERVISOR_CLOSED` en el bus. Violacion enumerada con ticket_id.
+3. Union bus vivo + archive verificada por test (archive-only cuenta como cerrado).
+4. Fail-closed sin project-root y con bus ilegible (test).
+5. MUTATION de A y de B verificadas (cada assert es la barrera de su fixture).
+6. `--json` emite `{checks:{drift, orphan_declared}, all_pass}`; script no muta estado.
+7. ruff + format + encoding verdes; suite canonica `--level all` exit 0 con
+   `tested_sha == HEAD`; validate 0/0.
 
 ## Files Likely Touched
 
 ### repo_motor
-- `scripts/check_publication_gate.py` (nuevo)
-- `tests/test_check_publication_gate.py` (nuevo)
+- `scripts/check_closeout_reconciliation.py` (nuevo, el gate)
+- `tests/unit/test_check_closeout_reconciliation.py` (nuevo, fixtures A/B + mutation)
 
 ## Non-goals
-- NO llamadas de red (gh API = checklist humana impresa).
-- NO integrar gitleaks en el script (segunda herramienta manual de la matriz).
-- NO reescrituras de historia ni fixes automaticos (es un GATE, detecta y bloquea).
-- NO tocar classify_publication (016o ya entrego su parte).
+- NO auto-reparar el backlog: el gate DETECTA y REPORTA; la correccion es humana/Manager.
+- NO tocar el flujo de manager-approve, el bus, ni la state machine.
+- NO consultar el bus del repo_motor (agnostico, sin estado operativo -> falso negativo).
+- NO derivar estado por prosa del backlog (solo tablas parseables: `## Vista rapida` y la
+  tabla de `backlog_done.md`).
+- NO llamadas de red.
