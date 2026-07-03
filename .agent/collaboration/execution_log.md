@@ -174,3 +174,45 @@ identico al diff del fix original (comparado visualmente linea por linea): mismo
 `+                [sys.executable, "-m", "pytest", "-q"],` y mismo bloque
 `+        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:` con las 4 lineas
 de distincion de mensaje. Ninguna mutacion dejo residuo.
+
+## ITERACION tras Review 2 adversarial (REFUTA -> fix de fondo)
+
+Review 2 (fresh-context) REFUTO el primer fix (sys.executable + timeout 120 + captura
+TimeoutExpired): correcto en su micro-alcance, PERO convertia el gate de pytest en un
+NO-OP silencioso (la suite canonica >120s -> SIEMPRE timeout -> passed=True nunca por
+pytest) y abria un FALSO VERDE (un test que falla en suite lenta se enmascara como
+timeout benigno; subprocess mata el proceso a 120s con returncode=None antes de ver el
+fallo). Ademas el WARN de timeout iba a results["warnings"], que _check_quality_gates
+descarta -> invisible al operador.
+
+Decision del usuario: NO cerrar con deuda (un falso verde en un gate de proceso no es
+deuda aceptable). Iterar delegando en el runner canonico.
+
+FIX DE FONDO (reemplaza el subprocess-timeout):
+- Nueva funcion `_read_pytest_safe_verdict()`: lee el stamp `.agent/runtime/pytest-safe/
+  last-run.json` que escribe `scripts/run_pytest_safe.py` (corre la suite completa SIN cap
+  de 120s). Devuelve verdict green|red|inconclusive:
+  - green: stamp de HEAD, status finished, exit_code 0 -> passed=True, [OK].
+  - red: stamp de HEAD pero exit_code != 0 -> passed=False, [FAIL] con tests fallando
+    nombrados. UN FALLO REAL YA NO SE ENMASCARA (falso verde CERRADO).
+  - inconclusive: stamp ausente/desalineado/no-finished -> WARN accionable VISIBLE, no
+    fake-pass ni fake-fail (el pre-handoff canonico exige stamp fresco por separado).
+- El gate ya NO re-corre pytest via subprocess (sin timeout artificial). Refleja la salud
+  real de la suite.
+
+Verificacion 3 escenarios (stamp sintetico): green->green, exit1+fallos->red, stamp-viejo
+->inconclusive, status=running->inconclusive. CLAVE confirmada: red -> passed=False.
+
+Tests reescritos (5, TestRunQualityGates):
+- does_not_rerun_pytest_with_timeout: el gate NO invoca pytest via subprocess.
+- pytest_green_from_stamp: green -> passed=True.
+- real_failure_is_not_masked: red -> passed=False (el anti-falso-verde de Review 2).
+- inconclusive_stamp_does_not_fake_pass: inconclusive -> WARN visible, no fake-pass.
+- returns_dict (preexistente).
+MUTATION: neutralizar la rama red (no forzar passed=False) -> real_failure_is_not_masked
+FALLA (exit 1); restaurado -> 5 passed. Barrera anti-falso-verde viva.
+
+Gates: ruff check All passed, ruff format aplicado, encoding exit 0, regresion
+test_agent_controller (sin TestPreHandoff/BuilderBriefExclusion, deuda de estado-real)
+107 passed. Dogfooding: run_quality_gates lee el stamp verde de HEAD -> [OK] Pytest suite
+verde, passed=True.

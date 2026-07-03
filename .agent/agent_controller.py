@@ -2011,6 +2011,67 @@ def run_finalization_checks() -> dict:
     return results
 
 
+def _read_pytest_safe_verdict() -> dict:
+    """Read the canonical runner's stamp (`run_pytest_safe` last-run.json).
+
+    WOT-2026-016c: the quality gate must reflect the REAL health of the suite
+    without re-running it under an artificial `timeout=120` (the canonical suite
+    exceeds that, which either AUTO-REJECTs spuriously or masks a real failure as
+    a benign timeout). This reads the stamp that `scripts/run_pytest_safe.py`
+    writes after running the full suite with no cap.
+
+    Returns ``{"verdict": "green"|"red"|"inconclusive", "detail": str}``:
+    - ``green``: stamp exists, ``status == "finished"``, ``exit_code == 0`` and
+      ``tested_commit_sha == HEAD`` (fresh, real, passing run).
+    - ``red``: stamp is fresh for HEAD but ``exit_code != 0`` (real failure);
+      ``detail`` names the failing tests when available.
+    - ``inconclusive``: stamp absent, unreadable, or ``tested_commit_sha`` does
+      NOT match HEAD (stale). Never faked as green: the caller emits a WARN and
+      does not force ``passed``. The canonical pre-handoff still requires a fresh
+      green stamp separately, so this is a soft signal, not a silent no-op.
+    """
+    stamp_path = PROJECT_ROOT / ".agent" / "runtime" / "pytest-safe" / "last-run.json"
+    if not stamp_path.exists():
+        return {"verdict": "inconclusive", "detail": "sin last-run.json"}
+    try:
+        stamp = json.loads(stamp_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {"verdict": "inconclusive", "detail": f"stamp ilegible: {exc}"}
+
+    try:
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            cwd=PROJECT_ROOT,
+            timeout=10,
+        )
+        head_sha = head.stdout.strip() if head.returncode == 0 else ""
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        head_sha = ""
+
+    tested_sha = str(stamp.get("tested_commit_sha", ""))
+    if not head_sha or tested_sha != head_sha:
+        return {
+            "verdict": "inconclusive",
+            "detail": f"stamp de {tested_sha[:7] or '?'} != HEAD {head_sha[:7] or '?'}",
+        }
+    if stamp.get("status") != "finished":
+        return {
+            "verdict": "inconclusive",
+            "detail": f"run no finalizado (status={stamp.get('status')})",
+        }
+    if stamp.get("exit_code") == 0:
+        return {"verdict": "green", "detail": "suite verde sobre HEAD"}
+    failed = stamp.get("failed_test_ids") or []
+    detail = (
+        f"{len(failed)} test(s) fallando: {failed[:3]}"
+        if failed
+        else f"exit_code={stamp.get('exit_code')}"
+    )
+    return {"verdict": "red", "detail": detail}
+
+
 def run_quality_gates(plan_type: str = "IMPLEMENTATION") -> dict:
     """Ejecuta validaciones automaticas."""
     print("\n[QUALITY GATES] Ejecutando Quality Gates...")
@@ -2047,25 +2108,28 @@ def run_quality_gates(plan_type: str = "IMPLEMENTATION") -> dict:
         results["summary"].append("[WARN] Ruff: No instalado")
 
     if tests_dir.exists():
-        try:
-            pytest_result = subprocess.run(
-                [sys.executable, "-m", "pytest", "-q"],
-                capture_output=True,
-                timeout=120,
-                cwd=PROJECT_ROOT,
+        # WOT-2026-016c: NO re-run pytest here with a hard `timeout=120`. The
+        # canonical suite (~3470 tests) legitimately exceeds 120s, so a direct
+        # `subprocess.run(pytest, timeout=120)` ALWAYS times out and either
+        # (a) AUTO-REJECTs spuriously, or (b) after the naive timeout fix, turns
+        # the gate into a silent no-op that can MASK a real failure as a benign
+        # timeout (false green). Instead, read the verdict of the canonical
+        # runner `scripts/run_pytest_safe.py`, which runs the full suite with no
+        # artificial cap and stamps `last-run.json`. The gate reflects the real
+        # health of the suite: PASS only when the stamp is fresh (tested against
+        # HEAD), finished and green; FAIL on a real failure; inconclusive (does
+        # not force pass) when the stamp is stale/absent.
+        pytest_status = _read_pytest_safe_verdict()
+        if pytest_status["verdict"] == "green":
+            results["summary"].append("[OK] Pytest: suite verde (run_pytest_safe)")
+        elif pytest_status["verdict"] == "red":
+            results["passed"] = False
+            results["summary"].append(f"[FAIL] Pytest: {pytest_status['detail']}")
+        else:  # inconclusive: stale/absent stamp -> do NOT fake a pass or a fail
+            results["warnings"].append(
+                f"[WARN] Pytest: veredicto no concluyente ({pytest_status['detail']}); "
+                "corre scripts/run_pytest_safe.py --level all sobre HEAD"
             )
-            if pytest_result.returncode != 0:
-                results["passed"] = False
-                results["summary"].append("[FAIL] Pytest: Tests fallando")
-            else:
-                results["summary"].append("[OK] Pytest: Tests OK")
-        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-            if isinstance(exc, subprocess.TimeoutExpired):
-                results["warnings"].append(
-                    f"[WARN] Pytest: timeout tras {exc.timeout}s (no es fallo de tests)"
-                )
-            else:
-                results["summary"].append("[WARN] Pytest: No instalado")
 
     if plan_type == "FINALIZATION":
         fin_results = run_finalization_checks()

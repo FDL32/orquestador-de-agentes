@@ -337,73 +337,96 @@ class TestRunQualityGates:
         assert "passed" in result
         assert "summary" in result
 
-    def test_run_quality_gates_uses_canonical_python_interpreter_for_pytest(self):
-        """WOT-2026-016c: pytest command uses sys.executable -m pytest, not uv run pytest."""
+    def test_run_quality_gates_does_not_rerun_pytest_with_timeout(self):
+        """WOT-2026-016c (iterado): el gate NO re-corre pytest con timeout=120.
+        Delega en el stamp de run_pytest_safe. Un subprocess de pytest con
+        timeout=120 sobre la suite canonica (>120s) volveria a los bugs
+        (AUTO-REJECT espurio o no-op/falso-verde). Verifica que el gate no invoca
+        pytest via subprocess.run."""
         mock_run = MagicMock(
             return_value=MagicMock(returncode=0, stdout=b"", stderr=b"")
         )
         with (
             patch("agent_controller.read_file", return_value=""),
             patch("agent_controller.subprocess.run", mock_run),
+            patch(
+                "agent_controller._read_pytest_safe_verdict",
+                return_value={"verdict": "green", "detail": "x"},
+            ),
         ):
-            result = run_quality_gates()
+            run_quality_gates()
 
-        assert result["passed"] is True
-        assert any("[OK] Pytest" in line for line in result["summary"])
-
-        # Find the call that invoked pytest (not ruff)
         pytest_calls = [
             call
             for call in mock_run.call_args_list
             if call.args and "pytest" in call.args[0]
         ]
-        assert len(pytest_calls) == 1, (
-            f"Expected exactly one pytest call, got {mock_run.call_args_list}"
+        assert pytest_calls == [], (
+            f"El gate NO debe re-correr pytest via subprocess; se encontro: {pytest_calls}"
         )
-        pytest_cmd = pytest_calls[0].args[0]
-        assert pytest_cmd[0] == sys.executable
-        assert pytest_cmd[1] == "-m"
-        assert pytest_cmd[2] == "pytest"
-        assert pytest_cmd[:3] != ["uv", "run", "pytest"]
 
-    def test_run_quality_gates_pytest_timeout_is_not_reported_as_test_failure(self):
-        """WOT-2026-016c: TimeoutExpired on pytest is captured with an honest
-        message and does NOT force passed=False nor say 'Tests fallando'."""
-
-        def fake_run(cmd, *args, **kwargs):
-            if "pytest" in cmd:
-                raise subprocess.TimeoutExpired(cmd=cmd, timeout=120)
-            return MagicMock(returncode=0, stdout=b"", stderr=b"")
-
+    def test_run_quality_gates_pytest_green_from_stamp(self):
+        """WOT-2026-016c: stamp verde (run_pytest_safe) -> passed=True, [OK]."""
         with (
             patch("agent_controller.read_file", return_value=""),
-            patch("agent_controller.subprocess.run", side_effect=fake_run),
+            patch(
+                "agent_controller.subprocess.run",
+                MagicMock(return_value=MagicMock(returncode=0, stdout=b"", stderr=b"")),
+            ),
+            patch(
+                "agent_controller._read_pytest_safe_verdict",
+                return_value={"verdict": "green", "detail": "suite verde"},
+            ),
         ):
             result = run_quality_gates()
-
-        # ruff passed and the only event is a pytest timeout -> passed stays True
         assert result["passed"] is True
-        all_messages = result["summary"] + result["warnings"]
-        assert any("timeout" in msg.lower() for msg in all_messages)
-        assert not any("[FAIL] Pytest: Tests fallando" in msg for msg in all_messages)
+        assert any("[OK] Pytest" in msg for msg in result["summary"])
 
-    def test_run_quality_gates_pytest_real_failure_reports_tests_fallando(self):
-        """WOT-2026-016c: a real pytest failure (returncode != 0, no exception)
-        still reports passed=False and '[FAIL] Pytest: Tests fallando'."""
-
-        def fake_run(cmd, *args, **kwargs):
-            if "pytest" in cmd:
-                return MagicMock(returncode=1, stdout=b"", stderr=b"")
-            return MagicMock(returncode=0, stdout=b"", stderr=b"")
-
+    def test_run_quality_gates_real_failure_is_not_masked(self):
+        """WOT-2026-016c (el fix de fondo, contra Review 2): un fallo REAL de la
+        suite NO se enmascara como pass. verdict=red -> passed=False. Esto cierra
+        la ventana de falso-verde donde un test que falla en una suite lenta
+        quedaba oculto como 'timeout benigno'."""
         with (
             patch("agent_controller.read_file", return_value=""),
-            patch("agent_controller.subprocess.run", side_effect=fake_run),
+            patch(
+                "agent_controller.subprocess.run",
+                MagicMock(return_value=MagicMock(returncode=0, stdout=b"", stderr=b"")),
+            ),
+            patch(
+                "agent_controller._read_pytest_safe_verdict",
+                return_value={
+                    "verdict": "red",
+                    "detail": "1 test(s) fallando: ['tests/x.py::test_a']",
+                },
+            ),
         ):
             result = run_quality_gates()
-
         assert result["passed"] is False
-        assert any("[FAIL] Pytest: Tests fallando" in msg for msg in result["summary"])
+        assert any("[FAIL] Pytest" in msg for msg in result["summary"])
+
+    def test_run_quality_gates_inconclusive_stamp_does_not_fake_pass(self):
+        """WOT-2026-016c: stamp ausente/desalineado -> WARN visible, NO fuerza
+        pass silencioso ni fail. El pre-handoff canonico exige stamp fresco por
+        separado; aqui es senal suave, no no-op."""
+        with (
+            patch("agent_controller.read_file", return_value=""),
+            patch(
+                "agent_controller.subprocess.run",
+                MagicMock(return_value=MagicMock(returncode=0, stdout=b"", stderr=b"")),
+            ),
+            patch(
+                "agent_controller._read_pytest_safe_verdict",
+                return_value={"verdict": "inconclusive", "detail": "sin last-run.json"},
+            ),
+        ):
+            result = run_quality_gates()
+        # No [OK] Pytest ni [FAIL] Pytest en summary; si un WARN accionable.
+        assert not any("Pytest" in msg for msg in result["summary"])
+        assert any(
+            "no concluyente" in msg.lower() or "run_pytest_safe" in msg
+            for msg in result["warnings"]
+        )
 
 
 class TestHumanGateThreshold:
