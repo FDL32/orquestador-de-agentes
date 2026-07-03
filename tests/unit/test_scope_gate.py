@@ -104,6 +104,27 @@ file5.py
         expected = {str((_MOTOR_ROOT / "scripts/foo.py").resolve())}
         assert files == expected
 
+    def test_parse_flt_path_with_literal_space_is_inert_not_dangerous(self):
+        """WOT-2026-016s (Rev2 nit): a bullet whose path itself contains a
+        literal space (`scripts/foo bar.py`) is truncated to the first token
+        (`scripts/foo`) instead of being dropped. This documents that the
+        truncation is INERT, not dangerous: the scope gate only subtracts the
+        whitelist from changed files by exact resolved-path equality, so a
+        partial token that matches no real file never removes anything
+        (fail-safe) and can never produce a false ALLOW. Paths with literal
+        spaces do not exist in this repo, so this is a benign edge case."""
+        content = """
+## Files Likely Touched
+
+- `scripts/foo bar.py`
+
+## Next Section
+        """
+        files = parse_files_likely_touched(content)
+        # Truncated to the partial token, which resolves to a path matching no
+        # real file -> inert in the gate (subtraction is by exact equality).
+        assert files == {str((_MOTOR_ROOT / "scripts/foo").resolve())}
+
 
 class TestGetChangedFiles:
     """Test getting changed files from git."""

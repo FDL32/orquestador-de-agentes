@@ -94,6 +94,14 @@ _NAMESPACED_MOTOR_ANNOTATED = (
     "## Otro\n"
 )
 
+_NAMESPACED_DESTINO_ANNOTATED = (
+    "# Work Plan\n\n"
+    "## Files Likely Touched\n\n"
+    "### repo_destino\n"
+    "- `src/app.py` (refactor del handler)\n\n"
+    "## Otro\n"
+)
+
 
 # ---------------------------------------------------------------------------
 # parse_flt_namespaced tests
@@ -205,6 +213,18 @@ def test_namespaced_motor_annotated_path_resolves():
     )
     assert result["motor"] == {"scripts/bar.py"}
     assert result["destino"] == set()
+
+
+def test_namespaced_destino_annotated_path_resolves():
+    """WOT-2026-016s (Rev2 nit): symmetric coverage of ### repo_destino. A
+    bullet with a trailing annotation under ### repo_destino must resolve to a
+    clean path in the destino bucket (the fix is namespace-agnostic; it lives
+    in the shared _normalize_flt_line)."""
+    result = scope_gate.parse_flt_raw_buckets(
+        _NAMESPACED_DESTINO_ANNOTATED, delivery_authority="repo_motor"
+    )
+    assert result["destino"] == {"src/app.py"}
+    assert result["motor"] == set()
 
 
 def test_raw_paths_authority_target_uses_delivery_authority():
