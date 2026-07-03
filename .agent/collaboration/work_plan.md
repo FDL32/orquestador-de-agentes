@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WOT-2026-016w
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Titulo:** check_deliverables_exist.py descarta bullets FLT con anotacion (bug gemelo de 016s).
 - **Asignado a:** Builder

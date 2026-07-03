@@ -2,7 +2,7 @@
 
 **Ticket:** WOT-2026-016w - check_deliverables_exist.py descarta bullets FLT con anotacion
 (bug gemelo de 016s).
-**Estado:** IN_PROGRESS
+**Estado:** COMPLETED
 **delivery_authority:** repo_motor | **deliverable_type:** code
 
 > execution_log de WOT-2026-016c (COMPLETED) preservado en
@@ -133,3 +133,8 @@ la mutacion temporal).
    de suite". Plan de accion: commitear (fix + tests + artefactos de colaboracion) y
    RE-CORRER la suite canonica sobre el HEAD final antes de mark-ready (exigido por el
    propio work_plan.md, seccion STOP conditions y Criterios de Aceptacion 7).
+
+
+Scope override: Over-captura del scope gate sobre tickets CERRADOS: verificado con 'git show --name-status HEAD' que el commit d4787c3 de 016w toca SOLO scripts/check_deliverables_exist.py + tests/unit/test_check_deliverables_exist.py + artefactos de colaboracion del ticket. Las 6 rutas reportadas (AUDIT_016c/016s/016t movidos por el archivador, agent_controller.py, test_agent_controller.py, test_manager_approve.py) NO estan en el commit de 016w: pertenecen a tickets cerrados previos, no al diff de este ticket.. Affected files: <REPO_ROOT>/.agent/agent_controller.py, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016c.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016s.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016t.md, <REPO_ROOT>/tests/test_agent_controller.py, <REPO_ROOT>/tests/unit/test_manager_approve.py
+
+Manager approved canonical closeout for WOT-2026-016w
