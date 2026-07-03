@@ -31,3 +31,8 @@ Manager approved canonical closeout for WOT-2026-016m
   WARN sin cerrar; el SEGUNDO cierra canonicamente. El commit f929181 quedo etiquetado
   prematuramente (mismo error que en 016o). El cierre real es el evento SUPERVISOR_CLOSED
   posterior. Barrera personal: no commitear churn hasta ver "[OK] closed canonically".
+
+
+Marked ready by Builder
+
+Manager approved canonical closeout for WOT-2026-015l

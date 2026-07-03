@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WOT-2026-015l
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Titulo:** Gate de cierre: reconciliar backlog vs eventos SUPERVISOR_CLOSED del bus del workspace (bidireccional, anti auto-reporte)
 - **Asignado a:** Builder
