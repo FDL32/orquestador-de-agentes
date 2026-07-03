@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WOT-2026-016m
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Titulo:** Gate de publicacion por fila (cross-repo): script canonico con B-TOCTOU, patron laxo, metadata y hermanos (contrato probado en la tanda backup)
 - **Asignado a:** Builder

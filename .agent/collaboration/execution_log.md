@@ -1,7 +1,7 @@
 # Execution Log - WOT-2026-016m
 
 **Ticket:** WOT-2026-016m - Gate de publicacion por fila (cross-repo) con B-TOCTOU
-**Estado:** READY_FOR_REVIEW
+**Estado:** COMPLETED
 **HEAD al inicio:** 8451cac
 
 > execution_log de 016o (COMPLETED) preservado en `execution_log_WOT-2026-016o.md`.
@@ -24,3 +24,10 @@
 
 
 Marked ready by Builder
+
+Manager approved canonical closeout for WOT-2026-016m
+## Nota de cierre
+- Patron confirmado (2/2 en esta sesion): el PRIMER manager-approve tras mark-ready devuelve
+  WARN sin cerrar; el SEGUNDO cierra canonicamente. El commit f929181 quedo etiquetado
+  prematuramente (mismo error que en 016o). El cierre real es el evento SUPERVISOR_CLOSED
+  posterior. Barrera personal: no commitear churn hasta ver "[OK] closed canonically".
