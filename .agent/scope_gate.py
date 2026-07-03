@@ -75,7 +75,18 @@ def _looks_like_path_token(token: str) -> bool:
 
 
 def _normalize_flt_line(line: str) -> str:
-    return line.lstrip("*- ").replace("`", "").replace('"', "").replace("'", "").strip()
+    cleaned = (
+        line.lstrip("*- ").replace("`", "").replace('"', "").replace("'", "").strip()
+    )
+    if not cleaned:
+        return cleaned
+    # WOT-2026-016s: a bullet may carry a trailing descriptive annotation after
+    # the path (e.g. "scripts/x.py (nuevo, el gate)"). Keep only the first
+    # whitespace-separated token (the path itself) so _looks_like_path_token
+    # does not reject the whole bullet just because the annotation contains a
+    # space. Bullets without annotation have no second token, so this is a
+    # no-op for the already-covered case.
+    return cleaned.split(" ", 1)[0]
 
 
 def _normalize_raw_flt_path(path: str) -> str:

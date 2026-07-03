@@ -89,6 +89,21 @@ file5.py
         }
         assert files == expected
 
+    def test_parse_flt_with_trailing_annotation_after_path(self):
+        """WOT-2026-016s: a bullet with a descriptive annotation after the
+        path (e.g. "`scripts/foo.py` (nuevo, el gate)") must still resolve to
+        the path, not be discarded because the annotation contains a space."""
+        content = """
+## Files Likely Touched
+
+- `scripts/foo.py` (nuevo, el gate)
+
+## Next Section
+        """
+        files = parse_files_likely_touched(content)
+        expected = {str((_MOTOR_ROOT / "scripts/foo.py").resolve())}
+        assert files == expected
+
 
 class TestGetChangedFiles:
     """Test getting changed files from git."""

@@ -86,6 +86,14 @@ _NAMESPACED_UNKNOWN_NS = (
     "## Otro\n"
 )
 
+_NAMESPACED_MOTOR_ANNOTATED = (
+    "# Work Plan\n\n"
+    "## Files Likely Touched\n\n"
+    "### repo_motor\n"
+    "- `scripts/bar.py` (nuevo)\n\n"
+    "## Otro\n"
+)
+
 
 # ---------------------------------------------------------------------------
 # parse_flt_namespaced tests
@@ -187,6 +195,16 @@ def test_raw_buckets_keep_namespaces_separate():
     )
     assert result["motor"] == {".agent/scope_gate.py"}
     assert result["destino"] == {".agent/docs/foo.md"}
+
+
+def test_namespaced_motor_annotated_path_resolves():
+    """WOT-2026-016s: a bullet with a trailing annotation under ### repo_motor
+    must still resolve to a clean path in the motor bucket, not be dropped."""
+    result = scope_gate.parse_flt_raw_buckets(
+        _NAMESPACED_MOTOR_ANNOTATED, delivery_authority="repo_motor"
+    )
+    assert result["motor"] == {"scripts/bar.py"}
+    assert result["destino"] == set()
 
 
 def test_raw_paths_authority_target_uses_delivery_authority():

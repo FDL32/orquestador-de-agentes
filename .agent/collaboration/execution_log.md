@@ -1,74 +1,127 @@
-# Execution Log - WOT-2026-015l
+# Execution Log - WOT-2026-016s
 
-**Ticket:** WOT-2026-015l - Gate de cierre: reconciliar backlog vs eventos SUPERVISOR_CLOSED del bus (bidireccional, anti auto-reporte)
-**Estado:** COMPLETED
-**HEAD al inicio:** 6058fd0
+**Ticket:** WOT-2026-016s - mark-ready: el parser de Files Likely Touched descarta el path
+cuando el bullet lleva anotacion descriptiva tras la ruta.
+**Estado:** IN_PROGRESS
+**HEAD al inicio:** 78b5ee0
 **delivery_authority:** repo_motor | **deliverable_type:** code
 
-> execution_log de 016m (COMPLETED) preservado en `execution_log_WOT-2026-016m.md`
-> (el bootstrap de 015l no lo archivo; separado a mano).
+> execution_log de WOT-2026-015l (COMPLETED) preservado en
+> `execution_log_WOT-2026-015l.md` antes de este bootstrap.
 
-## Fase 0 - Diagnostico (EJECUTADA)
-- Bus fisico del workspace confirmado: `.agent/runtime/events/events.jsonl` (vivo) +
-  `events/archive/*.jsonl` (181 archivos). Runtime GITIGNORED (estado local).
-- Esquema de evento verificado en vivo: SUPERVISOR_CLOSED con `event_type`, `ticket_id`,
-  `sequence_number`, `actor` (ej. 015i seq 1298).
-- Contrato 012a/012b: los terminales NO permanecen en la cola viva -> el drift real es
-  "cerrado-en-bus pero aun-pending", no "declarado sin cerrar".
-- Fuente B: `_archive/backlog_done.md`, tabla `| Ticket | Estado | Nota |`.
+## Fase 0 - Diagnostico del Manager (EJECUTADA en fase de planificacion)
 
-## Fase 1 - Implementacion (EJECUTADA)
-- `scripts/check_closeout_reconciliation.py` (nuevo, read-only). Funciones puras:
-  `read_bus` (union vivo+archive: {closed:id->seq}, {present}), `read_live_backlog`
-  (IDs vivos de `## Vista rapida`), `read_declared_done` (IDs que AFIRMAN cierre),
-  `run_gate`.
-- Check A (drift) = `closed_bus & live_backlog` (excluye `completed-partial`).
-- Check B (orphan) = `(declared_done & present_in_bus) - closed_bus`. Exime pre-bus
-  (cero eventos) Y estados no-afirmativos (`superseded`/`absorbed`).
-- Fail-closed: `--project-root`/`AGENT_PROJECT_ROOT` sin fallback a `__file__`; bus/backlog
-  ilegible -> ReconcileError -> exit 1. `--json`. No muta estado.
-- Patron AP-D04: reutiliza el enfoque de lectura de bus de preflight_reconcile y el parseo
-  de tabla de check_backlog_contract.
+- Premisa original del backlog ("el parser no reconoce subsecciones repo_motor") verificada
+  como IMPRECISA. Causa raiz real confirmada en vivo:
+  scope_gate._looks_like_path_token('scripts/x.py (nuevo)') devuelve False porque rechaza
+  cualquier token con espacio, y _normalize_flt_line no separa el path de la anotacion
+  descriptiva que lo sigue.
+- Reproducido end-to-end sobre el work_plan.md real de WOT-2026-015l (subseccion repo_motor
+  + bullets anotados tipo "(nuevo, el gate)"): parse_files_likely_touched y
+  parse_flt_raw_buckets devuelven whitelist/buckets VACIOS sin el fix.
+- Fix propuesto simulado (monkeypatch de _normalize_flt_line con split en el primer espacio)
+  y verificado contra el propio work_plan.md de este ticket: resuelve correctamente los 3
+  paths del FLT al bucket "motor", bucket "destino" vacio.
+- Hallazgo colateral documentado como Non-goal (no corregido en este ticket):
+  scripts/check_deliverables_exist.py tiene _resolve_flt_bullet_tokens con el mismo bug
+  (su propio docstring dice que espeja el comportamiento de scope_gate).
 
-## Fase 2 - Tests + verificacion en vivo
-- Focal: `pytest tests/unit/test_check_closeout_reconciliation.py` = **12 passed** (0.13s).
-- Verificacion EN VIVO contra el workspace real:
-  - 1a corrida cazo drift real y orphans -> triage (ver abajo).
-  - Tras el fix de check B: `[PASS]` exit 0 (drift=0, orphan=0, prebus_exempt=3).
+## Fase 1 - Implementacion (Builder)
 
-## mutation-verify (barreras vivas: sin-fix -> test FALLA; con-fix -> verde)
-```
-M1  check A (drift) neutralizado             -> test_drift_closed_in_bus...      FALLA (exit 1)
-M2  check B (orphan) neutralizado            -> test_orphan_declared_done...     FALLA (exit 1)
-M3  archive glob eliminado                   -> test_archive_only_close...       FALLA (exit 1)
-M4  check B re-incluye superseded (FP)       -> test_superseded_..._exempt       FALLA (exit 1)
-CON-FIX (fuente restaurado): 12 passed
-```
+- Modificado `.agent/scope_gate.py::_normalize_flt_line`: tras el lstrip/replace/strip
+  actual, si el resultado no es vacio se le aplica `cleaned.split(" ", 1)[0]`, quedandose
+  solo con el primer token separado por espacio (el path) y descartando cualquier
+  anotacion descriptiva posterior. No se toco `_looks_like_path_token`, `_parse_flt_section`
+  ni ningun call-site (los 3 consumidores heredan el fix automaticamente al compartir la
+  funcion). Diff exacto (verificado con `git diff .agent/scope_gate.py` tras el fix y de
+  nuevo tras el mutation-verify, identico byte a byte ambas veces).
 
-## Triage del hallazgo real del gate: WT-2026-239a
-- La 1a corrida del gate contra el workspace marco `orphan_declared = WT-2026-239a`
-  (declarado terminal sin SUPERVISOR_CLOSED).
-- Triage: 239a esta marcado **`superseded`** (NO `completed`) en backlog_done, cerrado por
-  Ruta B honesta 2026-06-22. El Manager emitio CHANGES (bug critico de seguridad); el scope
-  migro a los hijos 240a/241a que SI entregaron el fix. Se dejo el bus SIN cerrar A PROPOSITO
-  "para no falsear historia". 4 tipos de evento en bus, ningun SUPERVISOR_CLOSED.
-- Conclusion: NO es auto-reporte -- es lo contrario, un cierre escrupulosamente honesto.
-  El gate tenia un falso positivo: no distinguia `superseded`-honesto de `completed`-fantasma.
-- FIX aplicado: check B solo exige bus a estados que AFIRMAN cierre completo
-  (`_CLOSURE_CLAIMING_STATES = {completed, done, closed}`); `superseded`/`absorbed` se eximen.
-  Barrera M4 lo blinda. Gate ahora PASA contra el workspace real.
+## Fase 2 - Tests + mutation-verify (Builder)
 
-## Gates
-- ruff check + format: limpio. encoding guard: 0. focal: 12 passed.
-- validate: config valid, single authority. validate_ticket_prose: ver nota de cierre.
-- suite canonica `--level all` sobre HEAD final: exit 0, sin state-leak (ver nota).
+- `tests/unit/test_scope_gate.py::TestParseFilesLikelyTouched::test_parse_flt_with_trailing_annotation_after_path`
+  (nuevo): bullet `` - `scripts/foo.py` (nuevo, el gate) `` bajo `## Files Likely Touched`
+  (ruta plana, sin subseccion) -> `parse_files_likely_touched(content)` (wrapper de
+  `agent_controller`, que resuelve contra `PROJECT_ROOT` == `_MOTOR_ROOT` del test) devuelve
+  `{str((_MOTOR_ROOT / "scripts/foo.py").resolve())}`. Nota de ajuste respecto al nombre
+  literal del work_plan: el wrapper `agent_controller.parse_files_likely_touched` NO acepta
+  kwarg `project_root` (firma fija a `PROJECT_ROOT`); como el archivo de test importa ese
+  wrapper (no `scope_gate.parse_files_likely_touched` directamente) y `_MOTOR_ROOT` ya es
+  `PROJECT_ROOT.resolve()`, se llamo sin `project_root=` replicando el patron de los tests
+  preexistentes de la misma clase (`test_parse_simple_files`, etc.).
+- `tests/unit/test_scope_gate_topology.py::test_namespaced_motor_annotated_path_resolves`
+  (nuevo): fixture `_NAMESPACED_MOTOR_ANNOTATED` con subseccion `### repo_motor` y bullet
+  `` - `scripts/bar.py` (nuevo) `` -> `scope_gate.parse_flt_raw_buckets(...)` devuelve
+  `bucket["motor"] == {"scripts/bar.py"}` y `bucket["destino"] == set()`.
+- Regresion cero confirmada: familia completa de 4 archivos (test_scope_gate.py,
+  test_scope_gate_topology.py, test_scope_gate_deliverable_aware.py,
+  test_scope_gate_isolation.py) -> 55 passed, 0 failed.
 
-Marked ready by Builder
+### MUTATION-VERIFY (obligatorio, CEM)
 
-Manager approved canonical closeout for WOT-2026-015l (SUPERVISOR_CLOSED bus seq 14)
+Comando usado en las 4 corridas (mismo comando, fuente mutado/restaurado entre medias):
+`.venv/Scripts/python.exe -m pytest tests/unit/test_scope_gate.py -k trailing_annotation
+tests/unit/test_scope_gate_topology.py -k "trailing_annotation or annotated" -v`
 
-## Nota de cierre
-- El Manager review post-cierre (pre-push) cazo 6 findings legitimos: execution_log de 016m
-  no separado, tested_sha desfasado por el churn, warning validate, mutation-verify no formal,
-  triage 239a pendiente, AUDIT ausente. Todos corregidos ANTES del push (este log, el fix de
-  check B, AUDIT_WOT-2026-015l.md, re-run de suite y validate). Push solo tras re-review.
+1. (a) Test SIN fix (revertido manualmente `_normalize_flt_line` a la forma original de
+   una sola linea, sin el `.split(" ", 1)[0]`): **2 failed** (ambos tests nuevos), **exit
+   code 1**. Evidencia literal:
+   `AssertionError: assert set() == {'C:\\Users\\...\\scripts\\foo.py'}` (test 1) y
+   `AssertionError: assert set() == {'scripts/bar.py'}` (test 2).
+2. (b) Codigo observado: **1**.
+3. (c) Test CON fix restaurado (mismo texto exacto reaplicado): **2 passed**, **exit code
+   0**.
+4. (d) Codigo observado: **0**.
+
+Restauracion verificada: `git diff .agent/scope_gate.py` tras el mutation-verify es
+IDENTICO al diff capturado justo despues de aplicar el fix en Fase 1 (mismo patch, sin
+diferencias residuales de la mutacion temporal).
+
+## Fase 3 - Verificacion end-to-end (Builder)
+
+- El `work_plan.md` real de WOT-2026-015l ya estaba sobrescrito por el bootstrap de este
+  ticket (015l era COMPLETED). El AUDIT_WOT-2026-015l.md no contiene el fragmento FLT
+  literal, asi que se reconstruyo via `git show a39cdea:.agent/collaboration/work_plan.md`
+  (commit deliverable de 015l citado en el work_plan de este ticket), extrayendo la seccion
+  `## Files Likely Touched` completa:
+  ```
+  ## Files Likely Touched
+
+  ### repo_motor
+  - `scripts/check_closeout_reconciliation.py` (nuevo, el gate)
+  - `tests/unit/test_check_closeout_reconciliation.py` (nuevo, fixtures A/B + mutation)
+
+  ## Non-goals
+  ```
+- Script de verificacion ejecutado desde el scratchpad de sesion (no forma parte del
+  repo): construye ese CONTENT literal y llama a
+  `scope_gate.parse_flt_raw_buckets(CONTENT, delivery_authority="repo_motor")` y
+  `scope_gate.parse_files_likely_touched(CONTENT, project_root=<repo_root>,
+  deliverable_type="code")`.
+- Resultado (exit 0):
+  - `buckets["motor"] == {"scripts/check_closeout_reconciliation.py",
+    "tests/unit/test_check_closeout_reconciliation.py"}` (NO vacio, 2 paths esperados).
+  - `buckets["destino"] == set()`.
+  - `parse_files_likely_touched(...)` devuelve el set con ambos paths resueltos contra
+    project_root.
+  - Confirma el sintoma original resuelto: sobre el FLT real de 015l (subseccion
+    repo_motor + bullets anotados), el whitelist deja de estar vacio.
+
+## Hallazgo colateral (Non-goal, ver work_plan) - NO corregido en este ticket
+
+`scripts/check_deliverables_exist.py::_resolve_flt_bullet_tokens` reimplementa el mismo
+criterio de rechazo (bullet con espacio tras normalizar -> descartado) y comparte el mismo
+bug de raiz (su propio docstring dice que espeja `scope_gate._normalize_flt_line` /
+`_looks_like_path_token`). Confirmado NO tocado en este ticket (Non-goal explicito del
+work_plan). Se deja anotado para que el Manager decida si abre ticket de seguimiento
+(mismo patron AP-D04, mismo fix, otro archivo).
+
+## Notas de handoff
+
+- El Manager (esta sesion) NO ejecuto `--reset-turn` ni `--bootstrap-ticket`: por
+  instruccion explicita del orquestador, esos pasos quedan a cargo del Orquestador
+  despues de este reporte. TURN.md/STATE.md aun reflejan el ciclo anterior (015l
+  COMPLETED / accion CREATE_PLAN) hasta que se ejecuten esos comandos.
+- Artefactos de handoff producidos por el Manager en esta sesion: work_plan.md
+  (APPROVED), AUDIT_WOT-2026-016s.md, este execution_log.md (IN_PROGRESS). Pendientes
+  antes de abrir la ventana del Builder: TURN.md/STATE.md regenerados y evento
+  STATE_CHANGED -> IN_PROGRESS emitido al bus.
