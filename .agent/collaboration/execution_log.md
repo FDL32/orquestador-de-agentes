@@ -43,7 +43,7 @@ entorno) y reporta timeout/error de runner como "Tests fallando" (AUTO-REJECTED 
     pytest (unico con `except FileNotFoundError:` solo) es la excepcion inconsistente.
 - Reproducido EN VIVO (comandos literales, cwd = repo root):
   - `uv run pytest -q --co` -> returncode 1, `real 0m0.055s` (medido con `time`), stderr:
-    `warning: VIRTUAL_ENV=C:\Users\fdl\miniconda3 does not match the project environment
+    `warning: VIRTUAL_ENV=C:\Users\<user>\miniconda3 does not match the project environment
     path .venv...` + `Failed to canonicalize script path`. Confirma: NO es timeout (120s),
     es fallo instantaneo del runner uv.
   - `.venv/Scripts/python.exe -m pytest --co -q` -> returncode 0, `real 0m1.464s`,
