@@ -105,3 +105,19 @@ def test_no_hardcoded_username_in_source() -> None:
     """DoD #4: el motor no lleva el username del autor hardcodeado."""
     src = Path(gate.__file__).read_text(encoding="utf-8")
     assert "fdl" not in src.lower().replace("default_pii_terms", "")
+
+
+def test_loose_pattern_chunks_many_revs(tmp_path: Path) -> None:
+    """WinError 206 hotfix: cientos de revs no revientan la linea de comandos
+    (se procesan en chunks) y el hallazgo del primer commit sigue cazandose."""
+    repo = _make_repo(tmp_path, "repo_grande")
+    (repo / "leak.md").write_text("c--Users-pepito-x\n", encoding="utf-8")
+    _git(repo, "add", "leak.md")
+    _git(repo, "commit", "-m", "leak temprano")
+    for i in range(gate.REV_CHUNK_SIZE * 2 + 5):
+        (repo / "f.txt").write_text(f"v{i}\n", encoding="utf-8")
+        _git(repo, "add", "f.txt")
+        _git(repo, "commit", "-q", "-m", f"c{i}")
+    report = gate.run_gate(repo, [], ["pepito"], [])
+    loose = next(c for c in report["checks"] if c["check"] == "loose_pattern")
+    assert not loose["ok"] and "leak.md" in str(loose["evidence"])

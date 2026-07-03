@@ -100,23 +100,28 @@ def check_classify(repo: Path) -> dict[str, Any]:
     }
 
 
+# Windows caps the command line at ~32K chars; ~800 revs of 40 chars overflow
+# it (WinError 206, found dogfooding the gate on the motor itself). Chunk revs.
+REV_CHUNK_SIZE = 100
+
+
 def check_loose_pattern(repo: Path, terms: list[str]) -> dict[str, Any]:
     """Loose PII pattern over every blob of every commit.
 
     Catches escape/slug variants (users\\\\term, Users-term) that fixed-string
     scans missed in production; case-insensitive by construction.
     """
-    hits: list[str] = []
+    hits: set[str] = set()
     revs = _run_git(repo, "rev-list", "--all").stdout.split()
     for term in terms:
         if not term:
             continue
         pattern = rf"users[^a-z0-9]{{0,4}}{re.escape(term)}"
-        result = _run_git(repo, "grep", "-il", "-iE", pattern, *revs)
-        hits.extend(
-            sorted({line.split(":", 1)[-1] for line in result.stdout.splitlines()})[:5]
-        )
-    return {"check": "loose_pattern", "ok": not hits, "evidence": hits[:10]}
+        for start in range(0, len(revs), REV_CHUNK_SIZE):
+            chunk = revs[start : start + REV_CHUNK_SIZE]
+            result = _run_git(repo, "grep", "-il", "-iE", pattern, *chunk)
+            hits.update(line.split(":", 1)[-1] for line in result.stdout.splitlines())
+    return {"check": "loose_pattern", "ok": not hits, "evidence": sorted(hits)[:10]}
 
 
 def check_metadata(repo: Path, allow_res: list[re.Pattern[str]]) -> dict[str, Any]:
