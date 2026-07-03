@@ -77,6 +77,55 @@ HOST_SETUP_CANDIDATES = ("host-setup.sh", "host-setup.ps1")
 MANIFEST_WORKSPACE = "MANIFEST.workspace"
 MANIFEST_WORKSPACE_VERSION = "1.0"
 
+# WOT-2026-016p (N7 / B-PROJ): regenerable motor projections carry absolute
+# local paths at runtime; if a destination versions them, every motor run
+# re-contaminates the repo (bit in production 2026-07-03: redacted history got
+# re-polluted between a filter-repo and a `git add -A`). install/sync therefore
+# ensures these entries exist in the destination .gitignore.
+PROJECTIONS_GITIGNORE_MARKER = (
+    "# motor-managed: regenerable projections (WOT-2026-016p)"
+)
+PROJECTIONS_GITIGNORE_ENTRIES: tuple[str, ...] = (
+    ".agent/context/project-map.json",
+    ".agent/context/destination_map.md",
+    ".agent/config/motor_destination_link.json",
+    ".agent/.last_upgrade_result.json",
+    ".agent/runtime/",
+)
+
+
+def ensure_destination_projections_ignored(
+    project_root: Path, dry_run: bool = False
+) -> list[str]:
+    """Idempotently ensure regenerable projections are gitignored in the destination.
+
+    Before: project_root is the destination repo root (may lack .gitignore).
+    During: appends a managed block with any missing PROJECTIONS_GITIGNORE_ENTRIES;
+            lines already present (managed block or user's own) are not duplicated.
+    After: returns the list of entries added (empty when everything was covered).
+    """
+    gitignore = project_root / ".gitignore"
+    existing = (
+        gitignore.read_text(encoding="utf-8", errors="replace").splitlines()
+        if gitignore.exists()
+        else []
+    )
+    existing_set = {line.strip() for line in existing}
+    missing = [e for e in PROJECTIONS_GITIGNORE_ENTRIES if e not in existing_set]
+    if not missing:
+        return []
+    if dry_run:
+        print(f"[DRY-RUN] Would add to .gitignore: {', '.join(missing)}")
+        return missing
+    block = [""] if existing and existing[-1].strip() else []
+    if PROJECTIONS_GITIGNORE_MARKER not in existing_set:
+        block.append(PROJECTIONS_GITIGNORE_MARKER)
+    block.extend(missing)
+    with gitignore.open("a", encoding="utf-8", newline="\n") as fh:
+        fh.write("\n".join(block) + "\n")
+    print(f"[INSTALL] .gitignore: added projection entries: {', '.join(missing)}")
+    return missing
+
 
 def read_json(path: Path) -> dict | None:
     if not path.exists():
@@ -1137,6 +1186,10 @@ def install_agent_system(
     if not dry_run:
         project_agent.mkdir(parents=True, exist_ok=True)
 
+    # WOT-2026-016p: protect the destination from versioning regenerable
+    # projections before any of them get written.
+    ensure_destination_projections_ignored(project_agent.parent, dry_run=dry_run)
+
     # Read allowlist from MANIFEST.workspace
     template_root = template_agent.parent
     allowlist = read_manifest_allowlist(template_root)
@@ -1226,6 +1279,9 @@ def sync_agent_system(  # noqa: C901
     if not project_agent.exists():
         print("[ERROR] Project .agent/ not found. Run --install first.")
         return 1
+
+    # WOT-2026-016p: existing destinations get the projection guard on sync.
+    ensure_destination_projections_ignored(project_agent.parent, dry_run=dry_run)
 
     manifest_version = get_manifest_version(template_agent)
     if manifest_version:

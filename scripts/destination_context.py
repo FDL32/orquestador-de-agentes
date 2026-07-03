@@ -374,14 +374,16 @@ def build_map(project_root: Path, max_bytes: int) -> str:  # noqa: C901
         "# Destination Context Map",
         "",
         "## Identity & Topology",
-        f"- **Destination root:** `{project_root.resolve()}`",
+        # PII-safe (WOT-2026-016p): folder names only. Absolute paths in this
+        # regenerable projection leaked into destination git history (N7).
+        f"- **Destination root:** `{project_root.resolve().name}`",
     ]
 
     motor_link = resolve_motor_link(project_root)
     if motor_link:
-        identity_lines.append(
-            f"- **Motor root:** `{motor_link.get('motor_root', 'unknown')}`"
-        )
+        _motor_root_raw = str(motor_link.get("motor_root", "") or "")
+        _motor_root_name = Path(_motor_root_raw).name if _motor_root_raw else "unknown"
+        identity_lines.append(f"- **Motor root:** `{_motor_root_name}`")
         identity_lines.append("- **Mode:** destination-hosted")
         identity_lines.append(
             f"- **Motor version:** {motor_link.get('motor_version', 'unknown')}"

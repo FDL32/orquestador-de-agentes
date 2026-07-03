@@ -1,68 +1,52 @@
-# Execution Log - WOT-2026-016b
+# Execution Log - WOT-2026-016p
 
-**Ticket:** WOT-2026-016b - Hook pre-commit/pre-push con INSTALL_PYTHON obsoleto: detectar/regenerar ruta de interprete inexistente (repo movido)
-**Estado:** COMPLETED
-**HEAD al inicio:** 65af880
+**Ticket:** WOT-2026-016p - Proyecciones regenerables con rutas absolutas: auto-gitignore install/sync + generadores PII-safe (N7 + B-PROJ)
+**Estado:** IN_PROGRESS
+**HEAD al inicio:** 6af5677
 
-> execution_log de 018b (COMPLETED) preservado en `execution_log_WOT-2026-018b.md`.
+> execution_log de 016b (COMPLETED) preservado en `execution_log_WOT-2026-016b.md`.
 
 ---
 
 ## Bootstrap
 
-- Ticket 016b materializado como code (delivery_authority=repo_motor).
-- FLT = scripts/check_hook_interpreter.py (nuevo) + tests/test_check_hook_interpreter.py (nuevo)
-  + .pre-commit-config.yaml (enganche hook manual).
-- Origen: WOT-2026-017a (2026-06-30/07-01) destapo que el hook generado hardcodea INSTALL_PYTHON;
-  tras mover el repo fuera de z_scripts\, la ruta quedo obsoleta y el hook caia al fallback roto.
+- Origen: N7 mordio en produccion 2026-07-03 (tanda backup 12 repos): el motor regenero
+  project-map/link con rutas reales entre filter-repo y un add -A -> PII pusheada (cazada por
+  Manager review, corregida con purga+force-push). Sugerencia formal del Manager: auto-gitignore.
+- FLT: install_agent_system.py + project_scanner.py + destination_context.py +
+  tests/test_projections_pii_safe.py (nuevo).
 
-## Fase 0: Diagnostico (VERIFICADO EN VIVO)
+## Fase 0: Diagnostico (VERIFICADO)
 
-- Reproducido el bug en este repo a HEAD 65af880:
-  - `.git/hooks/pre-commit` L7 INSTALL_PYTHON = `...\orquestador_de_agentes\.venv\Scripts\python.exe`
-    -> EXISTE en disco (ok, regenerado en 017a).
-  - `.git/hooks/pre-push` L7 INSTALL_PYTHON = `...\z_scripts\orquestador_de_agentes\.venv\Scripts\python.exe`
-    -> NO existe (`ls` confirma No such file). Hook roto vivo.
-- grep INSTALL_PYTHON / pre_commit install / hook-type sobre **/*.py -> 0 hits: ningun codigo
-  gestiona esto hoy. Superficie NUEVA, no modificacion de seam existente.
-- Convencion de scripts/check_*.py confirmada (check_motor_pristine.py, check_ruff_hook_scope.py):
-  funciones puras + main(argv)->int, fail-closed, UTF-8/ASCII, tests con repos reales en tmp_path.
+- project_scanner.py:717 `"project_root": str(project_root)` (y schema doc :624 "absolute path").
+- destination_context.py:377 `{project_root.resolve()}` y :382 `motor_link.get('motor_root')`.
+- install_agent_system.py: 0 hits de gitignore -> funcionalidad nueva; hooks install() L1121
+  y sync_agent_system() L1215.
+- Consumidores verificados: _build_scanner_context_block lee summary/frameworks/importMap
+  (NO project_root); scope_gate excluye el path, no lee contenido; batch_destination_controller
+  ESCRIBE su propio "Motor root:" (no parsea el map). Cambio de semantica SEGURO.
+- Link: solo-lectura en runtime/motor_link.py; contenido machine-specific por diseno (non-goal).
+
+## Fase 1-2: pendiente de implementar (ver work_plan)
 
 ## Fase 1: Implementacion (EJECUTADA)
 
-- `scripts/check_hook_interpreter.py`: parse_install_python (regex L7, comilla simple/doble),
-  check_hook/check_all sobre HOOK_TYPES=("pre-commit","pre-push"), main con --repo-root/--hooks-dir/--fix.
-  Sin --fix: exit 1 + mensaje accionable si algun interprete no existe; exit 0 si todos ok o ausentes.
-  Con --fix: regenera via `sys.executable -m pre_commit install --overwrite --hook-type pre-commit
-  --hook-type pre-push` y re-verifica. Nunca versiona .git/hooks/*.
-- `.pre-commit-config.yaml`: hook local `check-hook-interpreter` en stage `manual` (no automatico:
-  un hook automatico seria circular porque el propio hook roto no puede invocarlo con fiabilidad).
+- install_agent_system.py: PROJECTIONS_GITIGNORE_MARKER + PROJECTIONS_GITIGNORE_ENTRIES (5) +
+  ensure_destination_projections_ignored() idempotente (respeta lineas de usuario, dry_run);
+  hooks en install (tras mkdir) y sync (tras check de existencia).
+- project_scanner.py:717 project_root -> .name (+ schema doc :624). Consumidores no afectados
+  (verificado Fase 0).
+- destination_context.py:377/382 Destination root y Motor root -> nombres, no rutas.
 
-## Fase 2: Tests (barrera FAIL-sin/PASS-con, VERDE)
+## Fase 2: Tests (VERDE con barrera)
 
-- `tests/test_check_hook_interpreter.py` (8 tests):
-  - stale detectado por tipo (parametrizado pre-commit Y pre-push) -> exit 1. [DoD #1, #2]
-  - interprete existente -> exit 0; hook ausente -> exit 0 (no falso positivo).
-  - BARRERA: mismo texto de hook; solo la EXISTENCIA del interprete flipa PASS<->FAIL (borrar el
-    interprete -> exit 1). [DoD #3]
-  - mixto (pre-commit ok + pre-push stale) -> exit 1 (no "pasa" por tener uno bueno; forma del bug vivo).
+- tests/test_projections_pii_safe.py: 6 tests (anade-todo, idempotencia sin duplicados,
+  respeta entradas de usuario, dry-run no escribe, project-map sin rutas absolutas
+  (regex [A-Za-z]:[\/]|/home/), link name-derivation).
+- BARRERA FAIL-sin/PASS-con VERIFICADA: git stash del fix de project_scanner ->
+  test_project_map_has_no_absolute_paths FAILED; stash pop -> passed.
 
-## Evidencia de cierre (gates)
+## Gates
 
-- LIVE run contra los hooks reales: `python scripts/check_hook_interpreter.py` -> exit 1, nombra
-  pre-push con la ruta z_scripts inexistente (caza el bug real).
-- Focal: `pytest tests/test_check_hook_interpreter.py -q` -> 8 passed.
-- ruff check -> All checks passed!; ruff format --check -> already formatted.
-- encoding guard sobre archivos tocados -> exit 0.
-- Suite canonica run_pytest_safe.py --level all -> pendiente (debe dar exit 0, tested_commit_sha==HEAD).
-- validate --json -> pendiente (0/0 tras commit).
-
-## Estado actual
-
-- Implementacion + tests verdes focal. PENDIENTE: commit con ID 016b (PATH saneado) -> re-correr
-  suite canonica -> validate 0/0 -> pre-handoff -> mark-ready -> manager-approve.
-
-
-Marked ready by Builder
-
-Manager approved canonical closeout for WOT-2026-016b
+- pytest focal: 6 passed (+ naming 25 total). ruff check: 1 fixed, 0 remaining; format ok.
+- encoding guard exit 0. Suite canonica + validate: pendientes tras commit.

@@ -621,7 +621,7 @@ def scan_project(project_root: Path | None = None) -> dict[str, Any]:
     {
         "version": "1.0",
         "generated": "ISO timestamp",
-        "project_root": "absolute path",
+        "project_root": "repo folder name (PII-safe: never an absolute path; WOT-2026-016p)",
         "summary": {
             "total_files": int,
             "total_size_bytes": int,
@@ -714,7 +714,9 @@ def scan_project(project_root: Path | None = None) -> dict[str, Any]:
     project_map = {
         "version": "1.0",
         "generated": datetime.now(timezone.utc).isoformat(),
-        "project_root": str(project_root),
+        # PII-safe (WOT-2026-016p): folder name only. Absolute paths in this
+        # regenerable projection leaked into destination git history (N7).
+        "project_root": project_root.name,
         "summary": summary,
         "files": files_by_category,
         "importMap": {"python_files": import_map},
