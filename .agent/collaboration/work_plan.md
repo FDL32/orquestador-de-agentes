@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WOT-2026-019b
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Titulo:** Fuga PII en el detail de "stamp ilegible" de `_read_pytest_safe_verdict`
   (OSError vuelca ruta absoluta con username).

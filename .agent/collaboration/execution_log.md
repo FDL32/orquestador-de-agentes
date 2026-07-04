@@ -2,7 +2,7 @@
 
 Ticket: WOT-2026-019b - Fuga PII en el detail de "stamp ilegible" de
 _read_pytest_safe_verdict (OSError vuelca ruta absoluta con username).
-**Estado:** IN_PROGRESS
+**Estado:** COMPLETED
 
 ## Bitacora
 
@@ -205,3 +205,8 @@ STAGED (no commiteados): `.agent/agent_controller.py`,
 `tests/test_agent_controller.py`.
 
 **Estado:** READY_FOR_REVIEW (Builder)
+
+
+Scope override: Over-captura del scope gate por baseline anterior. Los AUDIT/PLAN de 015p aparecen porque el commit de cierre del bus c687e38 los BORRA (archivados a _archive gitignored), no son contenido de 019b. Los otros 10 paths (016y/016z AUDIT/PLAN, archive/observations.2026-07.jsonl, los 3 targets de 015p ya en 5df5c5b, conftest, test_motor_git_identity_barrier) son de tickets ya cerrados en sesiones/commits previos, verificado con git show --name-only b0d8d7b c687e38: NO estan en los 2 commits de 019b. El unico codigo productivo de 019b es agent_controller.py (fix del except) + tests/test_agent_controller.py. 'missing: json.JSONDecodeError' es el bug de parser FLT (texto del work_plan leido como path), inofensivo.. Affected files: <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-015p.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016y.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016z.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-015p.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-016y.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-016z.md, <REPO_ROOT>/.agent/runtime/memory/archive/observations.2026-07.jsonl, <REPO_ROOT>/.claude/rules/01-security-architecture.md, <REPO_ROOT>/json.JSONDecodeError, <REPO_ROOT>/prompts/audit_agent_output.md, <REPO_ROOT>/skills/secure-existing-project/SKILL.md, <REPO_ROOT>/tests/conftest.py, <REPO_ROOT>/tests/unit/test_motor_git_identity_barrier.py
+
+Manager approved canonical closeout for WOT-2026-019b
