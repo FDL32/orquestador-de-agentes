@@ -8,6 +8,17 @@ this ticket established that no test may run ``git config`` with
 module-level reader/writer functions in ``tests/conftest.py`` are monkeypatched
 to fake "after" identity tuples and to record restore calls, and the guard is
 invoked directly with an in-memory "before" tuple.
+
+The production fixture that drives this guard,
+``_isolate_motor_git_identity_session``, is session-scoped (Review 2, blocker
+1: per-test scope added ~186s of subprocess overhead across the ~3500-test
+suite; session-scope reduces the cost to ~4 subprocesses total). These tests
+exercise the enforcement/restore logic directly and are unaffected by that
+scope change: the logic under test (compare before/after, restore, fail) is
+identical regardless of when the fixture snapshots/enforces it. The trade-off
+of session-scope -- the failure message cannot name a specific test nodeid,
+only "some test in this session" -- is exercised by passing a session-level
+description string in place of a per-test nodeid where relevant.
 """
 
 from __future__ import annotations
@@ -113,3 +124,27 @@ def test_motor_git_identity_barrier_allows_unchanged_value(
     motor_git_identity_guard(identity, "test_unchanged_identity")
 
     assert restore_calls == []
+
+
+def test_motor_git_identity_reader_degrades_when_git_is_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing ``git`` binary degrades to ``(None, None)`` instead of raising.
+
+    WOT-2026-016z Review 2, blocker 2: a bare ``subprocess.run(["git", ...])``
+    without exception handling would raise ``FileNotFoundError`` on a machine
+    without ``git`` on ``PATH`` and break fixture collection for the whole
+    suite. Verifies the guard degrades to "not verifiable" instead.
+    """
+
+    def _raise_file_not_found(*_args, **_kwargs):
+        raise FileNotFoundError("git not found")
+
+    monkeypatch.setattr(conftest.subprocess, "run", _raise_file_not_found)
+
+    assert conftest._read_motor_git_identity() == (None, None)
+
+    # _write_motor_git_identity_key must also degrade silently (nothing to
+    # restore if git was never reachable to read the identity in the first
+    # place).
+    conftest._write_motor_git_identity_key("user.email", "irrelevant@example.invalid")

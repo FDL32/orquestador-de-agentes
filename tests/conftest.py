@@ -255,16 +255,25 @@ def motor_bus_isolation_guard():
 
 
 def _read_motor_git_identity() -> tuple[str | None, str | None]:
-    """Read the motor's local ``user.email``/``user.name`` (None if unset)."""
+    """Read the motor's local ``user.email``/``user.name`` (None if unset).
+
+    Degrades to ``(None, None)`` instead of raising if ``git`` is not on
+    ``PATH`` (e.g. a minimal CI image): a missing ``git`` binary must not break
+    the whole suite via a fixture-collection error (WOT-2026-016z Review 2
+    blocker 2).
+    """
 
     def _read_one(key: str) -> str | None:
-        result = subprocess.run(
-            ["git", "config", "--local", key],
-            cwd=PROJECT_ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            result = subprocess.run(
+                ["git", "config", "--local", key],
+                cwd=PROJECT_ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except (FileNotFoundError, OSError):
+            return None
         if result.returncode != 0:
             return None
         value = result.stdout.strip()
@@ -274,23 +283,31 @@ def _read_motor_git_identity() -> tuple[str | None, str | None]:
 
 
 def _write_motor_git_identity_key(key: str, value: str | None) -> None:
-    """Set (or unset) a single motor-local git config key."""
-    if value is None:
-        subprocess.run(
-            ["git", "config", "--local", "--unset", key],
-            cwd=PROJECT_ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    else:
-        subprocess.run(
-            ["git", "config", "--local", key, value],
-            cwd=PROJECT_ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+    """Set (or unset) a single motor-local git config key.
+
+    Degrades silently if ``git`` is not on ``PATH`` (see
+    ``_read_motor_git_identity``): there is nothing to restore if it was never
+    possible to read the identity in the first place.
+    """
+    try:
+        if value is None:
+            subprocess.run(
+                ["git", "config", "--local", "--unset", key],
+                cwd=PROJECT_ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        else:
+            subprocess.run(
+                ["git", "config", "--local", key, value],
+                cwd=PROJECT_ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+    except (FileNotFoundError, OSError):
+        pass
 
 
 def _restore_motor_git_identity_if_changed(
@@ -310,7 +327,14 @@ def _enforce_motor_git_identity_isolation(
     before: tuple[str | None, str | None],
     nodeid: str,
 ) -> None:
-    """Restore a leaked motor git identity and fail with the contaminating test id."""
+    """Restore a leaked motor git identity and fail naming the contaminating test.
+
+    ``nodeid`` is the exact pytest node id when the caller can attribute the
+    change to a single test (used by the barrier tests below). The
+    session-scoped fixture that drives this in production cannot name an
+    individual test (see ``_isolate_motor_git_identity_session``); it passes a
+    session-level description instead.
+    """
     if _restore_motor_git_identity_if_changed(before):
         pytest.fail(
             "Test mutated the real motor git identity (user.email/user.name) and "
@@ -327,24 +351,51 @@ def motor_git_identity_guard():
     return _enforce_motor_git_identity_isolation
 
 
-@pytest.fixture(autouse=True)
-def _isolate_motor_git_identity(request: pytest.FixtureRequest) -> None:
+@pytest.fixture(scope="session", autouse=True)
+def _isolate_motor_git_identity_session() -> None:
     """Barrier (WOT-2026-016z): isolate the motor's local git identity.
 
     Snapshots ``git config --local user.email``/``user.name`` for the real
-    motor (``PROJECT_ROOT``) before each test and, in the finally, restores
-    the original value and fails the contaminating test if it changed. No
+    motor (``PROJECT_ROOT``) ONCE at the start of the pytest session and, in
+    this fixture's teardown (which runs at session end, after every test),
+    restores the original value and fails the session if it changed. No
     fixture is known to mutate this today (WOT-2026-016z Fase 0 verified all
     ``git config`` usages in tests/ operate on ``cwd=tmp_path``/``cwd=repo``
     fixtures, never on the real motor), but this closes the risk of future
-    recontamination with the same mechanism already approved for the event
-    bus (see ``_isolate_controller_event_bus`` above).
+    recontamination with the same restore-and-fail mechanism already approved
+    for the event bus (see ``_isolate_controller_event_bus``), scoped to the
+    session instead of per-test.
+
+    SESSION-SCOPE TRADE-OFF (WOT-2026-016z Review 2, blocker 1): the original
+    design cloned the bus fixture's PER-TEST scope, which costs 4 ``git
+    config`` subprocesses per test (2 keys, snapshot + restore-check) --
+    empirically ~186s of added wall time across ~3500 tests (measured: 355-378s
+    with per-test vs ~165-190s with session-scope). Per-test scope is not
+    needed for correctness: the resource under guard is a single global (the
+    motor's local git identity), not a per-test resource, and this event has 0
+    observed occurrences. Session-scope reduces the cost to ~4 subprocesses
+    total for the whole suite (one snapshot, one comparison at teardown), at
+    the cost of losing the ability to name the exact contaminating test: on
+    failure, the message can only say "some test in this session" rather than
+    a specific nodeid. If this ever fires, bisect manually (rerun subsets of
+    the suite) to find the offending test -- an acceptable trade given the
+    event has never fired in this repo's history. A per-test scoped variant
+    remains available for that manual bisection via ``motor_git_identity_guard``
+    plus a temporary local fixture, without paying its cost by default.
+
+    ``pytest.fail`` inside a session-scoped fixture's teardown (this method,
+    not ``pytest_sessionfinish``) is used deliberately: ``pytest_sessionfinish``
+    runs after the session is already finalized and cannot fail it, whereas a
+    fixture teardown failure is reported as a session error and yields a
+    non-zero exit code.
     """
     before = _read_motor_git_identity()
     try:
         yield
     finally:
-        _enforce_motor_git_identity_isolation(before, request.node.nodeid)
+        _enforce_motor_git_identity_isolation(
+            before, "<session>: some test mutated the motor git identity"
+        )
 
 
 @pytest.fixture(autouse=True)
