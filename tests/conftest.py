@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 import os
 import shutil
@@ -39,6 +40,13 @@ class ProjectTmpPathFactory:
 
     def mktemp(self, name: str, numbered: bool = True) -> Path:
         safe_name = name.replace("/", "_").replace("\\", "_")
+        safe_name = (
+            safe_name[:16]
+            + "_"
+            + hashlib.sha1(
+                safe_name.encode("utf-8"), usedforsecurity=False
+            ).hexdigest()[:8]
+        )
         if numbered:
             self._counter += 1
             path = self.base_dir / f"{safe_name}{self._counter:04d}"

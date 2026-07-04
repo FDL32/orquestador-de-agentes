@@ -1,140 +1,93 @@
-# Execution Log - WOT-2026-016w
+# Execution Log - WOT-2026-015m
 
-**Ticket:** WOT-2026-016w - check_deliverables_exist.py descarta bullets FLT con anotacion
-(bug gemelo de 016s).
-**Estado:** COMPLETED
-**delivery_authority:** repo_motor | **deliverable_type:** code
+**Ticket:** WOT-2026-015m - Acortar el nombre de carpeta de ProjectTmpPathFactory.mktemp para
+evitar MAX_PATH intermitente bajo la suite completa.
+**Estado:** IN_PROGRESS
 
-> execution_log de WOT-2026-016c (COMPLETED) preservado en
-> execution_log_WOT-2026-016c.md antes de este bootstrap.
+## Bitacora
 
-## Fase 0 - Diagnostico (Orquestador + Manager, EJECUTADO, verificado en codigo)
+- Plan creado y aprobado por el Manager. Diagnostico de Fase 0 confirmado en codigo
+  (tests/conftest.py:32-48, 167-178; tests/test_classify_publication.py:556-584).
+  Medicion cuantitativa realizada: peor caso actual 92 caracteres de carpeta, shortening
+  propuesto reduce a 29 caracteres constantes (ahorro de 63 caracteres), dejando 55
+  caracteres de margen bajo MAX_PATH (260) con paths git-internos largos incluidos.
+- Handoff al Builder pendiente de --bootstrap-ticket y --validate.
 
-- Sintoma confirmado en scripts/check_deliverables_exist.py:244-252
-  (_resolve_flt_bullet_tokens): tras limpiar backticks/comillas/bullet-prefix, si la linea
-  completa contiene un espacio, la funcion descarta el bullet entero sin comprobar
-  existencia en disco.
-- Confirmado que .agent/scope_gate.py::_normalize_flt_line (lineas 77-89) ya corrige el
-  mismo problema desde WOT-2026-016s (commit 4c79e8e): toma solo el primer token separado
-  por espacio antes de que _looks_like_path_token valide el resultado.
-- Confirmado con git log --oneline -- scripts/check_deliverables_exist.py que este archivo
-  NO fue tocado por WOT-2026-016s (ultimo commit es de WOT-2026-010n): el bug es real y
-  sigue sin corregir.
-- Matiz de diseno anti-narrativa confirmado: docstring lineas 235-243 y test existente
-  test_wot_010j_real_case_narrative_note_not_treated_as_deliverable (lineas 139-170 de
-  tests/unit/test_check_deliverables_exist.py) cubren el caso que el filtro de espacio
-  protege; el fix de "primer token" no lo rompe porque el primer token de una linea
-  narrativa no pasa looks_like_path.
-- Baseline: .venv/Scripts/python.exe -m pytest tests/unit/test_check_deliverables_exist.py -q
-  -> 9 passed in 1.00s (verificado antes de cualquier cambio).
+## Fase 0 (Builder) - diagnostico confirmado antes de tocar codigo
 
-## Fase 0 - Diagnostico (Builder, re-confirmado en codigo)
+- Preflight: `--validate --json` = 0 errors / 0 warnings. STATE.md = WOT-2026-015m/IN_PROGRESS,
+  TURN.md = BUILDER/IMPLEMENT, work_plan.md Estado=APPROVED, ID activo = WOT-2026-015m. Nota:
+  `.agent_common_rules.md` y `.builder_rules` NO existen en este repo (ni en raiz ni en ningun
+  subdirectorio via glob) -- se procede solo con work_plan.md + el prompt del Orquestador, que
+  es autocontenido.
+- `ProjectTmpPathFactory` completa (tests/conftest.py:32-48) leida. Confirmado que `mktemp`
+  (l.40-48) es el UNICO punto a tocar: `__init__` (l.35-38) crea `base_dir` y `_counter = 0` y
+  no requiere cambios.
+- `hashlib` NO estaba importado en conftest.py (imports actuales: importlib, os, shutil, stat,
+  sys, tempfile, pathlib.Path, pytest). Se anade en el bloque de imports estandar.
+- Por que el counter garantiza unicidad (y el hash no es necesario para eso): `self._counter`
+  es un entero de instancia que se incrementa (`self._counter += 1`, l.43) en CADA llamada a
+  `mktemp(numbered=True)`, monotonicamente, sobre la MISMA instancia de
+  `ProjectTmpPathFactory` (una por sesion de pytest, ver fixture `tmp_path_factory` scope=session
+  l.167-170). Como el sufijo `{self._counter:04d}` se concatena siempre al final del path
+  (l.44) y nunca se reinicia ni se comparte entre instancias dentro de una sesion, dos llamadas
+  a `mktemp(same_name)` producen SIEMPRE paths distintos independientemente de que `safe_name`
+  sea identico, truncado, o incluso vacio -- la unicidad depende exclusivamente del contador,
+  no del contenido de `name`. El shortening (prefijo+hash) es ortogonal a esta garantia: solo
+  mejora la legibilidad visual del nombre, no participa en la unicidad.
+- No-regresion confirmada por grep: `grep -rn "mktemp("` en tests/ da un unico resultado
+  (tests/conftest.py, la propia fixture `tmp_path` l.178); `grep -rn "tmp_path\.name|safe_name"`
+  en tests/ da un unico archivo (tests/conftest.py) -- ningun test fuera de conftest.py depende
+  del nombre completo de la carpeta generada.
 
-- Preflight: `.venv/Scripts/python.exe .agent/agent_controller.py --validate --json --project-root .`
-  -> `total_errors: 0, total_warnings: 0`. STATE.md = `WOT-2026-016w / IN_PROGRESS`. TURN.md =
-  `ROL: BUILDER, Plan ID: WOT-2026-016w, Accion: IMPLEMENT`. work_plan.md ID activo =
-  WOT-2026-016w. Preflight OK, runtime bootstrapped correctamente.
-- Seam confirmado: `scripts/check_deliverables_exist.py:232-263`
-  (`_resolve_flt_bullet_tokens`), caller `_extract_flt_paths` (linea 266-325, llama al
-  resolver en la linea 323 para cada bullet `-`/`*` dentro de `## Files Likely Touched`).
-- Linea exacta a cambiar: linea 251 `if not normalized or " " in normalized:` — se sustituye
-  la condicion de descarte por espacio por "quedarse con el primer token" (paridad con
-  `.agent/scope_gate.py::_normalize_flt_line` linea 89: `cleaned.split(" ", 1)[0]`), ANTES
-  del resto de validaciones ya existentes (linea 253 `rstrip(",")`, linea 256 caracteres
-  prohibidos, linea 258 `looks_like_path`).
-- `_normalize_flt_line` (scope_gate.py:77-89) y `_looks_like_path_token` (scope_gate.py:66-74)
-  confirmados como el patron gemelo ya revisado: limpia backticks/comillas/bullet-prefix,
-  toma `cleaned.split(" ", 1)[0]` como el path candidato, y el caller valida ese token con
-  `_looks_like_path_token` (rechaza si aun tiene espacio, exige que empiece por punto,
-  contenga slash/backslash, o el basename tenga un punto). `looks_like_path` en
-  check_deliverables_exist.py (lineas 63-71) es equivalente local con un filtro extra
-  (rechaza UPPER_CASE con guion bajo) que no interfiere con el fix.
-- Test de referencia para el patron de test nuevo:
-  `test_namespaced_repo_motor_missing_deliverable_fails_closed` (tests/unit/
-  test_check_deliverables_exist.py:107-116). Test de no-regresion a preservar:
-  `test_wot_010j_real_case_narrative_note_not_treated_as_deliverable` (lineas 139-170).
+## Fase 1 (Builder) - implementacion
 
-## Fase 1 - Implementacion
+- Cambio minimo en `mktemp` (tests/conftest.py): tras `safe_name = name.replace("/", "_").replace("\\", "_")`,
+  se anade `safe_name = safe_name[:16] + "_" + hashlib.sha1(safe_name.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]`.
+  Se anadio `import hashlib` al bloque de imports estandar. No se toco nada mas de `mktemp`
+  ni de la clase `ProjectTmpPathFactory`.
+- Desviacion menor documentada (fiel al diseno aprobado, no cambia el algoritmo): se anadio
+  el kwarg `usedforsecurity=False` a `hashlib.sha1(...)` porque `ruff check` (regla S324,
+  "Probable use of insecure hash functions in hashlib") bloqueaba el gate sin el. El plan
+  especifica `hashlib.sha1(safe_name.encode("utf-8")).hexdigest()[:8]` sin ese kwarg; el uso
+  aqui es explicitamente NO criptografico (solo desambiguacion visual para debug de huerfanos,
+  el counter es la unica garantia de unicidad real, ver Fase 0) por lo que `usedforsecurity=False`
+  es la forma correcta y estandar (soportada desde Python 3.9, este repo usa 3.10.19) de declarar
+  esa intencion sin silenciar el linter con un noqa ciego. No cambia el algoritmo de shortening
+  ni la longitud resultante (sigue siendo prefijo(16)+"_"+hash(8) = 25 chars sin counter, 29 con).
+- `ruff format` reformateo automaticamente la expresion de `safe_name` (la parentiza en
+  multiples lineas por longitud >88 chars); no cambia la logica, solo el estilo de wrapping.
 
-- Cambio unico en `scripts/check_deliverables_exist.py::_resolve_flt_bullet_tokens`
-  (linea ~251-259): reemplazada la condicion `if not normalized or " " in normalized: return`
-  por `if not normalized: return` seguido de `normalized = normalized.split(" ", 1)[0]`
-  (paridad exacta con `scope_gate._normalize_flt_line`), ANTES del resto de validaciones
-  ya existentes (rstrip coma, caracteres prohibidos, looks_like_path). Docstring de la
-  funcion actualizado para reflejar el comportamiento real (ya no rechaza por espacio, sino
-  que toma el primer token y ese token es el que se valida contra looks_like_path).
-  No se toco `.agent/scope_gate.py` ni ningun otro archivo (non-goal respetado).
+## Fase 2 (Builder) - tests nuevos + mutation-verify
 
-## Fase 2 - Tests nuevos
+- Creado tests/test_conftest_sandbox.py con los 3 tests especificados en el plan, cargando
+  tests/conftest.py via `importlib.util.spec_from_file_location` (no `import conftest`, que
+  falla en este repo segun diagnostico del Manager). Los 3 tests instancian
+  `ProjectTmpPathFactory` sobre un `tmp_path / "factory_base"` (el `tmp_path` aqui es el fixture
+  del propio proyecto, ya que `tests/conftest.py` lo sobreescribe globalmente para todo el
+  repo) -- no se crean repos git reales.
+- `.venv/Scripts/python.exe -m pytest tests/test_conftest_sandbox.py -v` -> 3 passed en 0.07s-0.08s
+  (corrido 2 veces, antes y despues del reformat de ruff sobre el propio archivo de test).
 
-- Anadidos 2 tests en `tests/unit/test_check_deliverables_exist.py` (antes de
-  `test_wot_010j_real_case_narrative_note_not_treated_as_deliverable`, siguiendo el patron
-  de `test_namespaced_repo_motor_missing_deliverable_fails_closed`):
-  - `test_wot_016w_flt_bullet_with_trailing_annotation_resolves_and_checked`: bullet
-    `` - `scripts/annotated_thing.py` (nuevo, el gate)`` bajo `### repo_motor`, archivo
-    AUSENTE en `motor_root` -> exige `code == 1` y `"annotated_thing.py" in output`.
-  - `test_wot_016w_flt_bullet_with_trailing_annotation_passes_when_exists`: mismo bullet,
-    archivo PRESENTE en `motor_root/scripts/annotated_thing.py` -> exige `code == 0`.
+### MUTATION-VERIFY (obligatorio, los 4 exit codes)
 
-## Mutation-verify (criterio de aceptacion 3, OBLIGATORIO)
-
-Backup previo: `scripts/check_deliverables_exist.py` copiado a
-`.../scratchpad/check_deliverables_exist.py.bak_016w` (fuera del repo) antes de mutar.
-
-1. **(a) Test de paridad SIN el fix** (revertido solo el cambio central: condicion vuelta a
-   `if not normalized or " " in normalized: return`, sin el `split(" ", 1)[0]`):
-   ```
-   .venv/Scripts/python.exe -m pytest tests/unit/test_check_deliverables_exist.py -k wot_016w_flt_bullet_with_trailing_annotation_resolves_and_checked -v
-   ```
-   Resultado: **FAILED**. `assert code == 1` -> `AssertionError: assert 0 == 1` (el bullet
-   anotado se descarta silenciosamente, el script no detecta el archivo faltante: exactamente
-   el falso-verde que describe el bug).
-2. **(b) Codigo de salida observado (pytest):** `1` (`1 failed, 10 deselected in 0.22s`,
-   `EXIT_CODE=1` capturado tras el comando).
-3. **(c) Test CON el fix restaurado** (archivo restaurado byte-a-byte desde el backup;
-   `git diff scripts/check_deliverables_exist.py` confirmado identico al fix original: 14
-   insertions(+), 4 deletions(-) sobre HEAD, mismo diff que tras la Fase 1):
-   ```
-   .venv/Scripts/python.exe -m pytest tests/unit/test_check_deliverables_exist.py -k wot_016w_flt_bullet_with_trailing_annotation_resolves_and_checked -v
-   ```
-   Resultado: **PASSED** (`1 passed, 10 deselected in 0.17s`).
-4. **(d) Codigo de salida observado (pytest):** `0` (`EXIT_CODE=0` capturado tras el comando).
-
-Arbol confirmado limpio tras la restauracion (`git status --short` sobre
-`scripts/check_deliverables_exist.py` muestra unicamente el diff del fix, ningun rastro de
-la mutacion temporal).
-
-## Quality gates (Builder)
-
-1. `.venv/Scripts/python.exe -m pytest tests/unit/test_check_deliverables_exist.py -v`
-   -> **11 passed in 1.14s** (9 preexistentes + 2 nuevos, 0 failed). Incluye
-   `test_wot_010j_real_case_narrative_note_not_treated_as_deliverable` en verde (no-regresion
-   confirmada, STOP condition no disparada).
-2. `.venv/Scripts/python.exe -m ruff check scripts/check_deliverables_exist.py tests/unit/test_check_deliverables_exist.py`
-   -> `All checks passed!` (exit 0).
-3. `uv run ruff format --check scripts/check_deliverables_exist.py tests/unit/test_check_deliverables_exist.py`
-   -> funciono en este entorno (con warning benigno de `VIRTUAL_ENV` no coincide con
-   `.venv`, ignorado por uv): `2 files already formatted` (exit 0). No hizo falta el
-   fallback a `.venv/Scripts/python.exe -m ruff format --check` documentado en el plan como
-   contingencia (a diferencia de 016c, aqui `uv run` si arranco).
-4. `.venv/Scripts/python.exe scripts/run_pytest_safe.py --level all` (PRIMERA corrida, antes
-   del commit de cierre): **8 failed, 3466 passed, 20 skipped**. Los 8 fallos son TODOS en
-   `tests/test_agent_controller.py::TestPreHandoff` y
-   `TestBuilderBriefExclusion::test_builder_brief_does_not_block_pre_handoff`, no relacionados
-   con `check_deliverables_exist.py` (confirmado corriendo solo esas clases:
-   `-k "TestPreHandoff or TestBuilderBriefExclusion"` -> mismos 8 failed). Causa raiz: estos
-   tests invocan `_handle_pre_handoff` real, que lee el estado git actual del arbol de
-   trabajo; en este punto del ciclo `.agent/collaboration/work_plan.md` (y STATE/TURN/
-   execution_log) estan modificados sin commitear (bootstrap del Orquestador para 016w aun
-   no commiteado), por lo que el guard real reporta
-   `uncommitted_work_plan: true` y bloquea con exit 1 en vez del exit 0 que los tests esperan
-   para sus escenarios mockeados. Coincide con la leccion de memoria "Suite --level all:
-   state-leak de artefactos / tests-que-leen-arbol fallan con arbol sucio -> commitear antes
-   de suite". Plan de accion: commitear (fix + tests + artefactos de colaboracion) y
-   RE-CORRER la suite canonica sobre el HEAD final antes de mark-ready (exigido por el
-   propio work_plan.md, seccion STOP conditions y Criterios de Aceptacion 7).
-
-
-Scope override: Over-captura del scope gate sobre tickets CERRADOS: verificado con 'git show --name-status HEAD' que el commit d4787c3 de 016w toca SOLO scripts/check_deliverables_exist.py + tests/unit/test_check_deliverables_exist.py + artefactos de colaboracion del ticket. Las 6 rutas reportadas (AUDIT_016c/016s/016t movidos por el archivador, agent_controller.py, test_agent_controller.py, test_manager_approve.py) NO estan en el commit de 016w: pertenecen a tickets cerrados previos, no al diff de este ticket.. Affected files: <REPO_ROOT>/.agent/agent_controller.py, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016c.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016s.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016t.md, <REPO_ROOT>/tests/test_agent_controller.py, <REPO_ROOT>/tests/unit/test_manager_approve.py
-
-Manager approved canonical closeout for WOT-2026-016w
+1. Backup de tests/conftest.py guardado en el scratchpad de la sesion
+   (`conftest.py.backup_015m`) antes de mutar.
+2. Reversion temporal: se edito `mktemp` para volver a
+   `safe_name = name.replace("/", "_").replace("\\", "_")` SIN el shortening (se dejo el
+   `import hashlib` sin usar, irrelevante para el resultado del test). `git diff tests/conftest.py`
+   confirmo que el UNICO cambio residual frente a HEAD era el import huerfano de hashlib
+   (la logica de `mktemp` quedo identica a la version pre-fix).
+   - (a) Comando: `.venv/Scripts/python.exe -m pytest tests/test_conftest_sandbox.py::test_mktemp_folder_name_is_short_for_long_test_name -v`
+   - (b) Resultado SIN fix: **FAILED**, `EXIT_CODE_SIN_FIX=1`. Output relevante:
+     `AssertionError: mktemp('test_build_review_prompt_includes_manager_learnings_for_code_and_preserves_static_rubric')
+     produced folder name '...rubric0001' (92 chars), expected <= 29` -- el 92 coincide
+     exactamente con la medicion del plan (peor caso actual).
+3. Restauracion: `cp` del backup de vuelta a tests/conftest.py. `git diff tests/conftest.py`
+   tras restaurar mostro EXACTAMENTE el diff esperado del fix (8 lineas insertadas: el
+   `import hashlib` + las 7 lineas de la expresion de shortening con `usedforsecurity=False`),
+   sin residuos de la mutacion.
+   - (c) Comando: mismo test, mismo comando.
+   - (d) Resultado CON fix: **PASSED**, `EXIT_CODE_CON_FIX=0`.
+- Arbol restaurado y limpio confirmado (`git diff --stat tests/conftest.py` = 1 file changed,
+  8 insertions(+), 0 deletions -- el diff acumulado esperado del ticket, no residuo de la mutacion).
