@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WOT-2026-016z
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Titulo:** Guard de sesion anti-contaminacion de la identidad git local del motor (barrera preventiva, no aislamiento de fixture).
 - **Asignado a:** Builder
