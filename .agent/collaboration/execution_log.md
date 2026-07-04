@@ -2,7 +2,7 @@
 
 **Ticket:** WOT-2026-016x - run_quality_gates no imprime el WARN de "veredicto no
 concluyente" de pytest cuando el stamp es inconclusive.
-**Estado:** IN_PROGRESS
+**Estado:** COMPLETED
 
 ## Bitacora
 
@@ -107,3 +107,8 @@ concluyente" de pytest cuando el stamp es inconclusive.
   test_run_quality_gates_inconclusive_stamp_does_not_fake_pass (los 4 de
   TestRunQualityGates), y TestAutoRejectQualityGates (2 tests) -- todos
   incluidos en el run verde de 126 passed arriba.
+
+
+Scope override: WOT-2026-016x commit 9a4a2c7 solo toca .agent/agent_controller.py, tests/test_agent_controller.py y execution_log.md (mas 2 deletes de AUDIT/PLAN_WOT-2026-015m ya archivados por el Manager en la transicion previa). Los archivos senalados (AUDIT/PLAN de 016c/016s/016t/016w, check_deliverables_exist.py, conftest.py, test_conftest_sandbox.py, test_check_deliverables_exist.py) pertenecen a tickets ya cerrados anteriores a este checkpoint del motor, no fueron tocados por el Builder de 016x.. Affected files: <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-015m.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016c.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016s.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016t.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016w.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-015m.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-016w.md, <REPO_ROOT>/scripts/check_deliverables_exist.py, <REPO_ROOT>/tests/conftest.py, <REPO_ROOT>/tests/test_conftest_sandbox.py, <REPO_ROOT>/tests/unit/test_check_deliverables_exist.py
+
+Manager approved canonical closeout for WOT-2026-016x

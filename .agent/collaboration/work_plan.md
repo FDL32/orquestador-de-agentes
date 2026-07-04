@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WOT-2026-016x
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Titulo:** run_quality_gates no imprime el WARN de "veredicto no concluyente" de pytest;
   el operador queda ciego a esa senal aunque el gate siga pasando por diseno.
