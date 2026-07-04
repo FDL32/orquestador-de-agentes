@@ -3,7 +3,7 @@
 **Ticket:** WOT-2026-016y - Documentar la convencion de anotaciones
 descriptivas en bullets de Files Likely Touched (parentesis/corchetes, o path
 en linea propia).
-**Estado:** IN_PROGRESS
+**Estado:** COMPLETED
 
 ## Bitacora
 
@@ -37,3 +37,8 @@ en linea propia).
   (2) check_encoding_guard.py -> exit 0; (3) scope_gate.py y check_deliverables_exist.py
   INTACTOS (non-goal respetado, git status --porcelain vacio para ambos).
 - Validate: exit 0, 0 errors, 0 warnings.
+
+
+Scope override: Over-captura del scope gate sobre tickets CERRADOS Y PUSHEADOS. Verificado con 'git show --name-only HEAD': el commit 05bc284 de 016y toca como UNICO productivo skills/manager-create-work-plan/references/plan-quality-checklist.md (deliverable documentation del ticket). Las 11 rutas reportadas (check_deliverables_exist.py, conftest.py, test_agent_controller.py, test_conftest_sandbox.py, test_check_deliverables_exist.py, y AUDIT/PLAN de 016c/016s/016t/016w/015m) NO estan en el commit de 016y: pertenecen a los tickets ya cerrados 016w/015m/016x (pusheados a origin) y a archivos movidos por el archivador.. Affected files: <REPO_ROOT>/.agent/agent_controller.py, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-015m.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016c.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016s.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016t.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016w.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-015m.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-016w.md, <REPO_ROOT>/scripts/check_deliverables_exist.py, <REPO_ROOT>/tests/conftest.py, <REPO_ROOT>/tests/test_agent_controller.py, <REPO_ROOT>/tests/test_conftest_sandbox.py, <REPO_ROOT>/tests/unit/test_check_deliverables_exist.py
+
+Manager approved canonical closeout for WOT-2026-016y

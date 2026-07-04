@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WOT-2026-016y
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** documentation
 - **Titulo:** Documentar la convencion de anotaciones descriptivas en bullets de
   Files Likely Touched (parentesis/corchetes, o path en linea propia) para que
