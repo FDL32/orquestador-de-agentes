@@ -2035,7 +2035,17 @@ def _read_pytest_safe_verdict() -> dict:
         return {"verdict": "inconclusive", "detail": "sin last-run.json"}
     try:
         stamp = json.loads(stamp_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except OSError as exc:
+        # WOT-2026-019b: str(exc) de un OSError concatena la ruta absoluta
+        # (exc.filename), que bajo PROJECT_ROOT arrastra el username local.
+        # Componer el detail a mano sin exponer nunca la ruta cruda.
+        if exc.filename:
+            where = scope_gate._relativize_scope_path(exc.filename, PROJECT_ROOT)
+            detail = f"stamp ilegible: {exc.strerror} (errno {exc.errno}) en {where}"
+        else:
+            detail = f"stamp ilegible: {exc.strerror} (errno {exc.errno})"
+        return {"verdict": "inconclusive", "detail": detail}
+    except json.JSONDecodeError as exc:
         return {"verdict": "inconclusive", "detail": f"stamp ilegible: {exc}"}
 
     try:

@@ -508,6 +508,103 @@ class TestRunQualityGates:
         write_stamp(args_mode="explicit_paths")
         assert ac._read_pytest_safe_verdict()["verdict"] == "inconclusive"
 
+    def test_read_pytest_safe_verdict_oserror_detail_has_no_absolute_path(
+        self, tmp_path, monkeypatch
+    ):
+        """WOT-2026-019b: un OSError al leer el stamp NO debe filtrar la ruta
+        absoluta local (username incluido) en el detail devuelto. El except de
+        OSError debe componer el detail via
+        scope_gate._relativize_scope_path(exc.filename, PROJECT_ROOT), nunca
+        str(exc) crudo ni exc.filename sin relativizar."""
+        import agent_controller as ac
+
+        monkeypatch.setattr(ac, "PROJECT_ROOT", tmp_path)
+        stamp_dir = tmp_path / ".agent" / "runtime" / "pytest-safe"
+        stamp_dir.mkdir(parents=True)
+        stamp_path = stamp_dir / "last-run.json"
+        # stamp_path.exists() debe ser True para llegar al try/except (linea
+        # 2034-2035 corta antes con un detail distinto si no existe).
+        stamp_path.write_text("{}", encoding="utf-8")
+
+        absolute_path_str = str(stamp_path)
+        real_read_text = Path.read_text
+
+        def fake_read_text(self, *args, **kwargs):
+            if self == stamp_path:
+                raise OSError(13, "Permission denied", absolute_path_str)
+            return real_read_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", fake_read_text)
+
+        result = ac._read_pytest_safe_verdict()
+
+        assert result["verdict"] == "inconclusive"
+        detail = result["detail"]
+        # La ruta absoluta simulada (que vive bajo tmp_path, con o sin
+        # segmento de usuario real de esta maquina) no debe aparecer entera.
+        assert absolute_path_str not in detail
+        assert str(tmp_path) not in detail
+        # El username real de quien ejecuta el test tampoco debe colarse.
+        assert str(Path.home()) not in detail
+        # Debe relativizar a <REPO_ROOT> (stamp_path esta dentro de PROJECT_ROOT).
+        assert "<REPO_ROOT>" in detail
+        assert "last-run.json" in detail
+        # Informacion de diagnostico util (strerror/errno) se conserva.
+        assert "Permission denied" in detail
+        assert "13" in detail
+
+    def test_read_pytest_safe_verdict_oserror_without_filename_is_safe(
+        self, tmp_path, monkeypatch
+    ):
+        """WOT-2026-019b: si exc.filename es None (algunos OSError no lo
+        traen), el except NO debe llamar a scope_gate._relativize_scope_path
+        con None; debe caer al detail sin ruta (solo strerror/errno)."""
+        import agent_controller as ac
+
+        monkeypatch.setattr(ac, "PROJECT_ROOT", tmp_path)
+        stamp_dir = tmp_path / ".agent" / "runtime" / "pytest-safe"
+        stamp_dir.mkdir(parents=True)
+        stamp_path = stamp_dir / "last-run.json"
+        stamp_path.write_text("{}", encoding="utf-8")
+
+        real_read_text = Path.read_text
+
+        def fake_read_text(self, *args, **kwargs):
+            if self == stamp_path:
+                raise OSError("boom sin filename")
+            return real_read_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", fake_read_text)
+
+        result = ac._read_pytest_safe_verdict()
+
+        assert result["verdict"] == "inconclusive"
+        assert str(tmp_path) not in result["detail"]
+
+    def test_read_pytest_safe_verdict_jsondecodeerror_detail_unchanged(
+        self, tmp_path, monkeypatch
+    ):
+        """WOT-2026-019b (paridad): json.JSONDecodeError sigue cayendo en su
+        propia rama, con str(exc) intacto (describe linea/columna del JSON
+        invalido, no una ruta de filesystem; no tiene el problema de PII que
+        si tiene OSError, y no debe perder informacion de diagnostico)."""
+        import agent_controller as ac
+
+        monkeypatch.setattr(ac, "PROJECT_ROOT", tmp_path)
+        stamp_dir = tmp_path / ".agent" / "runtime" / "pytest-safe"
+        stamp_dir.mkdir(parents=True)
+        (stamp_dir / "last-run.json").write_text(
+            "{ esto no es json valido", encoding="utf-8"
+        )
+
+        result = ac._read_pytest_safe_verdict()
+
+        assert result["verdict"] == "inconclusive"
+        assert result["detail"].startswith("stamp ilegible: ")
+        # str(exc) de JSONDecodeError describe posicion (linea/columna), no
+        # una ruta de filesystem: no debe contener el path absoluto local.
+        assert str(tmp_path) not in result["detail"]
+
 
 class TestHumanGateThreshold:
     """WP-2026-106 B-fix: HUMAN_GATE threshold is a single source of truth."""

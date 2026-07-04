@@ -1,97 +1,207 @@
-# Execution Log - WOT-2026-015p
+# Execution Log - WOT-2026-019b
 
-Ticket: WOT-2026-015p - Degradar privada/ a fallback temporal (no solucion final) en
-la doc de seguridad del motor + documentar la politica escalonada de secretos por
-contexto.
-**Estado:** COMPLETED
+Ticket: WOT-2026-019b - Fuga PII en el detail de "stamp ilegible" de
+_read_pytest_safe_verdict (OSError vuelca ruta absoluta con username).
+**Estado:** IN_PROGRESS
 
 ## Bitacora
 
 - Plan creado y aprobado por el Manager. Fase 0 (Orquestador) verifico la premisa
   del ticket contra el estado real del repo antes de bootstrapear:
-  - Los 3 archivos target (.claude/rules/01-security-architecture.md,
-    skills/secure-existing-project/SKILL.md, prompts/audit_agent_output.md) existen
-    en la ruta viva del repo (no en _backups/, gitignored).
-  - Doctrina fuente confirmada en .agent/runtime/memory/observations.jsonl, topics
-    secrets-architecture-escalonada (confidence 0.9, source ADU-DEC-006) y
-    grep-env-vuelca-secreto-en-dod (confidence 0.95): ambos presentes con el texto
-    literal que el work_plan.md transcribe.
-  - Correcciones de Fase 0 (evitan reimplementar de mas):
-    skills/secure-existing-project/references/cascade-config-pattern.md es PURO
-    CODIGO de carga (config.py/settings.py), sin afirmaciones de politica de
-    seguridad -> NO es target, no tocar. AGENTS.md seccion "Secretos y seguridad"
-    sigue vigente sin cambio -> no tocar, fuera de scope.
-  - HEAD del motor = 60d627e, arbol limpio, validate previo 0 errors / 0 warnings
-    (preflight ya corrido por el Orquestador).
-- Handoff al Builder: work_plan.md, PLAN_WOT-2026-015p.md y AUDIT_WOT-2026-015p.md
-  creados en .agent/collaboration/. execution_log.md previo (WOT-2026-016z,
-  COMPLETED) preservado como execution_log_WOT-2026-016z.md antes de este bootstrap
-  (trampa conocida: bootstrap-ticket no resetea execution_log.md por si solo).
-  TURN.md regenerado a BUILDER via --reset-turn --force.
-- Decision de Review: single-review (no Review 2 adversarial). Blast radius
-  estrictamente documental, deliverable_type=documentation, 0 superficie de
-  codigo/bus/estado/hooks/CI, doctrina prescrita literalmente por observations de
-  memoria (no derivada por el Builder), riesgo residual de forma cubierto por DoD
-  por paso + check_encoding_guard.
-
-## Builder - Implementacion (2026-07-04)
-
-- Fase 0 confirmada por el Builder (lectura completa de los 3 targets +
-  cascade-config-pattern.md): coincide 1:1 con lo descrito en el work_plan. La
-  linea 3 de 01-security-architecture.md (enlace ../../AGENTS.md#secretos-y-seguridad)
-  y "## Controles Activos" existian intactas antes de editar.
-  cascade-config-pattern.md confirmado como puro codigo de config (config.py/
-  settings.py), sin afirmaciones de politica -> NO tocado, consistente con Fase 0
-  del Orquestador.
-- PASO 1 (.claude/rules/01-security-architecture.md): reemplazada la seccion
-  "## Politica de Secretos" insertando el bloque de nota de alcance + jerarquia
-  escalonada (keyring/DPAPI, SOPS+age, OAuth2/OIDC) ANTES de la lista numerada, y
-  renumerando los puntos 1-3 con el mismo contenido semantico ampliado (fallback
-  operativo). Se preservaron las tildes/acentos del espanol nativo del archivo
-  (ej. "solucion" -> "solución", "jerarquia" -> "jerarquía") porque la restriccion
-  de "sin acentos" del work_plan aplica EXCLUSIVAMENTE a prompts/audit_agent_output.md
-  (archivo que ya esta en estilo sin tildes), no a este archivo que usa espanol con
-  tildes en todo su contenido preexistente (linea 1 "Automáticos", linea 3 "básicas",
-  "técnicos", "específicos"). git diff confirma: linea 3 y "## Controles Activos"
-  sin cambios.
-- PASO 2 (skills/secure-existing-project/SKILL.md), 4 cambios aplicados:
-  (a) frontmatter version 2.0.0 -> 2.1.0;
-  (b) parrafo "Nota de arquitectura" anadido al final de "## Overview";
-  (c) nueva seccion "### Paso 7 (opcional): Evaluar alternativa de la jerarquia
-      escalonada" insertada entre "### Paso 6: Verificar" y "## Output";
-  (d) bullet nuevo "privada/ es fallback, no solucion final" anadido al final de
-      "## Constraints".
-  git diff confirma Pasos 1-6 y "## References" sin cambios.
-- PASO 3 (prompts/audit_agent_output.md): bullet nuevo "Checks de presencia de
-  secretos no deben volcar el valor" anadido al final de la seccion "### 3. Tests y
-  gates" (tras el bullet "git check-ignore..."), ANTES de "### 4. Produccion vs
-  tests". Insertado TAL CUAL el bloque literal del work_plan, sin acentos,
-  replicando el estilo ASCII del resto del documento (verificado: el resto del
-  archivo usa "generico", "patron", "practica" sin tilde). git diff confirma
-  insercion de 8 lineas exactas, sin tocar bullets existentes ni "### 4.".
-- Verificacion post-edicion (grep -c sobre cada archivo):
-  - 01-security-architecture.md: "keyring"=1, "SOPS"=1, "OAuth2"=1.
-  - SKILL.md: "keyring"=3, "SOPS"=3, "OAuth2"=3 (Overview + Constraints + Paso 7).
-  - audit_agent_output.md: "grep -q"=1, "CLAVE="=1.
-- Gate final de encoding:
-  Comando: .venv\Scripts\python.exe scripts\check_encoding_guard.py
-  .claude/rules/01-security-architecture.md skills/secure-existing-project/SKILL.md
-  prompts/audit_agent_output.md
-  Salida: (vacia, sin errores impresos)
-  Exit code: 0
-- Verificacion adicional por bytes (Python: decode utf-8 + chequeo de BOM) sobre los
-  3 archivos: BOM=False en los 3, decode('utf-8') exitoso en los 3. Los caracteres
-  `?` detectados por analisis crudo en SKILL.md y audit_agent_output.md son signos
-  de interrogacion literales de contenido legitimo (p.ej. "¿El proyecto es local...?"
-  en el Paso 7 nuevo, y patrones regex/ejemplos preexistentes en audit_agent_output.md),
-  NO mojibake -- confirmado porque check_encoding_guard.py (que especificamente
-  detecta el caracter de reemplazo U+FFFD / secuencias corruptas, no el glifo `?`
-  ASCII de interrogacion) dio exit 0 sobre los 3 archivos.
-- Cambios dejados STAGED SIN COMMIT (git diff sin `git add`), a la espera de
-  decision de commit del Manager/Orquestador. No se ejecuto --pre-handoff ni
-  --mark-ready (fuera del alcance del Builder segun instruccion recibida).
+  - .agent/agent_controller.py lineas 2038-2039 confirmadas: except (OSError,
+    json.JSONDecodeError) as exc con f-string "stamp ilegible: {exc}" literal.
+  - str(OSError(...)) con filename seteado concatena strerror + errno + la ruta
+    absoluta -- demostrado en vivo, no solo inferido.
+  - Correccion clave a la premisa original de la ficha: _relativize_scope_path NO
+    vive en agent_controller.py, vive en .agent/scope_gate.py linea 539. Ya
+    importado (linea 52, import scope_gate) y ya usado con el patron
+    scope_gate.<funcion>(...) en 14 sitios existentes.
+  - El helper toma un path (str), no una excepcion -- el fix debe extraer
+    exc.filename en el sitio de uso, no cambiar la firma del helper.
+  - json.JSONDecodeError no hereda de OSError (hereda de ValueError), su str(exc)
+    es seguro y no debe tocarse.
+  - grep confirmo 0 tests existentes cubriendo esta rama de error en
+    tests/test_agent_controller.py (clase TestRunQualityGates, lineas 324-509).
 
 
-Scope override: Los 8 paths reportados NO estan en el commit del ticket 5df5c5b (verificado con git show --name-only HEAD): son artefactos de tickets ya cerrados 016x/016y/016z (AUDIT/PLAN, conftest, test_motor_git_identity_barrier, plan-quality-checklist) y la consolidacion automatica de memoria portable (archive/observations.2026-07.jsonl) de sesiones previas. El commit de 015p solo toca los 3 targets documentales + bus de colaboracion. Over-captura del scope gate por baseline anterior.. Affected files: <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016x.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016y.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-016x.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-016y.md, <REPO_ROOT>/.agent/runtime/memory/archive/observations.2026-07.jsonl, <REPO_ROOT>/skills/manager-create-work-plan/references/plan-quality-checklist.md, <REPO_ROOT>/tests/conftest.py, <REPO_ROOT>/tests/unit/test_motor_git_identity_barrier.py
+## Nota del Orquestador (pre-Builder) - warning de prosa aceptado
 
-Manager approved canonical closeout for WOT-2026-015p
+Validate = total_errors: 0, total_warnings: 1 (TP-PROSE-04 "extremos-lazy").
+El Orquestador redujo de 2->1 corrigiendo las 2 frases genuinamente vagas del
+work_plan (L78 "todos los usos" -> "las 9 referencias"; L221 "todo verde" ->
+"exit 0"). El warning residual (sin linea del checker) ancla en prosa TECNICA
+precisa (distincion OSError/JSONDecodeError por MRO: "ambos excepts siguen
+disparando cada uno para su tipo").
+
+DECISION (con OK del humano): warning ACEPTADO como falso positivo lexico. NO se
+reescribe la frase tecnica para no deformar la distincion. No bloquea:
+total_errors: 0, plan APPROVED, bus correcto (ACTIVE=WOT-2026-019b, ROL=BUILDER),
+criterios binarios definidos. Seguimiento higiene de prosa -> no amerita ticket.
+
+## Builder - Implementacion (PASO 1 + PASO 2)
+
+### PASO 1 - `.agent/agent_controller.py` (fix)
+
+Diff aplicado (lineas ~2036-2039 de `_read_pytest_safe_verdict`), diff minimo,
+no toca ninguna otra rama de la funcion:
+
+```
+     try:
+         stamp = json.loads(stamp_path.read_text(encoding="utf-8"))
+-    except (OSError, json.JSONDecodeError) as exc:
++    except OSError as exc:
++        # WOT-2026-019b: str(exc) de un OSError concatena la ruta absoluta
++        # (exc.filename), que bajo PROJECT_ROOT arrastra el username local.
++        # Componer el detail a mano sin exponer nunca la ruta cruda.
++        if exc.filename:
++            where = scope_gate._relativize_scope_path(exc.filename, PROJECT_ROOT)
++            detail = f"stamp ilegible: {exc.strerror} (errno {exc.errno}) en {where}"
++        else:
++            detail = f"stamp ilegible: {exc.strerror} (errno {exc.errno})"
++        return {"verdict": "inconclusive", "detail": detail}
++    except json.JSONDecodeError as exc:
+         return {"verdict": "inconclusive", "detail": f"stamp ilegible: {exc}"}
+```
+
+`except OSError` compone el detail con `exc.strerror` + `exc.errno` y, solo si
+`exc.filename` no es `None`, adjunta `scope_gate._relativize_scope_path(exc.filename,
+PROJECT_ROOT)`. `except json.JSONDecodeError` queda identico al original
+(`f"stamp ilegible: {exc}"`), sin cambios de fondo. `scope_gate.py` NO se toco
+(solo se llama, patron ya existente en 14 sitios previos del archivo).
+
+### PASO 2 - `tests/test_agent_controller.py` (tests nuevos en `TestRunQualityGates`)
+
+3 tests nuevos anadidos inmediatamente despues de
+`test_read_pytest_safe_verdict_partial_coverage_is_inconclusive`:
+
+1. `test_read_pytest_safe_verdict_oserror_detail_has_no_absolute_path` (test de
+   REGRESION principal): monkeypatchea `ac.PROJECT_ROOT` a `tmp_path`, crea el
+   stamp real (`stamp_path.write_text("{}", ...)` para que `stamp_path.exists()`
+   sea `True` y se llegue al `try/except`), y monkeypatchea `pathlib.Path.read_text`
+   a nivel de clase para que, SOLO cuando `self == stamp_path`, lance
+   `OSError(13, "Permission denied", absolute_path_str)` (delegando al
+   `real_read_text` guardado para cualquier otra instancia, evitando romper el
+   resto del test runner). Asserta que ni la ruta absoluta simulada completa, ni
+   `str(tmp_path)`, ni `str(Path.home())` (username real de quien ejecuta el test)
+   aparecen en `detail`; y que SI aparecen `<REPO_ROOT>`, el basename
+   `last-run.json`, y la info de diagnostico (`Permission denied`, `13`).
+2. `test_read_pytest_safe_verdict_oserror_without_filename_is_safe`: mismo patron
+   pero `OSError("boom sin filename")` (sin `.filename`, cae en el `else` que NO
+   llama al helper con `None`). Asserta que `str(tmp_path)` no aparece en `detail`.
+3. `test_read_pytest_safe_verdict_jsondecodeerror_detail_unchanged` (PARIDAD):
+   escribe un `last-run.json` con contenido no-JSON real (sin monkeypatch de
+   `read_text`, para forzar el `json.JSONDecodeError` real de `json.loads`).
+   Asserta `detail` empieza por `"stamp ilegible: "` (sin cambios de fondo) y que
+   `str(tmp_path)` no aparece (confirma que `JSONDecodeError` nunca tuvo el
+   problema, no que se le aplico el mismo tratamiento).
+
+Punto de monkeypatch: `pathlib.Path.read_text` a nivel de CLASE (no
+`stamp_path.read_text` de instancia, que no es monkeypatcheable directamente sin
+resultar en un bind roto) filtrando por identidad del objeto `stamp_path`
+concreto. Confirmado que SI se llega al except (no es una hipotesis): el test
+paso en verde con el fix, y en el mutation check de abajo el detail cambio
+exactamente como predice el diagnostico (ruta absoluta con username `fdl`
+reapareciendo integra), lo cual demuestra que el except se ejercito de verdad.
+
+### PASO 3 - Verificacion
+
+Comando: `.venv\Scripts\python.exe -m pytest tests/test_agent_controller.py -k "TestRunQualityGates" -v`
+
+Salida literal (CON el fix, ANTES del mutation check):
+
+```
+collecting ... collected 129 items / 119 deselected / 10 selected
+
+tests/test_agent_controller.py::TestRunQualityGates::test_run_quality_gates_returns_dict PASSED [ 10%]
+tests/test_agent_controller.py::TestRunQualityGates::test_run_quality_gates_does_not_rerun_pytest_with_timeout PASSED [ 20%]
+tests/test_agent_controller.py::TestRunQualityGates::test_run_quality_gates_pytest_green_from_stamp PASSED [ 30%]
+tests/test_agent_controller.py::TestRunQualityGates::test_run_quality_gates_real_failure_is_not_masked PASSED [ 40%]
+tests/test_agent_controller.py::TestRunQualityGates::test_run_quality_gates_inconclusive_stamp_does_not_fake_pass PASSED [ 50%]
+tests/test_agent_controller.py::TestRunQualityGates::test_run_quality_gates_inconclusive_stamp_prints_warning_to_operator PASSED [ 60%]
+tests/test_agent_controller.py::TestRunQualityGates::test_read_pytest_safe_verdict_partial_coverage_is_inconclusive PASSED [ 70%]
+tests/test_agent_controller.py::TestRunQualityGates::test_read_pytest_safe_verdict_oserror_detail_has_no_absolute_path PASSED [ 80%]
+tests/test_agent_controller.py::TestRunQualityGates::test_read_pytest_safe_verdict_oserror_without_filename_is_safe PASSED [ 90%]
+tests/test_agent_controller.py::TestRunQualityGates::test_read_pytest_safe_verdict_jsondecodeerror_detail_unchanged PASSED [100%]
+
+===================== 10 passed, 119 deselected in 0.45s ======================
+```
+
+### Verificacion MUTATION (obligatoria)
+
+Se guardo copia del archivo con el fix, se revirtio temporalmente
+`.agent/agent_controller.py` al except combinado original (`except (OSError,
+json.JSONDecodeError) as exc: ... f"stamp ilegible: {exc}"`), y se corrio de nuevo
+el mismo comando. Salida literal (SIN el fix, FAIL esperado y confirmado):
+
+```
+        assert result["verdict"] == "inconclusive"
+        detail = result["detail"]
+        # La ruta absoluta simulada (que vive bajo tmp_path, con o sin
+        # segmento de usuario real de esta maquina) no debe aparecer entera.
+        assert absolute_path_str not in detail
+        assert str(tmp_path) not in detail
+        # El username real de quien ejecuta el test tampoco debe colarse.
+        assert str(Path.home()) not in detail
+        # Debe relativizar a <REPO_ROOT> (stamp_path esta dentro de PROJECT_ROOT).
+>       assert "<REPO_ROOT>" in detail
+E       assert '<REPO_ROOT>' in "stamp ilegible: [Errno 13] Permission denied: 'C:\\\\Users\\\\fdl\\\\Proyectos_Python\\\\orquestador_de_agentes\\\\tests\\\\sandbox\\\\test_runtime\\\\session_24700\\\\factory\\\\test_read_pytest_242c851d0002\\\\.agent\\\\runtime\\\\pytest-safe\\\\last-run.json'"
+
+tests\test_agent_controller.py:550: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_agent_controller.py::TestRunQualityGates::test_read_pytest_safe_verdict_oserror_detail_has_no_absolute_path
+================= 1 failed, 9 passed, 119 deselected in 0.45s ======================
+```
+
+Confirmado: sin el fix, la ruta absoluta completa (incluyendo el username real
+`fdl` de esta maquina, arrastrado por `Path.home()` via el tmp_path del sandbox
+de pytest) reaparece integra en `detail`. El test de regresion NO es un placebo:
+distingue correctamente el codigo roto del codigo arreglado.
+
+Se restauro el fix (`.agent/agent_controller.py` identico al diff citado en PASO
+1) y se corrio el mismo comando una tercera vez. Salida literal (CON el fix
+restaurado, PASS confirmado):
+
+```
+tests/test_agent_controller.py::TestRunQualityGates::test_read_pytest_safe_verdict_oserror_detail_has_no_absolute_path PASSED [ 80%]
+tests/test_agent_controller.py::TestRunQualityGates::test_read_pytest_safe_verdict_oserror_without_filename_is_safe PASSED [ 90%]
+tests/test_agent_controller.py::TestRunQualityGates::test_read_pytest_safe_verdict_jsondecodeerror_detail_unchanged PASSED [100%]
+
+===================== 10 passed, 119 deselected in 0.37s ======================
+```
+
+Los 7 tests YA existentes de `TestRunQualityGates` (incluyendo
+`test_read_pytest_safe_verdict_partial_coverage_is_inconclusive`) siguen en
+verde en las 3 corridas: el cambio no rompio nada preexistente.
+
+### Gates de calidad (post-restauracion del fix)
+
+`.venv\Scripts\python.exe -m ruff check .agent/agent_controller.py tests/test_agent_controller.py`:
+
+```
+All checks passed!
+```
+
+Exit: 0
+
+`.venv\Scripts\python.exe -m ruff format --check .agent/agent_controller.py tests/test_agent_controller.py`:
+
+```
+2 files already formatted
+```
+
+Exit: 0
+
+`.venv\Scripts\python.exe .agent/agent_controller.py --validate --json --project-root .`
+(diagnostico local, no es gate del Builder): `total_errors: 0, total_warnings: 1`
+(el mismo TP-PROSE-04 ya aceptado; sin cambios).
+
+### Pendiente (fuera de este turno del Builder, segun instrucciones explicitas)
+
+NO se ejecuto `scripts/run_pytest_safe.py` (suite canonica completa) ni
+`--pre-handoff`/`--mark-ready`: las instrucciones de este turno indican
+explicitamente que la suite completa la coordina el Orquestador en el cierre
+tras la Review, y que el commit lo decide el Orquestador. Cambios dejados
+STAGED (no commiteados): `.agent/agent_controller.py`,
+`tests/test_agent_controller.py`.
+
+**Estado:** READY_FOR_REVIEW (Builder)
