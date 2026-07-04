@@ -428,6 +428,30 @@ class TestRunQualityGates:
             for msg in result["warnings"]
         )
 
+    def test_run_quality_gates_inconclusive_stamp_prints_warning_to_operator(
+        self, capsys
+    ):
+        """WOT-2026-016x: el WARN de stamp inconclusive debe llegar al operador
+        como salida VISIBLE (stdout), no solo acumularse en result["warnings"].
+        El veredicto NO cambia (passed sigue True); esto es puramente
+        visibilidad diagnostica."""
+        with (
+            patch("agent_controller.read_file", return_value=""),
+            patch(
+                "agent_controller.subprocess.run",
+                MagicMock(return_value=MagicMock(returncode=0, stdout=b"", stderr=b"")),
+            ),
+            patch(
+                "agent_controller._read_pytest_safe_verdict",
+                return_value={"verdict": "inconclusive", "detail": "sin last-run.json"},
+            ),
+        ):
+            result = run_quality_gates()
+        captured = capsys.readouterr()
+        assert result["passed"] is True
+        assert result["warnings"][0] in captured.out
+        assert "no concluyente" in captured.out.lower()
+
     def test_read_pytest_safe_verdict_partial_coverage_is_inconclusive(
         self, tmp_path, monkeypatch
     ):

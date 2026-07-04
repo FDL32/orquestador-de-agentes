@@ -2149,6 +2149,9 @@ def run_quality_gates(plan_type: str = "IMPLEMENTATION") -> dict:
         fin_results = run_finalization_checks()
         results["summary"].extend(fin_results["summary"])
 
+    for warning in results["warnings"]:
+        print(f"   {warning}")
+
     status = "[PASSED]" if results["passed"] else "[FAILED]"
     print(f"   {status}")
     return results
