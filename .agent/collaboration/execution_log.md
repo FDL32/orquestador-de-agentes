@@ -3,7 +3,7 @@
 Ticket: WOT-2026-015p - Degradar privada/ a fallback temporal (no solucion final) en
 la doc de seguridad del motor + documentar la politica escalonada de secretos por
 contexto.
-**Estado:** IN_PROGRESS
+**Estado:** COMPLETED
 
 ## Bitacora
 
@@ -90,3 +90,8 @@ contexto.
 - Cambios dejados STAGED SIN COMMIT (git diff sin `git add`), a la espera de
   decision de commit del Manager/Orquestador. No se ejecuto --pre-handoff ni
   --mark-ready (fuera del alcance del Builder segun instruccion recibida).
+
+
+Scope override: Los 8 paths reportados NO estan en el commit del ticket 5df5c5b (verificado con git show --name-only HEAD): son artefactos de tickets ya cerrados 016x/016y/016z (AUDIT/PLAN, conftest, test_motor_git_identity_barrier, plan-quality-checklist) y la consolidacion automatica de memoria portable (archive/observations.2026-07.jsonl) de sesiones previas. El commit de 015p solo toca los 3 targets documentales + bus de colaboracion. Over-captura del scope gate por baseline anterior.. Affected files: <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016x.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016y.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-016x.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-016y.md, <REPO_ROOT>/.agent/runtime/memory/archive/observations.2026-07.jsonl, <REPO_ROOT>/skills/manager-create-work-plan/references/plan-quality-checklist.md, <REPO_ROOT>/tests/conftest.py, <REPO_ROOT>/tests/unit/test_motor_git_identity_barrier.py
+
+Manager approved canonical closeout for WOT-2026-015p

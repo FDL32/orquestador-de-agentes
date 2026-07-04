@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WOT-2026-015p
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** documentation
 - **Titulo:** Degradar privada/ a fallback temporal (no solucion final) en la doc de
   seguridad del motor + documentar la politica escalonada de secretos por contexto.
