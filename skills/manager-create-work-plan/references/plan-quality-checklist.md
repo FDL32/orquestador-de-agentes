@@ -12,6 +12,7 @@ Usa esta checklist antes de aprobar cualquier `work_plan.md`. Las preguntas son 
 
 - [ ] La seccion `Non-goals` existe y no esta vacia.
 - [ ] `Files Likely Touched` enumera todos los archivos que el plan espera tocar.
+- [ ] Cada bullet FLT es `path` o `path (anotacion)`: la anotacion descriptiva va entre parentesis `(...)` o corchetes `[...]`, o el path va en su propia linea; NUNCA prosa libre tras el path en el mismo bullet. Ejemplo NO: `scripts/x.py es read-only, no tocar`; ejemplo SI: `scripts/x.py (read-only, no tocar)`, o mover ese path a `Read/inspect only`. Motivo: el parser FLT (`scope_gate._normalize_flt_line`, `check_deliverables_exist._resolve_flt_bullet_tokens`) se queda con el primer token del bullet; una anotacion delimitada es inequivoca, la prosa libre es ambigua.
 - [ ] No hay comodines difusos como "etc.", "los necesarios" o "otros archivos".
 - [ ] Si el ticket crea docs o scaffolding, `deliverable_type` no esta clasificado como `code` por inercia.
 

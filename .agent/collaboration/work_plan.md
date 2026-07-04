@@ -1,272 +1,205 @@
-# Work Plan - WOT-2026-016x
+# Work Plan - WOT-2026-016y
 
 ## Metadata
-- **ID:** WOT-2026-016x
-- **Estado:** COMPLETED
-- **deliverable_type:** code
-- **Titulo:** run_quality_gates no imprime el WARN de "veredicto no concluyente" de pytest;
-  el operador queda ciego a esa senal aunque el gate siga pasando por diseno.
+- **ID:** WOT-2026-016y
+- **Estado:** APPROVED
+- **deliverable_type:** documentation
+- **Titulo:** Documentar la convencion de anotaciones descriptivas en bullets de
+  Files Likely Touched (parentesis/corchetes, o path en linea propia) para que
+  el caso teorico de prosa-libre-tras-el-path nunca surja en la practica.
 - **Asignado a:** Builder
 - **delivery_authority:** repo_motor
 
 ## Objetivo
 
-Cuando run_quality_gates (.agent/agent_controller.py) detecta que el stamp de
-run_pytest_safe es inconclusive (stale o ausente) y anade un WARN a
-results["warnings"], ese WARN debe llegar al operador como salida VISIBLE
-(stdout) en el mismo lugar donde ya se imprime el header y el status final del
-gate. Hoy el WARN se acumula en el dict de retorno pero nunca se imprime, y como
-passed sigue True (correcto: inconclusive no es un fallo), el operador nunca
-lo ve ni por consola ni por el veredicto [PASSED]/[FAILED].
+Anadir al checklist canonico de calidad de planes
+(skills/manager-create-work-plan/references/plan-quality-checklist.md) una
+convencion explicita de redaccion: las anotaciones descriptivas que siguen a un
+path en un bullet de Files Likely Touched deben ir entre parentesis (...) o
+corchetes [...], o el path debe ir en su propia linea; NO se debe escribir
+prosa libre tras el path en el mismo bullet. Resultado observable: el checklist
+contiene la regla, con ejemplo NO/SI, junto al item existente de FLT (linea 14).
+Verificacion (comando exacto): `grep -n "parentesis" skills/manager-create-work-plan/references/plan-quality-checklist.md`
+debe encontrar al menos 1 match tras el cambio (0 matches antes del cambio).
 
-Verificacion del objetivo (comando literal): un nuevo test en
-tests/test_agent_controller.py que mockea _read_pytest_safe_verdict para
-devolver un dict con verdict inconclusive, llama run_quality_gates() bajo
-capsys de pytest, y afirma que el texto del WARN aparece en
-capsys.readouterr().out. El test falla sin el fix (WARN tragado, no aparece en
-stdout) y pasa con el fix.
+## Contexto (diagnostico de Fase 0 del Orquestador, CORREGIDO con evidencia)
 
-## Contexto (diagnostico de Fase 0, confirmado en codigo por el Manager)
+WOT-2026-016y nacio de Review 2 de WOT-2026-016w: el heuristico FLT compartido
+(.agent/scope_gate.py:_normalize_flt_line de WOT-2026-016s y
+scripts/check_deliverables_exist.py:_resolve_flt_bullet_tokens de
+WOT-2026-016w) usa .split(" ", 1)[0] para quedarse con el primer token del
+bullet tras des-comillar. Review 2 planteo que un bullet con forma
+"path.py es read-only, no tocar" (path PRIMERO, seguido de prosa) se trataria
+como deliverable obligatorio, porque el primer token (path.py) pasa
+looks_like_path y el resto de la prosa se descarta silenciosamente.
 
-- .agent/agent_controller.py:2089-2154 -- run_quality_gates(plan_type):
-  - L.2091: imprime el header de Quality Gates.
-  - L.2092: construye results = {"passed": True, "errors": [], "summary": [], "warnings": []}.
-  - L.2142-2146: cuando _read_pytest_safe_verdict() devuelve
-    verdict == "inconclusive" (stamp stale/absent), hace
-    results["warnings"].append(...) con el mensaje "[WARN] Pytest: veredicto no
-    concluyente (...); corre scripts/run_pytest_safe.py --level all sobre HEAD".
-    NO toca results["passed"] (queda True -- by design, ver comentario
-    L.2124-2135: no fingir pass/fail cuando el stamp no es concluyente).
-  - L.2152-2153: status = "[PASSED]" if results["passed"] else "[FAILED]";
-    print de status. Los items de results["summary"] y results["warnings"]
-    NO se imprimen individualmente en ningun punto de la funcion -- solo se
-    acumulan en el dict de retorno.
-- .agent/agent_controller.py:2227-2255 -- _check_quality_gates(plan_id,
-  plan_type, plan_status, skip_gates): L.2239 llama
-  gate_result = run_quality_gates(plan_type=plan_type); L.2240 evalua
-  UNICAMENTE gate_result["passed"]. Si es True (caso inconclusive incluido),
-  retorna None en L.2255 sin inspeccionar ni imprimir summary/warnings.
-- .agent/agent_controller.py:2497 -- unico caller de _check_quality_gates,
-  dentro de determine_next_action, en la rama con plan_status APPROVED,
-  log_status READY_FOR_REVIEW y skip_gates False. Cuando _check_quality_gates
-  retorna None, el flujo continua sin ninguna traza del WARN.
-- Severidad (confirmada, no re-litigar en este ticket): redundante-seguro. El
-  gate de --pre-handoff (pre_handoff_guard.assert_canonical_suite_green) exige
-  stamp verde por separado antes de cerrar, asi que este gap NO permite un
-  falso-verde de cierre. El gap es exclusivamente de VISIBILIDAD diagnostica
-  durante determine_next_action / _check_quality_gates.
-- Test existente relevante ya cubre el dict de retorno pero NO la impresion:
-  tests/test_agent_controller.py:408-429
-  test_run_quality_gates_inconclusive_stamp_does_not_fake_pass ya verifica que
-  el WARN aparece en result["warnings"] (el dict), y que NO aparece "Pytest" en
-  result["summary"]. Ese test seguira pasando sin cambios: no verifica stdout,
-  solo el dict. Es complementario al test nuevo de este ticket, no redundante.
+Fase 0 verifico esta premisa contra el repo real y la CORRIGIO:
 
-## Enfoque elegido (decision del humano)
+1. El patron problematico (path + prosa "es/no/sigue read-only" en el MISMO
+   bullet, path primero) tiene 0 ocurrencias en los work_plans
+   vivos (.agent/collaboration/*.md) ni en el archivo (.agent/collaboration/_archive/*.md).
+   Verificado con:
+   grep -rhnE "path\.(py|md) (es|no|sigue|read-only)" .agent/collaboration/*.md .agent/collaboration/_archive/*.md
+   -> 0 matches. El caso es TEORICO: Review 2 lo construyo como fixture
+   adversarial, no existe en uso real archivado.
+2. Las anotaciones FLT reales en el repo usan mayoritariamente parentesis
+   (60+ bullets con forma "path (anotacion)", ej.
+   ".agent/agent_controller.py (funcion run_quality_gates unicamente)",
+   "scripts/check_closeout_reconciliation.py (nuevo, read-only)"). Existen
+   tambien anotaciones legitimas SIN parentesis que ya funcionan hoy porque el
+   primer token sigue siendo el path exacto: "file_info_cb.py  sha256=...",
+   "runtime/project_root.py L36 (...)", "run_pytest_safe.py -> 3467 passed".
+3. Una barrera de codigo que exigiera "solo parentesis" romperia esas
+   anotaciones sin parentesis (falsos negativos reales en un GATE de
+   deliverables) para cerrar un caso teorico con 0 ocurrencias (falso positivo
+   que nunca ocurrio). Es el anti-patron que Fase 0 identifica: cambiar codigo
+   para un problema que no existe en la practica, a costa de introducir un
+   problema nuevo que si existiria.
+4. El caso simetrico ya resuelto -- prosa PRIMERO, path despues (ej. "Notas:
+   los scripts inspeccionados (foo.py) son read-only") -- ya esta protegido
+   por looks_like_path (el primer token de esa prosa no parece un path) segun
+   el docstring de _resolve_flt_bullet_tokens (WOT-2026-016w). WOT-2026-016s y
+   WOT-2026-016w ya cerraron el problema PRACTICO (anotacion CON espacio tras un
+   path real). No queda gap practico que un cambio de codigo deba cerrar.
 
-Propagar el WARN al operador imprimiendolo, SIN cambiar el veredicto. Punto
-exacto: dentro de run_quality_gates, inmediatamente antes de la linea
-status = "[PASSED]" if results["passed"] else "[FAILED]" (L.2152 actual),
-anadir un bucle que imprima cada item de results["warnings"]:
-
-    for warning in results["warnings"]:
-        print(f"   {warning}")
-
-Por que este punto y no otro:
-
-- run_quality_gates es la unica funcion que ya posee logica de impresion para
-  esta gate (el header L.2091 y el status final L.2153); mantener toda la
-  impresion de esta gate en un solo lugar evita duplicar logica de output en
-  cada caller.
-- _check_quality_gates (el caller relevante) debe seguir siendo responsable
-  SOLO de decidir el flujo de control (AUTO-REJECT vs None), no de imprimir;
-  mezclar ambas responsabilidades ahi haria mas fragil el path de AUTO-REJECT
-  que WT-2026-204 ya endurecio con tests propios.
-  Ver tests/test_agent_controller.py:2344-2409 (TestAutoRejectQualityGates):
-  esos tests no deben requerir cambios. Confirmado en Fase 0 mockeando
-  run_quality_gates directamente (no llaman a la funcion real), por lo que un
-  print nuevo dentro de run_quality_gates no los afecta.
-  El caller en determine_next_action (L.2497) tampoco cambia: sigue
-  invocando _check_quality_gates sin inspeccionar summary/warnings
-  directamente, porque la visibilidad ya queda resuelta dentro de
-  run_quality_gates antes de que el resultado se propague.
-- Imprimir ANTES del status final (no despues) mantiene el orden de lectura
-  natural para un operador en consola: primero ve los detalles/warnings de la
-  corrida, despues el veredicto agregado [PASSED]/[FAILED] como ultima linea.
-- Alcance minimo: NO se anade impresion de results["summary"] (ya cubierto
-  como texto interno del dict pero no impreso hoy tampoco) porque el ticket es
-  estrictamente sobre el WARN de pytest inconclusive descrito en el
-  diagnostico; ampliar a imprimir tambien summary es un cambio de
-  comportamiento mas amplio no pedido por el humano y queda fuera de alcance
-  (ver Non-goals).
+Decision del humano (tras ver la evidencia de Fase 0): cerrar WOT-2026-016y
+SIN cambio de codigo. Es documentacion pura: fijar la convencion de escritura
+para que el caso teorico (path + prosa libre sin parentesis) nunca se produzca
+en planes futuros, sin tocar el parser existente.
 
 ## Non-goals
 
-- NO convertir el veredicto inconclusive en fail ni en AUTO-REJECT. passed
-  sigue siendo True con stamp inconclusive; este ticket NO reintroduce el
-  falso-rojo que WOT-2026-016c elimino deliberadamente.
-- NO tocar --pre-handoff ni pre_handoff_guard.assert_canonical_suite_green:
-  ese gate de cierre ya exige stamp verde por separado y esta fuera de alcance.
-- NO cambiar la logica que calcula results["passed"] en ningun branch de
-  run_quality_gates (ruff, estado, pytest verde/rojo/inconclusive,
-  finalization checks).
-- NO imprimir results["summary"] en este ticket (ver Enfoque elegido, alcance
-  minimo): solo results["warnings"].
-- NO modificar _check_quality_gates ni su firma, ni el caller en
-  determine_next_action (L.2497): el fix vive enteramente dentro de
-  run_quality_gates.
-- NO tocar tests/test_agent_controller.py:408-429
-  (test_run_quality_gates_inconclusive_stamp_does_not_fake_pass) ni la clase
-  TestAutoRejectQualityGates (L.2344-2409): deben seguir pasando sin
-  modificacion.
+- NO modificar .agent/scope_gate.py (en particular _normalize_flt_line ni
+  _looks_like_path_token).
+- NO modificar scripts/check_deliverables_exist.py (en particular
+  _resolve_flt_bullet_tokens ni _extract_flt_paths).
+- NO anadir ninguna barrera de codigo, validador nuevo ni test de regresion
+  sobre el parser FLT: el diagnostico de Fase 0 confirma que el caso teorico
+  tiene 0 ocurrencias reales y que una barrera estricta introduciria falsos
+  negativos sobre anotaciones sin parentesis ya en uso.
+- NO documentar la convencion en mas de un sitio primario: el checklist
+  (plan-quality-checklist.md) es la unica fuente canonica nueva. NO
+  duplicar el texto completo en prompts/orchestrator_launch_builder.md ni en
+  la seccion "Autoridad del FLT" de prompts/orchestrator_pipeline.md (linea
+  456) -- esa seccion trata de DONDE vive el FLT canonico (contrato vs
+  backlog), no de la sintaxis de anotaciones dentro de un bullet; no es el
+  sitio natural para esta convencion y anadir texto ahi violaria el principio
+  de cambio minimo / un solo sitio primario.
+- NO reabrir ni re-litigar la severidad o el diagnostico de WOT-2026-016s /
+  WOT-2026-016w: sus fixes de codigo (.split(" ", 1)[0]) se dan por
+  correctos y vigentes para el uso real observado.
 
 ## Files Likely Touched
 
 ### repo_motor
 
-- .agent/agent_controller.py
-- tests/test_agent_controller.py
+#### Builder
+
+- skills/manager-create-work-plan/references/plan-quality-checklist.md
+
+## Read/inspect only
+
+- .agent/scope_gate.py (fuente del parser FLT citado en el diagnostico; no se modifica)
+- scripts/check_deliverables_exist.py (fuente del parser FLT citado en el diagnostico; no se modifica)
+- prompts/orchestrator_pipeline.md (referencia de la seccion Autoridad del FLT; no se modifica)
+
+## Convencion a documentar (texto exacto a insertar)
+
+En la seccion ## Alcance del checklist, inmediatamente despues del item
+existente de la linea 14 (Files Likely Touched enumera todos los archivos que
+el plan espera tocar.), anadir un nuevo item de checklist:
+
+    - [ ] Si un bullet de Files Likely Touched lleva una anotacion descriptiva
+      tras el path, esa anotacion va entre parentesis (...) o corchetes [...],
+      o el path ocupa su propia linea (p.ej. bajo Read/inspect only). No se
+      escribe prosa libre tras el path en el mismo bullet (evitar
+      "scripts/x.py es read-only, no tocar"; usar
+      "scripts/x.py (read-only, no tocar)" o mover ese path a la subseccion
+      Read/inspect only). Motivo: el parser FLT (scope_gate._normalize_flt_line,
+      check_deliverables_exist._resolve_flt_bullet_tokens) se queda solo con el
+      primer token del bullet; una anotacion entre parentesis es inequivoca, la
+      prosa libre sin parentesis es ambigua para el parser y para el lector humano.
 
 ## Tests Esperados
 
-1. Nuevo test en tests/test_agent_controller.py, dentro de
-   class TestRunQualityGates (junto a
-   test_run_quality_gates_inconclusive_stamp_does_not_fake_pass, L.408-429):
-
-   test_run_quality_gates_inconclusive_stamp_prints_warning_to_operator:
-   - Usa el fixture nativo capsys de pytest (parametro de la funcion de test,
-     sin import adicional -- ya disponible, pytest esta en las dependencias del
-     repo).
-   - Mockea agent_controller.read_file (return_value=""),
-     agent_controller.subprocess.run (MagicMock con returncode=0), y
-     agent_controller._read_pytest_safe_verdict para devolver un dict con
-     verdict inconclusive y detail sin last-run.json (mismo patron que el
-     test existente L.408-423).
-   - Llama result = run_quality_gates().
-   - Captura captured = capsys.readouterr().
-   - Afirma result["passed"] is True (el veredicto NO cambia -- criterio de
-     aceptacion 2).
-   - Afirma que el texto exacto del WARN aparece en captured.out: usa el
-     mismo item que ya esta en result["warnings"][0] (reutilizar el string
-     real devuelto por la funcion, no una copia literal hardcodeada, para que
-     el test no diverja si el mensaje cambia de redaccion en el futuro).
-   - Afirma tambien, como red adicional del criterio 1 (visibilidad
-     inequivoca), que la subcadena "no concluyente" aparece en captured.out
-     en minusculas.
-2. No-regresion: test_run_quality_gates_inconclusive_stamp_does_not_fake_pass
-   (L.408-429), test_run_quality_gates_pytest_green_from_stamp (L.368-383),
-   test_run_quality_gates_real_failure_is_not_masked (L.385-406),
-   test_run_quality_gates_does_not_rerun_pytest_with_timeout (L.340-366), y
-   toda la clase TestAutoRejectQualityGates (L.2344-2409) siguen verdes sin
-   modificacion.
-3. MUTATION (documentado en execution_log.md, no como test pytest nuevo
-   separado): revertir temporalmente el bucle de impresion anadido (dejar
-   run_quality_gates como esta hoy en HEAD, sin el bucle for/print sobre
-   results["warnings"]) y confirmar que
-   test_run_quality_gates_inconclusive_stamp_prints_warning_to_operator
-   FALLA (el WARN no aparece en captured.out aunque result["passed"] siga
-   True). Restaurar el fix y confirmar que el mismo test PASA. Documentar
-   ambos exit codes literales en execution_log.md (mismo patron ya usado en
-   WOT-2026-015m: backup temporal, revertir, correr, capturar exit code,
-   restaurar, re-correr, capturar exit code, git diff --stat limpio al final).
+No aplica (deliverable_type: documentation). No hay codigo tocado; no se
+anaden ni modifican tests de pytest.
 
 ## Criterios de Aceptacion (binarios)
 
-1. Con un stamp inconclusive (mockeado via _read_pytest_safe_verdict), el
-   WARN completo (el string real que ya construye la L.2144-2146 actual)
-   aparece en la salida estandar capturada por capsys durante la ejecucion de
-   run_quality_gates(). Verificado por
-   test_run_quality_gates_inconclusive_stamp_prints_warning_to_operator.
-2. result["passed"] sigue siendo True en el mismo escenario (el veredicto
-   NO cambia a AUTO-REJECT): verificado en el mismo test nuevo, y por
-   no-regresion en test_run_quality_gates_inconclusive_stamp_does_not_fake_pass
-   (existente, sin modificar).
-3. MUTATION: revertir el bucle de impresion anadido hace fallar
-   test_run_quality_gates_inconclusive_stamp_prints_warning_to_operator
-   (WARN ausente de stdout); con el fix restaurado, el mismo test PASA. Ambos
-   resultados (FAIL-sin-fix con exit code, PASS-con-fix con exit code) quedan
-   registrados literalmente en execution_log.md.
-4. Suite canonica: .venv/Scripts/python.exe scripts/run_pytest_safe.py
-   --level all con last-run.json en status=finished, exit_code=0,
-   level=all, args_mode=default_discovery y tested_commit_sha == HEAD del
-   commit que se entrega.
-5. ruff check .agent/agent_controller.py tests/test_agent_controller.py ->
-   exit code 0.
-6. validate (Manager gate, ver abajo) en 0 errors / 0 warnings.
+1. skills/manager-create-work-plan/references/plan-quality-checklist.md
+   contiene el nuevo item de checklist bajo ## Alcance, inmediatamente
+   despues del item de la linea 14 actual, con el texto de la convencion
+   (parentesis/corchetes o linea propia; ejemplo NO/SI explicito).
+   Verificable con: grep -n "parentesis" skills/manager-create-work-plan/references/plan-quality-checklist.md
+   debe encontrar al menos 1 match.
+2. Ningun archivo de codigo (.agent/scope_gate.py,
+   scripts/check_deliverables_exist.py) aparece modificado en el diff del
+   ticket. Verificable con: git diff --name-only (o el diff del commit del
+   ticket) NO debe listar ninguno de los dos archivos.
+3. .venv/Scripts/python.exe .agent/agent_controller.py --validate --json
+   --project-root . -> 0 errors / 0 warnings.
+4. .venv/Scripts/python.exe scripts/check_encoding_guard.py
+   skills/manager-create-work-plan/references/plan-quality-checklist.md (o el
+   comando canonico equivalente de encoding guard sobre el archivo tocado) ->
+   exit code 0, sin caracteres de encoding invalidos.
+5. execution_log.md registra una linea final que combina artefacto + gate,
+   sin la palabra "pendiente", del tipo: "Checklist actualizado en
+   skills/manager-create-work-plan/references/plan-quality-checklist.md.
+   Validate: exit code 0, 0 errors, 0 warnings."
 
 ## Quality Gates
 
 - Builder ejecuta:
-  - .venv/Scripts/python.exe -m pytest tests/test_agent_controller.py -v
-  - .venv/Scripts/python.exe -m pytest tests/ -q -p no:cacheprovider
-  - ruff check .agent/agent_controller.py tests/test_agent_controller.py
-  - .venv/Scripts/python.exe scripts/run_pytest_safe.py --level all
-- Manager gate (Builder NO lo ejecuta salvo diagnostico local):
-  - .venv/Scripts/python.exe .agent/agent_controller.py --validate --json
-    --project-root .
+  - .venv/Scripts/python.exe .agent/agent_controller.py --validate --json --project-root .
+  - .venv/Scripts/python.exe scripts/check_encoding_guard.py skills/manager-create-work-plan/references/plan-quality-checklist.md
+  - grep -n "parentesis" skills/manager-create-work-plan/references/plan-quality-checklist.md
+- Manager gate (revision de contenido, unica review -- ver justificacion
+  abajo):
+  - Lectura del diff completo del .md tocado.
+  - .venv/Scripts/python.exe .agent/agent_controller.py --validate --json --project-root . (repetido por el Manager)
 
 ## STOP conditions
 
-- Si imprimir results["warnings"] cambia el resultado de algun test existente
-  que capture stdout con una asercion de igualdad estricta sobre la
-  salida completa de run_quality_gates: DETENTE, no relajes ese test para
-  forzar verde, documenta el hallazgo y escala al Manager. Verificado en Fase
-  0: ningun test existente hace capsys sobre run_quality_gates hoy, por lo
-  que no deberia haber colision -- si el Builder encuentra uno al implementar,
-  es una desviacion del diagnostico y debe pararse.
-- Si test_run_quality_gates_inconclusive_stamp_does_not_fake_pass (L.408-429)
-  deja de pasar tras el cambio: DETENTE, el fix esta tocando el dict de retorno
-  ademas de la impresion, lo cual esta fuera de alcance.
-- Si alguno de los tests de TestAutoRejectQualityGates (L.2344-2409) deja de
-  pasar: DETENTE, el cambio se filtro a _check_quality_gates fuera del scope
-  aprobado.
-- Si run_pytest_safe.py --level all no cierra con tested_commit_sha == HEAD
-  del commit final: no reportes cierre canonico; re-corre tras el commit final
-  antes de --mark-ready.
+- Si el Builder toca .agent/scope_gate.py o
+  scripts/check_deliverables_exist.py: DETENTE, es un Non-goal explicito;
+  revertir y documentar la desviacion en execution_log.md.
+- Si el Builder anade el texto de la convencion en mas de un archivo .md
+  (duplicacion en 3 sitios): DETENTE, viola el principio de cambio minimo /
+  un solo sitio primario de este ticket.
+- Si validate --json no da 0 errors / 0 warnings tras el cambio: DETENTE, no
+  reportes cierre; corrige el checklist o el formato de Metadata antes de
+  continuar.
 
 ## Riesgos
 
-- Bajo: cambio aislado (un bucle print de 2 lineas) dentro de una funcion ya
-  cubierta por 5 tests existentes que no capturan stdout hoy, por lo que no hay
-  colision esperada. Confirmado por grep: ningun test en
-  tests/test_agent_controller.py usa capsys junto a run_quality_gates
-  antes de este ticket.
-- Bajo: el cambio no toca ninguna rama de calculo de passed, solo anade
-  impresion de items ya existentes en el dict; el riesgo de regresion
-  funcional es minimo.
+- Bajo: cambio de un archivo .md de documentacion interna del propio
+  sistema Manager, sin tocar codigo ejecutable ni tests. No hay superficie de
+  regresion funcional.
 
 ## Decision Arquitectonica
 
-Por que imprimir dentro de run_quality_gates (antes del status final) en vez
-de: (a) que _check_quality_gates imprima cuando passed=True y hay warnings, o
-(b) que el caller en determine_next_action inspeccione summary/warnings
-directamente. La opcion (a) dispersaria la logica de impresion de esta gate en
-dos funciones (header/status en una, warnings en otra), complicando el
-mantenimiento futuro y arriesgando que un cambio en _check_quality_gates (que
-WT-2026-204 ya protege con tests especificos del path AUTO-REJECT) se acople a
-una responsabilidad de output que no le corresponde. La opcion (b) requeriria
-que cualquier caller futuro de run_quality_gates reimplemente la misma logica
-de impresion para no perder visibilidad, duplicando codigo. Concentrar el
-print en run_quality_gates, ya duena del header y del status final de esta
-gate, es el cambio minimo que garantiza que cualquier caller (el actual y
-los futuros) vea el WARN sin tener que saber que existe.
+Por que documentar en vez de anadir una barrera de codigo: la evidencia de
+Fase 0 (0 ocurrencias reales del caso problematico, 60+ casos legitimos con
+parentesis, y 3 casos legitimos SIN parentesis (citados arriba) que ya funcionan porque el
+primer token coincide con el path) muestra que una barrera estricta
+"solo parentesis" convertiria anotaciones hoy validas en falsos negativos de
+un gate de deliverables -- cambiando un problema teorico por uno real. Fijar
+la convencion en el checklist que el Manager ya usa para redactar y aprobar
+Files Likely Touched previene el caso teorico en planes futuros sin tocar el
+parser que ya funciona correctamente para el uso real observado.
 
 ## Trade-offs Considerados
 
 | Opcion | Pros | Contras | Decision |
 |--------|------|---------|----------|
-| print en run_quality_gates, antes del status final | Un solo punto de impresion para toda la gate; visible para cualquier caller presente o futuro; cambio de 2 lineas | Ninguno relevante detectado | Elegida |
-| print en _check_quality_gates cuando passed=True y hay warnings | Tambien visible para el caller actual | Dispersa la logica de output de la misma gate en dos funciones; acopla una responsabilidad de impresion a la funcion que WT-2026-204 ya protege como path de decision AUTO-REJECT | Descartada |
-| El caller determine_next_action inspecciona summary/warnings y los imprime | Ningun cambio en run_quality_gates | Cualquier caller futuro debe reimplementar la misma logica para no perder visibilidad; hoy solo hay un caller pero no hay garantia de que siga siendo el unico | Descartada |
-| Tambien imprimir results["summary"] (no solo warnings) | Visibilidad de summary y warnings en el mismo test de la gate | Cambio de alcance mas amplio que lo pedido por el humano; fuera de los Non-goals de este ticket | Descartada para este ticket (posible follow-up) |
+| Documentar la convencion en el checklist (parentesis/corchetes o linea propia) | Cierra el caso teorico para planes futuros sin tocar codigo; cero riesgo de regresion; el Manager ya lee este checklist antes de aprobar cada plan | No previene retroactivamente planes ya redactados sin esta convencion (mitigado: 0 ocurrencias reales hoy) | Elegida |
+| Anadir barrera de codigo que exija parentesis en _normalize_flt_line / _resolve_flt_bullet_tokens | Cierre automatico, no depende de que el Manager recuerde la convencion | Rompe 3+ anotaciones legitimas sin parentesis ya en uso (file_info_cb.py  sha256=..., etc.); introduce falso-negativo real para cerrar falso-positivo teorico (0 ocurrencias) | Descartada |
+| No hacer nada (dejar el caso teorico sin documentar) | Cero esfuerzo | El caso teorico podria materializarse en un plan futuro sin que nadie lo prevenga explicitamente | Descartada |
 
 ## Criterios de Aceptacion Global
-- [ ] El WARN de pytest inconclusive aparece en stdout capturado por capsys
-- [ ] result["passed"] sigue True con stamp inconclusive (no AUTO-REJECT)
-- [ ] Mutation FAIL-sin-fix / PASS-con-fix documentado en execution_log.md
-- [ ] No-regresion: los 4 tests de TestRunQualityGates existentes + los 2 de
-      TestAutoRejectQualityGates siguen verdes sin modificacion
-- [ ] ruff check en verde sobre los 2 archivos tocados
-- [ ] Suite canonica run_pytest_safe.py --level all verde con
-      tested_commit_sha == HEAD
-- [ ] validate --json 0 errors / 0 warnings (Manager gate)
+- [ ] El checklist contiene la convencion de anotaciones FLT (parentesis/corchetes o linea propia) junto al item de la linea 14
+- [ ] Ningun archivo de codigo (scope_gate.py, check_deliverables_exist.py) aparece modificado
+- [ ] validate --json 0 errors / 0 warnings
+- [ ] check_encoding_guard.py limpio sobre el .md tocado
+- [ ] execution_log.md registra la linea final artefacto + gate sin "pendiente"
