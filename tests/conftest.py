@@ -7,6 +7,7 @@ import importlib
 import os
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -251,6 +252,99 @@ def _enforce_motor_bus_isolation(
 def motor_bus_isolation_guard():
     """Expose the exact isolation enforcement function for barrier tests."""
     return _enforce_motor_bus_isolation
+
+
+def _read_motor_git_identity() -> tuple[str | None, str | None]:
+    """Read the motor's local ``user.email``/``user.name`` (None if unset)."""
+
+    def _read_one(key: str) -> str | None:
+        result = subprocess.run(
+            ["git", "config", "--local", key],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            return None
+        value = result.stdout.strip()
+        return value if value else None
+
+    return _read_one("user.email"), _read_one("user.name")
+
+
+def _write_motor_git_identity_key(key: str, value: str | None) -> None:
+    """Set (or unset) a single motor-local git config key."""
+    if value is None:
+        subprocess.run(
+            ["git", "config", "--local", "--unset", key],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    else:
+        subprocess.run(
+            ["git", "config", "--local", key, value],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+
+def _restore_motor_git_identity_if_changed(
+    before: tuple[str | None, str | None],
+) -> bool:
+    """Restore a mutated motor git identity and report whether it changed."""
+    after = _read_motor_git_identity()
+    if before == after:
+        return False
+    before_email, before_name = before
+    _write_motor_git_identity_key("user.email", before_email)
+    _write_motor_git_identity_key("user.name", before_name)
+    return True
+
+
+def _enforce_motor_git_identity_isolation(
+    before: tuple[str | None, str | None],
+    nodeid: str,
+) -> None:
+    """Restore a leaked motor git identity and fail with the contaminating test id."""
+    if _restore_motor_git_identity_if_changed(before):
+        pytest.fail(
+            "Test mutated the real motor git identity (user.email/user.name) and "
+            f"was isolated: {nodeid}. Use a git -c user.email=... inline override "
+            "or cwd=tmp_path/cwd=repo (a temporary repo fixture); never a "
+            "persistent git config --local change on the real motor.",
+            pytrace=False,
+        )
+
+
+@pytest.fixture
+def motor_git_identity_guard():
+    """Expose the exact isolation enforcement function for barrier tests."""
+    return _enforce_motor_git_identity_isolation
+
+
+@pytest.fixture(autouse=True)
+def _isolate_motor_git_identity(request: pytest.FixtureRequest) -> None:
+    """Barrier (WOT-2026-016z): isolate the motor's local git identity.
+
+    Snapshots ``git config --local user.email``/``user.name`` for the real
+    motor (``PROJECT_ROOT``) before each test and, in the finally, restores
+    the original value and fails the contaminating test if it changed. No
+    fixture is known to mutate this today (WOT-2026-016z Fase 0 verified all
+    ``git config`` usages in tests/ operate on ``cwd=tmp_path``/``cwd=repo``
+    fixtures, never on the real motor), but this closes the risk of future
+    recontamination with the same mechanism already approved for the event
+    bus (see ``_isolate_controller_event_bus`` above).
+    """
+    before = _read_motor_git_identity()
+    try:
+        yield
+    finally:
+        _enforce_motor_git_identity_isolation(before, request.node.nodeid)
 
 
 @pytest.fixture(autouse=True)
