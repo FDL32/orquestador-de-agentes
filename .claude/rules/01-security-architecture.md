@@ -3,10 +3,26 @@
 > Reglas operativas básicas (no tocar `privada/`, no commitear secretos, no desactivar `guard_paths`): ver [AGENTS.md sección "Secretos y seguridad"](../../AGENTS.md#secretos-y-seguridad). Este archivo añade detalles técnicos específicos de Claude Code (hooks, pip-audit, allowlist).
 
 ## Política de Secretos
-1. **`privada/`**: FUERA del workspace del agente. Contiene `.env` y configuración sensible. NUNCA leer ni escribir aquí.
-2. **Workspace del agente**: usa `.env.example` con variables vacías; nunca un `.env` real.
-3. **Carga de secretos**: siempre vía variables de entorno desde `privada/`, nunca hardcodeadas en código del repo.
-- **PROHIBIDO** hardcodear tokens/passwords. Usar siempre variables de entorno y `***REDACTED***` en logs.
+
+**Nota de alcance:** `privada/` es un **fallback operativo local**, no la solución
+de seguridad final. La jerarquía canónica por contexto es:
+
+- **Local mono-usuario:** keyring / OS DPAPI.
+- **Compartido o versionado cifrado:** SOPS + age.
+- **Productivo / backend:** OAuth2 / OIDC / token efímero.
+- **`privada/`** solo aplica como separación por convención (fuera del workspace del
+  agente + `.gitignore` + hook `guard_paths`) cuando ninguna de las opciones
+  anteriores es viable todavía; NO es una barrera criptográfica.
+
+1. **`privada/`**: FUERA del workspace del agente. Contiene `.env` y configuración
+   sensible como fallback operativo mientras no exista una alternativa de la
+   jerarquía anterior. NUNCA leer ni escribir aquí.
+2. **Workspace del agente**: usa `.env.example` con variables vacías; nunca un
+   `.env` real.
+3. **Carga de secretos**: siempre vía variables de entorno desde `privada/` u otro
+   mecanismo de la jerarquía anterior, nunca hardcodeadas en código del repo.
+- **PROHIBIDO** hardcodear tokens/passwords. Usar siempre variables de entorno y
+  `***REDACTED***` en logs.
 
 ## Controles Activos
 ### Hook `guard_paths` (Claude Code)

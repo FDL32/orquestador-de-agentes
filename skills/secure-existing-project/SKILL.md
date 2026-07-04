@@ -1,6 +1,6 @@
 ---
 name: secure-existing-project
-version: 2.0.0
+version: 2.1.0
 description: Aplicar arquitectura de seguridad privada/publica a proyecto Python existente
 triggers: [/secure, /security-audit, /harden]
 author: agent
@@ -18,6 +18,14 @@ Migra un proyecto Python existente a la arquitectura de seguridad privada/public
 ## Overview
 
 Convierte un proyecto con credenciales expuestas a uno seguro con separación privada/publica.
+
+> **Nota de arquitectura:** la separación `privada/`/`publica/` de este skill es un
+> **fallback operativo por convención** (útil cuando el proyecto aún no tiene
+> alternativa mejor), no la solución de seguridad final. Según el contexto del
+> proyecto, prefiere: **keyring / OS DPAPI** para apps locales mono-usuario, **SOPS +
+> age** para secretos compartidos o versionados cifrados, y **OAuth2 / OIDC / tokens
+> efímeros** para sistemas productivos o backends. Este workflow documenta el
+> fallback `privada/`; no sustituye esas opciones cuando son viables.
 
 ## Workflow
 
@@ -108,6 +116,22 @@ git status | grep privada  # No debe mostrar nada
 ls -la publica/repo/.env.example
 ```
 
+### Paso 7 (opcional): Evaluar alternativa de la jerarquía escalonada
+
+Antes de dar la migración por completa, evalúa si `privada/` es la opción correcta a
+largo plazo o solo el fallback inmediato:
+
+- **¿El proyecto es local y mono-usuario?** Considera migrar a `keyring` (Python) u
+  OS DPAPI (Windows) en vez de `.env` en disco.
+- **¿Los secretos deben compartirse entre desarrolladores o versionarse cifrados?**
+  Considera SOPS + age.
+- **¿El proyecto corre en un backend o entorno productivo?** Considera OAuth2 / OIDC
+  / tokens efímeros en vez de credenciales estáticas.
+
+Si ninguna alternativa es viable todavía, `privada/` con `.gitignore` + hook
+`guard_paths` sigue siendo el fallback operativo válido -- pero queda registrado
+como decisión temporal, no como arquitectura final.
+
 ## Output
 
 - Estructura `privada/` creada
@@ -126,3 +150,7 @@ ls -la publica/repo/.env.example
 - **NO** mover archivos de `privada/` automáticamente (usuario lo hace)
 - **NO** dejar secrets en código después de la migración
 - **SIEMPRE** crear archivos `.example`
+- **`privada/` es fallback, no solución final**: si el proyecto tiene mejor
+  alternativa disponible (keyring/DPAPI, SOPS+age, OAuth2/OIDC), documentarla como
+  siguiente paso en vez de asumir que la separación `privada/`/`publica/` cierra el
+  tema de seguridad.
