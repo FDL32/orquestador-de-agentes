@@ -2,7 +2,7 @@
 
 **Ticket:** WOT-2026-015m - Acortar el nombre de carpeta de ProjectTmpPathFactory.mktemp para
 evitar MAX_PATH intermitente bajo la suite completa.
-**Estado:** IN_PROGRESS
+**Estado:** COMPLETED
 
 ## Bitacora
 
@@ -91,3 +91,8 @@ evitar MAX_PATH intermitente bajo la suite completa.
    - (d) Resultado CON fix: **PASSED**, `EXIT_CODE_CON_FIX=0`.
 - Arbol restaurado y limpio confirmado (`git diff --stat tests/conftest.py` = 1 file changed,
   8 insertions(+), 0 deletions -- el diff acumulado esperado del ticket, no residuo de la mutacion).
+
+
+Scope override: Over-captura del scope gate sobre tickets CERRADOS. Verificado con 'git show --name-only HEAD': el commit 2d293ec de 015m toca como PRODUCTIVO solo tests/conftest.py + tests/test_conftest_sandbox.py (dentro del FLT). AUDIT_016w/PLAN_016w aparecen como BORRADOS (D) por el archivador al bootstrapear 015m (trampa heredada). Las 7 rutas restantes (agent_controller.py, AUDIT_016c/016s/016t, check_deliverables_exist.py, test_agent_controller.py, test_check_deliverables_exist.py) NO estan en el commit de 015m: pertenecen a tickets cerrados 016c/016w.. Affected files: <REPO_ROOT>/.agent/agent_controller.py, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016c.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016s.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016t.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016w.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-016w.md, <REPO_ROOT>/scripts/check_deliverables_exist.py, <REPO_ROOT>/tests/test_agent_controller.py, <REPO_ROOT>/tests/unit/test_check_deliverables_exist.py
+
+Manager approved canonical closeout for WOT-2026-015m

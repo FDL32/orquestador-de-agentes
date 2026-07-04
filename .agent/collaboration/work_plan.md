@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WOT-2026-015m
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Titulo:** Acortar el nombre de carpeta generado por ProjectTmpPathFactory.mktemp para
   evitar cruzar MAX_PATH de Windows bajo la suite completa (tests/conftest.py).
