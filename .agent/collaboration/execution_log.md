@@ -3,7 +3,7 @@
 Ticket: WOT-2026-019d - Inventario y correccion de los ~18 usos de
 str(exc)/{exc}/{e} en .agent/agent_controller.py con clasificacion PII
 (follow-up de WOT-2026-019b).
-**Estado:** IN_PROGRESS
+**Estado:** COMPLETED
 
 ## Bitacora
 
@@ -72,3 +72,8 @@ str(exc)/{exc}/{e} en .agent/agent_controller.py con clasificacion PII
 - Gates: `ruff check` -> All checks passed. `ruff format` aplicado (1 file
   reformatted). Encoding: 0 caracteres no-ASCII en lineas nuevas (verificado
   por script Python sobre el diff).
+
+
+Scope override: Over-captura de artefactos de tickets YA CERRADOS (015p/016y/016z/019b AUDIT/PLAN, docs de 015p, observations archive). Verificado con git show --name-only 6a4469c bb74854: 019d solo toco agent_controller.py + tests/test_agent_controller.py + sus propios artefactos + archivado de PLAN/AUDIT de 019b (churn de cierre). Ninguno de los 10 archivos ajenos esta en mis commits (0 hits).. Affected files: <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-015p.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016y.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-016z.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019b.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-015p.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-016y.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-016z.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-019b.md, <REPO_ROOT>/.agent/runtime/memory/archive/observations.2026-07.jsonl, <REPO_ROOT>/.claude/rules/01-security-architecture.md, <REPO_ROOT>/prompts/audit_agent_output.md, <REPO_ROOT>/skills/secure-existing-project/SKILL.md
+
+Manager approved canonical closeout for WOT-2026-019d
