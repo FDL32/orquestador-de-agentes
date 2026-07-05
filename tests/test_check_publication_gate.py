@@ -16,12 +16,36 @@ def _make_repo(
     repo = base / name
     repo.mkdir()
     _git(repo, "init")
+    # WOT-2026-019c: desactivar el gc automatico en background. Los tests que
+    # crean cientos de commits en bucle (test_loose_pattern_chunks_many_revs)
+    # disparan el umbral de loose objects; con gc.autoDetach=true (default POSIX)
+    # el `git gc --auto` corre en background y repaqueta/poda objetos justo
+    # mientras `rev-list --all`/`ls-tree` los leen -> "error: Could not read
+    # <sha>" transitorio -> exit 128. Flaky solo en CI (Linux). gc.auto=0 lo cierra.
+    _git(repo, "config", "gc.auto", "0")
     _git(repo, "config", "user.email", email)
     _git(repo, "config", "user.name", "Bot")
     (repo / "README.md").write_text("# limpio\n", encoding="utf-8")
     _git(repo, "add", "README.md")
     _git(repo, "commit", "-m", "baseline")
     return repo
+
+
+def test_make_repo_disables_autogc(tmp_path: Path) -> None:
+    """WOT-2026-019c: _make_repo debe fijar gc.auto=0 para que el gc en
+    background no corra durante los tests que crean cientos de commits (evita
+    la carrera con rev-list --all que da exit 128 flaky en CI). Barrera del
+    mecanismo del fix; el sintoma real (la carrera) es CI-only, no reproducible
+    de forma determinista en local."""
+    repo = _make_repo(tmp_path, "repo_autogc")
+    result = subprocess.run(
+        ["git", "config", "--get", "gc.auto"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout.strip() == "0"
 
 
 def test_clean_repo_is_listo(tmp_path: Path) -> None:

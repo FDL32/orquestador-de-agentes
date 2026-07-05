@@ -47,8 +47,39 @@ Ticket: WOT-2026-019c - test flaky en CI shallow clone
 - Turno a resetear a BUILDER (`--reset-turn --force`), ticket a
   bootstrapear en el bus (`--bootstrap-ticket --json`).
 
-Pendiente: Builder implementa PASO 1/2/3 de work_plan.md y documenta aqui
-la evidencia (diff, tests, mutation check, salidas de pytest/ruff/suite).
 El cierre real de este ticket requiere ademas observar un run verde de
 `Quality Gates` en CI tras el push (criterio PENDIENTE-POST-PUSH, ver
 work_plan.md).
+
+## Implementacion (Orquestador toma el fix de 1 linea directamente)
+
+El fix es 1 linea; el Orquestador lo aplico directamente en vez de lanzar Builder
+(mismo patron que otros fixes triviales de la sesion). Verificacion del diagnostico
+causal del Manager ANTES de aplicar:
+- `[VERIFICADO EN CODIGO]` el `git rev-list --all` que falla vive en
+  `scripts/classify_publication.py:482` (`_collect_history_blob_paths`), dentro de
+  `check_classify`, no en `check_loose_pattern` (refuta la premisa de la ficha).
+  Hace `rev-list --all` + `ls-tree -r <commit>` por cada uno de los 485 commits ->
+  rafaga de lecturas de objetos justo tras crear 485 commits -> ventana de carrera
+  con `git gc --auto` en background (gc.autoDetach=true default POSIX).
+- `[VERIFICADO EN CODIGO]` `_make_repo` hacia `git init` sin desactivar gc -> el fix
+  (`git config gc.auto 0` tras init) aplica exactamente ahi.
+
+Fix aplicado: `tests/test_check_publication_gate.py::_make_repo` +
+`_git(repo, "config", "gc.auto", "0")` tras `git init` (+ comentario WOT-2026-019c).
+Test nuevo `test_make_repo_disables_autogc` (verifica `git config --get gc.auto == 0`).
+
+### Gates (verificados por el Orquestador)
+- `pytest tests/test_check_publication_gate.py::test_make_repo_disables_autogc` -> 1 passed.
+- MUTATION: comentar `gc.auto=0` -> el test nuevo FALLA (1 failed); restaurar -> pasa. Barrera valida.
+- `pytest tests/test_check_publication_gate.py` -> 9 passed in 22.30s (8 previos + 1 nuevo).
+- `ruff check` -> All checks passed. `ruff format --check` -> already formatted.
+- Encoding: 0 caracteres no-ASCII en lineas nuevas. Diff: solo tests/test_check_publication_gate.py (+24).
+
+### Barrera del sintoma real (CI-only, PENDIENTE-POST-PUSH)
+La carrera de gc NO reproduce de forma determinista en Windows local. El criterio de cierre
+real es observar un run verde de `Quality Gates` en CI tras el push. barrier: run verde de
+Quality Gates post-push; reason: la carrera git-gc solo se manifiesta en el runner Linux de CI
+bajo carga, no reproducible en local. Estado de pipeline: CLOSED_PENDING_CI.
+
+Pendiente: Review 2 fresh-context + cierre canonico local + push + verificar CI verde.
