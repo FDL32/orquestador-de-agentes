@@ -1,406 +1,367 @@
-# Work Plan - WOT-2026-019a
+# Work Plan - WOT-2026-019c
 
 ## Metadata
-- **ID:** WOT-2026-019a
-- **Estado:** COMPLETED
+- **ID:** WOT-2026-019c
+- **Estado:** APPROVED
 - **deliverable_type:** code
-- **Titulo:** guard_paths acepta un segundo root explicito (AGENT_PROJECT_ROOT /
-  destination_root del link) para no bloquear Writes legitimos al repo_destino
-  cuando el cwd del proceso harness apunta al repo_motor.
+- **Titulo:** Aislar `_make_repo` de `tests/test_check_publication_gate.py` con
+  `gc.auto=0` para eliminar la condicion de carrera de `git rev-list --all`
+  que hizo fallar `test_loose_pattern_chunks_many_revs` en CI (Ubuntu) dos
+  veces (2026-07-04 run 28692691463, 2026-07-05 run 28755232843).
 - **Asignado a:** Builder
 - **delivery_authority:** repo_motor
 
 ## Objetivo
 
-El hook PreToolUse (`claude_guard_entry.py` -> `guard_paths.py`) resuelve
-`repo_root` buscando el ancestro `.claude` mas cercano al cwd del proceso
-harness (`resolve_repo_root`, `claude_guard_entry.py` linea 37-43) y ejecuta
-`guard_paths.py` con `cwd=repo_root` (linea 102-104). Dentro de
-`guard_paths.py`, `_is_protected_path` (linea 121-160) usa ese `repo_root` (o,
-si es `None`, cae a `Path(os.getcwd()).resolve()`, linea 133-137) como UNICO
-root valido: `_is_within_repo` (linea 100-105) hace
-`path_obj.relative_to(repo_root)` y devuelve `False` (bloqueo, "fuera del
-repo") por `ValueError` en cuanto el path no cuelga de ese unico root.
-Cuando el cwd del proceso apunta al repo_motor (tras cualquier Bash, o en
-subagentes que no heredan el cwd aparcado del repo_destino), `repo_root`
-resuelve al motor. Un Write/Edit legitimo a un archivo del repo_destino
-(otro repo git, con su propio `.claude`) NO cuelga del motor: `relative_to`
-lanza `ValueError` y el guard bloquea con "fuera del repo", aunque
-`AGENT_PROJECT_ROOT` (env var ya establecida como fuente canonica de
-resolucion del project root del orquestador, `runtime/project_root.py` linea
-9, 92, 106) apunte correctamente al destino, o aunque
-`.agent/config/motor_destination_link.json` del motor declare ese destino en
-su campo `destination_root` (patron ya usado por
-`.agent/motor_checkpoint.py::resolve_destino_root`, linea 424-436).
-Este ticket fija el fix MINIMO: `guard_paths.py` acepta un SEGUNDO root
-valido derivado de fuentes ya oficiales del sistema (env var
-`AGENT_PROJECT_ROOT`, o si no esta seteada, `destination_root` del
-`motor_destination_link.json` situado en el `repo_root` resuelto por el
-entry). Un Write cuenta como legitimo si cuelga de CUALQUIERA de los dos
-roots (motor O destino); sigue bloqueado si no cuelga de NINGUNO
-(fail-closed preservado). El resto de checks (`PROTECTED_PATH_PATTERNS`,
-`PROTECTED_FILENAMES`, `write_roots`) se siguen aplicando sin cambios, y se
-aplican al root efectivo bajo el que cae el path (no se relajan ni se
-saltan).
+Eliminar el fallo intermitente `subprocess.CalledProcessError: Command
+['/usr/bin/git', 'rev-list', '--all'] returned non-zero exit status 128` que
+en CI (job `quality-gates (3.11)`, runs `28692691463` y `28755232843`, ambos
+con traceback identico) ocurre dentro de `check_classify` ->
+`build_manifest(repo, scan_history=True)` ->
+`_collect_history_blob_paths(repo_root)` (`scripts/classify_publication.py`
+linea 482), invocado desde `run_gate` (`scripts/check_publication_gate.py`
+linea 149) sobre el repo git fixture creado por
+`_make_repo(tmp_path, "repo_grande")` en
+`tests/test_check_publication_gate.py::test_loose_pattern_chunks_many_revs`
+(485 commits creados en bucle, `REV_CHUNK_SIZE * 2 + 5`). El `stderr` de CI
+(`error: Could not read 8c5ad02d1e80a65e407934c4035d5c17b704bb0b\nfatal:
+Failed to traverse parents of commit 8ed1dbf116f0ee3a361da7fedd0096fd5ded8b3f`)
+demuestra corrupcion transitoria del object store del propio repo fixture
+(un SHA que `rev-list --all` lista en su propio stdout resulta ilegible acto
+seguido), consistente con un `git gc --auto` disparado en background
+(`gc.autoDetach=true` por defecto en Linux) por alguno de los 485
+`git commit -q` en bucle de `_make_repo`/el test, que compacta o poda
+objetos mientras `check_classify`/`check_loose_pattern` los leen justo
+despues. El fix desactiva `gc.auto` en el repo fixture (`git config gc.auto
+0` inmediatamente tras `git init` dentro de `_make_repo`), cerrando la
+ventana de carrera sin depender de la profundidad del checkout de CI.
 
 ## Decision Arquitectonica
 
-(Evaluadas las 3 opciones del diagnostico de Fase 0.)
+(Evaluadas las 2 opciones de la ficha original mas el diagnostico de Fase 0
+del Orquestador, que reproduce el escenario shallow localmente y verifica el
+traceback exacto de los 2 runs de CI via `gh run view --log-failed`.)
 
-**Elegida: Opcion (a)** -- `guard_paths.py` resuelve el segundo root
-internamente (dentro de `_is_protected_path`, sin cambiar su firma publica
-mas alla de anadir logica interna) y lo trata como repo valido ADEMAS del
-`repo_root` recibido. `claude_guard_entry.py` (el entry) y
-`canonical_hook_command()` (el bootstrap hardcodeado) NO se tocan: siguen
-resolviendo `repo_root` por ancestro `.claude` exactamente igual que hoy, y
-lo pasan a `guard_paths.py` con `cwd=repo_root` exactamente igual que hoy.
-Por que (a) y no (b) o (c):
-- **(b) descartada:** pasar el destino como root explicito desde
-  `claude_guard_entry.py` obligaria a anadir un argumento nuevo al comando
-  que invoca `guard_paths.py` (linea 102-104) y probablemente a
-  `canonical_hook_command()` (linea 69-90, el bootstrap hardcodeado que
-  tambien resuelve por `.claude` y que el gate de portabilidad
-  `check claude settings portability` valida ESTATICAMENTE, segun el
-  docstring de linea 6-8). Cambiar el bootstrap amplia el blast-radius al
-  gate de portabilidad sin necesidad: el entry NO necesita saber nada del
-  destino porque `guard_paths.py` ya puede resolverlo el mismo leyendo el
-  `motor_destination_link.json` bajo el `repo_root` recibido (exactamente
-  igual patron que `resolve_guard_paths` ya usa para localizar el propio
-  script via link, linea 46-66).
-- **(c) descartada:** no aplica. El fix cabe dentro del contrato actual
-  del hook (mismo comando canonico, mismo bootstrap, misma firma de
-  `_is_protected_path` salvo logica interna) sin requerir una decision de
-  producto o arquitectura nueva. No hay tercer root arbitrario: el segundo
-  root SOLO puede ser `AGENT_PROJECT_ROOT` (env var ya oficial, propagada
-  por los entry points del orquestador tras parsear `--project-root`) o el
-  `destination_root` de un `motor_destination_link.json` YA presente en el
-  `repo_root` resuelto (no se lee ningun archivo fuera de ese arbol, no se
-  acepta ningun valor de un tercer origen).
-- **(a) elegida, minimo blast-radius:** no toca `claude_guard_entry.py` (el
-  entry sigue siendo exactamente el mismo binario testeado por
-  `tests/unit/test_claude_guard_entry.py`), no toca
-  `canonical_hook_command()` (el gate de portabilidad no necesita
-  re-validarse), y el cambio vive enteramente en `guard_paths.py`
-  (`_is_protected_path`/`_is_within_repo`), que ya reciben `repo_root` como
-  parametro explicito (linea 125) y ya tienen su propia suite de tests
-  aislada (`tests/test_guard_paths.py`).
-## Contexto (Fase 0 del Orquestador, verificado leyendo el codigo real)
+**Descartada: Opcion (A) -- `fetch-depth: 0` en `quality-gates.yml`.**
+Evidencia que la descarta: (1) reproduccion local de un clon `--depth=1`
+del propio motor con un `tmp_path` de longitud normal ejecutando
+`tests/test_check_publication_gate.py` completo -> `8 passed in 23.60s`,
+CERO fallos, incluyendo `test_loose_pattern_chunks_many_revs`; el shallow
+del checkout PADRE no afecta al repo fixture. (2) El traceback real de
+ambos runs de CI (`gh run view 28755232843/28692691463 --log-failed`)
+muestra que el `git rev-list --all` que falla corre con
+`cwd=PosixPath('.../tests/sandbox/test_runtime/session_.../factory/
+test_loose_patte_.../repo_grande')` -- el repo ANIDADO propio del test, no
+el checkout del runner. `_run_git`/`_git_lines`
+(`scripts/classify_publication.py` linea 216-238) invocan `git` con
+`cwd=repo_root` explicito, sin heredar ningun `GIT_DIR`/working-tree del
+proceso padre; `actions/checkout@v5` (log de ambos runs) solo anade
+`safe.directory` para el path del checkout, no para el repo anidado. (3)
+Ningun workflow del repo (`quality-gates.yml`, `security-audit.yml`) invoca
+`check_publication_gate.py`/`classify_publication.py` sobre el checkout real
+de CI: solo los tests los ejercitan, siempre sobre repos fixture propios en
+`tmp_path`. `fetch-depth: 0` no tiene ningun camino de codigo que pueda
+tocar en este bug: seria un cambio cosmetico sin relacion causal
+demostrable con el fallo observado, y documentarlo como fix real
+enmascararia la causa.
 
-- `claude_guard_entry.py::resolve_repo_root` (linea 37-43): ancestro `.claude`
-  mas cercano al cwd. Con cwd=motor, `repo_root`=motor. NO se toca.
-- `claude_guard_entry.py::main` (linea 93-104): corre `guard_paths.py` con
-  `cwd=repo_root`. NO se toca.
-- `guard_paths.py::_is_protected_path` (linea 121-160): hoy usa
-  UNICAMENTE el `repo_root` recibido (o `os.getcwd()` si es `None`) para
-  `_is_within_repo`. El fix anade un segundo root candidato, resuelto de
-  `AGENT_PROJECT_ROOT` (si esta seteada y no vacia tras `.strip()`) o, si no
-  esta seteada, de `destination_root` en
-  `<repo_root>/.agent/config/motor_destination_link.json` (mismo patron de
-  lectura fail-safe -- `except (json.JSONDecodeError, OSError, KeyError,
-  TypeError)` -- ya usado en `resolve_guard_paths`, linea 56-66, y en
-  `motor_checkpoint.py::resolve_destino_root`, linea 424-436).
-- `_is_within_repo` (linea 100-105): hoy comprueba un unico root. El fix
-  generaliza a "esta dentro de repo_root O dentro de destino_root" sin
-  cambiar el resto del pipeline de checks.
-- `guard_paths.py` NO importa nada de `runtime/project_root.py` hoy (el hook
-  es standalone, solo usa `os.environ.get(...)` directamente para
-  `GUARD_PATHS_CONFIG`, linea 236). El fix mantiene ese mismo estilo
-  autocontenido: lee `os.environ.get("AGENT_PROJECT_ROOT", "")` directamente,
-  sin importar el paquete `runtime` (evita acoplar el hook standalone a
-  modulos del orquestador que pueden no estar en `sys.path` cuando el hook
-  se invoca desde un repo_destino externo).
-- `motor_destination_link.json` de ESTE motor (`.agent/config/`) ya declara
-  `destination_root` (`orquestador_de_agentes_workspace`) ademas de
-  `motor_root`: confirma que el campo ya existe en produccion y no es una
-  invencion del plan.
+**Elegida: Opcion (B) -- aislar `_make_repo` con `gc.auto=0`.** El fix vive
+enteramente en `tests/test_check_publication_gate.py::_make_repo`: anadir
+`_git(repo, "config", "gc.auto", "0")` inmediatamente despues de
+`_git(repo, "init")` y antes de la primera escritura. Esto desactiva el
+disparo automatico de `git gc` (que por defecto se activa a partir de 6700
+objetos loose o 50 packs, `gc.auto`/`gc.autoPackLimit`) dentro del repo
+fixture, cerrando la ventana de carrera entre los 485 `git commit -q` en
+bucle y las 2 lecturas de historial completo que corren justo despues
+(`check_classify` y `check_loose_pattern`, ambos via `git rev-list --all`
+sobre el mismo repo). Es hermetico (no depende de la profundidad ni de la
+ubicacion del checkout padre), ataca el mecanismo real documentado por el
+traceback de CI, y no requiere tocar ningun workflow.
+
+## Contexto (Fase 0 del Orquestador, verificado en esta sesion)
+
+- Traceback identico en 2 runs de CI reales (`28692691463` 2026-07-04,
+  `28755232843` 2026-07-05), obtenido con
+  `gh run view <id> --log-failed`: ambos fallan en
+  `scripts/classify_publication.py:482` (`_collect_history_blob_paths`,
+  dentro de `_git_lines(repo_root, "rev-list", "--all")`) llamado desde
+  `scripts/check_publication_gate.py:89` (`check_classify`), NO en
+  `scripts/check_publication_gate.py:115` (`check_loose_pattern`, que la
+  ficha original senalaba como sospechoso). `check_classify` corre antes en
+  la secuencia de `run_gate` (linea 146-153: `check_name`,
+  `check_tree_clean`, `check_classify`, `check_loose_pattern`, ...).
+- `cwd` exacto del `git rev-list --all` que falla, tomado del log de CI:
+  `/home/runner/work/orquestador-de-agentes/orquestador-de-agentes/tests/sandbox/test_runtime/session_<pid>/factory/test_loose_patte_<hash>/repo_grande`
+  -- el repo fixture ANIDADO creado por `_make_repo`, no el checkout del
+  runner. `stdout` del proceso fallido SI incluye el SHA que luego resulta
+  ilegible (aparece listado, `rev-list` ya lo habia encontrado), y `stderr`
+  es exactamente `error: Could not read
+  8c5ad02d1e80a65e407934c4035d5c17b704bb0b\nfatal: Failed to traverse
+  parents of commit 8ed1dbf116f0ee3a361da7fedd0096fd5ded8b3f`.
+- Reproduccion local (Windows) de un clon `--depth=1` del propio motor
+  (`git clone --depth=1 file:///<motor> <tmp>`) ejecutando
+  `tests/test_check_publication_gate.py` completo desde dentro del clon:
+  `8 passed in 23.60s`, incluyendo `test_loose_pattern_chunks_many_revs`.
+  CERO reproduccion del fallo en 3 corridas adicionales del mismo escenario.
+  Confirma que el shallow del padre, por si solo, no es la causa.
+- `tests/conftest.py` (`ProjectTmpPathFactory`, linea 34-57, y fixture
+  `tmp_path`, linea 182-187) reemplaza el `tmp_path` estandar de pytest: en
+  vez de un directorio temporal del sistema, resuelve a
+  `<PROJECT_ROOT>/tests/sandbox/test_runtime/session_<pid>/factory/<hash>`,
+  es decir, DENTRO del propio repo (motor o checkout de CI). Este dato
+  explica por que el path de CI cae dentro del checkout, pero NO es la
+  causa del fallo: la reproduccion local con el mismo mecanismo de
+  `tmp_path` (mismo `conftest.py`, mismo clon shallow) no reprodujo el
+  error.
+- `scripts/check_publication_gate.py` linea 105-124 (`REV_CHUNK_SIZE`,
+  `check_loose_pattern`) y `scripts/classify_publication.py` linea 478-494
+  (`_collect_history_blob_paths`) confirmados por lectura directa: ambos
+  llaman `git rev-list --all` sobre `repo_root` (el argumento recibido, el
+  repo fixture), sin ninguna opcion de `git` relacionada con gc o
+  concurrencia.
+- `_make_repo` (`tests/test_check_publication_gate.py` linea 13-24) hace
+  `git init` seguido de `config user.email/user.name` y UN commit baseline;
+  `test_loose_pattern_chunks_many_revs` (linea 110-124) anade 485 commits
+  mas (`REV_CHUNK_SIZE * 2 + 5` con `REV_CHUNK_SIZE = 100`) en un bucle de
+  `git add` + `git commit -q`. Es el UNICO test del archivo que genera un
+  volumen de commits capaz de acercarse a un umbral de `gc.auto` (los demas
+  tests de `_make_repo` hacen 1-2 commits).
+- Sin overrides de `gc.auto`/`gc.autopacklimit`/`gc.autodetach` en la
+  config git de este entorno (`git config --get gc.auto` vacio): aplican
+  los defaults documentados de git (`gc.auto=6700` objetos loose,
+  `gc.autoDetach=true` en POSIX -- dispara `git gc --auto` como proceso
+  hijo desacoplado cuyo termino NO se espera por el `git commit`
+  invocante), consistente con una carrera que solo se manifiesta bajo el
+  timing/IO especifico del runner Ubuntu y no en Windows local.
+- Unico archivo de test con el patron de "muchos commits en bucle" (grep
+  de `range(` + `REV_CHUNK_SIZE` en `tests/`): confirma que el fix de
+  `_make_repo` no necesita replicarse en otro archivo del repo.
+
 ## Files Likely Touched
 
 ### repo_motor
 
-- `.agent/hooks/guard_paths.py` (anadir resolucion del segundo root dentro
-  de `_is_protected_path`/nueva funcion helper privada, y generalizar
-  `_is_within_repo` o el punto de llamada para aceptar 1 o 2 roots)
-- `tests/test_guard_paths.py` (tests de regresion: cwd=motor + Write al
-  destino via `AGENT_PROJECT_ROOT` -> pasa; cwd=motor + Write al destino via
-  `destination_root` del link -> pasa; cwd=motor + Write a un TERCER path
-  fuera de ambos -> sigue bloqueado; sin `AGENT_PROJECT_ROOT` ni link ->
-  comportamiento identico al actual, un unico root)
+- `tests/test_check_publication_gate.py` (`_make_repo`: anadir
+  `_git(repo, "config", "gc.auto", "0")` tras `_git(repo, "init")`)
 
 ## Read/inspect only (Manager-only / no tocar)
 
-- `.agent/hooks/claude_guard_entry.py` (entry + bootstrap; NO se modifica --
-  decision de diseno explicita de esta ficha)
-- `.agent/agents.json` (config de allowlist; solo se lee, `write_roots` y
-  `blocked_command_patterns` no cambian de semantica)
-- `.agent/motor_checkpoint.py` (fuente del patron `resolve_destino_root`;
-  solo lectura para replicar el mismo estilo de lectura fail-safe del link,
-  no se edita ni se importa)
-- `runtime/project_root.py` (fuente de la semantica de `AGENT_PROJECT_ROOT`;
-  solo lectura para confirmar el contrato del env var, NO se importa desde
-  el hook)
-- `tests/unit/test_claude_guard_entry.py` (cubre el entry, que no cambia;
-  debe seguir en verde sin modificacion)
+- `scripts/check_publication_gate.py` (fuente de `run_gate`/
+  `check_classify`/`check_loose_pattern`; solo lectura, el fix no cambia
+  produccion)
+- `scripts/classify_publication.py` (fuente de `_collect_history_blob_paths`/
+  `_run_git`; solo lectura, el fix no cambia produccion)
+- `tests/conftest.py` (fuente de `ProjectTmpPathFactory`/`tmp_path`; solo
+  lectura, confirma el path anidado pero NO se modifica: cambiar el
+  comportamiento global de `tmp_path` excede el blast-radius de este
+  ticket y afectaria a toda la suite)
+- `.github/workflows/quality-gates.yml` (Opcion A descartada; NO se anade
+  `fetch-depth: 0`, ver Decision Arquitectonica)
+- `.github/workflows/security-audit.yml` (referencia de paridad citada en
+  la ficha original; solo lectura, no se modifica)
 
 ## Plan de Implementacion
 
-### PASO 1 (IMPLEMENT) - `.agent/hooks/guard_paths.py`, segundo root
+### PASO 1 (IMPLEMENT) - `tests/test_check_publication_gate.py`, `_make_repo` hermetico
 
-1. Anadir una funcion privada `_resolve_extra_root(repo_root: Path) ->
-   Path | None` que:
-   - Si `os.environ.get("AGENT_PROJECT_ROOT", "").strip()` es no vacio,
-     devuelve `Path(esa_variable).resolve()` (fail-safe: si `Path(...)`
-     lanza `OSError`/`ValueError`, devuelve `None`, NO propaga la
-     excepcion).
-   - Si no esta seteada, intenta leer
-     `repo_root / ".agent" / "config" / "motor_destination_link.json"`
-     igual que `resolve_guard_paths` (linea 56-66 de
-     `claude_guard_entry.py`): si existe y es JSON valido con clave
-     `destination_root` no vacia, devuelve `Path(ese_valor).resolve()`.
-     Cualquier `(json.JSONDecodeError, OSError, KeyError, TypeError)` ->
-     devuelve `None` (no hay segundo root, comportamiento actual sin
-     cambios).
-   - Si ninguna fuente resuelve, devuelve `None`.
-2. Modificar `_is_within_repo` (o el punto de llamada en
-   `_is_protected_path`) para aceptar el resultado de `_resolve_extra_root`
-   como root ADICIONAL: el path esta "dentro del repo" si
-   `path_obj.relative_to(repo_root)` funciona O (si `extra_root` no es
-   `None`) `path_obj.relative_to(extra_root)` funciona. Si NINGUNO de los
-   dos aplica -> sigue bloqueado con "fuera del repo" (mismo mensaje,
-   mismo exit code).
-3. El resto de `_is_protected_path` (filename protegido,
-   `PROTECTED_PATH_PATTERNS`, `write_roots`) sigue evaluandose exactamente
-   igual DESPUES de superar el check de "dentro de algun repo": no se
-   relaja ningun otro check, y `write_roots` (si esta configurado) se
-   evalua contra `repo_root` en el caso motor y contra `extra_root` en el
-   caso destino (usar el root bajo el que el path SI cayo, no
-   arbitrariamente el primero).
-4. `_resolve_extra_root` se llama UNA vez por invocacion de
-   `_is_protected_path` (no cambia la firma publica de
-   `evaluate_tool_request` ni de `_is_protected_path`: sigue aceptando
-   `repo_root: Path | None = None`).
+1. En `_make_repo` (linea 13-24), anadir una linea
+   `_git(repo, "config", "gc.auto", "0")` inmediatamente despues de
+   `_git(repo, "init")` y antes de `_git(repo, "config", "user.email",
+   email)`. Esta config se escribe en `<repo>/.git/config` (local al repo
+   fixture, nunca afecta al repo motor real ni a otros repos fixture
+   creados por otros tests).
+2. No modificar la firma de `_make_repo` ni el resto de su cuerpo
+   (`user.email`, `user.name`, `README.md`, `add`, `commit -m baseline`
+   quedan identicos).
+3. No modificar ningun otro test del archivo: los 7 tests existentes que
+   usan `_make_repo` (`test_clean_repo_is_listo`,
+   `test_copia_folder_blocks`, `test_dirty_tree_blocks`,
+   `test_personal_metadata_email_blocks_and_mutation`,
+   `test_dirty_sibling_blocks_unidad`,
+   `test_loose_pattern_catches_slug_variant`,
+   `test_loose_pattern_chunks_many_revs`) heredan el fix automaticamente al
+   compartir el mismo helper, sin que su codigo cambie.
 
 Restricciones:
-- NO modificar `claude_guard_entry.py` ni `canonical_hook_command()`.
-- NO anadir un tercer origen de root ademas de `AGENT_PROJECT_ROOT` y
-  `destination_root` del link (evita abrir un root arbitrario que rompa
-  fail-closed).
-- NO relajar `PROTECTED_PATH_PATTERNS`, `PROTECTED_FILENAMES` ni
-  `write_roots` para NINGUNO de los dos roots: ambos quedan sujetos a los
-  mismos checks que hoy aplica el unico root.
-- NO importar `runtime.project_root` desde el hook (mantener el hook
-  standalone, mismo estilo que el uso existente de
-  `os.environ.get("GUARD_PATHS_CONFIG")`).
-- Si `AGENT_PROJECT_ROOT` resuelve a una ruta que NO existe en disco (env
-  var mal seteada), tratarla igual que "no hay segundo root" (fail-closed:
-  no se crea un root fantasma que nunca bloquea nada -- ver STOP
-  conditions).
+- NO tocar `scripts/check_publication_gate.py` ni
+  `scripts/classify_publication.py` (produccion, fuera de alcance: el fix
+  es exclusivamente del fixture de test).
+- NO tocar `tests/conftest.py` ni el mecanismo de `tmp_path` (blast-radius
+  de toda la suite, fuera de alcance de este ticket).
+- NO anadir `fetch-depth: 0` a ningun workflow (Opcion A descartada por
+  evidencia, ver Decision Arquitectonica).
 
 DoD Paso 1:
-- [ ] `_resolve_extra_root` existe, lee `AGENT_PROJECT_ROOT` primero y
-      `destination_root` del link como fallback, y devuelve `None` (no
-      excepciona) ante cualquier fuente ausente o malformada.
-- [ ] Un Write dentro del `repo_root` (motor) sigue permitido exactamente
-      igual que hoy cuando NO hay segundo root (paridad de comportamiento
-      sin regresion).
-- [ ] Un Write dentro del segundo root (destino, via `AGENT_PROJECT_ROOT` O
-      via `destination_root` del link) deja de bloquearse con "fuera del
-      repo".
-- [ ] Un Write fuera de AMBOS roots sigue bloqueado con "fuera del repo"
-      (mismo mensaje, exit 2).
-- [ ] `PROTECTED_PATH_PATTERNS`/`PROTECTED_FILENAMES`/`write_roots` se
-      siguen aplicando sobre paths que caen en CUALQUIERA de los dos roots
-      (no hay bypass de esos checks para el segundo root).
-- [ ] `ruff check .agent/hooks/guard_paths.py` y
-      `ruff format --check .agent/hooks/guard_paths.py` exit 0.
+- [ ] `_make_repo` invoca `git config gc.auto 0` tras `git init`, antes de
+      la primera escritura de contenido.
+- [ ] Los 7 tests existentes de `tests/test_check_publication_gate.py`
+      que usan `_make_repo` siguen pasando localmente sin cambio de
+      aserciones.
+- [ ] `ruff check tests/test_check_publication_gate.py` y
+      `ruff format --check tests/test_check_publication_gate.py` exit 0.
 
-### PASO 2 (IMPLEMENT) - `tests/test_guard_paths.py`, tests de regresion + fail-closed
+### PASO 2 (VERIFY) - Verificacion local + documentar el limite de reproduccion
 
-Usar el patron de repos git reales (`init_git_repo`, ver
-`tests/test_motor_root_gates.py` linea 23-46, y el estilo con `tmp_path` de
-`tests/unit/test_claude_guard_entry.py::_make_repo`, linea 17-27): montar un
-"motor" (con `.claude`) y un "destino" (con `.claude` +
-`.agent/config/motor_destination_link.json` declarando
-`destination_root=<destino>`), fijar cwd al motor, y ejercitar
-`_is_protected_path`/`evaluate_tool_request` con `repo_root=<motor>`.
+El fallo real (carrera de `git gc --auto` bajo el timing de CI Ubuntu) NO
+reprodujo en 3 corridas locales (Windows) ni en el escenario shallow
+clonado localmente (ver Contexto): esta barrera es CI-only,
+PENDIENTE-POST-PUSH. Razon: la condicion de carrera depende del
+scheduler/IO del runner Ubuntu de GitHub Actions, no reproducible de forma
+determinista en Windows local con las herramientas disponibles en este
+repo (no hay inyeccion de fallos de git ni control del scheduler del SO).
 
-Anadir como minimo:
+Verificacion local disponible (determinista, no depende de la carrera):
 
-1. `test_write_to_destination_via_agent_project_root_allowed`: cwd/repo_root
-   = motor; `monkeypatch.setenv("AGENT_PROJECT_ROOT", str(destino))`; path =
-   archivo dentro de destino. HOY (antes del fix) da `blocked=True,
-   "fuera del repo"`; TRAS el fix da `blocked=False`.
-2. `test_write_to_destination_via_link_destination_root_allowed`: cwd/repo_root
-   = motor; SIN `AGENT_PROJECT_ROOT` seteada (monkeypatch.delenv si estuviera
-   presente); motor tiene `.agent/config/motor_destination_link.json` con
-   `destination_root=str(destino)`; path = archivo dentro de destino. Mismo
-   antes/despues que el test 1.
-3. `test_write_outside_both_roots_still_blocked` (fail-closed): cwd/repo_root
-   = motor; `AGENT_PROJECT_ROOT` seteada al destino; path = archivo en un
-   TERCER directorio (ni motor ni destino). Debe seguir bloqueado con
-   "fuera del repo" tanto ANTES como DESPUES del fix (no debe cambiar).
-4. `test_no_extra_root_behaves_like_today`: cwd/repo_root = motor; SIN
-   `AGENT_PROJECT_ROOT` y SIN link (o link sin `destination_root`); path
-   fuera del motor. Sigue bloqueado (paridad exacta con el comportamiento
-   pre-fix, ausencia de regresion cuando no hay destino declarado).
-5. `test_malformed_agent_project_root_value_falls_back_closed`: `AGENT_PROJECT_ROOT`
-   seteada a un valor que no resuelve a un directorio existente; path fuera
-   del motor. Sigue bloqueado (no se crea un root fantasma permisivo).
-6. Al menos 1 test que confirme que `PROTECTED_PATH_PATTERNS` (p. ej. un
-   archivo `.env` dentro del destino) SIGUE bloqueado aunque el destino sea
-   un root valido (no bypass de los demas checks para el segundo root).
+1. `.venv\Scripts\python.exe -m pytest tests/test_check_publication_gate.py -v`
+   -> exit 0, los 8 tests pasan (incluye
+   `test_loose_pattern_chunks_many_revs`).
+2. Inspeccion directa de que el fix aplica: el test nuevo del Paso 3
+   (`test_make_repo_disables_autogc`) confirma con una asercion literal
+   que el repo creado tiene `gc.auto=0` en su config local.
+3. `ruff check tests/test_check_publication_gate.py` y
+   `ruff format --check tests/test_check_publication_gate.py` -> exit 0.
+4. `.venv\Scripts\python.exe scripts/run_pytest_safe.py` (suite completa,
+   stamp fresco sobre HEAD, level=all, exit_code=0) antes de mark-ready.
+5. Tras el push: el criterio de cierre real de este ticket es que el
+   siguiente run de `Quality Gates` en CI (matrix 3.10 y 3.11) termine en
+   verde, confirmado con
+   `gh run list --workflow "Quality Gates" --limit 1` mostrando
+   `conclusion: success` para el commit del fix. Este check es
+   PENDIENTE-POST-PUSH: no puede satisfacerse antes del push porque
+   depende del runner remoto.
 
-Mutation check (documentar en `execution_log.md`, no dejar reverts en el
-commit final): revertir temporalmente `_resolve_extra_root` a devolver
-siempre `None` (o eliminar la rama del segundo root en
-`_is_within_repo`), confirmar que los tests 1 y 2 FALLAN (siguen bloqueados
-hoy), confirmar que 3/4/5/6 siguen en verde (fail-closed y paridad no
-dependen del fix); restaurar el fix y confirmar que los 6 (o mas) tests
-pasan.
+### PASO 3 (IMPLEMENT) - Test de regresion determinista del propio fix
 
-Restricciones:
-- Los tests deben usar repos git reales (`init_git_repo`) o, como minimo,
-  directorios reales con `.claude` marker (no mockear `Path.relative_to` ni
-  `Path.resolve`).
-- NO borrar ni modificar ningun test existente de `tests/test_guard_paths.py`.
-- Los tests nuevos deben limpiar `AGENT_PROJECT_ROOT` del entorno tras cada
-  test (usar `monkeypatch.setenv`/`monkeypatch.delenv`, nunca mutar
-  `os.environ` directamente sin cleanup) para no filtrar estado entre tests.
+Anadir a `tests/test_check_publication_gate.py` un test nuevo,
+`test_make_repo_disables_autogc`, que:
+1. Llama `_make_repo(tmp_path, "repo_gc_check")`.
+2. Ejecuta `git config --get gc.auto` con `cwd=repo` (usar
+   `subprocess.run` directo capturando stdout, con `check=True`) y afirma
+   que el valor devuelto (stripped) es exactamente `"0"`.
+3. Es un test determinista (no depende de la carrera de CI): verifica el
+   MECANISMO del fix (la config queda escrita), no el sintoma
+   (`rev-list --all` fallando), que es CI-only e irreproducible localmente
+   segun el Paso 2.
 
-DoD Paso 2:
-- [ ] Los 6 tests (o mas) descritos arriba existen y pasan tras el fix.
-- [ ] El test de regresion principal (`..._agent_project_root_allowed`)
-      FALLA contra el codigo pre-fix (mutation check documentado con
-      salida literal de pytest) y PASA tras el fix.
-- [ ] El test fail-closed (`..._outside_both_roots_still_blocked`) pasa
-      tanto ANTES como DESPUES del fix (no debe cambiar de comportamiento).
-- [ ] Ningun test existente de `tests/test_guard_paths.py` se rompe
-      (correr el archivo completo).
-- [ ] `ruff check tests/test_guard_paths.py` y
-      `ruff format --check tests/test_guard_paths.py` exit 0.
+Mutation check (documentar en `execution_log.md`): comentar temporalmente
+la linea `_git(repo, "config", "gc.auto", "0")` anadida en el Paso 1,
+confirmar que `test_make_repo_disables_autogc` FALLA (la config no esta
+seteada, `git config --get gc.auto` devuelve cadena vacia o exit distinto
+de 0), restaurar la linea y confirmar que el test vuelve a pasar.
 
-### PASO 3 (VERIFY) - Verificacion final combinada
-
-Comandos (Builder ejecuta, cita salida literal en `execution_log.md`):
-
-`.venv\Scripts\python.exe -m pytest tests/test_guard_paths.py -v`
-
-`.venv\Scripts\python.exe -m pytest tests/unit/test_claude_guard_entry.py -v`
-(debe seguir en verde SIN cambios: confirma que el entry no se toco).
-
-`ruff check .agent/hooks/guard_paths.py tests/test_guard_paths.py`
-
-`ruff format --check .agent/hooks/guard_paths.py tests/test_guard_paths.py`
-
-Y la suite canonica completa antes de mark-ready:
-
-`.venv\Scripts\python.exe scripts/run_pytest_safe.py`
+DoD Paso 3:
+- [ ] `test_make_repo_disables_autogc` existe, pasa tras el fix, y FALLA
+      cuando se comenta la linea del fix (mutation check documentado con
+      salida literal de pytest).
+- [ ] `.venv\Scripts\python.exe -m pytest tests/test_check_publication_gate.py -v`
+      exit 0 con los 9 tests (8 existentes + 1 nuevo).
 
 ## Quality Gates
 
 - Builder ejecuta:
-  - `.venv\Scripts\python.exe -m pytest tests/test_guard_paths.py -v` (exit
-    0, incluyendo los 6+ tests nuevos).
-  - `.venv\Scripts\python.exe -m pytest tests/unit/test_claude_guard_entry.py
-    -v` (exit 0, SIN modificaciones -- confirma que el entry no cambio de
-    comportamiento).
-  - `ruff check .agent/hooks/guard_paths.py tests/test_guard_paths.py`
-    (exit 0).
-  - `ruff format --check .agent/hooks/guard_paths.py
-    tests/test_guard_paths.py` (exit 0).
+  - `.venv\Scripts\python.exe -m pytest tests/test_check_publication_gate.py -v`
+    (exit 0, 9 tests incluyendo el nuevo).
+  - `ruff check tests/test_check_publication_gate.py` (exit 0).
+  - `ruff format --check tests/test_check_publication_gate.py` (exit 0).
   - `.venv\Scripts\python.exe scripts/run_pytest_safe.py` (suite completa,
     stamp fresco sobre HEAD; level=all, exit_code=0).
 - Manager gate (Builder NO lo ejecuta salvo diagnostico local):
   - `.venv\Scripts\python.exe .agent\agent_controller.py --validate --json
     --project-root .`
+- Gate CI-only, PENDIENTE-POST-PUSH (razon: depende del runner remoto de
+  GitHub Actions, no reproducible localmente segun Paso 2):
+  - `gh run list --workflow "Quality Gates" --limit 1` tras el push del
+    commit del fix debe mostrar `conclusion: success` para ambos legs del
+    matrix (3.10 y 3.11).
 
 ## STOP conditions
 
-- Si `_resolve_extra_root` termina propagando CUALQUIER excepcion (en vez
-  de devolver `None` fail-safe) ante un `AGENT_PROJECT_ROOT` malformado o un
-  `motor_destination_link.json` corrupto: DETENTE, es una regresion de
-  disponibilidad del hook (el guard debe seguir funcionando con un unico
-  root si el segundo root no resuelve).
-- Si el fix requiere tocar `claude_guard_entry.py` o
-  `canonical_hook_command()` para funcionar (p. ej. porque `guard_paths.py`
-  no puede acceder a `AGENT_PROJECT_ROOT` o al link con la informacion que
-  ya recibe): DETENTE y escala al Manager -- esto invalidaria la premisa de
-  la Opcion (a) elegida en este plan.
-- Si algun test existente de `tests/test_guard_paths.py` o
-  `tests/unit/test_claude_guard_entry.py` se rompe con el cambio: DETENTE,
-  escala antes de forzar el test existente a pasar cambiando su asercion.
-- Si el test fail-closed (path fuera de ambos roots) empieza a pasar
-  (`blocked=False`) en algun escenario: DETENTE inmediatamente, es una
-  regresion de seguridad critica (el guard dejaria de bloquear escrituras
-  arbitrarias fuera de los repos conocidos).
+- Si `test_make_repo_disables_autogc` NO falla al comentar la linea del
+  fix (mutation check ausente o mal ejecutado): DETENTE, el test es un
+  placebo, no hay evidencia de que verifique el mecanismo real.
+- Si algun test existente de `tests/test_check_publication_gate.py` se
+  rompe con el cambio: DETENTE, escala antes de forzar el test existente a
+  pasar cambiando su asercion.
+- Si el Builder intenta anadir `fetch-depth: 0` a `quality-gates.yml` o
+  cualquier otro cambio de workflow: DETENTE y escala al Manager -- esto
+  contradice la Decision Arquitectonica de este plan (Opcion A descartada
+  por evidencia).
+- Si el Builder intenta modificar `scripts/check_publication_gate.py`,
+  `scripts/classify_publication.py` o `tests/conftest.py`: DETENTE y
+  escala -- fuera del alcance declarado en Files Likely Touched.
 
 ## Non-goals
 
-- NO modificar `claude_guard_entry.py` ni `canonical_hook_command()` (el
-  bootstrap del hook y el gate de portabilidad que lo valida quedan
-  intactos).
-- NO anadir un tercer origen de root (solo `AGENT_PROJECT_ROOT` y
-  `destination_root` del link).
-- NO relajar `PROTECTED_PATH_PATTERNS`, `PROTECTED_FILENAMES` ni
-  `write_roots` para ninguno de los dos roots.
-- NO importar `runtime.project_root` desde el hook standalone.
-- NO cambiar el `agents.json` de configuracion del guard (perfiles,
-  `write_roots` por perfil quedan iguales).
+- NO anadir `fetch-depth: 0` a `.github/workflows/quality-gates.yml`
+  (Opcion A descartada por evidencia; ver Decision Arquitectonica).
+- NO modificar `scripts/check_publication_gate.py` ni
+  `scripts/classify_publication.py` (produccion, fuera de alcance).
+- NO modificar `tests/conftest.py` ni el mecanismo de `tmp_path` del
+  proyecto (blast-radius de toda la suite).
+- NO intentar reproducir de forma determinista la carrera de `git gc
+  --auto` en el entorno local de este ticket (confirmado irreproducible en
+  Windows tras 3 intentos; el criterio de cierre real es CI-only,
+  PENDIENTE-POST-PUSH).
+- NO anadir tests nuevos a ningun otro archivo de `tests/` (el patron de
+  "muchos commits en bucle" es exclusivo de
+  `tests/test_check_publication_gate.py`).
 
 ## Riesgos
 
-- Bajo: `_resolve_extra_root` mal implementado podria abrir un bypass de
-  seguridad si no se aplican `PROTECTED_PATH_PATTERNS`/`write_roots` al
-  segundo root -- mitigado con DoD explicito y un test dedicado (test 6
-  del Paso 2) que verifica que el segundo root SIGUE sujeto a esos checks.
-- Bajo: un `AGENT_PROJECT_ROOT` heredado de una sesion anterior (variable de
-  entorno que sobrevive entre invocaciones del hook en el mismo proceso
-  harness) podria ampliar el alcance del guard mas alla de lo esperado si
-  apunta a un destino ya no vigente -- mitigado porque el hook siempre
-  re-lee la env var en cada invocacion (no hay cache), y el test 5 cubre el
-  caso de un valor que no resuelve a un directorio existente.
-- Bajo: el patron de lectura del link ya existe y esta probado
-  (`resolve_guard_paths`, `resolve_destino_root`); el unico codigo
-  genuinamente nuevo es la generalizacion de `_is_within_repo` a 2 roots,
-  cambio pequeno y cubierto por el test fail-closed.
+- Bajo: `gc.auto=0` en el repo fixture podria, en teoria, dejar de
+  ejercitar codigo de produccion que dependiera de que `git gc` corriera
+  durante el test -- mitigado porque ningun check de
+  `check_publication_gate.py`/`classify_publication.py` invoca ni depende
+  de `git gc` en ningun punto (confirmado por lectura completa de ambos
+  archivos: solo usan `rev-list`, `ls-tree`, `show`, `log`, `status`,
+  `grep`).
+- Bajo: el fix corrige el MECANISMO documentado (carrera de gc en
+  background) pero, al ser CI-only, el cierre depende de observar un run
+  verde de CI tras el push -- mitigado con el gate PENDIENTE-POST-PUSH
+  explicito en Quality Gates y con el Paso 2 documentando por que no puede
+  verificarse antes.
+- Bajo: si el fallo real de CI tuviera una causa adicional no cubierta por
+  `gc.auto=0` (por ejemplo un limite de recursos del runner en vez de gc),
+  el siguiente run de CI seguiria fallando -- mitigado porque el gate
+  PENDIENTE-POST-PUSH exige observar el resultado real antes de dar el
+  ticket por cerrado; si CI sigue en rojo con el mismo traceback, el
+  Manager debe reabrir el diagnostico en vez de asumir cierre.
 
 ## Decision sobre REVIEW
 
-Single-review basta (no se exige Review 2 adversarial), condicionado a que
-el test fail-closed (Paso 2, test 3) este presente y en verde. Justificacion:
-- Blast-radius minimo y localizado: un unico archivo de produccion tocado
-  (`.agent/hooks/guard_paths.py`), sin cambios al entry ni al bootstrap ni
-  al gate de portabilidad.
-- El patron de lectura fail-safe del link ya existe y esta probado en 2
-  sitios del codigo (`resolve_guard_paths`, `resolve_destino_root`); no se
-  introduce un mecanismo de resolucion nuevo, solo se reutiliza el mismo
-  patron dentro de `guard_paths.py`.
-- El criterio de aceptacion mas critico (fail-closed sobre un tercer path)
-  es un test explicito y obligatorio con su propia DoD y STOP condition
-  dedicada, verificable de forma binaria sin necesidad de una segunda
-  pasada adversarial completa.
-- Prioridad Media de la ficha original, deliverable_type=code, mismo estilo
-  de fix quirurgico que 019b/019d (single-review, ya validado en el ciclo
-  anterior para cambios de blast-radius comparable).
+Review 2 adversarial fresh-context OBLIGATORIA (la ficha original la exige
+por tocar CI/workflow con alto blast-radius). Aunque el diagnostico final
+de Fase 0 concluye que el fix NO toca ningun workflow (solo un archivo de
+test), se mantiene la Review 2 obligatoria por dos razones: (1) la
+naturaleza CI-only del criterio de cierre (el gate real depende de un run
+remoto de GitHub Actions, no de un test local) requiere una segunda mirada
+fresh-context que confirme que el traceback de CI post-push coincide con
+el mecanismo documentado aqui antes de dar el ticket por cerrado; (2) el
+propio diagnostico de Fase 0 revirtio la premisa inicial de la ficha (el
+fallo no esta en `check_loose_pattern` ni depende de `fetch-depth`), y un
+cambio de diagnostico de esta magnitud debe re-verificarse por un segundo
+agente sin el contexto de la sesion que lo produjo.
 
 ## Criterios de Aceptacion Global (1:1 con el criterio de aceptacion de la ficha)
 
-- [ ] Existe un test que reproduce el bloqueo actual: cwd=repo_motor + Write
-      a una ruta del repo_destino declarado via `AGENT_PROJECT_ROOT` (o via
-      `destination_root` del link) -- ese test FALLA contra el codigo
-      pre-fix (mutation check documentado) y PASA tras el fix.
-- [ ] Existe un test fail-closed: Write a un tercer path fuera de AMBOS
-      repos sigue bloqueado con "fuera del repo" tanto antes como despues
-      del fix.
-- [ ] `claude_guard_entry.py` y `canonical_hook_command()` no aparecen
-      modificados en el diff final.
-- [ ] `PROTECTED_PATH_PATTERNS`/`PROTECTED_FILENAMES`/`write_roots` se
-      siguen aplicando sobre paths que caen en el segundo root (destino),
-      no solo sobre el primero (motor).
-- [ ] Ningun test existente de `tests/test_guard_paths.py` ni de
-      `tests/unit/test_claude_guard_entry.py` se rompe.
-- [ ] `ruff check` y `ruff format --check` exit 0 sobre ambos archivos
-      tocados.
+- [ ] `_make_repo` invoca `git config gc.auto 0` tras `git init`, verificado
+      por un test determinista (`test_make_repo_disables_autogc`) que FALLA
+      contra el codigo pre-fix (mutation check documentado con salida
+      literal de pytest) y PASA tras el fix.
+- [ ] Los 8 tests existentes de `tests/test_check_publication_gate.py`
+      siguen pasando localmente sin cambio de aserciones.
+- [ ] `.github/workflows/quality-gates.yml` y
+      `.github/workflows/security-audit.yml` NO aparecen modificados en el
+      diff final (Opcion A descartada explicitamente).
+- [ ] `scripts/check_publication_gate.py`, `scripts/classify_publication.py`
+      y `tests/conftest.py` NO aparecen modificados en el diff final.
+- [ ] `ruff check` y `ruff format --check` exit 0 sobre
+      `tests/test_check_publication_gate.py`.
 - [ ] `.venv\Scripts\python.exe scripts/run_pytest_safe.py` verde (stamp
       fresco sobre HEAD, level=all, exit_code=0).
 - [ ] `.venv\Scripts\python.exe .agent\agent_controller.py --validate
       --json --project-root .` exit 0/0 tras el cierre.
+- [ ] PENDIENTE-POST-PUSH: el siguiente run de `Quality Gates` en CI tras
+      el push del commit del fix termina en `conclusion: success` para
+      ambos legs del matrix (3.10, 3.11), confirmado con
+      `gh run list --workflow "Quality Gates" --limit 1`.
