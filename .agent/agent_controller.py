@@ -890,8 +890,24 @@ def _capture_builder_session(plan_id: str, current_round: int) -> dict | None:
         return session_data
 
     except sqlite3.OperationalError as exc:
+        # WOT-2026-019d: SEGURO, no tocar. sqlite3.OperationalError no tiene
+        # .filename; su mensaje describe el error SQL, no una ruta de filesystem.
         print(
             f"[WARN] OpenCode DB query failed (schema mismatch?): {exc}",
+            flush=True,
+        )
+        return None
+    except OSError as exc:
+        # WOT-2026-019d: str(exc) de un OSError (p.ej. de session_path.write_text)
+        # concatena la ruta absoluta local (con username). Componer el mensaje
+        # a mano sin exponer nunca la ruta cruda.
+        if exc.filename:
+            where = scope_gate._relativize_scope_path(exc.filename, PROJECT_ROOT)
+            detail = f"{exc.strerror} (errno {exc.errno}) en {where}"
+        else:
+            detail = f"{exc.strerror} (errno {exc.errno})"
+        print(
+            f"[WARN] Failed to capture OpenCode session: {detail}",
             flush=True,
         )
         return None
@@ -1002,6 +1018,21 @@ def _create_human_gate_approval_request(
             flush=True,
         )
         return True
+    except OSError as exc:
+        # WOT-2026-019d: store.create_request persiste a archivo (ApprovalStore
+        # save/_write_store); un OSError real trae .filename absoluto. Componer
+        # el mensaje a mano sin exponer nunca la ruta cruda.
+        if exc.filename:
+            where = scope_gate._relativize_scope_path(exc.filename, PROJECT_ROOT)
+            detail = f"{exc.strerror} (errno {exc.errno}) en {where}"
+        else:
+            detail = f"{exc.strerror} (errno {exc.errno})"
+        print(
+            f"[ERROR] Failed to create HUMAN_GATE approval request: {detail}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return False
     except Exception as exc:
         print(
             f"[ERROR] Failed to create HUMAN_GATE approval request: {exc}",
@@ -1036,6 +1067,16 @@ def _auto_archive_closed_artifacts() -> None:
                 collaboration_dir=COLLAB_DIR,
                 dry_run=False,
             )
+    except OSError as exc:
+        # WOT-2026-019d: archive_collaboration_artifacts mueve/renombra archivos
+        # bajo COLLAB_DIR (ruta absoluta); un OSError real trae .filename. Componer
+        # el mensaje a mano sin exponer nunca la ruta cruda.
+        if exc.filename:
+            where = scope_gate._relativize_scope_path(exc.filename, PROJECT_ROOT)
+            detail = f"{exc.strerror} (errno {exc.errno}) en {where}"
+        else:
+            detail = f"{exc.strerror} (errno {exc.errno})"
+        print(f"[WARN] Auto-archive failed: {detail}")
     except Exception as exc:
         # Silent fail with debug logging - archiving is best-effort, not critical path
         print(f"[WARN] Auto-archive failed: {exc}")
@@ -1077,6 +1118,23 @@ def _check_mark_ready_archive_rename() -> dict | None:
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         rename_result = module.check_archive_rename_complete(project_root)
+    except OSError as exc:
+        # WOT-2026-019d: check_archive_rename_complete inspecciona el arbol de
+        # archivos bajo project_root (ruta absoluta); un OSError real trae
+        # .filename. Componer el mensaje a mano sin exponer nunca la ruta cruda.
+        if exc.filename:
+            where = scope_gate._relativize_scope_path(exc.filename, PROJECT_ROOT)
+            detail = f"{exc.strerror} (errno {exc.errno}) en {where}"
+        else:
+            detail = f"{exc.strerror} (errno {exc.errno})"
+        return {
+            "status": "blocked",
+            "reason": "archive_rename_guard_error",
+            "details": [
+                f"check_archive_rename_complete no pudo ejecutarse: {detail}. "
+                "Barrera fail-closed (WOT-2026-011h)."
+            ],
+        }
     except Exception as exc:
         return {
             "status": "blocked",
@@ -1609,6 +1667,8 @@ def _check_declared_deliverables_exist(plan_content: str) -> list[str]:
     try:
         from scripts.check_deliverables_exist import extract_paths_from_work_plan
 
+        # WOT-2026-019d: SEGURO, no tocar. extract_paths_from_work_plan es
+        # parsing puro de texto (sin I/O); el unico riesgo es el import.
         declared_paths = extract_paths_from_work_plan(plan_content)
     except Exception as exc:
         return [f"Could not inspect declared deliverables: {exc}"]
@@ -1684,6 +1744,8 @@ def _check_implementation_evidence(plan_id: str) -> list[str]:  # noqa: C901
                 "No implementation evidence: git diff shows no files changed "
                 "outside .agent/collaboration/"
             )
+    # WOT-2026-019d: SEGURO, no tocar. resolve_evidence solo ejecuta git via
+    # subprocess con manejo interno de OSError; no hace I/O directo propio.
     except Exception as exc:
         errors.append(f"Git check error (non-blocking): {exc}")
 
@@ -1884,6 +1946,17 @@ def _validate_contract_gap_coherence(plan_content: str) -> list[str]:  # noqa: C
         if not isinstance(contract_gap_events, list):
             return errors
         has_bus_event = bool(contract_gap_events)
+    except OSError as exc:
+        # WOT-2026-019d: bus.read_events -> _read_raw_events hace
+        # self.events_path.read_text; un OSError real trae .filename absoluto.
+        # Componer el mensaje a mano sin exponer nunca la ruta cruda.
+        if exc.filename:
+            where = scope_gate._relativize_scope_path(exc.filename, PROJECT_ROOT)
+            detail = f"{exc.strerror} (errno {exc.errno}) en {where}"
+        else:
+            detail = f"{exc.strerror} (errno {exc.errno})"
+        errors.append(f"CONTRACT_GAP coherence: error reading bus events: {detail}")
+        return errors
     except Exception as exc:
         errors.append(f"CONTRACT_GAP coherence: error reading bus events: {exc}")
         return errors
@@ -1906,8 +1979,18 @@ def _validate_contract_gap_coherence(plan_content: str) -> list[str]:  # noqa: C
     cg_pattern = f"CG-{ticket_id}.md"
     try:
         has_cg_file = (contract_gaps_dir / cg_pattern).exists()
-    except Exception as exc:
-        errors.append(f"CONTRACT_GAP coherence: error scanning contract_gaps/: {exc}")
+    except OSError as exc:
+        # WOT-2026-019d: Path.exists() re-lanza OSError (con .filename poblado)
+        # cuando errno no esta en la lista de errores ignorados de pathlib
+        # (p. ej. EACCES). Componer el mensaje a mano sin exponer la ruta cruda.
+        if exc.filename:
+            where = scope_gate._relativize_scope_path(exc.filename, PROJECT_ROOT)
+            detail = f"{exc.strerror} (errno {exc.errno}) en {where}"
+        else:
+            detail = f"{exc.strerror} (errno {exc.errno})"
+        errors.append(
+            f"CONTRACT_GAP coherence: error scanning contract_gaps/: {detail}"
+        )
         return errors
 
     # Coherence check: both must agree
@@ -2215,6 +2298,16 @@ def create_findings_file(plan_id: str = "N/A") -> Path:
         write_file(findings_path, content)
         print("  [OK] Creado findings.md")
 
+    except OSError as e:
+        # WOT-2026-019d: template_path.read_text/write_file hacen I/O directo
+        # sobre rutas absolutas bajo AGENT_DIR/COLLAB_DIR; un OSError real trae
+        # .filename. Componer el mensaje a mano sin exponer la ruta cruda.
+        if e.filename:
+            where = scope_gate._relativize_scope_path(e.filename, PROJECT_ROOT)
+            detail = f"{e.strerror} (errno {e.errno}) en {where}"
+        else:
+            detail = f"{e.strerror} (errno {e.errno})"
+        print(f"  [WARN] Error creando findings.md: {detail}")
     except Exception as e:
         print(f"  [WARN] Error creando findings.md: {e}")
 
@@ -2886,6 +2979,18 @@ def _run_pre_handoff_guard(plan_id: str, json_output: bool) -> dict:  # noqa: C9
 
         return guard_result
 
+    except OSError as exc:
+        # WOT-2026-019d: read_file(WORK_PLAN) y subprocess.run(cmd, ...) con
+        # guard_script pueden lanzar OSError (p.ej. FileNotFoundError) con
+        # .filename absoluto. Componer el mensaje a mano sin exponer la ruta
+        # cruda. Un unico bloque cubre AMBOS usos de exc (print y warnings).
+        if exc.filename:
+            where = scope_gate._relativize_scope_path(exc.filename, PROJECT_ROOT)
+            detail = f"{exc.strerror} (errno {exc.errno}) en {where}"
+        else:
+            detail = f"{exc.strerror} (errno {exc.errno})"
+        print(f"[WARN] Pre-handoff guard execution failed: {detail}")
+        return {"valid": True, "warnings": [f"Guard execution error: {detail}"]}
     except Exception as exc:
         print(f"[WARN] Pre-handoff guard execution failed: {exc}")
         return {"valid": True, "warnings": [f"Guard execution error: {exc}"]}
@@ -3456,6 +3561,9 @@ def _handle_resolve_launcher_roots(json_output: bool) -> int:
                 print(f"{key}: {value}")
         return 0
     except RuntimeError as e:
+        # WOT-2026-019d: SEGURO, no tocar. El unico raise RuntimeError de
+        # resolve_launcher_roots usa un mensaje fijo con el nombre de una clave
+        # de dict, nunca una ruta variable; RuntimeError no tiene .filename.
         print(f"[ERROR] {e}", file=sys.stderr, flush=True)
         return 1
 
@@ -5335,6 +5443,21 @@ def _handle_reopen_terminal_ticket(  # noqa: C901 - flag handler validates bus s
             collaboration_dir=get_collab_dir(),
             ticket_id=ticket_id,
         )
+    except OSError as exc:
+        # WOT-2026-019d: sync_state_projection hace state_md_path.write_text
+        # (ruta absoluta bajo collaboration_dir); un OSError real trae
+        # .filename. Componer el mensaje a mano sin exponer la ruta cruda.
+        if exc.filename:
+            where = scope_gate._relativize_scope_path(exc.filename, PROJECT_ROOT)
+            detail = f"{exc.strerror} (errno {exc.errno}) en {where}"
+        else:
+            detail = f"{exc.strerror} (errno {exc.errno})"
+        if not json_output:
+            print(
+                f"[WARN] Ticket {ticket_id} reopened in bus, but projection sync "
+                f"failed: {detail}",
+                file=sys.stderr,
+            )
     except Exception as exc:
         if not json_output:
             print(
@@ -5891,12 +6014,23 @@ def _handle_session_close(  # noqa: C901 - delegation handler with flag building
     except subprocess.TimeoutExpired:
         print("[ERROR] Session close timed out after 600s.", file=sys.stderr)
         return 1
+    except OSError as exc:
+        # WOT-2026-019d: subprocess.run(cmd, ...) lanza FileNotFoundError (una
+        # subclase de OSError) con .filename absoluto si el script/ejecutable
+        # no existe. Componer el mensaje a mano sin exponer la ruta cruda.
+        if exc.filename:
+            where = scope_gate._relativize_scope_path(exc.filename, PROJECT_ROOT)
+            detail = f"{exc.strerror} (errno {exc.errno}) en {where}"
+        else:
+            detail = f"{exc.strerror} (errno {exc.errno})"
+        print(f"[ERROR] Session close failed: {detail}", file=sys.stderr)
+        return 1
     except Exception as exc:
         print(f"[ERROR] Session close failed: {exc}", file=sys.stderr)
         return 1
 
 
-def _handle_main_action(
+def _handle_main_action(  # noqa: C901 - WOT-2026-019d: +1 branch from except OSError split
     skip_gates: bool, strict_mode: bool, json_output: bool, reset_turn_mode: bool
 ) -> int:
     """Handle main action determination and output."""
@@ -5921,6 +6055,17 @@ def _handle_main_action(
             print(
                 f"       Python files with imports: {len(project_map['importMap']['python_files'])}"
             )
+        except OSError as e:
+            # WOT-2026-019d: context_dir.mkdir/output_path.write_text hacen I/O
+            # directo sobre rutas absolutas bajo PROJECT_ROOT/AGENT_DIR; un
+            # OSError real trae .filename. Componer el mensaje sin exponer la
+            # ruta cruda.
+            if e.filename:
+                where = scope_gate._relativize_scope_path(e.filename, PROJECT_ROOT)
+                detail = f"{e.strerror} (errno {e.errno}) en {where}"
+            else:
+                detail = f"{e.strerror} (errno {e.errno})"
+            print(f"  [WARN] Scanner failed: {detail}")
         except Exception as e:
             print(f"  [WARN] Scanner failed: {e}")
     else:

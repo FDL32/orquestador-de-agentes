@@ -1,312 +1,401 @@
-# Work Plan - WOT-2026-019b
+# Work Plan - WOT-2026-019d
 
 ## Metadata
-- **ID:** WOT-2026-019b
-- **Estado:** COMPLETED
+- **ID:** WOT-2026-019d
+- **Estado:** APPROVED
 - **deliverable_type:** code
-- **Titulo:** Fuga PII en el detail de "stamp ilegible" de `_read_pytest_safe_verdict`
-  (OSError vuelca ruta absoluta con username).
+- **Titulo:** Inventario y correccion de los ~18 usos de str(exc)/{exc}/{e} en
+  `.agent/agent_controller.py` con clasificacion PII (follow-up de WOT-2026-019b).
 - **Asignado a:** Builder
 - **delivery_authority:** repo_motor
 
 ## Objetivo
 
-`.agent/agent_controller.py`, funcion `_read_pytest_safe_verdict` (linea 2014 y ss.),
-lineas 2038-2039:
+WOT-2026-019b corrigio un unico sitio (`_read_pytest_safe_verdict`, linea
+2036-2049) donde un `OSError` sin capturar por separado concatenaba la ruta
+absoluta local (con username) en el `detail` de un WARN. Su non-goal explicito
+dejo pendiente el resto: `.agent/agent_controller.py` tiene 18 ocurrencias
+totales de `str(exc)`/`{exc}`/`str(e)`/`{e}` (confirmado por grep en Fase 0 del
+Orquestador). De esas 18:
 
-except (OSError, json.JSONDecodeError) as exc:
-    return {"verdict": "inconclusive", "detail": f"stamp ilegible: {exc}"}
+- 1 es un comentario (linea 2039, no es un except real).
+- 1 ya esta corregida por WOT-2026-019b (linea 2049, except json.JSONDecodeError,
+  ya documentada como segura).
+- 16 son excepts reales pendientes de clasificar. Este ticket clasifica las 16 y
+  corrige las que sean PII-riesgo.
 
-Si la lectura del stamp (`.agent/runtime/pytest-safe/last-run.json`) falla con un
-`OSError` (permiso denegado, carpeta borrada a mitad de carrera, etc.), `str(exc)`
-concatena `strerror` + `errno` + la ruta absoluta (`exc.filename`), que bajo
-Windows incluye C:\Users\<username>\... . Ese `detail` se propaga a
-`run_quality_gates()` -> `results["warnings"]`/`summary` -> stdout y potencialmente a
-logs persistidos (execution_log.md, notifications.md) segun quien consuma el detail.
-Es una fuga de PII (username local) por la rama de error, analoga en espiritu a
-WOT-2026-016e (que ya resolvio el mismo problema para `record_scope_override` con
-`scope_gate._relativize_scope_path`).
+Este work_plan fija el subconjunto EXACTO de lineas a corregir (clasificacion
+verificada leyendo cada bloque try completo en la fuente real, no la tabla
+preliminar de la ficha). Los 16 excepts reales se dividen en:
 
-`json.JSONDecodeError` no tiene este problema: hereda de `ValueError`, no de
-`OSError`, y su `str(exc)` describe posicion/contenido del JSON invalido (linea,
-columna, caracter), nunca una ruta del filesystem. Confirmar esto es parte del DoD
-(no aplicar el mismo tratamiento a JSONDecodeError seria sobre-ingenieria; aplicar
-distinto tratamiento a OSError es el fix correcto).
+- 12 PII-riesgo (el try puede producir un OSError con .filename poblado por
+  I/O de filesystem bajo PROJECT_ROOT): lineas 900, 1007, 1041, 1085, 1888,
+  1910, 2219, 2890, 2891 (2890 y 2891 comparten el MISMO bloque except
+  Exception as exc, un solo fix cubre ambas), 5342, 5895, 5925.
+- 4 seguros (no hay ruta de OSError con filename explotable): lineas 894,
+  1614, 1688, 3459.
 
-Verificacion del objetivo (comando literal, tras el fix): el test de regresion nuevo
-(ver seccion Tests) fuerza un `OSError` con `exc.filename` = ruta absoluta bajo
-`PROJECT_ROOT` y verifica que el `detail` devuelto por `_read_pytest_safe_verdict` NO
-contiene el username del usuario (`os.environ` o `Path.home()`) ni la ruta absoluta
-completa, y SI contiene `<REPO_ROOT>` o el basename del archivo. Ademas, revertir el
-fix debe hacer FALLAR ese mismo test (mutation check), confirmando que el test es
-gobernante y no un placebo.
+## Contexto (Fase 0 del Orquestador + clasificacion definitiva de este plan)
 
-## Contexto (Fase 0 del Orquestador, verificado en vivo -- fuente de verdad de este
-plan; corrige la premisa original de la ficha)
+### Tabla de clasificacion (16 excepts reales; 2039 comentario y 2049 ya corregida excluidas)
 
-- Confirmado leyendo `.agent/agent_controller.py` lineas 2036-2039: el except
-  combinado `(OSError, json.JSONDecodeError)` esta exactamente donde dice la ficha, y
-  el f-string `f"stamp ilegible: {exc}"` es literal.
-- Demostrado en vivo que `str(OSError(...))` con `filename` seteado concatena
-  `strerror` + `errno` + la ruta: p. ej. para una ruta inexistente bajo el HOME del
-  usuario, el mensaje es "[Errno 2] No such file or directory: '<ruta-absoluta>'".
-  `PROJECT_ROOT` (usado para construir `stamp_path`) vive bajo el home del usuario en
-  esta maquina, por lo que cualquier `OSError` real al leer ese stamp arrastra el
-  username.
-- CORRECCION CLAVE a la premisa de la ficha original: la ficha proponia
-  "relativizar con el patron 016e/`_relativize_scope_path`" asumiendo que ese helper
-  vive en `agent_controller.py`. Verificado que NO es asi:
-  - `_relativize_scope_path` vive en `.agent/scope_gate.py` linea 539, firma
-    `_relativize_scope_path(path: str, repo_root: Path | None) -> str`. Renderiza
-    "<REPO_ROOT>/" + rel.as_posix() para paths dentro de `repo_root`, y cae a
-    `Path(path).name` (basename, nunca ruta absoluta) si el path no es relativizable
-    o si `repo_root` es `None`.
-  - `agent_controller.py` ya importa el modulo completo en la linea 52
-    (`import scope_gate  # noqa: E402 - sibling module in .agent/`) y ya lo llama
-    como `scope_gate.<funcion>(...)` en multiples sitios (lineas 306, 310, 326, 341,
-    356, 361, 369, 373, 400, 405, 415, 431, 440, 1195). Usar
-    `scope_gate._relativize_scope_path(...)` es el patron identico y NO introduce
-    dependencia nueva ni import nuevo.
-  - El helper toma un path (`str`), no una excepcion. NO se puede pasar `exc`
-    directamente al helper. El fix correcto compone el `detail` a mano para el caso
-    `OSError`: usar `exc.strerror`, `exc.errno`, y (solo si `exc.filename` no es
-    `None`) el resultado de `scope_gate._relativize_scope_path(exc.filename,
-    PROJECT_ROOT)`; para `json.JSONDecodeError` mantener `str(exc)` sin cambios (no
-    tiene el problema, y cambiarlo perderia informacion de diagnostico util --
-    linea/columna del JSON invalido).
-- Busqueda en `tests/` (grep -rln "_read_pytest_safe_verdict\|stamp ilegible"
-  tests/): un unico archivo, `tests/test_agent_controller.py`. Leidas las 9
-  referencias a `_read_pytest_safe_verdict` en ese archivo (clase `TestRunQualityGates`,
-  lineas 324-509): existen tests que mockean el valor de retorno de
-  `_read_pytest_safe_verdict` (verdict green/red/inconclusive) para probar
-  `run_quality_gates()`, y un test que escribe un `last-run.json` real para probar la
-  degradacion por cobertura parcial
-  (`test_read_pytest_safe_verdict_partial_coverage_is_inconclusive`, lineas 455-509).
-  Ninguno de los tests existentes cubre la rama except (OSError,
-  json.JSONDecodeError) ni el caso "stamp ilegible" -- confirmado con grep, 0
-  ocurrencias de "ilegible" salvo el propio codigo de produccion. El test de
-  regresion de este ticket es net-new, no hay riesgo de duplicar cobertura.
-- `PROJECT_ROOT` es una constante ya definida en `agent_controller.py` (usada en la
-  linea 2033 para construir `stamp_path`); el fix y el test deben reusarla, no
-  hardcodear otra ruta.
+| Linea | Funcion contenedora | Except | Que hace el try | Clasificacion | Evidencia |
+|---|---|---|---|---|---|
+| 894 | _capture_builder_session | sqlite3.OperationalError | Query a la DB de OpenCode (conn.execute) | SEGURO | sqlite3.OperationalError no tiene .filename; su mensaje describe el error SQL, no una ruta de filesystem. |
+| 900 | _capture_builder_session | Exception | Mismo bloque que 894, incluye session_path.write_text sobre _BUILDER_SESSION_PATH (ruta absoluta bajo PROJECT_ROOT) | RIESGO | write_text puede lanzar OSError (PermissionError, disco lleno) con .filename = ruta absoluta local. |
+| 1007 | _create_human_gate_approval_request | Exception | store.create_request llama a ApprovalStore.save que llama a self._write_store(store), persiste a archivo bajo el store path | RIESGO | bus/approval.py save/_write_store hacen I/O de archivo; OSError real trae .filename absoluto. Verificado leyendo bus/approval.py lineas 304-308 (save) y 367-392 (create_request). |
+| 1041 | _auto_archive_closed_artifacts | Exception | Importa y ejecuta archive_collaboration_artifacts(collaboration_dir=COLLAB_DIR) (mueve/renombra archivos bajo COLLAB_DIR) | RIESGO | Operacion de archivo real (rename/move) sobre rutas absolutas bajo PROJECT_ROOT. |
+| 1085 | _check_mark_ready_archive_rename | Exception | Ejecuta check_archive_rename_complete(project_root) de scripts/delivery_hygiene_check.py (inspecciona el arbol de archivos) | RIESGO | Inspeccion de filesystem sobre project_root (ruta absoluta); un fallo de I/O real puede traer .filename. |
+| 1614 | _check_declared_deliverables_exist | Exception | from scripts.check_deliverables_exist import extract_paths_from_work_plan; extract_paths_from_work_plan(plan_content) | SEGURO | extract_paths_from_work_plan(content: str) es parsing puro de texto (verificado leyendo scripts/check_deliverables_exist.py lineas 338-341); no hace I/O. El unico riesgo del try es el import (ImportError/ModuleNotFoundError), cuyo mensaje cita el nombre del modulo, no una ruta absoluta arbitraria del usuario. |
+| 1688 | _check_implementation_evidence | Exception | from bus.evidence import resolve_evidence; resolve_evidence(_MOTOR_ROOT, PROJECT_ROOT, plan_id) | SEGURO | resolve_evidence (verificado leyendo bus/evidence.py completo) solo ejecuta subprocess.run(git ...) via _run_git_cmd, que ya captura (subprocess.TimeoutExpired, FileNotFoundError, OSError) internamente y devuelve set() en error. resolve_evidence no tiene ninguna llamada directa a open/read_text/write_text. |
+| 1888 | _validate_contract_gap_coherence | Exception | bus.read_events(ticket_id=..., event_type=CONTRACT_GAP) llama a _read_raw_events que llama a self.events_path.read_text | RIESGO | Verificado leyendo bus/event_bus.py lineas 84-95 (_read_raw_events): read_text sobre events_path (ruta absoluta bajo el runtime dir) puede lanzar OSError con .filename. |
+| 1910 | _validate_contract_gap_coherence | Exception | (contract_gaps_dir / cg_pattern).exists() | RIESGO | Path.exists() de CPython captura OSError solo si errno esta en _IGNORED_ERROS/_IGNORED_WINERRORS (ENOENT, ENOTDIR, EBADF, ELOOP y 3 winerrors); cualquier otro OSError (p. ej. EACCES/permiso denegado, o rutas UNC problematicas) se re-lanza con .filename = contract_gaps_dir / cg_pattern (ruta absoluta). Verificado leyendo el source real de pathlib.Path.exists instalado (_ignore_error). |
+| 2219 | create_findings_file | Exception | template_path.read_text mas write_file(findings_path, content) que hace open(path, w) | RIESGO | Ambas operaciones son I/O directo sobre rutas absolutas bajo AGENT_DIR/COLLAB_DIR. |
+| 2890 | _run_pre_handoff_guard | Exception | read_file(WORK_PLAN), subprocess.run([sys.executable, guard_script, ...]), _fallback_checkpoint_motor, _resolve_motor_checkpoint_files | RIESGO | read_file hace open(); subprocess.run con ejecutable/script ausente lanza FileNotFoundError con .filename = ruta absoluta del script. Mismo bloque except que 2891. |
+| 2891 | _run_pre_handoff_guard | (mismo except que 2890) | (mismo try que 2890) | RIESGO | Mismo bloque; el fix de 2890 cubre automaticamente 2891 (dos print/return que citan el mismo exc, un solo except Exception as exc). |
+| 3459 | _handle_resolve_launcher_roots | RuntimeError | _resolve_launcher_roots(PROJECT_ROOT) llama a motor_checkpoint.resolve_launcher_roots | SEGURO | Verificado leyendo .agent/motor_checkpoint.py lineas 397-421: el UNICO raise RuntimeError es f"Cannot resolve empty {key}", donde key es el nombre de una clave de dict (repo_motor_root, repo_destino_root, workspace_activo_root), nunca una ruta. RuntimeError no tiene atributo .filename. |
+| 5342 | _handle_reopen_terminal_ticket | Exception | sync_state_projection(runtime_dir=..., collaboration_dir=..., ticket_id=...) llama a state_md_path.write_text | RIESGO | Verificado leyendo scripts/state_projection_sync.py lineas 25-65: write_text sobre collaboration_dir / STATE.md (ruta absoluta) puede lanzar OSError con .filename. |
+| 5895 | _handle_session_close | Exception | subprocess.run(cmd) invoca script de cierre mas _sync_state_after_session_close() | RIESGO | subprocess.run con script ausente lanza FileNotFoundError con .filename = ruta absoluta del script/interprete. |
+| 5925 | _handle_main_action | Exception | context_dir.mkdir(parents=True, exist_ok=True), scan_project(...), output_path.write_text(...) | RIESGO | mkdir/write_text sobre rutas absolutas bajo PROJECT_ROOT/AGENT_DIR pueden lanzar OSError con .filename. |
+
+### Nota sobre el patron de fix (identico a WOT-2026-019b, NO reinventar)
+
+Para cada uno de los 12 sitios PII-riesgo, el patron probado en 019b
+(agent_controller.py funcion _read_pytest_safe_verdict, commit b0d8d7b) es el
+UNICO patron autorizado:
+
+1. Si el try puede lanzar tanto OSError como otras excepciones (p. ej.
+   Exception generico que en la practica solo captura OSError en el path de
+   I/O), separar el except en dos ramas: una especifica except OSError as exc
+   y otra que preserva el comportamiento actual para el resto de excepciones
+   NO relacionadas con filesystem (mantener except Exception as exc para el
+   resto, con su str(exc) intacto si no toca filesystem).
+2. Dentro de except OSError as exc, componer el detail/mensaje a mano:
+   exc.strerror + exc.errno + (solo si exc.filename no es None) el resultado
+   de scope_gate._relativize_scope_path(exc.filename, PROJECT_ROOT). NUNCA
+   usar str(exc) ni exc.filename crudo dentro de la rama OSError.
+3. Guard obligatorio para exc.filename is None (algunos OSError no lo
+   traen): en ese caso el detail usa solo strerror+errno, sin intentar
+   relativizar None.
+4. scope_gate._relativize_scope_path NO se modifica (ya existe, firma
+   _relativize_scope_path(path: str, repo_root: Path | None) -> str,
+   .agent/scope_gate.py lineas 539-557). Se llama tal cual, mismo patron ya
+   usado 15 veces en el archivo (14 previas + el uso de 019b).
+5. Si el except Exception original tambien debe seguir capturando
+   excepciones no-OSError del mismo try (p. ej. ImportError,
+   sqlite3.OperationalError en un try mixto), preservar una segunda rama
+   except Exception as exc DESPUES de except OSError as exc para no perder
+   cobertura de esas otras excepciones (Python evalua los except en orden;
+   OSError debe ir primero para interceptar el caso de filesystem antes de
+   que caiga al generico).
+
+### Casos con matiz especifico (leer antes de implementar)
+
+- 900 (_capture_builder_session): el bloque ya tiene DOS excepts separados:
+  except sqlite3.OperationalError as exc (894, SEGURO, no tocar) y except
+  Exception as exc (900, RIESGO). El fix debe insertar except OSError as exc
+  ANTES del except Exception as exc existente (el orden importa: OSError mas
+  especifico primero), y dejar except Exception as exc como ultimo recurso
+  para cualquier otra excepcion no-OSError del mismo try (p. ej. errores de
+  la libreria sqlite3 que no sean OperationalError). NO tocar el except
+  sqlite3.OperationalError existente.
+- 2890/2891 (_run_pre_handoff_guard): un UNICO except Exception as exc
+  produce DOS mensajes que citan exc (el print en 2890 y el warnings en 2891,
+  ambos parte del mismo return). El fix es UNA sola insercion de except
+  OSError as exc antes del except Exception as exc existente; el detail
+  compuesto (sin ruta cruda) se usa en AMBOS lugares donde antes se usaba exc
+  (el print y el warnings list).
+- 1910 (_validate_contract_gap_coherence, segundo except del par 1888/1910):
+  el try de 1910 SOLO contiene (contract_gaps_dir / cg_pattern).exists(), una
+  sola expresion. El fix aqui es directo: separar en except OSError as exc
+  (compone detail seguro) sin rama adicional except Exception (no hay otro
+  tipo de excepcion esperada de .exists() segun el source de pathlib
+  verificado).
+- 1041 (_auto_archive_closed_artifacts) y 1085
+  (_check_mark_ready_archive_rename): ambos try mezclan importlib (que puede
+  lanzar excepciones de import, no relacionadas con filesystem directo) con
+  la ejecucion de la funcion importada (que SI toca filesystem). Mantener
+  except Exception as exc como red de seguridad DESPUES de except OSError as
+  exc para no perder cobertura de errores de import.
 
 ## Files Likely Touched
 
 ### repo_motor
 
-- `.agent/agent_controller.py` (fix: separar el manejo de `OSError` de
-  `json.JSONDecodeError` en `_read_pytest_safe_verdict`, lineas 2036-2039)
-- `tests/test_agent_controller.py` (test de regresion nuevo en la clase
-  `TestRunQualityGates`, junto a
-  `test_read_pytest_safe_verdict_partial_coverage_is_inconclusive`)
+- .agent/agent_controller.py (los 12 sitios PII-riesgo: lineas 900, 1007,
+  1041, 1085, 1888, 1910, 2219, 2890, 2891, 5342, 5895, 5925 -- separar
+  except OSError con detail seguro via scope_gate._relativize_scope_path)
+- tests/test_agent_controller.py (1 test de regresion nuevo por cada uno de
+  los 12 sitios PII-riesgo, mas su mutation check documentado; total 12
+  tests nuevos como minimo)
 
 ## Read/inspect only (Manager-only / no tocar)
 
-- `.agent/scope_gate.py` (fuente de `_relativize_scope_path`, linea 539-557; se
+- .agent/scope_gate.py (fuente de _relativize_scope_path, linea 539-557; se
   llama, no se edita)
+- bus/approval.py (fuente de ApprovalStore.save/_write_store; solo lectura
+  para confirmar el patron de I/O, no se edita)
+- bus/event_bus.py (fuente de _read_raw_events; solo lectura, no se edita)
+- bus/evidence.py (fuente de resolve_evidence; solo lectura para confirmar
+  que el sitio 1688 es SEGURO, no se edita)
+- scripts/check_deliverables_exist.py (fuente de
+  extract_paths_from_work_plan; solo lectura para confirmar que el sitio
+  1614 es SEGURO, no se edita)
+- scripts/state_projection_sync.py (fuente de sync_state_projection; solo
+  lectura, no se edita)
+- .agent/motor_checkpoint.py (fuente de resolve_launcher_roots; solo lectura
+  para confirmar que el sitio 3459 es SEGURO, no se edita)
 
 ## Plan de Implementacion
 
-### PASO 1 (IMPLEMENT) - `.agent/agent_controller.py`
+### PASO 1 (IMPLEMENT) - .agent/agent_controller.py, sitios PII-riesgo
 
-Que cambia: reescribir el bloque try/except de las lineas ~2036-2039 de
-`_read_pytest_safe_verdict` para que `OSError` y `json.JSONDecodeError` se manejen en
-excepts separados:
+Para cada uno de los 12 sitios (900, 1007, 1041, 1085, 1888, 1910, 2219,
+2890, 2891 [mismo bloque que 2890], 5342, 5895, 5925), aplicar el patron
+fijado en "Nota sobre el patron de fix" arriba:
 
-- `except json.JSONDecodeError as exc:` -> mantener el comportamiento actual
-  (detail = f"stamp ilegible: {exc}"), sin cambios de fondo.
-- `except OSError as exc:` -> construir un `detail` que NO contenga la ruta absoluta:
-  usar `exc.strerror` y `exc.errno`, y si `exc.filename` esta poblado, adjuntar
-  `scope_gate._relativize_scope_path(exc.filename, PROJECT_ROOT)` (nunca
-  `exc.filename` crudo ni `str(exc)`).
-
-Cambio MINIMO: no tocar el resto de la funcion (las ramas de `head_sha`, `tested_sha`,
-`level`/`args_mode`, `exit_code` permanecen intactas byte a byte). No tocar ningun
-otro except/f-string en el archivo (los ~16 restantes son follow-up 019d explicito,
-fuera de scope de este ticket).
+1. Insertar except OSError as exc ANTES de cualquier except Exception
+   existente del mismo try (Python evalua los excepts en orden de
+   aparicion; OSError debe interceptar antes que el generico).
+2. Componer el detail/mensaje sin exponer str(exc) ni exc.filename crudo:
+   exc.strerror + exc.errno + (si exc.filename no es None)
+   scope_gate._relativize_scope_path(exc.filename, PROJECT_ROOT).
+3. Preservar el resto del mensaje original (prefijos como "[WARN]
+   Auto-archive failed: ", "[ERROR] Failed to create HUMAN_GATE approval
+   request: ", etc.) intactos; solo cambia la parte que antes era
+   {exc}/str(exc).
+4. Si el try original solo capturaba Exception (sin otra rama previa),
+   mantener una rama except Exception as exc DESPUES de la nueva except
+   OSError as exc para no perder cobertura de excepciones no-OSError del
+   mismo bloque (import errors, etc.) -- ESA rama sigue usando {exc} tal
+   cual (no tiene el problema de PII).
+5. NO fusionar los 12 sitios en un helper compartido nuevo: cada sitio
+   mantiene su propio bloque except en su funcion, replicando el patron
+   inline (igual que 019b hizo para _read_pytest_safe_verdict). Un helper
+   compartido esta fuera de scope (ver Non-goals).
 
 Restricciones:
-- NO modificar la firma ni el docstring de `_read_pytest_safe_verdict` mas alla de lo
-  estrictamente necesario para documentar el nuevo comportamiento del except (si el
-  Builder anade una linea al docstring explicando el fix, debe ser breve y no alterar
-  el contrato documentado de verdict/detail ya descrito).
-- NO tocar `.agent/scope_gate.py` (`_relativize_scope_path` se usa tal cual existe,
-  no se modifica su firma ni su comportamiento).
-- NO barrer otros usos de {exc}/str(exc) en `agent_controller.py` fuera de estas
-  dos lineas (ese es el scope explicito de 019d, un ticket futuro, NO este).
-- NO cambiar la visibilidad de los warnings de WOT-2026-016x (siguen imprimiendose a
-  stdout tal cual).
-- NO tocar la rama verde/roja del verdict (green/red), solo la rama
-  inconclusive que nace del except de lectura del stamp.
+- NO modificar el except sqlite3.OperationalError de la linea 894 (SEGURO,
+  no tocar).
+- NO modificar los 4 sitios SEGURO (894, 1614, 1688, 3459): en su lugar,
+  anadir un comentario breve de una linea en cada uno citando WOT-2026-019d
+  y la razon de por que NO se toca (ver PASO 2, documentacion).
+- NO modificar la logica de negocio de ninguna de las 10 funciones tocadas
+  (_capture_builder_session, _create_human_gate_approval_request,
+  _auto_archive_closed_artifacts, _check_mark_ready_archive_rename,
+  _validate_contract_gap_coherence, create_findings_file,
+  _run_pre_handoff_guard, _handle_reopen_terminal_ticket,
+  _handle_session_close, _handle_main_action): solo el manejo del except y
+  la composicion del detail/mensaje de error cambian.
+- NO tocar .agent/scope_gate.py (_relativize_scope_path se usa tal cual
+  existe).
+- NO barrer str(exc)/{exc} fuera de .agent/agent_controller.py (non-goal
+  explicito de la ficha).
 
 DoD Paso 1:
-- [ ] El except de OSError ya NO puede emitir una ruta absoluta local (ni via
-      str(exc) ni via exc.filename crudo): usa
-      scope_gate._relativize_scope_path(exc.filename, PROJECT_ROOT) cuando
-      exc.filename existe.
-- [ ] El except de json.JSONDecodeError sigue devolviendo f"stamp ilegible:
-      {exc}" sin cambios de fondo.
-- [ ] El resto de _read_pytest_safe_verdict (ramas head_sha, tested_sha,
-      level/args_mode, exit_code) no cambia (diff no debe tocarlas).
-- [ ] ruff check .agent/agent_controller.py y
-      ruff format --check .agent/agent_controller.py exit 0.
+- [ ] Los 12 sitios PII-riesgo (900, 1007, 1041, 1085, 1888, 1910, 2219,
+      2890, 2891, 5342, 5895, 5925) ya NO pueden emitir una ruta absoluta
+      local en su mensaje cuando el try lanza un OSError con .filename
+      poblado.
+- [ ] Cada sitio usa scope_gate._relativize_scope_path(exc.filename,
+      PROJECT_ROOT) cuando exc.filename existe, y cae a
+      solo-strerror-mas-errno cuando exc.filename es None.
+- [ ] El bloque 2890/2891 se corrige con UNA sola insercion de except
+      OSError (no duplicar el fix en dos sitios distintos del codigo).
+- [ ] Los 4 sitios SEGURO (894, 1614, 1688, 3459) llevan un comentario de
+      una linea citando WOT-2026-019d y la razon (sin cambiar su logica).
+- [ ] Ninguna otra rama de las 10 funciones tocadas cambia de
+      comportamiento (diff no debe tocar logica fuera del except).
+- [ ] ruff check .agent/agent_controller.py y ruff format --check
+      .agent/agent_controller.py exit 0.
 
-### PASO 2 (IMPLEMENT) - `tests/test_agent_controller.py`
+### PASO 2 (IMPLEMENT) - tests/test_agent_controller.py, 12 tests de regresion
 
-Que cambia: anadir un test de regresion nuevo en la clase TestRunQualityGates
-(mismo bloque que test_read_pytest_safe_verdict_partial_coverage_is_inconclusive,
-siguiendo su mismo patron de tmp_path/monkeypatch sobre
-agent_controller.PROJECT_ROOT y agent_controller reimportado localmente):
+Para cada uno de los 12 sitios PII-riesgo, anadir un test de regresion nuevo
+siguiendo el MISMO patron de monkeypatch usado en 019b
+(test_read_pytest_safe_verdict_oserror_detail_has_no_absolute_path,
+tests/test_agent_controller.py lineas 511-554):
 
-1. Forzar que la lectura del stamp (Path.read_text o la ruta completa de
-   stamp_path.read_text(...)) lance un OSError con filename seteado a una ruta
-   absoluta DENTRO de PROJECT_ROOT (monkeypatch de pathlib.Path.read_text, o
-   del metodo puntual que usa _read_pytest_safe_verdict, verificar en el codigo
-   real cual es el punto exacto de monkeypatch mas quirurgico: la llamada es
-   stamp_path.read_text(encoding="utf-8") en la linea 2037).
-2. Llamar ac._read_pytest_safe_verdict() y capturar detail.
-3. Aserciones:
-   - detail NO contiene ningun componente de la ruta absoluta completa que
-     exc.filename traia (ni el nombre del usuario/HOME, verificable comparando
-     contra str(Path.home()) o el segmento de usuario si la maquina de CI lo
-     expone; como minimo, detail no debe contener la cadena literal de la ruta
-     absoluta simulada).
-   - detail SI contiene "<REPO_ROOT>" (o el basename del archivo si el path
-     simulado cae fuera de PROJECT_ROOT -- pero el caso principal del test debe
-     estar DENTRO de PROJECT_ROOT para ejercer la rama de relativizacion).
-4. Verificacion mutation (documentar en execution_log.md, NO dejar el codigo
-   revertido en el commit final): revertir temporalmente el fix del Paso 1 (volver al
-   except (OSError, json.JSONDecodeError) as exc combinado con f"stamp ilegible:
-   {exc}") y confirmar que el test nuevo FALLA (la ruta absoluta reaparece en
-   detail); restaurar el fix y confirmar que vuelve a pasar. Citar literalmente el
-   resultado de ambas corridas (pytest -k del test nuevo) en execution_log.md.
+1. Localizar (o crear, si no existe una clase de test dedicada a la funcion
+   en cuestion) la clase de test correspondiente a cada funcion tocada.
+2. Forzar el OSError real en el punto de I/O especifico de cada sitio
+   (monkeypatch.setattr sobre el metodo puntual: Path.write_text,
+   Path.read_text, Path.exists, Path.mkdir, o subprocess.run/
+   FileNotFoundError segun corresponda a cada try), con exc.filename = ruta
+   absoluta DENTRO de tmp_path/PROJECT_ROOT simulado.
+3. Aserciones minimas por test (identicas en espiritu a las de 019b):
+   - El mensaje/detail resultante NO contiene la ruta absoluta simulada
+     completa (str(tmp_path) o el path exacto usado en el monkeypatch no
+     debe aparecer).
+   - El mensaje/detail NO contiene str(Path.home()) (el username real de la
+     maquina que ejecuta el test).
+   - El mensaje/detail SI contiene <REPO_ROOT> o el basename del archivo
+     (segun si el path simulado cae dentro o fuera de PROJECT_ROOT).
+   - La informacion de diagnostico util (strerror, errno) se conserva en el
+     mensaje.
+4. Mutation check por cada uno de los 12 tests (documentar en
+   execution_log.md, NO dejar el codigo revertido en el commit final):
+   revertir temporalmente el fix del sitio correspondiente (volver a except
+   Exception as exc con {exc}/str(exc) directo) y confirmar que el test
+   nuevo FALLA (la ruta absoluta reaparece); restaurar el fix y confirmar
+   que vuelve a pasar. Citar el resultado de pytest de cada mutation (al
+   menos el nombre del test + PASS/FAIL) en execution_log.md.
 
 Restricciones:
-- Seguir el estilo/patron de fixtures ya usado por
-  test_read_pytest_safe_verdict_partial_coverage_is_inconclusive (mismo
-  tmp_path, mismo monkeypatch.setattr(ac, "PROJECT_ROOT", tmp_path) o equivalente
-  si ese es el patron real -- confirmar leyendo el test existente completo antes de
-  escribir el nuevo, para no reinventar un fixture distinto sin necesidad).
-- NO borrar ni modificar ningun test existente de TestRunQualityGates.
-- El test nuevo debe ser deterministico (no depender del username real de la
-  maquina que ejecuta CI) -- construir la ruta absoluta simulada dentro de
-  tmp_path, no asumir un valor fijo de C:\Users\<algo>.
+- Los 12 tests deben ser deterministicos: construir la ruta absoluta
+  simulada dentro de tmp_path, no depender del username real de la maquina
+  de CI.
+- NO borrar ni modificar ningun test existente de
+  tests/test_agent_controller.py.
+- Si una funcion de las 10 tocadas no tiene aun una clase de test dedicada
+  (verificar con grep antes de asumir), el Builder puede crear una clase
+  nueva siguiendo el estilo de las existentes (class Test<Funcion>:), pero
+  documentar en execution_log.md cual eligio y por que.
 
 DoD Paso 2:
-- [ ] Test nuevo anadido en TestRunQualityGates, pasa en verde tras el fix.
-- [ ] Revertir el fix del Paso 1 hace FALLAR el test nuevo (mutation check
-      documentado en execution_log.md con la salida literal de pytest).
-- [ ] Ningun test existente de tests/test_agent_controller.py se rompe (correr la
-      clase completa TestRunQualityGates, no solo el test nuevo).
-- [ ] ruff check tests/test_agent_controller.py y
-      ruff format --check tests/test_agent_controller.py exit 0.
+- [ ] 12 tests de regresion nuevos anadidos (uno por sitio PII-riesgo,
+      2890/2891 pueden compartir un unico test si el mismo monkeypatch
+      cubre ambos usos de exc dentro del mismo bloque -- documentar la
+      eleccion).
+- [ ] Los 12 (u 11 si 2890/2891 se cubren con un solo test) pasan en verde
+      tras el fix.
+- [ ] Mutation check documentado en execution_log.md para cada uno:
+      revertir el fix puntual hace FALLAR su test correspondiente.
+- [ ] Ningun test existente de tests/test_agent_controller.py se rompe
+      (correr el archivo completo, no solo los tests nuevos).
+- [ ] ruff check tests/test_agent_controller.py y ruff format --check
+      tests/test_agent_controller.py exit 0.
 
 ### PASO 3 (VERIFY) - Verificacion final combinada
 
 Comandos (Builder ejecuta, cita salida literal en execution_log.md):
 
-.venv\Scripts\python.exe -m pytest tests/test_agent_controller.py -k "TestRunQualityGates" -v
+.venv\Scripts\python.exe -m pytest tests/test_agent_controller.py -v
+
 ruff check .agent/agent_controller.py tests/test_agent_controller.py
+
 ruff format --check .agent/agent_controller.py tests/test_agent_controller.py
 
-Y la suite canonica completa antes de mark-ready (obligatoria para el stamp que lee
-_read_pytest_safe_verdict en el propio gate -- dogfooding):
+Y la suite canonica completa antes de mark-ready (obligatoria: el propio
+gate de pre-handoff lee el stamp que corrige 019b, dogfooding continuo):
 
 .venv\Scripts\python.exe scripts/run_pytest_safe.py
 
 ## Quality Gates
 
 - Builder ejecuta:
-  - .venv\Scripts\python.exe -m pytest tests/test_agent_controller.py -k
-    "TestRunQualityGates" -v (exit 0, incluyendo el test de regresion nuevo).
-  - ruff check .agent/agent_controller.py tests/test_agent_controller.py (exit 0).
-  - ruff format --check .agent/agent_controller.py tests/test_agent_controller.py
+  - .venv\Scripts\python.exe -m pytest tests/test_agent_controller.py -v
+    (exit 0, incluyendo los 12 tests de regresion nuevos).
+  - ruff check .agent/agent_controller.py tests/test_agent_controller.py
     (exit 0).
-  - .venv\Scripts\python.exe scripts/run_pytest_safe.py (suite completa, stamp
-    fresco sobre HEAD; requisito para que el propio gate de pre-handoff/manager vea
-    verdict: green).
+  - ruff format --check .agent/agent_controller.py
+    tests/test_agent_controller.py (exit 0).
+  - .venv\Scripts\python.exe scripts/run_pytest_safe.py (suite completa,
+    stamp fresco sobre HEAD; level=all, exit_code=0).
 - Manager gate (Builder NO lo ejecuta salvo diagnostico local):
   - .venv\Scripts\python.exe .agent\agent_controller.py --validate --json
     --project-root .
 
 ## STOP conditions
 
-- Si el Builder descubre que el punto de monkeypatch mas quirurgico para forzar el
-  OSError NO es stamp_path.read_text(...) sino otro (p. ej. stamp_path.exists()
-  ya filtra antes de llegar al try, o hace falta interceptar Path.read_text a
-  nivel de clase): documentarlo en execution_log.md con prefijo hipotesis: si no
-  esta 100% verificado, y ajustar el test sin cambiar el objetivo del DoD.
+- Si algun sitio de la tabla de clasificacion NO se comporta como describe
+  este plan al leer el codigo en el momento de implementar (p. ej. el try
+  cambio de forma desde que se escribio este plan): documentar en
+  execution_log.md con prefijo hipotesis: si no esta 100% verificado, y
+  escalar antes de aplicar un fix distinto al patron fijado.
 - Si scope_gate._relativize_scope_path no esta accesible como
-  scope_gate._relativize_scope_path (p. ej. cambio de nombre/firma desde el
-  diagnostico de este plan): DETENTE y escala, no inventes un helper propio
-  duplicado en agent_controller.py.
-- Si el fix del Paso 1 rompe cualquier test YA existente de TestRunQualityGates (no
-  solo el nuevo): DETENTE, el cambio no es tan minimo como se penso, escala antes de
-  seguir.
+  scope_gate._relativize_scope_path en algun sitio (p. ej. import faltante
+  en el scope de esa funcion): DETENTE y escala, no inventes un helper
+  propio duplicado.
+- Si el fix de cualquiera de los 12 sitios rompe un test YA existente de
+  tests/test_agent_controller.py: DETENTE, escala antes de seguir; no
+  fuerces el test existente a pasar cambiando su asercion.
+- Si durante la implementacion el Builder identifica un 17mo sitio no
+  contemplado en el grep de Fase 0 (p. ej. una variante no cubierta por el
+  patron de busqueda usado): documentar en execution_log.md como hallazgo,
+  NO corregirlo en este ticket (fuera del subconjunto exacto fijado), y
+  sugerir un ticket de seguimiento.
 
 ## Non-goals
 
-- NO barrer los demas str(exc)/{exc} de .agent/agent_controller.py (~16
-  ocurrencias adicionales fuera de esta funcion) -- eso es el ticket follow-up 019d,
-  explicitamente NO este.
-- NO cambiar la visibilidad de los warnings de WOT-2026-016x (siguen impresos a
-  stdout).
-- NO tocar la rama verde/roja del verdict de _read_pytest_safe_verdict.
+- NO reescribir la logica de las 10 funciones tocadas: solo el manejo del
+  except y la composicion del detail/mensaje.
+- NO barrer str(exc)/{exc} fuera de .agent/agent_controller.py.
+- NO crear un helper compartido nuevo para componer el detail (el patron se
+  replica inline en cada sitio, igual que 019b).
 - NO modificar .agent/scope_gate.py ni la firma de _relativize_scope_path.
+- NO tocar los 4 sitios SEGURO (894, 1614, 1688, 3459) mas alla de anadir
+  un comentario de una linea documentando por que no se tocan.
+- NO modificar bus/approval.py, bus/event_bus.py, bus/evidence.py,
+  scripts/check_deliverables_exist.py, scripts/state_projection_sync.py ni
+  .agent/motor_checkpoint.py (solo lectura para confirmar clasificacion).
 
 ## Riesgos
 
-- Bajo: cambio quirurgico de una funcion de 2 lineas dentro de un helper de
-  diagnostico (_read_pytest_safe_verdict), sin tocar la logica de decision
-  green/red/inconclusive salvo el texto del detail en un unico sub-caso de error.
-  Blast radius acotado a un mensaje de warning/log, reversible trivialmente con git.
-- Bajo-medio: el punto exacto de monkeypatch para forzar OSError en la lectura del
-  stamp puede requerir iteracion (interceptar Path.read_text vs.
-  stamp_path.read_text) -- mitigado con la STOP condition explicita arriba
-  (documentar hipotesis, no bloquear el ticket por esto).
-- Bajo: json.JSONDecodeError no hereda de OSError (hereda de ValueError) --
-  confirmado en el diagnostico; el except OSError nuevo NO debe capturar
-  accidentalmente JSONDecodeError (Python los distingue correctamente por MRO, pero
-  el Builder debe verificar con un test que ambos excepts siguen disparando cada uno
-  para su tipo, no solo el caso OSError).
+- Bajo-medio: 12 sitios distintos en 10 funciones distintas del mismo
+  archivo incrementan el blast radius respecto a 019b (que toco 1 sitio),
+  pero cada fix individual es identico en forma al patron ya probado y
+  revisado en 019b; el riesgo se mitiga con un test + mutation check por
+  sitio.
+- Bajo: el bloque compartido 2890/2891 podria inducir al Builder a
+  duplicar el fix en dos lugares en vez de reconocer que es un unico
+  except; mitigado con la nota explicita en "Casos con matiz especifico".
+- Bajo: Path.exists() (sitio 1910) re-lanzando OSError es un caso poco
+  frecuente en la practica (solo con errores de permiso o rutas UNC
+  problematicas), pero el fix es identico al resto y no anade complejidad
+  extra.
+- Bajo: encontrar el punto de monkeypatch quirurgico correcto para cada
+  uno de los 12 sitios puede requerir iteracion (distintos metodos:
+  write_text, read_text, exists, mkdir, subprocess.run) -- mitigado con la
+  STOP condition explicita de documentar hipotesis si no esta verificado.
 
 ## Decision Arquitectonica
 
-Componer el detail de OSError a mano (strerror + errno + path relativizado) en
-vez de intentar pasar la excepcion completa a scope_gate._relativize_scope_path
-porque el helper esta disenado para recibir un path: str, no una excepcion; forzar
-la firma del helper para aceptar excepciones acoplaria scope_gate.py (modulo
-generico de scope) a la forma especifica de OSError, lo cual es peor diseno que
-extraer exc.filename en el sitio de uso (agent_controller.py) y pasar solo el
-string al helper existente, sin tocar scope_gate.py.
+Replicar el patron de 019b sitio por sitio (sin abstraer un helper
+compartido nuevo) porque: (a) cada sitio ya tiene su propio prefijo de
+mensaje ("[WARN] Auto-archive failed: ", "[ERROR] Failed to create
+HUMAN_GATE..." etc.) que un helper generico tendria que parametrizar sin
+ganancia real de mantenibilidad; (b) 019b establecio precedente de fix
+inline revisado y aprobado; introducir abstraccion nueva en un ticket de
+"solo mensajes de error" es sobre-ingenieria fuera del non-goal declarado
+("no reescribir la logica de las funciones tocadas").
 
 ## Decision sobre REVIEW
 
 Single-review basta (no se exige Review 2 adversarial). Justificacion:
-- Blast radius acotado a un unico sub-caso de error en una funcion diagnostica; no
-  toca logica de negocio del verdict green/red, ni bus, ni hooks, ni CI.
-- El fix reusa un helper ya existente y probado (scope_gate._relativize_scope_path,
-  con su propia cobertura de tests de WOT-2026-016e), no introduce logica nueva de
-  relativizacion.
-- Riesgo residual (mutation check del test nuevo + no romper tests existentes de
-  TestRunQualityGates) queda cubierto por DoD explicito y gates automatizados
-  (pytest focal + ruff + suite canonica completa).
-- Prioridad Baja de la ficha original, deliverable_type=code de blast radius minimo.
+- Blast radius por sitio identico al de 019b (ya aprobado con
+  single-review): cambia solo el manejo de un except y la composicion de
+  un mensaje de diagnostico, sin tocar logica de negocio de ninguna
+  funcion.
+- El fix reusa integramente un helper ya existente y probado
+  (scope_gate._relativize_scope_path, con su propia cobertura de tests de
+  WOT-2026-016e), no introduce logica nueva de relativizacion.
+- Los 12 sitios son independientes entre si (no hay interaccion cruzada:
+  cada uno vive en su propia funcion), por lo que el riesgo de romper un
+  sitio al corregir otro es bajo, y cada uno queda cubierto por su propio
+  test + mutation check.
+- Prioridad Baja de la ficha original, deliverable_type=code, mismo patron
+  ya validado en el ciclo anterior.
 
-## Criterios de Aceptacion Global (1:1 con el criterio binario de la ficha)
+## Criterios de Aceptacion Global (1:1 con el DoD de la ficha)
 
-- [ ] El except de OSError en _read_pytest_safe_verdict ya NO puede emitir una
-      ruta absoluta local en detail (usa scope_gate._relativize_scope_path sobre
-      exc.filename cuando existe).
-- [ ] El except de json.JSONDecodeError no cambia de comportamiento (str(exc)
-      sigue siendo seguro, confirmado no hereda de OSError).
-- [ ] Test de regresion nuevo en tests/test_agent_controller.py (clase
-      TestRunQualityGates) que fuerza el OSError y verifica ausencia de ruta
-      absoluta en detail.
-- [ ] Mutation check documentado: revertir el fix hace fallar el test nuevo.
-- [ ] ruff check y ruff format --check exit 0 sobre ambos archivos tocados.
-- [ ] .venv\Scripts\python.exe scripts/run_pytest_safe.py verde (stamp fresco sobre
-      HEAD, level=all, exit_code=0).
-- [ ] .venv\Scripts\python.exe .agent\agent_controller.py --validate --json
-      --project-root . exit 0/0 tras el cierre.
-
+- [ ] Tabla de los 16 excepts reales (18 grep hits menos 1 comentario menos
+      1 ya corregida por 019b) con clasificacion PII-riesgo/seguro y
+      justificacion, presente en execution_log.md (replicando o citando la
+      tabla de este work_plan).
+- [ ] Cada uno de los 12 usos PII-riesgo corregido: la ruta absoluta con
+      username NUNCA llega al mensaje/detail final cuando el try lanza
+      OSError con .filename poblado.
+- [ ] Test de regresion + mutation check documentado para cada uno de los
+      12 sitios (o 11 tests si 2890/2891 comparten uno solo, documentado
+      explicitamente por que).
+- [ ] Los 4 usos SEGURO (894, 1614, 1688, 3459) documentados con un
+      comentario de una linea en el codigo y una entrada en
+      execution_log.md explicando por que no se tocan.
+- [ ] Ningun test existente de tests/test_agent_controller.py se rompe.
+- [ ] ruff check y ruff format --check exit 0 sobre ambos archivos
+      tocados.
+- [ ] .venv\Scripts\python.exe scripts/run_pytest_safe.py verde (stamp
+      fresco sobre HEAD, level=all, exit_code=0).
+- [ ] .venv\Scripts\python.exe .agent\agent_controller.py --validate
+      --json --project-root . exit 0/0 tras el cierre.

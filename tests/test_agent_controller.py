@@ -4429,3 +4429,496 @@ class TestValidateJsonTotals:
         # Strict equality: 7 empty categories -> total 0, not 7
         assert data["total_errors"] == 0
         assert data["total_warnings"] == 0
+
+
+# ======================================================================
+# WOT-2026-019d: PII regression tests for the 12 str(exc)/{exc} sites
+# corrected to compose their detail via scope_gate._relativize_scope_path
+# instead of exposing exc.filename/str(exc) raw. Follow-up of WOT-2026-019b.
+# ======================================================================
+
+
+class TestPiiSafeExceptionSites:
+    """WOT-2026-019d: one regression test per PII-risk site (12 total).
+
+    Each test forces a real OSError at the concrete I/O point of a site, with
+    exc.filename set to an absolute path under tmp_path, then asserts the
+    resulting message/detail:
+    - Does NOT contain the simulated absolute path in full.
+    - Does NOT contain str(Path.home()) (the real local username).
+    - DOES preserve strerror/errno diagnostic information.
+
+    Mutation-safety note: on Windows, ``str(OSError(errno, strerror,
+    filename))`` renders the filename with DOUBLE backslashes
+    (``C:\\\\Users\\\\...``), while the test builds ``absolute_path_str`` with
+    single backslashes (``str(path)``). A naive
+    ``assert absolute_path_str not in captured.out`` is a FALSE-GREEN: it
+    passes both with and without the fix, because the separators never match
+    even when the raw path leaked. ``_assert_no_pii_leak`` below normalizes
+    both sides (collapsing doubled backslashes) AND independently checks a
+    bare marker string with no path separators (e.g. a unique tmp_path
+    component, standing in for the real local username), which is immune to
+    the separator-escaping problem and is the real barrier that must bite the
+    mutation.
+    """
+
+    @staticmethod
+    def _assert_no_pii_leak(output: str, absolute_path_str: str, marker: str) -> None:
+        """Assert `output` leaks neither the simulated absolute path nor the
+        bare sensitive marker (e.g. username/tmp dir name), immune to
+        Windows' doubled-backslash str(OSError) rendering (WOT-2026-019d
+        mutation-safety fix)."""
+        normalized = output.replace("\\\\", "\\")
+        assert absolute_path_str not in output
+        assert absolute_path_str not in normalized
+        assert marker not in output
+        assert marker not in normalized
+
+    def test_capture_builder_session_oserror_detail_has_no_absolute_path(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """Site 900 (_capture_builder_session): session_path.write_text can
+        raise OSError; the except must compose the detail via
+        scope_gate._relativize_scope_path, never str(exc) raw."""
+        import sqlite3
+
+        import agent_controller as ac
+
+        monkeypatch.setattr(ac, "PROJECT_ROOT", tmp_path)
+
+        home_stub = tmp_path / "home_stub"
+        home_stub.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: home_stub)
+        monkeypatch.setattr(ac.os.environ, "get", lambda *a: "")
+
+        # This is the FIRST candidate _capture_builder_session checks
+        # (home_path / ".local" / "share" / "opencode" / "opencode.db").
+        db_path = home_stub / ".local" / "share" / "opencode" / "opencode.db"
+        db_path.parent.mkdir(parents=True)
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("CREATE TABLE session (id TEXT, title TEXT, time_updated TEXT)")
+        conn.execute(
+            "INSERT INTO session VALUES (?, ?, ?)",
+            ("sess-1", "WOT-2026-019d-R1", "2026-07-05T00:00:00"),
+        )
+        conn.commit()
+        conn.close()
+
+        session_path = tmp_path / "runtime" / "builder_session.json"
+        monkeypatch.setattr(ac, "_BUILDER_SESSION_PATH", session_path)
+
+        absolute_path_str = str(session_path)
+        real_write_text = Path.write_text
+
+        def fake_write_text(self, *args, **kwargs):
+            if self == session_path:
+                raise OSError(13, "Permission denied", absolute_path_str)
+            return real_write_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "write_text", fake_write_text)
+
+        result = ac._capture_builder_session("WOT-2026-019d", 1)
+
+        assert result is None
+        captured = capsys.readouterr()
+        self._assert_no_pii_leak(captured.out, absolute_path_str, tmp_path.name)
+        assert "<REPO_ROOT>" in captured.out or "builder_session.json" in captured.out
+        assert "Permission denied" in captured.out
+        assert "13" in captured.out
+
+    def test_create_human_gate_approval_request_oserror_detail_has_no_absolute_path(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """Site 1007 (_create_human_gate_approval_request):
+        store.create_request persists to a file; OSError must be composed
+        safely."""
+        import agent_controller as ac
+
+        monkeypatch.setattr(ac, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(ac, "APPROVAL_SYSTEM_AVAILABLE", True)
+
+        store_path = tmp_path / "runtime" / "approvals" / "store.json"
+        absolute_path_str = str(store_path)
+
+        class FakeStore:
+            def create_request(self, **kwargs):
+                raise OSError(13, "Permission denied", absolute_path_str)
+
+        monkeypatch.setattr(ac, "_get_approval_store", lambda: FakeStore())
+        monkeypatch.setattr(ac, "get_human_gate_timeout", lambda: 3600)
+
+        result = ac._create_human_gate_approval_request("WOT-2026-019d")
+
+        assert result is False
+        captured = capsys.readouterr()
+        self._assert_no_pii_leak(captured.err, absolute_path_str, tmp_path.name)
+        assert "<REPO_ROOT>" in captured.err or "store.json" in captured.err
+        assert "Permission denied" in captured.err
+        assert "13" in captured.err
+
+    def test_auto_archive_closed_artifacts_oserror_detail_has_no_absolute_path(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """Site 1041 (_auto_archive_closed_artifacts):
+        archive_collaboration_artifacts moves files under COLLAB_DIR; OSError
+        must be composed safely."""
+        import importlib.util
+
+        import agent_controller as ac
+
+        monkeypatch.setattr(ac, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(ac, "_MOTOR_ROOT", tmp_path)
+        monkeypatch.setattr(ac, "COLLAB_DIR", tmp_path / "collaboration")
+
+        script_path = tmp_path / "collaboration" / "some_archived_file.md"
+        absolute_path_str = str(script_path)
+
+        real_spec_from_file = importlib.util.spec_from_file_location
+
+        def fake_spec(name, location, *a, **kw):
+            if name == "archive_collaboration_artifacts":
+                raise OSError(13, "Permission denied", absolute_path_str)
+            return real_spec_from_file(name, location, *a, **kw)
+
+        monkeypatch.setattr(importlib.util, "spec_from_file_location", fake_spec)
+
+        ac._auto_archive_closed_artifacts()
+
+        captured = capsys.readouterr()
+        self._assert_no_pii_leak(captured.out, absolute_path_str, tmp_path.name)
+        assert "<REPO_ROOT>" in captured.out or "some_archived_file.md" in captured.out
+        assert "Permission denied" in captured.out
+        assert "13" in captured.out
+
+    def test_check_mark_ready_archive_rename_oserror_detail_has_no_absolute_path(
+        self, tmp_path, monkeypatch
+    ):
+        """Site 1085 (_check_mark_ready_archive_rename):
+        check_archive_rename_complete inspects the file tree; OSError must be
+        composed safely in the returned block dict."""
+        import importlib.util
+
+        import agent_controller as ac
+
+        project_root = tmp_path / "repo"
+        (project_root / ".git").mkdir(parents=True)
+        monkeypatch.setattr(ac, "PROJECT_ROOT", project_root)
+        monkeypatch.setattr(ac, "_MOTOR_ROOT", project_root)
+
+        script_path = project_root / "some_dir" / "some_file.md"
+        absolute_path_str = str(script_path)
+
+        real_spec_from_file = importlib.util.spec_from_file_location
+
+        def fake_spec(name, location, *a, **kw):
+            if name == "delivery_hygiene_check":
+                raise OSError(13, "Permission denied", absolute_path_str)
+            return real_spec_from_file(name, location, *a, **kw)
+
+        monkeypatch.setattr(importlib.util, "spec_from_file_location", fake_spec)
+
+        block = ac._check_mark_ready_archive_rename()
+
+        assert block is not None
+        assert block["reason"] == "archive_rename_guard_error"
+        details = " ".join(block["details"])
+        self._assert_no_pii_leak(details, absolute_path_str, tmp_path.name)
+        assert "<REPO_ROOT>" in details or "some_file.md" in details
+        assert "Permission denied" in details
+        assert "13" in details
+
+    def test_validate_contract_gap_coherence_bus_read_oserror_detail_has_no_absolute_path(
+        self, tmp_path, monkeypatch
+    ):
+        """Site 1888 (_validate_contract_gap_coherence, first except):
+        bus.read_events -> _read_raw_events does events_path.read_text;
+        OSError must be composed safely."""
+        import agent_controller as ac
+
+        monkeypatch.setattr(ac, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(ac, "BUS_AVAILABLE", True)
+
+        events_path = tmp_path / "runtime" / "events" / "events.jsonl"
+        absolute_path_str = str(events_path)
+
+        class FakeBus:
+            def read_events(self, ticket_id=None, event_type=None):
+                raise OSError(13, "Permission denied", absolute_path_str)
+
+        monkeypatch.setattr(ac, "_get_event_bus", lambda: FakeBus())
+
+        plan_content = (
+            "# Work Plan\n## Metadata\n- **ID:** WOT-2026-019d\n"
+            "- **Estado:** APPROVED\n"
+        )
+        errors = ac._validate_contract_gap_coherence(plan_content)
+
+        assert errors, "expected a CONTRACT_GAP coherence error"
+        joined = " ".join(errors)
+        self._assert_no_pii_leak(joined, absolute_path_str, tmp_path.name)
+        assert "<REPO_ROOT>" in joined or "events.jsonl" in joined
+        assert "Permission denied" in joined
+        assert "13" in joined
+
+    def test_validate_contract_gap_coherence_cg_scan_oserror_detail_has_no_absolute_path(
+        self, tmp_path, monkeypatch
+    ):
+        """Site 1910 (_validate_contract_gap_coherence, second except):
+        (contract_gaps_dir / cg_pattern).exists() can re-raise OSError (e.g.
+        EACCES); OSError must be composed safely."""
+        import agent_controller as ac
+
+        monkeypatch.setattr(ac, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(ac, "BUS_AVAILABLE", True)
+
+        class EmptyBus:
+            def read_events(self, ticket_id=None, event_type=None):
+                return []
+
+        monkeypatch.setattr(ac, "_get_event_bus", lambda: EmptyBus())
+        monkeypatch.setattr(ac, "get_agent_dir", lambda: tmp_path / ".agent")
+
+        cg_path = (
+            tmp_path / ".agent" / "planning" / "contract_gaps" / "CG-WOT-2026-019d.md"
+        )
+        absolute_path_str = str(cg_path)
+        real_exists = Path.exists
+
+        def fake_exists(self):
+            if self == cg_path:
+                raise OSError(13, "Permission denied", absolute_path_str)
+            return real_exists(self)
+
+        monkeypatch.setattr(Path, "exists", fake_exists)
+
+        plan_content = (
+            "# Work Plan\n## Metadata\n- **ID:** WOT-2026-019d\n"
+            "- **Estado:** APPROVED\n"
+        )
+        errors = ac._validate_contract_gap_coherence(plan_content)
+
+        assert errors, "expected a CONTRACT_GAP coherence error"
+        joined = " ".join(errors)
+        self._assert_no_pii_leak(joined, absolute_path_str, tmp_path.name)
+        assert "<REPO_ROOT>" in joined or "CG-WOT-2026-019d.md" in joined
+        assert "Permission denied" in joined
+        assert "13" in joined
+
+    def test_create_findings_file_oserror_detail_has_no_absolute_path(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """Site 2219 (create_findings_file): write_file does open(path, 'w');
+        OSError must be composed safely."""
+        import agent_controller as ac
+
+        monkeypatch.setattr(ac, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(ac, "COLLAB_DIR", tmp_path / "collaboration")
+        monkeypatch.setattr(ac, "AGENT_DIR", tmp_path / ".agent")
+
+        findings_path = tmp_path / "collaboration" / "findings.md"
+        absolute_path_str = str(findings_path)
+
+        def fake_write_file(path, content):
+            if path == findings_path:
+                raise OSError(13, "Permission denied", absolute_path_str)
+
+        monkeypatch.setattr(ac, "write_file", fake_write_file)
+
+        result = ac.create_findings_file("WOT-2026-019d")
+
+        assert result == findings_path
+        captured = capsys.readouterr()
+        self._assert_no_pii_leak(captured.out, absolute_path_str, tmp_path.name)
+        assert "<REPO_ROOT>" in captured.out or "findings.md" in captured.out
+        assert "Permission denied" in captured.out
+        assert "13" in captured.out
+
+    def test_run_pre_handoff_guard_oserror_detail_has_no_absolute_path(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """Sites 2890/2891 (_run_pre_handoff_guard, single except block):
+        read_file(WORK_PLAN) can raise OSError; a single fix must cover BOTH
+        uses of exc (the print and the returned warnings list)."""
+        import agent_controller as ac
+
+        monkeypatch.setattr(ac, "PROJECT_ROOT", tmp_path)
+
+        work_plan_path = tmp_path / "work_plan.md"
+        absolute_path_str = str(work_plan_path)
+
+        def fake_read_file(path):
+            raise OSError(13, "Permission denied", absolute_path_str)
+
+        monkeypatch.setattr(ac, "read_file", fake_read_file)
+        monkeypatch.setattr(ac, "WORK_PLAN", work_plan_path)
+
+        result = ac._run_pre_handoff_guard("WOT-2026-019d", json_output=False)
+
+        assert result == {
+            "valid": True,
+            "warnings": [w for w in result["warnings"] if "Guard execution error" in w],
+        }
+        captured = capsys.readouterr()
+        warnings_joined = " ".join(result["warnings"])
+        self._assert_no_pii_leak(captured.out, absolute_path_str, tmp_path.name)
+        self._assert_no_pii_leak(warnings_joined, absolute_path_str, tmp_path.name)
+        assert "<REPO_ROOT>" in captured.out or "work_plan.md" in captured.out
+        assert "Permission denied" in captured.out
+        assert "13" in captured.out
+
+    def test_handle_reopen_terminal_ticket_projection_sync_oserror_detail_has_no_absolute_path(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """Site 5342 (_handle_reopen_terminal_ticket): sync_state_projection
+        does state_md_path.write_text; OSError must be composed safely."""
+        import agent_controller as ac
+
+        ticket_id = "WT-2026-208"
+        work_plan_content = (
+            "# Work Ticket\n## Metadata\n- **ID:** WT-2026-208\n"
+            "- **Estado:** APPROVED\n"
+        )
+
+        class FakeEvent:
+            def __init__(self):
+                self.payload = {"from_state": "IN_PROGRESS", "to_state": "COMPLETED"}
+
+            def to_dict(self):
+                return {"event_type": "STATE_CHANGED", "payload": self.payload}
+
+        class FakeBus:
+            def __init__(self):
+                self.emits = []
+
+            def read_events(self, ticket_id=None, event_type=None):
+                return [FakeEvent()]
+
+            def emit(self, *args, **kwargs):
+                self.emits.append((args, kwargs))
+                return object()
+
+        monkeypatch.setattr(ac, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(
+            ac,
+            "read_file",
+            lambda p: work_plan_content if "work_plan" in str(p) else "",
+        )
+        monkeypatch.setattr(ac, "BUS_AVAILABLE", True)
+        monkeypatch.setattr(ac, "event_bus", FakeBus())
+        monkeypatch.setattr(ac, "update_log_status", lambda *_args: True)
+        monkeypatch.setattr(ac, "get_runtime_dir", lambda: tmp_path / "runtime")
+        monkeypatch.setattr(ac, "get_collab_dir", lambda: tmp_path / "collaboration")
+
+        state_md_path = tmp_path / "collaboration" / "STATE.md"
+        absolute_path_str = str(state_md_path)
+
+        def fake_sync_state_projection(**kwargs):
+            raise OSError(13, "Permission denied", absolute_path_str)
+
+        monkeypatch.setitem(
+            sys.modules,
+            "scripts.state_projection_sync",
+            type(
+                "MockSyncModule",
+                (),
+                {"sync_state_projection": staticmethod(fake_sync_state_projection)},
+            )(),
+        )
+
+        rc = ac._handle_reopen_terminal_ticket(ticket_id, False)
+
+        assert rc == 0
+        captured = capsys.readouterr()
+        self._assert_no_pii_leak(captured.err, absolute_path_str, tmp_path.name)
+        assert "<REPO_ROOT>" in captured.err or "STATE.md" in captured.err
+        assert "Permission denied" in captured.err
+        assert "13" in captured.err
+
+    def test_handle_session_close_subprocess_oserror_detail_has_no_absolute_path(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """Site 5895 (_handle_session_close): subprocess.run raises
+        FileNotFoundError (an OSError subclass) with .filename absolute when
+        the script/interpreter is missing; OSError must be composed safely."""
+        import agent_controller as ac
+
+        monkeypatch.setattr(ac, "PROJECT_ROOT", tmp_path)
+
+        script_path = tmp_path / "scripts" / "session_closeout.py"
+        absolute_path_str = str(script_path)
+
+        def fake_run(cmd, **kwargs):
+            raise FileNotFoundError(2, "No such file or directory", absolute_path_str)
+
+        monkeypatch.setattr(ac.subprocess, "run", fake_run)
+        monkeypatch.setattr(
+            ac, "read_file", lambda path: "Estado actual: IN_PROGRESS\n"
+        )
+
+        code = ac._handle_session_close(
+            dry_run=False,
+            skip_slow=False,
+            ticket=None,
+            tickets=None,
+            force_mode=False,
+            json_output=False,
+        )
+
+        assert code == 1
+        captured = capsys.readouterr()
+        self._assert_no_pii_leak(captured.err, absolute_path_str, tmp_path.name)
+        assert "<REPO_ROOT>" in captured.err or "session_closeout.py" in captured.err
+        assert "No such file or directory" in captured.err
+        assert "2" in captured.err
+
+    def test_handle_main_action_scanner_oserror_detail_has_no_absolute_path(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """Site 5925 (_handle_main_action): context_dir.mkdir/
+        output_path.write_text can raise OSError; OSError must be composed
+        safely."""
+        import agent_controller as ac
+
+        monkeypatch.setattr(ac, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(ac, "SESSION_TRACKER_AVAILABLE", False)
+        monkeypatch.setattr(ac, "SCANNER_AVAILABLE", True)
+
+        context_dir = tmp_path / "context"
+        absolute_path_str = str(context_dir)
+
+        def fake_scan_project(*args, **kwargs):
+            return {}
+
+        monkeypatch.setattr(ac, "scan_project", fake_scan_project)
+        monkeypatch.setattr(ac, "get_context_dir", lambda: context_dir)
+
+        def fake_mkdir(self, **kwargs):
+            if self == context_dir:
+                raise OSError(13, "Permission denied", absolute_path_str)
+
+        monkeypatch.setattr(Path, "mkdir", fake_mkdir)
+
+        # Neutralize downstream best-effort collaborators so the test focuses
+        # on the scanner except branch only.
+        monkeypatch.setattr(
+            ac, "validate_state_files", lambda: {"notifications.md": []}
+        )
+        monkeypatch.setattr(ac, "archive_old_notifications", lambda: None)
+        monkeypatch.setattr(
+            ac, "determine_next_action", lambda **kw: {"action": "NONE"}
+        )
+        monkeypatch.setattr(ac, "should_overwrite_turn", lambda *a, **kw: False)
+
+        code = ac._handle_main_action(
+            skip_gates=False,
+            strict_mode=False,
+            json_output=True,
+            reset_turn_mode=False,
+        )
+
+        assert code == 0
+        captured = capsys.readouterr()
+        self._assert_no_pii_leak(captured.out, absolute_path_str, tmp_path.name)
+        assert "<REPO_ROOT>" in captured.out or "context" in captured.out
+        assert "Permission denied" in captured.out
+        assert "13" in captured.out
