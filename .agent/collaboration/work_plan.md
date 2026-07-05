@@ -43,7 +43,9 @@ roots (motor O destino); sigue bloqueado si no cuelga de NINGUNO
 aplican al root efectivo bajo el que cae el path (no se relajan ni se
 saltan).
 
-## Decision de diseno (evaluadas las 3 opciones del diagnostico de Fase 0)
+## Decision Arquitectonica
+
+(Evaluadas las 3 opciones del diagnostico de Fase 0.)
 
 **Elegida: Opcion (a)** -- `guard_paths.py` resuelve el segundo root
 internamente (dentro de `_is_protected_path`, sin cambiar su firma publica
