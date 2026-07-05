@@ -80,6 +80,54 @@ antes de `orchestrator_pipeline.md`. El pipeline de implantacion es autonomo
 cuando el contrato esta congelado; la fase de definicion requiere decisiones del
 usuario.
 
+## Modo ORQUESTADOR de pipeline multi-ticket (paso 0)
+
+Si la sesion va a encadenar tickets del backlog con Manager y Builder como
+subagentes reales (dogfooding: repo_motor == repo_destino), tu rol es el
+ORQUESTADOR del pipeline. Contrato completo: `prompts/orchestrator_pipeline.md`
+(seccion 3, flujo por ticket). Plantilla del Builder:
+`prompts/orchestrator_launch_builder.md`. Cierre de sesion:
+`prompts/orchestrator_session_close_full_audit.md` (5 bloques adversariales).
+
+Paso 0 (antes de tocar nada):
+1. Lee el handoff durable que INDIQUE el humano. Si no se indica, busca
+   candidatos `C:\tmp\HANDOFF_*.md` relacionados con el motor/orquestador; si
+   hay mas de uno plausible, LISTA los candidatos y pide seleccion. NO
+   infieras por fecha solamente (`C:\tmp` puede contener handoffs de otros
+   proyectos/sesiones -> riesgo de arrancar con contexto equivocado). Lee
+   tambien la memoria privada. Los SHA que citen estan DESFASADOS por
+   definicion: manda el PREFLIGHT, no el handoff.
+2. PREFLIGHT: HEAD == origin/main, arbol limpio, `--validate` en 0 errors /
+   0 warnings. Reporta el estado real ANTES de elegir ticket.
+3. Elige ticket por VALOR/RIESGO del backlog vivo del workspace. Fase 0
+   SIEMPRE verifica la premisa de la ficha contra el codigo real: las fichas
+   traen premisas falsas de forma recurrente (patron verificado en 016c,
+   016s/016t, 019b, 019c).
+
+Reglas duras del orquestador (verificadas en sesiones reales):
+- NUNCA cierres por el reporte de un subagente: el mutation-verify lo
+  re-corres TU sobre el repo real (cazo false-greens y typos que los reportes
+  ocultaban).
+- Modo por defecto: encadenar cierres canonicos EN LOCAL y UN solo push al
+  final de la cola, con OK humano explicito. Los guards operan sobre HEAD
+  local, no sobre origin.
+- Review 2 adversarial fresh-context OBLIGATORIA si el ticket toca
+  gate/bus/estado/CI/hooks/seguridad. NUNCA lances dos reviews en paralelo
+  que muten el mismo archivo: usa git worktree aislada o copia en scratchpad.
+- Antes de cualquier push: re-lee `last-run.json` FRESCO (status=finished,
+  tested_commit_sha == HEAD) y confirma 0 procesos python vivos (existen
+  suites fantasma en vuelo con el interprete del PATH). El conteo
+  "NNNN passed" vive en `last-run.log`, no en el `.json`.
+- El churn de cierre (archivado de PLAN/AUDIT + proyecciones a COMPLETED)
+  desalinea el stamp ~2 veces por ticket: re-suite sobre el HEAD final antes
+  del mini-audit.
+- Mini-audit de 7 checks por ticket antes de saltar al siguiente: STATE
+  COMPLETED, arbol limpio, autores noreply, validate 0/0, stamp fresco
+  sha==HEAD, diff dentro de scope, 0 PII nueva en diff/mensajes.
+- Barrera CI-only (flaky de runner, workflow): cerrar local con el mecanismo
+  mutation-verified + estado CLOSED_PENDING_CI; el criterio de cierre real es
+  el run verde post-push. Si el CI sigue rojo con el mismo traceback, reabrir.
+
 ## Ciclo canonico de un ticket
 
 > Flujo completo y arquitectura: ver [PROJECT.md sección "Current architecture"](../PROJECT.md#current-architecture).
@@ -125,6 +173,11 @@ Cuando termines la lectura, di "Sistema internalizado" y enumera en 5 lineas max
 ## Cuando usarlo
 
 - Primera interaccion con un agente nuevo en una sesion limpia.
+- Al lanzar una sesion de pipeline multi-ticket (rol ORQUESTADOR con Manager y
+  Builder como subagentes): pega este bloque y sigue la seccion "Modo
+  ORQUESTADOR de pipeline multi-ticket (paso 0)". Complementa (no sustituye) el
+  handoff durable de la sesion previa en `C:\tmp\HANDOFF_*.md`, que aporta el
+  estado volatil (SHA, cola, pendientes).
 - Al recuperarse de una conversacion comprimida donde el agente perdio contexto.
 - Al cambiar de backend (de Claude Code a Codex, de Kilo a OpenCode, etc.) y necesitar que el nuevo backend asuma rapido.
 
