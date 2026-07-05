@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import scripts.pip_audit_policy as pip_audit_policy
@@ -348,3 +350,33 @@ def test_resolve_motor_root_path_returns_resolved_path(tmp_path):
         "resolve_motor_root_path must call .resolve() via motor_link: "
         "returned the raw non-canonical path"
     )
+
+
+# WOT-2026-019i: regression barrier — .agent must never shadow the top-level
+# runtime package at module level.
+
+
+def test_run_gates_dispatch_importable_without_module_shadowing():
+    """Regression: running the script must not shadow runtime.motor_link.
+
+    Before the fix, run_gates_dispatch.py inserted `.agent` into sys.path at
+    module level (before importing runtime.motor_link inside
+    resolve_motor_root_path), which made `import runtime` resolve to the
+    `.agent/runtime/` package (only __init__.py, no motor_link.py) instead of
+    `<motor>/runtime/`, raising ModuleNotFoundError at import time.
+
+    The module under test (`dispatch`, imported above via importlib.util) is
+    already loaded in this pytest process, so re-importing it here would not
+    re-exercise the module-level import failure. This test invokes the script
+    as an independent subprocess instead, using sys.executable so it runs
+    under the same interpreter as the pytest process itself.
+    """
+    result = subprocess.run(
+        [sys.executable, str(PROJECT_ROOT / "scripts" / "run_gates_dispatch.py")],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "ModuleNotFoundError" not in result.stderr
+    assert "No module named 'runtime.motor_link'" not in result.stderr

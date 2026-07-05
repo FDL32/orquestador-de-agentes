@@ -20,12 +20,16 @@ from pathlib import Path
 _PROJECT_ROOT_BOOTSTRAP = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT_BOOTSTRAP) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT_BOOTSTRAP))
-_AGENT_DIR = _PROJECT_ROOT_BOOTSTRAP / ".agent"
-if str(_AGENT_DIR) not in sys.path:
-    sys.path.insert(0, str(_AGENT_DIR))
 
-# WP-2026-122 / WP-2026-155: Centralized path resolution via runtime.project_root
-import scope_gate  # noqa: E402
+
+def _import_scope_gate():
+    """Import scope_gate from the motor .agent/ directory."""
+    agent_dir = _PROJECT_ROOT_BOOTSTRAP / ".agent"
+    if str(agent_dir) not in sys.path:
+        sys.path.insert(0, str(agent_dir))
+    import scope_gate as _sg
+
+    return _sg
 
 
 def resolve_project_root_path() -> Path:
@@ -106,7 +110,8 @@ def read_delivery_authority() -> str:
     content = read_work_plan_content()
     if content is None:
         return "repo_motor"
-    return scope_gate.read_delivery_authority(content, default="repo_motor")
+    _sg = _import_scope_gate()
+    return _sg.read_delivery_authority(content, default="repo_motor")
 
 
 def resolve_authority_root(delivery_authority: str) -> Path:

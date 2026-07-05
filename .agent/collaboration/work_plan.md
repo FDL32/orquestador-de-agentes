@@ -1,367 +1,351 @@
-# Work Plan - WOT-2026-019c
+# Work Plan - WOT-2026-019i
 
 ## Metadata
-- **ID:** WOT-2026-019c
-- **Estado:** COMPLETED
+- **ID:** WOT-2026-019i
+- **Estado:** APPROVED
 - **deliverable_type:** code
-- **Titulo:** Aislar `_make_repo` de `tests/test_check_publication_gate.py` con
-  `gc.auto=0` para eliminar la condicion de carrera de `git rev-list --all`
-  que hizo fallar `test_loose_pattern_chunks_many_revs` en CI (Ubuntu) dos
-  veces (2026-07-04 run 28692691463, 2026-07-05 run 28755232843).
+- **Titulo:** `scripts/run_gates_dispatch.py` es NO-EJECUTABLE por
+  `ModuleNotFoundError: No module named 'runtime.motor_link'` (shadowing de
+  `runtime` por `.agent/runtime/` al insertar `.agent` en `sys.path` a nivel
+  de modulo).
+- **Prioridad:** Baja (alto valor: barrera de bus/tooling de cierre esta rota)
 - **Asignado a:** Builder
 - **delivery_authority:** repo_motor
 
 ## Objetivo
 
-Eliminar el fallo intermitente `subprocess.CalledProcessError: Command
-['/usr/bin/git', 'rev-list', '--all'] returned non-zero exit status 128` que
-en CI (job `quality-gates (3.11)`, runs `28692691463` y `28755232843`, ambos
-con traceback identico) ocurre dentro de `check_classify` ->
-`build_manifest(repo, scan_history=True)` ->
-`_collect_history_blob_paths(repo_root)` (`scripts/classify_publication.py`
-linea 482), invocado desde `run_gate` (`scripts/check_publication_gate.py`
-linea 149) sobre el repo git fixture creado por
-`_make_repo(tmp_path, "repo_grande")` en
-`tests/test_check_publication_gate.py::test_loose_pattern_chunks_many_revs`
-(485 commits creados en bucle, `REV_CHUNK_SIZE * 2 + 5`). El `stderr` de CI
-(`error: Could not read 8c5ad02d1e80a65e407934c4035d5c17b704bb0b\nfatal:
-Failed to traverse parents of commit 8ed1dbf116f0ee3a361da7fedd0096fd5ded8b3f`)
-demuestra corrupcion transitoria del object store del propio repo fixture
-(un SHA que `rev-list --all` lista en su propio stdout resulta ilegible acto
-seguido), consistente con un `git gc --auto` disparado en background
-(`gc.autoDetach=true` por defecto en Linux) por alguno de los 485
-`git commit -q` en bucle de `_make_repo`/el test, que compacta o poda
-objetos mientras `check_classify`/`check_loose_pattern` los leen justo
-despues. El fix desactiva `gc.auto` en el repo fixture (`git config gc.auto
-0` inmediatamente tras `git init` dentro de `_make_repo`), cerrando la
-ventana de carrera sin depender de la profundidad del checkout de CI.
+Reparar `scripts/run_gates_dispatch.py` para que se pueda ejecutar sin
+`ModuleNotFoundError`, replicando el patron ya canonico de
+`scripts/check_deliverables_exist.py` (import lazy de `scope_gate` dentro de
+una funcion helper), de modo que `from runtime.motor_link import
+resolve_motor_root` resuelva siempre al paquete `<motor>/runtime/` y nunca al
+paquete `.agent/runtime/` que hace sombra.
 
 ## Decision Arquitectonica
 
-(Evaluadas las 2 opciones de la ficha original mas el diagnostico de Fase 0
-del Orquestador, que reproduce el escenario shallow localmente y verifica el
-traceback exacto de los 2 runs de CI via `gh run view --log-failed`.)
+**Elegida: replicar el patron lazy de `scripts/check_deliverables_exist.py`
+(import de `scope_gate` dentro de `_import_scope_gate()`, `.agent` fuera del
+`sys.path` a nivel de modulo).** Motivo: es el UNICO patron ya verificado en
+produccion en este mismo repo que resuelve `from runtime.motor_link import
+resolve_motor_root` sin shadowing, sin requerir cambios en `.agent/runtime/`
+ni en `runtime/motor_link.py`. Es el cambio de menor blast-radius posible:
+1 funcion nueva + 1 punto de llamada modificado, sin tocar ninguna otra
+funcion ni firma publica.
 
-**Descartada: Opcion (A) -- `fetch-depth: 0` en `quality-gates.yml`.**
-Evidencia que la descarta: (1) reproduccion local de un clon `--depth=1`
-del propio motor con un `tmp_path` de longitud normal ejecutando
-`tests/test_check_publication_gate.py` completo -> `8 passed in 23.60s`,
-CERO fallos, incluyendo `test_loose_pattern_chunks_many_revs`; el shallow
-del checkout PADRE no afecta al repo fixture. (2) El traceback real de
-ambos runs de CI (`gh run view 28755232843/28692691463 --log-failed`)
-muestra que el `git rev-list --all` que falla corre con
-`cwd=PosixPath('.../tests/sandbox/test_runtime/session_.../factory/
-test_loose_patte_.../repo_grande')` -- el repo ANIDADO propio del test, no
-el checkout del runner. `_run_git`/`_git_lines`
-(`scripts/classify_publication.py` linea 216-238) invocan `git` con
-`cwd=repo_root` explicito, sin heredar ningun `GIT_DIR`/working-tree del
-proceso padre; `actions/checkout@v5` (log de ambos runs) solo anade
-`safe.directory` para el path del checkout, no para el repo anidado. (3)
-Ningun workflow del repo (`quality-gates.yml`, `security-audit.yml`) invoca
-`check_publication_gate.py`/`classify_publication.py` sobre el checkout real
-de CI: solo los tests los ejercitan, siempre sobre repos fixture propios en
-`tmp_path`. `fetch-depth: 0` no tiene ningun camino de codigo que pueda
-tocar en este bug: seria un cambio cosmetico sin relacion causal
-demostrable con el fallo observado, y documentarlo como fix real
-enmascararia la causa.
+**Descartada: renombrar o vaciar el paquete `.agent/runtime/__init__.py`.**
+Eliminaria el shadowing de raiz, pero excede el alcance de este ticket (Tier
+mas alto: tocaria un paquete compartido por el motor entero, con blast-radius
+desconocido sobre otros scripts que puedan importar `.agent/runtime/`
+explicitamente) y no tiene ningun precedente verificado en este repo.
 
-**Elegida: Opcion (B) -- aislar `_make_repo` con `gc.auto=0`.** El fix vive
-enteramente en `tests/test_check_publication_gate.py::_make_repo`: anadir
-`_git(repo, "config", "gc.auto", "0")` inmediatamente despues de
-`_git(repo, "init")` y antes de la primera escritura. Esto desactiva el
-disparo automatico de `git gc` (que por defecto se activa a partir de 6700
-objetos loose o 50 packs, `gc.auto`/`gc.autoPackLimit`) dentro del repo
-fixture, cerrando la ventana de carrera entre los 485 `git commit -q` en
-bucle y las 2 lecturas de historial completo que corren justo despues
-(`check_classify` y `check_loose_pattern`, ambos via `git rev-list --all`
-sobre el mismo repo). Es hermetico (no depende de la profundidad ni de la
-ubicacion del checkout padre), ataca el mecanismo real documentado por el
-traceback de CI, y no requiere tocar ningun workflow.
+**Descartada: insertar `.agent` DESPUES de `<motor>` pero con
+`sys.path.append` en vez de `insert(0, ...)`.** No resuelve el problema: aun
+si `.agent` queda al final de `sys.path`, `<motor>/runtime/` YA esta en
+`sys.path` en indice 0 (linea 22, `_PROJECT_ROOT_BOOTSTRAP`), asi que en
+teoria ganaria igual -- pero el bug real observado prueba que el orden actual
+(`.agent` insertado en indice 0 en la linea 25, DESPUES del insert de
+`_PROJECT_ROOT_BOOTSTRAP` en la linea 22) hace que `.agent` quede MAS
+adelante en la lista que `_PROJECT_ROOT_BOOTSTRAP`, ganando la resolucion.
+Cambiar el orden de insercion es fragil y no tiene un precedente verificado;
+el patron lazy (que retrasa la insercion hasta que es estrictamente
+necesaria) es mas robusto y ya esta probado en `check_deliverables_exist.py`.
 
 ## Contexto (Fase 0 del Orquestador, verificado en esta sesion)
 
-- Traceback identico en 2 runs de CI reales (`28692691463` 2026-07-04,
-  `28755232843` 2026-07-05), obtenido con
-  `gh run view <id> --log-failed`: ambos fallan en
-  `scripts/classify_publication.py:482` (`_collect_history_blob_paths`,
-  dentro de `_git_lines(repo_root, "rev-list", "--all")`) llamado desde
-  `scripts/check_publication_gate.py:89` (`check_classify`), NO en
-  `scripts/check_publication_gate.py:115` (`check_loose_pattern`, que la
-  ficha original senalaba como sospechoso). `check_classify` corre antes en
-  la secuencia de `run_gate` (linea 146-153: `check_name`,
-  `check_tree_clean`, `check_classify`, `check_loose_pattern`, ...).
-- `cwd` exacto del `git rev-list --all` que falla, tomado del log de CI:
-  `/home/runner/work/orquestador-de-agentes/orquestador-de-agentes/tests/sandbox/test_runtime/session_<pid>/factory/test_loose_patte_<hash>/repo_grande`
-  -- el repo fixture ANIDADO creado por `_make_repo`, no el checkout del
-  runner. `stdout` del proceso fallido SI incluye el SHA que luego resulta
-  ilegible (aparece listado, `rev-list` ya lo habia encontrado), y `stderr`
-  es exactamente `error: Could not read
-  8c5ad02d1e80a65e407934c4035d5c17b704bb0b\nfatal: Failed to traverse
-  parents of commit 8ed1dbf116f0ee3a361da7fedd0096fd5ded8b3f`.
-- Reproduccion local (Windows) de un clon `--depth=1` del propio motor
-  (`git clone --depth=1 file:///<motor> <tmp>`) ejecutando
-  `tests/test_check_publication_gate.py` completo desde dentro del clon:
-  `8 passed in 23.60s`, incluyendo `test_loose_pattern_chunks_many_revs`.
-  CERO reproduccion del fallo en 3 corridas adicionales del mismo escenario.
-  Confirma que el shallow del padre, por si solo, no es la causa.
-- `tests/conftest.py` (`ProjectTmpPathFactory`, linea 34-57, y fixture
-  `tmp_path`, linea 182-187) reemplaza el `tmp_path` estandar de pytest: en
-  vez de un directorio temporal del sistema, resuelve a
-  `<PROJECT_ROOT>/tests/sandbox/test_runtime/session_<pid>/factory/<hash>`,
-  es decir, DENTRO del propio repo (motor o checkout de CI). Este dato
-  explica por que el path de CI cae dentro del checkout, pero NO es la
-  causa del fallo: la reproduccion local con el mismo mecanismo de
-  `tmp_path` (mismo `conftest.py`, mismo clon shallow) no reprodujo el
-  error.
-- `scripts/check_publication_gate.py` linea 105-124 (`REV_CHUNK_SIZE`,
-  `check_loose_pattern`) y `scripts/classify_publication.py` linea 478-494
-  (`_collect_history_blob_paths`) confirmados por lectura directa: ambos
-  llaman `git rev-list --all` sobre `repo_root` (el argumento recibido, el
-  repo fixture), sin ninguna opcion de `git` relacionada con gc o
-  concurrencia.
-- `_make_repo` (`tests/test_check_publication_gate.py` linea 13-24) hace
-  `git init` seguido de `config user.email/user.name` y UN commit baseline;
-  `test_loose_pattern_chunks_many_revs` (linea 110-124) anade 485 commits
-  mas (`REV_CHUNK_SIZE * 2 + 5` con `REV_CHUNK_SIZE = 100`) en un bucle de
-  `git add` + `git commit -q`. Es el UNICO test del archivo que genera un
-  volumen de commits capaz de acercarse a un umbral de `gc.auto` (los demas
-  tests de `_make_repo` hacen 1-2 commits).
-- Sin overrides de `gc.auto`/`gc.autopacklimit`/`gc.autodetach` en la
-  config git de este entorno (`git config --get gc.auto` vacio): aplican
-  los defaults documentados de git (`gc.auto=6700` objetos loose,
-  `gc.autoDetach=true` en POSIX -- dispara `git gc --auto` como proceso
-  hijo desacoplado cuyo termino NO se espera por el `git commit`
-  invocante), consistente con una carrera que solo se manifiesta bajo el
-  timing/IO especifico del runner Ubuntu y no en Windows local.
-- Unico archivo de test con el patron de "muchos commits en bucle" (grep
-  de `range(` + `REV_CHUNK_SIZE` en `tests/`): confirma que el fix de
-  `_make_repo` no necesita replicarse en otro archivo del repo.
+- REPRO en vivo confirmado: `.venv/Scripts/python.exe
+  scripts/run_gates_dispatch.py` -> exit 1,
+  `ModuleNotFoundError: No module named 'runtime.motor_link'` en la linea 54
+  (`from runtime.motor_link import resolve_motor_root as _resolve`, dentro de
+  `resolve_motor_root_path`).
+- Causa raiz confirmada por lectura directa: `run_gates_dispatch.py` lineas
+  23-25 insertan `.agent` en `sys.path` A NIVEL DE MODULO
+  (`_AGENT_DIR = _PROJECT_ROOT_BOOTSTRAP / ".agent"`;
+  `sys.path.insert(0, str(_AGENT_DIR))`), inmediatamente antes de
+  `import scope_gate` (linea 28, tambien a nivel de modulo). Como
+  `.agent/runtime/__init__.py` EXISTE (paquete real, confirmado con
+  `ls .agent/runtime/*.py` -> solo `__init__.py`, sin `motor_link.py`),
+  cuando la linea 54 ejecuta `from runtime.motor_link import ...`, Python
+  resuelve el nombre `runtime` contra `.agent/runtime/` (que no tiene
+  `motor_link.py`) en vez de `<motor>/runtime/motor_link.py` (que si lo
+  tiene, confirmado con `ls runtime/*.py`).
+- Precedente canonico que SI funciona en el mismo repo con el mismo import:
+  `scripts/check_deliverables_exist.py` importa exactamente
+  `from runtime.motor_link import resolve_motor_root` (dentro de
+  `resolve_motor_root()`, linea 57) y no falla, porque su bootstrap a nivel
+  de modulo (lineas 17-23) inserta SOLO `_PROJECT_ROOT_BOOTSTRAP` (raiz del
+  motor), y el import de `scope_gate` es LAZY dentro de
+  `_import_scope_gate()` (lineas 34-41), que inserta `.agent` en `sys.path`
+  solo dentro de esa funcion, nunca a nivel de modulo. `run_pytest_safe.py`
+  sigue el mismo patron (nunca inserta `.agent` a nivel de modulo).
+- `run_gates_dispatch.py` SI necesita `scope_gate` (usado en
+  `read_delivery_authority()`, linea 109, via
+  `scope_gate.read_delivery_authority(...)`). El fix debe preservar que ese
+  uso siga funcionando, solo cambiando CUANDO se inserta `.agent` en el path
+  y CUANDO se importa `scope_gate` (de nivel-de-modulo a lazy).
+- Test existente (`tests/unit/test_run_gates_dispatch.py`) carga el modulo
+  completo UNA VEZ a nivel de modulo del propio archivo de test (lineas
+  11-16, via `importlib.util.spec_from_file_location` +
+  `spec.loader.exec_module(dispatch)`). Esto implica que el fallo real
+  (`ModuleNotFoundError` en tiempo de import) YA esta ocurriendo dentro de
+  ese `exec_module` en cuanto se corre CUALQUIER test del archivo hoy: no es
+  posible verificar el shadowing con monkeypatch sobre un modulo ya cargado
+  en memoria, porque el error ocurre ANTES de que el modulo termine de
+  cargar. El test nuevo de regresion (Paso 2 de este plan) debe invocar el
+  script como PROCESO independiente (`subprocess.run([sys.executable,
+  str(script_path)], ...)`), no reusar el `dispatch` ya importado por el
+  archivo de test.
 
 ## Files Likely Touched
 
 ### repo_motor
 
-- `tests/test_check_publication_gate.py` (`_make_repo`: anadir
-  `_git(repo, "config", "gc.auto", "0")` tras `_git(repo, "init")`)
+- `scripts/run_gates_dispatch.py` (mover la insercion de `.agent` en
+  `sys.path` y el `import scope_gate` de nivel-de-modulo a una funcion lazy;
+  llamar a esa funcion donde se usa `scope_gate`)
+- `tests/unit/test_run_gates_dispatch.py` (anadir un test de regresion que
+  invoque el script como subprocess y confirme exit 0 sin traceback, mas el
+  mutation-check correspondiente)
 
 ## Read/inspect only (Manager-only / no tocar)
 
-- `scripts/check_publication_gate.py` (fuente de `run_gate`/
-  `check_classify`/`check_loose_pattern`; solo lectura, el fix no cambia
-  produccion)
-- `scripts/classify_publication.py` (fuente de `_collect_history_blob_paths`/
-  `_run_git`; solo lectura, el fix no cambia produccion)
-- `tests/conftest.py` (fuente de `ProjectTmpPathFactory`/`tmp_path`; solo
-  lectura, confirma el path anidado pero NO se modifica: cambiar el
-  comportamiento global de `tmp_path` excede el blast-radius de este
-  ticket y afectaria a toda la suite)
-- `.github/workflows/quality-gates.yml` (Opcion A descartada; NO se anade
-  `fetch-depth: 0`, ver Decision Arquitectonica)
-- `.github/workflows/security-audit.yml` (referencia de paridad citada en
-  la ficha original; solo lectura, no se modifica)
+- `scripts/check_deliverables_exist.py` (fuente del patron canonico
+  `_import_scope_gate()`; solo lectura, sirve de referencia exacta para el
+  fix, no se modifica)
+- `scripts/run_pytest_safe.py` (referencia de paridad: nunca inserta
+  `.agent` a nivel de modulo; solo lectura)
+- `.agent/scope_gate.py` (fuente de `scope_gate.read_delivery_authority`;
+  solo lectura, el fix no cambia su contrato ni su firma)
+- `.agent/runtime/__init__.py` (paquete que hace sombra; solo lectura, NO se
+  renombra ni se elimina: el fix vive enteramente en
+  `scripts/run_gates_dispatch.py`, cambiar el paquete `.agent/runtime/`
+  excede el alcance y el blast-radius de este ticket)
+- `runtime/motor_link.py` (fuente de `resolve_motor_root`; solo lectura, no
+  se modifica)
 
 ## Plan de Implementacion
 
-### PASO 1 (IMPLEMENT) - `tests/test_check_publication_gate.py`, `_make_repo` hermetico
+### PASO 1 (IMPLEMENT) - `scripts/run_gates_dispatch.py`, import lazy de `scope_gate`
 
-1. En `_make_repo` (linea 13-24), anadir una linea
-   `_git(repo, "config", "gc.auto", "0")` inmediatamente despues de
-   `_git(repo, "init")` y antes de `_git(repo, "config", "user.email",
-   email)`. Esta config se escribe en `<repo>/.git/config` (local al repo
-   fixture, nunca afecta al repo motor real ni a otros repos fixture
-   creados por otros tests).
-2. No modificar la firma de `_make_repo` ni el resto de su cuerpo
-   (`user.email`, `user.name`, `README.md`, `add`, `commit -m baseline`
-   quedan identicos).
-3. No modificar ningun otro test del archivo: los 7 tests existentes que
-   usan `_make_repo` (`test_clean_repo_is_listo`,
-   `test_copia_folder_blocks`, `test_dirty_tree_blocks`,
-   `test_personal_metadata_email_blocks_and_mutation`,
-   `test_dirty_sibling_blocks_unidad`,
-   `test_loose_pattern_catches_slug_variant`,
-   `test_loose_pattern_chunks_many_revs`) heredan el fix automaticamente al
-   compartir el mismo helper, sin que su codigo cambie.
+1. Eliminar de nivel-de-modulo (lineas 23-28 actuales):
+   - `_AGENT_DIR = _PROJECT_ROOT_BOOTSTRAP / ".agent"`
+   - el `if str(_AGENT_DIR) not in sys.path: sys.path.insert(0, str(_AGENT_DIR))`
+   - `import scope_gate  # noqa: E402`
+2. Crear una funcion helper `_import_scope_gate()` (mismo nombre y forma que
+   `check_deliverables_exist.py::_import_scope_gate`) que:
+   - calcule `agent_dir = _PROJECT_ROOT_BOOTSTRAP / ".agent"` dentro de la
+     funcion,
+   - inserte `agent_dir` en `sys.path` solo si no esta ya presente,
+   - haga `import scope_gate as _sg` dentro de la funcion,
+   - retorne `_sg`.
+3. Sustituir el unico uso de `scope_gate` a nivel de modulo
+   (`read_delivery_authority()`, linea ~105-109) para que llame primero a
+   `_sg = _import_scope_gate()` y luego use
+   `_sg.read_delivery_authority(content, default="repo_motor")` en vez de
+   `scope_gate.read_delivery_authority(...)`.
+4. No modificar ninguna otra funcion de `run_gates_dispatch.py`
+   (`resolve_project_root_path`, `get_collab_dir_path`,
+   `resolve_motor_root_path`, `resolve_authority_root`,
+   `build_project_env`, `run_motor_script`, `has_local_tests`,
+   `run_code_gates`, `run_deliverable_gates`, `main`) mas alla del cambio de
+   import descrito arriba. `MOTOR_ROOT = resolve_motor_root_path(PROJECT_ROOT)`
+   (linea 63, a nivel de modulo) sigue ejecutandose igual: tras el fix,
+   `.agent` ya NO esta en `sys.path` en ese punto, asi que
+   `from runtime.motor_link import resolve_motor_root` (dentro de
+   `resolve_motor_root_path`, linea 54) resuelve al paquete
+   `<motor>/runtime/` sin shadowing.
+5. No cambiar la logica de dispatch por `deliverable_type` (`main()`,
+   `run_code_gates`, `run_deliverable_gates` quedan con el mismo
+   comportamiento observable, mismos argumentos, mismos subprocess
+   invocados).
 
 Restricciones:
-- NO tocar `scripts/check_publication_gate.py` ni
-  `scripts/classify_publication.py` (produccion, fuera de alcance: el fix
-  es exclusivamente del fixture de test).
-- NO tocar `tests/conftest.py` ni el mecanismo de `tmp_path` (blast-radius
-  de toda la suite, fuera de alcance de este ticket).
-- NO anadir `fetch-depth: 0` a ningun workflow (Opcion A descartada por
-  evidencia, ver Decision Arquitectonica).
+- NO tocar `scripts/check_deliverables_exist.py`, `scripts/run_pytest_safe.py`,
+  `.agent/scope_gate.py`, `.agent/runtime/__init__.py` ni
+  `runtime/motor_link.py` (fuera de alcance, solo lectura).
+- NO cambiar la firma publica de ninguna funcion existente de
+  `run_gates_dispatch.py` (los tests existentes de
+  `tests/unit/test_run_gates_dispatch.py` dependen de
+  `dispatch.read_deliverable_type`, `dispatch.read_delivery_authority`,
+  `dispatch.run_code_gates`, `dispatch.run_deliverable_gates`,
+  `dispatch.main`, `dispatch.has_local_tests`,
+  `dispatch.resolve_motor_root_path` con sus firmas actuales).
+- NO anadir un import a nivel de modulo de `scope_gate` en ninguna forma
+  (ni directo ni con alias): el import debe quedar exclusivamente dentro de
+  `_import_scope_gate()`.
 
 DoD Paso 1:
-- [ ] `_make_repo` invoca `git config gc.auto 0` tras `git init`, antes de
-      la primera escritura de contenido.
-- [ ] Los 7 tests existentes de `tests/test_check_publication_gate.py`
-      que usan `_make_repo` siguen pasando localmente sin cambio de
-      aserciones.
-- [ ] `ruff check tests/test_check_publication_gate.py` y
-      `ruff format --check tests/test_check_publication_gate.py` exit 0.
+- [ ] `scripts/run_gates_dispatch.py` ya NO inserta `.agent` en `sys.path` a
+      nivel de modulo, y ya NO tiene `import scope_gate` a nivel de modulo.
+- [ ] Existe una funcion `_import_scope_gate()` en
+      `scripts/run_gates_dispatch.py` que inserta `.agent` en `sys.path` y
+      hace el import de `scope_gate` dentro de su propio cuerpo.
+- [ ] `read_delivery_authority()` sigue devolviendo el valor correcto
+      (verificado por el test existente
+      `test_read_delivery_authority_from_work_plan`, que debe seguir
+      pasando sin cambios en su codigo).
+- [ ] Correr el script ya NO produce `ModuleNotFoundError` en el import
+      (puede fallar mas adelante en la ejecucion por otras razones de
+      entorno -- p.ej. ausencia de `work_plan.md` valido -- pero NUNCA por
+      el shadowing de `runtime`).
+- [ ] `ruff check scripts/run_gates_dispatch.py` y
+      `ruff format --check scripts/run_gates_dispatch.py` exit 0.
 
-### PASO 2 (VERIFY) - Verificacion local + documentar el limite de reproduccion
+### PASO 2 (IMPLEMENT) - Test de regresion como subprocess + mutation-check
 
-El fallo real (carrera de `git gc --auto` bajo el timing de CI Ubuntu) NO
-reprodujo en 3 corridas locales (Windows) ni en el escenario shallow
-clonado localmente (ver Contexto): esta barrera es CI-only,
-PENDIENTE-POST-PUSH. Razon: la condicion de carrera depende del
-scheduler/IO del runner Ubuntu de GitHub Actions, no reproducible de forma
-determinista en Windows local con las herramientas disponibles en este
-repo (no hay inyeccion de fallos de git ni control del scheduler del SO).
+Anadir a `tests/unit/test_run_gates_dispatch.py` un test nuevo,
+`test_run_gates_dispatch_importable_without_module_shadowing`, que:
+1. Invoca el script como proceso independiente:
+   `subprocess.run([sys.executable, str(PROJECT_ROOT / "scripts" /
+   "run_gates_dispatch.py")], cwd=PROJECT_ROOT, capture_output=True,
+   text=True)` (usar un `cwd`/entorno donde el script pueda ejecutar sin
+   depender de un `work_plan.md` real del motor; si `main()` requiere mas
+   contexto para completar en exit 0, el test puede limitarse a comprobar
+   que `ModuleNotFoundError` y `"runtime.motor_link"` NO aparecen en
+   `result.stderr`, en vez de exigir `returncode == 0` de punta a punta --
+   ambas aserciones son validas siempre que el test falle de forma
+   determinista contra el codigo pre-fix).
+2. Afirma explicitamente que `"ModuleNotFoundError"` NO esta en
+   `result.stderr` y que `"No module named 'runtime.motor_link'"` NO esta en
+   `result.stderr`.
+3. Debe ejecutarse como proceso nuevo (no reusar el modulo `dispatch` ya
+   cargado por `importlib.util` al inicio del archivo de test): el fallo
+   real ocurre en tiempo de import a nivel de modulo, y el modulo ya cargado
+   en el proceso pytest no vuelve a ejecutar ese import.
 
-Verificacion local disponible (determinista, no depende de la carrera):
+Mutation check (documentar en `execution_log.md` con salida literal de
+pytest): reintroducir temporalmente el shadowing (volver a insertar
+`.agent` en `sys.path` a nivel de modulo Y volver a poner
+`import scope_gate` a nivel de modulo, exactamente como estaba antes del
+Paso 1), confirmar que
+`test_run_gates_dispatch_importable_without_module_shadowing` FALLA (el
+subprocess vuelve a mostrar `ModuleNotFoundError: No module named
+'runtime.motor_link'` en `stderr`), restaurar el fix y confirmar que el test
+vuelve a pasar.
 
-1. `.venv\Scripts\python.exe -m pytest tests/test_check_publication_gate.py -v`
-   -> exit 0, los 8 tests pasan (incluye
-   `test_loose_pattern_chunks_many_revs`).
-2. Inspeccion directa de que el fix aplica: el test nuevo del Paso 3
-   (`test_make_repo_disables_autogc`) confirma con una asercion literal
-   que el repo creado tiene `gc.auto=0` en su config local.
-3. `ruff check tests/test_check_publication_gate.py` y
-   `ruff format --check tests/test_check_publication_gate.py` -> exit 0.
-4. `.venv\Scripts\python.exe scripts/run_pytest_safe.py` (suite completa,
-   stamp fresco sobre HEAD, level=all, exit_code=0) antes de mark-ready.
-5. Tras el push: el criterio de cierre real de este ticket es que el
-   siguiente run de `Quality Gates` en CI (matrix 3.10 y 3.11) termine en
-   verde, confirmado con
-   `gh run list --workflow "Quality Gates" --limit 1` mostrando
-   `conclusion: success` para el commit del fix. Este check es
-   PENDIENTE-POST-PUSH: no puede satisfacerse antes del push porque
-   depende del runner remoto.
+Restricciones:
+- NO modificar ningun test existente de
+  `tests/unit/test_run_gates_dispatch.py` (los 15 tests actuales deben
+  seguir pasando sin cambios en su codigo).
+- NO eliminar ni renombrar el `import scripts.pip_audit_policy as
+  pip_audit_policy` de cabecera del archivo de test (usado por
+  `test_run_code_gates_repo_motor_uses_motor_root_and_absolute_pytest`).
 
-### PASO 3 (IMPLEMENT) - Test de regresion determinista del propio fix
-
-Anadir a `tests/test_check_publication_gate.py` un test nuevo,
-`test_make_repo_disables_autogc`, que:
-1. Llama `_make_repo(tmp_path, "repo_gc_check")`.
-2. Ejecuta `git config --get gc.auto` con `cwd=repo` (usar
-   `subprocess.run` directo capturando stdout, con `check=True`) y afirma
-   que el valor devuelto (stripped) es exactamente `"0"`.
-3. Es un test determinista (no depende de la carrera de CI): verifica el
-   MECANISMO del fix (la config queda escrita), no el sintoma
-   (`rev-list --all` fallando), que es CI-only e irreproducible localmente
-   segun el Paso 2.
-
-Mutation check (documentar en `execution_log.md`): comentar temporalmente
-la linea `_git(repo, "config", "gc.auto", "0")` anadida en el Paso 1,
-confirmar que `test_make_repo_disables_autogc` FALLA (la config no esta
-seteada, `git config --get gc.auto` devuelve cadena vacia o exit distinto
-de 0), restaurar la linea y confirmar que el test vuelve a pasar.
-
-DoD Paso 3:
-- [ ] `test_make_repo_disables_autogc` existe, pasa tras el fix, y FALLA
-      cuando se comenta la linea del fix (mutation check documentado con
-      salida literal de pytest).
-- [ ] `.venv\Scripts\python.exe -m pytest tests/test_check_publication_gate.py -v`
-      exit 0 con los 9 tests (8 existentes + 1 nuevo).
+DoD Paso 2:
+- [ ] `test_run_gates_dispatch_importable_without_module_shadowing` existe,
+      pasa tras el fix del Paso 1, y FALLA cuando se reintroduce el
+      shadowing (mutation check documentado con salida literal de pytest
+      mostrando el `ModuleNotFoundError` reaparecido).
+- [ ] `pytest tests/unit/test_run_gates_dispatch.py -v` exit 0 con 16 tests
+      (15 existentes + 1 nuevo), 0 fallos.
+- [ ] `ruff check tests/unit/test_run_gates_dispatch.py` y
+      `ruff format --check tests/unit/test_run_gates_dispatch.py` exit 0.
 
 ## Quality Gates
 
-- Builder ejecuta:
-  - `.venv\Scripts\python.exe -m pytest tests/test_check_publication_gate.py -v`
-    (exit 0, 9 tests incluyendo el nuevo).
-  - `ruff check tests/test_check_publication_gate.py` (exit 0).
-  - `ruff format --check tests/test_check_publication_gate.py` (exit 0).
-  - `.venv\Scripts\python.exe scripts/run_pytest_safe.py` (suite completa,
-    stamp fresco sobre HEAD; level=all, exit_code=0).
+- Builder ejecuta (interprete canonico: `.venv/Scripts/python.exe`, NO el
+  `python` del PATH):
+  - `pytest tests/unit/test_run_gates_dispatch.py -v` (exit 0, 16 tests
+    incluyendo el nuevo).
+  - `scripts/run_gates_dispatch.py` (ya no `ModuleNotFoundError` en el
+    import; confirmar con salida literal).
+  - `ruff check scripts/run_gates_dispatch.py tests/unit/test_run_gates_dispatch.py`
+    (exit 0).
+  - `ruff format --check scripts/run_gates_dispatch.py tests/unit/test_run_gates_dispatch.py`
+    (exit 0).
+  - `scripts/run_pytest_safe.py` (suite completa, stamp fresco sobre HEAD;
+    level=all, exit_code=0).
 - Manager gate (Builder NO lo ejecuta salvo diagnostico local):
-  - `.venv\Scripts\python.exe .agent\agent_controller.py --validate --json
-    --project-root .`
-- Gate CI-only, PENDIENTE-POST-PUSH (razon: depende del runner remoto de
-  GitHub Actions, no reproducible localmente segun Paso 2):
-  - `gh run list --workflow "Quality Gates" --limit 1` tras el push del
-    commit del fix debe mostrar `conclusion: success` para ambos legs del
-    matrix (3.10 y 3.11).
+  - `.agent/agent_controller.py --validate --json --project-root .`
 
 ## STOP conditions
 
-- Si `test_make_repo_disables_autogc` NO falla al comentar la linea del
-  fix (mutation check ausente o mal ejecutado): DETENTE, el test es un
-  placebo, no hay evidencia de que verifique el mecanismo real.
-- Si algun test existente de `tests/test_check_publication_gate.py` se
+- Si el fix reintroduce `import scope_gate` o la insercion de `.agent` en
+  `sys.path` a NIVEL DE MODULO (fuera de `_import_scope_gate()`): DETENTE,
+  esto reproduce exactamente el bug original.
+- Si `test_run_gates_dispatch_importable_without_module_shadowing` NO falla
+  al reintroducir el shadowing (mutation check ausente o mal ejecutado):
+  DETENTE, el test es un placebo, no hay evidencia de que verifique el
+  mecanismo real.
+- Si algun test existente de `tests/unit/test_run_gates_dispatch.py` se
   rompe con el cambio: DETENTE, escala antes de forzar el test existente a
   pasar cambiando su asercion.
-- Si el Builder intenta anadir `fetch-depth: 0` a `quality-gates.yml` o
-  cualquier otro cambio de workflow: DETENTE y escala al Manager -- esto
-  contradice la Decision Arquitectonica de este plan (Opcion A descartada
-  por evidencia).
-- Si el Builder intenta modificar `scripts/check_publication_gate.py`,
-  `scripts/classify_publication.py` o `tests/conftest.py`: DETENTE y
-  escala -- fuera del alcance declarado en Files Likely Touched.
+- Si el Builder intenta modificar `scripts/check_deliverables_exist.py`,
+  `scripts/run_pytest_safe.py`, `.agent/scope_gate.py`,
+  `.agent/runtime/__init__.py` o `runtime/motor_link.py`: DETENTE y escala
+  -- fuera del alcance declarado en Files Likely Touched.
+- Si el Builder cambia la logica de dispatch por `deliverable_type` (que
+  gates corren para `code`/`documentation`/`research`/`analysis`/`mixed`):
+  DETENTE y escala -- Non-goal explicito de este ticket.
 
 ## Non-goals
 
-- NO anadir `fetch-depth: 0` a `.github/workflows/quality-gates.yml`
-  (Opcion A descartada por evidencia; ver Decision Arquitectonica).
-- NO modificar `scripts/check_publication_gate.py` ni
-  `scripts/classify_publication.py` (produccion, fuera de alcance).
-- NO modificar `tests/conftest.py` ni el mecanismo de `tmp_path` del
-  proyecto (blast-radius de toda la suite).
-- NO intentar reproducir de forma determinista la carrera de `git gc
-  --auto` en el entorno local de este ticket (confirmado irreproducible en
-  Windows tras 3 intentos; el criterio de cierre real es CI-only,
-  PENDIENTE-POST-PUSH).
-- NO anadir tests nuevos a ningun otro archivo de `tests/` (el patron de
-  "muchos commits en bucle" es exclusivo de
-  `tests/test_check_publication_gate.py`).
+- NO cambiar la logica de dispatch por `deliverable_type` (que gates corren
+  para cada tipo).
+- NO tocar `scripts/check_deliverables_exist.py`, `scripts/run_pytest_safe.py`
+  ni ningun otro script del motor mas alla de
+  `scripts/run_gates_dispatch.py`.
+- NO renombrar, mover ni vaciar el paquete `.agent/runtime/__init__.py`
+  (fuente del shadowing, pero fuera de alcance: el fix vive enteramente en
+  `scripts/run_gates_dispatch.py`).
+- NO modificar `.agent/scope_gate.py` ni su contrato publico
+  (`read_delivery_authority`).
+- NO anadir tests nuevos a ningun otro archivo de `tests/` distinto de
+  `tests/unit/test_run_gates_dispatch.py`.
 
 ## Riesgos
 
-- Bajo: `gc.auto=0` en el repo fixture podria, en teoria, dejar de
-  ejercitar codigo de produccion que dependiera de que `git gc` corriera
-  durante el test -- mitigado porque ningun check de
-  `check_publication_gate.py`/`classify_publication.py` invoca ni depende
-  de `git gc` en ningun punto (confirmado por lectura completa de ambos
-  archivos: solo usan `rev-list`, `ls-tree`, `show`, `log`, `status`,
-  `grep`).
-- Bajo: el fix corrige el MECANISMO documentado (carrera de gc en
-  background) pero, al ser CI-only, el cierre depende de observar un run
-  verde de CI tras el push -- mitigado con el gate PENDIENTE-POST-PUSH
-  explicito en Quality Gates y con el Paso 2 documentando por que no puede
-  verificarse antes.
-- Bajo: si el fallo real de CI tuviera una causa adicional no cubierta por
-  `gc.auto=0` (por ejemplo un limite de recursos del runner en vez de gc),
-  el siguiente run de CI seguiria fallando -- mitigado porque el gate
-  PENDIENTE-POST-PUSH exige observar el resultado real antes de dar el
-  ticket por cerrado; si CI sigue en rojo con el mismo traceback, el
-  Manager debe reabrir el diagnostico en vez de asumir cierre.
+- Bajo: mover el import de `scope_gate` a lazy podria, en teoria, ocultar un
+  error de import de `scope_gate` hasta que se llame
+  `read_delivery_authority()` -- mitigado porque ese es exactamente el
+  patron ya probado en produccion por `check_deliverables_exist.py` (mismo
+  repo, mismo modulo importado, sin incidentes conocidos).
+- Bajo: el test nuevo depende de invocar el script como subprocess real, lo
+  que puede ser mas lento o fragil ante el entorno (p.ej. si
+  `AGENT_PROJECT_ROOT` esta seteado en el entorno del test) -- mitigado
+  fijando `cwd=PROJECT_ROOT` explicito y limitando la asercion al mensaje de
+  `stderr` relacionado con el shadowing, no al `returncode` completo de
+  `main()`.
+- Bajo: si algun otro punto futuro del script vuelve a necesitar
+  `scope_gate` a nivel de modulo, el patron lazy exige recordar llamar a
+  `_import_scope_gate()` explicitamente -- mitigado porque el precedente
+  (`check_deliverables_exist.py`) ya documenta este patron y el mutation
+  check de este ticket deja una barrera viva contra la regresion mas
+  probable (reinsertar el import a nivel de modulo).
 
 ## Decision sobre REVIEW
 
-Review 2 adversarial fresh-context OBLIGATORIA (la ficha original la exige
-por tocar CI/workflow con alto blast-radius). Aunque el diagnostico final
-de Fase 0 concluye que el fix NO toca ningun workflow (solo un archivo de
-test), se mantiene la Review 2 obligatoria por dos razones: (1) la
-naturaleza CI-only del criterio de cierre (el gate real depende de un run
-remoto de GitHub Actions, no de un test local) requiere una segunda mirada
-fresh-context que confirme que el traceback de CI post-push coincide con
-el mecanismo documentado aqui antes de dar el ticket por cerrado; (2) el
-propio diagnostico de Fase 0 revirtio la premisa inicial de la ficha (el
-fallo no esta en `check_loose_pattern` ni depende de `fetch-depth`), y un
-cambio de diagnostico de esta magnitud debe re-verificarse por un segundo
-agente sin el contexto de la sesion que lo produjo.
+Review 2 adversarial fresh-context NO obligatoria por regla generica de
+blast-radius (el cambio es un script de tooling de cierre, no CI/workflow),
+pero SI recomendada dado que `run_gates_dispatch.py` es invocado por el
+propio flujo de quality gates del motor (bus/tooling de cierre, Tier 3 segun
+CEM). El Manager en review debe, como minimo, re-ejecutar
+`scripts/run_gates_dispatch.py` el mismo (con el interprete canonico) y
+confirmar con sus propios ojos que el traceback de `ModuleNotFoundError` ya
+no aparece, ademas de revisar el diff literal de
+`scripts/run_gates_dispatch.py` para confirmar que no quedo ningun import de
+`scope_gate` a nivel de modulo.
 
-## Criterios de Aceptacion Global (1:1 con el criterio de aceptacion de la ficha)
+## Criterios de Aceptacion Global (1:1 con el DoD binario de la ficha)
 
-- [ ] `_make_repo` invoca `git config gc.auto 0` tras `git init`, verificado
-      por un test determinista (`test_make_repo_disables_autogc`) que FALLA
-      contra el codigo pre-fix (mutation check documentado con salida
-      literal de pytest) y PASA tras el fix.
-- [ ] Los 8 tests existentes de `tests/test_check_publication_gate.py`
-      siguen pasando localmente sin cambio de aserciones.
-- [ ] `.github/workflows/quality-gates.yml` y
-      `.github/workflows/security-audit.yml` NO aparecen modificados en el
-      diff final (Opcion A descartada explicitamente).
-- [ ] `scripts/check_publication_gate.py`, `scripts/classify_publication.py`
-      y `tests/conftest.py` NO aparecen modificados en el diff final.
+- [ ] `run_gates_dispatch.py` corre y dispatcha por `deliverable_type` SIN
+      `ModuleNotFoundError` (verificado ejecutando el script directamente,
+      sin traceback de import).
+- [ ] MUTATION: reintroducir el import roto (insertar `.agent` a nivel de
+      modulo antes del import de `motor_link`, y `import scope_gate` a nivel
+      de modulo) hace que
+      `test_run_gates_dispatch_importable_without_module_shadowing` FALLE
+      (vuelve el `ModuleNotFoundError`), documentado con salida literal de
+      pytest. Restaurar el fix hace que el test vuelva a pasar.
+- [ ] `tests/unit/test_run_gates_dispatch.py` pasa completo (16 tests: 15
+      existentes + 1 nuevo), sin cambios en las aserciones de los tests
+      existentes.
 - [ ] `ruff check` y `ruff format --check` exit 0 sobre
-      `tests/test_check_publication_gate.py`.
-- [ ] `.venv\Scripts\python.exe scripts/run_pytest_safe.py` verde (stamp
-      fresco sobre HEAD, level=all, exit_code=0).
-- [ ] `.venv\Scripts\python.exe .agent\agent_controller.py --validate
-      --json --project-root .` exit 0/0 tras el cierre.
-- [ ] PENDIENTE-POST-PUSH: el siguiente run de `Quality Gates` en CI tras
-      el push del commit del fix termina en `conclusion: success` para
-      ambos legs del matrix (3.10, 3.11), confirmado con
-      `gh run list --workflow "Quality Gates" --limit 1`.
+      `scripts/run_gates_dispatch.py` y
+      `tests/unit/test_run_gates_dispatch.py`.
+- [ ] `scripts/run_pytest_safe.py` verde (stamp fresco sobre HEAD, level=all,
+      exit_code=0).
+- [ ] `agent_controller.py --validate --json --project-root .` exit 0/0
+      tras el cierre.
+- [ ] `scripts/check_deliverables_exist.py`, `scripts/run_pytest_safe.py`,
+      `.agent/scope_gate.py`, `.agent/runtime/__init__.py` y
+      `runtime/motor_link.py` NO aparecen modificados en el diff final.
