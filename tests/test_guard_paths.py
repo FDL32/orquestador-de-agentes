@@ -415,6 +415,95 @@ class TestGuardHookProfiles:
         assert minimal_patterns != strict_patterns
 
 
+class TestExtraRootDestination:
+    """WOT-2026-019a: guard_paths accepts a second valid root (repo_destino)
+    derived from AGENT_PROJECT_ROOT or motor_destination_link.json's
+    destination_root, so a legitimate Write to repo_destino is not blocked
+    when the harness cwd resolved repo_root to repo_motor."""
+
+    def setup_method(self):
+        _clean_workspace()
+        self.motor_root = (TEST_WORKSPACE / "motor").resolve()
+        self.destino_root = (TEST_WORKSPACE / "destino").resolve()
+        self.outside_root = (TEST_WORKSPACE / "outside").resolve()
+        self.motor_root.mkdir(parents=True, exist_ok=True)
+        self.destino_root.mkdir(parents=True, exist_ok=True)
+        self.outside_root.mkdir(parents=True, exist_ok=True)
+        (self.motor_root / ".claude").mkdir(parents=True, exist_ok=True)
+        (self.destino_root / ".claude").mkdir(parents=True, exist_ok=True)
+
+    def teardown_method(self):
+        os.environ.pop("AGENT_PROJECT_ROOT", None)
+        _clean_workspace()
+
+    def _write_link(self, destination_root: Path) -> None:
+        link = self.motor_root / ".agent" / "config" / "motor_destination_link.json"
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.write_text(
+            json.dumps(
+                {
+                    "motor_root": str(self.motor_root),
+                    "destination_root": str(destination_root),
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def test_write_to_destination_via_agent_project_root_allowed(self, monkeypatch):
+        monkeypatch.setenv("AGENT_PROJECT_ROOT", str(self.destino_root))
+        target = self.destino_root / "src" / "main.py"
+        blocked, reason = _is_protected_path(
+            str(target), DEFAULT_ALLOWLIST, {}, repo_root=self.motor_root
+        )
+        assert blocked is False, reason
+
+    def test_write_to_destination_via_link_destination_root_allowed(self, monkeypatch):
+        monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+        self._write_link(self.destino_root)
+        target = self.destino_root / "src" / "main.py"
+        blocked, reason = _is_protected_path(
+            str(target), DEFAULT_ALLOWLIST, {}, repo_root=self.motor_root
+        )
+        assert blocked is False, reason
+
+    def test_write_outside_both_roots_still_blocked(self, monkeypatch):
+        monkeypatch.setenv("AGENT_PROJECT_ROOT", str(self.destino_root))
+        target = self.outside_root / "evil.py"
+        blocked, reason = _is_protected_path(
+            str(target), DEFAULT_ALLOWLIST, {}, repo_root=self.motor_root
+        )
+        assert blocked is True
+        assert "fuera del repo" in reason
+
+    def test_no_extra_root_behaves_like_today(self, monkeypatch):
+        monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+        target = self.outside_root / "evil.py"
+        blocked, reason = _is_protected_path(
+            str(target), DEFAULT_ALLOWLIST, {}, repo_root=self.motor_root
+        )
+        assert blocked is True
+        assert "fuera del repo" in reason
+
+    def test_malformed_agent_project_root_value_falls_back_closed(self, monkeypatch):
+        nonexistent = self.motor_root.parent / "does_not_exist_at_all"
+        monkeypatch.setenv("AGENT_PROJECT_ROOT", str(nonexistent))
+        target = self.outside_root / "evil.py"
+        blocked, reason = _is_protected_path(
+            str(target), DEFAULT_ALLOWLIST, {}, repo_root=self.motor_root
+        )
+        assert blocked is True
+        assert "fuera del repo" in reason
+
+    def test_protected_pattern_still_blocked_in_destination(self, monkeypatch):
+        monkeypatch.setenv("AGENT_PROJECT_ROOT", str(self.destino_root))
+        target = self.destino_root / ".env"
+        blocked, reason = _is_protected_path(
+            str(target), DEFAULT_ALLOWLIST, {}, repo_root=self.motor_root
+        )
+        assert blocked is True
+        assert "archivo protegido" in reason
+
+
 class TestGitSegmentMatch:
     r"""WOT-2026-004b: the .git protection must match the internal git dir as a
     path segment, NOT as a substring. Barrier against the over-match where the

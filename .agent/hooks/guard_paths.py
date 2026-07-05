@@ -105,6 +105,44 @@ def _is_within_repo(path_obj: Path, repo_root: Path) -> bool:
         return False
 
 
+def _resolve_extra_root(repo_root: Path) -> Path | None:
+    """Resolve a second valid root beyond ``repo_root``.
+
+    Source 1: ``AGENT_PROJECT_ROOT`` env var (already-official orchestrator
+    project root, set by entry points after parsing ``--project-root``).
+    Source 2 (fallback, only if source 1 is unset/empty): ``destination_root``
+    from ``<repo_root>/.agent/config/motor_destination_link.json`` -- same
+    fail-safe read pattern as ``resolve_guard_paths`` in
+    ``claude_guard_entry.py`` and ``motor_checkpoint.py::resolve_destino_root``.
+
+    Returns ``None`` (fail-safe, never raises) when neither source resolves,
+    when the resolved value is malformed, or when the resolved path does not
+    exist on disk (no phantom root that would never block anything).
+    """
+    env_value = os.environ.get("AGENT_PROJECT_ROOT", "").strip()
+    if env_value:
+        try:
+            candidate = Path(env_value).resolve()
+        except (OSError, ValueError):
+            return None
+        return candidate if candidate.exists() else None
+
+    link = repo_root / ".agent" / "config" / "motor_destination_link.json"
+    try:
+        destination_root = json.loads(link.read_text(encoding="utf-8"))[
+            "destination_root"
+        ]
+    except (json.JSONDecodeError, OSError, KeyError, TypeError):
+        return None
+    if not isinstance(destination_root, str) or not destination_root.strip():
+        return None
+    try:
+        candidate = Path(destination_root).resolve()
+    except (OSError, ValueError):
+        return None
+    return candidate if candidate.exists() else None
+
+
 def _matches_any_pattern(text: str, patterns: tuple[str, ...]) -> str | None:
     for pattern in patterns:
         if re.search(pattern, text, re.IGNORECASE):
@@ -141,8 +179,12 @@ def _is_protected_path(
         except (OSError, ValueError):
             return True, "directorio actual no accesible"
 
+    effective_root = repo_root
     if not _is_within_repo(path_obj, repo_root):
-        return True, "fuera del repo"
+        extra_root = _resolve_extra_root(repo_root)
+        if extra_root is None or not _is_within_repo(path_obj, extra_root):
+            return True, "fuera del repo"
+        effective_root = extra_root
 
     filename = path_obj.name.lower()
     if filename in PROTECTED_FILENAMES:
@@ -154,7 +196,9 @@ def _is_protected_path(
         return True, f"ruta protegida por patron: {pattern}"
 
     write_roots = allowlist.get("write_roots", [])
-    if write_roots and not _is_allowed_write_root(path_obj, repo_root, write_roots):
+    if write_roots and not _is_allowed_write_root(
+        path_obj, effective_root, write_roots
+    ):
         return True, f"fuera de write_roots permitidos: {write_roots}"
 
     return False, ""
