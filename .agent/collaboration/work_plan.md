@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WOT-2026-019a
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Titulo:** guard_paths acepta un segundo root explicito (AGENT_PROJECT_ROOT /
   destination_root del link) para no bloquear Writes legitimos al repo_destino

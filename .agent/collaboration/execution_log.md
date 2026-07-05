@@ -2,7 +2,7 @@
 
 Ticket: WOT-2026-019a - guard_paths resuelve repo-root por cwd, bloquea
 Writes legitimos al repo_destino.
-**Estado:** IN_PROGRESS
+**Estado:** COMPLETED
 
 ## Bitacora
 
@@ -139,3 +139,8 @@ completa `pytest tests/test_guard_paths.py -v` tras restaurar: `43 passed in
 - [x] `ruff check`/`ruff format --check` exit 0 (tras aplicar reformat).
 - [ ] Suite canonica `run_pytest_safe.py` -- pendiente de ejecutar tras el
       commit (ver siguiente entrada de este log / reporte final).
+
+
+Scope override: Over-captura de artefactos de tickets YA CERRADOS (015p/019b/019d AUDIT/PLAN, y agent_controller.py+test_agent_controller.py que son la ENTREGA de 019d ya commiteada). Verificado con git show --name-only dfdebee f3ac1f5: 019a solo toco guard_paths.py + tests/test_guard_paths.py + execution_log + archivado de PLAN/AUDIT de 019d (churn de cierre). 0 hits de los archivos ajenos en mis commits.. Affected files: <REPO_ROOT>/.agent/agent_controller.py, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-015p.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019b.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019d.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-015p.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-019b.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-019d.md, <REPO_ROOT>/tests/test_agent_controller.py
+
+Manager approved canonical closeout for WOT-2026-019a
