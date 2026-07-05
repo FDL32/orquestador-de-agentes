@@ -2,7 +2,7 @@
 
 Ticket: WOT-2026-019c - test flaky en CI shallow clone
 (test_loose_pattern_chunks_many_revs, exit 128 de git rev-list --all).
-**Estado:** IN_PROGRESS
+**Estado:** COMPLETED
 
 ## Bitacora
 
@@ -83,3 +83,8 @@ Quality Gates post-push; reason: la carrera git-gc solo se manifiesta en el runn
 bajo carga, no reproducible en local. Estado de pipeline: CLOSED_PENDING_CI.
 
 Pendiente: Review 2 fresh-context + cierre canonico local + push + verificar CI verde.
+
+
+Scope override: Over-captura de artefactos de tickets YA CERRADOS Y PUSHEADOS (019a/019d AUDIT/PLAN, guard_paths.py+test_guard_paths.py=entrega de 019a, observations=cierre de sesion). Verificado con git show --name-only 4c810a4 9b0306b: 019c solo toco tests/test_check_publication_gate.py + execution_log + archivado de PLAN/AUDIT de 019a (churn). 0 hits de los archivos ajenos.. Affected files: <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019a.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019d.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-019a.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-019d.md, <REPO_ROOT>/.agent/hooks/guard_paths.py, <REPO_ROOT>/.agent/runtime/memory/archive/observations.2026-07.jsonl, <REPO_ROOT>/tests/test_guard_paths.py
+
+Manager approved canonical closeout for WOT-2026-019c

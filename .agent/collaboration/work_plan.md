@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WOT-2026-019c
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Titulo:** Aislar `_make_repo` de `tests/test_check_publication_gate.py` con
   `gc.auto=0` para eliminar la condicion de carrera de `git rev-list --all`
