@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WOT-2026-019i
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Titulo:** `scripts/run_gates_dispatch.py` es NO-EJECUTABLE por
   `ModuleNotFoundError: No module named 'runtime.motor_link'` (shadowing de

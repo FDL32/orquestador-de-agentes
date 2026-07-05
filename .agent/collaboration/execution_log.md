@@ -3,7 +3,7 @@
 Ticket: `scripts/run_gates_dispatch.py` es NO-EJECUTABLE por
 `ModuleNotFoundError: No module named 'runtime.motor_link'` (shadowing de
 `runtime` por `.agent/runtime/`).
-**Estado:** IN_PROGRESS
+**Estado:** COMPLETED
 
 ## Bitacora
 
@@ -65,3 +65,8 @@ Nota de estado: los `D AUDIT_WOT-2026-019c.md` / `D PLAN_WOT-2026-019c.md`
 del `git status` son churn del cierre de 019c (artefactos trackeados de un
 ticket COMPLETED archivados al bootstrap de este ticket), NO cambios del fix.
 Se consolidan en el commit de cierre.
+
+
+Scope override: Sobre-captura del scope gate: git show 5a7d973 --name-only da 0 hits para todos los archivos listados (AUDIT/PLAN 019a/019c/019d = artefactos de tickets ya cerrados; observations/bootstrap/test_check_publication_gate = cambios de sesion previa; 'sys.path' = falso positivo del parser sobre prosa del work_plan). El diff real origin/main..HEAD toca solo los 11 archivos de 019i + churn 019c. Verificado auditablemente.. Affected files: <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019a.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019c.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019d.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-019a.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-019c.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-019d.md, <REPO_ROOT>/.agent/runtime/memory/archive/observations.2026-07.jsonl, <REPO_ROOT>/prompts/orchestrator_session_bootstrap.md, <REPO_ROOT>/sys.path, <REPO_ROOT>/tests/test_check_publication_gate.py
+
+Manager approved canonical closeout for WOT-2026-019i
