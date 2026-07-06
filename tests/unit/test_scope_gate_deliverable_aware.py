@@ -1,8 +1,8 @@
-"""Tests for deliverable_type-aware scope gate (WOT-2026-009a).
+"""Tests for deliverable_type-aware scope gate (WOT-2026-009a, WOT-2026-019j).
 
 Verifica que parse_files_likely_touched y check_scope_gate reconocen la
 seccion ## Builder como alternativa a ## Files Likely Touched para tickets
-de tipo analysis/documentation/research, y que tickets code/mixed NO
+de tipo analysis/documentation/research/mixed, y que tickets code NO
 parsean ## Builder como whitelist.
 """
 
@@ -92,6 +92,16 @@ _ANALYSIS_FLT_AND_BUILDER = (
     "- `.agent/docs/OTHER.md`\n"
 )
 
+_MIXED_FLT_AND_BUILDER = (
+    "# Work Plan\n\n"
+    "## Metadata\n\n"
+    "- **deliverable_type:** mixed\n\n"
+    "## Files Likely Touched\n\n"
+    "- `bus/foo.py`\n\n"
+    "## Builder\n\n"
+    "- `bus/OTHER.py`\n"
+)
+
 
 def _parse(plan: str, deliverable_type: str = "code") -> set[str]:
     return scope_gate.parse_files_likely_touched(
@@ -170,8 +180,19 @@ def test_code_gate_emits_warning_without_flt() -> None:
     assert any("No Files Likely Touched" in w for w in result["warnings"])
 
 
-def test_mixed_does_not_parse_builder_section() -> None:
-    assert _parse(_MIXED_BUILDER_ONLY, deliverable_type="mixed") == set()
+# Positivo B2 (WOT-2026-019j): mixed con ## Builder -> SI parsea Builder
+
+
+def test_mixed_parses_builder_section_as_whitelist() -> None:
+    files = _parse(_MIXED_BUILDER_ONLY, deliverable_type="mixed")
+    assert str((_ROOT / "bus/foo.py").resolve()) in files
+
+
+def test_mixed_gate_no_warning_when_covered() -> None:
+    changed = {str((_ROOT / "bus/foo.py").resolve())}
+    result = _gate(_MIXED_BUILDER_ONLY, changed=changed, deliverable_type="mixed")
+    assert result["valid"] is True
+    assert result["warnings"] == []
 
 
 # Positivo C: analysis con ## Files Likely Touched -> FLT tiene prioridad
@@ -181,3 +202,9 @@ def test_analysis_with_flt_uses_flt_not_builder() -> None:
     files = _parse(_ANALYSIS_FLT_AND_BUILDER, deliverable_type="analysis")
     assert str((_ROOT / ".agent/docs/foo.md").resolve()) in files
     assert str((_ROOT / ".agent/docs/OTHER.md").resolve()) not in files
+
+
+def test_mixed_with_flt_uses_flt_not_builder() -> None:
+    files = _parse(_MIXED_FLT_AND_BUILDER, deliverable_type="mixed")
+    assert str((_ROOT / "bus/foo.py").resolve()) in files
+    assert str((_ROOT / "bus/OTHER.py").resolve()) not in files

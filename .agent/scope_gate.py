@@ -56,6 +56,12 @@ def exclude_files(
 
 
 _DOC_DELIVERABLE_TYPES = frozenset({"analysis", "documentation", "research"})
+# WOT-2026-019j: deliverable_types that fall back to parsing the ``## Builder``
+# section when ``## Files Likely Touched`` yields no entries. Superset of
+# _DOC_DELIVERABLE_TYPES that also covers "mixed" tickets declaring their
+# deliverables under ``## Builder``. Single source of truth so a future
+# surface cannot forget to add "mixed" independently.
+_FLT_BUILDER_FALLBACK_TYPES = _DOC_DELIVERABLE_TYPES | {"mixed"}
 _DELIVERY_AUTHORITY_RE = re.compile(
     r"(?:delivery_authority|repo\s+de\s+autoridad)"
     r"\**\s*:?\s*\**\s*(`?)(repo_motor|repo_destino)\1",
@@ -140,7 +146,7 @@ def files_likely_touched_tokens(
     """
     lines = work_plan_content.split("\n")
     tokens = _section_path_tokens(lines, "Files Likely Touched")
-    if not tokens and deliverable_type in _DOC_DELIVERABLE_TYPES:
+    if not tokens and deliverable_type in _FLT_BUILDER_FALLBACK_TYPES:
         tokens = _section_path_tokens(lines, "Builder")
     return tokens
 
@@ -166,13 +172,53 @@ def _extract_section_paths(
     return files
 
 
+def _parse_builder_fallback_entries(
+    lines: list[str],
+) -> list[tuple[str | None, str]]:
+    """Scan the ``## Builder`` section for path tokens (flat, no namespaces).
+
+    WOT-2026-019j fallback: ``## Builder`` never uses ``### `` sub-headings, so
+    every entry is flat (namespace ``None``). Same start/end detection as the
+    FLT scan in :func:`_parse_flt_section`.
+    """
+    in_builder = False
+    builder_entries: list[tuple[str | None, str]] = []
+    for line in lines:
+        stripped = line.strip()
+        if "## Builder" in stripped and stripped.startswith("## "):
+            in_builder = True
+            continue
+        if (
+            in_builder
+            and stripped.startswith("## ")
+            and not stripped.startswith("### ")
+        ):
+            break
+        if not in_builder:
+            continue
+        if not stripped or stripped.startswith("---"):
+            continue
+        normalized = _normalize_flt_line(stripped)
+        if normalized and _looks_like_path_token(normalized):
+            builder_entries.append((None, normalized))
+    return builder_entries
+
+
 def _parse_flt_section(
     lines: list[str],
+    *,
+    deliverable_type: str = "code",
 ) -> tuple[bool, list[tuple[str | None, str]]]:
     """Scan the FLT section and return (has_namespaces, [(namespace, raw_path)]).
 
     Namespace is ``"motor"``, ``"destino"``, ``"unknown"``, or ``None`` (flat).
     Only yields lines that look like path tokens.
+
+    WOT-2026-019j: if the ``## Files Likely Touched`` scan yields no entries
+    and ``deliverable_type`` is in ``_FLT_BUILDER_FALLBACK_TYPES``, re-scans
+    ``lines`` for a ``## Builder`` section using the same start/end detection
+    logic, and returns those entries as flat (namespace ``None``) since
+    ``## Builder`` never uses ``### `` sub-headings.
     """
     in_flt = False
     current_ns: str | None = None
@@ -206,6 +252,11 @@ def _parse_flt_section(
         if normalized and _looks_like_path_token(normalized):
             entries.append((current_ns, normalized))
 
+    if not entries and deliverable_type in _FLT_BUILDER_FALLBACK_TYPES:
+        builder_entries = _parse_builder_fallback_entries(lines)
+        if builder_entries:
+            return False, builder_entries
+
     return has_namespaces, entries
 
 
@@ -215,6 +266,7 @@ def parse_flt_namespaced(
     motor_root: Path,
     project_root: Path,
     delivery_authority: str = "repo_motor",
+    deliverable_type: str = "code",
 ) -> dict[str, set[str]]:
     """Parse FLT section with optional namespace sub-headings.
 
@@ -226,9 +278,16 @@ def parse_flt_namespaced(
     - ``### repo_destino`` lines are resolved against ``project_root``.
     - Flat lines (no sub-heading) are routed by ``delivery_authority``.
     - Unknown sub-headings are skipped.
+
+    WOT-2026-019j: ``deliverable_type`` (default ``"code"``) is forwarded to
+    :func:`parse_flt_raw_buckets` so a ``mixed`` (or doc-type) ticket that
+    declares its files under ``## Builder`` resolves a real whitelist through
+    the ``--validate`` scope check too, not only through mark-ready.
     """
     buckets = parse_flt_raw_buckets(
-        work_plan_content, delivery_authority=delivery_authority
+        work_plan_content,
+        delivery_authority=delivery_authority,
+        deliverable_type=deliverable_type,
     )
     motor_files: set[str] = set()
     destino_files: set[str] = set()
@@ -242,7 +301,10 @@ def parse_flt_namespaced(
 
 
 def parse_flt_raw_buckets(
-    work_plan_content: str, *, delivery_authority: str = "repo_motor"
+    work_plan_content: str,
+    *,
+    delivery_authority: str = "repo_motor",
+    deliverable_type: str = "code",
 ) -> dict[str, set[str]]:
     """Parse FLT into raw normalized path buckets without resolving roots.
 
@@ -251,7 +313,7 @@ def parse_flt_raw_buckets(
     forward slashes so downstream consumers can choose their own root.
     """
     lines = work_plan_content.split("\n")
-    _, entries = _parse_flt_section(lines)
+    _, entries = _parse_flt_section(lines, deliverable_type=deliverable_type)
     motor_files: set[str] = set()
     destino_files: set[str] = set()
 
@@ -276,6 +338,7 @@ def parse_flt_raw_paths(
     *,
     delivery_authority: str = "repo_motor",
     target: str = "authority",
+    deliverable_type: str = "code",
 ) -> set[str]:
     """Return raw normalized FLT paths for one target view.
 
@@ -286,7 +349,9 @@ def parse_flt_raw_paths(
     - ``"all"``: union of both buckets.
     """
     buckets = parse_flt_raw_buckets(
-        work_plan_content, delivery_authority=delivery_authority
+        work_plan_content,
+        delivery_authority=delivery_authority,
+        deliverable_type=deliverable_type,
     )
     if target == "motor":
         return set(buckets["motor"])
@@ -344,7 +409,7 @@ def parse_files_likely_touched(
     """
     lines = work_plan_content.split("\n")
     files = _extract_section_paths(lines, "Files Likely Touched", project_root)
-    if not files and deliverable_type in _DOC_DELIVERABLE_TYPES:
+    if not files and deliverable_type in _FLT_BUILDER_FALLBACK_TYPES:
         files = _extract_section_paths(lines, "Builder", project_root)
     return files
 

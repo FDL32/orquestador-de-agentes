@@ -177,7 +177,9 @@ def path_is_under(child: Path, parent: Path) -> bool:
         return False
 
 
-def parse_raw_flt_paths(plan_content: str) -> set[str]:
+def parse_raw_flt_paths(
+    plan_content: str, *, deliverable_type: str = "code"
+) -> set[str]:
     """Parse Files Likely Touched returning motor-relative paths with /.
 
     Unlike parse_files_likely_touched(), this function does NOT resolve paths
@@ -189,6 +191,12 @@ def parse_raw_flt_paths(plan_content: str) -> set[str]:
     ``### repo_motor`` (or flat lines with no sub-heading) are returned.
     Lines under ``### repo_destino`` are excluded — they are not motor paths.
 
+    WOT-2026-019j: ``deliverable_type`` (default ``"code"``, preserving prior
+    behavior for existing callers) is forwarded to
+    :func:`scope_gate.parse_flt_raw_paths` so tickets whose type falls back to
+    ``## Builder`` (doc-types and ``mixed``) resolve a real whitelist even when
+    ``## Files Likely Touched`` is absent.
+
     Before: plan_content contains a ``## Files Likely Touched`` section.
     During: Scans lines, tracks sub-heading namespace, normalizes paths.
     After: Returns set of motor-relative paths with forward slashes.
@@ -197,6 +205,7 @@ def parse_raw_flt_paths(plan_content: str) -> set[str]:
         plan_content,
         delivery_authority="repo_motor",
         target="motor",
+        deliverable_type=deliverable_type,
     )
 
 

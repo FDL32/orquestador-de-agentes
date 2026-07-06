@@ -1,72 +1,123 @@
-# Execution Log - WOT-2026-019i
+# Execution Log - WOT-2026-019j
 
-Ticket: `scripts/run_gates_dispatch.py` es NO-EJECUTABLE por
-`ModuleNotFoundError: No module named 'runtime.motor_link'` (shadowing de
-`runtime` por `.agent/runtime/`).
-**Estado:** COMPLETED
+Ticket: El scope gate no reconoce el heading `## Builder` para tickets
+`deliverable_type=mixed`.
+**Estado:** IN_PROGRESS
 
 ## Bitacora
 
 - Plan creado y aprobado por el Manager (2026-07-06). Fase 0 (Orquestador)
-  diagnostico la causa raiz ANTES de bootstrapear, verificada en vivo:
-  - REPRO confirmado: `.venv/Scripts/python.exe scripts/run_gates_dispatch.py`
-    -> exit 1, `ModuleNotFoundError: No module named 'runtime.motor_link'`
-    en la linea 54 (`resolve_motor_root_path`).
-  - Causa: `.agent` se inserta en `sys.path` a nivel de modulo (lineas
-    23-25) antes de `import scope_gate` (linea 28); `.agent/runtime/` hace
-    sombra a `<motor>/runtime/` al resolver `from runtime.motor_link import
-    ...`.
-  - Precedente canonico verificado: `scripts/check_deliverables_exist.py`
-    resuelve el mismo import sin fallar porque nunca inserta `.agent` a
-    nivel de modulo (import de `scope_gate` lazy, dentro de
-    `_import_scope_gate()`).
-  - work_plan.md, STRATEGY_WOT-2026-019i.md y AUDIT_WOT-2026-019i.md
-    creados. execution_log.md de WOT-2026-019c archivado a
-    execution_log_WOT-2026-019c.md antes de este bootstrap.
-- Turno a resetear a BUILDER (`--reset-turn --force`), ticket a
-  bootstrapear en el bus (`--bootstrap-ticket --json`).
+  diagnostico las 3 superficies ANTES de bootstrapear, verificadas de nuevo
+  por el Manager antes de aprobar:
+  - `scope_gate.parse_files_likely_touched` (linea 347) y
+    `scope_gate.files_likely_touched_tokens` (linea 143): mismo guard
+    `_DOC_DELIVERABLE_TYPES` sin `mixed`.
+  - Cadena del checkpoint del mark-ready
+    (`_handle_mark_ready`, `agent_controller.py:3352`) ->
+    `motor_checkpoint.parse_raw_flt_paths` -> `scope_gate.parse_flt_raw_paths`
+    -> `parse_flt_raw_buckets` -> `_parse_flt_section`: esta ultima SOLO
+    reconoce `## Files Likely Touched`, sin parametro `deliverable_type` ni
+    fallback a `## Builder`.
+  - Verificacion adicional del Manager: 2 call-sites mas de la misma
+    `_parse_raw_flt_paths` dentro de `_handle_pre_handoff`
+    (`agent_controller.py:3636` y `:3914`) comparten el mismo mecanismo de
+    bug; se corrigen en el mismo ticket.
+- Decision de diseno: conjunto compartido `_FLT_BUILDER_FALLBACK_TYPES` para
+  las superficies 1 y 2; parametro `deliverable_type` explicito (default
+  `"code"`) por toda la cadena de la superficie 3, sin fallback
+  incondicional (opcion descartada por blast-radius).
+- work_plan.md, STRATEGY_WOT-2026-019j.md y AUDIT_WOT-2026-019j.md creados.
+  execution_log.md de WOT-2026-019i archivado a
+  execution_log_WOT-2026-019i.md antes de este bootstrap.
+  STRATEGY_WOT-2026-019i.md y AUDIT_WOT-2026-019i.md archivados a
+  `.agent/collaboration/_archive/plan_audit/` via
+  `scripts/archive_collaboration_artifacts.py --project-root .`.
+- Turno reseteado a BUILDER (`--reset-turn --force`), ticket a bootstrapear
+  en el bus (`--bootstrap-ticket --json`).
 
-## Implementacion (Builder + verificacion del Orquestador)
+## Implementacion (Builder + verificacion/cierre del Orquestador)
 
-- PASO 1 aplicado en `scripts/run_gates_dispatch.py`: eliminada la insercion
-  de `.agent` en `sys.path` a nivel de modulo y el `import scope_gate` global;
-  anadida la funcion lazy `_import_scope_gate()` (mismo patron que
-  `check_deliverables_exist.py`); `read_delivery_authority()` ahora llama
-  `_sg = _import_scope_gate()` antes de usarlo. Diff minimo, sin tocar la
-  logica de dispatch.
-- PASO 2 aplicado en `tests/unit/test_run_gates_dispatch.py`: anadido
-  `test_run_gates_dispatch_importable_without_module_shadowing` que invoca el
-  script como SUBPROCESO independiente (`sys.executable`, no reusa el modulo
-  ya cargado) y aserta que `ModuleNotFoundError` y
-  `No module named 'runtime.motor_link'` NO aparecen en stderr.
+- PASO 1 (scope_gate.py sup. 1 y 2): `_FLT_BUILDER_FALLBACK_TYPES =
+  _DOC_DELIVERABLE_TYPES | {"mixed"}`; guards de `files_likely_touched_tokens`
+  y `parse_files_likely_touched` cambiados a ese conjunto.
+- PASO 2 (scope_gate.py cadena raw): `_parse_flt_section`,
+  `parse_flt_raw_buckets`, `parse_flt_raw_paths` reciben
+  `deliverable_type="code"`; fallback a `## Builder` cuando FLT vacio y tipo en
+  el conjunto.
+- PASO 3 (motor_checkpoint + agent_controller): `parse_raw_flt_paths` recibe el
+  parametro; 3 call-sites de `_parse_raw_flt_paths` en agent_controller pasan el
+  deliverable_type correcto (`_dt_mr` mark-ready; `_dt_bom` leido local en el
+  guard BOM del pre-handoff; `_dt_ph` en el commit-or-block del pre-handoff).
+- PASO 4 (tests): 6 tests nuevos/renombrados en los 3 archivos focales, incl.
+  `test_mixed_parses_builder_section_as_whitelist` (invierte el viejo
+  `test_mixed_does_not_parse_builder_section`) y
+  `test_parse_raw_flt_paths_code_default_ignores_builder` (protege que `code`
+  NO cae al fallback).
+
+### Arreglos del Orquestador (el Builder se corto antes de completarlos)
+- REGRESION cazada por el Orquestador: `tests/test_agent_controller.py`
+  (NO en el FLT original) tenia 3 monkeypatches de `_parse_raw_flt_paths` con
+  `lambda content: {...}` -> al anadir el kwarg `deliverable_type` reventaban
+  con `TypeError: <lambda>() got an unexpected keyword argument
+  'deliverable_type'` (5 tests de `TestExternalMotorCheckpointTopology`).
+  Fix: firma de los 3 lambdas a `lambda content, **kwargs: {...}`. Tras el
+  arreglo: `TestExternalMotorCheckpointTopology` 10 passed.
+- C901: `_parse_flt_section` quedaba en complejidad 16 (>10) con el 2o escaneo
+  inline. Extraido a helper `_parse_builder_fallback_entries(lines)` ->
+  ruff check `All checks passed!`.
 
 ### Verificacion del Orquestador (re-corrida sobre el repo real)
-
-- IMPORT a nivel de modulo (donde vivia el bug): `exec_module` OK,
-  `MOTOR_ROOT = C:\Users\<user>\Proyectos_Python\orquestador_de_agentes`,
-  exit 0. Ya NO hay `ModuleNotFoundError` del shadowing.
-- Script directo: corre de punta a punta con exit 0 (cadena de gates completa).
-- Suite del modulo: `pytest tests/unit/test_run_gates_dispatch.py` = 19 passed
-  (18 previos + 1 nuevo), exit 0. Todos los tests existentes intactos.
-- MUTATION-VERIFY (corrido por el Orquestador, no por el Builder):
-  reintroducido el shadowing (`.agent` en sys.path + `import scope_gate` a
-  nivel de modulo) -> el test nuevo FALLA con salida literal:
+- Tests focales (3 archivos scope_gate/motor_checkpoint): 40 passed.
+- `tests/test_agent_controller.py -k "Congruence or CheckpointTopology or
+  MarkReady or mark_ready"`: 15 passed (sin regresiones de firma).
+- MUTATION-VERIFY (corrido 2x por el Orquestador: pre- y post-refactor C901):
+  quitar `mixed` de `_FLT_BUILDER_FALLBACK_TYPES` -> FALLAN 4 tests de mixed
+  cubriendo las 3 superficies:
   ```
-  >       assert "ModuleNotFoundError" not in result.stderr
-  E       assert 'ModuleNotFoundError' not in "Traceback (...otor_link'\n"
-  E         ModuleNotFoundError: No module named 'runtime.motor_link'
-  FAILED ...::test_run_gates_dispatch_importable_without_module_shadowing
-  1 failed in 0.22s
+  FAILED test_scope_gate_deliverable_aware.py::test_mixed_parses_builder_section_as_whitelist
+  FAILED test_scope_gate_deliverable_aware.py::test_mixed_gate_no_warning_when_covered
+  FAILED test_scope_gate_topology.py::test_raw_paths_mixed_falls_back_to_builder_section
+  FAILED test_motor_checkpoint.py::test_parse_raw_flt_paths_mixed_falls_back_to_builder
+  4 failed, 1 passed
   ```
-  Restaurado el fix -> 19 passed de nuevo. Barrera viva, no placebo.
-- ruff check: `All checks passed!`; ruff format --check: `2 files already formatted`.
+  (el 1 passed = `test_mixed_with_flt_uses_flt_not_builder`, correcto: no
+  depende del fallback). Restaurar -> 40 passed. Barrera viva, no placebo.
+- ruff check + ruff format --check sobre los 7 archivos tocados: limpio.
 
-Nota de estado: los `D AUDIT_WOT-2026-019c.md` / `D PLAN_WOT-2026-019c.md`
-del `git status` son churn del cierre de 019c (artefactos trackeados de un
-ticket COMPLETED archivados al bootstrap de este ticket), NO cambios del fix.
-Se consolidan en el commit de cierre.
+Nota de scope: el diff toca `tests/test_agent_controller.py` (arreglo de
+mocks de firma), que NO estaba en el FLT original -> el mark-ready dara
+sobre-captura, se cerrara con --scope-override citando que es consecuencia
+directa e inevitable del cambio de firma publica de `_parse_raw_flt_paths`.
 
+## 4a SUPERFICIE (BLOCKER de Review 2 fresh-context, corregido por el Orquestador)
 
-Scope override: Sobre-captura del scope gate: git show 5a7d973 --name-only da 0 hits para todos los archivos listados (AUDIT/PLAN 019a/019c/019d = artefactos de tickets ya cerrados; observations/bootstrap/test_check_publication_gate = cambios de sesion previa; 'sys.path' = falso positivo del parser sobre prosa del work_plan). El diff real origin/main..HEAD toca solo los 11 archivos de 019i + churn 019c. Verificado auditablemente.. Affected files: <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019a.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019c.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019d.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-019a.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-019c.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-019d.md, <REPO_ROOT>/.agent/runtime/memory/archive/observations.2026-07.jsonl, <REPO_ROOT>/prompts/orchestrator_session_bootstrap.md, <REPO_ROOT>/sys.path, <REPO_ROOT>/tests/test_check_publication_gate.py
+Review 2 fresh-context cazo un BLOCKER real que Fase 0, el Manager y Review 1
+NO vieron: el fix cerraba las 3 superficies de la ficha (mark-ready checkpoint,
+extension checks, check_scope_gate para repo_destino) pero DEJABA el warning de
+`--validate` para tickets `mixed` `repo_motor` con `## Builder` -> el DoD del
+ticket ("valida sin warning", work_plan l.16) quedaba a medias, y el caso
+DOMINANTE es repo_motor (los tickets del propio motor). Causa:
+`_check_scope_for_validate` (agent_controller.py:4344) enruta repo_motor por
+`parse_flt_namespaced(plan_content)`, y `scope_gate.parse_flt_namespaced`
+(scope_gate.py:281) llamaba `parse_flt_raw_buckets` SIN reenviar
+`deliverable_type` -> el fallback a `## Builder` nunca se activaba por esa ruta.
+REPRODUCIDO EN VIVO por el Orquestador: parse_flt_namespaced(mixed+Builder,
+repo_motor) -> whitelist motor VACIA (pre-fix).
 
-Manager approved canonical closeout for WOT-2026-019i
+Fix (reenvio de deliverable_type por la cadena, patron identico, default "code"):
+- `scope_gate.parse_flt_namespaced`: +param `deliverable_type="code"`, reenviado
+  a `parse_flt_raw_buckets`.
+- `agent_controller.parse_flt_namespaced` wrapper (l.333): lee `_read_deliverable_type`
+  y lo reenvia (el call-site 4344 `parse_flt_namespaced(plan_content)` no cambia:
+  el wrapper resuelve el tipo internamente).
+- `scripts/pre_handoff_guard.py` (l.330): lee `_read_deliverable_type_from_content`
+  y lo reenvia (misma ruta scope-discrepancy, coherencia).
+- Tests nuevos en test_scope_gate_topology.py: `test_namespaced_mixed_falls_back_to_builder`
+  (mixed+Builder+repo_motor -> whitelist motor no vacia) y
+  `test_namespaced_code_default_ignores_builder` (code default -> vacio).
+
+VERIFICADO EN VIVO post-fix: mixed -> {.agent/scope_gate.py, scripts/foo.py};
+code -> vacio. MUTATION del Orquestador: quitar el reenvio en parse_flt_namespaced
+-> `test_namespaced_mixed_falls_back_to_builder` FALLA (whitelist vacia). Sin
+regresion: 42 tests focales, 30 tests agent_controller (checkpoint/validate/scope),
+62 tests pre_handoff_guard, todos verde. ruff limpio.

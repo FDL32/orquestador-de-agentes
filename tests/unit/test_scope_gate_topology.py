@@ -102,6 +102,16 @@ _NAMESPACED_DESTINO_ANNOTATED = (
     "## Otro\n"
 )
 
+_MIXED_BUILDER_ONLY_NO_FLT = (
+    "# Work Plan\n\n"
+    "## Metadata\n\n"
+    "- **deliverable_type:** mixed\n\n"
+    "## Builder\n\n"
+    "- `.agent/scope_gate.py`\n"
+    "- `scripts/foo.py`\n\n"
+    "## Otro\n"
+)
+
 
 # ---------------------------------------------------------------------------
 # parse_flt_namespaced tests
@@ -143,6 +153,35 @@ def test_namespaced_destino_only_motor_bucket_empty():
     )
     assert result["motor"] == set()
     assert str((_DESTINO / ".agent/docs/bar.md").resolve()) in result["destino"]
+
+
+def test_namespaced_mixed_falls_back_to_builder():
+    """WOT-2026-019j (4th surface): parse_flt_namespaced forwards
+    deliverable_type so a mixed repo_motor ticket declaring files under
+    ## Builder resolves a real motor whitelist -> --validate emits no spurious
+    'No repo_motor paths in Files Likely Touched' warning."""
+    result = scope_gate.parse_flt_namespaced(
+        _MIXED_BUILDER_ONLY_NO_FLT,
+        motor_root=_MOTOR,
+        project_root=_DESTINO,
+        delivery_authority="repo_motor",
+        deliverable_type="mixed",
+    )
+    assert str((_MOTOR / ".agent/scope_gate.py").resolve()) in result["motor"]
+    assert str((_MOTOR / "scripts/foo.py").resolve()) in result["motor"]
+
+
+def test_namespaced_code_default_ignores_builder():
+    """WOT-2026-019j guard: deliverable_type='code' (default) must NOT fall
+    back to ## Builder in parse_flt_namespaced, so the validate scope check
+    still flags a code ticket that forgot its FLT whitelist."""
+    result = scope_gate.parse_flt_namespaced(
+        _MIXED_BUILDER_ONLY_NO_FLT,
+        motor_root=_MOTOR,
+        project_root=_DESTINO,
+        delivery_authority="repo_motor",
+    )
+    assert result["motor"] == set()
 
 
 def test_flat_flt_motor_authority_goes_to_motor_bucket():
@@ -243,6 +282,19 @@ def test_raw_paths_all_target_returns_union():
         target="all",
     )
     assert result == {".agent/scope_gate.py", ".agent/docs/foo.md"}
+
+
+def test_raw_paths_mixed_falls_back_to_builder_section():
+    """WOT-2026-019j: a mixed-type plan with no ## Files Likely Touched but a
+    ## Builder section falls back to parsing ## Builder, same contract as
+    doc-types."""
+    result = scope_gate.parse_flt_raw_paths(
+        _MIXED_BUILDER_ONLY_NO_FLT,
+        delivery_authority="repo_motor",
+        target="motor",
+        deliverable_type="mixed",
+    )
+    assert result == {".agent/scope_gate.py", "scripts/foo.py"}
 
 
 # ---------------------------------------------------------------------------

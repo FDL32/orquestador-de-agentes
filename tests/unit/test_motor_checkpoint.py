@@ -257,3 +257,42 @@ class TestRegressionBarrier008b:
         )
         assert diag.get("uncommitted_work_plan") is True
         assert ".agent/collaboration/work_plan.md" in diag.get("path", "")
+
+
+def test_parse_raw_flt_paths_mixed_falls_back_to_builder() -> None:
+    """WOT-2026-019j: parse_raw_flt_paths(deliverable_type="mixed") falls back
+    to ## Builder when ## Files Likely Touched is absent, same contract as
+    scope_gate.parse_flt_raw_paths."""
+    import motor_checkpoint
+
+    plan = (
+        "# Work Plan\n\n"
+        "## Metadata\n\n"
+        "- **deliverable_type:** mixed\n\n"
+        "## Builder\n\n"
+        "- `.agent/scope_gate.py`\n"
+        "- `scripts/foo.py`\n\n"
+        "## Otro\n"
+    )
+
+    paths = motor_checkpoint.parse_raw_flt_paths(plan, deliverable_type="mixed")
+
+    assert paths == {".agent/scope_gate.py", "scripts/foo.py"}
+
+
+def test_parse_raw_flt_paths_code_default_ignores_builder() -> None:
+    """WOT-2026-019j regression guard: deliverable_type="code" (default) must
+    NOT fall back to ## Builder, preserving pre-fix behavior byte for byte."""
+    import motor_checkpoint
+
+    plan = (
+        "# Work Plan\n\n"
+        "## Metadata\n\n"
+        "- **deliverable_type:** code\n\n"
+        "## Builder\n\n"
+        "- `.agent/scope_gate.py`\n"
+    )
+
+    paths = motor_checkpoint.parse_raw_flt_paths(plan)
+
+    assert paths == set()

@@ -333,6 +333,7 @@ def parse_files_likely_touched(
 def parse_flt_namespaced(work_plan_content: str) -> dict[str, set[str]]:
     """Return FLT paths split by namespace (motor / destino)."""
     da = _read_delivery_authority(work_plan_content)
+    dt = _read_deliverable_type(work_plan_content)
     motor = (
         _MOTOR_ROOT.resolve()
         if (_MOTOR_ROOT / ".git").exists()
@@ -343,6 +344,7 @@ def parse_flt_namespaced(work_plan_content: str) -> dict[str, set[str]]:
         motor_root=motor,
         project_root=PROJECT_ROOT.resolve(),
         delivery_authority=da,
+        deliverable_type=dt,
     )
 
 
@@ -3349,7 +3351,9 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
                 checkpoint_root_mr, plan_id
             )
             if cp_valid and cp_files:
-                flt_motor_paths = _parse_raw_flt_paths(plan_content)
+                flt_motor_paths = _parse_raw_flt_paths(
+                    plan_content, deliverable_type=_dt_mr
+                )
                 motor_set = {f.replace("\\", "/") for f in cp_files}
                 flt_set = {p.replace("\\", "/") for p in flt_motor_paths}
                 outside_flt = motor_set - flt_set
@@ -3633,7 +3637,8 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
     # legitimate changes. Fall through to normal scope/evidence rules.
     _opencode_path = _MOTOR_ROOT / ".opencode" / "opencode.json"
     if _opencode_path.exists():
-        _flt_paths = _parse_raw_flt_paths(plan_content)
+        _dt_bom = _read_deliverable_type(plan_content)
+        _flt_paths = _parse_raw_flt_paths(plan_content, deliverable_type=_dt_bom)
         _opencode_rel = ".opencode/opencode.json"
         if _opencode_rel not in {p.replace("\\", "/") for p in _flt_paths}:
             _bom_bytes = b"\xef\xbb\xbf"
@@ -3911,7 +3916,7 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
                 flush=True,
             )
             return 1
-        flt_motor_paths = _parse_raw_flt_paths(plan_content)
+        flt_motor_paths = _parse_raw_flt_paths(plan_content, deliverable_type=_dt_ph)
         # Normalize both sets to motor-relative forward-slash paths (TP-06)
         motor_set = {f.replace("\\", "/") for f in motor_uncommitted}
         flt_set = {p.replace("\\", "/") for p in flt_motor_paths}

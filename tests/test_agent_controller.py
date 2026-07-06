@@ -3058,7 +3058,7 @@ class TestExternalMotorCheckpointTopology:
         monkeypatch.setattr(
             agent_controller,
             "_parse_raw_flt_paths",
-            lambda content: {
+            lambda content, **kwargs: {
                 ".agent/agent_controller.py",
                 "tests/test_agent_controller.py",
                 "src/module.py",
@@ -3213,7 +3213,7 @@ class TestExternalMotorCheckpointTopology:
         monkeypatch.setattr(
             agent_controller,
             "_parse_raw_flt_paths",
-            lambda content: {
+            lambda content, **kwargs: {
                 ".agent/agent_controller.py",
                 "tests/test_agent_controller.py",
                 "src/module.py",
@@ -3326,7 +3326,7 @@ class TestExternalMotorCheckpointTopology:
         monkeypatch.setattr(
             agent_controller,
             "_parse_raw_flt_paths",
-            lambda content: {
+            lambda content, **kwargs: {
                 ".agent/agent_controller.py",
                 "tests/test_agent_controller.py",
                 "src/module.py",

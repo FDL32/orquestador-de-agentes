@@ -327,11 +327,13 @@ def parse_files_likely_touched(
 
     effective_motor_root = motor_root if motor_root is not None else project_root
     da = _read_delivery_authority_from_content(content)
+    dt = _read_deliverable_type_from_content(content)
     buckets = sg.parse_flt_namespaced(
         content,
         motor_root=effective_motor_root,
         project_root=project_root,
         delivery_authority=da,
+        deliverable_type=dt,
     )
     # When motor_root is explicit: return union (scope covers both repos).
     # When motor_root is absent (standalone/test context): return all resolved
