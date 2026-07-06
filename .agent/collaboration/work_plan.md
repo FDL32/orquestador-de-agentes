@@ -13,10 +13,13 @@
 ## Objetivo
 
 Hacer que un `work_plan.md` con `deliverable_type: mixed` que declara sus
-entregables bajo `## Builder` (en vez de `## Files Likely Touched`) valide sin
-warning "No Files Likely Touched section" y pase `--mark-ready` sin necesitar
-`--scope-override`, igual que ya ocurre hoy para `analysis`/`documentation`/
-`research`.
+entregables bajo la seccion Builder (en vez de la seccion FLT canonica) valide
+sin warning y pase `--mark-ready` sin necesitar `--scope-override`, igual que
+ya ocurre hoy para `analysis`/`documentation`/`research`.
+
+(Nota: esta prosa evita deliberadamente el literal de heading FLT con doble
+almohadilla; el parser de secciones detecta por substring y una mencion en
+prosa lo confundiria -- follow-up 019l.)
 
 ## Contexto (Fase 0 del Orquestador, verificado en esta sesion por el Manager)
 
@@ -26,8 +29,9 @@ conjunto (o de una cadena que termina en el mismo parser) como guard del
 fallback a `## Builder`. Confirmado por lectura directa de cada una:
 
 1. `scope_gate.parse_files_likely_touched` (linea 331-349): si la seccion
-   `## Files Likely Touched` no produce archivos Y `deliverable_type in
-   _DOC_DELIVERABLE_TYPES`, cae a `## Builder`. Resuelve el whitelist real que
+   FLT canonica (heading `Files Likely Touched`) no produce archivos Y
+   `deliverable_type in _DOC_DELIVERABLE_TYPES`, cae a `## Builder`. Resuelve
+   el whitelist real que
    usa `--validate`. Con `mixed`, el fallback nunca se activa, whitelist
    vacio, `scope_gate.check_scope_gate` (linea 476-536) emite el warning
    "No Files Likely Touched section in work_plan.md" (linea 504).
@@ -47,7 +51,7 @@ fallback a `## Builder`. Confirmado por lectura directa de cada una:
    llama `scope_gate.parse_flt_raw_paths(..., target="motor")` (linea 274-301)
    que llama `scope_gate.parse_flt_raw_buckets` (linea 244-271) que llama
    `scope_gate._parse_flt_section` (linea 169-209). `_parse_flt_section` SOLO
-   reconoce `"## Files Likely Touched" in stripped` (linea 184) y NO recibe
+   reconoce el heading FLT canonico por substring (linea 184) y NO recibe
    `deliverable_type` como parametro en ningun punto de la cadena, ni tiene
    fallback a `## Builder`. Los doc-types no sufren esto porque
    `_handle_mark_ready` los trata como `_non_code_ticket` (linea 3340:
@@ -111,7 +115,7 @@ existente).** Cadena exacta a modificar:
 - `scope_gate.parse_flt_raw_buckets(..., *, deliverable_type: str = "code")`:
   pasa a `_parse_flt_section(lines, deliverable_type=deliverable_type)`.
 - `scope_gate._parse_flt_section(lines, *, deliverable_type: str = "code")`:
-  si el escaneo de `## Files Likely Touched` no produce ninguna entrada
+  si el escaneo de la seccion FLT canonica no produce ninguna entrada
   (`entries` vacio al terminar el bucle) Y `deliverable_type in
   _FLT_BUILDER_FALLBACK_TYPES`, re-escanea `lines` buscando `## Builder` con
   la MISMA logica de deteccion de inicio/fin de seccion que ya usa para FLT
