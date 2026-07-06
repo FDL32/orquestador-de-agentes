@@ -385,18 +385,6 @@ def resolve_git_head_sha(git_root: Path) -> tuple[bool, str]:
 def print_motor_checkpoint_guidance(plan_id: str, cp_error: str) -> None:
     """Print Builder-facing recovery guidance for motor checkpoint failures."""
     print(f"[ERROR] No valid motor checkpoint for {plan_id}: {cp_error}")
-    if "stale; expected HEAD" in cp_error:
-        print(
-            "Checkpoint M3 exists but is outdated. Run `--pre-handoff` again after "
-            "the latest repo_motor commit so checkpoint/review-<ticket> is recreated "
-            "on the current HEAD."
-        )
-        print(
-            "Do not use --scope-override for this case: the handoff anchor itself "
-            "must be refreshed."
-        )
-        return
-
     if "refusing empty closeout" in cp_error:
         print(
             "El checkpoint M3 apunta a un commit sin diff real. Re-ejecuta "

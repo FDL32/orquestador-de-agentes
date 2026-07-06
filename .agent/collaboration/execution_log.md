@@ -1,269 +1,189 @@
-# Execution Log - WOT-2026-019r
+# Execution Log - WOT-2026-019u
 
-Ticket: Auditoria + inventario + actualizacion de prompts/skills/scripts
-del pipeline segun la topologia worktree-dev (WOT-2026-019m).
+Ticket: Eliminar rama muerta de print_motor_checkpoint_guidance en
+.agent/motor_checkpoint.py, inalcanzable desde el cierre de WOT-2026-019q.
 **Estado:** COMPLETED
 
 ## Bitacora
 
-- Plan creado y aprobado por el Manager (2026-07-06). work_plan.md,
-  STRATEGY_WOT-2026-019r.md y AUDIT_WOT-2026-019r.md creados en
-  `.agent/collaboration/`. Estructura de dos fases secuenciales con gate
-  F1-antes-de-F2: Fase 1 produce
-  `docs/audit/worktree_topology_surface_inventory.md` clasificando los 24
-  prompts + skills + 7 scripts candidatos + 3 puntos de superficie destino
-  roles/backends sin editar nada; Fase 2 edita SOLO lo marcado DESFASADO.
-- Artefactos de WOT-2026-019q (COMPLETED) archivados:
-  execution_log.md -> execution_log_WOT-2026-019q.md; STRATEGY_WOT-2026-019q.md
-  y AUDIT_WOT-2026-019q.md -> `.agent/collaboration/_archive/plan_audit/`.
-- Correccion post-aprobacion (2026-07-06, a peticion del coordinador del
-  pipeline, gate Pre-Builder 3.b exige validate 0 warnings): saneados 4
-  warnings de `ticket_prose` en work_plan.md sin cambiar el fondo del plan:
-  - TP-PROSE-09 (ticket-sobredimensionado): `## Files Likely Touched` ahora
-    lista SOLO `docs/audit/worktree_topology_surface_inventory.md` (el
-    unico archivo que Fase 1 crea); los 24 prompts + skills + scripts +
-    backlog se movieron a `## Read/inspect only` (superficie de inspeccion
-    de Fase 1, edicion condicional en Fase 2 segun el inventario -- no son
-    "Files Likely Touched" en el sentido de entregable nuevo).
-  - TP-PROSE-04 x2: reescritas dos frases que usaban "algo"/"todo" de forma
-    generica ("re-clasificar como OK-agnostico un artefacto que..." en vez
-    de "...algo que..."; "Resuelve el problema en un solo ticket" en vez de
-    "Resuelve todo en un solo ticket" en la tabla de Trade-offs).
-  - TP-PROSE-02: el Non-goal "No optimizar el contenido de los prompts..."
-    reescrito como "No reescribir el contenido de los prompts mas alla de
-    la correccion de topologia worktree-dev...".
-  - Comando `agent_controller.py --validate --json --project-root .`
-    tras estos 4 fixes: `total_errors: 0`, `total_warnings: 0` salvo el
-    bus_drift resuelto por este mismo seed de execution_log.md (ver abajo).
-- El ticket fue bootstrapeado en el bus por el Orquestador/launcher
-  (evento `STATE_CHANGED BOOTSTRAP -> IN_PROGRESS`, sequence_number 10,
-  2026-07-06T16:25:57Z) mientras este Manager trabajaba en el saneamiento
-  de prosa; este archivo se siembra ahora con Estado IN_PROGRESS para que
-  el Markdown state deje de reportar UNKNOWN frente al bus.
+- Plan creado y aprobado por el Manager (2026-07-06). work_plan.md y
+  AUDIT_WOT-2026-019u.md creados en `.agent/collaboration/`. Alcance: un
+  unico archivo (.agent/motor_checkpoint.py), borrado de 11 lineas en la
+  funcion print_motor_checkpoint_guidance, sin adaptacion de tests (grep
+  confirma que ninguno depende de la rama muerta).
+- Artefactos de WOT-2026-019r (COMPLETED) archivados: execution_log.md ->
+  execution_log_WOT-2026-019r.md; STRATEGY_WOT-2026-019r.md y
+  AUDIT_WOT-2026-019r.md -> `.agent/collaboration/_archive/plan_audit/`.
+- El Orquestador ejecuto `--reset-turn --force` y `--bootstrap-ticket --json`
+  (status=bootstrapped, plan_id=WOT-2026-019u): TURN.md/STATE.md regenerados
+  y STATE_CHANGED -> IN_PROGRESS emitido al bus. Este log queda en IN_PROGRESS.
 
-Pendiente: Builder implementa Fase 1 (inventario) + gate 1.4 + Fase 2
-(edicion condicionada) de work_plan.md y documenta aqui la evidencia
-(inventario completo, diff de archivos editados, validate, encoding guard,
-ruff si aplica).
+### Builder - ejecucion (2026-07-06/07)
 
-## Fase 1: Auditoria e inventario (Builder, 2026-07-06)
+- Turno confirmado con `./.venv/Scripts/python.exe .agent/agent_controller.py
+  --force` (arbol tenia artefactos de colaboracion heredados del handoff
+  019r->019u, no relacionados con el ticket): TURNO ACTUAL: BUILDER, Plan
+  WOT-2026-019u, Estado APPROVED, Progreso IN_PROGRESS.
 
-Entregable unico creado: `docs/audit/worktree_topology_surface_inventory.md`
-(HEAD auditado: `d7d15dbccc0d03a8cfe7d1dfb63058320f16770c`). Ningun
-prompt/skill/script fue editado durante esta fase (solo lectura + grep +
-redaccion del inventario).
+**Fase 1 (verificacion previa):**
+- `grep -rn "stale; expected HEAD" .agent scripts bus tests` (sin filtro):
+  13 lineas totales, pero filtrando solo codigo fuente
+  (`grep -rn "stale; expected HEAD" --include="*.py" .agent scripts bus
+  tests`) da EXACTAMENTE 1 hit: `.agent/motor_checkpoint.py:388`. El resto
+  de hits sin filtrar son: 1 mencion historica en
+  `execution_log_WOT-2026-019q.md:42`, 8 menciones en prosa dentro del
+  propio `work_plan.md` de este ticket (citan la cadena como texto, no
+  como codigo — patron conocido de falso-positivo por substring, ver
+  leccion 019j/019l), 1 mencion en
+  `_archive/plan_audit/STRATEGY_WOT-2026-019q.md:13` (documento archivado),
+  y 1 match binario en `.agent/__pycache__/motor_checkpoint.cpython-310.pyc`
+  (artefacto compilado derivado del propio .py, no fuente independiente).
+  0 emisores de codigo vivo distintos al conocido. Criterio de Fase 1
+  satisfecho.
+- `grep -rln "print_motor_checkpoint_guidance" tests/`: 0 archivos (exit
+  code 1 = sin matches). Criterio de Fase 1 satisfecho.
 
-Metodologia: lectura completa de cada uno de los 24 prompts +
-`grep -n` dirigido a los 4 marcadores del modelo viejo (`cwd`, `checkout`,
-`worktree`, `pull --ff-only`, `main vive`, `repo_motor\b`) sobre cada
-archivo; barrido global sobre `skills/` con `grep -rln`; grep dirigido sobre
-los 7 scripts candidatos; lectura completa de `scripts/setup_dev_worktree.ps1`
-como referencia del modelo nuevo; lectura completa de QUICKSTART.md
-(526 lineas) seccion por seccion; lectura de
-`scripts/install_agent_system.py` (LOCAL_DIRS l.46, INSTALLER_MANAGED_PATHS
-l.52, INSTALLER_BOOTSTRAP_PATHS l.60-68, `flip_profile_in_destination()`
-l.611-638, call sites l.1204/l.1318) + `MANIFEST.workspace` l.68 para la
-superficie destino roles/backends.
+**Fase 2 (borrado):**
+- Edicion aplicada en `.agent/motor_checkpoint.py`: eliminado el bloque
+  completo `if "stale; expected HEAD" in cp_error: ... return` (el `if`,
+  sus dos `print(...)` multi-linea, y el `return`), mas la linea en blanco
+  separadora entre esa rama y la siguiente (`if "refusing empty
+  closeout"`). Preservado bit-a-bit: la linea inicial de error, el bloque
+  `refusing empty closeout` completo (2 prints + return), y el print
+  generico final.
+- `git diff --stat -- .agent/motor_checkpoint.py`: `1 file changed, 12
+  deletions(-)` (11 lineas del bloque logico + 1 linea en blanco
+  separadora; 0 lineas anadidas). Ningun otro archivo tocado por esta
+  edicion.
+- `grep -c "stale; expected HEAD" .agent/motor_checkpoint.py` -> `0`
+  (exit code 1 = sin matches). Criterio de Fase 2 satisfecho.
+- Funcion resultante verificada por lectura directa (lineas 383-397):
+  queda con la linea de error inicial, 1 rama condicional
+  (`refusing empty closeout`, intacta) y el print de fallback final —
+  exactamente el contrato del DoD.
 
-### Conteo de cobertura (Fase 1.4 -- gate F1 a F2)
+**Fase 3 (gates):**
+1. `./.venv/Scripts/python.exe -m ruff check .agent/motor_checkpoint.py`
+   -> `All checks passed!`, **exit code 0**.
+2. `PYTHONDONTWRITEBYTECODE=1 ./.venv/Scripts/python.exe
+   scripts/run_pytest_safe.py --level all` -> **8 failed, 3489 passed, 47
+   skipped** en 226.85s, **exit code != 0**. `last-run.json`: `status:
+   "finished"`, `exit_code: 1`, `tested_commit_sha:
+   f8541f826ee7fce57334d8e3497ad70bc1e76161` (== HEAD actual, confirmado
+   con `git rev-parse HEAD`). Los 8 tests que fallan son todos de
+   `tests/test_agent_controller.py`, clases `TestPreHandoff` (7 tests:
+   `test_happy_path_commit_tag_clean`,
+   `test_happy_path_resets_circuit_breaker`,
+   `test_idempotent_no_changes_tag_aligned`,
+   `test_no_changes_tag_missing_create_only`,
+   `test_no_changes_tag_misaligned_delete_then_recreate`,
+   `test_hook_failure_propagates_stderr`, `test_dirty_tree_after_ops`) y
+   `TestBuilderBriefExclusion::test_builder_brief_does_not_block_pre_handoff`.
+   Todos fallan con el mismo mensaje: `[ERROR] Pre-handoff blocked:
+   .agent/collaboration/work_plan.md is not committed. uncommitted_work_plan:
+   true`.
+   - **Diagnostico de causa (sin tocar codigo fuera de scope):** los tests
+     mockean unicamente `agent_controller.subprocess.run`
+     (`monkeypatch.setattr(agent_controller.subprocess, "run", git_mock)`),
+     pero `_handle_pre_handoff` invoca
+     `motor_checkpoint.assert_work_plan_committed(...)`, que a su vez
+     llama a `scope_gate.get_changed_files(...)`. `scope_gate.py` hace
+     `import subprocess` en su PROPIO namespace (linea 12), distinto de
+     `agent_controller.subprocess`. Ningun test de los 8 mockea
+     `scope_gate.subprocess.run` ni `scope_gate.get_changed_files`
+     directamente, por lo que `assert_work_plan_committed` ejecuta una
+     llamada git REAL sobre el arbol real del working directory. Ese
+     arbol real tiene `.agent/collaboration/work_plan.md` modificado sin
+     commit (estado heredado del handoff 019r->019u, visible en
+     `git status --porcelain` desde el inicio de este turno, antes de
+     tocar ningun codigo), por lo que el guard real detecta
+     correctamente "work_plan.md no comiteado" y bloquea con exit 1 --
+     resultado esperable del guard real, pero contrario a lo que cada
+     test simulaba (arbol limpio via mock parcial).
+   - **Prueba de que es preexistente e independiente de este ticket:**
+     ejecute `git stash push -- .agent/motor_checkpoint.py` (revirtiendo
+     temporalmente SOLO mi edicion, dejando el resto del arbol intacto),
+     corri `pytest tests/test_agent_controller.py::TestPreHandoff -x -q`
+     sobre ese estado (HEAD limpio `f8541f8`, mi cambio fuera): el primer
+     test (`test_happy_path_commit_tag_clean`) fallo con el MISMO mensaje
+     exacto (`work_plan.md is not committed`). Confirmado con
+     `git stash pop` inmediato despues (recuper mi cambio; verificado con
+     `git diff --stat -- .agent/motor_checkpoint.py` -> igual `12
+     deletions(-)`, sin perdida). Esto demuestra que el fallo NO depende
+     de las 12 lineas borradas en `print_motor_checkpoint_guidance`; es
+     una fuga de aislamiento preexistente (Clase B) en los tests de
+     `TestPreHandoff`/`TestBuilderBriefExclusion` combinada con el estado
+     real (legitimo) del arbol de colaboracion en este momento del
+     pipeline.
+   - **Decision:** conforme al work_plan ("Si falla: No proceder a
+     handoff ni pre-handoff; escalar al Manager con el output literal del
+     gate que fallo"), NO se intenta arreglar `assert_work_plan_committed`
+     ni el aislamiento de mocks de estos tests -- esta fuera del scope
+     autorizado de WOT-2026-019u (unico archivo tocable:
+     `.agent/motor_checkpoint.py`, sin tests nuevos ni cambios en
+     `agent_controller.py`/`scope_gate.py`). Se escala al Manager.
+3. `./.venv/Scripts/python.exe .agent/agent_controller.py --validate --json
+   --project-root .` (ejecutado como diagnostico de solo lectura, no como
+   cierre): `{"errors": {...todas las claves vacias...}, "warnings": {},
+   "total_errors": 0, "total_warnings": 0}`. Gate 3 en verde de forma
+   aislada.
 
-- **Prompts: 24/24 clasificados.** 15 OK-agnostico, 1 DESFASADO
-  (`prompts/orchestrator_session_bootstrap.md`, l.55 y l.100), 8 N/A.
-  0 prompts sin fila.
-- **Skills: 33/33 subdirectorios clasificados** (agrupados con
-  justificacion explicita: 2 barridos deterministas de grep global sobre
-  TODOS los subdirectorios + desglose individual de las 7 skills que
-  mencionan `repo_motor`). Los 33 son OK-agnostico. 0 subdirectorios sin
-  cubrir. **Discrepancia reportada:** el plan citaba "36 directorios en
-  `skills/`" medidos en vivo por el Manager; la medicion independiente de
-  este Builder (dos metodos: `ls -d skills/*/` y
-  `Path('skills').iterdir()` en Python) da **33**, no 36. Se documenta la
-  discrepancia en el inventario sin investigar la causa raiz (fuera de
-  alcance de Fase 1).
-- **Scripts candidatos: 7/7 clasificados**, los 7 OK-agnostico (incluye
-  `scripts/setup_dev_worktree.ps1`, que es la fuente canonica del modelo
-  nuevo, no un artefacto a corregir). 0 rutas/ramas hardcodeadas rotas
-  encontradas -> 0 hallazgos para sub-ticket.
-- **QUICKSTART.md: clasificado por seccion completo** (cabecera + secciones
-  0, 0b, 0c, 0d, 1, 2-5, 6, 7, 8). Unica seccion que describe la topologia
-  del checkout del motor es "0d. Motor dev worktree" (l.140-235), que YA es
-  el modelo nuevo correcto (fuente canonica). Ninguna otra seccion cita
-  `pull --ff-only`/cwd=principal del motor fuera de ese rango. 0 secciones
-  DESFASADO.
-- **Superficie destino roles/backends: 3/3 puntos clasificados** con
-  evidencia literal (funcion+linea o prompt+seccion): (a) mecanismo de sync
-  sobre `agents.json` = DESFASADO/GAP (config/ no en LOCAL_DIRS;
-  `flip_profile_in_destination()` solo preserva `active_profile`, el resto
-  del archivo se sobrescribe); (b) prompts de destino
-  (`orchestrator_destination_bootstrap.md`, `orchestrator_destination_batch.md`,
-  y `orchestrator_pipeline.md` verificado tambien) = 0 coincidencias de
-  `agents.json`/`active_profile`/`backend`/`role` en los tres; (c) gap de
-  configuracion-de-roles-por-destino documentado explicitamente como
-  alimentador de WOT-2026-019t, no resuelto en este ticket.
+**Resultado:** Fases 1 y 2 completas y verificadas (criterios de
+aceptacion cumplidos al pie de la letra). Fase 3, gate 1 y gate 3 verdes;
+gate 2 (suite completa) rojo por 8 tests preexistentes NO relacionados con
+el cambio de este ticket (evidencia de aislamiento arriba). NO se ejecuto
+`--pre-handoff` ni `--mark-ready`. NO se hizo commit. El cambio queda en el
+working tree para revision del Orquestador/Manager, junto con esta
+bitacora.
 
-**Total: 24/24 prompts + 33/33 skills + 7/7 scripts + 3/3 superficie destino
-= 0 artefactos pendientes de clasificar.** Gate F1-a-F2 satisfecho: el
-inventario esta completo antes de cualquier tarea de Fase 2.
+hipotesis: el bloqueo de estos 8 tests podria desaparecer si el arbol de
+colaboracion (work_plan.md) estuviera comiteado en el momento de correr la
+suite -- pendiente de confirmar por el Manager si se considera deuda
+tecnica aceptable (mock incompleto de `scope_gate.subprocess`) o si se abre
+un ticket de barrera (mockear `scope_gate.get_changed_files` directamente
+en `TestPreHandoff`/`TestBuilderBriefExclusion` en vez de mocks parciales
+de `subprocess`).
 
-### Encoding guard sobre el inventario
+### Verificacion del ORQUESTADOR (2026-07-07) -- hipotesis del Builder CONFIRMADA por metodo limpio
 
-```
-.venv\Scripts\python.exe scripts\check_encoding_guard.py docs/audit/worktree_topology_surface_inventory.md
-```
-Exit code: 0 (sin salida, sin hallazgos de mojibake/BOM/no-ASCII).
+La prueba del Builder uso `git stash push` sobre el arbol COMPARTIDO (metodo
+contaminado: trampa del poisoned-pyc / mtime del handoff). La re-corri con un
+metodo aislado que no toca el arbol de trabajo:
 
-### Verificacion de superficie tocada
+- Cree una worktree efimera `git worktree add --detach <scratchpad>/wt_019u_clean
+  f8541f8` (arbol GARANTIZADO limpio, `status --porcelain` vacio).
+- Corri los 8 tests (14 metodos) ahi con `-B -p no:cacheprovider`:
+  `TestPreHandoff` + `TestBuilderBriefExclusion::test_builder_brief_does_not_block_pre_handoff`
+  -> **14 passed in 1.09s** (arbol limpio, SIN mi cambio).
+- Apliqu mi diff de 019u (`git apply 019u.patch`) sobre esa worktree limpia
+  (unico modificado: `.agent/motor_checkpoint.py`) y re-corri los 8:
+  -> **14 passed in 0.83s** (arbol limpio, CON mi cambio).
+- Elimine la worktree (`git worktree remove --force`); arbol de la dev intacto.
 
-`git status --short` tras crear el inventario: el unico artefacto
-productivo nuevo es `docs/audit/worktree_topology_surface_inventory.md`
-(directorio `docs/audit/` nuevo, `?? docs/audit/` en el status). El resto
-de entradas del status (`AUDIT_WOT-2026-019q.md` borrado,
-`STRATEGY_WOT-2026-019q.md` borrado, `execution_log_WOT-2026-019q.md`
-nuevo, `AUDIT_WOT-2026-019r.md`/`STRATEGY_WOT-2026-019r.md` nuevos,
-`STATE.md`/`TURN.md`/`execution_log.md`/`work_plan.md` modificados) son
-artefactos de colaboracion pre-existentes de la rotacion de tickets
-019q->019r hecha por el Manager antes del handoff a Builder; no fueron
-tocados por este Builder en Fase 1. Ningun prompt, skill ni script fue
-editado.
+CONCLUSION (verificada por el Orquestador, no heredada del reporte del Builder):
+1. Los 8 rojos NO los causa el cambio de 019u: con el fix aplicado sobre arbol
+   limpio, los 14 metodos pasan.
+2. Los 8 rojos NO son "preexistentes en HEAD f8541f8": en f8541f8 con arbol
+   limpio pasan (14 passed). El CI de f8541f8 tampoco muestra TestPreHandoff
+   fallando.
+3. Los 8 rojos los dispara EL ESTADO DEL PIPELINE: el arbol de la dev tiene
+   `work_plan.md`/`execution_log.md` modificados SIN commit (bootstrap del
+   ticket). `assert_work_plan_committed` (motor_checkpoint.py:76 -> 
+   scope_gate.get_changed_files) hace una llamada git REAL que escapa el mock
+   parcial de `TestPreHandoff` (mockea `agent_controller.subprocess`, NO
+   `scope_gate.subprocess` -- import propio en scope_gate.py:12) y ve el arbol
+   sucio -> guard legitimo bloquea.
+4. IMPLICACION PARA EL CIERRE: al commitear el cierre (work_plan.md pasa a
+   committed), el arbol quedara limpio y la RE-SUITE sobre el HEAD final de
+   cierre volvera verde en estos 8. Esa re-suite (no la corrida con arbol
+   sucio) es el criterio de DoD. Patron "re-suite sobre HEAD final".
 
-### Cierre de Fase 1
-
-Fase 1 completa segun DoD del work_plan.md: inventario existe, clasifica
-24 prompts + skills + 7 scripts + QUICKSTART + 3 puntos de superficie
-destino con 0 sin clasificar, cada DESFASADO lleva linea/seccion + cambio
-propuesto, encoding guard verde, y NO se edito ningun prompt/skill/script
-(solo se creo el inventario). **Fase 2 (edicion condicionada) queda
-pendiente de un turno posterior de Builder**, tal como exige la
-instruccion de esta tarea.
-
-## Fase 2: Actualizacion del unico artefacto DESFASADO (Builder, 2026-07-06)
-
-Segun el gate F1-a-F2 (24/24 + 33/33 + 7/7 + 3/3, 0 pendientes), el
-inventario de Fase 1 marca **un unico** artefacto `DESFASADO`:
-`prompts/orchestrator_session_bootstrap.md` (l.55 y l.100). Ningun otro
-prompt, skill o script tiene veredicto DESFASADO, por lo tanto Fase 2 edita
-EXCLUSIVAMENTE ese archivo, en las dos zonas exactas citadas por el
-inventario. No se toco ningun otro prompt/skill/script/el propio inventario.
-
-### Edicion 1 (l.55, seccion "Resumen breve del sistema")
-
-Antes:
-```
-- **Runtime activo:** `orquestador_de_agentes/` (`repo_motor`, portable).
-```
-
-Despues:
-```
-- **Runtime activo:** `repo_motor` portable. Topologia worktree-dev (WOT-2026-019m): el motor se EVOLUCIONA en la worktree `orquestador_de_agentes_dev` (lleva `main`, cwd de desarrollo); el checkout principal `orquestador_de_agentes` queda DETACHED en `origin/main` como fuente estable que consumen los destinos via `motor_destination_link.json`. Ver `QUICKSTART.md` seccion "0d. Motor dev worktree" y `scripts/setup_dev_worktree.ps1`.
-```
-
-### Edicion 2 (Modo ORQUESTADOR, paso 0, punto 2 -- PREFLIGHT, ~l.100-101)
-
-Antes:
-```
-2. PREFLIGHT: HEAD == origin/main, arbol limpio, `--validate` en 0 errors /
-   0 warnings. Reporta el estado real ANTES de elegir ticket.
-```
-
-Despues:
-```
-2. PREFLIGHT (topologia worktree-dev, WOT-2026-019m): arranca con cwd=`orquestador_de_agentes_dev`
-   (la worktree que lleva `main`, donde se evoluciona el motor; usa su
-   `.venv\Scripts\python.exe`). Verifica que esa worktree existe y lleva `main`
-   (si no, crearla con `scripts/setup_dev_worktree.ps1`). En la worktree-dev:
-   HEAD == origin/main, arbol limpio, `--validate` en 0 errors / 0 warnings.
-   El checkout PRINCIPAL `orquestador_de_agentes` queda DETACHED en origin/main
-   (fuente estable de los destinos), NO se trabajan tickets alli. Reporta el
-   estado real ANTES de elegir ticket. Ver `QUICKSTART.md` "0d".
-```
-
-Ambas redacciones son coherentes con `QUICKSTART.md` seccion "0d. Motor dev
-worktree" (l.140-235: worktree-dev lleva `main`, principal DETACHED en
-`origin/main`, cierre = `git fetch` + `git checkout --detach origin/main`,
-sin `pull --ff-only`) y con `scripts/setup_dev_worktree.ps1` (fuente
-canonica del procedimiento de creacion/desmontaje). No se cambio el resto
-del prompt: mismo orden de secciones, mismo contenido fuera de las dos
-zonas citadas.
-
-### Encoding guard (Fase 2)
-
-```
-.venv\Scripts\python.exe scripts\check_encoding_guard.py prompts/orchestrator_session_bootstrap.md
-```
-Salida: `EXIT=0` (sin hallazgos de mojibake/BOM/no-ASCII).
-
-### Diff completo verificado
-
-`git diff -- prompts/orchestrator_session_bootstrap.md` confirma
-exactamente 2 hunks (uno por edicion), sin cambios fuera de esas dos zonas:
-+1/-1 en la linea "Runtime activo" y +7/-2 en el punto 2 del PREFLIGHT del
-Modo ORQUESTADOR. Ningun otro fragmento del archivo aparece en el diff.
-
-### Verificacion de superficie tocada (Fase 2)
-
-`git status --short` tras la edicion:
-```
- D .agent/collaboration/AUDIT_WOT-2026-019q.md
- M .agent/collaboration/STATE.md
- D .agent/collaboration/STRATEGY_WOT-2026-019q.md
- M .agent/collaboration/TURN.md
- M .agent/collaboration/execution_log.md
- M .agent/collaboration/work_plan.md
- M prompts/orchestrator_session_bootstrap.md
-?? .agent/collaboration/AUDIT_WOT-2026-019r.md
-?? .agent/collaboration/STRATEGY_WOT-2026-019r.md
-?? .agent/collaboration/execution_log_WOT-2026-019q.md
-?? docs/audit/
-```
-El unico archivo productivo NUEVO modificado por esta Fase 2 es
-`prompts/orchestrator_session_bootstrap.md`. El resto de entradas
-(`AUDIT_WOT-2026-019q.md`, `STRATEGY_WOT-2026-019q.md`,
-`execution_log_WOT-2026-019q.md`, `AUDIT_WOT-2026-019r.md`,
-`STRATEGY_WOT-2026-019r.md`, `STATE.md`, `TURN.md`, `work_plan.md`,
-`docs/audit/`) ya existian antes de esta Fase 2 (rotacion de tickets del
-Manager + entregable de Fase 1); `execution_log.md` cambia porque esta
-misma bitacora se esta escribiendo. Ningun otro prompt, ninguna skill,
-ningun script fue tocado.
-
-### Gates de Fase 2.3
-
-- `--validate --json`: NO se re-ejecuto en esta Fase 2 porque el turno
-  requiere no invocar `agent_controller.py` fuera del alcance indicado por
-  el coordinador (la unica invocacion previa de este turno, sin `--force`,
-  fallo con el guard estandar de "cambios sin guardar en git", esperable
-  dado que Fase 1 ya habia creado `docs/audit/` sin commitear; no se
-  reintento con `--force` para no exceder el alcance de esta tarea, que es
-  exclusivamente la edicion documental). Pendiente de que el Manager/
-  Orquestador corra `--validate` en el turno de revision.
-- `ruff check .`: OMITIDO. Fase 2 no toco ningun archivo `.py` (unico
-  archivo editado: `prompts/orchestrator_session_bootstrap.md`, Markdown).
-- Checklist de lectura-nueva (un lector siguiendo solo `QUICKSTART.md`
-  seccion "0d" + el prompt actualizado):
-  - Donde arrancar: `orquestador_de_agentes_dev` (Edicion 1 lo nombra en
-    "Runtime activo"; Edicion 2 lo repite explicitamente en el PREFLIGHT
-    del paso 0 del Modo ORQUESTADOR). SI, sin ambiguedad.
-  - Como verificar el arranque: HEAD == origin/main + arbol limpio +
-    `--validate` 0/0, explicitamente ANCLADO a la worktree-dev en la
-    Edicion 2 ("En la worktree-dev: HEAD == origin/main..."). SI.
-  - Que el checkout principal no se toca: Edicion 1 y Edicion 2 declaran
-    ambas que `orquestador_de_agentes` queda DETACHED/fuente estable y que
-    "NO se trabajan tickets alli". SI, sin ambiguedad.
-  - Que el destino no cambia su forma de consumo: Edicion 1 cita
-    explicitamente `motor_destination_link.json` como mecanismo de consumo
-    sin cambios. SI.
-
-### Cierre de Fase 2
-
-Fase 2 completa: unico artefacto DESFASADO (`prompts/orchestrator_session_bootstrap.md`)
-editado en sus dos zonas exactas (l.55 y punto 2 del PREFLIGHT), encoding
-guard verde, diff acotado a esas dos zonas, ningun otro prompt/skill/script
-tocado, 0 archivos `.py` modificados (ruff omitido y documentado). No se
-commiteo nada ni se ejecuto `--pre-handoff`/`--mark-ready`, segun
-instruccion explicita de esta tarea. Queda pendiente de un turno de
-revision (Manager/Orquestador) que corra `--validate --json` sobre el HEAD
-resultante.
+Follow-up SEPARADO (state-leak de test, NO de este ticket): mockear
+`scope_gate.get_changed_files` directamente en `TestPreHandoff`/
+`TestBuilderBriefExclusion`, o aislar su cwd, para que no dependan del estado
+git real del working directory. Candidato a ficha de backlog del workspace.
 
 
-Scope override: over-captura de arbol limpio (patron conocido, mismo que 019q): los archivos marcados (motor_checkpoint.py, agent_controller.py, scope_gate.py, QUICKSTART.md, tests varios, AUDIT/STRATEGY de 019i/019j/019m/019q) NO estan en el commit 60e4ff0 de 019r. Evidencia: git show --name-only 60e4ff0 -> solo 11 archivos (prompts/orchestrator_session_bootstrap.md, docs/audit/worktree_topology_surface_inventory.md, y proyecciones de colaboracion de la rotacion 019q->019r); git status --porcelain vacio (arbol limpio); origin/main..HEAD == 2 commits (019q d7d15db + 019r 60e4ff0), ambos noreply. El diff real de 019r esta 100% dentro de FLT (documentation). Los archivos marcados vienen de commits anteriores ya cerrados en la cadena de HEAD, no de esta entrega.. Affected files: <REPO_ROOT>/.agent/agent_controller.py, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019i.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019j.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019m.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019q.md, <REPO_ROOT>/.agent/collaboration/STRATEGY_WOT-2026-019i.md, <REPO_ROOT>/.agent/collaboration/STRATEGY_WOT-2026-019j.md, <REPO_ROOT>/.agent/collaboration/STRATEGY_WOT-2026-019m.md, <REPO_ROOT>/.agent/collaboration/STRATEGY_WOT-2026-019q.md, <REPO_ROOT>/.agent/motor_checkpoint.py, <REPO_ROOT>/.agent/scope_gate.py, <REPO_ROOT>/QUICKSTART.md, <REPO_ROOT>/prompts/orchestrator_session_bootstrap.md, <REPO_ROOT>/scripts/pre_handoff_guard.py, <REPO_ROOT>/scripts/setup_dev_worktree.ps1, <REPO_ROOT>/tests/test_agent_controller.py, <REPO_ROOT>/tests/test_mark_ready_motor_scope.py, <REPO_ROOT>/tests/test_setup_dev_worktree_script.py, <REPO_ROOT>/tests/unit/test_motor_checkpoint.py, <REPO_ROOT>/tests/unit/test_scope_gate_deliverable_aware.py, <REPO_ROOT>/tests/unit/test_scope_gate_topology.py
+Scope override: Falso-positivo de over-captura sobre arbol LIMPIO (patron confirmado x3, handoff 019q/019r). Evidencia: git show --name-only 43a43d2 = solo 9 archivos de 019u (motor_checkpoint.py + artefactos pipeline), 0 de los listados (scope_gate.py/agent_controller.py/AUDIT_019i-r/QUICKSTART/tests son de tickets YA cerrados); git status --porcelain vacio; origin/main..HEAD = 1 solo commit (43a43d2). El gate diffea contra base amplia, no contra mi commit.. Affected files: <REPO_ROOT>/.agent/agent_controller.py, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019i.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019j.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019m.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019q.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019r.md, <REPO_ROOT>/.agent/collaboration/STRATEGY_WOT-2026-019i.md, <REPO_ROOT>/.agent/collaboration/STRATEGY_WOT-2026-019j.md, <REPO_ROOT>/.agent/collaboration/STRATEGY_WOT-2026-019m.md, <REPO_ROOT>/.agent/collaboration/STRATEGY_WOT-2026-019q.md, <REPO_ROOT>/.agent/collaboration/STRATEGY_WOT-2026-019r.md, <REPO_ROOT>/.agent/scope_gate.py, <REPO_ROOT>/QUICKSTART.md, <REPO_ROOT>/docs/audit/worktree_topology_surface_inventory.md, <REPO_ROOT>/prompts/orchestrator_session_bootstrap.md, <REPO_ROOT>/scripts/pre_handoff_guard.py, <REPO_ROOT>/scripts/setup_dev_worktree.ps1, <REPO_ROOT>/tests/test_agent_controller.py, <REPO_ROOT>/tests/test_mark_ready_motor_scope.py, <REPO_ROOT>/tests/test_setup_dev_worktree_script.py, <REPO_ROOT>/tests/unit/test_motor_checkpoint.py, <REPO_ROOT>/tests/unit/test_scope_gate_deliverable_aware.py, <REPO_ROOT>/tests/unit/test_scope_gate_topology.py
 
-Manager approved canonical closeout for WOT-2026-019r
+Manager approved canonical closeout for WOT-2026-019u
