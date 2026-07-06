@@ -1,0 +1,282 @@
+"""Functional tests for scripts/setup_dev_worktree.ps1 against a real,
+throwaway git fixture (never the motor repo itself).
+
+WOT-2026-019m defers actual activation of the worktree (git checkout
+--detach / git worktree add / uv venv+sync on the real motor checkout) to
+post-closure; this ticket only versions the script and QUICKSTART.md
+section, and verifies the script's logic against a disposable fixture
+repo created under tmp_path.
+
+The script resolves its own root via $PSScriptRoot (same pattern as
+scripts/launch_agent_terminals.ps1), so to exercise it against a fixture
+repo we copy the script into a sibling `scripts/` directory inside that
+fixture and invoke it from there. `uv` is faked (a tiny script placed
+first on PATH) so the test does not depend on network access or a real
+pyproject.toml/uv.lock in the throwaway fixture; `git checkout --detach`
+and `git worktree add` run for real against the fixture.
+"""
+
+from __future__ import annotations
+
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+
+_MOTOR_ROOT = Path(__file__).resolve().parent.parent
+_SCRIPT_SOURCE = _MOTOR_ROOT / "scripts" / "setup_dev_worktree.ps1"
+
+_POWERSHELL = shutil.which("powershell") or shutil.which("pwsh")
+
+_FAKE_UV_BAT = """@echo off
+if "%1"=="venv" (
+    mkdir "%CD%\\.venv\\Scripts" 2>nul
+    echo fake > "%CD%\\.venv\\Scripts\\python.exe"
+    exit /b 0
+)
+if "%1"=="sync" (
+    exit /b 0
+)
+exit /b 0
+"""
+
+
+def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", *args], capture_output=True, text=True, cwd=cwd, timeout=30
+    )
+
+
+def _init_fixture_repo(repo_path: Path) -> None:
+    """Create a minimal real git repo with the script copied into scripts/.
+
+    Mirrors the motor's own layout closely enough for the script's
+    $PSScriptRoot/.. resolution to land on the fixture's root, not the
+    motor's.
+    """
+    repo_path.mkdir(parents=True, exist_ok=True)
+    result = _git(["init", "-q", "-b", "main"], cwd=repo_path)
+    assert result.returncode == 0, result.stderr
+
+    _git(["config", "user.email", "test@example.com"], cwd=repo_path)
+    _git(["config", "user.name", "Test User"], cwd=repo_path)
+    # WOT-2026-019d/019c lesson: avoid background gc races; irrelevant here
+    # (no commit loops) but kept for consistency with the repo's fixture
+    # conventions.
+    _git(["config", "gc.auto", "0"], cwd=repo_path)
+
+    scripts_dir = repo_path / "scripts"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(_SCRIPT_SOURCE, scripts_dir / "setup_dev_worktree.ps1")
+
+    # Mirrors the real motor repo: .venv/ is gitignored, so the venv the
+    # script creates inside the worktree-dev does not itself count as
+    # "uncommitted changes" for the -Remove dirty-check.
+    (repo_path / ".gitignore").write_text(".venv/\n", encoding="utf-8")
+    (repo_path / "README.md").write_text("# fixture\n", encoding="utf-8")
+    _git(["add", "."], cwd=repo_path)
+    commit = _git(["commit", "-m", "init fixture"], cwd=repo_path)
+    assert commit.returncode == 0, commit.stderr
+
+
+def _fake_uv_dir(tmp_path: Path) -> Path:
+    """Create a directory containing a fake `uv.bat` shim to prepend to PATH."""
+    fake_bin = tmp_path / "fake_bin"
+    fake_bin.mkdir(parents=True, exist_ok=True)
+    (fake_bin / "uv.bat").write_text(_FAKE_UV_BAT, encoding="utf-8")
+    return fake_bin
+
+
+def _run_script(
+    repo_path: Path, args: list[str], fake_uv_dir: Path
+) -> subprocess.CompletedProcess:
+    import os
+
+    env = dict(os.environ)
+    env["PATH"] = str(fake_uv_dir) + os.pathsep + env.get("PATH", "")
+
+    script_path = repo_path / "scripts" / "setup_dev_worktree.ps1"
+    return subprocess.run(
+        [
+            _POWERSHELL,
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script_path),
+            *args,
+        ],
+        capture_output=True,
+        text=True,
+        cwd=repo_path,
+        timeout=120,
+        env=env,
+    )
+
+
+def _worktree_dev_path(repo_path: Path) -> Path:
+    # The script hardcodes the sibling name orquestador_de_agentes_dev
+    # (matches QUICKSTART.md / work_plan.md literally), regardless of the
+    # fixture repo's own directory name.
+    return repo_path.parent / "orquestador_de_agentes_dev"
+
+
+def _current_branch(repo_path: Path) -> str:
+    result = _git(["branch", "--show-current"], cwd=repo_path)
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
+
+
+def _status_short(repo_path: Path) -> str:
+    result = _git(["status", "--short"], cwd=repo_path)
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
+def _cleanup_worktree(repo_path: Path, worktree_path: Path) -> None:
+    if worktree_path.exists():
+        _git(["worktree", "remove", "--force", str(worktree_path)], cwd=repo_path)
+    _git(["worktree", "prune"], cwd=repo_path)
+
+
+@pytest.fixture
+def fixture_repo(tmp_path: Path):
+    if _POWERSHELL is None:
+        pytest.skip("PowerShell not available on this host")
+
+    repo_path = tmp_path / "fixture_repo"
+    _init_fixture_repo(repo_path)
+    fake_uv_dir = _fake_uv_dir(tmp_path)
+    worktree_path = _worktree_dev_path(repo_path)
+
+    yield repo_path, fake_uv_dir, worktree_path
+
+    _cleanup_worktree(repo_path, worktree_path)
+
+
+def test_creation_detaches_principal_and_adds_worktree_with_venv(
+    fixture_repo,
+) -> None:
+    repo_path, fake_uv_dir, worktree_path = fixture_repo
+
+    result = _run_script(repo_path, [], fake_uv_dir)
+
+    assert result.returncode == 0, f"stdout={result.stdout}\nstderr={result.stderr}"
+    assert _current_branch(repo_path) == "", (
+        "principal checkout should be detached (no current branch) after "
+        f"running the script; branch output={_current_branch(repo_path)!r}"
+    )
+    assert worktree_path.is_dir(), "worktree-dev directory was not created"
+
+    worktree_list = _git(["worktree", "list"], cwd=repo_path).stdout
+    assert "(detached HEAD)" in worktree_list
+    assert "[main]" in worktree_list
+
+    venv_python = worktree_path / ".venv" / "Scripts" / "python.exe"
+    assert venv_python.is_file(), "fake uv venv step did not materialize python.exe"
+
+
+def test_creation_is_idempotent_on_second_run(fixture_repo) -> None:
+    repo_path, fake_uv_dir, _worktree_path = fixture_repo
+
+    first = _run_script(repo_path, [], fake_uv_dir)
+    assert first.returncode == 0, first.stderr
+
+    second = _run_script(repo_path, [], fake_uv_dir)
+    assert second.returncode == 0, (
+        f"second run should be idempotent (exit 0); stdout={second.stdout}\n"
+        f"stderr={second.stderr}"
+    )
+    combined = second.stdout + second.stderr
+    assert "idempotente" in combined, (
+        "second run should report the already-detached/already-exists paths: "
+        f"{combined}"
+    )
+
+
+def test_whatif_creation_mutates_nothing(fixture_repo) -> None:
+    repo_path, fake_uv_dir, worktree_path = fixture_repo
+
+    branch_before = _current_branch(repo_path)
+    status_before = _status_short(repo_path)
+    worktree_list_before = _git(["worktree", "list"], cwd=repo_path).stdout
+
+    result = _run_script(repo_path, ["-WhatIf"], fake_uv_dir)
+
+    assert result.returncode == 0, f"stdout={result.stdout}\nstderr={result.stderr}"
+    assert _current_branch(repo_path) == branch_before
+    assert not worktree_path.exists(), "-WhatIf must not create the worktree"
+    assert _git(["worktree", "list"], cwd=repo_path).stdout == worktree_list_before
+    # status may legitimately gain the untracked script copy only once, at
+    # fixture creation time; -WhatIf itself must add nothing further.
+    assert _status_short(repo_path) == status_before
+
+
+def test_remove_cleans_worktree_and_reattaches_main(fixture_repo) -> None:
+    repo_path, fake_uv_dir, worktree_path = fixture_repo
+
+    created = _run_script(repo_path, [], fake_uv_dir)
+    assert created.returncode == 0, created.stderr
+    assert worktree_path.is_dir()
+
+    removed = _run_script(repo_path, ["-Remove"], fake_uv_dir)
+    assert removed.returncode == 0, f"stdout={removed.stdout}\nstderr={removed.stderr}"
+    assert not worktree_path.exists(), "worktree directory should be gone"
+
+    worktree_list = _git(["worktree", "list"], cwd=repo_path).stdout
+    assert "orquestador_de_agentes_dev" not in worktree_list
+    assert _current_branch(repo_path) == "main", (
+        "principal checkout should be re-attached to main after -Remove"
+    )
+
+
+def test_remove_with_uncommitted_changes_fails_closed(fixture_repo) -> None:
+    repo_path, fake_uv_dir, worktree_path = fixture_repo
+
+    created = _run_script(repo_path, [], fake_uv_dir)
+    assert created.returncode == 0, created.stderr
+
+    # Dirty the worktree-dev with an uncommitted change.
+    (worktree_path / "dirty.txt").write_text("uncommitted\n", encoding="utf-8")
+
+    removed = _run_script(repo_path, ["-Remove"], fake_uv_dir)
+
+    assert removed.returncode == 2, (
+        f"expected exit 2 for a dirty worktree; got {removed.returncode}\n"
+        f"stdout={removed.stdout}\nstderr={removed.stderr}"
+    )
+    assert worktree_path.is_dir(), "worktree must remain intact on a failed remove"
+    assert (worktree_path / "dirty.txt").is_file()
+
+    worktree_list = _git(["worktree", "list"], cwd=repo_path).stdout
+    assert "orquestador_de_agentes_dev" in worktree_list
+    assert _current_branch(repo_path) == "", (
+        "principal checkout must remain detached; -Remove must not run "
+        "git checkout main when it fails closed"
+    )
+
+
+def test_regression_add_without_detach_first_fails(fixture_repo) -> None:
+    """MUTATION barrier: if the detach-before-add step were removed from the
+    script, `git worktree add ... main` would fail with
+    `fatal: 'main' is already used by worktree`. This test reproduces that
+    exact failure directly (bypassing the script) to document the invariant
+    the script's Step-DetachPrincipal/Step-CreateWorktree ordering protects
+    against, and to give a fast, script-independent signal if the ordering
+    invariant regresses silently.
+    """
+    repo_path, _fake_uv_dir, worktree_path = fixture_repo
+
+    # Principal is still on `main` here (nothing has detached it yet).
+    assert _current_branch(repo_path) == "main"
+
+    result = _git(
+        ["worktree", "add", str(worktree_path), "main"],
+        cwd=repo_path,
+    )
+
+    assert result.returncode != 0
+    assert "already used by worktree" in result.stderr

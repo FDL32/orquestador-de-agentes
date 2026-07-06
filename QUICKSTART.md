@@ -137,6 +137,98 @@ Regla operativa:
 - El launcher inyecta `ticket_id`, `work_plan`, `close_command`, `role` y `backend`.
 - Si cambias backend durante un ticket, actualiza `.agent/collaboration/TURN.md`, `.agent/collaboration/STATE.md`, `.agent/collaboration/execution_log.md` y `.agent/collaboration/notifications.md`.
 
+## 0d. Motor dev worktree
+
+El motor (`orquestador_de_agentes`) se consume en dos modos: sync-copia
+(instalacion que copia archivos hacia un destino) y runtime-en-vivo (los
+destinos invocan scripts del motor con el checkout principal como `cwd`). Si
+un ticket del motor se trabaja a medias directamente sobre ese checkout
+principal, los guards que auditan destinos leen un arbol de trabajo sucio o
+a mitad de cambio, contaminando corridas que no tienen nada que ver con el
+ticket en curso. Para evitarlo, el desarrollo del motor usa una worktree de
+git separada, dedicada exclusivamente a trabajar y cerrar tickets.
+
+Modelo de ramas (invertido respecto a lo intuitivo): la worktree
+`orquestador_de_agentes_dev` es la que lleva la rama `main` -- ahi se
+trabaja y desde ahi se pushea. El checkout principal
+(`orquestador_de_agentes`) queda en estado DETACHED, apuntando siempre al
+commit de `origin/main` ya cerrado; es el checkout de solo consumo que usan
+los destinos. Este reparto es obligatorio porque git no permite que la
+misma rama este checked-out en dos worktrees a la vez: intentar crear la
+worktree con `main` mientras el checkout principal todavia la lleva falla
+con `fatal: 'main' is already used by worktree at '<principal>'`.
+
+Creacion, en dos pasos secuenciales (el orden importa: el detach va
+siempre antes del `worktree add`):
+
+```powershell
+# Paso 1, desde el checkout principal: lo deja sin rama, mismo commit, arbol intacto
+git checkout --detach
+
+# Paso 2, solo despues del paso 1: crea la worktree-dev en `main`
+git worktree add ..\orquestador_de_agentes_dev main
+```
+
+`git worktree list` debe mostrar entonces exactamente dos entradas: el
+checkout principal como `(detached HEAD)` y `orquestador_de_agentes_dev`
+como `[main]`, ambas en el mismo commit.
+
+La worktree necesita su propio venv (no comparte el `.venv` del checkout
+principal, porque el tooling de calidad resuelve el interprete relativo a
+la raiz del proyecto que audita en cada invocacion): desde
+`orquestador_de_agentes_dev`,
+
+```powershell
+uv venv
+uv sync
+```
+
+La suite canonica se corre desde la worktree, con su propio interprete:
+
+```powershell
+.venv\Scripts\python.exe scripts\run_pytest_safe.py --level all
+```
+
+Ciclo de cierre de un ticket trabajado en la worktree-dev: el push es
+normal (`git push origin main`, sin cambios, porque `main` ya vive ahi).
+Tras el push, el checkout principal se pone al dia SOLO con:
+
+```powershell
+git fetch
+git checkout --detach origin/main
+```
+
+(no `git pull --ff-only`: no aplica sobre un HEAD sin rama). Nunca se
+trabaja un ticket directamente en el checkout principal.
+
+Desmontaje de la worktree-dev, desde el checkout principal:
+
+```powershell
+git worktree remove ..\orquestador_de_agentes_dev
+git checkout main
+```
+
+(`git worktree prune` si `remove` reporta cambios sin commitear que se
+decide descartar). El segundo comando re-ata la rama `main` al checkout
+principal, devolviendolo al estado pre-ticket.
+
+Nota de futuro: un canal estable (tag o rama dedicada) para que los
+destinos consuman siempre una version fija y probada del motor, en vez del
+ultimo commit de `main`, queda fuera de este procedimiento -- es un riesgo
+distinto (estabilidad de version, no suciedad del checkout) y se deja como
+trabajo futuro separado.
+
+Nota de alcance: el criterio de campo "un ticket completo trabajado en la
+worktree deja el checkout principal limpio en cada fase de su ciclo" se
+verifica la primera vez que un ticket del motor se trabaje siguiendo este
+procedimiento completo, no en el ticket que crea la worktree por primera
+vez.
+
+Existe tambien `scripts/setup_dev_worktree.ps1`, que automatiza los pasos
+de creacion (detach, worktree add, venv) de forma idempotente y expone
+`-Remove` para el desmontaje y `-WhatIf` para previsualizar sin ejecutar;
+ver la cabecera del script para el detalle de codigos de salida.
+
 ## 1. Preflight
 
 ```powershell
