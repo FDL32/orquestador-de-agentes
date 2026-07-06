@@ -1,350 +1,313 @@
-# Work Plan - WOT-2026-019m
+# Work Plan - WOT-2026-019q
 
 ## Metadata
-- **ID:** WOT-2026-019m
+- **ID:** WOT-2026-019q
 - **Estado:** COMPLETED
-- **deliverable_type:** mixed
-- **Titulo:** worktree-dev del MOTOR para desarrollo paralelo sin ensuciar el
-  checkout consumido.
-- **Prioridad:** Media
+- **deliverable_type:** code
+- **Titulo:** Permitir el cierre canonico de un ticket cuyo commit no es HEAD
+  (batch-close no contiguo) sin aceptar entregas vacias.
+- **Creado:** 2026-07-06
+- **Prioridad:** Alta
 - **Asignado a:** Builder
 - **delivery_authority:** repo_motor
 
 ## Objetivo
 
-Crear y documentar una worktree de git separada del motor
-(`orquestador_de_agentes`) donde se trabajen los tickets del motor, de modo
-que el checkout principal permanezca siempre limpio y DETACHED en el commit
-de `origin/main` (actualizado solo con `git fetch && git checkout --detach
-origin/main` tras cada cierre) y sea el unico consumido por los destinos en
-sus dos modos de uso: sync-copia y runtime-en-vivo. La rama `main` vive en
-la worktree-dev, no en el checkout principal (git no permite la misma rama
-en dos worktrees a la vez; ver Contexto punto 2).
+Modificar resolve_motor_checkpoint_files en .agent/motor_checkpoint.py para
+que un ticket cuyo commit checkpoint (M3, checkpoint/review-<ticket>) NO es
+HEAD pueda cerrar canonicamente (--mark-ready -> --manager-approve) cuando
+su commit es ancestro real de HEAD, su commit message contiene el ticket_id,
+y la caminata de contiguidad desde ESE commit recupera un conjunto de archivos
+NO VACIO. El caso comun (sha == head_sha, ticket topmost) NO cambia de
+comportamiento. Un M3 que apunte a un commit vacio (<ticket>: closeout sin
+diff real) debe seguir siendo RECHAZADO explicitamente.
 
 ## Contexto
 
-Fase 0 (verificada en codigo hoy, 2026-07-06, no se re-deriva en este plan):
+Fase 0 del Orquestador (script reproducible, re-ejecutado de forma
+independiente por este Manager con el venv de la worktree-dev) demostro con
+un fixture git real y el modulo motor_checkpoint real (no mocks):
 
-1. El motor se consume en DOS modos: sync-copia
-   (`install_agent_system.py:344-422`, via `shutil.copy2`/`copytree`) y
-   runtime-en-vivo (`run_gates_dispatch.py`: `MOTOR_SCRIPTS_DIR =
-   MOTOR_ROOT/scripts`, subprocess con `cwd=MOTOR_ROOT`; `prepush_check.py`
-   resuelve `motor_root` via `motor_destination_link.json`). Un ticket del
-   motor a medias contamina las corridas de los destinos porque los guards
-   leen el working tree real del checkout principal.
-2. Fix elegido (CORREGIDO tras blocker de Fase 0 tardia, verificado en
-   vivo en un repo de prueba): git NO permite que la misma rama este
-   checked-out en dos worktrees a la vez -- `git worktree add
-   ..\orquestador_de_agentes_dev main` ejecutado con el checkout principal
-   todavia en `main` FALLA con `fatal: 'main' is already used by worktree
-   at '<principal>'` (exit 128). El procedimiento correcto invierte quien
-   lleva la rama: (a) el checkout principal se pone DETACHED con `git
-   checkout --detach` (permanece en el mismo commit, arbol intacto); (b)
-   solo entonces `git worktree add ..\orquestador_de_agentes_dev main`
-   funciona, y la worktree-dev queda en `[main]`. Los tickets del motor se
-   trabajan y se pushean desde la worktree-dev (que lleva `main`); el
-   checkout principal, ya detached, se actualiza tras cada push de cierre
-   con `git fetch && git checkout --detach origin/main` (un `git pull
-   --ff-only` no aplica sobre un HEAD detached sin rama). El checkout
-   principal detached es de facto read-only para uso operativo (commitear
-   ahi deja commits huerfanos), que es exactamente el rol de "checkout de
-   consumo" que necesitan los destinos.
-3. La worktree necesita un venv PROPIO: `run_pytest_safe.py:132` resuelve
-   `<root>/.venv/Scripts/python.exe` relativo a la raiz del proyecto que se
-   audita, y `pyvenv.cfg` no ancla la ruta del propio venv (solo `home`
-   apunta al Python compartido de `uv`). Se crea con `uv venv && uv sync`
-   (el `uv.lock` del repo ya existe y fija las versiones).
-4. `motor_destination_link.json` esta gitignored (verificado con `git
-   check-ignore`), por lo que la worktree nueva arranca deslinkada de
-   cualquier destino: comportamiento correcto para hacer dogfooding del
-   motor contra si mismo.
-5. Los hooks pre-commit comparten el directorio de hooks del `.git` comun
-   entre todas las worktrees (git worktree: `.git` es un archivo puntero
-   compartido) y referencian el interprete via ruta absoluta; un commit de
-   prueba hecho desde la worktree debe pasar esos hooks igual que en el
-   checkout principal. Esto se verifica en vivo (Fase 2.2 del plan), no se
-   asume.
-6. `Resolve-VenvPython` en `launch_agent_terminals.ps1:113-127` busca
-   `.venv` relativo a la raiz que recibe como parametro; con un venv propio
-   en la worktree, resuelve correctamente si el launcher se apunta a esa
-   raiz.
-7. Un canal estable (tag o rama dedicada que consuman los destinos, para
-   proteger contra breaking changes) queda fuera de este ticket: es un
-   riesgo distinto (estabilidad de version, no suciedad del checkout) y se
-   deja anotado como nota de futuro en la documentacion nueva.
+1. resolve_motor_checkpoint_files Step 3 (l.247-252 de
+   .agent/motor_checkpoint.py) exige sha == head_sha; si no, devuelve
+   ok=False con "Tag ...@<sha> is stale; expected HEAD <head_sha>". Este es
+   el UNICO paso que bloquea el cierre de un ticket enterrado bajo otro commit
+   posterior.
+2. Step 2 (is_git_ancestor_of_head, l.235) YA garantiza que el commit del
+   checkpoint sea ancestro de HEAD antes de llegar a Step 3 -- es decir, el
+   diff del ticket SI esta realmente entregado en la historia de HEAD cuando
+   se llega a evaluar Step 3.
+3. contiguous_ticket_commits(motor_root, sha_ticket, ticket_id) invocado
+   DESDE el commit real del ticket enterrado (no desde HEAD) devuelve
+   EXACTAMENTE el commit propio del ticket, y files_from_commits sobre ese
+   resultado recupera SOLO el diff de ese ticket. La maquinaria de contiguidad
+   ya funciona correctamente para el caso no-HEAD; Step 3 es el bloqueador
+   aislado.
+4. Un commit vacio de cierre (<ticket>: closeout, git commit --allow-empty)
+   pasa Step 3 (si se tagea a si mismo, es HEAD) y Step 4 (subject contiene el
+   ticket_id), pero files_from_commits sobre el devuelve set() (cero
+   archivos). Este es el anti-patron que la ficha prohibe explicitamente: la
+   solucion debe rechazar una entrega de cero archivos.
 
-## Non-goals
-
-- No se crea ni modifica ningun canal estable (tag/rama dedicada) para que
-  los destinos consuman una version fija del motor; queda como nota de
-  futuro en la documentacion.
-- No se modifica `install_agent_system.py`, `run_gates_dispatch.py`,
-  `prepush_check.py` ni ningun otro modulo de sincronizacion o runtime-en-
-  vivo: este ticket es puramente de flujo de desarrollo (worktree +
-  documentacion + script auxiliar opcional), no de logica de negocio.
-- No se modifican hooks pre-commit ni la configuracion de CI: se verifica
-  en vivo que los hooks existentes funcionan igual desde la worktree, sin
-  tocar su definicion.
-- No se mueve ni se reconfigura el repositorio
-  `orquestador_de_agentes_workspace`.
-- No se deja la worktree creada por este ticket como entregable permanente
-  del repo: es un artefacto de desarrollo local (no versionado, fuera de
-  `orquestador_de_agentes/`), reproducible en cualquier maquina siguiendo la
-  documentacion o ejecutando el script opcional. Al cierre del ticket puede
-  desmontarse o dejarse montada; ambos estados son validos porque no forma
-  parte del arbol versionado del motor.
-- El criterio de campo "un ticket completo trabajado en la worktree deja el
-  checkout principal limpio en cada fase de su ciclo" NO se verifica dentro de
-  este ticket 019m (este ticket SE HACE en el checkout principal porque es
-  el que crea la worktree). Es el criterio de aceptacion en campo del
-  PRIMER ticket del motor que se trabaje usando la worktree ya creada por
-  019m; se documenta explicitamente como tal en la seccion nueva del
-  `QUICKSTART.md`, no se declara verificado aqui.
+Caso real que motiva el ticket: CTL-2026-009k, 009g, 009i (implementados,
+revisados y pusheados a origin/main en el destino Crear_Texto_LLM) quedaron
+completed-partial porque sus commits quedaron enterrados bajo 009j (ya
+cerrado), y la gate de cierre no es bypassable via --force ni
+--scope-override (agent_controller.py:1704).
 
 ## Decision Arquitectonica
 
-Por que worktree de git y no un clon completo separado: una worktree
-comparte el mismo repositorio Git (objetos, historia y directorio de
-hooks) con el checkout principal, de modo que un commit hecho desde la
-worktree pasa por los mismos hooks de pre-commit sin configuracion
-adicional, y no duplica en disco la historia completa del repositorio. Un
-clon separado resolveria el mismo problema de aislamiento del arbol de
-trabajo, pero a costa de mantener remotes y hooks configurados por
-duplicado y de poder divergir de `main` sin una disciplina de
-sincronizacion extra. Por que venv propio en la worktree y no compartir el
-`.venv` del checkout principal: el tooling de calidad (`run_pytest_safe.py`)
-resuelve el interprete relativo a la raiz del proyecto que audita en cada
-invocacion; compartir un unico venv entre dos arboles de trabajo
-distintos, cada uno potencialmente en una rama o estado distinto,
-arriesgaria a que dependencias distintas de cada ticket contaminen el
-otro arbol.
+Opcion elegida: (a) cierre no-HEAD.
 
-## Configuracion Privada Requerida
+La ficha ofrece dos opciones: (a) relajar Step 3 para aceptar un M3 no-HEAD
+verificando contiguidad+entrega no vacia desde el commit real del ticket; o
+(b) prohibir el batch-close con diagnostico accionable. Se elige (a).
 
-Ninguna. No se necesitan archivos en `privada/`.
+Justificacion (evidencia de Fase 0, punto 3 arriba): la maquinaria de
+contiguidad y recoleccion de archivos YA funciona correctamente para el commit
+real del ticket enterrado; el unico cambio necesario es narrow (Step 3). La
+opcion (b) NO desbloquea los 3 tickets reales que motivan la ficha (009k/009g/
+009i ya estan commiteados y enterrados; prohibir el batch-close no ayuda a
+el problema ya ocurrido (los commits ya enterrados de 009k/009g/009i), solo evita que vuelva a pasar en el futuro). (a) resuelve
+tanto el caso ya ocurrido como previene la recurrencia (con las barreras de
+abajo), por lo que aporta mas valor con un cambio de superficie menor.
+
+Riesgo evaluado y mitigado: relajar sha != head_sha podria, en teoria, abrir
+un bypass donde cualquier commit historico con subject conteniendo el
+ticket_id certifique una entrega no relacionada con el cierre real. Se mitiga
+asi:
+- Step 2 (ancestor-of-HEAD) se preserva sin cambios: el commit debe estar
+  realmente en la historia de HEAD.
+- Step 4 (subject contiene ticket_id) se preserva sin cambios, aplicado sobre
+  el commit real (sha), no sobre HEAD.
+- Contiguidad hacia atras del propio ticket (contiguous_ticket_commits) se
+  preserva sin cambios de firma ni de logica interna.
+- Entrega NO vacia: se anade una verificacion nueva explicita despues de
+  files_from_commits: si el conjunto de archivos resultante esta vacio, el
+  checkpoint se RECHAZA con un mensaje diagnostico nuevo y distinto
+  ("Checkpoint ... delivers no files; refusing empty closeout"), en vez de
+  aceptarlo silenciosamente. Esto cierra explicitamente el anti-patron del
+  commit vacio de cierre (punto 4 de Contexto), que de otro modo pasaria a
+  certificar cero archivos bajo la logica relajada.
+- El caso comun HEAD==tag (ticket topmost) sigue el mismo camino de codigo
+  hasta Step 2; Step 3 pasa a ser informativo (ya no bloqueante por si solo)
+  pero el resultado observable para ese caso (files recuperados == diff del
+  topmost) es IDENTICO al comportamiento actual, verificado por el test de
+  control ya existente en Fase 0 (Escenario B) y por el test de no-regresion
+  nuevo de este ticket.
+- Distincion "M3 legitimo al commit real" vs "M3 stale por olvido de
+  --pre-handoff": bajo el nuevo contrato, un M3 es aceptado si (1) es
+  ancestro de HEAD, (2) su subject contiene el ticket_id, y (3) la caminata de
+  contiguidad desde el produce un conjunto de archivos no vacio. El caso de
+  "olvido de --pre-handoff" (working tree modificado DESPUES de crear el M3,
+  sin volver a taguearlo) no lo detecta este mecanismo -- lo sigue detectando
+  el chequeo de arbol sucio (pre_handoff_guard.py / dirty-tree check) que se
+  ejecuta ANTES de invocar resolve_motor_checkpoint_files en los 3 call
+  sites de agent_controller.py (l.2849, 2927, 3350) y que este ticket NO
+  modifica. Es decir: "stale por arbol sucio" y "stale por Step 3 == HEAD" son
+  chequeos ortogonales; este ticket solo relaja el segundo, preservando el
+  primero intacto.
+
+## Superficie tocada (topologia verificada)
+
+_resolve_motor_checkpoint_files en agent_controller.py (l.3587) es un
+alias de motor_checkpoint.resolve_motor_checkpoint_files y se invoca en 3
+sitios (l.2849, 2927, 3350). Los 3 call sites consumen unicamente la tupla de
+retorno (valid: bool, files: set[str], error: str) de forma generica (no
+inspeccionan el string interno de Step 3 para tomar decisiones de control mas
+alla de imprimir cp_error o pasarlo a _print_motor_checkpoint_guidance).
+Por lo tanto el cambio queda LOCALIZADO en .agent/motor_checkpoint.py;
+agent_controller.py NO requiere modificacion de logica. La UNICA funcion
+adicional que se toca dentro de motor_checkpoint.py (no en
+agent_controller.py) es print_motor_checkpoint_guidance, para anadir
+guidance del nuevo mensaje de "empty closeout" (ver Fase 2.2).
 
 ## Plan de Implementacion
 
 ### Tipos de Tareas
 | Icono | Tipo | Ejecutor |
 |-------|------|----------|
-| 🤖 | TAREA AGENTE | Builder |
+| BOT | TAREA AGENTE | Builder |
 
-### Fase 1: Crear la worktree y su venv propio
+### Fase 1: Tests primero (TDD) - escenarios no-HEAD y anti-patron vacio
 
-#### 1.1: 🤖 Poner el checkout principal DETACHED y crear la worktree con `main`
-- **Accion:** Ejecutar (no crea archivo versionado)
-- **Descripcion:** Desde el checkout principal del motor
-  (`C:\Users\fdl\Proyectos_Python\orquestador_de_agentes`), en DOS pasos
-  secuenciales obligatorios: (1) `git checkout --detach` (deja el checkout
-  principal en el mismo commit, arbol de trabajo intacto, pero ya no lleva
-  la rama `main` -- paso necesario porque git no permite la misma rama
-  checked-out en dos worktrees a la vez); (2) solo despues del paso (1),
-  `git worktree add ..\orquestador_de_agentes_dev main`. Confirmar con `git
-  worktree list` que aparecen exactamente dos entradas: el checkout
-  principal en estado detached y `orquestador_de_agentes_dev` en `[main]`.
-- **Riesgo:** 🟢 Bajo
-- **Criterio de Aceptacion:** `git worktree list` ejecutado desde el
-  checkout principal muestra el checkout principal como `(detached HEAD)`
-  y `orquestador_de_agentes_dev` como `[main]`; ambos apuntan al mismo
-  commit (`git rev-parse HEAD` identico en ambos); el checkout principal
-  (`git status --short`) permanece sin cambios tras ambos comandos.
+#### 1.1: BOT Anadir tests de escenario no-HEAD y de entrega vacia
+- **Tipo:** TAREA AGENTE
+- **Archivo:** tests/unit/test_motor_checkpoint.py
+- **Accion:** Modificar (anadir clase de test nueva, no tocar las existentes)
+- **Descripcion:** Anadir una clase TestResolveMotorCheckpointFilesNonHead
+  con, como minimo, estos casos (fixture git real via subprocess, igual
+  patron que _init_git_repo/_add_committed_work_plan ya presentes en el
+  archivo; NO usar mocks de git):
+  1. test_buried_ticket_with_real_m3_closes_and_recovers_own_files: construye
+     un repo con commit base, commit del ticket A (file_a.py, subject
+     f"{ticket_a}: implement A"), tag M3 checkpoint/review-<ticket_a>
+     apuntando al commit de A, y luego un commit de ticket B ENCIMA (HEAD).
+     Llama a resolve_motor_checkpoint_files(repo, ticket_a) y asegura
+     ok is True y files == {"file_a.py"}.
+  2. test_topmost_ticket_head_unchanged_behavior (control/no-regresion):
+     mismo fixture, tag M3 de ticket B apuntando a HEAD (el propio commit de
+     B). Asegura ok is True y files == {"file_b.py"} -- exactamente el
+     comportamiento actual, sin cambios observables.
+  3. test_empty_closeout_commit_is_rejected: construye un repo con el commit
+     del ticket A real (file_a.py) y luego un commit VACIO
+     (git commit --allow-empty -m "<ticket_a>: closeout") como HEAD, con el M3
+     apuntando a ese commit vacio. Asegura ok is False y que el mensaje de
+     error contenga el texto literal "refusing empty closeout" fijado en
+     Fase 2.1 (el test usa ESE texto exacto, no una subcadena generica).
+  4. test_non_ancestor_still_rejected (no-regresion de Step 2): M3 tageado
+     en una rama lateral no fusionada a HEAD; asegura ok is False y el
+     mensaje sigue siendo el de "not an ancestor of HEAD" (Step 2 no cambia).
+  5. test_subject_without_ticket_id_still_rejected (no-regresion de Step 4):
+     M3 apuntando a un commit real cuyo subject NO contiene el ticket_id;
+     asegura ok is False con el mensaje de Step 4 sin cambios.
+- **Riesgo:** MEDIO (fixtures git nuevas, pero patron ya establecido en el
+  mismo archivo)
+- **Criterio de Aceptacion:** Los 5 tests se ejecutan con el comando
+  ".venv\Scripts\python.exe -m pytest tests/unit/test_motor_checkpoint.py -k TestResolveMotorCheckpointFilesNonHead -v"
+  y en este punto (ANTES del fix de Fase 2) los tests 1.1.1 y 1.1.3 FALLAN
+  (reproducen el bug/anti-patron), y 1.1.2/1.1.4/1.1.5 PASAN (comportamiento ya
+  correcto hoy). Esto documenta el estado pre-fix como evidencia TDD.
 
-#### 1.2: 🤖 Crear el venv propio de la worktree
-- **Accion:** Ejecutar
-- **Descripcion:** Desde `orquestador_de_agentes_dev`, ejecutar `uv venv`
-  seguido de `uv sync` para materializar `.venv/` local a la worktree
-  usando el `uv.lock` existente.
-- **Riesgo:** 🟢 Bajo
-- **Criterio de Aceptacion:** Existe
-  `orquestador_de_agentes_dev\.venv\Scripts\python.exe`; `uv sync` termina
-  con exit code 0; `orquestador_de_agentes_dev\.venv\pyvenv.cfg` no
-  contiene ninguna ruta al checkout principal (`orquestador_de_agentes\.venv`)
-  salvo la linea `home` que apunta al Python base compartido de `uv` (no al
-  venv del checkout principal).
+### Fase 2: Implementar la relajacion de Step 3 + rechazo de entrega vacia
 
-### Fase 2: Verificar la worktree en vivo (suite + commit de prueba + aislamiento del checkout principal)
-
-#### 2.1: 🤖 Correr la suite canonica DESDE la worktree con su propio venv
-- **Accion:** Ejecutar
-- **Descripcion:** Desde `orquestador_de_agentes_dev`, ejecutar
-  `.venv\Scripts\python.exe scripts\run_pytest_safe.py --level all` (el
-  mismo runner canonico del motor, invocado con el interprete de la
-  worktree, no el del checkout principal).
-- **Riesgo:** 🟡 Medio
-- **Criterio de Aceptacion:** El comando termina con exit code 0; el stamp
-  de `run_pytest_safe.py` (last-run) queda escrito dentro de
-  `orquestador_de_agentes_dev` (no en el checkout principal); durante y
-  despues de la corrida, `git status --short` ejecutado en el checkout
-  principal (`orquestador_de_agentes`) no muestra ningun cambio.
-
-#### 2.2: 🤖 Verificar que un commit de prueba desde la worktree pasa los hooks pre-commit
-- **Accion:** Ejecutar
-- **Descripcion:** Desde `orquestador_de_agentes_dev`, crear un commit de
-  prueba con `git commit --allow-empty -m "WOT-2026-019m: verificacion de
-  hooks pre-commit desde la worktree-dev"` y confirmar que los hooks de
-  `pre-commit` configurados en el repo se ejecutan y pasan. Tras verificar,
-  revertir el commit de prueba DENTRO de la worktree con `git reset --hard
-  HEAD~1` (nunca en el checkout principal) para no dejar commits de prueba
-  en `main`.
-- **Riesgo:** 🟡 Medio
-- **Criterio de Aceptacion:** La salida del `git commit` muestra los hooks
-  de pre-commit ejecutandose (no "no pre-commit hooks configured" ni
-  saltados) y terminando en exito; tras revertir el commit de prueba,
-  `git log --oneline -3` en la worktree no conserva el commit de prueba; el
-  checkout principal sigue sin cambios (`git status --short` vacio)
-  durante toda esta fase.
-
-#### 2.3: 🤖 Confirmar el checkout principal detached y limpio de punta a punta
-- **Accion:** Verificar (no crea archivo)
-- **Descripcion:** Ejecutar `git status --short` y `git worktree list` en
-  el checkout principal una vez completadas las fases 1 y 2, como cierre de
-  la evidencia operativa de aislamiento.
-- **Riesgo:** 🟢 Bajo
-- **Criterio de Aceptacion:** `git status --short` en el checkout principal
-  devuelve vacio; `git worktree list` sigue mostrando las dos worktrees, el
-  checkout principal como `(detached HEAD)` en el commit de `origin/main` y
-  `orquestador_de_agentes_dev` como `[main]`, sin worktrees marcadas
-  `prunable` ni corruptas.
-
-### Fase 3: Documentar el procedimiento en QUICKSTART.md
-
-#### 3.1: 🤖 Anadir la seccion "Motor dev worktree" a QUICKSTART.md
-- **Archivo:** `QUICKSTART.md`
+#### 2.1: BOT Modificar resolve_motor_checkpoint_files
+- **Tipo:** TAREA AGENTE
+- **Archivo:** .agent/motor_checkpoint.py
 - **Accion:** Modificar
-- **Descripcion:** Insertar una seccion nueva con heading `0d. Motor dev
-  worktree` entre la seccion existente `0c. Startup Templates` y
-  `1. Preflight`, cubriendo en este orden: (a) por que existe (los dos
-  modos de consumo del motor, citados de la seccion Contexto de este plan,
-  en prosa breve sin reproducir literalmente los nombres de funcion linea
-  por linea); (b) el modelo de ramas: la worktree-dev lleva `main` (es
-  donde se trabaja y se pushea); el checkout principal queda DETACHED (es
-  lo que consumen los destinos), porque git no permite la misma rama
-  checked-out en dos worktrees a la vez; (c) comando de creacion en DOS
-  pasos, en este orden: `git checkout --detach` en el checkout principal,
-  seguido de `git worktree add ..\orquestador_de_agentes_dev main`; (d)
-  creacion del venv propio (`uv venv && uv sync` dentro de la worktree);
-  (e) como correr la suite canonica desde la worktree
-  (`.venv\Scripts\python.exe scripts\run_pytest_safe.py --level all`, con
-  el interprete de la worktree); (f) el ciclo de cierre: tras cada push de
-  un ticket resuelto en la worktree (que ya lleva `main`, el push normal
-  `git push origin main` funciona sin cambios), el checkout principal se
-  actualiza SOLO con `git fetch && git checkout --detach origin/main`
-  (nunca se trabaja un ticket directamente en el checkout principal, y
-  `git pull --ff-only` no aplica porque el principal no lleva rama); (g)
-  desmontaje: `git worktree remove ..\orquestador_de_agentes_dev` desde el
-  checkout principal (y `git worktree prune` si `remove` reporta cambios
-  sin commitear que el usuario decide descartar), seguido de `git checkout
-  main` en el checkout principal para devolverlo al estado pre-ticket (la
-  rama vuelve al checkout principal); (h) nota de futuro explicita: un
-  canal estable (tag/rama dedicada) para que los destinos consuman una
-  version fija del motor NO esta cubierto por este procedimiento, queda
-  como trabajo futuro separado; (i) nota de alcance explicita: el criterio
-  "un ticket completo trabajado en la worktree deja el checkout principal
-  limpio en cada fase del ciclo" se verifica la primera vez que un ticket
-  del motor completo se trabaje usando este procedimiento, no en el
-  ticket que lo crea.
-- **Riesgo:** 🟢 Bajo
-- **Criterio de Aceptacion:** `QUICKSTART.md` contiene la seccion con
-  heading `0d. Motor dev worktree` con los 9 puntos (a)-(i) anteriores en
-  algun orden que preserve el sentido; los comandos citados en la seccion
-  coinciden literalmente con los usados en las Fases 1 y 2 de este plan
-  (mismo flag, mismo path relativo, mismo interprete referenciado, mismo
-  orden detach-antes-que-add).
+- **Descripcion:** En resolve_motor_checkpoint_files (l.212-283 actual):
+  1. Mantener Step 1 (resolver tag SHA) y Step 2 (ancestor-of-HEAD) sin
+     cambios.
+  2. Cambiar Step 3: en vez de retornar (False, set(), "...is stale...")
+     inmediatamente cuando sha != head_sha, continuar la evaluacion (no
+     bloquear aqui). El chequeo de "stale" deja de ser una condicion de
+     retorno temprano; se convierte en informacion que solo importa para el
+     mensaje de error si los pasos posteriores tambien fallan. Concretamente:
+     eliminar el return temprano de Step 3; conservar el calculo de
+     head_sha (se sigue necesitando para Step 2 y para logs/diagnostico) y
+     seguir el flujo hacia Step 4.
+  3. Mantener Step 4 (subject contiene ticket_id) sin cambios de logica,
+     aplicado sobre sha (el commit real del checkpoint, como ya hace hoy).
+  4. Mantener la llamada a contiguous_ticket_commits(motor_root, sha,
+     ticket_id) sin cambios de firma ni de logica interna.
+  5. Anadir DESPUES de files_from_commits: si files es un set vacio,
+     retornar (False, set(), f"Checkpoint {tag_name}@{sha[:8]} delivers no
+     files; refusing empty closeout") en vez de (True, files, ""). Este
+     chequeo aplica tanto al caso HEAD==tag como al caso no-HEAD (simetrico,
+     no depende de la rama Step 3).
+  6. El mensaje de error de "is stale; expected HEAD" de Step 3 (texto
+     original) se ELIMINA como retorno temprano bloqueante; NO debe aparecer
+     mas como causa de fallo del camino feliz no-HEAD. Si se desea preservar
+     el string en algun log informativo no bloqueante, debe quedar claramente
+     fuera del valor de retorno de error (no concatenado al err
+     devuelto cuando ok=True).
+- **Riesgo:** ALTO (cambia el contrato de una gate de cierre no
+  bypasseable; blast radius = cualquier cierre de ticket del motor)
+- **Criterio de Aceptacion:**
+  - resolve_motor_checkpoint_files para un M3 no-HEAD con subject valido,
+    ancestro de HEAD, y archivos no vacios devuelve ok=True con el set de
+    archivos correcto (verificado por el test 1.1.1 de Fase 1, ahora en
+    verde).
+  - El caso HEAD==tag (control) sigue devolviendo exactamente el mismo
+    resultado que antes del cambio (verificado por el test 1.1.2, en verde
+    antes y despues del fix -- no debe haber ninguna diferencia observable).
+  - Un M3 sobre commit vacio es rechazado (test 1.1.3 en verde).
+  - Step 2 y Step 4 siguen bloqueando sus casos (tests 1.1.4 y 1.1.5 en
+    verde, sin cambio de comportamiento).
 
-### Fase 4: Script auxiliar opcional (decision: SI se incluye)
+#### 2.2: BOT Actualizar guidance de error (obligatoria)
+- **Tipo:** TAREA AGENTE
+- **Archivo:** .agent/motor_checkpoint.py
+- **Accion:** Modificar
+- **Descripcion:** En print_motor_checkpoint_guidance (l.358-373), anadir
+  una rama elif "refusing empty closeout" in cp_error: que emita guidance
+  accionable especifica: "El checkpoint M3 apunta a un commit sin diff real.
+  Re-ejecuta --pre-handoff apuntando al commit que SI contiene el trabajo del
+  ticket; no uses un commit de cierre vacio." Esta tarea NO modifica el
+  contrato de retorno de Fase 2.1, solo mejora el mensaje impreso al Builder
+  cuando el nuevo caso de rechazo ocurre.
+- **Riesgo:** BAJO (solo texto de guidance, no logica de gate)
+- **Criterio de Aceptacion:** Ejecutar un script Python de una linea que
+  importe motor_checkpoint (con .agent en sys.path) y llame a
+  print_motor_checkpoint_guidance("T-1", "Checkpoint checkpoint/review-T-1
+  delivers no files; refusing empty closeout") debe imprimir una linea que
+  contenga "empty closeout" o "commit vacio" en la guidance mostrada (no el
+  texto generico de "Run --pre-handoff first..."), exit code 0.
 
-Decision de alcance (cerrada, no condicional): se incluye
-`scripts/setup_dev_worktree.ps1` porque el coste es bajo (script corto,
-reutiliza patrones ya existentes en `scripts/launch_agent_terminals.ps1`
-para resolver rutas) y el beneficio es reproducibilidad determinista del
-procedimiento documentado en la Fase 3, con verificacion propia en vez de
-quedar solo como prosa.
+### Fase 3: Mutation-verify y suite completa
 
-#### 4.1: 🤖 Crear scripts/setup_dev_worktree.ps1
-- **Archivo:** `scripts/setup_dev_worktree.ps1`
-- **Accion:** Crear
-- **Descripcion:** Script idempotente que, ejecutado desde el checkout
-  principal (o resolviendo la raiz del repo igual que
-  `launch_agent_terminals.ps1` via `$PSScriptRoot`), realiza: (1) si el
-  checkout principal NO esta ya en estado detached (`git symbolic-ref -q
-  HEAD` devuelve una rama), ejecuta `git checkout --detach`; si ya esta
-  detached, lo reporta y continua sin error (idempotente) -- este paso va
-  SIEMPRE antes del paso (2); (2) si `..\orquestador_de_agentes_dev` no
-  existe como worktree registrada (`git worktree list` no la lista),
-  ejecuta `git worktree add ..\orquestador_de_agentes_dev main`; si ya
-  existe, lo reporta y continua sin error (idempotente); (3) si
-  `..\orquestador_de_agentes_dev\.venv\Scripts\python.exe` no existe,
-  ejecuta `uv venv` y `uv sync` dentro de la worktree; si ya existe, lo
-  reporta y continua sin error; (4) expone `-Remove` como parametro
-  explicito que ejecuta `git worktree remove ..\orquestador_de_agentes_dev`
-  para el desmontaje, y a continuacion `git checkout main` en el checkout
-  principal para re-atar la rama y devolverlo al estado pre-ticket (en vez
-  de dejarlo solo como instruccion en prosa); (5) expone el parametro
-  estandar `-WhatIf` de PowerShell (`[CmdletBinding(SupportsShouldProcess)]`)
-  que cubre AMBOS flujos (creacion y `-Remove`) e imprime que haria sin
-  ejecutar `git checkout --detach`, `git worktree add`, `uv venv`/`uv sync`,
-  `git worktree remove` ni `git checkout main`; el modo por defecto (sin
-  `-WhatIf`) SIEMPRE ejecuta las acciones reales, `-WhatIf` es
-  exclusivamente el modo de comprobacion previa y nunca sustituye a la
-  ejecucion real documentada en la Fase 1. Codigos de salida: `0` en exito
-  (incluye los casos ya-existe/ya-detached idempotentes), `1` si `git
-  checkout --detach`, `git worktree add` o `uv venv`/`uv sync` fallan, `2`
-  cuando `-Remove` se pide sobre una worktree con cambios sin commitear
-  (falla cerrado, no fuerza el borrado y NO ejecuta `git checkout main`).
-- **Riesgo:** 🟡 Medio
-- **Criterio de Aceptacion:** `.\scripts\setup_dev_worktree.ps1 -WhatIf`
-  ejecutado con el checkout principal ya detached y la worktree ya creada
-  por la Fase 1 imprime el plan de accion sin modificar nada (`git
-  worktree list`, la rama del checkout principal, y el contenido de
-  `orquestador_de_agentes_dev\.venv` identicos antes/despues); ejecutado
-  SIN `-WhatIf` una segunda vez sobre un checkout principal ya detached y
-  una worktree+venv ya existentes, termina con exit code `0` y mensajes de
-  "ya existe"/"ya detached" para los 3 pasos (idempotencia real, no solo
-  narrativa); `.\scripts\setup_dev_worktree.ps1 -Remove` sobre la worktree
-  limpia (sin cambios sin commitear) la elimina, `git worktree list` deja
-  de listarla, y el checkout principal queda de nuevo en la rama `main`
-  (`git branch --show-current` devuelve `main`); `.\scripts\setup_dev_worktree.ps1
-  -Remove` invocado con la worktree teniendo un archivo modificado sin
-  commitear devuelve exit code `2`, NO ejecuta `git worktree remove` y NO
-  ejecuta `git checkout main` (el checkout principal permanece detached).
-- **Si falla:** Si `-WhatIf` no puede implementarse limpiamente con
-  `SupportsShouldProcess` por alguna limitacion de version de PowerShell,
-  sustituirlo por un parametro explicito `-DryRun` casero con la misma
-  semantica exacta, documentando el cambio en `execution_log.md`; el modo
-  de comprobacion previa no se omite en ningun caso.
+#### 3.1: BOT Mutation-verify manual del fix
+- **Tipo:** TAREA AGENTE
+- **Archivo:** (ninguno nuevo; verificacion sobre .agent/motor_checkpoint.py
+  y tests/unit/test_motor_checkpoint.py)
+- **Accion:** Verificar (no crea archivo)
+- **Descripcion:** Revertir temporalmente el cambio de Fase 2.1 (con git
+  stash o comentando el return temprano restaurado) y ejecutar
+  ".venv\Scripts\python.exe -m pytest tests/unit/test_motor_checkpoint.py -k TestResolveMotorCheckpointFilesNonHead -v".
+  Confirmar que los tests 1.1.1 y 1.1.3 (los que dependen directamente del fix)
+  FALLAN sin el, y que al restaurar el fix (git stash pop o descomentar)
+  vuelven a PASAR. Documentar el resultado (comando + output relevante) en
+  execution_log.md.
+- **Riesgo:** MEDIO (paso de verificacion, no debe dejar el repo en estado
+  revertido)
+- **Criterio de Aceptacion:** Evidencia textual en execution_log.md de:
+  (a) comando + output con tests 1.1.1/1.1.3 en rojo tras revertir, exit code
+  1; (b) comando + output con los 5 tests en verde tras restaurar, exit
+  code 0.
 
-## Calidad
+#### 3.2: BOT Correr gates de calidad completos
+- **Tipo:** TAREA AGENTE
+- **Archivo:** N/A (comandos)
+- **Accion:** Verificar
+- **Descripcion:** Ejecutar, en este orden, desde
+  C:\Users\fdl\Proyectos_Python\orquestador_de_agentes_dev:
+  1. ruff check .
+  2. .venv\Scripts\python.exe scripts\run_pytest_safe.py
+  Ambos deben terminar en exit code 0. Si run_pytest_safe.py reporta fallos
+  pre-existentes documentados en memoria (ninguno conocido para este modulo),
+  el Builder debe distinguir explicitamente fallos nuevos introducidos por
+  este ticket de fallos heredados, citando el archivo/test exacto.
+- **Riesgo:** MEDIO
+- **Criterio de Aceptacion:** ruff check . exit code 0. run_pytest_safe.py
+  exit code 0 y last-run.json con tested_commit_sha == HEAD (verificado
+  tras el commit de handoff, no antes).
 
-- `git worktree list` (Fase 1.1, Fase 2.3): verifica creacion, el estado
-  detached del principal y `[main]` en la worktree-dev, y el aislamiento.
-- `uv venv && uv sync` exit code 0 dentro de la worktree (Fase 1.2).
-- `.venv\Scripts\python.exe scripts\run_pytest_safe.py --level all` exit
-  code 0 ejecutado DESDE `orquestador_de_agentes_dev` con SU venv (Fase
-  2.1).
-- `git commit --allow-empty` desde la worktree pasando los hooks de
-  pre-commit, luego revertido con `git reset --hard HEAD~1` (Fase 2.2).
-- `git status --short` vacio en el checkout principal verificado al final
-  de la Fase 2 (Fase 2.3).
-- Fase 4 (script opcional): `.\scripts\setup_dev_worktree.ps1 -WhatIf`,
-  ejecucion real idempotente repetida, y `.\scripts\setup_dev_worktree.ps1
-  -Remove` en los dos escenarios (limpio y con cambios sin commitear),
-  cada uno con el exit code declarado en el criterio de aceptacion de la
-  Fase 4.1.
-- No se requiere `ruff check`/`ruff format` adicional: el ticket no
-  modifica ningun archivo `.py`.
-- `.venv\Scripts\python.exe .agent\agent_controller.py --validate --json
-  --project-root .` exit 0/0 tras el cierre, ejecutado en el checkout
-  PRINCIPAL sobre el `work_plan.md` real de este ticket.
+## Non-goals
+
+- No reescribir historia de ramas del usuario.
+- No relajar la exigencia de suite fresh-green ni de subject con ticket_id.
+- No permitir cerrar un ticket cuyo diff NO este en la historia de HEAD (Step
+  2 ancestor-of-HEAD se preserva intacto).
+- No tocar la superficie de cross_root ni de scope_gate.py mas alla de lo
+  necesario (este ticket no las toca en absoluto).
+- No modificar agent_controller.py: los 3 call sites consumen la tupla de
+  retorno de forma generica y no requieren cambios (verificado en el analisis
+  de superficie arriba).
+- No implementar la Opcion (b) (prohibir batch-close): se descarta
+  explicitamente por la justificacion de la Decision Arquitectonica.
+- No cerrar el bus de CTL-2026-009k/009g/009i: esa es la deuda de destino
+  ligada, fuera de scope de este ticket de motor (la ejecuta el destino
+  Crear_Texto_LLM una vez este ticket cierre).
+
+## Files Likely Touched
+
+- .agent/motor_checkpoint.py
+- tests/unit/test_motor_checkpoint.py
+- tests/test_mark_ready_motor_scope.py (2 tests del contrato viejo tag==HEAD,
+  derogado por este ticket, actualizados al contrato nuevo; scope-expansion
+  justificada CEM: el cambio de contrato invalida sus aserciones)
+- tests/test_setup_dev_worktree_script.py (hotfix de entorno: asercion
+  path-fragil de un test de 019m que falla SOLO al correr la suite desde la
+  worktree-dev por colision de substring con la ruta del sandbox; bloquea el
+  gate de cierre-desde-dev de cualquier ticket; fix 1-linea aprobado por el
+  humano, analogo a los hotfixes CI de 019m)
 
 ## Trade-offs Considerados
 | Opcion | Pros | Contras | Decision |
 |--------|------|---------|----------|
-| Worktree del motor con principal detached + dev en main (git worktree add) | Comparte objetos y hooks con el checkout principal; sin duplicar el .git; nativo de git; el push de cierre no cambia (main vive en la dev) | Requiere invertir la rama (detach del principal primero, git no permite main en dos worktrees) y recordar que el principal es de solo consumo | Aceptada |
-| Rama efimera por ticket en vez de detach (alternativa descartada) | Evita el concepto de HEAD detached | Rompe el flujo de cierre actual (`git push origin main`); obligaria a merge/push HEAD:main y cambiar cada procedimiento de cierre existente | Descartada |
-| Clon completo separado (git clone) | Aislamiento total, sin compartir .git | Duplica historia completa en disco; hooks y remotes se configuran por separado; diverge facilmente de main sin disciplina extra de sync | Descartada |
-| Script setup_dev_worktree.ps1 (Fase 4) | Reproducibilidad determinista; verificacion propia; idempotente | Superficie nueva a mantener | Aceptada (coste bajo, cubierto con verificacion) |
-| Canal estable (tag/rama dedicada) para destinos | Protege contra breaking changes de version | Fuera del alcance de este ticket (riesgo distinto: estabilidad de version, no suciedad de checkout) | Descartada para este ticket; nota de futuro en la documentacion |
+| (a) Relajar Step 3, verificar contiguidad+entrega no vacia desde el commit real | Desbloquea los 3 tickets reales ya entregados; maquinaria de contiguidad ya funciona (Fase 0); cambio narrow y localizado en un modulo | Toca una gate de cierre no-bypasseable (blast radius alto); requiere mutation-verify riguroso | Elegida |
+| (b) Prohibir batch-close con diagnostico | Cambio mas simple; evita la clase de problema hacia el futuro | NO desbloquea 009k/009g/009i (ya commiteados y enterrados); solo previene, no resuelve el caso ya ocurrido | Descartada |
+| Commit vacio de cierre como atajo | Ninguno real (ceremonial) | Certifica cero archivos; anti-patron explicitamente prohibido por la ficha | Descartada (rechazada activamente por Fase 2.1) |
 
 ## Guia de Riesgos
 | Nivel | Significado | Accion del Builder |
@@ -353,53 +316,40 @@ quedar solo como prosa.
 | Medio | Requiere atencion | Intentar 2 veces, escalar si dudas |
 | Alto | Critica | Escalar al primer fallo |
 
-## Decision sobre REVIEW
+## Calidad
 
-Review 2 adversarial fresh-context NO obligatoria (regla de blast-radius):
-este ticket no toca gate/bus/estado/CI/hooks/seguridad; los hooks
-pre-commit solo se VERIFICAN en vivo (Fase 2.2), no se modifican. Single
-review del Manager es suficiente. Se recomienda que el Manager en review
-repita literalmente el `git worktree list` y el `git status --short` del
-checkout principal con sus propios ojos antes de aprobar el cierre, en vez
-de confiar solo en el relato del `execution_log.md`.
-
-## Files Likely Touched
-
-- `QUICKSTART.md` (Fase 3.1, modificar)
-- `scripts/setup_dev_worktree.ps1` (Fase 4.1, crear)
-- `.agent/collaboration/work_plan.md`
-- `.agent/collaboration/STRATEGY_WOT-2026-019m.md`
-- `.agent/collaboration/AUDIT_WOT-2026-019m.md`
-- `.agent/collaboration/execution_log.md`
-
-Fuera del arbol versionado del motor (no aparecen en el diff del ticket,
-solo en el `execution_log.md` como evidencia operativa): la worktree
-`..\orquestador_de_agentes_dev` y su `.venv\` interno.
+- ruff check . -> exit code 0 (Fase 3.2).
+- .venv\Scripts\python.exe scripts\run_pytest_safe.py -> exit code 0,
+  last-run.json.tested_commit_sha == HEAD (Fase 3.2).
+- .venv\Scripts\python.exe -m pytest tests/unit/test_motor_checkpoint.py -k TestResolveMotorCheckpointFilesNonHead -v
+  -> exit code 0 con los 5 tests nuevos en verde tras el fix (Fase 1 + Fase 2).
+- Mutation-verify: revertir Fase 2.1 -> tests 1.1.1 y 1.1.3 en rojo (exit code
+  1); restaurar -> los 5 en verde (exit code 0) (Fase 3.1).
+- Script Python de una linea que ejerza print_motor_checkpoint_guidance con
+  el mensaje "refusing empty closeout" -> exit code 0, guidance nueva
+  presente (Fase 2.2).
 
 ## Criterios de Aceptacion Global
 
-- [ ] `git worktree list` (desde el checkout principal) muestra el
-      checkout principal como `(detached HEAD)` y `orquestador_de_agentes_dev`
-      como `[main]`, ambos en el mismo commit.
-- [ ] `orquestador_de_agentes_dev` tiene su propio
-      `.venv\Scripts\python.exe` creado con `uv venv && uv sync`, sin
-      referenciar el `.venv` del checkout principal (salvo la linea `home`
-      de `pyvenv.cfg` apuntando al Python base compartido de `uv`).
-- [ ] `scripts\run_pytest_safe.py --level all` ejecutado DESDE la worktree
-      con SU venv termina con exit code 0.
-- [ ] Un commit `--allow-empty` ejecutado desde la worktree pasa los hooks
-      de pre-commit (evidencia literal en `execution_log.md`) y queda
-      revertido sin dejar rastro en `main`.
-- [ ] El checkout principal permanece con `git status --short` vacio
-      durante y despues de todo el proceso (Fases 1 y 2).
-- [ ] `QUICKSTART.md` documenta el procedimiento completo (modelo de
-      ramas detached-principal/main-en-dev, creacion en 2 pasos, venv,
-      suite, cierre con `fetch && checkout --detach origin/main`,
-      desmontaje con re-attach a `main`, nota de futuro sobre canal
-      estable, nota de alcance sobre el criterio de campo).
-- [ ] `scripts/setup_dev_worktree.ps1` (Fase 4) cumple los 4 escenarios de
-      su criterio de aceptacion (whatif, idempotencia real, remove limpio,
-      remove con cambios sin commitear fallando cerrado con exit 2).
-- [ ] `.venv\Scripts\python.exe .agent\agent_controller.py --validate
-      --json --project-root .` exit 0/0 en el checkout principal al cierre
-      del ticket.
+- [ ] Un ticket cuyo commit NO es HEAD, con M3 apuntando a su commit real y
+      diff real en la historia de HEAD, cierra canonico (test
+      test_buried_ticket_with_real_m3_closes_and_recovers_own_files en
+      verde: ok=True, files == su propio diff, no el del topmost).
+- [ ] La solucion NO acepta un commit vacio como entrega (test
+      test_empty_closeout_commit_is_rejected en verde: ok=False).
+- [ ] Mutation-verify: revertir el fix hace que
+      test_buried_ticket_with_real_m3_closes_and_recovers_own_files y
+      test_empty_closeout_commit_is_rejected FALLEN; restaurar los deja en
+      verde (Fase 3.1, evidencia en execution_log.md).
+- [ ] Suite canonica run_pytest_safe.py verde; exit code 0.
+- [ ] El caso comun HEAD==tag no cambia de comportamiento observable (test
+      test_topmost_ticket_head_unchanged_behavior en verde, identico
+      antes/despues del fix).
+- [ ] ruff check . exit code 0.
+
+## Handoff
+
+### 2026-07-06 Handoff: Manager -> Builder
+**Plan:** WOT-2026-019q
+**Accion requerida:** Implementar segun work_plan.md (Fases 1 a 3, en orden TDD).
+**Estado:** PENDING

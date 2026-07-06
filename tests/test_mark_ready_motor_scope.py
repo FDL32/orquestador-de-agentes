@@ -271,10 +271,14 @@ class TestMotorNoEvidence:
         )
         assert result == 1, f"Expected 1 (blocked), got {result}"
 
-    def test_stale_ancestor_checkpoint_blocks(
+    def test_ancestor_checkpoint_with_real_delivery_passes(
         self, tmp_path: Path, monkeypatch
     ) -> None:
-        """Ancestor checkpoints must block when they do not anchor the current HEAD."""
+        """WOT-2026-019q: an ancestor (non-HEAD) checkpoint with a real,
+        non-empty delivery now passes mark-ready. The commit stacked on top
+        (`feat: commit after checkpoint`) has no ticket_id in its subject, so
+        the contiguous walk from the checkpoint's own commit stops there and
+        recovers only the checkpoint's own file, not the topmost commit's."""
         import agent_controller
 
         motor, dest, wp, exec_log, plan_content = _setup_multi_repo(tmp_path)
@@ -290,7 +294,7 @@ class TestMotorNoEvidence:
         result = agent_controller._handle_mark_ready(
             scope_override=None, json_output=True, force_mode=False
         )
-        assert result == 1, f"Expected 1 (blocked), got {result}"
+        assert result == 0, f"Expected 0 (real delivery, non-HEAD passes), got {result}"
 
 
 # ---------------------------------------------------------------------------
@@ -496,8 +500,15 @@ class TestResolveMotorCheckpointFiles:
         assert not valid
         assert "not an ancestor" in error
 
-    def test_ancestor_but_not_head_returns_invalid(self, tmp_path: Path) -> None:
-        """Tag on an older ancestor commit must fail; handoff requires tag == HEAD."""
+    def test_ancestor_not_head_with_real_delivery_is_valid(
+        self, tmp_path: Path
+    ) -> None:
+        """WOT-2026-019q: a tag on an older ancestor commit (not HEAD) is now
+        valid when its own commit's subject contains the ticket_id and the
+        contiguous walk from that commit recovers a non-empty file set. The
+        walk starts at the tag's own commit (not HEAD), so it never reaches
+        src/newer.py even though the commit stacked on top also happens to
+        contain the ticket_id in its subject."""
         import agent_controller
 
         motor = tmp_path / "motor"
@@ -511,11 +522,11 @@ class TestResolveMotorCheckpointFiles:
             cwd=motor,
         )
 
-        valid, _files, error = agent_controller._resolve_motor_checkpoint_files(
+        valid, files, error = agent_controller._resolve_motor_checkpoint_files(
             motor, "TICKET-1"
         )
-        assert not valid
-        assert "stale" in error
+        assert valid, error
+        assert files == {"src/base.py"}
 
 
 class TestFallbackCheckpointMotor:

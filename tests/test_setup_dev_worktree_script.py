@@ -268,7 +268,12 @@ def test_remove_cleans_worktree_and_reattaches_main(fixture_repo) -> None:
     assert not worktree_path.exists(), "worktree directory should be gone"
 
     worktree_list = _git(["worktree", "list"], cwd=repo_path).stdout
-    assert "orquestador_de_agentes_dev" not in worktree_list
+    # WOT-2026-019q: assert against the specific removed worktree path, not a
+    # bare "orquestador_de_agentes_dev" substring. The bare substring collides
+    # with the sandbox's own absolute path when the suite runs from inside a
+    # checkout literally named orquestador_de_agentes_dev (the dev worktree),
+    # making this test fail spuriously there while passing from the principal.
+    assert str(worktree_path) not in worktree_list
     assert _current_branch(repo_path) == "main", (
         "principal checkout should be re-attached to main after -Remove"
     )

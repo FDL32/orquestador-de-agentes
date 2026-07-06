@@ -215,12 +215,19 @@ def resolve_motor_checkpoint_files(
     """Resolve checkpoint files from motor git repo.
 
     WT-2026-232a: Helper for motor-aware scope gate in mark-ready.
+    WOT-2026-019q: the checkpoint tag no longer needs to point at HEAD
+    exactly. A ticket buried under later commits (batch-close, non-
+    contiguous) closes canonically when its own commit is an ancestor of
+    HEAD, its subject contains ticket_id, and the contiguous walk from its
+    own commit recovers a non-empty file set. An empty delivery (e.g. an
+    "<ticket>: closeout" commit with --allow-empty) is rejected explicitly
+    regardless of whether the tag is at HEAD or not.
 
     Before: motor_root is a git repo with checkpoint/review-<ticket_id> tag.
-    During: Runs git rev-parse, merge-base --is-ancestor, verifies tag == HEAD,
-            then git log and git diff-tree.
-    After: Returns (True, files_set, '') on valid checkpoint,
-           (False, set(), error_msg) on failure.
+    During: Runs git rev-parse, merge-base --is-ancestor, git log and
+            git diff-tree from the tag's own commit (not necessarily HEAD).
+    After: Returns (True, files_set, '') on a valid, non-empty checkpoint,
+           (False, set(), error_msg) on failure (including empty delivery).
     """
     tag_name = f"checkpoint/review-{ticket_id}"
 
@@ -239,17 +246,20 @@ def resolve_motor_checkpoint_files(
                 f"Tag {tag_name}@{sha[:8]} is not an ancestor of HEAD",
             )
 
-        # Step 3: Require the checkpoint tag to anchor the exact handoff HEAD.
+        # Step 3: Resolve HEAD (needed for Step 2 ancestry check and for
+        # diagnostics). WOT-2026-019q: a checkpoint tag no longer needs to
+        # equal HEAD exactly to be valid -- a ticket buried under later
+        # commits (batch-close, non-contiguous) can still close canonically
+        # as long as its own commit is an ancestor of HEAD (Step 2, above),
+        # its subject contains the ticket_id (Step 4, below), and the
+        # contiguous walk from ITS OWN commit recovers a non-empty file set
+        # (checked after files_from_commits). The old "is stale; expected
+        # HEAD" early-return is removed as a blocking condition; sha != HEAD
+        # is no longer, by itself, a rejection reason.
         head_ok, head_result = resolve_git_head_sha(motor_root)
         if not head_ok:
             return False, set(), head_result
         head_sha = head_result
-        if sha != head_sha:
-            return (
-                False,
-                set(),
-                f"Tag {tag_name}@{sha[:8]} is stale; expected HEAD {head_sha[:8]}",
-            )
 
         # Step 4: Verify checkpoint commit message contains ticket_id
         log_proc = subprocess.run(
@@ -277,6 +287,23 @@ def resolve_motor_checkpoint_files(
         files, files_error = files_from_commits(motor_root, delivery_commits)
         if files_error:
             return False, set(), files_error
+
+        # Symmetric guard (applies whether sha == head_sha or not): a
+        # checkpoint whose contiguous walk recovers zero files certifies
+        # nothing. Reject the empty-closeout anti-pattern explicitly instead
+        # of accepting it silently.
+        if not files:
+            non_head_note = (
+                f" (checkpoint@{sha[:8]} != HEAD@{head_sha[:8]})"
+                if sha != head_sha
+                else ""
+            )
+            return (
+                False,
+                set(),
+                f"Checkpoint {tag_name}@{sha[:8]} delivers no files; "
+                f"refusing empty closeout{non_head_note}",
+            )
         return True, files, ""
 
     except (subprocess.TimeoutExpired, FileNotFoundError) as e:
@@ -367,6 +394,14 @@ def print_motor_checkpoint_guidance(plan_id: str, cp_error: str) -> None:
         print(
             "Do not use --scope-override for this case: the handoff anchor itself "
             "must be refreshed."
+        )
+        return
+
+    if "refusing empty closeout" in cp_error:
+        print(
+            "El checkpoint M3 apunta a un commit sin diff real. Re-ejecuta "
+            "--pre-handoff sobre el commit que SI contiene el trabajo del ticket; "
+            "no uses un commit de cierre vacio."
         )
         return
 

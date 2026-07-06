@@ -296,3 +296,193 @@ def test_parse_raw_flt_paths_code_default_ignores_builder() -> None:
     paths = motor_checkpoint.parse_raw_flt_paths(plan)
 
     assert paths == set()
+
+
+def _make_commit(repo: Path, fname: str, content: str, subject: str) -> str:
+    """Write fname, commit it with subject, return the new commit SHA."""
+    (repo / fname).write_text(content, encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "--", fname], cwd=repo, check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "commit", "-m", subject], cwd=repo, check=True, capture_output=True
+    )
+    rev = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return rev.stdout.strip()
+
+
+def _tag_at(repo: Path, tag: str, sha: str) -> None:
+    """(Re)create an annotated tag pointing at sha."""
+    subprocess.run(["git", "tag", "-d", tag], cwd=repo, capture_output=True)
+    subprocess.run(
+        ["git", "tag", "-a", tag, "-m", f"M3 {tag}", sha],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+
+
+class TestResolveMotorCheckpointFilesNonHead:
+    """WOT-2026-019q: batch-close a ticket whose M3 is not HEAD, without
+    accepting empty deliveries. Fixtures use real git via subprocess, same
+    pattern as _init_git_repo/_add_committed_work_plan above (no git mocks).
+    """
+
+    def test_buried_ticket_with_real_m3_closes_and_recovers_own_files(
+        self, tmp_path: Path
+    ) -> None:
+        """Ticket A's M3 points at A's own commit, buried under ticket B's
+        commit (HEAD). Must close ok=True and recover ONLY file_a.py."""
+        import motor_checkpoint
+
+        repo = tmp_path / "repo"
+        _init_git_repo(repo)
+
+        ticket_a = "WOT-2026-AAA"
+        ticket_b = "WOT-2026-BBB"
+
+        sha_a = _make_commit(repo, "file_a.py", "a = 1\n", f"{ticket_a}: implement A")
+        _tag_at(repo, f"checkpoint/review-{ticket_a}", sha_a)
+        # Bury ticket A under ticket B's commit (B becomes HEAD).
+        _make_commit(repo, "file_b.py", "b = 2\n", f"{ticket_b}: implement B")
+
+        ok, files, err = motor_checkpoint.resolve_motor_checkpoint_files(repo, ticket_a)
+
+        assert ok is True, f"buried ticket A should close canonically; err={err!r}"
+        assert files == {"file_a.py"}
+
+    def test_topmost_ticket_head_unchanged_behavior(self, tmp_path: Path) -> None:
+        """Control/no-regression: M3 at HEAD (topmost ticket) behaves exactly
+        as before the fix: ok=True, files == its own diff."""
+        import motor_checkpoint
+
+        repo = tmp_path / "repo"
+        _init_git_repo(repo)
+
+        ticket_a = "WOT-2026-AAA"
+        ticket_b = "WOT-2026-BBB"
+
+        sha_a = _make_commit(repo, "file_a.py", "a = 1\n", f"{ticket_a}: implement A")
+        _tag_at(repo, f"checkpoint/review-{ticket_a}", sha_a)
+        sha_b = _make_commit(repo, "file_b.py", "b = 2\n", f"{ticket_b}: implement B")
+        _tag_at(repo, f"checkpoint/review-{ticket_b}", sha_b)
+
+        ok, files, err = motor_checkpoint.resolve_motor_checkpoint_files(repo, ticket_b)
+
+        assert ok is True, f"topmost ticket B should close as before; err={err!r}"
+        assert files == {"file_b.py"}
+
+    def test_empty_closeout_commit_is_rejected(self, tmp_path: Path) -> None:
+        """M3 pointing at an empty closeout commit (cero files) must be
+        rejected explicitly with 'refusing empty closeout'.
+
+        A ticket B commit is interposed between A's real commit and the
+        empty closeout commit so the first-parent contiguity walk from the
+        closeout commit is cut by B's subject (no ticket_a id) before it
+        would otherwise reach A's real, non-empty commit -- matching the
+        Fase 0 repro fixture exactly (base -> A -> B -> A closeout)."""
+        import motor_checkpoint
+
+        repo = tmp_path / "repo"
+        _init_git_repo(repo)
+
+        ticket_a = "WOT-2026-AAA"
+        ticket_b = "WOT-2026-BBB"
+        _make_commit(repo, "file_a.py", "a = 1\n", f"{ticket_a}: implement A")
+        _make_commit(repo, "file_b.py", "b = 2\n", f"{ticket_b}: implement B")
+
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", f"{ticket_a}: closeout"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        empty_head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        _tag_at(repo, f"checkpoint/review-{ticket_a}", empty_head)
+
+        ok, files, err = motor_checkpoint.resolve_motor_checkpoint_files(repo, ticket_a)
+
+        assert ok is False
+        assert "refusing empty closeout" in err, f"unexpected error message: {err!r}"
+        assert files == set()
+
+    def test_non_ancestor_still_rejected(self, tmp_path: Path) -> None:
+        """No-regression (Step 2): M3 tagged on a lateral branch not merged
+        into HEAD must still be rejected with 'not an ancestor of HEAD'."""
+        import motor_checkpoint
+
+        repo = tmp_path / "repo"
+        _init_git_repo(repo)
+
+        ticket_a = "WOT-2026-AAA"
+        base_sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+        subprocess.run(
+            ["git", "checkout", "-b", "lateral"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        sha_a = _make_commit(repo, "file_a.py", "a = 1\n", f"{ticket_a}: implement A")
+        _tag_at(repo, f"checkpoint/review-{ticket_a}", sha_a)
+
+        # Move main-line HEAD back to base (lateral commit not an ancestor).
+        subprocess.run(
+            ["git", "checkout", "master"],
+            cwd=repo,
+            capture_output=True,
+        )
+        checkout_main = subprocess.run(
+            ["git", "checkout", "main"],
+            cwd=repo,
+            capture_output=True,
+        )
+        if checkout_main.returncode != 0:
+            subprocess.run(
+                ["git", "checkout", base_sha],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+            )
+
+        ok, files, err = motor_checkpoint.resolve_motor_checkpoint_files(repo, ticket_a)
+
+        assert ok is False
+        assert "not an ancestor of HEAD" in err, f"unexpected error message: {err!r}"
+        assert files == set()
+
+    def test_subject_without_ticket_id_still_rejected(self, tmp_path: Path) -> None:
+        """No-regression (Step 4): M3 pointing at a real, ancestor commit
+        whose subject does NOT contain the ticket_id must still be rejected."""
+        import motor_checkpoint
+
+        repo = tmp_path / "repo"
+        _init_git_repo(repo)
+
+        ticket_a = "WOT-2026-AAA"
+        sha_a = _make_commit(repo, "file_a.py", "a = 1\n", "unrelated: implement A")
+        _tag_at(repo, f"checkpoint/review-{ticket_a}", sha_a)
+
+        ok, files, err = motor_checkpoint.resolve_motor_checkpoint_files(repo, ticket_a)
+
+        assert ok is False
+        assert "does not contain" in err, f"unexpected error message: {err!r}"
+        assert files == set()

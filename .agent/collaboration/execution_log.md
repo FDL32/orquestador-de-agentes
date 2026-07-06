@@ -1,147 +1,233 @@
-# Execution Log - WOT-2026-019m
+# Execution Log - WOT-2026-019q
 
-Ticket: worktree-dev del MOTOR para desarrollo paralelo sin ensuciar el
-checkout consumido.
+Ticket: Cierre canonico de un ticket cuyo commit no es HEAD (batch-close no
+contiguo), sin aceptar entregas vacias.
 **Estado:** COMPLETED
 
 ## Bitacora
 
 - Plan creado y aprobado por el Manager (2026-07-06). Fase 0 (Orquestador)
-  verifico en codigo los dos modos de consumo del motor (sync-copia y
-  runtime-en-vivo), el requisito de venv propio por resolucion relativa a
-  la raiz auditada, y que `motor_destination_link.json` esta gitignored;
-  no se re-deriva en el plan, se cita como verificado.
-- work_plan.md, STRATEGY_WOT-2026-019m.md y AUDIT_WOT-2026-019m.md creados.
-  Artefactos de WOT-2026-019j (ya COMPLETED en el bus) archivados a
-  `.agent/collaboration/_archive/plan_audit/` (PLAN/STRATEGY/AUDIT) y
-  `.agent/collaboration/execution_log_WOT-2026-019j.md`.
-- Ajuste de redaccion tras `--validate`: 2 ocurrencias de "todo su
-  ciclo"/"todo el ciclo" en el criterio de campo diferido disparaban
-  TP-PROSE-04 (extremos-lazy) por limite del lookahead del regex sobre
-  texto cerca del final del documento; reformuladas a "en cada fase de su
-  ciclo" sin cambiar el significado del contrato. Anadida la seccion
-  `## Decision Arquitectonica` (ausente, TP-PROSE-10) con el razonamiento
-  real de worktree-vs-clon y venv-propio-vs-compartido ya presente en
-  Trade-offs, sin contradecirlo.
-- `--validate --json --project-root .` final: 0 errores, 1 warning
-  (`bus_drift` esperado antes del bootstrap).
+  verifico en codigo, con un fixture git real y el modulo motor_checkpoint
+  real (no mocks), que Step 3 de resolve_motor_checkpoint_files es el UNICO
+  bloqueador del cierre de un ticket enterrado, que Step 2
+  (ancestor-of-HEAD) ya garantiza que el diff este en la historia de HEAD, y
+  que contiguous_ticket_commits/files_from_commits ya recuperan
+  correctamente el diff del ticket enterrado desde su propio commit. El
+  Manager re-ejecuto el script de repro de forma independiente antes de
+  aprobar el plan (mismo resultado).
+- work_plan.md, STRATEGY_WOT-2026-019q.md y AUDIT_WOT-2026-019q.md creados.
+  Decision Arquitectonica: Opcion (a) (relajar Step 3, verificar
+  contiguidad+entrega no vacia desde el commit real del ticket), justificada
+  porque desbloquea los 3 tickets reales (CTL-2026-009k/009g/009i) que
+  motivan la ficha, mientras que la Opcion (b) (prohibir batch-close) no lo
+  hace.
+- Artefactos de WOT-2026-019m (COMPLETED) archivados: execution_log.md ->
+  execution_log_WOT-2026-019m.md; AUDIT_WOT-2026-019m.md y
+  STRATEGY_WOT-2026-019m.md -> .agent/collaboration/_archive/plan_audit/.
 
-## Correccion post-aprobacion: blocker de Fase 0 tardia (rama en dos worktrees)
+## Builder: implementacion (2026-07-06)
 
-- El Orquestador (coordinador) reporto un BLOCKER: la premisa de
-  `git worktree add ..\orquestador_de_agentes_dev main` con el checkout
-  principal todavia en `main` es FALSA -- git no permite la misma rama
-  checked-out en dos worktrees a la vez.
-- Reproducido de forma INDEPENDIENTE por el Manager en un repo de prueba
-  nuevo en el scratchpad (no confiando solo en el reporte): `git worktree
-  add ../repo_test_dev main` con `repo_test` en `main` da `fatal: 'main' is
-  already used by worktree at '<repo_test>'`, exit 128.
-- Verificada tambien la solucion propuesta en el mismo repo de prueba:
-  `git checkout --detach` en el principal (queda en el mismo commit, arbol
-  intacto) seguido de `git worktree add ../repo_test_dev main` da exit 0;
-  `git worktree list` muestra el principal `(detached HEAD)` y la dev
-  `[main]`, mismo SHA. Verificados ademas: detach idempotente (segunda
-  llamada a `git checkout --detach` con HEAD ya detached, exit 0 sin
-  error), `git worktree remove` + `git checkout main` en el principal
-  (re-attach exitoso), y `git fetch && git checkout --detach origin/main`
-  contra un remoto bare de prueba (exit 0).
-- Aplicada la correccion en `work_plan.md`, `STRATEGY_WOT-2026-019m.md` y
-  `AUDIT_WOT-2026-019m.md`: el checkout principal queda DETACHED (checkout
-  de consumo); la worktree-dev lleva `main` (donde se trabaja y se
-  pushea); la actualizacion post-push del principal es `git fetch && git
-  checkout --detach origin/main` (no `git pull --ff-only`, que no aplica
-  sin rama); el script opcional hace el detach ANTES del `worktree add`, y
-  `-Remove` re-ata el principal a `main` solo tras un `worktree remove`
-  exitoso.
-- Re-verificado que el heading `## Files Likely Touched` sigue apareciendo
-  una sola vez en `work_plan.md` y en `AUDIT_WOT-2026-019m.md` tras las
-  ediciones (guard del bug 019l/019j).
-- `--validate --json --project-root .` tras la correccion: 0 errores, 0
-  warnings.
+### Fase 1: tests nuevos (TDD, escritos ANTES del fix)
 
-## Implementacion (Builder + verificacion/cierre del Orquestador)
+Se anadio la clase `TestResolveMotorCheckpointFilesNonHead` a
+`tests/unit/test_motor_checkpoint.py` con los 5 tests del plan (fixtures git
+reales via subprocess, mismo patron que `_init_git_repo`/`_add_committed_work_plan`
+ya presentes en el archivo; sin mocks de git).
 
-DECISION DE ORDEN (humano): las Fases 1-2 (activacion REAL de la worktree sobre
-el motor: `git checkout --detach` + `worktree add` + `uv venv/sync` + suite desde
-la dev) quedan DIFERIDAS a post-cierre, para evitar el bootstrap circular (el
-ticket que crea la infra se cerraria con main movido a la worktree). Este ticket
-entrega SOLO lo versionado + tests contra fixture; la activacion la ejecuta el
-Orquestador/humano con el script ya versionado tras pushear 019m.
+Comando pre-fix:
+```
+.venv\Scripts\python.exe -m pytest tests/unit/test_motor_checkpoint.py -k TestResolveMotorCheckpointFilesNonHead -v
+```
+Resultado pre-fix (exit code 1): `test_buried_ticket_with_real_m3_closes_and_recovers_own_files`
+FAILED (`... is stale; expected HEAD ...`), `test_topmost_ticket_head_unchanged_behavior` PASSED,
+`test_empty_closeout_commit_is_rejected` FAILED (`assert True is False`),
+`test_non_ancestor_still_rejected` PASSED, `test_subject_without_ticket_id_still_rejected` PASSED.
+`2 failed, 3 passed, 11 deselected` — exactamente el estado esperado por el
+criterio de aceptacion de Fase 1 (1.1.1 y 1.1.3 en rojo, resto en verde).
 
-Entregables:
-- `QUICKSTART.md`: seccion `## 0d. Motor dev worktree` (9 puntos: modelo de ramas
-  invertido dev=main/principal=detached, creacion en 2 pasos, venv propio, suite
-  desde la dev, ciclo de cierre con fetch+checkout --detach origin/main,
-  desmontaje, nota canal-estable-futuro, nota alcance del criterio en campo).
-- `scripts/setup_dev_worktree.ps1`: idempotente, SupportsShouldProcess (-WhatIf),
-  detach-antes-de-add, -Remove con exit 2 fail-closed sobre worktree sucia.
-- `tests/test_setup_dev_worktree_script.py`: 6 tests contra un repo FIXTURE
-  temporal (uv fake en PATH; git checkout --detach + worktree add REALES sobre el
-  fixture, NUNCA sobre el motor): creacion detach+add+venv, idempotencia, -WhatIf
-  no-muta, -Remove limpia+reata-main, -Remove sucio->exit 2, y regresion
-  detach-antes-de-add (documenta el `fatal: main already used`).
+Nota de fixture: el primer intento de `test_empty_closeout_commit_is_rejected`
+(commit real de A seguido directamente por un commit vacio de cierre, sin
+commit intermedio) NO reproducia el anti-patron: `contiguous_ticket_commits`
+camina hacia atras desde el commit vacio y, como el subject de A tambien
+contiene el ticket_id, lo incluye en la contigueidad, recuperando
+`file_a.py` (no vacio) — resultado correcto para ESE fixture, pero no el
+anti-patron que el plan pide reproducir. Se ajusto el fixture para incluir un
+commit de ticket B intermedio (subject SIN el ticket_id de A) entre el commit
+real de A y el commit vacio, replicando exactamente la secuencia del repro de
+Fase 0 (`base -> A -> B -> A:closeout`): asi la contigueidad se corta en B
+antes de alcanzar el commit real de A, y el commit vacio queda aislado
+(archivos == `set()`).
 
-Verificacion del Orquestador (re-corrida sobre el repo real):
-- 6 tests PASSED; ruff check `All checks passed!`; ruff format limpio; el .ps1
-  parsea (PSParser::Tokenize OK).
-- STOP condition respetada: NO se creo `..\orquestador_de_agentes_dev` real;
-  `git worktree list` sigue mostrando solo el principal en `[main]` e7defc7.
-- validate 0/0.
-- DESCARTADO un parche "unborn branch guard" propuesto por un backend externo: sin
-  evidencia de necesidad (tests verde sin el; el motor nunca es unborn; el script
-  solo corre sobre el motor real), y el parche traia emojis que el encoding guard
-  rechazaria. Anadir defensa para un caso imposible contradice los non-goals.
-- Eliminado un `run_worktree_tests.ps1` huerfano (scratch manual de un backend
-  externo, en la raiz del repo, fuera del FLT): el test canonico ya cubre todo.
-- Fix menor propio: RUF059 (variable `worktree_path` sin usar en un test) ->
-  prefijo `_`.
+### Fase 2: fix aplicado
+
+`.agent/motor_checkpoint.py::resolve_motor_checkpoint_files`:
+- Step 3 ya NO retorna temprano cuando `sha != head_sha`; se preserva el
+  calculo de `head_sha` (usado solo como nota diagnostica opcional en el
+  mensaje de error de entrega vacia, nunca como bloqueo).
+- Step 2 y Step 4 sin cambios de logica.
+- Nuevo chequeo simetrico DESPUES de `files_from_commits`: si `files` es
+  `set()`, retorna `(False, set(), f"Checkpoint {tag}@{sha[:8]} delivers no
+  files; refusing empty closeout...")` en vez de `(True, files, "")`.
+- `print_motor_checkpoint_guidance`: nueva rama `elif "refusing empty
+  closeout" in cp_error` con guidance ASCII accionable.
+
+Comando post-fix (mismos 5 tests):
+```
+.venv\Scripts\python.exe -m pytest tests/unit/test_motor_checkpoint.py -k TestResolveMotorCheckpointFilesNonHead -v
+```
+Resultado: `5 passed, 11 deselected` — exit code 0.
+
+Verificacion Fase 2.2 (guidance):
+```
+.venv\Scripts\python.exe -c "import sys; sys.path.insert(0,'.agent'); import motor_checkpoint; motor_checkpoint.print_motor_checkpoint_guidance('T-1', 'Checkpoint checkpoint/review-T-1 delivers no files; refusing empty closeout')"
+```
+Salida: imprime `[ERROR] No valid motor checkpoint for T-1: ...` seguido de
+`"El checkpoint M3 apunta a un commit sin diff real. Re-ejecuta --pre-handoff
+sobre el commit que SI contiene el trabajo del ticket; no uses un commit de
+cierre vacio."` — exit code 0.
+
+### Regresion detectada y resuelta: 2 tests de contrato viejo en test_mark_ready_motor_scope.py
+
+Al correr `run_pytest_safe.py` con el fix aplicado, se detectaron 11 fallos.
+Se investigo cada uno por separado (stash selectivo de `.agent/motor_checkpoint.py`
+para comparar con/sin el fix, dejando los tests nuevos intactos):
+
+- 8 fallos en `tests/test_agent_controller.py` (`TestPreHandoff::*`,
+  `TestBuilderBriefExclusion::test_builder_brief_does_not_block_pre_handoff`)
+  y 1 fallo en `tests/test_setup_dev_worktree_script.py::test_remove_cleans_worktree_and_reattaches_main`:
+  confirmados HEREDADOS (fallan identico con motor_checkpoint.py revertido al
+  original). Los 8 primeros dependen del estado real del working tree de la
+  worktree-dev (work_plan.md real modificado sin commit durante el ticket);
+  el ultimo no tiene relacion alguna con motor_checkpoint.py. No relacionados
+  con este ticket.
+- 2 fallos en `tests/test_mark_ready_motor_scope.py`
+  (`TestMotorNoEvidence::test_stale_ancestor_checkpoint_blocks`,
+  `TestResolveMotorCheckpointFiles::test_ancestor_but_not_head_returns_invalid`):
+  confirmados como PASAN sin el fix y FALLAN con el fix — es decir, estos 2
+  tests codificaban explicitamente el contrato VIEJO ("handoff requires tag
+  == HEAD") que WOT-2026-019q deroga a proposito (Opcion (a), elegida en la
+  Decision Arquitectonica). Por indicacion expresa del Manager (CEM:
+  scope-expansion justificada porque el cambio de contrato invalida sus
+  aserciones), se actualizaron ambos tests para reflejar el contrato NUEVO
+  en vez de dejarlos en rojo:
+  - `test_stale_ancestor_checkpoint_blocks` -> renombrado
+    `test_ancestor_checkpoint_with_real_delivery_passes`; assert cambiado de
+    `result == 1` a `result == 0` (el checkpoint ancestro con entrega real
+    ahora pasa mark-ready).
+  - `test_ancestor_but_not_head_returns_invalid` -> renombrado
+    `test_ancestor_not_head_with_real_delivery_is_valid`; assert cambiado de
+    `not valid` / `"stale" in error` a `valid` / `files == {"src/base.py"}`
+    (verificado ejecutando el escenario real antes de fijar el assert: la
+    caminata de contiguidad desde el commit del propio tag no alcanza
+    `src/newer.py`, aunque ese commit posterior tambien contenga el
+    ticket_id en su subject, porque la caminata nunca llega a verlo — parte
+    del commit del tag hacia atras, no desde HEAD).
+  - Ningun otro test de `tests/test_mark_ready_motor_scope.py` fue tocado
+    (los 12 restantes siguen exactamente igual).
+
+Archivo `tests/test_mark_ready_motor_scope.py` anadido a los archivos
+tocados de este ticket (fuera de las FLT originales del plan), con
+justificacion CEM: el cambio de contrato de Step 3 invalida directamente las
+aserciones de esos 2 tests especificos; dejarlos en rojo romperia CI sin
+razon (no es un fallo real del fix, es un test que verifica el
+comportamiento derogado a proposito por este mismo ticket).
+
+Correccion adicional de encoding: se detecto un caracter no-ASCII (em-dash,
+introducido por error en un docstring nuevo) en
+`tests/test_mark_ready_motor_scope.py` y se corrigio a texto ASCII plano
+antes de la verificacion final (el resto de bytes no-ASCII detectados en
+`.agent/motor_checkpoint.py` y `tests/unit/test_motor_checkpoint.py` se
+confirmaron preexistentes en HEAD, ajenos al diff de este ticket — verificado
+con `git diff -- <archivos> | python -c "...decode('ascii')..."`, que
+confirma el diff completo es ASCII puro).
+
+### Fase 3.1: mutation-verify (re-corrido completo tras el ajuste de scope)
+
+Paso 1 — stash SOLO de `.agent/motor_checkpoint.py` (`git stash push -m
+"019q-mutation-verify-v2" -- .agent/motor_checkpoint.py`), dejando los 3
+archivos de test (incl. los 2 actualizados de test_mark_ready_motor_scope.py)
+intactos en el working tree.
+
+Paso 2 — comando:
+```
+.venv\Scripts\python.exe -m pytest tests/test_mark_ready_motor_scope.py tests/unit/test_motor_checkpoint.py -v
+```
+Resultado SIN el fix (exit code 1): `4 failed, 26 passed`. Los 4 fallos son
+exactamente los que dependen del fix:
+`TestMotorNoEvidence::test_ancestor_checkpoint_with_real_delivery_passes`,
+`TestResolveMotorCheckpointFiles::test_ancestor_not_head_with_real_delivery_is_valid`,
+`TestResolveMotorCheckpointFilesNonHead::test_buried_ticket_with_real_m3_closes_and_recovers_own_files`,
+`TestResolveMotorCheckpointFilesNonHead::test_empty_closeout_commit_is_rejected`.
+
+Paso 3 — `git stash pop` (fix restaurado).
+
+Paso 4 — mismo comando, resultado CON el fix (exit code 0): `30 passed`.
+
+Los 4 exit codes del mutation-verify (en orden): **1 (rojo, sin fix) -> 0
+(verde, con fix restaurado)**, confirmados en dos corridas separadas segun el
+protocolo pedido (rojo/verde), cada una con su propio exit code de shell
+verificado explicitamente.
+
+### Fase 3.2: gates de calidad completos (corrida final, post-ajuste)
+
+```
+.venv\Scripts\python.exe -m ruff check .
+```
+Salida: `All checks passed!` — exit code 0.
+
+```
+.venv\Scripts\python.exe scripts\run_pytest_safe.py
+```
+Resultado: `9 failed, 3483 passed, 47 skipped, 5 deselected` — exit code 1.
+Los 9 fallos son EXACTAMENTE los heredados descritos arriba (8 en
+test_agent_controller.py/test_setup_dev_worktree_script.py por estado del
+working tree real / no relacion con motor_checkpoint, 1 en
+test_remove_cleans_worktree_and_reattaches_main). Verificado por separado
+que estos 9 fallan identico con `.agent/motor_checkpoint.py` revertido al
+original (independiente de este ticket). CERO fallos nuevos introducidos por
+WOT-2026-019q en la corrida completa: los 2 que si dependian del cambio de
+contrato (test_mark_ready_motor_scope.py) ya estan actualizados y en verde,
+contados dentro de los 3483 passed.
+
+### Resumen de archivos tocados (diff final)
+
+```
+.agent/motor_checkpoint.py           |  57 ++++++++--
+tests/test_mark_ready_motor_scope.py |  27 +++--
+tests/unit/test_motor_checkpoint.py  | 198 +++++++++++++++++++++++++++++++++++
+3 files changed, 263 insertions(+), 19 deletions(-)
+```
+
+### Self-audit (skill builder-self-audit v2.0.0)
+
+| Paso | Verificacion | Comando | Resultado |
+|------|-------------|---------|-----------|
+| 1 | Sintaxis Python (3 archivos) | `python -m py_compile .agent/motor_checkpoint.py tests/unit/test_motor_checkpoint.py tests/test_mark_ready_motor_scope.py` | Sin output, exit 0 -> OK |
+| 2 | Ya-existia | N/A | No aplica: fix implementado desde cero, no preexistia |
+| 3 | Completitud multi-archivo | Verificado cada uno de los 3 archivos por separado (diffstat + pytest por archivo) | OK |
+| 4 | Anti-regresion (manejo de errores) | Revision manual de `resolve_motor_checkpoint_files`: Steps 1/2/4 y el manejo de `TimeoutExpired`/`FileNotFoundError` preservados sin cambios; ningun caso de error previo fue eliminado | OK |
+| 5 | Frescura documental | Buscado "is stale/expected HEAD/resolve_motor_checkpoint_files" en PROJECT.md y QUICKSTART.md: sin matches (el contrato interno de Step 3 no esta documentado alli, no hay drift que corregir). STATE.md/TURN.md/execution_log.md verificados alineados (ticket WOT-2026-019q, BUILDER, APPROVED) | OK, sin drift |
+| 6a | Ruff (excluye .agent, forma del skill) | `ruff check . --exclude .agent` | `All checks passed!`, exit 0 |
+| 6b | Ruff (completo, forma del work_plan Fase 3.2) | `ruff check .` | `All checks passed!`, exit 0 |
+| 6c | Suite completa | `python scripts/run_pytest_safe.py` | `9 failed, 3483 passed, 47 skipped, 5 deselected`. Los 9 fallos son heredados (confirmados identicos con `.agent/motor_checkpoint.py` revertido al original, ver seccion anterior); CERO fallos nuevos de este ticket. El work_plan (Fase 3.2) exige distinguir explicitamente fallos heredados de nuevos citando archivo/test exacto en vez de bloquear el reporte por ellos -- hecho arriba con evidencia de stash comparativo |
+
+**Nota sobre exit code de la suite:** `run_pytest_safe.py` termina en exit
+code != 0 debido UNICAMENTE a los 9 fallos heredados y no relacionados
+(8 dependen del estado real del working tree de la worktree-dev -- work_plan.md
+modificado sin commit durante la ejecucion del ticket -- y 1 es de
+test_setup_dev_worktree_script.py, sin relacion alguna con motor_checkpoint.py).
+Ninguno de los 9 involucra `.agent/motor_checkpoint.py`,
+`tests/unit/test_motor_checkpoint.py` ni `tests/test_mark_ready_motor_scope.py`.
+El Manager puede re-verificar re-ejecutando el subset especifico:
+`pytest tests/test_mark_ready_motor_scope.py tests/unit/test_motor_checkpoint.py -v`
+(30 passed, exit 0).
+
+**Estado:** READY_FOR_REVIEW. Self-audit completo (Pasos 1-6 del skill
+builder-self-audit ejecutados con evidencia real arriba). NO se ha
+commiteado ni ejecutado --pre-handoff/--mark-ready; los cambios quedan en el
+working tree para revision del Manager.
 
 
-Scope override: Sobre-captura del scope gate + activacion diferida. git diff origin/main..HEAD (commit 45c1982) toca SOLO los 12 archivos de 019m (QUICKSTART.md, scripts/setup_dev_worktree.ps1, tests/test_setup_dev_worktree_script.py, colaboracion 019m + churn de archivado 019j). 0 hits para TODOS los archivos ajenos listados (AUDIT/PLAN/STRATEGY 019a/019c/019i/019j, scope_gate/motor_checkpoint/agent_controller/pre_handoff_guard/run_gates_dispatch, test_check_publication_gate, bootstrap: artefactos de tickets ya cerrados y pusheados). El 'missing: ..._dev' es CORRECTO y esperado: la activacion real de la worktree esta DIFERIDA a post-cierre por decision de orden (evita bootstrap circular); este ticket solo versiona el mecanismo. Suite 3518 verde tested_sha==HEAD 45c1982. Verificado auditablemente.. Affected files: <REPO_ROOT>/.agent/agent_controller.py, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019a.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019c.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019i.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019j.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-019a.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-019c.md, <REPO_ROOT>/.agent/collaboration/STRATEGY_WOT-2026-019i.md, <REPO_ROOT>/.agent/collaboration/STRATEGY_WOT-2026-019j.md, <REPO_ROOT>/.agent/motor_checkpoint.py, <REPO_ROOT>/.agent/scope_gate.py, <REPO_ROOT>/prompts/orchestrator_session_bootstrap.md, <REPO_ROOT>/scripts/pre_handoff_guard.py, <REPO_ROOT>/scripts/run_gates_dispatch.py, <REPO_ROOT>/tests/test_agent_controller.py, <REPO_ROOT>/tests/test_check_publication_gate.py, <REPO_ROOT>/tests/test_setup_dev_worktree_script.py, <REPO_ROOT>/tests/unit/test_motor_checkpoint.py, <REPO_ROOT>/tests/unit/test_run_gates_dispatch.py, <REPO_ROOT>/tests/unit/test_scope_gate_deliverable_aware.py, <REPO_ROOT>/tests/unit/test_scope_gate_topology.py, orquestador_de_agentes_dev
+Scope override: over-captura de arbol limpio (patron conocido): los archivos marcados (agent_controller.py, scope_gate.py, QUICKSTART.md, AUDIT/PLAN/STRATEGY de 019c/019i/019j/019m, scripts/tests varios) NO estan en el commit 9027e10 (git show --name-only 9027e10 -> 0 hits de esos archivos; git diff --stat HEAD -> 0; origin/main..HEAD == 1 commit con solo los 13 archivos de 019q). Arbol limpio verificado. El diff real esta 100% dentro de FLT + hotfix aprobado.. Affected files: <REPO_ROOT>/.agent/agent_controller.py, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019c.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019i.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019j.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019m.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-019c.md, <REPO_ROOT>/.agent/collaboration/STRATEGY_WOT-2026-019i.md, <REPO_ROOT>/.agent/collaboration/STRATEGY_WOT-2026-019j.md, <REPO_ROOT>/.agent/collaboration/STRATEGY_WOT-2026-019m.md, <REPO_ROOT>/.agent/scope_gate.py, <REPO_ROOT>/QUICKSTART.md, <REPO_ROOT>/scripts/pre_handoff_guard.py, <REPO_ROOT>/scripts/run_gates_dispatch.py, <REPO_ROOT>/scripts/setup_dev_worktree.ps1, <REPO_ROOT>/tests/test_agent_controller.py, <REPO_ROOT>/tests/unit/test_run_gates_dispatch.py, <REPO_ROOT>/tests/unit/test_scope_gate_deliverable_aware.py, <REPO_ROOT>/tests/unit/test_scope_gate_topology.py
 
-Manager approved canonical closeout for WOT-2026-019m
-
-## Correccion pre-push (2 blockers del Manager review, verificados en codigo)
-
-BLOCKER 1 (real, de fondo): `Step-DetachPrincipal` NO comprobaba el arbol del
-checkout principal antes del `git checkout --detach` -> un principal sucio
-quedaba detached-y-sucio, justo el estado que 019m existe para evitar. Fix:
-`Test-PrincipalHasUncommittedChanges` (mismo patron que el
-`Test-WorktreeHasUncommittedChanges` que ya usa -Remove) + guard fail-closed al
-inicio de `Step-DetachPrincipal` (exit 2 en modo real; en -WhatIf reporta que
-bloquearia sin abortar). Test nuevo `test_creation_fails_closed_when_principal_is_dirty`
-(principal sucio -> exit 2, principal sigue en main, worktree NO creada).
-MUTATION del Orquestador: neutralizar el guard -> el test falla (script devuelve
-0 y crea la worktree sobre principal sucio); restaurado -> 7 passed. Barrera viva.
-
-BLOCKER 2 (error factual en doc): QUICKSTART decia usar `git worktree prune` para
-descartar una worktree sucia -> FALSO (prune solo limpia metadatos huerfanos, no
-descarta cambios). Fix: reformulado a commitear/`git stash` y reintentar remove;
-`git worktree remove --force` descarta sin recuperacion, solo con decision
-explicita; prune solo para metadatos huerfanos.
-
-Verificacion: 7 tests PASSED, ruff check/format limpio, script parsea. Ambos fixes
-tocan solo los 3 archivos del FLT. Correccion pre-push sobre el ticket ya COMPLETED
-(no salio a origin): commit correctivo + re-suite sobre HEAD final antes del push.
-
-## Hotfix CI post-push (barrera CI-only): test no portable a Linux
-
-El push de 7ce31a0 dejo Quality Gates en FAILURE (Security Audit verde). Causa
-REAL (no flaky): `test_setup_dev_worktree_script.py` no es portable. El fake uv es
-un `uv.bat` (shim Windows) que en el runner Linux (pwsh) NO se resuelve -> el
-script cae al `uv` REAL del runner (crea venv Linux py3.11) y la 2a corrida falla
-con "venv already exists" (exit 2); ademas las aserciones asumen el layout
-`Scripts/python.exe` (Windows), inexistente en Linux (`bin/python`). 2 failed en
-CI Linux (test_creation_detaches... + test_creation_is_idempotent...), 0 en la
-suite local Windows -> gap de portabilidad que solo el CI Linux caza.
-
-Fix: `pytestmark = pytest.mark.skipif(sys.platform != "win32", ...)` a nivel de
-modulo. `setup_dev_worktree.ps1` es infraestructura Windows-native del motor
-(PowerShell, rutas `\`, layout `.venv\Scripts\python.exe`, fake `uv.bat`); el
-motor se desarrolla en Windows y este script NUNCA corre en el CI Linux ni en
-destinos Linux. Mismo patron canonico que tests/unit/test_launcher_powershell_syntax.py
-(tests de scripts PS1 Windows-only). Verificado: en Windows los 7 tests corren y
-pasan (skip no aplica); en Linux skipean (skipif=True) -> el runner ya no ejecuta
-el .ps1 con uv real. ruff limpio. Estado: CLOSED_PENDING_CI -> el cierre real es CI
-verde post-push. Follow-up: si se quiere cobertura del .ps1 en CI, exigiria un runner
-Windows o un fake uv cross-plataforma + aserciones agnosticas de layout (no-goal aqui).
+Manager approved canonical closeout for WOT-2026-019q
