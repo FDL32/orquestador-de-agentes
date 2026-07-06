@@ -2,7 +2,7 @@
 
 Ticket: El scope gate no reconoce el heading `## Builder` para tickets
 `deliverable_type=mixed`.
-**Estado:** IN_PROGRESS
+**Estado:** COMPLETED
 
 ## Bitacora
 
@@ -121,3 +121,8 @@ code -> vacio. MUTATION del Orquestador: quitar el reenvio en parse_flt_namespac
 -> `test_namespaced_mixed_falls_back_to_builder` FALLA (whitelist vacia). Sin
 regresion: 42 tests focales, 30 tests agent_controller (checkpoint/validate/scope),
 62 tests pre_handoff_guard, todos verde. ruff limpio.
+
+
+Scope override: Sobre-captura del scope gate + falso positivo del parser (019l). git diff origin/main..HEAD (2 commits 91ad7c8+48d7d65) toca SOLO: scope_gate.py, motor_checkpoint.py, agent_controller.py, pre_handoff_guard.py (4a superficie del blocker de Review 2, fuera del FLT original pero consecuencia directa del fix), test_agent_controller.py (arreglo de 3 mocks lambda por el cambio de firma publica), y los 3 tests focales. 0 hits para todos los archivos AJENOS listados (AUDIT/PLAN 019a/019c/019i, bootstrap, run_gates_dispatch, test_check_publication_gate: artefactos de tickets ya cerrados). Los 'missing:' (motor_checkpoint.parse_raw_flt_paths, parse_flt_raw_paths, scope_gate.parse_flt_raw_paths) son falsos del parser FLT por substring que toma anotaciones de prosa como paths (ficha 019l). Suite 3511 verde tested_sha==HEAD 48d7d65. Verificado auditablemente.. Affected files: <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019a.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019c.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019i.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-019a.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-019c.md, <REPO_ROOT>/.agent/collaboration/STRATEGY_WOT-2026-019i.md, <REPO_ROOT>/motor_checkpoint.parse_raw_flt_paths, <REPO_ROOT>/parse_flt_raw_paths/parse_flt_raw_buckets, <REPO_ROOT>/prompts/orchestrator_session_bootstrap.md, <REPO_ROOT>/scope_gate.parse_flt_raw_paths), <REPO_ROOT>/scripts/pre_handoff_guard.py, <REPO_ROOT>/scripts/run_gates_dispatch.py, <REPO_ROOT>/tests/test_agent_controller.py, <REPO_ROOT>/tests/test_check_publication_gate.py, <REPO_ROOT>/tests/unit/test_run_gates_dispatch.py
+
+Manager approved canonical closeout for WOT-2026-019j

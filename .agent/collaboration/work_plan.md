@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WOT-2026-019j
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Titulo:** El scope gate no reconoce el heading `## Builder` para tickets
   `deliverable_type=mixed`.
