@@ -31,6 +31,7 @@ if str(agent_dir) not in sys.path:
     sys.path.insert(0, str(agent_dir))
 
 import agent_controller  # noqa: E402
+import motor_checkpoint  # noqa: E402
 from agent_controller import (  # noqa: E402
     determine_next_action,
     read_file,
@@ -1159,6 +1160,20 @@ class TestPreHandoff:
             agent_controller,
             "get_changed_files",
             lambda: changed_files,
+        )
+        # motor_checkpoint.assert_work_plan_committed calls
+        # scope_gate.get_changed_files directly (not agent_controller's
+        # wrapper), and scope_gate.get_changed_files's run_fn=subprocess.run
+        # default is bound at import time, so patching agent_controller.subprocess
+        # or agent_controller.get_changed_files above does not reach it. Patch
+        # the module-level seam directly so pre-handoff never shells out to
+        # real git for the work_plan.md commit check (see
+        # tests/unit/test_motor_checkpoint.py::test_delegates_to_scope_gate_not_new_git_parser
+        # for the canonical precedent of this pattern).
+        monkeypatch.setattr(
+            motor_checkpoint.scope_gate,
+            "get_changed_files",
+            lambda *, project_root, motor_root, run_fn=None: changed_files,
         )
         # Ensure .git exists for pre_handoff git directory check
         project_root = agent_controller.PROJECT_ROOT.resolve()
@@ -4236,6 +4251,13 @@ class TestBuilderBriefExclusion:
             agent_controller,
             "get_changed_files",
             lambda: {brief_file},
+        )
+        # Same mock-escape closure as TestPreHandoff._setup_basic_mocks: patch
+        # the scope_gate seam that assert_work_plan_committed actually calls.
+        monkeypatch.setattr(
+            motor_checkpoint.scope_gate,
+            "get_changed_files",
+            lambda *, project_root, motor_root, run_fn=None: {brief_file},
         )
         self._patch_git_exists(monkeypatch)
 
