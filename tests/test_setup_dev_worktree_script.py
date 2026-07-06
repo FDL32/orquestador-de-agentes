@@ -20,10 +20,25 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
+
+# setup_dev_worktree.ps1 is Windows-native infrastructure for the motor's
+# dev-worktree (PowerShell, backslash sibling paths `..\orquestador_de_agentes_dev`,
+# a `.venv\Scripts\python.exe` layout, and a `uv.bat` fake shim). The motor is
+# developed on Windows; this script never runs on the Linux CI runner nor on
+# Linux destinations. Same policy as tests/unit/test_launcher_powershell_syntax.py
+# (Windows-only launcher scripts). On non-Windows (`pwsh` present but no Windows
+# semantics) the fake `uv.bat` is not resolved and the script falls back to the
+# real `uv`, which is neither the unit under test nor portable — so skip the
+# whole module off Windows.
+pytestmark = pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="setup_dev_worktree.ps1 is Windows-only motor dev infrastructure",
+)
 
 _MOTOR_ROOT = Path(__file__).resolve().parent.parent
 _SCRIPT_SOURCE = _MOTOR_ROOT / "scripts" / "setup_dev_worktree.ps1"

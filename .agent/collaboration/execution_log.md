@@ -123,3 +123,25 @@ explicita; prune solo para metadatos huerfanos.
 Verificacion: 7 tests PASSED, ruff check/format limpio, script parsea. Ambos fixes
 tocan solo los 3 archivos del FLT. Correccion pre-push sobre el ticket ya COMPLETED
 (no salio a origin): commit correctivo + re-suite sobre HEAD final antes del push.
+
+## Hotfix CI post-push (barrera CI-only): test no portable a Linux
+
+El push de 7ce31a0 dejo Quality Gates en FAILURE (Security Audit verde). Causa
+REAL (no flaky): `test_setup_dev_worktree_script.py` no es portable. El fake uv es
+un `uv.bat` (shim Windows) que en el runner Linux (pwsh) NO se resuelve -> el
+script cae al `uv` REAL del runner (crea venv Linux py3.11) y la 2a corrida falla
+con "venv already exists" (exit 2); ademas las aserciones asumen el layout
+`Scripts/python.exe` (Windows), inexistente en Linux (`bin/python`). 2 failed en
+CI Linux (test_creation_detaches... + test_creation_is_idempotent...), 0 en la
+suite local Windows -> gap de portabilidad que solo el CI Linux caza.
+
+Fix: `pytestmark = pytest.mark.skipif(sys.platform != "win32", ...)` a nivel de
+modulo. `setup_dev_worktree.ps1` es infraestructura Windows-native del motor
+(PowerShell, rutas `\`, layout `.venv\Scripts\python.exe`, fake `uv.bat`); el
+motor se desarrolla en Windows y este script NUNCA corre en el CI Linux ni en
+destinos Linux. Mismo patron canonico que tests/unit/test_launcher_powershell_syntax.py
+(tests de scripts PS1 Windows-only). Verificado: en Windows los 7 tests corren y
+pasan (skip no aplica); en Linux skipean (skipif=True) -> el runner ya no ejecuta
+el .ps1 con uv real. ruff limpio. Estado: CLOSED_PENDING_CI -> el cierre real es CI
+verde post-push. Follow-up: si se quiere cobertura del .ps1 en CI, exigiria un runner
+Windows o un fake uv cross-plataforma + aserciones agnosticas de layout (no-goal aqui).
