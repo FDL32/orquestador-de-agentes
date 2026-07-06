@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID:** WOT-2026-019m
-- **Estado:** APPROVED
+- **Estado:** COMPLETED
 - **deliverable_type:** mixed
 - **Titulo:** worktree-dev del MOTOR para desarrollo paralelo sin ensuciar el
   checkout consumido.

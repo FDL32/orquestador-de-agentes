@@ -2,7 +2,7 @@
 
 Ticket: worktree-dev del MOTOR para desarrollo paralelo sin ensuciar el
 checkout consumido.
-**Estado:** IN_PROGRESS
+**Estado:** COMPLETED
 
 ## Bitacora
 
@@ -95,3 +95,8 @@ Verificacion del Orquestador (re-corrida sobre el repo real):
   externo, en la raiz del repo, fuera del FLT): el test canonico ya cubre todo.
 - Fix menor propio: RUF059 (variable `worktree_path` sin usar en un test) ->
   prefijo `_`.
+
+
+Scope override: Sobre-captura del scope gate + activacion diferida. git diff origin/main..HEAD (commit 45c1982) toca SOLO los 12 archivos de 019m (QUICKSTART.md, scripts/setup_dev_worktree.ps1, tests/test_setup_dev_worktree_script.py, colaboracion 019m + churn de archivado 019j). 0 hits para TODOS los archivos ajenos listados (AUDIT/PLAN/STRATEGY 019a/019c/019i/019j, scope_gate/motor_checkpoint/agent_controller/pre_handoff_guard/run_gates_dispatch, test_check_publication_gate, bootstrap: artefactos de tickets ya cerrados y pusheados). El 'missing: ..._dev' es CORRECTO y esperado: la activacion real de la worktree esta DIFERIDA a post-cierre por decision de orden (evita bootstrap circular); este ticket solo versiona el mecanismo. Suite 3518 verde tested_sha==HEAD 45c1982. Verificado auditablemente.. Affected files: <REPO_ROOT>/.agent/agent_controller.py, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019a.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019c.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019i.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019j.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-019a.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-019c.md, <REPO_ROOT>/.agent/collaboration/STRATEGY_WOT-2026-019i.md, <REPO_ROOT>/.agent/collaboration/STRATEGY_WOT-2026-019j.md, <REPO_ROOT>/.agent/motor_checkpoint.py, <REPO_ROOT>/.agent/scope_gate.py, <REPO_ROOT>/prompts/orchestrator_session_bootstrap.md, <REPO_ROOT>/scripts/pre_handoff_guard.py, <REPO_ROOT>/scripts/run_gates_dispatch.py, <REPO_ROOT>/tests/test_agent_controller.py, <REPO_ROOT>/tests/test_check_publication_gate.py, <REPO_ROOT>/tests/test_setup_dev_worktree_script.py, <REPO_ROOT>/tests/unit/test_motor_checkpoint.py, <REPO_ROOT>/tests/unit/test_run_gates_dispatch.py, <REPO_ROOT>/tests/unit/test_scope_gate_deliverable_aware.py, <REPO_ROOT>/tests/unit/test_scope_gate_topology.py, orquestador_de_agentes_dev
+
+Manager approved canonical closeout for WOT-2026-019m
