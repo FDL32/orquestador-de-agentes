@@ -179,6 +179,32 @@ def test_creation_detaches_principal_and_adds_worktree_with_venv(
     assert venv_python.is_file(), "fake uv venv step did not materialize python.exe"
 
 
+def test_creation_fails_closed_when_principal_is_dirty(fixture_repo) -> None:
+    """WOT-2026-019m: the whole point is that the consumed (principal) checkout
+    stays clean. If it has uncommitted changes, the script must NOT detach it
+    (which would leave it detached-and-dirty) nor create the worktree: exit 2,
+    principal still on `main`, no worktree-dev."""
+    repo_path, fake_uv_dir, worktree_path = fixture_repo
+
+    # Dirty the principal checkout with an uncommitted change.
+    (repo_path / "README.md").write_text("# fixture DIRTY\n", encoding="utf-8")
+    assert _current_branch(repo_path) == "main"
+
+    result = _run_script(repo_path, [], fake_uv_dir)
+
+    assert result.returncode == 2, (
+        f"dirty principal must fail closed with exit 2; got {result.returncode}\n"
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+    # Principal was NOT detached (still on main) and the worktree was NOT created.
+    assert _current_branch(repo_path) == "main", (
+        "principal must remain on `main` (not detached) when it is dirty"
+    )
+    assert not worktree_path.exists(), (
+        "worktree-dev must NOT be created when the principal is dirty"
+    )
+
+
 def test_creation_is_idempotent_on_second_run(fixture_repo) -> None:
     repo_path, fake_uv_dir, _worktree_path = fixture_repo
 

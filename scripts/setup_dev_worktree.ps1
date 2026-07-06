@@ -119,7 +119,30 @@ function Test-WorktreeRegistered {
     return $false
 }
 
+function Test-PrincipalHasUncommittedChanges {
+    # El proposito de 019m es que el checkout principal (el que consumen los
+    # destinos) quede SIEMPRE limpio. Detachar un principal sucio lo dejaria
+    # detached-y-sucio, justo el estado que este script existe para evitar.
+    $result = Invoke-GitCommand -ArgList @('status', '--porcelain') -WorkingDirectory $script:RepoRoot
+    if ($result.ExitCode -ne 0) {
+        throw "git status --porcelain fallo en el checkout principal: $($result.Output)"
+    }
+    return -not [string]::IsNullOrWhiteSpace($result.Output)
+}
+
 function Step-DetachPrincipal {
+    # Fail-closed: si el checkout principal tiene cambios sin commitear, NO se
+    # detacha (dejaria el checkout de consumo detached-y-sucio). Exit 2, mismo
+    # contrato que -Remove sobre una worktree sucia. En -WhatIf se reporta el
+    # bloqueo sin abortar (el dry-run nunca muta ni sale con error).
+    if (Test-PrincipalHasUncommittedChanges) {
+        if ($WhatIfPreference) {
+            Write-Host "[setup-dev-worktree] [WhatIf] El checkout principal tiene cambios sin commitear -> el modo real BLOQUEARIA aqui (exit 2) sin detachar ni crear la worktree."
+            return
+        }
+        Write-Warning "El checkout principal tiene cambios sin commitear. No se detacha ni se crea la worktree (exit 2). Commitea, stashea o descarta esos cambios primero."
+        exit 2
+    }
     if (-not (Test-PrincipalDetached)) {
         if ($PSCmdlet.ShouldProcess($script:RepoRoot, 'git checkout --detach')) {
             $result = Invoke-GitCommand -ArgList @('checkout', '--detach')

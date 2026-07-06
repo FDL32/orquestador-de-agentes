@@ -208,9 +208,14 @@ git worktree remove ..\orquestador_de_agentes_dev
 git checkout main
 ```
 
-(`git worktree prune` si `remove` reporta cambios sin commitear que se
-decide descartar). El segundo comando re-ata la rama `main` al checkout
-principal, devolviendolo al estado pre-ticket.
+Si `git worktree remove` falla porque la worktree-dev tiene cambios sin
+commitear, la via limpia es revisar y **commitear o `git stash`** esos cambios
+en la worktree antes de reintentar el `remove`; `git worktree remove --force`
+descarta esos cambios sin recuperacion y solo debe usarse con decision explicita
+(checkpoint humano). `git worktree prune` NO descarta una worktree sucia: solo
+limpia metadatos huerfanos de worktrees ya borradas a mano del disco. El segundo
+comando (`git checkout main`) re-ata la rama `main` al checkout principal,
+devolviendolo al estado pre-ticket.
 
 Nota de futuro: un canal estable (tag o rama dedicada) para que los
 destinos consuman siempre una version fija y probada del motor, en vez del

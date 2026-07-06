@@ -100,3 +100,26 @@ Verificacion del Orquestador (re-corrida sobre el repo real):
 Scope override: Sobre-captura del scope gate + activacion diferida. git diff origin/main..HEAD (commit 45c1982) toca SOLO los 12 archivos de 019m (QUICKSTART.md, scripts/setup_dev_worktree.ps1, tests/test_setup_dev_worktree_script.py, colaboracion 019m + churn de archivado 019j). 0 hits para TODOS los archivos ajenos listados (AUDIT/PLAN/STRATEGY 019a/019c/019i/019j, scope_gate/motor_checkpoint/agent_controller/pre_handoff_guard/run_gates_dispatch, test_check_publication_gate, bootstrap: artefactos de tickets ya cerrados y pusheados). El 'missing: ..._dev' es CORRECTO y esperado: la activacion real de la worktree esta DIFERIDA a post-cierre por decision de orden (evita bootstrap circular); este ticket solo versiona el mecanismo. Suite 3518 verde tested_sha==HEAD 45c1982. Verificado auditablemente.. Affected files: <REPO_ROOT>/.agent/agent_controller.py, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019a.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019c.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019i.md, <REPO_ROOT>/.agent/collaboration/AUDIT_WOT-2026-019j.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-019a.md, <REPO_ROOT>/.agent/collaboration/PLAN_WOT-2026-019c.md, <REPO_ROOT>/.agent/collaboration/STRATEGY_WOT-2026-019i.md, <REPO_ROOT>/.agent/collaboration/STRATEGY_WOT-2026-019j.md, <REPO_ROOT>/.agent/motor_checkpoint.py, <REPO_ROOT>/.agent/scope_gate.py, <REPO_ROOT>/prompts/orchestrator_session_bootstrap.md, <REPO_ROOT>/scripts/pre_handoff_guard.py, <REPO_ROOT>/scripts/run_gates_dispatch.py, <REPO_ROOT>/tests/test_agent_controller.py, <REPO_ROOT>/tests/test_check_publication_gate.py, <REPO_ROOT>/tests/test_setup_dev_worktree_script.py, <REPO_ROOT>/tests/unit/test_motor_checkpoint.py, <REPO_ROOT>/tests/unit/test_run_gates_dispatch.py, <REPO_ROOT>/tests/unit/test_scope_gate_deliverable_aware.py, <REPO_ROOT>/tests/unit/test_scope_gate_topology.py, orquestador_de_agentes_dev
 
 Manager approved canonical closeout for WOT-2026-019m
+
+## Correccion pre-push (2 blockers del Manager review, verificados en codigo)
+
+BLOCKER 1 (real, de fondo): `Step-DetachPrincipal` NO comprobaba el arbol del
+checkout principal antes del `git checkout --detach` -> un principal sucio
+quedaba detached-y-sucio, justo el estado que 019m existe para evitar. Fix:
+`Test-PrincipalHasUncommittedChanges` (mismo patron que el
+`Test-WorktreeHasUncommittedChanges` que ya usa -Remove) + guard fail-closed al
+inicio de `Step-DetachPrincipal` (exit 2 en modo real; en -WhatIf reporta que
+bloquearia sin abortar). Test nuevo `test_creation_fails_closed_when_principal_is_dirty`
+(principal sucio -> exit 2, principal sigue en main, worktree NO creada).
+MUTATION del Orquestador: neutralizar el guard -> el test falla (script devuelve
+0 y crea la worktree sobre principal sucio); restaurado -> 7 passed. Barrera viva.
+
+BLOCKER 2 (error factual en doc): QUICKSTART decia usar `git worktree prune` para
+descartar una worktree sucia -> FALSO (prune solo limpia metadatos huerfanos, no
+descarta cambios). Fix: reformulado a commitear/`git stash` y reintentar remove;
+`git worktree remove --force` descarta sin recuperacion, solo con decision
+explicita; prune solo para metadatos huerfanos.
+
+Verificacion: 7 tests PASSED, ruff check/format limpio, script parsea. Ambos fixes
+tocan solo los 3 archivos del FLT. Correccion pre-push sobre el ticket ya COMPLETED
+(no salio a origin): commit correctivo + re-suite sobre HEAD final antes del push.
