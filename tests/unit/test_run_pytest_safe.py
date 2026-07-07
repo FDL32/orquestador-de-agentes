@@ -474,7 +474,7 @@ class TestFailedTestIdsInSummary:
     ) -> None:
         """When exit_code==0, failed_test_ids must be [] in last-run.json."""
         mod = load_runner_module()
-        data = self._stub_main(mod, tmp_path, monkeypatch, stream_return=(0, []))
+        data = self._stub_main(mod, tmp_path, monkeypatch, stream_return=(0, [], []))
         assert data.get("exit_code") == 0
         assert data.get("failed_test_ids") == [], (
             "failed_test_ids must be [] when exit_code==0"
@@ -490,7 +490,7 @@ class TestFailedTestIdsInSummary:
             "tests/foo/test_bar.py::TestFoo::test_two",
         ]
         data = self._stub_main(
-            mod, tmp_path, monkeypatch, stream_return=(1, failing_ids)
+            mod, tmp_path, monkeypatch, stream_return=(1, failing_ids, [])
         )
         assert data.get("exit_code") == 1
         assert data.get("failed_test_ids") == failing_ids, (
@@ -536,7 +536,7 @@ class TestFailedTestIdsInSummary:
         )
 
         # Stub helpers so main() runs without a real repo. Green run this time.
-        monkeypatch.setattr(mod, "stream_pytest", lambda cmd: (0, []))
+        monkeypatch.setattr(mod, "stream_pytest", lambda cmd: (0, [], []))
         monkeypatch.setattr(mod, "_delivery_head_sha", lambda: "abc123")
         lock_obj = {
             "pid": 0,
@@ -568,4 +568,297 @@ class TestFailedTestIdsInSummary:
         assert data.get("baseline_failed_test_ids") == prev_failed, (
             "baseline_failed_test_ids must carry-forward the failed_test_ids "
             "from the previous last-run.json"
+        )
+
+
+# =============================================================================
+# WOT-2026-016k: error_test_ids field in last-run.json (separate from failed)
+# =============================================================================
+
+
+def _parse_test_ids_from_lines(lines: list[str]) -> tuple[list[str], list[str]]:
+    """Replicate the FAILED+ERROR parser from stream_pytest for isolated testing.
+
+    stream_pytest builds failed_ids and error_ids from lines using two regexes.
+    We replicate the same contract here so we can test both parsers without
+    invoking pytest or a subprocess.
+    """
+    import re
+
+    _failed_re = re.compile(r"^FAILED\s+(\S+)")
+    _error_re = re.compile(r"^ERROR\s+(\S+)")
+    failed_result: list[str] = []
+    error_result: list[str] = []
+    for line in lines:
+        m = _failed_re.match(line.rstrip())
+        if m:
+            failed_result.append(m.group(1))
+        m = _error_re.match(line.rstrip())
+        if m:
+            error_result.append(m.group(1))
+    return failed_result, error_result
+
+
+class TestErrorTestIdsParsing:
+    """G4: unit tests for the ERROR-line parser added by WOT-2026-016k.
+
+    Tests feed example lines directly to the parser without invoking pytest,
+    so they run in milliseconds and never spawn a subprocess.
+    """
+
+    def test_single_error_line_parsed_correctly(self) -> None:
+        """A single ERROR line yields the correct node-id."""
+        lines = ["ERROR tests/foo/test_bar.py::TestFoo::test_err -- AttributeError\n"]
+        failed, errors = _parse_test_ids_from_lines(lines)
+        assert failed == []
+        assert errors == ["tests/foo/test_bar.py::TestFoo::test_err"]
+
+    def test_multiple_error_lines_parsed_in_order(self) -> None:
+        """Multiple ERROR lines yield all node-ids in order."""
+        lines = [
+            "ERROR tests/foo/test_bar.py::TestFoo::test_one -- AttributeError\n",
+            "ERROR tests/foo/test_bar.py::TestFoo::test_two -- RuntimeError\n",
+            "ERROR tests/other/test_baz.py::test_top_level -- ValueError\n",
+        ]
+        failed, errors = _parse_test_ids_from_lines(lines)
+        assert failed == []
+        assert errors == [
+            "tests/foo/test_bar.py::TestFoo::test_one",
+            "tests/foo/test_bar.py::TestFoo::test_two",
+            "tests/other/test_baz.py::test_top_level",
+        ]
+
+    def test_mixed_failed_and_error_separated(self) -> None:
+        """FAILED goes to failed_ids, ERROR goes to error_ids, never mixed."""
+        lines = [
+            "PASSED tests/foo/test_bar.py::TestFoo::test_ok\n",
+            "FAILED tests/foo/test_bar.py::TestFoo::test_fail - AssertionError\n",
+            "ERROR tests/foo/test_bar.py::TestFoo::test_err -- AttributeError\n",
+            "FAILED tests/other/test_baz.py::test_other - ValueError\n",
+            "ERROR tests/other/test_baz.py::test_err2 -- RuntimeError\n",
+        ]
+        failed, errors = _parse_test_ids_from_lines(lines)
+        assert failed == [
+            "tests/foo/test_bar.py::TestFoo::test_fail",
+            "tests/other/test_baz.py::test_other",
+        ]
+        assert errors == [
+            "tests/foo/test_bar.py::TestFoo::test_err",
+            "tests/other/test_baz.py::test_err2",
+        ]
+
+    def test_empty_stream_yields_empty_lists(self) -> None:
+        """An empty stream yields empty lists for both."""
+        failed, errors = _parse_test_ids_from_lines([])
+        assert failed == []
+        assert errors == []
+
+    def test_green_stream_yields_empty_lists(self) -> None:
+        """A fully green stream yields empty lists."""
+        lines = [
+            "PASSED tests/foo/test_bar.py::TestFoo::test_ok\n",
+            "1 passed in 0.12s\n",
+        ]
+        failed, errors = _parse_test_ids_from_lines(lines)
+        assert failed == []
+        assert errors == []
+
+    def test_error_only_stream(self) -> None:
+        """ERROR lines only: failed_ids must be empty, error_ids populated."""
+        lines = [
+            "ERROR tests/fake.py::test_teardown_error -- AttributeError\n",
+        ]
+        failed, errors = _parse_test_ids_from_lines(lines)
+        assert failed == []
+        assert errors == ["tests/fake.py::test_teardown_error"]
+
+    def test_first_token_only_captures_node_id_not_error_text(self) -> None:
+        """Only the first token after ERROR is the node-id; remainder is ignored."""
+        lines = [
+            "ERROR tests/foo/test_bar.py::TestFoo::test_one"
+            " -- assert x == y (extra text here)\n"
+        ]
+        failed, errors = _parse_test_ids_from_lines(lines)
+        assert failed == []
+        assert errors == ["tests/foo/test_bar.py::TestFoo::test_one"]
+
+
+class TestErrorTestIdsInSummary:
+    """G4: integration-level checks for error_test_ids field in last-run.json.
+
+    These tests verify the contract without invoking the real pytest subprocess.
+    They patch stream_pytest to return controlled (returncode, failed_ids,
+    error_ids) tuples and check that main() writes the expected fields to
+    last-run.json.
+    """
+
+    def _stub_main(
+        self, mod, tmp_path: Path, monkeypatch, stream_return: tuple
+    ) -> None:
+        """Wire a tmp_path-isolated environment into the module and call main()."""
+        import json as _json
+
+        monkeypatch.setattr(mod, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(mod, "_PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(mod, "_PROJECT_ROOT_BOOTSTRAP", tmp_path)
+        last_run_json = (
+            tmp_path / ".agent" / "runtime" / "pytest-safe" / "last-run.json"
+        )
+        last_run_log = tmp_path / ".agent" / "runtime" / "pytest-safe" / "last-run.log"
+        last_run_json.parent.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(mod, "LAST_RUN_JSON", last_run_json)
+        monkeypatch.setattr(mod, "LAST_RUN_LOG", last_run_log)
+
+        monkeypatch.setattr(mod, "stream_pytest", lambda cmd: stream_return)
+        monkeypatch.setattr(mod, "_delivery_head_sha", lambda: "abc123")
+        lock_obj = {
+            "pid": 0,
+            "started_at": "2026-01-01T00:00:00+00:00",
+            "cwd": str(tmp_path),
+        }
+        monkeypatch.setattr(mod, "acquire_lock", lambda force_unlock=False: lock_obj)
+        monkeypatch.setattr(mod, "release_lock", lambda: None)
+        monkeypatch.setattr(
+            mod, "cleanup_known_temp_dirs", lambda: {"removed": [], "failed": []}
+        )
+        monkeypatch.setattr(mod, "check_canonical_state_leak", lambda snap: [])
+        monkeypatch.setattr(mod, "snapshot_canonical_state", lambda: {})
+        monkeypatch.setattr(
+            mod,
+            "select_test_runner",
+            lambda interp, args, xdist, run_dir, test_dir: (["echo"], "pytest"),
+        )
+        monkeypatch.setattr(mod, "resolve_test_interpreter", lambda: sys.executable)
+        monkeypatch.setattr(sys, "argv", ["run_pytest_safe.py", "--level", "all"])
+
+        mod.main()
+        return _json.loads(last_run_json.read_text(encoding="utf-8"))
+
+    def test_error_test_ids_in_summary_on_teardown_error(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """When stream_pytest returns ERROR ids, they appear in error_test_ids."""
+        mod = load_runner_module()
+        error_ids = ["tests/fake.py::test_teardown_error"]
+        data = self._stub_main(
+            mod, tmp_path, monkeypatch, stream_return=(1, [], error_ids)
+        )
+        assert data.get("exit_code") == 1
+        assert data.get("failed_test_ids") == []
+        assert data.get("error_test_ids") == error_ids, (
+            "error_test_ids must contain the node-ids returned by stream_pytest"
+        )
+
+    def test_error_and_failed_separated_in_summary(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """FAILED and ERROR stay in separate fields in last-run.json."""
+        mod = load_runner_module()
+        failing_ids = [
+            "tests/foo/test_bar.py::TestFoo::test_one",
+        ]
+        error_ids = [
+            "tests/foo/test_bar.py::TestFoo::test_err",
+        ]
+        data = self._stub_main(
+            mod, tmp_path, monkeypatch, stream_return=(1, failing_ids, error_ids)
+        )
+        assert data.get("exit_code") == 1
+        assert data.get("failed_test_ids") == failing_ids
+        assert data.get("error_test_ids") == error_ids
+        # They must not be mixed: failed_test_ids must NOT contain error ids
+        for eid in error_ids:
+            assert eid not in data.get("failed_test_ids", []), (
+                "error ids must not leak into failed_test_ids"
+            )
+        # and error_test_ids must NOT contain failed ids
+        for fid in failing_ids:
+            assert fid not in data.get("error_test_ids", []), (
+                "failed ids must not leak into error_test_ids"
+            )
+
+    def test_error_test_ids_empty_when_green(self, tmp_path: Path, monkeypatch) -> None:
+        """Green run: both failed_test_ids and error_test_ids are []."""
+        mod = load_runner_module()
+        data = self._stub_main(mod, tmp_path, monkeypatch, stream_return=(0, [], []))
+        assert data.get("exit_code") == 0
+        assert data.get("failed_test_ids") == []
+        assert data.get("error_test_ids") == []
+
+    def test_stream_pytest_real_error_re_with_mocked_subprocess(  # noqa: C901
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Exercise the REAL _error_re in stream_pytest via subprocess mock.
+
+        This is the mutation-verify-critical test: it calls stream_pytest
+        with a mocked Popen that produces ERROR lines, so the _error_re
+        compiled regex inside stream_pytest (NOT the replica) must match them.
+        If someone removes _error_re or breaks the regex, this test fails.
+        """
+        mod = load_runner_module()
+
+        class _Capture:
+            call_args: list | None = None
+
+        class _MockProcess:
+            returncode = 1
+
+            def __init__(self, *a, **kw):
+                self._idx = 0
+                self._stdout_lines = [
+                    "============================= test session starts =============================\n",
+                    "platform win32 -- Python 3.10.19, pytest-9.0.3\n",
+                    "collected 3 items\n\n",
+                    "tests/unit/test_a.py::test_pass PASSED                             [ 33%]\n",
+                    "tests/unit/test_a.py::test_fail FAILED                             [ 66%]\n",
+                    "ERROR tests/unit/test_b.py::test_teardown_err -- AttributeError: 'NoneType'\n",
+                    "\n=========================== short test summary ===========================\n",
+                    "FAILED tests/unit/test_a.py::test_fail - AssertionError: assert False\n",
+                    "1 failed, 1 passed, 1 error in 0.12s\n",
+                ]
+
+            @property
+            def stdout(self):
+                return self
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                if self._idx >= len(self._stdout_lines):
+                    raise StopIteration
+                line = self._stdout_lines[self._idx]
+                self._idx += 1
+                return line
+
+            def wait(self):
+                return self.returncode
+
+            def terminate(self):
+                pass
+
+            def kill(self):
+                pass
+
+            def poll(self):
+                return 1
+
+        cap = _Capture()
+
+        def mock_popen(command, *a, **kw):
+            cap.call_args = command
+            return _MockProcess()
+
+        monkeypatch.setattr(mod.subprocess, "Popen", mock_popen)
+
+        # Call the REAL stream_pytest (not a replica)
+        returncode, failed_ids, error_ids = mod.stream_pytest(["pytest", "tests/"])
+
+        assert returncode == 1
+        assert failed_ids == ["tests/unit/test_a.py::test_fail"]
+        assert error_ids == ["tests/unit/test_b.py::test_teardown_err"]
+        # Critical: must not be empty - if _error_re is broken/removed, this fails
+        assert len(error_ids) > 0, (
+            "stream_pytest must capture ERROR lines via _error_re; "
+            "if _error_re is removed or broken, error_ids stays empty"
         )

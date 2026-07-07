@@ -447,18 +447,22 @@ def select_test_runner(
     return command, "unittest"
 
 
-def stream_pytest(command: list[str]) -> tuple[int, list[str]]:
-    """Run pytest, stream output, and return (returncode, failed_test_ids).
+def stream_pytest(command: list[str]) -> tuple[int, list[str], list[str]]:  # noqa: C901
+    """Run pytest, stream output, and return (returncode, failed_test_ids, error_test_ids).
 
     WOT-2026-017a: parses lines matching ^FAILED\\s+(\\S+) from the stream to
     capture the node-ids of failing tests (stdlib-only, no plugin required).
-    Returns the returncode and the list of failed test node-ids (empty when
-    returncode == 0 or when no FAILED lines appear in the output).
+    WOT-2026-016k: also parses ^ERROR\\s+(\\S+) to capture teardown-crash
+    node-ids in a separate list, keeping FAILED != ERROR semantics.
+    Returns the returncode, the list of failed test node-ids, and the list of
+    error test node-ids (both empty when returncode == 0 or when no matching
+    lines appear in the output).
     """
     import re
 
     lines: list[str] = []
     _failed_re = re.compile(r"^FAILED\s+(\S+)")
+    _error_re = re.compile(r"^ERROR\s+(\S+)")
 
     # Ensure .agent is in PYTHONPATH for the subprocess
     env = os.environ.copy()
@@ -507,7 +511,13 @@ def stream_pytest(command: list[str]) -> tuple[int, list[str]]:
         if m:
             failed_ids.append(m.group(1))
 
-    return returncode, failed_ids
+    error_ids: list[str] = []
+    for line in lines:
+        m = _error_re.match(line.rstrip())
+        if m:
+            error_ids.append(m.group(1))
+
+    return returncode, failed_ids, error_ids
 
 
 def parse_args() -> argparse.Namespace:
@@ -886,13 +896,15 @@ def main() -> int:  # noqa: C901
         print_default_discovery_notice(args_mode)
         print(f"[pytest-safe] Ejecutando: {' '.join(command)}")
         state_snapshot = snapshot_canonical_state()
-        exit_code, failed_ids = stream_pytest(command)
+        exit_code, failed_ids, error_ids = stream_pytest(command)
         summary["status"] = "finished"
         summary["exit_code"] = exit_code
         # WOT-2026-017a: persist node-ids of failed tests so pre_handoff_guard
         # can compare them against the baseline (D2/D3). Always a list; empty
         # when exit_code==0 or when no FAILED lines appeared in the stream.
         summary["failed_test_ids"] = failed_ids
+        # WOT-2026-016k: separate field for ERROR teardown crashes.
+        summary["error_test_ids"] = error_ids
         # WOT-2026-017a: persist the failed_test_ids that were on disk before
         # this run so the guard can use them as baseline B for subset comparison.
         summary["baseline_failed_test_ids"] = _baseline_failed
