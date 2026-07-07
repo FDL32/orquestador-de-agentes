@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -918,7 +919,25 @@ class TestStateLeakWotFiles:
 class TestBasetempOutsideRepo:
     """WOT-2026-020f: make_run_dir must place basetemp OUTSIDE the repo motor
     so staged changes in the motor are not visible to resolve_evidence when
-    project_root=tmp_path."""
+    project_root=tmp_path.
+
+    NOTE: conftest hijacks tempfile.tempdir to a path inside the repo for test
+    sandboxing. These tests restore the REAL system temp to validate production
+    behavior (run_pytest_safe.py runs as a script, before pytest/conftest load).
+    """
+
+    @pytest.fixture(autouse=True)
+    def _restore_real_tempdir(self, monkeypatch):
+        import tempfile
+
+        real_temp = Path(
+            os.environ.get("TEMP", os.environ.get("TMP", tempfile.gettempdir()))
+        )
+        if not real_temp.is_absolute():
+            real_temp = Path.cwd() / real_temp
+        real_temp = real_temp.resolve()
+        monkeypatch.setattr(tempfile, "tempdir", str(real_temp))
+        yield
 
     def test_make_run_dir_outside_runtime_dir(self) -> None:
         """basetemp must NOT be under RUNTIME_DIR (the old in-repo location).

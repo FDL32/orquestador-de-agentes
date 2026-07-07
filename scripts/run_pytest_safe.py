@@ -4,7 +4,7 @@
 Objectives:
 - inspeccionar el estado antes de tocar nada
 - evitar ejecuciones concurrentes de pytest
-- mantener los temporales dentro del proyecto
+- mantener los temporales fuera del proyecto (WOT-2026-020f: basetemp en tempfile)
 - limpiar residuos conocidos antes y despues del run
 - dejar log del ultimo run para diagnostico
 
@@ -754,8 +754,8 @@ def snapshot_canonical_state() -> dict[str, str]:
     content before and comparing after turns that silent leak into a
     visible failure with the offending delta.
 
-    WOT-2026-020f: also snapshots ``*_WOT-*.md`` files so a staged deletion
-    of an AUDIT_WOT-*/PLAN_WOT-* artifact during the suite is detected.
+    WOT-2026-020f: also snapshots ``*_WOT-*.md`` files (recursive) so a staged
+    deletion of an AUDIT_WOT-*/PLAN_WOT-* artifact during the suite is detected.
     """
     snapshot: dict[str, str] = {}
     collab = _AGENT_DIR / "collaboration"
@@ -765,7 +765,7 @@ def snapshot_canonical_state() -> dict[str, str]:
             snapshot[name] = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             snapshot[name] = ""
-    for wot_file in collab.glob("*_WOT-*.md"):
+    for wot_file in collab.rglob("*_WOT-*.md"):
         try:
             snapshot[wot_file.name] = wot_file.read_text(
                 encoding="utf-8", errors="replace"

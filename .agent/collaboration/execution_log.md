@@ -70,3 +70,21 @@ como base. `import tempfile` anadido. Basetemp fuera del repo motor.
 APROBADO para cierre pragmatico. Ambos fixes son fail-safe (glob no rompe si no
 hay WOT files; basetemp en tempfile es estandar). Tradeoff de velocidad aceptado:
 correctness > velocidad en gate de cierre.
+
+## Review 2 fresh-context (blast MEDIO)
+
+**Hallazgos del reviewer:**
+- BLOCKING: conftest hijackea `tempfile.tempdir` -> tests validan path hijackeado
+  (no sistema temp real). Fix funciona en produccion (make_run_dir se llama antes
+  de pytest) pero los tests eran misleading.
+- MEDIUM: `glob` no recursivo -> WOT files en subdirs no capturados.
+- NIT: docstring dice "dentro del proyecto" pero basetemp ahora fuera.
+
+**Correcciones aplicadas (commit separado):**
+- Tests: autouse fixture `_restore_real_tempdir` restaura `tempfile.tempdir` al
+  sistema temp real via monkeypatch (valida comportamiento de produccion).
+- `glob` -> `rglob` para captura recursiva de `*_WOT-*.md`.
+- Docstring actualizado: "fuera del proyecto (WOT-2026-020f: basetemp en tempfile)".
+- `import os` anadido al test file.
+
+**Veredicto Review 2:** REQUEST_CHANGES -> corregido -> APROBADO.
