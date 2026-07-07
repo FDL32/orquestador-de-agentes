@@ -42,5 +42,18 @@ fuera del motor -> staged changes del motor no visibles para `resolve_evidence`.
 - Restaurar ambos -> 50/50 pasan
 
 ## Tradeoff
-Basetemp en tempfile.gettempdir() es ~22% mas lento (7:24 -> 9:04) por IO/antivirus.
+Basetemp en `tempfile.gettempdir()` mide 9:04 vs 7:24 en `RUNTIME_DIR` (wall-clock
+de `run_pytest_safe --level all`, 3537 tests). Delta: +100s (~22.5%) por IO/antivirus.
 Es aceptable: correctness (staged changes no visibles) > velocidad en gate de cierre.
+
+## Non-goals
+- No cambiar la logica de `resolve_evidence` (bus/evidence.py) ni de `check_canonical_state_leak`
+- No mover `RUNTIME_DIR` entero (solo basetemp); los reportes de last-run siguen en `.agent/runtime/`
+- No optimizar la velocidad del basetemp en tempfile (el tradeoff es aceptado)
+
+## Decision Arquitectonica
+Basetemp fuera del repo motor via `tempfile.gettempdir()` en lugar de un subdirectorio
+del repo. Motivo: el problema raiz es que `tmp_path` (basetemp de pytest) vive dentro
+del repo motor, haciendo que `git diff --cached` con `cwd=tmp_path` vea staged changes
+del motor real. Mover solo basetemp (no RUNTIME_DIR) resuelve el problema sin romper
+la localizacion de last-run.json/run logs que siguen en `.agent/runtime/pytest-safe/`.

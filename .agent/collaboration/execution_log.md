@@ -2,6 +2,7 @@
 
 ## Ticket
 - **ID:** WOT-2026-020f
+- **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Scope:** motor/pytest-safe-basetemp-isolation
 
@@ -9,7 +10,7 @@
 
 **Premisa (1):** `check_canonical_state_leak` solo cubre 4 archivos, no `*_WOT-*.md`.
 - VERIFICADO: `snapshot_canonical_state` (run_pytest_safe.py:746) itera
-  `("STATE.md", "TURN.md", "work_plan.md", "execution_log.md")` — sin glob.
+  `("STATE.md", "TURN.md", "work_plan.md", "execution_log.md")` -- sin glob.
 - Un staged deletion de `AUDIT_WOT-*` no seria detectado por la barrera.
 
 **Premisa (2):** `basetemp` vive dentro del repo motor.
