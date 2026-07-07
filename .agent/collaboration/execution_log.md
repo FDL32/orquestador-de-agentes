@@ -35,3 +35,12 @@
 
 Single-review (documentation, blast-radius acotado). Validado por Orquestador:
 contenido correcto, evidencia citada, encoding limpio, schema-drift gate verde.
+
+## Nota sobre portabilidad
+
+UPSTREAM_LEARNINGS.md esta gitignored por diseno (WOT-2026-015c: "Runtime state
+generado en sesion - NO distribuir con el motor"). Es "portable" en el sentido
+de que `scripts/closeout_steps/observations.py` (l.129-139) lo resuelve local o
+via motor_link fallback, accesible desde cualquier destino que enlaza al
+motor. No es version-controlled (no se pushea), pero es la superficie canonica
+de aprendizajes del motor cargada por el closeout.
