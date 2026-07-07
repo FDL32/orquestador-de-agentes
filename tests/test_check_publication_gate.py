@@ -131,9 +131,15 @@ def test_no_hardcoded_username_in_source() -> None:
     assert "fdl" not in src.lower().replace("default_pii_terms", "")
 
 
-def test_loose_pattern_chunks_many_revs(tmp_path: Path) -> None:
+def test_loose_pattern_chunks_many_revs(tmp_path: Path, monkeypatch) -> None:
     """WinError 206 hotfix: cientos de revs no revientan la linea de comandos
-    (se procesan en chunks) y el hallazgo del primer commit sigue cazandose."""
+    (se procesan en chunks) y el hallazgo del primer commit sigue cazandose.
+
+    WOT-2026-020f: monkeypatch REV_CHUNK_SIZE a 5 para crear 15 commits (3
+    chunks) en vez de 205. Testea la misma logica de chunking pero en <2s
+    en vez de ~100s (gc.auto=0 + 205 loose objects = git progresivamente lento).
+    """
+    monkeypatch.setattr(gate, "REV_CHUNK_SIZE", 5)
     repo = _make_repo(tmp_path, "repo_grande")
     (repo / "leak.md").write_text("c--Users-pepito-x\n", encoding="utf-8")
     _git(repo, "add", "leak.md")
