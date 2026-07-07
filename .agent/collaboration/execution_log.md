@@ -136,3 +136,34 @@ El Orquestador re-corrio el mutation-verify con mutacion precisa (no stash compl
 4. Test -> PASSED (exit 0): `error_ids == ["tests/unit/test_b.py::test_teardown_err"]`
 
 Esto verifica que la captura de ERROR via `_error_re` es la causa real (no solo el cambio de firma de return).
+
+## Suite canonica (Orquestador)
+
+- Comando: `.\.venv\Scripts\python.exe scripts/run_pytest_safe.py --level all`
+- Resultado: `3522 passed, 47 skipped in 420.51s` — exit 0
+- last-run.json: status=finished, exit_code=0, level=all, tested_commit_sha=a994bc0==HEAD, args_mode=default_discovery
+- error_test_ids: [] (campo nuevo presente, vacio porque no hay ERROR de teardown en la suite)
+- Arbol limpio tras la suite
+
+## Review 2 fresh-context adversarial (subagente independiente)
+
+- Veredicto: APROBADO CON NITS
+- Senales nuevas (4): (1) false positives en _error_re para collection/import errors (BAJO), (2) mutation-verify independiente confirmado, (3) solo 1 caller de stream_pytest, (4) scope verificado
+- NITs (BAJO, no bloqueantes):
+  - El regex `^ERROR\s+(\S+)` matchea "ERROR collecting tests/foo.py" -> captura "collecting" (no es node-id valido). Mismo patron para "ERROR while importing". Follow-up: refinar regex a `^ERROR\s+(tests/\S+\.py::\S+)` para solo capturar node-ids con `::`.
+  - 7 de 8 tests de TestErrorTestIdsParsing usan replica, no el regex real. Solo test_stream_pytest_real_error_re_with_mocked_subprocess ejerce el real.
+- No hay blockers CRITICO/ALTO/MEDIO. DoD se cumple (teardown errors con :: se capturan correctamente).
+
+## Mini-audit de 7 checks (Orquestador)
+
+1. STATE COMPLETED: SI (STATE.md: WOT-2026-016k, COMPLETED)
+2. Arbol limpio: SI (git status --short vacio tras suite)
+3. Autores noreply: SI (128408907+FDL32@users.noreply.github.com)
+4. Validate 0/0: 0 errors, 3 warnings (accepted_health_exception: bus_drift + 2 invariants por fix 020d)
+5. Stamp fresco sha==HEAD: SI (tested_commit_sha=a994bc0==HEAD)
+6. Diff dentro de scope: SI (solo scripts/run_pytest_safe.py + tests/unit/test_run_pytest_safe.py)
+7. 0 PII nueva: SI (sin PII en el diff)
+
+## Follow-up registrado
+
+- NIT-016k-1: refinar `_error_re` para filtrar false positives de collection/import errors (regex `^ERROR\s+(tests/\S+\.py::\S+)` o validacion de `::` en el node-id). Blast radius BAJO (campo nuevo sin consumidores).
