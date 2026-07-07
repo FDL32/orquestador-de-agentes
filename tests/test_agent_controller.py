@@ -2213,6 +2213,8 @@ Marked ready by Builder
                 return MagicMock(
                     returncode=0, stdout="abc1234 other ticket\n", stderr=""
                 )
+            if "check-ignore" in cmd_str:
+                return MagicMock(returncode=1, stdout="", stderr="")
             return MagicMock(returncode=0, stdout="", stderr="")
 
         return MagicMock(side_effect=mock_run)
@@ -2432,6 +2434,84 @@ Marked ready by Builder
 
         errors = agent_controller._check_implementation_evidence(self._PLAN_ID)
         assert errors == [], f"Expected no errors, got: {errors}"
+
+    def test_flt_all_gitignored_true_when_all_gitignored(self, monkeypatch):
+        """WOT-2026-019g: _flt_all_gitignored returns True when all FLT gitignored."""
+        monkeypatch.setattr(
+            agent_controller,
+            "parse_files_likely_touched",
+            lambda x, **kw: {"data/cache.json"},
+        )
+
+        def mock_run(cmd, *args, **kwargs):
+            cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+            if "check-ignore" in cmd_str:
+                return MagicMock(returncode=0, stdout="", stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(agent_controller.subprocess, "run", mock_run)
+        assert agent_controller._flt_all_gitignored("plan") is True
+
+    def test_flt_all_gitignored_false_when_tracked(self, monkeypatch):
+        """WOT-2026-019g: _flt_all_gitignored returns False when FLT is tracked."""
+        monkeypatch.setattr(
+            agent_controller,
+            "parse_files_likely_touched",
+            lambda x, **kw: {"src/module.py"},
+        )
+
+        def mock_run(cmd, *args, **kwargs):
+            cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+            if "check-ignore" in cmd_str:
+                return MagicMock(returncode=1, stdout="", stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(agent_controller.subprocess, "run", mock_run)
+        assert agent_controller._flt_all_gitignored("plan") is False
+
+    def test_code_ticket_gitignored_flt_skips_evidence_check(self, monkeypatch):
+        """WOT-2026-019g: code ticket with gitignored FLT skips evidence checks."""
+        git_mock = self._make_git_mock(
+            [".agent/collaboration/execution_log.md"],
+            plan_in_log=True,
+        )
+        original_side = git_mock.side_effect
+
+        def extended_mock(cmd, *args, **kwargs):
+            cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+            if "check-ignore" in cmd_str:
+                return MagicMock(returncode=0, stdout="", stderr="")
+            return original_side(cmd, *args, **kwargs)
+
+        monkeypatch.setattr(
+            agent_controller.subprocess, "run", MagicMock(side_effect=extended_mock)
+        )
+
+        def mock_read(path):
+            name = str(path).replace("\\", "/")
+            if "execution_log.md" in name:
+                return self._LOG_WITH_EVIDENCE
+            if "work_plan.md" in name:
+                return self._PLAN_WITH_FILES
+            return ""
+
+        monkeypatch.setattr(agent_controller, "read_file", mock_read)
+        monkeypatch.setattr(
+            agent_controller,
+            "parse_files_likely_touched",
+            lambda x, **kw: {"src/module.py", "tests/test_module.py"},
+        )
+
+        errors = agent_controller._check_implementation_evidence(self._PLAN_ID)
+        assert not any("No implementation evidence" in err for err in errors), (
+            f"Should skip for gitignored FLT, got: {errors}"
+        )
+        assert not any("Collaboration-only" in err for err in errors), (
+            f"Should skip collab-only for gitignored FLT, got: {errors}"
+        )
+        assert not any("Files Likely Touched match" in err for err in errors), (
+            f"Should skip FLT-match for gitignored FLT, got: {errors}"
+        )
 
 
 # =============================================================================

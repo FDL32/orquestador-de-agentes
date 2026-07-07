@@ -1503,6 +1503,42 @@ def _run_git_diff_cmd(args: list[str], cwd: Path | None = None) -> set[str]:
 _MOTOR_ROOT: Path = Path(__file__).resolve().parent.parent
 
 
+def _flt_all_gitignored(plan_content: str) -> bool:
+    """Check if all Files Likely Touched are gitignored.
+
+    Returns True when there is at least one FLT entry and every entry is
+    gitignored (``git check-ignore`` returns 0). This lets code tickets
+    whose deliverable lives entirely in a gitignored surface (e.g.
+    ``data/``) close without ``--allow-empty`` when a deterministic gate
+    verifies the fix (WOT-2026-019g).
+    """
+    try:
+        likely_files = parse_files_likely_touched(plan_content)
+    except Exception:
+        return False
+    if not likely_files:
+        return False
+    for f in likely_files:
+        path = Path(f)
+        try:
+            rel = path.relative_to(_MOTOR_ROOT) if path.is_absolute() else path
+        except ValueError:
+            rel = path
+        try:
+            result = subprocess.run(
+                ["git", "check-ignore", str(rel)],
+                capture_output=True,
+                text=True,
+                cwd=str(_MOTOR_ROOT),
+                timeout=5,
+            )
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+            return False
+        if result.returncode != 0:
+            return False
+    return True
+
+
 def _collect_git_diff_files() -> set[str]:
     """Collect files from git diff (unstaged + staged + last commit).
 
@@ -1713,6 +1749,7 @@ def _check_implementation_evidence(plan_id: str) -> list[str]:  # noqa: C901
     plan_content = read_file(WORK_PLAN)
     deliverable_type = _read_deliverable_type(plan_content)
     non_code_ticket = deliverable_type in {"documentation", "research", "analysis"}
+    flt_gitignored = not non_code_ticket and _flt_all_gitignored(plan_content)
 
     try:
         from bus.evidence import resolve_evidence
@@ -1722,14 +1759,20 @@ def _check_implementation_evidence(plan_id: str) -> list[str]:  # noqa: C901
         has_commit = evidence["has_ticket_commit"]
 
         if all_files:
-            if evidence["is_collaboration_only"] and not non_code_ticket:
+            if (
+                evidence["is_collaboration_only"]
+                and not non_code_ticket
+                and not flt_gitignored
+            ):
                 errors.append(
                     "Collaboration-only evidence: all git changes are collaboration "
                     f"artifacts ({len(all_files)} files). No productive code changes "
                     "detected in motor or destination. Run --pre-handoff first, "
                     "then produce real implementation changes."
                 )
-            elif evidence["is_docs_only"] and not non_code_ticket:
+            elif (
+                evidence["is_docs_only"] and not non_code_ticket and not flt_gitignored
+            ):
                 errors.append(
                     "Docs-only evidence: all git changes are documentation artifacts "
                     f"({len(all_files)} files). No productive implementation files "
@@ -1739,6 +1782,7 @@ def _check_implementation_evidence(plan_id: str) -> list[str]:  # noqa: C901
         if (
             not evidence["has_productive_evidence"]
             and not non_code_ticket
+            and not flt_gitignored
             and not evidence["is_docs_only"]
             and not evidence["is_collaboration_only"]
         ):
@@ -1769,21 +1813,22 @@ def _check_implementation_evidence(plan_id: str) -> list[str]:  # noqa: C901
         return errors
 
     # 3. Best-effort: check Files Likely Touched
-    try:
-        if plan_content:
-            likely_files = parse_files_likely_touched(plan_content)
-            if likely_files and all_files:
-                likely_basenames = {Path(f).name for f in likely_files}
-                matched = any(
-                    Path(f).name in likely_basenames or f in likely_files
-                    for f in all_files
-                )
-                if not matched:
-                    errors.append(
-                        "No Files Likely Touched match git changes (best-effort)"
+    if not flt_gitignored:
+        try:
+            if plan_content:
+                likely_files = parse_files_likely_touched(plan_content)
+                if likely_files and all_files:
+                    likely_basenames = {Path(f).name for f in likely_files}
+                    matched = any(
+                        Path(f).name in likely_basenames or f in likely_files
+                        for f in all_files
                     )
-    except Exception:  # noqa: S110 - best-effort check, silent on parse failure
-        pass
+                    if not matched:
+                        errors.append(
+                            "No Files Likely Touched match git changes (best-effort)"
+                        )
+        except Exception:  # noqa: S110 - best-effort check, silent on parse failure
+            pass
 
     # 4. WT-2026-203: Check git log --oneline -20 contains plan_id
     # has_commit already computed via resolve_evidence above
