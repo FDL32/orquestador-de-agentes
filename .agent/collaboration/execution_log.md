@@ -1,90 +1,66 @@
-# Execution Log - WOT-2026-020c
+# Execution Log: WOT-2026-020a
 
-**Ticket:** WOT-2026-020c
-**Estado:** COMPLETED
-**Fecha:** 2026-07-07
-**delivery_authority:** repo_motor
+## Ticket
+- **ID:** WOT-2026-020a
+- **deliverable_type:** code
+- **Scope:** motor/guard-paths-cwd-vs-operational-root
 
-## Fase 0: Verificacion de premisa
+## Fase 0 - Verificacion de premisa (2026-07-07)
 
-- `.agent/scope_gate.py` usa `line == f"## {heading}"` (l.125, 162) y
-  `stripped == "## Files Likely Touched"` (l.230) — match exacto.
-- El match exacto NO detecta headings con trailing content (`## Files Likely Touched (motor)`)
-  ni double-space (`##  Files Likely Touched`).
-- WOT-2026-019l cambio de substring a exacto para evitar que menciones en prosa
-  abran secciones (L-GATE-HARDENING-001 regla 1).
-- Premisa CONFIRMADA.
+**Premisa del backlog:** guard_paths falla-cerrado como "fuera del repo" cuando
+cwd=motor y target esta en repo_destino. El link vive en el destino, no en el
+motor.
 
-## Decision
-
-Mantener match exacto (fail-closed). Razon: el match exacto previene falsos
-positivos (prosa abriendo secciones). Relajar a startswith reintroduce el riesgo
-que 019l fixo. Los edge cases no ocurren en work_plans existentes. Fail-closed es
-seguro: fallo visible (seccion no detectada) vs fallo silencioso (contenido
-equivocado).
+**Verificacion contra codigo real:**
+- `claude_guard_entry.py:103` ejecuta guard_paths con `cwd=str(repo_root)` donde
+  repo_root = nearest `.claude` ancestor = motor.
+- `guard_paths.py:304` pasa `repo_root=Path.cwd()` = motor a `evaluate_tool_request`.
+- `_is_protected_path` (l.199): si target no esta en repo_root, llama
+  `_resolve_extra_root(repo_root)`.
+- `_resolve_extra_root` Source 2 (l.149): busca link en
+  `repo_root/.agent/config/motor_destination_link.json` -> NO EXISTE en el motor.
+- Motor (DEV) verificado: `Test-Path .agent/config/motor_destination_link.json` = False.
+- Link del destino (Aduanas_pedidos_agencias) verificado: tiene `motor_root` +
+  `destination_root`, vive en `<destino>/.agent/config/`.
+- **Premisa CONFIRMADA.** Source 2 nunca puede resolver cuando repo_root=motor.
 
 ## Implementacion
 
-- Anadida clase `TestScopeGateHeadingEdgeCases` a `tests/unit/test_scope_gate.py`
-  con 5 tests:
-  1. test_flt_trailing_content_does_not_open_section
-  2. test_flt_double_space_does_not_open_section
-  3. test_flt_trailing_content_with_real_section_uses_real
-  4. test_flt_tokens_trailing_content_does_not_open_section
-  5. test_builder_trailing_content_does_not_open_section
-- scope_gate.py NO se modifica (decision: mantener exacto).
+**Fix:** anadir Source 3 a `_resolve_extra_root` — camina ancestros del TARGET
+buscando `motor_destination_link.json`, verifica `motor_root == repo_root`.
+Extraida a helper `_resolve_destino_from_target` para complejidad < 10 (ruff C901).
+
+**Archivos modificados:**
+- `.agent/hooks/guard_paths.py`: +30 lineas (helper + Source 3 call + docstring)
+- `tests/test_guard_paths.py`: +65 lineas (5 tests nuevos en TestExtraRootViaTargetLink)
+
+**Call site modificado:**
+- `_is_protected_path` l.200: `_resolve_extra_root(repo_root, path_obj)`
 
 ## Gates
 
-- Tests focales: `pytest tests/unit/test_scope_gate.py::TestScopeGateHeadingEdgeCases` -> 5 passed
-- Test file completo: `pytest tests/unit/test_scope_gate.py` -> 32 passed (0 regresiones)
-- Ruff check: All checks passed
-- Ruff format: 1 file already formatted
+- ruff check: All checks passed!
+- ruff format: 1 file reformatted
+- Tests focales (guard_paths): 51 passed, 0 failed
+- validate_agent_config.py: Configuration valid - all checks passed
+- Suite canonica --level all: 3532 passed, 47 skipped, 0 failed, 0 errors (444s)
 
-## Mutation-verify (Orquestador)
+## Mutation-verify (orquestador sobre repo real)
 
-1. Edit scope_gate.py: `line == f"## {heading}"` -> `line.startswith(f"## {heading}")` (replaceAll, l.125 + l.162)
-2. Tests -> 4 FAILED (trailing content abre la seccion con startswith; double-space no afectado porque el prefijo `## ` no matchea `##  `)
-3. Revert edit
-4. Tests -> 5 PASSED
+1. Deshabilitar Source 3: `if path_obj is not None and False:`
+2. `test_write_to_destino_via_target_link_allowed` -> FAILED (blocked=True, "fuera del repo")
+3. 4 tests fail-closed -> PASSED (no dependen de Source 3)
+4. Restaurar Source 3 -> 51/51 PASSED
 
-Exit codes: SIN fix (startswith) = 4 failed exit 1; CON fix (exact) = 5 passed exit 0.
+**Veredicto:** mutation-verify confirma que el test nuevo detecta la regresion.
 
-## DoD
+## Commits
 
-- [x] test que heading con trailing content NO abre la seccion (comportamiento actual preservado)
-- [x] test que heading con double-space NO abre la seccion
-- [x] decision documentada: mantener exacto (fail-closed)
-- [x] MUTATION: relajar a startswith -> 4 tests fallan (trailing content abre la seccion)
+- `WOT-2026-020a: guard_paths Source 3 - resolver destino desde link del target (motor_root == repo_root)`
+- `WOT-2026-020a: tests TestExtraRootViaTargetLink (5 casos, fail-closed + happy path + mutation)`
 
-## Review 2 fresh-context adversarial
+## Decision
 
-- Veredicto reportado: NO ACEPTAR TODAVIA
-- Analisis del Orquestador (verificacion independiente):
-
-### H1 (ALTA) - Mutation-verify discrepancy: ACLARACION, no blocker
-- El Reviewer muto solo `_extract_section_paths` (l.162) -> 3 failures.
-- Mi mutation uso `replaceAll=true` en AMBAS ocurrencias (l.125 + l.162) -> 4 failures.
-- Verificado: hay exactamente 2 ocurrencias de `line == f"## {heading}"` (l.125, l.162).
-- Mi mutation-verify es correcto y mas thorough. El reporte del Reviewer es
-  correcto para SU mutation (una linea), pero mi mutation (dos lineas) da 4.
-
-### H2 (MEDIA) - Double-space phantom: REFUTADO con evidencia
-- El Reviewer afirma que `strip()` normaliza `##  Files` a `## Files` -> exact match TRUE.
-- VERIFICADO EN PYTHON: `"##  Files Likely Touched".strip()` = `"##  Files Likely Touched"`
-  (double space PRESERVADO — `.strip()` solo elimina whitespace leading/trailing, NO interno).
-- `== exact` = False, `startswith` = False. El test de double-space es valido: verifica
-  que el match exacto rechaza double-space headings correctamente.
-
-### H3 (MEDIA) - Cobertura incompleta: ACEPTADO como follow-up
-- Sugerencias validas: tab separator, CRLF, puntuacion inline, capitalizacion.
-- El DoD pide solo trailing content + double-space. Cobertura adicional es follow-up.
-- Follow-up registrado: NIT-020c-1 (cobertura de edge cases adicionales).
-
-### Conclusion
-No hay findings bloqueantes. H2 es factualmente erroneo (evidencia Python). H1 es
-una aclaracion (mi mutation fue correcta). H3 es follow-up no bloqueante.
-Veredicto del Orquestador: APROBADO CON NITS.
-
-## Follow-up registrado
-- NIT-020c-1: cobertura de edge cases adicionales (tab, CRLF, puntuacion inline, capitalizacion). BAJO.
+APROBADO para cierre pragmatico. El fix es fail-closed en todos los edge cases
+(link malformado, motor_root != repo_root, ancestro sin marker). No amplía la
+superficie de escritura mas alla de destinos verificados linkeados al motor.

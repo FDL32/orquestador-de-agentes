@@ -544,6 +544,106 @@ class TestExtraRootDestination:
         assert "fuera del repo" in reason
 
 
+class TestExtraRootViaTargetLink:
+    """WOT-2026-020a: guard_paths resolves a destino from the TARGET's
+    motor_destination_link.json (motor_root == repo_root), not from the
+    motor's own link. The real topology: the link lives in the destino, not
+    the motor, so Source 2 (link in repo_root) cannot find it when cwd=motor.
+    Source 3 walks the target's ancestors to find the link and verify it
+    points back to the motor (repo_root)."""
+
+    def setup_method(self):
+        _clean_workspace()
+        self.motor_root = (TEST_WORKSPACE / "motor").resolve()
+        self.destino_root = (TEST_WORKSPACE / "destino").resolve()
+        self.outside_root = (TEST_WORKSPACE / "outside").resolve()
+        self.motor_root.mkdir(parents=True, exist_ok=True)
+        self.destino_root.mkdir(parents=True, exist_ok=True)
+        self.outside_root.mkdir(parents=True, exist_ok=True)
+        (self.motor_root / ".claude").mkdir(parents=True, exist_ok=True)
+        (self.destino_root / ".claude").mkdir(parents=True, exist_ok=True)
+
+    def teardown_method(self):
+        os.environ.pop("AGENT_PROJECT_ROOT", None)
+        _clean_workspace()
+
+    def _write_link_in_destino(self, motor_root: Path) -> None:
+        link = self.destino_root / ".agent" / "config" / "motor_destination_link.json"
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.write_text(
+            json.dumps(
+                {
+                    "motor_root": str(motor_root),
+                    "destination_root": str(self.destino_root),
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def test_write_to_destino_via_target_link_allowed(self, monkeypatch):
+        """cwd=motor, target=destino, destino has link with motor_root==motor -> allowed."""
+        monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+        self._write_link_in_destino(self.motor_root)
+        target = self.destino_root / ".agent" / "planning" / "foo.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        blocked, reason = _is_protected_path(
+            str(target), DEFAULT_ALLOWLIST, {}, repo_root=self.motor_root
+        )
+        assert blocked is False, reason
+
+    def test_write_to_destino_link_wrong_motor_blocked(self, monkeypatch):
+        """cwd=motor, target=destino, destino link points to a different motor -> blocked."""
+        monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+        other_motor = (TEST_WORKSPACE / "other_motor").resolve()
+        other_motor.mkdir(parents=True, exist_ok=True)
+        (other_motor / ".claude").mkdir(parents=True, exist_ok=True)
+        self._write_link_in_destino(other_motor)
+        target = self.destino_root / "src" / "main.py"
+        blocked, reason = _is_protected_path(
+            str(target), DEFAULT_ALLOWLIST, {}, repo_root=self.motor_root
+        )
+        assert blocked is True
+        assert "fuera del repo" in reason
+
+    def test_write_to_destino_no_link_blocked(self, monkeypatch):
+        """cwd=motor, target=destino, no link in destino -> blocked (fail-closed)."""
+        monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+        target = self.destino_root / "src" / "main.py"
+        blocked, reason = _is_protected_path(
+            str(target), DEFAULT_ALLOWLIST, {}, repo_root=self.motor_root
+        )
+        assert blocked is True
+        assert "fuera del repo" in reason
+
+    def test_write_to_destino_link_without_marker_blocked(self, monkeypatch):
+        """cwd=motor, target=destino, destino has link but no .claude/.git -> blocked."""
+        monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+        no_marker_dest = (TEST_WORKSPACE / "no_marker_dest").resolve()
+        no_marker_dest.mkdir(parents=True, exist_ok=True)
+        link = no_marker_dest / ".agent" / "config" / "motor_destination_link.json"
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.write_text(
+            json.dumps({"motor_root": str(self.motor_root)}), encoding="utf-8"
+        )
+        target = no_marker_dest / "src" / "main.py"
+        blocked, reason = _is_protected_path(
+            str(target), DEFAULT_ALLOWLIST, {}, repo_root=self.motor_root
+        )
+        assert blocked is True
+        assert "fuera del repo" in reason
+
+    def test_outside_both_roots_still_blocked(self, monkeypatch):
+        """cwd=motor, target outside motor+destino, destino has valid link -> blocked."""
+        monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+        self._write_link_in_destino(self.motor_root)
+        target = self.outside_root / "evil.py"
+        blocked, reason = _is_protected_path(
+            str(target), DEFAULT_ALLOWLIST, {}, repo_root=self.motor_root
+        )
+        assert blocked is True
+        assert "fuera del repo" in reason
+
+
 class TestGitSegmentMatch:
     r"""WOT-2026-004b: the .git protection must match the internal git dir as a
     path segment, NOT as a substring. Barrier against the over-match where the

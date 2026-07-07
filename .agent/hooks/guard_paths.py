@@ -115,7 +115,36 @@ def _has_repo_marker(candidate: Path) -> bool:
     return (candidate / ".claude").exists() or (candidate / ".git").exists()
 
 
-def _resolve_extra_root(repo_root: Path) -> Path | None:
+def _resolve_destino_from_target(path_obj: Path, repo_root: Path) -> Path | None:
+    """WOT-2026-020a: resolve a destino root from the target path's ancestors.
+
+    Walks the target's ancestors looking for a ``motor_destination_link.json``
+    whose ``motor_root`` resolves to ``repo_root`` -- the real topology where
+    the link lives in the destino, not the motor. Fail-closed when the link is
+    missing, malformed, points to a different motor, or the ancestor lacks a
+    repo marker.
+    """
+    for ancestor in [path_obj, *path_obj.parents]:
+        link = ancestor / ".agent" / "config" / "motor_destination_link.json"
+        if not link.exists():
+            continue
+        try:
+            motor_root_value = json.loads(link.read_text(encoding="utf-8"))[
+                "motor_root"
+            ]
+        except (json.JSONDecodeError, OSError, KeyError, TypeError):
+            return None
+        try:
+            linked_motor = Path(motor_root_value).resolve()
+        except (OSError, ValueError):
+            return None
+        if linked_motor == repo_root and _has_repo_marker(ancestor):
+            return ancestor
+        return None
+    return None
+
+
+def _resolve_extra_root(repo_root: Path, path_obj: Path | None = None) -> Path | None:
     """Resolve a second valid root beyond ``repo_root``.
 
     Source 1: ``AGENT_PROJECT_ROOT`` env var (already-official orchestrator
@@ -124,8 +153,13 @@ def _resolve_extra_root(repo_root: Path) -> Path | None:
     from ``<repo_root>/.agent/config/motor_destination_link.json`` -- same
     fail-safe read pattern as ``resolve_guard_paths`` in
     ``claude_guard_entry.py`` and ``motor_checkpoint.py::resolve_destino_root``.
+    Source 3 (WOT-2026-020a, fallback after source 2): walk the target path's
+    ancestors looking for a ``motor_destination_link.json`` whose ``motor_root``
+    resolves to ``repo_root`` -- the real topology where the link lives in the
+    destino, not the motor. Fail-closed when the link is missing, malformed,
+    points to a different motor, or the ancestor lacks a repo marker.
 
-    Returns ``None`` (fail-safe, never raises) when neither source resolves,
+    Returns ``None`` (fail-safe, never raises) when no source resolves,
     when the resolved value is malformed, when the resolved path does not
     exist on disk, or when the path lacks a repo marker (``.claude``/``.git``)
     -- WOT-2026-019h: fail-closed against arbitrary dirs widening the write
@@ -147,15 +181,18 @@ def _resolve_extra_root(repo_root: Path) -> Path | None:
             "destination_root"
         ]
     except (json.JSONDecodeError, OSError, KeyError, TypeError):
-        return None
-    if not isinstance(destination_root, str) or not destination_root.strip():
-        return None
-    try:
-        candidate = Path(destination_root).resolve()
-    except (OSError, ValueError):
-        return None
-    if candidate.exists() and _has_repo_marker(candidate):
-        return candidate
+        destination_root = None
+    if isinstance(destination_root, str) and destination_root.strip():
+        try:
+            candidate = Path(destination_root).resolve()
+        except (OSError, ValueError):
+            candidate = None
+        if candidate is not None and candidate.exists() and _has_repo_marker(candidate):
+            return candidate
+
+    if path_obj is not None:
+        return _resolve_destino_from_target(path_obj, repo_root)
+
     return None
 
 
@@ -197,7 +234,7 @@ def _is_protected_path(
 
     effective_root = repo_root
     if not _is_within_repo(path_obj, repo_root):
-        extra_root = _resolve_extra_root(repo_root)
+        extra_root = _resolve_extra_root(repo_root, path_obj)
         if extra_root is None or not _is_within_repo(path_obj, extra_root):
             return True, "fuera del repo"
         effective_root = extra_root
