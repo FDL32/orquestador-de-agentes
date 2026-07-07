@@ -503,6 +503,46 @@ class TestExtraRootDestination:
         assert blocked is True
         assert "archivo protegido" in reason
 
+    def test_extra_root_without_marker_rejected(self, monkeypatch):
+        """WOT-2026-019h: a dir without .claude/.git marker must NOT be
+        accepted as extra root. Write under it stays blocked (fail-closed)."""
+        no_marker = (TEST_WORKSPACE / "no_marker").resolve()
+        no_marker.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setenv("AGENT_PROJECT_ROOT", str(no_marker))
+        target = no_marker / "evil.py"
+        blocked, reason = _is_protected_path(
+            str(target), DEFAULT_ALLOWLIST, {}, repo_root=self.motor_root
+        )
+        assert blocked is True
+        assert "fuera del repo" in reason
+
+    def test_extra_root_with_git_marker_accepted(self, monkeypatch):
+        """WOT-2026-019h: a dir with .git (but no .claude) IS accepted as
+        extra root. Covers repos using Codex/OpenCode backends without .claude."""
+        git_only = (TEST_WORKSPACE / "git_only").resolve()
+        git_only.mkdir(parents=True, exist_ok=True)
+        (git_only / ".git").mkdir(parents=True, exist_ok=True)
+        monkeypatch.setenv("AGENT_PROJECT_ROOT", str(git_only))
+        target = git_only / "src" / "main.py"
+        blocked, reason = _is_protected_path(
+            str(target), DEFAULT_ALLOWLIST, {}, repo_root=self.motor_root
+        )
+        assert blocked is False, reason
+
+    def test_link_destination_without_marker_rejected(self, monkeypatch):
+        """WOT-2026-019h: link destination_root without .claude/.git marker
+        must NOT be accepted as extra root (fail-closed via link source)."""
+        no_marker_dest = (TEST_WORKSPACE / "no_marker_dest").resolve()
+        no_marker_dest.mkdir(parents=True, exist_ok=True)
+        monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+        self._write_link(no_marker_dest)
+        target = no_marker_dest / "evil.py"
+        blocked, reason = _is_protected_path(
+            str(target), DEFAULT_ALLOWLIST, {}, repo_root=self.motor_root
+        )
+        assert blocked is True
+        assert "fuera del repo" in reason
+
 
 class TestGitSegmentMatch:
     r"""WOT-2026-004b: the .git protection must match the internal git dir as a

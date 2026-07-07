@@ -105,6 +105,16 @@ def _is_within_repo(path_obj: Path, repo_root: Path) -> bool:
         return False
 
 
+def _has_repo_marker(candidate: Path) -> bool:
+    """Check if a directory has a repo marker (``.claude`` or ``.git``).
+
+    Same fail-closed criterion as ``resolve_repo_root`` in
+    ``claude_guard_entry.py`` uses ``.claude`` for the first root; ``.git``
+    covers repos without ``.claude`` (e.g. Codex/OpenCode backends).
+    """
+    return (candidate / ".claude").exists() or (candidate / ".git").exists()
+
+
 def _resolve_extra_root(repo_root: Path) -> Path | None:
     """Resolve a second valid root beyond ``repo_root``.
 
@@ -116,8 +126,10 @@ def _resolve_extra_root(repo_root: Path) -> Path | None:
     ``claude_guard_entry.py`` and ``motor_checkpoint.py::resolve_destino_root``.
 
     Returns ``None`` (fail-safe, never raises) when neither source resolves,
-    when the resolved value is malformed, or when the resolved path does not
-    exist on disk (no phantom root that would never block anything).
+    when the resolved value is malformed, when the resolved path does not
+    exist on disk, or when the path lacks a repo marker (``.claude``/``.git``)
+    -- WOT-2026-019h: fail-closed against arbitrary dirs widening the write
+    surface beyond a known repo.
     """
     env_value = os.environ.get("AGENT_PROJECT_ROOT", "").strip()
     if env_value:
@@ -125,7 +137,9 @@ def _resolve_extra_root(repo_root: Path) -> Path | None:
             candidate = Path(env_value).resolve()
         except (OSError, ValueError):
             return None
-        return candidate if candidate.exists() else None
+        if candidate.exists() and _has_repo_marker(candidate):
+            return candidate
+        return None
 
     link = repo_root / ".agent" / "config" / "motor_destination_link.json"
     try:
@@ -140,7 +154,9 @@ def _resolve_extra_root(repo_root: Path) -> Path | None:
         candidate = Path(destination_root).resolve()
     except (OSError, ValueError):
         return None
-    return candidate if candidate.exists() else None
+    if candidate.exists() and _has_repo_marker(candidate):
+        return candidate
+    return None
 
 
 def _matches_any_pattern(text: str, patterns: tuple[str, ...]) -> str | None:
