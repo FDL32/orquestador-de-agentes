@@ -19,8 +19,12 @@
          worktree, `git worktree add ..\orquestador_de_agentes_dev main`.
          Si ya existe, se reporta y se continua (idempotente).
       3. Si `..\orquestador_de_agentes_dev\.venv\Scripts\python.exe` no
-         existe, `uv venv` seguido de `uv sync` dentro de la worktree. Si ya
-         existe, se reporta y se continua (idempotente).
+         existe, se crea con `uv venv` dentro de la worktree. Si ya existe,
+         se reporta y se continua (creacion del venv idempotente). En ambos
+         casos se ejecuta `uv sync` a continuacion, siempre, para que las
+         dependencias queden sincronizadas aunque el venv ya existiera con
+         dependencias faltantes o desactualizadas (`uv sync` es idempotente
+         por diseno: no reinstala lo ya sincronizado).
 
     Modo `-Remove`: `git worktree remove ..\orquestador_de_agentes_dev`
     seguido de `git checkout main` en el checkout principal (re-ata la
@@ -173,28 +177,50 @@ function Step-CreateWorktree {
 }
 
 function Step-CreateVenv {
+    # WOT-2026-019s: la creacion del venv (`uv venv`) sigue siendo
+    # condicional a que falte python.exe, pero `uv sync` se ejecuta SIEMPRE
+    # (tanto si el venv se acaba de crear como si ya existia), porque un
+    # venv con python.exe presente puede tener dependencias faltantes o
+    # desincronizadas (p.ej. una corrida anterior de `uv sync` fallo o se
+    # interrumpio, o pyproject.toml/uv.lock cambiaron despues). `uv sync` es
+    # idempotente por diseno, asi que correrlo de mas no tiene costo
+    # funcional relevante frente al riesgo de un venv incompleto silencioso.
     $venvPython = Join-Path $script:WorktreePath '.venv\Scripts\python.exe'
+    $venvJustCreated = $false
     if (-not (Test-Path -LiteralPath $venvPython)) {
-        if ($PSCmdlet.ShouldProcess($script:WorktreePath, 'uv venv && uv sync')) {
+        if ($PSCmdlet.ShouldProcess($script:WorktreePath, 'uv venv')) {
             Push-Location $script:WorktreePath
             try {
                 & uv venv
                 if ($LASTEXITCODE -ne 0) {
                     throw "uv venv fallo con exit code $LASTEXITCODE"
                 }
-                & uv sync
-                if ($LASTEXITCODE -ne 0) {
-                    throw "uv sync fallo con exit code $LASTEXITCODE"
-                }
             }
             finally {
                 Pop-Location
             }
+            $venvJustCreated = $true
             Write-Host "[setup-dev-worktree] venv propio creado en $venvPython."
         }
     }
     else {
-        Write-Host "[setup-dev-worktree] El venv de la worktree ya existe en $venvPython (idempotente, sin cambios)."
+        Write-Host "[setup-dev-worktree] El venv de la worktree ya existe en $venvPython (se resincronizan dependencias)."
+    }
+
+    if ($PSCmdlet.ShouldProcess($script:WorktreePath, 'uv sync')) {
+        Push-Location $script:WorktreePath
+        try {
+            & uv sync
+            if ($LASTEXITCODE -ne 0) {
+                throw "uv sync fallo con exit code $LASTEXITCODE"
+            }
+        }
+        finally {
+            Pop-Location
+        }
+        if (-not $venvJustCreated) {
+            Write-Host "[setup-dev-worktree] Dependencias del venv resincronizadas con uv sync."
+        }
     }
 }
 

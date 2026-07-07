@@ -57,6 +57,27 @@ if "%1"=="sync" (
 exit /b 0
 """
 
+# WOT-2026-019s: the shared _FAKE_UV_BAT above intentionally does not record
+# `uv sync` invocations (the pre-existing tests do not need it, and touching
+# the shared fake risks perturbing their exact stdout/stderr expectations).
+# This variant is local to test_second_run_resyncs_existing_venv: it behaves
+# identically to _FAKE_UV_BAT except the "sync" branch appends one line to a
+# marker file inside the fixture repo's cwd BEFORE exiting, so the test can
+# read back how many times `uv sync` actually ran across successive
+# invocations of the script.
+_FAKE_UV_BAT_WITH_SYNC_LOG = """@echo off
+if "%1"=="venv" (
+    mkdir "%CD%\\.venv\\Scripts" 2>nul
+    echo fake > "%CD%\\.venv\\Scripts\\python.exe"
+    exit /b 0
+)
+if "%1"=="sync" (
+    echo sync >> "%CD%\\.uv_sync_calls.log"
+    exit /b 0
+)
+exit /b 0
+"""
+
 
 def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
     return subprocess.run(
@@ -96,11 +117,11 @@ def _init_fixture_repo(repo_path: Path) -> None:
     assert commit.returncode == 0, commit.stderr
 
 
-def _fake_uv_dir(tmp_path: Path) -> Path:
+def _fake_uv_dir(tmp_path: Path, script: str = _FAKE_UV_BAT) -> Path:
     """Create a directory containing a fake `uv.bat` shim to prepend to PATH."""
     fake_bin = tmp_path / "fake_bin"
     fake_bin.mkdir(parents=True, exist_ok=True)
-    (fake_bin / "uv.bat").write_text(_FAKE_UV_BAT, encoding="utf-8")
+    (fake_bin / "uv.bat").write_text(script, encoding="utf-8")
     return fake_bin
 
 
@@ -326,3 +347,60 @@ def test_regression_add_without_detach_first_fails(fixture_repo) -> None:
 
     assert result.returncode != 0
     assert "already used by worktree" in result.stderr
+
+
+def test_second_run_resyncs_existing_venv(tmp_path: Path) -> None:
+    """WOT-2026-019s barrier: Step-CreateVenv must run `uv sync` on every
+    invocation, not just the first one where `.venv\\Scripts\\python.exe` is
+    absent. A venv can have python.exe present but dependencies missing or
+    stale (e.g. a prior `uv sync` failed or pyproject.toml/uv.lock changed
+    after the venv was created); silently skipping `uv sync` on subsequent
+    runs would report false success while leaving the venv incomplete.
+
+    Uses a local fake uv.bat (_FAKE_UV_BAT_WITH_SYNC_LOG) that appends a line
+    to `.uv_sync_calls.log` inside the worktree-dev on every `uv sync`
+    invocation, so the number of recorded syncs across successive script runs
+    is readable from Python without parsing the script's own stdout.
+
+    FAIL-sin-fix: with the pre-019s script, Step-CreateVenv's `else` branch
+    (python.exe already exists) never calls `uv`, so the log stays at 1 line
+    after the second run (this test fails on that assertion).
+    PASS-con-fix: `uv sync` runs unconditionally, so the log reaches 2 lines
+    after the second run.
+    """
+    if _POWERSHELL is None:
+        pytest.skip("PowerShell not available on this host")
+
+    repo_path = tmp_path / "fixture_repo"
+    _init_fixture_repo(repo_path)
+    fake_uv_dir = _fake_uv_dir(tmp_path, script=_FAKE_UV_BAT_WITH_SYNC_LOG)
+    worktree_path = _worktree_dev_path(repo_path)
+    sync_log = worktree_path / ".uv_sync_calls.log"
+
+    try:
+        first = _run_script(repo_path, [], fake_uv_dir)
+        assert first.returncode == 0, (
+            f"first run should succeed; stdout={first.stdout}\nstderr={first.stderr}"
+        )
+        venv_python = worktree_path / ".venv" / "Scripts" / "python.exe"
+        assert venv_python.is_file(), "fake uv venv step did not materialize python.exe"
+
+        first_lines = sync_log.read_text(encoding="utf-8").splitlines()
+        assert len(first_lines) == 1, (
+            "uv sync should be invoked exactly once on the first run (venv "
+            f"just created); log contents={first_lines!r}"
+        )
+
+        second = _run_script(repo_path, [], fake_uv_dir)
+        assert second.returncode == 0, (
+            f"second run should succeed; stdout={second.stdout}\nstderr={second.stderr}"
+        )
+
+        second_lines = sync_log.read_text(encoding="utf-8").splitlines()
+        assert len(second_lines) == 2, (
+            "uv sync must be invoked again on the second run even though "
+            "python.exe already exists (Step-CreateVenv must not skip "
+            f"dependency sync); log contents={second_lines!r}"
+        )
+    finally:
+        _cleanup_worktree(repo_path, worktree_path)
