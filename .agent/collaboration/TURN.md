@@ -1,6 +1,6 @@
 # TURNO ACTUAL
 
-**Ultima actualizacion:** 2026-07-07
+**Ultima actualizacion:** 2026-07-07 18:25:00
 
 ---
 
@@ -8,18 +8,17 @@
 
 | Campo | Valor |
 |-------|-------|
-| **ROL** | **ORQUESTADOR** |
-| **Plan ID** | WOT-2026-020d |
+| **ROL** | **MANAGER** |
+| **Plan ID** | N/A |
 | **Tipo** | IMPLEMENTATION |
-| **Accion** | CLOSE |
+| **Accion** | CREATE_PLAN |
 
 ---
 
 ## Instruccion
 
-> Ticket WOT-2026-020d (fix is_motor_code_only + .gitignore) cerrado localmente.
-> Siguiente: WOT-2026-020e (git rm 38 archivos contaminados). Cadena local, push
-> unico al final con OK humano explicito.
+> Sesion 2026-0707 cerrada (WOT-2026-020d + WOT-2026-020e: limpieza de
+> contaminacion del motor). Esperando nuevo ticket del backlog.
 
 ---
 
@@ -32,4 +31,4 @@
 
 ---
 
-*Generado por orquestador (cierre pragmatico: fix bloquea mark-ready en motor)*
+*Generado por orquestador (cierre pragmatico: --session-close bloqueado por fix 020d)*
