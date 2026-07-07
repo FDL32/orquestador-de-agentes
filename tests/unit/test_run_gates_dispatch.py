@@ -357,7 +357,7 @@ def test_resolve_motor_root_path_returns_resolved_path(tmp_path):
 
 
 def test_run_gates_dispatch_importable_without_module_shadowing():
-    """Regression: running the script must not shadow runtime.motor_link.
+    """Regression: importing the script must not shadow runtime.motor_link.
 
     Before the fix, run_gates_dispatch.py inserted `.agent` into sys.path at
     module level (before importing runtime.motor_link inside
@@ -370,9 +370,33 @@ def test_run_gates_dispatch_importable_without_module_shadowing():
     re-exercise the module-level import failure. This test invokes the script
     as an independent subprocess instead, using sys.executable so it runs
     under the same interpreter as the pytest process itself.
+
+    WOT-2026-019k: the subprocess loads the script via spec_from_file_location
+    + module_from_spec + exec_module (import-as-module) instead of running it
+    as `__main__`. This still executes every module-level statement -- imports,
+    PROJECT_ROOT, and MOTOR_ROOT = resolve_motor_root_path(PROJECT_ROOT) at
+    line 67, which is what raised ModuleNotFoundError before the 019i fix --
+    but leaves `__name__` set to the probe module name instead of "__main__",
+    so the `if __name__ == "__main__": main()` guard at the bottom of the
+    script stays False and main() (which drives ruff, pytest-safe, and every
+    other quality gate, ~165s) never runs. This bounds the regression check to
+    the ~0.1s it takes to exercise the import, without weakening what it
+    verifies.
     """
+    exec_module_only_snippet = (
+        "import importlib.util, sys\n"
+        "from pathlib import Path\n"
+        "project_root = Path(sys.argv[1]).resolve()\n"
+        "spec = importlib.util.spec_from_file_location(\n"
+        "    'run_gates_dispatch_module_probe',\n"
+        "    project_root / 'scripts' / 'run_gates_dispatch.py',\n"
+        ")\n"
+        "module = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(module)\n"
+    )
+
     result = subprocess.run(
-        [sys.executable, str(PROJECT_ROOT / "scripts" / "run_gates_dispatch.py")],
+        [sys.executable, "-c", exec_module_only_snippet, str(PROJECT_ROOT)],
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
@@ -380,3 +404,4 @@ def test_run_gates_dispatch_importable_without_module_shadowing():
 
     assert "ModuleNotFoundError" not in result.stderr
     assert "No module named 'runtime.motor_link'" not in result.stderr
+    assert "[dispatch]" not in result.stdout

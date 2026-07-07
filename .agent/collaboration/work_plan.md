@@ -1,10 +1,10 @@
-# Work Plan - WOT-2026-019p
+# Work Plan - WOT-2026-019k
 
 ## Metadata
-- **ID:** WOT-2026-019p
+- **ID:** WOT-2026-019k
 - **Estado:** COMPLETED
 - **deliverable_type:** code
-- **Titulo:** Retry acotado en write_artifact_atomic ante PermissionError transitorio de os.replace (WinError 5)
+- **Titulo:** Acotar test_run_gates_dispatch_importable_without_module_shadowing a subprocess de solo-import (sin main/gates), de ~165s a menos de 1s
 - **Creado:** 2026-07-07
 - **Prioridad:** Media
 - **Asignado a:** Builder
@@ -12,81 +12,59 @@
 
 ## Objetivo
 
-Anadir un retry con backoff acotado ante PermissionError transitorio
-(WinError 5 en Windows) alrededor del rename atomico de
-write_artifact_atomic (`bus/supervisor.py`), extraido a dos funciones de
-modulo (`_replace_once_or_none` y `_atomic_replace_with_retry`) para no
-elevar la complejidad ciclomatica de write_artifact_atomic por encima del
-limite C90=10 (ruff C901) y sin anidar un try/except dentro de un for
-(ruff PERF203), preservando el fail-closed si el rename sigue fallando
-tras agotar los reintentos. Exito verificable con dos tests nuevos en
-`tests/test_approval_state_revision_and_skill_access.py` (positivo y
-negativo) mas `ruff check` en exit code 0 sobre `bus/supervisor.py`.
+Reducir el coste de test_run_gates_dispatch_importable_without_module_shadowing
+(tests/unit/test_run_gates_dispatch.py) de ~165 segundos a menos de 1 segundo,
+acotando el subprocess de verificacion a ejecutar SOLO el codigo a nivel de
+modulo de scripts/run_gates_dispatch.py (hasta MOTOR_ROOT inclusive, linea
+67) sin invocar main() (linea 229), preservando integramente la capacidad de
+la barrera de detectar el shadowing de runtime.motor_link que causo el bug de
+WOT-2026-019i.
 
 ## Contexto / Root Cause
 
-tests/test_supervisor.py::test_bootstrap_bus_precedence_over_turn_divergence
-fallo 1 vez con PermissionError [WinError 5] Acceso denegado durante el
-rename atomico .tmp_XXXX.tmp -> supervisor_state.json. Evidencia: log de
-019m (2026-07-06); el mismo test aislado paso 3/3 y una re-corrida completa
-de la suite sobre el mismo HEAD dio exit 0, transitorio confirmado, no un
-fallo deterministico de logica.
-
-Superficie exacta: bus/supervisor.py, metodo write_artifact_atomic,
-bloque l.234-249:
-
-    fd, temp_path = tempfile.mkstemp(
-        dir=str(artifact_path.parent), prefix=".tmp_", suffix=".tmp",
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(new_content)
-        os.replace(temp_path, str(artifact_path))
-    except Exception:
-        import contextlib
-        with contextlib.suppress(OSError):
-            os.unlink(temp_path)
-        raise
-
-El for attempt in range(max_retries) externo (l.195) solo reintenta ante
-FileExistsError del lock (conflicto OCC/lock), no ante un PermissionError
-del os.replace: el except Exception de l.244 limpia el temp file y
-re-lanza sin reintentar. Causa probable: otro proceso (antivirus,
-indexador de Windows, handle residual) retiene brevemente el .tmp entre
-el open y el rename.
+El test actual invoca el script completo como __main__
+(subprocess.run([sys.executable, str(PROJECT_ROOT / "scripts" /
+"run_gates_dispatch.py")], cwd=PROJECT_ROOT, ...)),
+tests/unit/test_run_gates_dispatch.py:374-379,
+lo que ejecuta main() -> arranca ruff, run_pytest_safe.py y el resto de
+gates de calidad (~165s, confirmado por Review 2 de 019i: "1 passed in
+164.48s"). Pero el fallo original de 019i (ModuleNotFoundError: No module
+named 'runtime.motor_link') ocurria en MOTOR_ROOT =
+resolve_motor_root_path(PROJECT_ROOT) (scripts/run_gates_dispatch.py:67),
+que internamente llama from runtime.motor_link import resolve_motor_root
+(scripts/run_gates_dispatch.py:58) -- codigo a NIVEL DE MODULO, ejecutado
+mucho antes de que main() (linea 229) sea siquiera invocado. Confirmado por
+lectura completa de scripts/run_gates_dispatch.py lineas 1-76: nada entre la
+linea 1 y la linea 67 (bootstrap de sys.path, definicion de
+_import_scope_gate, resolve_project_root_path, get_collab_dir_path,
+resolve_motor_root_path, y la asignacion de MOTOR_ROOT) arranca un
+subprocess ni ejecuta gates; el primer subprocess de gates ocurre dentro de
+run_code_gates (linea 161 en adelante), que solo se llama desde main().
+El subprocess completo del test actual es, por tanto, ~165s de trabajo
+desperdiciado para verificar un import que falla o no falla en menos de 0.2s.
 
 ## Non-goals
 
-- No se toca el retry OCC externo del lock (for attempt in
-  range(max_retries), l.195-216) ni su logica de deteccion de lock
-  obsoleto (stale lock recovery, l.200-206).
-- No se cambia la firma de write_artifact_atomic (parametros, tipo de
-  retorno, excepciones publicas).
-- No se anaden dependencias externas nuevas; el retry usa unicamente
-  time.sleep (ya importado en el metodo, l.190) y manejo de excepciones
-  estandar.
-- No se modifica el comportamiento en el caso feliz (sin PermissionError):
-  el retorno y el contenido escrito son identicos a hoy.
-- No se usa `# noqa: C901` bajo ninguna circunstancia para resolver el
-  hallazgo de complejidad; la resolucion es la extraccion de las 2
-  funciones descrita en la Fase 1.1 y en Decision Arquitectonica.
-- No se usa `# noqa: PERF203` como primera respuesta al hallazgo de
-  overhead try/except-en-loop; la Fase 1.1 exige primero la
-  reestructuracion en 2 funciones (verificada empiricamente por el
-  Manager antes de aprobar este plan: ruff check da "All checks passed!"
-  con esa estructura). Un `# noqa: PERF203` puntual y documentado solo
-  se autoriza como ultimo recurso si el Manager, en el review, confirma
-  que la reestructuracion entregada por el Builder difiere de la
-  especificada y ruff sigue reportando PERF203 pese a ello.
-- No se usa un per-file-ignore en pyproject.toml para PERF203 sobre
-  bus/supervisor.py (silenciaria PERF203 en todo el archivo, no solo en
-  el punto puntual; el unico precedente de ese ignore en el repo es
-  sobre un archivo de tests, no sobre codigo de produccion).
+- No se modifica scripts/run_gates_dispatch.py (produccion). El fix es
+  exclusivamente del test.
+- No se anade ningun assert de wall-clock (medicion de tiempo) al test nuevo;
+  seria flaky en CI. La verificacion de "no ejecuta gates" es estructural
+  (ausencia de los strings de stdout que main()/run_code_gates emiten, ver
+  Fase 1.2), no temporal.
+- No se elimina el aislamiento de subprocess: la verificacion sigue
+  ejecutandose en un proceso Python fresco e independiente (no se reutiliza
+  el modulo dispatch ya cargado por importlib.util al inicio del archivo
+  de test, lineas 13-18), porque reimportar en el mismo proceso no
+  re-ejercitaria el fallo de import a nivel de modulo (ya documentado en el
+  docstring actual del test, lineas 367-372).
+- No se modifica ningun otro test de tests/unit/test_run_gates_dispatch.py.
+- No se anade un marker slow ni se salta el test bajo ninguna condicion:
+  el test acotado debe correr siempre, en local y en CI, sin flags
+  especiales.
 
 ## Files Likely Touched
 
-- bus/supervisor.py
-- tests/test_approval_state_revision_and_skill_access.py
+- tests/unit/test_run_gates_dispatch.py
 
 ## Plan de Implementacion
 
@@ -95,274 +73,226 @@ el open y el rename.
 |-------|------|----------|
 | Bot | TAREA AGENTE | Builder |
 
-### Fase 1: Retry acotado extraido a 2 funciones de modulo sin try/except en el loop (Bot)
-#### 1.1: Bot Anadir _replace_once_or_none + _atomic_replace_with_retry y usarlos en write_artifact_atomic
+### Fase 1: Acotar el subprocess a solo-import, sin ejecutar main()/gates (Bot)
+
+#### 1.1: Bot Reemplazar el subprocess de script completo por un subprocess de exec_module via -c
 - **Tipo:** TAREA AGENTE
-- **Archivo:** bus/supervisor.py
+- **Archivo:** tests/unit/test_run_gates_dispatch.py
 - **Accion:** Modificar
-- **Descripcion:** ACTUALIZADO dos veces tras hallazgos de ruff:
-  (1) C901 (write_artifact_atomic supero complejidad 10 con el bucle
-  inline) resuelto extrayendo un helper de modulo; (2) PERF203
-  (try-except dentro de un for incurre en overhead) disparado por el
-  helper de un solo nivel, resuelto ahora separando el intento
-  individual del bucle de reintento en DOS funciones de modulo, ninguna
-  de las cuales tiene un try/except anidado dentro de un for. Ambas
-  verificadas empiricamente con ruff check usando el extend-select real
-  del proyecto (E, F, B, S, RUF, N, W, I, PERF, UP, C90, ERA, SIM):
-  All checks passed!.
+- **Descripcion:** En
+  test_run_gates_dispatch_importable_without_module_shadowing (lineas
+  359-383), reemplazar la invocacion actual
+  (subprocess.run([sys.executable, str(PROJECT_ROOT / "scripts" /
+  "run_gates_dispatch.py")], cwd=PROJECT_ROOT, capture_output=True,
+  text=True)) por un subprocess que ejecute el script COMO MODULO (no como
+  __main__) via python -c, de modo que el codigo a nivel de modulo
+  (incluida la linea 67, MOTOR_ROOT = resolve_motor_root_path(PROJECT_ROOT),
+  y el import problematico de la linea 58 dentro de ella) se ejecute
+  integramente, pero el bloque if __name__ == "__main__": ... main() NO se
+  dispare (su guarda es falsa al importar el archivo como modulo en vez de
+  ejecutarlo directamente).
 
-  Definir, en bus/supervisor.py, ANTES de class SequentialTicketSupervisor
-  (antes de la linea 93 actual), dos funciones de modulo nuevas, en este
-  orden:
+  Codigo exacto del subprocess (usar -c con este cuerpo, pasado como un
+  unico string; usar PROJECT_ROOT ya definido en el archivo de test,
+  linea 12, para construir la ruta absoluta del script):
 
-  1. _replace_once_or_none(temp_path: str, artifact_path: Path) ->
-     PermissionError | None: intenta os.replace(temp_path,
-     str(artifact_path)) dentro de un try/except que NO esta dentro de
-     ningun for (es una funcion de nivel superior sin loop). Si tiene
-     exito, no retorna nada explicito (retorno implicito None). Si
-     captura PermissionError, retorna el objeto de excepcion capturado
-     (except PermissionError as exc: return exc) en vez de re-lanzarlo o
-     silenciarlo.
+  ```python
+  _EXEC_MODULE_ONLY_SNIPPET = (
+      "import importlib.util, sys\n"
+      "from pathlib import Path\n"
+      "project_root = Path(sys.argv[1]).resolve()\n"
+      "spec = importlib.util.spec_from_file_location(\n"
+      "    'run_gates_dispatch_module_probe',\n"
+      "    project_root / 'scripts' / 'run_gates_dispatch.py',\n"
+      ")\n"
+      "module = importlib.util.module_from_spec(spec)\n"
+      "spec.loader.exec_module(module)\n"
+  )
 
-  2. _atomic_replace_with_retry(temp_path: str, artifact_path: Path,
-     attempts: int = 3) -> None: un bucle for replace_attempt in
-     range(attempts) SIN try/except propio (el try/except vive
-     unicamente dentro de _replace_once_or_none). En cada iteracion,
-     llama a last_error = _replace_once_or_none(temp_path,
-     artifact_path); si last_error is None, hace return inmediato
-     (exito); si no, y no es el ultimo intento
-     (replace_attempt < attempts - 1), hace un import time local y
-     time.sleep(0.01 * (replace_attempt + 1)) antes de continuar a la
-     siguiente iteracion. Si el for termina sin haber retornado (los
-     attempts intentos fallaron), hace raise last_error fuera del for,
-     re-lanzando el objeto de excepcion guardado de la ultima iteracion
-     (el traceback original permanece adjunto al objeto en Python 3; no
-     se necesita raise ... from porque no hay un except activo en el
-     punto del raise).
+  result = subprocess.run(
+      [sys.executable, "-c", _EXEC_MODULE_ONLY_SNIPPET, str(PROJECT_ROOT)],
+      cwd=PROJECT_ROOT,
+      capture_output=True,
+      text=True,
+  )
+  ```
 
-  Este diseno preserva el mismo backoff, el mismo limite de intentos (3)
-  y el mismo criterio de excepcion (PermissionError generico, sin
-  sys.platform ni .winerror) que las versiones previas, solo
-  reestructurado en 2 funciones para que ningun for contenga un
-  try/except en su cuerpo. En write_artifact_atomic, dentro del bloque
-  try existente de la escritura atomica (l.240-249 en la numeracion
-  pre-019p), la unica linea os.replace(temp_path, str(artifact_path)) se
-  sustituye por una sola linea de llamada:
-  _atomic_replace_with_retry(temp_path, artifact_path). El except
-  Exception exterior de ese mismo bloque (limpieza del .tmp con
-  os.unlink + raise) no cambia: sigue envolviendo la llamada al helper
-  igual que antes envolvia la linea de os.replace directa, preservando
-  el fail-closed. bus.supervisor.os.replace sigue siendo el punto de
-  monkeypatch correcto para los tests de la Fase 2, porque
-  _replace_once_or_none vive en el mismo modulo bus.supervisor y sigue
-  invocando os.replace (el modulo os importado a nivel de modulo, linea
-  4); ningun test de la Fase 2 cambia su mecanismo de monkeypatch.
+  Mecanismo: spec_from_file_location + module_from_spec +
+  spec.loader.exec_module(module) ejecuta el codigo de nivel superior
+  del archivo (imports, PROJECT_ROOT, MOTOR_ROOT y las definiciones de
+  funcion, lineas 10-227), equivalente a un import, no a correrlo como
+  __main__,
+  por lo que __name__ dentro del modulo ejecutado es
+  'run_gates_dispatch_module_probe' (el name pasado a
+  spec_from_file_location), NUNCA '__main__'; la guarda if __name__ ==
+  "__main__": al final de scripts/run_gates_dispatch.py permanece False y
+  main() no se invoca. Esto es el mismo mecanismo que ya usa el propio
+  archivo de test para cargar dispatch al inicio (lineas 13-18), aplicado
+  aqui dentro de un SUBPROCESO nuevo en vez del proceso pytest actual (la
+  aislacion en subprocess se preserva; solo cambia que en vez de ejecutar el
+  script como __main__, se ejecuta como modulo importado).
+
+  Mantener las 2 aserciones actuales sin cambios:
+  assert "ModuleNotFoundError" not in result.stderr y
+  assert "No module named 'runtime.motor_link'" not in result.stderr.
+
+  Actualizar el docstring del test para explicar el nuevo mecanismo acotado
+  (que solo se ejercita el import de nivel de modulo, no main()) en vez
+  del mecanismo de "invocar el script completo".
 - **Riesgo:** Bajo
-- **Criterio de Aceptacion:** git diff -- bus/supervisor.py muestra: (i)
-  dos funciones de modulo nuevas, _replace_once_or_none y
-  _atomic_replace_with_retry, definidas antes de class
-  SequentialTicketSupervisor, ninguna con un try/except anidado dentro de
-  un for; (ii) dentro de write_artifact_atomic, el bloque try de la
-  escritura atomica reemplaza el bucle inline por una unica linea de
-  llamada a _atomic_replace_with_retry; (iii) el resto del metodo
-  write_artifact_atomic (lock, OCC, lectura de revision) permanece
-  byte-identico a la version pre-019p. ruff check bus/supervisor.py sale
-  con exit code 0, sin C901 (write_artifact_atomic recupera complejidad
-  <=10) y sin PERF203 (ninguna de las 2 funciones nuevas tiene
-  try/except dentro de un for; verificado empiricamente por el Manager
-  en una reproduccion aislada con el extend-select real del proyecto
-  antes de aprobar este plan).
-- **Si falla:** Si tras esta reestructuracion ruff check SIGUE
-  reportando C901 o PERF203 sobre cualquiera de las 2 funciones nuevas o
-  sobre write_artifact_atomic, el Builder ejecuta ruff check
-  bus/supervisor.py y pega el output literal en execution_log, y escala
-  al Manager con ese output antes de anadir cualquier noqa (ver
-  Non-goals y Decision Arquitectonica: el noqa C901 sigue prohibido; un
-  noqa PERF203 puntual solo esta autorizado como ultimo recurso si el
-  Manager confirma en el review que ninguna reestructuracion adicional
-  es razonable, no como primera respuesta del Builder).
+- **Criterio de Aceptacion:** pytest
+  tests/unit/test_run_gates_dispatch.py -k
+  test_run_gates_dispatch_importable_without_module_shadowing -v --durations=1
+  pasa (exit 0) y la duracion reportada por --durations=1 para ese test es
+  menor a 5 segundos (verificacion manual del Builder al documentar en
+  execution_log; NO se anade un assert de tiempo dentro del test, ver
+  Non-goals). El test ya no imprime en su output ninguna de las cadenas que
+  emite main()/run_code_gates ("[dispatch] Running ruff check",
+  "[dispatch] Running pytest-safe"), verificable inspeccionando
+  result.stdout y result.stderr del subprocess dentro del propio test
+  (ver criterio 1.2, que formaliza esto como assert).
+- **Si falla:** Si spec.loader.exec_module no reproduce el
+  ModuleNotFoundError original en absoluto (ni siquiera con la mutation de
+  2.1), escalar al Manager con el output literal antes de volver al
+  subprocess de script completo.
 
-### Fase 2: Test de barrera cross-platform (Bot)
-#### 2.1: Bot Test positivo, retry exitoso ante PermissionError transitorio
+#### 1.2: Bot Assert estructural de "no se ejecutaron gates" (sin medir tiempo)
 - **Tipo:** TAREA AGENTE
-- **Archivo:** tests/test_approval_state_revision_and_skill_access.py
-- **Accion:** Modificar (anadir tests nuevos junto a
-  test_supervisor_write_artifact_atomic y variantes existentes)
-- **Descripcion:** Anadir la funcion de test
-  test_supervisor_write_artifact_atomic_retries_transient_permission_error
-  con parametros (tmp_path, monkeypatch): instanciar
-  SequentialTicketSupervisor igual que test_supervisor_write_artifact_atomic
-  (mismo patron de collaboration_dir, runtime_dir, auto_sync=False).
-  Monkeypatchear bus.supervisor.os.replace con una funcion que use un
-  contador (closure o list mutable) para lanzar PermissionError(5,
-  "Access is denied") en la 1a invocacion y, en la 2a invocacion,
-  delegar al os.replace real (guardar referencia al original ANTES de
-  monkeypatchear, via original_replace = bus.supervisor.os.replace, y
-  llamarlo dentro del fake). Llamar
-  supervisor.write_artifact_atomic(test_file, new_content) y verificar:
-  (a) no propaga ninguna excepcion; (b) el valor de retorno (revision)
-  no es None; (c) test_file.read_text(encoding="utf-8") == new_content;
-  (d) el contador de invocaciones del fake es exactamente 2. El test no
-  depende de sys.platform ni asume Windows: construye el PermissionError
-  manualmente y no lee el atributo winerror (Windows-only).
+- **Archivo:** tests/unit/test_run_gates_dispatch.py
+- **Accion:** Modificar (mismo test de 1.1)
+- **Descripcion:** Anadir, junto a las 2 aserciones existentes, una tercera
+  asercion que confirme estructuralmente que main() no corrio: assert
+  "[dispatch]" not in result.stdout. El prefijo "[dispatch]" es el que
+  aparece en los print() de main(), run_code_gates y
+  run_deliverable_gates y sus sub-pasos (confirmado por lectura de
+  scripts/run_gates_dispatch.py: cada print(...) desde la linea 86 en
+  adelante usa el prefijo "[dispatch]" o f"[dispatch] ..."); el codigo a
+  nivel de modulo (lineas 1-76, incluida resolve_motor_root_path) no
+  imprime nada con ese prefijo. Esta asercion es la evidencia estructural de
+  que el subprocess acotado no ejecuto ningun gate, sin depender de medir
+  wall-clock.
 - **Riesgo:** Bajo
-- **Criterio de Aceptacion:** El test nuevo, ejecutado solo con pytest
-  apuntando a
-  tests/test_approval_state_revision_and_skill_access.py y el nombre
-  test_supervisor_write_artifact_atomic_retries_transient_permission_error
-  con -v, pasa (exit 0) DESPUES del fix de la Fase 1
-  (_replace_once_or_none + _atomic_replace_with_retry en uso). MUTATION:
-  revirtiendo temporalmente el call-site de write_artifact_atomic a la
-  linea directa os.replace(temp_path, str(artifact_path)) sin retry (o
-  haciendo que _atomic_replace_with_retry haga return tras la primera
-  llamada a _replace_once_or_none sin reintentar), el mismo test FALLA
-  (la PermissionError de la 1a invocacion se propaga sin llegar a la 2a).
-  El Builder documenta en execution_log el comando literal FAIL-sin-fix
-  y PASS-con-fix.
-- **Si falla:** Escalar al Manager si el monkeypatch de os.replace no es
-  interceptable en el punto esperado (p.ej. si el import de os en
-  bus/supervisor.py cambiase de forma); no improvisar un mecanismo de
-  fallo distinto sin documentarlo.
+- **Criterio de Aceptacion:** El test con las 3 aserciones (2 existentes +
+  la nueva de "[dispatch]" not in result.stdout) pasa en exit 0 sobre el
+  commit de entrega (post-1.1).
+- **Si falla:** Si "[dispatch]" aparece en stdout del subprocess acotado
+  (indicando que el codigo de nivel-modulo ejecuta un print con ese
+  prefijo), escalar al Manager: implicaria que el analisis de Fase 0 sobre
+  el codigo a nivel de modulo era incompleto y el diseno de la Fase 1
+  necesita revisarse antes de continuar.
 
-#### 2.2: Bot Test negativo, fail-closed tras agotar reintentos
+### Fase 2: Mutation-verify sin tocar produccion de forma permanente (Bot)
+
+#### 2.1: Bot Verificar que el test acotado sigue fallando ante el shadowing reintroducido
 - **Tipo:** TAREA AGENTE
-- **Archivo:** tests/test_approval_state_revision_and_skill_access.py
-- **Accion:** Modificar (anadir junto al test de 2.1)
-- **Descripcion:** Anadir la funcion de test
-  test_supervisor_write_artifact_atomic_reraises_after_exhausting_replace_retries
-  con parametros (tmp_path, monkeypatch): mismo patron de instanciacion.
-  Monkeypatchear bus.supervisor.os.replace con una funcion que SIEMPRE
-  lanza PermissionError(5, "Access is denied") en las 3 invocaciones (o
-  las que defina attempts en _atomic_replace_with_retry, por defecto 3). Verificar con pytest.raises(PermissionError)
-  que supervisor.write_artifact_atomic(test_file, new_content) re-lanza
-  la excepcion original tras agotar los reintentos (no la oculta ni la
-  convierte en ConcurrentStateError ni en ningun otro tipo). Verificar
-  tambien que el archivo temporal con prefijo .tmp_ y sufijo .tmp no
-  queda huerfano en collaboration_dir tras la excepcion (el except
-  Exception exterior de l.244-249 ya limpia el temp con os.unlink; el
-  test confirma que list(collaboration_dir.glob) para ese patron da
-  lista vacia despues de la excepcion).
+- **Archivo:** tests/unit/test_run_gates_dispatch.py (verificacion manual,
+  sin commit del estado mutado)
+- **Accion:** Verificar (mutation temporal, no permanente)
+- **Descripcion:** Reproducir localmente, sin modificar
+  scripts/run_gates_dispatch.py de forma permanente, el bug pre-019i:
+  revertir temporalmente (en el working tree, sin commitear) el fix de
+  019i en scripts/run_gates_dispatch.py -- reinsertar
+  sys.path.insert(0, str(_PROJECT_ROOT_BOOTSTRAP / ".agent")) a nivel de
+  modulo ANTES de la definicion de _import_scope_gate y volver a un
+  import scope_gate global tal como estaba antes del commit 5a7d973 (ver
+  git show 5a7d973 -- scripts/run_gates_dispatch.py para el diff exacto a
+  revertir) -- y confirmar que el test acotado de la Fase 1 FALLA con el
+  mismo ModuleNotFoundError: No module named 'runtime.motor_link' que
+  capturaba el test original. Verificado por el Manager antes de aprobar
+  este plan: simplemente insertar .agent en sys.path DESPUES de que el
+  propio script ya inserta _PROJECT_ROOT_BOOTSTRAP en el indice 0 NO
+  reproduce el bug (el script post-fix prioriza la raiz del proyecto); la
+  mutation debe revertir el ORDEN real del commit 5a7d973 (insertar .agent
+  en el indice 0 ANTES de insertar la raiz del proyecto, exactamente como
+  estaba pre-019i), no una insercion adicional posterior. Tras confirmar el
+  FAIL, restaurar el archivo a su estado del commit de entrega con
+  git checkout -- scripts/run_gates_dispatch.py (o equivalente) antes de
+  continuar; el archivo de produccion no debe quedar modificado en el
+  commit final de este ticket.
 - **Riesgo:** Bajo
-- **Criterio de Aceptacion:** El test pasa (exit 0) tras el fix de la
-  Fase 1 (helper _atomic_replace_with_retry en uso; confirma que el
-  fail-closed final sigue re-lanzando en vez de tragarse el error
-  indefinidamente). No requiere mutation adicional: este test ya pasa
-  incluso SIN el fix de la Fase 1 (hoy tambien re-lanza, solo que en el
-  primer intento); su proposito es fijar el contrato de fail-closed para
-  que un futuro cambio no lo rompa silenciosamente. El Builder lo
-  documenta como test de regresion, no como test que distingue
-  pre/post-fix.
-- **Si falla:** Escalar al Manager si el temp file queda huerfano tras
-  agotar los reintentos (indicaria que el cleanup de l.246-248 no cubre
-  el nuevo bucle).
+- **Criterio de Aceptacion:** Con el fix de 019i revertido temporalmente en
+  el working tree, pytest tests/unit/test_run_gates_dispatch.py -k
+  test_run_gates_dispatch_importable_without_module_shadowing -v FALLA con
+  salida que contiene literalmente ModuleNotFoundError y "No module named
+  'runtime.motor_link'" en la asercion fallida. Tras restaurar el archivo,
+  el mismo comando vuelve a pasar (exit 0). El Builder documenta ambos
+  comandos y sus salidas literales (FAIL-con-shadowing / PASS-sin) en
+  execution_log_WOT-2026-019k.md.
+- **Si falla:** Si la mutation NO logra reproducir el
+  ModuleNotFoundError (el test acotado pasa igual con el shadowing
+  reintroducido), la barrera de la Fase 1 esta rota: escalar al Manager con
+  el diff exacto de la mutation aplicada y el output del test antes de
+  marcar READY_FOR_REVIEW. No se aprueba el cierre sin este FAIL confirmado.
 
 ### Fase 3: Verificacion y cierre de calidad (Bot)
-#### 3.1: Bot Gates de calidad y suite completa
+
+#### 3.1: Bot Gates de calidad, suite completa y validate
 - **Tipo:** TAREA AGENTE
 - **Archivo:** N/A (solo comandos)
 - **Accion:** Verificar
-- **Descripcion:** Ejecutar en orden: ruff check sobre bus/supervisor.py
-  y tests/test_approval_state_revision_and_skill_access.py; la suite
-  completa via el runner del proyecto (run_pytest_safe con nivel all o
-  el equivalente documentado en AGENTS.md) y registrar el
-  tested_commit_sha; el comando de validacion del controller con flags
-  --validate --json --project-root apuntando al punto actual. Los tres
-  comandos deben salir en verde antes de marcar READY_FOR_REVIEW.
+- **Descripcion:** Con el archivo de produccion restaurado (sin la
+  mutation de la Fase 2 aplicada), ejecutar en orden: ruff check
+  tests/unit/test_run_gates_dispatch.py; la suite completa (run_pytest_safe
+  con nivel all o el equivalente documentado en AGENTS.md) registrando el
+  tested_commit_sha; python .agent/agent_controller.py --validate --json
+  --project-root . Los tres comandos deben salir en verde antes de marcar
+  READY_FOR_REVIEW.
 - **Riesgo:** Bajo
-- **Criterio de Aceptacion:** ruff check exit 0 sin warnings sobre los 2
-  archivos tocados; la suite completa termina en exit 0 y su
-  tested_commit_sha coincide con el HEAD del commit de entrega; la
-  validacion del controller reporta errors en 0.
-- **Si falla:** Si la suite completa revela OTRO flaky no relacionado
-  (distinto de este ticket), documentarlo en execution_log y escalar al
-  Manager en vez de intentar arreglarlo fuera de scope.
+- **Criterio de Aceptacion:** ruff check exit 0 sobre el archivo tocado; la
+  suite completa termina en exit 0 y su tested_commit_sha coincide con el
+  HEAD del commit de entrega; --validate --json reporta errors: 0.
+- **Si falla:** Si la suite completa revela otro flaky no relacionado con
+  este ticket, documentarlo en execution_log y escalar al Manager en vez de
+  intentar arreglarlo fuera de scope.
 
 ## Calidad
 
 | Fase | Comando de verificacion |
 |------|--------------------------|
-| 1.1 | git diff -- bus/supervisor.py (confirma _replace_once_or_none + _atomic_replace_with_retry extraidas + call-site de 1 linea); ruff check bus/supervisor.py (exit 0, sin C901 y sin PERF203) |
-| 2.1 | pytest tests/test_approval_state_revision_and_skill_access.py -k test_supervisor_write_artifact_atomic_retries_transient_permission_error -v (FAIL sin el bucle de la Fase 1, PASS con el) |
-| 2.2 | pytest tests/test_approval_state_revision_and_skill_access.py -k test_supervisor_write_artifact_atomic_reraises_after_exhausting_replace_retries -v |
-| 3.1 | ruff check bus/supervisor.py tests/test_approval_state_revision_and_skill_access.py; suite completa (tested_commit_sha == HEAD); python .agent/agent_controller.py --validate --json --project-root . |
+| 1.1 | pytest tests/unit/test_run_gates_dispatch.py -k test_run_gates_dispatch_importable_without_module_shadowing -v --durations=1 (exit 0, duracion menor a 5s) |
+| 1.2 | Mismo comando de 1.1; confirma que "[dispatch]" no aparece en stdout del subprocess acotado |
+| 2.1 | Con el fix de 019i revertido temporalmente (working tree, sin commit): mismo pytest -k del test acotado FALLA con ModuleNotFoundError / "No module named 'runtime.motor_link'"; tras restaurar el archivo, el mismo comando vuelve a pasar |
+| 3.1 | ruff check tests/unit/test_run_gates_dispatch.py; suite completa (tested_commit_sha == HEAD); python .agent/agent_controller.py --validate --json --project-root . |
 
 ## Decision Arquitectonica
 
-El retry se acota exclusivamente a la linea `os.replace` (no al bloque
-try completo) porque el sintoma observado (WinError 5 transitorio) ocurre
-especificamente en el rename, no en la apertura/escritura del archivo
-temporal; envolver mas superficie de la necesaria ocultaria errores reales
-de escritura bajo el mismo mecanismo de reintento. Se distingue
-`PermissionError` de forma generica (sin depender de `sys.platform` ni de
-leer `.winerror` de forma insegura) para que la logica de produccion sea
-identica en Windows y Linux: en Linux el bucle nuevo no encuentra la
-excepcion y se comporta exactamente igual que hoy (cero intentos extra,
-cero retraso). El backoff es corto (decenas de milisegundos) y el numero
-de intentos bajo (3) para no enmascarar un problema real de permisos
-detras de una espera larga; si el recurso sigue bloqueado tras esos 3
-intentos, el fail-closed existente (re-lanzar la excepcion) se preserva
-sin modificacion de comportamiento.
+Se elige exec_module via python -c sobre un env var/flag que corte
+scripts/run_gates_dispatch.py antes de main() (opcion B descartada)
+porque: (a) no toca produccion, reduciendo el blast radius del cambio a un
+unico archivo de test; (b) el mecanismo (spec_from_file_location +
+module_from_spec + exec_module) ya es el patron canonico usado en el
+propio archivo de test para cargar dispatch al inicio (lineas 13-18), asi
+que no introduce una tecnica nueva al codebase; (c) preserva el aislamiento
+de subprocess que la barrera necesita (el import a nivel de modulo se
+ejecuta en un proceso Python fresco, no en el proceso pytest donde dispatch
+ya esta cacheado en sys.modules), condicion necesaria para que la barrera
+siga siendo real y no un placebo. Verificado empiricamente por el Manager
+antes de aprobar este plan: exec_module de una copia limpia del script
+tarda aproximadamente 0.12 segundos (sin ejecutar gates), y reproducir el
+ORDEN de sys.path pre-019i (.agent insertado en el indice 0 antes de la
+raiz del proyecto) sobre el archivo revertido SI reproduce el
+ModuleNotFoundError original; insertar .agent en un indice posterior al
+que el propio script post-fix ya usa para la raiz del proyecto NO lo
+reproduce, de ahi que la Fase 2 modele la mutation como una reversion real
+del diff de 019i (working tree, no commiteada) en vez de una manipulacion
+adicional de sys.path desde el test.
 
-ACTUALIZADO (hallazgo post-implementacion): la primera version inline del
-bucle de retry (dentro del propio write_artifact_atomic) elevo la
-complejidad ciclomatica McCabe del metodo de <=10 a 13, incumpliendo el
-limite C90=10 configurado en pyproject.toml (regla C901 de ruff). Se
-decide EXTRAER el bucle a una funcion de modulo nueva,
-_atomic_replace_with_retry, en vez de silenciar el hallazgo con
-`# noqa: C901`. Razon: un noqa oculta el sintoma pero deja
-write_artifact_atomic con mas ramas de decision de las necesarias para
-su responsabilidad principal (lock + OCC + escritura), mientras que
-extraer el retry a una funcion propia (a) devuelve write_artifact_atomic
-a su complejidad original, (b) aisla la logica de reintento como una
-unidad con una unica responsabilidad, mas facil de testear de forma
-independiente en el futuro, y (c) no introduce deuda tecnica marcada con
-un supresor de lint. La funcion vive en el mismo modulo (no en un archivo
-nuevo) porque su unico consumidor es write_artifact_atomic y no justifica
-un modulo separado; vive fuera de la clase (funcion, no metodo) porque no
-necesita ningun atributo de self, solo sus 2 parametros. El punto de
-monkeypatch de los tests de la Fase 2 (bus.supervisor.os.replace) no
-cambia: el helper nuevo sigue invocando os.replace del mismo modulo.
-
-SEGUNDO ACTUALIZADO (hallazgo post-implementacion #2): con el helper de
-una sola funcion _atomic_replace_with_retry ya extraido (resolviendo
-C901), ruff reporto PERF203 (`try`-`except` dentro de un `for` incurre
-en overhead) sobre el `except PermissionError` anidado en el `for` del
-helper. Se descartan (a) `# noqa: PERF203` puntual y (b) un
-per-file-ignore en pyproject.toml como primera respuesta, y se elige (c)
-reestructurar: separar el intento individual
-(`_replace_once_or_none`, con su try/except FUERA de cualquier for) del
-bucle de reintento (`_atomic_replace_with_retry`, con un for que NO
-contiene try/except propio, solo llama a la funcion de intento y
-decide reintentar o re-lanzar segun su valor de retorno). Esta
-estructura fue verificada empiricamente por el Manager antes de aprobar
-este plan, ejecutando `ruff check` con el `extend-select` real del
-proyecto (E, F, B, S, RUF, N, W, I, PERF, UP, C90, ERA, SIM) sobre un
-archivo aislado con exactamente ese diseno: resultado "All checks
-passed!" (sin C901, sin PERF203, sin B904 por el `raise last_error`
-fuera de un bloque except activo). Razon para preferir la
-reestructuracion sobre el noqa: es codigo de produccion critico (el
-escritor atomico del estado del bus); el unico precedente de
-per-file-ignore para PERF203 en el repo es sobre un archivo de tests
-(tests/test_pre_commit_hooks.py), no sobre codigo de produccion, por lo
-que extender ese precedente a bus/supervisor.py ampliaria una excepcion
-pensada para tests hacia produccion sin justificacion nueva. La
-reestructuracion elegida no complica la lectura: separa dos
-responsabilidades ya implicitas en el diseno anterior ("intentar una
-vez" vs "orquestar los reintentos"), cada una mas facil de razonar y
-testear por separado que el bucle unico previo.
+No se anade un assert de wall-clock (elapsed menor a 5) porque estos son
+tipicamente flaky en CI (maquinas compartidas, contencion de CPU); en su
+lugar la Fase 1.2 usa una asercion estructural ("[dispatch]" not in
+result.stdout) que es deterministica: o el codigo a nivel de modulo
+imprime ese prefijo (no deberia, confirmado por lectura del archivo) o no lo
+hace, sin zona gris de "cuanto es demasiado lento".
 
 ## Trade-offs Considerados
 
 | Opcion | Pros | Contras | Decision |
 |--------|------|---------|----------|
-| Retry acotado (3 intentos, backoff aprox 10-20ms) solo alrededor de os.replace | Cambio minimo, no toca OCC ni lock, inocuo en Linux | No elimina la causa raiz externa (antivirus, indexador) | Aceptada |
-| Reintentar el bloque try completo (incl. reabrir y reescribir el temp file) | Cubriria tambien fallos de escritura transitorios | Amplia el blast radius fuera de lo pedido; el fallo observado es solo en el rename | Descartada |
-| Aumentar max_retries o retry_delay_ms del bucle OCC externo para que tambien cubra este caso | Reutiliza infraestructura existente | Ese bucle solo dispara ante FileExistsError del lock; mezclar semanticas (lock vs rename) complica el codigo y el test | Descartada |
-| Extraer el retry a una funcion de modulo _atomic_replace_with_retry | Resuelve C901 sin silenciar el lint; retry queda testeable como unidad propia; write_artifact_atomic recupera su complejidad original | Anade una funcion nueva al modulo (superficie ligeramente mayor) | Aceptada (reemplaza al bucle inline tras el hallazgo de ruff) |
-| Anadir `# noqa: C901` en la firma de write_artifact_atomic | Cambio de una linea, mas rapido | Silencia el sintoma sin reducir la complejidad real del metodo; deuda tecnica que un futuro cambio puede agravar sin aviso del linter | Descartada |
-| Separar el intento individual (_replace_once_or_none) del bucle de reintento (_atomic_replace_with_retry) para que ningun for contenga un try/except | Resuelve PERF203 sin silenciar el lint; verificado empiricamente con el extend-select real; cada funcion queda con una unica responsabilidad clara | Anade una segunda funcion de modulo (superficie ligeramente mayor que un solo helper) | Aceptada (reemplaza al helper de una funcion tras el hallazgo PERF203) |
-| Anadir `# noqa: PERF203` puntual sobre el except del helper de una funcion | Cambio de una linea, mas rapido que reestructurar | Silencia el sintoma en codigo de produccion critico sin necesidad, dado que existe una reestructuracion limpia y verificada | Descartada (queda como ultimo recurso documentado si el Builder no logra reproducir la reestructuracion) |
-| Per-file-ignore de PERF203 para bus/supervisor.py en pyproject.toml | Resuelve el hallazgo en una linea de configuracion | Silencia PERF203 en TODO el archivo, no solo en el punto puntual; el unico precedente de este ignore en el repo es sobre un archivo de tests | Descartada |
+| exec_module via python -c en subprocess fresco (import como modulo, no como __main__) | No toca produccion; reutiliza el patron ya usado en el propio archivo de test; preserva aislamiento de subprocess; aproximadamente 0.12s | Requiere pasar el snippet como string -c (legibilidad ligeramente menor que un archivo .py dedicado) | Aceptada |
+| Env var/flag en scripts/run_gates_dispatch.py para cortar antes de main() | Podria ser mas explicito en el propio script | Toca codigo de produccion para un unico test; introduce una rama condicional en el script real solo para testing | Descartada |
+| Ejecutar el script completo como hoy (subprocess de __main__, aproximadamente 165s) | Cero cambios, cero riesgo de regresion en la barrera | Coste de aproximadamente 165s por ejecucion, principal motivador del ticket; desperdicia tiempo de CI verificando un import ya cubierto en menos de 1s | Descartada (es el problema que este ticket resuelve) |
+| Assert de wall-clock (elapsed menor a 5) dentro del test | Verificacion directa y facil de entender del objetivo "es rapido" | Flaky en CI compartido; no es la garantia real que importa (la garantia real es "no ejecuta gates", no "tarda X segundos") | Descartada |
+| Asercion estructural ("[dispatch]" not in stdout) para confirmar ausencia de ejecucion de gates | Deterministica, no depende de wall-clock ni de la maquina | Depende de que ningun print futuro fuera de main() use el prefijo "[dispatch]" (mitigado: confirmado por lectura completa del archivo antes de aprobar) | Aceptada |
 
 ## Guia de Riesgos
 | Nivel | Significado | Accion del Builder |
@@ -372,34 +302,28 @@ testear por separado que el bucle unico previo.
 | Alto | Critica | Escalar al primer fallo |
 
 ## Criterios de Aceptacion Global
-- [ ] os.replace dentro de write_artifact_atomic (via el helper
-      _atomic_replace_with_retry) reintenta hasta 3 veces ante
-      PermissionError transitorio y completa con exito si un intento
-      posterior tiene exito.
-- [ ] _replace_once_or_none y _atomic_replace_with_retry existen como
-      funciones de modulo en bus/supervisor.py, definidas antes de class
-      SequentialTicketSupervisor; ningun for de ninguna de las dos
-      contiene un try/except propio (el try/except vive solo dentro de
-      _replace_once_or_none, que no tiene loop). write_artifact_atomic
-      invoca a _atomic_replace_with_retry con una unica linea en el
-      punto donde antes estaba la llamada directa a os.replace.
-- [ ] Test de barrera 2.1 es FAIL-sin-fix y PASS-con-fix, cross-platform
-      (monkeypatch, sin depender de sys.platform ni del atributo
-      winerror).
-- [ ] Test de barrera 2.2 confirma que el fail-closed re-lanza tras
-      agotar los reintentos (no se traga el error) y no deja archivos
-      temporales huerfanos.
-- [ ] El retry OCC externo (lock, l.195-216) y su logica de stale lock
-      quedan byte-identicos.
-- [ ] ruff check y --validate --json en 0 errores y 0 warnings nuevos,
-      SIN usar `# noqa: C901` (write_artifact_atomic recupera complejidad
-      <=10) y SIN usar `# noqa: PERF203` ni per-file-ignore (la
-      reestructuracion en 2 funciones evita el hallazgo por diseno,
-      verificado empiricamente antes de aprobar este plan).
-- [ ] El cambio es inocuo en Linux (sin PermissionError, el bucle nuevo
-      no anade retraso ni cambia el resultado del caso feliz).
+- [ ] test_run_gates_dispatch_importable_without_module_shadowing invoca el
+      script via exec_module (import-como-modulo) en un subprocess fresco,
+      NO como __main__; nunca llama a main() ni ejecuta ningun gate.
+- [ ] El test pasa en menos de 5 segundos (idealmente menos de 1s), sin usar
+      un assert de wall-clock dentro del propio test.
+- [ ] Las 2 aserciones originales (ausencia de "ModuleNotFoundError" y de
+      "No module named 'runtime.motor_link'" en stderr) se preservan sin
+      debilitarse.
+- [ ] Nueva asercion estructural: "[dispatch]" no aparece en el stdout del
+      subprocess acotado (confirma que no se ejecutaron gates).
+- [ ] MUTATION: revirtiendo temporalmente (sin commit) el fix de 019i en
+      scripts/run_gates_dispatch.py, el test acotado FALLA con el mismo
+      ModuleNotFoundError; restaurado el archivo, vuelve a pasar. Evidencia
+      documentada en execution_log_WOT-2026-019k.md.
+- [ ] Cross-platform: el mecanismo (exec_module, sys.executable) no depende
+      de sys.platform ni de rutas especificas de Windows; corre igual en CI
+      Linux.
+- [ ] scripts/run_gates_dispatch.py NO se modifica en el commit final (solo
+      el archivo de test).
+- [ ] ruff check + suite completa + --validate --json en verde.
 
 ## 2026-07-07 Handoff: Manager a Builder
-**Plan:** WOT-2026-019p
+**Plan:** WOT-2026-019k
 **Accion requerida:** Implementar segun work_plan.md
 **Estado:** PENDING
