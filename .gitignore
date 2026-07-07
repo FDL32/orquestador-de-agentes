@@ -84,6 +84,11 @@ prompts/debug_*.md
 .agent/collaboration/manager_feedback_*.md
 .agent/collaboration/AUDIT_WP-*.md
 .agent/collaboration/PLAN_WP-*.md
+# Per-ticket archived artifacts del motor (WOT-*): viven en workspace destino,
+# no en producto. Patron broad *_WOT-*.md cubre AUDIT/PLAN/execution_log/
+# work_plan/STRATEGY WOT-* (WOT-2026-020d). Las live surfaces sin sufijo _WOT
+# (STATE/TURN/execution_log/work_plan/notifications/review_queue) quedan trackeadas.
+.agent/collaboration/*_WOT-*.md
 .agent/collaboration/_archive/
 .agent/runtime/events/archive/
 .agent/runtime/deliverables/

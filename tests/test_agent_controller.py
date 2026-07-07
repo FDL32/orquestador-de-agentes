@@ -1594,16 +1594,49 @@ class TestMotorCodeOnlyGuard:
         expected = marker.exists()
         assert result == expected
 
-    def test_is_motor_code_only_false_with_env(self, monkeypatch):
-        """is_motor_code_only returns False when AGENT_PROJECT_ROOT is set."""
-        monkeypatch.setenv(
-            "AGENT_PROJECT_ROOT", str(Path("/tmp/fake_workspace").resolve())
-        )
+    def test_is_motor_code_only_false_with_env(self, monkeypatch, tmp_path):
+        """is_motor_code_only returns False when AGENT_PROJECT_ROOT points to an external workspace.
+
+        Uses a real existing external path (tmp_path) because the guard is
+        fail-closed for non-existent paths: a non-existent AGENT_PROJECT_ROOT
+        returns True, not False.
+        """
+        monkeypatch.setenv("AGENT_PROJECT_ROOT", str(tmp_path))
 
         from runtime.project_root import is_motor_code_only
 
         result = is_motor_code_only()
         assert result is False
+
+    def test_is_motor_code_only_true_when_env_points_to_motor(self, monkeypatch):
+        """is_motor_code_only returns True when AGENT_PROJECT_ROOT points to the motor itself.
+
+        Regression guard for the --project-root . from-motor contamination
+        bug (WOT-2026-020d): before the fix, any non-empty AGENT_PROJECT_ROOT
+        returned False, so --bootstrap-ticket/--mark-ready could write into
+        the motor's own .agent/collaboration/ and commit per-ticket artifacts.
+        """
+        import runtime.project_root as project_root_module
+
+        motor_root = Path(project_root_module.__file__).resolve().parent.parent
+        monkeypatch.setenv("AGENT_PROJECT_ROOT", str(motor_root))
+
+        from runtime.project_root import is_motor_code_only
+
+        result = is_motor_code_only()
+        assert result is True
+
+    def test_is_motor_code_only_true_when_env_path_nonexistent(self, monkeypatch):
+        """is_motor_code_only returns True (fail-closed) for a non-existent env path."""
+        monkeypatch.setenv(
+            "AGENT_PROJECT_ROOT",
+            str(Path("/tmp/definitely_not_a_real_workspace_zzz").resolve()),
+        )
+
+        from runtime.project_root import is_motor_code_only
+
+        result = is_motor_code_only()
+        assert result is True
 
     def test_main_blocks_mutating_flags(self, monkeypatch):
         """Motor code-only guard blocks --mark-ready when no AGENT_PROJECT_ROOT."""

@@ -235,9 +235,26 @@ def is_motor_code_only() -> bool:
     Returns:
         True if running without external workspace (motor code-only).
     """
-    if os.environ.get("AGENT_PROJECT_ROOT", "").strip():
-        return False
-    # Check if the resolved root IS the motor repo by looking for the
-    # motor marker (agent_controller.py in the expected .agent/ location).
+    env_value = os.environ.get("AGENT_PROJECT_ROOT", "").strip()
+    if env_value:
+        # AGENT_PROJECT_ROOT set: only deactivates code-only mode when it
+        # points to an EXTERNAL workspace distinct from repo_motor. Without
+        # this check, `--project-root .` run from the motor sets
+        # AGENT_PROJECT_ROOT to the motor itself, defeating the guard and
+        # allowing write operations against the motor's own .agent/.
+        # Path(__file__) is deterministic and independent of the lru_cache
+        # that resolve_project_root() uses (the cache may hold the motor
+        # path even after --project-root re-injection).
+        motor_root = Path(__file__).resolve().parent.parent
+        try:
+            env_root = Path(env_value).resolve()
+        except (OSError, ValueError):
+            return True  # fail-closed: invalid path = code-only
+        if env_root == motor_root:
+            return True  # points to the motor itself = code-only
+        # fail-closed: a non-existent AGENT_PROJECT_ROOT is treated as code-only
+        return not env_root.exists()
+    # No AGENT_PROJECT_ROOT: check if the resolved root IS the motor repo by
+    # looking for the motor marker (agent_controller.py in .agent/).
     motor_marker = resolve_project_root() / ".agent" / "agent_controller.py"
     return motor_marker.exists()
