@@ -1,6 +1,6 @@
 # TURNO ACTUAL
 
-**Ultima actualizacion:** 2026-07-07 23:55:00
+**Ultima actualizacion:** 2026-07-08 02:00:00
 
 ---
 
@@ -17,8 +17,9 @@
 
 ## Instruccion
 
-> Sin ticket activo. WOT-2026-020f cerrado (cierre administrativo: backlog archivado + TURN reset).
-> Listo para el siguiente ticket.
+> WOT-2026-020g cerrado (cierre pragmatico). Suite final sobre arbol limpio
+> pendiente de confirmacion via last-run.json. Listo para el siguiente ticket
+> (WOT-2026-020m) tras mini-audit.
 
 ---
 
@@ -26,9 +27,9 @@
 
 | Archivo | Estado |
 |---------|--------|
-| work_plan.md | COMPLETED (WOT-2026-020f) |
-| execution_log.md | COMPLETED (WOT-2026-020f) |
+| work_plan.md | COMPLETED (WOT-2026-020g) |
+| execution_log.md | COMPLETED (WOT-2026-020g) |
 
 ---
 
-*Reset tras cierre administrativo de 020f (2a pasada de auditoria).*
+*Reset tras cierre de WOT-2026-020g (pipeline higiene de cierre).*

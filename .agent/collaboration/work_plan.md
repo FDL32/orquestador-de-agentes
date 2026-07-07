@@ -1,59 +1,74 @@
-# Plan de Trabajo: Barrera state_leak + basetemp fuera del repo
+# Plan de Trabajo: Fix falso-verde del recolector de salud (encoding + parse)
 
 ## Metadata
-- **ID:** WOT-2026-020f
+- **ID:** WOT-2026-020g
 - **Estado:** COMPLETED
 - **deliverable_type:** code
-- **Creado:** 2026-07-07
+- **Creado:** 2026-07-08
 - **delivery_authority:** repo_motor
+- **Prioridad:** LOW
+- **Asignado a:** Builder
 
 ## Objetivo
+`collect_system_health.py` produce dos falsos verdes: (1) pierde/corrompe el stdout de
+subprocesos (ruff) porque `subprocess.run(text=True)` usa cp1252 en Windows en vez de UTF-8;
+(2) marca `ok=True` sin mirar el `exit_code`. El recolector debe reflejar el exit real.
 
-Dos hallazgos de la sesion 020d+020f:
-1. `check_canonical_state_leak` solo cubria STATE/TURN/work_plan/execution_log,
-   NO `*_WOT-*.md` -> un staged deletion de AUDIT_WOT-* no era detectado.
-2. `basetemp` de `run_pytest_safe` vivia en `.agent/runtime/pytest-safe/run-*`
-   (DENTRO del repo motor) -> `tmp_path` dentro del motor -> staged changes
-   visibles para `resolve_evidence` (bus/evidence.py) -> falsos fallos.
+## Premisa (verificada read-only)
+- VERIFICADO EN CODIGO (`collect_system_health.py:43-49`): subprocess.run text=True SIN encoding utf-8.
+- VERIFICADO EN CODIGO (`collect_system_health.py:50-56`): `_run` devuelve "ok": True fijo.
 
 ## Files Likely Touched
-- `scripts/run_pytest_safe.py`
-- `tests/unit/test_run_pytest_safe.py`
+- `scripts/collect_system_health.py`
+- `tests/` (test nuevo/extendido del recolector; ruta exacta la fija el Builder segun layout)
 
-## Criterios binarios (DoD)
-- [x] Un staged deletion de `*_WOT-*.md` durante la suite es detectado por state-leak
-- [x] Staged changes del motor NO son visibles para `resolve_evidence` en tests
-      con `project_root=tmp_path` (basetemp fuera del repo)
-- [x] MUTATION: revertir -> vuelve el falso fallo / el deletion no detectado
+## Read/inspect only
+- `.agent/audits/system_health/general_audit_20260707_1630/findings.json`
+- `.agent/runtime/pytest-safe/last-run.json`
 
-## Implementacion
-
-**Fix (a):** `snapshot_canonical_state` ahora tambien captura `*_WOT-*.md` via
-`collab.glob("*_WOT-*.md")`. `check_canonical_state_leak` no cambia (ya compara
-todo el snapshot).
-
-**Fix (b):** `make_run_dir` ahora usa `Path(tempfile.gettempdir()) / "pytest-safe"`
-como base en lugar de `RUNTIME_DIR`. Basetemp fuera del repo motor -> `tmp_path`
-fuera del motor -> staged changes del motor no visibles para `resolve_evidence`.
-
-## Mutation-verify
-- (a) Deshabilitar captura `*_WOT-*.md` (`continue`) -> 2 tests FAIL
-- (b) Revertir `make_run_dir` a `RUNTIME_DIR / run-*` -> 2 tests FAIL
-- Restaurar ambos -> 50/50 pasan
-
-## Tradeoff
-Basetemp en `tempfile.gettempdir()` mide 9:04 vs 7:24 en `RUNTIME_DIR` (wall-clock
-de `run_pytest_safe --level all`, 3537 tests). Delta: +100s (~22.5%) por IO/antivirus.
-Es aceptable: correctness (staged changes no visibles) > velocidad en gate de cierre.
+## Forbidden Surfaces
+- NO tocar el AUDITOR ni la logica de veredicto (solo la fidelidad del RECOLECTOR).
+- NO tocar run_pytest_safe.py ni scripts fuera del recolector.
 
 ## Non-goals
-- No cambiar la logica de `resolve_evidence` (bus/evidence.py) ni de `check_canonical_state_leak`
-- No mover `RUNTIME_DIR` entero (solo basetemp); los reportes de last-run siguen en `.agent/runtime/`
-- No optimizar la velocidad del basetemp en tempfile (el tradeoff es aceptado)
+- No cambiar la logica de los checks del recolector (que comandos corre, ni el orden).
+- No tocar el AUDITOR ni la Pasada B (veredicto del agente).
+- No modificar `_read_pytest_last_run` (ya usa json.load desde el origen; el
+  exit_code=null del audit fue sintoma del crash de encoding, no bug de parseo).
+- No alterar el flujo de degradacion auto/motor-only/full ni la salida de exit codes
+  del recolector (0/1/2/3).
+- No ampliar scope al parseo "regex/parcial" del backlog (premise stale, ya satisfecha).
 
 ## Decision Arquitectonica
-Basetemp fuera del repo motor via `tempfile.gettempdir()` en lugar de un subdirectorio
-del repo. Motivo: el problema raiz es que `tmp_path` (basetemp de pytest) vive dentro
-del repo motor, haciendo que `git diff --cached` con `cwd=tmp_path` vea staged changes
-del motor real. Mover solo basetemp (no RUNTIME_DIR) resuelve el problema sin romper
-la localizacion de last-run.json/run logs que siguen en `.agent/runtime/pytest-safe/`.
+Forzar `encoding="utf-8", errors="replace"` en `subprocess.run` en lugar de depender de
+la codepage del sistema. Motivo: el root cause del crash es que `text=True` sin
+`encoding=` usa cp1252+strict en Windows, y `UnicodeDecodeError` (ValueError) escapa
+del try/except de `_run` (que solo captura OSError). UTF-8+replace es fail-safe: nunca
+crashea y captura stdout UTF-8 (lo que ruff emite) sin perdida. Derivar `ok` de
+`returncode == 0` en lugar de hardcodear True: el recolector es Pasada A determinista;
+su fidelidad depende de reflejar el exit real, no de asumir verde. Ambos cambios son
+salida del recolector (no logica de control), por lo que no alteran el flujo.
+
+## Fase 1: Fix de fidelidad del recolector
+### 1.1 Forzar encoding UTF-8 en captura de subprocesos
+- Archivo: `scripts/collect_system_health.py` (`_run`, l.43). Anadir `encoding="utf-8", errors="replace"`.
+- Riesgo: BAJO. AC: stdout no-ASCII capturado sin None ni `?` lossy (test).
+### 1.2 Derivar `ok` del exit_code real
+- Archivo: `scripts/collect_system_health.py` (dict retorno, l.50-56). `ok = proc.returncode == 0`.
+- Riesgo: MEDIO. AC: exit_code=1 -> ok=False; exit_code=0 -> ok=True. Verificar consumidores del ok fijo.
+### 1.3 Barrera de regresion (mutation-verify)
+- Archivo: `tests/`. Test que cubra ambos fallos. Revertir cada fix -> test FALLA; restaurar -> PASA.
+- Riesgo: BAJO. AC: 4 exit codes en execution_log.
+
+## Calidad (gates)
+- `ruff check scripts/collect_system_health.py` -> 0
+- `python scripts/run_pytest_safe.py --level unit --xdist-workers auto` -> 0
+- test focal del recolector -> pasa; mutation-verify de ambos fixes
+- `python scripts/check_encoding_guard.py scripts/collect_system_health.py` -> 0
+
+## Criterios de Aceptacion Global
+- [x] `_run` fuerza encoding utf-8, captura stdout no-ASCII sin perdida
+- [x] `ok` deriva de exit_code == 0
+- [x] findings.json: ruff exit 1 -> ok=false; last-run exit 0 -> exit_code=0
+- [x] Test regresion + mutation-verify (4 exit codes en execution_log)
+- [ ] ruff 0, suite verde, validate 0 errors  (suite final sobre arbol limpio pendiente)
