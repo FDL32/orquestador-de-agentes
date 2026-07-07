@@ -22,6 +22,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -366,7 +367,9 @@ def print_status(payload: dict) -> None:
 
 def make_run_dir() -> Path:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return RUNTIME_DIR / f"run-{stamp}-{os.getpid()}"
+    base = Path(tempfile.gettempdir()) / "pytest-safe"
+    base.mkdir(parents=True, exist_ok=True)
+    return base / f"run-{stamp}-{os.getpid()}"
 
 
 def probe_pytest(interpreter: str) -> bool:
@@ -750,6 +753,9 @@ def snapshot_canonical_state() -> dict[str, str]:
     REAL .agent/collaboration/ of the motor instead of tmp_path. Capturing
     content before and comparing after turns that silent leak into a
     visible failure with the offending delta.
+
+    WOT-2026-020f: also snapshots ``*_WOT-*.md`` files so a staged deletion
+    of an AUDIT_WOT-*/PLAN_WOT-* artifact during the suite is detected.
     """
     snapshot: dict[str, str] = {}
     collab = _AGENT_DIR / "collaboration"
@@ -759,6 +765,13 @@ def snapshot_canonical_state() -> dict[str, str]:
             snapshot[name] = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             snapshot[name] = ""
+    for wot_file in collab.glob("*_WOT-*.md"):
+        try:
+            snapshot[wot_file.name] = wot_file.read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except OSError:  # noqa: PERF203
+            snapshot[wot_file.name] = ""
     return snapshot
 
 

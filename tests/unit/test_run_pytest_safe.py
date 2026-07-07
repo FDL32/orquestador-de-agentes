@@ -862,3 +862,84 @@ class TestErrorTestIdsInSummary:
             "stream_pytest must capture ERROR lines via _error_re; "
             "if _error_re is removed or broken, error_ids stays empty"
         )
+
+
+# =============================================================================
+# WOT-2026-020f: state_leak covers *_WOT-*.md + basetemp outside repo
+# =============================================================================
+
+
+class TestStateLeakWotFiles:
+    """WOT-2026-020f: check_canonical_state_leak must detect deletion of
+    *_WOT-*.md files (AUDIT_WOT-*, PLAN_WOT-*), not just the 4 canonical files."""
+
+    def test_wot_file_deletion_detected(self, tmp_path: Path, monkeypatch) -> None:
+        mod = load_runner_module()
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        wot_file = collab / "AUDIT_WOT-2026-020f.md"
+        wot_file.write_text("audit content", encoding="utf-8")
+
+        monkeypatch.setattr(mod, "_AGENT_DIR", tmp_path / ".agent")
+        snapshot = mod.snapshot_canonical_state()
+        assert "AUDIT_WOT-2026-020f.md" in snapshot
+
+        wot_file.unlink()
+        leaked = mod.check_canonical_state_leak(snapshot)
+        assert "AUDIT_WOT-2026-020f.md" in leaked
+
+    def test_wot_file_content_change_detected(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        mod = load_runner_module()
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        wot_file = collab / "PLAN_WOT-2026-999z.md"
+        wot_file.write_text("original", encoding="utf-8")
+
+        monkeypatch.setattr(mod, "_AGENT_DIR", tmp_path / ".agent")
+        snapshot = mod.snapshot_canonical_state()
+
+        wot_file.write_text("modified", encoding="utf-8")
+        leaked = mod.check_canonical_state_leak(snapshot)
+        assert "PLAN_WOT-2026-999z.md" in leaked
+
+    def test_no_wot_files_no_leak(self, tmp_path: Path, monkeypatch) -> None:
+        mod = load_runner_module()
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+
+        monkeypatch.setattr(mod, "_AGENT_DIR", tmp_path / ".agent")
+        snapshot = mod.snapshot_canonical_state()
+        leaked = mod.check_canonical_state_leak(snapshot)
+        assert leaked == []
+
+
+class TestBasetempOutsideRepo:
+    """WOT-2026-020f: make_run_dir must place basetemp OUTSIDE the repo motor
+    so staged changes in the motor are not visible to resolve_evidence when
+    project_root=tmp_path."""
+
+    def test_make_run_dir_outside_runtime_dir(self) -> None:
+        """basetemp must NOT be under RUNTIME_DIR (the old in-repo location).
+
+        WOT-2026-020f: previously make_run_dir returned RUNTIME_DIR/run-*,
+        placing basetemp inside the repo motor -> staged changes visible to
+        resolve_evidence. Now it uses tempfile.gettempdir() as base.
+        """
+        mod = load_runner_module()
+        run_dir = mod.make_run_dir()
+        runtime_dir = mod.RUNTIME_DIR.resolve()
+        assert not run_dir.is_relative_to(runtime_dir), (
+            f"basetemp {run_dir} must not be under RUNTIME_DIR {runtime_dir}"
+        )
+
+    def test_make_run_dir_in_tempdir(self) -> None:
+        import tempfile
+
+        mod = load_runner_module()
+        run_dir = mod.make_run_dir()
+        temp_base = Path(tempfile.gettempdir()).resolve()
+        assert run_dir.is_relative_to(temp_base), (
+            f"basetemp {run_dir} must be under tempfile.gettempdir() {temp_base}"
+        )

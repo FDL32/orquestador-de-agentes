@@ -1,66 +1,72 @@
-# Execution Log: WOT-2026-020a
+# Execution Log: WOT-2026-020f
 
 ## Ticket
-- **ID:** WOT-2026-020a
+- **ID:** WOT-2026-020f
 - **deliverable_type:** code
-- **Scope:** motor/guard-paths-cwd-vs-operational-root
+- **Scope:** motor/pytest-safe-basetemp-isolation
 
 ## Fase 0 - Verificacion de premisa (2026-07-07)
 
-**Premisa del backlog:** guard_paths falla-cerrado como "fuera del repo" cuando
-cwd=motor y target esta en repo_destino. El link vive en el destino, no en el
-motor.
+**Premisa (1):** `check_canonical_state_leak` solo cubre 4 archivos, no `*_WOT-*.md`.
+- VERIFICADO: `snapshot_canonical_state` (run_pytest_safe.py:746) itera
+  `("STATE.md", "TURN.md", "work_plan.md", "execution_log.md")` — sin glob.
+- Un staged deletion de `AUDIT_WOT-*` no seria detectado por la barrera.
 
-**Verificacion contra codigo real:**
-- `claude_guard_entry.py:103` ejecuta guard_paths con `cwd=str(repo_root)` donde
-  repo_root = nearest `.claude` ancestor = motor.
-- `guard_paths.py:304` pasa `repo_root=Path.cwd()` = motor a `evaluate_tool_request`.
-- `_is_protected_path` (l.199): si target no esta en repo_root, llama
-  `_resolve_extra_root(repo_root)`.
-- `_resolve_extra_root` Source 2 (l.149): busca link en
-  `repo_root/.agent/config/motor_destination_link.json` -> NO EXISTE en el motor.
-- Motor (DEV) verificado: `Test-Path .agent/config/motor_destination_link.json` = False.
-- Link del destino (Aduanas_pedidos_agencias) verificado: tiene `motor_root` +
-  `destination_root`, vive en `<destino>/.agent/config/`.
-- **Premisa CONFIRMADA.** Source 2 nunca puede resolver cuando repo_root=motor.
+**Premisa (2):** `basetemp` vive dentro del repo motor.
+- VERIFICADO: `RUNTIME_DIR = AGENT_DIR / "runtime" / "pytest-safe"` (l.70).
+- `make_run_dir()` (l.367) retorna `RUNTIME_DIR / f"run-{stamp}-{pid}"`.
+- `select_test_runner` (l.433) pasa `--basetemp={run_dir}` a pytest.
+- `resolve_evidence` (bus/evidence.py:107-109) ejecuta `git diff --cached`
+  con `cwd=motor_root` -> ve staged changes del motor.
+- Un test con `project_root=tmp_path` (dentro del motor via basetemp) ve
+  staged changes del motor real -> falsos fallos en `test_*review_bridge*`.
+
+**Premisa CONFIRMADA.**
 
 ## Implementacion
 
-**Fix:** anadir Source 3 a `_resolve_extra_root` — camina ancestros del TARGET
-buscando `motor_destination_link.json`, verifica `motor_root == repo_root`.
-Extraida a helper `_resolve_destino_from_target` para complejidad < 10 (ruff C901).
+**Fix (a):** `snapshot_canonical_state` anade `collab.glob("*_WOT-*.md")` para
+capturar artefactos WOT. `check_canonical_state_leak` no cambia (ya compara
+todo el snapshot dict).
+
+**Fix (b):** `make_run_dir` usa `Path(tempfile.gettempdir()) / "pytest-safe"`
+como base. `import tempfile` anadido. Basetemp fuera del repo motor.
 
 **Archivos modificados:**
-- `.agent/hooks/guard_paths.py`: +30 lineas (helper + Source 3 call + docstring)
-- `tests/test_guard_paths.py`: +65 lineas (5 tests nuevos en TestExtraRootViaTargetLink)
-
-**Call site modificado:**
-- `_is_protected_path` l.200: `_resolve_extra_root(repo_root, path_obj)`
+- `scripts/run_pytest_safe.py`: +12 lineas (import tempfile, glob WOT, basetemp)
+- `tests/unit/test_run_pytest_safe.py`: +65 lineas (5 tests en 2 clases nuevas)
 
 ## Gates
 
-- ruff check: All checks passed!
-- ruff format: 1 file reformatted
-- Tests focales (guard_paths): 51 passed, 0 failed
+- ruff check: All checks passed! (PERF203 suprimido con noqa en glob loop)
+- ruff format: 2 files left unchanged
+- Tests focales (run_pytest_safe): 50 passed, 0 failed
 - validate_agent_config.py: Configuration valid - all checks passed
-- Suite canonica --level all: 3532 passed, 47 skipped, 0 failed, 0 errors (444s)
+- Suite canonica --level all: 3537 passed, 47 skipped, 0 failed (544s)
+  - 5 tests mas que antes (3532) = los 5 nuevos
+  - ~22% mas lento por basetemp en tempfile (tradeoff aceptado)
 
 ## Mutation-verify (orquestador sobre repo real)
 
-1. Deshabilitar Source 3: `if path_obj is not None and False:`
-2. `test_write_to_destino_via_target_link_allowed` -> FAILED (blocked=True, "fuera del repo")
-3. 4 tests fail-closed -> PASSED (no dependen de Source 3)
-4. Restaurar Source 3 -> 51/51 PASSED
+**Fix (a):** Deshabilitar captura `*_WOT-*.md` (`continue` en el loop)
+- `test_wot_file_deletion_detected` -> FAILED (AUDIT_WOT no en snapshot)
+- `test_wot_file_content_change_detected` -> FAILED (PLAN_WOT no en leaked)
+- `test_no_wot_files_no_leak` -> PASSED (no depende de WOT capture)
+- Restaurar -> 3/3 PASSED
 
-**Veredicto:** mutation-verify confirma que el test nuevo detecta la regresion.
+**Fix (b):** Revertir `make_run_dir` a `RUNTIME_DIR / run-*`
+- `test_make_run_dir_outside_runtime_dir` -> FAILED (basetemp bajo RUNTIME_DIR)
+- `test_make_run_dir_in_tempdir` -> FAILED (basetemp no bajo tempfile)
+- Restaurar -> 2/2 PASSED
+
+**Veredicto:** mutation-verify confirma ambos fixes.
 
 ## Commits
 
-- `WOT-2026-020a: guard_paths Source 3 - resolver destino desde link del target (motor_root == repo_root)`
-- `WOT-2026-020a: tests TestExtraRootViaTargetLink (5 casos, fail-closed + happy path + mutation)`
+- `WOT-2026-020f: state_leak cubre *_WOT-*.md + basetemp fuera del repo (tempfile)`
 
 ## Decision
 
-APROBADO para cierre pragmatico. El fix es fail-closed en todos los edge cases
-(link malformado, motor_root != repo_root, ancestro sin marker). No amplía la
-superficie de escritura mas alla de destinos verificados linkeados al motor.
+APROBADO para cierre pragmatico. Ambos fixes son fail-safe (glob no rompe si no
+hay WOT files; basetemp en tempfile es estandar). Tradeoff de velocidad aceptado:
+correctness > velocidad en gate de cierre.

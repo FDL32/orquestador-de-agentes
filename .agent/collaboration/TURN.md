@@ -1,6 +1,6 @@
 # TURNO ACTUAL
 
-**Ultima actualizacion:** 2026-07-07 21:50:00
+**Ultima actualizacion:** 2026-07-07 22:25:00
 
 ---
 
@@ -9,7 +9,7 @@
 | Campo | Valor |
 |-------|-------|
 | **ROL** | **ORQUESTADOR** |
-| **Plan ID** | WOT-2026-020a |
+| **Plan ID** | WOT-2026-020f |
 | **Tipo** | IMPLEMENTATION |
 | **Accion** | REVIEW_2 |
 
@@ -17,8 +17,8 @@
 
 ## Instruccion
 
-> WOT-2026-020a implementado + mutation-verify + suite canonica verde.
-> Pendiente: Review 2 fresh-context adversarial (blast ALTO, obligatorio).
+> WOT-2026-020f implementado + mutation-verify + suite canonica verde.
+> Pendiente: Review 2 fresh-context adversarial (blast MEDIO, obligatorio).
 > Cierre pragmatico (bus bloqueado por fix 020d).
 
 ---
@@ -27,8 +27,8 @@
 
 | Archivo | Estado |
 |---------|--------|
-| work_plan.md | COMPLETED (WOT-2026-020a) |
-| execution_log.md | COMPLETED (WOT-2026-020a) |
+| work_plan.md | COMPLETED (WOT-2026-020f) |
+| execution_log.md | COMPLETED (WOT-2026-020f) |
 
 ---
 
