@@ -812,6 +812,81 @@ def test_supervisor_write_artifact_atomic_concurrent_conflict(tmp_path):
         )
 
 
+def test_supervisor_write_artifact_atomic_retries_transient_permission_error(
+    tmp_path, monkeypatch
+):
+    """os.replace retries after a transient PermissionError (WinError 5)."""
+    import bus.supervisor as supervisor_module
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    test_file = collaboration_dir / "test.json"
+    new_content = '{"new": "content"}'
+
+    original_replace = supervisor_module.os.replace
+    call_count = []
+
+    def fake_replace(src, dst):
+        call_count.append(1)
+        if len(call_count) == 1:
+            raise PermissionError(5, "Access is denied")
+        return original_replace(src, dst)
+
+    monkeypatch.setattr(supervisor_module.os, "replace", fake_replace)
+
+    revision = supervisor.write_artifact_atomic(test_file, new_content)
+
+    assert revision is not None
+    assert test_file.read_text(encoding="utf-8") == new_content
+    assert len(call_count) == 2
+
+
+def test_supervisor_write_artifact_atomic_reraises_after_exhausting_replace_retries(
+    tmp_path, monkeypatch
+):
+    """write_artifact_atomic re-raises PermissionError after exhausting retries
+    and leaves no orphaned .tmp_*.tmp file behind (fail-closed)."""
+    import bus.supervisor as supervisor_module
+    from bus.supervisor import SequentialTicketSupervisor
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    test_file = collaboration_dir / "test.json"
+    new_content = '{"new": "content"}'
+
+    def fake_replace(src, dst):
+        raise PermissionError(5, "Access is denied")
+
+    monkeypatch.setattr(supervisor_module.os, "replace", fake_replace)
+
+    with pytest.raises(PermissionError):
+        supervisor.write_artifact_atomic(test_file, new_content)
+
+    orphaned_temp_files = list(collaboration_dir.glob(".tmp_*.tmp"))
+    assert orphaned_temp_files == []
+
+
 def test_supervisor_get_approval_store(tmp_path):
     """Test supervisor creates approval store."""
     from bus.supervisor import SequentialTicketSupervisor

@@ -90,6 +90,30 @@ class SupervisorState:
     _revision: int | None = field(default=None, repr=False, compare=False)
 
 
+def _replace_once_or_none(temp_path: str, artifact_path: Path):
+    """Single os.replace attempt; return None on success or the caught error."""
+    try:
+        os.replace(temp_path, str(artifact_path))
+    except PermissionError as exc:
+        return exc
+    return None
+
+
+def _atomic_replace_with_retry(
+    temp_path: str, artifact_path: Path, attempts: int = 3
+) -> None:
+    import time
+
+    last_error = None
+    for replace_attempt in range(attempts):
+        last_error = _replace_once_or_none(temp_path, artifact_path)
+        if last_error is None:
+            return
+        if replace_attempt < attempts - 1:
+            time.sleep(0.01 * (replace_attempt + 1))
+    raise last_error
+
+
 class SequentialTicketSupervisor:
     def __init__(
         self,
@@ -240,7 +264,7 @@ class SequentialTicketSupervisor:
                 try:
                     with os.fdopen(fd, "w", encoding="utf-8") as f:
                         f.write(new_content)
-                    os.replace(temp_path, str(artifact_path))
+                    _atomic_replace_with_retry(temp_path, artifact_path)
                 except Exception:
                     import contextlib
 

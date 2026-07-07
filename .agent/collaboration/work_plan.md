@@ -1,10 +1,10 @@
-# Work Plan - WOT-2026-019s
+# Work Plan - WOT-2026-019p
 
 ## Metadata
-- **ID:** WOT-2026-019s
+- **ID:** WOT-2026-019p
 - **Estado:** COMPLETED
 - **deliverable_type:** code
-- **Titulo:** Corregir Step-CreateVenv para que siempre sincronice dependencias aunque el venv ya exista
+- **Titulo:** Retry acotado en write_artifact_atomic ante PermissionError transitorio de os.replace (WinError 5)
 - **Creado:** 2026-07-07
 - **Prioridad:** Media
 - **Asignado a:** Builder
@@ -12,335 +12,394 @@
 
 ## Objetivo
 
-Corregir Step-CreateVenv en scripts/setup_dev_worktree.ps1 para que uv
-sync se ejecute SIEMPRE que el venv de la worktree-dev ya este creado (con
-o sin python.exe presente), en vez de saltarse por completo la
-sincronizacion de dependencias cuando .venv\Scripts\python.exe ya existe.
+Anadir un retry con backoff acotado ante PermissionError transitorio
+(WinError 5 en Windows) alrededor del rename atomico de
+write_artifact_atomic (`bus/supervisor.py`), extraido a dos funciones de
+modulo (`_replace_once_or_none` y `_atomic_replace_with_retry`) para no
+elevar la complejidad ciclomatica de write_artifact_atomic por encima del
+limite C90=10 (ruff C901) y sin anidar un try/except dentro de un for
+(ruff PERF203), preservando el fail-closed si el rename sigue fallando
+tras agotar los reintentos. Exito verificable con dos tests nuevos en
+`tests/test_approval_state_revision_and_skill_access.py` (positivo y
+negativo) mas `ruff check` en exit code 0 sobre `bus/supervisor.py`.
 
 ## Contexto / Root Cause
 
-Step-CreateVenv (scripts/setup_dev_worktree.ps1:175-199) usa la
-existencia de .venv\Scripts\python.exe como unico gate de idempotencia:
+tests/test_supervisor.py::test_bootstrap_bus_precedence_over_turn_divergence
+fallo 1 vez con PermissionError [WinError 5] Acceso denegado durante el
+rename atomico .tmp_XXXX.tmp -> supervisor_state.json. Evidencia: log de
+019m (2026-07-06); el mismo test aislado paso 3/3 y una re-corrida completa
+de la suite sobre el mismo HEAD dio exit 0, transitorio confirmado, no un
+fallo deterministico de logica.
 
-    function Step-CreateVenv {
-        $venvPython = Join-Path $script:WorktreePath '.venv\Scripts\python.exe'
-        if (-not (Test-Path -LiteralPath $venvPython)) {
-            # ... uv venv && uv sync ...
-        }
-        else {
-            Write-Host "... El venv de la worktree ya existe ... (idempotente, sin cambios)."
-        }
-    }
+Superficie exacta: bus/supervisor.py, metodo write_artifact_atomic,
+bloque l.234-249:
 
-Si python.exe existe, la funcion entera se salta, incluyendo uv sync.
-Pero un venv puede tener python.exe con dependencias FALTANTES o
-desincronizadas (p.ej. uv venv corrio pero uv sync fallo o se
-interrumpio en una corrida anterior, o pyproject.toml/uv.lock
-cambiaron despues de crear el venv). En ese caso el script reporta exito
-"idempotente sin cambios" pero deja el venv incompleto, y el siguiente uso
-(ruff, pytest, agent_controller.py) rompe con ImportError. uv sync
-es idempotente por diseno (no reinstala lo ya sincronizado), asi que
-correrlo siempre es seguro y barato.
+    fd, temp_path = tempfile.mkstemp(
+        dir=str(artifact_path.parent), prefix=".tmp_", suffix=".tmp",
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(new_content)
+        os.replace(temp_path, str(artifact_path))
+    except Exception:
+        import contextlib
+        with contextlib.suppress(OSError):
+            os.unlink(temp_path)
+        raise
 
-## Decision Arquitectonica
-
-Se elige la opcion (A): correr uv sync incondicionalmente, fuera del
-if (-not (Test-Path ...)), preservando la creacion condicional del venv
-(uv venv solo si falta python.exe).
-
-Justificacion:
-- uv sync ya es idempotente por diseno (no reinstala paquetes ya
-  sincronizados a la version del lockfile); ejecutarlo de mas no tiene
-  costo funcional relevante frente al riesgo de un venv incompleto
-  silencioso.
-- Es el cambio minimo: no se anade deteccion heuristica ni estado nuevo,
-  solo se saca uv sync del bloque condicional que protege unicamente la
-  creacion del venv (uv venv).
-- Se alinea con el patron ya usado en el propio repo para gates de
-  idempotencia "accion barata siempre, accion cara condicional" (crear vs.
-  sincronizar).
-
-Se descarta la opcion (B): detectar dependencias faltantes (intentar
-un import o comprobar un marcador de "sync completo") porque anade
-superficie nueva (que archivo/marcador declarar como fuente de verdad de
-"sync al dia", como invalidarlo si cambia uv.lock) y es mas fragil de
-testear con el fake uv.bat de tests/test_setup_dev_worktree_script.py
-(el fake no ejecuta uv sync de verdad, asi que no puede materializar
-dependencias reales para que una heuristica de deteccion las intente
-importar). La opcion (A) evita ese problema por completo.
-
-## Cambio esperado en Step-CreateVenv
-
-- El if (-not (Test-Path -LiteralPath $venvPython)) sigue existiendo,
-  pero solo envuelve uv venv (creacion del venv) y su chequeo de exit
-  code.
-- uv sync (con su chequeo de $LASTEXITCODE) se mueve fuera de ese
-  if, de modo que se ejecuta en ambas ramas: cuando se acaba de crear el
-  venv y cuando ya existia.
-- El Push-Location $script:WorktreePath / finally { Pop-Location } debe
-  seguir envolviendo tanto uv venv (si corre) como uv sync (que ahora
-  siempre corre), para que uv sync se ejecute con cwd en la worktree.
-- Los mensajes Write-Host deben dejar de decir "idempotente, sin
-  cambios" para el caso "python.exe ya existe": ahora esa rama SI hace un
-  cambio (invoca uv sync). Ajustar el texto para reflejar que el venv ya
-  existia pero se resincronizaron dependencias (evitar que el mensaje
-  mienta).
-- El $PSCmdlet.ShouldProcess(...) debe seguir gobernando la ejecucion
-  real de uv sync en modo -WhatIf (no debe invocarse bajo -WhatIf),
-  igual que ya protege uv venv hoy.
-- Actualizar la docstring del script (.DESCRIPTION, paso 3, lineas
-  21-23) para reflejar que ahora siempre se corre uv sync aunque el venv
-  ya exista (solo la creacion del venv en si es condicional).
-
-## Files Likely Touched
-
-- scripts/setup_dev_worktree.ps1
-- tests/test_setup_dev_worktree_script.py
-
-## Mecanismo de la barrera (FAIL sin fix / PASS con fix)
-
-El fake uv.bat actual (_FAKE_UV_BAT en
-tests/test_setup_dev_worktree_script.py:48-58) responde a sync con
-exit /b 0 sin dejar rastro de haber sido invocado. Hay que extenderlo (o
-anadir una variante local al nuevo test) para que registre cada
-invocacion de uv sync, por ejemplo agregando una linea al script batch
-que, en la rama "%1"=="sync", escriba/incremente un archivo marcador en
-un directorio conocido (p.ej. echo sync >> "%CD%\.uv_sync_calls.log" o
-un contador via set /a persistido a archivo), ANTES de exit /b 0. El
-test nuevo debe:
-
-1. Ejecutar el script una primera vez (_run_script sin flags) sobre el
-   fixture repo, tal como ya hacen los tests existentes, para que se cree
-   el venv-dev con python.exe (via el fake uv venv) y se registre la
-   primera invocacion de sync.
-2. Verificar que el marcador de invocacion de sync existe/tiene 1
-   registro tras la primera corrida.
-3. Ejecutar el script una segunda vez (mismo fixture, venv y
-   python.exe ya presentes).
-4. Aserto de la barrera: tras la segunda corrida, el marcador de sync
-   debe tener 2 registros (uno por corrida), no 1. Sin el fix, la
-   segunda corrida no invoca uv sync en absoluto (el marcador se queda
-   en 1 registro) porque Step-CreateVenv entra en la rama else y sale
-   sin tocar uv; ese es el estado FAIL-sin-fix. Con el fix, la segunda
-   corrida SI invoca uv sync (el marcador sube a 2), que es el estado
-   PASS-con-fix.
-5. El test hereda automaticamente el pytestmark =
-   pytest.mark.skipif(sys.platform != "win32", ...) ya definido a nivel
-   de modulo (linea 38-41): NO anadir un skipif propio ni quitar el de
-   modulo.
-6. Si el test necesita listar git worktree list o comparar paths de la
-   worktree, usar str(worktree_path) (la variable ya devuelta por el
-   fixture fixture_repo), nunca el substring bare
-   "orquestador_de_agentes_dev" (leccion WOT-2026-019q, ya documentada
-   en el comentario de test_remove_cleans_worktree_and_reattaches_main,
-   lineas 271-276 del archivo).
-
-El mecanismo concreto de conteo (archivo log con >>, contador en
-archivo, o un directorio con un archivo por invocacion) queda a criterio
-del Builder; el requisito de diseno es que sea legible desde Python
-(Path.read_text() / contar archivos) despues de cada corrida del script,
-sin depender de parsear stdout del script en si.
-
-## Definition of Done
-
-1. Step-CreateVenv ejecuta uv sync incluso cuando
-   .venv\Scripts\python.exe ya existe (creacion de venv sigue siendo
-   condicional; sincronizacion de deps deja de serlo).
-2. Test nuevo en tests/test_setup_dev_worktree_script.py que demuestra
-   la barrera: FAIL-sin-fix (segunda corrida NO invoca uv sync) /
-   PASS-con-fix (segunda corrida SI lo invoca), via el fake uv.bat
-   extendido con registro de invocaciones. Hereda el
-   skipif(sys.platform != "win32") de modulo.
-3. Los tests existentes del script siguen en verde:
-   test_creation_detaches_principal_and_adds_worktree_with_venv,
-   test_creation_fails_closed_when_principal_is_dirty,
-   test_creation_is_idempotent_on_second_run,
-   test_whatif_creation_mutates_nothing,
-   test_remove_cleans_worktree_and_reattaches_main,
-   test_remove_with_uncommitted_changes_fails_closed,
-   test_regression_add_without_detach_first_fails. En particular,
-   test_creation_is_idempotent_on_second_run debe seguir pasando con
-   exit 0 y el texto "idempotente" en la salida combinada (referido ahora
-   a los pasos de detach/worktree, que siguen siendo genuinamente
-   idempotentes; el mensaje de Step-CreateVenv puede cambiar su
-   redaccion pero no debe romper ese assert si el test no depende del
-   texto exacto de esa linea).
-4. Docstring del script (.DESCRIPTION, paso 3) actualizada para
-   reflejar el nuevo comportamiento.
-5. python .agent/agent_controller.py --validate --json --project-root .
-   da 0 errores / 0 warnings (fuera del drift esperado de transicion de
-   ticket, que resuelve el Orquestador).
-6. ruff aplica unicamente sobre
-   tests/test_setup_dev_worktree_script.py (es el unico archivo Python
-   tocado; scripts/setup_dev_worktree.ps1 es PowerShell y ruff no
-   aplica sobre el).
-7. El gate funcional del .ps1 es su propia suite de tests
-   (tests/test_setup_dev_worktree_script.py), no ruff ni un linter de
-   PowerShell: correr esa suite completa (skip fuera de win32; verde en
-   Windows) es el criterio de aceptacion del script.
+El for attempt in range(max_retries) externo (l.195) solo reintenta ante
+FileExistsError del lock (conflicto OCC/lock), no ante un PermissionError
+del os.replace: el except Exception de l.244 limpia el temp file y
+re-lanza sin reintentar. Causa probable: otro proceso (antivirus,
+indexador de Windows, handle residual) retiene brevemente el .tmp entre
+el open y el rename.
 
 ## Non-goals
 
-- No se modifica la logica de deteccion de "worktree registrada" ni de
-  "principal dirty" (Step-CreateWorktree, Test-WorktreeHasUncommittedChanges,
-  Invoke-RemoveWorktree): el bug es exclusivo de Step-CreateVenv.
-- No se introduce deteccion heuristica de dependencias faltantes (opcion
-  B, descartada arriba).
-- No se toca assert_work_plan_committed / motor_checkpoint.py /
-  scope_gate.py (superficie del ticket anterior, WOT-2026-019v, ya
-  cerrado).
+- No se toca el retry OCC externo del lock (for attempt in
+  range(max_retries), l.195-216) ni su logica de deteccion de lock
+  obsoleto (stale lock recovery, l.200-206).
+- No se cambia la firma de write_artifact_atomic (parametros, tipo de
+  retorno, excepciones publicas).
+- No se anaden dependencias externas nuevas; el retry usa unicamente
+  time.sleep (ya importado en el metodo, l.190) y manejo de excepciones
+  estandar.
+- No se modifica el comportamiento en el caso feliz (sin PermissionError):
+  el retorno y el contenido escrito son identicos a hoy.
+- No se usa `# noqa: C901` bajo ninguna circunstancia para resolver el
+  hallazgo de complejidad; la resolucion es la extraccion de las 2
+  funciones descrita en la Fase 1.1 y en Decision Arquitectonica.
+- No se usa `# noqa: PERF203` como primera respuesta al hallazgo de
+  overhead try/except-en-loop; la Fase 1.1 exige primero la
+  reestructuracion en 2 funciones (verificada empiricamente por el
+  Manager antes de aprobar este plan: ruff check da "All checks passed!"
+  con esa estructura). Un `# noqa: PERF203` puntual y documentado solo
+  se autoriza como ultimo recurso si el Manager, en el review, confirma
+  que la reestructuracion entregada por el Builder difiere de la
+  especificada y ruff sigue reportando PERF203 pese a ello.
+- No se usa un per-file-ignore en pyproject.toml para PERF203 sobre
+  bus/supervisor.py (silenciaria PERF203 en todo el archivo, no solo en
+  el punto puntual; el unico precedente de ese ignore en el repo es
+  sobre un archivo de tests, no sobre codigo de produccion).
+
+## Files Likely Touched
+
+- bus/supervisor.py
+- tests/test_approval_state_revision_and_skill_access.py
 
 ## Plan de Implementacion
 
 ### Tipos de Tareas
-
-| Marca | Tipo | Ejecutor |
+| Icono | Tipo | Ejecutor |
 |-------|------|----------|
-| [AGENTE] | TAREA AGENTE | Builder |
+| Bot | TAREA AGENTE | Builder |
 
-### Fase 1: Confirmar el estado FAIL-sin-fix con un fake uv.bat que registre invocaciones [AGENTE]
-
-- **Tipo:** [AGENTE] TAREA AGENTE
-- **Archivo:** tests/test_setup_dev_worktree_script.py
+### Fase 1: Retry acotado extraido a 2 funciones de modulo sin try/except en el loop (Bot)
+#### 1.1: Bot Anadir _replace_once_or_none + _atomic_replace_with_retry y usarlos en write_artifact_atomic
+- **Tipo:** TAREA AGENTE
+- **Archivo:** bus/supervisor.py
 - **Accion:** Modificar
-- **Descripcion:** Extender _FAKE_UV_BAT (o anadir una variante local)
-  para que la rama "%1"=="sync" registre cada invocacion en un archivo
-  marcador dentro del cwd de ejecucion (p.ej.
-  echo sync >> "%CD%\.uv_sync_calls.log") antes de exit /b 0. Escribir
-  un test nuevo (p.ej. test_second_run_resyncs_existing_venv) que: (1)
-  corre el script una vez sobre el fixture repo, (2) confirma que el log
-  de invocaciones de sync tiene exactamente 1 linea, (3) corre el script
-  una segunda vez, (4) afirma que el log tiene 2 lineas tras la segunda
-  corrida. Ejecutar el test ANTES de tocar setup_dev_worktree.ps1
-  (con el codigo actual, sin fix) y confirmar que FALLA en el paso (4)
-  porque el log se queda en 1 linea.
-- **Riesgo:** [Bajo]
-- **Criterio de Aceptacion:** El test nuevo, corrido contra el
-  setup_dev_worktree.ps1 sin modificar, falla exactamente en el assert
-  de "2 lineas tras la segunda corrida" (no por un error de fixture o de
-  sintaxis del fake bat).
-- **Si falla el criterio (es decir, si el test pasa sin fix, o falla por
-  otra razon):** Revisar que el fake uv.bat registra la invocacion
-  ANTES del exit /b 0 y que el test lee el log despues de cada corrida
-  del script, no una sola vez al final; escalar al Manager si tras 3
-  intentos el test no reproduce el FAIL esperado.
+- **Descripcion:** ACTUALIZADO dos veces tras hallazgos de ruff:
+  (1) C901 (write_artifact_atomic supero complejidad 10 con el bucle
+  inline) resuelto extrayendo un helper de modulo; (2) PERF203
+  (try-except dentro de un for incurre en overhead) disparado por el
+  helper de un solo nivel, resuelto ahora separando el intento
+  individual del bucle de reintento en DOS funciones de modulo, ninguna
+  de las cuales tiene un try/except anidado dentro de un for. Ambas
+  verificadas empiricamente con ruff check usando el extend-select real
+  del proyecto (E, F, B, S, RUF, N, W, I, PERF, UP, C90, ERA, SIM):
+  All checks passed!.
 
-### Fase 2: Corregir Step-CreateVenv para sincronizar siempre [AGENTE]
+  Definir, en bus/supervisor.py, ANTES de class SequentialTicketSupervisor
+  (antes de la linea 93 actual), dos funciones de modulo nuevas, en este
+  orden:
 
-- **Tipo:** [AGENTE] TAREA AGENTE
-- **Archivo:** scripts/setup_dev_worktree.ps1
-- **Accion:** Modificar
-- **Descripcion:** En Step-CreateVenv (lineas 175-199), sacar la llamada
-  a uv sync (y su chequeo de $LASTEXITCODE) del bloque
-  if (-not (Test-Path -LiteralPath $venvPython)), de modo que se ejecute
-  siempre (tanto si el venv se acaba de crear como si ya existia). El
-  bloque if sigue envolviendo unicamente uv venv y su chequeo de exit
-  code. Push-Location/Pop-Location deben seguir cubriendo la llamada a
-  uv sync en ambos casos. Ajustar el Write-Host de la rama "ya existe"
-  para no decir "idempotente, sin cambios" (ahora si hay un cambio: se
-  resincronizan dependencias). Actualizar la seccion .DESCRIPTION
-  (paso 3, lineas 21-23) del comment-based help del script para reflejar
-  que uv sync corre siempre, y que solo la creacion del venv en si
-  (uv venv) es condicional.
-- **Riesgo:** [Bajo]
-- **Criterio de Aceptacion:** git diff -- scripts/setup_dev_worktree.ps1
-  muestra el cambio localizado en Step-CreateVenv y en el bloque
-  .DESCRIPTION; ningun otro Step (Step-DetachPrincipal,
-  Step-CreateWorktree, Test-WorktreeHasUncommittedChanges,
-  Invoke-RemoveWorktree) se modifica.
-- **Si falla:** Revertir con
-  git checkout -- scripts/setup_dev_worktree.ps1 y escalar al Manager
-  citando el error exacto.
+  1. _replace_once_or_none(temp_path: str, artifact_path: Path) ->
+     PermissionError | None: intenta os.replace(temp_path,
+     str(artifact_path)) dentro de un try/except que NO esta dentro de
+     ningun for (es una funcion de nivel superior sin loop). Si tiene
+     exito, no retorna nada explicito (retorno implicito None). Si
+     captura PermissionError, retorna el objeto de excepcion capturado
+     (except PermissionError as exc: return exc) en vez de re-lanzarlo o
+     silenciarlo.
 
-### Fase 3: Demostrar PASS-con-fix y correr la suite completa del script [AGENTE]
+  2. _atomic_replace_with_retry(temp_path: str, artifact_path: Path,
+     attempts: int = 3) -> None: un bucle for replace_attempt in
+     range(attempts) SIN try/except propio (el try/except vive
+     unicamente dentro de _replace_once_or_none). En cada iteracion,
+     llama a last_error = _replace_once_or_none(temp_path,
+     artifact_path); si last_error is None, hace return inmediato
+     (exito); si no, y no es el ultimo intento
+     (replace_attempt < attempts - 1), hace un import time local y
+     time.sleep(0.01 * (replace_attempt + 1)) antes de continuar a la
+     siguiente iteracion. Si el for termina sin haber retornado (los
+     attempts intentos fallaron), hace raise last_error fuera del for,
+     re-lanzando el objeto de excepcion guardado de la ultima iteracion
+     (el traceback original permanece adjunto al objeto en Python 3; no
+     se necesita raise ... from porque no hay un except activo en el
+     punto del raise).
 
-- **Tipo:** [AGENTE] TAREA AGENTE
-- **Archivo:** tests/test_setup_dev_worktree_script.py (ejecucion, sin
-  modificar salvo ajustes menores de assert si hiciera falta)
-- **Accion:** Ejecutar / verificar
-- **Descripcion:** Re-ejecutar el test de la Fase 1
-  (test_second_run_resyncs_existing_venv) contra el
-  setup_dev_worktree.ps1 ya corregido en la Fase 2: debe pasar (el log
-  de invocaciones de sync llega a 2 lineas tras la segunda corrida).
-  Despues, correr la suite entera del archivo:
-  .venv\Scripts\python.exe -m pytest tests/test_setup_dev_worktree_script.py -q
-  y confirmar que los 7 tests preexistentes
-  (test_creation_detaches_principal_and_adds_worktree_with_venv,
-  test_creation_fails_closed_when_principal_is_dirty,
-  test_creation_is_idempotent_on_second_run,
-  test_whatif_creation_mutates_nothing,
-  test_remove_cleans_worktree_and_reattaches_main,
-  test_remove_with_uncommitted_changes_fails_closed,
-  test_regression_add_without_detach_first_fails) mas el test nuevo dan
-  8 passed / 0 failed (el modulo entero corre porque estamos en Windows;
-  si por algun motivo corre en un entorno no-Windows, confirmar que el
-  modulo entero se skipea via el pytestmark existente, sin tocarlo).
-- **Riesgo:** [Bajo]
-- **Criterio de Aceptacion:** 8 passed / 0 failed en Windows (o 8 skipped
-  fuera de Windows) para tests/test_setup_dev_worktree_script.py.
-- **Si falla:** Si test_creation_is_idempotent_on_second_run rompe por
-  el cambio de texto del Write-Host, ajustar unicamente el texto
-  esperado en ese assert (no relajar el assert de "idempotente" para los
-  pasos de detach/worktree, que siguen siendolo); si cualquier otro test
-  preexistente rompe, revisar que el diff de Fase 2 no toco nada fuera de
-  Step-CreateVenv/.DESCRIPTION. Escalar tras 3 intentos.
+  Este diseno preserva el mismo backoff, el mismo limite de intentos (3)
+  y el mismo criterio de excepcion (PermissionError generico, sin
+  sys.platform ni .winerror) que las versiones previas, solo
+  reestructurado en 2 funciones para que ningun for contenga un
+  try/except en su cuerpo. En write_artifact_atomic, dentro del bloque
+  try existente de la escritura atomica (l.240-249 en la numeracion
+  pre-019p), la unica linea os.replace(temp_path, str(artifact_path)) se
+  sustituye por una sola linea de llamada:
+  _atomic_replace_with_retry(temp_path, artifact_path). El except
+  Exception exterior de ese mismo bloque (limpieza del .tmp con
+  os.unlink + raise) no cambia: sigue envolviendo la llamada al helper
+  igual que antes envolvia la linea de os.replace directa, preservando
+  el fail-closed. bus.supervisor.os.replace sigue siendo el punto de
+  monkeypatch correcto para los tests de la Fase 2, porque
+  _replace_once_or_none vive en el mismo modulo bus.supervisor y sigue
+  invocando os.replace (el modulo os importado a nivel de modulo, linea
+  4); ningun test de la Fase 2 cambia su mecanismo de monkeypatch.
+- **Riesgo:** Bajo
+- **Criterio de Aceptacion:** git diff -- bus/supervisor.py muestra: (i)
+  dos funciones de modulo nuevas, _replace_once_or_none y
+  _atomic_replace_with_retry, definidas antes de class
+  SequentialTicketSupervisor, ninguna con un try/except anidado dentro de
+  un for; (ii) dentro de write_artifact_atomic, el bloque try de la
+  escritura atomica reemplaza el bucle inline por una unica linea de
+  llamada a _atomic_replace_with_retry; (iii) el resto del metodo
+  write_artifact_atomic (lock, OCC, lectura de revision) permanece
+  byte-identico a la version pre-019p. ruff check bus/supervisor.py sale
+  con exit code 0, sin C901 (write_artifact_atomic recupera complejidad
+  <=10) y sin PERF203 (ninguna de las 2 funciones nuevas tiene
+  try/except dentro de un for; verificado empiricamente por el Manager
+  en una reproduccion aislada con el extend-select real del proyecto
+  antes de aprobar este plan).
+- **Si falla:** Si tras esta reestructuracion ruff check SIGUE
+  reportando C901 o PERF203 sobre cualquiera de las 2 funciones nuevas o
+  sobre write_artifact_atomic, el Builder ejecuta ruff check
+  bus/supervisor.py y pega el output literal en execution_log, y escala
+  al Manager con ese output antes de anadir cualquier noqa (ver
+  Non-goals y Decision Arquitectonica: el noqa C901 sigue prohibido; un
+  noqa PERF203 puntual solo esta autorizado como ultimo recurso si el
+  Manager confirma en el review que ninguna reestructuracion adicional
+  es razonable, no como primera respuesta del Builder).
 
-### Fase 4: Gates de calidad finales [AGENTE]
+### Fase 2: Test de barrera cross-platform (Bot)
+#### 2.1: Bot Test positivo, retry exitoso ante PermissionError transitorio
+- **Tipo:** TAREA AGENTE
+- **Archivo:** tests/test_approval_state_revision_and_skill_access.py
+- **Accion:** Modificar (anadir tests nuevos junto a
+  test_supervisor_write_artifact_atomic y variantes existentes)
+- **Descripcion:** Anadir la funcion de test
+  test_supervisor_write_artifact_atomic_retries_transient_permission_error
+  con parametros (tmp_path, monkeypatch): instanciar
+  SequentialTicketSupervisor igual que test_supervisor_write_artifact_atomic
+  (mismo patron de collaboration_dir, runtime_dir, auto_sync=False).
+  Monkeypatchear bus.supervisor.os.replace con una funcion que use un
+  contador (closure o list mutable) para lanzar PermissionError(5,
+  "Access is denied") en la 1a invocacion y, en la 2a invocacion,
+  delegar al os.replace real (guardar referencia al original ANTES de
+  monkeypatchear, via original_replace = bus.supervisor.os.replace, y
+  llamarlo dentro del fake). Llamar
+  supervisor.write_artifact_atomic(test_file, new_content) y verificar:
+  (a) no propaga ninguna excepcion; (b) el valor de retorno (revision)
+  no es None; (c) test_file.read_text(encoding="utf-8") == new_content;
+  (d) el contador de invocaciones del fake es exactamente 2. El test no
+  depende de sys.platform ni asume Windows: construye el PermissionError
+  manualmente y no lee el atributo winerror (Windows-only).
+- **Riesgo:** Bajo
+- **Criterio de Aceptacion:** El test nuevo, ejecutado solo con pytest
+  apuntando a
+  tests/test_approval_state_revision_and_skill_access.py y el nombre
+  test_supervisor_write_artifact_atomic_retries_transient_permission_error
+  con -v, pasa (exit 0) DESPUES del fix de la Fase 1
+  (_replace_once_or_none + _atomic_replace_with_retry en uso). MUTATION:
+  revirtiendo temporalmente el call-site de write_artifact_atomic a la
+  linea directa os.replace(temp_path, str(artifact_path)) sin retry (o
+  haciendo que _atomic_replace_with_retry haga return tras la primera
+  llamada a _replace_once_or_none sin reintentar), el mismo test FALLA
+  (la PermissionError de la 1a invocacion se propaga sin llegar a la 2a).
+  El Builder documenta en execution_log el comando literal FAIL-sin-fix
+  y PASS-con-fix.
+- **Si falla:** Escalar al Manager si el monkeypatch de os.replace no es
+  interceptable en el punto esperado (p.ej. si el import de os en
+  bus/supervisor.py cambiase de forma); no improvisar un mecanismo de
+  fallo distinto sin documentarlo.
 
-- **Tipo:** [AGENTE] TAREA AGENTE
-- **Archivo:** N/A (comandos de verificacion)
-- **Accion:** Ejecutar (no modifica codigo de produccion)
-- **Descripcion:** Ejecutar en este orden desde la raiz del repo con el
-  interprete de la worktree-dev:
-  1. .venv\Scripts\python.exe -m ruff check tests/test_setup_dev_worktree_script.py
-  2. .venv\Scripts\python.exe -m ruff format --check tests/test_setup_dev_worktree_script.py
-  3. PYTHONDONTWRITEBYTECODE=1 .venv\Scripts\python.exe scripts/run_pytest_safe.py --level all
-     (runner canonico del repo; suite completa, no un subconjunto).
-  4. .venv\Scripts\python.exe .agent\agent_controller.py --validate --json --project-root .
-- **Riesgo:** [Bajo]
-- **Criterio de Aceptacion:** ruff check y ruff format --check devuelven
-  exit code 0 sobre tests/test_setup_dev_worktree_script.py; la suite
-  completa de scripts/run_pytest_safe.py --level all sale verde (0
-  failed) con tested_commit_sha igual al HEAD del commit que contiene
-  los cambios de Fase 1-3; --validate --json reporta errors: 0
-  (fuera del drift plan-vs-log esperado en la transicion de ticket, que
-  resuelve el Orquestador, no el Builder).
-- **Si falla:** Si ruff format --check falla, correr
-  ruff format tests/test_setup_dev_worktree_script.py y re-verificar
-  (no editar el formato a mano). Si la suite completa falla en un test
-  fuera del alcance de este ticket, escalar al Manager citando el nombre
-  exacto del test y si es un rojo pre-existente conocido o uno nuevo.
+#### 2.2: Bot Test negativo, fail-closed tras agotar reintentos
+- **Tipo:** TAREA AGENTE
+- **Archivo:** tests/test_approval_state_revision_and_skill_access.py
+- **Accion:** Modificar (anadir junto al test de 2.1)
+- **Descripcion:** Anadir la funcion de test
+  test_supervisor_write_artifact_atomic_reraises_after_exhausting_replace_retries
+  con parametros (tmp_path, monkeypatch): mismo patron de instanciacion.
+  Monkeypatchear bus.supervisor.os.replace con una funcion que SIEMPRE
+  lanza PermissionError(5, "Access is denied") en las 3 invocaciones (o
+  las que defina attempts en _atomic_replace_with_retry, por defecto 3). Verificar con pytest.raises(PermissionError)
+  que supervisor.write_artifact_atomic(test_file, new_content) re-lanza
+  la excepcion original tras agotar los reintentos (no la oculta ni la
+  convierte en ConcurrentStateError ni en ningun otro tipo). Verificar
+  tambien que el archivo temporal con prefijo .tmp_ y sufijo .tmp no
+  queda huerfano en collaboration_dir tras la excepcion (el except
+  Exception exterior de l.244-249 ya limpia el temp con os.unlink; el
+  test confirma que list(collaboration_dir.glob) para ese patron da
+  lista vacia despues de la excepcion).
+- **Riesgo:** Bajo
+- **Criterio de Aceptacion:** El test pasa (exit 0) tras el fix de la
+  Fase 1 (helper _atomic_replace_with_retry en uso; confirma que el
+  fail-closed final sigue re-lanzando en vez de tragarse el error
+  indefinidamente). No requiere mutation adicional: este test ya pasa
+  incluso SIN el fix de la Fase 1 (hoy tambien re-lanza, solo que en el
+  primer intento); su proposito es fijar el contrato de fail-closed para
+  que un futuro cambio no lo rompa silenciosamente. El Builder lo
+  documenta como test de regresion, no como test que distingue
+  pre/post-fix.
+- **Si falla:** Escalar al Manager si el temp file queda huerfano tras
+  agotar los reintentos (indicaria que el cleanup de l.246-248 no cubre
+  el nuevo bucle).
+
+### Fase 3: Verificacion y cierre de calidad (Bot)
+#### 3.1: Bot Gates de calidad y suite completa
+- **Tipo:** TAREA AGENTE
+- **Archivo:** N/A (solo comandos)
+- **Accion:** Verificar
+- **Descripcion:** Ejecutar en orden: ruff check sobre bus/supervisor.py
+  y tests/test_approval_state_revision_and_skill_access.py; la suite
+  completa via el runner del proyecto (run_pytest_safe con nivel all o
+  el equivalente documentado en AGENTS.md) y registrar el
+  tested_commit_sha; el comando de validacion del controller con flags
+  --validate --json --project-root apuntando al punto actual. Los tres
+  comandos deben salir en verde antes de marcar READY_FOR_REVIEW.
+- **Riesgo:** Bajo
+- **Criterio de Aceptacion:** ruff check exit 0 sin warnings sobre los 2
+  archivos tocados; la suite completa termina en exit 0 y su
+  tested_commit_sha coincide con el HEAD del commit de entrega; la
+  validacion del controller reporta errors en 0.
+- **Si falla:** Si la suite completa revela OTRO flaky no relacionado
+  (distinto de este ticket), documentarlo en execution_log y escalar al
+  Manager en vez de intentar arreglarlo fuera de scope.
+
+## Calidad
+
+| Fase | Comando de verificacion |
+|------|--------------------------|
+| 1.1 | git diff -- bus/supervisor.py (confirma _replace_once_or_none + _atomic_replace_with_retry extraidas + call-site de 1 linea); ruff check bus/supervisor.py (exit 0, sin C901 y sin PERF203) |
+| 2.1 | pytest tests/test_approval_state_revision_and_skill_access.py -k test_supervisor_write_artifact_atomic_retries_transient_permission_error -v (FAIL sin el bucle de la Fase 1, PASS con el) |
+| 2.2 | pytest tests/test_approval_state_revision_and_skill_access.py -k test_supervisor_write_artifact_atomic_reraises_after_exhausting_replace_retries -v |
+| 3.1 | ruff check bus/supervisor.py tests/test_approval_state_revision_and_skill_access.py; suite completa (tested_commit_sha == HEAD); python .agent/agent_controller.py --validate --json --project-root . |
+
+## Decision Arquitectonica
+
+El retry se acota exclusivamente a la linea `os.replace` (no al bloque
+try completo) porque el sintoma observado (WinError 5 transitorio) ocurre
+especificamente en el rename, no en la apertura/escritura del archivo
+temporal; envolver mas superficie de la necesaria ocultaria errores reales
+de escritura bajo el mismo mecanismo de reintento. Se distingue
+`PermissionError` de forma generica (sin depender de `sys.platform` ni de
+leer `.winerror` de forma insegura) para que la logica de produccion sea
+identica en Windows y Linux: en Linux el bucle nuevo no encuentra la
+excepcion y se comporta exactamente igual que hoy (cero intentos extra,
+cero retraso). El backoff es corto (decenas de milisegundos) y el numero
+de intentos bajo (3) para no enmascarar un problema real de permisos
+detras de una espera larga; si el recurso sigue bloqueado tras esos 3
+intentos, el fail-closed existente (re-lanzar la excepcion) se preserva
+sin modificacion de comportamiento.
+
+ACTUALIZADO (hallazgo post-implementacion): la primera version inline del
+bucle de retry (dentro del propio write_artifact_atomic) elevo la
+complejidad ciclomatica McCabe del metodo de <=10 a 13, incumpliendo el
+limite C90=10 configurado en pyproject.toml (regla C901 de ruff). Se
+decide EXTRAER el bucle a una funcion de modulo nueva,
+_atomic_replace_with_retry, en vez de silenciar el hallazgo con
+`# noqa: C901`. Razon: un noqa oculta el sintoma pero deja
+write_artifact_atomic con mas ramas de decision de las necesarias para
+su responsabilidad principal (lock + OCC + escritura), mientras que
+extraer el retry a una funcion propia (a) devuelve write_artifact_atomic
+a su complejidad original, (b) aisla la logica de reintento como una
+unidad con una unica responsabilidad, mas facil de testear de forma
+independiente en el futuro, y (c) no introduce deuda tecnica marcada con
+un supresor de lint. La funcion vive en el mismo modulo (no en un archivo
+nuevo) porque su unico consumidor es write_artifact_atomic y no justifica
+un modulo separado; vive fuera de la clase (funcion, no metodo) porque no
+necesita ningun atributo de self, solo sus 2 parametros. El punto de
+monkeypatch de los tests de la Fase 2 (bus.supervisor.os.replace) no
+cambia: el helper nuevo sigue invocando os.replace del mismo modulo.
+
+SEGUNDO ACTUALIZADO (hallazgo post-implementacion #2): con el helper de
+una sola funcion _atomic_replace_with_retry ya extraido (resolviendo
+C901), ruff reporto PERF203 (`try`-`except` dentro de un `for` incurre
+en overhead) sobre el `except PermissionError` anidado en el `for` del
+helper. Se descartan (a) `# noqa: PERF203` puntual y (b) un
+per-file-ignore en pyproject.toml como primera respuesta, y se elige (c)
+reestructurar: separar el intento individual
+(`_replace_once_or_none`, con su try/except FUERA de cualquier for) del
+bucle de reintento (`_atomic_replace_with_retry`, con un for que NO
+contiene try/except propio, solo llama a la funcion de intento y
+decide reintentar o re-lanzar segun su valor de retorno). Esta
+estructura fue verificada empiricamente por el Manager antes de aprobar
+este plan, ejecutando `ruff check` con el `extend-select` real del
+proyecto (E, F, B, S, RUF, N, W, I, PERF, UP, C90, ERA, SIM) sobre un
+archivo aislado con exactamente ese diseno: resultado "All checks
+passed!" (sin C901, sin PERF203, sin B904 por el `raise last_error`
+fuera de un bloque except activo). Razon para preferir la
+reestructuracion sobre el noqa: es codigo de produccion critico (el
+escritor atomico del estado del bus); el unico precedente de
+per-file-ignore para PERF203 en el repo es sobre un archivo de tests
+(tests/test_pre_commit_hooks.py), no sobre codigo de produccion, por lo
+que extender ese precedente a bus/supervisor.py ampliaria una excepcion
+pensada para tests hacia produccion sin justificacion nueva. La
+reestructuracion elegida no complica la lectura: separa dos
+responsabilidades ya implicitas en el diseno anterior ("intentar una
+vez" vs "orquestar los reintentos"), cada una mas facil de razonar y
+testear por separado que el bucle unico previo.
 
 ## Trade-offs Considerados
 
 | Opcion | Pros | Contras | Decision |
 |--------|------|---------|----------|
-| A: uv sync incondicional (fuera del if de Test-Path) | Minimo; aprovecha que uv sync ya es idempotente por diseno; no anade estado nuevo ni superficie de deteccion | Corre uv sync de mas cuando el venv ya estaba sincronizado (costo bajo, red/disco) | Elegida |
-| B: deteccion heuristica de deps faltantes (import de prueba o marcador de sync-completo) | Evita invocar uv sync cuando no hace falta | Anade superficie nueva (que marcador, como invalidarlo si cambia uv.lock); dificil de testear con el fake uv.bat (no instala deps reales) | Descartada |
+| Retry acotado (3 intentos, backoff aprox 10-20ms) solo alrededor de os.replace | Cambio minimo, no toca OCC ni lock, inocuo en Linux | No elimina la causa raiz externa (antivirus, indexador) | Aceptada |
+| Reintentar el bloque try completo (incl. reabrir y reescribir el temp file) | Cubriria tambien fallos de escritura transitorios | Amplia el blast radius fuera de lo pedido; el fallo observado es solo en el rename | Descartada |
+| Aumentar max_retries o retry_delay_ms del bucle OCC externo para que tambien cubra este caso | Reutiliza infraestructura existente | Ese bucle solo dispara ante FileExistsError del lock; mezclar semanticas (lock vs rename) complica el codigo y el test | Descartada |
+| Extraer el retry a una funcion de modulo _atomic_replace_with_retry | Resuelve C901 sin silenciar el lint; retry queda testeable como unidad propia; write_artifact_atomic recupera su complejidad original | Anade una funcion nueva al modulo (superficie ligeramente mayor) | Aceptada (reemplaza al bucle inline tras el hallazgo de ruff) |
+| Anadir `# noqa: C901` en la firma de write_artifact_atomic | Cambio de una linea, mas rapido | Silencia el sintoma sin reducir la complejidad real del metodo; deuda tecnica que un futuro cambio puede agravar sin aviso del linter | Descartada |
+| Separar el intento individual (_replace_once_or_none) del bucle de reintento (_atomic_replace_with_retry) para que ningun for contenga un try/except | Resuelve PERF203 sin silenciar el lint; verificado empiricamente con el extend-select real; cada funcion queda con una unica responsabilidad clara | Anade una segunda funcion de modulo (superficie ligeramente mayor que un solo helper) | Aceptada (reemplaza al helper de una funcion tras el hallazgo PERF203) |
+| Anadir `# noqa: PERF203` puntual sobre el except del helper de una funcion | Cambio de una linea, mas rapido que reestructurar | Silencia el sintoma en codigo de produccion critico sin necesidad, dado que existe una reestructuracion limpia y verificada | Descartada (queda como ultimo recurso documentado si el Builder no logra reproducir la reestructuracion) |
+| Per-file-ignore de PERF203 para bus/supervisor.py en pyproject.toml | Resuelve el hallazgo en una linea de configuracion | Silencia PERF203 en TODO el archivo, no solo en el punto puntual; el unico precedente de este ignore en el repo es sobre un archivo de tests | Descartada |
 
 ## Guia de Riesgos
-
 | Nivel | Significado | Accion del Builder |
 |-------|-------------|-------------------|
-| [Bajo] | Rutinaria | Intentar 3 veces antes de escalar |
+| Bajo | Rutinaria | Intentar 3 veces antes de escalar |
+| Medio | Requiere atencion | Intentar 2 veces, escalar si dudas |
+| Alto | Critica | Escalar al primer fallo |
 
 ## Criterios de Aceptacion Global
+- [ ] os.replace dentro de write_artifact_atomic (via el helper
+      _atomic_replace_with_retry) reintenta hasta 3 veces ante
+      PermissionError transitorio y completa con exito si un intento
+      posterior tiene exito.
+- [ ] _replace_once_or_none y _atomic_replace_with_retry existen como
+      funciones de modulo en bus/supervisor.py, definidas antes de class
+      SequentialTicketSupervisor; ningun for de ninguna de las dos
+      contiene un try/except propio (el try/except vive solo dentro de
+      _replace_once_or_none, que no tiene loop). write_artifact_atomic
+      invoca a _atomic_replace_with_retry con una unica linea en el
+      punto donde antes estaba la llamada directa a os.replace.
+- [ ] Test de barrera 2.1 es FAIL-sin-fix y PASS-con-fix, cross-platform
+      (monkeypatch, sin depender de sys.platform ni del atributo
+      winerror).
+- [ ] Test de barrera 2.2 confirma que el fail-closed re-lanza tras
+      agotar los reintentos (no se traga el error) y no deja archivos
+      temporales huerfanos.
+- [ ] El retry OCC externo (lock, l.195-216) y su logica de stale lock
+      quedan byte-identicos.
+- [ ] ruff check y --validate --json en 0 errores y 0 warnings nuevos,
+      SIN usar `# noqa: C901` (write_artifact_atomic recupera complejidad
+      <=10) y SIN usar `# noqa: PERF203` ni per-file-ignore (la
+      reestructuracion en 2 funciones evita el hallazgo por diseno,
+      verificado empiricamente antes de aprobar este plan).
+- [ ] El cambio es inocuo en Linux (sin PermissionError, el bucle nuevo
+      no anade retraso ni cambia el resultado del caso feliz).
 
-- [ ] Step-CreateVenv invoca uv sync en la segunda corrida del script
-      (venv y python.exe ya existentes), demostrado por el test nuevo
-      con el fake uv.bat que registra invocaciones (FAIL sin el fix,
-      PASS con el fix).
-- [ ] La creacion del venv (uv venv) sigue siendo condicional a que
-      falte .venv\Scripts\python.exe.
-- [ ] Los 7 tests preexistentes de tests/test_setup_dev_worktree_script.py
-      siguen pasando (o skipeandose fuera de Windows via el pytestmark
-      de modulo, sin modificarlo).
-- [ ] La docstring .DESCRIPTION del script refleja el nuevo
-      comportamiento del paso 3.
-- [ ] assert_work_plan_committed, scope_gate.get_changed_files y
-      _handle_pre_handoff (superficie del ticket anterior, 019v) quedan
-      bit-a-bit identicos a HEAD.
-- [ ] ruff check y ruff format --check sobre
-      tests/test_setup_dev_worktree_script.py dan exit code 0.
-- [ ] .venv\Scripts\python.exe .agent\agent_controller.py --validate --json --project-root .
-      reporta errors: 0.
+## 2026-07-07 Handoff: Manager a Builder
+**Plan:** WOT-2026-019p
+**Accion requerida:** Implementar segun work_plan.md
+**Estado:** PENDING
