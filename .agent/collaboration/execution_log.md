@@ -1,46 +1,58 @@
-# Execution Log - WOT-2026-020b
+# Execution Log - WOT-2026-020c
 
-**Ticket:** WOT-2026-020b
+**Ticket:** WOT-2026-020c
 **Estado:** COMPLETED
 **Fecha:** 2026-07-07
 **delivery_authority:** repo_motor
 
 ## Fase 0: Verificacion de premisa
 
-- UPSTREAM_LEARNINGS.md existe en `.agent/runtime/memory/` con 1 learning (L-GATE-HARDENING-001).
-- La regla CONTRACT_GAP NO esta en UPSTREAM_LEARNINGS.md (verificado por grep).
-- Gate de schema-drift: `validate_observations.py --strict` exit 0 (verde).
-- Premisa CONFIRMADA: la regla necesita ser promocionada.
+- `.agent/scope_gate.py` usa `line == f"## {heading}"` (l.125, 162) y
+  `stripped == "## Files Likely Touched"` (l.230) — match exacto.
+- El match exacto NO detecta headings con trailing content (`## Files Likely Touched (motor)`)
+  ni double-space (`##  Files Likely Touched`).
+- WOT-2026-019l cambio de substring a exacto para evitar que menciones en prosa
+  abran secciones (L-GATE-HARDENING-001 regla 1).
+- Premisa CONFIRMADA.
+
+## Decision
+
+Mantener match exacto (fail-closed). Razon: el match exacto previene falsos
+positivos (prosa abriendo secciones). Relajar a startswith reintroduce el riesgo
+que 019l fixo. Los edge cases no ocurren en work_plans existentes. Fail-closed es
+seguro: fallo visible (seccion no detectada) vs fallo silencioso (contenido
+equivocado).
 
 ## Implementacion
 
-- Anadida entrada `L-CONTRACT-GAP-001` a UPSTREAM_LEARNINGS.md con:
-  - Regla: un campo REQUERIDO por un gate sin fuente en schema frozen es CONTRACT_GAP, no alias.
-  - Evidencia: CTL-2026-010a (GATE_FIELD_MAP aliasaba country<-idioma_origen, mutation-verify rompe 4 tests).
-  - Superficies y barreras existentes documentadas.
+- Anadida clase `TestScopeGateHeadingEdgeCases` a `tests/unit/test_scope_gate.py`
+  con 5 tests:
+  1. test_flt_trailing_content_does_not_open_section
+  2. test_flt_double_space_does_not_open_section
+  3. test_flt_trailing_content_with_real_section_uses_real
+  4. test_flt_tokens_trailing_content_does_not_open_section
+  5. test_builder_trailing_content_does_not_open_section
+- scope_gate.py NO se modifica (decision: mantener exacto).
 
 ## Gates
 
-- Schema-drift gate: `validate_observations.py --strict` -> exit 0 (verde tras adicion)
-- Encoding: `check_encoding_guard.py UPSTREAM_LEARNINGS.md` -> passed (no output)
-- Validate: 0 errors, 3 warnings (bus_drift + 2 invariants, accepted_health_exception por fix 020d)
+- Tests focales: `pytest tests/unit/test_scope_gate.py::TestScopeGateHeadingEdgeCases` -> 5 passed
+- Test file completo: `pytest tests/unit/test_scope_gate.py` -> 32 passed (0 regresiones)
+- Ruff check: All checks passed
+- Ruff format: 1 file already formatted
+
+## Mutation-verify (Orquestador)
+
+1. Edit scope_gate.py: `line == f"## {heading}"` -> `line.startswith(f"## {heading}")` (replaceAll, l.125 + l.162)
+2. Tests -> 4 FAILED (trailing content abre la seccion con startswith; double-space no afectado porque el prefijo `## ` no matchea `##  `)
+3. Revert edit
+4. Tests -> 5 PASSED
+
+Exit codes: SIN fix (startswith) = 4 failed exit 1; CON fix (exact) = 5 passed exit 0.
 
 ## DoD
 
-- [x] la regla escrita en la superficie portable del motor (UPSTREAM_LEARNINGS.md, entrada L-CONTRACT-GAP-001)
-- [x] gate de schema-drift de observations.jsonl verde (exit 0)
-- [x] sin duplicar en observations.jsonl del destino (la regla va en UPSTREAM_LEARNINGS.md, no en observations.jsonl)
-
-## Review
-
-Single-review (documentation, blast-radius acotado). Validado por Orquestador:
-contenido correcto, evidencia citada, encoding limpio, schema-drift gate verde.
-
-## Nota sobre portabilidad
-
-UPSTREAM_LEARNINGS.md esta gitignored por diseno (WOT-2026-015c: "Runtime state
-generado en sesion - NO distribuir con el motor"). Es "portable" en el sentido
-de que `scripts/closeout_steps/observations.py` (l.129-139) lo resuelve local o
-via motor_link fallback, accesible desde cualquier destino que enlaza al
-motor. No es version-controlled (no se pushea), pero es la superficie canonica
-de aprendizajes del motor cargada por el closeout.
+- [x] test que heading con trailing content NO abre la seccion (comportamiento actual preservado)
+- [x] test que heading con double-space NO abre la seccion
+- [x] decision documentada: mantener exacto (fail-closed)
+- [x] MUTATION: relajar a startswith -> 4 tests fallan (trailing content abre la seccion)

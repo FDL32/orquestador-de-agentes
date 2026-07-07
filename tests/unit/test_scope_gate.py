@@ -555,3 +555,99 @@ research. Esto no es la seccion real.
 """
         tokens = files_likely_touched_tokens(content)
         assert tokens == ["src/real.py"], f"Expected ['src/real.py'], got: {tokens}"
+
+
+class TestScopeGateHeadingEdgeCases:
+    """WOT-2026-020c: heading exact match edge cases (trailing content, double-space).
+
+    The exact match ``stripped == "## {heading}"`` (WOT-2026-019l) does NOT
+    detect headings with trailing content or double-space. This is intentional
+    (fail-closed): the exact match prevents prose mentions from opening
+    sections. These tests verify that the edge cases are correctly NOT detected.
+
+    Decision: maintain exact match (fail-closed). If the work_plan format
+    evolves to use trailing content or double-space, the section will not be
+    detected (visible failure) rather than silently matching wrong content.
+    """
+
+    def test_flt_trailing_content_does_not_open_section(self):
+        """Heading with trailing content must NOT open the FLT section.
+
+        ``## Files Likely Touched (motor)`` is NOT ``## Files Likely Touched``
+        so the section is not opened and no tokens are captured.
+        """
+        content = """# Work Plan
+
+## Files Likely Touched (motor)
+- src/real_file.py
+
+## Next Section
+"""
+        files = parse_files_likely_touched(content)
+        assert files == set(), (
+            f"Expected empty set (trailing content must not open section), got: {files}"
+        )
+
+    def test_flt_double_space_does_not_open_section(self):
+        """Heading with double-space after ## must NOT open the FLT section.
+
+        ``##  Files Likely Touched`` (two spaces) is NOT ``## Files Likely
+        Touched`` (one space) so the section is not opened.
+        """
+        content = "# Work Plan\n\n##  Files Likely Touched\n- src/real_file.py\n"
+        files = parse_files_likely_touched(content)
+        assert files == set(), (
+            f"Expected empty set (double-space must not open section), got: {files}"
+        )
+
+    def test_flt_trailing_content_with_real_section_uses_real(self):
+        """Trailing-content heading + real heading -> real heading is used.
+
+        If both a trailing-content heading and a real heading exist, the
+        parser must resolve the REAL section, not the trailing-content one.
+        """
+        content = """# Work Plan
+
+## Files Likely Touched (motor)
+- src/should_not_capture.py
+
+## Files Likely Touched
+- src/real_file.py
+
+## Next Section
+"""
+        files = parse_files_likely_touched(content)
+        expected = {str((_MOTOR_ROOT / "src/real_file.py").resolve())}
+        assert files == expected, (
+            f"Expected real FLT file (not trailing-content), got: {files}"
+        )
+
+    def test_flt_tokens_trailing_content_does_not_open_section(self):
+        """files_likely_touched_tokens must also reject trailing-content headings."""
+        from scope_gate import files_likely_touched_tokens
+
+        content = """# Work Plan
+
+## Files Likely Touched (motor)
+- src/real.py
+"""
+        tokens = files_likely_touched_tokens(content)
+        assert tokens == [], (
+            f"Expected [] (trailing content must not open section), got: {tokens}"
+        )
+
+    def test_builder_trailing_content_does_not_open_section(self):
+        """Heading with trailing content must NOT open the Builder section."""
+        content = """# Work Plan
+
+**deliverable_type:** documentation
+
+## Builder (motor)
+- docs/guide.md
+
+## Next Section
+"""
+        files = parse_files_likely_touched(content, deliverable_type="documentation")
+        assert files == set(), (
+            f"Expected empty set (Builder trailing content must not open), got: {files}"
+        )

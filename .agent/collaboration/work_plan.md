@@ -1,47 +1,50 @@
-# Plan de Trabajo: Promover regla CONTRACT_GAP a memoria portable
+# Plan de Trabajo: Heading exact match edge cases
 
 ## Metadata
-- **ID:** WOT-2026-020b
+- **ID:** WOT-2026-020c
 - **Estado:** COMPLETED
-- **deliverable_type:** documentation
+- **deliverable_type:** code
 - **Creado:** 2026-07-07
 - **delivery_authority:** repo_motor
 
 ## Objetivo
 
-Promover a memoria PORTABLE del motor (UPSTREAM_LEARNINGS.md) la regla
-generalizable: un campo REQUERIDO por un gate que NO tiene fuente en el schema
-de entrada frozen es un CONTRACT_GAP, NO se resuelve aliasando el campo mas
-cercano. Un gate con check presence-only deja pasar el alias -> artefacto
-semanticamente corrupto (floor assertion a nivel de artefacto).
+Testear y documentar el comportamiento del scope gate ante headings con formatos
+alternativos: trailing content (`## Files Likely Touched (motor)`) y
+double-space (`##  Files Likely Touched`). WOT-2026-019l cambio la deteccion de
+substring a match exacto (`stripped == "## {heading}"`); este ticket verifica
+que el match exacto NO detecta estos formatos (fail-closed) y documenta la
+decision.
 
-## Contexto
+## Decision
 
-Evidencia origen: CTL-2026-010a. GATE_FIELD_MAP aliasaba country<-idioma_origen;
-IntakeCompletenessGate (quality_gate.py:381) exige country pero
-docs/schemas/intake_request.md v1+v2 no lo provee. Mutation-verify confirma que
-retirar el alias rompe 4 tests. OK humano ya dado (2026-07-07).
+**Mantener match exacto (fail-closed).** Razon: el match exacto previene que
+menciones en prosa del literal del heading abran la seccion y lean tokens
+basura (WOT-2026-019l, L-GATE-HARDENING-001 regla 1). Relajar a `startswith`
+reintroduciria el riesgo de falso positivo. Los edge cases (trailing content,
+double-space) no ocurren en ningun work_plan existente. Si el formato evoluciona,
+el fail-closed es seguro: la seccion no se detecta (fallo visible) en vez de
+matchear contenido equivocado (fallo silencioso).
 
 ## Files Likely Touched
-- `.agent/runtime/memory/UPSTREAM_LEARNINGS.md`
+- `tests/unit/test_scope_gate.py`
+
+## Read/inspect only
+- `.agent/scope_gate.py` (no se modifica; el match exacto se mantiene)
 
 ## Non-goals
-- NO modificar observations.jsonl del destino (la regla va en UPSTREAM_LEARNINGS.md del motor, no en observations.jsonl)
-- NO crear tests (es documentation; la barrera es el mutation-verify de CTL-2026-010a ya existente)
-- NO tocar codigo productivo (quality_gate.py, GATE_FIELD_MAP, schemas)
-
-## Decision Arquitectonica
-
-La regla se promueve a UPSTREAM_LEARNINGS.md (memoria portable del motor) en
-vez de observations.jsonl del destino, porque es generalizable entre destinos:
-cualquier destino con gates de completitud que exijan campos sin fuente en su
-schema frozen se beneficia de la regla. UPSTREAM_LEARNINGS.md es la superficie
-canonica para aprendizajes del motor con evidencia y TTL permanente.
+- NO cambiar la deteccion de headings sin trailing content (comportamiento actual preservado)
+- NO relajar el match a startswith (decision: mantener exacto)
+- NO tocar scope_gate.py (es test-only; el codigo no cambia)
 
 ## Criterios de aceptacion (DoD)
-- [x] la regla escrita en la superficie portable del motor (UPSTREAM_LEARNINGS.md)
-- [x] gate de schema-drift de observations.jsonl verde (validate_observations.py --strict exit 0)
-- [x] sin duplicar en observations.jsonl del destino
+- [x] test que un heading con trailing content NO abre la seccion (comportamiento actual preservado)
+- [x] test que un heading con double-space NO abre la seccion
+- [x] decision documentada: mantener exacto (fail-closed)
+- [x] MUTATION: relajar a startswith -> el comportamiento cambia (trailing content abre la seccion)
 
-## Review
-Single-review (documentation, blast-radius acotado).
+## Mutation-verify
+1. Edit scope_gate.py: cambiar `stripped == "## Files Likely Touched"` a `stripped.startswith("## Files Likely Touched")`
+2. Correr test de trailing content -> debe FALLAR (la seccion se abre)
+3. Revertir edit
+4. Correr test -> debe PASS (la seccion no se abre)
