@@ -1,96 +1,138 @@
-# Execution Log - WOT-2026-020d
+# Execution Log - WOT-2026-016k
 
-**Ticket:** WOT-2026-020d
+**Ticket:** WOT-2026-016k
 **Estado:** COMPLETED
 **Fecha:** 2026-07-07
 **delivery_authority:** repo_motor
 
-## PREFLIGHT (Orquestador, topologia worktree-dev)
+## PREFLIGHT (Manager, topologia worktree-dev)
 
-- DEV (`orquestador_de_agentes_dev`): main, HEAD == origin/main == b1913a0, arbol limpio, 0/0.
-- PRINCIPAL (`orquestador_de_agentes`): detached en b1913a0, limpio.
-- WORKSPACE (`orquestador_de_agentes_workspace`): dirty (019l IN_PROGRESS + backlog 020a/020b/020c). NO tocado.
-- Contaminacion re-derivada en DEV: 36 WOT-* tracked + 2 no-WOT 016d (CALLBACK_GAP_016d_test_forms.py, INVENTARIO_3BUCKETS_016d_20260701.md). Coincide con handoff.
+- DEV (`orquestador_de_agentes_dev`): main, HEAD == origin/main == c799522, arbol limpio.
+- PRINCIPAL (`orquestador_de_agentes`): detached, NO tocar.
+- WORKSPACE (`orquestador_de_agentes_workspace`): main 6bd9aa5.
 
-## Fase 0: Diagnostico (verificar premisa contra codigo real)
+## Fase Manager: Verificacion de premisa
 
-- `runtime/project_root.py:238` `is_motor_code_only()`: retornaba `False` ante
-  cualquier `AGENT_PROJECT_ROOT` no vacia, sin comparar contra el motor. Bug confirmado.
-- `agent_controller.py:6312`: `--project-root .` setea `AGENT_PROJECT_ROOT = Path(".").resolve()` = motor.
-- `agent_controller.py:6340`: code-only guard no bloquea porque `is_motor_code_only()` ya dio False.
-- `.gitignore:85-86`: ignora `AUDIT_WP-*`/`PLAN_WP-*` (legacy), NO `*_WOT-*`. Gap confirmado.
-- Test existente `test_is_motor_code_only_false_with_env` (l.1597) usaba
-  `AGENT_PROJECT_ROOT=/tmp/fake_workspace` (path INEXISTENTE en Windows:
-  `C:\tmp\fake_workspace`, exists=False) y asertaba False.
+- `scripts/run_pytest_safe.py:461`: `_failed_re = re.compile(r"^FAILED\s+(\S+)")` — solo matchea FAILED.
+- `scripts/run_pytest_safe.py:450-510` (`stream_pytest`): retorna `(returncode, failed_ids)`, sin `error_test_ids`.
+- `scripts/run_pytest_safe.py:889`: `exit_code, failed_ids = stream_pytest(command)` — unpack de 2 valores.
+- `scripts/run_pytest_safe.py:895`: `summary["failed_test_ids"] = failed_ids` — solo campo FAILED en last-run.json.
+- `scripts/run_pytest_safe.py:925`: `write_json(LAST_RUN_JSON, summary)` — escribe schema sin error_test_ids.
+- `scripts/pre_handoff_guard.py:504-528` (`assert_canonical_suite_green`): cuando `exit_code != 0` y `failed_test_ids` esta vacio, fail-cierra como "state-leak suspected" (opaque failure).
+- `backlog.md:29`: WOT-2026-016h confirmo 5 ERRORs de teardown con `failed_test_ids=[]`, exit 1.
+- `backlog.md:60-74`: evidencia detallada de 016h: fixture `_isolate_controller_event_bus` en `tests/conftest.py:248-284` usa `pytest.fail(pytrace=False)` en teardown -> ERROR.
+- Premisa VERIFICADA: no existe `_error_re` ni `error_test_ids` en `run_pytest_safe.py`.
 
-### Correccion de premisa del handoff (Fase 0)
-El handoff afirmaba que el test existente "pasa con bug Y con fix (porque /tmp
-!= motor)". FALSO en este entorno: el fix propuesto incluye fail-closed
-`not env_root.exists() -> True`; como `C:\tmp\fake_workspace` no existe, el fix
-retornaria True y el test (que aserta False) ROMPERIA. Se actualizo el test
-existente para usar `tmp_path` (path externo real existente), preservando su
-intencion (externo -> False). Unico caller productivo: `agent_controller.py:6340`
-(resto son mocks o artefactos historicos contaminados).
+## Fase Manager: Creacion de work_plan.md
 
-## Fase 1: Implementacion
+- work_plan.md creado en `.agent/collaboration/work_plan.md` con Estado: APPROVED.
+- execution_log.md inicializado con entrada de inicio del ticket.
 
-- `runtime/project_root.py` `is_motor_code_only()`: env seteada -> `motor_root =
-  Path(__file__).resolve().parent.parent`; `env_root = Path(env_value).resolve()`;
-  invalido (OSError/ValueError) -> True; `env_root == motor_root` -> True;
-  `return not env_root.exists()` (fail-closed: inexistente -> True, existente
-  externo -> False). Sin env: marker check (sin cambios).
-- `.gitignore`: anadido `.agent/collaboration/*_WOT-*.md` (patron broad, superset
-  de las 4 lineas del handoff; cubre STRATEGY_WOT/PLAN_WOT futuros).
-- `tests/test_agent_controller.py` `TestMotorCodeOnlyGuard`:
-  - actualizado `test_is_motor_code_only_false_with_env` a `tmp_path` (externo existente -> False)
-  - NUEVO `test_is_motor_code_only_true_when_env_points_to_motor` (motor_root -> True)
-  - NUEVO `test_is_motor_code_only_true_when_env_path_nonexistent` (inexistente -> True)
+## Fase Builder: Inicio WOT-2026-016k
 
-## Mutation-verify (Orquestador, sobre repo real)
+- stream_pytest (l.450): firma `-> tuple[int, list[str]]`, retorna 2 valores.
+- _failed_re (l.461): solo matchea FAILED.
+- failed_ids loop (l.504-510): solo construye failed_ids.
+- stream_pytest return (l.510): `return returncode, failed_ids`.
+- main() (l.889): `exit_code, failed_ids = stream_pytest(command)` - unpack 2.
+- main() (l.895): `summary["failed_test_ids"] = failed_ids`.
+- main() (l.925): `write_json(LAST_RUN_JSON, summary)`.
+- NO existe _error_re ni error_test_ids.
+- Caller de stream_pytest: SOLO l.889 en main().
+- tests/unit/test_run_pytest_safe.py: _stub_main (l.447) patchea `lambda cmd: stream_return` donde stream_return es tupla de 2.
+- Premisa CONFIRMADA: 100% coincide con work_plan.md.
 
-Mecanica: `git stash push -- runtime/project_root.py` (revertir fix a HEAD buggy,
-mantener tests nuevos) -> correr test motor_root -> `git stash pop` -> correr test.
-- (a) SIN fix: `assert False is True` (AssertionError) -> exit 1
-- (b) codigo observado: `assert False is True` / FAILED test_is_motor_code_only_true_when_env_points_to_motor
-- (c) CON fix restaurado: PASSED -> exit 0
-- (d) codigo observado: 1 passed
-Barrera confirmada real: el test nuevo caza la regresion.
+## Fase 1: Implementacion en run_pytest_safe.py
 
-## Gates
+- Anadido `_error_re = re.compile(r"^ERROR\s+(\S+)")` en stream_pytest (l.463).
+- Anadido loop paralelo para `error_ids` despues del loop de `failed_ids`.
+- Firma actualizada: `-> tuple[int, list[str], list[str]]`.
+- Return actualizado: `return returncode, failed_ids, error_ids`.
+- main() unpack: `exit_code, failed_ids, error_ids = stream_pytest(command)`.
+- main() summary: `summary["error_test_ids"] = error_ids` anadido despues de `failed_test_ids`.
+- Caller verificado: unico caller es main() l.889, actualizado correctamente.
+- Segun `git diff`, scripts/run_pytest_safe.py: +24/-9 lineas.
 
-- Tests focales: `pytest tests/test_agent_controller.py::TestMotorCodeOnlyGuard -v` -> 8 passed, exit 0
-- Ruff check: `ruff check runtime/project_root.py tests/test_agent_controller.py` -> All checks passed, exit 0
-  (corregido SIM103: colapsado `if not exists(): return True; return False` -> `return not env_root.exists()`)
-- Ruff format: `ruff format --check ...` -> 2 files already formatted, exit 0
-- Validate: `agent_controller.py --validate --json --project-root <DEV>` -> 0 errors / 0 warnings, exit 0
-- Suite canonica: pendiente (corre sobre HEAD final tras commit)
+## Fase 2: Tests en tests/unit/test_run_pytest_safe.py
 
-## Nota operativa (consecuencia del fix)
+- Actualizados existing _stub_main calls: `(0, [])` -> `(0, [], [])`, `(1, failing_ids)` -> `(1, failing_ids, [])`.
+- Actualizado baseline test: `lambda cmd: (0, [])` -> `lambda cmd: (0, [], [])`.
+- Nueva funcion `_parse_test_ids_from_lines()` replica del parser REAL (FAILED + ERROR).
+- Nueva clase `TestErrorTestIdsParsing`: 7 tests para parsing de ERROR lines.
+- Nueva clase `TestErrorTestIdsInSummary`: 3 tests para error_test_ids en last-run.json + 1 test focal directo a stream_pytest con Popen mock.
+- _stub_main se duplico para la nueva clase (monkeypatches independientes).
+- Segun `git diff`, tests/unit/test_run_pytest_safe.py: +299/-9 lineas.
 
-Despues del fix, `is_motor_code_only()` retorna True cuando `AGENT_PROJECT_ROOT`
-apunta al motor -> el guard bloquea `--bootstrap-ticket`/`--mark-ready`/`--session-close`
-en el motor con `--project-root .`. Esto es CORRECTO (evita la contaminacion) e
-implica que el cierre de 020d/020e es pragmatico: live surfaces mantenidas a mano,
-sin bus/mark-ready en el motor. Las puertas esenciales (mutation-verify, suite,
-validate, Review 2 fresh-context) se cumplen. El bloqueo mismo es evidencia
-adicional de que el fix funciona.
+## Fase 3: Quality gates
 
-## Warnings accepted_health_exception (validate 0 errors / 3 warnings)
+### Tests
+Comando: `.\.venv\Scripts\python.exe -m pytest tests/unit/test_run_pytest_safe.py -v`
+```
+44 passed in 0.54s
+```
 
-Las 3 warnings restantes (`bus_drift` + 2 `invariants`) son no reparables y se
-clasifican `accepted_health_exception`:
+### Ruff check
+Comando: `.\.venv\Scripts\python.exe -m ruff check scripts/run_pytest_safe.py tests/unit/test_run_pytest_safe.py`
+```
+All checks passed!
+```
 
-- **Evidencia:** el fix (`runtime/project_root.py` `is_motor_code_only`) retorna
-  `True` cuando `AGENT_PROJECT_ROOT` apunta al motor; el guard
-  (`agent_controller.py:6340`) bloquea `--mark-ready`/`--bootstrap-ticket` en el
-  motor con `--project-root <motor>`. El bus no tiene eventos para 020d porque
-  `--mark-ready` nunca corrio (bloqueado por el fix, su comportamiento intencional).
-- **Propietario:** orquestador (session-2026-0707-motor-cleanup).
-- **Razon:** el proposito del fix es bloquear las write-ops del controller sobre
-  el motor, que es exactamente lo que detiene la contaminacion. Fabricar eventos
-  de bus para limpiar las warnings esta prohibido por el contrato CEM
-  (`audit_agent_output.md`: "No fabriques eventos de bus para convertir una
-  warning en falso 0"). Correr `--mark-ready` requeriria `--project-root` a un
-  workspace externo, pero 020d es motor-surface y el WORKSPACE esta ocupado con
-  019l (IN_PROGRESS). El warning reparable `ticket_prose` (TP-PROSE-10) ya se
-  corrigio (renombrado heading a "Decision Arquitectonica").
+### Ruff format
+Comando: `.\.venv\Scripts\python.exe -m ruff format --check scripts/run_pytest_safe.py tests/unit/test_run_pytest_safe.py`
+```
+2 files already formatted
+```
+
+## Fase 4: Mutation-verify (OBLIGATORIO)
+
+### Paso 1: Stash source file (revertir fix, mantener tests)
+```
+git add scripts/run_pytest_safe.py
+git stash push -- scripts/run_pytest_safe.py
+```
+
+### Paso 2: Test focal SIN fix -> debe FALLAR
+Comando: `.\.venv\Scripts\python.exe -m pytest tests/unit/test_run_pytest_safe.py::TestErrorTestIdsInSummary::test_stream_pytest_real_error_re_with_mocked_subprocess -v`
+Resultado: FAILED (exit code 1) — `ValueError: not enough values to unpack (expected 3, got 2)`
+
+### Paso 3: Restore fix
+```
+git stash pop
+```
+
+### Paso 4: Test focal CON fix -> debe PASS
+Comando: `.\.venv\Scripts\python.exe -m pytest tests/unit/test_run_pytest_safe.py::TestErrorTestIdsInSummary::test_stream_pytest_real_error_re_with_mocked_subprocess -v`
+Resultado: PASSED (exit code 0)
+
+**Exit codes registrados:**
+- SIN fix: exit code 1 (falla como esperado)
+- CON fix: exit code 0 (pasa como esperado)
+
+## Fase 5: Commit
+
+Comando: `$env:PATH = ".\.venv\Scripts;" + $env:PATH; git add scripts/run_pytest_safe.py tests/unit/test_run_pytest_safe.py; git commit -m "WOT-2026-016k: run_pytest_safe captura ERROR de teardown en error_test_ids (campo separado)"`
+
+Resultado:
+```
+[main 1a1c000] WOT-2026-016k: run_pytest_safe captura ERROR de teardown en error_test_ids (campo separado)
+2 files changed, 314 insertions(+), 9 deletions(-)
+```
+
+Hooks pre-commit: todos Passed (yaml, json, toml, merge conflicts, large files, shebangs, ast, EOF, line endings, trailing whitespace, ruff check, ruff format, history guard, encoding, claude).
+
+## Cierre
+
+- Commit SHA: 1a1c000
+- Mensaje: `WOT-2026-016k: run_pytest_safe captura ERROR de teardown en error_test_ids (campo separado)`
+- Cierre pragmatico: commit code + collab, suite valida, mutation-verify pasa. NO se ejecuto --mark-ready / --pre-handoff / --session-close (bloqueados por fix 020d, intencional).
+- Desviaciones: ninguna.
+
+## Mutation-verify preciso (re-corrido por Orquestador)
+
+El Orquestador re-corrio el mutation-verify con mutacion precisa (no stash completo):
+1. Edit `_error_re` pattern: `r"^ERROR\s+(\S+)"` -> `r"^DISABLED_MUTATION\s+(\S+)"` (mantiene 3-tuple return, solo rompe el match de ERROR)
+2. Test `test_stream_pytest_real_error_re_with_mocked_subprocess` -> FAILED (exit 1): `error_ids` vacio porque `_error_re` no matchea lineas ERROR
+3. Revert edit (restaurar `r"^ERROR\s+(\S+)"`)
+4. Test -> PASSED (exit 0): `error_ids == ["tests/unit/test_b.py::test_teardown_err"]`
+
+Esto verifica que la captura de ERROR via `_error_re` es la causa real (no solo el cambio de firma de return).
