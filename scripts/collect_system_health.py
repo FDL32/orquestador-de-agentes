@@ -45,6 +45,8 @@ def _run(cmd: list[str], cwd: Path, timeout: int = 600) -> dict:
             cwd=str(cwd),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
         )
         return {
@@ -52,7 +54,7 @@ def _run(cmd: list[str], cwd: Path, timeout: int = 600) -> dict:
             "exit_code": proc.returncode,
             "stdout": proc.stdout,
             "stderr": proc.stderr,
-            "ok": True,
+            "ok": proc.returncode == 0,
         }
     except FileNotFoundError as exc:
         return {

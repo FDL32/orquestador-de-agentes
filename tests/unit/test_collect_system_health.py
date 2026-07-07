@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 
@@ -164,3 +165,30 @@ def test_main_rejects_non_motor_root(tmp_path):
     notmotor.mkdir()
     rc = csh.main(["--motor-root", str(notmotor), "--out", str(tmp_path / "o")])
     assert rc == 2
+
+
+def test_run_captures_non_cp1252_stdout_without_crash(tmp_path):
+    cmd = [
+        sys.executable,
+        "-c",
+        "import sys; sys.stdout.buffer.write(b'\\x81'); sys.stdout.flush(); sys.exit(0)",
+    ]
+    res = csh._run(cmd, tmp_path)
+    assert res["exit_code"] == 0
+    assert res["stdout"] is not None
+    assert "\ufffd" in res["stdout"]
+    assert res["ok"] is True
+
+
+def test_run_ok_false_on_nonzero_exit(tmp_path):
+    cmd = [sys.executable, "-c", "import sys; sys.exit(1)"]
+    res = csh._run(cmd, tmp_path)
+    assert res["exit_code"] == 1
+    assert res["ok"] is False
+
+
+def test_run_ok_true_on_zero_exit(tmp_path):
+    cmd = [sys.executable, "-c", "import sys; sys.exit(0)"]
+    res = csh._run(cmd, tmp_path)
+    assert res["exit_code"] == 0
+    assert res["ok"] is True
