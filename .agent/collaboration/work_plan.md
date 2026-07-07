@@ -1,65 +1,71 @@
 # Work Plan
 
 ## Metadata
-- **ID:** WOT-2026-019g
+- **ID:** WOT-2026-020d
 - **Estado:** COMPLETED
 - **deliverable_type:** code
 - **delivery_authority:** repo_motor
+- **Origen:** handoff C:\tmp\HANDOFF_20260707_motor_cleanup.md
 
 ## Objetivo
 
-El guard code de mark-ready (_check_implementation_evidence en agent_controller.py)
-exige que un archivo del Files Likely Touched aparezca en el diff git. Un
-deliverable_type=code cuyo entregable vive ENTERAMENTE en superficie gitignored
-no satisface el guard. Fix: si cada FLT es gitignored (verificado con
-git check-ignore), saltar los checks de evidencia productiva y FLT-match.
+Cerrar la causa raiz 1 de la contaminacion del motor: `is_motor_code_only()`
+(`runtime/project_root.py`) no verificaba que `AGENT_PROJECT_ROOT` apunte a un
+workspace EXTERNO distinto del motor. Ejecutar `--bootstrap-ticket --project-root .`
+desde el motor seteaba `AGENT_PROJECT_ROOT` al motor mismo, el guard retornaba
+`False` y permitia escribir artefactos WOT-* en `repo_motor/.agent/collaboration/`.
+
+Causa raiz 2 (gap de `.gitignore`) se cierra en este mismo ticket: el `.gitignore`
+ignoraba `AUDIT_WP-*`/`PLAN_WP-*` (legacy) pero no `*_WOT-*`, asi los artefactos
+WOT se trackeaban sin barrera. La limpieza de los 38 archivos ya commiteados es
+WOT-2026-020e (prerrequisito: este ticket cierra el `.gitignore`).
 
 ## Root cause
 
-_check_implementation_evidence (l.1764+) verifica has_productive_evidence,
-is_collaboration_only, is_docs_only y FLT-match-git. Cada uno falla para un
-ticket code con deliverable gitignored porque git no ve los archivos.
+`is_motor_code_only()` (l.238) retornaba `False` ante cualquier
+`AGENT_PROJECT_ROOT` no vacia, sin comparar contra el motor. Cadena de fallo:
+`--project-root .` desde el motor -> `AGENT_PROJECT_ROOT = Path(".").resolve()`
+= motor (agent_controller.py:6312) -> `is_motor_code_only()` = False (l.238-239)
+-> code-only guard no bloquea `--bootstrap-ticket` (l.6340) -> artefactos WOT-*
+escritos en `repo_motor/.agent/collaboration/` y commiteados.
 
 ## Files Likely Touched
-
-- `.agent/agent_controller.py`
+- `runtime/project_root.py`
+- `.gitignore`
 - `tests/test_agent_controller.py`
 
 ## Read/inspect only
-
-- `bus/evidence.py` (resolve_evidence, fuente de all_files)
+- `.agent/agent_controller.py` (guard l.6340, set env l.6312)
 
 ## Criterios binarios de aceptacion
-
-- [ ] _flt_all_gitignored retorna True cuando cada FLT es gitignored
-- [ ] _flt_all_gitignored retorna False cuando al menos un FLT no es gitignored
-- [ ] code ticket con FLT gitignored no recibe "No implementation evidence" ni
-      "Collaboration-only" ni "No FLT match" errors
-- [ ] mutation: revertir el flag flt_gitignored -> vuelve el bloqueo
-- [ ] validate 0/0
-- [ ] ruff check pasa
-- [ ] Suite canonica exit 0, tested_commit_sha == HEAD
+- [x] `is_motor_code_only()` con `AGENT_PROJECT_ROOT=motor_root` -> True
+- [x] `is_motor_code_only()` con `AGENT_PROJECT_ROOT=externo existente` -> False
+- [x] `is_motor_code_only()` con `AGENT_PROJECT_ROOT=inexistente` -> True (fail-closed)
+- [x] mutation-verify: revertir fix -> test motor_root falla (exit 1); restaurar -> pasa (exit 0)
+- [x] `.gitignore` ignora `*_WOT-*.md` en `.agent/collaboration/` (patron broad, cubre AUDIT/PLAN/execution_log/work_plan/STRATEGY WOT-*)
+- [x] validate 0/0, ruff check limpio, suite canonica exit 0
 
 ## Non-goals
-
-- No eliminar el check FLT-match para tickets code con deliverable VERSIONADO
-- No tocar resolve_evidence en bus/evidence.py
-- No relajar has_commit ni quality gate evidence
+- No limpiar los 38 archivos contaminados (es WOT-2026-020e, despues de este ticket)
+- No relajar el guard a warning-only: sigue bloqueante
+- No usar `resolve_project_root()` para motor_root en el fix (lru_cache); usar `Path(__file__)`
+- No usar `Path(__file__).parent.parent.parent` (daria Proyectos_Python); usar `parent.parent`
+- No crear AUDIT_WOT-2026-020d.md / PLAN_WOT-2026-020d.md (evita nueva contaminacion)
 
 ## Decision Arquitectonica
-
-Se elige tratar code ticket con FLT gitignored como non_code_ticket (skip
-evidencia productiva + FLT-match) en vez de aceptar exit-code de gate como
-sustituto, porque: (a) es el cambio minimo (reutiliza el patron existente de
-non_code_ticket que hace return antes del FLT-match); (b) no introduce un
-nuevo canal de evidencia (exit-code) que requeriria validacion adicional;
-(c) git check-ignore es determinista y no requiere confianza en el agente.
+- `motor_root = Path(__file__).resolve().parent.parent`: deterministico, independiente
+  del lru_cache de `resolve_project_root()` (que puede retener el path del motor tras
+  re-inyeccion de `--project-root`).
+- fail-closed para path invalido (`OSError`/`ValueError`) e inexistente: un
+  `AGENT_PROJECT_ROOT` que no resuelve a un workspace real se trata como code-only.
+- `.gitignore`: patron broad `*_WOT-*.md` (1 linea) en vez de 4 lineas especificas
+  del handoff. Cubre STRATEGY_WOT-*/PLAN_WOT-* futuros (latente en
+  `prompts/orchestrator_launch_builder.md`); las live surfaces sin sufijo `_WOT`
+  (STATE/TURN/execution_log/work_plan/notifications/review_queue) quedan trackeadas.
 
 ## TP Check
-
-- TP-01: Premisa verificada (resolve_evidence usa git diff/log que no ven
-  gitignored; _check_implementation_evidence l.1764+ bloquea sin evidencia)
-- TP-02: Fix mecanico: _flt_all_gitignored + flag flt_gitignored en 3 checks
-- TP-03: Tests: _flt_all_gitignored true/false + code ticket skip evidence
-- TP-04: Mutation: revertir flag -> code ticket gitignored recibe errores
-- TP-05: No romper 8 tests existentes de TestImplementationEvidenceGate
+- TP-01: Premisa verificada contra codigo real (project_root.py:238, agent_controller.py:6312/6340)
+- TP-02: Fix mecanico: env seteada -> comparar contra motor_root + fail-closed exists()
+- TP-03: Tests: motor_root->True (NUEVO, caza regresion), inexistente->True (NUEVO), externo existente->False (actualizado a tmp_path)
+- TP-04: Mutation: revertir fix -> test motor_root falla (exit 1); restaurar -> pasa (exit 0)
+- TP-05: Fase 0 corrigio premisa del handoff: test existente false_with_env usaba path inexistente y romperia con fail-closed; actualizado a tmp_path

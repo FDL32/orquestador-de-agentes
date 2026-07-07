@@ -1,6 +1,6 @@
 # TURNO ACTUAL
 
-**Ultima actualizacion:** 2026-07-07 14:39:16
+**Ultima actualizacion:** 2026-07-07
 
 ---
 
@@ -8,16 +8,18 @@
 
 | Campo | Valor |
 |-------|-------|
-| **ROL** | **MANAGER** |
-| **Plan ID** | N/A |
+| **ROL** | **ORQUESTADOR** |
+| **Plan ID** | WOT-2026-020d |
 | **Tipo** | IMPLEMENTATION |
-| **Accion** | CREATE_PLAN |
+| **Accion** | CLOSE |
 
 ---
 
 ## Instruccion
 
-> Ticket WOT-2026-019g closed. Create new work_plan.md for next cycle.
+> Ticket WOT-2026-020d (fix is_motor_code_only + .gitignore) cerrado localmente.
+> Siguiente: WOT-2026-020e (git rm 38 archivos contaminados). Cadena local, push
+> unico al final con OK humano explicito.
 
 ---
 
@@ -25,9 +27,9 @@
 
 | Archivo | Estado |
 |---------|--------|
-| work_plan.md | COMPLETED |
-| execution_log.md | COMPLETED |
+| work_plan.md | COMPLETED (WOT-2026-020d) |
+| execution_log.md | COMPLETED (WOT-2026-020d) |
 
 ---
 
-*Generado por agent_controller.py v5*
+*Generado por orquestador (cierre pragmatico: fix bloquea mark-ready en motor)*
