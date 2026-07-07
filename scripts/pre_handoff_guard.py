@@ -811,7 +811,7 @@ def sg_fallback_parse(content: str, project_root: Path) -> set[str]:
     files: set[str] = set()
     for line in lines:
         line_s = line.strip()
-        if "## Files Likely Touched" in line_s:
+        if line_s == "## Files Likely Touched":
             in_section = True
             continue
         if in_section and line_s.startswith("## "):

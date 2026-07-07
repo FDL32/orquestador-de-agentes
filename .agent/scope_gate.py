@@ -122,7 +122,7 @@ def _section_path_tokens(lines: list[str], heading: str) -> list[str]:
     tokens: list[str] = []
     for raw in lines:
         line = raw.strip()
-        if f"## {heading}" in line:
+        if line == f"## {heading}":
             in_section = True
             continue
         if in_section and line.startswith("## "):
@@ -159,7 +159,7 @@ def _extract_section_paths(
     files: set[str] = set()
     for line in lines:
         line = line.strip()
-        if f"## {heading}" in line:
+        if line == f"## {heading}":
             in_section = True
             continue
         if in_section and line.startswith("## "):
@@ -185,7 +185,7 @@ def _parse_builder_fallback_entries(
     builder_entries: list[tuple[str | None, str]] = []
     for line in lines:
         stripped = line.strip()
-        if "## Builder" in stripped and stripped.startswith("## "):
+        if stripped == "## Builder":
             in_builder = True
             continue
         if (
@@ -227,7 +227,7 @@ def _parse_flt_section(
 
     for line in lines:
         stripped = line.strip()
-        if "## Files Likely Touched" in stripped and stripped.startswith("## "):
+        if stripped == "## Files Likely Touched":
             in_flt = True
             current_ns = None
             continue

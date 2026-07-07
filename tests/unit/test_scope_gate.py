@@ -371,7 +371,9 @@ class TestScopeGateHints:
             },
             "covered_files": set(),
             "warnings": [],
-            "blocked_reason": "None of the declared Files Likely Touched entries appeared in the diff",
+            "blocked_reason": (
+                "None of the declared Files Likely Touched entries appeared in the diff"
+            ),
         }
 
         allowed = _scope_gate_allows_close(gate_result, scope_override=None)
@@ -468,3 +470,88 @@ class TestRecordScopeOverrideNoAbsolutePaths:
         note = captured["note"]
         assert "y.py" in note
         assert str(_MOTOR_ROOT) not in note
+
+
+class TestScopeGateHeadingExactMatch:
+    """WOT-2026-019l: heading detection must be exact line match, not substring.
+
+    A prose mention of ``## Files Likely Touched`` (or ``## Builder``) BEFORE
+    the real section must NOT open the section and read garbage tokens.
+    """
+
+    def test_flt_prose_mention_before_real_section(self):
+        """Prose mention of '## Files Likely Touched' before real section
+        must resolve the REAL section, not the prose.
+
+        The prose line contains a path-like token (research.) that the
+        substring parser would incorrectly capture as a FLT entry.
+        """
+        content = """# Work Plan
+
+El scope gate lee la seccion `## Files Likely Touched` del work_plan.
+research. Esto es prosa, no la seccion real.
+
+## Files Likely Touched
+- src/real_file.py
+
+## Next Section
+"""
+        files = parse_files_likely_touched(content)
+        expected = {str((_MOTOR_ROOT / "src/real_file.py").resolve())}
+        assert files == expected, f"Expected real FLT file, got: {files}"
+
+    def test_flt_prose_mention_does_not_open_section(self):
+        """Prose mention alone (no real section) must NOT open a section.
+
+        The prose line contains a path-like token (research.) that the
+        substring parser would incorrectly capture.
+        """
+        content = """# Work Plan
+
+El parser busca `## Files Likely Touched` en el work_plan.
+research. No hay seccion real aqui.
+"""
+        files = parse_files_likely_touched(content)
+        assert files == set(), f"Expected empty set (no real section), got: {files}"
+
+    def test_builder_prose_mention_before_real_section(self):
+        """Prose mention of '## Builder' before real section must resolve
+        the REAL section for doc-type tickets.
+
+        The prose line contains a path-like token (research.) that the
+        substring parser would incorrectly capture.
+        """
+        content = """# Work Plan
+
+**deliverable_type:** documentation
+
+El fallback lee `## Builder` cuando no hay FLT.
+research. Esto es prosa, no la seccion real.
+
+## Builder
+- docs/guide.md
+
+## Next Section
+"""
+        files = parse_files_likely_touched(content, deliverable_type="documentation")
+        expected = {str((_MOTOR_ROOT / "docs/guide.md").resolve())}
+        assert files == expected, f"Expected real Builder file, got: {files}"
+
+    def test_flt_section_tokens_prose_mention(self):
+        """files_likely_touched_tokens must also reject prose mentions.
+
+        The prose line contains a path-like token (research.) that the
+        substring parser would incorrectly capture.
+        """
+        from scope_gate import files_likely_touched_tokens
+
+        content = """# Work Plan
+
+Mencion de `## Files Likely Touched` en prosa.
+research. Esto no es la seccion real.
+
+## Files Likely Touched
+- src/real.py
+"""
+        tokens = files_likely_touched_tokens(content)
+        assert tokens == ["src/real.py"], f"Expected ['src/real.py'], got: {tokens}"
