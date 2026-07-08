@@ -104,6 +104,47 @@ def _rmtree_robust(target: Path) -> bool:
     return not target.exists()
 
 
+def _pid_is_alive(pid: int) -> bool:
+    """Return True if a process with ``pid`` is currently running (portable).
+
+    WOT-2026-020p: the orphan-purge must never delete the sandbox of a LIVING
+    process -- under ``pytest -n N`` each xdist worker is a separate process with
+    its own ``session_<pid>`` dir, and one worker's purge would otherwise wipe a
+    sibling's live sandbox mid-run (cross-worker TOCTOU). POSIX uses ``os.kill(pid,
+    0)``; Windows uses ``tasklist`` (no psutil dependency). Fail-safe: on any doubt
+    it returns True (treat as alive -> do NOT purge), so we never delete a dir that
+    might still be in use. Only unambiguously-dead pids get purged.
+    """
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        tasklist = shutil.which("tasklist")
+        if not tasklist:
+            return True  # can't check -> assume alive, do not purge
+        try:
+            result = subprocess.run(
+                [tasklist, "/FI", f"PID eq {pid}", "/NH"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=5,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            return True  # can't check -> assume alive, do not purge
+        return result.returncode == 0 and str(pid) in result.stdout
+    # POSIX
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists but not ours -> alive
+    except OSError:
+        return True  # can't check -> assume alive, do not purge
+    return True
+
+
 def _purge_orphan_session_dirs(keep_pid: int) -> int:
     """WOT-2026-013d/013i: remove stale session_<PID> sandboxes from dead runs.
 
@@ -119,17 +160,30 @@ def _purge_orphan_session_dirs(keep_pid: int) -> int:
     fixture trees are actually deleted (the prior ``ignore_errors=True`` made the
     purge a no-op on Windows). Removes every session_* dir except the current
     pid's. Returns the count actually purged.
+
+    WOT-2026-020p: skip session dirs whose pid is STILL ALIVE. Under ``pytest -n N``
+    each xdist worker is a distinct process with its own ``session_<pid>``; without
+    this guard the worker that runs the purge second would delete a live sibling's
+    sandbox, and the victim's ``tempfile.TemporaryDirectory()`` (tempdir is
+    redirected to SESSION_RUNTIME_ROOT) crashes with ``FileNotFoundError``
+    (WinError 3). Only unambiguously-dead orphans are purged; the 013d/013i intent
+    (clean up crashed-run leftovers) is preserved.
     """
     if not TEST_RUNTIME_ROOT.is_dir():
         return 0
     purged = 0
     keep = f"session_{keep_pid}"
     for entry in TEST_RUNTIME_ROOT.iterdir():
-        if (
-            entry.name.startswith("session_")
-            and entry.name != keep
-            and _rmtree_robust(entry)
-        ):
+        if not entry.name.startswith("session_") or entry.name == keep:
+            continue
+        # WOT-2026-020p: never purge a living process's sandbox (xdist sibling).
+        try:
+            entry_pid = int(entry.name[len("session_") :])
+        except ValueError:
+            entry_pid = -1
+        if entry_pid > 0 and _pid_is_alive(entry_pid):
+            continue
+        if _rmtree_robust(entry):
             purged += 1
     return purged
 

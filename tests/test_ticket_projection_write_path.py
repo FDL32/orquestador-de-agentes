@@ -20,18 +20,43 @@ runtime_pkg = types.ModuleType("runtime")
 runtime_pkg.__path__ = [str(MOTOR_ROOT / "runtime")]
 sys.modules.setdefault("runtime", runtime_pkg)
 
-project_root_spec = importlib.util.spec_from_file_location(
-    "runtime.project_root", MOTOR_ROOT / "runtime" / "project_root.py"
-)
-assert project_root_spec and project_root_spec.loader
-project_root_module = importlib.util.module_from_spec(project_root_spec)
-project_root_spec.loader.exec_module(project_root_module)
-sys.modules["runtime.project_root"] = project_root_module
-runtime_pkg.project_root = project_root_module
+# WOT-2026-020p: reuse the already-loaded runtime.project_root if present, instead
+# of exec-loading a SECOND, divergent module object. Under `pytest -n` (xdist), a
+# duplicate module has its own @lru_cache; the autouse _clear_runtime_project_root_cache
+# fixture (conftest.py) and the victim test's module-level `from runtime.project_root
+# import clear_cache` then bind to DIFFERENT objects, so resolve_project_root()'s cache
+# is never actually cleared for the victim -> stale repo-root leaks into
+# tests/unit/test_project_root_resolution.py (13 flaky failures under the full suite).
+# The else branch registers the newly-created module in sys.modules too, so a later
+# loader reuses THIS object (not order-dependent).
+_EXISTING_PR = sys.modules.get("runtime.project_root")
+if _EXISTING_PR is not None:
+    project_root_module = _EXISTING_PR
+    runtime_pkg.project_root = project_root_module
+else:
+    project_root_spec = importlib.util.spec_from_file_location(
+        "runtime.project_root", MOTOR_ROOT / "runtime" / "project_root.py"
+    )
+    assert project_root_spec and project_root_spec.loader
+    project_root_module = importlib.util.module_from_spec(project_root_spec)
+    project_root_spec.loader.exec_module(project_root_module)
+    sys.modules["runtime.project_root"] = project_root_module
+    runtime_pkg.project_root = project_root_module
 
 import agent_controller  # type: ignore  # noqa: E402
 from bus.state_machine import TicketState  # type: ignore  # noqa: E402
 from bus.supervisor import SequentialTicketSupervisor  # type: ignore  # noqa: E402
+
+
+# WOT-2026-020p NOTE (vector B barrier): a *unit* barrier for the divergent-module
+# regression was attempted and REJECTED as a no-op. The divergence only manifests
+# under the specific xdist worker-split + full-suite collection order; in an isolated
+# or paired run the freshly exec-loaded module IS what a subsequent import resolves,
+# so any single-process assertion passes with OR without the fix (mutation-verify
+# confirmed it does not catch the reverted fix). The REAL, verified barrier for
+# vector B is the full-suite xdist gate (A/B confirmed: with the fix, 6/6 green; the
+# reverted loader reproduces the 13 test_project_root_resolution failures). Do not
+# re-add a unit test here that gives false confidence; guard this fix via the suite.
 
 
 class FakeEvent:

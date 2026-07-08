@@ -9,6 +9,8 @@ discover_skills.py; check_skill_collisions.py is untouched.
 
 from __future__ import annotations
 
+import os
+from collections.abc import Iterator
 from pathlib import Path
 
 from scripts.discover_skills import (
@@ -19,6 +21,54 @@ from scripts.discover_skills import (
     check_naming,
     parse_frontmatter,
 )
+
+
+# WOT-2026-020p: the two live-surface scans below used bare ``root.rglob("*")``,
+# which enters ``tests/sandbox/test_runtime/session_<PID>`` of OTHER xdist workers
+# and stat()s (``p.is_file()``) files that a sibling worker deletes mid-traversal ->
+# intermittent ``FileNotFoundError [WinError 3]`` under ``pytest -n``, BEFORE the
+# post-scan ``tolerated_parts`` filter can skip them. Mirrors the ``_safe_walk``
+# defense already used in ``scripts/project_scanner.py`` (WOT-2026-013d): PRUNE the
+# volatile sandbox subtree before descending, and tolerate entries that vanish.
+_PRUNE_DIR_NAMES = {".git", ".venv", "__pycache__", "node_modules"}
+_PRUNE_REL_PARTS = ("tests/sandbox",)
+
+
+def _safe_repo_files(root: Path) -> Iterator[Path]:
+    """Yield files under ``root``, pruning the volatile sandbox and tolerating races."""
+    root_str = str(root)
+    for dirpath, dirnames, filenames in os.walk(root_str, onerror=lambda _e: None):
+        current = Path(dirpath)
+        rel = str(current.relative_to(root)).replace("\\", "/")
+        if any(rel == part or rel.startswith(part + "/") for part in _PRUNE_REL_PARTS):
+            dirnames[:] = []
+            continue
+        dirnames[:] = [d for d in dirnames if d not in _PRUNE_DIR_NAMES]
+        for name in filenames:
+            yield current / name
+
+
+def test_safe_repo_files_prunes_volatile_sandbox(tmp_path: Path) -> None:
+    """WOT-2026-020p barrier: the live-surface scan must NOT descend into
+    ``tests/sandbox/test_runtime`` (other xdist workers create/delete files there
+    mid-traversal -> WinError 3). Mutation: drop the prune branch in
+    ``_safe_repo_files`` and the sandbox file is yielded -> this test FAILS.
+    """
+    # A normal repo file (must be yielded) and a volatile sandbox file (must NOT).
+    (tmp_path / "prompts").mkdir()
+    real = tmp_path / "prompts" / "launch_builder.md"
+    real.write_text("x", encoding="utf-8")
+    sandbox = tmp_path / "tests" / "sandbox" / "test_runtime" / "session_99999"
+    sandbox.mkdir(parents=True)
+    volatile = sandbox / "opencode-review-x.md"
+    volatile.write_text("y", encoding="utf-8")
+
+    yielded = {p.resolve() for p in _safe_repo_files(tmp_path)}
+
+    assert real.resolve() in yielded, "a real repo file was wrongly pruned"
+    assert volatile.resolve() not in yielded, (
+        "volatile sandbox file was visited (rglob-style race regression, 020p)"
+    )
 
 
 def _seed(
@@ -250,8 +300,8 @@ class TestNoLiveManSkillRefs008i:
             "/.agent/context/",
         )
         offenders = []
-        for p in root.rglob("*"):
-            if not p.is_file() or p.suffix not in (
+        for p in _safe_repo_files(root):
+            if p.suffix not in (
                 ".md",
                 ".py",
                 ".txt",
@@ -310,8 +360,8 @@ class TestNoLiveBuiSkillRefs008j:
             "/.agent/context/",
         )
         offenders = []
-        for p in root.rglob("*"):
-            if not p.is_file() or p.suffix not in (
+        for p in _safe_repo_files(root):
+            if p.suffix not in (
                 ".md",
                 ".py",
                 ".txt",

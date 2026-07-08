@@ -19,6 +19,7 @@ already used by ``.agent/agent_controller.py::_auto_archive_closed_artifacts``.
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
 
 import pytest
@@ -33,6 +34,8 @@ conftest_module = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(conftest_module)
 
 ProjectTmpPathFactory = conftest_module.ProjectTmpPathFactory
+_purge_orphan_session_dirs = conftest_module._purge_orphan_session_dirs
+_pid_is_alive = conftest_module._pid_is_alive
 
 # Real long test name measured in this repo's diagnostic (Fase 0), 88 chars.
 _REAL_LONG_TEST_NAME = "test_build_review_prompt_includes_manager_learnings_for_code_and_preserves_static_rubric"
@@ -87,6 +90,65 @@ def test_mktemp_short_name_not_padded_or_broken(tmp_path: Path) -> None:
     # Recognizable: the short name (or its safe-replaced form) still appears
     # as a literal prefix of the generated folder name.
     assert path.name.startswith(short_name)
+
+
+def _find_dead_pid() -> int:
+    """Return a pid that is (almost certainly) not running.
+
+    Scans downward from a high value; falls back to a fixed high pid if the
+    liveness check is inconclusive on this platform.
+    """
+    for candidate in range(999983, 900000, -1):
+        if not _pid_is_alive(candidate):
+            return candidate
+    return 999983
+
+
+def test_purge_preserves_live_sibling_and_removes_dead(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WOT-2026-020p barrier: the orphan purge must NOT delete a living process's
+    ``session_<pid>`` sandbox (xdist sibling), but MUST still remove dead ones.
+
+    Mutation: revert the liveness guard in ``_purge_orphan_session_dirs`` and the
+    live sibling gets purged -> this test FAILS. Reproduces the cross-worker TOCTOU
+    that made ``tempfile.TemporaryDirectory()`` crash with WinError 3 under ``-n``.
+    """
+    runtime_root = tmp_path / "test_runtime"
+    runtime_root.mkdir()
+    monkeypatch.setattr(conftest_module, "TEST_RUNTIME_ROOT", runtime_root)
+
+    live_pid = os.getpid()  # this test process is provably alive
+    dead_pid = _find_dead_pid()
+    other_live_pid = os.getppid()  # parent process, also alive
+
+    live_dir = runtime_root / f"session_{live_pid}"
+    dead_dir = runtime_root / f"session_{dead_pid}"
+    other_live_dir = runtime_root / f"session_{other_live_pid}"
+    for d in (live_dir, dead_dir, other_live_dir):
+        d.mkdir()
+        (d / "marker.txt").write_text("x", encoding="utf-8")
+
+    # Purge with a keep_pid that matches NONE of the three dirs, so live_dir is
+    # not merely skipped by the keep_pid==self short-circuit: it must survive
+    # purely because the liveness check reports its pid alive. keep_pid=1 is a
+    # sentinel with no session_1 dir present.
+    purged = _purge_orphan_session_dirs(keep_pid=1)
+
+    assert live_dir.exists(), (
+        "live sibling sandbox was wrongly purged (TOCTOU regression)"
+    )
+    assert other_live_dir.exists(), "live parent-process sandbox was wrongly purged"
+    assert not dead_dir.exists(), "dead orphan sandbox was not purged"
+    assert purged == 1, f"expected exactly 1 dead dir purged, got {purged}"
+
+
+def test_pid_is_alive_true_for_self_false_for_dead() -> None:
+    """``_pid_is_alive`` recognizes the running process and rejects a dead pid."""
+    assert _pid_is_alive(os.getpid()) is True
+    assert _pid_is_alive(_find_dead_pid()) is False
+    assert _pid_is_alive(0) is False
+    assert _pid_is_alive(-1) is False
 
 
 if __name__ == "__main__":
