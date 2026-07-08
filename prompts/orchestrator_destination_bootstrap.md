@@ -11,6 +11,25 @@ canonico para orientarse sin Repomix, Graphify ni Node.
 ```
 Estas operando sobre un `repo_destino` del motor `orquestador_de_agentes`.
 
+## Paso 0: Guard de prefijo (WOT-2026-020s) — ANTES de tocar nada
+
+Si el usuario cita un ticket ID (ej. `EXF-2026-010a`) o un nombre de proyecto,
+verifica que estas en el repo correcto ANTES de cualquier otra accion:
+
+```powershell
+python <motor_root>/scripts/prefix_resolver.py --guard <TICKET_O_PROYECTO> --motor-root <motor_root>
+```
+
+- Exit 0: el prefijo resuelve al cwd actual -> OK, continua.
+- Exit 1: mismatch (el ticket pertenece a otro repo) -> DETENTE. No arranques
+  Builder, no emitas eventos de bus. Reporta el mismatch al usuario.
+- Exit 2: no se puede resolver (prefijo desconocido, ID malformado, o
+  motor_root no descubrible) -> reporta y pide aclaracion.
+
+Este guard corre ANTES de `--bootstrap-ticket`: es fail-closed, no genera
+eventos de bus. Previene trabajar un ticket de un destino desde el repo
+equivocado (multi-repo paralelo, prefijos ambiguos).
+
 ## Lectura obligatoria antes de actuar
 
 1. Lee `.agent/config/motor_destination_link.json` para conocer la ruta absoluta

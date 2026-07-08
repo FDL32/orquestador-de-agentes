@@ -74,6 +74,8 @@ tests/sandbox/tmp*/
 .agent/runtime/research/
 .agent/backups/
 .agent/config/motor_destination_link.json
+# WOT-2026-020s: prefix-resolver local overrides (destinations outside search tree)
+scripts/prefix_resolver.local.json
 
 # Requeue claims atomico (WT-2026-199, transitorio)
 .agent/runtime/requeue_claims/

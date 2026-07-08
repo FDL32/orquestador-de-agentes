@@ -1,0 +1,5 @@
+{
+  "overrides": {
+    "ABC": "/absolute/path/to/destination/outside/search/tree"
+  }
+}
