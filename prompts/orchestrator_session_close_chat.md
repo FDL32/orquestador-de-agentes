@@ -106,6 +106,17 @@ Nota de idempotencia: si `STATE.md` ya esta en `COMPLETED` (ticket cerrado
 antes del cierre de sesion), anade `--force` o el comando devolvera
 `already_completed` sin ejecutar ningun paso.
 
+> STOP - integridad de historia (no reescribir lo ya pusheado): el cierre
+> (incluido `--force`) NUNCA debe reescribir historia git ya publicada:
+> prohibido `git reset --hard` a un remoto y `git push --force`/`--force-with-lease`
+> sobre `main` u otra rama pusheada, salvo autorizacion humana explicita y
+> documentada. `--force` aqui es SOLO idempotencia del estado del bus, no permiso
+> para reescribir commits. Incidente de referencia: EXF-2026-011a (un
+> `session-close --force` hizo `git reset` a origin/main, reescribio el SHA del
+> producto y descarto el CHANGELOG; se reaplico). Follow-up recomendado: guarda de
+> codigo en `scripts/session_closeout.py` que falle-cerrado ante estas operaciones
+> (ticket WOT- propio del motor; este STOP es advisory hasta entonces).
+
 Scripts sueltos SOLO para diagnostico puntual (el pipeline ya los incluye):
 
 - `python scripts/local_audit.py` — snapshot estructurado del estado actual
