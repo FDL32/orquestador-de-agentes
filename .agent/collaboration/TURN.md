@@ -1,6 +1,6 @@
 # TURNO ACTUAL
 
-**Ultima actualizacion:** 2026-07-08 02:00:00
+**Ultima actualizacion:** 2026-07-08 02:15:00
 
 ---
 
@@ -17,9 +17,9 @@
 
 ## Instruccion
 
-> WOT-2026-020g cerrado (cierre pragmatico). Suite final sobre arbol limpio
+> WOT-2026-020m cerrado (cierre pragmatico). Suite final sobre arbol limpio
 > pendiente de confirmacion via last-run.json. Listo para el siguiente ticket
-> (WOT-2026-020m) tras mini-audit.
+> (WOT-2026-020h) tras mini-audit.
 
 ---
 
@@ -27,9 +27,9 @@
 
 | Archivo | Estado |
 |---------|--------|
-| work_plan.md | COMPLETED (WOT-2026-020g) |
-| execution_log.md | COMPLETED (WOT-2026-020g) |
+| work_plan.md | COMPLETED (WOT-2026-020m) |
+| execution_log.md | COMPLETED (WOT-2026-020m) |
 
 ---
 
-*Reset tras cierre de WOT-2026-020g (pipeline higiene de cierre).*
+*Reset tras cierre de WOT-2026-020m (pipeline higiene de cierre).*
