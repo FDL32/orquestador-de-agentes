@@ -1,6 +1,7 @@
 """Functional integration tests for agent_controller.py."""
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -15,7 +16,10 @@ _REAL_CONTROLLER = _PROJECT_ROOT / ".agent" / "agent_controller.py"
 _RUNTIME_DIR = _PROJECT_ROOT / "runtime"
 _BUS_DIR = _PROJECT_ROOT / "bus"
 _TMP_BASE = _PROJECT_ROOT / ".tmp"
-_SANDBOX_ROOT = _TMP_BASE / "controller_sandbox"
+# WOT-2026-020p: per-worker sandbox (see test_completion_integration.py) so parallel
+# xdist workers do not clobber a shared .tmp dir under -n.
+_WORKER = os.environ.get("PYTEST_XDIST_WORKER", "main")
+_SANDBOX_ROOT = _TMP_BASE / f"controller_sandbox_{_WORKER}"
 
 
 @pytest.fixture()

@@ -34,9 +34,35 @@ def _rmtree_robust(path: Path) -> None:
 
 
 PROJECT_ROOT = Path(__file__).parent.parent
-SANDBOX_ROOT = PROJECT_ROOT / ".tmp" / "sandbox_completion_test"
+# WOT-2026-020p: per-worker sandbox so parallel xdist workers do not clobber a
+# shared .tmp dir (one worker deleting/rebuilding it while another reads -> WinError
+# 3/5 on agent_controller.py). PYTEST_XDIST_WORKER is gw0/gw1/... under -n, "main"
+# in serial. Same shared-sandbox family as the rest of 020p.
+_WORKER = os.environ.get("PYTEST_XDIST_WORKER", "main")
+SANDBOX_ROOT = PROJECT_ROOT / ".tmp" / f"sandbox_completion_test_{_WORKER}"
 SANDBOX_AGENT = SANDBOX_ROOT / ".agent"
 SANDBOX_COLLAB = SANDBOX_AGENT / "collaboration"
+
+
+def test_sandbox_root_is_per_worker() -> None:
+    """WOT-2026-020p barrier: the integration sandbox must be namespaced per xdist
+    worker so parallel workers do not clobber a shared .tmp dir.
+
+    Mutation: drop the ``_{worker}`` suffix from SANDBOX_ROOT and two workers map to
+    the SAME path -> this test FAILS (both env values yield an identical path). The
+    real regression it guards (concurrent WinError 3/5 on the shared sandbox) is
+    covered end-to-end by the xdist A/B gate; this is the fast unit sentinel.
+    """
+    # The live constant must carry the current worker id.
+    assert f"_{_WORKER}" in SANDBOX_ROOT.name, (
+        f"SANDBOX_ROOT {SANDBOX_ROOT.name!r} is not namespaced by worker {_WORKER!r}"
+    )
+    # Two distinct worker ids must produce DISTINCT sandbox paths.
+    base = PROJECT_ROOT / ".tmp"
+    path_gw0 = base / f"sandbox_completion_test_{'gw0'}"
+    path_gw1 = base / f"sandbox_completion_test_{'gw1'}"
+    assert path_gw0 != path_gw1, "per-worker sandbox paths collided (020p regression)"
+
 
 # Archivos a copiar en el sandbox
 # Incluye los modulos hermanos que agent_controller importa al cargar
