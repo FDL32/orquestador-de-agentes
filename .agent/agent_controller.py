@@ -4622,7 +4622,7 @@ def _sync_markdowns_to_completed(ticket_id: str) -> None:
 
 
 def _handle_manager_approve(  # noqa: C901 - flag handler intentionally branches across validation and closeout
-    ticket_id: str, json_output: bool, force_mode: bool
+    ticket_id: str, json_output: bool, force_mode: bool, dry_run: bool = False
 ) -> int:
     """
     Handle --manager-approve flag.
@@ -4693,6 +4693,24 @@ def _handle_manager_approve(  # noqa: C901 - flag handler intentionally branches
         else:
             bus_state = None
         if supervisor_closed_events and bus_state == TicketState.COMPLETED:
+            if dry_run:
+                if json_output:
+                    print(
+                        json.dumps(
+                            {
+                                "status": "dry_run_preview",
+                                "ticket_id": ticket_id,
+                                "current_state": "COMPLETED",
+                                "would_apply": "idempotent_noop",
+                            },
+                            indent=2,
+                        )
+                    )
+                else:
+                    print(
+                        f"[DRY-RUN] Ticket {ticket_id} already COMPLETED; no action. No state mutated."
+                    )
+                return 0
             # Ticket already closed in bus - idempotent return. Still repair
             # a missing BUILDER_EXIT (chat-driven closeouts skip --mark-ready)
             # and re-sync markdown projections so --validate converges on the
@@ -4717,6 +4735,24 @@ def _handle_manager_approve(  # noqa: C901 - flag handler intentionally branches
     # fails permanently with no repair path. Backfill the canonical cascade
     # to reconcile toward the bus instead of returning passively.
     if "COMPLETED" in log_status:
+        if dry_run:
+            if json_output:
+                print(
+                    json.dumps(
+                        {
+                            "status": "dry_run_preview",
+                            "ticket_id": ticket_id,
+                            "current_state": "COMPLETED",
+                            "would_apply": "backfill_closeout",
+                        },
+                        indent=2,
+                    )
+                )
+            else:
+                print(
+                    f"[DRY-RUN] Ticket {ticket_id} markdown COMPLETED; would backfill closeout. No state mutated."
+                )
+            return 0
         if BUS_AVAILABLE and event_bus:
             _backfill_builder_exit(event_bus, ticket_id)
             _emit_manager_approve_cascade(event_bus, ticket_id)
@@ -4809,6 +4845,25 @@ def _handle_manager_approve(  # noqa: C901 - flag handler intentionally branches
             warn_msg = "\n".join(warn_parts)
             print(warn_msg, file=sys.stderr, flush=True)
             return 1
+
+    if dry_run:
+        if json_output:
+            print(
+                json.dumps(
+                    {
+                        "status": "dry_run_preview",
+                        "ticket_id": ticket_id,
+                        "current_state": log_status,
+                        "would_apply": "READY_FOR_REVIEW -> COMPLETED",
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            print(
+                f"[DRY-RUN] Would close ticket {ticket_id}: {log_status} -> COMPLETED. No state mutated."
+            )
+        return 0
 
     # Emit canonical closeout cascade
     if BUS_AVAILABLE and event_bus:
@@ -6482,7 +6537,14 @@ def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
     for flag, handler in FLAG_HANDLERS.items():
         if flag in sys.argv:
             # Pass ticket_id to manager-approve handler
-            if flag in ("--manager-approve", "--request-changes"):
+            if flag == "--manager-approve":
+                return handler(
+                    ticket_id,
+                    json_output,
+                    force_mode,
+                    dry_run=("--dry-run" in sys.argv),
+                )
+            if flag == "--request-changes":
                 return handler(ticket_id, json_output, force_mode)
             return handler()
 

@@ -2058,6 +2058,96 @@ class TestHandleManagerApproveIntegration:
         assert cascade_calls == [(bus, self._TICKET)]
 
 
+class TestHandleManagerApproveDryRun:
+    """WOT-2026-020h: --manager-approve --dry-run must be a no-op on state.
+
+    Dry-run must NOT sync markdowns to COMPLETED, clear auxiliary states, nor
+    emit the closeout cascade. It only reports what it would do.
+    """
+
+    _TICKET = "WT-2026-020h"
+
+    _WORK_PLAN = (
+        "# Work Ticket - WT-2026-020h\n"
+        "## Metadata\n"
+        "- **ID:** WT-2026-020h\n"
+        "- **Estado:** APPROVED\n"
+        "- **deliverable_type:** code\n"
+    )
+
+    _EXEC_LOG_READY = "# Execution Log WT-2026-020h\n\n**Estado:** READY_FOR_REVIEW\n"
+
+    def _setup(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(
+            agent_controller,
+            "read_file",
+            lambda p: (
+                self._WORK_PLAN if "work_plan" in str(p) else self._EXEC_LOG_READY
+            ),
+        )
+        monkeypatch.setattr(agent_controller, "BUS_AVAILABLE", False)
+        monkeypatch.setattr(agent_controller, "event_bus", None)
+        calls = []
+        monkeypatch.setattr(
+            agent_controller,
+            "_sync_markdowns_to_completed",
+            lambda tid: calls.append("sync"),
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "_clear_auxiliary_states",
+            lambda tid: calls.append("clear"),
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "_reset_circuit_breaker",
+            lambda tid: calls.append("reset"),
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "_release_builder_lock",
+            lambda tid: calls.append("release"),
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "_emit_manager_approve_cascade",
+            lambda bus, tid: calls.append("cascade"),
+        )
+        monkeypatch.setattr(
+            agent_controller, "_check_last_commit", lambda root, tid: (True, "ok")
+        )
+        mgr = tmp_path / "manager_bridge_state.json"
+        sup = tmp_path / "supervisor_state.json"
+        mgr.write_text('{"seq": 1}', encoding="utf-8")
+        sup.write_text('{"active_ticket": "WT-2026-020h"}', encoding="utf-8")
+        monkeypatch.setattr(agent_controller, "_MANAGER_BRIDGE_STATE_PATH", mgr)
+        monkeypatch.setattr(agent_controller, "_SUPERVISOR_STATE_PATH", sup)
+        return calls, mgr, sup
+
+    def test_dry_run_does_not_mutate_state(self, monkeypatch, tmp_path, capsys):
+        """--dry-run leaves state unchanged: no sync, no clear, state files intact."""
+        calls, mgr, sup = self._setup(monkeypatch, tmp_path)
+        rc = agent_controller._handle_manager_approve(
+            self._TICKET, False, False, dry_run=True
+        )
+        assert rc == 0
+        assert calls == [], f"dry-run must not mutate state, got calls={calls}"
+        assert mgr.exists() and sup.exists(), "dry-run must not delete state files"
+        assert "DRY-RUN" in capsys.readouterr().out
+
+    def test_real_run_still_applies_transition(self, monkeypatch, tmp_path):
+        """Without --dry-run, the closeout still applies (regression guard)."""
+        calls, _mgr, _sup = self._setup(monkeypatch, tmp_path)
+        rc = agent_controller._handle_manager_approve(
+            self._TICKET, False, False, dry_run=False
+        )
+        assert rc == 0
+        assert "sync" in calls, "real run must sync markdowns to COMPLETED"
+        assert "clear" in calls, "real run must clear auxiliary states"
+        assert "reset" in calls, "real run must reset circuit breaker"
+        assert "release" in calls, "real run must release builder lock"
+
+
 class TestHandleReopenTerminalTicket:
     """WT-2026-233a: explicit reopen path for terminal tickets."""
 
