@@ -21,6 +21,7 @@ from scripts.install_agent_system import (
     copy_project_template,
     copy_tree,
     detect_destination_residues,
+    ensure_destination_projections_ignored,
     merge_memory_rules,
     parse_wing_sections,
     prune_residues,
@@ -789,3 +790,113 @@ def test_copy_gitleaks_config_dry_run_does_not_write(tmp_path):
 
     assert result is True
     assert not (dest_root / ".gitleaks.toml").exists()
+
+
+# ---------------------------------------------------------------------------
+# ensure_destination_projections_ignored (WOT-2026-020t)
+# ---------------------------------------------------------------------------
+
+
+def test_destination_projections_adds_collaboration_for_destination(tmp_path):
+    """A real destination (motor_root != project_root) gets .agent/collaboration/
+    gitignored alongside the shared projection entries."""
+    motor_root = tmp_path / "motor"
+    motor_root.mkdir()
+    dest_root = tmp_path / "dest"
+    dest_root.mkdir()
+
+    added = ensure_destination_projections_ignored(
+        dest_root, dry_run=False, motor_root=motor_root
+    )
+
+    gitignore = (dest_root / ".gitignore").read_text(encoding="utf-8")
+    assert ".agent/collaboration/" in added
+    assert ".agent/config/motor_destination_link.json" in added
+    assert ".agent/collaboration/" in gitignore
+    assert "# motor-managed: regenerable projections (WOT-2026-016p)" in gitignore
+
+
+def test_destination_projections_skips_collaboration_for_motor(tmp_path):
+    """The motor itself (motor_root == project_root) versions .agent/collaboration/;
+    the guard is a no-op and must NOT touch its .gitignore."""
+    motor_root = tmp_path / "motor"
+    motor_root.mkdir()
+
+    added = ensure_destination_projections_ignored(
+        motor_root, dry_run=False, motor_root=motor_root
+    )
+
+    assert added == []
+    assert not (motor_root / ".gitignore").exists()
+
+
+def test_destination_projections_idempotent(tmp_path):
+    """Running twice adds nothing the second time and leaves the file unchanged."""
+    motor_root = tmp_path / "motor"
+    motor_root.mkdir()
+    dest_root = tmp_path / "dest"
+    dest_root.mkdir()
+
+    ensure_destination_projections_ignored(
+        dest_root, dry_run=False, motor_root=motor_root
+    )
+    first = (dest_root / ".gitignore").read_text(encoding="utf-8")
+
+    added2 = ensure_destination_projections_ignored(
+        dest_root, dry_run=False, motor_root=motor_root
+    )
+    second = (dest_root / ".gitignore").read_text(encoding="utf-8")
+
+    assert added2 == []
+    assert first == second
+
+
+def test_destination_projections_dry_run_does_not_write(tmp_path):
+    """Dry-run reports the missing entries but does not create .gitignore."""
+    motor_root = tmp_path / "motor"
+    motor_root.mkdir()
+    dest_root = tmp_path / "dest"
+    dest_root.mkdir()
+
+    added = ensure_destination_projections_ignored(
+        dest_root, dry_run=True, motor_root=motor_root
+    )
+
+    assert ".agent/collaboration/" in added
+    assert not (dest_root / ".gitignore").exists()
+
+
+def test_destination_projections_no_motor_root_defaults_to_destination(tmp_path):
+    """Without motor_root (backward-compat default) the call assumes a destination
+    and gitignores collaboration."""
+    dest_root = tmp_path / "dest"
+    dest_root.mkdir()
+
+    added = ensure_destination_projections_ignored(dest_root, dry_run=False)
+
+    assert ".agent/collaboration/" in added
+    assert ".agent/collaboration/" in (dest_root / ".gitignore").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_destination_projections_respects_existing_entries(tmp_path):
+    """Entries already present (user's own or a prior managed block) are not
+    duplicated; only missing ones are appended."""
+    motor_root = tmp_path / "motor"
+    motor_root.mkdir()
+    dest_root = tmp_path / "dest"
+    dest_root.mkdir()
+    (dest_root / ".gitignore").write_text(
+        ".agent/collaboration/\n.agent/runtime/\n", encoding="utf-8"
+    )
+
+    added = ensure_destination_projections_ignored(
+        dest_root, dry_run=False, motor_root=motor_root
+    )
+
+    assert ".agent/collaboration/" not in added
+    assert ".agent/runtime/" not in added
+    assert ".agent/config/motor_destination_link.json" in added
+    text = (dest_root / ".gitignore").read_text(encoding="utf-8")
+    assert text.count(".agent/collaboration/") == 1

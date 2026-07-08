@@ -6,6 +6,7 @@ from pathlib import Path
 
 from scripts import project_scanner
 from scripts.install_agent_system import (
+    DESTINATION_ONLY_PROJECTION_ENTRIES,
     PROJECTIONS_GITIGNORE_ENTRIES,
     PROJECTIONS_GITIGNORE_MARKER,
     ensure_destination_projections_ignored,
@@ -28,11 +29,38 @@ class TestEnsureProjectionsIgnored:
     def test_adds_all_entries_when_gitignore_missing(self, tmp_path: Path) -> None:
         root = _make_destino(tmp_path)
         added = ensure_destination_projections_ignored(root)
-        assert set(added) == set(PROJECTIONS_GITIGNORE_ENTRIES)
+        # WOT-2026-020t: a destination (default, motor_root=None) also gets the
+        # destination-only collaboration entry.
+        expected = set(PROJECTIONS_GITIGNORE_ENTRIES) | set(
+            DESTINATION_ONLY_PROJECTION_ENTRIES
+        )
+        assert set(added) == expected
         text = (root / ".gitignore").read_text(encoding="utf-8")
         assert PROJECTIONS_GITIGNORE_MARKER in text
-        for entry in PROJECTIONS_GITIGNORE_ENTRIES:
+        for entry in expected:
             assert entry in text.splitlines()
+
+    def test_motor_root_noop_for_motor(self, tmp_path: Path) -> None:
+        """WOT-2026-020t: the motor versions .agent/collaboration/ for dogfooding;
+        when motor_root resolves to project_root the guard is a no-op."""
+        root = _make_destino(tmp_path)
+        added = ensure_destination_projections_ignored(root, motor_root=root)
+        assert added == []
+        assert not (root / ".gitignore").exists()
+
+    def test_motor_root_adds_collaboration_for_destination(
+        self, tmp_path: Path
+    ) -> None:
+        """WOT-2026-020t: a real destination (motor_root != project_root) gets
+        collaboration gitignored even when motor_root is explicit."""
+        root = _make_destino(tmp_path)
+        motor_root = tmp_path / "motor"
+        motor_root.mkdir()
+        added = ensure_destination_projections_ignored(root, motor_root=motor_root)
+        assert ".agent/collaboration/" in added
+        assert ".agent/collaboration/" in (root / ".gitignore").read_text(
+            encoding="utf-8"
+        )
 
     def test_idempotent_no_duplicates_on_rerun(self, tmp_path: Path) -> None:
         root = _make_destino(tmp_path)
@@ -40,7 +68,9 @@ class TestEnsureProjectionsIgnored:
         again = ensure_destination_projections_ignored(root)
         assert again == []
         lines = (root / ".gitignore").read_text(encoding="utf-8").splitlines()
-        for entry in PROJECTIONS_GITIGNORE_ENTRIES:
+        for entry in (
+            PROJECTIONS_GITIGNORE_ENTRIES + DESTINATION_ONLY_PROJECTION_ENTRIES
+        ):
             assert lines.count(entry) == 1
 
     def test_respects_existing_user_entries(self, tmp_path: Path) -> None:

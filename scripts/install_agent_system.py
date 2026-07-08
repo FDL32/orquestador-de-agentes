@@ -92,18 +92,33 @@ PROJECTIONS_GITIGNORE_ENTRIES: tuple[str, ...] = (
     ".agent/.last_upgrade_result.json",
     ".agent/runtime/",
 )
+# WOT-2026-020t: destinations must NOT version .agent/collaboration/ artifacts
+# (execution_log/STATE/TURN/work_plan carry local C:\Users\<user>\ paths and
+# leak PII on publication). The MOTOR itself versions .agent/collaboration/
+# for dogfooding, so these entries are added ONLY for destinations, i.e. when
+# project_root != motor_root.
+DESTINATION_ONLY_PROJECTION_ENTRIES: tuple[str, ...] = (".agent/collaboration/",)
 
 
 def ensure_destination_projections_ignored(
-    project_root: Path, dry_run: bool = False
+    project_root: Path,
+    dry_run: bool = False,
+    motor_root: Path | None = None,
 ) -> list[str]:
     """Idempotently ensure regenerable projections are gitignored in the destination.
 
     Before: project_root is the destination repo root (may lack .gitignore).
-    During: appends a managed block with any missing PROJECTIONS_GITIGNORE_ENTRIES;
-            lines already present (managed block or user's own) are not duplicated.
+    During: appends a managed block with any missing PROJECTIONS_GITIGNORE_ENTRIES
+            plus DESTINATION_ONLY_PROJECTION_ENTRIES; lines already present
+            (managed block or user's own) are not duplicated. When motor_root is
+            provided and resolves to project_root (the motor itself, which
+            versions .agent/collaboration/ for dogfooding and manages its own
+            .gitignore), this is a no-op and nothing is added.
     After: returns the list of entries added (empty when everything was covered).
     """
+    if motor_root is not None and project_root.resolve() == motor_root.resolve():
+        return []
+    entries = PROJECTIONS_GITIGNORE_ENTRIES + DESTINATION_ONLY_PROJECTION_ENTRIES
     gitignore = project_root / ".gitignore"
     existing = (
         gitignore.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -111,7 +126,7 @@ def ensure_destination_projections_ignored(
         else []
     )
     existing_set = {line.strip() for line in existing}
-    missing = [e for e in PROJECTIONS_GITIGNORE_ENTRIES if e not in existing_set]
+    missing = [e for e in entries if e not in existing_set]
     if not missing:
         return []
     if dry_run:
@@ -1188,7 +1203,11 @@ def install_agent_system(
 
     # WOT-2026-016p: protect the destination from versioning regenerable
     # projections before any of them get written.
-    ensure_destination_projections_ignored(project_agent.parent, dry_run=dry_run)
+    # WOT-2026-020t: pass motor_root so collaboration is gitignored only in
+    # destinations, never in the motor itself.
+    ensure_destination_projections_ignored(
+        project_agent.parent, dry_run=dry_run, motor_root=template_agent.parent
+    )
 
     # Read allowlist from MANIFEST.workspace
     template_root = template_agent.parent
@@ -1281,7 +1300,11 @@ def sync_agent_system(  # noqa: C901
         return 1
 
     # WOT-2026-016p: existing destinations get the projection guard on sync.
-    ensure_destination_projections_ignored(project_agent.parent, dry_run=dry_run)
+    # WOT-2026-020t: pass motor_root so collaboration is gitignored only in
+    # destinations, never in the motor itself.
+    ensure_destination_projections_ignored(
+        project_agent.parent, dry_run=dry_run, motor_root=template_agent.parent
+    )
 
     manifest_version = get_manifest_version(template_agent)
     if manifest_version:
