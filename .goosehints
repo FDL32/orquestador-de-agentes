@@ -19,7 +19,7 @@
 **How to Use (Native Import):**
 
 ```python
-from skills.refactor_manager.goose_integration import invoke
+# [REMOVED - WOT-2026-020m] native skill wrapper retired; import no longer available
 
 result = invoke(
     target="src/core.py",        # Required: file to refactor
@@ -75,7 +75,7 @@ Goose: "I notice run_pytest_safe.py could be improved with better error handling
 Goose: "Let me use the native /refactor skill to safely refactor it."
 
 [Goose invokes]
-from skills.refactor_manager.goose_integration import invoke
+# [REMOVED - WOT-2026-020m] native skill wrapper retired; import no longer available
 result = invoke(target="scripts/run_pytest_safe.py")
 
 Manager: [reads analysis results]
