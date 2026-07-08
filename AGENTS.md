@@ -65,6 +65,17 @@ reserva para la familia completa; el artefacto de estrategia de un ticket es
 | `STRATEGY_WOT-<ID>.md` | **Estrategia tecnica del ticket** (opcional). Sustituye al antiguo `PLAN_WT-<ID>.md`. Libera "PLAN" para la familia. Legacy: `PLAN_WP-*`, `PLAN_WT-*`. |
 | `AUDIT_WOT-<ID>.md` | **Criterios de auditoria del ticket.** Solo cambia el prefijo `WT->WOT`. Legacy: `AUDIT_WP-*`, `AUDIT_WT-*`. |
 
+**REGLA: en contextos inter-ticket o inter-repo, usa el ID COMPLETO con prefijo.**
+Referencia cada ticket con su identificador completo `<PREFIJO>-YYYY-NNNx` (p.ej.
+`CTL-2026-008k`, `WOT-2026-020p`, `EXF-2026-007a`) en chat, commits, memoria, backlog,
+work_plan y cualquier artefacto operativo. Motivo: se trabajan varios repos/destinos en
+PARALELO, y cada uno tiene su propio prefijo (`CTL-`, `WOT-`, `EXF-`, ...); la forma corta
+`008k` a secas es AMBIGUA -- es imposible saber a que repositorio/destino pertenece. El
+numero `NNNx` solo es unico DENTRO de un prefijo+ano, no globalmente. La forma corta `008k`
+solo es aceptable si el prefijo/familia ya quedo EXPLICITAMENTE desambiguado en el mismo
+contexto inmediato (p.ej. tras citar `WOT-2026-009a`, referir `009b..009g` como esa familia
+en el mismo parrafo); fuera de ese contexto local, siempre el ID completo.
+
 **Clases de patron para consumidores de codigo** (archivador, pre-handoff guard,
 validador de prosa, review bridge, motor_checkpoint):
 - `canonical`: `STRATEGY_WOT-*`, `AUDIT_WOT-*`.
