@@ -76,6 +76,13 @@ solo es aceptable si el prefijo/familia ya quedo EXPLICITAMENTE desambiguado en 
 contexto inmediato (p.ej. tras citar `WOT-2026-009a`, referir `009b..009g` como esa familia
 en el mismo parrafo); fuera de ese contexto local, siempre el ID completo.
 
+El prefijo ademas RESUELVE el repo destino: cada destino declara su `ticket_prefix` en su
+`motor_destination_link.json` / `PROJECT.md`, y el mapeo inverso prefijo->repo se deriva de
+ahi (ver WOT-2026-020s: prefix-resolver + bootstrap guard). Convencion para repos NUEVOS
+(sin retrofit de los existentes): sugerir el prefijo desde las iniciales del nombre (3
+letras, mayusculas) y verificar unicidad contra los prefijos ya declarados antes de
+adoptarlo -- la convencion sugiere, el registro (los links por-destino) resuelve.
+
 **Clases de patron para consumidores de codigo** (archivador, pre-handoff guard,
 validador de prosa, review bridge, motor_checkpoint):
 - `canonical`: `STRATEGY_WOT-*`, `AUDIT_WOT-*`.
