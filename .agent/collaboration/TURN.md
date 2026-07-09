@@ -1,6 +1,6 @@
 # TURNO ACTUAL
 
-**Ultima actualizacion:** 2026-07-09 17:18:37
+**Ultima actualizacion:** 2026-07-09 18:35:00
 
 ---
 
@@ -8,34 +8,16 @@
 
 | Campo | Valor |
 |-------|-------|
-| **ROL** | **BUILDER** |
+| **ROL** | N/A |
 | **Plan ID** | WOT-2026-021g |
-| **Tipo** | IMPLEMENTATION |
-| **Accion** | IMPLEMENT |
+| **Tipo** | CIERRE |
+| **Accion** | COMPLETED |
 
 ---
 
 ## Instruccion
 
-> ## Project Context
-
-- **Total files:** 703
-- **Total size:** 7218.4 KB
-
-**Files by category:**
-  - config: 37
-  - documentation: 288
-  - other: 14
-  - python: 360
-  - scripts: 4
-
-**Tools:** mypy, pytest, ruff, uv
-
-**Python files with imports:** 351
-
----
-
-Plan WOT-2026-021g aprobado. Implementa segun work_plan.md
+> WOT-2026-021g cerrado en code-only mode. Guard de topologia de worktree implementado, verificado, commiteado y pusheado. Pendientes de cola diferida: WOT-2026-019f y WOT-2026-020i.
 
 ---
 
@@ -43,9 +25,9 @@ Plan WOT-2026-021g aprobado. Implementa segun work_plan.md
 
 | Archivo | Estado |
 |---------|--------|
-| work_plan.md | APPROVED |
-| execution_log.md | IN_PROGRESS |
+| work_plan.md | COMPLETED |
+| execution_log.md | COMPLETED |
 
 ---
 
-*Generado por agent_controller.py v5*
+*Ajuste post-cierre: TURN terminal para evitar proyeccion stale BUILDER/IMPLEMENT tras commit 3711dc8.*

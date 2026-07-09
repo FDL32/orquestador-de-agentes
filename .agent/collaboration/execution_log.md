@@ -280,6 +280,10 @@ topologia. Corregido: `manager_review.md:51` ahora incluye `--project-root <work
   sistema): **54 passed** (test_prefix_resolver + test_check_worktree_topology +
   test_no_legacy_topology_terms). El PermissionError de un rerun con pytest DIRECTO
   (sin el runner) es del sandbox in-repo, no del ticket.
-- `--validate` tras el fix del prompt: **0 errores**, 7 warnings esperados.
+- `--validate` tras el fix del prompt: **0 errores**, 7 warnings esperados en esa verificacion puntual; la revalidacion post-cierre queda registrada abajo con 9 warnings aceptadas en code-only mode.
 - Mi edicion del prompt es 100% ASCII; los em-dash del archivo son preexistentes (l.237/240/260,
   template MANAGER REVIEW REPORT), no de 021g.
+
+### 2026-07-09 - Orquestador - Ajuste post-cierre de proyecciones
+- TURN.md actualizado a estado terminal: WOT-2026-021g COMPLETED. Motivo: tras el commit 3711dc8, STATE/work_plan/execution_log estaban COMPLETED, pero TURN conservaba la ultima instruccion BUILDER/IMPLEMENT; era una proyeccion visual stale.
+- Revalidacion posterior al cierre: `python .agent/agent_controller.py --validate --json --project-root C:\Users\fdl\Proyectos_Python\orquestador_de_agentes_dev --force` devuelve 0 errores y 9 warnings aceptadas en code-only mode: 6 `ticket_prose`, 1 `bus_drift`, 2 `invariants` por bus ausente (`BUILDER_EXIT` y `STATE_CHANGED`). Estas warnings no bloquean este cierre porque WOT-2026-021g se cerro commit-directo/code-only, igual que la serie 020/021b.
