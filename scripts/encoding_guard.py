@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import statistics
 from fnmatch import fnmatch
 from functools import lru_cache
 from pathlib import Path
@@ -33,6 +34,39 @@ SUSPICIOUS_CODEPOINTS = {
     0x0102,
     0xFFFD,
 }
+
+# CTL-2026-012j (Check 1): de-acentuacion lossy detection. De-accented Spanish
+# (sin tildes) is valid ASCII and passes the byte-level guard (false green of
+# CTL-2026-012h); this layer flags de-accented blocks inside a document that
+# otherwise uses accents. Only Spanish acute accent + diaeresis + n-tilde; NOT
+# other languages' diacritics (e.g. grave a/egrave). Follows the frozenset
+# convention of SUSPICIOUS_CODEPOINTS / TEXT_EXTENSIONS.
+ACCENTED_CHARS = frozenset("áéíóúüñÁÉÍÓÚÜÑ")
+
+# De-acentuacion only applies to prose; code/config (.py/.json/.toml/.jsonl/
+# .yaml/.yml/.sh/.ps1) legitimately lacks accents and is excluded. The caller
+# (file_issues) filters by suffix before invoking find_deaccentuation_lossy.
+DEACCENT_PROSE_EXTENSIONS = frozenset({".md", ".html", ".txt", ".xml"})
+
+# Fixed-line windows (no HTML/markdown parsing): simpler, more robust, avoids
+# false positives from parse errors.
+DEACCENT_BLOCK_LINES = 50
+
+# Minimum characters per block to avoid noise in short blocks.
+DEACCENT_MIN_BLOCK_CHARS = 200
+
+# A document is only checked when its own accent baseline is significant.
+# Measured on real destino/motor prose (execution_log CTL-2026-012j): the
+# highest false-positive file median was 0.01333 (a changelog with code blocks);
+# 0.015 excludes all measured false positives with margin while keeping genuine
+# accented prose (>= ~0.019) under the check.
+DEACCENT_BASELINE_MIN = 0.015
+
+# A block is suspect when its accent ratio falls below 10% of the document
+# baseline. Measured: the lightest real accented block sits at ~40% of its
+# baseline, so 10% gives ~4x margin against false positives while flagging
+# de-accented blocks (ratio ~0). Matches the contract's initial 10% value.
+DEACCENT_RATIO_THRESHOLD = 0.10
 
 STATIC_FILES_TO_CHECK = [
     AGENT_DIR / "agent_controller.py",
@@ -235,6 +269,55 @@ def find_text_corruption(text: str) -> list[str]:
     return findings
 
 
+def find_deaccentuation_lossy(text: str) -> list[str]:
+    """Return snippets for blocks that lost Spanish accents vs the doc baseline.
+
+    CTL-2026-012j (Check 1): detects de-accented blocks (Spanish without tildes,
+    which is valid ASCII and passes the byte-level guard) inside a document that
+    otherwise uses accents. Splits the text into fixed windows of
+    ``DEACCENT_BLOCK_LINES`` lines, computes ``accent_ratio = accented / alpha``
+    per block, takes the document baseline as the median of valid blocks
+    (>= ``DEACCENT_MIN_BLOCK_CHARS``), and flags blocks whose ratio is below
+    ``DEACCENT_RATIO_THRESHOLD`` of the baseline when the baseline is
+    significant (>= ``DEACCENT_BASELINE_MIN``).
+
+    Known limitation: a COMPLETELY de-accented document has baseline ~0
+    (< DEACCENT_BASELINE_MIN) and is NOT flagged -- there is no intra-document
+    baseline to compare against. Catching fully de-accented Spanish needs a
+    global repo baseline or a Spanish dictionary (follow-up, not a bug).
+    """
+    lines = text.splitlines()
+    if not lines:
+        return []
+    blocks: list[tuple[int, float]] = []
+    for start in range(0, len(lines), DEACCENT_BLOCK_LINES):
+        block_text = "\n".join(lines[start : start + DEACCENT_BLOCK_LINES])
+        if len(block_text) < DEACCENT_MIN_BLOCK_CHARS:
+            continue
+        alpha = sum(1 for ch in block_text if ch.isalpha())
+        if not alpha:
+            continue
+        ratio = sum(1 for ch in block_text if ch in ACCENTED_CHARS) / alpha
+        blocks.append((start + 1, ratio))
+    if len(blocks) < 2:
+        return []
+    baseline = statistics.median([ratio for _, ratio in blocks])
+    if baseline < DEACCENT_BASELINE_MIN:
+        return []
+    threshold = DEACCENT_RATIO_THRESHOLD * baseline
+    snippets: list[str] = []
+    for start, ratio in blocks:
+        if ratio >= threshold:
+            continue
+        snippet = (
+            f"<deaccent-lossy@line {start}: ratio {ratio:.4f} "
+            f"< {DEACCENT_RATIO_THRESHOLD:.2f} * baseline {baseline:.4f}>"
+        )
+        if snippet not in snippets:
+            snippets.append(snippet)
+    return snippets
+
+
 def is_excluded(relative: str) -> bool:
     return any(fnmatch(relative, pattern) for pattern in EXCLUDE_PATTERNS)
 
@@ -280,6 +363,8 @@ def file_issues(path: Path) -> tuple[list[str], list[str], list[str]]:
     - narrow path-bullet mangling signatures (CTL-2026-007a)
     - C1 control codepoints (U+0080-U+009F) in decoded text (WOT-2026-014d)
     - invalid UTF-8 byte sequences via strict-decode (WOT-2026-014d)
+    - de-acentuacion lossy: de-accented Spanish prose in .md/.html/.txt/.xml
+      (CTL-2026-012j); not applied to code/config extensions
 
     Note: ``check_utf8_strict`` operates on raw bytes before ``load_text``
     (which uses errors='replace' semantics via UTF-8 read).  For files that are
@@ -295,6 +380,12 @@ def file_issues(path: Path) -> tuple[list[str], list[str], list[str]]:
         return [], [], list(strict_issues)
     text = load_text(path)
     text_corruption = find_text_corruption(text)
+    # CTL-2026-012j: de-acentuacion lossy (prose only). Called AFTER the
+    # strict-decode early return so bytes-invalid files never reach the
+    # text-level check, and AFTER find_text_corruption to keep that function's
+    # "structural corruption" contract unchanged.
+    if path.suffix.lower() in DEACCENT_PROSE_EXTENSIONS:
+        text_corruption.extend(find_deaccentuation_lossy(text))
     return find_mojibake(text), find_q_in_word(text), text_corruption
 
 
