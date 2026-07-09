@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import re
 import statistics
 from fnmatch import fnmatch
 from functools import lru_cache
 from pathlib import Path
+from typing import NamedTuple
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -396,3 +398,180 @@ def iter_staged_files(paths: list[str]) -> list[Path]:
         if candidate.exists() and candidate.is_file() and is_in_scope(rel):
             staged.append(candidate)
     return staged
+
+
+# ---------------------------------------------------------------------------
+# CTL-2026-012i (Check 2): conformidad estructural HTML contra templates del
+# destino. Cross-repo: el motor lee los templates via --project-root en runtime
+# (DEC-012i-01); no hardcodea rutas del destino. Complementa (no reemplaza) el
+# check intra-documento de 012j con un baseline cross-documento que caza output
+# totalmente de-acentuado (limitacion conocida de 012j: un doc COMPLETAMENTE
+# de-acentuado tiene baseline ~0 y no se flaggea).
+# ---------------------------------------------------------------------------
+
+# Tolerancia de conteo de H2: el output valido puede fusionar secciones del
+# template (DEC-012i-03). Medido sobre output real (execution_log
+# CTL-2026-012i): output ES `incienso_liturgico/content_es/5_article_polished`
+# tiene 8 H2 vs 9 del template Product -> divergencia legitima = 1. Con
+# H2_TOLERANCE=1 el output valido pasa (8 >= 9-1) y el colapso estructural
+# (1-2 H2 vs 8-9) se caza con margen amplo. Valor minimal justificado por la
+# medicion (contrato: "tolerancia >= 1").
+H2_TOLERANCE = 1
+
+# Fraccion del baseline de acentos del template que el output debe alcanzar
+# (DEC-012i-04). Medido: output ES acentuado accent_freq 0.020510 vs template
+# Product 0.005487 (ratio 3.74). Con 0.5 el output valido pasa con ~7.5x margen
+# (0.0205 >= 0.5 * 0.0055) y un output totalmente de-acentuado (freq ~0) cae
+# bajo el piso. 012i caza "totalmente de-acentuado"; el parcial
+# intra-documento lo cubre 012j (rigor proporcional CEM).
+TEMPLATE_ACCENT_FRACTION = 0.5
+
+_JSONLD_BLOCK_RE = re.compile(
+    r"<script\s+type=[\"']application/ld\+json[\"']>\s*(.*?)\s*</script>",
+    re.IGNORECASE | re.DOTALL,
+)
+_H2_RE = re.compile(r"<h2[\s>]", re.IGNORECASE)
+
+
+class TemplateProfile(NamedTuple):
+    """Perfil estructural de un template del destino (CTL-2026-012i).
+
+    - ``primary_type``: primer @type no-FAQPage del JSON-LD (selector).
+    - ``h2_count``: numero de <h2> del template (baseline de estructura).
+    - ``accent_freq``: frecuencia de acentos del template (baseline cross-doc).
+    - ``has_faqpage``: si el template declara FAQPage (presencia obligatoria).
+    - ``template_path``: ruta del template (trazabilidad).
+    """
+
+    primary_type: str
+    h2_count: int
+    accent_freq: float
+    has_faqpage: bool
+    template_path: Path
+
+
+def extract_jsonld_types(html: str) -> list[str]:
+    """Extraer los @type top-level de cada bloque JSON-LD del HTML, en orden.
+
+    Un @type que es una lista JSON se expande. Los bloques con JSON invalido o
+    sin @type no contribuyen tipos (fail-closed: sin tipos validos, el caller
+    reporta ``<missing-jsonld>`` o ``<missing-primary-type>``).
+    """
+    types: list[str] = []
+    for match in _JSONLD_BLOCK_RE.finditer(html):
+        try:
+            obj = json.loads(match.group(1))
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(obj, dict):
+            continue
+        type_value = obj.get("@type")
+        if isinstance(type_value, list):
+            types.extend(str(item) for item in type_value)
+        elif isinstance(type_value, str):
+            types.append(type_value)
+    return types
+
+
+def count_h2(html: str) -> int:
+    """Contar elementos <h2> (robusto a atributos; no <h3>/<h4>)."""
+    return len(_H2_RE.findall(html))
+
+
+def accent_frequency(text: str) -> float:
+    """Frecuencia de acentos: accented / alpha. Reutiliza ACCENTED_CHARS (012j).
+
+    Retorna 0.0 si no hay caracteres alfabeticos.
+    """
+    alpha = sum(1 for ch in text if ch.isalpha())
+    if not alpha:
+        return 0.0
+    return sum(1 for ch in text if ch in ACCENTED_CHARS) / alpha
+
+
+def build_template_registry(templates_dir: Path) -> dict[str, TemplateProfile]:
+    """Construir ``{primary_type: TemplateProfile}`` desde templates del destino.
+
+    Lee todos los ``article_*_template.html`` de ``templates_dir`` y extrae el
+    @type primario (primer no-FAQPage), el conteo de H2, la frecuencia de
+    acentos y la presencia de FAQPage. Fail-closed: lanza si el dir no existe,
+    no hay templates, un template no tiene @type primario, o dos templates
+    comparten @type primario (CONTRACT_GAP: no se puede seleccionar). El caller
+    (CLI) traduce la excepcion en un diagnostico accionable, nunca silent skip.
+    """
+    if not templates_dir.is_dir():
+        raise FileNotFoundError(
+            f"templates dir not found (fail-closed): {templates_dir}"
+        )
+    registry: dict[str, TemplateProfile] = {}
+    for path in sorted(templates_dir.glob("article_*_template.html")):
+        html = path.read_text(encoding="utf-8")
+        types = extract_jsonld_types(html)
+        primary = next((t for t in types if t != "FAQPage"), None)
+        if primary is None:
+            raise ValueError(
+                f"template without primary @type (no non-FAQPage @type): {path}"
+            )
+        if primary in registry:
+            raise ValueError(
+                f"duplicate primary @type {primary!r}: {path} and "
+                f"{registry[primary].template_path} "
+                "(CONTRACT_GAP: cannot select template)"
+            )
+        registry[primary] = TemplateProfile(
+            primary_type=primary,
+            h2_count=count_h2(html),
+            accent_freq=accent_frequency(html),
+            has_faqpage="FAQPage" in types,
+            template_path=path,
+        )
+    if not registry:
+        raise FileNotFoundError(
+            f"no article_*_template.html found in {templates_dir} (fail-closed)"
+        )
+    return registry
+
+
+def find_template_conformity_issues(
+    html_text: str, registry: dict[str, TemplateProfile]
+) -> list[str]:
+    """Retornar issues de conformidad del HTML contra el registry de templates.
+
+    Funcion pura (sin I/O). Selecciona el template por @type primario (primer
+    no-FAQPage), exige FAQPage secundario, valida H2 minimo con tolerancia y
+    baseline de acentos cross-documento. Issues descriptivos y deduplicados.
+    Lista vacia = conforme.
+
+    Orden de checks: ``<missing-jsonld>`` -> ``<missing-primary-type>`` ->
+    ``<unknown-type:{type}>`` (+ ``<missing-faqpage>``) -> ``<missing-faqpage>``
+    -> ``<h2-collapse>`` -> ``<accent-below-template>``.
+    """
+    types = extract_jsonld_types(html_text)
+    if not types:
+        return ["<missing-jsonld>"]
+    primary = next((t for t in types if t != "FAQPage"), None)
+    if primary is None:
+        return ["<missing-primary-type>"]
+    issues: list[str] = []
+    if primary not in registry:
+        issues.append(f"<unknown-type:{primary}>")
+        if "FAQPage" not in types:
+            issues.append("<missing-faqpage>")
+        return list(dict.fromkeys(issues))
+    if "FAQPage" not in types:
+        issues.append("<missing-faqpage>")
+    template = registry[primary]
+    h2_count = count_h2(html_text)
+    h2_floor = template.h2_count - H2_TOLERANCE
+    if h2_count < h2_floor:
+        issues.append(
+            f"<h2-collapse: {h2_count} < {template.h2_count} - {H2_TOLERANCE}>"
+        )
+    accent_freq = accent_frequency(html_text)
+    accent_floor = TEMPLATE_ACCENT_FRACTION * template.accent_freq
+    if accent_freq < accent_floor:
+        issues.append(
+            f"<accent-below-template: {accent_freq:.6f} < "
+            f"{TEMPLATE_ACCENT_FRACTION} * {template.accent_freq:.6f}>"
+        )
+    return list(dict.fromkeys(issues))
