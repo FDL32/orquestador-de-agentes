@@ -26,6 +26,7 @@ EXCLUDED_PARTS = {
     ".agent",
     ".codex",
     ".git",
+    ".kilo",
     ".opencode",
     ".tmp",
     ".venv",
