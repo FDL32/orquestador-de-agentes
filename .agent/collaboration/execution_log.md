@@ -1,4 +1,4 @@
-# Execution Log: WOT-2026-021d
+# Execution Log: WOT-2026-021l
 
 **Estado:** COMPLETED
 
@@ -6,37 +6,37 @@
 
 ### 2026-07-10 - Manager - Plan aprobado
 - work_plan.md creado y aprobado (Estado: APPROVED, deliverable_type: code,
-  delivery_authority: repo_motor). Decision vinculante: DEC-021D-001 (Opcion A).
-- STRATEGY_WOT-2026-021d.md + AUDIT_WOT-2026-021d.md (con TP Check) creados.
-- Premisa RE-VERIFICADA in-vivo 2026-07-10 (surface goose/claw == DEC;
-  `goose_context` sin callers externos; 9 tests refactor_kit verdes en baseline).
+  delivery_authority: repo_motor). Alcance: "live + named docs only" (decision
+  usuario 2026-07-10).
+- STRATEGY_WOT-2026-021l.md + AUDIT_WOT-2026-021l.md (con TP Check) creados.
+- Premisa RE-VERIFICADA in-vivo 2026-07-10: `.goosehints`/`--goose` sin tests que
+  los ejerzan; test_upgrade usa `len(CRITICAL_PATHS)` dinamico; test_cleanup_legacy
+  no asserta la entrada goose; 2 `.pyc` huerfanos untracked.
 
-### 2026-07-10 - Builder - Implementacion (Opcion A)
-- `refactor_manager.py`: default `agent="manual"`; retiradas ramas goose/claw de
-  `_call_agent` (queda modo MANUAL stdin); retirado `goose_context` + su rama dict
-  en `_wait_for_approval` -> corregido bug de tipo (firma `-> bool` ahora honrada);
-  CLI `--agent` sin choices goose/claw; import subprocess retirado; mojibake
-  limpiado a ASCII. Metodos `_call_agent`/`_wait_for_approval` CONSERVADOS.
-- `install_refactor_kit.py:39` default_agent -> `manual`.
-- `README.md`: ejemplo l.21 y bullet l.8 -> modo manual.
+### 2026-07-10 - Builder - Implementacion (barrido transversal)
+- `git rm .goosehints` (fichero tracked).
+- `upgrade_agent_system.py`: quitado `".goosehints"` de CRITICAL_PATHS (8 -> 7).
+- `discover_skills.py`: retirada la rama `elif "--goose"` + nota del docstring.
+- `cleanup_legacy.py`: quitado `"test_goose_realworld.py"` de OLD_SCRIPT_NAMES.
+- 2 `.pyc` huerfanos borrados de disco (untracked).
+- `.gitignore`: quitado el ignore `.agent/runtime/goose/` + comentario.
+- `.claude/rules/02` y `03`: reescritas las lineas nombradas -> backend Claude Code
+  y flag `--skill` real (reemplaza el `--stage` obsoleto que ya no existia).
+- PRESERVADO intacto: AGENTS.md, llms-full.txt, RETIRED_TESTS.md, docs/*,
+  MANIFEST.*, CHANGELOG, skills/repo-compare, skills/refactor-manager SKILL.
 
 ### 2026-07-10 - Gates (corridos por el orquestador)
-- DoD-a: `git grep -i goose|claw` en refactor_kit = 0 (case-INsensitive, la forma
-  correcta; una pasada sin `-i` habria dejado escapar "Goose"/"Claw" mayusculas).
-- DoD-b: default `manual` verificado; `_call_agent` stdin OK.
-- DoD-c: 9 tests refactor_kit VERDES. DoD-d: `_wait_for_approval` -> bool (runtime
-  + annotation). DoD-e: ASCII limpio. DoD-f: suite `--level all` **3629 passed /
-  0 failed** (182s, limpia). NOTA: una corrida previa dio "1 failed" por mojibake
-  en MI work_plan.md (bytes corruptos citados en prosa; el guard escanea docs
-  tracked); corregido citando el patron abstracto, no los bytes.
+- DoD-a: `.goosehints` fuera del repo. DoD-b: `goosehints|--goose` en scripts/ = 0;
+  `discover --json` OK. DoD-c: `goose|claw` en rules 02/03 = 0. DoD-d: 2 .pyc
+  ausentes. DoD-e: py_compile + ruff limpios. DoD-f: suite `--level all`
+  **3629 passed / 0 failed** (187s). DoD-g: historia preservada (grep de la lista
+  PRESERVAR en git status = vacio).
 
-### 2026-07-10 - Review 2 fresh-context - CHANGES-REQUESTED -> corregido -> OK
-- Review 2 cazo un BLOCKER real de DoD-a que YO omiti: `README.md:8` seguia
-  diciendo "Soporta Goose y Claw" (fixe la l.21 pero no la l.8; mi grep DoD sin
-  `-i` no lo vio). Corregido l.8 -> modo manual. Re-grep case-insensitive = 0.
-  Mutation-to-prove del reviewer: rename `_call_agent` rompio
-  test_refactor_manager_importable (pin con dientes); restaurado. Nota MINOR del
-  reviewer (`.goosehints:26` default goose) -> es dominio de WOT-2026-021l.
+### 2026-07-10 - Review 2 fresh-context - APPROVE
+- Sin blockers. Mutation-to-prove del invariante `len(CRITICAL_PATHS)`: loop `[:-1]`
+  (6 copias vs 7 en lista) -> test_backup_* FALLO `assert 6 == 7` -> el conteo se
+  deriva dinamicamente (no hardcode 8), pin con dientes; restaurado. Confirmado
+  0 residuo en codigo vivo; los hits restantes son historia inerte fuera de scope.
 
 ### 2026-07-10 - Cierre commit-directo
 - Estado COMPLETED. Commit con ID. Push a origin/main.

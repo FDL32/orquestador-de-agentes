@@ -4,11 +4,6 @@ Skill Discovery System — Finds and indexes skills with triggers.
 
 Generates trigger_map for Claude Code (the main IA backend) and the
 ``--check-contract`` prompt<->skill contract validation.
-
-Note: the ``--goose`` output flag and any reference to Goose/Claw are
-[DEPRECATED - WT-2026-254a]; those external orchestration engines are legacy
-and not part of the active flow. The flag is kept only for backward
-compatibility.
 """
 
 import json
@@ -819,12 +814,6 @@ def main() -> None:
 
     if "--json" in sys.argv:
         print(json.dumps(result, indent=2))
-    elif "--goose" in sys.argv:
-        # [DEPRECATED - WT-2026-254a] Goose is a legacy/deprecated engine. This
-        # output format is kept only for backward compatibility; not active flow.
-        print("# Available Triggers for Goose [DEPRECATED - WT-2026-254a]\n")
-        for trigger, path in sorted(result["trigger_map"].items()):
-            print(f"- **{trigger}** -> {path}")
     else:
         print("\nSKILL DISCOVERY RESULTS\n")
         print(f"Total Skills: {result['total_skills']}")

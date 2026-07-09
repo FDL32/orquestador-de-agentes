@@ -47,7 +47,6 @@ class UpgradeManager:
         "agent_system/",
         "skills/",
         "scripts/",
-        ".goosehints",
         "AGENTS.md",
         "CLAUDE.md",
     ]

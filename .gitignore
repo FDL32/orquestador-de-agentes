@@ -44,9 +44,6 @@ tests/.test_workspace/
 .agent/audits/
 orchestrator_pipeline/
 
-# Runtime local del CLI Goose (perfil, logs, config local del motor externo)
-.agent/runtime/goose/
-
 # Cache de modulos de PowerShell creada accidentalmente en el arbol
 /Microsoft/
 

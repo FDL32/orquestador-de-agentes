@@ -24,7 +24,6 @@ class LegacyCleanup:
     # Old script names that were renamed
     OLD_SCRIPT_NAMES: ClassVar[list[str]] = [
         "detect_agent_system_version.py",
-        "test_goose_realworld.py",
     ]
 
     # Debug/temporary files from execution
