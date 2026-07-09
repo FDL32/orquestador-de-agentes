@@ -73,16 +73,23 @@ class TestGitignoreWotArtifactsBarrier:
         )
 
     def test_live_collaboration_surface_is_not_gitignored(self):
-        """A live surface without the _WOT- suffix stays tracked/visible.
+        """An untracked live surface without the _WOT- suffix is not swept in.
 
-        Confirms the .gitignore rule is precise (matches only per-ticket
-        ``*_WOT-*.md`` artifacts) and does not over-capture legitimate,
-        non-suffixed collaboration surfaces such as STATE.md.
+        Uses a path that does not exist on disk and is therefore untracked
+        (``.agent/collaboration/some_live_surface.md``) rather than an
+        already-tracked file. ``git check-ignore`` always returns exit 1 for
+        a tracked path regardless of the .gitignore pattern (git never
+        reports an already-tracked file as ignored), so asserting against a
+        tracked fixture like ``STATE.md`` would be a false-green: it cannot
+        detect the pattern over-capturing, only that the file happens to be
+        tracked. An untracked, non-``_WOT-``-suffixed path is the only
+        fixture that actually exercises the ``.gitignore`` pattern's
+        precision.
         """
-        exit_code = _check_ignore(".agent/collaboration/STATE.md")
+        exit_code = _check_ignore(".agent/collaboration/some_live_surface.md")
         assert exit_code == 1, (
-            "Expected .agent/collaboration/STATE.md (a live surface "
-            "without the _WOT- suffix) to NOT be gitignored (git "
-            f"check-ignore exit 1); got exit {exit_code}. The "
-            ".gitignore pattern may be over-capturing live surfaces."
+            "Expected .agent/collaboration/some_live_surface.md (an "
+            "untracked live surface without the _WOT- suffix) to NOT be "
+            f"gitignored (git check-ignore exit 1); got exit {exit_code}. "
+            "The .gitignore pattern may be over-capturing live surfaces."
         )
