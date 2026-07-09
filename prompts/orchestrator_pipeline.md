@@ -41,8 +41,16 @@ pipeline cuando una base rota pueda contaminar tickets dependientes.
      de `.agent/`, no es fuente de verdad del bus y `agent_controller --validate`
      no lo valida ni lo archiva automaticamente.
 4. Lee `PROJECT.md` y confirma `Ticket prefix:`.
-5. Lee `BACKLOG_PATH` y ordena tickets por dependencias, prioridad y orden de
-   aparicion.
+5. Si `/backlog-triage` ya se ejecuto (existe
+   `backlog_triage_output.json` reciente en `PIPELINE_REPORTS_DIR`) O el
+   backlog en `BACKLOG_PATH` tiene mas de 6 tickets `pending` o mezcla
+   scopes/autoridades distintas, ejecuta `/backlog-triage`
+   (`<MOTOR_ROOT>/prompts/backlog_triage.md`) si aun no corrio, y usa SU
+   SALIDA (`backlog_triage_output.json`) como orden de la cola: los tickets
+   `LIKELY_DONE` NO entran, los `REQUIERE_HUMANO` no entran en pipeline
+   autonomo. Si no aplica ninguna condicion (backlog pequeno/homogeneo y sin
+   salida de triage previa), lee `BACKLOG_PATH` y ordena tickets por
+   dependencias, prioridad y orden de aparicion, como hasta ahora.
 6. Aplica el preflight generico del destino:
    `<MOTOR_ROOT>/skills/orchestrate-pipeline/references/destination-preflight.md`.
 7. Valida estado inicial:

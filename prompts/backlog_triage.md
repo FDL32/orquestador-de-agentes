@@ -1,0 +1,231 @@
+# Prompt: Triage del Backlog (analisis pre-pipeline)
+
+> **Modo:** Solo lectura sobre el backlog y el repositorio. Este triage NUNCA
+> muta `backlog.md`, codigo ni estado operativo. Solo escribe sus propios
+> artefactos en `orchestrator_pipeline/reports/`.
+>
+> Eres el PLANIFICADOR PRE-PIPELINE. Llegas antes de lanzar
+> `orchestrate-pipeline`: tu trabajo es decidir que pipeline lanzar, no
+> ejecutarlo.
+
+contract_id: cid-backlog-triage-v1
+Skill canonica: skills/backlog-triage/SKILL.md
+source_of_truth: este prompt. La skill `skills/backlog-triage/SKILL.md` es
+wrapper operativo; si divergen, prevalece este prompt.
+
+## Ciclo de vida del backlog (el trio)
+
+Esta capacidad cierra el ciclo de vida limpio del backlog junto a sus dos
+hermanas ya existentes:
+
+- **/backlog-triage** (ANTES): decide que pipeline lanzar. Este prompt.
+- **/orchestrate-pipeline** (DURANTE): ejecuta el pipeline elegido, ticket a
+  ticket, con Manager y Builder.
+- **/audit-pipeline** (DESPUES): meta-auditoria retrospectiva del pipeline ya
+  cerrado (`prompts/audit_pipeline.md`).
+
+Las tres son read-only sobre el sistema que rodean (el backlog, el pipeline en
+curso, el pipeline cerrado respectivamente) y nunca se sustituyen entre si.
+
+## Nota de topologia (obligatoria)
+
+Para tickets WOT del motor, localiza el backlog via
+`.agent/config/motor_destination_link.json` del workspace activo, resolviendo
+`destination_root` -> el backlog vive en
+`<destination_root>/.agent/collaboration/backlog.md` (el workspace, NO el
+checkout de codigo `_dev` ni el principal). Para un repo_destino generico, el
+backlog vive en `DESTINO_ROOT/.agent/collaboration/backlog.md` (el propio
+destino). No asumas la ubicacion sin resolver el link.
+
+## Principio rector
+
+Read-only sobre el backlog: este triage NUNCA muta `backlog.md`, codigo ni
+estado operativo. Propone; el humano o el Manager decide archivar tickets o
+lanzar un pipeline.
+
+---
+
+## Fase 0.pre: Gate de formato (obligatorio, antes de analizar)
+
+Ejecutar:
+
+```powershell
+python <MOTOR_ROOT>/scripts/check_backlog_contract.py --project-root <destino>
+```
+
+Exigir `exit 0` ANTES de analizar nada. Si el exit code no es 0, detener y
+reportar el backlog como no analizable. Este gate no compite con el
+validador sintactico WOT-2026-012b: es complementario. `check_backlog_contract.py`
+verifica la forma; este triage es el planificador semantico que viene despues.
+
+---
+
+## Fase 0: Reconciliacion (recolector mas juicio, NO determinista)
+
+Leer `backlog.md` completo. Para cada ticket `pending`/`deferred`/
+`completed-partial`, RECOLECTAR senales de git y JUZGAR con esas senales:
+
+- `git log --grep <ID>` (commits que mencionan el ticket).
+- `git ls-files <archivos-del-scope>` (si los archivos declarados existen).
+- greps de terminos del DoD del ticket sobre el codigo/docs actuales.
+- `last-run.json` u otro artefacto de ejecucion si existe.
+
+No existe un check determinista generico: cada DoD requiere una verificacion
+distinta. El script recolector automatico (`scripts/backlog_reconcile.py`) es
+un follow-up futuro (WOT-2026-021i); hasta que exista, esta fase se hace "a
+mano" con los comandos de arriba.
+
+Emitir por ticket una de estas tres clasificaciones de reconciliacion:
+
+- **LIKELY_DONE**: evidencia de commit/archivo que ya satisface el DoD.
+  Etiqueta `VERIFICADO` con `commit:`/`path:` concreto.
+- **LIKELY_PENDING**: sin evidencia de que se haya hecho.
+- **NEEDS_HUMAN_VERIFY**: senales contradictorias o insuficientes para
+  decidir con confianza.
+
+Los tickets `LIKELY_DONE` se proponen para archivar y SALEN del analisis de
+pipelines: nunca entran en la Fase 2 (agrupacion).
+
+---
+
+## Fase 1: Clasificacion de aptitud
+
+Por cada ticket PENDING (todo lo que no quedo `LIKELY_DONE` en la Fase 0),
+clasificar en una de tres categorias:
+
+- **APTO_AUTONOMO**: DoD binario, `deliverable_type: code` (o `mixed` con
+  gates claros), mutation-verify aplicable, riesgo bajo, cero politica y
+  cero `HUMAN_GATE`.
+- **REQUIERE_HUMANO**: politica, cambio destructivo, infraestructura local,
+  bloqueado por un factor externo.
+- **DISENO_PRIMERO**: ficha grande con sub-decisiones de arquitectura
+  todavia sin cerrar.
+
+Cada clasificacion lleva etiqueta de evidencia `VERIFICADO` / `INFERIDO` /
+`REQUIERE_HUMANO`, heredada del contrato de `prompts/audit_agent_output.md`
+(mismo contrato que usa `/audit-pipeline`).
+
+---
+
+## Fase 2: Agrupacion en pipelines
+
+Agrupar los tickets `APTO_AUTONOMO` por:
+
+- afinidad tecnica (mismo subsistema o mismo gate -> permite una
+  verificacion final comun);
+- dependencias declaradas y ocultas;
+- blast radius (tickets de alto impacto no se mezclan con higiene de bajo
+  riesgo en el mismo pipeline salvo que compartan gate).
+
+Cada pipeline resultante declara:
+
+- nombre;
+- tickets en el orden de ejecucion;
+- rationale (por que van juntos);
+- gate de verificacion comun;
+- tamano `S` / `M` / `L`.
+
+---
+
+## Fase 3: Sintesis y recomendacion
+
+Ordenar los pipelines por valor/riesgo: mas valor con menos riesgo primero.
+La higiene de suite o codigo muerto suele ir primero porque despeja el
+terreno para el resto.
+
+Salida obligatoria de esta fase:
+
+- Listar EXPLICITAMENTE los tickets `REQUIERE_HUMANO`, con motivo, separados
+  de los pipelines autonomos.
+- Senalar los tickets cuya premisa hay que reverificar: candidatos a
+  ya-hechos que la Fase 0 no pudo confirmar con certeza suficiente
+  (`NEEDS_HUMAN_VERIFY`).
+- Recomendar explicitamente por cual pipeline empezar.
+
+---
+
+## Nota de escala (tecnica opt-in, no obligacion)
+
+El analisis multi-lente (fan-out de varios agentes trabajando el mismo
+backlog desde angulos distintos) es RECOMENDADO para backlogs grandes (mas de
+6 tickets `pending` aproximadamente, o mezcla de scopes/autoridades
+distintas dentro del mismo backlog). Es OPCIONAL para backlogs pequenos: un
+solo agente en una pasada basta.
+
+---
+
+## Los 5 riesgos codificados
+
+1. **No hinchar `orchestrator_pipeline.md`**: el metodo completo vive en este
+   prompt. El cableado en `orchestrator_pipeline.md` es solo referencia mas
+   consumo del JSON de salida, nunca una copia de estas fases.
+2. **El triage puede fabricar certezas**: toda clasificacion (Fase 0 y Fase 1)
+   lleva etiqueta de evidencia (`VERIFICADO` / `INFERIDO` / `REQUIERE_HUMANO`),
+   heredada de `prompts/audit_agent_output.md`. Ninguna clasificacion se
+   presenta como hecho sin artefacto.
+3. **Backlog stale (reconciliacion primero)**: la Fase 0 es SIEMPRE el primer
+   paso de analisis, antes de cualquier clasificacion o agrupacion. Un
+   ticket `LIKELY_DONE` nunca entra en un pipeline.
+4. **Autonomia falsa**: la Fase 1 separa `APTO_AUTONOMO` de `REQUIERE_HUMANO`
+   y de `DISENO_PRIMERO`. Ningun ticket destructivo, de politica, con
+   `HUMAN_GATE` o con infraestructura fuera de git entra jamas en un
+   pipeline autonomo.
+5. **La skill es puntero, no fuente**: `skills/backlog-triage/SKILL.md` no
+   redeclara este metodo. Remite aqui con la clausula "el prompt es la
+   fuente de verdad; si algo diverge, prevalece este prompt".
+
+---
+
+## Salida obligatoria
+
+Dos artefactos, en el mismo turno, bajo
+`<destino>/orchestrator_pipeline/reports/` (mismo patron de rutas que
+`/audit-pipeline`):
+
+- Informe Markdown: `backlog_triage_<YYYYMMDD-HHMM>.md`, con las fases 0
+  (reconciliacion), 1 (clasificacion), 2 (agrupacion) y 3 (sintesis)
+  desarrolladas.
+- JSON portable: `backlog_triage_output.json`, con el esquema:
+
+```json
+{
+  "pipelines": [
+    {
+      "name": "string",
+      "tickets": ["WOT-2026-XXXa"],
+      "rationale": "string",
+      "common_gate": "string",
+      "size": "S|M|L"
+    }
+  ],
+  "tickets": [
+    {
+      "id": "WOT-2026-XXXa",
+      "classification": "APTO_AUTONOMO|REQUIERE_HUMANO|DISENO_PRIMERO",
+      "reconciliation": "LIKELY_DONE|LIKELY_PENDING|NEEDS_HUMAN_VERIFY",
+      "evidence_label": "VERIFICADO|INFERIDO|REQUIERE_HUMANO",
+      "artifact": "commit:<sha>|path:<ruta>|null"
+    }
+  ],
+  "recommended_start": "string (nombre de pipeline)",
+  "requires_human": [
+    {"id": "WOT-2026-XXXa", "reason": "string"}
+  ],
+  "premise_verify": [
+    {"id": "WOT-2026-XXXa", "reason": "string"}
+  ]
+}
+```
+
+El informe NO escribe `backlog.md`: propone. El humano o el Manager decide
+archivar los `LIKELY_DONE` o lanzar el pipeline recomendado.
+
+---
+
+## Restriccion dura
+
+- NO reabre tickets ni modifica `backlog.md`.
+- NO escribe codigo ni estado operativo.
+- NO ejecuta el pipeline (eso es `/orchestrate-pipeline`).
+- NO audita un pipeline ya cerrado (eso es `/audit-pipeline`).
+- Solo escribe sus dos artefactos de salida y propone.

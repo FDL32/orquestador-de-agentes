@@ -1,731 +1,525 @@
-# Plan de Trabajo: guard de topologia de worktree (WOT vs destino)
+# Plan de Trabajo: capacidad /backlog-triage (analisis pre-pipeline del backlog)
 
 ## Metadata
-- **ID:** WOT-2026-021g
+- **ID:** WOT-2026-021h
 - **Estado:** COMPLETED
-- **deliverable_type:** code
+- **deliverable_type:** mixed
 - **Creado:** 2026-07-09
 - **delivery_authority:** repo_motor
-- **Prioridad:** ALTA
+- **Prioridad:** MEDIA
 - **Asignado a:** Builder
 
 ## Objetivo
-Crear `scripts/check_worktree_topology.py`, un guard ejecutable que bloquea con
-exit 1 cuando un ticket `WOT` se trabaja desde el checkout principal detached del
-motor (en vez de la worktree `_dev`, rama `main`), y aplicar un fix estrecho a
-`scripts/prefix_resolver.py::guard()` para que reconozca `_dev` y el principal
-como el MISMO motor (comparando `git rev-parse --git-common-dir` en vez del path
-literal), sin exigir en esa funcion la disciplina de escritura.
+Crear la capacidad /backlog-triage: el espejo PRE-PIPELINE de /audit-pipeline.
+Tres piezas nuevas/modificadas, en este orden: (1) prompts/backlog_triage.md
+(metodo, fuente de verdad), (2) skills/backlog-triage/SKILL.md (puntero, molde
+exacto de skills/audit-pipeline/SKILL.md), (3) cableado CONDICIONAL minimo en
+prompts/orchestrator_pipeline.md (paso 5 del bootstrap, l.44-45) que consuma la
+salida del triage sin incrustar su metodo.
 
 ## Contexto
-El 2026-07-09 el mutation-verify del Builder de WOT-2026-019f colisiono con un
-commit de CTL-2026-012j en el MISMO checkout detached del motor (compartido por
-dos sesiones en paralelo) y se perdio el trabajo del Builder. La infraestructura
-de aislamiento (worktree `_dev`, rama `main`, escritura; principal detached,
-solo consumo) ya existe (`scripts/setup_dev_worktree.ps1`, QUICKSTART 0d) pero
-no esta enforced en el arranque de los agentes: nada bloquea trabajar un ticket
-`WOT` desde el principal.
+El 2026-07-09, antes de organizar el backlog tras cerrar WOT-2026-021g, el
+orquestador ejecuto AD-HOC un analisis en 3 fases (reconciliacion contra git,
+agrupacion multi-lente, sintesis en pipelines ordenados) que evito planificar 4
+tickets ya hechos (020m/020s/021e/020u) y produjo pipelines ejecutables. El
+usuario pidio cristalizar el proceso como capacidad reutilizable, formando el
+ciclo de vida limpio del backlog: /backlog-triage (antes) / /orchestrate-pipeline
+(durante) / /audit-pipeline (despues).
 
-Ademas, se descubrio en vivo que `prefix_resolver.py::guard()` (l.204-237) ya
-"protege" el prefijo `WOT`, pero de forma incorrecta para esta topologia: compara
-`cwd.resolve()` contra `resolved.resolve()` (`resolved` = `motor_root`, l.230), y
-para `WOT` eso siempre resuelve al checkout PRINCIPAL (`resolve_prefix`, l.146-147:
-`if prefix == WOT_PREFIX: return motor_root`, y `motor_root` es donde vive
-`.agent/agent_controller.py`, que en este arbol es el checkout principal). Por
-tanto, ejecutar `prefix_resolver.py --guard WOT-XXX` desde `_dev` da
-"Prefix mismatch" / exit 1 -- exactamente el worktree donde SI se debe trabajar
--- mientras que ejecutarlo desde el principal (donde NO se debe escribir) da
-exit 0. Es una contradiccion con la topologia real: el guard existente manda al
-lugar equivocado.
+Contrato fuente completo (2 pasadas adversariales ya incorporadas):
+orquestador_de_agentes_workspace/orchestrator_pipeline/cleanup/next_session_dev/CONTRATO_WOT-2026-021h_backlog_triage.md
+Este work_plan es su materializacion ejecutable; en caso de discrepancia de
+detalle, el contrato es la fuente de las decisiones de alcance y este plan la
+fuente de la secuencia Builder.
 
 ## Configuracion Privada Requerida
-Ninguna. No se necesitan credenciales ni archivos en `privada/`.
+Ninguna. No se necesitan credenciales ni archivos en privada/.
 
-## Decision de alcance (fijada por el usuario 2026-07-09, vinculante)
-- Script nuevo `scripts/check_worktree_topology.py`: unico lugar donde vive la
-  disciplina de escritura ("WOT debe trabajarse en `_dev` rama `main`; el
-  principal detached es solo consumo").
-- Fix ESTRECHO de `prefix_resolver.py::guard()`: SOLO la rama `prefix == WOT`.
-  Sustituye la comparacion de `cwd`/`resolved` por path literal por una
-  comparacion de `git rev-parse --git-common-dir` resuelto a ruta absoluta en
-  ambos lados (confirma que cwd y `motor_root` son worktrees del MISMO repo
-  git). En esa rama, `guard()` NO exige `_dev`/rama `main`: solo verifica "es
-  el motor" (lo que ya hacia para otros prefijos), no la disciplina de
-  escritura.
-- Destinos (`prefix != WOT`, p.ej. `CTL`/`EXF`) en `prefix_resolver.guard()`:
-  CERO cambios de comportamiento.
-- La disciplina de escritura vive EXCLUSIVAMENTE en `check_worktree_topology.py`.
-
-## Verificacion en vivo (git-common-dir, comando literal ejecutado 2026-07-09)
-Desde `_dev` (`C:\Users\fdl\Proyectos_Python\orquestador_de_agentes_dev`):
-```
-git rev-parse --git-common-dir
--> C:/Users/fdl/Proyectos_Python/orquestador_de_agentes/.git
-```
-Desde el principal (`C:\Users\fdl\Proyectos_Python\orquestador_de_agentes`):
-```
-git rev-parse --git-common-dir
--> .git
-```
-**BUG DE FORMULA DESCARTADO (verificado en vivo, reproducido por el
-Orquestador): `Path(raw_output).resolve()` NO sirve.** Cuando el raw es
-relativo (caso del principal: `.git`), `Path(".git").resolve()` lo resuelve
-contra el **cwd del PROCESO Python que ejecuta el guard**, NO contra el
-directorio del `-C <path>` que se le paso a git. Si el guard corre con
-cwd=`_dev` (el caso real de un Builder trabajando en `_dev`), `Path(".git").resolve()`
-del lado "principal" da `..._dev\.git` (el `.git` de `_dev`, WRONG), nunca
-`...orquestador_de_agentes\.git`. Los dos lados NUNCA coinciden con esta
-formula: el MATCH es `False` siempre que cwd != directorio consultado, que es
-precisamente el caso de uso real del guard. Con esta formula el fix es
-INALCANZABLE (el DoD exige exit 0 desde `_dev`, y la formula rota da exit 1).
-
-**FORMULA CORRECTA (verificada en vivo, MATCH=True):**
-```
-git -C <path> rev-parse --path-format=absolute --git-common-dir
-```
-Este flag (`--path-format=absolute`, disponible en git >= 2.31) hace que git
-mismo devuelva SIEMPRE una ruta absoluta, sin depender del cwd del proceso que
-invoca el comando:
-```
-git -C "C:\Users\fdl\Proyectos_Python\orquestador_de_agentes_dev" rev-parse --path-format=absolute --git-common-dir
--> C:/Users/fdl/Proyectos_Python/orquestador_de_agentes/.git
-git -C "C:\Users\fdl\Proyectos_Python\orquestador_de_agentes" rev-parse --path-format=absolute --git-common-dir
--> C:/Users/fdl/Proyectos_Python/orquestador_de_agentes/.git
-```
-Ambos lados dan el MISMO string; `Path(...).resolve()` sobre cada resultado
-(para normalizar separadores/mayusculas de unidad en Windows) sigue siendo
-correcto y necesario, pero YA NO depende del cwd del proceso porque el propio
-git resuelve la ruta antes de imprimirla.
-
-**NO usar `--absolute-git-dir`:** ese flag da el git-dir de la WORKTREE
-enlazada (`.git/worktrees/<nombre>` dentro del repo principal), no el
-common-dir compartido; comparar por ese valor NUNCA coincide entre worktrees
-hermanas (cada una tiene su propio subdirectorio `worktrees/<nombre>`) y
-reintroduce el mismo bug por otra via.
-
-**Nota critica para el Builder:** el output crudo de `--git-common-dir` SIN el
-flag `--path-format=absolute` difiere en FORMA (ruta absoluta vs relativa
-`.git`) segun el worktree, Y `Path(...).resolve()` sobre un output relativo
-resuelve contra el cwd del proceso, NO contra el directorio consultado. La
-UNICA formula correcta es `git -C <path> rev-parse --path-format=absolute
---git-common-dir`, seguida de `Path(...).resolve()` por higiene de
-normalizacion (no para corregir relatividad, que el flag ya elimina).
-
-`git worktree list` (verificado en vivo, confirma que son 2 worktrees del MISMO
-repo):
-```
-C:/Users/fdl/Proyectos_Python/orquestador_de_agentes     c344854 (detached HEAD)
-C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_dev 2eb88a7 [main]
-```
+## Decision de arquitectura (fijada por el usuario 2026-07-09, vinculante)
+TRES piezas, metodo primero, automatizacion despues:
+1. prompts/backlog_triage.md (source_of_truth): el metodo del analisis
+   pre-pipeline. 4 fases (0.pre gate, 0 reconciliacion, 1 clasificacion, 2
+   agrupacion, 3 sintesis) mas los 5 riesgos codificados.
+2. skills/backlog-triage/SKILL.md (wrapper PUNTERO, NO fuente normativa):
+   molde EXACTO = skills/audit-pipeline/SKILL.md (misma estructura de
+   secciones y frontmatter, stage: plan).
+3. Cableado MINIMO en prompts/orchestrator_pipeline.md: el paso 5 actual del
+   bootstrap ("Lee BACKLOG_PATH y ordena tickets", l.44-45 verificado en vivo)
+   pasa a ser CONDICIONAL. NO se suma como paso aparte (si se sumara, el propio
+   paso 5 reordenaria y pisaria la salida del triage).
+NO se construye en este ticket el script de reconciliacion determinista
+(scripts/backlog_reconcile.py, diferido a follow-up WOT-2026-021i): la Fase 0
+del metodo se hace "a mano" (comandos git) hasta que exista ese recolector.
 
 ## Rutas exactas verificadas (evitar busqueda a ciegas)
-- `scripts/prefix_resolver.py`: `discover_motor_root` (l.46), `resolve_prefix`
-  (l.134, rama WOT en l.146-147), `guard` (l.204-237, comparacion problematica
-  en l.230), `WOT_PREFIX = "WOT"` (l.38).
-- `.agent/scope_gate.py:105`: `read_delivery_authority(content,
-  default="repo_motor")`. Import: `.agent/` NO es un package Python; el
-  patron real es `sys.path.insert(0, str(motor_root / ".agent"))` seguido de
-  `import scope_gate` (ver `scripts/pip_audit_policy.py` l.10-17), NO
-  `from .agent.scope_gate import ...` ni `.agent.scope_gate.X` dotted.
-- `scripts/setup_dev_worktree.ps1`: existe: SOLO referenciar en mensajes de
-  error del guard nuevo; el guard NUNCA lo invoca ni crea `_dev`.
-- Cableado PRE: `prompts/orchestrator_destination_bootstrap.md` (seccion
-  "Paso 0: Guard de prefijo (WOT-2026-020s)", l.14-31),
-  `prompts/orchestrator_launch_builder.md` (seccion "Preflight
-  (WOT-2026-009a)", l.8-32), y `prompts/orchestrator_session_bootstrap.md`
-  (seccion "Paso 0" / "2. PREFLIGHT (topologia worktree-dev, WOT-2026-019m)",
-  l.100-107 -- ya hace un chequeo MANUAL en prosa de la topologia worktree-dev
-  para sesiones WOT; se cablea ahi la invocacion del guard nuevo para cerrar
-  el eje orquestador-WOT del incidente, no solo destino/Builder).
-- Cableado POST: `prompts/manager_review.md`, "Paso 1: Clasificacion" (l.30-45)
-  o un paso nuevo inmediatamente despues -- NUNCA el "Paso 0" (l.15-28), que es
-  CF-frozen y esta fuera de alcance de este ticket.
-- Test existente de referencia (fix estrecho, no-regresion): `tests/unit/test_prefix_resolver.py`
-  (clase de tests de `guard()`, l.157-196: `test_guard_wot_in_motor_passes` l.168-170,
-  `test_guard_wot_in_destination_blocks` l.173-176, `test_guard_match_returns_zero`
-  l.157-159, `test_guard_mismatch_blocks` l.162-165).
-- Patron de test Windows-only de referencia: `tests/test_setup_dev_worktree_script.py`
-  l.38-41 (`pytestmark = pytest.mark.skipif(sys.platform != "win32", reason=...)`
-  a nivel de modulo).
+- Molde de la skill: skills/audit-pipeline/SKILL.md (14 lineas de frontmatter:
+  name/version/description/triggers/author/role/stage/writes_memory/quality_gate/
+  tags/source_prompt/contract_id; secciones "Cuando usarla" / "No usar" /
+  "Prompt canonico" / "Topologia obligatoria" / "Flujo" / "Herramientas por fase"
+  / "Contrato de evidencia" / "Salidas" / "Restriccion dura"). VERIFICADO
+  leyendo el archivo completo.
+- Molde/hermano del prompt: prompts/audit_pipeline.md (cabecera con
+  contract_id: cid-audit-pipeline-v1, Skill canonica: skills/audit-pipeline/SKILL.md,
+  source_of_truth: este prompt; estructura de fases con encabezados "## Fase N").
+  VERIFICADO existe y su cabecera literal.
+- Punto de cableado: prompts/orchestrator_pipeline.md, seccion "0. Bootstrap
+  del destino", paso 5 (l.44-45 en la version actual): "Lee BACKLOG_PATH y
+  ordena tickets por dependencias, prioridad y orden de aparicion." VERIFICADO
+  por lectura completa del archivo (1343 lineas); NO confundir con la seccion
+  numerada "## 5. Manager: revisar implementacion" (l.652), que es un heading
+  H2 distinto y NO se toca.
+- Enum de stage: skills/validate_all.py::VALID_STAGES (l.37-47) incluye
+  plan (junto a setup/implement/review/quality/close/memory/meta/support).
+  VERIFICADO por lectura del archivo; plan YA lo usan
+  skills/manager-create-work-plan/SKILL.md y skills/grill-work-plan/SKILL.md
+  (2 skills). NO crear un stage planning nuevo.
+- Descubrimiento de skills: scripts/discover_skills.py::_scan_skills_dir
+  escanea CADA subdirectorio de skills/ buscando SKILL.md y parsea su
+  frontmatter; NO requiere registro manual en agents.json ni en ningun otro
+  archivo. Basta con crear skills/backlog-triage/SKILL.md con frontmatter
+  valido para que aparezca en discover_skills()/--catalog. VERIFICADO
+  leyendo discover_skills.py completo (no hay paso de registro adicional).
+  Contrato bidireccional prompt-skill: como role: manager (heredado del
+  molde) esta en CONTRACT_OPT_IN_ROLES, declarar source_prompt/contract_id
+  activa la validacion estricta de --check-contract: el prompt debe contener
+  literalmente "Skill canonica: skills/backlog-triage/SKILL.md" y
+  "contract_id: cid-backlog-triage-v1" (mismo patron que audit_pipeline.md).
+- Gate de formato del backlog: scripts/check_backlog_contract.py (CLI:
+  --project-root PROJECT_ROOT, sin fallback a cwd; usa AGENT_PROJECT_ROOT
+  si no se pasa el flag). VERIFICADO con --help.
+- Topologia del backlog del motor: para tickets WOT, el backlog vive en
+  orquestador_de_agentes_workspace/.agent/collaboration/backlog.md, NO en el
+  checkout de codigo (_dev ni el principal). Se localiza via
+  motor_destination_link.json (destination_root -> workspace). Esto es
+  DISTINTO de la topologia de un repo_destino generico, donde el backlog vive
+  en DESTINO_ROOT/.agent/collaboration/backlog.md (el propio destino).
 
 ## Files Likely Touched
-- `scripts/check_worktree_topology.py` (nuevo)
-- `scripts/prefix_resolver.py` (fix estrecho de `guard()`, rama `prefix == WOT`)
-- `tests/unit/test_prefix_resolver.py` (tests de no-regresion del fix + test
-  nuevo "guard WOT desde `_dev` -> exit 0")
-- `tests/unit/test_check_worktree_topology.py` (nuevo; tests del guard nuevo)
-- `prompts/orchestrator_destination_bootstrap.md` (cableado PRE, seccion "Paso 0")
-- `prompts/orchestrator_launch_builder.md` (cableado PRE, seccion "Preflight")
-- `prompts/orchestrator_session_bootstrap.md` (cableado PRE, seccion "Paso 0" /
-  "2. PREFLIGHT", l.100-107; cierra el eje orquestador-WOT)
-- `prompts/manager_review.md` (cableado POST, Paso 1 o paso nuevo tras el Paso 0
-  CF-frozen; el Paso 0 mismo NO se toca)
+- prompts/backlog_triage.md (nuevo)
+- skills/backlog-triage/SKILL.md (nuevo)
+- prompts/orchestrator_pipeline.md (modificar SOLO el paso 5 del bootstrap,
+  l.44-45 en la version actual)
+
+## Read/inspect only
+- skills/audit-pipeline/SKILL.md (molde; NO se modifica)
+- prompts/audit_pipeline.md (hermano/referencia; NO se modifica)
+- prompts/audit_agent_output.md (contrato de evidencia heredado; NO se
+  modifica)
+- skills/validate_all.py (solo para confirmar el enum de stage; NO se
+  modifica)
+- scripts/check_backlog_contract.py (solo se invoca/referencia; NO se
+  modifica)
 
 ## Forbidden Surfaces
-- NO tocar `prompts/manager_review.md` seccion "Paso 0: Ambito de este review -
-  CF-frozen vs implementacion" (l.15-28): es CF-frozen, fuera de alcance.
-- NO tocar `scripts/setup_dev_worktree.ps1` ni el modelo de ramas existente.
-- NO modificar `resolve_prefix()` ni `discover_motor_root()`: el fix es
-  exclusivamente dentro de `guard()`.
-- NO tocar el comportamiento de `guard()` para prefijos distintos de `WOT`.
+- NO tocar prompts/audit_pipeline.md ni skills/audit-pipeline/SKILL.md:
+  son espejos de referencia, no superficie de este ticket.
+- NO tocar prompts/orchestrate_destination_batch.md, skills/orchestrate-pipeline/
+  ni ningun otro prompt/skill de ejecucion del pipeline.
+- NO crear scripts/backlog_reconcile.py (diferido a WOT-2026-021i).
+- NO anadir un paso 5.bis aparte en prompts/orchestrator_pipeline.md: el
+  cableado reemplaza el contenido del paso 5 existente, no se suma.
+- NO crear un stage nuevo (planning u otro) en skills/validate_all.py.
 
 ## Non-goals
-- NO un hook que bloquee commits (enforcement duro; el preflight ya previene el
-  dano real).
-- NO cambiar `setup_dev_worktree.ps1` ni el modelo de ramas (ya correcto).
-- NO que el guard nuevo CREE `_dev` automaticamente (avisa, no crea; decision
-  del usuario).
-- NO derivar WOT->workspace por `ticket_prefix` del link (es null en el link del
-  workspace; se deriva por `motor_root`/`discover_motor_root`).
-- NO tocar el flujo de destinos que ya funciona (CTL/EXF en `prefix_resolver.guard()`
-  quedan bit a bit identicos en comportamiento).
-- NO leer `AGENT_PROJECT_ROOT` directo: usar `discover_motor_root` (cadena de
-  precedencia link > `AGENT_PROJECT_ROOT`).
+- NO construir el recolector determinista de senales de reconciliacion
+  (scripts/backlog_reconcile.py): follow-up WOT-2026-021i explicito.
+- NO incrustar el metodo del triage en orchestrator_pipeline.md: solo
+  referencia al prompt mas consumo del JSON.
+- NO que la skill redeclare reglas del metodo (puntero, no fuente).
+- NO forzar el analisis multi-lente (fan-out de agentes) en cada ejecucion: es
+  tecnica opt-in por tamano de backlog, declarada como tal en el prompt.
+- NO tocar audit_pipeline.md ni orchestrate-pipeline (solo se referencian
+  como espejos del ciclo de vida).
 
 ## Decision Arquitectonica
 
-### 1. `check_worktree_topology.py` -- interfaz y logica
-CLI: `python scripts/check_worktree_topology.py --ticket <TICKET_OR_PROJECT>
-[--motor-root <PATH>] [--project-root <PATH>] [--allow-diagnostic]` (o env
-`WORKTREE_GUARD_BYPASS=1` equivalente a `--allow-diagnostic`). `--project-root`
-es el workspace ACTIVO de la sesion (por defecto `Path.cwd()` si se omite,
-pero en el caso WOT real el workspace activo -- `orquestador_de_agentes_workspace`
--- casi siempre es un directorio DISTINTO del `cwd` del motor -- `_dev` --
-porque son 2 carpetas abiertas en paralelo; el llamador -- los prompts de
-cableado -- DEBE pasar `--project-root` explicito con el workspace real de la
-sesion, no confiar en el default).
+### 1. prompts/backlog_triage.md -- contenido canonico
+Cabecera identica en forma a prompts/audit_pipeline.md (tres lineas):
+contract_id: cid-backlog-triage-v1
+Skill canonica: skills/backlog-triage/SKILL.md
+source_of_truth: este prompt. La skill skills/backlog-triage/SKILL.md es
+wrapper operativo; si divergen, prevalece este prompt.
 
-Exit codes (4, tal como exige el DoD):
-- `0`: topologia correcta para el prefijo (WOT en `_dev`/main CON workspace ==
-  `orquestador_de_agentes_workspace`, o destino con motor detached + workspace
-  == destino resuelto).
-- `1`: topologia incorrecta (WOT en principal detached, o `_dev` no existe, o
-  para WOT el workspace activo -- `--project-root` -- != `orquestador_de_agentes_workspace`,
-  o para destino el workspace activo no coincide con el destino resuelto).
-- `2`: incoherencia de contrato (prefijo vs `delivery_authority` del
-  `work_plan.md` activo, cuando exista) o prefijo no resoluble.
-- Con `--allow-diagnostic`/`WORKTREE_GUARD_BYPASS=1`: SIEMPRE exit 0, imprime el
-  veredicto real (incluido lo que hubiera bloqueado) con un warning explicito
-  `[DIAGNOSTIC MODE] veredicto real: <bloqueado/incoherente>, motivo: <texto>`.
-  No se salta la regla de topologia, solo permite depurar el guard sin
-  bloquear.
+Declarar el espejo de ciclo de vida explicitamente en la introduccion:
+/backlog-triage (ANTES: que pipeline lanzar) / /orchestrate-pipeline
+(DURANTE: ejecuta 1 pipeline) / /audit-pipeline (DESPUES: meta-auditoria del
+backlog cerrado). Este parrafo satisface el criterio "coherencia del espejo"
+del DoD (ya existe un ancla parcial en orchestrator_pipeline.md l.1128-1136,
+seccion "11. Meta-auditoria final", que menciona /audit-pipeline; el prompt
+nuevo debe citar el trio completo, no solo el hermano post-pipeline).
 
-Logica (estructurada en 2 funciones separadas para evitar C901/complejidad
-ciclomatica alta seguida de PERF203; NUNCA usar `# noqa` para silenciar
-complejidad -- ver seccion Calidad). **Verificacion A (worktree del motor) Y
-Verificacion B (workspace activo) son AMBAS obligatorias para WOT segun el
-contrato (l.36, l.42-43, l.81-83); ninguna sustituye a la otra:**
-- `_check_wot_topology(cwd, motor_root, project_root) -> tuple[int, str]`:
-  rama exclusiva de `prefix == WOT`, recibe el `project_root` (workspace
-  activo) ademas de `cwd`/`motor_root`. **Verificacion A (worktree del
-  motor):** calcula `git -C <cwd> rev-parse --path-format=absolute
-  --git-common-dir` y `git -C <motor_root> rev-parse --path-format=absolute
-  --git-common-dir` (flag `--path-format=absolute` OBLIGATORIO: sin el, el
-  raw output es relativo en el checkout principal y `Path(...).resolve()`
-  lo resolveria contra el cwd del proceso, no contra el path consultado --
-  ver seccion "Verificacion en vivo", BUG DE FORMULA DESCARTADO). Ambos
-  resultados se pasan ademas por `Path(...).resolve()` como higiene de
-  normalizacion (separadores, mayusculas de unidad Windows), no para corregir
-  relatividad.
-  Si no coinciden -> exit 2 ("no se puede determinar topologia: cwd no es
-  worktree del mismo repo que motor_root"). Si coinciden: verifica
-  `git -C <cwd> symbolic-ref --short HEAD` == `"main"` Y que el toplevel de
-  `cwd` (`git -C <cwd> rev-parse --show-toplevel`) coincide con la ruta de
-  ALGUNA entrada de `git worktree list --porcelain` (ejecutado con `-C
-  <motor_root>`) cuyo nombre de directorio termine en `_dev` (sufijo
-  comparado sobre el basename real de esa entrada de worktree, NO un string
-  hardcodeado del nombre del repo). Si la rama no es `main` o el toplevel no
-  coincide con esa entrada `_dev` -> exit 1, mensaje con instruccion exacta
-  ("Ticket WOT escribe en el MOTOR: usa la worktree _dev (rama main), no el
-  checkout principal (detached=consumo). Ver scripts/setup_dev_worktree.ps1.").
-  Caso borde `_dev` no creada (ninguna entrada de `git worktree list` con
-  sufijo `_dev`) -> exit 1, mensaje ("Crea la worktree _dev:
-  .\scripts\setup_dev_worktree.ps1" -- SOLO avisa, no la ejecuta el guard).
-  **Verificacion B (workspace activo), SOLO si la Verificacion A dio exit 0**
-  (no tiene sentido verificar el workspace si el worktree del motor ya fallo;
-  se reporta el primer bloqueo encontrado, mensaje mas accionable): deriva el
-  workspace esperado escaneando `parent(motor_root)` (mismo `search_root` que
-  usa `prefix_resolver.scan_links`; reusar esa funcion o la logica equivalente
-  de `resolve_by_project_name`, l.160-184 de `prefix_resolver.py`) por el link
-  `motor_destination_link.json` cuyo campo `destination_id ==
-  "orquestador_de_agentes_workspace"` (NO por `ticket_prefix`, que es `null`
-  en ese link -- verificado en disco: `.agent/config/motor_destination_link.json`
-  del workspace tiene `"ticket_prefix": null, "destination_id":
-  "orquestador_de_agentes_workspace"`). Si no se encuentra ese link -> exit 2
-  ("no se pudo derivar el workspace esperado para WOT: falta el link con
-  destination_id == orquestador_de_agentes_workspace"). Si
-  `project_root.resolve() != <workspace_esperado>.resolve()` -> exit 1,
-  mensaje literal del contrato (l.43): "Ticket WOT necesita el workspace
-  orquestador_de_agentes_workspace, no <project_root>." Si coincide -> exit 0
-  (topologia COMPLETA: worktree del motor Y workspace correctos).
-- `_check_destination_topology(prefix, cwd, motor_root) -> tuple[int, str]`:
-  rama exclusiva de `prefix != WOT`. Resuelve `resolved =
-  prefix_resolver.resolve_prefix(prefix, motor_root)`. Si `resolved is None`
-  -> exit 2 ("prefijo desconocido: <prefix>"). Si `cwd.resolve() !=
-  resolved.resolve()` -> exit 1 ("Ticket <PREFIX> necesita el workspace
-  <resolved>, no <cwd>."). Si coincide -> exit 0 (el motor detached es lo
-  esperado; NO se exige `_dev` para destinos).
-- `main(argv)`: parsea `--ticket`, `--project-root` (workspace activo; default
-  `Path.cwd()` si se omite), extrae el prefijo con
-  `prefix_resolver.extract_prefix` (reusar la funcion existente, no
-  reimplementar el regex), descubre `motor_root` con
-  `prefix_resolver.discover_motor_root(Path.cwd())` (o `--motor-root`
-  explicito), y despacha a la funcion correspondiente segun `prefix == "WOT"`,
-  pasando `project_root` a `_check_wot_topology` (rama WOT) o a
-  `_check_destination_topology` como el `cwd` de esa funcion (rama destino:
-  el "cwd" que compara contra `resolved` en esa rama ES el workspace activo,
-  no el `cwd` del proceso).
-  Cuando exista un `work_plan.md` activo legible en
-  `.agent/collaboration/work_plan.md`, cruza `delivery_authority` (via
-  `scope_gate.read_delivery_authority`, importado con el patron real del repo
-  -- `.agent/` NO es un package Python importable como `.agent.scope_gate`;
-  usar `sys.path.insert(0, str(motor_root / ".agent"))` seguido de
-  `import scope_gate`, exactamente el patron de `scripts/pip_audit_policy.py`
-  l.10-17) contra el prefijo: `WOT` debe
-  traer `repo_motor`, cualquier otro prefijo debe traer `repo_destino`; si
-  divergen -> exit 2 ("incoherencia de contrato: prefijo <X> vs
-  delivery_authority <Y>"), SIN ejecutar el resto de la logica de topologia (el
-  chequeo de incoherencia de contrato precede al de topologia). Si no hay
-  `work_plan.md` legible, se omite ese cruce (no es bloqueante: el guard corre
-  en preflight, antes de que exista necesariamente un plan).
-  El flag `--allow-diagnostic`/env envuelve el resultado final: calcula el
-  exit code real, lo imprime con el prefijo `[DIAGNOSTIC MODE]` si aplica, y
-  fuerza el return a 0 sea cual sea el resultado real.
+Nota de topologia (obligatoria, literal en el prompt): "Para tickets WOT del
+motor, localiza el backlog via .agent/config/motor_destination_link.json del
+workspace activo, resolviendo destination_root -> el backlog vive en
+<destination_root>/.agent/collaboration/backlog.md (el workspace, NO el
+checkout de codigo _dev ni el principal). Para un repo_destino generico, el
+backlog vive en DESTINO_ROOT/.agent/collaboration/backlog.md (el propio
+destino). No asumas la ubicacion sin resolver el link."
 
-### 2. Fix de `prefix_resolver.py::guard()`
-Dentro de `guard()` (l.204-237), la unica rama que cambia es cuando `prefix ==
-WOT_PREFIX` (usar la constante ya existente, no un string literal nuevo). En
-esa rama, en vez de `cwd.resolve() != resolved.resolve()` (l.230), comparar
-`git -C <path> rev-parse --path-format=absolute --git-common-dir` de `cwd`
-contra el de `motor_root` (flag `--path-format=absolute` OBLIGATORIO -- ver
-seccion "Verificacion en vivo", BUG DE FORMULA DESCARTADO: sin el flag, el
-raw output relativo del principal resuelto con `Path(...).resolve()` se
-resuelve contra el cwd del PROCESO, no contra `motor_root`, y el MATCH nunca
-es `True`), ambos resultados pasados ademas por `Path(...).resolve()` como
-higiene de normalizacion (usando `subprocess.run(["git", "-C", str(<path>),
-"rev-parse", "--path-format=absolute", "--git-common-dir"],
-capture_output=True, text=True, check=False)` -- **`check=False`, NUNCA
-`check=True`**, ver degradado abajo). Si los dos `git-common-dir` resueltos no
-coinciden -> mismatch, exit 1 (mismo formato de mensaje que ya existe,
-adaptado). Todas las demas ramas de `guard()` (prefijos distintos de `WOT`,
-`resolved is None`, `ValueError` de `extract_prefix`) permanecen exactamente
-iguales (cero diff fuera de la rama `prefix == WOT_PREFIX`).
+Fases (read-only sobre el backlog; NUNCA muta backlog, codigo ni estado):
 
-**Degradado obligatorio si `git rev-parse` falla (fail-closed, NUNCA crash,
-NUNCA exit 0):** el subprocess se invoca con `check=False` e inspecciona
-`returncode` explicitamente (o equivalente `try/except` capturando
-`subprocess.CalledProcessError` y `FileNotFoundError`, si se usa `check=True`
-en un bloque envuelto -- pero la forma preferida y mas simple es
-`check=False` + inspeccion de `returncode`). Causas posibles: `cwd` o
-`motor_root` no es un repo git (returncode != 0, stderr tipico "not a git
-repository"), o el ejecutable `git` no esta en PATH (`FileNotFoundError`). En
-CUALQUIERA de esos casos, para la rama `prefix == WOT_PREFIX`: **no se puede
-verificar que cwd y motor_root son el mismo repo -> tratar como mismatch ->
-exit 1**, exactamente el mismo camino que un mismatch confirmado. NO lanzar la
-excepcion sin capturar (crash inaceptable en un guard de preflight), NO
-devolver 0 (un guard que no puede verificar la topologia debe bloquear, no
-dejar pasar -- fail-closed). El mensaje de error en ese caso debe distinguir
-la causa ("no se pudo determinar git-common-dir de <cwd|motor_root>: <detalle
-returncode/stderr o 'git no encontrado en PATH'>") del mensaje de mismatch
-confirmado, para que el usuario no confunda "no es un repo git" con
-"topologia incorrecta pero SI es un repo git".
+- Fase 0.pre - Gate de formato: ejecutar
+  python MOTOR_ROOT/scripts/check_backlog_contract.py --project-root <destino>
+  y exigir exit 0 ANTES de analizar. Si el exit code no es 0, detener y
+  reportar el backlog como no analizable (no es competidor del validador
+  sintactico WOT-012b, es complementario: este triage es el planner semantico).
+- Fase 0 - Reconciliacion (recolector mas juicio, explicitamente NO
+  determinista): leer backlog.md completo; para cada ticket
+  pending/deferred/completed-partial, RECOLECTAR senales de git
+  (git log --grep ID, git ls-files archivos-del-scope, greps de
+  terminos del DoD, last-run.json si existe) y JUZGAR con esas senales. El
+  prompt declara explicitamente: "no existe un check determinista generico;
+  cada DoD requiere una verificacion distinta". Emitir por ticket:
+  LIKELY_DONE (con evidencia commit/archivo, etiqueta VERIFICADO) /
+  LIKELY_PENDING / NEEDS_HUMAN_VERIFY. Los LIKELY_DONE se proponen para
+  archivar y SALEN del analisis de pipelines (nunca entran en agrupacion).
+- Fase 1 - Clasificacion de aptitud: por cada ticket PENDING (no
+  LIKELY_DONE), clasificar APTO_AUTONOMO (DoD binario, deliverable code,
+  mutation-verify, bajo riesgo, cero politica/HUMAN_GATE) /
+  REQUIERE_HUMANO (politica/destructivo/infra-local/blocked-externo) /
+  DISENO_PRIMERO (ficha grande con sub-decisiones pendientes). Cada
+  clasificacion lleva etiqueta VERIFICADO/INFERIDO/REQUIERE_HUMANO
+  (contrato de evidencia heredado de prompts/audit_agent_output.md, mismo
+  que audit-pipeline).
+- Fase 2 - Agrupacion en pipelines: agrupar los APTO_AUTONOMO por
+  afinidad tecnica (mismo subsistema/gate -> una verificacion final comun) mas
+  dependencias declaradas y ocultas mas blast radius. Cada pipeline: nombre,
+  tickets en orden, rationale, gate de verificacion comun, tamano S/M/L.
+- Fase 3 - Sintesis y recomendacion: ordenar pipelines por valor/riesgo
+  (mas valor con menos riesgo primero; higiene de suite/codigo-muerto suele ir
+  primero). Listar EXPLICITAMENTE los REQUIERE_HUMANO con motivo, separados
+  de los pipelines autonomos. Senalar los tickets cuya premisa hay que
+  reverificar (potencialmente ya-hechos, no capturados por la Fase 0 con
+  certeza suficiente). Recomendar por cual pipeline empezar.
+- Salida (obligatoria): informe Markdown mas backlog_triage_output.json
+  bajo orchestrator_pipeline/reports/ del destino (mismo patron de rutas que
+  audit-pipeline). Esquema del JSON: pipelines[] (nombre, tickets-en-orden,
+  gate-comun, tamano), tickets[] (id, clasificacion APTO_AUTONOMO/
+  REQUIERE_HUMANO/DISENO_PRIMERO, reconciliacion LIKELY_DONE/LIKELY_PENDING/
+  NEEDS_HUMAN_VERIFY, etiqueta-evidencia, artefacto), recommended_start,
+  requires_human[], premise_verify[]. El informe NO escribe backlog.md:
+  propone; el humano/Manager decide archivar/lanzar.
 
-### 3. Cableado
-- PRE en `prompts/orchestrator_destination_bootstrap.md`: anadir, dentro de la
-  seccion existente "Paso 0: Guard de prefijo (WOT-2026-020s)" (l.14-31), un
-  sub-paso que invoque `check_worktree_topology.py --ticket <TICKET_O_PROYECTO>`
-  inmediatamente despues de la llamada a `prefix_resolver.py --guard`
-  (misma logica de exit codes 0/1/2, mismo "detente si no es 0").
-- PRE en `prompts/orchestrator_launch_builder.md`: anadir, dentro de la seccion
-  "Preflight (WOT-2026-009a)" (l.8-32), antes de "Rol y limites" (l.34), un
-  parrafo que exija correr `check_worktree_topology.py --ticket {{TICKET_ID}}`
-  y detenerse con `WORKTREE_TOPOLOGY_VIOLATION` si el exit code no es 0.
-- POST en `prompts/manager_review.md`: anadir, en "Paso 1: Clasificacion"
-  (l.30-45) o como paso nuevo inmediatamente despues (nunca en el "Paso 0"
-  CF-frozen, l.15-28), una verificacion de que el Builder respeto la topologia:
-  releer `check_worktree_topology.py --ticket {{TICKET_ID}} --motor-root
-  <repo_motor>` contra el estado actual del repo y confirmar exit 0; si no,
-  `CHANGES` con blocker "topologia de worktree violada".
+Nota de escala (declarada como tecnica, no obligacion): el analisis
+multi-lente (fan-out de agentes) es RECOMENDADO para backlogs grandes (mas de
+6 tickets pending aproximadamente, o mezcla de scopes/autoridades), OPCIONAL
+para pequenos.
 
-## Mecanismo de Mutation (DoD obligatorio, worktree/checkout REAL)
-El mutation-verify NO usa mocks de `git symbolic-ref` (evita mock-drift: un
-mock puede quedar desincronizado del comportamiento real de git). Usa el
-worktree principal detached REAL (`C:\Users\fdl\Proyectos_Python\orquestador_de_agentes`,
-ya existente) y la worktree `_dev` REAL (`C:\Users\fdl\Proyectos_Python\orquestador_de_agentes_dev`,
-ya existente, el propio arbol de trabajo) como fixtures del mutation, ademas de
-los tests unitarios con fixtures sinteticas en `tmp_path` (para los casos que no
-dependen de la topologia real de esta maquina, ej. caso borde `_dev` no creada,
-que se simula con un `tmp_path` sin la worktree, NUNCA borrando o alterando la
-`_dev` real).
+Los 5 riesgos codificados EXPLICITAMENTE (con encabezado propio o bloque
+identificable, no disueltos en prosa general):
+1. No hinchar orchestrator_pipeline.md: el metodo vive aqui, el cableado es
+   solo referencia mas consumo de JSON.
+2. El triage puede fabricar certezas: toda clasificacion lleva etiqueta de
+   evidencia (VERIFICADO/INFERIDO/REQUIERE_HUMANO), heredada de
+   prompts/audit_agent_output.md.
+3. Backlog stale: la Fase 0 (reconciliacion) es SIEMPRE el primer paso, antes
+   de cualquier planificacion; un ticket LIKELY_DONE nunca entra en
+   pipeline.
+4. Autonomia falsa: Fase 1 separa APTO_AUTONOMO de REQUIERE_HUMANO de
+   DISENO_PRIMERO; destructivo/politica/HUMAN_GATE/infra-fuera-de-git NUNCA
+   van en pipeline autonomo.
+5. Skill es puntero, no fuente: skills/backlog-triage/SKILL.md no redeclara
+   el metodo; remite con la clausula "prevalece el prompt".
 
-Secuencia literal a ejecutar y registrar en `execution_log.md`:
+### 2. skills/backlog-triage/SKILL.md -- molde exacto
+Copiar la ESTRUCTURA de skills/audit-pipeline/SKILL.md seccion por seccion
+(Cuando usarla / No usar / Prompt canonico / Topologia obligatoria / Flujo /
+Herramientas por fase / Contrato de evidencia / Salidas / Restriccion dura),
+adaptando el CONTENIDO al triage (read-only sobre backlog, no sobre pipeline
+cerrado) SIN copiar el metodo del prompt: cada seccion remite o resume en 1-2
+lineas, nunca reproduce las 4 fases completas.
 
-```
-mutation-verify: prefix_resolver.guard() -- fix del bug real (caso principal)
-  sin_fix (revertir temporalmente scripts/prefix_resolver.py a la version
-  pre-fix, ej. via `git show HEAD:scripts/prefix_resolver.py` a un archivo
-  temporal fuera del repo o `git stash` del fix, ejecutando el script
-  revertido):
-    command: python scripts/prefix_resolver.py --guard WOT-2026-021g --motor-root "C:\Users\fdl\Proyectos_Python\orquestador_de_agentes"
-    (ejecutado con cwd = "C:\Users\fdl\Proyectos_Python\orquestador_de_agentes_dev")
-    exit_code: 1   # el bug: _dev rechazada por comparacion de path literal
-  con_fix:
-    command: <mismo comando, con el fix restaurado>
-    exit_code: 0   # _dev reconocida como el mismo motor via git-common-dir
+Frontmatter exacto (12 campos):
+name: backlog-triage
+version: 1.0.0
+description: Analisis pre-pipeline del backlog: reconciliacion contra git,
+  clasificacion de aptitud y agrupacion en pipelines ordenados por valor/riesgo
+triggers: [/backlog-triage, backlog-triage]
+author: agent
+role: manager
+stage: plan
+writes_memory: false
+quality_gate: false
+tags: [core, system, backlog]
+source_prompt: prompts/backlog_triage.md
+contract_id: cid-backlog-triage-v1
 
-mutation-verify: check_worktree_topology.py -- caso del bug (motor detached + WOT)
-  sin_check (documentar que hoy NADA bloquea esto; no hay "sin_fix" de codigo
-  previo porque el script es nuevo -- el "antes" es la ausencia del guard):
-    command: python scripts/check_worktree_topology.py --ticket WOT-2026-021g --motor-root "C:\Users\fdl\Proyectos_Python\orquestador_de_agentes"
-    (ejecutado con cwd = "C:\Users\fdl\Proyectos_Python\orquestador_de_agentes" -- el PRINCIPAL detached)
-    exit_code: 1   # DEBE bloquear: exactamente el caso que causo la perdida de trabajo de 019f
-  con_dev (mismo comando, cwd = "C:\Users\fdl\Proyectos_Python\orquestador_de_agentes_dev"):
-    exit_code: 0   # _dev, rama main: pasa
-```
+role: manager (no auditor): el triage es meta-planificacion (decide que
+pipeline lanzar), analogo a manager-create-work-plan, no una auditoria
+retrospectiva. stage: plan segun el DoD del contrato (ya en el enum,
+semanticamente correcto para "antes del pipeline"). La clausula "el prompt es
+la fuente de verdad; si algo diverge, prevalece el prompt" debe aparecer
+literal (mismo texto que skills/audit-pipeline/SKILL.md l.51-53, adaptado al
+nombre del prompt nuevo).
 
-Nota de terminologia: como `check_worktree_topology.py` es un script NUEVO, no
-existe un "sin_fix" en el sentido de revertir un commit; el par que demuestra
-la barrera es "sin el guard el bug pasa desapercibido" (documentado, no
-ejecutable como comando aislado: es la ausencia de la herramienta) vs "con el
-guard nuevo, el caso real del bug (principal detached + WOT) da exit 1". El par
-ejecutable y verificable en ambos sentidos es el de `prefix_resolver.guard()`
-(bug real revertible: comparacion por path literal vs por git-common-dir) y el
-de topologia inversa de `check_worktree_topology.py` (exit 1 en principal, exit
-0 en `_dev`, ambos ejecutables hoy mismo sobre los 2 worktrees reales). Registrar
-AMBOS pares en `execution_log.md`.
+### 3. Cableado en prompts/orchestrator_pipeline.md
+Reemplazar el paso 5 actual del bootstrap (l.44-45: "Lee BACKLOG_PATH y
+ordena tickets por dependencias, prioridad y orden de aparicion.") por un
+paso 5 CONDICIONAL que preserva el fallback exacto cuando no aplica:
+
+"5. Si /backlog-triage ya se ejecuto (existe
+orchestrator_pipeline/reports/backlog_triage_output.json reciente en
+PIPELINE_REPORTS_DIR) O el backlog en BACKLOG_PATH tiene mas de N tickets
+pending o mezcla scopes/autoridades distintas, ejecuta /backlog-triage
+(MOTOR_ROOT/prompts/backlog_triage.md) si aun no corrio, y usa SU SALIDA
+(backlog_triage_output.json) como orden de la cola: los tickets LIKELY_DONE
+NO entran, los REQUIERE_HUMANO no entran en pipeline autonomo. Si no aplica
+ninguna condicion (backlog pequeno/homogeneo y sin salida de triage previa),
+lee BACKLOG_PATH y ordena tickets por dependencias, prioridad y orden de
+aparicion, como hasta ahora." El umbral N sugerido es 6 (no critico, el
+Builder documenta su eleccion en el diff/commit si difiere).
+
+Es un condicional DENTRO del paso 5 existente (mismo numero, mismo lugar), NO
+un paso 5.bis nuevo que se sume: si se sumara, la version vieja del paso 5
+seguiria corriendo siempre y pisaria el orden que produjo el triage.
+orchestrator_pipeline.md NO incrusta el metodo del triage: solo la
+referencia al prompt y el consumo del JSON descrito arriba.
+
+## Barrera / verificacion (deliverable mixed, docs-heavy, no bugfix)
+Este ticket es prompt/skill/cableado (documentation-heavy), no un bugfix de
+codigo: no aplica mutation-verify de codigo. La barrera proporcional, criterio
+BINARIO declarado explicitamente en AUDIT_WOT-2026-021h.md:
+- Barrera anti-riesgo-5 (skill es puntero, no fuente): grep -c de los
+  terminos clave del metodo ("LIKELY_DONE", "APTO_AUTONOMO",
+  "REQUIERE_HUMANO", "DISENO_PRIMERO", "Fase 0.pre", "Fase 3") sobre
+  skills/backlog-triage/SKILL.md debe dar 0 apariciones DE LA REGLA
+  (definicion/criterio), salvo menciones puramente referenciales de una linea
+  (p.ej. "Fase 0 - Reconciliacion" como nombre de fase en la tabla de
+  herramientas, sin redefinir su contenido). Las reglas completas (que es
+  LIKELY_DONE, como se calcula, que hace que un ticket sea APTO_AUTONOMO)
+  deben existir SOLO en prompts/backlog_triage.md.
+- Barrera anti-riesgo-1 (orchestrator_pipeline.md no absorbe el metodo):
+  git diff prompts/orchestrator_pipeline.md debe mostrar cambios SOLO dentro
+  del paso 5 del bootstrap (rango de lineas acotado, no un bloque nuevo de
+  varias fases); el diff no debe contener las palabras "Fase 0.pre", "Fase 1 -
+  Clasificacion", "Fase 2 - Agrupacion" ni "Fase 3 - Sintesis" (esas son
+  fases del METODO, exclusivas del prompt nuevo).
 
 ## Plan de Implementacion
 
-### Fase 1: Fix estrecho de `prefix_resolver.py::guard()`
-- **Archivo:** `scripts/prefix_resolver.py`
-- **Accion:** Modificar
-- **Descripcion:** Dentro de `guard()` (l.204-237), en la rama donde `prefix ==
-  WOT_PREFIX` unicamente, sustituir la comparacion `cwd.resolve() !=
-  resolved.resolve()` por una comparacion de `git -C <path> rev-parse
-  --path-format=absolute --git-common-dir` (flag OBLIGATORIO; ver "Verificacion
-  en vivo", BUG DE FORMULA DESCARTADO) en ambos lados (`cwd` y `motor_root`),
-  segun la Decision Arquitectonica seccion 2. Todas las demas ramas de `guard()`
-  (prefijos distintos de WOT) quedan bit a bit identicas. **Degradado
-  obligatorio:** el subprocess de cada `git rev-parse --git-common-dir` usa
-  `check=False` (o try/except equivalente) e inspecciona el resultado
-  explicitamente; si `cwd` o `motor_root` no es un repo git (returncode != 0)
-  o `git` no esta en PATH (`FileNotFoundError`), el resultado es **fail-closed:
-  exit 1** (mismatch), nunca una excepcion sin capturar ni un exit 0. Ver
-  Decision Arquitectonica seccion 2 para el detalle completo del mensaje de
-  error por causa.
-- **Riesgo:** Medio (funcion compartida por todos los prefijos; el cambio esta
-  aislado a una rama condicional, pero un error de logica puede romper el
-  guard existente para destinos; el degradado mal implementado puede crashear
-  un guard de preflight universal)
-- **Criterio de Aceptacion:** `git diff scripts/prefix_resolver.py` muestra
-  cambios SOLO dentro del cuerpo de `guard()`, en la rama `prefix ==
-  WOT_PREFIX`; ninguna otra funcion ni rama cambia. `ast.parse` del archivo no
-  lanza excepcion. Ademas: invocar `guard()` con `prefix="WOT"` y un `cwd` que
-  NO es un repo git (directorio `tmp_path` plano sin `git init`) devuelve `1`
-  de forma determinista, sin lanzar `CalledProcessError` ni ninguna otra
-  excepcion no capturada (verificado por el test nuevo de Fase 2 "cwd no es
-  repo git en rama WOT").
-- **Si falla:** revertir el cambio y escalar al Manager con el traceback exacto
-
-### Fase 2: Tests de no-regresion y del caso corregido en `test_prefix_resolver.py`
-- **Archivo:** `tests/unit/test_prefix_resolver.py`
-- **Accion:** Modificar
-- **Descripcion:** `_make_tree(tmp_path)` (l.56-73) es una factory COMPARTIDA
-  usada por ~15 tests del archivo: los de `resolve_prefix`, los 8 de `guard`
-  (l.152-215) Y los de `scan_links`. **NO modificar `_make_tree` in-place.**
-  Crear un helper NUEVO y SEPARADO (p.ej. `_make_git_tree(tmp_path)`,
-  reutilizando el patron `init_git_repo` de `tests/test_pre_handoff_guard.py`
-  como PUNTO DE PARTIDA, pero NO reutilizado tal cual: `init_git_repo` hace
-  `git init` a secas, y el nombre de la rama por defecto depende de
-  `init.defaultBranch` del entorno -- `main` en esta maquina, pero `master`
-  en el runner CI (sin esa config), lo que romperia en false-RED el check
-  `symbolic-ref == "main"` SOLO en CI. `_make_git_tree` DEBE forzar la rama
-  explicitamente: `git init -b main` (preferido, git >= 2.28) o `git init`
-  seguido de `git branch -M main` antes del primer commit, en el motor
-  sintetico; la `_dev` sintetica se crea con `git worktree add -b main
-  <ruta_dev> main` (worktree nueva sobre la rama `main` ya forzada) para que
-  `symbolic-ref --short HEAD` en `_dev` de `main` de forma determinista en
-  cualquier entorno (local Windows y CI Linux), no solo en esta maquina.
-  Usado UNICAMENTE por los tests de la rama WOT que ahora invocan `git` real. Los tests existentes de `resolve_prefix`/`scan_links` y los 8
-  tests de `guard()` (l.157-196) siguen usando `_make_tree` plano intacto, SIN
-  `git init` y SIN modificar sus asserts.
-  Anadir con `_make_git_tree`:
-  1. Un test nuevo "guard WOT desde `_dev` -> exit 0":
-     `guard("WOT-2026-XXXXx", cwd=<ruta _dev sintetica de _make_git_tree>,
-     motor_root=<motor sintetico de _make_git_tree>) == 0`.
-  2. Un test nuevo "cwd no es repo git en rama WOT -> exit 1 determinista (no
-     crash)": `guard("WOT-2026-XXXXx", cwd=<tmp_path plano SIN git init>,
-     motor_root=<motor sintetico CON git init>) == 1`, y asercion explicita de
-     que NO se lanza ninguna excepcion (el test falla si `guard()` propaga
-     `CalledProcessError` en vez de devolver `1`). Cubre el degradado
-     fail-closed de la Fase 1 / Decision Arquitectonica seccion 2.
-  Los 8 tests existentes de `guard()` (l.157-196:
-  `test_guard_match_returns_zero`, `test_guard_mismatch_blocks`,
-  `test_guard_wot_in_motor_passes`, `test_guard_wot_in_destination_blocks`,
-  `test_guard_unknown_prefix_returns_2`, `test_guard_malformed_id_returns_2`,
-  `test_guard_project_name_match`, `test_guard_project_name_mismatch_blocks`)
-  usan `_make_tree` plano (sin `git init`); tras el fix, para la rama WOT eso
-  activa el degradado fail-closed de la Fase 1 (ningun lado es repo git ->
-  exit 1). Razonamiento explicito por que ninguno cambia de assert:
-  - `test_guard_wot_in_motor_passes` (l.168-170): `cwd == motor_root`
-    (mismo directorio, sin `git init`). El degradado fail-closed daria exit 1
-    para un `cwd` generico sin git, pero aqui `cwd` Y `motor_root` son el
-    MISMO path -- si el Builder implementa el degradado por-lado (git-common-dir
-    de un lado falla -> exit 1 inmediato sin comparar), este test ROMPE (paso
-    de 0 a 1) porque ninguno de los dos tiene `.git`. **Este test DEBE ganar
-    `git init` en su fixture local (OBLIGATORIO, no opcional):** bajo el
-    degradado fail-closed por-lado fijado en la Fase 1, sin `git init` el
-    resultado seria `1` (degradado) en vez de `0` (mismo motor real) y el
-    test romperia. Anadir `git init` real a la fixture local de este test
-    unicamente (no a `_make_tree`), para que siga siendo un caso "mismo
-    motor real" -> exit 0. Documentar en el diff por que este test especifico
-    gana `git init` mientras los demas no.
-  - `test_guard_wot_in_destination_blocks` (l.173-176): `cwd=exf` (destino,
-    sin `git init`), `prefix=WOT` por lo que `resolved=motor` (sin `git
-    init`). Con el fix, la rama WOT intenta obtener `git-common-dir` de
-    ambos; ninguno es repo git -> degradado fail-closed -> exit 1. **Este
-    test NO cambia de assert** (sigue esperando `1`): tanto en el
-    comportamiento pre-fix (mismatch por path literal) como en el
-    post-fix (degradado fail-closed por ausencia de git) el resultado
-    coincide en exit 1, por razones distintas pero mismo exit code -- no
-    hace falta tocar su fixture.
-  - Los 6 tests restantes (`test_guard_match_returns_zero`,
-    `test_guard_mismatch_blocks`, `test_guard_unknown_prefix_returns_2`,
-    `test_guard_malformed_id_returns_2`, `test_guard_project_name_match`,
-    `test_guard_project_name_mismatch_blocks`) usan prefijos distintos de
-    `WOT` (`EXF`/`CTL`/`XYZ`/malformado/nombre de proyecto): caen en la rama
-    `_check_destination_topology`-equivalente de `guard()`, que el fix NO
-    toca. Sin cambio de comportamiento ni de fixture.
-  NO mockear `subprocess.run` de git en ningun test nuevo (evita mock-drift,
-  mismo criterio que el mutation).
-- **Riesgo:** Medio (tests de git real son mas lentos y pueden ser fragiles en
-  CI si no se crean los repos correctamente; mitigar con `tmp_path` real y
-  limpieza automatica de pytest; riesgo adicional de mezclar `_make_git_tree`
-  con `_make_tree` por descuido)
-- **Criterio de Aceptacion:** `python -m pytest tests/unit/test_prefix_resolver.py -v`
-  pasa completo, incluye los 2 tests nuevos (`_dev` via `_make_git_tree`, y
-  "cwd no es repo git -> exit 1 determinista"); `_make_tree` (l.56-73) no
-  tiene diff (`git diff` no muestra cambios en su cuerpo); los 8 tests
-  existentes de `guard()` no cambian su assert final, salvo
-  `test_guard_wot_in_motor_passes`, que DEBE ganar `git init` en su fixture
-  local (OBLIGATORIO bajo el degradado fail-closed, razonado arriba)
-  manteniendo el mismo assert `== 0`; comparar contra
-  `git show HEAD:tests/unit/test_prefix_resolver.py` antes del ticket para
-  confirmar que ningun otro assert cambio.
-- **Si falla:** revertir Fase 1 y Fase 2 juntas, escalar al Manager con el log
-  de fallo exacto
-
-### Fase 3: Crear `scripts/check_worktree_topology.py`
-- **Archivo:** `scripts/check_worktree_topology.py`
+### Fase 1: Crear prompts/backlog_triage.md
+- **Tipo:** TAREA AGENTE (Builder)
+- **Archivo:** prompts/backlog_triage.md
 - **Accion:** Crear
-- **Descripcion:** Implementar segun la Decision Arquitectonica seccion 1: CLI
-  `--ticket`, `--motor-root` (opcional), `--project-root` (opcional, workspace
-  activo), `--allow-diagnostic` (o env `WORKTREE_GUARD_BYPASS=1`); funciones
-  `_check_wot_topology(cwd, motor_root, project_root)` (Verificacion A del
-  worktree + Verificacion B del workspace, AMBAS obligatorias para WOT) y
-  `_check_destination_topology` separadas (para no acumular complejidad
-  ciclomatica en una sola funcion -- ver seccion Calidad); reusa
-  `prefix_resolver.extract_prefix`, `prefix_resolver.discover_motor_root`,
-  `prefix_resolver.resolve_prefix` (import, NO reimplementar); reusa
-  `scope_gate.read_delivery_authority` para el cruce de incoherencia de
-  contrato, importado con `sys.path.insert(0, str(motor_root / ".agent"))` +
-  `import scope_gate` (patron real de `scripts/pip_audit_policy.py` l.10-17;
-  `.agent/` NO es un package, `.agent.scope_gate` como dotted import NO
-  funciona). Exit codes 0/1/2 segun la Decision Arquitectonica. Mensajes de
-  error citan `scripts/setup_dev_worktree.ps1` solo como referencia (nunca lo
-  invoca ni crea `_dev`).
-- **Riesgo:** Alto (script nuevo que se cablea como preflight en 2 prompts;
-  un falso positivo paraliza el arranque de agentes en toda sesion futura --
-  de ahi el escape hatch `--allow-diagnostic` obligatorio en el DoD)
-- **Criterio de Aceptacion:** `python scripts/check_worktree_topology.py --help`
-  documenta `--ticket`, `--motor-root`, `--project-root`, `--allow-diagnostic`;
-  ejecutar manualmente los 5 casos base (WOT en `_dev` + workspace correcto ->
-  0; WOT en principal -> 1; WOT en `_dev` + workspace INCORRECTO -> 1; destino
-  con workspace correcto -> 0; prefijo desconocido -> 2) reproduce el exit
-  code esperado en cada caso
-- **Si falla:** revertir el archivo nuevo (`git rm` o descartar), escalar al
-  Manager con el caso concreto que no reproduce el exit code esperado
+- **Descripcion:** Redactar el prompt completo segun la Decision Arquitectonica
+  seccion 1: cabecera con contract_id: cid-backlog-triage-v1,
+  Skill canonica: skills/backlog-triage/SKILL.md, source_of_truth; parrafo
+  del trio de ciclo de vida; nota de topologia obligatoria (motor -> workspace
+  via motor_destination_link.json, destino generico -> su propio
+  .agent/collaboration/backlog.md); las 5 fases (0.pre, 0, 1, 2, 3) con el
+  contenido exacto descrito arriba; los 5 riesgos codificados en un bloque
+  identificable; el esquema del JSON de salida
+  (backlog_triage_output.json) con los campos declarados
+  (pipelines[]/tickets[]/recommended_start/requires_human[]/
+  premise_verify[]); la nota de escala del analisis multi-lente
+  como tecnica opt-in.
+- **Riesgo:** Medio (documento nuevo, pero fija un contrato que consumira el
+  cableado de Fase 3 y sera puntero-fuente de la skill de Fase 2; un error de
+  alcance aqui se propaga a las otras 2 fases).
+- **Criterio de Aceptacion:**
+  - El archivo existe y contiene, en encabezados identificables, las 4 fases
+    (0/1/2/3, mas la 0.pre) en ese orden.
+  - Contiene los 5 riesgos codificados como bloque explicito (verificable por
+    grep de las 5 frases clave: "no hinchar", "fabricar certezas",
+    "backlog stale" o "reconciliacion", "autonomia falsa", "puntero").
+  - Contiene la nota de topologia con la frase literal sobre
+    motor_destination_link.json.
+  - Contiene el esquema JSON con los 5 campos obligatorios nombrados
+    (pipelines, tickets, recommended_start, requires_human,
+    premise_verify).
+  - Cabecera contiene literal "contract_id: cid-backlog-triage-v1" y
+    "Skill canonica: skills/backlog-triage/SKILL.md" (verificable por grep;
+    necesario para que discover_skills.py --check-contract pase en Fase 5).
+- **Si falla:** Revisar contra el contrato fuente
+  (CONTRATO_WOT-2026-021h_backlog_triage.md en el workspace) y corregir la
+  fase o riesgo faltante antes de continuar a Fase 2.
 
-### Fase 4: Tests de `check_worktree_topology.py`
-- **Archivo:** `tests/unit/test_check_worktree_topology.py`
+### Fase 2: Crear skills/backlog-triage/SKILL.md
+- **Tipo:** TAREA AGENTE (Builder)
+- **Archivo:** skills/backlog-triage/SKILL.md
 - **Accion:** Crear
-- **Descripcion:** Cubrir, con fixtures de `tmp_path` + `git init -b main`
-  (o `git init` + `git branch -M main`) / `git worktree add -b main` reales
-  (mismo helper `_make_git_tree` de la Fase 2, o un helper equivalente que
-  fuerce la rama `main` explicitamente -- NO usar `init_git_repo` de
-  `tests/test_pre_handoff_guard.py` sin ese forzado: su `git init` a secas
-  depende de `init.defaultBranch`, `main` en esta maquina pero `master` en
-  el runner CI sin esa config, lo que romperia en false-RED SOLO en CI el
-  check `symbolic-ref == "main"` de los casos (a)/(c)/(h); NO mockear `git
-  symbolic-ref` ni `subprocess` de git):
-  (a) WOT + `_dev` sintetica (rama `main`) + `--project-root` ==
-      workspace sintetico con link `destination_id ==
-      "orquestador_de_agentes_workspace"` -> exit 0 (Verificacion A y B
-      ambas correctas);
-  (b) WOT + principal sintetico (detached) -> exit 1, mensaje cita
-      `setup_dev_worktree.ps1` (falla en Verificacion A, no llega a evaluar B);
-  (c) WOT + `_dev` no existe (`git worktree list` sin entrada `_dev`) -> exit 1,
-      mensaje "Crea la worktree _dev";
-  (d) destino conocido (prefijo sintetico tipo `EXF`/`CTL` con link de
-      `motor_destination_link.json` en `tmp_path`) con motor detached +
-      workspace == destino resuelto -> exit 0;
-  (e) destino conocido con workspace activo != destino resuelto -> exit 1;
-  (f) prefijo desconocido -> exit 2;
-  (g) incoherencia de contrato (work_plan.md sintetico con
-      `delivery_authority: repo_destino` pero prefijo `WOT`) -> exit 2;
-  (h) `--allow-diagnostic` (o `WORKTREE_GUARD_BYPASS=1`) sobre el caso (b) ->
-      exit 0, stdout/stderr contiene `[DIAGNOSTIC MODE]` y el veredicto real
-      (bloqueado);
-  (i) **WOT + `_dev` sintetica correcta (Verificacion A pasa) + `--project-root`
-      apuntando a un directorio sintetico DISTINTO del link
-      `orquestador_de_agentes_workspace` (workspace incorrecto) -> exit 1,
-      mensaje literal del contrato: "Ticket WOT necesita el workspace
-      orquestador_de_agentes_workspace, no <project_root>."** Cubre el
-      BLOCKER 2 (Verificacion B) de forma aislada de la Verificacion A.
-- **Riesgo:** Medio (fixtures de git real son mas lentas; el caso (c) requiere
-  simular ausencia de `_dev` sin tocar la `_dev` real de esta sesion)
-- **Criterio de Aceptacion:** `python -m pytest tests/unit/test_check_worktree_topology.py -v`
-  pasa completo, con los 9 casos (a)-(i) como tests individuales nombrados
-  explicitamente por el caso que cubren
-- **Si falla:** revertir Fase 3 y Fase 4 juntas, escalar al Manager con el caso
-  que no reproduce
+- **Descripcion:** Copiar la ESTRUCTURA de secciones de
+  skills/audit-pipeline/SKILL.md (Cuando usarla / No usar / Prompt canonico
+  / Topologia obligatoria / Flujo / Herramientas por fase / Contrato de
+  evidencia / Salidas / Restriccion dura), con el frontmatter exacto de la
+  Decision Arquitectonica seccion 2 (name, version, description,
+  triggers: [/backlog-triage, backlog-triage], author: agent,
+  role: manager, stage: plan, writes_memory: false,
+  quality_gate: false, tags, source_prompt: prompts/backlog_triage.md,
+  contract_id: cid-backlog-triage-v1). Cada seccion resume o remite al
+  prompt en 1-2 lineas; el "Flujo" lista los NOMBRES de las 5 fases (0.pre, 0,
+  1, 2, 3) sin reproducir sus reglas internas. Incluir la clausula literal "el
+  prompt es la fuente de verdad; si algo diverge, prevalece
+  prompts/backlog_triage.md" (mismo patron de
+  skills/audit-pipeline/SKILL.md l.51-53).
+- **Riesgo:** Bajo (archivo nuevo, molde ya verificado y estable).
+- **Criterio de Aceptacion:**
+  - El archivo existe con las 9 secciones del molde (mismos titulos de
+    seccion que audit-pipeline/SKILL.md, adaptados al triage).
+  - Frontmatter completo con los 12 campos exactos de la Decision
+    Arquitectonica seccion 2, incluido stage: plan (no planning).
+  - Contiene la clausula "el prompt es la fuente de verdad".
+  - Barrera anti-riesgo-5 (ver seccion "Barrera / verificacion" de este plan):
+    0 redeclaraciones del metodo, verificado por el Builder antes de marcar
+    la fase completa.
+- **Si falla:** Si el grep de la barrera anti-riesgo-5 encuentra
+  redeclaraciones, recortar la seccion a una referencia y repetir el grep
+  antes de continuar.
 
-### Fase 5: Mutation-verify con worktrees reales
-- **Archivo:** ninguno (verificacion transitoria; usa los worktrees reales
-  existentes de esta maquina, sin modificarlos)
-- **Accion:** Verificar
-- **Descripcion:** Ejecutar la secuencia literal de la seccion "Mecanismo de
-  Mutation" de este plan: (1) `prefix_resolver.guard()` sin el fix (revertido
-  temporalmente en una copia aislada o via `git stash`/checkout parcial en
-  `tmp_path`, NUNCA en el arbol de trabajo real sin revertir despues) vs con el
-  fix, ambos ejecutados con cwd real = `_dev`; (2) `check_worktree_topology.py`
-  ejecutado con cwd real = principal detached (exit esperado 1) y cwd real =
-  `_dev` (exit esperado 0). Restaurar cualquier archivo revertido
-  temporalmente antes de continuar.
-- **Riesgo:** Medio (opera sobre los worktrees reales de la maquina; debe
-  revertir cualquier estado temporal antes de dejar la sesion)
-- **Criterio de Aceptacion:** los 2 pares `mutation-verify` (4 comandos, 4 exit
-  codes) quedan registrados literalmente en `execution_log.md` con el formato
-  exacto de la seccion "Mecanismo de Mutation"; `git status --short` en ambos
-  worktrees queda limpio despues de la verificacion (ningun revert temporal
-  sobrevive)
-- **Si falla:** el fix o el guard nuevo no son una barrera genuina; revisar el
-  mecanismo y escalar al Manager antes de marcar READY_FOR_REVIEW
-
-### Fase 6: Cableado PRE en los 3 prompts de bootstrap/launch/sesion
-- **Archivo:** `prompts/orchestrator_destination_bootstrap.md`,
-  `prompts/orchestrator_launch_builder.md`,
-  `prompts/orchestrator_session_bootstrap.md`
+### Fase 3: Cablear paso 5 condicional en prompts/orchestrator_pipeline.md
+- **Tipo:** TAREA AGENTE (Builder)
+- **Archivo:** prompts/orchestrator_pipeline.md
 - **Accion:** Modificar
-- **Descripcion:** Segun la Decision Arquitectonica seccion 3: anadir en
-  `orchestrator_destination_bootstrap.md` un sub-paso dentro del "Paso 0: Guard
-  de prefijo" (l.14-31) que invoque `check_worktree_topology.py --ticket
-  <TICKET_O_PROYECTO> --project-root <workspace_activo>` inmediatamente
-  despues del `prefix_resolver.py --guard` existente, con la misma politica de
-  exit codes (0 continua, 1/2 detente y reporta). En
-  `orchestrator_launch_builder.md`, anadir dentro de "Preflight
-  (WOT-2026-009a)" (l.8-32), antes de "Rol y limites" (l.34), la misma
-  invocacion con `{{TICKET_ID}}` y `--project-root <repo_destino>`,
-  deteniendose con `WORKTREE_TOPOLOGY_VIOLATION` si el exit code no es 0. En
-  `orchestrator_session_bootstrap.md`, anadir dentro de "2. PREFLIGHT
-  (topologia worktree-dev, WOT-2026-019m)" (l.100-107) la misma invocacion
-  para el ticket WOT activo con `--project-root
-  orquestador_de_agentes_workspace` (o la ruta real del workspace de la
-  sesion), reemplazando/complementando el chequeo manual en prosa que ya
-  existe ahi con la version programatica del guard nuevo.
-- **Riesgo:** Bajo (cambio de prosa en 3 prompts Markdown; no ejecuta codigo,
-  no tiene gates de pytest/ruff)
-- **Criterio de Aceptacion:** los 3 archivos contienen la invocacion literal de
-  `check_worktree_topology.py --ticket ... --project-root ...` con la politica
-  de exit codes 0/1/2 descrita; encoding guard (ver Fase 8) pasa sobre los 3
-- **Si falla:** revertir el cambio de prosa, escalar al Manager
+- **Descripcion:** Localizar el paso 5 actual dentro de la seccion "0.
+  Bootstrap del destino" (verificado en l.44-45 de la version leida por el
+  Manager: "5. Lee BACKLOG_PATH y ordena tickets por dependencias,
+  prioridad y orden de aparicion."). Reemplazar SOLO ese punto por el texto
+  condicional completo de la Decision Arquitectonica seccion 3 (misma
+  numeracion "5.", mismo lugar en la lista). No anadir un punto "5.bis" ni
+  mover el resto de la numeracion del bootstrap. Si el numero de linea real
+  difiere de l.44-45 en el momento de editar (el archivo pudo cambiar entre
+  la Fase 0 del Manager y la implementacion), el Builder localiza el paso 5
+  por su TEXTO literal actual ("Lee BACKLOG_PATH y ordena tickets"), no por
+  el numero de linea.
+- **Riesgo:** Medio (el archivo es el prompt canonico del pipeline completo,
+  1343 lineas; un error de alcance aqui puede desalinear la numeracion o
+  incrustar el metodo por accidente).
+- **Criterio de Aceptacion:**
+  - git diff prompts/orchestrator_pipeline.md muestra cambios
+    EXCLUSIVAMENTE dentro del punto 5 de la seccion "0. Bootstrap del
+    destino" (no en ninguna otra seccion del archivo, incluida la "## 5.
+    Manager: revisar implementacion" mas abajo, que NO se toca).
+  - El diff no contiene ninguna de las frases "Fase 0.pre", "Fase 1 -
+    Clasificacion", "Fase 2 - Agrupacion", "Fase 3 - Sintesis" (barrera
+    anti-riesgo-1, ver seccion "Barrera / verificacion").
+  - El texto nuevo referencia MOTOR_ROOT/prompts/backlog_triage.md y
+    backlog_triage_output.json, y preserva literalmente el fallback "ordena
+    tickets por dependencias, prioridad y orden de aparicion" para el caso
+    sin-triage.
+- **Si falla:** Revertir el cambio de prosa (git diff muestra un bloque
+  contenido y reversible) y corregir el alcance antes de reintentar.
 
-### Fase 7: Cableado POST en `manager_review.md`
-- **Archivo:** `prompts/manager_review.md`
-- **Accion:** Modificar
-- **Descripcion:** Anadir, en "Paso 1: Clasificacion" (l.30-45) o como paso
-  nuevo inmediatamente despues de el (nunca dentro del "Paso 0: Ambito de este
-  review" CF-frozen, l.15-28, que NO se toca), una verificacion de cumplimiento:
-  el Manager releera `check_worktree_topology.py --ticket {{TICKET_ID}}
-  --motor-root <repo_motor>` contra el estado actual del repo tras la entrega
-  del Builder; si el exit code no es 0, el veredicto es `CHANGES` con blocker
-  "topologia de worktree violada durante la implementacion". Esto es
-  verificacion de CUMPLIMIENTO posterior al trabajo del Builder, no prevencion
-  (la prevencion ya esta en Fase 6).
-- **Riesgo:** Bajo (cambio de prosa en un prompt; no toca el Paso 0 CF-frozen)
-- **Criterio de Aceptacion:** `prompts/manager_review.md` contiene la
-  verificacion de topologia fuera del Paso 0 (verificable por posicion de
-  linea: despues de l.28); el Paso 0 original (l.15-28) queda bit a bit
-  identico (`git diff` no muestra cambios en ese rango)
-- **Si falla:** revertir el cambio, escalar al Manager
+### Fase 4: Coherencia de espejo (trio antes/durante/despues)
+- **Tipo:** TAREA AGENTE (Builder)
+- **Archivo:** prompts/backlog_triage.md (ya cubierto en Fase 1) y
+  verificacion cruzada sobre prompts/orchestrator_pipeline.md
+- **Accion:** Verificar (no crea archivo nuevo; confirma que el requisito ya
+  quedo satisfecho por las Fases 1 y 3)
+- **Descripcion:** Confirmar que al menos uno de los prompts documenta
+  explicitamente el trio /backlog-triage (antes) / /orchestrate-pipeline
+  (durante) / /audit-pipeline (despues) con referencia cruzada. El parrafo
+  de introduccion de prompts/backlog_triage.md (Fase 1) ya lo cubre; esta
+  fase es la verificacion explicita de que quedo, no una redaccion nueva.
+- **Riesgo:** Bajo (verificacion, no escritura).
+- **Criterio de Aceptacion:** grep de las 3 cadenas "/backlog-triage",
+  "orchestrate-pipeline", "/audit-pipeline" en el mismo archivo
+  (prompts/backlog_triage.md) da las 3 presentes.
+- **Si falla:** Completar el parrafo faltante en prompts/backlog_triage.md
+  antes de continuar a Fase 5.
 
-### Fase 8: Calidad, encoding y no-regresion global
-- **Archivo:** todos los tocados; toda la suite
+### Fase 5: Calidad, encoding y descubrimiento
+- **Tipo:** TAREA AGENTE (Builder)
+- **Archivo:** todos los tocados/creados; suite de discovery/validate
 - **Accion:** Verificar
-- **Descripcion:** (a) `ruff check scripts/prefix_resolver.py
-  scripts/check_worktree_topology.py tests/unit/test_prefix_resolver.py
-  tests/unit/test_check_worktree_topology.py` con 0 errores -- si el guard
-  nuevo genera una advertencia de complejidad (C901) por ramas anidadas,
-  reestructurar en funciones mas pequenas (ya previsto en la Decision
-  Arquitectonica seccion 1 con `_check_wot_topology`/`_check_destination_topology`);
-  NUNCA silenciar con `# noqa`. (b) `uv run ruff format --check` sobre los
-  mismos archivos Python. (c) Encoding guard sobre los 3 prompts tocados y el
-  script nuevo: UTF-8 limpio, sin mojibake ni em-dash/comillas curvas (usar
-  `-`/`"` ASCII), verificado con el comando de la seccion "Check de encoding"
-  de `prompts/orchestrator_launch_builder.md`. (d)
-  `python scripts/run_pytest_safe.py -- --level all` con exit code 0 (blast
-  radius: el fix toca infraestructura compartida -- `prefix_resolver.py` lo
-  usan tanto WOT como destinos). (e) `python .agent/agent_controller.py
-  --validate --json --force` con 0 errores.
-- **Riesgo:** Medio (blast radius de tocar `prefix_resolver.py`, usado por
-  otros flujos de destino)
-- **Criterio de Aceptacion:** los 5 comandos de la Descripcion terminan con el
-  resultado indicado en cada caso
-- **Si falla:** aislar si el fallo viene del fix de Fase 1 o de una
-  interaccion con otro modulo; revertir la fase minima necesaria y escalar al
-  Manager con el log de fallo exacto
+- **Descripcion:** Ejecutar, en este orden, y registrar comando mas salida
+  literal en execution_log.md:
+  1. Encoding guard sobre los 2 archivos nuevos y el prompt editado:
+     python scripts/check_encoding_guard.py prompts/backlog_triage.md skills/backlog-triage/SKILL.md prompts/orchestrator_pipeline.md
+     (o el comando equivalente documentado en
+     prompts/orchestrator_launch_builder.md, seccion "Check de encoding").
+     Exit 0, sin mojibake ni em-dash/comillas curvas (usar guion/comillas
+     ASCII) en los 2 archivos NUEVOS. El prompt editado puede conservar
+     em-dash preexistentes fuera del rango tocado (no se re-redacta contenido
+     ajeno al diff), pero el TEXTO NUEVO anadido por Fase 3 debe ser ASCII
+     limpio.
+  2. Descubrimiento de la skill:
+     python scripts/discover_skills.py --json y confirmar que
+     backlog-triage aparece en skills[] con triggers incluyendo
+     /backlog-triage.
+  3. Contrato bidireccional prompt-skill:
+     python scripts/discover_skills.py --check-contract con exit 0 (valida
+     que source_prompt/contract_id de la skill nueva resuelven
+     correctamente contra prompts/backlog_triage.md, dado que
+     role: manager esta en CONTRACT_OPT_IN_ROLES).
+  4. Naming convention:
+     python scripts/discover_skills.py --check-naming con exit 0
+     (backlog_triage es snake_case valido para el prompt,
+     backlog-triage es kebab-case valido para la skill; ninguno combina
+     actor y accion en orden invertido, no aplica la regla actor-first).
+  5. python .agent/agent_controller.py --validate --json --force con 0
+     errores (los warnings de bus/code-only-mode esperados no bloquean).
+- **Riesgo:** Bajo (solo verificacion; ningun comando muta produccion).
+- **Criterio de Aceptacion:** los 5 comandos anteriores terminan con el
+  resultado indicado; las 2 barreras binarias de la seccion "Barrera /
+  verificacion" (anti-riesgo-5 grep sobre la skill, anti-riesgo-1 grep sobre
+  el diff del prompt) quedan registradas en execution_log.md con el
+  resultado exacto del grep (0 matches de regla completa en cada caso).
+- **Si falla:** Si --check-contract o --check-naming fallan, corregir el
+  frontmatter o el nombre de archivo (nunca renombrar backlog-triage a otra
+  forma sin volver a Fase 1/2) y repetir el comando que fallo.
+
 
 ## Trade-offs Considerados
 | Opcion | Pros | Contras | Decision |
 |--------|------|---------|----------|
-| Guard nuevo separado + fix estrecho de `prefix_resolver.guard()` | Separa responsabilidades: `prefix_resolver` sigue siendo "es el motor correcto", el guard nuevo es "disciplina de escritura"; cambio de riesgo acotado en el codigo existente | Dos puntos de verificacion en vez de uno; requiere cablear 2 guards en preflight | Aceptada (decision del usuario) |
-| Reescribir `prefix_resolver.guard()` para incluir toda la logica de `_dev`/rama main | Un solo guard, menos cableado | Mezcla dos responsabilidades distintas (identidad del repo vs disciplina de escritura); mayor riesgo de romper destinos existentes | Descartada |
-| Comparar por path literal normalizado (resolver symlinks) en vez de `git-common-dir` | Mas simple, sin invocar `git` externo | No captura la relacion "worktree del mismo repo": dos checkouts independientes del mismo repo (via `git clone`) tendrian paths distintos y `git-common-dir` distinto, que es precisamente la distincion correcta; un path-diff no distingue worktree-hermano de clon-independiente | Descartada |
-| Mockear `git symbolic-ref`/`git rev-parse` en los tests | Tests mas rapidos, sin overhead de `git init` real | Mock-drift: un mock puede quedar desincronizado del comportamiento real de git y dar falsos verdes (leccion de memoria: "mutation-verify con worktree/checkout real, no mocks") | Descartada |
-| Degradado fail-closed (`git rev-parse` falla -> exit 1) vs fail-open (exit 0) vs propagar excepcion | Fail-closed: un guard de preflight que no puede verificar topologia debe bloquear, no dejar pasar ni crashear; consistente con el resto del guard (mismatch = bloqueo) | Fail-closed puede bloquear un `cwd` legitimo si `git` no esta disponible por una razon ajena a la topologia (ej. PATH mal configurado); mitigado por el escape hatch `--allow-diagnostic` del guard nuevo (no de `prefix_resolver.guard()`, que no lo tiene, pero el caso practico -- `cwd` real siempre es un repo git -- hace este escenario improbable) | Aceptada (fail-closed) |
+| 3 piezas (prompt + skill puntero + cableado condicional minimo) | Separa metodo de mecanica; reusa el molde ya probado de audit-pipeline; blast radius acotado en orchestrator_pipeline.md | Mas archivos que una unica pieza monolitica | Elegida (decision del usuario, vinculante) |
+| Incrustar el metodo directamente en orchestrator_pipeline.md | Un solo archivo, sin indireccion | Hincha el prompt del pipeline, mezcla decidir-que-lanzar con ejecutar; contradice el DoD explicito | Descartada |
+| Construir tambien scripts/backlog_reconcile.py en este ticket | Cierra la Fase 0 con recolector automatico ya | Amplia el alcance del ticket mas alla del metodo; el usuario fijo metodo-primero-automatizacion-despues | Descartada, diferida a WOT-2026-021i |
+| stage nuevo planning para la skill | Nombre mas especifico | plan ya existe en el enum y es semanticamente correcto; crear uno nuevo rompe la convencion sin necesidad | Descartada |
 
 ## Guia de Riesgos
 | Nivel | Significado | Accion del Builder |
 |-------|-------------|---------------------|
-| Bajo | Rutinaria (prosa en prompts, tests nuevos aislados) | Intentar 3 veces antes de escalar |
-| Medio | Requiere atencion (blast radius compartido, fixtures de git real) | Intentar 2 veces, escalar si dudas |
-| Alto | Critica (guard nuevo cableado como preflight universal) | Escalar al primer fallo |
+| Bajo | Rutinaria (archivos nuevos siguiendo un molde verificado, verificaciones) | Intentar 3 veces antes de escalar |
+| Medio | Requiere atencion (contenido normativo nuevo, edicion acotada de un prompt de 1343 lineas) | Intentar 2 veces, escalar si dudas |
+| Alto | Critica | Escalar al primer fallo |
 
 ## Calidad
-- `ruff check scripts/prefix_resolver.py scripts/check_worktree_topology.py tests/unit/test_prefix_resolver.py tests/unit/test_check_worktree_topology.py` con 0 errores (Fase 8a). Si aparece complejidad ciclomatica alta en el guard nuevo, reestructurar en funciones mas pequenas ANTES de considerar `# noqa`; `# noqa` no es una opcion valida de cierre para este ticket.
-- `uv run ruff format --check` sobre los mismos archivos Python (Fase 8b)
-- Encoding guard sobre `prompts/orchestrator_destination_bootstrap.md`, `prompts/orchestrator_launch_builder.md`, `scripts/check_worktree_topology.py` (Fase 8c)
-- `python scripts/run_pytest_safe.py -- --level all` con exit code 0 (Fase 8d)
-- `python .agent/agent_controller.py --validate --json --force` con 0 errores (Fase 8e)
-- mutation-verify de Fase 5 registrado en `execution_log.md` con los 2 pares de comandos y exit codes literales (Mecanismo de Mutation)
-- Todo test que dependa de layout Windows real (paths con `_dev`/principal reales de esta maquina, si algun test los referenciara directamente) debe usar `pytest.mark.skipif(sys.platform != "win32", ...)` a nivel de modulo, patron de `tests/test_setup_dev_worktree_script.py:38-41`. Los tests de Fase 2 y Fase 4 usan `tmp_path` sintetico (portable), no deberian depender del layout real de esta maquina; si algun caso SI lo hiciera, marcarlo Windows-only explicitamente.
+- Encoding guard sobre prompts/backlog_triage.md, skills/backlog-triage/SKILL.md,
+  prompts/orchestrator_pipeline.md (Fase 5.1): exit 0, ASCII limpio en el
+  contenido nuevo.
+- python scripts/discover_skills.py --json confirma backlog-triage
+  descubierta con trigger /backlog-triage (Fase 5.2).
+- python scripts/discover_skills.py --check-contract exit 0 (Fase 5.3).
+- python scripts/discover_skills.py --check-naming exit 0 (Fase 5.4).
+- python .agent/agent_controller.py --validate --json --force con 0
+  errores (Fase 5.5).
+- Barrera anti-riesgo-5 (grep sobre la skill, 0 redeclaraciones de regla) y
+  anti-riesgo-1 (grep sobre el diff del prompt, 0 fases del metodo
+  incrustadas) registradas en execution_log.md (Fase 2 y Fase 3).
+- No aplica ruff/pytest (no hay codigo Python nuevo en este ticket).
 
 ## Criterios de Aceptacion Global
-- [ ] `scripts/check_worktree_topology.py` existe, expone `--ticket`, `--motor-root`, `--project-root`, `--allow-diagnostic`/`WORKTREE_GUARD_BYPASS=1`, y produce los 4 exit codes (0/1/2 + diagnostic-siempre-0) segun los casos del DoD del contrato
-- [ ] Para WOT, `check_worktree_topology.py` implementa AMBAS verificaciones del contrato: Verificacion A (worktree del motor: `_dev`/rama `main`) Y Verificacion B (workspace activo == `orquestador_de_agentes_workspace`, derivado por `destination_id` del link, NO por `ticket_prefix`); `--project-root` con workspace incorrecto -> exit 1 con el mensaje literal del contrato (test caso (i) de Fase 4)
-- [ ] `prefix_resolver.py::guard()` reconoce `_dev` y el principal como el mismo motor via `git -C <path> rev-parse --path-format=absolute --git-common-dir` (flag `--path-format=absolute` obligatorio; la formula sin flag esta descartada por bug reproducido en vivo), SOLO en la rama `prefix == WOT`; el resto de `guard()` queda bit a bit identico
-- [ ] `prefix_resolver --guard WOT-XXX` desde `_dev` -> exit 0 (ya no falla por path literal)
-- [ ] `check_worktree_topology --ticket WOT-XXX` desde el principal detached -> exit 1
-- [ ] Destinos (CTL/EXF) en `prefix_resolver.guard()` sin cambio de comportamiento (los 8 tests existentes de `tests/unit/test_prefix_resolver.py` l.157-196 pasan sin modificar su assert final; `test_guard_wot_in_motor_passes` DEBE ganar `git init` en su fixture local, razonado en Fase 2, manteniendo su assert `== 0`)
-- [ ] `guard()` con `cwd` que no es repo git en la rama WOT devuelve `1` de forma determinista (fail-closed), sin lanzar `CalledProcessError` ni excepcion no capturada (degradado de la Fase 1, cubierto por el test nuevo de Fase 2)
-- [ ] `_make_tree` (l.56-73 de `tests/unit/test_prefix_resolver.py`) queda sin diff; el helper de fixtures git real (`_make_git_tree`) es una funcion nueva y separada, usada solo por los tests de la rama WOT que invocan `git`
-- [ ] Mutation-verify de los 2 pares (prefix_resolver.guard fix, check_worktree_topology inverso) registrado literal en `execution_log.md`
-- [ ] Cableado PRE presente en `prompts/orchestrator_destination_bootstrap.md`, `prompts/orchestrator_launch_builder.md` y `prompts/orchestrator_session_bootstrap.md` (cierra el eje orquestador-WOT); cableado POST presente en `prompts/manager_review.md` fuera de su Paso 0 CF-frozen (que queda intacto)
-- [ ] `ruff check` y `uv run ruff format --check` en 0 errores sobre los archivos Python tocados, sin usar `# noqa`
-- [ ] Suite completa `python scripts/run_pytest_safe.py -- --level all` en exit 0
-- [ ] `python .agent/agent_controller.py --validate --json --force` en 0 errores
+- [x] prompts/backlog_triage.md existe con las 4 fases (reconciliacion ->
+      clasificacion -> agrupacion -> sintesis) mas la 0.pre, y los 5 riesgos
+      codificados explicitamente.
+- [x] skills/backlog-triage/SKILL.md existe, frontmatter completo
+      (source_prompt: prompts/backlog_triage.md,
+      contract_id: cid-backlog-triage-v1,
+      triggers: [/backlog-triage, backlog-triage], stage: plan,
+      writes_memory: false), clausula "el prompt es la fuente de verdad".
+      Verificado por grep que NO redeclara el metodo.
+- [x] El prompt incluye la Fase 0.pre (check_backlog_contract.py exit 0
+      antes de analizar) y la nota de topologia (backlog del motor vive en el
+      workspace via motor_destination_link.json).
+- [x] El prompt produce el JSON portable backlog_triage_output.json con el
+      esquema declarado (pipelines/tickets/recommended_start/
+      requires_human/premise_verify).
+- [x] prompts/orchestrator_pipeline.md paso 5 del bootstrap es CONDICIONAL
+      (usa salida de triage si existe, si no ordena como antes) sin incrustar
+      el metodo; git diff muestra solo esa modificacion, no un paso nuevo
+      aparte.
+- [x] /backlog-triage descubierta por discover_skills.py
+      (--json/--catalog); --check-contract y --check-naming en exit 0.
+- [x] Encoding guard limpio (ASCII, sin em-dash/comillas curvas) sobre los 2
+      archivos nuevos y el contenido nuevo del prompt editado.
+- [x] --validate --json --force 0 errores.
+- [x] Coherencia de espejo: el trio /backlog-triage / /orchestrate-pipeline /
+      /audit-pipeline documentado en prompts/backlog_triage.md.
+- [x] Barreras anti-riesgo-5 y anti-riesgo-1 (grep) registradas con resultado
+      exacto en execution_log.md.
 
 ## Handoff: Manager -> Builder
-**Plan:** WOT-2026-021g
+**Plan:** WOT-2026-021h
 **Accion requerida:** Implementar segun work_plan.md
 **Estado:** PENDING
