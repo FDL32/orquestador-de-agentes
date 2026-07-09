@@ -49,6 +49,22 @@ propia topologia. El auditor no esta exento del error que busca:
    `check_encoding_guard.py` prueba encoding (mojibake, BOM, `?`), NO que
    el archivo exista ni que se haya creado correctamente. Son dos checks
    distintos; uno no cubre al otro.
+4. **Re-verifica claims de ESTADO contra la fuente viva antes de auditarlos,
+   no los heredes de una pasada previa.** Un claim de ESTADO (HEAD, dirty,
+   pendientes, estado de CI, stamp de `last-run.json`) exige RELECTURA de
+   la fuente viva en el momento presente, nunca la aceptacion de lo que
+   dijo una pasada anterior o de otra sesion. Re-verifica el mismo claim
+   contra la fuente: `git rev-parse HEAD` + `git status --porcelain`,
+   `gh run list`, `last-run.json`, o `check_motor_pristine.py --snapshot`.
+   Tras re-verificar, estampa una linea literal:
+   `ESTADO_FRESCO: HEAD=<sha>, dirty=<n>, verificado=<hora>`.
+   Los claims de COMPORTAMIENTO de codigo (p.ej. "la funcion X hace Y en
+   linea Z") exigen RE-LECTURA del codigo real antes de validarlos o
+   refutarlos, pero SIN estampa de HEAD (el estado lleva estampa; el
+   comportamiento lleva re-lectura sin estampa). En cierre: nunca audites
+   SHAs, estados o comportamientos leidos de un artefacto de otra sesion o
+   de una pasada previa del mismo hilo sin re-verificarlos en el momento
+   presente.
 
 Si saltas esta verificacion, cualquier hallazgo sobre "archivo no existe" o
 "backlog no esta" puede ser un falso positivo causado por el auditor, no
