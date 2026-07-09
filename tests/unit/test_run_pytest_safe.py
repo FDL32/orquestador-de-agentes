@@ -934,6 +934,61 @@ class TestStateLeakWotFiles:
         leaked = mod.check_canonical_state_leak(snapshot)
         assert leaked == []
 
+    def test_archived_wot_files_not_false_leak(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """CTL-2026-012j: archived WOT files under _archive/ must NOT be a false leak.
+
+        Regression barrier for the false-positive that turned a green suite
+        (0 failed) into exit 1: the snapshot keyed archived files by basename,
+        but the check looked them up at the collab root (where they do not
+        exist), so every unchanged archived file was reported as a leak. With
+        the relative-path key, archived files are found at their real path and
+        an unchanged tree reports no leak.
+        """
+        mod = load_runner_module()
+        collab = tmp_path / ".agent" / "collaboration"
+        archive_dir = collab / "_archive" / "plan_audit"
+        archive_dir.mkdir(parents=True)
+        archived = archive_dir / "AUDIT_WOT-2026-015l.md"
+        archived.write_text("archived audit content", encoding="utf-8")
+
+        monkeypatch.setattr(mod, "_AGENT_DIR", tmp_path / ".agent")
+        snapshot = mod.snapshot_canonical_state()
+        # The archived file is keyed by its path relative to collab, not basename.
+        assert "_archive/plan_audit/AUDIT_WOT-2026-015l.md" in snapshot
+        assert "AUDIT_WOT-2026-015l.md" not in snapshot
+
+        # No change during the "run" -> no leak (the pre-fix bug reported this).
+        leaked = mod.check_canonical_state_leak(snapshot)
+        assert leaked == [], (
+            f"FALSE POSITIVE: unchanged archived WOT file reported as leak: {leaked}"
+        )
+
+    def test_archived_wot_file_change_detected(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """CTL-2026-012j: a real mutation of an archived WOT file IS detected.
+
+        The relative-path key must not weaken the barrier: changing an archived
+        file's content during the run is still a leak (named by its relative path).
+        """
+        mod = load_runner_module()
+        collab = tmp_path / ".agent" / "collaboration"
+        archive_dir = collab / "_archive" / "plan_audit"
+        archive_dir.mkdir(parents=True)
+        archived = archive_dir / "PLAN_WOT-2026-016b.md"
+        archived.write_text("original archived", encoding="utf-8")
+
+        monkeypatch.setattr(mod, "_AGENT_DIR", tmp_path / ".agent")
+        snapshot = mod.snapshot_canonical_state()
+
+        archived.write_text("mutated archived", encoding="utf-8")
+        leaked = mod.check_canonical_state_leak(snapshot)
+        assert "_archive/plan_audit/PLAN_WOT-2026-016b.md" in leaked, (
+            f"Expected archived WOT mutation to be detected, got: {leaked}"
+        )
+
 
 class TestBasetempOutsideRepo:
     """WOT-2026-020f: make_run_dir must place basetemp OUTSIDE the repo motor

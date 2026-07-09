@@ -756,6 +756,14 @@ def snapshot_canonical_state() -> dict[str, str]:
 
     WOT-2026-020f: also snapshots ``*_WOT-*.md`` files (recursive) so a staged
     deletion of an AUDIT_WOT-*/PLAN_WOT-* artifact during the suite is detected.
+
+    CTL-2026-012j: WOT files are keyed by their path RELATIVE to the collab dir
+    (e.g. ``_archive/plan_audit/AUDIT_WOT-2026-015l.md``), not by basename. The
+    prior basename key made ``check_canonical_state_leak`` look up
+    ``collab / name`` (the root), so archived files living under ``_archive/``
+    were never found at compare time and were reported as a false leak even
+    when unchanged -- turning a green suite (0 failed) into exit 1. The 4
+    canonical files stay keyed by basename (they live at the collab root).
     """
     snapshot: dict[str, str] = {}
     collab = _AGENT_DIR / "collaboration"
@@ -767,11 +775,13 @@ def snapshot_canonical_state() -> dict[str, str]:
             snapshot[name] = ""
     for wot_file in collab.rglob("*_WOT-*.md"):
         try:
-            snapshot[wot_file.name] = wot_file.read_text(
-                encoding="utf-8", errors="replace"
-            )
-        except OSError:  # noqa: PERF203
-            snapshot[wot_file.name] = ""
+            rel = wot_file.relative_to(collab).as_posix()
+        except ValueError:
+            rel = wot_file.name
+        try:
+            snapshot[rel] = wot_file.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            snapshot[rel] = ""
     return snapshot
 
 
