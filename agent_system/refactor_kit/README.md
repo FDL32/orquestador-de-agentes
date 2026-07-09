@@ -5,7 +5,7 @@ Herramienta standalone para realizar reingenierÃ­a de cÃ³digo segura siguien
 ## CaracterÃ­sticas
 - **Zero Dependencies:** Funciona con la librerÃ­a estÃ¡ndar de Python 3.10+.
 - **PortÃ¡til:** Se instala en cualquier proyecto sin contaminar tu entorno global.
-- **AgnÃ³stico:** Soporta Goose y Claw como motores de IA.
+- **Manual:** El agente aporta la respuesta por stdin (modo `manual`, por defecto).
 
 ## InstalaciÃ³n
 
@@ -18,7 +18,7 @@ python agent_system/refactor-kit/install_refactor_kit.py /ruta/a/tu/proyecto
 
 Navega a tu proyecto y ejecuta:
 ```bash
-python .refactor/kit/refactor_manager.py --target src/mi_archivo.py --agent goose
+python .refactor/kit/refactor_manager.py --target src/mi_archivo.py --agent manual
 ```
 
 ## Flujo de 5 Fases

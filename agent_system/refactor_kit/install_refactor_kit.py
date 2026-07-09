@@ -36,7 +36,7 @@ def install(project_path: str):
         config = {
             "version": "1.0.0",
             "project_name": dst_root.name,
-            "default_agent": "goose",
+            "default_agent": "manual",
         }
         (dst_root / ".refactor" / "config.json").write_text(
             json.dumps(config, indent=2)

@@ -1,7 +1,7 @@
-# Plan de Trabajo: retirada del subsistema --engine (Goose/Claw) de orquestador.py
+# Plan de Trabajo: retirada del motor Goose/Claw del Refactor-Kit (Opcion A)
 
 ## Metadata
-- **ID:** WOT-2026-020n
+- **ID:** WOT-2026-021d
 - **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Creado:** 2026-07-10
@@ -10,67 +10,72 @@
 - **Asignado a:** Builder
 
 ## Objetivo
-Retirar el subsistema de motores externos `--engine` (Goose/Claw) de
-`scripts/orquestador.py`, ya codigo muerto (0 consumidores runtime, 0 tests que
-lo ejerzan, VERIFICADO 2026-07-10 por git grep). La ruta `--skill`
-(`execute_skill`) SOBREVIVE intacta: es el backend real vivo, ortogonal al motor
-externo. Resultado: `orquestador.py` queda como un lanzador de skills puro.
+Retirar el motor de agentes externos Goose/Claw del Refactor-Kit segun la
+decision fijada **DEC-021D-001 (accepted, Opcion A)**. El modulo NO es codigo
+muerto (9 tests verdes, `__init__` lo exporta, detect_version usa el dir como
+marcador) -> se conserva el modulo y sus fases; solo se retira la rama de
+invocacion Goose/Claw, dejando el modo MANUAL (stdin, ya existente) como unico
+backend. Se corrige de paso el bug de tipo de `_wait_for_approval` y se limpia
+el mojibake preexistente del archivo (scope anadido intencional, N5).
 
 ## Contexto
-El script arrastra un patron legacy `Claude Code -> orquestador.py -> goose|claw`
-deprecado en WT-2026-254a. Las clases `GooseAdapter`/`ClawAdapter`, el dict
-`ADAPTERS`, la rama `--engine` de `main()` y toda su cadena de helpers
-(`run_supervisor`, `print_dry_run`, `build_payload`, `write_log`,
-`git_changed_files`, `sanitize_context`, `read_json_file`) forman un subarbol
-autocontenido que solo alcanza `main()` a traves de `--engine`. Verificado que
-ningun modulo externo importa simbolos de `orquestador`.
+`agent_system/refactor_kit/refactor_manager.py` tiene `agent="goose"` por defecto
+y ramas goose/claw en `_call_agent`; el modo manual (stdin, l.143-150) ya existe
+como fallback. La Opcion A promueve el modo manual a default y retira las ramas
+externas. `_wait_for_approval` declara `-> bool` pero devuelve un dict en la rama
+`goose_context` (bug de tipo); esa rama existe SOLO para Goose, asi que retirarla
+corrige el bug y hace que la funcion devuelva `bool` de verdad.
 
-Etiqueta N2 (handoff): **RIESGO bajo** (codigo muerto confirmado) pero **DIFF
-medio** (se retira el subsistema `--engine` completo, no un residuo aislado).
+DEC-021D-001 fija el DoD y excluye explicitamente que WOT-2026-021l toque
+`agent_system/refactor_kit/` (frontera limpia entre tickets).
 
 ## Configuracion Privada Requerida
 Ninguna.
 
-## Alcance EXACTO (target end-state verificado in-vivo 2026-07-10)
+## Alcance EXACTO (verificado in-vivo 2026-07-10, surface == DEC)
 
-### RETIRAR (subarbol engine-only, todo alcanzable solo via --engine)
-- Clases: `AdapterBase` (l.146), `GooseAdapter` (l.171), `ClawAdapter` (l.194).
-- Dict: `ADAPTERS` (l.210).
-- Funciones engine-only: `run_supervisor` (l.360), `print_dry_run` (l.325),
-  `build_payload` (l.266), `write_log` (l.107), `git_changed_files` (l.82),
-  `sanitize_context` (l.70), `read_json_file` (l.61).
-- Constantes engine-only: `TIMEOUT_SECONDS`, `LOG_DIR`, `ALLOWLIST_PATH`,
-  `DENYLIST_PATH`, `CREDENTIAL_PATTERN` (l.36-43).
-- CLI: flag `--engine` (l.508-513), flag `--mode` (l.521-526), flag `--dry-run`
-  (l.527-531); todos solo servian al motor externo.
-- Validacion mutuamente-excluyente `--skill`/`--engine` (l.542-548): SIMPLIFICAR
-  a exigir solo `--skill` (`if not args.skill: error`).
-- Rama `else` de `main()` (l.557-570) que invoca `print_dry_run`/`run_supervisor`.
-- Docstrings/`description` DEPRECATED del motor (l.3-21 del modulo, l.504-513 del
-  parser).
-- Imports que quedan huerfanos tras la retirada (verificar y retirar solo los
-  que ningun simbolo superviviente use).
+### CAMBIAR
+- `refactor_manager.py:23` `agent: str = "goose"` -> `agent: str = "manual"`.
+- `refactor_manager.py:114-137` (`_call_agent`): retirar las ramas
+  `if self.agent == "goose"` / `elif self.agent == "claw"` (subprocess a los
+  binarios externos). Conservar el modo MANUAL stdin (l.143-150) como unica ruta.
+  El metodo `_call_agent` SE CONSERVA (test_refactor_manager_importable asserta
+  `hasattr`).
+- `refactor_manager.py:25,30,152-173` (`_wait_for_approval` + `goose_context`):
+  retirar el parametro `goose_context` del `__init__` y la rama
+  `if self.goose_context: return {dict}`. Dejar solo la ruta stdin que devuelve
+  `bool` -> corrige la firma `-> bool`. El metodo SE CONSERVA (hasattr).
+- `refactor_manager.py:319` CLI `--agent`: `default="goose"` -> `default="manual"`;
+  retirar `choices=["goose","claw"]` (o dejar sin choices).
+- `install_refactor_kit.py:39` `"default_agent": "goose"` -> `"manual"`.
+- `README.md:21` ejemplo `--agent goose` -> `--agent manual`.
+- Mojibake: dejar `refactor_manager.py` ASCII limpio (docstrings/prints con
+  UTF-8 doble-codificado, p.ej. acentos corruptos -> texto correcto o ASCII).
+  SCOPE ANADIDO INTENCIONAL (N5): deuda de encoding ajena al ticket Goose, pero
+  Opcion A ya edita el archivo. (Nota: no se reproducen los bytes corruptos aqui
+  para no romper el encoding-guard sobre work_plan.md, que es tracked.)
 
-### CONSERVAR (ruta --skill, backend real vivo)
-- `read_file_safe` (l.51) — usado por `main()` para `--file`.
-- `discover_available_skills` (l.221) — usado por `execute_skill`.
-- `execute_skill` (l.429) — la ruta viva.
-- `main()` reducido a: parsear `--skill`/`--query`/`--file`, validar `--skill`
-  presente, llamar `execute_skill`.
+### CONSERVAR (no tocar)
+- Todas las fases (`phase_1..5`), caching, timing, `_get_target_hash`,
+  `_should_skip_phase`, `_load_templates`, `run`.
+- Nombres de metodo `_call_agent` y `_wait_for_approval` (hasattr test).
+- Estructura de directorios del kit (marcador de version).
 
-## Definition of Done (DoD)
-- (a) `git grep -nE "GooseAdapter|ClawAdapter|ADAPTERS|--engine" -- scripts/` = 0
-  salvo referencias historicas en `CHANGELOG.md` (permitidas).
-- (b) `orquestador.py --skill /gates --query "..."` funciona (exit 0):
-  `tests/test_refactoring_impact.py::test_skill_execution_unchanged` VERDE.
-- (c) `python -m py_compile scripts/orquestador.py` OK y
-  `ruff check scripts/` limpio (test_scripts_executable + test_code_quality).
-- (d) Encoding-guard: `orquestador.py` esta en `CORE_SCOPE_REGRESSION`
-  (test_encoding_integrity.py:59) -> el archivo debe quedar ASCII limpio.
-- (e) Suite `run_pytest_safe.py --level all` exit 0.
+## Definition of Done (DoD, de DEC-021D-001)
+- (a) `git grep "goose\|claw" -- agent_system/refactor_kit/` = 0.
+- (b) Nuevo default `manual` funciona: construir `RefactorManager(target=...)` sin
+  `agent` usa modo manual; `_wait_for_approval` devuelve `bool`.
+- (c) Los 9 tests de refactor_kit (test_refactor_kit_portable.py +
+  test_refactor_kit_performance.py) siguen VERDES.
+- (d) Bug de tipo de `_wait_for_approval` corregido (firma `-> bool` honrada).
+- (e) `refactor_manager.py` ASCII limpio.
+- (f) Suite `run_pytest_safe.py --level all` exit 0 (incl. lifecycle/detect_version/
+  doctor/migrate/upgrade que referencian el kit como marcador).
 
 ## Riesgos y barreras
-- El unico test que ejerce la superficie a tocar es `test_skill_execution_unchanged`
-  (la ruta que CONSERVAMOS). Ningun test ejerce el motor externo -> la retirada
-  no rompe tests existentes. Barrera: DoD-(b) prueba que la ruta viva sigue viva.
-- Blast de imports: NULO (ningun `from scripts.orquestador import ...` en el repo).
+- `test_refactor_manager_importable` exige `_call_agent`+`_wait_for_approval` por
+  nombre -> NO borrar los metodos, solo su interior externo. Barrera: DoD-c.
+- `goose_context` no se usa fuera del archivo (git grep verificado) -> retirarlo
+  no rompe callers. Barrera: DoD-c + suite.
+- El default `manual` no lo ejercen los tests de perf (no pasan `agent`) -> el
+  cambio de default es transparente para ellos.

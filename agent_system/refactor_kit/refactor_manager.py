@@ -1,9 +1,6 @@
-# ruff: noqa: RUF001,S603,S607
-# ruff: noqa: S603,S607
 import argparse
 import hashlib
 import json
-import subprocess
 import sys
 import time
 from contextlib import suppress
@@ -13,21 +10,19 @@ from typing import Any
 
 class RefactorManager:
     """
-    Orquestador de refactorizaciÃƒÂ³n portÃƒÂ¡til de 5 fases.
-    No tiene dependencias externas a la librerÃƒÂ­a estÃƒÂ¡ndar de Python.
+    Orquestador de refactorizacion portatil de 5 fases.
+    No tiene dependencias externas a la libreria estandar de Python.
     """
 
     def __init__(
         self,
         target: str,
-        agent: str = "goose",
+        agent: str = "manual",
         work_dir: str = ".refactor",
-        goose_context: bool = False,
     ):
         self.target = Path(target)
         self.agent = agent
         self.work_dir = Path(work_dir)
-        self.goose_context = goose_context
         self.phases_dir = self.work_dir / "phases"
         self.templates_dir = Path(__file__).parent / "prompt_templates"
 
@@ -107,39 +102,8 @@ class RefactorManager:
         )
 
     def _call_agent(self, prompt: str) -> str:
-        """InvocaciÃƒÂ³n agnÃƒÂ³stica al agente disponible en el PATH."""
-        print(f"\n--- PROMPT PARA EL AGENTE ({self.agent.upper()}) ---")
-        # Intenta usar el agente si estÃƒÂ¡ disponible, si no, pide input manual
-        try:
-            if self.agent == "goose":
-                print(">> Invocando Goose...")
-                result = subprocess.run(
-                    ["goose", "run", "--text", prompt, "--no-session"],
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    timeout=300,
-                    shell=False,
-                )
-                if result.returncode == 0:
-                    return result.stdout
-            elif self.agent == "claw":
-                print(">> Invocando Claw...")
-                result = subprocess.run(
-                    ["claw", "prompt", prompt],
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    timeout=300,
-                    shell=False,
-                )
-                if result.returncode == 0:
-                    return result.stdout
-        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-            print(
-                f"Nota: El agente '{self.agent}' no respondiÃƒÂ³ automÃƒÂ¡ticamente ({e})."
-            )
-
+        """Presenta el prompt y recoge la respuesta del agente por stdin (modo manual)."""
+        print("\n--- PROMPT PARA EL AGENTE ---")
         print("\n[MODO MANUAL] Por favor, pega la respuesta del agente:")
         lines = []
         while True:
@@ -150,27 +114,10 @@ class RefactorManager:
         return "\n".join(lines)
 
     def _wait_for_approval(self, phase_name: str) -> bool:
-        """
-        Wait for Manager approval before continuing to next phase.
-
-        In goose_context: Returns dict for Goose to handle
-        Otherwise: Prompts stdin (current behavior)
-        """
-        if self.goose_context:
-            # In Goose context, return approval dict
-            # Goose handles the Manager prompt
-            return {
-                "phase": phase_name,
-                "action": "wait_for_manager_approval",
-                "artifacts": str(self.phases_dir / f"{phase_name}.json"),
-            }
-        else:
-            # Original stdin-based approval
-            print(f"\n>>> {phase_name} finalizada. Resultados en {self.phases_dir}")
-            confirm = (
-                input("Ã‚Â¿Aprobar esta fase y continuar? (S/n): ").strip().lower()
-            )
-            return confirm in ("s", "y", "")
+        """Espera la aprobacion del Manager (stdin) antes de continuar a la fase siguiente."""
+        print(f"\n>>> {phase_name} finalizada. Resultados en {self.phases_dir}")
+        confirm = input("Aprobar esta fase y continuar? (S/n): ").strip().lower()
+        return confirm in ("s", "y", "")
 
     def run(self):
         run_start = time.time()
@@ -178,7 +125,7 @@ class RefactorManager:
 
         target_hash = self._get_target_hash()
 
-        # FASE 1: AnÃƒÂ¡lisis
+        # FASE 1: Analisis
         if self._should_skip_phase("01_analysis"):
             print("[CACHE] FASE 1 resultado cacheado, saltando...")
             analysis = json.loads((self.phases_dir / "01_analysis.json").read_text())
@@ -186,7 +133,7 @@ class RefactorManager:
             analysis = self.phase_1_analysis()
             self._phase_hashes["01_analysis"] = target_hash
 
-        if not self._wait_for_approval("FASE 1 (AnÃƒÂ¡lisis)"):
+        if not self._wait_for_approval("FASE 1 (Analisis)"):
             return
 
         # FASE 2: Plan
@@ -201,17 +148,17 @@ class RefactorManager:
             return
 
         # FASE 3: Refactor
-        print("\nEjecutando FASE 3: RefactorizaciÃƒÂ³n...")
+        print("\nEjecutando FASE 3: Refactorizacion...")
         refactor_out = self.phase_3_refactor(plan)
 
-        # FASE 4: ValidaciÃƒÂ³n
+        # FASE 4: Validacion
         validation = self.phase_4_validation(refactor_out)
 
         if validation.get("status") == "FAIL":
-            print("[WARN] ValidaciÃƒÂ³n fallida. Iniciando FASE 5: IteraciÃƒÂ³n.")
+            print("[WARN] Validacion fallida. Iniciando FASE 5: Iteracion.")
             self.phase_5_iteration(validation)
         else:
-            print("\n[OK] RefactorizaciÃƒÂ³n completada exitosamente y validada.")
+            print("\n[OK] Refactorizacion completada exitosamente y validada.")
 
         # Save cache metadata
         self._save_cache_metadata()
@@ -233,12 +180,12 @@ class RefactorManager:
 
     def phase_1_analysis(self) -> dict[str, Any]:
         phase_start = time.time()
-        print("\nEjecutando FASE 1: AnÃƒÂ¡lisis...")
+        print("\nEjecutando FASE 1: Analisis...")
         template = self._get_template("01_analysis")
         target_content = (
             self.target.read_text(encoding="utf-8")
             if self.target.is_file()
-            else f"(MÃƒÂ³dulo: {self.target})"
+            else f"(Modulo: {self.target})"
         )
         prompt = (
             template.replace("{target_path}", str(self.target))
@@ -260,7 +207,7 @@ class RefactorManager:
         phase_start = time.time()
         print("\nEjecutando FASE 2: Plan...")
         template = self._get_template("02_plan")
-        prompt = template + f"\n\nCONTEXTO DEL ANÃƒÂLISIS:\n{analysis['response']}"
+        prompt = template + f"\n\nCONTEXTO DEL ANALISIS:\n{analysis['response']}"
 
         response = self._call_agent(prompt)
         result = {"status": "COMPLETED", "response": response}
@@ -281,12 +228,12 @@ class RefactorManager:
 
     def phase_4_validation(self, refactored: str) -> dict[str, Any]:
         phase_start = time.time()
-        print("\nEjecutando FASE 4: ValidaciÃƒÂ³n...")
+        print("\nEjecutando FASE 4: Validacion...")
         template = self._get_template("04_validation")
-        prompt = template + f"\n\nCÃƒâ€œDIGO GENERADO:\n{refactored}"
+        prompt = template + f"\n\nCODIGO GENERADO:\n{refactored}"
 
         response = self._call_agent(prompt)
-        # HeurÃƒÂ­stica simple de fallo
+        # Heuristica simple de fallo
         status = (
             "FAIL"
             if any(x in response.lower() for x in ["error", "fail", "fallo"])
@@ -316,7 +263,7 @@ def main():
         "--target", required=True, help="Archivo o directorio a refactorizar"
     )
     parser.add_argument(
-        "--agent", default="goose", choices=["goose", "claw"], help="Agente IA a usar"
+        "--agent", default="manual", help="Modo de agente (por defecto: manual/stdin)"
     )
     parser.add_argument(
         "--work-dir", default=".refactor", help="Directorio para artefactos"
@@ -329,7 +276,7 @@ def main():
         )
         manager.run()
     except Exception as e:
-        print(f"[FAIL] Error crÃƒÂ­tico: {e}")
+        print(f"[FAIL] Error critico: {e}")
         sys.exit(1)
 
 
