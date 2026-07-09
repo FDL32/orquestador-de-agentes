@@ -30,6 +30,21 @@ Este guard corre ANTES de `--bootstrap-ticket`: es fail-closed, no genera
 eventos de bus. Previene trabajar un ticket de un destino desde el repo
 equivocado (multi-repo paralelo, prefijos ambiguos).
 
+Inmediatamente despues, ejecuta el guard de topologia de worktree
+(WOT-2026-021g):
+
+```powershell
+python <motor_root>/scripts/check_worktree_topology.py --ticket <TICKET_O_PROYECTO> --motor-root <motor_root> --project-root <workspace_activo>
+```
+
+- Exit 0: topologia correcta -> OK, continua.
+- Exit 1: topologia incorrecta (ticket WOT trabajado desde el checkout
+  principal detached en vez de la worktree `_dev`, o el workspace activo no
+  coincide con el esperado para el prefijo) -> DETENTE. No arranques
+  Builder, no emitas eventos de bus. Reporta el motivo exacto al usuario.
+- Exit 2: incoherencia de contrato o prefijo no resoluble -> reporta y pide
+  aclaracion.
+
 ## Lectura obligatoria antes de actuar
 
 1. Lee `.agent/config/motor_destination_link.json` para conocer la ruta absoluta

@@ -31,6 +31,19 @@ contenido literal de `STATE.md` y `TURN.md` en el momento del check, mas la
 ruta del `work_plan.md` activo inspeccionado. Un `validate 0/0` de un ticket
 anterior NO autoriza a implementar `{{TICKET_ID}}`.
 
+Ademas, ejecuta el guard de topologia de worktree (WOT-2026-021g) antes de
+tocar codigo:
+
+```powershell
+python <MOTOR_ROOT>/scripts/check_worktree_topology.py --ticket {{TICKET_ID}} --motor-root <MOTOR_ROOT> --project-root <DESTINO>
+```
+
+Si el exit code no es 0, detente con `WORKTREE_TOPOLOGY_VIOLATION` y reporta
+el output exacto al Orquestador (exit 1 = topologia incorrecta -- ej. ticket
+`WOT` trabajado desde el checkout principal detached en vez de la worktree
+`_dev`; exit 2 = incoherencia de contrato o prefijo no resoluble). No
+implementes hasta que este guard de exit 0.
+
 ## Rol y limites
 - Implementa solo `{{TICKET_ID}}`.
 - No toques: `{{NON_GOALS_UNA_LINEA}}`.

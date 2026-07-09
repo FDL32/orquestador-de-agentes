@@ -104,7 +104,14 @@ Paso 0 (antes de tocar nada):
    HEAD == origin/main, arbol limpio, `--validate` en 0 errors / 0 warnings.
    El checkout PRINCIPAL `orquestador_de_agentes` queda DETACHED en origin/main
    (fuente estable de los destinos), NO se trabajan tickets alli. Reporta el
-   estado real ANTES de elegir ticket. Ver `QUICKSTART.md` "0d".
+   estado real ANTES de elegir ticket. Ver `QUICKSTART.md` "0d". Ademas de
+   este chequeo en prosa, ejecuta la version programatica del guard
+   (WOT-2026-021g) para el ticket WOT activo:
+   ```powershell
+   python scripts/check_worktree_topology.py --ticket <TICKET_WOT_ACTIVO> --motor-root orquestador_de_agentes --project-root orquestador_de_agentes_workspace
+   ```
+   Exit 0 continua; exit 1/2 DETENTE y reporta el motivo exacto antes de
+   elegir o continuar un ticket.
 3. Elige ticket por VALOR/RIESGO del backlog vivo del workspace. Fase 0
    SIEMPRE verifica la premisa de la ficha contra el codigo real: las fichas
    traen premisas falsas de forma recurrente (patron verificado en 016c,

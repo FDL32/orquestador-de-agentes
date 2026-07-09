@@ -43,6 +43,24 @@ Para cierres de codigo exige:
 - exit codes o resultado verificable;
 - bus canonico coherente.
 
+## Paso 1b: Verificacion de topologia de worktree (WOT-2026-021g)
+Para tickets de prefijo `WOT`, releas el guard de topologia contra el estado
+actual del repo tras la entrega del Builder:
+
+```powershell
+python scripts/check_worktree_topology.py --ticket {{TICKET_ID}} --motor-root <repo_motor> --project-root <workspace_activo>
+```
+
+`--project-root <workspace_activo>` es OBLIGATORIO para tickets `WOT`: sin el,
+la Verificacion B (workspace activo == orquestador_de_agentes_workspace) no
+puede derivar el workspace y el guard devuelve exit 1 (falso CHANGES). Para
+tickets `WOT`, `<workspace_activo>` es `orquestador_de_agentes_workspace`.
+
+Si el exit code no es 0, el veredicto es `CHANGES` con blocker "topologia de
+worktree violada durante la implementacion". Esta es verificacion de
+CUMPLIMIENTO posterior al trabajo del Builder (la prevencion ya corrio en el
+preflight del Orquestador/Builder).
+
 ## Paso 2: Verificacion mecanica
 Ejecuta tu propia verificacion. No confies solo en el relato del Builder.
 

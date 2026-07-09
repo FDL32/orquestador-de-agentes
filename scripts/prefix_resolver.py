@@ -29,6 +29,8 @@ import argparse
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -201,13 +203,79 @@ def extract_prefix(ticket_or_project: str) -> str | None:
     return None
 
 
+def _git_executable() -> str | None:
+    """Resolve the absolute path to the git executable, or None if missing.
+
+    Satisfies ruff S607 (partial executable path) without a noqa: the
+    literal string "git" is never passed to subprocess directly, only the
+    resolved absolute path from shutil.which.
+    """
+    return shutil.which("git")
+
+
+def _git_common_dir(path: Path) -> Path | None:
+    """Resolve the absolute git-common-dir for path, or None on failure.
+
+    Before: path is a directory that may or may not be a git worktree.
+    During: invokes `git -C <path> rev-parse --path-format=absolute
+            --git-common-dir` with check=False (never check=True unguarded).
+            The --path-format=absolute flag is mandatory: without it, git
+            returns a relative path (e.g. ".git") for the primary checkout
+            of a worktree set, and Path(...).resolve() on that relative
+            output resolves against the calling PROCESS cwd, not against
+            <path> -- producing a false mismatch (verified live, see
+            work_plan.md "Verificacion en vivo"). Do NOT use
+            --absolute-git-dir: that returns the LINKED worktree's own
+            git-dir (.git/worktrees/<name>), which never matches between
+            sibling worktrees of the same repo.
+    After: returns the resolved absolute Path, or None if path is not a
+          git repo (non-zero returncode) or git is not on PATH
+          (FileNotFoundError). Callers must treat None as fail-closed.
+    """
+    git = _git_executable()
+    if git is None:
+        return None
+    try:
+        result = subprocess.run(  # noqa: S603
+            [
+                git,
+                "-C",
+                str(path),
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-common-dir",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return None
+    if result.returncode != 0:
+        return None
+    raw = result.stdout.strip()
+    if not raw:
+        return None
+    return Path(raw).resolve()
+
+
 def guard(ticket_or_project: str, cwd: Path, motor_root: Path) -> int:
     """Guard: resolve ticket_or_project, compare resolved path with cwd.
 
     Before: ticket_or_project is a ticket ID or project name; cwd is the
             current working directory; motor_root is the motor root.
     During: extracts prefix (or uses project name), resolves to a
-            destination_root, compares with cwd.resolve().
+            destination_root. For prefix == WOT_PREFIX ONLY: compares
+            cwd and motor_root by git-common-dir (same repo, any worktree
+            of it -- e.g. the _dev worktree and the primary detached
+            checkout are the SAME motor) instead of literal path equality;
+            this only confirms "same repo", it does NOT enforce write
+            discipline (which worktree/branch to use for WOT is the job of
+            scripts/check_worktree_topology.py, not this function). If
+            git-common-dir cannot be determined for either side (not a git
+            repo, or git missing from PATH), fails closed: treated as a
+            mismatch (exit 1), never a crash, never exit 0. All other
+            prefixes keep the original literal-path comparison, unchanged.
     After: returns 0 if match, 1 if mismatch, 2 if resolution fails.
           Prints to stderr on failure (NO bus event: runs before
           --bootstrap-ticket).
@@ -227,6 +295,25 @@ def guard(ticket_or_project: str, cwd: Path, motor_root: Path) -> int:
             file=sys.stderr,
         )
         return 2
+    if prefix == WOT_PREFIX:
+        cwd_common = _git_common_dir(cwd)
+        motor_common = _git_common_dir(motor_root)
+        if cwd_common is None or motor_common is None:
+            print(
+                f"[ERROR] Cannot determine git-common-dir for cwd={cwd} or "
+                f"motor_root={motor_root}: not a git repository, or git not "
+                "found on PATH",
+                file=sys.stderr,
+            )
+            return 1
+        if cwd_common != motor_common:
+            print(
+                f"[ERROR] Prefix mismatch: '{ticket_or_project}' resolves to "
+                f"{resolved}, but cwd is {cwd} (different git repo)",
+                file=sys.stderr,
+            )
+            return 1
+        return 0
     if cwd.resolve() != resolved.resolve():
         print(
             f"[ERROR] Prefix mismatch: '{ticket_or_project}' resolves to "

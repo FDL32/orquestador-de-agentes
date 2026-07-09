@@ -8,6 +8,7 @@ verify detects duplicates/drift, project-name resolution.
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -51,6 +52,95 @@ def _make_motor(tmp_path: Path) -> Path:
     agent_dir.mkdir(parents=True)
     (agent_dir / "agent_controller.py").write_text("# motor\n", encoding="utf-8")
     return motor
+
+
+def _git_init_main(repo_path: Path) -> None:
+    """Init a git repo at repo_path with the branch forced to 'main'.
+
+    Before: repo_path exists as a plain directory (no .git yet).
+    During: `git init -b main` (git >= 2.28). Explicitly forces the branch
+            name instead of relying on init.defaultBranch, which is 'main'
+            on this machine but 'master' on the CI runner (no such config
+            there) -- an unforced init would false-RED the
+            `symbolic-ref --short HEAD == "main"` check ONLY in CI. Also
+            configures a throwaway user.email/user.name (needed for commit)
+            and creates one commit so the branch ref actually exists (an
+            empty repo has no commits and `symbolic-ref HEAD` would still
+            resolve, but rev-parse/worktree operations are more robust with
+            at least one commit).
+    After: repo_path is a git repo on branch 'main' with one commit.
+    """
+    subprocess.run(
+        ["git", "init", "-b", "main"], cwd=repo_path, check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+    )
+    (repo_path / "README.md").write_text("# Test Repo\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "Initial commit"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+    )
+
+
+def _make_git_tree(tmp_path: Path) -> tuple[Path, Path]:
+    """Create a synthetic motor + _dev worktree pair, mirroring real topology.
+
+    Before: tmp_path is an empty pytest tmp_path fixture.
+    During: creates a real git repo at <tmp_path>/motor (branch 'main',
+            forced explicitly via `git init -b main`, one commit), then
+            detaches motor's HEAD (`git checkout --detach main`) BEFORE
+            adding the linked worktree -- git refuses to have the same
+            branch checked out in two worktrees at once
+            ("fatal: 'main' is already used by worktree at ..."), so the
+            _dev worktree cannot check out 'main' while motor still has it
+            checked out. Detaching motor first mirrors the REAL topology of
+            this machine exactly (verified live: the primary checkout is
+            `(detached HEAD)`, only `_dev` carries `main` --
+            see work_plan.md "Verificacion en vivo",
+            `git worktree list` output). Then adds a real linked worktree
+            at <tmp_path>/motor_dev via `git worktree add <path> main`
+            (checks out the EXISTING 'main' branch, now free). This is a
+            NEW, SEPARATE helper from _make_tree: used ONLY by the
+            WOT-branch tests that need real git repos (guard()'s
+            git-common-dir comparison, and Fase 4's _check_wot_topology),
+            never by the ~15 pre-existing tests that use the plain
+            _make_tree fixture.
+    After: returns (motor_root, dev_root): motor_root is a detached-HEAD
+          git worktree, dev_root is a linked worktree of the SAME repo
+          (same git-common-dir) on branch 'main' -- the exact shape guard()
+          and check_worktree_topology.py must recognize as "same motor,
+          _dev correctly on main".
+    """
+    motor = tmp_path / "motor"
+    motor.mkdir()
+    _git_init_main(motor)
+    subprocess.run(
+        ["git", "checkout", "--detach", "main"],
+        cwd=motor,
+        check=True,
+        capture_output=True,
+    )
+    dev = tmp_path / "motor_dev"
+    subprocess.run(
+        ["git", "worktree", "add", str(dev), "main"],
+        cwd=motor,
+        check=True,
+        capture_output=True,
+    )
+    return motor, dev
 
 
 def _make_tree(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
@@ -166,11 +256,35 @@ def test_guard_mismatch_blocks(tmp_path: Path) -> None:
 
 
 def test_guard_wot_in_motor_passes(tmp_path: Path) -> None:
+    """cwd == motor_root (same directory). Under the fail-closed-per-side
+    degradation of the WOT git-common-dir fix, a plain _make_tree directory
+    (no .git) would make BOTH sides fail to resolve git-common-dir, and the
+    guard would return 1 (degraded) instead of 0 (same real motor). This
+    test's local fixture DELIBERATELY gains a real `git init` (via
+    _git_init_main) on top of _make_tree, so it keeps representing a
+    "same real motor" case -> exit 0. _make_tree itself stays untouched;
+    only this test's own directory is git-initialized in addition."""
     motor, _, _, _ = _make_tree(tmp_path)
+    _git_init_main(motor)
     assert guard("WOT-2026-020t", cwd=motor, motor_root=motor) == 0
 
 
-def test_guard_wot_in_destination_blocks(tmp_path: Path) -> None:
+def test_guard_wot_in_destination_blocks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """cwd=exf (destination, no git init), prefix=WOT so resolved=motor
+    (also no git init). Neither _make_tree directory has its own .git, so
+    without isolation git's ambient discovery would ASCEND past tmp_path
+    into whatever real repo contains the pytest tmp dir (this repo itself,
+    since the test sandbox lives under this worktree) and find a git-
+    common-dir there for BOTH sides -- producing a false MATCH (0) instead
+    of the intended degraded mismatch (1). GIT_CEILING_DIRECTORIES stops
+    git's directory-discovery walk at tmp_path, so neither side resolves to
+    a repo -> fail-closed degradation -> exit 1, exactly the pre-fix
+    behavior (mismatch by literal path) preserved for a different reason.
+    This is test-fixture isolation only; production code (_git_common_dir)
+    is untouched."""
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
     motor, exf, _, _ = _make_tree(tmp_path)
     # cwd is EXF but ticket is WOT -> resolves to motor -> mismatch -> block
     assert guard("WOT-2026-020t", cwd=exf, motor_root=motor) == 1
@@ -194,6 +308,28 @@ def test_guard_project_name_match(tmp_path: Path) -> None:
 def test_guard_project_name_mismatch_blocks(tmp_path: Path) -> None:
     motor, exf, _ctl, _ = _make_tree(tmp_path)
     assert guard("Crear_Texto_LLM", cwd=exf, motor_root=motor) == 1
+
+
+def test_guard_wot_from_dev_worktree_passes(tmp_path: Path) -> None:
+    """WOT-2026-021g: guard() from the _dev worktree (rama main) must
+    recognize it as the SAME motor as the detached primary checkout, via
+    git-common-dir comparison -- this is the exact bug fix under test."""
+    motor, dev = _make_git_tree(tmp_path)
+    assert guard("WOT-2026-021g", cwd=dev, motor_root=motor) == 0
+
+
+def test_guard_wot_cwd_not_git_repo_returns_one_no_crash(tmp_path: Path) -> None:
+    """WOT-2026-021g: fail-closed degradation. cwd is a plain directory
+    (no git init) while motor_root IS a real git repo. guard() must return
+    1 deterministically -- never raise CalledProcessError or any other
+    uncaught exception."""
+    motor = tmp_path / "motor"
+    motor.mkdir()
+    _git_init_main(motor)
+    bare_cwd = tmp_path / "not_a_repo"
+    bare_cwd.mkdir()
+    result = guard("WOT-2026-021g", cwd=bare_cwd, motor_root=motor)
+    assert result == 1
 
 
 # ---------------------------------------------------------------------------
