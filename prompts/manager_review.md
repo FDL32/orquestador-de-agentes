@@ -12,6 +12,21 @@ contract_id: cid-man-review-v2
 No aceptes auto-reportes como evidencia. Verifica artefactos, comandos y estado
 canonico antes de aprobar.
 
+## Paso 0: Ambito de este review - CF-frozen vs implementacion
+
+- Un ticket cuyo `ticket_contract` esta en `status: frozen` (cierre de
+  Contract Formation, no de implementacion) se valida y cierra con
+  `scripts/validate_contract_formation.py`, NO con este prompt de manager
+  review ni con la suite canonica (`run_pytest_safe.py`).
+- Cuando un ticket `code`/`mixed` cuyo contrato ya esta `frozen` se EJECUTA
+  despues en su Builder phase (implementacion real del entregable), el
+  resto de este prompt aplica integramente, incluida la barrera "loop
+  rapido vs cierre canonico" del Paso 2 (suite canonica obligatoria para
+  cerrar `code`/`mixed`).
+- Referencia cruzada: `prompts/contract_formation_pipeline.md` usa el mismo
+  vocabulario `status: frozen`; confirma alli el estado del contrato antes
+  de decidir que herramienta de cierre aplica.
+
 ## Paso 1: Clasificacion
 Identifica el tipo de entrega del Builder:
 - codigo;
