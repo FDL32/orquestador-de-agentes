@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib.util
-import os
 import sys
 from pathlib import Path
 
@@ -13,6 +12,26 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RUNNER_PATH = PROJECT_ROOT / "scripts" / "run_pytest_safe.py"
 SELECTION_PATH = PROJECT_ROOT / "scripts" / "test_selection.py"
+
+
+def _load_conftest():
+    """Load tests/conftest.py as a module to reuse REAL_SYSTEM_TEMP.
+
+    pytest loads conftest as a plugin but not under an importable ``conftest``
+    name from a sibling package, so resolve it by path (reusing an
+    already-loaded instance from sys.modules when present).
+    """
+    for mod in sys.modules.values():
+        if getattr(mod, "__file__", None) == str(
+            PROJECT_ROOT / "tests" / "conftest.py"
+        ):
+            return mod
+    spec = importlib.util.spec_from_file_location(
+        "_conftest_under_test", PROJECT_ROOT / "tests" / "conftest.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def load_runner_module():
@@ -922,7 +941,9 @@ class TestBasetempOutsideRepo:
     project_root=tmp_path.
 
     NOTE: conftest hijacks tempfile.tempdir to a path inside the repo for test
-    sandboxing. These tests restore the REAL system temp to validate production
+    sandboxing. These tests restore tempfile.tempdir to REAL_SYSTEM_TEMP, the
+    real system temp captured by tests/conftest.py at import-time (before the
+    session-scoped fixture hijacks os.environ), to validate production
     behavior (run_pytest_safe.py runs as a script, before pytest/conftest load).
     """
 
@@ -930,13 +951,8 @@ class TestBasetempOutsideRepo:
     def _restore_real_tempdir(self, monkeypatch):
         import tempfile
 
-        real_temp = Path(
-            os.environ.get("TEMP", os.environ.get("TMP", tempfile.gettempdir()))
-        )
-        if not real_temp.is_absolute():
-            real_temp = Path.cwd() / real_temp
-        real_temp = real_temp.resolve()
-        monkeypatch.setattr(tempfile, "tempdir", str(real_temp))
+        conftest = _load_conftest()
+        monkeypatch.setattr(tempfile, "tempdir", str(conftest.REAL_SYSTEM_TEMP))
         yield
 
     def test_make_run_dir_outside_runtime_dir(self) -> None:
@@ -961,4 +977,10 @@ class TestBasetempOutsideRepo:
         temp_base = Path(tempfile.gettempdir()).resolve()
         assert run_dir.is_relative_to(temp_base), (
             f"basetemp {run_dir} must be under tempfile.gettempdir() {temp_base}"
+        )
+        # WOT-2026-021b: non-tautological check against the real DoD invariant
+        # from 020f ("basetemp outside the repo motor"), independent of
+        # whatever tempfile.tempdir was restored to above.
+        assert not run_dir.is_relative_to(PROJECT_ROOT), (
+            f"basetemp {run_dir} must not be under the repo motor {PROJECT_ROOT}"
         )

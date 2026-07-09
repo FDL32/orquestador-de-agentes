@@ -19,6 +19,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 AGENT_DIR = PROJECT_ROOT / ".agent"
 TEST_RUNTIME_ROOT = PROJECT_ROOT / "tests" / "sandbox" / "test_runtime"
 SESSION_RUNTIME_ROOT = TEST_RUNTIME_ROOT / f"session_{os.getpid()}"
+# WOT-2026-021b: captured at import-time, BEFORE _project_temp_environment
+# (session-scoped autouse fixture below) hijacks os.environ["TEMP"/"TMP"] to
+# SESSION_RUNTIME_ROOT. pytest imports this module fully before collecting or
+# running any fixture, so this is the real system temp, not the sandboxed one.
+REAL_SYSTEM_TEMP = Path(
+    os.environ.get("TEMP", os.environ.get("TMP", tempfile.gettempdir()))
+).resolve()
 
 
 # Add project root FIRST, then .agent directory to path so tests can import
