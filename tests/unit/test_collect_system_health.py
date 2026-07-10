@@ -333,6 +333,205 @@ def test_motor_only_still_reads_motor(tmp_path, monkeypatch):
     assert "pytest_safe_last_run_nonzero" in findings["automatic_criticals"]
 
 
+# ---- WOT-2026-021n: flag a STALE last-run (tested an old commit) as a WARN ----
+
+_MOTOR_SHA = "a" * 40
+_DEST_SHA = "b" * 40
+
+
+def _fake_run_per_root(motor: Path, dest: Path, *, head_fails: bool = False):
+    """A _run fake that returns a DISTINCT HEAD sha per repo root (motor vs dest).
+
+    The default _fake_run_factory returns one sha ('abc1234def') for every rev-parse,
+    so it cannot exercise the delivery_authority axis (motor != dest). This variant
+    keys the rev-parse output on the cwd. `head_fails` makes rev-parse exit 1 (HEAD
+    None edge). Non-git commands keep the benign defaults.
+    """
+    motor_s = str(motor)
+
+    def _fake(cmd, cwd, timeout=600):
+        joined = " ".join(cmd)
+        if "rev-parse" in joined:
+            if head_fails:
+                return {
+                    "cmd": cmd,
+                    "exit_code": 1,
+                    "stdout": "",
+                    "stderr": "",
+                    "ok": False,
+                }
+            sha = _MOTOR_SHA if str(cwd) == motor_s else _DEST_SHA
+            return {
+                "cmd": cmd,
+                "exit_code": 0,
+                "stdout": sha + "\n",
+                "stderr": "",
+                "ok": True,
+            }
+        if "ls-files" in joined:
+            return {
+                "cmd": cmd,
+                "exit_code": 0,
+                "stdout": "a.py\n",
+                "stderr": "",
+                "ok": True,
+            }
+        if "--validate" in joined:
+            return {
+                "cmd": cmd,
+                "exit_code": 0,
+                "stdout": "{}",
+                "stderr": "",
+                "ok": True,
+            }
+        return {"cmd": cmd, "exit_code": 0, "stdout": "ok", "stderr": "", "ok": True}
+
+    return _fake
+
+
+def _write_wp(root: Path, delivery_authority: str):
+    """Write a minimal work_plan.md declaring delivery_authority in `root`."""
+    collab = root / ".agent" / "collaboration"
+    collab.mkdir(parents=True, exist_ok=True)
+    (collab / "work_plan.md").write_text(
+        f"# Plan\n\n- **delivery_authority:** {delivery_authority}\n", encoding="utf-8"
+    )
+
+
+def _run_full_staleness(
+    tmp_path, monkeypatch, *, dest_delivery, dest_lastrun, head_fails=False
+):
+    """Run full mode with distinct motor/dest HEADs; return findings."""
+    motor = _fake_motor(tmp_path)
+    dest = _fake_dest(tmp_path, dest_lastrun)
+    _write_wp(dest, dest_delivery)
+    monkeypatch.setattr(
+        csh, "_run", _fake_run_per_root(motor, dest, head_fails=head_fails)
+    )
+    out = tmp_path / "out"
+    csh.main(
+        [
+            "--motor-root",
+            str(motor),
+            "--project-root",
+            str(dest),
+            "--mode",
+            "full",
+            "--out",
+            str(out),
+        ]
+    )
+    return json.loads((out / "findings.json").read_text(encoding="utf-8"))
+
+
+def test_stale_flagged_when_tested_sha_differs_from_delivery_head(
+    tmp_path, monkeypatch
+):
+    """DoD-a: last-run tested a sha != the delivery HEAD -> stale True + warn."""
+    # dest delivery_authority repo_destino -> compare vs dest HEAD (_DEST_SHA);
+    # last-run tested a different sha -> stale.
+    findings = _run_full_staleness(
+        tmp_path,
+        monkeypatch,
+        dest_delivery="repo_destino",
+        dest_lastrun={"exit_code": 0, "tested_commit_sha": "c" * 40},
+    )
+    assert findings["pytest_safe_last_run"]["stale"] is True
+    assert "pytest_safe_last_run_stale" in findings["automatic_warnings"]
+
+
+def test_fresh_not_flagged_when_tested_sha_matches(tmp_path, monkeypatch):
+    """DoD-b: last-run tested exactly the delivery HEAD -> stale False, no warn."""
+    findings = _run_full_staleness(
+        tmp_path,
+        monkeypatch,
+        dest_delivery="repo_destino",
+        dest_lastrun={"exit_code": 0, "tested_commit_sha": _DEST_SHA},
+    )
+    assert findings["pytest_safe_last_run"]["stale"] is False
+    assert "pytest_safe_last_run_stale" not in findings["automatic_warnings"]
+
+
+def test_repo_motor_ticket_compares_vs_motor_not_dest(tmp_path, monkeypatch):
+    """DoD-c (the BLOCKER): dest_ok + delivery_authority repo_motor + last-run stamped
+    with the MOTOR head must compare vs MOTOR head -> NOT stale (no false-positive).
+
+    This is the exact real-world topology: a destino runs the suite for a repo_motor
+    ticket; the last-run file lives under the destino but tested_commit_sha is the
+    MOTOR HEAD. Comparing against dest_head (the v1-plan bug) would be spurious stale.
+    """
+    findings = _run_full_staleness(
+        tmp_path,
+        monkeypatch,
+        dest_delivery="repo_motor",  # default authority
+        dest_lastrun={"exit_code": 0, "tested_commit_sha": _MOTOR_SHA},
+    )
+    assert findings["pytest_safe_last_run"]["stale"] is False, (
+        "repo_motor ticket must compare tested_sha vs MOTOR head, not dest head"
+    )
+    assert "pytest_safe_last_run_stale" not in findings["automatic_warnings"]
+
+
+def test_repo_destino_ticket_stale_vs_dest_head(tmp_path, monkeypatch):
+    """DoD-d: dest_ok + delivery_authority repo_destino + tested_sha != dest head -> stale."""
+    findings = _run_full_staleness(
+        tmp_path,
+        monkeypatch,
+        dest_delivery="repo_destino",
+        dest_lastrun={"exit_code": 0, "tested_commit_sha": _MOTOR_SHA},  # != _DEST_SHA
+    )
+    assert findings["pytest_safe_last_run"]["stale"] is True
+    assert "pytest_safe_last_run_stale" in findings["automatic_warnings"]
+
+
+def test_no_tested_sha_is_not_stale(tmp_path, monkeypatch):
+    """DoD-e: last-run without tested_commit_sha -> stale False (no spurious mark)."""
+    findings = _run_full_staleness(
+        tmp_path,
+        monkeypatch,
+        dest_delivery="repo_destino",
+        dest_lastrun={"exit_code": 0},  # no tested_commit_sha
+    )
+    assert findings["pytest_safe_last_run"]["stale"] is False
+    assert "pytest_safe_last_run_stale" not in findings["automatic_warnings"]
+
+
+def test_head_none_is_not_stale(tmp_path, monkeypatch):
+    """DoD-f: unknown HEAD (rev-parse fails) -> stale False."""
+    findings = _run_full_staleness(
+        tmp_path,
+        monkeypatch,
+        dest_delivery="repo_destino",
+        dest_lastrun={"exit_code": 0, "tested_commit_sha": "c" * 40},
+        head_fails=True,
+    )
+    assert findings["pytest_safe_last_run"]["stale"] is False
+    assert "pytest_safe_last_run_stale" not in findings["automatic_warnings"]
+
+
+def test_stale_is_never_a_critical(tmp_path, monkeypatch):
+    """DoD-g (NON-GOAL duro): a stale last-run with exit 0 produces ZERO criticals."""
+    findings = _run_full_staleness(
+        tmp_path,
+        monkeypatch,
+        dest_delivery="repo_destino",
+        dest_lastrun={"exit_code": 0, "tested_commit_sha": "c" * 40},
+    )
+    assert findings["pytest_safe_last_run"]["stale"] is True
+    assert findings["automatic_criticals"] == []
+    assert "pytest_safe_last_run_stale" in findings["automatic_warnings"]
+
+
+def test_read_delivery_authority_default_and_explicit(tmp_path):
+    """The helper mirrors pre_handoff_guard: repo_destino only when declared."""
+    # missing work_plan -> default repo_motor
+    assert csh._read_delivery_authority(tmp_path) == "repo_motor"
+    _write_wp(tmp_path, "repo_motor")
+    assert csh._read_delivery_authority(tmp_path) == "repo_motor"
+    _write_wp(tmp_path, "repo_destino")
+    assert csh._read_delivery_authority(tmp_path) == "repo_destino"
+
+
 def test_main_rejects_non_motor_root(tmp_path):
     notmotor = tmp_path / "x"
     notmotor.mkdir()

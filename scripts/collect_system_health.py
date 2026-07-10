@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -125,6 +126,28 @@ def _unique_out_dir(base: Path) -> Path:
     raise RuntimeError(f"too many existing audit dirs for {base}")
 
 
+def _read_delivery_authority(root: Path) -> str:
+    """Read delivery_authority from a repo's active work_plan (repo_motor default).
+
+    WOT-2026-021n: mirror of pre_handoff_guard._read_delivery_authority_from_content
+    (same regex) so the HEAD we compare tested_commit_sha against uses the SAME axis
+    that run_pytest_safe used to STAMP it. Returns "repo_destino" only when the field
+    says so; "repo_motor" otherwise (missing/unreadable work_plan -> default).
+    """
+    wp = root / ".agent" / "collaboration" / "work_plan.md"
+    try:
+        content = wp.read_text(encoding="utf-8")
+    except OSError:
+        return "repo_motor"
+    if re.search(
+        r"delivery_authority\s*:?\**\s*(?:repo_destino|destino)",
+        content,
+        re.IGNORECASE,
+    ):
+        return "repo_destino"
+    return "repo_motor"
+
+
 def _read_pytest_last_run(motor_root: Path) -> dict:
     """Read the canonical runner's last-run.json (real exit, not pipe).
 
@@ -147,6 +170,10 @@ def _read_pytest_last_run(motor_root: Path) -> dict:
             "failed_test_ids": d.get("failed_test_ids", []),
             "error_test_ids": d.get("error_test_ids", []),
             "state_leak": d.get("state_leak"),
+            # WOT-2026-021n: surface the commit the last run tested so the caller can
+            # flag a STALE witness (last-run of an old HEAD). May be absent on
+            # started/dry-run records or old fixtures -> None (no spurious stale).
+            "tested_commit_sha": d.get("tested_commit_sha"),
         }
     except (OSError, json.JSONDecodeError) as exc:
         return {"present": False, "exit_code": None, "error": str(exc)}
@@ -304,6 +331,30 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI orchestratio
     # silent fallback to the motor).
     pytest_last = _read_pytest_last_run(dest_root if dest_ok else motor_root)
     pytest_last["source"] = "destino" if dest_ok else "motor"
+    # WOT-2026-021n: flag a STALE last-run (tested a different commit than the current
+    # delivery HEAD). CRITICAL: the HEAD to compare against is resolved by
+    # delivery_authority, NOT by the last-run file location (dest_ok). run_pytest_safe
+    # stamps tested_commit_sha with the HEAD of _delivery_repo_root(), which is the
+    # destino only when delivery_authority == repo_destino, else the motor (default).
+    # A destino running the suite for a repo_motor ticket keeps its last-run file under
+    # the destino but stamps the MOTOR HEAD -> comparing against dest_head would be a
+    # spurious stale on every fresh run. So mirror pre_handoff_guard: pick dest_head
+    # only when the destino's work_plan declares delivery_authority repo_destino.
+    delivery_head = (
+        dest_head
+        if (dest_ok and _read_delivery_authority(dest_root) == "repo_destino")
+        else motor_head
+    )
+    tested_sha = pytest_last.get("tested_commit_sha")
+    # Truthiness (never `is not None`): None/"" tested_sha or head collapse to not-stale.
+    # bool() forces a genuine bool (a falsy term would otherwise leak through the `and`).
+    # This is transparency of the witness (a WARN), never a critical.
+    pytest_last["stale"] = bool(
+        pytest_last.get("present")
+        and tested_sha
+        and delivery_head
+        and tested_sha != delivery_head
+    )
 
     if dest_ok:
         checks["ruff_destino"] = _run(["ruff", "check", "."], dest_root)
@@ -347,6 +398,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI orchestratio
         criticals.append("pytest_safe_last_run_missing")  # cannot confirm green
     if checks.get("validate_motor", {}).get("exit_code") not in (0, None):
         criticals.append("validate_motor_nonzero")
+    # WOT-2026-021n: a stale last-run (tested an old commit) is a WARN, never a
+    # critical -- the green/red verdict stays with exit_code + the 021m classification.
+    if pytest_last.get("stale"):
+        warnings.append("pytest_safe_last_run_stale")
 
     # ---- Write raw evidence ----
     for name, res in checks.items():
