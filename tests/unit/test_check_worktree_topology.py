@@ -39,7 +39,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from scripts.check_worktree_topology import check_topology
+from scripts.check_worktree_topology import _check_contract_coherence, check_topology
 
 
 def _git_init_main(repo_path: Path) -> None:
@@ -262,6 +262,84 @@ def test_case_g_contract_incoherence_exits_two(tmp_path: Path) -> None:
     )
 
     exit_code, message = check_topology("WOT-2026-021g", motor, motor, motor)
+    assert exit_code == 2
+    assert "incoherencia de contrato" in message
+
+
+# ---------------------------------------------------------------------------
+# (g2) WOT-2026-021s: a work_plan in a TERMINAL state (COMPLETED) must NOT
+# block the launch of a new ticket of a DIFFERENT prefix. The residual
+# COMPLETED work_plan of a prior WOT (delivery_authority repo_motor) would
+# otherwise false-block any CTL start. Mutation-to-prove: removing the
+# terminal-state guard makes this flip back to exit 2.
+# ---------------------------------------------------------------------------
+
+
+def _make_motor_with_workplan(tmp_path: Path, workplan_body: str) -> Path:
+    search_root = tmp_path / "projects"
+    search_root.mkdir()
+    motor = search_root / "orquestador_de_agentes"
+    motor.mkdir()
+    (motor / ".agent").mkdir(parents=True)
+    (motor / ".agent" / "agent_controller.py").write_text("# motor\n", encoding="utf-8")
+    collab_dir = motor / ".agent" / "collaboration"
+    collab_dir.mkdir(parents=True)
+    (collab_dir / "work_plan.md").write_text(workplan_body, encoding="utf-8")
+    return motor
+
+
+# These assert on _check_contract_coherence DIRECTLY (the unit under test):
+# None = no contract block, (2, msg) = block. Going through check_topology()
+# would mask the result, because for a CTL prefix the later dispatch always
+# ends in "prefijo desconocido" in this test env (no CTL destination configured)
+# -- so "incoherencia not in message" would pass trivially even with a broken
+# terminal filter. The direct call has no such masking.
+
+
+@pytest.mark.parametrize("terminal", ["COMPLETED", "SUPERSEDED", "BLOCKED_FINAL"])
+def test_terminal_workplan_does_not_block_other_prefix(
+    tmp_path: Path, terminal: str
+) -> None:
+    # A work_plan in ANY of the 3 irreversible terminal states (mirror of
+    # bus/state_machine.py IRREVERSIBLE_TERMINAL_STATES) carrying repo_motor +
+    # an incoming CTL ticket -> the terminal-state guard returns None (no block).
+    # Parametrizing over all 3 makes the "mirrors the canonical set" claim
+    # load-bearing: dropping any terminal from the frozenset fails here.
+    motor = _make_motor_with_workplan(
+        tmp_path,
+        f"# Plan\n\n- **Estado:** {terminal}\n- **delivery_authority:** repo_motor\n",
+    )
+    assert _check_contract_coherence(motor, "CTL") is None
+
+
+@pytest.mark.parametrize(
+    "decorated",
+    ["completed", "COMPLETED (archivado 2026-07-10)", "COMPLETED  "],
+)
+def test_decorated_terminal_status_is_still_terminal(
+    tmp_path: Path, decorated: str
+) -> None:
+    # A decorated Estado marker (lowercase / parenthetical suffix / trailing
+    # space) must still be recognized as terminal -> None (no block). Guards the
+    # normalization (upper + first token) before the membership test: removing
+    # it makes the lowercase case slip through as non-terminal and fail here.
+    motor = _make_motor_with_workplan(
+        tmp_path,
+        f"# Plan\n\n- **Estado:** {decorated}\n- **delivery_authority:** repo_motor\n",
+    )
+    assert _check_contract_coherence(motor, "CTL") is None
+
+
+def test_active_workplan_still_blocks_incoherent_prefix(tmp_path: Path) -> None:
+    # Guardrail: a LIVE (non-terminal) work_plan must still block. IN_PROGRESS
+    # carrying repo_motor + a CTL prefix (expects repo_destino) -> (2, msg).
+    motor = _make_motor_with_workplan(
+        tmp_path,
+        "# Plan\n\n- **Estado:** IN_PROGRESS\n- **delivery_authority:** repo_motor\n",
+    )
+    result = _check_contract_coherence(motor, "CTL")
+    assert result is not None
+    exit_code, message = result
     assert exit_code == 2
     assert "incoherencia de contrato" in message
 

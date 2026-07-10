@@ -335,11 +335,15 @@ def _check_destination_topology(
 def _check_contract_coherence(
     motor_root: Path, prefix: str | None
 ) -> tuple[int, str] | None:
-    """Cross delivery_authority (from the active work_plan.md, if any)
+    """Cross delivery_authority (from the ACTIVE work_plan.md, if any)
     against the resolved prefix. WOT must carry repo_motor; any other
-    prefix must carry repo_destino. Returns None if there's no active
-    work_plan.md to check (not blocking: this guard runs in preflight,
-    possibly before a plan exists), or (exit_code, message) on mismatch.
+    prefix must carry repo_destino. Returns None if there's no work_plan.md
+    to check (not blocking: this guard runs in preflight, possibly before a
+    plan exists) OR if the work_plan is in a TERMINAL state (a closed ticket's
+    contract must not block the launch of a new ticket of another prefix --
+    WOT-2026-021s; the residual COMPLETED work_plan of a prior WOT would
+    otherwise false-block any CTL start with "incoherencia de contrato").
+    Returns (exit_code, message) on a genuine live mismatch.
     """
     work_plan_path = motor_root / ".agent" / "collaboration" / "work_plan.md"
     if not work_plan_path.exists():
@@ -352,6 +356,26 @@ def _check_contract_coherence(
     agent_dir = motor_root / ".agent"
     sys.path.insert(0, str(agent_dir))
     import scope_gate
+    import state_validation
+
+    # A work_plan in a terminal state is a CLOSED ticket's contract -> it must
+    # not block a new ticket. The 3 irreversible terminals mirror the canonical
+    # source bus/state_machine.py IRREVERSIBLE_TERMINAL_STATES; they are
+    # replicated inline (not imported) because bus/ hangs off motor_root, NOT
+    # off .agent/ (the only dir this guard adds to sys.path) -- importing bus
+    # here would raise ImportError. get_status returns "UNKNOWN" when there's no
+    # Estado marker, which is NOT terminal, so a plan-less/Estado-less work_plan
+    # still gets its contract crossed (the genuine-incoherence path is intact).
+    # Normalize the raw status: uppercase + first whitespace token, so a
+    # decorated marker ("completed", "COMPLETED (archivado)", "COMPLETED ✅")
+    # still matches the bare terminal literal.
+    terminal_states = frozenset({"COMPLETED", "SUPERSEDED", "BLOCKED_FINAL"})
+    raw_status = state_validation.get_status(content, "**Estado:**")
+    normalized_status = (
+        raw_status.strip().upper().split()[0] if raw_status.strip() else ""
+    )
+    if normalized_status in terminal_states:
+        return None
 
     delivery_authority = scope_gate.read_delivery_authority(content)
     expected = "repo_motor" if prefix == prefix_resolver.WOT_PREFIX else "repo_destino"
