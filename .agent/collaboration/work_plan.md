@@ -1,7 +1,7 @@
-# Plan de Trabajo: collect_system_health senala STALENESS del last-run que lee
+# Plan de Trabajo: backlog_reconcile.py (recolector de senales de Fase 0)
 
 ## Metadata
-- **ID:** WOT-2026-021n
+- **ID:** WOT-2026-021i
 - **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Creado:** 2026-07-10
@@ -10,108 +10,161 @@
 - **Asignado a:** Builder
 
 ## Objetivo
-`collect_system_health` lee el `last-run.json` del root elegido (destino si `dest_ok`,
-motor si motor-only) y reporta `exit_code`/`source`/`state_leak`/`finished_at`, PERO
-NO compara su `tested_commit_sha` con el HEAD del repo de ENTREGA. Un last-run puede
-estar STALE (testigo viejo) sin marca alguna: el colector lo trata como evidencia
-fresca. Fix: leer `tested_commit_sha` del last-run y compararlo con el HEAD del repo de
-entrega (resuelto por `delivery_authority`, no por la ubicacion del fichero); anadir
-campo `stale: bool` al `pytest_safe_last_run` + warn `pytest_safe_last_run_stale`
-cuando difieren. Es TRANSPARENCIA del testigo, NO un critical (el veredicto de
-verde/rojo lo sigue dando exit_code + clasificacion 021m).
+Crear `scripts/backlog_reconcile.py`: un RECOLECTOR read-only de senales de git que
+automatiza la **Fase 0 (Reconciliacion)** de `/backlog-triage` (prompt
+`prompts/backlog_triage.md`, l.63-88; el script se nombra como follow-up 021i en l.74).
+Por cada ticket vivo del backlog emite senales git con evidencia y NO EMITE VEREDICTO:
+el AGENTE juzga LIKELY_DONE/LIKELY_PENDING/NEEDS_HUMAN_VERIFY. Patron =
+`collect_system_health.py` (recolector testigo: "Collector output is [RELATO]; the agent
+produces the verdict").
 
 ## Contexto
-Hermano de WOT-2026-021m (b6aea54) y 021c (4f316ce): mismo fichero
-`collect_system_health.py`, misma funcion `_read_pytest_last_run` / campo
-`pytest_safe_last_run`. El patron code-only ya cerro 021m+021c sobre este fichero
-(bajo riesgo, rodado). Evidencia VERIFICADA 2026-07-10: la auditoria
-general_audit_20260710_0914 leyo el last-run del DESTINO con
-`tested_commit_sha=602e3c78`, finished_at 2026-07-09, mientras el HEAD del workspace
-era `bef3ff9`. Precedente del patron: `pre_handoff_guard.py` (l.564-603) ya compara
-`tested_commit_sha != delivery HEAD` -> `stale_run`, pero eso vive en el guard de
-handoff, NO en el colector de salud.
+Follow-up de WOT-2026-021h (`a641117`, capacidad `/backlog-triage`; dependencia CERRADA).
+Hasta hoy la Fase 0 se hace a mano (prompt l.73-76). El consumidor (prompt + skill
+`skills/backlog-triage/`) ya esta desplegado. `backlog_reconcile.py` NO existe (verificado
+`find` + `git log --grep` vacio). Superficie mapeada por workflow de 4 exploradores +
+verificacion manual.
 
 ## Configuracion Privada Requerida
 Ninguna.
 
-## Alcance EXACTO (verificado in-vivo 2026-07-10; REVISADO tras plan-audit adversarial)
+## BLOCKERS del plan-audit adversarial (CONFIRMADOS in-vivo) -> plan REVISADO
 
-### BLOCKER del plan-audit (CONFIRMADO in-vivo) -> el HEAD a comparar lo decide
-### `delivery_authority`, NO la ubicacion del fichero (`dest_ok`)
-La 1a version del plan comparaba contra `dest_head if dest_ok else motor_head` (root
-cuyo last-run FILE se lee). ERROR confirmado in-vivo: `tested_commit_sha` lo estampa
-`run_pytest_safe._delivery_head_sha()` = HEAD de `_delivery_repo_root()` (l.113-123),
-que devuelve el destino SOLO si `_delivery_authority()=="repo_destino"` (leido del
-work_plan del destino), si no el MOTOR (DEFAULT `repo_motor`). La UBICACION del fichero
-last-run va por `PROJECT_ROOT`/`dest_ok`; el SHA ESTAMPADO va por `delivery_authority`.
-Son EJES INDEPENDIENTES. En la topologia mas comun (un destino corre su suite para un
-ticket `delivery_authority: repo_motor`), el last-run vive bajo el destino pero
-`tested_commit_sha` = HEAD del MOTOR -> comparar contra `dest_head` daria stale=True
-ESPURIO en cada run fresco. PRUEBA in-vivo: el SHA de la evidencia `602e3c78` NO existe
-en el destino (workspace: `bad object`) y SI en el motor (`602e3c7 docs(prompts)
-WOT-2026-019n`); el work_plan del destino tiene `delivery_authority: repo_motor`. => el
-testigo debe compararse contra el HEAD del MOTOR, no del destino.
+### BLOCKER 1: las senales git deben correr contra el repo CORRECTO por SCOPE
+La v1 del plan hardcodeaba todas las senales contra el WORKSPACE. ERROR confirmado
+in-vivo: el reconcile set de HOY tiene 19 tickets, ~12 con scope `motor/*` cuyo codigo
+vive en el MOTOR, no en el workspace. Prueba: 020i (`motor/skip-gates-not-forwarded`,
+evidencia agent_controller.py:6022) -> `git ls-files scripts/run_pytest_safe.py` es VACIO
+en el workspace y TRACKED en el motor `_dev`. Grepear solo el workspace daria
+`tracked=false/hits~0` para los 12 motor-tickets cuyo codigo SI existe -> senal falsa
+masiva (false LIKELY_PENDING). La barrera "no ascender al motor" (familia flaky 021k) es
+correcta para HERMETICIDAD de sandbox pero ERRONEA para recoleccion de senales: aqui
+queremos el repo del ticket. Fix: ENRUTAR por prefijo de scope.
 
-### Coherencia del root (regla correcta)
-Resolver el HEAD de comparacion por `delivery_authority` (espejo de
-`run_pytest_safe._delivery_repo_root` y `pre_handoff_guard.resolve_delivery_root`):
-- `dest_ok` Y `delivery_authority(destino) == repo_destino` -> comparar vs `dest_head`.
-- resto (`repo_motor`, o motor-only) -> comparar vs `motor_head`.
-`motor_head` (l.267) y `dest_head` (l.268) ya estan en scope; solo hace falta leer el
-`delivery_authority` del destino (regex sobre su work_plan; sin git nuevo).
+### BLOCKER 2: `last-run.json` es per-REPO, no per-ticket
+Confirmado in-vivo: cada repo tiene UN solo `.agent/runtime/pytest-safe/last-run.json`
+SIN campo `ticket`. Copiar el mismo estado de suite a los 19 records por-ticket es
+enganoso. Ademas `stale` exige el eje `delivery_authority` (BLOCKER de 021c/021n: leer el
+repo/HEAD equivocado da false-green/false-stale). Fix: emitir `last_run` a nivel de REPO
+(uno por motor, uno por destino), NO copiado por ticket.
 
-### CAMBIAR (`scripts/collect_system_health.py`)
-- Nuevo helper `_read_delivery_authority(root: Path) -> str`: lee
-  `<root>/.agent/collaboration/work_plan.md`, regex
-  `delivery_authority\s*:?\**\s*(?:repo_destino|destino)` (IGNORECASE) ->
-  "repo_destino"; default "repo_motor" si falta/ilegible. Espejo EXACTO de
-  `pre_handoff_guard._read_delivery_authority_from_content` (misma regex) para que el
-  SHA estampado y el HEAD comparado usen el MISMO criterio.
-- `_read_pytest_last_run` (l.128-152): anadir al dict devuelto
-  `"tested_commit_sha": d.get("tested_commit_sha")` (usar `.get`; None en records
-  `started`/dry-run/fixtures viejos; no petar).
-- Caller (tras l.306, donde ya se pone `source`): resolver el HEAD de entrega
-  `delivery_head = dest_head if (dest_ok and
-  _read_delivery_authority(dest_root) == "repo_destino") else motor_head`.
-  Calcular `stale` y anadir `pytest_last["stale"]`. Regla (TRUTHINESS, NUNCA
-  `is not None`): `stale = bool(pytest_last.get("present") and tested_sha and
-  delivery_head and tested_sha != delivery_head)`. Si falta `tested_commit_sha` (None)
-  O `delivery_head` es None/"" -> `stale = False` (indeterminado != stale; sin marca
-  espuria). `present False` -> `stale False` (no hay tested_sha).
-- Deteccion automatica (bloque l.328-349): anadir, DESPUES de la clasificacion de
-  exit_code de 021m y del bloque `missing`, `if pytest_last.get("stale"):
-  warnings.append("pytest_safe_last_run_stale")`. Es WARN, jamas critical.
+## Justificacion del conjunto de senales (evidencia historica)
+Cada reconciliacion "ya-hecho" real uso una senal distinta, PERO todas caen en familias
+genericas (backlog_done.md): 019e (git log --grep + git ls-files), 020j (git ls-files 243
++ git status), 020m (git ls-files 3 paths + git grep consumidores=0), 020s (git ls-files
+.example). => NO es viable un check-DoD-generico (sistema experto); SI es viable emitir
+senales genericas y que el agente juzgue.
 
-### CONSERVAR (no tocar)
-- La clasificacion por causa de 021m (failed/error -> critical; state_leak -> warn;
-  else -> critical fail-safe): intacta; opera sobre exit_code, ortogonal a stale.
-- El campo `source` de 021c y la eleccion del root leido de 021c (l.305-306): intactos.
-- El critical `pytest_safe_last_run_missing`: intacto.
-- El resto de checks (ruff, validate, inventarios), findings.json, skeletons, INDEX.
+## Alcance EXACTO (REVISADO tras plan-audit)
+
+### CREAR (`scripts/backlog_reconcile.py`) - espeja collect_system_health.py
+- **CLI** (espejo `collect_system_health.py:218-248`): `main(argv=None) -> int` via
+  `sys.exit(main())`. Args: `--motor-root` REQUIRED (marker `MANIFEST.distribute`; root
+  malo -> exit 2); `--project-root` opcional (default None; el workspace/destino);
+  `--out` opcional (`_unique_out_dir` inmutable). Docstring: strictly read-only.
+- **Helpers espejo** (copiar el patron, NO importar de collect): `_run` (read-only, nunca
+  raise, timeout, encoding utf-8/replace, dict `{cmd,exit_code,stdout,stderr,ok}`);
+  `_git_head`; `_relativize(text, roots)` con `roots={MOTOR_ROOT, DESTINO_ROOT}`;
+  `_unique_out_dir`.
+- **Resolucion de topologia (NO hardcodear)**: si `--project-root` ausente, leer
+  `<workspace>/.agent/config/motor_destination_link.json` -> `destination_root` -> backlog
+  en `<destination_root>/.agent/collaboration/backlog.md` (prompt l.30-38). Link
+  gitignored/machine-specific -> resolver runtime; ausente -> degradar (warning + exit 3),
+  NO petar.
+- **Parser del backlog** (reutilizar la LOGICA de `check_backlog_contract.py`, sin
+  duplicar sus checks): leer `encoding='utf-8-sig'`; localizar `## Vista rapida`; header
+  `| Prioridad`; saltar separador; filas hasta blank o `## `. Split
+  `cells=[c.strip() for c in row.strip().strip('|').split('|')]`, len==8. Indices:
+  `ticket=cells[1]`, `titulo=cells[2]`, `scope=cells[3]`, `status=cells[4]`. Reconcile set
+  = `status in {pending, deferred, completed-partial}` (prompt l.65; NO solo pending).
+  Enumerar SOLO de la TABLA, nunca de `### ` fichas.
+- **ENRUTADO POR SCOPE (BLOCKER 1)**: por cada ticket, resolver el repo de sus senales por
+  el prefijo de `scope`:
+  - `motor/*` -> `git -C <motor-root>` (el codigo del motor).
+  - `destinos/*` (o destino generico) -> `git -C <workspace/destino>`.
+  - `system/*`, `infra/*` (016v es infra local, no-git) -> repo INDETERMINADO: emitir
+    `repo: "n/a"` + warning, senales de archivo/grep OMITIDAS (no forzar un grep del
+    workspace). El agente juzga con eso.
+  Emitir el `repo` elegido ("motor"|"destino"|"n/a") en cada record como EVIDENCIA (no es
+  veredicto; es de-donde-se-miro).
+- **Senales por ticket** (RAW, sin veredicto), corridas contra el repo enrutado:
+  1. `git log --all --fixed-strings --grep <ID>` (commits que mencionan el ticket; ID
+     COMPLETO con prefijo; `--all` por el detached HEAD del principal -confirmado in-vivo:
+     sin --all la ancestry del detached no ve main-; `-F`/fixed-strings por robustez aunque
+     los IDs no tengan metachars). Emite `[{sha,subject,date}]` (lista vacia si 0).
+  2. `git ls-files <path>` + `git status --short <path>` (presencia/tracking de archivos
+     del scope; emitir AS WRITTEN -leccion 020s-, no adivinar). `[{path,tracked,present,status}]`.
+  3. `git grep -n -i <term>` (terminos del DoD; **`-i` OBLIGATORIO** -leccion 021d-; hits
+     RAW, presencia Y ausencia). `[{term,hits,lines}]`.
+- **Senal de repo (BLOCKER 2)**: `last_run` a nivel de REPO, NO por ticket. Bloque
+  top-level `repos_last_run: {motor: {...}, destino: {...}}` leyendo el
+  `last-run.json` de cada repo (exit_code + tested_sha + stale RAW; stale por comparacion
+  con el HEAD DE ESE repo -no cross-repo-). El agente cruza el `repo` del ticket con este
+  bloque. NO se copia por ticket.
+- **Extraccion de terminos por ticket** (el cell es OPACO -split solo la FILA por `|`-):
+  (a) `cells[1]` verbatim -> `git log --grep`; (b) tokenizar `scope` por `/` y `-`;
+  (c) regex-cosechar filepaths/file:line del `titulo` (`[\w./-]+\.py(?::\d+(?:-\d+)?)?` +
+  backticks) Y de la ficha `### <ID>` si existe. No toda ficha existe -> titulo garantizado;
+  titulo-only sin petar; regex ANCLADA (sin catastrophic backtracking, verificado in-vivo
+  1.8s sobre 30K no-match).
+- **Salida** (espejo `collect_system_health.py:425-448`): `SCHEMA_VERSION =
+  "backlog-reconcile-collector/v0"`; findings dict con `schema`, `generated_at`
+  (`datetime.now(timezone.utc).isoformat()`), `tickets` (records por ticket),
+  `repos_last_run` (bloque per-repo), `automatic_warnings`, `automatic_criticals` (SOLO
+  fallos de RECOLECCION del propio script -backlog ilegible, git ausente-, NUNCA
+  ticket-level), y la nota fija `"Collector output is [RELATO]; the agent produces the
+  verdict."`. Record por ticket (SOLO senales, CERO campos de juicio):
+  `{ticket_id, status, scope_slug, repo, grep_commits:[...], scope_paths:[...],
+    dod_terms:[...]}`. Escribir `raw/` con `.gitignore` (`raw/\n`) para volcados git
+  crudos (PII); findings.json RELATIVIZADO. Exit: 0 ok / 1 self-failure de recoleccion /
+  2 error de args / 3 topologia degradada.
+
+### CONSERVAR / NO TOCAR
+- `check_backlog_contract.py` (gate sintactico; 021i es el recolector semantico, disjunto).
+- `collect_system_health.py` (patron, no se importa ni se modifica).
+- El prompt `backlog_triage.md` y la skill (ya desplegados).
 
 ## Definition of Done (DoD)
-- (a) Fixture STALE (`tested_commit_sha != delivery_head`): `pytest_last["stale"] is
-  True` + `"pytest_safe_last_run_stale"` en warnings.
-- (b) Fixture FRESH (`tested_commit_sha == delivery_head`): `stale is False`, sin warn.
-- (c) BLOCKER: dest_ok + `delivery_authority: repo_motor` (default) + last-run con
-  tested_sha = MOTOR head (distinto del dest head) -> `stale is False` (compara vs
-  motor, no vs dest -> NO false-positive). SHAs de motor y dest DISTINTOS en el fixture.
-- (d) dest_ok + `delivery_authority: repo_destino` + tested_sha != dest head -> stale
-  True (compara vs dest).
-- (e) Edge SIN sha (last-run sin tested_commit_sha) -> `stale is False` (no espuria).
-- (f) Edge delivery_head None/"" -> `stale is False`.
-- (g) NON-GOAL duro: `stale` NUNCA en `criticals`; stale + exit 0 -> 0 criticals.
-- (h) Test unitario que cubre (a)-(g) + mutation-verify (romper la comparacion o el
-  eje delivery_authority -> el test de stale/blocker falla).
-- (i) py_compile + ruff + ASCII limpios (encoding-guard scope: `scripts/**/*.py`).
-- (j) Suite `run_pytest_safe --level all` -> "N passed / 0 failed"; tested_sha==HEAD.
+- (a) `main([--motor-root fake, --project-root fake_ws, --out tmp])` -> 0 en workspace
+  limpio; findings JSON con `schema`, `generated_at`, `tickets`, `repos_last_run`,
+  `automatic_warnings`, `automatic_criticals` + la nota exacta.
+- (b) PARSE: fixture con estados mezclados -> `tickets[]` = exactamente las filas con
+  `status in {pending,deferred,completed-partial}`; excluye blocked/terminal y IDs
+  solo-ficha. `ticket_id` = ID COMPLETO de `cells[1]`.
+- (c) ENRUTADO (BLOCKER 1): fixture con un ticket `motor/*` y otro `destinos/*` -> el
+  `motor/*` corre sus senales contra motor-root (record `repo=="motor"`), el `destinos/*`
+  contra el destino (`repo=="destino"`); un `infra/*`/`system/*` -> `repo=="n/a"` +
+  warning, sin grep forzado. Mutation: enrutar todo al workspace -> el test del
+  motor-ticket falla (senales vacias).
+- (d) SENALES: cada record tiene grep_commits/scope_paths/dod_terms RAW; **NINGUNA clave
+  de veredicto/clasificacion/evidence_label en toda la salida** (assert de AUSENCIA en el
+  JSON completo).
+- (e) last_run PER-REPO (BLOCKER 2): `repos_last_run` tiene bloques motor/destino con
+  exit_code+tested_sha+stale; NINGUN record de ticket lleva `last_run`.
+- (f) GREP `-i`: fixture con termino que difiere solo en mayuscula -> `dod_terms[]` con
+  hits > 0.
+- (g) RELATIVIZACION: ni `C:/Users/fdl` ni `C:\Users\fdl` sobrevive en el JSON escrito.
+- (h) EXIT: root malo -> 2; link no resoluble con run completo -> 3; self-failure de
+  recoleccion (p.ej. backlog ilegible) -> 1.
+- (i) READ-ONLY: tras un run, backlog.md y ambos arboles byte-identicos.
+- (j) TOPOLOGIA: con solo el link (sin --project-root) resuelve destination_root; link
+  ausente -> degrada (exit 3/warning) sin petar.
+- (k) `git log` usa `--all` (barrera del detached HEAD; test que verifica el flag en el cmd).
+- (l) Tests espejo `test_collect_system_health.py` (importlib, monkeypatch `_run` con
+  `_fake_run_factory` por comando incl. routing por cwd, `_fake_workspace(tmp_path)`, NO
+  git real) + mutation-verify (quitar `-i` -> falla f; meter un campo de veredicto -> falla
+  d; enrutar todo al workspace -> falla c; romper relativize -> falla g).
+- (m) py_compile + ruff + ASCII (encoding-guard scope `scripts/**/*.py`).
+- (n) Suite `run_pytest_safe --level all` -> "N passed / 0 failed"; tested_sha==HEAD.
 
-## Riesgos y barreras
-- (BLOCKER plan-audit) El eje es `delivery_authority`, NO la ubicacion del fichero.
-  Barrera: DoD-c/-d con SHAs motor!=dest y ambos valores de delivery_authority.
-- Truthiness (no `is not None`) para que None/"" colapsen a stale False. Barrera: DoD-e/-f.
-- NON-GOAL DURO: stale es WARN, jamas critical. Barrera: DoD-g (assert explicito).
-- NO tocar la clasificacion 021m. NO agrupar con 021k ni 021i. Cierre 021n SOLO.
-- El fixture `_fake_run_factory` devuelve UN solo SHA (`abc1234def`) para todo
-  rev-parse -> los tests del BLOCKER DEBEN inyectar SHAs motor!=dest (monkeypatch de
-  `_git_head` o de la resolucion) o el eje divergente NO se ejercita.
+## Riesgos y barreras (para el plan-audit)
+- (BLOCKER 1) Enrutar senales por scope; motor-scoped al motor. Barrera: DoD-c + mutation.
+- (BLOCKER 2) last_run per-repo, no per-ticket; stale sin cross-repo. Barrera: DoD-e.
+- Detached HEAD -> `git log --all`. Barrera: DoD-k.
+- Frontera "collector, not judge": CERO campos de veredicto. Barrera: DoD-d (ausencia).
+- PII: todo string por `_relativize`; volcados crudos a `raw/` gitignored. Barrera: DoD-g.
+- Extractor: cell opaco (split solo la fila); regex anclada; titulo-only sin petar.
+- exit 1 = SOLO self-failure de recoleccion (nunca ticket-level "critical"). Documentado
+  en el docstring.
+- `_run` con guard `not in (0, None)` (herramienta ausente NO es pass silencioso).
+- NO agrupar con 021k (otra familia). Cierre 021i SOLO.
