@@ -54,14 +54,9 @@ read-only: reporta senales, el agente juzga. Detalle en el prompt (Paso 0).
 
 ## Workflow
 
-El metodo completo esta en `prompts/orchestrator_pipeline_codeonly.md`. En resumen,
-por ticket: (1) verificar premisa EN VIVO; (2) Manager plan + auditar el PLAN
-adversarialmente; (3) Builder persistiendo a disco; (4) correr los gates YO MISMO
-(grep `-i`, ruff, py_compile, encoding, suite leyendo "N passed/failed" NO el exit
-code); (5) Review 2 fresh-context que MUTA para probar barreras; (6) cierre
-commit-directo (PATH del venv para hooks, Co-Authored-By dinamico, push); (7)
-verificar cada claim con evidencia. Al final: auditoria adversarial de la CADENA +
-cierre canonico adaptado (Bloque 3 N/A) + archivar backlog + memoria.
+El metodo (preflight, flujo por ticket, cierre de cadena, riesgos codificados) vive
+INTEGRO en `prompts/orchestrator_pipeline_codeonly.md`. Esta skill no lo redeclara:
+lee ese prompt y ejecutalo. Si algo diverge, prevalece el prompt.
 
 ## Restriccion dura
 
