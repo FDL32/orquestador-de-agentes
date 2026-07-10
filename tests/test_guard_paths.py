@@ -97,7 +97,14 @@ class TestIsProtectedPath:
         os.chdir(self._orig_cwd)
         _clean_workspace()
 
-    def test_outside_repo_blocked(self):
+    def test_outside_repo_blocked(self, monkeypatch):
+        # Aislar de AGENT_PROJECT_ROOT: si apunta a un repo que contiene el
+        # fixture (p.ej. el propio _dev), guard_paths lo aceptaria como extra
+        # root y "outside" ya no quedaria fuera del root efectivo. El test debe
+        # ser robusto a la env del que lo corre (CEM C: deriva de estado global
+        # no aislado). Follow-up WOT: convertir los os.environ.pop de este y
+        # otros ficheros a monkeypatch para no ensuciar la env de la suite.
+        monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
         outside = self.repo_root.parent / "outside.txt"
         blocked, reason = _is_protected_path(str(outside), DEFAULT_ALLOWLIST, {})
         assert blocked is True
