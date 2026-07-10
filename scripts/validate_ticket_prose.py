@@ -559,6 +559,30 @@ def detect_audit_malformed_tp_check(collab_dir: Path) -> list[ProseWarning]:
 # ============================================================================
 
 
+def is_completed_plan(content: str) -> bool:
+    """
+    Detecta si un work_plan.md esta en estado terminal (COMPLETED).
+
+    Before: Requiere el contenido de texto completo de un work_plan.md.
+    During: Busca la seccion `## Metadata` seguida (en cualquier punto) de
+            una linea `- **Estado:** COMPLETED`, sin distinguir mayusculas.
+    After: Retorna True si el plan esta en estado COMPLETED, False en
+           cualquier otro caso (IN_PROGRESS, APPROVED, ausente, etc.).
+
+    Extraida de `validate_ticket_prose` (antes variable local) para que
+    otros consumidores (ej. el clasificador de warnings del preflight
+    code-only) reutilicen el mismo criterio de estado terminal sin
+    duplicar el regex y arriesgar drift.
+    """
+    return bool(
+        re.search(
+            r"##\s*Metadata\s*\n.*?\-\s*\*\*Estado:\*\*\s*COMPLETED",
+            content,
+            re.DOTALL | re.IGNORECASE,
+        )
+    )
+
+
 def validate_ticket_prose(work_plan_path: Path, collab_dir: Path) -> ValidationResult:
     """
     Valida la prosa de un work_plan.md.
@@ -581,13 +605,7 @@ def validate_ticket_prose(work_plan_path: Path, collab_dir: Path) -> ValidationR
         )
 
     content = work_plan_path.read_text(encoding="utf-8")
-    is_completed_plan = bool(
-        re.search(
-            r"##\s*Metadata\s*\n.*?\-\s*\*\*Estado:\*\*\s*COMPLETED",
-            content,
-            re.DOTALL | re.IGNORECASE,
-        )
-    )
+    plan_is_completed = is_completed_plan(content)
 
     all_warnings: list[ProseWarning] = []
 
@@ -606,7 +624,7 @@ def validate_ticket_prose(work_plan_path: Path, collab_dir: Path) -> ValidationR
     all_warnings.extend(detect_ghost_dependency(content))
 
     # Verificacion estructural de AUDIT solo para planes activos.
-    if not is_completed_plan:
+    if not plan_is_completed:
         all_warnings.extend(detect_audit_missing_tp_check(collab_dir))
         all_warnings.extend(detect_audit_malformed_tp_check(collab_dir))
 
