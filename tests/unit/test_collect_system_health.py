@@ -148,8 +148,9 @@ def test_main_full_mode_requires_destino_returns_3(tmp_path, monkeypatch):
 
 
 def test_main_exit_critical_when_suite_red(tmp_path, monkeypatch):
+    # Fixture C: exit_code=1 with NO failed/error ids and NO state_leak -> unexplained
+    # -> must stay critical (fail-safe). This is the case the `!= []` bug would break.
     motor = _fake_motor(tmp_path)
-    # Red suite: last-run exit_code=1
     psafe = motor / ".agent" / "runtime" / "pytest-safe" / "last-run.json"
     psafe.write_text(json.dumps({"exit_code": 1}), encoding="utf-8")
     monkeypatch.setattr(csh, "_run", _fake_run_factory())
@@ -158,6 +159,80 @@ def test_main_exit_critical_when_suite_red(tmp_path, monkeypatch):
     assert rc == 1
     findings = json.loads((out / "findings.json").read_text(encoding="utf-8"))
     assert "pytest_safe_last_run_nonzero" in findings["automatic_criticals"]
+
+
+# ---- WOT-2026-021m: classify nonzero exit by CAUSE (state-leak vs real failure) ----
+
+
+def _run_with_lastrun(tmp_path, monkeypatch, lastrun: dict) -> dict:
+    """Run main() with a synthetic last-run.json; return the findings.json dict."""
+    motor = _fake_motor(tmp_path)
+    psafe = motor / ".agent" / "runtime" / "pytest-safe" / "last-run.json"
+    psafe.write_text(json.dumps(lastrun), encoding="utf-8")
+    monkeypatch.setattr(csh, "_run", _fake_run_factory())
+    out = tmp_path / "out"
+    csh.main(["--motor-root", str(motor), "--mode", "auto", "--out", str(out)])
+    return json.loads((out / "findings.json").read_text(encoding="utf-8"))
+
+
+def test_stateleak_only_is_warn_not_critical(tmp_path, monkeypatch):
+    """Fixture A: exit=1 caused ONLY by state_leak -> WARN, not critical."""
+    findings = _run_with_lastrun(
+        tmp_path,
+        monkeypatch,
+        {
+            "exit_code": 1,
+            "failed_test_ids": [],
+            "error_test_ids": [],
+            "state_leak": ["AUDIT_WOT-2026-021d.md"],
+        },
+    )
+    assert "pytest_safe_last_run_nonzero" not in findings["automatic_criticals"]
+    assert "pytest_safe_last_run_stateleak_only" in findings["automatic_warnings"]
+
+
+def test_real_failure_is_critical(tmp_path, monkeypatch):
+    """Fixture B: exit=1 with failed_test_ids -> critical (real red suite)."""
+    findings = _run_with_lastrun(
+        tmp_path,
+        monkeypatch,
+        {
+            "exit_code": 1,
+            "failed_test_ids": ["tests/x.py::test_y"],
+            "error_test_ids": [],
+        },
+    )
+    assert "pytest_safe_last_run_nonzero" in findings["automatic_criticals"]
+    assert "pytest_safe_last_run_stateleak_only" not in findings["automatic_warnings"]
+
+
+def test_green_suite_no_flag(tmp_path, monkeypatch):
+    """Fixture D: exit=0 -> neither critical nor warn."""
+    findings = _run_with_lastrun(
+        tmp_path, monkeypatch, {"exit_code": 0, "failed_test_ids": []}
+    )
+    assert "pytest_safe_last_run_nonzero" not in findings["automatic_criticals"]
+    assert "pytest_safe_last_run_stateleak_only" not in findings["automatic_warnings"]
+
+
+def test_failure_and_leak_together_is_critical(tmp_path, monkeypatch):
+    """Fixture E: exit=1 with BOTH a real failure AND a state_leak -> critical.
+
+    Guards branch order: a real failure must WIN over the state-leak, so a leak can
+    never mask a genuine red suite (CONCERN-2 of the plan audit).
+    """
+    findings = _run_with_lastrun(
+        tmp_path,
+        monkeypatch,
+        {
+            "exit_code": 1,
+            "failed_test_ids": ["tests/x.py::test_y"],
+            "error_test_ids": [],
+            "state_leak": ["AUDIT_WOT-2026-021d.md"],
+        },
+    )
+    assert "pytest_safe_last_run_nonzero" in findings["automatic_criticals"]
+    assert "pytest_safe_last_run_stateleak_only" not in findings["automatic_warnings"]
 
 
 def test_main_rejects_non_motor_root(tmp_path):

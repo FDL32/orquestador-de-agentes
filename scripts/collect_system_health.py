@@ -126,7 +126,15 @@ def _unique_out_dir(base: Path) -> Path:
 
 
 def _read_pytest_last_run(motor_root: Path) -> dict:
-    """Read the canonical runner's last-run.json exit_code (real exit, not pipe)."""
+    """Read the canonical runner's last-run.json (real exit, not pipe).
+
+    WOT-2026-021m: also surfaces failed_test_ids/error_test_ids/state_leak so the
+    caller can tell a REAL test failure from an exit-1 caused ONLY by the state-leak
+    of gitignored projections (AUDIT_*/STRATEGY_*). The producer (run_pytest_safe.py)
+    writes state_leak ONLY when non-empty, so it is either a non-empty list or ABSENT
+    -- never []. failed/error_test_ids may be absent on started/dry-run records, hence
+    the .get(..., []) defaults.
+    """
     p = motor_root / ".agent" / "runtime" / "pytest-safe" / "last-run.json"
     if not p.exists():
         return {"present": False, "exit_code": None}
@@ -136,6 +144,9 @@ def _read_pytest_last_run(motor_root: Path) -> dict:
             "present": True,
             "exit_code": d.get("exit_code"),
             "finished_at": d.get("finished_at"),
+            "failed_test_ids": d.get("failed_test_ids", []),
+            "error_test_ids": d.get("error_test_ids", []),
+            "state_leak": d.get("state_leak"),
         }
     except (OSError, json.JSONDecodeError) as exc:
         return {"present": False, "exit_code": None, "error": str(exc)}
@@ -308,8 +319,23 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI orchestratio
 
     # ---- Automatic critical detection (no judgment, only flags) ----
     criticals: list[str] = []
+    warnings: list[str] = []
     if pytest_last.get("present") and pytest_last.get("exit_code") not in (0, None):
-        criticals.append("pytest_safe_last_run_nonzero")
+        # WOT-2026-021m: classify a nonzero exit by its CAUSE. Branch order matters:
+        # a real test failure (failed/error ids) wins over a state-leak, and an
+        # unexplained nonzero exit stays critical (fail-safe, never silenced).
+        # Truthiness (never `!= []`): state_leak is a non-empty list or absent/None.
+        if pytest_last.get("failed_test_ids") or pytest_last.get("error_test_ids"):
+            criticals.append("pytest_safe_last_run_nonzero")
+        elif pytest_last.get("state_leak"):
+            # exit-1 caused ONLY by the state-leak of gitignored projections
+            # (AUDIT_*/STRATEGY_* that the suite legitimately mutates) -> WARN, not
+            # a real red suite. The leak is still surfaced, just not a critical.
+            warnings.append("pytest_safe_last_run_stateleak_only")
+        else:
+            # nonzero exit with no failed/error ids and no state_leak -> unexplained;
+            # keep it critical (fail-safe).
+            criticals.append("pytest_safe_last_run_nonzero")
     if pytest_last.get("present") is False:
         criticals.append("pytest_safe_last_run_missing")  # cannot confirm green
     if checks.get("validate_motor", {}).get("exit_code") not in (0, None):
@@ -355,6 +381,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI orchestratio
             "destino_tracked_count": len(dest_tracked),
         },
         "automatic_criticals": criticals,
+        "automatic_warnings": warnings,
         "note": "Collector output is [RELATO]; the agent produces the verdict (Pass B).",
     }
     (out_dir / "findings.json").write_text(
@@ -400,7 +427,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI orchestratio
             fh.write(row)
 
     print(f"[collect] OK -> {out_dir}")
-    print(f"[collect] mode={mode} degraded={degraded} automatic_criticals={criticals}")
+    print(
+        f"[collect] mode={mode} degraded={degraded} "
+        f"automatic_criticals={criticals} automatic_warnings={warnings}"
+    )
     return 1 if criticals else 0
 
 

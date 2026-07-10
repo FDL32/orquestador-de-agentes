@@ -1,42 +1,59 @@
-# Execution Log: WOT-2026-021l
+# Execution Log: WOT-2026-021m
 
 **Estado:** COMPLETED
 
 ## Bitacora
 
 ### 2026-07-10 - Manager - Plan aprobado
-- work_plan.md creado y aprobado (Estado: APPROVED, deliverable_type: code,
-  delivery_authority: repo_motor). Alcance: "live + named docs only" (decision
-  usuario 2026-07-10).
-- STRATEGY_WOT-2026-021l.md + AUDIT_WOT-2026-021l.md (con TP Check) creados.
-- Premisa RE-VERIFICADA in-vivo 2026-07-10: `.goosehints`/`--goose` sin tests que
-  los ejerzan; test_upgrade usa `len(CRITICAL_PATHS)` dinamico; test_cleanup_legacy
-  no asserta la entrada goose; 2 `.pyc` huerfanos untracked.
+- work_plan.md APPROVED (deliverable_type: code, delivery_authority: repo_motor).
+- STRATEGY + AUDIT (TP Check) creados.
+- Premisa CONFIRMADA in-vivo por REPRODUCCION MINIMA (mejora del review 2a pasada):
+  2 fixtures last-run.json. Fixture A (exit=1, failed=[], error=[], state_leak!=[])
+  da critical HOY = el bug; Fixture B (exit=1, failed!=[]) da critical = correcto.
+  Raiz: `_read_pytest_last_run` (l.128-141) NO devuelve failed/error/state_leak ->
+  la deteccion (l.311-312) no puede distinguir A de B.
+- Maiden voyage previo (021e/021j) valido el metodo del pipeline code-only.
 
-### 2026-07-10 - Builder - Implementacion (barrido transversal)
-- `git rm .goosehints` (fichero tracked).
-- `upgrade_agent_system.py`: quitado `".goosehints"` de CRITICAL_PATHS (8 -> 7).
-- `discover_skills.py`: retirada la rama `elif "--goose"` + nota del docstring.
-- `cleanup_legacy.py`: quitado `"test_goose_realworld.py"` de OLD_SCRIPT_NAMES.
-- 2 `.pyc` huerfanos borrados de disco (untracked).
-- `.gitignore`: quitado el ignore `.agent/runtime/goose/` + comentario.
-- `.claude/rules/02` y `03`: reescritas las lineas nombradas -> backend Claude Code
-  y flag `--skill` real (reemplaza el `--stage` obsoleto que ya no existia).
-- PRESERVADO intacto: AGENTS.md, llms-full.txt, RETIRED_TESTS.md, docs/*,
-  MANIFEST.*, CHANGELOG, skills/repo-compare, skills/refactor-manager SKILL.
+### 2026-07-10 - Plan-audit adversarial - CAZO 1 BLOCKER (corregido antes del Builder)
+- BLOCKER-1: el plan mezclaba "default None" con condicion `state_leak != []`; como
+  `None != []` es True en Python, el Fixture C (exit inexplicado) se degradaria a WARN
+  = FAIL-OPEN que viola DoD-c. El productor (run_pytest_safe.py:937-939) nunca escribe
+  state_leak vacio: o lista-no-vacia o AUSENTE. CORREGIDO: usar TRUTHINESS (`if
+  state_leak:`), nunca `!= []`.
+- CONCERN-1: leer failed/error con `.get(...,[])` (ausentes en runs started/dry-run).
+  CORREGIDO en el plan.
+- CONCERN-2: falta caso "failed + leak simultaneos" -> critical (failed gana). ORDEN
+  de ramas fijado explicito (failed/error -> critical ANTES de state_leak -> warn).
+  Anadido Fixture E al DoD.
+- Leccion 021g en accion: auditar el PLAN antes del Builder cazo el fail-open.
+
+### 2026-07-10 - Builder - Implementacion (con plan corregido)
+- `_read_pytest_last_run`: devuelve failed_test_ids/error_test_ids (`.get(...,[])`) +
+  state_leak (`.get(...)`, None/ausente si no hubo leak). Docstring actualizado.
+- Deteccion de criticals: ORDEN de ramas (failed/error -> critical; elif state_leak
+  -> WARN via truthiness; else exit!=0 -> critical fail-safe). NUNCA `!= []`.
+- findings.json: nuevo campo `automatic_warnings`; print final lo muestra; exit del
+  script sin cambio (1 if criticals).
+- Test: 5 casos A/B/C/D/E en test_collect_system_health.py (C reutiliza el existente
+  test_main_exit_critical_when_suite_red = barrera anti-regresion del fail-safe).
 
 ### 2026-07-10 - Gates (corridos por el orquestador)
-- DoD-a: `.goosehints` fuera del repo. DoD-b: `goosehints|--goose` en scripts/ = 0;
-  `discover --json` OK. DoD-c: `goose|claw` en rules 02/03 = 0. DoD-d: 2 .pyc
-  ausentes. DoD-e: py_compile + ruff limpios. DoD-f: suite `--level all`
-  **3629 passed / 0 failed** (187s). DoD-g: historia preservada (grep de la lista
-  PRESERVAR en git status = vacio).
+- py_compile + ruff limpios; ASCII limpio (ambos ficheros).
+- 15 tests de test_collect_system_health verdes.
+- MUTATION-VERIFY: reintroducir el bug (state-leak-only -> critical) hace FALLAR el
+  test de Fixture A; restaurado. La barrera tiene dientes.
+- Suite --level all: **3636 passed / 0 failed** (+4 tests nuevos). PRUEBA EN VIVO: la
+  suite dejo exit_code:1 con state_leak:[AUDIT_WOT-2026-021l.md, STRATEGY_WOT-2026-021l.md]
+  (proyecciones gitignored) y el collect ARREGLADO lo trato como WARN
+  (automatic_warnings=['pytest_safe_last_run_stateleak_only'], automatic_criticals=[]).
+  El bug real, reproducido espontaneamente, ahora se degrada bien.
 
 ### 2026-07-10 - Review 2 fresh-context - APPROVE
-- Sin blockers. Mutation-to-prove del invariante `len(CRITICAL_PATHS)`: loop `[:-1]`
-  (6 copias vs 7 en lista) -> test_backup_* FALLO `assert 6 == 7` -> el conteo se
-  deriva dinamicamente (no hardcode 8), pin con dientes; restaurado. Confirmado
-  0 residuo en codigo vivo; los hits restantes son historia inerte fuera de scope.
+- Sin BLOCKERs. 3 mutation-to-prove independientes: (1) rama else->warn rompe Fixture C
+  (fail-safe con dientes); (2) state-leak->critical rompe Fixture A; (3) orden invertido
+  rompe Fixture E (leak enmascararia fallo real). Sin bug None-vs-[] (0 hits de `!= []`,
+  truthiness pura). Robusto ante claves ausentes. Exit/INDEX intactos. Sin scope creep.
+  Restaurado md5-identico.
 
-### 2026-07-10 - Cierre commit-directo
-- Estado COMPLETED. Commit con ID. Push a origin/main.
+### 2026-07-10 - Cierre commit-directo (021m SOLO, aislado de 021c)
+- Estado COMPLETED. Commit con ID. Re-suite tras commit para tested_sha==HEAD. Push.
