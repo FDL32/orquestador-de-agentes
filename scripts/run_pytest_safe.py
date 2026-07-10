@@ -417,7 +417,13 @@ def select_test_runner(
         to pass to unittest discover -s; _probe overrides the pytest
         probe result (test seam only -- do NOT use in production code).
     During: calls probe_pytest(interpreter) unless _probe is supplied.
-        pytest branch: current command construction (byte-identical behavior).
+        pytest branch: builds the command and injects --durations=25 so the
+            per-run last-run.log always carries pytest's "slowest N durations"
+            table for timing telemetry (WOT-2026-021t; the table is advisory
+            only -- it is emitted before the summary and never matches the
+            ^FAILED/^ERROR parser in stream_pytest). Reliable under --level all
+            (serial); approximate under the xdist unit-subset (durations are
+            aggregated per worker).
         unittest branch: omits xdist_flags (incompatible) and basetemp;
             passes -s <test_dir> to unittest discover.
     After: returns (command, runner) where runner is "pytest" or "unittest".
@@ -427,11 +433,14 @@ def select_test_runner(
     has_pytest = probe_pytest(interpreter) if _probe is None else _probe
 
     if has_pytest:
+        # --durations=25 goes BEFORE *pytest_args so an explicit user
+        # --durations (after `--`) wins via argparse last-wins.
         command = [
             interpreter,
             "-m",
             "pytest",
             *xdist_flags,
+            "--durations=25",
             *pytest_args,
             f"--basetemp={run_dir}",
         ]
@@ -842,7 +851,8 @@ def main() -> int:  # noqa: C901
     # sys.executable for the motor/single-repo case.
     # WOT-2026-014b: runner-detection seam. select_test_runner probes whether
     # the resolved interpreter has pytest; falls back to unittest discover when
-    # it does not. Behavior is byte-identical for interpreters that DO have pytest.
+    # it does not. For interpreters that DO have pytest the command matches the
+    # historic construction plus the --durations=25 telemetry flag (WOT-2026-021t).
     command, _runner = select_test_runner(
         resolve_test_interpreter(),
         pytest_args,

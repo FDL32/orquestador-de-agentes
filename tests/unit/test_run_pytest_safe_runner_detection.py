@@ -171,6 +171,49 @@ def test_select_runner_pytest_when_pytest_present(tmp_path: Path) -> None:
     assert str(run_dir) in " ".join(command)
 
 
+def test_select_runner_pytest_injects_durations_flag(tmp_path: Path) -> None:
+    """WOT-2026-021t: the pytest command carries --durations=25 as a single token.
+
+    The flag makes pytest emit the "slowest N durations" telemetry table into
+    last-run.log. It must be ONE list element (matched by exact membership) so
+    the mutation (removing it) has teeth; two tokens ['--durations','25'] would
+    make this assertion silently pass or fail on the wrong axis.
+    """
+    mod = load_runner_module()
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+
+    # default_discovery mode
+    command_default, _ = mod.select_test_runner(
+        sys.executable,
+        pytest_args=["tests", "-q"],
+        xdist_flags=[],
+        run_dir=run_dir,
+        test_dir="tests",
+        _probe=True,
+    )
+    assert "--durations=25" in command_default, (
+        f"--durations=25 must be a single token in the pytest command; got {command_default!r}"
+    )
+
+    # Same seam with different args (user-style explicit discovery + xdist flags):
+    # the flag is injected by select_test_runner itself, so it is present for ANY
+    # pytest_args this builder receives. (The upstream guarantee that main() routes
+    # explicit_args through this builder rather than DEFAULT_PYTEST_ARGS is covered
+    # by the run_pytest_safe integration tests, not asserted here.)
+    command_explicit, _ = mod.select_test_runner(
+        sys.executable,
+        pytest_args=["tests/unit", "-k", "foo"],
+        xdist_flags=["-n", "8"],
+        run_dir=run_dir,
+        test_dir="tests",
+        _probe=True,
+    )
+    assert "--durations=25" in command_explicit, (
+        f"--durations=25 must survive explicit_args mode; got {command_explicit!r}"
+    )
+
+
 def test_select_runner_pytest_passes_xdist_flags(tmp_path: Path) -> None:
     """pytest branch passes xdist_flags; unittest branch drops them (incompatible)."""
     mod = load_runner_module()
