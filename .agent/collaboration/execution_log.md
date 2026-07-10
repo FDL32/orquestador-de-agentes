@@ -1,59 +1,49 @@
-# Execution Log: WOT-2026-021m
+# Execution Log: WOT-2026-021c
 
 **Estado:** COMPLETED
 
 ## Bitacora
 
 ### 2026-07-10 - Manager - Plan aprobado
-- work_plan.md APPROVED (deliverable_type: code, delivery_authority: repo_motor).
-- STRATEGY + AUDIT (TP Check) creados.
-- Premisa CONFIRMADA in-vivo por REPRODUCCION MINIMA (mejora del review 2a pasada):
-  2 fixtures last-run.json. Fixture A (exit=1, failed=[], error=[], state_leak!=[])
-  da critical HOY = el bug; Fixture B (exit=1, failed!=[]) da critical = correcto.
-  Raiz: `_read_pytest_last_run` (l.128-141) NO devuelve failed/error/state_leak ->
-  la deteccion (l.311-312) no puede distinguir A de B.
-- Maiden voyage previo (021e/021j) valido el metodo del pipeline code-only.
+- work_plan.md APPROVED (code, delivery_authority repo_motor). STRATEGY + AUDIT (TP).
+- Premisa CONFIRMADA in-vivo por REPRODUCCION de 2 fixtures (mejora del review):
+  Fixture 1 (motor stale exit=1, destino verde exit=0) -> _read(motor) da 1 = false-RED
+  del destino; Fixture 2 (destino exit=1 failed) -> critical real. Raiz: l.299 pasa
+  motor_root SIEMPRE, aun con dest_ok (dest_root/dest_ok en scope l.223-224).
+- NIT del review confirmado: el principal detached tiene `?? .kilocode/` untracked
+  (gitignored; residuo de la herramienta kilocode, familia WOT-2026-020q). No afecta a
+  _dev ni a 021c (el guard de topologia no camina .kilocode). Anotado, no tocado (es
+  dominio de 020q).
 
-### 2026-07-10 - Plan-audit adversarial - CAZO 1 BLOCKER (corregido antes del Builder)
-- BLOCKER-1: el plan mezclaba "default None" con condicion `state_leak != []`; como
-  `None != []` es True en Python, el Fixture C (exit inexplicado) se degradaria a WARN
-  = FAIL-OPEN que viola DoD-c. El productor (run_pytest_safe.py:937-939) nunca escribe
-  state_leak vacio: o lista-no-vacia o AUSENTE. CORREGIDO: usar TRUTHINESS (`if
-  state_leak:`), nunca `!= []`.
-- CONCERN-1: leer failed/error con `.get(...,[])` (ausentes en runs started/dry-run).
-  CORREGIDO en el plan.
-- CONCERN-2: falta caso "failed + leak simultaneos" -> critical (failed gana). ORDEN
-  de ramas fijado explicito (failed/error -> critical ANTES de state_leak -> warn).
-  Anadido Fixture E al DoD.
-- Leccion 021g en accion: auditar el PLAN antes del Builder cazo el fail-open.
+### 2026-07-10 - Plan-audit adversarial - PLAN SOLIDO (sin BLOCKER)
+- Riesgo principal (false-green por fallback silencioso) EVITADO por construccion:
+  `_read` recibe 1 root, no reintenta el motor; missing critical se preserva.
+- 2 CONCERN, ya reforzados en el plan ANTES del audit: (4) `source` va en el CALLER
+  (l.299), no dentro de `_read` (no conoce dest_ok); (6) anadir Fixture 4 (dest_ok +
+  destino sin last-run -> missing) + plumbing nuevo (dest/.agent/ + --project-root).
 
-### 2026-07-10 - Builder - Implementacion (con plan corregido)
-- `_read_pytest_last_run`: devuelve failed_test_ids/error_test_ids (`.get(...,[])`) +
-  state_leak (`.get(...)`, None/ausente si no hubo leak). Docstring actualizado.
-- Deteccion de criticals: ORDEN de ramas (failed/error -> critical; elif state_leak
-  -> WARN via truthiness; else exit!=0 -> critical fail-safe). NUNCA `!= []`.
-- findings.json: nuevo campo `automatic_warnings`; print final lo muestra; exit del
-  script sin cambio (1 if criticals).
-- Test: 5 casos A/B/C/D/E en test_collect_system_health.py (C reutiliza el existente
-  test_main_exit_critical_when_suite_red = barrera anti-regresion del fail-safe).
+### 2026-07-10 - Builder - Implementacion
+- l.299-300: `_read_pytest_last_run(dest_root if dest_ok else motor_root)` + 
+  `pytest_last["source"] = "destino" if dest_ok else "motor"`. Modo motor-only intacto.
+- Tests: helper `_fake_dest` + `_run_full` (plumbing dest_ok nuevo) + 4 fixtures
+  (destino-verde+motor-rojo -> no false-RED; destino-failed -> critical; dest sin
+  last-run -> missing; motor-only -> motor).
 
 ### 2026-07-10 - Gates (corridos por el orquestador)
-- py_compile + ruff limpios; ASCII limpio (ambos ficheros).
-- 15 tests de test_collect_system_health verdes.
-- MUTATION-VERIFY: reintroducir el bug (state-leak-only -> critical) hace FALLAR el
-  test de Fixture A; restaurado. La barrera tiene dientes.
-- Suite --level all: **3636 passed / 0 failed** (+4 tests nuevos). PRUEBA EN VIVO: la
-  suite dejo exit_code:1 con state_leak:[AUDIT_WOT-2026-021l.md, STRATEGY_WOT-2026-021l.md]
-  (proyecciones gitignored) y el collect ARREGLADO lo trato como WARN
-  (automatic_warnings=['pytest_safe_last_run_stateleak_only'], automatic_criticals=[]).
-  El bug real, reproducido espontaneamente, ahora se degrada bien.
+- py_compile + ruff + ASCII limpios. 19 tests de test_collect_system_health verdes.
+- MUTATION-VERIFY: revertir a motor_root -> FALLAN Fixture 1 (root equivocado) Y
+  Fixture 4 (false-green del fallback). 2 tests con dientes; restaurado.
+- Suite --level all: **3640 passed / 0 failed** (+4 tests). El state-leak reportado fue
+  de proyecciones gitignored (AUDIT/STRATEGY_WOT-2026-021m) -> arbol tracked limpio; el
+  fix de 021m (ya commiteado) lo degrada a WARN.
+- Verificado YO el punto 7 (no-tautologia): los tests dest_ok corren mode=full con
+  dest_ok real (source=destino, no motor-only por error).
 
 ### 2026-07-10 - Review 2 fresh-context - APPROVE
-- Sin BLOCKERs. 3 mutation-to-prove independientes: (1) rama else->warn rompe Fixture C
-  (fail-safe con dientes); (2) state-leak->critical rompe Fixture A; (3) orden invertido
-  rompe Fixture E (leak enmascararia fallo real). Sin bug None-vs-[] (0 hits de `!= []`,
-  truthiness pura). Robusto ante claves ausentes. Exit/INDEX intactos. Sin scope creep.
-  Restaurado md5-identico.
+- 9 puntos verificados. MUTATION-TO-PROVE del riesgo principal: mutar l.305 al bug
+  (motor_root) -> Fixture 1 Y Fixture 4 fallan (fallback silencioso = false-green
+  bloqueado). Plumbing NO tautologico (verificado empiricamente: mode=full). source en
+  caller. Motor-only sin regresion. Sin scope creep. Restaurado md5-identico.
 
-### 2026-07-10 - Cierre commit-directo (021m SOLO, aislado de 021c)
+### 2026-07-10 - Cierre commit-directo (021c SOLO, aislado de 021k/021i)
 - Estado COMPLETED. Commit con ID. Re-suite tras commit para tested_sha==HEAD. Push.

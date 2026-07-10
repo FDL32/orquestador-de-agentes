@@ -296,7 +296,14 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI orchestratio
         ],
         motor_root,
     )
-    pytest_last = _read_pytest_last_run(motor_root)
+    # WOT-2026-021c: when auditing a repo_destino, read ITS last-run.json (its own
+    # canonical suite), not the motor's -- a stale motor last-run (old exit 1) must not
+    # false-RED a green destino. In motor-only mode (dest_ok False) keep reading the
+    # motor. `source` is set by the caller here (the callee gets a single root and does
+    # not know its type); a destino with no last-run stays a `missing` critical (no
+    # silent fallback to the motor).
+    pytest_last = _read_pytest_last_run(dest_root if dest_ok else motor_root)
+    pytest_last["source"] = "destino" if dest_ok else "motor"
 
     if dest_ok:
         checks["ruff_destino"] = _run(["ruff", "check", "."], dest_root)

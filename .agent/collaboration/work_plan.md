@@ -1,7 +1,7 @@
-# Plan de Trabajo: collect_system_health degrada state-leak-only a WARN (no critical)
+# Plan de Trabajo: collect_system_health lee last-run del destino cuando dest_ok
 
 ## Metadata
-- **ID:** WOT-2026-021m
+- **ID:** WOT-2026-021c
 - **Estado:** COMPLETED
 - **deliverable_type:** code
 - **Creado:** 2026-07-10
@@ -10,72 +10,58 @@
 - **Asignado a:** Builder
 
 ## Objetivo
-`collect_system_health.py` marca `pytest_safe_last_run_nonzero` como automatic_critical
-leyendo el `exit_code` CRUDO de `last-run.json`, sin distinguir un fallo de test REAL
-de un exit-1 que viene SOLO del `state_leak` de proyecciones GITIGNORED
-(`AUDIT_*`/`STRATEGY_*`). Fix: leer tambien `failed_test_ids`/`error_test_ids`/
-`state_leak` y degradar a WARN cuando `exit!=0 AND failed==[] AND error==[] AND
-state_leak!=[]`; mantener el critical cuando hay `failed`/`error` ids.
+`collect_system_health._read_pytest_last_run` (l.128) se invoca SIEMPRE con
+`motor_root` (l.299), aun cuando se audita un `repo_destino` (`dest_ok`). Cuando el
+last-run del MOTOR esta stale (exit 1 de un run viejo) y el del DESTINO esta verde
+(exit 0), el colector reporta un FALSE-RED de pytest-safe del destino. Fix: leer el
+last-run del `dest_root` cuando `dest_ok`, del `motor_root` en modo motor-only.
 
 ## Contexto
-VIVIDO en el cierre de sesion 2026-07-10: last-run.json (run-20260710-011902) tenia
-`exit_code:1`, `failed_test_ids:[]`, `error_test_ids:[]`,
-`state_leak:[AUDIT_WOT-2026-021d.md, STRATEGY_WOT-2026-021d.md]` -> critical FALSO que
-obligo a re-correr la suite (~3min) solo para limpiar el registro. Es el ESPEJO de la
-leccion "el wrapper da exit 0 aunque haya 1 failed": aqui da exit 1 sin ningun failed.
-El exit code del wrapper NO es un veredicto de suite.
+Hermano de WOT-2026-021m (mismo fichero, misma superficie pytest_safe_last_run).
+020g (5e8365d) arreglo encoding + ok-por-exit_code pero NO la raiz (el root
+equivocado). En un cierre code-only del MOTOR (sin destino) el comportamiento actual
+es correcto (lee el motor); el bug SOLO se manifiesta cuando `dest_ok` (auditoria de
+un repo_destino real con su propia suite). La clasificacion por causa de 021m
+(state-leak vs failed/error) sigue aplicando al last-run resultante, sea de quien sea.
 
 ## Configuracion Privada Requerida
 Ninguna.
 
-## Alcance EXACTO (verificado in-vivo 2026-07-10)
+## Alcance EXACTO (verificado in-vivo 2026-07-10 por reproduccion de 2 fixtures)
 
 ### CAMBIAR (`scripts/collect_system_health.py`)
-- `_read_pytest_last_run` (l.128-141): el dict devuelto incluye tambien
-  `failed_test_ids`, `error_test_ids` y `state_leak`, LEIDOS CON `.get(...)` SEGURO
-  (correccion plan-audit): `d.get("failed_test_ids", [])`, `d.get("error_test_ids",
-  [])`, `d.get("state_leak")` (ausente/None si no hubo leak; el productor
-  run_pytest_safe.py:937-939 SOLO escribe state_leak si `leaked` es truthy -> nunca
-  es `[]`). Hoy solo devuelve `exit_code`/`finished_at`.
-- Logica de critical (l.311-312). **ORDEN EXPLICITO DE RAMAS (correccion plan-audit,
-  failed/error GANA a state_leak)** y **TRUTHINESS, NUNCA `!= []`** (BLOCKER plan-audit:
-  `None != []` es True -> degradaria el caso inexplicado). Solo cuando exit not in
-  (0, None):
-  1. `if failed_test_ids or error_test_ids:` -> critical `pytest_safe_last_run_nonzero`
-     (fallo real; GANA aunque haya tambien state_leak).
-  2. `elif state_leak:` (truthy = lista no vacia) -> WARN
-     `automatic_warnings.append("pytest_safe_last_run_stateleak_only")`, NO critical.
-  3. `else:` (exit!=0 sin failed/error y sin state_leak) -> critical
-     `pytest_safe_last_run_nonzero` (exit NO explicado -> FAIL-SAFE, no se silencia).
-- findings.json (l.337-359): anadir `automatic_warnings` (lista) al lado de
-  `automatic_criticals`. El exit del script (l.404) sigue siendo
-  `1 if criticals else 0` -> los WARN NO cambian el exit code.
+- l.299: `pytest_last = _read_pytest_last_run(motor_root)` ->
+  `pytest_last = _read_pytest_last_run(dest_root if dest_ok else motor_root)`.
+  `dest_root`/`dest_ok` ya estan en scope (l.223-224). En modo motor-only (dest_ok
+  False) sigue leyendo el motor (sin regresion).
+- Transparencia del recolector (testigo): anadir el campo `source` = "destino" |
+  "motor" al `pytest_last` EN EL CALLER (l.299), NO dentro de `_read_pytest_last_run`
+  (que recibe un root y no sabe su tipo -> ahi seria incalculable). Ej.:
+  `pytest_last = _read_pytest_last_run(root); pytest_last["source"] = "destino" if
+  dest_ok else "motor"`. NO cambia el veredicto, solo lo audita.
 
 ### CONSERVAR (no tocar)
-- El critical `pytest_safe_last_run_missing` (l.313-314): cannot confirm green.
-- El critical `validate_motor_nonzero` (l.315-316).
-- El resto de checks, la escritura de raw/, INDEX.md, esqueletos md.
-- La convencion de exit 0/1 del script.
+- La clasificacion por causa de 021m (failed/error -> critical; state_leak -> warn;
+  else -> critical fail-safe): opera sobre el last-run resultante, sea motor o destino.
+- El critical `pytest_safe_last_run_missing` (si el last-run del root elegido falta).
+- El resto de checks del destino (ruff_destino, validate_destino), inventarios, etc.
 
 ## Definition of Done (DoD)
-- (a) Fixture A (`exit=1, failed=[], error=[], state_leak=['x']`): collect NO lista
-  `pytest_safe_last_run_nonzero` en `automatic_criticals`; lo lista como WARN.
-- (b) Fixture B (`exit=1, failed_test_ids=['t']`): SIGUE dando el critical.
-- (c) Fixture C (`exit=1, sin failed/error y state_leak AUSENTE`): sigue critical
-  (fail-safe). Este es el caso que el `!= []` habria roto (BLOCKER plan-audit).
-- (d) Fixture D (`exit=0`): ni critical ni warn (sin cambio).
-- (e) Fixture E (`exit=1, failed=['t'], state_leak=['x']` -- fallo real Y leak):
-  critical (failed GANA a state_leak; verifica el ORDEN de ramas, CONCERN-2 plan-audit).
-- (f) Test unitario nuevo que cubre A/B/C/D/E + mutation-verify (revertir la
-  degradacion -> el test de A vuelve a critical y falla).
-- (g) py_compile + `ruff check scripts/collect_system_health.py` verdes; ASCII limpio
-  (VERIFICADO en scope del encoding-guard via glob scripts/**/*.py; plan-audit OK-4).
-- (h) Suite `run_pytest_safe --level all` exit 0, tested_sha==HEAD.
+- (a) Fixture 1 (motor last-run exit=1 stale, destino exit=0, dest_ok): collect NO
+  marca `pytest_safe_last_run_nonzero` (lee el destino verde). `source`=="destino".
+- (b) Fixture 2 (destino exit=1 con failed_test_ids, dest_ok): SIGUE critical (fallo
+  real del destino).
+- (c) Fixture 3 (modo motor-only, motor exit=1): sigue leyendo el motor (sin regresion;
+  `source`=="motor"). El test existente motor-only sigue verde.
+- (c2) Fixture 4 (dest_ok pero destino SIN last-run.json): critical
+  `pytest_safe_last_run_missing` (NO fallback silencioso al motor -> NO false-green).
+- (d) Test unitario que cubre Fixture 1/2/3/4 + mutation-verify (revertir a motor_root ->
+  Fixture 1 falla).
+- (e) py_compile + ruff + ASCII limpios (encoding-guard scope).
+- (f) Suite `run_pytest_safe --level all` exit 0, tested_sha==HEAD.
 
 ## Riesgos y barreras
-- NO silenciar un exit!=0 sin explicacion (sin failed/error Y sin state_leak) ->
-  ese caso sigue critical (fail-safe). Barrera: DoD-(c).
-- La barrera se define ANTES del codigo con 2 fixtures (mejora del review 2a pasada):
-  A -> WARN, B -> critical. Reproduccion minima ya confirmada in-vivo.
-- Aislar 021m: NO agrupar 021c en el mismo commit (regla del review). Cierre limpio
-  de 021m primero.
+- NO romper el modo motor-only (dest_ok False sigue leyendo el motor). Barrera: DoD-c.
+- La clasificacion de 021m NO se toca; solo cambia DE QUE root se lee el last-run.
+- Aislar 021c: NO mezclar con 021k (sandbox hermeticity, otra familia) ni 021i
+  (recolector backlog). Cierre limpio de 021c solo (regla del review 2a pasada).

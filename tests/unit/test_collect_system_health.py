@@ -235,6 +235,104 @@ def test_failure_and_leak_together_is_critical(tmp_path, monkeypatch):
     assert "pytest_safe_last_run_stateleak_only" not in findings["automatic_warnings"]
 
 
+# ---- WOT-2026-021c: read the DESTINO's last-run when dest_ok (not the motor's) ----
+
+
+def _fake_dest(tmp_path, lastrun: dict | None):
+    """A repo_destino with a .agent/ workspace and, optionally, its own last-run.json."""
+    dest = tmp_path / "dest"
+    (dest / ".agent").mkdir(parents=True)
+    if lastrun is not None:
+        psafe = dest / ".agent" / "runtime" / "pytest-safe"
+        psafe.mkdir(parents=True)
+        (psafe / "last-run.json").write_text(json.dumps(lastrun), encoding="utf-8")
+    return dest
+
+
+def _run_full(tmp_path, monkeypatch, motor_lastrun, dest_lastrun):
+    """Run main() in full mode (motor + destino); return (rc, findings)."""
+    motor = _fake_motor(tmp_path)
+    (motor / ".agent" / "runtime" / "pytest-safe" / "last-run.json").write_text(
+        json.dumps(motor_lastrun), encoding="utf-8"
+    )
+    dest = _fake_dest(tmp_path, dest_lastrun)
+    monkeypatch.setattr(csh, "_run", _fake_run_factory())
+    out = tmp_path / "out"
+    rc = csh.main(
+        [
+            "--motor-root",
+            str(motor),
+            "--project-root",
+            str(dest),
+            "--mode",
+            "full",
+            "--out",
+            str(out),
+        ]
+    )
+    findings = json.loads((out / "findings.json").read_text(encoding="utf-8"))
+    return rc, findings
+
+
+def test_dest_green_motor_stale_is_not_false_red(tmp_path, monkeypatch):
+    """Fixture 1: motor last-run stale (exit 1), destino green (exit 0).
+
+    The collector must read the DESTINO's last-run -> no false-RED of the destino.
+    """
+    _rc, findings = _run_full(
+        tmp_path,
+        monkeypatch,
+        motor_lastrun={"exit_code": 1},
+        dest_lastrun={"exit_code": 0},
+    )
+    assert "pytest_safe_last_run_nonzero" not in findings["automatic_criticals"]
+    assert findings["pytest_safe_last_run"]["source"] == "destino"
+    assert findings["pytest_safe_last_run"]["exit_code"] == 0
+
+
+def test_dest_real_failure_is_critical(tmp_path, monkeypatch):
+    """Fixture 2: destino exit=1 with failed_test_ids -> real red suite -> critical."""
+    _rc, findings = _run_full(
+        tmp_path,
+        monkeypatch,
+        motor_lastrun={"exit_code": 0},
+        dest_lastrun={"exit_code": 1, "failed_test_ids": ["tests/x.py::test_y"]},
+    )
+    assert "pytest_safe_last_run_nonzero" in findings["automatic_criticals"]
+    assert findings["pytest_safe_last_run"]["source"] == "destino"
+
+
+def test_dest_missing_lastrun_is_missing_critical_not_motor_fallback(
+    tmp_path, monkeypatch
+):
+    """Fixture 4: dest_ok but destino has NO last-run.json.
+
+    Must emit pytest_safe_last_run_missing (cannot confirm green) and NOT silently
+    fall back to the motor's last-run (that would be a false-green). Guards the
+    principal risk of the plan audit.
+    """
+    _rc, findings = _run_full(
+        tmp_path, monkeypatch, motor_lastrun={"exit_code": 0}, dest_lastrun=None
+    )
+    assert "pytest_safe_last_run_missing" in findings["automatic_criticals"]
+    assert findings["pytest_safe_last_run"]["present"] is False
+    assert findings["pytest_safe_last_run"]["source"] == "destino"
+
+
+def test_motor_only_still_reads_motor(tmp_path, monkeypatch):
+    """Fixture 3: motor-only mode (no destino) keeps reading the motor's last-run."""
+    motor = _fake_motor(tmp_path)
+    (motor / ".agent" / "runtime" / "pytest-safe" / "last-run.json").write_text(
+        json.dumps({"exit_code": 1}), encoding="utf-8"
+    )
+    monkeypatch.setattr(csh, "_run", _fake_run_factory())
+    out = tmp_path / "out"
+    csh.main(["--motor-root", str(motor), "--mode", "auto", "--out", str(out)])
+    findings = json.loads((out / "findings.json").read_text(encoding="utf-8"))
+    assert findings["pytest_safe_last_run"]["source"] == "motor"
+    assert "pytest_safe_last_run_nonzero" in findings["automatic_criticals"]
+
+
 def test_main_rejects_non_motor_root(tmp_path):
     notmotor = tmp_path / "x"
     notmotor.mkdir()
