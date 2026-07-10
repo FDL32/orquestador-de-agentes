@@ -8,6 +8,7 @@
 .tmp/
 tmp_pytest_*/
 __pycache__/
+.kilocode/
 **/__pycache__/
 .runtime/test_runtime/
 .runtime/probe_dirs/
