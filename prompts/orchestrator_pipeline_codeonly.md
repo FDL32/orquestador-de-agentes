@@ -57,10 +57,12 @@ Verifica y reporta:
 - SHAs de los 3 repos (`_dev`, principal, workspace) + limpieza del arbol `_dev`.
 - `--validate --json --force` = 0 errores (warnings bus_drift NORMALES).
 - Guard de topologia (`check_worktree_topology.py`): worktree `_dev`/main correcta.
-- **BARRERA "0 consumidores runtime"** (clave para retiradas de codigo deprecated):
-  `git grep -i` del `--retire-token` excluyendo el propio fichero -> vacio = 0
-  consumidores = seguro retirar. Interpretar por la SALIDA (vacia=OK), no por el
-  exit code (que difiere entre shells con pipe).
+- **BARRERA "0 consumidores runtime"** (SOLO para tickets de RETIRADA de codigo
+  deprecated; `--retire-token` es OPCIONAL, se omite en fixes/tests): `git grep -i`
+  del `--retire-token` excluyendo el propio fichero -> vacio = 0 consumidores =
+  seguro retirar. Interpretar por la SALIDA (vacia=OK), no por el exit code (que
+  difiere entre shells con pipe). Para un ticket de FIX o de TEST (no retirada), el
+  preflight se corre SIN `--retire-token`: valida SHAs/topologia/validate y basta.
 
 Si algun SHA no coincide con lo esperado (otra sesion avanzo el motor), RECONCILIAR
 y re-verificar las premisas ANTES de seguir. El recolector NO decide: surfacea las
@@ -72,9 +74,20 @@ senales; el agente decide continuar o parar.
 
 ### 1. Verificar la premisa EN VIVO antes de gastar Builder
 Leccion 020s/020j (premisas refutadas): la ficha describe una parte, el sistema real
-puede ser mayor. `git grep` del token a retirar por TODO el scope (scripts/
-agent_system/ bus/ prompts/ skills/ .agent/ .claude/) excluyendo historia
-(CHANGELOG/DEC). Confirmar el alcance REAL antes de planificar.
+puede ser mayor O YA PUEDE ESTAR HECHO. `git grep` del token/simbolo por TODO el
+scope (scripts/ agent_system/ bus/ prompts/ skills/ .agent/ .claude/) excluyendo
+historia (CHANGELOG/DEC), + `git log --grep <ID>` y busqueda de commits/tests que ya
+satisfagan el DoD. Confirmar el alcance REAL antes de planificar.
+
+**Salidas validas del PASO 1** (no solo "seguir al PASO 2"):
+- **Premisa CONFIRMADA** -> PASO 2 (planificar el trabajo real).
+- **Premisa REFUTADA-por-ampliacion** (el scope real es mayor) -> reencuadrar el
+  ticket, actualizar el plan, PASO 2 con el alcance corregido.
+- **Premisa REFUTADA-por-ya-hecho** (otro commit/sesion ya cerro el DoD; verificar
+  con mutation-to-prove que el fix/test tiene dientes) -> NO gastar Builder;
+  reconciliar el ticket como LIKELY_DONE y archivarlo en el WORKSPACE con evidencia
+  (commit/test/mutation). Esto es un EXITO del pipeline, no un fallo: el maiden
+  voyage de 2026-07-10 cazo 021e+021j ya-hechos aqui y evito trabajo redundante.
 
 ### 2. Manager: crear los artefactos de plan + auditar el PLAN adversarialmente
 - work_plan.md APPROVED + STRATEGY_<ID>.md + AUDIT_<ID>.md (con TP Check).
