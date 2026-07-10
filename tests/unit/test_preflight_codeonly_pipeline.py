@@ -102,6 +102,25 @@ def test_tp_fatal_is_always_actionable():
     assert not any("TP-FATAL-01" in w for w in result["accepted_advisories"])
 
 
+def test_tp_fatal_actionable_even_when_plan_is_terminal():
+    # ISOLATES the `code == "TP-FATAL-01"` special-case: with a TERMINAL work_plan,
+    # a plain TP-PROSE would be accepted, so if the FATAL special-case were removed
+    # TP-FATAL-01 would wrongly fall into accepted via the terminal branch. This
+    # fixture kills that mutation (the chain meta-audit caught that the
+    # work_plan=None fixture alone did NOT -- FATAL fell to actionable via the
+    # non-terminal `else`, masking the special-case removal).
+    warnings = {
+        "ticket_prose": [
+            "[TP-FATAL-01] work-plan-not-found: asegurate de que work_plan.md existe"
+        ]
+    }
+    result = pcp.classify_warnings(
+        warnings, code_only=True, work_plan_content=_WP_COMPLETED
+    )
+    assert any("TP-FATAL-01" in w for w in result["actionable_warnings"])
+    assert not any("TP-FATAL-01" in w for w in result["accepted_advisories"])
+
+
 # --------------------------------------------------------------------------- #
 # Fixture 4 (synthetic N2): code_only False (destination with a broken bus) ->
 # bus_drift/invariants are actionable. In THIS preflight is_motor_code_only is
