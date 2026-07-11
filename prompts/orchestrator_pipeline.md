@@ -352,6 +352,17 @@ STOP conditions:
 - Si el backlog mezcla IDs canonicos y aliases no canonicos como candidatos
   `pending`, normalizar primero el backlog o bloquear el pipeline.
 
+## 0.e Scratch de sesion
+
+Inicializa el scratch de sesion del destino:
+
+```powershell
+python <MOTOR_ROOT>/scripts/init_session_scratch.py --project-root . init
+```
+
+Todo handoff/arranque especifico de sesion va a `.agent/runtime/session/` del
+destino (`DESTINO_ROOT`), no a `C:\tmp`.
+
 ## 1. Capacidades requeridas
 
 Este prompt esta disenado para un agente con subagentes reales via `task tool`.

@@ -70,6 +70,19 @@ senales; el agente decide continuar o parar.
 
 ---
 
+## PASO 0.5: Inicializar scratch de sesion
+
+Tras el preflight, inicializa el scratch de sesion:
+
+```
+python <MOTOR_ROOT>/scripts/init_session_scratch.py --project-root <_dev> init
+```
+
+Todo handoff/arranque especifico de sesion va a `.agent/runtime/session/` del
+destino-rol, no a `C:\tmp`.
+
+---
+
 ## FLUJO POR TICKET (el orden importa; cada paso con su barrera)
 
 ### 1. Verificar la premisa EN VIVO antes de gastar Builder

@@ -91,12 +91,14 @@ ORQUESTADOR del pipeline. Contrato completo: `prompts/orchestrator_pipeline.md`
 
 Paso 0 (antes de tocar nada):
 1. Lee el handoff durable que INDIQUE el humano. Si no se indica, busca
-   candidatos `C:\tmp\HANDOFF_*.md` relacionados con el motor/orquestador; si
-   hay mas de uno plausible, LISTA los candidatos y pide seleccion. NO
-   infieras por fecha solamente (`C:\tmp` puede contener handoffs de otros
-   proyectos/sesiones -> riesgo de arrancar con contexto equivocado). Lee
-   tambien la memoria privada. Los SHA que citen estan DESFASADOS por
-   definicion: manda el PREFLIGHT, no el handoff.
+   PRIMERO candidatos en `.agent/runtime/session/` del destino
+   (WOT-2026-022c/022d, `scripts/init_session_scratch.py`); si no hay
+   candidatos alli, cae como FALLBACK a `C:\tmp\HANDOFF_*.md` relacionados
+   con el motor/orquestador; si hay mas de uno plausible, LISTA los
+   candidatos y pide seleccion. NO infieras por fecha solamente (`C:\tmp`
+   puede contener handoffs de otros proyectos/sesiones -> riesgo de arrancar
+   con contexto equivocado). Lee tambien la memoria privada. Los SHA que
+   citen estan DESFASADOS por definicion: manda el PREFLIGHT, no el handoff.
 2. PREFLIGHT (topologia worktree-dev, WOT-2026-019m): arranca con cwd=`orquestador_de_agentes_dev`
    (la worktree que lleva `main`, donde se evoluciona el motor; usa su
    `.venv\Scripts\python.exe`). Verifica que esa worktree existe y lleva `main`

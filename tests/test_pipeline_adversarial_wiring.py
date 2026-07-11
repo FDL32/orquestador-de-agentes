@@ -23,6 +23,7 @@ import pytest
 PROMPTS = Path(__file__).resolve().parents[1] / "prompts"
 CANONICAL = PROMPTS / "orchestrator_pipeline.md"
 CODEONLY = PROMPTS / "orchestrator_pipeline_codeonly.md"
+BOOTSTRAP = PROMPTS / "orchestrator_session_bootstrap.md"
 
 
 def _read(p: Path) -> str:
@@ -132,4 +133,63 @@ def test_codeonly_ref_survives_removal_of_canonical(token: str, tmp_path: Path) 
     assert token in codeonly_text, (
         f"code-only pipeline must independently reference {token}; the canonical "
         f"pipeline's refs must not be what makes this pass"
+    )
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-022d: wire init_session_scratch.py (022c) into both pipelines and
+# make the bootstrap read from the session scratch before falling back to
+# C:\tmp. Before 022d neither pipeline referenced the script at all (0 refs).
+# ---------------------------------------------------------------------------
+
+
+def test_codeonly_references_init_session_scratch() -> None:
+    """The code-only pipeline must invoke init_session_scratch.py (022d wiring).
+
+    LOAD-BEARING: before 022d, orchestrator_pipeline_codeonly.md had 0 refs to
+    init_session_scratch.py (022c left the script inert). This is what 022d
+    delivers on the codeonly side.
+    """
+    assert "init_session_scratch" in _read(CODEONLY), (
+        "orchestrator_pipeline_codeonly.md must reference "
+        "scripts/init_session_scratch.py to initialize the session scratch dir"
+    )
+
+
+def test_canonical_references_init_session_scratch() -> None:
+    """The canonical pipeline must invoke init_session_scratch.py (022d wiring).
+
+    LOAD-BEARING: before 022d, orchestrator_pipeline.md had 0 refs to
+    init_session_scratch.py. This is what 022d delivers on the canonical side.
+    """
+    assert "init_session_scratch" in _read(CANONICAL), (
+        "orchestrator_pipeline.md must reference scripts/init_session_scratch.py "
+        "to initialize the session scratch dir"
+    )
+
+
+def test_bootstrap_reads_session_before_tmp() -> None:
+    """The session bootstrap must read the session scratch BEFORE falling back
+    to C:\\tmp (022d wiring, part b of the seam).
+
+    LOAD-BEARING: before 022d, Paso 0 punto 1 of orchestrator_session_bootstrap.md
+    searched ONLY C:\\tmp\\HANDOFF_*.md. The fallback to C:\\tmp MUST remain
+    present and intact (022c/022d do not break pre-existing handoffs); the new
+    session/ reference must appear BEFORE it (by text position) so a reader
+    (and an agent following the prompt) tries session/ first.
+    """
+    text = _read(BOOTSTRAP)
+    assert ".agent/runtime/session/" in text, (
+        "orchestrator_session_bootstrap.md must reference .agent/runtime/session/ "
+        "as the primary handoff source (022d wiring)"
+    )
+    assert "C:\\tmp" in text, (
+        "orchestrator_session_bootstrap.md must still reference C:\\tmp as the "
+        "fallback handoff source (022c/022d must not break pre-existing handoffs)"
+    )
+    session_idx = text.find(".agent/runtime/session/")
+    tmp_idx = text.find("C:\\tmp")
+    assert session_idx < tmp_idx, (
+        "the .agent/runtime/session/ reference must appear BEFORE the C:\\tmp "
+        "fallback reference in Paso 0 (session-first, tmp as fallback)"
     )
