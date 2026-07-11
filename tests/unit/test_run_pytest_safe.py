@@ -1039,3 +1039,230 @@ class TestBasetempOutsideRepo:
         assert not run_dir.is_relative_to(PROJECT_ROOT), (
             f"basetemp {run_dir} must not be under the repo motor {PROJECT_ROOT}"
         )
+
+
+# =============================================================================
+# WOT-2026-021w: run-history telemetry (parse_run_metrics + append_run_history)
+# =============================================================================
+
+_REAL_SUMMARY_LOG = """\
+============================= slowest 25 durations =============================
+7.58s teardown tests/unit/test_work_plan_schema.py::test_deliverable_type_extra
+2.27s call     tests/test_check_publication_gate.py::test_dirty_sibling_blocks
+0.03s setup    tests/unit/test_foo.py::test_bar
+==================== 3757 passed, 47 skipped in 219.73s (0:03:39) ==============
+"""
+
+
+class TestParseRunMetrics:
+    """Pure-function parser: counts + duration + top-slowest from log text."""
+
+    def test_parses_passed_skipped_duration(self) -> None:
+        mod = load_runner_module()
+        m = mod.parse_run_metrics(_REAL_SUMMARY_LOG)
+        assert m["passed"] == 3757
+        assert m["skipped"] == 47
+        assert m["failed_count"] is None  # no "failed" token in this summary
+        assert m["duration_s"] == 219.73
+
+    def test_parses_top_slowest_table(self) -> None:
+        mod = load_runner_module()
+        m = mod.parse_run_metrics(_REAL_SUMMARY_LOG)
+        assert len(m["top_slowest"]) == 3
+        first = m["top_slowest"][0]
+        assert first["seconds"] == 7.58
+        assert first["phase"] == "teardown"
+        assert first["nodeid"].endswith("::test_deliverable_type_extra")
+
+    def test_parses_failed_and_errors(self) -> None:
+        mod = load_runner_module()
+        m = mod.parse_run_metrics("==== 1 failed, 2 passed, 3 errors in 4.20s ====")
+        assert m["failed_count"] == 1
+        assert m["passed"] == 2
+        assert m["errors"] == 3
+        assert m["duration_s"] == 4.20
+
+    def test_empty_log_returns_all_none(self) -> None:
+        mod = load_runner_module()
+        m = mod.parse_run_metrics("")
+        assert m["passed"] is None
+        assert m["skipped"] is None
+        assert m["failed_count"] is None
+        assert m["duration_s"] is None
+        assert m["top_slowest"] == []
+
+    def test_malformed_log_does_not_raise(self) -> None:
+        mod = load_runner_module()
+        # garbage without a summary line or a durations table -> all defaults
+        m = mod.parse_run_metrics("random noise\nno summary here\n123 not-a-count\n")
+        assert m["passed"] is None
+        assert m["top_slowest"] == []
+
+    def test_durations_table_without_summary_line(self) -> None:
+        """A partial log (aborted before the summary) still yields the table."""
+        mod = load_runner_module()
+        log = (
+            "===== slowest 3 durations =====\n"
+            "1.11s call tests/x.py::test_a\n"
+            "0.50s setup tests/x.py::test_b\n"
+        )
+        m = mod.parse_run_metrics(log)
+        assert m["passed"] is None
+        assert len(m["top_slowest"]) == 2
+
+    def test_parametrized_nodeid_with_space_is_not_truncated(self) -> None:
+        """A parametrized nodeid containing a space must be captured whole, not
+        truncated at the first space (regression pin for the \\S.* nodeid group)."""
+        mod = load_runner_module()
+        log = (
+            "===== slowest 1 durations =====\n"
+            "2.00s call tests/x.py::test_a[param with space]\n"
+        )
+        m = mod.parse_run_metrics(log)
+        assert len(m["top_slowest"]) == 1
+        assert m["top_slowest"][0]["nodeid"] == "tests/x.py::test_a[param with space]"
+
+
+class TestAppendRunHistory:
+    """append_run_history: append-only jsonl, tail-cap, fail-open."""
+
+    def _wire_history(self, mod, tmp_path: Path, monkeypatch) -> Path:
+        hist = tmp_path / ".agent" / "runtime" / "pytest-safe" / "run_history.jsonl"
+        monkeypatch.setattr(mod, "RUN_HISTORY_JSONL", hist)
+        return hist
+
+    def test_appends_one_json_line(self, tmp_path: Path, monkeypatch) -> None:
+        import json as _json
+
+        mod = load_runner_module()
+        hist = self._wire_history(mod, tmp_path, monkeypatch)
+        summary = {
+            "finished_at": "2026-07-11T03:00:00+00:00",
+            "level": "all",
+            "status": "finished",
+            "exit_code": 0,
+            "passed": 3757,
+            "skipped": 47,
+            "duration_s": 219.73,
+            "top_slowest": [{"seconds": 7.58, "phase": "teardown", "nodeid": "x::y"}],
+            "tested_commit_sha": "abc123",
+        }
+        mod.append_run_history(summary)
+        lines = [ln for ln in hist.read_text(encoding="utf-8").splitlines() if ln]
+        assert len(lines) == 1
+        rec = _json.loads(lines[0])
+        assert rec["passed"] == 3757
+        assert rec["tested_commit_sha"] == "abc123"
+        assert rec["level"] == "all"
+
+    def test_appends_are_cumulative(self, tmp_path: Path, monkeypatch) -> None:
+        mod = load_runner_module()
+        hist = self._wire_history(mod, tmp_path, monkeypatch)
+        for i in range(3):
+            mod.append_run_history({"exit_code": i})
+        lines = [ln for ln in hist.read_text(encoding="utf-8").splitlines() if ln]
+        assert len(lines) == 3
+
+    def test_tail_cap_bounds_growth(self, tmp_path: Path, monkeypatch) -> None:
+        mod = load_runner_module()
+        hist = self._wire_history(mod, tmp_path, monkeypatch)
+        monkeypatch.setattr(mod, "RUN_HISTORY_MAX", 5)
+        for i in range(12):
+            mod.append_run_history({"exit_code": i})
+        import json as _json
+
+        lines = [ln for ln in hist.read_text(encoding="utf-8").splitlines() if ln]
+        assert len(lines) == 5, "history must be tail-capped to RUN_HISTORY_MAX"
+        # the retained records must be the MOST RECENT (7..11), not the oldest
+        exit_codes = [_json.loads(ln)["exit_code"] for ln in lines]
+        assert exit_codes == [7, 8, 9, 10, 11]
+
+    def test_fail_open_never_raises(self, tmp_path: Path, monkeypatch) -> None:
+        """A tracker failure must be swallowed, never propagated to the run."""
+        mod = load_runner_module()
+
+        # Point RUN_HISTORY_JSONL at a path whose parent cannot be created
+        # (a file used as a directory) to force an OSError inside the writer.
+        bad_parent = tmp_path / "afile"
+        bad_parent.write_text("x", encoding="utf-8")
+        bad_path = bad_parent / "sub" / "run_history.jsonl"
+        monkeypatch.setattr(mod, "RUN_HISTORY_JSONL", bad_path)
+
+        # Must return None without raising even though the write is impossible.
+        assert mod.append_run_history({"exit_code": 0}) is None
+
+
+class TestRunHistoryInSummary:
+    """Integration: main() enriches last-run.json with metrics AND writes a
+    run_history line, using the _stub_main harness."""
+
+    def _stub_main_with_log(
+        self, mod, tmp_path: Path, monkeypatch, log_text: str
+    ) -> tuple:
+        """Wire a tmp_path env; stub stream_pytest to WRITE the log then return
+        (0, [], []) so main()'s parse-enrich path reads real metrics."""
+        import json as _json
+
+        monkeypatch.setattr(mod, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(mod, "_PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(mod, "_PROJECT_ROOT_BOOTSTRAP", tmp_path)
+        base = tmp_path / ".agent" / "runtime" / "pytest-safe"
+        base.mkdir(parents=True, exist_ok=True)
+        last_run_json = base / "last-run.json"
+        last_run_log = base / "last-run.log"
+        history = base / "run_history.jsonl"
+        monkeypatch.setattr(mod, "LAST_RUN_JSON", last_run_json)
+        monkeypatch.setattr(mod, "LAST_RUN_LOG", last_run_log)
+        monkeypatch.setattr(mod, "RUN_HISTORY_JSONL", history)
+
+        def _fake_stream(cmd):
+            last_run_log.write_text(log_text, encoding="utf-8")
+            return (0, [], [])
+
+        monkeypatch.setattr(mod, "stream_pytest", _fake_stream)
+        monkeypatch.setattr(mod, "_delivery_head_sha", lambda: "deadbeef")
+        lock_obj = {"pid": 0, "started_at": "2026-01-01T00:00:00+00:00", "cwd": "x"}
+        monkeypatch.setattr(mod, "acquire_lock", lambda force_unlock=False: lock_obj)
+        monkeypatch.setattr(mod, "release_lock", lambda: None)
+        monkeypatch.setattr(
+            mod, "cleanup_known_temp_dirs", lambda: {"removed": [], "failed": []}
+        )
+        monkeypatch.setattr(mod, "check_canonical_state_leak", lambda snap: [])
+        monkeypatch.setattr(mod, "snapshot_canonical_state", lambda: {})
+        monkeypatch.setattr(
+            mod,
+            "select_test_runner",
+            lambda interp, args, xdist, run_dir, test_dir: (["echo"], "pytest"),
+        )
+        monkeypatch.setattr(mod, "resolve_test_interpreter", lambda: sys.executable)
+        monkeypatch.setattr(sys, "argv", ["run_pytest_safe.py", "--level", "all"])
+
+        mod.main()
+        summary = _json.loads(last_run_json.read_text(encoding="utf-8"))
+        hist_lines = [
+            ln for ln in history.read_text(encoding="utf-8").splitlines() if ln
+        ]
+        return summary, hist_lines
+
+    def test_metrics_land_in_last_run_json(self, tmp_path: Path, monkeypatch) -> None:
+        mod = load_runner_module()
+        summary, _ = self._stub_main_with_log(
+            mod, tmp_path, monkeypatch, _REAL_SUMMARY_LOG
+        )
+        assert summary["passed"] == 3757
+        assert summary["skipped"] == 47
+        assert summary["duration_s"] == 219.73
+        assert len(summary["top_slowest"]) == 3
+
+    def test_history_line_written_on_run(self, tmp_path: Path, monkeypatch) -> None:
+        import json as _json
+
+        mod = load_runner_module()
+        _, hist_lines = self._stub_main_with_log(
+            mod, tmp_path, monkeypatch, _REAL_SUMMARY_LOG
+        )
+        assert len(hist_lines) == 1
+        rec = _json.loads(hist_lines[0])
+        assert rec["passed"] == 3757
+        assert rec["tested_commit_sha"] == "deadbeef"
+        assert rec["level"] == "all"

@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -72,6 +73,17 @@ RUNTIME_DIR = _LazyPath(lambda: AGENT_DIR.resolve() / "runtime" / "pytest-safe")
 LOCK_FILE = _LazyPath(lambda: RUNTIME_DIR.resolve() / "pytest.lock")
 LAST_RUN_LOG = _LazyPath(lambda: RUNTIME_DIR.resolve() / "last-run.log")
 LAST_RUN_JSON = _LazyPath(lambda: RUNTIME_DIR.resolve() / "last-run.json")
+# WOT-2026-021w: append-only run-history (one JSON line per run). Lives under the
+# already-gitignored RUNTIME_DIR (.gitignore .agent/runtime/pytest-safe/), so it
+# NEVER enters git (defense-in-depth). The record schema itself is deliberately
+# PII-scrubbed: append_run_history whitelists only counts/duration/sha/nodeids
+# and OMITS lock (pid/cwd), run_dir, command and pytest_args -- so even outside
+# git the file carries no pid/cwd/absolute paths, only relative test nodeids.
+# Tail-capped to the last RUN_HISTORY_MAX lines to bound growth. This is the
+# recolector (evidence) that WOT-2026-021x's optimizer reads; the writer is
+# fail-open (a tracker failure never aborts a pytest run).
+RUN_HISTORY_JSONL = _LazyPath(lambda: RUNTIME_DIR.resolve() / "run_history.jsonl")
+RUN_HISTORY_MAX = 500
 
 DEFAULT_PYTEST_ARGS = [
     "tests",
@@ -532,6 +544,142 @@ def stream_pytest(command: list[str]) -> tuple[int, list[str], list[str]]:  # no
     return returncode, failed_ids, error_ids
 
 
+_COUNT_RE = re.compile(r"(\d+)\s+(passed|failed|skipped|errors?)\b")
+_DURATION_RE = re.compile(r"\bin\s+([\d.]+)s\b")
+# nodeid captured to end-of-line (not \S+) so parametrized ids with spaces
+# (e.g. "test_a[param with space]") are not truncated in top_slowest.
+_SLOWEST_ROW_RE = re.compile(r"^([\d.]+)s\s+(setup|call|teardown)\s+(\S.*)$")
+
+
+def _parse_pytest_summary_line(log_text: str) -> dict:
+    """Extract counts + total duration from the pytest summary line.
+
+    e.g. "3757 passed, 47 skipped in 219.73s (0:03:39)" or
+    "1 failed, 2 passed, 3 errors in 4.20s". Scans each count token so field
+    order does not matter; keeps the LAST matching summary line. Absent line ->
+    all-None (never raises).
+    """
+    result: dict = {
+        "passed": None,
+        "skipped": None,
+        "failed_count": None,
+        "errors": None,
+        "duration_s": None,
+    }
+    summary_line = None
+    for line in log_text.splitlines():
+        stripped = line.strip()
+        if " in " in stripped and _COUNT_RE.search(stripped):
+            summary_line = stripped
+    if not summary_line:
+        return result
+    for value, label in _COUNT_RE.findall(summary_line):
+        n = int(value)
+        if label == "passed":
+            result["passed"] = n
+        elif label == "skipped":
+            result["skipped"] = n
+        elif label == "failed":
+            result["failed_count"] = n
+        elif label.startswith("error"):
+            result["errors"] = n
+    dm = _DURATION_RE.search(summary_line)
+    if dm:
+        result["duration_s"] = float(dm.group(1))
+    return result
+
+
+def _parse_durations_table(log_text: str) -> list[dict]:
+    """Extract the "slowest N durations" table rows (from --durations=25, 021t).
+
+    Rows look like "7.58s teardown tests/unit/test_x.py::test_y" under the
+    header "===== slowest N durations =====". Absent table -> [] (never raises).
+    """
+    rows: list[dict] = []
+    in_table = False
+    for line in log_text.splitlines():
+        stripped = line.strip()
+        if "slowest" in stripped and "durations" in stripped:
+            in_table = True
+            continue
+        if not in_table:
+            continue
+        rm = _SLOWEST_ROW_RE.match(stripped)
+        if rm:
+            rows.append(
+                {
+                    "seconds": float(rm.group(1)),
+                    "phase": rm.group(2),
+                    "nodeid": rm.group(3),
+                }
+            )
+        elif stripped.startswith("="):
+            in_table = False  # reached the summary separator; table done
+    return rows
+
+
+def parse_run_metrics(log_text: str) -> dict:
+    """WOT-2026-021w: pass/skip/fail counts + duration + top-slowest.
+
+    Pure function over the captured pytest output text (last-run.log). pytest
+    does NOT expose these counts programmatically to a stdlib wrapper, so they
+    are only available textually. Parsing happens ONCE here (tested in
+    isolation) rather than scattered across main(). Every field defaults to
+    None / [] when its line is absent (dry-run, aborted collection), so a
+    malformed/partial log never raises.
+
+    Returns a dict with keys: passed, skipped, failed_count, errors,
+    duration_s, top_slowest (list of {"seconds", "phase", "nodeid"}).
+    """
+    metrics = _parse_pytest_summary_line(log_text or "")
+    metrics["top_slowest"] = _parse_durations_table(log_text or "")
+    return metrics
+
+
+def append_run_history(summary: dict) -> None:
+    """WOT-2026-021w: append one JSON line to run_history.jsonl (FAIL-OPEN).
+
+    Records the evolutivo of runs (timestamp, level, counts, duration,
+    top-slowest, tested_commit_sha) so WOT-2026-021x can classify slow tests
+    over time. Tail-capped to RUN_HISTORY_MAX lines to bound growth.
+
+    Fail-open by contract: ANY error here (disk full, permission, malformed
+    prior file) is swallowed -- a telemetry-tracker failure must NEVER abort or
+    fail a pytest run. The caller does not depend on the return value.
+    """
+    try:
+        record = {
+            "finished_at": summary.get("finished_at") or iso_now(),
+            "level": summary.get("level"),
+            "args_mode": summary.get("args_mode"),
+            "status": summary.get("status"),
+            "exit_code": summary.get("exit_code"),
+            "passed": summary.get("passed"),
+            "skipped": summary.get("skipped"),
+            "failed_count": summary.get("failed_count"),
+            "errors": summary.get("errors"),
+            "duration_s": summary.get("duration_s"),
+            "top_slowest": summary.get("top_slowest") or [],
+            "tested_commit_sha": summary.get("tested_commit_sha"),
+        }
+        line = json.dumps(record, ensure_ascii=False)
+
+        path = RUN_HISTORY_JSONL
+        path.parent.mkdir(parents=True, exist_ok=True)
+        existing: list[str] = []
+        if path.exists():
+            existing = [
+                ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()
+            ]
+        existing.append(line)
+        # Tail-cap: keep only the most recent RUN_HISTORY_MAX records.
+        if len(existing) > RUN_HISTORY_MAX:
+            existing = existing[-RUN_HISTORY_MAX:]
+        path.write_text("\n".join(existing) + "\n", encoding="utf-8")
+    except Exception:  # noqa: S110 - fail-open telemetry, never abort the run
+        pass
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Runner seguro para pytest en agent_system."
@@ -932,6 +1080,19 @@ def main() -> int:  # noqa: C901
         exit_code, failed_ids, error_ids = stream_pytest(command)
         summary["status"] = "finished"
         summary["exit_code"] = exit_code
+        # WOT-2026-021w: enrich the summary with pass/skip/fail counts + duration
+        # + top-slowest, parsed ONCE from the log stream_pytest just wrote. These
+        # feed both last-run.json and the run-history append. Fail-soft: a parse
+        # failure leaves the fields at their None/[] defaults, never aborts.
+        try:
+            _metrics = parse_run_metrics(
+                LAST_RUN_LOG.read_text(encoding="utf-8")
+                if LAST_RUN_LOG.exists()
+                else ""
+            )
+            summary.update(_metrics)
+        except Exception:  # noqa: S110 - telemetry enrichment must not abort
+            pass
         # WOT-2026-017a: persist node-ids of failed tests so pre_handoff_guard
         # can compare them against the baseline (D2/D3). Always a list; empty
         # when exit_code==0 or when no FAILED lines appeared in the stream.
@@ -968,6 +1129,10 @@ def main() -> int:  # noqa: C901
         summary["finished_at"] = iso_now()
         summary["cleanup_after"] = cleanup_after
         write_json(LAST_RUN_JSON, summary)
+        # WOT-2026-021w: append this run to the run-history evolutivo. Placed
+        # AFTER last-run.json is written and is fully fail-open (its own
+        # try/except) so it can never abort the run nor block release_lock().
+        append_run_history(summary)
         release_lock()
 
 
