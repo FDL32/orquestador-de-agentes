@@ -463,6 +463,14 @@ class TestFailedTestIdsInSummary:
         last_run_json.parent.mkdir(parents=True, exist_ok=True)
         monkeypatch.setattr(mod, "LAST_RUN_JSON", last_run_json)
         monkeypatch.setattr(mod, "LAST_RUN_LOG", last_run_log)
+        # WOT-2026-021w: main() ahora hace append_run_history; sin aislar
+        # RUN_HISTORY_JSONL estos harnesses contaminarian el jsonl REAL del
+        # runtime con entradas sinteticas (tested_commit_sha=abc123).
+        monkeypatch.setattr(
+            mod,
+            "RUN_HISTORY_JSONL",
+            tmp_path / ".agent" / "runtime" / "pytest-safe" / "run_history.jsonl",
+        )
 
         monkeypatch.setattr(mod, "stream_pytest", lambda cmd: stream_return)
         monkeypatch.setattr(mod, "_delivery_head_sha", lambda: "abc123")
@@ -542,6 +550,12 @@ class TestFailedTestIdsInSummary:
         last_run_json.parent.mkdir(parents=True, exist_ok=True)
         monkeypatch.setattr(mod, "LAST_RUN_JSON", last_run_json)
         monkeypatch.setattr(mod, "LAST_RUN_LOG", last_run_log)
+        # WOT-2026-021w: aislar RUN_HISTORY_JSONL para no contaminar el jsonl real.
+        monkeypatch.setattr(
+            mod,
+            "RUN_HISTORY_JSONL",
+            tmp_path / ".agent" / "runtime" / "pytest-safe" / "run_history.jsonl",
+        )
 
         # Pre-populate last-run.json with a previous red run.
         prev_failed = [
@@ -728,6 +742,14 @@ class TestErrorTestIdsInSummary:
         last_run_json.parent.mkdir(parents=True, exist_ok=True)
         monkeypatch.setattr(mod, "LAST_RUN_JSON", last_run_json)
         monkeypatch.setattr(mod, "LAST_RUN_LOG", last_run_log)
+        # WOT-2026-021w: main() ahora hace append_run_history; sin aislar
+        # RUN_HISTORY_JSONL estos harnesses contaminarian el jsonl REAL del
+        # runtime con entradas sinteticas (tested_commit_sha=abc123).
+        monkeypatch.setattr(
+            mod,
+            "RUN_HISTORY_JSONL",
+            tmp_path / ".agent" / "runtime" / "pytest-safe" / "run_history.jsonl",
+        )
 
         monkeypatch.setattr(mod, "stream_pytest", lambda cmd: stream_return)
         monkeypatch.setattr(mod, "_delivery_head_sha", lambda: "abc123")
@@ -1266,3 +1288,69 @@ class TestRunHistoryInSummary:
         assert rec["passed"] == 3757
         assert rec["tested_commit_sha"] == "deadbeef"
         assert rec["level"] == "all"
+
+
+class TestRunHistoryTestIsolation:
+    """WOT-2026-021w barrera anti-contaminacion: ningun harness que llame main()
+    debe escribir en el run_history.jsonl REAL del runtime.
+
+    Origen (2026-07-11): desde 021w, main() llama append_run_history; los
+    harnesses _stub_main PRE-EXISTENTES (TestFailedTestIdsInSummary /
+    TestErrorTestIdsInSummary / test_baseline_carry_forward) parcheaban
+    LAST_RUN_JSON/LOG pero NO RUN_HISTORY_JSONL -> contaminaron el jsonl real con
+    entradas sinteticas (tested_commit_sha=abc123). Este guard lo caza en el
+    futuro: si un main() de test escribe en el RUN_HISTORY_JSONL real, falla.
+    """
+
+    def test_main_does_not_write_the_real_run_history(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        mod = load_runner_module()
+
+        # Sentinel: apunta el RUN_HISTORY_JSONL REAL del modulo a un fichero
+        # centinela FUERA de cualquier tmp que un harness pudiera parchear, y
+        # afirmalo intacto tras un main() que -bien aislado- debe escribir en
+        # OTRO sitio (el tmp del harness), nunca aqui.
+        sentinel = tmp_path / "REAL_runtime" / "run_history.jsonl"
+        sentinel.parent.mkdir(parents=True, exist_ok=True)
+        sentinel.write_text("SENTINEL-UNTOUCHED\n", encoding="utf-8")
+        monkeypatch.setattr(mod, "RUN_HISTORY_JSONL", sentinel)
+
+        # Un harness BIEN aislado re-parchea RUN_HISTORY_JSONL a su propio tmp
+        # (como hace _stub_main_with_log). Simulamos ese contrato: el harness
+        # aislado escribe en harness_hist, NO en el sentinel.
+        harness_hist = tmp_path / "harness" / "run_history.jsonl"
+        base = tmp_path / ".agent" / "runtime" / "pytest-safe"
+        base.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(mod, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(mod, "_PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(mod, "_PROJECT_ROOT_BOOTSTRAP", tmp_path)
+        monkeypatch.setattr(mod, "LAST_RUN_JSON", base / "last-run.json")
+        monkeypatch.setattr(mod, "LAST_RUN_LOG", base / "last-run.log")
+        monkeypatch.setattr(mod, "RUN_HISTORY_JSONL", harness_hist)  # aislado
+        monkeypatch.setattr(mod, "stream_pytest", lambda cmd: (0, [], []))
+        monkeypatch.setattr(mod, "_delivery_head_sha", lambda: "sha0")
+        monkeypatch.setattr(mod, "acquire_lock", lambda force_unlock=False: {"pid": 0})
+        monkeypatch.setattr(mod, "release_lock", lambda: None)
+        monkeypatch.setattr(
+            mod, "cleanup_known_temp_dirs", lambda: {"removed": [], "failed": []}
+        )
+        monkeypatch.setattr(mod, "check_canonical_state_leak", lambda snap: [])
+        monkeypatch.setattr(mod, "snapshot_canonical_state", lambda: {})
+        monkeypatch.setattr(
+            mod,
+            "select_test_runner",
+            lambda interp, args, xdist, run_dir, test_dir: (["echo"], "pytest"),
+        )
+        monkeypatch.setattr(mod, "resolve_test_interpreter", lambda: sys.executable)
+        monkeypatch.setattr(sys, "argv", ["run_pytest_safe.py", "--level", "all"])
+
+        mod.main()
+
+        # El sentinel (que representa el run_history REAL cuando el harness lo
+        # deja sin re-parchear) permanece intacto; el write fue al tmp aislado.
+        assert sentinel.read_text(encoding="utf-8") == "SENTINEL-UNTOUCHED\n", (
+            "un main() de test escribio en el RUN_HISTORY_JSONL no-aislado: "
+            "el harness debe parchear RUN_HISTORY_JSONL a tmp_path"
+        )
+        assert harness_hist.exists(), "el harness aislado debe escribir en su tmp"
