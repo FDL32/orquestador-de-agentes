@@ -1,6 +1,6 @@
 # Execution Log: WOT-2026-022c
 
-**Estado:** IN_PROGRESS
+**Estado:** COMPLETED
 
 ## Bitacora
 
@@ -26,4 +26,33 @@
 - Plan v2 incluido en el prompt de arranque; work_plan.md creado desde el v2.
 
 ### 2026-07-11 - Implementacion (orquestador directo, persistiendo a disco)
-- [EN CURSO]
+- Creado `scripts/init_session_scratch.py` (~1140 lineas): 6 subcomandos (init, add,
+  list, audit, archive, gc), writer con lock del SO (msvcrt/fcntl), lock TTL puro,
+  takeover atomico + marker TTL, required condicional por event, exit codes hibrido.
+- Creado `tests/test_init_session_scratch.py` (~1070 lineas, 51 tests): M1 agnosticismo
+  (3 ejes disjuntos), T-LEDGER-CONC (4x25=100 concurrentes, 0 CRLF), T-TAKEOVER-FOSIL,
+  T-ARCHIVE-DEST-EXISTE, fail-open/exit2, lock_reclaimed anti-fosilizacion, CRLF/LF hash,
+  list/gc ignoran _archive, gc keep-K, audit modes, lock management, init idempotency,
+  validation, archive flow, maiden voyage (2 sesiones + takeover competition).
+- .gitignore en motor Y workspace: `.agent/runtime/session/` (verificado git check-ignore).
+- Gates: py_compile + ruff + ASCII limpios. 51 targeted tests passed.
+
+### 2026-07-11 - Suite completa
+- `run_pytest_safe.py --level all`: **3825 passed, 47 skipped, 0 failed** (276s).
+- Warning STATE LEAK sobre `*_WOT-*.md` (021i, gitignored) = falso-positivo (tree limpio).
+
+### 2026-07-11 - Review 2 fresh-context (mutation-to-prove) - 12 mutations
+- 10/12 barreras con dientes (mutation rompe el test). 2 cosméticas detectadas:
+  - Mutation 6 (archive dest-exists): test pasaba por PermissionError downstream.
+    FIX: assert `"already exists" in reason` -> ahora discrimina. Verificado: test
+    FALLA sin el check (reason = "os.replace failed" != "already exists").
+  - Mutation 9 (enum regex filter): test pasaba por check `== ARCHIVE_DIRNAME`.
+    FIX: anadir `garbage_dir` (no matchea regex) -> ahora discrimina. Verificado: test
+    FALLA sin el filtro (garbage_dir listado).
+- Static checks: resolve_project_root NO llamada, O_BINARY presente, msvcrt+fcntl
+  presentes, TAKEOVER_TTL presente, git check-ignore OK.
+- Restauracion verificada: git diff clean. 51 tests re-verificados tras fixes.
+
+### 2026-07-11 - Cierre commit-directo
+- Commit 2e9880c: `feat(session): WOT-2026-022c init_session_scratch.py`.
+- Estado COMPLETED. Commit fixes del Review 2.

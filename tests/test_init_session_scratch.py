@@ -360,6 +360,9 @@ class TestArchiveDestExists:
         assert result.returncode != 0, "Archive should STOP when dest exists"
         output = json.loads(result.stdout)
         assert output["status"] == "stop"
+        assert "already exists" in output["reason"], (
+            f"Should report dest-exists, got: {output['reason']}"
+        )
         assert output["session_intact"] is True
 
         assert session_dir.is_dir(), "Session dir should be INTACT (not moved)"
@@ -529,10 +532,16 @@ class TestEnumAndGc:
         archive_dir = session_root / "_archive"
         (archive_dir / archived_sid).mkdir(parents=True, exist_ok=True)
 
+        garbage_dir = session_root / "garbage_dir"
+        garbage_dir.mkdir()
+
         result = _enum_sessions(repo)
         assert active_sid in result
         assert archived_sid not in result
         assert "_archive" not in result
+        assert "garbage_dir" not in result, (
+            "Regex filter should reject non-session-id dirs"
+        )
 
     def test_enum_sessions_include_archive(self, tmp_path):
         repo = _make_repo(REAL_SYSTEM_TEMP, f"ina_{uuid.uuid4().hex[:8]}")
