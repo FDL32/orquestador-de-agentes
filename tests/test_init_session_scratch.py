@@ -228,6 +228,7 @@ class TestLedgerConcurrency:
         m_adds = 25
 
         procs: list[subprocess.Popen] = []
+        idx = 0
         for _ in range(n_procs):
             for _ in range(m_adds):
                 p = subprocess.Popen(
@@ -243,12 +244,15 @@ class TestLedgerConcurrency:
                         "artifact_added",
                         "--generator",
                         "conc_test",
+                        "--artifact-path",
+                        f"artifact_{idx}.txt",
                     ],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     env=os.environ.copy(),
                 )
                 procs.append(p)
+                idx += 1
 
         for p in procs:
             p.wait(timeout=60)
@@ -385,7 +389,7 @@ class TestExitCodes:
         manifest.write_text("", encoding="utf-8")
         os.chmod(str(manifest), stat.S_IREAD)
 
-        result = _add_record(repo, sid, generator="test")
+        result = _add_record(repo, sid, generator="test", artifact_path="file.txt")
 
         os.chmod(str(manifest), stat.S_IWRITE | stat.S_IREAD)
 
@@ -428,9 +432,25 @@ class TestExitCodes:
         sid = _sentinel_id()
         _init_session(repo, sid)
 
-        result = _add_record(repo, sid, event="artifact_added")
+        result = _add_record(
+            repo, sid, event="artifact_added", artifact_path="file.txt"
+        )
 
         assert result.returncode == 2
+
+    def test_add_exit2_missing_artifact_path_for_artifact_added(self, tmp_path):
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"map_{uuid.uuid4().hex[:8]}")
+        sid = _sentinel_id()
+        _init_session(repo, sid)
+
+        result = _add_record(repo, sid, event="artifact_added", generator="test")
+
+        assert result.returncode == 2, (
+            f"add should exit 2 for artifact_added without artifact_path: "
+            f"stdout={result.stdout}"
+        )
+        output = json.loads(result.stdout)
+        assert "artifact_path" in output["reason"]
 
     def test_init_exit2_invalid_project_root(self, tmp_path):
         result = _run_scratch(["--project-root", "C:/nonexistent/path", "init"])
@@ -488,6 +508,30 @@ class TestLockReclaimedAudit:
         result = _audit_session(session_dir, sid)
         assert result["valid"] is False, (
             "artifact_decision without decision should be invalid"
+        )
+
+    def test_artifact_added_requires_artifact_path(self, tmp_path):
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"aap_{uuid.uuid4().hex[:8]}")
+        sid = _sentinel_id()
+        session_dir = repo / ".agent" / "runtime" / "session" / sid
+        session_dir.mkdir(parents=True, exist_ok=True)
+
+        manifest = session_dir / "manifest.jsonl"
+        _append_record(
+            manifest,
+            {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "session_id": sid,
+                "event": "artifact_added",
+                "repo_role": "unknown",
+                "generator": "test",
+            },
+        )
+
+        result = _audit_session(session_dir, sid)
+        assert result["valid"] is False, (
+            "artifact_added without artifact_path should be invalid "
+            f"(022e would consume it empty): {result['findings']}"
         )
 
 
@@ -650,7 +694,7 @@ class TestAuditModes:
         repo = _make_repo(REAL_SYSTEM_TEMP, f"auok_{uuid.uuid4().hex[:8]}")
         sid = _sentinel_id()
         _init_session(repo, sid)
-        _add_record(repo, sid, generator="test")
+        _add_record(repo, sid, generator="test", artifact_path="file.txt")
 
         result = _run_scratch(
             ["--project-root", str(repo), "audit", "--session-id", sid]
@@ -880,7 +924,7 @@ class TestArchiveFlow:
         repo = _make_repo(REAL_SYSTEM_TEMP, f"as_{uuid.uuid4().hex[:8]}")
         sid = _sentinel_id()
         _init_session(repo, sid)
-        _add_record(repo, sid, generator="test")
+        _add_record(repo, sid, generator="test", artifact_path="file.txt")
 
         result = _run_scratch(
             ["--project-root", str(repo), "archive", "--session-id", sid]
@@ -898,7 +942,7 @@ class TestArchiveFlow:
         repo = _make_repo(REAL_SYSTEM_TEMP, f"adr_{uuid.uuid4().hex[:8]}")
         sid = _sentinel_id()
         _init_session(repo, sid)
-        _add_record(repo, sid, generator="test")
+        _add_record(repo, sid, generator="test", artifact_path="file.txt")
 
         result = _run_scratch(
             ["--project-root", str(repo), "archive", "--session-id", sid, "--dry-run"]
@@ -1000,7 +1044,7 @@ class TestMaidenVoyage:
         repo = _make_repo(REAL_SYSTEM_TEMP, f"int_{uuid.uuid4().hex[:8]}")
         sid = _sentinel_id()
         _init_session(repo, sid)
-        _add_record(repo, sid, generator="test")
+        _add_record(repo, sid, generator="test", artifact_path="file.txt")
 
         audit_result = _run_scratch(
             ["--project-root", str(repo), "audit", "--session-id", sid]
@@ -1041,7 +1085,7 @@ class TestListCommand:
 
         _init_session(repo, active_sid)
         _init_session(repo, archived_sid)
-        _add_record(repo, archived_sid, generator="test")
+        _add_record(repo, archived_sid, generator="test", artifact_path="file.txt")
         _run_scratch(
             ["--project-root", str(repo), "archive", "--session-id", archived_sid]
         )

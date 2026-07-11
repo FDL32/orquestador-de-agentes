@@ -64,7 +64,7 @@ SESSION_ID_RE = re.compile(r"^\d{8}-\d{4}-(?:[0-9a-f]{4,40}|nogit)-[0-9a-f]{4,32
 EVENTS = frozenset({"artifact_added", "artifact_decision", "lock_reclaimed"})
 
 REQUIRED_BY_EVENT: dict[str, frozenset[str]] = {
-    "artifact_added": frozenset({"generator"}),
+    "artifact_added": frozenset({"generator", "artifact_path"}),
     "artifact_decision": frozenset({"generator", "decision"}),
     "lock_reclaimed": frozenset(),
 }
@@ -677,6 +677,16 @@ def cmd_add(args: argparse.Namespace) -> int:  # noqa: C901
                 {
                     "written": False,
                     "reason": f"missing required field for event={event}: decision",
+                }
+            )
+        )
+        return 2
+    if "artifact_path" in required and not args.artifact_path:
+        print(
+            json.dumps(
+                {
+                    "written": False,
+                    "reason": f"missing required field for event={event}: artifact_path",
                 }
             )
         )
