@@ -246,12 +246,17 @@ def _enum_archived_sessions(root: Path) -> list[str]:
     return result
 
 
+_DRIVE_LETTER_RE = re.compile(r"^[A-Za-z]:[\\/]")
+
+
 def _validate_artifact_path(path_str: str, session_dir: Path) -> bool:
     try:
         p = Path(path_str)
     except (ValueError, TypeError):
         return False
     if p.is_absolute():
+        return False
+    if _DRIVE_LETTER_RE.match(path_str):
         return False
     resolved = (session_dir / p).resolve()
     try:
