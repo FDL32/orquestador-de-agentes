@@ -1354,3 +1354,174 @@ class TestRunHistoryTestIsolation:
             "el harness debe parchear RUN_HISTORY_JSONL a tmp_path"
         )
         assert harness_hist.exists(), "el harness aislado debe escribir en su tmp"
+
+
+# =============================================================================
+# WOT-2026-022i: Windows-safe PID liveness (SystemError no propaga, fail-safe)
+# =============================================================================
+
+
+class TestIsPidRunningWindowsSafe:
+    """WOT-2026-022i: is_pid_running must never let os.kill's SystemError
+    (Windows, foreign live pid) crash acquire_lock.
+
+    Fail-safe conservative: on doubt treat the PID as alive so an active lock is
+    never broken or released. Only an unambiguously-dead PID returns False.
+    """
+
+    def test_non_positive_pid_is_false(self) -> None:
+        """pid <= 0 is never a live process (DoD invariant, unchanged)."""
+        mod = load_runner_module()
+        assert mod.is_pid_running(0) is False
+        assert mod.is_pid_running(-1) is False
+
+    def test_os_kill_systemerror_treated_as_alive(self, monkeypatch) -> None:
+        """Mutation-critical: os.kill raising SystemError (Windows foreign live
+        pid) must return True, not propagate.
+
+        Restoring the pre-fix `os.kill(pid, 0)` with only `except OSError` lets
+        SystemError escape (it is NOT an OSError) -> this test fails.
+        """
+        import os
+        import shutil
+
+        mod = load_runner_module()
+        # Force the os.kill fallback (tasklist unavailable) so the SystemError
+        # seam is exercised regardless of the host platform.
+        monkeypatch.setattr(shutil, "which", lambda *a, **k: None)
+
+        def _boom(pid: int, sig: int) -> None:
+            raise SystemError("windows foreign live pid probe")
+
+        monkeypatch.setattr(os, "kill", _boom)
+        assert mod.is_pid_running(12345) is True
+
+    def test_os_kill_process_lookup_error_is_dead(self, monkeypatch) -> None:
+        """Unambiguously-dead PID (ProcessLookupError) stays False."""
+        import os
+        import shutil
+
+        mod = load_runner_module()
+        monkeypatch.setattr(shutil, "which", lambda *a, **k: None)
+
+        def _dead(pid: int, sig: int) -> None:
+            raise ProcessLookupError(3, "No such process")
+
+        monkeypatch.setattr(os, "kill", _dead)
+        assert mod.is_pid_running(99999) is False
+
+    def test_os_kill_other_oserror_is_alive(self, monkeypatch) -> None:
+        """A non-ProcessLookupError OSError (e.g. PermissionError) is
+        inconclusive -> conservative alive (do not break a foreign lock)."""
+        import os
+        import shutil
+
+        mod = load_runner_module()
+        monkeypatch.setattr(shutil, "which", lambda *a, **k: None)
+
+        def _denied(pid: int, sig: int) -> None:
+            raise PermissionError(13, "Permission denied")
+
+        monkeypatch.setattr(os, "kill", _denied)
+        assert mod.is_pid_running(12345) is True
+
+    def test_tasklist_miss_is_dead(self, monkeypatch) -> None:
+        """Windows tasklist reports the PID absent -> unambiguously dead."""
+        import shutil
+        import subprocess
+
+        mod = load_runner_module()
+        monkeypatch.setattr(
+            shutil,
+            "which",
+            lambda name, *a, **k: (
+                "C:/fake/tasklist.EXE" if name == "tasklist" else None
+            ),
+        )
+
+        class _Result:
+            returncode = 0
+            stdout = "INFO: No tasks are running which match the specified criteria.\n"
+
+        monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: _Result())
+        assert mod.is_pid_running(99999) is False
+
+    def test_tasklist_hit_is_alive(self, monkeypatch) -> None:
+        """Windows tasklist reports the PID present -> alive."""
+        import shutil
+        import subprocess
+
+        mod = load_runner_module()
+        monkeypatch.setattr(
+            shutil,
+            "which",
+            lambda name, *a, **k: (
+                "C:/fake/tasklist.EXE" if name == "tasklist" else None
+            ),
+        )
+
+        class _Result:
+            returncode = 0
+            stdout = "python.exe                  12345 Console                    1     60,000 K\n"
+
+        monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: _Result())
+        assert mod.is_pid_running(12345) is True
+
+    def test_tasklist_probe_error_is_alive(self, monkeypatch) -> None:
+        """Any tasklist probe error (timeout / OSError) -> conservative alive."""
+        import shutil
+        import subprocess
+
+        mod = load_runner_module()
+        monkeypatch.setattr(
+            shutil,
+            "which",
+            lambda name, *a, **k: (
+                "C:/fake/tasklist.EXE" if name == "tasklist" else None
+            ),
+        )
+
+        def _timeout(cmd, **kw):
+            raise subprocess.TimeoutExpired(cmd, 5)
+
+        monkeypatch.setattr(subprocess, "run", _timeout)
+        assert mod.is_pid_running(12345) is True
+
+    def test_acquire_lock_problematic_pid_reports_active_not_crash(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """acquire_lock with a lock whose PID triggers the Windows-problematic
+        SystemError must raise RuntimeError (lock activo), not crash.
+
+        End-to-end: acquire_lock -> is_pid_running(lock_pid) -> SystemError is
+        swallowed conservatively (alive) -> stale=False -> RuntimeError.
+        """
+        import json as _json
+        import os
+        import shutil
+
+        mod = load_runner_module()
+        runtime = tmp_path / "runtime"
+        runtime.mkdir()
+        lock_file = runtime / "pytest.lock"
+        monkeypatch.setattr(mod, "RUNTIME_DIR", runtime)
+        monkeypatch.setattr(mod, "LOCK_FILE", lock_file)
+        lock_file.write_text(
+            _json.dumps(
+                {
+                    "pid": 12345,
+                    "started_at": "2026-01-01T00:00:00+00:00",
+                    "cwd": str(tmp_path),
+                }
+            ),
+            encoding="utf-8",
+        )
+        # Force the os.kill fallback to raise SystemError (the Windows bug).
+        monkeypatch.setattr(shutil, "which", lambda *a, **k: None)
+
+        def _boom(pid: int, sig: int) -> None:
+            raise SystemError("windows foreign live pid probe")
+
+        monkeypatch.setattr(os, "kill", _boom)
+        with pytest.raises(RuntimeError):
+            mod.acquire_lock(force_unlock=False)

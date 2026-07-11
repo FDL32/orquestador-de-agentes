@@ -208,12 +208,43 @@ def ensure_runtime_dir() -> None:
 
 
 def is_pid_running(pid: int) -> bool:
+    """Return True if a process with ``pid`` is running (fail-safe conservative).
+
+    WOT-2026-022i: on Windows ``os.kill(pid, 0)`` over a foreign live process
+    (the real case when another session holds the lock) can raise ``SystemError``
+    instead of ``OSError``. That escaped and crashed ``acquire_lock`` instead of
+    reporting an active pytest. Windows now probes via ``tasklist`` (no psutil);
+    when ``tasklist`` is unavailable it falls back to ``os.kill`` but still
+    treats ``SystemError`` as alive. On any doubt the PID is treated as alive so
+    an active lock is never broken or released. Only an unambiguously-dead PID
+    (``ProcessLookupError``, or a ``tasklist`` miss) returns False.
+    """
     if pid <= 0:
         return False
+    if os.name == "nt":
+        tasklist = shutil.which("tasklist")
+        if tasklist:
+            try:
+                result = subprocess.run(  # noqa: S603
+                    [tasklist, "/FI", f"PID eq {pid}", "/NH"],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=5,
+                )
+            except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+                return True  # can't check -> assume alive, do not break the lock
+            return result.returncode == 0 and str(pid) in result.stdout
+    # POSIX, or Windows without tasklist: probe via os.kill. SystemError is
+    # captured explicitly (WOT-2026-022i): on Windows it can be raised over a
+    # foreign live process; treat it as alive (conservative), never propagate.
     try:
         os.kill(pid, 0)
-    except OSError:
+    except ProcessLookupError:
         return False
+    except (SystemError, OSError):
+        return True
     return True
 
 
