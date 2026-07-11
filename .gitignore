@@ -15,6 +15,7 @@ __pycache__/
 .runtime/pytest_safe/
 .agent/runtime/tmp/
 .agent/runtime/uv-cache/
+.agent/runtime/session/
 graphify-out/
 debug_output.txt
 output.txt
