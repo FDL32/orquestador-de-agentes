@@ -41,6 +41,7 @@ from scripts.init_session_scratch import (  # noqa: E402
     _lock_is_live,
     _read_lock,
     _release_lock,
+    _try_create_lock_exclusive,
     _validate_artifact_path,
     _validate_project_root,
     _validate_session_id,
@@ -808,6 +809,27 @@ class TestLockManagement:
         assert _acquire_lock(session_dir, sid, "init") is True
         lock_data = _read_lock(session_dir / "lock.json")
         assert lock_data["pid"] == os.getpid()
+
+    def test_try_create_lock_exclusive_only_one_wins(self, tmp_path):
+        """Deterministic test of the atomic lock primitive (portable).
+
+        The threading race test (test_takeover_competition_exactly_one_wins)
+        is environment-dependent: it only catches the race on Linux/CI, not on
+        Windows (GIL + scheduling). This test verifies the atomic primitive
+        directly: O_CREAT|O_EXCL guarantees exactly 1 winner on ANY OS.
+        """
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"tcx_{uuid.uuid4().hex[:8]}")
+        sid = _sentinel_id()
+        session_dir = repo / ".agent" / "runtime" / "session" / sid
+        session_dir.mkdir(parents=True, exist_ok=True)
+
+        assert _try_create_lock_exclusive(session_dir, sid, "init") is True
+        assert _try_create_lock_exclusive(session_dir, sid, "init") is False
+
+        lock_data = _read_lock(session_dir / "lock.json")
+        assert lock_data is not None
+        assert lock_data["pid"] == os.getpid()
+        assert lock_data["session_id"] == sid
 
 
 # ---------------------------------------------------------------------------
