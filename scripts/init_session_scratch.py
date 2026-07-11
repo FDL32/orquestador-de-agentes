@@ -386,6 +386,33 @@ def _write_lock(session_dir: Path, sid: str, op: str) -> Path:
     return lock_path
 
 
+def _try_create_lock_exclusive(session_dir: Path, sid: str, op: str) -> bool:
+    """Atomically create lock.json via O_CREAT|O_EXCL. Returns True if won."""
+    lock_path = _lock_path(session_dir)
+    try:
+        fd = os.open(
+            str(lock_path),
+            os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0),
+        )
+    except FileExistsError:
+        return False
+    except OSError:
+        return False
+    try:
+        now = datetime.now(timezone.utc)
+        data = {
+            "pid": os.getpid(),
+            "session_id": sid,
+            "op": op,
+            "created_at": now.isoformat(),
+            "expires_at": (now + _td_seconds(LOCK_TTL)).isoformat(),
+        }
+        os.write(fd, json.dumps(data, indent=2).encode("utf-8"))
+    finally:
+        os.close(fd)
+    return True
+
+
 def _td_seconds(seconds: int):
     from datetime import timedelta
 
@@ -400,8 +427,7 @@ def _acquire_lock(session_dir: Path, sid: str, op: str) -> bool:
     """
     lock_path = _lock_path(session_dir)
     if not lock_path.exists():
-        _write_lock(session_dir, sid, op)
-        return True
+        return _try_create_lock_exclusive(session_dir, sid, op)
 
     lock_data = _read_lock(lock_path)
     if _lock_is_live(lock_data):
@@ -443,7 +469,8 @@ def _takeover_lock(session_dir: Path, sid: str, op: str) -> bool:
         lock_path = _lock_path(session_dir)
         with contextlib.suppress(OSError):
             lock_path.unlink()
-        _write_lock(session_dir, sid, op)
+        if not _try_create_lock_exclusive(session_dir, sid, op):
+            return False
         manifest = _manifest_path(session_dir)
         if manifest.exists():
             record = {
