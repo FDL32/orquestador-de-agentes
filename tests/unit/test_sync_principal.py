@@ -48,7 +48,7 @@ def _make_repo_with_main(tmp_path):
     origin/main. Callers then diverge/detach `work` to build each scenario.
     """
     origin = tmp_path / "origin.git"
-    _g(["init", "--bare", "-q", str(origin)], tmp_path)
+    _g(["init", "--bare", "-b", "main", "-q", str(origin)], tmp_path)
     work = tmp_path / "work"
     _g(["clone", "-q", str(origin), str(work)], tmp_path)
     _g(["config", "user.email", "t@t.com"], work)
