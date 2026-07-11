@@ -98,6 +98,12 @@ satisfagan el DoD. Confirmar el alcance REAL antes de planificar.
   fresh-context cazo 2 BLOCKER que el Manager + 2 pasadas no vieron). Verificar cada
   claim del plan contra codigo vivo: call-graph, imports a retirar, survivor set,
   0 importadores externos, 0 tests que ejerzan lo retirado, 0 launchers con el flag.
+- **Review 1 (mecanica canonica):** la verificacion sincronica intra-ticket sigue
+  `prompts/manager_review.md` + `prompts/audit_agent_output.md` (filosofia CEM),
+  MODULADA por el `deliverable_type` del plan (`code`/`mixed` corren gates focales;
+  `documentation`/`research` verifican existencia+contenido, no `ruff`/`pytest`).
+  Este prompt NO reimplementa esa mecanica: la referencia. Si diverge, prevalece
+  `manager_review.md` para el metodo de Review y este prompt para el modo code-only.
 
 ### 3. Builder: implementar, PERSISTIENDO incrementalmente a disco
 Leccion 021g: el Builder iteraba en memoria y agotaba tanda sin guardar. Instruccion
@@ -126,6 +132,12 @@ las barreras/retiradas son genuinas** (mutation-to-prove: romper el fix debe rom
 el test; quitar un import "conservado" debe romper el fichero). Un test verde +
 docstring plausible != barrera. **Secuenciar** el Review 2 respecto a la suite (no
 solapar mutaciones con una corrida). Restaurar toda mutacion (verificar md5/diff).
+La consigna adversarial de Review 2 (intentar tumbar la conclusion, buscar
+falso-verde/scope-creep/mock-drift) es la de `prompts/manager_review.md` (Review 2);
+este prompt la aplica al modo code-only, no la reimplementa. **Aislamiento de rama
+(leccion 021u):** el mutation-verify solo tiene dientes si el fixture AISLA la rama
+mutada (fuerza el estado donde ESA rama es la unica que decide el veredicto); un
+fixture que satisface el assert por 2 rutas redundantes da falso-verde.
 
 ### 6. Cierre commit-directo
 - Marcar work_plan/execution_log/STATE COMPLETED (inline).
@@ -151,7 +163,12 @@ auto-reporte. Leccion repetida toda la serie.
    fresh-context sobre los N commits JUNTOS caza problemas de SEAM (referencias
    colgantes entre tickets, invariantes que solo cambian con toda la cadena aplicada,
    coherencia de la frontera "preservar historia"). Los Review 2 por-ticket no ven
-   los seams.
+   los seams. **Metodo canonico:** usar `prompts/audit_pipeline_codeonly.md` (la
+   variante CODE-ONLY, que hereda de la base `prompts/audit_pipeline.md`): cierre
+   manual = caso por defecto, evidencia por commits git + bloque de cierre del
+   workspace, integridad por `check_motor_pristine` + aterrizaje en origin/main, y
+   los warnings `accepted_advisories` de `--validate` NO cuentan como hallazgo. Este
+   prompt referencia ese metodo, no lo reimplementa.
 2. **Cierre canonico adaptado** (`prompts/orchestrator_session_close_full_audit.md`):
    Bloques 1 (salud) / 2 (adversarial sobre diffs) / 4 (memoria) / 5 (follow-ups)
    aplican; **Bloque 3 (`--session-close`) es N/A code-only**.
