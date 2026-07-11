@@ -143,7 +143,7 @@ fuente de evidencia nueva. Ejemplo comun: "N archivos usan X"
 solo porque el auditor repite el numero. Si la fuente original es un grep
 parcial o conteo manual sin ejecucion reproduible, clasificalo como
 `INFERENCIA RAZONABLE` y recomienda la medicion canonica (p.ej.
-`--durations=50`).
+`--durations=25`).
 
 ### 2. Diff, scope y artefactos
 
