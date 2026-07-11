@@ -172,12 +172,29 @@ def _append_terminal_events(
         == "COMPLETED"
     )
     closed_present = _latest_event(events, "SUPERVISOR_CLOSED") is not None
-
-    if (
+    builder_exit_present = _latest_event(events, "BUILDER_EXIT") is not None
+    will_close_to_completed = (
         before_state not in TERMINAL_STATES
         and not terminal_change_present
         and bus is not None
-    ):
+    )
+
+    if will_close_to_completed and not builder_exit_present:
+        record = bus.emit(
+            "BUILDER_EXIT",
+            ticket_id=ticket_id,
+            actor="BUILDER",
+            payload={
+                "exit_reason": "reconcile_ticket: forced close",
+                "completion_summary": reason,
+                "source": "reconcile_ticket",
+            },
+        )
+        if record is not None:
+            events.append(record.to_dict())
+            emitted.append("BUILDER_EXIT")
+
+    if will_close_to_completed:
         record = bus.emit(
             "STATE_CHANGED",
             ticket_id=ticket_id,
