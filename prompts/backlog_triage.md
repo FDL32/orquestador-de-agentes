@@ -125,6 +125,34 @@ Cada pipeline resultante declara:
 - gate de verificacion comun;
 - tamano `S` / `M` / `L`.
 
+### CROSS-TICKET SURFACE SCAN (obligatorio)
+
+Ademas de dependencias declaradas, la Fase 2 exige un escaneo de
+superficie cruzada: dos tickets SIN dependencia declarada entre si pero
+con `Files Likely Touched` que SE SOLAPAN deben quedar en el MISMO grupo
+o serializarse explicitamente (uno depende del otro en el DAG de grupos).
+Un DAG construido solo a partir de dependencias declaradas NO es
+suficiente: la colision de superficie es una dependencia OCULTA tan real
+como una declarada, y omitirla produce una carrera de escritura si dos
+grupos se ejecutan en paralelo.
+
+### Autoridad de la clasificacion
+
+`class` (S/M/L) y `autonomy_mode` (p.ej. `autonomous`,
+`hard-stop-with-recovery`) los asigna el TRIAGE, no el ejecutor. El
+ejecutor (`/orchestrate-pipeline` u otro consumidor del DAG) NUNCA
+reclasifica un grupo para evitar un gate: reclasificar para esquivar un
+`common_gate` o un `autonomy_mode` mas estricto es, por definicion,
+`falso_verde` bajo el contrato de `prompts/audit_agent_output.md`.
+
+### El triage sigue siendo solo lectura
+
+Esta fase produce el DAG de grupos (que ordenar, que serializar, que
+paralelizar); NO lo ejecuta. La ejecucion sigue siendo responsabilidad
+exclusiva de `/orchestrate-pipeline`. El triage no gana logica de
+ejecucion por tener ahora un DAG en vez de una lista plana: sigue siendo
+un planificador, nunca un ejecutor.
+
 ---
 
 ## Fase 3: Sintesis y recomendacion
@@ -213,9 +241,56 @@ Dos artefactos, en el mismo turno, bajo
   ],
   "premise_verify": [
     {"id": "WOT-2026-XXXa", "reason": "string"}
-  ]
+  ],
+  "schema": "autonomous-batch-dag/v1",
+  "generated_at": "string (ISO-8601)",
+  "state_at_triage": {
+    "motor": "string (sha)",
+    "workspace": "string (sha)",
+    "dirty": "0|1"
+  },
+  "groups": [
+    {
+      "id": "G-EJEMPLO",
+      "tickets": ["WOT-2026-XXXa"],
+      "depends_on_groups": [],
+      "blocks_groups": ["G-OTRO"],
+      "shared_surfaces": ["ruta/relativa/archivo.py"],
+      "class": "S|M|L",
+      "autonomy_mode": "autonomous|hard-stop-with-recovery",
+      "common_gate": "string (comando exacto)",
+      "recovery_owner_stage": "BUILDER|MANAGER",
+      "max_recovery_attempts": "int"
+    }
+  ],
+  "stop_policy": {
+    "hard_stop_causes": ["string"],
+    "recoverable_causes": ["string"],
+    "max_unclassified_stops": "int"
+  },
+  "budget": {
+    "max_tickets_closed": "int",
+    "max_group_recoveries": "int"
+  }
 }
 ```
+
+Las claves `pipelines`, `tickets`, `recommended_start`, `requires_human` y
+`premise_verify` son el esquema historico (lista plana de pipelines) y se
+MANTIENEN sin cambios: es un cambio ADITIVO. Las claves nuevas
+(`schema`, `generated_at`, `state_at_triage`, `groups`, `stop_policy`,
+`budget`) anaden el DAG de grupos: cada `group` es una unidad de
+serializacion/paralelizacion derivada de los `pipelines` de la Fase 2 mas
+el cross-ticket surface scan. `depends_on_groups` / `blocks_groups` deben
+ser reciprocas (si G1 bloquea G2, G2 depende de G1). Antes de entregar
+el JSON, validarlo con:
+
+```powershell
+python <MOTOR_ROOT>/scripts/validate_batch_dag.py <destino>/orchestrator_pipeline/reports/backlog_triage_output.json
+```
+
+Exigir exit 0. Un DAG que no valida no es una salida completa de esta
+fase: corregir el DAG, no el validador.
 
 El informe NO escribe `backlog.md`: propone. El humano o el Manager decide
 archivar los `LIKELY_DONE` o lanzar el pipeline recomendado.
@@ -228,4 +303,9 @@ archivar los `LIKELY_DONE` o lanzar el pipeline recomendado.
 - NO escribe codigo ni estado operativo.
 - NO ejecuta el pipeline (eso es `/orchestrate-pipeline`).
 - NO audita un pipeline ya cerrado (eso es `/audit-pipeline`).
+- El DAG de grupos (`groups`, `stop_policy`, `budget`) es una PROPUESTA de
+  orden y agrupacion, no una ejecucion: producir el DAG nunca es
+  ejecutarlo. La logica de `autonomy_mode`, `recovery_owner_stage` y
+  `max_recovery_attempts` la INTERPRETA el ejecutor; el triage no la
+  aplica.
 - Solo escribe sus dos artefactos de salida y propone.
