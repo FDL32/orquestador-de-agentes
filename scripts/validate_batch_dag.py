@@ -225,6 +225,30 @@ def _reachable(start: str, depends: dict[str, set[str]]) -> set[str]:
     return seen
 
 
+def _normalize_surface(surface: str) -> str:
+    """Canonical form of a `shared_surfaces` path, for comparison ONLY.
+
+    WOT-2026-022w: the scan used to compare RAW strings, so two groups declared
+    INDEPENDENT could name the SAME file and pass. Verified false-negatives:
+        'Scripts/A.py' vs 'scripts/a.py'   (case)
+        'scripts/a.py' vs 'scripts\\a.py'   (separator)
+        './scripts/a.py' vs 'scripts/a.py' (redundant prefix)
+    On Windows all three are one file: the two groups would run in parallel and race
+    on writes -- precisely what this scan exists to prevent.
+
+    Normalizes: separator -> '/', collapses '.' segments, case-folds.
+
+    Case-folding ALWAYS (not only on Windows) is deliberate and conservative: the
+    failure modes are asymmetric. Over-matching serializes two groups that could have
+    run in parallel (a small cost in wall-clock). Under-matching lets two groups write
+    the same file concurrently (a corrupted run). When the DAG is portable and the
+    executing platform is unknown, pay the cheap error.
+    """
+    text = surface.replace("\\", "/")
+    parts = [p for p in text.split("/") if p not in ("", ".")]
+    return "/".join(parts).casefold()
+
+
 def _errors_surface_overlap(groups: list[dict[str, Any]]) -> list[str]:
     """
     Independent code path: reject shared_surfaces overlap between two
@@ -261,13 +285,19 @@ def _errors_surface_overlap(groups: list[dict[str, Any]]) -> list[str]:
             if connected:
                 continue
 
-            surfaces1 = set(g1.get("shared_surfaces") or [])
-            surfaces2 = set(g2.get("shared_surfaces") or [])
-            overlap = surfaces1 & surfaces2
+            # WOT-2026-022w: comparar por la ruta NORMALIZADA, no por la cadena cruda.
+            # Se conserva la ruta ORIGINAL para el mensaje (el usuario debe ver lo que
+            # escribio, no una forma canonica que no reconoce).
+            norm1 = {_normalize_surface(s): s for s in g1.get("shared_surfaces") or []}
+            norm2 = {_normalize_surface(s): s for s in g2.get("shared_surfaces") or []}
+            overlap = set(norm1) & set(norm2)
             if overlap:
+                shown = sorted(
+                    {norm1[k] for k in overlap} | {norm2[k] for k in overlap}
+                )
                 errors.append(
                     f"solapamiento de shared_surfaces entre grupos "
-                    f"independientes '{id1}' y '{id2}': {sorted(overlap)}"
+                    f"independientes '{id1}' y '{id2}': {shown}"
                 )
 
     return errors

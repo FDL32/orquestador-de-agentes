@@ -18,6 +18,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = PROJECT_ROOT / "scripts" / "validate_batch_dag.py"
@@ -230,3 +232,82 @@ def test_baseline_is_untouched_by_copy(tmp_path: Path) -> None:
     mutated = copy.deepcopy(original)
     mutated["groups"][0]["class"] = "L"
     assert original["groups"][0]["class"] == "S"
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-022w -- the surface scan compared RAW strings, so two INDEPENDENT
+# groups could name the SAME file and pass. On Windows all the pairs below are
+# one file: the groups would run in parallel and race on writes, which is the
+# exact hazard this scan exists to prevent.
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    ("surface_a", "surface_b", "vector"),
+    [
+        ("Scripts/A.py", "scripts/a.py", "case"),
+        ("scripts/a.py", "scripts\\a.py", "separator"),
+        ("./scripts/a.py", "scripts/a.py", "redundant ./ prefix"),
+        ("Scripts\\A.py", "./scripts/a.py", "all three at once"),
+    ],
+)
+def test_022w_same_file_different_spelling_is_rejected(
+    tmp_path: Path, surface_a: str, surface_b: str, vector: str
+) -> None:
+    """LOAD-BEARING: the same file spelled differently must still collide.
+
+    The groups are INDEPENDENT and the DAG is otherwise fully valid, so the
+    overlap is the ONLY defect (branch isolation): nothing else can be what makes
+    this fail.
+
+    Mutation: remove the normalization in _normalize_surface -> RED.
+    """
+    dag = _valid_dag()
+    dag["groups"][1]["shared_surfaces"] = [surface_a]
+    dag["groups"][2]["shared_surfaces"] = [surface_b]
+    result = _run(_write_dag(tmp_path, dag))
+    assert result.returncode == 1, (
+        f"{vector}: {surface_a!r} and {surface_b!r} are the SAME file, so two "
+        f"independent groups touching them must be rejected; the scan accepted them"
+    )
+    assert "solapamiento" in result.stderr.lower()
+
+
+@pytest.mark.parametrize(
+    ("surface_a", "surface_b"),
+    [
+        ("scripts/a.py", "scripts/b.py"),  # different file, same dir
+        ("scripts/a.py", "tests/a.py"),  # same name, different dir
+    ],
+)
+def test_022w_genuinely_different_files_still_allowed(
+    tmp_path: Path, surface_a: str, surface_b: str
+) -> None:
+    """The normalization must NOT over-match: distinct files stay independent.
+
+    Without this, "normalize everything" could collapse unrelated paths and
+    serialize groups that had no reason to be serialized -- the fix would trade a
+    false negative for a false positive.
+    """
+    dag = _valid_dag()
+    dag["groups"][1]["shared_surfaces"] = [surface_a]
+    dag["groups"][2]["shared_surfaces"] = [surface_b]
+    result = _run(_write_dag(tmp_path, dag))
+    assert result.returncode == 0, (
+        f"{surface_a!r} and {surface_b!r} are DIFFERENT files: the groups are "
+        f"genuinely independent and must not be flagged. stderr: {result.stderr}"
+    )
+
+
+def test_022w_error_message_shows_the_paths_the_user_wrote(tmp_path: Path) -> None:
+    """The error must name the ORIGINAL spelling, not the canonical form.
+
+    A user who wrote 'Scripts/A.py' must see 'Scripts/A.py' in the message; showing
+    only the normalized 'scripts/a.py' would point at a path they never typed.
+    """
+    dag = _valid_dag()
+    dag["groups"][1]["shared_surfaces"] = ["Scripts/A.py"]
+    dag["groups"][2]["shared_surfaces"] = ["scripts/a.py"]
+    result = _run(_write_dag(tmp_path, dag))
+    assert result.returncode == 1
+    assert "Scripts/A.py" in result.stderr, (
+        "the message must show the path as the user wrote it"
+    )
