@@ -65,8 +65,35 @@ Antes de escribir cualquier memoria, declara EXPLÍCITAMENTE su destino. No bast
 | Destino | Qué es | Portable / validable | Cuándo |
 |---------|--------|----------------------|--------|
 | `Claude privada` | Memoria personal de Claude Code (`~/.claude/.../memory/`) | NO portable, NO validada por el schema del motor | Hábito transversal del usuario/equipo; no es estado del proyecto |
-| `portable motor` | `repo_motor/.agent/runtime/memory/observations.jsonl` (wings `engine`/`meta`) | Portable + validable por schema; se propaga a destinos via sync | Invariante o contrato generalizable; SIEMPRE con confirmación humana |
-| `portable destino` | `repo_destino/.agent/runtime/memory/observations.jsonl` (wing `project`) | Portable al destino + validable por schema; no sale del destino | Aprendizaje local del proyecto destino |
+| `portable motor` | `repo_motor/.agent/runtime/memory/archive/observations.YYYY-MM.jsonl` (wings `engine`/`meta`) | Portable + validable por schema; **versionado en git**, se propaga a destinos via sync | Invariante o contrato generalizable; SIEMPRE con confirmación humana |
+| `portable destino` | `repo_destino/.agent/runtime/memory/archive/observations.YYYY-MM.jsonl` (wing `project`) | Portable al destino + validable por schema; no sale del destino | Aprendizaje local del proyecto destino |
+
+### El fichero al que se promueve es el ARCHIVE VERSIONADO (no `observations.jsonl`)
+
+> **`.agent/runtime/memory/observations.jsonl` está GITIGNORED** (`.gitignore:104`) en
+> TODAS las worktrees. **Escribir ahí NO promueve nada**: ningún commit lo recoge y ningún
+> push lo mueve. Es el buffer de runtime (lo escriben los hooks en cada tool call y
+> `session_close_observations.py` en cada cierre): telemetría efímera y lección portable
+> comparten fichero.
+>
+> **El único vehículo portable es el ARCHIVE TRACKEADO:**
+> `.agent/runtime/memory/archive/observations.YYYY-MM.jsonl` (un fichero por mes, UTC).
+> `git ls-files .agent/runtime/memory/archive/` lo confirma.
+
+Procedimiento de promoción (con confirmación humana explícita):
+
+1. Muestra el JSON exacto que se insertaría y **espera aprobación**.
+2. Promueve con el reconciliador, que escribe en el archive del checkout canónico y
+   valida `--strict` antes y después (fail-closed):
+
+   ```
+   python scripts/reconcile_portable_memory.py --source <worktree> --apply
+   ```
+
+3. **COMMITEA el archive.** Sin commit, la promoción no existe.
+4. Barrera de verificación: `python scripts/check_portable_memory_promotion.py
+   --project-root <repo>` reporta toda lección que esté en `observations.jsonl` y NO en
+   el archive (**exit 4** = hay huérfanas; exit 1 = la herramienta falló; exit 0 = limpio).
 
 Reglas de decisión (binarias):
 
@@ -77,8 +104,9 @@ Reglas de decisión (binarias):
    evidencia verificable (diff, commit, test, exit code, evento de bus o ruta real). Una
    memoria `Claude privada` puede ser preferencia/hábito sin artefacto, pero entonces NO es
    promovible a portable tal cual.
-3. **Promoción a `observations.jsonl` (portable):** solo si la entrada valida contra el
-   schema canónico (`skills/_shared/ap-schema.md`) Y contra el consumidor real del motor
+3. **Promoción al archive portable (`archive/observations.YYYY-MM.jsonl`):** solo si la
+   entrada valida contra el schema canónico (`skills/_shared/ap-schema.md`) Y contra el
+   consumidor real del motor
    (`bus/memory_loader.py`). Si no valida o no hay evidencia, etiquétala `NO PROMOVIBLE`
    con el motivo y déjala en `Claude privada` o como deuda explícita con ticket.
 4. **Aprendizaje útil pero privado:** si durante el ciclo guardaste algo en `Claude
@@ -147,4 +175,11 @@ promoting it.
 >
 > Si uno de los sistemas **no es accesible**, dilo explícitamente y limita la propuesta al que sí hayas podido inspeccionar.
 >
-> **Promoción al `repo_motor`** (wings engine/meta): nunca escribas en `orquestador_de_agentes/.agent/runtime/memory/observations.jsonl` sin confirmación humana explícita. Muestra el JSON exacto que se insertaría y espera aprobación.
+> **Promoción al `repo_motor`** (wings engine/meta): nunca promuevas al archive versionado
+> `orquestador_de_agentes/.agent/runtime/memory/archive/observations.YYYY-MM.jsonl` sin
+> confirmación humana explícita. Muestra el JSON exacto que se insertaría y espera aprobación.
+>
+> **No confundas escribir con promover:** una entrada añadida a
+> `.agent/runtime/memory/observations.jsonl` (gitignored) NO viaja. La promoción se hace
+> con `scripts/reconcile_portable_memory.py --apply` y se COMMITEA el archive;
+> `scripts/check_portable_memory_promotion.py` es la barrera que caza las huérfanas.
