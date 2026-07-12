@@ -168,6 +168,42 @@ def test_canonical_references_init_session_scratch() -> None:
     )
 
 
+def test_codeonly_push_policy_is_grouped_at_session_end() -> None:
+    """Step 6 must state the GROUPED push policy (022u).
+
+    LOAD-BEARING (positive assertion): a test that only checked the absence of
+    the old per-ticket line would false-green if the line were simply DELETED,
+    leaving the prompt with no push guidance at all -- which is not the fix. The
+    policy has to be affirmatively present: grouped, at session end, with the
+    user's explicit authorization.
+    """
+    text = _read(CODEONLY)
+    assert "Push AGRUPADO al final de sesion" in text, (
+        "orchestrator_pipeline_codeonly.md step 6 must state the grouped-push "
+        "policy (push at end of session, not per ticket)"
+    )
+    assert "autorizacion explicita del usuario" in text, (
+        "the grouped-push policy must require the user's explicit authorization "
+        "before pushing to remote"
+    )
+
+
+def test_codeonly_has_no_per_ticket_push_instruction() -> None:
+    """Step 6 must NOT instruct a push per ticket (022u).
+
+    LOAD-BEARING (negative assertion, independent teeth from the positive one
+    above): the defect 022u fixes was the bare line `- Push a origin/main.` in
+    the per-ticket close, which contradicted the grouped-push policy and gave an
+    agent two conflicting authorities. Mutation: restore that line -> RED.
+    """
+    text = _read(CODEONLY)
+    assert "- Push a origin/main." not in text, (
+        "orchestrator_pipeline_codeonly.md must not instruct a push per ticket "
+        "in the commit-directo close (step 6); the policy is a grouped push at "
+        "the end of the session with the user's explicit authorization (022u)"
+    )
+
+
 def test_bootstrap_reads_session_before_tmp() -> None:
     """The session bootstrap must read the session scratch BEFORE falling back
     to C:\\tmp (022d wiring, part b of the seam).
