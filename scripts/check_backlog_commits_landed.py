@@ -47,6 +47,18 @@ the guard green would have inverted the very policy WOT-2026-022u installed. The
 SEMANTIC, and it must NOT become fail-open: an object unreachable from the branch is
 still ERROR.
 
+PREMISA REFUTADA, declarada explicitamente (022x): el prompt de arranque de la cadena
+pedia "SHA inexistente -> ERROR". Se implemento WARN, que es el contrato PREEXISTENTE
+de 021o y el correcto. Razon, verificada contra datos vivos: el repo sufrio un
+history-rewrite legitimo (filter-repo, 020u) que dejo SHAs archivados sin objeto pero
+cuyo ticket SI aterrizo bajo un SHA nuevo -- hoy son 7 filas OK_BY_SUBJECT. Poner en
+ERROR el caso "sin objeto" convertiria en fallo el trabajo legitimamente republicado y
+bloquearia el guard entero. El discriminante que importa NO es "existe el objeto" sino
+"es alcanzable desde la rama": un SHA sin objeto no puede ser un cierre perdido porque
+no hay nada que perder; un objeto huerfano SI. El delta con el arranque es deliberado y
+se registra aqui para que no pase en silencio (CEM: un cambio de contrato no declarado
+es indistinguible de un descuido).
+
 Why the anchoring/exclusion matters (each VERIFIED against live git 2026-07-10):
     - CAPA 3 is anchored to origin/main, NEVER ``--all``: ``--all`` would count a
       commit that lives only on a local branch (e.g. ctl-012i-wip) as landed = false

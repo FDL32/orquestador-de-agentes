@@ -499,13 +499,26 @@ def test_022x_case3_object_unreachable_from_branch_stays_error(tmp_path):
 
 
 def test_022x_case4_nonexistent_sha_stays_warn(tmp_path):
-    """Case 4: the SHA has no git object at all -> WARN (unchanged).
+    """Case 4: the SHA has no git object at all -> WARN, NOT ERROR.
 
-    Never ERROR: a history-rewrite legitimately drops old SHAs.
+    PREMISE REFUTED, pinned here on purpose. The chain's start-up prompt asked for
+    "nonexistent SHA -> ERROR". That is WRONG, and this test exists so nobody
+    "fixes" it back: the repo went through a legitimate history-rewrite
+    (filter-repo, 020u) that left archived SHAs with no object whose ticket DID
+    land under a new SHA -- 7 such rows are OK_BY_SUBJECT today. Making the
+    no-object case an ERROR would fail legitimately republished work.
+
+    The discriminant that matters is NOT "does the object exist" but "is it
+    reachable from the branch": a SHA with no object cannot be a lost close (there
+    is nothing to lose); an ORPHANED object can -- and that one stays ERROR
+    (test_022x_case3).
     """
     _origin, work = _make_repo(tmp_path)
     verdict, _ = _classify(work, "WOT-2026-0PP4", "deadbeefdeadbeefdeadbeefdeadbeef")
-    assert verdict == gl.WARN
+    assert verdict == gl.WARN, (
+        "a SHA with no git object must be WARN (obsolete cite / history-rewrite), "
+        "never ERROR: fail-closed here would block every pre-republication ticket"
+    )
 
 
 def test_022x_pending_does_not_trigger_the_error_exit_code(tmp_path):
