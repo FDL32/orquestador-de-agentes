@@ -23,7 +23,29 @@ Verdict if NO layer hits:
                                                        the ID convention). Never ERROR
                                                        -- fail-closed would block
                                                        every pre-republication ticket.
-    - <sha> HAS an object but landed by no layer   -> ERROR fail-closed (lost close).
+    - <sha> HAS an object, is REACHABLE from the   -> PENDING_GROUPED_PUSH (WOT-2026-022x)
+      current local branch, but is not in                the close is committed and on the
+      origin/main                                        branch; it simply has not been
+                                                         pushed YET. The code-only policy
+                                                         is a GROUPED push at the end of
+                                                         the session, so this is the NORMAL
+                                                         state between commit and push --
+                                                         not a lost close. Not an ERROR.
+    - <sha> HAS an object but is NOT reachable     -> ERROR fail-closed (lost close): the
+      from the local branch either                       object survives only in the reflog
+                                                         / an orphan (a reset or rebase
+                                                         dropped it). THIS is the case the
+                                                         guard exists to catch, and the one
+                                                         distinction that must never be
+                                                         relaxed into a WARN.
+
+WOT-2026-022x: before this distinction, ANY object that had not landed was ERROR, so
+every row archived between its commit and the grouped push reported a false LOST CLOSE
+(audit_pipeline_codeonly.md treats that ERROR as blocking APROBADO -> every code-only
+chain was formally blocked in its pre-push window). Fixing it by pushing early to make
+the guard green would have inverted the very policy WOT-2026-022u installed. The fix is
+SEMANTIC, and it must NOT become fail-open: an object unreachable from the branch is
+still ERROR.
 
 Why the anchoring/exclusion matters (each VERIFIED against live git 2026-07-10):
     - CAPA 3 is anchored to origin/main, NEVER ``--all``: ``--all`` would count a
@@ -73,6 +95,10 @@ EXIT_VERDICT_ERROR = 4
 # Verdicts (per-SHA).
 OK = "OK"
 OK_BY_SUBJECT = "OK_BY_SUBJECT"
+# Committed and on the local branch, but not yet pushed (grouped-push policy, 022u).
+# Non-blocking: it is the expected state between a ticket's commit and the session's
+# grouped push. NOT a lost close.
+PENDING_GROUPED_PUSH = "PENDING_GROUPED_PUSH"
 ERROR = "ERROR"
 WARN = "WARN"
 
@@ -331,6 +357,20 @@ def classify(
             "ticket-ID in an origin/main subject (CAPA 3, squash/cherry-pick)",
         )
     if _has_object(sha, repo):
+        # WOT-2026-022x. The object exists and no layer says it landed. Two VERY
+        # different situations, and collapsing them is what made the guard block
+        # every code-only chain in its pre-push window:
+        #   reachable from the local branch -> committed, simply not pushed YET
+        #                                      (grouped-push policy, 022u): PENDING.
+        #   NOT reachable                    -> the close is LOST (orphan / dropped by
+        #                                      a reset or rebase): ERROR, fail-closed.
+        # This must never become fail-open: the unreachable case stays ERROR.
+        if _is_ancestor(sha, "HEAD", repo):
+            return (
+                PENDING_GROUPED_PUSH,
+                "committed and reachable from the local branch, but not in "
+                f"{ref} -- pending the session's grouped push (not a lost close)",
+            )
         return ERROR, "object exists but landed by no layer -- LOST CLOSE (fail-closed)"
     return (
         WARN,
@@ -423,8 +463,9 @@ def main(argv: list[str] | None = None) -> int:
     roots = {"MOTOR_ROOT": motor_root, "DESTINO_ROOT": dest_root, "GIT_REPO": git_repo}
     counts = {
         v: sum(1 for r in results if r["verdict"] == v)
-        for v in (OK, OK_BY_SUBJECT, ERROR, WARN)
+        for v in (OK, OK_BY_SUBJECT, PENDING_GROUPED_PUSH, ERROR, WARN)
     }
+    # Only ERROR blocks. PENDING_GROUPED_PUSH is the expected pre-push state (022x).
     errors = [r for r in results if r["verdict"] == ERROR]
 
     if args.json:
@@ -440,10 +481,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[landed] audited {len(results)} commit(s) against {args.ref}")
         print(
             f"[landed] OK={counts[OK]} OK_BY_SUBJECT={counts[OK_BY_SUBJECT]} "
+            f"PENDING_GROUPED_PUSH={counts[PENDING_GROUPED_PUSH]} "
             f"WARN={counts[WARN]} ERROR={counts[ERROR]}"
         )
         for r in results:
-            if r["verdict"] in (ERROR, WARN):
+            if r["verdict"] in (ERROR, WARN, PENDING_GROUPED_PUSH):
                 print(
                     f"[landed]   {r['verdict']}: {r['ticket_id']} {r['sha']} -- {r['detail']}"
                 )

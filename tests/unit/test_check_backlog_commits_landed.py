@@ -71,6 +71,28 @@ def _classify(work, ticket_id, sha, patch_ids=None):
     return gl.classify(ticket_id, sha, ref, work, patch_ids)
 
 
+def _archive_with(tmp_path, work, pairs):
+    """A minimal DESTINO root whose archived backlog closes `pairs`.
+
+    Needed to exercise main() (and therefore the real EXIT CODE), not just
+    classify()/audit(). The exit-code decision lives in main(), so a test that
+    only inspects audit()'s verdicts cannot prove the guard fails (or does not
+    fail) as intended -- see test_022x_pending_does_not_trigger_the_error_exit_code.
+
+    Also drops the MANIFEST.distribute that main() requires of the motor root.
+    """
+    (work / "MANIFEST.distribute").write_text("x\n", encoding="utf-8")
+    dest = tmp_path / "destino"
+    archive = dest / ".agent" / "collaboration" / "_archive"
+    archive.mkdir(parents=True, exist_ok=True)
+    rows = "\n".join(
+        f"| Alta | {tid} | t | motor/x | completed | - | s | commit:{sha} |"
+        for tid, sha in pairs
+    )
+    (archive / "backlog_done.md").write_text(rows + "\n", encoding="utf-8")
+    return dest
+
+
 # --------------------------------------------------------------------------- #
 # CAPA 1 -- direct ancestor -> OK
 # --------------------------------------------------------------------------- #
@@ -409,3 +431,143 @@ def test_capa2_empty_patchid_is_not_a_match(tmp_path):
     # Force a poisoned set containing '' -- classify must still NOT return OK via CAPA 2
     verdict, _ = gl.classify("WOT-2026-0III", orphan, "origin/main", work, {""})
     assert verdict == gl.ERROR  # orphan has an object, no layer hits -> ERROR, not OK
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-022x -- PENDING_GROUPED_PUSH vs LOST CLOSE
+#
+# The code-only policy (022u) is a GROUPED push at the end of the session, so a
+# row archived right after its commit is legitimately NOT in origin/main yet.
+# Before 022x the guard called that ERROR (LOST CLOSE), and since
+# audit_pipeline_codeonly.md treats such an ERROR as blocking APROBADO, EVERY
+# code-only chain was formally blocked in its pre-push window.
+#
+# The fix is semantic and must NOT become fail-open. The four cases below are the
+# whole contract: only case 2 changes; case 3 -- an object that exists but is NOT
+# reachable from the local branch (an orphan left by a reset/rebase) -- is the
+# genuine lost close and MUST stay ERROR.
+# --------------------------------------------------------------------------- #
+def test_022x_case1_landed_in_origin_is_ok(tmp_path):
+    """Case 1: pushed and in origin/main -> OK (unchanged)."""
+    _origin, work = _make_repo(tmp_path)
+    sha = _commit(work, "p.txt", "p\n", "WOT-2026-0PP1: landed")
+    _g(["push", "-q", "origin", "main"], work)
+    _g(["fetch", "-q", "origin"], work)
+    verdict, _ = _classify(work, "WOT-2026-0PP1", sha)
+    assert verdict == gl.OK
+
+
+def test_022x_case2_committed_not_pushed_is_pending_not_error(tmp_path):
+    """Case 2 -- THE FIX: committed, on the local branch, not pushed yet.
+
+    LOAD-BEARING: this is the NORMAL state under the grouped-push policy, between
+    a ticket's commit and the session's push. It is not a lost close.
+    """
+    _origin, work = _make_repo(tmp_path)
+    sha = _commit(work, "q.txt", "q\n", "WOT-2026-0PP2: committed, not pushed")
+    # deliberately NOT pushed
+    verdict, detail = _classify(work, "WOT-2026-0PP2", sha)
+    assert verdict == gl.PENDING_GROUPED_PUSH, (
+        "a commit that is on the local branch but not yet pushed is PENDING, not a "
+        "LOST CLOSE: the grouped-push policy (022u) makes this the expected state"
+    )
+    assert "grouped push" in detail
+
+
+def test_022x_case3_object_unreachable_from_branch_stays_error(tmp_path):
+    """Case 3 -- THE ANTI-FAIL-OPEN CASE: the object exists but is NOT reachable
+    from the local branch (orphaned by a reset/rebase; survives only in the reflog).
+
+    LOAD-BEARING: this is the genuine LOST CLOSE the guard exists to catch. If 022x
+    had keyed on "has an object" instead of "reachable from the branch", this would
+    have been downgraded to PENDING and the guard would be FAIL-OPEN.
+
+    Mutation: classify on _has_object alone -> this goes RED.
+    """
+    _origin, work = _make_repo(tmp_path)
+    _g(["checkout", "-q", "-b", "tmpwork"], work)
+    orphan = _commit(work, "r.txt", "r\n", "WOT-2026-0PP3: will be orphaned")
+    _g(["checkout", "-q", "main"], work)
+    _g(["branch", "-qD", "tmpwork"], work)  # object survives; nothing points at it
+
+    verdict, detail = _classify(work, "WOT-2026-0PP3", orphan)
+    assert verdict == gl.ERROR, (
+        "an object unreachable from the local branch is a LOST CLOSE and must stay "
+        "ERROR; downgrading it to PENDING would make the guard fail-open"
+    )
+    assert "LOST CLOSE" in detail
+
+
+def test_022x_case4_nonexistent_sha_stays_warn(tmp_path):
+    """Case 4: the SHA has no git object at all -> WARN (unchanged).
+
+    Never ERROR: a history-rewrite legitimately drops old SHAs.
+    """
+    _origin, work = _make_repo(tmp_path)
+    verdict, _ = _classify(work, "WOT-2026-0PP4", "deadbeefdeadbeefdeadbeefdeadbeef")
+    assert verdict == gl.WARN
+
+
+def test_022x_pending_does_not_trigger_the_error_exit_code(tmp_path):
+    """PENDING_GROUPED_PUSH must NOT make the guard FAIL (exit 4).
+
+    LOAD-BEARING, and it must assert on the REAL exit code of main(), not on
+    audit()'s verdict list. A first version of this test checked only the verdicts
+    returned by audit(); the mutation that counts PENDING as an ERROR (which
+    reintroduces the whole 022x bug -- the guard blocking the chain verdict again)
+    left it GREEN, because the error filter lives in main(), not in audit(). Testing
+    the wrong layer is a substring-proxy in disguise: assert the PROPERTY (the guard
+    does not fail) at the layer that owns it.
+
+    Mutation: count PENDING among `errors` in main() -> exit 4 -> RED.
+    """
+    _origin, work = _make_repo(tmp_path)
+    sha = _commit(work, "s.txt", "s\n", "WOT-2026-0PP5: pending")
+
+    results = gl.audit([("WOT-2026-0PP5", sha)], "origin/main", work)
+    assert [r["verdict"] for r in results] == [gl.PENDING_GROUPED_PUSH]
+
+    archive = _archive_with(tmp_path, work, [("WOT-2026-0PP5", sha)])
+    rc = gl.main(
+        [
+            "--motor-root",
+            str(work),
+            "--project-root",
+            str(archive),
+            "--ref",
+            "origin/main",
+        ]
+    )
+    assert rc == gl.EXIT_OK, (
+        f"a PENDING (committed, not yet pushed) close must NOT fail the guard; "
+        f"got exit {rc}. Blocking on it is exactly the bug 022x fixes."
+    )
+
+
+def test_022x_a_real_lost_close_still_fails_the_guard(tmp_path):
+    """The anti-fail-open twin of the test above, at the exit-code layer: a genuine
+    LOST CLOSE (object unreachable from the branch) must STILL make the guard fail.
+
+    Without this, 'PENDING does not fail' could be satisfied by a guard that never
+    fails at all.
+    """
+    _origin, work = _make_repo(tmp_path)
+    _g(["checkout", "-q", "-b", "tmpwork"], work)
+    orphan = _commit(work, "t.txt", "t\n", "WOT-2026-0PP6: orphaned")
+    _g(["checkout", "-q", "main"], work)
+    _g(["branch", "-qD", "tmpwork"], work)
+
+    archive = _archive_with(tmp_path, work, [("WOT-2026-0PP6", orphan)])
+    rc = gl.main(
+        [
+            "--motor-root",
+            str(work),
+            "--project-root",
+            str(archive),
+            "--ref",
+            "origin/main",
+        ]
+    )
+    assert rc == gl.EXIT_VERDICT_ERROR, (
+        f"a lost close (unreachable object) must still fail the guard; got exit {rc}"
+    )
