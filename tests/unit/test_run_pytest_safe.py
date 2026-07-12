@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -1425,19 +1426,37 @@ class TestIsPidRunningWindowsSafe:
         monkeypatch.setattr(os, "kill", _denied)
         assert mod.is_pid_running(12345) is True
 
+    @staticmethod
+    def _force_windows_tasklist_branch(monkeypatch, shutil_mod) -> None:
+        """Make the Windows `tasklist` branch of is_pid_running REACHABLE.
+
+        is_pid_running gates that branch on ``os.name == "nt"``. Without forcing
+        os.name, the branch is DEAD CODE on Linux: mocking shutil.which and
+        subprocess.run has no effect because control never reaches them, and the
+        call falls through to os.kill instead.
+
+        That is what broke CI (Linux) while the suite was green on Windows: the
+        tests passed locally by accident of the host platform, not because the
+        seam worked. Forcing os.name exercises the branch on EVERY platform --
+        the same approach the os.kill tests in this class already take
+        ("the seam is exercised regardless of the host platform").
+        """
+        monkeypatch.setattr(os, "name", "nt")
+        monkeypatch.setattr(
+            shutil_mod,
+            "which",
+            lambda name, *a, **k: (
+                "C:/fake/tasklist.EXE" if name == "tasklist" else None
+            ),
+        )
+
     def test_tasklist_miss_is_dead(self, monkeypatch) -> None:
         """Windows tasklist reports the PID absent -> unambiguously dead."""
         import shutil
         import subprocess
 
         mod = load_runner_module()
-        monkeypatch.setattr(
-            shutil,
-            "which",
-            lambda name, *a, **k: (
-                "C:/fake/tasklist.EXE" if name == "tasklist" else None
-            ),
-        )
+        self._force_windows_tasklist_branch(monkeypatch, shutil)
 
         class _Result:
             returncode = 0
@@ -1452,13 +1471,7 @@ class TestIsPidRunningWindowsSafe:
         import subprocess
 
         mod = load_runner_module()
-        monkeypatch.setattr(
-            shutil,
-            "which",
-            lambda name, *a, **k: (
-                "C:/fake/tasklist.EXE" if name == "tasklist" else None
-            ),
-        )
+        self._force_windows_tasklist_branch(monkeypatch, shutil)
 
         class _Result:
             returncode = 0
@@ -1473,13 +1486,7 @@ class TestIsPidRunningWindowsSafe:
         import subprocess
 
         mod = load_runner_module()
-        monkeypatch.setattr(
-            shutil,
-            "which",
-            lambda name, *a, **k: (
-                "C:/fake/tasklist.EXE" if name == "tasklist" else None
-            ),
-        )
+        self._force_windows_tasklist_branch(monkeypatch, shutil)
 
         def _timeout(cmd, **kw):
             raise subprocess.TimeoutExpired(cmd, 5)
