@@ -1186,10 +1186,26 @@ def test_ticket_supervisor_reactive_prints_bootstrapped_state(
 
 
 def test_builder_alive_pid_exists(tmp_path, monkeypatch):
-    """Test _builder_alive returns True when PID exists in tasklist."""
+    """Test _builder_alive returns True for the happy path.
+
+    WOT-2026-023a: this test had two defects. (1) The final assert was
+    ``isinstance(result, bool)``, which accepts True OR False -- it verified
+    nothing. (2) The fixture wrote ``started_at`` as a raw float
+    (``time.time()``), not an ISO string. ``builder_alive`` (bus/builder_
+    locks.py) parses ``started_at`` with ``_parse_iso_datetime``, which
+    raises AttributeError on a float; that error is swallowed by the
+    ``except (ValueError, TypeError, AttributeError)`` guard and the check
+    silently falls through to the mtime fallback. So the test believed it
+    was exercising the happy path (lock present, PID alive, no BUILDER_EXIT)
+    but was actually exercising a CORRUPT lock every time.
+
+    Fixed: ``started_at`` is now a real ISO string, and the assert checks
+    the actual expected outcome (``is True``) instead of merely "did not
+    crash".
+    """
     import json
     import os
-    import time
+    from datetime import datetime, timezone
 
     from bus.supervisor import SequentialTicketSupervisor
 
@@ -1198,13 +1214,13 @@ def test_builder_alive_pid_exists(tmp_path, monkeypatch):
     collaboration_dir.mkdir(parents=True)
     runtime_dir.mkdir(parents=True)
 
-    # Crear lock con PID actual (pytest process)
+    # Crear lock con PID actual (pytest process) y started_at ISO valido
     lock_path = runtime_dir / "builder_lock.txt"
     lock_data = {
         "pid": os.getpid(),
         "ticket_id": "WP-TEST",
         "project_root": str(tmp_path),
-        "started_at": time.time(),
+        "started_at": datetime.now(timezone.utc).isoformat(),
     }
     lock_path.write_text(json.dumps(lock_data), encoding="utf-8")
 
@@ -1215,18 +1231,17 @@ def test_builder_alive_pid_exists(tmp_path, monkeypatch):
         auto_sync=False,
     )
 
-    # En entorno real, tasklist deberia encontrar el PID actual
+    # Lock presente + started_at ISO valido + sin BUILDER_EXIT + mtime fresco
+    # -> True. builder_alive() no llama a tasklist en absoluto (no usa
+    # _is_pid_alive); decide por lock+bus+mtime (bus/builder_locks.py:104-132).
     result = supervisor._builder_alive()
-    # Puede ser True (tasklist funciona) o False (tasklist no disponible en test)
-    # Lo importante es que no crashea
-    assert isinstance(result, bool)
+    assert result is True
 
 
 def test_builder_alive_pid_dead(tmp_path, monkeypatch):
     """Test _builder_alive returns False when PID is dead."""
     import json
     import os
-    import subprocess
     import time
 
     from bus.supervisor import SequentialTicketSupervisor
@@ -1244,12 +1259,6 @@ def test_builder_alive_pid_dead(tmp_path, monkeypatch):
     # Hacer el lock viejo para que el fallback mtime tambien devuelva False
     old_time = time.time() - 1000  # ~16 minutos
     os.utime(lock_path, (old_time, old_time))
-
-    # Mock tasklist para simular PID no encontrado
-    def mock_tasklist(*args, **kwargs):
-        return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
-
-    monkeypatch.setattr("subprocess.run", mock_tasklist)
 
     supervisor = SequentialTicketSupervisor(
         project_root=tmp_path,
@@ -2083,7 +2092,6 @@ def test_builder_alive_mtime_fallback_only(tmp_path, monkeypatch):
     Expected: _builder_alive returns True based on mtime (crash recovery).
     """
     import json
-    import subprocess
 
     from bus.supervisor import SequentialTicketSupervisor
 
@@ -2091,12 +2099,6 @@ def test_builder_alive_mtime_fallback_only(tmp_path, monkeypatch):
     runtime_dir = tmp_path / ".agent" / "runtime"
     collaboration_dir.mkdir(parents=True)
     runtime_dir.mkdir(parents=True)
-
-    # Mock tasklist to always return PID not found
-    def mock_tasklist(*args, **kwargs):
-        return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
-
-    monkeypatch.setattr("subprocess.run", mock_tasklist)
 
     supervisor = SequentialTicketSupervisor(
         project_root=tmp_path,
@@ -2260,7 +2262,6 @@ def test_builder_alive_wrapper_pid_dead_builder(tmp_path, monkeypatch):
     """
     import json
     import os
-    import subprocess
     import time
     from datetime import datetime, timezone
 
@@ -2279,14 +2280,6 @@ def test_builder_alive_wrapper_pid_dead_builder(tmp_path, monkeypatch):
     )
 
     ticket_id = "WP-2026-115"
-
-    # Mock tasklist to report wrapper PID as alive
-    def mock_tasklist_alive(*args, **kwargs):
-        return subprocess.CompletedProcess(
-            args, 0, stdout=f"{os.getpid()}  powershell.exe\n", stderr=""
-        )
-
-    monkeypatch.setattr("subprocess.run", mock_tasklist_alive)
 
     # Create lock with wrapper PID (alive)
     lock_path = runtime_dir / "builder_lock.txt"
@@ -6455,3 +6448,260 @@ def test_verify_builder_start_bounded_by_env_not_host_default(tmp_path, monkeypa
     elapsed = _time.perf_counter() - started
     # Bounded by the 0.5s seam (+ poll slack), nowhere near the 20s host default.
     assert elapsed < 5.0, f"verify path paid host default, not env seam: {elapsed:.1f}s"
+
+
+# =============================================================================
+# WOT-2026-023a: _is_supervisor_lock_stale seam coverage (real Windows tasklist
+# branch, forced on every platform incl. CI Linux)
+#
+# builder_locks._is_pid_alive short-circuits to False whenever os.name != "nt"
+# (bus/builder_locks.py:67), so on Linux the tasklist probe is dead code. The
+# only LIVE caller of _is_pid_alive is
+# SequentialTicketSupervisor._is_supervisor_lock_stale (bus/supervisor.py:368-
+# 398, call-site line 390), and until this ticket its real body had zero
+# coverage (other test files only ever substitute MagicMocks for it).
+#
+# These tests force the Windows branch via tests._seam_helpers.force_os_name
+# so the tasklist probe is exercised on EVERY host platform, not just by
+# accident on Windows. skipif(platform...) is intentionally NOT used: that
+# would drop coverage exactly on the platform (CI/Linux) where the bug that
+# motivated this ticket was found.
+# =============================================================================
+
+
+def test_is_supervisor_lock_stale_tasklist_pid_alive(tmp_path, monkeypatch):
+    """tasklist reports the PID alive -> lock is NOT stale (False).
+
+    Forces the Windows tasklist branch via force_os_name so this is exercised
+    on every host platform, including CI Linux. A spy on the mocked
+    subprocess.run proves the mock was actually invoked (anti-teatro guard):
+    without it, a dead mock could silently stop being exercised and the test
+    would still pass for the wrong reason.
+
+    BRANCH ISOLATION (WOT-2026-023a, leccion 021u): the lock file is
+    deliberately aged past the 900s TTL. _is_supervisor_lock_stale has TWO
+    paths to a verdict (bus/supervisor.py:388-397): the PID probe, and the
+    mtime fallback. With a FRESH lock both paths return False, so the assert
+    would pass even if the PID branch were dead -- coverage of EXECUTION (the
+    spy proves tasklist ran) but not of DECISION. Ageing the lock makes the
+    mtime fallback say True (stale), so the only way to get False is the PID
+    branch actually governing the verdict. Mutating that branch now flips this
+    test to red, which is the whole point.
+    """
+    import json
+    import os
+    import time
+    import types
+
+    from bus.supervisor import SequentialTicketSupervisor
+
+    from tests._seam_helpers import force_os_name
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    pid = 4242
+    lock_data = {"pid": pid}
+    supervisor.supervisor_lock_path.write_text(json.dumps(lock_data), encoding="utf-8")
+    # Age the lock past the 900s TTL: the mtime fallback would say "stale"
+    # (True), so a False verdict can ONLY come from the live-PID branch.
+    old_time = time.time() - 1000
+    os.utime(supervisor.supervisor_lock_path, (old_time, old_time))
+
+    force_os_name(monkeypatch, "nt")
+
+    called = {"n": 0}
+
+    def fake_run(cmd, **kw):
+        called["n"] += 1
+        return types.SimpleNamespace(returncode=0, stdout=f"{pid}\n", stderr="")
+
+    monkeypatch.setattr(
+        "bus.builder_locks.subprocess",
+        types.SimpleNamespace(
+            run=fake_run,
+            TimeoutExpired=__import__("subprocess").TimeoutExpired,
+        ),
+    )
+
+    result = supervisor._is_supervisor_lock_stale()
+
+    assert called["n"] == 1, (
+        "el mock de tasklist no se invoco: el test no ejercita la rama"
+    )
+    assert result is False
+
+
+def test_is_supervisor_lock_stale_tasklist_miss_old_lock(tmp_path, monkeypatch):
+    """tasklist does NOT find the PID + lock is old (>900s) -> stale (True)."""
+    import json
+    import os
+    import time
+    import types
+
+    from bus.supervisor import SequentialTicketSupervisor
+
+    from tests._seam_helpers import force_os_name
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    pid = 999999
+    lock_data = {"pid": pid}
+    supervisor.supervisor_lock_path.write_text(json.dumps(lock_data), encoding="utf-8")
+    old_time = time.time() - 1000  # ~16 minutos, > 900s TTL
+    os.utime(supervisor.supervisor_lock_path, (old_time, old_time))
+
+    force_os_name(monkeypatch, "nt")
+
+    called = {"n": 0}
+
+    def fake_run(cmd, **kw):
+        called["n"] += 1
+        return types.SimpleNamespace(returncode=1, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        "bus.builder_locks.subprocess",
+        types.SimpleNamespace(
+            run=fake_run,
+            TimeoutExpired=__import__("subprocess").TimeoutExpired,
+        ),
+    )
+
+    result = supervisor._is_supervisor_lock_stale()
+
+    assert called["n"] == 1, (
+        "el mock de tasklist no se invoco: el test no ejercita la rama"
+    )
+    assert result is True
+
+
+def test_is_supervisor_lock_stale_mtime_fallback_keeps_fresh_lock(
+    tmp_path, monkeypatch
+):
+    """tasklist misses the PID + lock is fresh (<900s) -> not stale (False).
+
+    NAMED FOR WHAT IT ACTUALLY DECIDES (WOT-2026-023a): with the PID absent
+    from tasklist, the verdict here is produced by the MTIME FALLBACK
+    (bus/supervisor.py:394-397), not by the PID branch. Calling this a
+    "tasklist" test would overclaim: mutating the PID branch does NOT flip
+    this test, because a fresh lock is "not stale" either way. What the spy
+    below still buys us is proof that the tasklist probe was REACHED and
+    reported a miss (execution coverage of the Windows branch on every
+    platform); the DECISION coverage of the PID branch lives in
+    test_is_supervisor_lock_stale_tasklist_pid_alive, which ages the lock so
+    that only a live PID can yield False.
+    """
+    import json
+    import types
+
+    from bus.supervisor import SequentialTicketSupervisor
+
+    from tests._seam_helpers import force_os_name
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    pid = 999999
+    lock_data = {"pid": pid}
+    supervisor.supervisor_lock_path.write_text(json.dumps(lock_data), encoding="utf-8")
+    # No os.utime: mtime is "now" -> fresh.
+
+    force_os_name(monkeypatch, "nt")
+
+    called = {"n": 0}
+
+    def fake_run(cmd, **kw):
+        called["n"] += 1
+        return types.SimpleNamespace(returncode=1, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        "bus.builder_locks.subprocess",
+        types.SimpleNamespace(
+            run=fake_run,
+            TimeoutExpired=__import__("subprocess").TimeoutExpired,
+        ),
+    )
+
+    result = supervisor._is_supervisor_lock_stale()
+
+    assert called["n"] == 1, (
+        "el mock de tasklist no se invoco: el test no ejercita la rama"
+    )
+    assert result is False
+
+
+def test_is_pid_alive_fails_closed_to_dead_on_posix(tmp_path, monkeypatch):
+    """DOCUMENTS current behavior (B6, NOT fixed by this ticket).
+
+    builder_locks._is_pid_alive is fail-closed-to-dead: on any non-"nt"
+    platform it returns False WITHOUT EVER consulting tasklist (bus/
+    builder_locks.py:67, ``if os.name != "nt": return False``). This is a
+    real production bug (tracked as B6 in .agent/collaboration/work_plan.md
+    and a separate ticket): on CI Linux, a supervisor lock held by another
+    LIVE process but with mtime > 900s gets wrongly declared stale, breaking
+    the lock out from under a still-alive holder.
+
+    WOT-2026-023a does NOT fix this -- it only makes the current behavior
+    VISIBLE via a test, so nobody can accidentally "fix" _is_pid_alive's
+    semantics without this test forcing them to notice the change. The spy
+    proves tasklist is never even called on this branch (0 invocations),
+    which is the whole point: the PID-alive check is skipped entirely, not
+    merely answered False.
+    """
+    import types
+
+    from bus.builder_locks import _is_pid_alive
+
+    from tests._seam_helpers import force_os_name
+
+    force_os_name(monkeypatch, "posix")
+
+    called = {"n": 0}
+
+    def fake_run(cmd, **kw):
+        called["n"] += 1
+        return types.SimpleNamespace(returncode=0, stdout="4242\n", stderr="")
+
+    monkeypatch.setattr(
+        "bus.builder_locks.subprocess",
+        types.SimpleNamespace(
+            run=fake_run,
+            TimeoutExpired=__import__("subprocess").TimeoutExpired,
+        ),
+    )
+
+    result = _is_pid_alive(4242)
+
+    assert result is False, "B6: en posix, _is_pid_alive es fail-closed-a-muerto"
+    assert called["n"] == 0, (
+        "B6: tasklist NO debe ser consultado en absoluto en la rama posix"
+        " -- el bug es que el chequeo se SALTA, no que responda False"
+    )
