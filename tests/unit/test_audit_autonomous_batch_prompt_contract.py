@@ -55,6 +55,20 @@ def _read_skill() -> str:
     return SKILL_FILE.read_text(encoding="utf-8")
 
 
+def _section_zero() -> str:
+    """The text of section 0 ONLY (the nuclear isolation rule).
+
+    Scoping is what gives the isolation barrier teeth. The isolation tokens
+    ("fresh-context", "OBLIGATORIO") also occur INCIDENTALLY elsewhere in the
+    prompt, so a whole-document substring check can be satisfied by text that
+    has nothing to do with the rule.
+    """
+    text = _read()
+    start = text.index("## 0.")
+    end = text.index("## 1.", start)
+    return text[start:end]
+
+
 def test_prompt_file_exists() -> None:
     assert AUDIT_PROMPT.is_file(), (
         "prompts/audit_autonomous_ticket_batch.md must exist "
@@ -70,8 +84,156 @@ def test_skill_file_exists() -> None:
 
 
 # ---------------------------------------------------------------------------
+# SEAM 022s <-> 022t: the auditor must not audit a GHOST
+#
+# The chain meta-audit found the auditor evaluating a PREDICATE block that the
+# executor was never instructed to emit (grep -c PREDICATE: auditor=8,
+# executor=0). An auditor checking an artifact no producer emits is not a
+# barrier -- it is a barrier-shaped hole. Per-ticket reviews cannot see this:
+# each prompt is internally coherent. Only the seam is wrong.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "artifact",
+    [
+        "GROUP_STOP_REPORT",
+        "batch_run_",
+    ],
+)
+def test_audited_artifacts_are_declared_emissions_of_the_executor(
+    artifact: str,
+) -> None:
+    """Every artifact the AUDITOR checks must be one the EXECUTOR emits.
+
+    LOAD-BEARING (cross-prompt seam): an auditor that checks an artifact no
+    producer emits is not a barrier, it is a barrier-shaped hole.
+    """
+    audit_text = _read()
+    exec_text = EXECUTOR_PROMPT.read_text(encoding="utf-8")
+    if artifact not in audit_text:
+        pytest.skip(f"{artifact} is not audited by this prompt")
+    assert artifact in exec_text, (
+        f"the auditor checks {artifact!r} but the executor prompt "
+        f"(orchestrator_autonomous_ticket_batch.md) never declares or emits "
+        f"it: the auditor is checking a ghost"
+    )
+
+
+# The 7 conditions of the machine-checkable predicate (design 12.bis.2.b).
+PREDICATE_CONDITIONS = (
+    "schema_valido",
+    "dag_aciclico",
+    "contabilidad_completa",
+    "cierres_auditables",
+    "suite_final_verde",
+    "auditor_emitido",
+    "arboles_limpios",
+)
+
+
+@pytest.mark.parametrize("condition", PREDICATE_CONDITIONS)
+def test_executor_declares_every_predicate_condition_the_auditor_evaluates(
+    condition: str,
+) -> None:
+    """The executor must DECLARE the 7-condition PREDICATE the auditor evaluates.
+
+    LOAD-BEARING, and deliberately NOT a `"PREDICATE" in text` check: the token
+    alone is a substring proxy. A first attempt at this test asserted exactly
+    that, and stripping the whole PREDICATE *section* from the executor left it
+    GREEN -- the word survived in an unrelated Outputs bullet. That is the same
+    false-green class as the derogation attack on section 0 above: assert the
+    PROPERTY, never the token.
+
+    So this asserts every condition NAME is present. Mutation: remove the
+    PREDICATE section from the executor prompt -> RED (7 of these fail).
+    """
+    exec_text = EXECUTOR_PROMPT.read_text(encoding="utf-8")
+    assert condition in exec_text, (
+        f"the auditor evaluates predicate condition {condition!r}, but the "
+        f"executor prompt never declares it: the auditor audits a ghost"
+    )
+
+
+@pytest.mark.parametrize(
+    "dag_field",
+    ["stop_policy", "budget", "depends_on_groups", "shared_surfaces"],
+)
+def test_executor_consumes_the_dag_fields_the_schema_emits(dag_field: str) -> None:
+    """The DAG schema (022r) emits these; the executor (022s) is their only
+    consumer. A field the schema mandates and the executor ignores is a dead
+    contract -- and the triage would be filling it for nobody.
+
+    Mutation: remove the 'What the batch consumes from the DAG' section from
+    the executor -> RED.
+    """
+    exec_text = EXECUTOR_PROMPT.read_text(encoding="utf-8")
+    assert dag_field in exec_text, (
+        f"the DAG schema autonomous-batch-dag/v1 emits {dag_field!r}, but the "
+        f"executor prompt never mentions consuming it"
+    )
+
+
+# ---------------------------------------------------------------------------
 # (a) ISOLATION -- the load-bearing DoD test
 # ---------------------------------------------------------------------------
+
+# Tokens that would REPEAL the isolation rule rather than state it. Their
+# presence inside section 0 means the rule has been derogated, no matter how
+# faithfully the section still quotes the original wording.
+DEROGATION_TOKENS = (
+    "DEROGADA",
+    "derogada",
+    "queda sin efecto",
+    "SI PUEDE auditarlo",
+    "SI PUEDE auditar",
+    "PUEDE auditar su propia",
+    "es opcional",
+    "es OPCIONAL",
+    "meramente recomendable",
+)
+
+
+def test_isolation_rule_lives_in_section_zero() -> None:
+    """The prohibition must live INSIDE section 0, not merely somewhere in the
+    document.
+
+    LOAD-BEARING (structural, not substring): the sibling assertions below are
+    whole-document `in text` checks, and the isolation tokens recur incidentally
+    elsewhere in the prompt (e.g. "Review 2 fresh-context" in the close-proposal
+    table). Anchoring to the section is what makes them mean what they say.
+    """
+    s0 = _section_zero()
+    assert "NO PUEDE auditarlo" in s0, (
+        "section 0 must carry the prohibition itself; a rule stated only "
+        "elsewhere in the document is not the nuclear rule"
+    )
+
+
+@pytest.mark.parametrize("token", DEROGATION_TOKENS)
+def test_isolation_rule_cannot_be_derogated(token: str) -> None:
+    """LOAD-BEARING -- this is the barrier the DoD actually needs.
+
+    The DoD's named mutation (invert the clause) goes RED, but that is NOT
+    enough: a prompt can QUOTE the rule in order to REPEAL it -- keeping every
+    grep-token intact -- and every substring assertion still passes. The chain
+    meta-audit demonstrated exactly this: a section 0 reading "Historicamente se
+    dijo: 'El agente que EJECUTO el batch NO PUEDE auditarlo' ... Esa regla queda
+    DEROGADA: el ejecutor SI PUEDE auditar su propia corrida" passed all 72
+    tests. That is a falso_verde: the prompt permits self-audit and the suite is
+    green.
+
+    So the assertion must be about the RULE, not about the words: no derogating
+    token may appear inside section 0.
+
+    Mutation: add "Esa regla queda DEROGADA" to section 0 -> RED.
+    """
+    s0 = _section_zero()
+    assert token not in s0, (
+        f"section 0 (the nuclear isolation rule) contains the derogating token "
+        f"{token!r}: the rule is being repealed, not stated. The executor must "
+        f"NEVER be permitted to audit its own run (CEM v0: no self-report)."
+    )
 
 
 def test_prompt_states_executor_cannot_audit_itself() -> None:

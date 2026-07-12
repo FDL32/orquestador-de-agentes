@@ -34,6 +34,7 @@ import pytest
 
 PROMPTS = Path(__file__).resolve().parents[2] / "prompts"
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
+SKILLS = Path(__file__).resolve().parents[2] / "skills"
 BATCH_PROMPT = PROMPTS / "orchestrator_autonomous_ticket_batch.md"
 
 
@@ -202,22 +203,49 @@ def _referenced_script_files(text: str) -> set[str]:
     return set(re.findall(r"scripts/([A-Za-z0-9_.\-]+\.py)", text))
 
 
-# audit_autonomous_ticket_batch.md is the sibling AUDITOR prompt (WOT-2026-022t),
-# delivered as its own ticket per the frozen design ("T2 + T3 juntos"). The
-# batch prompt names it deliberately (see test_prompt_names_its_sibling_auditor)
-# even though it does not exist yet at the time 022s lands; it is the ONLY
-# allowed exception to the dangling-reference seam guard below.
-KNOWN_SIBLING_NOT_YET_DELIVERED = {"audit_autonomous_ticket_batch.md"}
+def _referenced_skill_files(text: str) -> set[str]:
+    """skills/<name>/SKILL.md references.
+
+    This regex did not exist until the chain meta-audit of 022u/r/s/t: the
+    seam guard covered prompts/ and scripts/ but NOT skills/, so the prompt
+    could declare `Skill canonica: skills/orchestrate-autonomous-ticket-batch/
+    SKILL.md` while that file did not exist. It did not exist. Any reference
+    class left unguarded is a reference class that will eventually dangle.
+    """
+    return set(re.findall(r"skills/([A-Za-z0-9_.\-]+)/SKILL\.md", text))
 
 
 def test_no_dangling_prompt_references() -> None:
-    """Every prompts/*.md file cited in the batch prompt must exist on disk,
-    except the one documented sibling-not-yet-delivered exception above."""
+    """Every prompts/*.md file cited in the batch prompt must exist on disk.
+
+    NOTE: an exception constant (KNOWN_SIBLING_NOT_YET_DELIVERED) used to
+    whitelist audit_autonomous_ticket_batch.md here, because 022s landed on
+    disk before its sibling 022t. Both shipped in the same commit, so the
+    exception is RETIRED: keeping it would silently mask a real regression if
+    the auditor prompt were ever deleted.
+    """
     text = _read()
-    referenced = _referenced_prompt_files(text) - KNOWN_SIBLING_NOT_YET_DELIVERED
+    referenced = _referenced_prompt_files(text)
     assert referenced, "expected at least one prompts/*.md reference to check"
     missing = [name for name in referenced if not (PROMPTS / name).is_file()]
     assert not missing, f"dangling prompt references (do not exist): {missing}"
+
+
+def test_no_dangling_skill_references() -> None:
+    """Every skills/<name>/SKILL.md cited in the batch prompt must exist.
+
+    LOAD-BEARING: the executor declares `Skill canonica:
+    skills/orchestrate-autonomous-ticket-batch/SKILL.md`. The chain meta-audit
+    found that file MISSING -- the auditor got a skill, the executor did not --
+    and no test caught it, because the seam guard never looked at skills/.
+
+    Mutation: delete skills/orchestrate-autonomous-ticket-batch/SKILL.md -> RED.
+    """
+    text = _read()
+    referenced = _referenced_skill_files(text)
+    assert referenced, "the batch prompt must declare its canonical skill"
+    missing = [n for n in referenced if not (SKILLS / n / "SKILL.md").is_file()]
+    assert not missing, f"dangling skill references (do not exist): {missing}"
 
 
 def test_no_dangling_script_references() -> None:

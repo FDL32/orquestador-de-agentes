@@ -276,6 +276,7 @@ real false-green in the evidence that informed this design:
 ## Outputs (design section 12)
 
 1. `batch_run_<ts>.json` -- per ticket: final state, checkpoint, evidence.
+   It MUST carry the `PREDICATE` block declared below.
 2. `GROUP_STOP_REPORT` per stop.
 3. Learning-ledger records in the session's `manifest.jsonl` (append-only).
 4. Final chain meta-audit (`audit_pipeline.md` or `audit_pipeline_codeonly.md`
@@ -284,6 +285,51 @@ real false-green in the evidence that informed this design:
 
 All of these are written to the **destino-rol**, never to `repo_motor`
 (portability rule above).
+
+---
+
+## The PREDICATE: declare it BEFORE running, emit it in `batch_run_<ts>.json`
+
+The batch declares a machine-checkable predicate BEFORE it runs, and the
+isolated auditor (`prompts/audit_autonomous_ticket_batch.md`) evaluates it
+**command by command, on real exit codes, not on narrative**. A run may be
+declared `DONE` only if ALL 7 conditions hold:
+
+| # | Condition | How it is checked |
+|---|---|---|
+| 1 | `schema_valido` | the DAG-JSON validates against `autonomous-batch-dag/v1` (`scripts/validate_batch_dag.py`, exit 0) |
+| 2 | `dag_aciclico` | the same validator reports no cycle (exit 0) |
+| 3 | `contabilidad_completa` | every ticket of the DAG ends in EXACTLY ONE state: closed, frozen-with-`GROUP_STOP_REPORT`, or not-reached-by-budget. No ticket is lost |
+| 4 | `cierres_auditables` | per closed ticket, an archived row with a `commit:` cell AND the `audited` counter of `check_backlog_commits_landed` WENT UP; final `ERROR=0` |
+| 5 | `suite_final_verde` | canonical suite post-last-commit with `tested_sha == HEAD`, read from the REAL output ("N passed / N failed"), NEVER the wrapper's exit code |
+| 6 | `auditor_emitido` | the isolated auditor's report exists, verdict != `NO ACEPTAR TODAVIA` |
+| 7 | `arboles_limpios` | dirty=0 across the repos ENUMERATED from the resolved topology (never a hardcoded count) |
+
+Conditions 4 and 5 encode real false-greens: `ERROR=0` is **not** the same as
+audited (the landing guard used to SKIP rows lacking a `commit:` cell), and a
+suite run PRE-commit reports the PARENT's `tested_sha`.
+
+Emit it as a `PREDICATE` block inside `batch_run_<ts>.json`, one entry per
+condition -> command -> real exit/value.
+
+---
+
+## What the batch consumes from the DAG (`autonomous-batch-dag/v1`)
+
+The DAG is produced by `/backlog-triage` and validated with
+`scripts/validate_batch_dag.py` BEFORE the batch executes anything. The
+executor reads, and never rewrites:
+
+- per group: `id`, `tickets`, `depends_on_groups` (execution order),
+  `blocks_groups` and `shared_surfaces` (containment, see the freeze rule),
+  `class` and `autonomy_mode` (**assigned by the triage; the executor NEVER
+  reclassifies**), `common_gate`, `recovery_owner_stage`,
+  `max_recovery_attempts`.
+- `stop_policy`: `hard_stop_causes`, `recoverable_causes`,
+  `max_unclassified_stops`.
+- `budget`: `max_tickets_closed`, `max_group_recoveries`. When the budget is
+  exhausted, remaining tickets end as `not-reached-by-budget` -- an explicit
+  state in the accounting of condition 3, never a silent drop.
 
 ---
 
