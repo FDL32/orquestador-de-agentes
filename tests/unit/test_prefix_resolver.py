@@ -318,6 +318,47 @@ def test_guard_wot_from_dev_worktree_passes(tmp_path: Path) -> None:
     assert guard("WOT-2026-021g", cwd=dev, motor_root=motor) == 0
 
 
+def test_guard_wot_mismatch_message_does_not_cite_resolved(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """WOT-2026-023i: the WOT mismatch message must talk about repos (cwd vs
+    motor), never about where the WOT prefix RESOLVES to.
+
+    Once the WOT special-case in prefix_resolver.resolve_prefix is retired,
+    'WOT' resolves through the links like any other prefix -- to the
+    WORKSPACE destination, not to the motor. A message citing that resolved
+    path would read "resolves to ..._workspace, but cwd is ..._workspace",
+    i.e. it would claim cwd differs from itself. guard()'s WOT branch does
+    not consult the resolution at all (it compares git-common-dir), so its
+    message must not cite it either.
+
+    Mutation-to-prove: re-introduce {resolved} into that f-string and this
+    test goes red. Before this test existed, NOTHING in the suite asserted
+    on the TEXT of guard()'s messages (verified: deleting {resolved}
+    produced a delta of 0 failures).
+
+    cwd must be a DIFFERENT REAL git repo, not a plain directory: a plain
+    directory takes the fail-closed branch ("cannot determine
+    git-common-dir"), which is a different message entirely.
+    """
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    motor = tmp_path / "motor"
+    motor.mkdir()
+    _git_init_main(motor)
+    other_repo = tmp_path / "not_the_motor"
+    other_repo.mkdir()
+    _git_init_main(other_repo)
+
+    assert guard("WOT-2026-023i", cwd=other_repo, motor_root=motor) == 1
+    err = capsys.readouterr().err
+    assert "different git repo" in err
+    assert str(other_repo) in err
+    # The barrier: the resolved destination must NOT appear in the message.
+    assert "resolves to" not in err
+
+
 def test_guard_wot_cwd_not_git_repo_returns_one_no_crash(tmp_path: Path) -> None:
     """WOT-2026-021g: fail-closed degradation. cwd is a plain directory
     (no git init) while motor_root IS a real git repo. guard() must return

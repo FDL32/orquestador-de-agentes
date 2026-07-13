@@ -260,22 +260,27 @@ def _git_common_dir(path: Path) -> Path | None:
 
 
 def guard(ticket_or_project: str, cwd: Path, motor_root: Path) -> int:
-    """Guard: resolve ticket_or_project, compare resolved path with cwd.
+    """Guard: is cwd the right repo to work ticket_or_project from?
 
     Before: ticket_or_project is a ticket ID or project name; cwd is the
             current working directory; motor_root is the motor root.
-    During: extracts prefix (or uses project name), resolves to a
-            destination_root. For prefix == WOT_PREFIX ONLY: compares
-            cwd and motor_root by git-common-dir (same repo, any worktree
-            of it -- e.g. the _dev worktree and the primary detached
-            checkout are the SAME motor) instead of literal path equality;
-            this only confirms "same repo", it does NOT enforce write
-            discipline (which worktree/branch to use for WOT is the job of
-            scripts/check_worktree_topology.py, not this function). If
+    During: extracts the prefix (or uses the project name). WOT is decided
+            FIRST and WITHOUT resolving the prefix to a destination: the
+            question for WOT is "is cwd the same git repo as motor_root"
+            (any worktree of it -- the _dev worktree and the primary
+            detached checkout are the SAME motor), answered by comparing
+            git-common-dir. That answer does not depend on where the WOT
+            prefix RESOLVES to, so this branch must not require a
+            resolution: demanding one would make a missing or duplicate WOT
+            link (resolve_prefix -> None -> exit 2) block every WOT ticket
+            from the correct worktree. It also does NOT enforce write
+            discipline (which worktree/branch to use for WOT belongs to
+            scripts/check_worktree_topology.py, exclusively). If
             git-common-dir cannot be determined for either side (not a git
-            repo, or git missing from PATH), fails closed: treated as a
-            mismatch (exit 1), never a crash, never exit 0. All other
-            prefixes keep the original literal-path comparison, unchanged.
+            repo, or git missing from PATH), fails closed: mismatch
+            (exit 1), never a crash, never exit 0. All other prefixes
+            resolve to a destination_root and keep the literal-path
+            comparison, unchanged.
     After: returns 0 if match, 1 if mismatch, 2 if resolution fails.
           Prints to stderr on failure (NO bus event: runs before
           --bootstrap-ticket).
@@ -284,16 +289,6 @@ def guard(ticket_or_project: str, cwd: Path, motor_root: Path) -> int:
         prefix = extract_prefix(ticket_or_project)
     except ValueError as exc:
         print(f"[ERROR] {exc}", file=sys.stderr)
-        return 2
-    if prefix is not None:
-        resolved = resolve_prefix(prefix, motor_root)
-    else:
-        resolved = resolve_by_project_name(ticket_or_project, motor_root)
-    if resolved is None:
-        print(
-            f"[ERROR] Cannot resolve '{ticket_or_project}' to a destination",
-            file=sys.stderr,
-        )
         return 2
     if prefix == WOT_PREFIX:
         cwd_common = _git_common_dir(cwd)
@@ -308,12 +303,23 @@ def guard(ticket_or_project: str, cwd: Path, motor_root: Path) -> int:
             return 1
         if cwd_common != motor_common:
             print(
-                f"[ERROR] Prefix mismatch: '{ticket_or_project}' resolves to "
-                f"{resolved}, but cwd is {cwd} (different git repo)",
+                f"[ERROR] Repo mismatch: '{ticket_or_project}' is a motor "
+                f"ticket, but cwd is {cwd}, which is not a worktree of the "
+                f"motor at {motor_root} (different git repo)",
                 file=sys.stderr,
             )
             return 1
         return 0
+    if prefix is not None:
+        resolved = resolve_prefix(prefix, motor_root)
+    else:
+        resolved = resolve_by_project_name(ticket_or_project, motor_root)
+    if resolved is None:
+        print(
+            f"[ERROR] Cannot resolve '{ticket_or_project}' to a destination",
+            file=sys.stderr,
+        )
+        return 2
     if cwd.resolve() != resolved.resolve():
         print(
             f"[ERROR] Prefix mismatch: '{ticket_or_project}' resolves to "
