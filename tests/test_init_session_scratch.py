@@ -1112,10 +1112,13 @@ class TestMaidenVoyage:
         wins = sum(1 for r in results if r is True)
         assert wins == 1, (
             f"Exactly 1 should win, got {wins} (creates={len(creates)}). "
-            "creates==2 -> WOT-2026-023s: the loser's stale reclaim verdict unlinked a "
-            "LIVE lock (TOCTOU in _takeover_lock) -- a REAL production bug, NOT a "
-            "regression of this test. creates==1 -> a same-session idempotent re-entry, "
-            "meaning this test lost its distinct-sid setup."
+            "wins==2, creates==2 -> WOT-2026-023s: the loser's stale reclaim verdict "
+            "unlinked a LIVE lock (TOCTOU in _takeover_lock) -- a REAL production bug, "
+            "NOT a regression of this test. "
+            "wins==2, creates==1 -> a same-session idempotent re-entry, meaning this "
+            "test lost its distinct-sid setup. "
+            "wins==0 -> WOT-2026-023l: NOBODY acquired (the `got 0` flaky, mechanism "
+            "still undetermined) -- a different bug, do not attribute it to either."
         )
 
     def test_interruption_leaves_session_intact(self, tmp_path):
@@ -1259,7 +1262,22 @@ class TestTakeoverProducedLockOwnership:
 
     @staticmethod
     def _reclaimed_by(session_dir: Path, sid: str) -> None:
-        """Drive a REAL takeover, then assert the lock is genuinely the takeover's."""
+        """Drive a REAL takeover, then assert the lock is genuinely the takeover's.
+
+        The PRE assert is what makes these tests about the takeover at all. Without a
+        foreign, EXPIRED lock to reclaim, _acquire_lock takes the `not lock_path.exists()`
+        branch and creates the lock outright -- _takeover_lock never runs, and the POST
+        state (ours, live, our sid) is satisfied ALL THE SAME. Both tests then pass green
+        while certifying a route they never walked, which is exactly what they exist to
+        cover. Measured: with the fixture sabotaged to write no lock, both went green.
+        """
+        pre = _read_lock(session_dir / "lock.json")
+        assert pre is not None, (
+            "no lock to reclaim: the takeover route is not exercised"
+        )
+        assert pre["pid"] != os.getpid(), "the lock to reclaim must be a FOREIGN pid"
+        assert not _lock_is_live(pre), "the lock to reclaim must be EXPIRED"
+
         assert _acquire_lock(session_dir, sid, "init") is True, (
             "the stale lock must be reclaimable, or this fixture proves nothing"
         )
@@ -1290,7 +1308,9 @@ class TestTakeoverProducedLockOwnership:
             "the reclaimed lock was rewritten: sid-b unlinked it and recreated it"
         )
 
-    def test_takeover_then_same_session_reentry_is_idempotent(self) -> None:
+    def test_takeover_then_same_session_reentry_is_idempotent(
+        self, monkeypatch
+    ) -> None:
         """The legitimate `wins == 2`. After A reclaims, A re-acquiring is idempotent:
         True, and the lock is left untouched.
 
@@ -1299,7 +1319,11 @@ class TestTakeoverProducedLockOwnership:
         Pinned here deterministically so nobody "fixes" it back into a race.
 
         Mutation-to-prove: without the identity check the re-entry falls through to the
-        takeover, which unlinks and REWRITES the lock -- the byte assert catches it.
+        takeover, which unlinks and REWRITES the lock. The discriminant is that
+        _takeover_lock RAN, not that the bytes changed: the two writes differ only in
+        their timestamps, so on a machine with a coarse clock both could land in the same
+        tick and produce a byte-identical lock -- the byte assert alone would then pass
+        against the mutant. The call counter does not depend on clock resolution.
         """
         repo = _make_repo(REAL_SYSTEM_TEMP, f"tpr_{uuid.uuid4().hex[:8]}")
         session_dir = repo / ".agent" / "runtime" / "session" / "s"
@@ -1308,9 +1332,23 @@ class TestTakeoverProducedLockOwnership:
         self._reclaimed_by(session_dir, "sid-a")
         before = (session_dir / "lock.json").read_bytes()
 
+        takeovers: list[str] = []
+        real_takeover = _iss._takeover_lock
+
+        def counting_takeover(target: Path, sid: str, op: str) -> bool:
+            takeovers.append(sid)
+            return real_takeover(target, sid, op)
+
+        # Patch the MODULE attribute: _acquire_lock resolves it as a global.
+        monkeypatch.setattr(_iss, "_takeover_lock", counting_takeover)
+
         acquired = _acquire_lock(session_dir, "sid-a", "init")
 
         assert acquired is True, "the owner cannot re-enter its own session"
+        assert takeovers == [], (
+            "the re-entry went through the TAKEOVER instead of the identity branch: it "
+            "unlinked and recreated a lock it already held"
+        )
         assert (session_dir / "lock.json").read_bytes() == before, (
             "an idempotent re-acquire must not rewrite the lock"
         )

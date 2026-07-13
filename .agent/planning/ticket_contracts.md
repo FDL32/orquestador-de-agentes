@@ -531,6 +531,32 @@ emite `CG-WOT-2026-023r.md` y **BLOQUEA**. No muta el contrato en silencio.
   ANTES de usarlo para medir el fix de produccion**. **No lo arregles aqui.**
 - **CONTRACT_GAP-3 (NO es un gap del Builder):** ausencia de infra CF -> es **023m**.
 
+### Review 2 (fresh-context, mutante) -- lo que cazo
+
+**APROBADO CON CAMBIOS. El BLOCKER que encontro es la leccion de 021k, repetida por mi:**
+
+- **BLOCKER-1 -- T2/T3 pasaban VERDE sin ejercer el takeover.** `_reclaimed_by` asertaba solo el
+  **POST**-estado (lock nuestro, vivo, con nuestro sid) -- **y un create fresco satisface los
+  cuatro asserts**. Sin lock previo, `_acquire_lock` toma la rama `not lock_path.exists()`
+  (`:446-447`) y crea el lock directamente: **`_takeover_lock` NO CORRE**. **Medido:** con el
+  fixture saboteado (que no escribe lock), **las 2 barreras pasaban verde igualmente**,
+  certificando una ruta que nunca recorrian. El contrato **exigia** este assert (DoD-3) y la
+  implementacion **no lo cumplia**: el contrato acerto, el codigo no.
+  **FIX:** `_reclaimed_by` aserta ahora el **PRE**-estado (lock **presente**, **pid AJENO**,
+  **EXPIRADO**) antes del acquire. Con el sabotaje, las 2 barreras **CAEN**.
+- **M-1 -- los dientes de T3 eran TEMPORALES, no estructurales.** Su unico discriminante era la
+  comparacion de BYTES, y los dos locks difieren **solo en los timestamps**. En una maquina de
+  reloj grueso (`time.get_clock_info('time').resolution` anuncia **15.6 ms** en esta) las dos
+  escrituras podrian caer en el **mismo tick** -> lock **byte-identico** -> **T3 verde contra el
+  mutante**. **FIX:** T3 cuenta las invocaciones de `_takeover_lock`: una reentrada idempotente
+  **no puede** pasar por el takeover. **No depende de la resolucion del reloj.**
+- **M-2 -- la atribucion no cubria el `got 0`.** El mensaje solo enumeraba `creates==2` y
+  `creates==1`, **y ambos presuponen `wins == 2`**. El flaky VIVO (023l) es `wins == 0` y cae en
+  ESTE test. **FIX:** el assert enumera ahora tambien `wins==0 -> WOT-2026-023l`.
+- **M-3 (medido, se acepta):** T1 sigue rojo **~0.10%** (3/3000 carreras in-process). **TODOS** los
+  rojos residuales salieron `wins=2, creates=2` = **el TOCTOU (023s), correctamente atribuido**.
+  La atribucion FUNCIONA en vivo. Es el riesgo documentado del canario: **023s lo cierra.**
+
 ### Builder clarification
 
 **Builder clarification budget: 0.**
