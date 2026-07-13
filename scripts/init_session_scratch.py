@@ -422,8 +422,25 @@ def _td_seconds(seconds: int):
 def _acquire_lock(session_dir: Path, sid: str, op: str) -> bool:
     """Acquire the session lock. Returns True if acquired (new or reclaimed).
 
-    If the lock is live and held by a living foreign process, returns False.
-    If the lock is stale (expired or dead pid), reclaims via atomic takeover.
+    Ownership is (pid, session_id) -- the SAME pair ``_release_lock`` requires to
+    let go of a lock (WOT-2026-023l). Acquisition used to check only the pid, so a
+    live lock written by THIS process for a DIFFERENT session was stolen: the
+    ``pid != os.getpid()`` guard was False, execution fell through to
+    ``_takeover_lock``, which unlinks the lock and recreates it. O_EXCL does not
+    protect against that -- the unlink frees the path first. The thief then held a
+    lock it could never release (``_release_lock`` demands a matching session_id):
+    false ownership. Reproduced deterministically: two SEQUENTIAL acquisitions both
+    returned True.
+
+    On a LIVE lock:
+      - held by a living foreign process -> False;
+      - held by THIS process for THIS session -> True, idempotent: the lock is left
+        byte-for-byte untouched (this is the legitimate resume path; it used to go
+        through the takeover and rewrite the lock for no reason);
+      - held by THIS process for ANOTHER session -> False. Same process, different
+        owner.
+    A STALE lock (expired, or a dead pid) is reclaimed via the atomic takeover, as
+    before.
     """
     lock_path = _lock_path(session_dir)
     if not lock_path.exists():
@@ -432,7 +449,10 @@ def _acquire_lock(session_dir: Path, sid: str, op: str) -> bool:
     lock_data = _read_lock(lock_path)
     if _lock_is_live(lock_data):
         pid = lock_data.get("pid", 0) if lock_data else 0
-        if pid != os.getpid() and _is_pid_alive_best_effort(pid):
+        if pid == os.getpid():
+            holder = lock_data.get("session_id") if lock_data else None
+            return holder == sid
+        if _is_pid_alive_best_effort(pid):
             return False
     return _takeover_lock(session_dir, sid, op)
 

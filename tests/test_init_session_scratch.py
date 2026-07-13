@@ -1082,6 +1082,107 @@ class TestMaidenVoyage:
 
 
 # ---------------------------------------------------------------------------
+# Lock ownership: (pid, session_id), not pid alone (WOT-2026-023l)
+# ---------------------------------------------------------------------------
+
+
+class TestLockOwnershipIsIdentityAware:
+    """A live lock is owned by (pid, session_id) -- the same pair _release_lock
+    demands. Acquisition used to check only the pid, so a live lock written by THIS
+    process for a DIFFERENT session got stolen: the `pid != os.getpid()` guard was
+    False, execution fell through to _takeover_lock, which unlinks and recreates the
+    lock (O_EXCL cannot protect a path that was just unlinked). The thief then held a
+    lock it could never release. Two SEQUENTIAL acquisitions both returned True --
+    which is what surfaced as `Exactly 1 should win, got 2` under xdist load.
+
+    These tests are deterministic: no threads, no timing, no flakiness. The old
+    takeover test (2 threads on an EXPIRED lock) passes with or without the fix, so
+    it cannot guard this behaviour.
+    """
+
+    @staticmethod
+    def _live_lock(session_dir: Path, holder_sid: str, pid: int) -> bytes:
+        """Write a LIVE lock owned by (pid, holder_sid). Returns its exact bytes."""
+        session_dir.mkdir(parents=True, exist_ok=True)
+        now = datetime.now(timezone.utc)
+        payload = json.dumps(
+            {
+                "pid": pid,
+                "session_id": holder_sid,
+                "op": "init",
+                "created_at": now.isoformat(),
+                "expires_at": (now + timedelta(seconds=300)).isoformat(),
+            }
+        )
+        lock_path = session_dir / "lock.json"
+        lock_path.write_text(payload, encoding="utf-8")
+        return lock_path.read_bytes()
+
+    def test_same_process_other_session_cannot_steal_a_live_lock(self) -> None:
+        """THE BUG. Same pid, DIFFERENT session_id, live lock -> must NOT acquire,
+        and the lock must survive byte-for-byte.
+
+        Mutation-to-prove: drop the identity check in _acquire_lock and this goes red
+        -- the caller acquires (True) and the lock becomes theirs.
+        """
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"own_{uuid.uuid4().hex[:8]}")
+        session_dir = repo / ".agent" / "runtime" / "session" / "s"
+        before = self._live_lock(session_dir, holder_sid="A", pid=os.getpid())
+
+        acquired = _acquire_lock(session_dir, "B", "init")
+
+        assert acquired is False, "session B stole a live lock held by session A"
+        assert (session_dir / "lock.json").read_bytes() == before, (
+            "the lock was rewritten: B unlinked A's lock and recreated it"
+        )
+
+    def test_same_process_same_session_resume_is_idempotent(self) -> None:
+        """The legitimate resume path: same pid, SAME session_id -> acquires, and
+        leaves the lock untouched. It used to go through the takeover and rewrite the
+        lock for no reason."""
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"res_{uuid.uuid4().hex[:8]}")
+        session_dir = repo / ".agent" / "runtime" / "session" / "s"
+        before = self._live_lock(session_dir, holder_sid="A", pid=os.getpid())
+
+        acquired = _acquire_lock(session_dir, "A", "init")
+
+        assert acquired is True
+        assert (session_dir / "lock.json").read_bytes() == before, (
+            "an idempotent re-acquire must not rewrite the lock"
+        )
+
+    def test_live_lock_of_a_living_foreign_process_still_blocks(self) -> None:
+        """Unchanged by the fix: pid 4 (System on Windows) is alive and foreign."""
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"fgn_{uuid.uuid4().hex[:8]}")
+        session_dir = repo / ".agent" / "runtime" / "session" / "s"
+        self._live_lock(session_dir, holder_sid="X", pid=4)
+
+        assert _acquire_lock(session_dir, "B", "init") is False
+
+    def test_expired_lock_of_a_dead_pid_is_still_reclaimed(self) -> None:
+        """Unchanged by the fix: the legitimate takeover must keep working, or the
+        identity check would have turned a fix into a deadlock."""
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"stl_{uuid.uuid4().hex[:8]}")
+        session_dir = repo / ".agent" / "runtime" / "session" / "s"
+        session_dir.mkdir(parents=True, exist_ok=True)
+        now = datetime.now(timezone.utc)
+        (session_dir / "lock.json").write_text(
+            json.dumps(
+                {
+                    "pid": 999999,
+                    "session_id": "old",
+                    "op": "init",
+                    "created_at": now.isoformat(),
+                    "expires_at": (now - timedelta(seconds=100)).isoformat(),
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        assert _acquire_lock(session_dir, "B", "init") is True
+
+
+# ---------------------------------------------------------------------------
 # List subcommand
 # ---------------------------------------------------------------------------
 
