@@ -6,6 +6,7 @@ Covers:
 - sync_memory_rules: dry-run, missing source, file creation, no L1/L3 touch
 - copy_project_template: guard (no overwrite), prefix substitution, dry-run,
   missing template
+- write_motor_destination_link: ticket_prefix preservation on re-sync
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from scripts.install_agent_system import (
     parse_wing_sections,
     prune_residues,
     sync_memory_rules,
+    write_motor_destination_link,
 )
 
 
@@ -900,3 +902,87 @@ def test_destination_projections_respects_existing_entries(tmp_path):
     assert ".agent/config/motor_destination_link.json" in added
     text = (dest_root / ".gitignore").read_text(encoding="utf-8")
     assert text.count(".agent/collaboration/") == 1
+
+
+# ---------------------------------------------------------------------------
+# write_motor_destination_link: ticket_prefix preservation (WOT-2026-023i)
+# ---------------------------------------------------------------------------
+
+
+def _write_link(tmp_path: Path, prefix: str | None = None, **kwargs) -> Path:
+    """Run write_motor_destination_link against a scratch destination and
+    return the link file path."""
+    motor_root = tmp_path / "motor"
+    motor_root.mkdir(exist_ok=True)
+    dest_root = tmp_path / "dest"
+    dest_root.mkdir(exist_ok=True)
+    project_agent = dest_root / ".agent"
+    project_agent.mkdir(exist_ok=True)
+    write_motor_destination_link(
+        project_agent=project_agent,
+        motor_root=motor_root,
+        destination_root=dest_root,
+        motor_version="v9.17.1",
+        ticket_prefix=prefix,
+        **kwargs,
+    )
+    return project_agent / "config" / "motor_destination_link.json"
+
+
+def _read_prefix(link_file: Path) -> str | None:
+    return json.loads(link_file.read_text(encoding="utf-8"))["ticket_prefix"]
+
+
+def test_sync_without_prefix_preserves_existing_ticket_prefix(tmp_path):
+    """WOT-2026-023i: a `--sync` without `--prefix` must NOT null the prefix.
+
+    This is the regression the ticket had to close before it could land. The
+    link file is gitignored (the installer itself adds it to the destination's
+    .gitignore), so the prefix lives only on disk -- and write_motor_
+    destination_link used to write `"ticket_prefix": ticket_prefix`
+    unconditionally, meaning any sync without the flag silently un-declared the
+    destination's namespace.
+
+    That was survivable while prefix_resolver hardcoded a special case for WOT.
+    It no longer is: with WOT resolving through the links like every other
+    prefix, a null-ed workspace link makes the topology guard fail to resolve
+    WOT (exit 2) and block every motor ticket.
+
+    Mutation-to-prove: drop the preservation and this goes red with None.
+    """
+    link = _write_link(tmp_path, prefix="WOT")
+    assert _read_prefix(link) == "WOT"
+
+    # Re-sync with no prefix (the exact shape of `install_agent_system.py --sync`
+    # invoked without --prefix).
+    link = _write_link(tmp_path, prefix=None)
+    assert _read_prefix(link) == "WOT"
+
+
+def test_explicit_prefix_overrides_existing(tmp_path):
+    """Preservation must not become stickiness: an explicit prefix still wins."""
+    _write_link(tmp_path, prefix="WOT")
+    link = _write_link(tmp_path, prefix="CTL")
+    assert _read_prefix(link) == "CTL"
+
+
+def test_new_destination_without_prefix_is_null(tmp_path):
+    """A brand-new destination has nothing to preserve: the prefix stays null,
+    which is the pre-existing contract for `--install` without --prefix."""
+    link = _write_link(tmp_path, prefix=None)
+    assert _read_prefix(link) is None
+
+
+def test_clear_ticket_prefix_nulls_it_explicitly(tmp_path):
+    """Nulling a prefix stays possible, but only on purpose."""
+    _write_link(tmp_path, prefix="WOT")
+    link = _write_link(tmp_path, prefix=None, clear_ticket_prefix=True)
+    assert _read_prefix(link) is None
+
+
+def test_malformed_existing_link_degrades_to_none(tmp_path):
+    """Preservation is best-effort: a corrupt link must not crash the install."""
+    link = _write_link(tmp_path, prefix="WOT")
+    link.write_text("{ not json", encoding="utf-8")
+    link = _write_link(tmp_path, prefix=None)
+    assert _read_prefix(link) is None

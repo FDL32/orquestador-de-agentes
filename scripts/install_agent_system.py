@@ -653,6 +653,27 @@ def flip_profile_in_destination(project_agent: Path, dry_run: bool = False) -> N
         print(f"[WARN] Failed to flip active_profile in {config_file}: {e}")
 
 
+def _read_existing_ticket_prefix(link_file: Path) -> str | None:
+    """Return the ticket_prefix already declared in link_file, or None.
+
+    Before: link_file may or may not exist; if it does, it may be malformed.
+    During: reads the JSON and pulls ticket_prefix. Any failure (missing file,
+            bad JSON, unexpected shape) degrades to None -- this is a
+            best-effort preservation, never a hard failure of the install.
+    After: returns the existing prefix string, or None.
+    """
+    if not link_file.exists():
+        return None
+    try:
+        data = json.loads(link_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    existing = data.get("ticket_prefix")
+    return existing if isinstance(existing, str) and existing else None
+
+
 def write_motor_destination_link(
     project_agent: Path,
     motor_root: Path,
@@ -661,12 +682,21 @@ def write_motor_destination_link(
     destination_id: str | None = None,
     ticket_prefix: str | None = None,
     dry_run: bool = False,
+    clear_ticket_prefix: bool = False,
 ) -> None:
     """
     Write the motor-destination link file in the destination workspace.
 
     Before: Destination .agent/config/ directory exists; link file may or may not exist.
     During: Creates/overwrites motor_destination_link.json with schema fields.
+            ticket_prefix is PRESERVED from the existing link when no prefix is
+            passed (WOT-2026-023i): a `--sync` without `--prefix` used to
+            overwrite it with null, silently un-declaring the destination's
+            namespace. That was survivable while prefix_resolver carried a
+            hardcoded special case for WOT; now that WOT resolves through the
+            links like any other prefix, a null-ed workspace link makes the
+            topology guard fail to resolve WOT and block every motor ticket.
+            Passing clear_ticket_prefix=True is the explicit way to null it.
     After: Link file exists with motor_root, destination_root, motor_version, ticket_prefix, etc.
 
     Schema:
@@ -685,13 +715,18 @@ def write_motor_destination_link(
         motor_version: Version string from motor's .version_manifest.json.
         destination_id: Optional stable identifier; defaults to destination_root name.
         ticket_prefix: Optional ticket prefix for destination namespace (e.g., 'XXX').
+            When None, an existing prefix in the link is preserved rather than nulled.
         dry_run: If True, simulate without writing.
+        clear_ticket_prefix: Explicitly null the prefix instead of preserving it.
     """
     config_dir = project_agent / "config"
     link_file = config_dir / "motor_destination_link.json"
 
     if destination_id is None:
         destination_id = destination_root.name
+
+    if ticket_prefix is None and not clear_ticket_prefix:
+        ticket_prefix = _read_existing_ticket_prefix(link_file)
 
     payload = {
         "motor_root": str(motor_root.resolve()),
