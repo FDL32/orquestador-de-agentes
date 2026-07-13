@@ -353,36 +353,49 @@ def classify(
 ) -> tuple[str, str]:
     """Return (verdict, detail) for one (ticket_id, sha), layers exact -> lax.
 
-    Precedence is load-bearing: CAPA 3 (by-subject) runs BEFORE the no-object WARN,
-    so a SHA rewritten by history (no object) whose ID still lands by convention is
-    OK_BY_SUBJECT, not a false WARN (the 016e/016h case: the recorded SHAs have no
-    object but the tickets landed under new SHAs).
+    Precedence is load-bearing, and WOT-2026-023q corrected it. A FACT about the SHA
+    recorded in the row always beats a CONVENTION about the ticket's ID:
+
+      CAPA 1/2  the SHA itself landed (ancestor / patch-id)          -> OK
+      PENDING   the SHA still EXISTS and is reachable from the local
+                branch -> it is committed and simply NOT PUSHED YET  -> PENDING
+      CAPA 3    the SHA is GONE (or was superseded) but the ID shows
+                up in an origin/main subject                          -> OK_BY_SUBJECT
+
+    CAPA 3 used to run BEFORE the PENDING check, and that was a false-green: a commit
+    that had never left the machine got blessed because a SIBLING commit of the same
+    ticket (a contract edit, say) had landed and carried the ID in its subject. The
+    grouped-push policy GUARANTEES such rows exist in every session, so the guard was
+    reporting ERROR=0 over work that only existed locally. Reproduced deterministically
+    (scripts/probe_landed_guard_unpushed.py).
+
+    CAPA 3 still runs BEFORE the no-object WARN and before the ERROR: it exists for
+    SHAs whose OBJECT IS GONE (the 016e/016h history-rewrite case) or that were
+    superseded on another branch (squash-merge) -- neither is reachable from HEAD, so
+    hoisting PENDING above it does not touch them.
     """
     if _is_ancestor(sha, ref, repo):
         return OK, "ancestor of origin/main (CAPA 1)"
     pid = _patch_id(sha, repo)
     if pid and pid in patch_ids:
         return OK, "patch-id present in origin/main (CAPA 2, rebase)"
+    # WOT-2026-023q: this MUST precede CAPA 3. The object existing AND being reachable
+    # from the local branch is a fact about THIS repo; the ID appearing in some subject
+    # is a convention about SOME commit. The fact wins.
+    if _has_object(sha, repo) and _is_ancestor(sha, "HEAD", repo):
+        # WOT-2026-022x. Committed but not pushed YET (grouped-push policy, 022u).
+        # Never fail-open: the UNREACHABLE case below stays ERROR (a lost close).
+        return (
+            PENDING_GROUPED_PUSH,
+            "committed and reachable from the local branch, but not in "
+            f"{ref} -- pending the session's grouped push (not a lost close)",
+        )
     if _landed_by_subject(ticket_id, ref, repo):
         return (
             OK_BY_SUBJECT,
             "ticket-ID in an origin/main subject (CAPA 3, squash/cherry-pick)",
         )
     if _has_object(sha, repo):
-        # WOT-2026-022x. The object exists and no layer says it landed. Two VERY
-        # different situations, and collapsing them is what made the guard block
-        # every code-only chain in its pre-push window:
-        #   reachable from the local branch -> committed, simply not pushed YET
-        #                                      (grouped-push policy, 022u): PENDING.
-        #   NOT reachable                    -> the close is LOST (orphan / dropped by
-        #                                      a reset or rebase): ERROR, fail-closed.
-        # This must never become fail-open: the unreachable case stays ERROR.
-        if _is_ancestor(sha, "HEAD", repo):
-            return (
-                PENDING_GROUPED_PUSH,
-                "committed and reachable from the local branch, but not in "
-                f"{ref} -- pending the session's grouped push (not a lost close)",
-            )
         return ERROR, "object exists but landed by no layer -- LOST CLOSE (fail-closed)"
     return (
         WARN,

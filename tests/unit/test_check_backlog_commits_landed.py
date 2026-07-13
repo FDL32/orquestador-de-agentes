@@ -384,6 +384,68 @@ def test_mut_squash_needs_capa3(tmp_path):
     )
 
 
+# --------------------------------------------------------------------------- #
+# WOT-2026-023q -- a SHA that never left the machine must NOT be blessed by a
+# SIBLING commit's subject. CAPA 3 is a convention about the ID; "the object is
+# here and reachable from my branch" is a FACT about the SHA. The fact wins.
+# --------------------------------------------------------------------------- #
+def _unpushed_with_sibling_landed(tmp_path):
+    """(work, unpushed_sha): the ticket ALREADY landed a commit carrying its ID in the
+    subject, and a LATER commit of the same ticket is still sitting unpushed on main.
+
+    This is the every-session shape: the grouped-push policy archives rows whose commit
+    has not been pushed yet, and those tickets usually have earlier commits (a contract
+    edit, a probe) already in origin/main with the ID in the subject.
+    """
+    _origin, work = _make_repo(tmp_path)
+    _commit(work, "c.txt", "contract\n", "WOT-2026-0QQQ: contract (landed)")
+    _g(["push", "-q", "origin", "main"], work)
+    _g(["fetch", "-q", "origin"], work)
+    # the fix itself: committed on main, NEVER pushed
+    unpushed = _commit(work, "f.txt", "the fix\n", "WOT-2026-0QQQ: the fix (unpushed)")
+    return work, unpushed
+
+
+def test_unpushed_sha_is_pending_not_blessed_by_sibling_subject(tmp_path):
+    """THE FALSE-GREEN. The ID landed via a SIBLING commit, but THIS sha never left the
+    machine -> PENDING_GROUPED_PUSH, never OK_BY_SUBJECT.
+
+    Mutation-to-prove: put CAPA 3 back above the PENDING check and this goes red --
+    the guard reports the close as landed while the fix exists only locally.
+    """
+    work, unpushed = _unpushed_with_sibling_landed(tmp_path)
+
+    # Assert the setup: CAPA 3 genuinely CAN fire here (that is the whole trap), and
+    # the sha genuinely is NOT in origin/main but IS on the local branch.
+    assert gl._landed_by_subject("WOT-2026-0QQQ", "origin/main", work) is True
+    assert gl._is_ancestor(unpushed, "origin/main", work) is False
+    assert gl._is_ancestor(unpushed, "HEAD", work) is True
+
+    verdict, detail = _classify(work, "WOT-2026-0QQQ", unpushed)
+
+    assert verdict == gl.PENDING_GROUPED_PUSH, (
+        f"a commit that never left the machine was blessed as {verdict}"
+    )
+    assert "grouped push" in detail
+
+
+def test_mut_pending_hoist_must_require_reachable_from_head(tmp_path):
+    """MUT 'PENDING fires on any existing object' -> the SQUASH case would flip
+    OK_BY_SUBJECT -> PENDING_GROUPED_PUSH.
+
+    The `_is_ancestor(sha, HEAD)` conjunct is what keeps the hoist from swallowing
+    CAPA 3's legitimate cases: a squashed original still HAS an object, but it is not
+    reachable from HEAD. Isolates the branch: without this test, dropping the conjunct
+    would look harmless.
+    """
+    work, original = _squashed(tmp_path)
+    patch_ids = gl.build_patch_id_set("origin/main", work)
+
+    assert gl._has_object(original, work) is True  # the object survives the squash
+    assert gl._is_ancestor(original, "HEAD", work) is False  # but is NOT on main
+    assert _classify(work, "WOT-2026-0CCC", original, patch_ids)[0] == gl.OK_BY_SUBJECT
+
+
 def test_mut_group_first_sha_only_would_miss_others():
     """MUT 'parser takes only 1st SHA of a+b+c' -> 2nd/3rd never audited."""
     pairs = gl.parse_archived_commits(_ROW_GROUP)
