@@ -19,9 +19,12 @@ For WOT there are TWO independent verifications, BOTH mandatory:
     toplevel must match an entry of `git worktree list` whose directory
     name ends in "_dev".
   Verification B (active workspace), evaluated ONLY if A passed: the active
-    workspace (--project-root) must be the "orquestador_de_agentes_workspace"
-    destination, derived by destination_id (never by ticket_prefix, which is
-    null on that link).
+    workspace (--project-root) must be the destination that the WOT prefix
+    resolves to, via prefix_resolver.resolve_prefix -- the same mechanism
+    every other prefix uses. (Until WOT-2026-023i this was derived by
+    destination_id instead, because the workspace link carried
+    ticket_prefix: null; the link now declares "WOT" and the bespoke lookup
+    is gone.)
 
 For any other prefix (destinations, e.g. CTL/EXF): the motor being detached
 is expected (no _dev requirement); only the active workspace must match the
@@ -54,7 +57,6 @@ to scripts/setup_dev_worktree.ps1 as a reference for the user to run.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import subprocess
 import sys
@@ -65,7 +67,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import prefix_resolver
 
 
-WORKSPACE_DESTINATION_ID = "orquestador_de_agentes_workspace"
 DEV_SUFFIX = "_dev"
 
 
@@ -177,40 +178,6 @@ def _find_dev_worktree(motor_root: Path) -> Path | None:
     return None
 
 
-def _find_workspace_by_destination_id(
-    motor_root: Path, destination_id: str
-) -> Path | None:
-    """Find a destination whose link has destination_id == the given value.
-
-    Before: motor_root is the motor root; destination_id is the value to
-            match (e.g. "orquestador_de_agentes_workspace").
-    During: scans parent(motor_root) one level deep for
-            motor_destination_link.json (same search_root as
-            prefix_resolver.scan_links / resolve_by_project_name), matching
-            on the destination_id field -- NEVER on ticket_prefix, which is
-            null on the workspace link (verified on disk).
-    After: returns the destination_root Path, or None if not found.
-    """
-    search_root = motor_root.parent
-    if not search_root.exists():
-        return None
-    for child in sorted(search_root.iterdir()):
-        link_path = child / prefix_resolver.LINK_REL
-        if not link_path.exists():
-            continue
-        try:
-            data = json.loads(link_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        if not isinstance(data, dict):
-            continue
-        if data.get("destination_id") == destination_id:
-            dest = data.get("destination_root")
-            if dest:
-                return Path(dest)
-    return None
-
-
 def _check_wot_topology(
     cwd: Path, motor_root: Path, project_root: Path
 ) -> tuple[int, str]:
@@ -229,10 +196,12 @@ def _check_wot_topology(
             instruction to use _dev. If no _dev entry exists at all -> exit
             1 with the "create _dev" message (never auto-created here).
             Verification B runs ONLY if A returned exit 0: resolves the
-            expected workspace via destination_id ==
-            "orquestador_de_agentes_workspace"; if that link cannot be
-            found -> exit 2; if project_root does not match it -> exit 1
-            with the literal contract message.
+            expected workspace via prefix_resolver.resolve_prefix(WOT), the
+            same mechanism every other prefix uses. If WOT does not resolve
+            (no link declares ticket_prefix "WOT", or more than one does and
+            it is ambiguous) -> exit 2, "cannot determine" (NOT exit 1,
+            which means "the workspace is the wrong one"); if project_root
+            does not match the resolved destination -> exit 1.
     After: returns (exit_code, message).
     """
     cwd_common = _git_common_dir(cwd)
@@ -269,19 +238,21 @@ def _check_wot_topology(
             "scripts/setup_dev_worktree.ps1.",
         )
 
-    expected_workspace = _find_workspace_by_destination_id(
-        motor_root, WORKSPACE_DESTINATION_ID
+    expected_workspace = prefix_resolver.resolve_prefix(
+        prefix_resolver.WOT_PREFIX, motor_root
     )
     if expected_workspace is None:
         return (
             2,
-            "no se pudo derivar el workspace esperado para WOT: falta el "
-            f"link con destination_id == {WORKSPACE_DESTINATION_ID}",
+            "no se pudo derivar el workspace esperado para WOT: ningun link "
+            f"declara ticket_prefix == {prefix_resolver.WOT_PREFIX}, o mas de "
+            "uno lo declara (ambiguo). Diagnostico: "
+            "python scripts/prefix_resolver.py --verify",
         )
     if project_root.resolve() != expected_workspace.resolve():
         return (
             1,
-            f"Ticket WOT necesita el workspace {WORKSPACE_DESTINATION_ID}, "
+            f"Ticket WOT necesita el workspace {expected_workspace}, "
             f"no {project_root}.",
         )
     return (
