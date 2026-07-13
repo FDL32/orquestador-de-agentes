@@ -8,6 +8,21 @@
 ## WOT-2026-021k
 
 - **status:** frozen
+- **FROZEN CON WAIVER EXPLICITO -- NO es un frozen canonico.** `audit_cf_ticket_contract.md`
+  exige `repo_charter.md` y `plan_graph.md` como **entradas obligatorias**, y **NINGUNO
+  EXISTE en este repo** -> el **Intent Audit (punto 8 del checklist) es INEJECUTABLE**, no
+  "debil": no hay Non-Goals / Quality Bar / Security Constraints contra los que contrastar.
+  **Un auditor futuro que bloquee este contrato por eso TIENE RAZON.**
+  - **Quien lo autoriza:** el USUARIO, 2026-07-13, de forma explicita.
+  - **Alcance del waiver:** SOLO la ausencia de infra CF. **Todo lo demas del contrato esta
+    verificado por probe EJECUTADO**, no por relato: premisa, regla del ceiling, las 2
+    barreras, sus 2 mutaciones, la precedencia y el DoD-6.
+  - **Por que no se bloquea:** la infra CF **nunca se materializo** en este repo (existen el
+    validador y los prompts, no los artefactos). Bloquear 021k por eso seria **scope hijack**.
+  - **Caducidad:** **WOT-2026-023m** (materializar charter + plan_graph, y **adaptar
+    `audit_cf_ticket_contract.md` para que DISTINGA "repo sin CF materializado" de "contrato
+    mal formado"**). **Su DoD-(e) es RETIRAR este waiver.**
+  - **El waiver NO es precedente.** No lo copies a otro contrato: reclama 023m.
 - **deliverable_type:** code
 - **delivery_authority:** repo_motor
 - **Objective-Link:** OBJ-HERMETICIDAD -- ningun test que invoque git contra un fixture
@@ -284,14 +299,13 @@ Builder emite `CG-WOT-2026-021k.md` y **BLOQUEA**. No muta el contrato en silenc
   rc=1?"* -> **rc=2 ES EL OBJETIVO.** Con un `.git` corrupto la topologia no es determinable;
   fail-closed es el veredicto honesto. La v1 exigia rc=1 (inalcanzable con el instrumento
   permitido) y por eso estaba muerta al nacer.
-- **CONTRACT_GAP-2 (deuda de infra; NO bloquea este ticket -- decision del usuario
-  2026-07-13):** este repo **no tiene** `.agent/planning/repo_charter.md` ni `plan_graph.md`,
-  que `audit_cf_ticket_contract.md` exige como entradas. Consecuencia honesta: el **Intent
-  Audit contra Non-Goals/Quality Bar/Security Constraints es NO VERIFICABLE**, y el
-  `Objective-Link`/`Plan-Link` de arriba son **declarativos, no derivados**. Bloquear 021k por
-  una infra que nunca se materializo en este repo seria **scope hijack**. -> **Follow-up
-  propio** (materializar charter + plan_graph, y adaptar `audit_cf_ticket_contract.md` para
-  distinguir "repo sin CF materializado" de "contrato mal formado").
+- **CONTRACT_GAP-2 -- NO es un gap del Builder: es el WAIVER de este contrato.** Ver el bloque
+  **FROZEN CON WAIVER EXPLICITO** arriba. Resumen: sin `repo_charter.md` / `plan_graph.md`, el
+  **Intent Audit es INEJECUTABLE** y el `Objective-Link`/`Plan-Link` son **declarativos, no
+  derivados**. Autorizado por el USUARIO (2026-07-13); **caduca con WOT-2026-023m**, cuyo
+  DoD-(e) es retirarlo. **El Builder NO emite CG por esto** (ya esta resuelto arriba); si el
+  Builder encuentra que la ausencia de charter le impide decidir algo CONCRETO de la
+  implementacion, ESO si es un CG nuevo -> PARA y reporta.
 
 ### Builder clarification
 
