@@ -28,6 +28,7 @@ _SCRIPT = _MOTOR_ROOT / "scripts" / "init_session_scratch.py"
 if str(_MOTOR_ROOT) not in sys.path:
     sys.path.insert(0, str(_MOTOR_ROOT))
 
+from scripts import init_session_scratch as _iss  # noqa: E402
 from scripts.init_session_scratch import (  # noqa: E402
     KEEP_LAST_K,
     TAKEOVER_TTL,
@@ -54,6 +55,25 @@ from tests.conftest import REAL_SYSTEM_TEMP  # noqa: E402
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _write_stale_lock(session_dir: Path) -> dict:
+    """Write the lock every takeover test starts from: EXPIRED, held by a foreign pid.
+
+    Returned so the caller can assert its own setup: a takeover test that never had a
+    stale lock certifies nothing (WOT-2026-021k: a barrier must assert its own fixture).
+    """
+    session_dir.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc)
+    stale = {
+        "pid": 999999,
+        "session_id": "old",
+        "op": "init",
+        "created_at": now.isoformat(),
+        "expires_at": (now - timedelta(seconds=100)).isoformat(),
+    }
+    (session_dir / "lock.json").write_text(json.dumps(stale), encoding="utf-8")
+    return stale
 
 
 def _sentinel_id() -> str:
@@ -1029,38 +1049,74 @@ class TestMaidenVoyage:
         assert dir_b.is_dir()
         assert dir_a != dir_b
 
-    def test_takeover_competition_exactly_one_wins(self, tmp_path):
-        repo = _make_repo(REAL_SYSTEM_TEMP, f"tc_{uuid.uuid4().hex[:8]}")
-        sid = _sentinel_id()
-        session_dir = repo / ".agent" / "runtime" / "session" / sid
-        session_dir.mkdir(parents=True, exist_ok=True)
+    def test_takeover_competition_exactly_one_wins(self, tmp_path, monkeypatch):
+        """Two contenders race to reclaim ONE stale lock. They are DIFFERENT sessions.
 
-        old_lock = {
-            "pid": 999999,
-            "session_id": "old",
-            "op": "init",
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "expires_at": (
-                datetime.now(timezone.utc) - timedelta(seconds=100)
-            ).isoformat(),
-        }
-        (session_dir / "lock.json").write_text(json.dumps(old_lock), encoding="utf-8")
+        The contenders must NOT share a session_id. Ownership is (pid, session_id)
+        (WOT-2026-023n), so two threads of one process sharing a sid are the SAME
+        logical owner: the second re-enters idempotently and `wins == 2` is CORRECT.
+        This test used to give both threads the same sid and assert `wins == 1` -- it
+        called a legitimate re-entry a bug and went red on roughly 3 of 4 loaded runs
+        (WOT-2026-023r). With distinct sids that mode is gone BY CONSTRUCTION:
+        _acquire_lock returns `holder == sid`, False for a foreign session, so the
+        re-entry branch can never hand out a second win.
+
+        A residual `got 2` here is NOT this test lying again: it is the TOCTOU in
+        _takeover_lock (WOT-2026-023s) -- a contender whose "stale" verdict went stale
+        unlinks a LIVE lock and takes it. `creates` tells the two apart, which is why
+        the assert reports it:
+            creates == 2 -> the second contender rewrote the lock -> 023s, a REAL bug
+            creates == 1 -> a same-session re-entry -> this test lost its distinct sids
+        """
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"tc_{uuid.uuid4().hex[:8]}")
+        sid_a = _sentinel_id()
+        sid_b = _sentinel_id()
+        assert sid_a != sid_b, "the contenders must be DIFFERENT sessions"
+
+        session_dir = repo / ".agent" / "runtime" / "session" / "contended"
+        _write_stale_lock(session_dir)
+
+        # Assert the setup: the race only means anything over a lock that is genuinely
+        # reclaimable -- EXPIRED and owned by someone ELSE.
+        stale = _read_lock(session_dir / "lock.json")
+        assert stale["pid"] != os.getpid(), "the stale lock must be a FOREIGN pid"
+        assert not _lock_is_live(stale), "the stale lock must be EXPIRED"
+
+        creates: list[str] = []
+        real_create = _iss._try_create_lock_exclusive
+
+        def counting_create(target: Path, sid: str, op: str) -> bool:
+            won = real_create(target, sid, op)
+            if won:
+                creates.append(sid)  # list.append is atomic under the GIL
+            return won
+
+        # Patch the MODULE attribute: _takeover_lock resolves it as a global.
+        monkeypatch.setattr(_iss, "_try_create_lock_exclusive", counting_create)
 
         results: list[bool] = []
 
-        def try_acquire():
+        def try_acquire(sid: str):
             results.append(_acquire_lock(session_dir, sid, "init"))
 
         import threading
 
-        threads = [threading.Thread(target=try_acquire) for _ in range(2)]
+        threads = [
+            threading.Thread(target=try_acquire, args=(sid,)) for sid in (sid_a, sid_b)
+        ]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
 
         wins = sum(1 for r in results if r is True)
-        assert wins == 1, f"Exactly 1 should win, got {wins}"
+        assert wins == 1, (
+            f"Exactly 1 should win, got {wins} (creates={len(creates)}). "
+            "creates==2 -> WOT-2026-023s: the loser's stale reclaim verdict unlinked a "
+            "LIVE lock (TOCTOU in _takeover_lock) -- a REAL production bug, NOT a "
+            "regression of this test. creates==1 -> a same-session idempotent re-entry, "
+            "meaning this test lost its distinct-sid setup."
+        )
 
     def test_interruption_leaves_session_intact(self, tmp_path):
         repo = _make_repo(REAL_SYSTEM_TEMP, f"int_{uuid.uuid4().hex[:8]}")
@@ -1180,6 +1236,84 @@ class TestLockOwnershipIsIdentityAware:
         )
 
         assert _acquire_lock(session_dir, "B", "init") is True
+
+
+# ---------------------------------------------------------------------------
+# Ownership of a lock produced by a REAL takeover (WOT-2026-023r)
+# ---------------------------------------------------------------------------
+
+
+class TestTakeoverProducedLockOwnership:
+    """Ownership holds on a lock written by _takeover_lock, not just a hand-written one.
+
+    TestLockOwnershipIsIdentityAware pins the same two verdicts, but it hand-writes the
+    live lock. Nothing pinned the route that actually produced the `got 2`: thread A
+    RECLAIMS the stale lock, and the lock B then reads is the one A's takeover wrote.
+    These two tests walk that route, deterministically -- no threads, no timing.
+
+    Both are barriers: reverting the identity check in _acquire_lock (pid-only
+    ownership, the pre-023n code) makes BOTH go red. Verify them in ISOLATION -- the
+    same mutation also kills the two tests above, so "the mutant died" proves nothing
+    about these (the mutation-verify false-green of WOT-2026-021t/021u).
+    """
+
+    @staticmethod
+    def _reclaimed_by(session_dir: Path, sid: str) -> None:
+        """Drive a REAL takeover, then assert the lock is genuinely the takeover's."""
+        assert _acquire_lock(session_dir, sid, "init") is True, (
+            "the stale lock must be reclaimable, or this fixture proves nothing"
+        )
+        lock = _read_lock(session_dir / "lock.json")
+        assert lock is not None
+        assert lock["pid"] == os.getpid(), "the reclaimed lock must be OURS"
+        assert lock["session_id"] == sid, "the reclaimed lock must name the reclaimer"
+        assert _lock_is_live(lock), "the reclaimed lock must be LIVE"
+
+    def test_takeover_then_foreign_session_cannot_steal(self) -> None:
+        """THE ROUTE OF THE FALSE RED. After A reclaims, a foreign session must NOT
+        acquire -- and A's lock must survive byte-for-byte.
+
+        Mutation-to-prove: drop the identity check in _acquire_lock and the second
+        acquisition returns True, taking a lock it could never release.
+        """
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"tpo_{uuid.uuid4().hex[:8]}")
+        session_dir = repo / ".agent" / "runtime" / "session" / "s"
+        _write_stale_lock(session_dir)
+
+        self._reclaimed_by(session_dir, "sid-a")
+        before = (session_dir / "lock.json").read_bytes()
+
+        acquired = _acquire_lock(session_dir, "sid-b", "init")
+
+        assert acquired is False, "a foreign session stole a freshly reclaimed lock"
+        assert (session_dir / "lock.json").read_bytes() == before, (
+            "the reclaimed lock was rewritten: sid-b unlinked it and recreated it"
+        )
+
+    def test_takeover_then_same_session_reentry_is_idempotent(self) -> None:
+        """The legitimate `wins == 2`. After A reclaims, A re-acquiring is idempotent:
+        True, and the lock is left untouched.
+
+        This is the behaviour the old threaded test called a bug: two threads sharing a
+        sid are ONE logical owner, so the second acquisition is a resume, not a theft.
+        Pinned here deterministically so nobody "fixes" it back into a race.
+
+        Mutation-to-prove: without the identity check the re-entry falls through to the
+        takeover, which unlinks and REWRITES the lock -- the byte assert catches it.
+        """
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"tpr_{uuid.uuid4().hex[:8]}")
+        session_dir = repo / ".agent" / "runtime" / "session" / "s"
+        _write_stale_lock(session_dir)
+
+        self._reclaimed_by(session_dir, "sid-a")
+        before = (session_dir / "lock.json").read_bytes()
+
+        acquired = _acquire_lock(session_dir, "sid-a", "init")
+
+        assert acquired is True, "the owner cannot re-enter its own session"
+        assert (session_dir / "lock.json").read_bytes() == before, (
+            "an idempotent re-acquire must not rewrite the lock"
+        )
 
 
 # ---------------------------------------------------------------------------

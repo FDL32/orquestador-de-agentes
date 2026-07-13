@@ -333,3 +333,216 @@ en un documento de arranque. **Cada una tumbo una version previa de este contrat
    el fixture** -> mutation-verify que no discrimina. Por eso el DoD tiene **DOS barreras
    separadas** (A: motor real, via fixture global; B: padre sintetico, via ceiling interno),
    **cada una con su mutacion**. **NO LAS FUNDAS.**
+
+## WOT-2026-023r
+
+- **status:** frozen
+- **deliverable_type:** code
+- **delivery_authority:** repo_motor
+- **RECATEGORIZADO (v2).** La ficha y la v1 de este contrato lo llamaban **"FALSO ROJO"**. **Es
+  una etiqueta INCOMPLETA y la auditoria adversarial la tumbo.** El test no registra UN modo de
+  fallo, sino **DOS, indistinguibles desde el `AssertionError`**:
+  - **modo LEGITIMO** (`same sid`): reentrada idempotente -> el sistema CUMPLE su contrato y el
+    assert MIENTE. Es un falso rojo de verdad.
+  - **modo CATASTROFICO** (`sids distintos`): **TOCTOU REAL en `_takeover_lock`** -> bug de
+    PRODUCCION vivo (**WOT-2026-023s**).
+  **Luego 023r no es "un falso rojo": es un TEST AMBIGUO.** Cerrarlo como falso rojo dejaria el
+  TOCTOU **invisible a todo gate futuro**. Este contrato lo desambigua.
+- **Objective-Link:** OBJ-TESTS-HONESTOS -- un test debe declarar bug si y solo si el sistema
+  incumple su contrato, y **cuando falle debe decir DE QUE mecanismo habla**. Un assert que
+  fusiona un comportamiento correcto con un bug real es peor que no tener test: hace
+  inatribuible todo rojo futuro.
+- **Plan-Link:** PLAN-SESSION-LOCK. Familia por MECANISMO: **023n** (ownership `(pid, sid)`,
+  CERRADO) - **023r** (este: el TEST) - **023s** (TOCTOU de `_takeover_lock`, NUEVO, produccion)
+  y **023l** (`got 0`, marker `.takeover`, SIN DETERMINAR). **Un mecanismo, un ticket. No los
+  fundas.**
+
+> **ESTE CONTRATO NO ES CF CANONICO, y no lo disimula.** `repo_charter.md` y `plan_graph.md` no
+> existen en este repo -> el **Intent Audit es INEJECUTABLE** y `Objective-Link`/`Plan-Link` son
+> **DECLARATIVOS, no derivados**. **NO es una copia del waiver de 021k** (que dice explicitamente
+> que no es precedente): es la misma carencia de infra, propiedad de **WOT-2026-023m**.
+
+### Premise
+
+Medido 2026-07-13 sobre HEAD `13c9b91`. **La v1 de este contrato fue BLOQUEADA por la auditoria
+adversarial: su Premise-4 era FALSA. Se deja escrito abajo para que no se reintroduzca.**
+
+1. **El modo dominante NO es un bug del lock.** El fixture monta un lock EXPIRADO de pid AJENO
+   (999999). El hilo A hace el takeover y **escribe un lock NUEVO con `os.getpid()` y el MISMO
+   `sid`**. El hilo B lee ESE lock y entra por la rama idempotente de 023n
+   (`init_session_scratch.py:452-454`, "held by THIS process for THIS session -> True") ->
+   `wins = 2`. **Reentrada legitima, no dos propietarios.**
+   `command: .venv\Scripts\python.exe scripts\probe_lock_reentrancy_got2.py` -> `exit 0`.
+2. **La opcion (b) de la ficha esta REFUTADA.** Proponia "mismo sid -> el assert correcto es
+   `wins == 2`". **FALSO Y MEDIDO:** con el MISMO sid, `A-luego-B` da 2 y `los-dos-en-takeover`
+   da 1, **y AMBOS son correctos**. `assert wins == 2` seria TAN dependiente de la intercalacion
+   como `assert wins == 1`: **el mismo pecado con el signo contrario.** No la implementes.
+3. **!!! LA PREMISA QUE TUMBO LA v1 -- HAY *TRES* INTERCALACIONES, NO DOS !!!**
+   La v1 afirmaba: *"con sids DISTINTOS, `wins == 1` en LAS DOS intercalaciones"*. **ES FALSO.**
+   `_acquire_lock` lee el lock **UNA sola vez** (`:449`) y `_takeover_lock` **NO REVALIDA NADA**:
+   gana el marker y hace `unlink()` **a ciegas** (`:490-491`). Un contendiente cuya decision
+   "stale" quedo **OBSOLETA borra un lock VIVO Y AJENO** y escribe el suyo.
+
+       I1  A-luego-B                 -> wins = 1
+       I2  los-dos-en-takeover       -> wins = 1
+       I3  TOCTOU (B lee stale, A completa el takeover, B despierta y ROBA)  -> wins = 2
+
+   **Medido (verificacion independiente del orquestador, sids DISTINTOS):** `A=True`, `B=True`,
+   lock final de `sid-b`, y **`_release_lock(sid-a) = False`** -> **A adquirio pero NO puede
+   soltar: FALSA PROPIEDAD.** Es **exactamente la clase de bug que el docstring de
+   `_acquire_lock` (`:430-433`) declara cerrada**: 023n cerro la ruta SECUENCIAL; **la
+   CONCURRENTE sigue abierta**, y es **cross-process**.
+   -> **Es WOT-2026-023s (produccion). NO se arregla aqui.**
+4. **CONSECUENCIA (la que define el DoD):** `assert wins == 1` **NO es un invariante** mientras
+   023s viva, **ni con sids distintos**. Con sids distintos SI queda **eliminado POR
+   CONSTRUCCION** el modo dominante (el idempotente): `_acquire_lock` devuelve `holder == sid`,
+   y con `holder=sid_a` / `sid=sid_b` eso es **False SIEMPRE**, sin pasar por el takeover
+   (`:452-454`). **Lo que queda vivo es el TOCTOU, y es RARO** (el auditor: 800 rondas con
+   scheduler natural -> 0 reproducciones; la ventana la abre el descheduling del SO bajo carga
+   xdist). **Frecuencia residual: NO MEDIDA. No la inventes.**
+5. **El test con HILOS no puede ser la victima de la mutacion.** Medido: con sids distintos,
+   T1 **MUERE** en I1 pero **SOBREVIVE** en I2. Un mutation-verify sobre el es **una moneda al
+   aire**. Las barreras DEBEN ser SECUENCIALES (T2, T3).
+6. **La mutacion mata tests que YA EXISTEN.** `TestLockOwnershipIsIdentityAware` (`:1121`,
+   `:1139`, de 023n) **cae con la MISMA mutacion aunque T2 y T3 no existan**. Por tanto
+   **"el mutante murio" NO prueba nada de lo nuevo**: el mutation-verify **DEBE ejecutar T2 y T3
+   AISLADOS por id** y ver caer **ESOS DOS**. (Es el falso-verde de mutation-verify que ya cazo
+   la cadena 021t/021u: **no AISLA la rama mutada**.)
+
+### Premise Re-check
+
+```
+.venv\Scripts\python.exe scripts\probe_lock_reentrancy_got2.py
+```
+-> `expect: exit 0`, `ESCENARIO 1 wins = 2`, `ESCENARIO 2 wins = 1`.
+**Si no reproduce -> premisa MUERTA: PARAR y reencuadrar.** (Probe TRACKED desde `13c9b91`.)
+
+### Context Baseline
+
+- HEAD al congelar la v2: **`13c9b91`** (`_dev`/main, arbol limpio).
+- **Suite baseline MEDIDA (no supuesta):** `--level all` -> **4058 passed, 0 failed** en 310s,
+  `tested_sha == 13c9b91`. (Subio de 4057 a 4058 porque `scripts/encoding_guard.py:103` globa
+  `scripts/**/*.py` y el probe nuevo anade un caso parametrizado.)
+- **TRAMPA (auditor):** `collect_files_to_check()` globa el **DISCO**, no git. Un `.py` de
+  scratch olvidado bajo `scripts/` **mueve el conteo**. Verificar `git status --porcelain -uall`
+  antes de leer el numero.
+- Codigo vivo (lineas verificadas): `_acquire_lock` `:422` (rama idempotente `:452-454`, lectura
+  unica `:449`, caida al takeover `:457`) - `_takeover_lock` `:460` (unlink ciego `:490-491`, el
+  perdedor del marker se rinde `:476-477`) - test defectuoso `tests/test_init_session_scratch.py:1032`
+  y `TestLockOwnershipIsIdentityAware` `:1089`.
+- El fichero de tests importa ya `_acquire_lock`, `_read_lock`, `_lock_is_live`, `_write_lock`,
+  `_try_create_lock_exclusive` (`:31-49`) y `REAL_SYSTEM_TEMP` (`:51`); helpers `_make_repo`/
+  `_sentinel_id` en `:59-70`. **El fix es implementable SIN tocar produccion.**
+
+### Files Likely Touched
+
+- `tests/test_init_session_scratch.py` -- **el UNICO fichero que muta este ticket.**
+- `scripts/probe_lock_reentrancy_got2.py` -- ya tracked (`13c9b91`). **No volver a tocar.**
+
+### Forbidden Surfaces
+
+- **`scripts/init_session_scratch.py`** (`_acquire_lock` / `_takeover_lock` / `_release_lock`)
+  -- **NO SE TOCA EN ESTE TICKET.** La rama idempotente (023n) es CORRECTA. El TOCTOU es REAL
+  pero es **WOT-2026-023s**. Mezclar el fix del TEST con un fix de PRODUCCION concurrente es el
+  patron que produjo el lio 023l/023n (un fix real que **no era EL fix**) y hace inatribuible
+  todo rojo futuro. Si te ves obligado a tocarlo -> **PARA y emite CG**.
+- **El modo `got 0`** -- es **WOT-2026-023l** (marker `.takeover`), mecanismo DISTINTO y SIN
+  DETERMINAR. **NO lo arregles aqui.**
+- **`tests/conftest.py`** -- 021k lo acaba de tocar y **023p** lo tocara. NO lo toques.
+
+### DoD
+
+Binario. Cada criterio es un comando con exit code o un test pass/fail.
+
+1. **DoD-1 (CUMPLIDO en `13c9b91`): probe TRACKED.**
+   `command: git ls-files scripts/probe_lock_reentrancy_got2.py` -> **salida NO vacia**.
+2. **DoD-2 -- T1 desambiguado: competicion REAL (sids DISTINTOS) + ATRIBUCION.**
+   `test_takeover_competition_exactly_one_wins` lanza los 2 hilos con **`sid` DISTINTO**; el
+   assert `wins == 1` se CONSERVA. **El modo idempotente queda eliminado POR CONSTRUCCION**
+   (Premise-4), no por suerte.
+   **OBLIGATORIO -- el discriminante (BLOCKER-2 del auditor):** el test **cuenta los
+   `_try_create_lock_exclusive` con exito** y lo pone **en el mensaje del assert**:
+   **`creates == 2` -> TOCTOU (WOT-2026-023s)**; **`creates == 1` -> reentrada idempotente**
+   (= el test perdio su montaje de sids distintos). **Sin esto, un `got 2` futuro vuelve a ser
+   inatribuible y el ticket no ha resuelto NADA.**
+   **T1 ASERTA SU PROPIO MONTAJE:** antes de la carrera, `assert` que el lock inicial esta
+   **EXPIRADO** y es de **pid AJENO**, y que `sid_a != sid_b`.
+   `command: pytest tests/test_init_session_scratch.py -k test_takeover_competition_exactly_one_wins -q`
+   -> `expect: passed`
+   > **T1 es un CANARIO, no una barrera.** Mientras 023s viva puede ponerse rojo (raro) por el
+   > TOCTOU. **Eso NO es una regresion de este ticket**: el `creates=2` lo dira. **023s lo
+   > ASCIENDE a invariante real** (su DoD lo recoge).
+3. **DoD-3 -- T2, BARRERA determinista (SIN hilos), sobre la RUTA REAL.** Tras un takeover
+   **REAL** (lock producido por `_takeover_lock`, **no escrito a mano**), una sesion AJENA del
+   MISMO proceso **NO puede robar**:
+   `_acquire_lock(dir, sid_a)` -> True ; `_acquire_lock(dir, sid_b)` -> **False**.
+   **T2 ASERTA SU PROPIO MONTAJE (M-1 del auditor):** tras el takeover, `assert` que el lock es
+   `pid == os.getpid()`, `session_id == sid_a` y **live**. **Sin ese assert, T2 es un clon
+   cosmetico de `:1121`.**
+   `command: pytest ... -k <T2> -q` -> `expect: passed`
+4. **DoD-4 -- T3, BARRERA determinista (SIN hilos): la reentrada LEGITIMA sobre la RUTA REAL.**
+   Tras el MISMO takeover real, el MISMO `sid` reentra -> **True** Y el lock queda
+   **byte-for-byte IGUAL** (el assert de BYTES es lo que le da dientes). Aserta su montaje igual
+   que T2. Documenta el `wins=2` legitimo que hacia falso el assert viejo.
+   `command: pytest ... -k <T3> -q` -> `expect: passed`
+5. **DoD-5 -- MUTATION-TO-PROVE, AISLADA POR ID (BLOCKER-3 del auditor).**
+   En un **CLON bajo `C:\tmp`** (NUNCA en el arbol), revertir la rama de identidad de 023n:
+       `if pid != os.getpid() and _is_pid_alive_best_effort(pid): return False`  -> cae al takeover
+   - **Ejecutar T2 y T3 AISLADOS (por id) sobre el clon mutado -> AMBOS deben CAER.**
+     (Medido en probe: T2 -> el 2o acquire da True; T3 -> el lock se REESCRIBE.)
+   - **PROHIBIDO** dar por bueno el mutation-verify porque "el mutante murio": `:1121` y `:1139`
+     (de 023n) **caen igual sin que T2/T3 existan** -> seria un **FALSO-VERDE de barrera**.
+   - **T1 NO cuenta como victima** (Premise-5: sobrevive en I2).
+   - **Restaurar el clon y verificar por bytes/md5**, no por "lo volvi a escribir".
+6. **DoD-6 -- suite completa:** `run_pytest_safe.py --level all` -> **`0 failed`** y
+   **`passed >= 4060`** (4058 + T2 + T3), leido del **output REAL**, **NUNCA del exit code del
+   wrapper**. `tested_sha == HEAD` (suite **DESPUES** del commit).
+7. **DoD-7 -- lint:** `ruff check` y `ruff format --check` **verdes**.
+8. **DoD-8 -- backlog:** abrir **WOT-2026-023s** (TOCTOU, produccion) con la evidencia de
+   Premise-3; **recategorizar la ficha de 023r** (TEST AMBIGUO, no "falso rojo"); anadir a
+   **023l** la hipotesis del `got 0` como **HIPOTESIS, no como hecho**.
+
+> **NO hay DoD de "5 corridas sin `got 2`"** -- y **NO** por ahorro, sino porque **NO ES
+> BINARIO** (M-3 del auditor). Con el TOCTOU vivo, 5 corridas verdes **no prueban nada**: es el
+> mismo razonamiento que el contrato aplica al `got 0` ("5 corridas verdes no son una prueba").
+> **La eliminacion del modo dominante es ESTRUCTURAL (Premise-4), y eso SI se puede afirmar.**
+> Un DoD estadistico aqui seria justo el falso-verde que este ticket existe para matar.
+
+### STOP conditions
+
+- **El probe del Premise Re-check ya no reproduce `wins=2`** -> premisa MUERTA: PARAR.
+- **El fix exige tocar `_acquire_lock`/`_takeover_lock`** -> **PARAR y emitir CG.** Es 023s.
+- **T2 o T3 NO caen bajo la mutacion AISLADA** -> no son barreras: PARAR y redisenarlas.
+- **Aparece `got 0`** -> es 023l. RECOVERABLE: re-correr. **NO arreglarlo.**
+- **Aparece `got 2` con `creates == 2`** -> es el TOCTOU (023s), **NO una regresion de 023r**.
+- **Tentacion de "estabilizar" T1 quitandole los hilos** -> **NO.** T1 es el UNICO test que
+  ejerce el takeover concurrente: es el canario de 023s y de 023l. Se DESAMBIGUA, no se desactiva.
+
+### CONTRACT_GAP
+
+Ante premisa falsa, ambiguedad, superficie prohibida necesaria o criterio incompleto, el Builder
+emite `CG-WOT-2026-023r.md` y **BLOQUEA**. No muta el contrato en silencio.
+
+- **CONTRACT_GAP-1 (RESUELTO -- NO preguntes):** *"opcion (a) o (b)?"* -> **(a) + T2 + T3.** La
+  (b) esta **REFUTADA POR PROBE** (Premise-2).
+- **CONTRACT_GAP-2 (RESUELTO -- NO preguntes):** *"y el TOCTOU que hace flaky a T1?"* -> **es
+  WOT-2026-023s, ticket APARTE, y va DESPUES de este.** Decidido con el usuario 2026-07-13: el
+  test roto contamina el gate ~3/4 de las corridas, luego **hay que calibrar el instrumento
+  ANTES de usarlo para medir el fix de produccion**. **No lo arregles aqui.**
+- **CONTRACT_GAP-3 (NO es un gap del Builder):** ausencia de infra CF -> es **023m**.
+
+### Builder clarification
+
+**Builder clarification budget: 0.**
+
+**Honestidad sobre este budget:** la **v1 de este contrato fue BLOQUEADA** por la auditoria
+adversarial (su Premise-4 era falsa: midio 2 de 3 intercalaciones y declaro estabilidad). Esta v2
+**si** ha pasado por esa auditoria y por una verificacion independiente. Su budget 0 se apoya en
+**MEDICIONES EJECUTADAS**, no en pedigri:
+
+1. *"(a) o (b)?"* -> **(a)**, mas T2/T3. La (b) esta refutada (Premise-2, CG-1).
+2. *"`assert wins == 1` es un invariante?"* -> **NO mientras 023s viva** (Premise-3/4). Es un
+   **canario** con discriminante `creates`. **Conservalo, pero no lo vendas como barrera.**
+3. *"Puedo usar T1 para el mutation-verify?"* -> **NO** (Premise-5). Las victimas son **T2 y T3**,
+   **AISLADAS POR ID** (Premise-6, DoD-5).
+4. *"Arreglo el TOCTOU / el `got 0`?"* -> **NO.** Son **023s** y **023l** (Forbidden Surfaces).
