@@ -1308,6 +1308,60 @@ class TestTakeoverProducedLockOwnership:
             "the reclaimed lock was rewritten: sid-b unlinked it and recreated it"
         )
 
+    def test_toctuo_stale_read_cannot_steal_a_reclaimed_lock(self) -> None:
+        """WOT-2026-023s. THE TOCTOU. Contender B reads the lock, decides "stale", is
+        descheduled; contender A completes its takeover and now owns a LIVE lock; B
+        wakes with its stale verdict already made and enters _takeover_lock directly. It
+        must NOT steal A's live lock.
+
+        Serialized deterministically -- no threads. Measured: with real threads this
+        interleaving surfaces ~1% of the time (198/200 gave wins=1 even WITHOUT the
+        fix), so a threaded test would pass on the broken code and the mutation would
+        have no teeth. Serializing is the only way this barrier bites.
+
+        Mutation-to-prove: drop the revalidation (unlink blindly) and B's takeover
+        returns True, taking a lock A can never release.
+        """
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"toc_{uuid.uuid4().hex[:8]}")
+        session_dir = repo / ".agent" / "runtime" / "session" / "s"
+        _write_stale_lock(session_dir)
+
+        # A reclaims the stale lock legitimately -> A now owns a LIVE lock.
+        self._reclaimed_by(session_dir, "sid-a")
+        a_lock = (session_dir / "lock.json").read_bytes()
+
+        # B already decided "stale" before A ran; it enters the takeover directly with a
+        # FOREIGN session id. The revalidation must see the lock is now live+foreign.
+        stolen = _iss._takeover_lock(session_dir, "sid-b", "init")
+
+        assert stolen is False, (
+            "B's stale-read takeover stole A's freshly reclaimed lock"
+        )
+        assert (session_dir / "lock.json").read_bytes() == a_lock, (
+            "A's live lock was unlinked and rewritten by B (the TOCTOU)"
+        )
+        assert _release_lock(session_dir, "sid-a") is True, (
+            "A cannot release its own lock -> false ownership: the TOCTOU is not fixed"
+        )
+
+    def test_toctuo_stale_read_same_session_reentry_is_idempotent(self) -> None:
+        """WOT-2026-023s companion: the SAME contender re-entering its own reclaimed
+        lock via the takeover path is idempotent -> True, lock untouched. Guards against
+        a fix that returns False for the legitimate re-entry too."""
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"tor_{uuid.uuid4().hex[:8]}")
+        session_dir = repo / ".agent" / "runtime" / "session" / "s"
+        _write_stale_lock(session_dir)
+
+        self._reclaimed_by(session_dir, "sid-a")
+        before = (session_dir / "lock.json").read_bytes()
+
+        again = _iss._takeover_lock(session_dir, "sid-a", "init")
+
+        assert again is True, "the owner cannot re-enter its own lock via the takeover"
+        assert (session_dir / "lock.json").read_bytes() == before, (
+            "an idempotent re-entry through the takeover must not rewrite the lock"
+        )
+
     def test_takeover_then_same_session_reentry_is_idempotent(
         self, monkeypatch
     ) -> None:

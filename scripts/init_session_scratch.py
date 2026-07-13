@@ -457,6 +457,31 @@ def _acquire_lock(session_dir: Path, sid: str, op: str) -> bool:
     return _takeover_lock(session_dir, sid, op)
 
 
+def _revalidate_before_unlink(lock_path: Path, sid: str) -> bool | None:
+    """WOT-2026-023s: re-read the lock inside the takeover, before unlinking it.
+
+    Returns a final verdict to short-circuit the takeover, or None to proceed with the
+    unlink+create. Called ONLY with the ``.takeover`` marker held, which serialises
+    takeovers: the only other writer of lock.json in this window is the O_EXCL creation
+    of a lock that did NOT exist, so it cannot resurrect a live one.
+
+    Without this, a contender whose "stale" verdict (taken in _acquire_lock, before the
+    marker) went out of date unlinks a LIVE, FOREIGN lock and takes it -- false
+    ownership (_release_lock then refuses to let go). Identity order is pid THEN sid,
+    matching _acquire_lock, so a foreign process sharing a session_id is not us.
+    """
+    current = _read_lock(lock_path)
+    if not _lock_is_live(current):
+        return None  # genuinely stale -> proceed with the reclaim
+    cur_pid = current.get("pid", 0) if current else 0
+    if cur_pid == os.getpid():
+        # our own live lock: idempotent re-entry, leave it byte-for-byte
+        return (current.get("session_id") if current else None) == sid
+    if _is_pid_alive_best_effort(cur_pid):
+        return False  # live and foreign: do NOT steal it (this was the TOCTOU)
+    return None  # foreign but dead -> a legitimate reclaim, proceed
+
+
 def _takeover_lock(session_dir: Path, sid: str, op: str) -> bool:
     """Atomically reclaim a stale lock via ``.takeover`` marker with TTL.
 
@@ -487,6 +512,11 @@ def _takeover_lock(session_dir: Path, sid: str, op: str) -> bool:
 
     try:
         lock_path = _lock_path(session_dir)
+        # WOT-2026-023s: revalidate WITH the marker held, BEFORE the unlink (the read
+        # that decided "stale" in _acquire_lock may itself be stale by now).
+        verdict = _revalidate_before_unlink(lock_path, sid)
+        if verdict is not None:
+            return verdict
         with contextlib.suppress(OSError):
             lock_path.unlink()
         if not _try_create_lock_exclusive(session_dir, sid, op):
