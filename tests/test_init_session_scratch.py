@@ -1362,6 +1362,55 @@ class TestTakeoverProducedLockOwnership:
             "an idempotent re-entry through the takeover must not rewrite the lock"
         )
 
+    def test_toctuo_stale_read_cannot_steal_a_live_foreign_process_lock(
+        self, monkeypatch
+    ) -> None:
+        """WOT-2026-023s, the CROSS-PROCESS half. The other two takeover tests run in one
+        process, so the reclaimed lock always carries os.getpid() and B's revalidation
+        takes the `cur_pid == os.getpid()` branch. The branch that actually fires when
+        the racing owner is a DIFFERENT process -- live pid, foreign -- was untested:
+        deleting it left the whole suite green (found by the Review 2 mutation of that
+        single branch). This test forces a lock owned by a foreign pid.
+
+        A real foreign-yet-alive pid is not deterministic, so _is_pid_alive_best_effort
+        is pinned True for the foreign pid -- exactly the ambiguity the guard resolves in
+        favour of "alive -> do not steal".
+
+        Mutation-to-prove: neutralise the `_is_pid_alive_best_effort(cur_pid) -> False`
+        branch in _revalidate_before_unlink and this goes red (B reclaims a live foreign
+        lock); the in-process tests stay green, so only THIS test guards that branch.
+        """
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"tfp_{uuid.uuid4().hex[:8]}")
+        session_dir = repo / ".agent" / "runtime" / "session" / "s"
+        session_dir.mkdir(parents=True, exist_ok=True)
+
+        # A LIVE lock owned by another process (pid 4242, not ours). This is the state B
+        # sees when it revalidates after a foreign process reclaimed the lock.
+        now = datetime.now(timezone.utc)
+        foreign = {
+            "pid": 4242,
+            "session_id": "sid-a",
+            "op": "init",
+            "created_at": now.isoformat(),
+            "expires_at": (now + timedelta(seconds=300)).isoformat(),
+        }
+        (session_dir / "lock.json").write_text(json.dumps(foreign), encoding="utf-8")
+        before = (session_dir / "lock.json").read_bytes()
+
+        # Setup assertion: the lock really is live and NOT ours (or this proves nothing).
+        assert foreign["pid"] != os.getpid()
+        assert _lock_is_live(foreign)
+
+        # The foreign pid is alive -> the guard must refuse to steal.
+        monkeypatch.setattr(_iss, "_is_pid_alive_best_effort", lambda pid: pid == 4242)
+
+        stolen = _iss._takeover_lock(session_dir, "sid-b", "init")
+
+        assert stolen is False, "B stole a live lock held by a foreign PROCESS"
+        assert (session_dir / "lock.json").read_bytes() == before, (
+            "the foreign process's live lock was unlinked and rewritten"
+        )
+
     def test_takeover_then_same_session_reentry_is_idempotent(
         self, monkeypatch
     ) -> None:
