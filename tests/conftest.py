@@ -248,6 +248,46 @@ def tmp_path(
     return tmp_path_factory.mktemp(request.node.name, numbered=True)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_git_discovery_global(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WOT-2026-021k: cut git's ascent from the sandbox INTO THE REAL MOTOR.
+
+    ``tmp_path`` is re-rooted INSIDE this repo's tree (TEST_RUNTIME_ROOT above),
+    so a test fixture whose ``.git`` is incomplete makes git's discovery walk
+    ASCEND into the motor: ``check_worktree_topology`` then answers exit 0
+    ("topology correct") for a topology that is not its own -- a guard APPROVING
+    what it cannot verify. This fixture stops that walk for every test.
+
+    THE REAL RULE (measured, git 2.53.0.windows.1): GIT_CEILING_DIRECTORIES only
+    truncates the walk ABOVE the ceiling, so it must be a STRICT ancestor of the
+    directory git starts from:
+      - ceiling == the scanned directory   -> git IGNORES it and ASCENDS;
+      - ceiling between scanned dir and the offending repo -> it CUTS.
+
+    EXACT SCOPE -- do not describe it as more than it is (an optimistic docstring
+    is the very defect this ticket exists to kill):
+      COVERS     git invoked from a STRICT descendant of tmp_path (the dominant
+                 pattern) -> it cannot see the motor's .git.
+      DOES NOT   git invoked with cwd == tmp_path exactly: the ceiling is then the
+                 scanned dir itself -> ignored, and the walk still reaches the
+                 motor. KNOWN residue, follow-up, not 021k's scope.
+      DOES NOT   fixtures built OUTSIDE tmp_path (REAL_SYSTEM_TEMP,
+                 tempfile.mkdtemp(), fixed paths): the ceiling is not their
+                 ancestor.
+
+    The ``_global`` suffix is deliberate: tests/unit/test_check_worktree_topology.py
+    defines a MODULE-level autouse fixture named ``_isolate_git_discovery``. A
+    same-named fixture here would be SHADOWED by it (measured: it would not run at
+    all), leaving this barrier inert in the 16 tests closest to this ticket.
+    """
+    # git IGNORES a ceiling that is not a native absolute path (relative, empty,
+    # MSYS-style "/c/...") SILENTLY -- it fails OPEN, with no warning. Measured.
+    assert tmp_path.is_absolute(), tmp_path
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+
+
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     """Remove the session runtime once pytest finishes."""
     # WOT-2026-013i: robust removal (read-only .git fixtures) instead of the
