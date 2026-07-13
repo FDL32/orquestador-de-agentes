@@ -4,8 +4,13 @@ Prefix resolver: maps ticket prefixes to destination repos (WOT-2026-020s).
 
 ARCHITECTURE: scans parent(motor_root) for motor_destination_link.json files,
 each declaring a ticket_prefix + destination_root. Builds a reverse map
-prefix -> destination_root. WOT is a special case resolving to motor_root
-(the motor itself, which versions .agent/collaboration/ for dogfooding).
+prefix -> destination_root. EVERY prefix goes through that map, WOT included
+(WOT-2026-023i): WOT resolves to the workspace destination, which is where the
+motor's own operational state lives (backlog.md, the bus). There is no special
+case. Note that resolving is a different question from where a WOT ticket is
+WORKED (the _dev worktree of the motor) and from where it is COMMITTED
+(delivery_authority: repo_motor) -- those are separate axes, enforced by
+scripts/check_worktree_topology.py.
 
 No versioned registry, no auto-registration in install. The mapping is derived
 purely from the links that already exist on disk. A local overrides file
@@ -138,15 +143,15 @@ def resolve_prefix(prefix: str | None, motor_root: Path) -> Path | None:
 
     Before: prefix is a short uppercase string (e.g. EXF, WOT); motor_root
             is the motor repository root.
-    During: WOT -> motor_root (special case). Otherwise checks local overrides
-            first, then scans parent(motor_root) for links. Returns None if
-            prefix is None, not found, or ambiguous (duplicate).
+    During: checks local overrides first, then scans parent(motor_root) for
+            links. WOT has NO special case (WOT-2026-023i): it is declared as
+            a ticket_prefix on the workspace link like any other destination,
+            and resolves through the same scan. Returns None if prefix is
+            None, not found, or ambiguous (duplicate).
     After: returns the destination_root Path, or None.
     """
     if prefix is None:
         return None
-    if prefix == WOT_PREFIX:
-        return motor_root
     overrides = load_overrides()
     if prefix in overrides:
         return overrides[prefix]

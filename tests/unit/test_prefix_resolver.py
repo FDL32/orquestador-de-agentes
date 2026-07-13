@@ -144,7 +144,14 @@ def _make_git_tree(tmp_path: Path) -> tuple[Path, Path]:
 
 
 def _make_tree(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
-    """Create motor + EXF + CTL destinations under tmp_path.
+    """Create motor + EXF + CTL destinations + the WOT workspace under tmp_path.
+
+    The workspace declares ticket_prefix "WOT" exactly like the 12 real
+    destinations declare theirs (WOT-2026-023i). Before that ticket the real
+    link carried ticket_prefix: null and prefix_resolver hardcoded an
+    early-return for WOT, so the fixture didn't need it; now WOT resolves
+    through the same scan as every other prefix and the fixture must mirror
+    the real topology.
 
     Returns (motor_root, exf_root, ctl_root, search_root).
     """
@@ -158,8 +165,11 @@ def _make_tree(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     exf.mkdir()
     ctl = search_root / "Crear_Texto_LLM"
     ctl.mkdir()
+    workspace = search_root / "orquestador_de_agentes_workspace"
+    workspace.mkdir()
     _make_link(exf, motor, "EXF", "Extractor_Facturas_PDF_Seguro")
     _make_link(ctl, motor, "CTL", "Crear_Texto_LLM")
+    _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
     return motor, exf, ctl, search_root
 
 
@@ -174,9 +184,34 @@ def test_resolve_known_prefix(tmp_path: Path) -> None:
     assert resolve_prefix("CTL", motor) == ctl
 
 
-def test_resolve_wot_returns_motor(tmp_path: Path) -> None:
-    motor, _, _, _ = _make_tree(tmp_path)
-    assert resolve_prefix("WOT", motor) == motor
+def test_resolve_wot_returns_workspace_via_scan(tmp_path: Path) -> None:
+    """WOT-2026-023i: WOT resolves through scan_links like every other prefix.
+
+    It used to short-circuit to motor_root via a hardcoded early-return,
+    which existed only because the real workspace link carried
+    ticket_prefix: null. The link now declares "WOT", so the generic path
+    works and the special case is gone. Where WOT is WORKED (the _dev
+    worktree) and where it is COMMITTED (repo_motor) are different axes --
+    see scripts/check_worktree_topology.py.
+    """
+    motor, _, _, search_root = _make_tree(tmp_path)
+    workspace = search_root / "orquestador_de_agentes_workspace"
+    assert resolve_prefix("WOT", motor) == workspace
+    assert resolve_prefix("WOT", motor) != motor
+
+
+def test_resolve_wot_duplicate_returns_none(tmp_path: Path) -> None:
+    """WOT-2026-023i: with the special case gone, WOT is subject to the same
+    ambiguity rule as any other prefix -- two links declaring it resolve to
+    None. This failure mode did not exist while the early-return masked it,
+    and it is why guard() must not require a resolution for WOT (a duplicate
+    would otherwise block every WOT ticket; see
+    test_guard_wot_passes_from_motor_without_wot_link)."""
+    motor, _, _, search_root = _make_tree(tmp_path)
+    dup = search_root / "otro_workspace"
+    dup.mkdir()
+    _make_link(dup, motor, "WOT", "otro_workspace")
+    assert resolve_prefix("WOT", motor) is None
 
 
 def test_resolve_unknown_prefix_returns_none(tmp_path: Path) -> None:
@@ -316,6 +351,42 @@ def test_guard_wot_from_dev_worktree_passes(tmp_path: Path) -> None:
     git-common-dir comparison -- this is the exact bug fix under test."""
     motor, dev = _make_git_tree(tmp_path)
     assert guard("WOT-2026-021g", cwd=dev, motor_root=motor) == 0
+
+
+def test_guard_wot_passes_from_motor_without_wot_link(tmp_path: Path) -> None:
+    """WOT-2026-023i (BLOCKER-1): guard() must authorize a WOT ticket from a
+    worktree of the motor EVEN IF the WOT prefix does not resolve.
+
+    guard()'s WOT branch answers "is cwd the same git repo as motor_root",
+    which does not depend on where WOT resolves to. Before the fix, guard()
+    demanded a resolution first (`if resolved is None: return 2`) -- harmless
+    only because the early-return guaranteed one. With the early-return gone,
+    requiring a resolution would make a missing WOT link (this test) or a
+    duplicate one (the next) return 2 and block every WOT ticket from the
+    correct worktree.
+
+    Mutation-to-prove: move the WOT branch back below the `resolved is None`
+    check and this test goes red with exit 2.
+    """
+    motor = tmp_path / "motor"
+    motor.mkdir()
+    _git_init_main(motor)
+    # No link anywhere: resolve_prefix("WOT") is None.
+    assert resolve_prefix("WOT", motor) is None
+    assert guard("WOT-2026-023i", cwd=motor, motor_root=motor) == 0
+
+
+def test_guard_wot_passes_from_motor_with_duplicate_wot_link(tmp_path: Path) -> None:
+    """WOT-2026-023i (BLOCKER-1): same as above for the AMBIGUOUS case. Two
+    links declaring ticket_prefix WOT make resolve_prefix return None; guard()
+    must still authorize from the motor's own worktree."""
+    motor, _, _, search_root = _make_tree(tmp_path)
+    _git_init_main(motor)
+    dup = search_root / "otro_workspace"
+    dup.mkdir()
+    _make_link(dup, motor, "WOT", "otro_workspace")
+    assert resolve_prefix("WOT", motor) is None
+    assert guard("WOT-2026-023i", cwd=motor, motor_root=motor) == 0
 
 
 def test_guard_wot_mismatch_message_does_not_cite_resolved(
