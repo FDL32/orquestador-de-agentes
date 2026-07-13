@@ -7,7 +7,7 @@
 
 ## WOT-2026-021k
 
-- **status:** review
+- **status:** frozen
 - **deliverable_type:** code
 - **delivery_authority:** repo_motor
 - **Objective-Link:** OBJ-HERMETICIDAD -- ningun test que invoque git contra un fixture
@@ -79,6 +79,10 @@ se reintroduzcan.**
    > (que esta DENTRO del arbol) y git asciende al `.git` del motor. El **fixture autouse
    > global** con el ceiling en `tmp_path` **SI la mata** (el motor esta por encima de
    > `tmp_path` -> el ceiling cae entre medias). **Es la amenaza de PRODUCCION.**
+   > **PERO SOLO para lo que cuelga de `tmp_path`:** lo que se construye FUERA (bajo
+   > `REAL_SYSTEM_TEMP`, `tempfile.mkdtemp()`, rutas fijas) **NO queda cubierto** -- el
+   > ceiling no es ancestro suyo. Residuo vivo: `tests/test_init_session_scratch.py`,
+   > `tests/unit/test_run_pytest_safe.py`. **Follow-up, no scope de 021k.**
    >
    > **AMENAZA B -- ascenso a un PADRE SINTETICO que el propio test fabrica** bajo
    > `tmp_path` (es lo que hace el probe canonico: crea `motor/` + `motor_dev/` y cuelga el
@@ -125,22 +129,41 @@ Si el probe ya NO reproduce el rc=0 -> **la premisa esta MUERTA: PARAR y reencua
     que fije `GIT_CEILING_DIRECTORIES` a **`tmp_path`** de cada test. Eso cubre la
     **AMENAZA A** (ascenso al motor real), que es la de produccion. **NO cubre la AMENAZA B**
     (padres sinteticos que el propio test fabrica bajo `tmp_path`) -- ver Premise-4.
-  - Los **DOS tests nuevos** (BARRERA A y BARRERA B del DoD; ubicacion a criterio del
-    Builder, p.ej. `tests/unit/`).
+  - Los **DOS tests nuevos** (BARRERA A y BARRERA B del DoD). Ubicacion libre **pero BAJO
+    `tests/`**: el fixture global vive en `tests/conftest.py` y **solo alcanza a ese arbol**.
   - **`scripts/probe_sandbox_git_ascension.py` YA ESTA TRACKED** (commiteado antes de
     congelar este contrato, precisamente para que el `Premise Re-check` sea reproducible por
     un tercero). **NO es scope del Builder.**
 - **NO se toca codigo de PRODUCCION.** El defecto vive en el HARNESS de test.
-- **PRECEDENCIA DE CEILING (resuelta aqui; el Builder NO pregunta):** los 2 tests que ya
-  ponen su ceiling (`_isolate_git_discovery` a nivel de modulo) **CONSERVAN el suyo y GANAN**
-  si hay colision. El fixture global es una **RED DE SEGURIDAD para los que NO lo ponen**,
-  no un reemplazo.
-  **Y NO BASTA CON DECLARARLO -- hay que hacerlo ESTRUCTURAL:** el fixture global **DEBE**
-  usar `monkeypatch.setenv` con **scope de FUNCION** (NO `scope="session"`, NO `os.environ`
-  crudo), para que el `setenv` del modulo se aplique DESPUES y gane por construccion, no por
-  accidente del orden de autouse. **DoD-6 lo verifica** (los 62 tests de esos 2 modulos
-  siguen verdes con el global activo). Si el global los AFLOJA -> **STOP**, corregir el
-  scope del global; **nunca relajar una barrera existente para que pase el fix.**
+- **PRECEDENCIA DE CEILING (resuelta aqui; el Builder NO pregunta).**
+
+  > **EL TERRENO NO ES LO QUE LAS v1/v2 DECIAN** (claim falso heredado, refutado con
+  > `grep -n autouse`): **NO** hay "2 modulos con fixture de ceiling propio". Hay **DOS
+  > FORMAS DISTINTAS** de ceiling propio, y **ambas GANAN al global, por mecanismos
+  > distintos** (verificado):
+  >
+  > 1. **`tests/unit/test_check_worktree_topology.py` (16 tests):** fixture **autouse de
+  >    MODULO** `_isolate_git_discovery` (l.131-137). Gana porque, a igual scope de funcion,
+  >    los autouse de conftest se resuelven ANTES que los de modulo -> el `setenv` del modulo
+  >    se aplica DESPUES.
+  > 2. **`tests/unit/test_prefix_resolver.py` (42 tests): NO TIENE FIXTURE AUTOUSE
+  >    (`grep -n autouse` -> VACIO).** Solo **2 de sus 42 tests** ponen ceiling, **INLINE en
+  >    el cuerpo** (l.322 y l.417). Ganan porque el cuerpo del test corre despues de TODOS
+  >    los fixtures. **Los otros 40 NO tienen ceiling hoy y PASARAN a heredarlo
+  >    (`= tmp_path`) con el fixture global: es un CAMBIO DE COMPORTAMIENTO REAL sobre 40
+  >    tests, y es esperado.** (Medido: siguen verdes.)
+
+  **HAZLO ESTRUCTURAL, no declarativo:** el fixture global **DEBE** usar `monkeypatch.setenv`
+  con **scope de FUNCION** (NO `scope="session"`, NO `os.environ` crudo), para que ambas
+  formas ganen por construccion y no por accidente de orden. **DoD-6 lo verifica.** Si el
+  global AFLOJA cualquiera de las dos -> **STOP**, corregir el scope del global; **nunca
+  relajar una barrera existente para que pase el fix.**
+
+- **COSTE ESPERADO (no es una regresion):** el fixture global pide `tmp_path`, asi que lo
+  **MATERIALIZA en TODOS los tests** (`ProjectTmpPathFactory.mktemp` hace `mkdir`
+  incondicional, `tests/conftest.py:49-64`) -> ~4048 directorios por sesion bajo
+  `session_<pid>/factory/`. **Coste medido: ~3% en `tests/unit` (90s -> 93s), 0 fallos.** Es
+  una consecuencia esperada del fix, no un bug.
 - **Trampas de entorno (verificadas):** `--level all` corre **EN SERIE** (`resolve_xdist`,
   `run_pytest_safe.py:872-915`: xdist solo con `--level unit`) -> **NO ejerce el vector
   concurrente**; usar `--level unit --xdist-workers auto`. Para mutar: copiar a ruta CORTA
@@ -153,8 +176,12 @@ Si el probe ya NO reproduce el rc=0 -> **la premisa esta MUERTA: PARAR y reencua
   por mutation en 021g y de nuevo en 023i). El defecto vive en el harness. Tocarlo seria
   arreglar el termometro en vez de la fiebre.
 - **`tests/unit/test_check_worktree_topology.py` y `tests/unit/test_prefix_resolver.py`** --
-  **su ceiling YA ES CORRECTO** (ancestro estricto). **NO migrarlos, NO "arreglarlos".**
-  (La v1 de este contrato mandaba justo eso, sobre una premisa FALSA.)
+  **NO anadir ni migrar ceilings en estos 2 ficheros.** Los ceilings que ya tienen (un
+  fixture autouse de modulo en el primero; **2 `setenv` inline** en el segundo, que **NO
+  tiene fixture autouse**) **YA CORTAN** el ascenso: el ceiling cae ENTRE el dir escaneado y
+  el motor. (La v1 mandaba "migrarlos hacia arriba" sobre una premisa FALSA; la v3 afirmaba
+  que ambos tenian fixture de modulo, tambien FALSO. **Verifica con `grep -n autouse` antes
+  de creerte cualquier descripcion de estos ficheros, incluida esta.**)
 - **`tests/conftest.py:114` `_pid_is_alive` / `:155` `_purge_orphan_session_dirs`** -- son de
   WOT-2026-020p y FUNCIONAN. No romperlos.
 - **Sacar `TEST_RUNTIME_ROOT` fuera del arbol** -- fix de RAIZ, blast radius alto. **Ticket
@@ -193,10 +220,15 @@ Binario. Cada criterio es un comando con exit code o un test pass/fail.
 5. **rc=2 ES EXITO, NO FALLO.** Ambas barreras asertan **fail-closed**, no rc=1. **NO se
    exige rc=1**: no es alcanzable con el instrumento permitido y **no es el veredicto
    correcto** (Premise-5).
-6. **Los 2 modulos con ceiling propio siguen verdes CON el fixture global activo** (el
-   global NO debe AFLOJARLOS):
+6. **El global NO AFLOJA ninguna barrera existente, y los 40 tests que heredan ceiling nuevo
+   no cambian de veredicto.** Mide las TRES cosas a la vez (ver PRECEDENCIA en Context
+   Baseline: NO son "2 modulos con fixture propio"):
+   (a) el fixture autouse de modulo de `test_check_worktree_topology.py` (16 tests);
+   (b) los **2** `setenv` INLINE de `test_prefix_resolver.py` (l.322, l.417);
+   (c) los **40** tests de `test_prefix_resolver.py` que HOY no tienen ceiling y pasaran a
+       heredarlo.
    `command: pytest tests/unit/test_check_worktree_topology.py tests/unit/test_prefix_resolver.py -q`
-   -> `expect: >= 62 passed, 0 failed`.
+   -> `expect: >= 62 passed, 0 failed` (medido con el global simulado: **62 passed**).
 7. **El Premise Re-check es reproducible por un tercero:** el probe esta **TRACKED**.
    `command: git ls-files scripts/probe_sandbox_git_ascension.py` -> **salida NO vacia**.
 8. **Suite completa:** `run_pytest_safe.py --level all` -> **`0 failed`** y
@@ -206,11 +238,31 @@ Binario. Cada criterio es un comando con exit code o un test pass/fail.
    **OJO:** si ves rojo, **comprueba si es `TestMaidenVoyage` (WOT-2026-023l, flaky vivo al
    ~57%) ANTES de culpar a tu cambio.**
 
-> **NO hay DoD de "auditar los N ficheros que invocan git".** La v1 lo pedia sin fijar N
-> (los conteos dieron 43, 44, 48 y 27 segun el regex): **no era binario, era
-> auto-certificable.** El fixture autouse GLOBAL cubre la AMENAZA A para TODOS por
-> construccion: **estructura en vez de disciplina.** Si se quiere el censo, es follow-up con
-> un comando fijado, no un criterio de cierre de este ticket.
+> **NO hay DoD de "auditar los N ficheros que invocan git"** -- pero **NO** por la razon que
+> daba la v3, que era FALSA y merece quedar escrita:
+>
+> **CLAIM FALSO DE LA v3 (refutado por probe):** *"el fixture global cubre la AMENAZA A para
+> TODOS por construccion: estructura en vez de disciplina"*. **ES FALSO, y se refuta con la
+> propia regla del ceiling de la Premise-3:** el ceiling solo protege lo que cuelga **por
+> debajo** de el. Un ceiling `= tmp_path` **no es ancestro** de nada que viva FUERA de
+> `tmp_path`. **Medido:** con el global activo, un dir del arbol que no cuelga de `tmp_path`
+> -> `git rev-parse` **ASCIENDE igual** al `.git` del motor.
+>
+> **La v3 RETIRO UN CRITERIO DE CIERRE APOYANDOSE EN UNA COBERTURA IMAGINARIA. Es EL MISMO
+> MOVIMIENTO que produce los falsos-verdes que este ticket existe para matar**, reproducido
+> dentro de su propio contrato. Queda aqui como aviso: no lo repitas.
+>
+> **ALCANCE REAL del fixture global:** cubre la AMENAZA A **para todo test cuyo fixture git
+> cuelgue de `tmp_path`** -- que es el patron DOMINANTE, y por eso el fix vale la pena.
+> **NO cubre** lo que se construye fuera de `tmp_path` (`REAL_SYSTEM_TEMP`,
+> `tempfile.mkdtemp()`, rutas fijas). **Residuo VIVO y conocido (verificado con git grep):**
+> `tests/test_init_session_scratch.py`, `tests/unit/test_run_pytest_safe.py` y el propio
+> `tests/conftest.py` construyen bajo `REAL_SYSTEM_TEMP`.
+>
+> El censo de ese residuo **NO es criterio de cierre de 021k** (el DoD de la v1 no era
+> binario: cuatro conteos dieron 43, 44, 48 y 27 segun el regex, y "o queda justificado con
+> excepcion explicita" hacia descartable cualquier fichero con prosa). Es **FOLLOW-UP con un
+> comando FIJADO** en su propia ficha.
 
 ### STOP conditions
 
@@ -254,9 +306,13 @@ en un documento de arranque. **Cada una tumbo una version previa de este contrat
    muerta al nacer.**
 2. *"migro el ceiling de los 2 tests existentes?"* -> **NO. Ya es correcto** (Premise-3,
    Forbidden Surfaces). **Ese claim de la v1 era FALSO** y fue refutado por auditoria.
-3. *"que ceiling gana si el global choca con los 2 de modulo?"* -> **gana el de modulo**, y
-   no por cortesia: el global usa `monkeypatch.setenv` con **scope de FUNCION**, asi que el
-   del modulo se aplica despues. **DoD-6 lo verifica.** Si el global los AFLOJA -> STOP.
+3. *"que ceiling gana si el global choca con el que ya existe?"* -> **gana el existente**, y
+   por DOS mecanismos distintos (**NO hay "2 modulos con fixture propio": ese claim de la v3
+   era FALSO**): el **fixture autouse de modulo** de `test_check_worktree_topology.py` gana
+   porque los autouse de conftest se resuelven antes (a igual scope de funcion); y los **2
+   `setenv` INLINE** de `test_prefix_resolver.py` (que **no tiene** fixture autouse) ganan
+   porque el cuerpo del test corre despues de todos los fixtures. Por eso el global **DEBE**
+   ser `monkeypatch.setenv` scope FUNCION. **DoD-6 lo verifica.** Si afloja alguno -> STOP.
 4. *"basta el fixture global para que el test determinista pase?"* -> **NO, y este es el
    error que tumbo a la v2.** El fixture global (ceiling en `tmp_path`) **NO toca** un padre
    sintetico que el test fabrique **debajo** de `tmp_path`: seguiria dando rc=0 **con y sin
