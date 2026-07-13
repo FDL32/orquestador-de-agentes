@@ -572,3 +572,145 @@ adversarial (su Premise-4 era falsa: midio 2 de 3 intercalaciones y declaro esta
 3. *"Puedo usar T1 para el mutation-verify?"* -> **NO** (Premise-5). Las victimas son **T2 y T3**,
    **AISLADAS POR ID** (Premise-6, DoD-5).
 4. *"Arreglo el TOCTOU / el `got 0`?"* -> **NO.** Son **023s** y **023l** (Forbidden Surfaces).
+
+## WOT-2026-023s
+
+- **status:** frozen
+- **deliverable_type:** code
+- **delivery_authority:** repo_motor
+- **Objective-Link:** OBJ-LOCK-HONESTO -- una adquisicion de lock NUNCA debe entregar propiedad
+  que su release no reconoce. Un contendiente que "adquiere" (True) pero cuyo `_release_lock`
+  devuelve False tiene FALSA PROPIEDAD: el lock nunca se suelta -> deadlock latente.
+- **Plan-Link:** PLAN-SESSION-LOCK. **023n** cerro la ruta SECUENCIAL del robo de lock; **023s**
+  cierra la CONCURRENTE (TOCTOU), que 023n dejo abierta. **023r** (el TEST) ya esta cerrado y
+  dejo el test `test_takeover_competition_exactly_one_wins` como CANARIO de ESTE ticket.
+
+### Premise
+
+Medido 2026-07-13 sobre HEAD `e6ab17e`, con probe EJECUTADO.
+
+1. **EL TOCTOU ES REAL Y REPRODUCE.** `_acquire_lock` lee el lock UNA sola vez
+   (`init_session_scratch.py:449`); si lo ve stale cae a `_takeover_lock` (`:457`), que **NO
+   REVALIDA**: gana el marker y hace `lock_path.unlink()` **a ciegas** (`:490-491`). Si entre la
+   lectura stale y el unlink OTRO contendiente completo su takeover, el rezagado **BORRA un lock
+   VIVO Y AJENO** y escribe el suyo.
+   **Medido (sids DISTINTOS, sin azar):** `A=True`, `B=True`, lock final de `sid-b`, y
+   **`_release_lock(sid-a) = False`** -> A adquirio pero NO puede soltar = **FALSA PROPIEDAD**.
+   Es cross-thread Y cross-process.
+2. **EL FIX CANDIDATO YA ESTA MEDIDO (no deducido), en un CLON.** Revalidar el lock **DESPUES de
+   ganar el marker y ANTES del unlink** (`:488-491`): re-leer; si es VIVO y de OTRO `(pid, sid)`
+   con pid vivo -> **return False** (no robar); si es VIVO y MIO -> **return True** (reentrada
+   idempotente, no reescribir); si sigue stale -> proceder con el unlink+create como hoy.
+   **Medido con el fix aplicado:**
+   ```
+   I3 TOCTOU dist-sid : A=True B=False wins=1  lock=sid-a  _release_lock(sid-a)=True
+   I3 reentrada same  : A=True B=True  wins=2  (reentrada idempotente correcta)
+   I1 A-luego-B dist  : A=True B=False wins=1
+   takeover legitimo  : True  (lock stale de pid muerto -> se reclama)
+   ```
+3. **LA PREMISA QUE HACE SUFICIENTE EL FIX (escribirla o alguien reabre el bug):** el marker
+   `.takeover` **SERIALIZA los takeovers entre si**. Enumeracion COMPLETA de los escritores de
+   `lock.json` fuera del marker (corregida tras el plan-audit; la v1 decia "el UNICO es
+   _try_create_lock_exclusive" y eso era una ENUMERACION INCOMPLETA presentada como completa):
+   - **`_try_create_lock_exclusive`** en la rama "no existe lock" de `_acquire_lock` (`:446-447`):
+     usa **O_EXCL**, solo escribe si NO hay lock. Si pisa entre el unlink y el create del takeover,
+     el `_try_create_lock_exclusive` del takeover falla (FileExistsError) y devuelve False limpio.
+   - **`_release_lock`** (`:509-521`): borra el lock, pero **solo si `(pid, session_id)` coincide
+     con el llamante** -> NUNCA fabrica propiedad ajena; como mucho adelanta un unlink que el
+     takeover iba a hacer igualmente (absorbido por el `suppress(OSError)`). Ademas hoy **no lo
+     llama ningun `cmd_*` de produccion** (grep: solo aparece en tests).
+   - **`_write_lock`** (`:375-386`, desde `cmd_init`): solo tras un `mkdir` EXCLUSIVO del session
+     dir -> por construccion no hay lock previo ahi para ningun contendiente.
+   **Ninguno puede producir falsa propiedad**, cada uno por una razon distinta y verificada. Por
+   eso revalidar DENTRO del marker basta. **Un futuro que "optimice" o quite el marker REABRE el
+   TOCTOU.**
+
+### Premise Re-check
+
+```
+python <scratch>/verify_blocker1.py   (o su equivalente)  -> wins=2, _release_lock(sid-a)=False
+```
+Sobre HEAD, sin el fix, el TOCTOU reproduce. **Si NO reproduce -> premisa MUERTA: HARD STOP.**
+
+### Context Baseline
+
+- HEAD `e6ab17e`, 3 arboles limpios. Suite `--level all`: 4063 passed / 0 failed.
+- `_read_lock`, `_lock_is_live`, `_is_pid_alive_best_effort`, `_try_create_lock_exclusive` ya
+  existen y estan a mano de `_takeover_lock`. El fix NO anade dependencias.
+- **023r dejo `test_takeover_competition_exactly_one_wins` como CANARIO** con instrumentacion de
+  atribucion (`creates`). Con 023s cerrado, `assert wins == 1` (sids distintos) pasa a ser
+  invariante en LAS TRES intercalaciones -> el canario **ASCIENDE a barrera**.
+
+### Files Likely Touched
+
+- `scripts/init_session_scratch.py` -- **`_takeover_lock` (`:488-491`), y SOLO ahi.**
+- `tests/test_init_session_scratch.py` -- el test de la barrera del TOCTOU.
+
+### Forbidden Surfaces
+
+- **`_acquire_lock` (`:422-457`)** -- 023n es correcto. El fix vive en `_takeover_lock`, no aqui.
+- **La logica del MARKER (`:467-486`)** -- **NO la toques.** Es la que SERIALIZA los takeovers y
+  hace suficiente la revalidacion (Premise-3). Tocarla reabre el bug.
+- **El modo `got 0`** -- es **WOT-2026-023l**, mecanismo DISTINTO (el marker, no el unlink). **NO
+  lo arregles aqui.** Mezclarlos produce falso-verde en ambos.
+- **`tests/conftest.py`** -- es 023p.
+
+### DoD
+
+Binario. Cada criterio = un comando con exit code o un test pass/fail.
+
+1. **DoD-1 -- BARRERA: el TOCTOU cerrado, DETERMINISTA (SIN HILOS -- esto NO es cosmetico).**
+   Medido por el plan-audit: el mismo escenario con HILOS REALES da `wins=2` solo ~1% de las
+   veces (198/200 dieron wins=1 incluso SIN el fix). Un test con hilos pasaria el 99% del tiempo
+   sobre el codigo ROTO -> mutation-verify hueco. **Serializar es la UNICA forma de que el DoD-4
+   tenga dientes.** Test NUEVO que serializa I3 (A completa el takeover; B, que ya decidio stale,
+   entra a `_takeover_lock` con sid AJENO):
+   `_takeover_lock(dir, sid_b)` -> **False**, y el lock **sigue siendo de sid_a** (bytes de A
+   intactos), y **`_release_lock(dir, sid_a)` -> True** (A conserva su propiedad).
+   El test **ASERTA SU MONTAJE**: antes, `_acquire_lock(dir, sid_a)` reclamo un lock stale REAL.
+2. **DoD-2 -- la reentrada legitima sigue viva.** Mismo escenario con MISMO sid: el 2o
+   `_takeover_lock(dir, sid_a)` -> **True** y el lock queda byte-identico (idempotente).
+3. **DoD-3 -- el takeover legitimo NO se rompe.** Un lock stale de pid muerto se sigue
+   reclamando (`_acquire_lock` -> True). (Es el `test_expired_lock_of_a_dead_pid_is_still_reclaimed`
+   existente; verificar que sigue verde.)
+4. **DoD-4 -- MUTATION-TO-PROVE (clon bajo C:\tmp, AISLADA POR NODE-ID).** Quitar la revalidacion
+   (volver al unlink a ciegas) -> **el test del DoD-1 CAE** (B roba el lock: B=True). Restaurar y
+   verificar por bytes.
+5. **DoD-5 -- ASCENDER EL CANARIO DE 023r.** `test_takeover_competition_exactly_one_wins` (sids
+   distintos) con el fix: `wins == 1` es ahora invariante. **DoD: correr 5 veces
+   `--level unit --xdist-workers auto` -> sin `got 2` con `creates == 2`** (el modo que era el
+   TOCTOU). **Si aparece `got 0`, es 023l, RECOVERABLE, NO es este ticket.**
+6. **DoD-6 -- suite:** `run_pytest_safe.py --level all` -> **0 failed**, output REAL, `tested_sha
+   == HEAD`. **DoD-7 -- lint** verde.
+
+> **Nota operativa (plan-audit, no bloqueante):** en el caso raro del TOCTOU, la revalidacion
+> llama a `_is_pid_alive_best_effort`, que en Windows invoca `tasklist` (timeout 5s), y ahora eso
+> ocurre DENTRO del marker (antes era fuera). El radio es solo otros contendientes de la MISMA
+> sesion. No se mitiga aqui; se deja escrito para que un timeout de marker relacionado no sorprenda.
+
+### STOP conditions
+
+- **El TOCTOU ya no reproduce en el Premise Re-check** -> premisa MUERTA: HARD STOP.
+- **El fix exige tocar el MARKER o `_acquire_lock`** -> PARA y emite CG.
+- **La mutacion no mata el test del DoD-1** -> no es barrera: PARA y redisena.
+- **Aparece `got 2` con `creates == 1`, o `got 0`** -> NO es este ticket (023r/023l).
+
+### CONTRACT_GAP
+
+Ante premisa falsa, ambiguedad o superficie prohibida necesaria, el Builder emite
+`CG-WOT-2026-023s.md` y BLOQUEA.
+
+- **CONTRACT_GAP-1 (RESUELTO):** *"revalidar como, exactamente?"* -> re-leer con `_read_lock`
+  DENTRO del marker. **Orden de identidad IDENTICO al de `_acquire_lock:452-454`: PRIMERO pid,
+  LUEGO sid** (si comparas solo sid, un lock de OTRO proceso que casualmente comparta session_id
+  se trataria como "mio"). vivo + `pid==getpid()` + `sid` igual -> True (reentrada); vivo +
+  `pid==getpid()` + sid distinto -> False; vivo + pid ajeno vivo -> False; stale -> proceder.
+  **Medido** (Premise-2). NO uses O_EXCL para "detectar" al otro: el marker ya serializa (Premise-3).
+
+### Builder clarification
+
+**Builder clarification budget: 0.**
+
+1. *"Toco el marker?"* -> **NO.** Es lo que hace suficiente el fix (Premise-3). Forbidden Surface.
+2. *"Y si al revalidar el lock es MIO?"* -> **return True** (reentrada), no reescribir (Premise-2).
+3. *"Arreglo el got 0 de paso?"* -> **NO.** Es 023l, otro mecanismo (el marker), sin determinar.
