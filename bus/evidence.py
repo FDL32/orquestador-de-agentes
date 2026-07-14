@@ -45,6 +45,23 @@ def _run_git_cmd(args: list[str], cwd: Path) -> set[str]:
     return set()
 
 
+def _own_git_root(root: Path | None) -> Path | None:
+    """Return `root` only if it carries its OWN .git; otherwise None.
+
+    Git resolves a repository by walking UP from cwd. A directory that sits inside
+    the real repo but has no .git of its own therefore answers for the REAL repo --
+    and pytest's `tmp_path` lands exactly there in this project. Running git from
+    such a root silently reports the developer's working tree, so a "hermetic" test
+    ends up asserting against whatever happens to be dirty (WOT-2026-020r).
+
+    `.git` is a FILE in a linked worktree (`_dev` is one), so the predicate is
+    existence, not is_dir().
+    """
+    if root is None:
+        return None
+    return root if (root / ".git").exists() else None
+
+
 def motor_uncommitted_productive(motor_root: Path) -> list[str]:
     """Return list of uncommitted productive files in motor_root.
 
@@ -56,7 +73,8 @@ def motor_uncommitted_productive(motor_root: Path) -> list[str]:
     not docs-only or collaboration-only. Empty list means no uncommitted productive
     changes.
     """
-    if not motor_root or not (motor_root / ".git").exists():
+    motor_root = _own_git_root(motor_root)
+    if motor_root is None:
         return []
 
     files = set()
@@ -80,7 +98,15 @@ def resolve_evidence(
     Extracts working tree, staged, and recently committed files.
     Always includes recent commits (fixes WT-2026-225a where a dirty working tree
     would hide valid ticket commits).
+
+    Both roots are normalized up front: a root without its own .git is dropped, so
+    no git command below can walk UP into the enclosing real repo (WOT-2026-020r).
+    This must happen BEFORE the first git call -- `git log --oneline -20` walks up
+    just as readily as `git diff` does.
     """
+    motor_root = _own_git_root(motor_root)
+    project_root = _own_git_root(project_root)
+
     motor_files_set = set()
     dest_files_set = set()
 

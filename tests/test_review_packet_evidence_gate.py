@@ -17,6 +17,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from bus.event_bus import EventBus
+from bus.evidence import _own_git_root, resolve_evidence
 from bus.review_bridge import ReviewBridge, ReviewDecision
 
 from tests.test_pre_handoff_guard import init_git_repo
@@ -39,7 +40,14 @@ def review_bridge(event_bus, tmp_path):
     """Create a ReviewBridge instance for testing.
 
     Sets up minimal collaboration files and a work_plan with ticket ID.
+
+    WOT-2026-020r: project_root must be a REAL repo root, because that is what the
+    production call site passes. Without its own .git it is not a repo at all, and
+    resolve_evidence now drops it rather than let git walk UP and answer for the
+    enclosing motor repo. The tests below mock git's OUTPUT; the .git makes the
+    fixture faithful to the shape git is asked about.
     """
+    init_git_repo(tmp_path)
     collab_dir = tmp_path / ".agent" / "collaboration"
     collab_dir.mkdir(parents=True)
     (collab_dir / "work_plan.md").write_text(
@@ -667,7 +675,7 @@ class TestReviewCycleEvidenceGateIntegration:
         )
 
     def test_integration_gate_passes_with_motor_evidence(
-        self, review_bridge, monkeypatch
+        self, review_bridge, monkeypatch, tmp_path
     ):
         """TP-04: Real classify_review_packet passes when motor has productive files."""
         # Emit READY_FOR_REVIEW state
@@ -683,11 +691,18 @@ class TestReviewCycleEvidenceGateIntegration:
             },
         )
 
-        # Mock motor root to exist
+        # Mock motor root to exist.
+        # WOT-2026-020r: it must be a REAL repo root. resolve_evidence now drops any
+        # root without its own .git (such a root makes git walk UP and answer for the
+        # enclosing repo). Path("/fake/motor") is not a repo, so the motor block would
+        # be skipped and this test would assert the gate's rejection path by accident.
+        # The dir name still ends in "motor" -- _make_side_effect routes on that.
+        fake_motor = tmp_path / "motor"
+        init_git_repo(fake_motor)
         monkeypatch.setattr(
             review_bridge,
             "_resolve_motor_root",
-            lambda: Path("/fake/motor"),
+            lambda: fake_motor,
         )
 
         # Mock subprocess.run: motor has productive files, destination has collab files
@@ -936,3 +951,102 @@ class TestCheckReviewPacketDiffEmpty:
 
         result = review_bridge.check_review_packet_diff_empty("WT-2026-221b")
         assert result is True, "Expected True for docs-only diff"
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-020r: the evidence gate must not read the REAL git tree
+# ---------------------------------------------------------------------------
+
+
+class TestEvidenceHermeticity020r:
+    """resolve_evidence() must ignore roots that carry no .git of their own.
+
+    Git resolves a repo by walking UP from cwd. `tmp_path` lands INSIDE this repo
+    (tests/sandbox/test_runtime/), so a root without its own .git answers for the
+    REAL repo: the gate reports whatever the developer's tree happens to contain.
+    A single dirty file in .agent/collaboration/ turned 6 bridge tests red while
+    the code under test was untouched.
+
+    These tests bite on a CLEAN tree: `git log -10 --name-only` walks up whether or
+    not anything is dirty, so they do not depend on -- and never create -- tree dirt.
+    """
+
+    def test_resolve_evidence_ignores_roots_without_own_git(self, tmp_path):
+        """Both roots. project_root is the one that actually carried the dirt:
+        _resolve_motor_root() returns None under tmp_path, so the motor block never
+        ran and the real tree entered through project_root."""
+        ev = resolve_evidence(tmp_path, tmp_path)
+
+        assert ev["motor_files"] == [], (
+            "motor_root without .git leaked the real repo's files: "
+            f"{ev['motor_files'][:5]}"
+        )
+        assert ev["destination_files"] == [], (
+            "project_root without .git leaked the real repo's files: "
+            f"{ev['destination_files'][:5]}"
+        )
+        assert ev["all_files"] == []
+
+    def test_resolve_evidence_finds_no_ticket_commit_from_rootless_dir(self, tmp_path):
+        """The `git log --oneline -20` probe walks up too, and it runs BEFORE the
+        diffs -- guarding only the diff calls would leave this one lying.
+
+        This must NOT lean on the enclosing repo's history: an id that happens to be
+        absent from the last 20 real commits yields has_ticket_commit=False with or
+        without the guard, and the test passes for the wrong reason (it did, until a
+        mutation exposed it). So build the walk-up ourselves: a real repo whose commit
+        message carries TICKET, queried from a subdirectory with no .git of its own.
+        Unguarded, git walks up and FINDS it -- which is precisely the leak.
+        """
+        ticket = "WOT-2026-020r"
+        repo = tmp_path / "enclosing_repo"
+        init_git_repo(repo)
+        (repo / "impl.py").write_text("x = 1\n")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", f"{ticket}: landed"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+
+        nested = repo / "sandbox" / "run"
+        nested.mkdir(parents=True)
+        assert not (nested / ".git").exists()
+
+        ev = resolve_evidence(nested, nested, ticket)
+
+        assert ev["has_ticket_commit"] is False, (
+            "has_ticket_commit walked UP into the enclosing repo's history"
+        )
+        assert ev["all_files"] == []
+
+    def test_resolve_evidence_still_reads_a_genuine_repo(self, tmp_path):
+        """Positive control: the guard must not degrade into 'always empty'.
+
+        Without this, `return []` would satisfy the two tests above.
+        """
+        repo = tmp_path / "real_repo"
+        init_git_repo(repo)
+        (repo / "module.py").write_text("x = 1\n")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+
+        ev = resolve_evidence(repo, repo)
+
+        assert "module.py" in ev["motor_files"], (
+            f"a real repo must still be read; got {ev['motor_files']}"
+        )
+        assert ev["has_productive_evidence"] is True
+
+    def test_own_git_root_accepts_a_worktree_dotgit_file(self, tmp_path):
+        """In a linked worktree `.git` is a FILE, not a directory -- and `_dev`, where
+        this suite runs, is one. An is_dir() predicate would reject the real motor."""
+        worktree = tmp_path / "linked_worktree"
+        worktree.mkdir()
+        (worktree / ".git").write_text("gitdir: /somewhere/.git/worktrees/wt\n")
+
+        assert _own_git_root(worktree) == worktree
+
+    def test_own_git_root_rejects_dir_without_git(self, tmp_path):
+        assert _own_git_root(tmp_path) is None
+        assert _own_git_root(None) is None
