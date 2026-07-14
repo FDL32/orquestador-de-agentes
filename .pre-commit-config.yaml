@@ -60,11 +60,14 @@ repos:
       # rescued. check_worktree_topology.py already detected the shape and is
       # fail-closed -- but it needs a --ticket and nothing ran it. This hook needs
       # neither, and fires at the last moment the mistake is still cheap.
+      # always_run: sin el, un commit de SOLO BORRADOS no pasa ficheros al hook y
+      # pre-commit se lo salta entero -- justo el commit que mas conviene vigilar.
       - id: check-commit-worktree
         name: check commit worktree (no commits in the detached motor checkout)
         entry: uv run python scripts/check_commit_worktree.py
         language: system
         pass_filenames: false
+        always_run: true
         stages: [pre-commit]
 
       # Guard-of-guards: a guard nobody invokes is a norm, not a barrier. Measured on
@@ -77,6 +80,7 @@ repos:
         entry: uv run python scripts/check_guard_wiring.py
         language: system
         pass_filenames: false
+        always_run: true
         stages: [pre-commit]
 
       # Guard against dangerous truncation of execution_log.md without archive compensation
