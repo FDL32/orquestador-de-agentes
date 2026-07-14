@@ -54,6 +54,19 @@ repos:
 
   - repo: local
     hooks:
+      # Never commit from the motor's DETACHED consumption checkout: the commit
+      # would land on no branch and be one sync_principal.py away from being lost.
+      # A session did exactly this on 2026-07-14 and its 2 commits had to be
+      # rescued. check_worktree_topology.py already detected the shape and is
+      # fail-closed -- but it needs a --ticket and nothing ran it. This hook needs
+      # neither, and fires at the last moment the mistake is still cheap.
+      - id: check-commit-worktree
+        name: check commit worktree (no commits in the detached motor checkout)
+        entry: uv run python scripts/check_commit_worktree.py
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
       # Guard against dangerous truncation of execution_log.md without archive compensation
       - id: check-history-truncation
         name: check history truncation guard
