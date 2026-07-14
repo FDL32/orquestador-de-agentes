@@ -27,5 +27,4 @@ Este checklist documenta los pasos manuales necesarios para completar la publica
 
 - Este checklist asegura que la publicacion se haga manualmente sin automatizacion por parte del agente.
 - El snapshot ha sido validado: tests pasan, linters OK, no hay vulnerabilidades.
-- No se han ejecutado comandos de git durante WP-2026-058.</content>
-<parameter name="filePath">MANUAL_PUBLICATION_CHECKLIST.md
+- No se han ejecutado comandos de git durante WP-2026-058.
