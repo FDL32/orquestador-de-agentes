@@ -27,6 +27,19 @@ EXCLUDED_PARTS = {
     ".codex",
     ".git",
     ".kilo",
+    # Matching is by EXACT path part (see _is_excluded), so ".kilo" does NOT
+    # exclude ".kilocode" -- a second, distinct tool dir. The original ficha
+    # blamed ".kilo" and that fix was already applied while the test stayed red;
+    # the 2026-07-13 triage re-probed it and found every hit was under .kilocode/.
+    ".kilocode",
+    # The real vector of this family is not any single tool: it is the vendored
+    # dependency tree every AI tool drops on disk. All 9 hits that broke the
+    # PRINCIPAL checkout came from node_modules/ (effect, fast-check), and none
+    # of them was the retired term -- they matched because LEGACY_PATTERN has no
+    # word boundary ("EmbeddingModel_base", "model-based testing"). Excluding
+    # node_modules immunizes against the next .cursor/.windsurf/.aider instead of
+    # adding one tool name per incident (WOT-2026-020q).
+    "node_modules",
     ".opencode",
     ".tmp",
     ".venv",
@@ -153,6 +166,67 @@ def test_iter_candidate_files_does_not_descend_into_excluded_dirs(
     )
     unpruned = {p.name for p in _iter_candidate_files(tmp_path)}
     assert "inside.py" in unpruned
+
+
+# ---- WOT-2026-020q: the external-tool vendor trees must not be scanned ----------
+#
+# These two tests are HERMETIC (synthetic tree in tmp_path) on purpose. The obvious
+# alternative -- "run the repo guard and check it is green" -- has NO TEETH in _dev:
+# neither .kilocode/ nor node_modules/ exists in this checkout, so the repo-wide test
+# passes identically with and without the fix. Its verdict would be decided by which
+# tool the developer happens to have on disk in ANOTHER worktree, not by this code.
+# A synthetic tree makes each exclusion the ONLY thing deciding the verdict, so the
+# mutation (drop the entry from EXCLUDED_PARTS) actually reaches its branch
+# (lesson 021u: a mutation only has teeth if a test can REACH the branch it mutates).
+
+
+def _tree_with_legacy_file(root: Path, *parts: str) -> Path:
+    """Create <root>/<parts...>/offender.d.ts carrying the retired term."""
+    target = root.joinpath(*parts)
+    target.mkdir(parents=True, exist_ok=True)
+    offender = target / "offender.d.ts"
+    offender.write_text("export const x = 'Model B';\n", encoding="utf-8")
+    return offender
+
+
+def test_kilocode_tool_dir_is_not_scanned(tmp_path) -> None:
+    """.kilo does NOT cover .kilocode: the match is on the EXACT path part.
+
+    Mutation: remove ".kilocode" from EXCLUDED_PARTS -> the offender is yielded and
+    this test fails. Isolated from the node_modules entry by using a bare .kilocode/.
+    """
+    offender = _tree_with_legacy_file(tmp_path, ".kilocode", "src")
+    assert _has_live_legacy_match(offender.read_text(encoding="utf-8")) is True
+
+    seen = {p.name for p in _iter_candidate_files(tmp_path)}
+    assert "offender.d.ts" not in seen
+
+
+def test_vendored_node_modules_is_not_scanned(tmp_path) -> None:
+    """The family vector is the vendored dep tree, whatever tool dropped it.
+
+    Mutation: remove "node_modules" from EXCLUDED_PARTS -> the offender is yielded and
+    this test fails. The parent dir here is deliberately NOT an excluded tool name, so
+    only the node_modules entry can decide the verdict.
+    """
+    offender = _tree_with_legacy_file(
+        tmp_path, ".some_future_tool", "node_modules", "effect"
+    )
+    assert _has_live_legacy_match(offender.read_text(encoding="utf-8")) is True
+
+    seen = {p.name for p in _iter_candidate_files(tmp_path)}
+    assert "offender.d.ts" not in seen
+
+
+def test_a_legacy_term_outside_any_tool_dir_is_still_caught(tmp_path) -> None:
+    """Counterfactual: the exclusions must not blind the guard to real code.
+
+    Without this, both tests above could pass because the walk yields NOTHING at all.
+    """
+    offender = _tree_with_legacy_file(tmp_path, "scripts")
+    seen = {p.name for p in _iter_candidate_files(tmp_path)}
+    assert "offender.d.ts" in seen
+    assert _has_live_legacy_match(offender.read_text(encoding="utf-8")) is True
 
 
 def test_negative_assertions_are_not_treated_as_live_legacy_terms() -> None:
