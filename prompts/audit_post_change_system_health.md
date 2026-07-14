@@ -26,9 +26,12 @@ hacer cambios en el motor y/o en un repo destino. Cubre tres capas:
 No conviertas el reporte automatico en "verdad oficial". `findings.json` es
 `[RELATO]` estructurado; el veredicto lo produce el agente tras re-derivar.
 
-**Read-only (v0).** El recolector NO muta el working tree y NO tiene
-`--apply-fixes` en v0 (se reservo para v1, solo para fixes pequenos tipo drift
-doc/CLI cuando exista evidencia verificable). Archivado y saneo SALEN como
+**Read-only (v0).** Por defecto el recolector NO muta ningun fichero TRACKED
+(escribe solo dentro de su carpeta de salida) y NO tiene `--apply-fixes` en v0
+(se reservo para v1, solo para fixes pequenos tipo drift doc/CLI cuando exista
+evidencia verificable). El registro en `INDEX.md` (fichero tracked) es opt-in
+via `--publish-index`, OFF por defecto (WOT-2026-023x): un auditor read-only
+puede correr el recolector sin ensuciar el arbol. Archivado y saneo SALEN como
 tickets, nunca se ejecutan en la misma pasada.
 
 Hereda `prompts/audit_agent_output.md` (CEM v0, evidencia antes que relato, doble
@@ -41,7 +44,8 @@ de auditoria, formato de hallazgos, plan por tickets).
 - La salida canonica vive en el `repo_destino`:
   `.agent/audits/system_health/general_audit_YYYYMMDD[_HHMM]/`
 - Cada ejecucion crea una carpeta INMUTABLE; no se sobrescriben auditorias previas.
-- Indice estable: `.agent/audits/system_health/INDEX.md`.
+- Indice estable: `.agent/audits/system_health/INDEX.md` (fichero TRACKED). Solo se
+  actualiza con `--publish-index` (opt-in): la corrida por defecto no lo toca.
 - **Regla de prefijo de tickets:** el `<PREFIX>` se lee del contrato del repo activo (`AGENTS.md`/`CLAUDE.md`). `WOT-` es prefijo SOLO del motor/dogfooding. Verificacion via `agent_controller --validate`.
 - Si no hay `repo_destino` (modo motor-only), la salida va a una ruta `--out`
   explicita y se marca cobertura degradada.

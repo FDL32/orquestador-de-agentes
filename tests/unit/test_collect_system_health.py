@@ -564,3 +564,63 @@ def test_run_ok_true_on_zero_exit(tmp_path):
     res = csh._run(cmd, tmp_path)
     assert res["exit_code"] == 0
     assert res["ok"] is True
+
+
+# ---- WOT-2026-023x: the collector never mutates the tracked INDEX.md by default --
+
+# The register lives at out_dir.parent/INDEX.md, a TRACKED file in the dogfooding
+# workspace. Writing it on every run made this "read-only collector" mutate the
+# working tree (the sibling batch audit hit that B3 violation live). These tests
+# are STRUCTURAL (they check whether the INDEX.md file exists), not porcelain-based:
+# porcelain would couple the test to the real motor tree (the false-green of
+# WOT-2026-023p) and, worse, would go blind if the audit dir were ever gitignored.
+# Structural existence isolates the INDEX.md branch so the DoD (b) mutation reaches it.
+
+
+def test_default_run_does_not_create_tracked_index(tmp_path, monkeypatch):
+    """DoD (a): a default invocation writes nothing outside its own out_dir.
+
+    Mutation-to-prove (DoD b): reverting the --publish-index gate so INDEX.md is
+    written unconditionally makes THIS assertion fail (the file reappears next to
+    out_dir without the flag). The branch under test is the ONLY thing that decides
+    the verdict -- no porcelain, no dependency on the real tree.
+    """
+    motor = _fake_motor(tmp_path)
+    monkeypatch.setattr(csh, "_run", _fake_run_factory())
+    out = tmp_path / "audits" / "out"
+
+    rc = csh.main(["--motor-root", str(motor), "--mode", "auto", "--out", str(out)])
+    assert rc == 0
+    # The collection artifacts DO exist (the run really ran)...
+    assert (out / "findings.json").exists()
+    # ...but the shared, tracked INDEX.md register was NOT written.
+    assert not (out.parent / "INDEX.md").exists()
+
+
+def test_publish_index_flag_writes_the_register(tmp_path, monkeypatch):
+    """The register is still reachable, but only opt-in via --publish-index.
+
+    This pins the flag so a future refactor cannot silently drop the capability
+    (which would make the default-off test pass vacuously).
+    """
+    motor = _fake_motor(tmp_path)
+    monkeypatch.setattr(csh, "_run", _fake_run_factory())
+    out = tmp_path / "audits" / "out"
+
+    rc = csh.main(
+        [
+            "--motor-root",
+            str(motor),
+            "--mode",
+            "auto",
+            "--out",
+            str(out),
+            "--publish-index",
+        ]
+    )
+    assert rc == 0
+    index = out.parent / "INDEX.md"
+    assert index.exists()
+    body = index.read_text(encoding="utf-8")
+    assert "System Health Audits" in body
+    assert out.name in body  # the row references this run's dir

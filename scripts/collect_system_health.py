@@ -12,8 +12,15 @@ During:
       diff). Captures raw stdout/exit per check under <out>/raw/. Builds a
       normalized findings.json with RELATIVIZED paths. Writes skeleton .md files
       with the fixed header block for the agent to fill (Pass B / judgment).
-    - Never mutates the working tree. Never archives or deletes. Never emits a
-      verdict: the agent is the auditor.
+    - By default writes ONLY inside the output dir (self-contained evidence);
+      it does not touch any tracked file. The append-only INDEX.md register is
+      opt-in via --publish-index (OFF by default): a pure collector never
+      mutates a tracked file (WOT-2026-023x). Never archives or deletes. Never
+      emits a verdict: the agent is the auditor.
+    - Residual (out of scope for 023x, tracked by WOT-2026-021f): in the
+      dogfooding workspace, .agent/audits/system_health/ is NOT gitignored, so
+      the output dir itself appears as untracked. That is a policy decision
+      (version the audits or not) reserved to the user, NOT a collector defect.
 
 After:
     - Output dir is immutable (refuses to overwrite; appends _NN if needed).
@@ -234,6 +241,16 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI orchestratio
     )
     parser.add_argument(
         "--out", default=None, help="explicit output dir (overrides destino default)"
+    )
+    parser.add_argument(
+        "--publish-index",
+        action="store_true",
+        help=(
+            "append a row to the shared INDEX.md register next to the output dir. "
+            "OFF by default: a pure collector never mutates a tracked file "
+            "(WOT-2026-023x). The INDEX.md lives at <out_dir>.parent/INDEX.md, "
+            "which is a TRACKED file in the dogfooding workspace."
+        ),
     )
     # NOTE: --apply-fixes is intentionally NOT implemented in v0. The collector is
     # strictly read-only. A future v1 may add it for small doc/CLI drift fixes only.
@@ -471,8 +488,13 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI orchestratio
         )
         (out_dir / fname).write_text(body, encoding="utf-8")
 
-    # ---- INDEX.md (append-only register) ----
-    if dest_ok or args.out:
+    # ---- INDEX.md (append-only register) -- opt-in only (WOT-2026-023x) ----
+    # The register lives at out_dir.parent/INDEX.md, a TRACKED file in the
+    # dogfooding workspace. Writing it by default made this "read-only collector"
+    # mutate the working tree on every run (AGENTS.md calls it a "read-only
+    # collector"; the sibling batch audit hit this B3 violation live). It is now
+    # gated behind --publish-index so the default invocation touches no tracked file.
+    if args.publish_index:
         index = out_dir.parent / "INDEX.md"
         if not index.exists():
             index.write_text(

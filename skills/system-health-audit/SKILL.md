@@ -41,13 +41,14 @@ Ese prompt prevalece si esta skill diverge.
 - **Script = recolector, agente = auditor.** `scripts/collect_system_health.py`
   recolecta evidencia determinista y escribe artefactos; NO emite veredicto. El
   juicio adversarial (Pasada B) lo hace el agente.
-- **Read-only (v0).** El recolector no muta el working tree y no tiene
-  `--apply-fixes` en v0 (reservado a v1, solo drift doc/CLI con evidencia).
-  Archivado y saneo SALEN como tickets, nunca se ejecutan en la misma pasada.
+- **Read-only (v0).** Por defecto el recolector no muta ningun fichero TRACKED
+  (escribe solo dentro de su carpeta de salida) y no tiene `--apply-fixes` en v0
+  (reservado a v1, solo drift doc/CLI con evidencia). Archivado y saneo SALEN como
+  tickets, nunca se ejecutan en la misma pasada.
 - **El motor ejecuta; el destino conserva.** Salida canonica en el destino:
   `.agent/audits/system_health/general_audit_YYYYMMDD[_HHMM]/`, carpeta INMUTABLE.
-- **Indice estable:** `.agent/audits/system_health/INDEX.md` (no se sobrescriben
-  auditorias previas).
+- **Indice estable:** `.agent/audits/system_health/INDEX.md` (fichero TRACKED);
+  solo se actualiza con `--publish-index` (opt-in, OFF por defecto: WOT-2026-023x).
 - **No vender verde global** si `run_pytest_safe` corre un allowlist parcial.
 - **Exit code real**, nunca medido con `cmd | tail` (mide el pipe, no el runner).
 - **`raw/` no publicable** por defecto (filtra rutas personales/PII); `findings.json`
