@@ -57,14 +57,14 @@ repos:
       # Guard against dangerous truncation of execution_log.md without archive compensation
       - id: check-history-truncation
         name: check history truncation guard
-        entry: python scripts/check_no_history_truncation.py
+        entry: uv run python scripts/check_no_history_truncation.py
         language: system
         pass_filenames: false
         stages: [pre-commit]
 
       - id: check-encoding-guard
         name: check encoding guard
-        entry: python scripts/check_encoding_guard.py
+        entry: uv run python scripts/check_encoding_guard.py
         language: system
         pass_filenames: false
         stages: [pre-commit]
@@ -75,7 +75,7 @@ repos:
       # regression where a removed guard left the hook silently allowing writes.
       - id: check-claude-settings-portability
         name: check claude settings portability
-        entry: python scripts/check_claude_settings_portability.py .claude/settings.json
+        entry: uv run python scripts/check_claude_settings_portability.py .claude/settings.json
         language: system
         pass_filenames: false
         stages: [pre-commit]
@@ -97,7 +97,7 @@ repos:
       # check). Ejecutable por tooling de instalacion o bajo demanda.
       - id: check-hook-interpreter
         name: check hook interpreter (INSTALL_PYTHON stale path)
-        entry: python scripts/check_hook_interpreter.py
+        entry: uv run python scripts/check_hook_interpreter.py
         language: system
         pass_filenames: false
         stages: [manual]
