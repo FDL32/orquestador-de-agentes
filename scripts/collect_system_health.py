@@ -340,38 +340,62 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI orchestratio
         ],
         motor_root,
     )
-    # WOT-2026-021c: when auditing a repo_destino, read ITS last-run.json (its own
-    # canonical suite), not the motor's -- a stale motor last-run (old exit 1) must not
-    # false-RED a green destino. In motor-only mode (dest_ok False) keep reading the
-    # motor. `source` is set by the caller here (the callee gets a single root and does
-    # not know its type); a destino with no last-run stays a `missing` critical (no
-    # silent fallback to the motor).
-    pytest_last = _read_pytest_last_run(dest_root if dest_ok else motor_root)
-    pytest_last["source"] = "destino" if dest_ok else "motor"
+    # WOT-2026-022v: READ BOTH last-runs. The collector audits TWO repos, and every
+    # version until now read ONE and discarded the other in silence:
+    #
+    #   - the original keyed the file on `dest_ok`, so whenever a destino was passed the
+    #     MOTOR's last-run was never consulted: a RED motor was invisible;
+    #   - keying it on `delivery_authority` (the first attempt at this ticket) inverted
+    #     the blindness: 12 of the 13 real destinos do not DECLARE the field, so they
+    #     defaulted to repo_motor and their OWN last-run was discarded -- a destino with
+    #     a genuinely red suite reported rc=0, criticals=[]. Strictly worse: a false-RED
+    #     is noisy, a false-GREEN is silent. An adversarial audit killed it before push.
+    #
+    # The invariant, from the module's own philosophy ("the collector collects, the agent
+    # is the auditor"): DELIVERY_AUTHORITY DECIDES SEVERITY, NOT VISIBILITY.
+    #
+    #   delivery repo   red -> CRITICAL   missing -> CRITICAL (cannot confirm the delivery)
+    #   the other repo  red -> WARNING    missing -> WARNING   (visible; never silent)
+    #
+    # So a destino's red suite is ALWAYS surfaced, the dogfooding workspace's fossil
+    # last-run stops false-REDding a motor close, and 021c is preserved (a repo_destino
+    # ticket still gets its critical from the DESTINO's own suite).
+    delivery_authority = (
+        _read_delivery_authority(dest_root) if dest_ok else "repo_motor"
+    )
+    delivery_is_dest = dest_ok and delivery_authority == "repo_destino"
+
+    motor_last = _read_pytest_last_run(motor_root)
+    motor_last["source"] = "motor"
+    dest_last = _read_pytest_last_run(dest_root) if dest_ok else None
+    if dest_last is not None:
+        dest_last["source"] = "destino"
+
+    # The record of the repo the ticket is DELIVERED from. Kept under the original key so
+    # existing consumers of findings.json keep working.
+    pytest_last = dest_last if delivery_is_dest else motor_last
+
     # WOT-2026-021n: flag a STALE last-run (tested a different commit than the current
-    # delivery HEAD). CRITICAL: the HEAD to compare against is resolved by
-    # delivery_authority, NOT by the last-run file location (dest_ok). run_pytest_safe
-    # stamps tested_commit_sha with the HEAD of _delivery_repo_root(), which is the
-    # destino only when delivery_authority == repo_destino, else the motor (default).
-    # A destino running the suite for a repo_motor ticket keeps its last-run file under
-    # the destino but stamps the MOTOR HEAD -> comparing against dest_head would be a
-    # spurious stale on every fresh run. So mirror pre_handoff_guard: pick dest_head
-    # only when the destino's work_plan declares delivery_authority repo_destino.
-    delivery_head = (
-        dest_head
-        if (dest_ok and _read_delivery_authority(dest_root) == "repo_destino")
-        else motor_head
-    )
-    tested_sha = pytest_last.get("tested_commit_sha")
-    # Truthiness (never `is not None`): None/"" tested_sha or head collapse to not-stale.
-    # bool() forces a genuine bool (a falsy term would otherwise leak through the `and`).
-    # This is transparency of the witness (a WARN), never a critical.
-    pytest_last["stale"] = bool(
-        pytest_last.get("present")
-        and tested_sha
-        and delivery_head
-        and tested_sha != delivery_head
-    )
+    # delivery HEAD). The HEAD to compare against is resolved by delivery_authority, NOT
+    # by the last-run file location. run_pytest_safe stamps tested_commit_sha with the
+    # HEAD of _delivery_repo_root(), which is the destino only when delivery_authority ==
+    # repo_destino, else the motor -- so BOTH records are stamped against the same HEAD
+    # and both compare against it. `stale` is orthogonal to the verdict: it never
+    # silences a red and never downgrades one. It only says "this witness is not fresh".
+    delivery_head = dest_head if delivery_is_dest else motor_head
+    for _lr in (motor_last, dest_last):
+        if _lr is None:
+            continue
+        _tested = _lr.get("tested_commit_sha")
+        # Truthiness (never `is not None`): None/"" tested_sha or head collapse to
+        # not-stale. bool() forces a genuine bool (a falsy term would otherwise leak
+        # through the `and`).
+        _lr["stale"] = bool(
+            _lr.get("present")
+            and _tested
+            and delivery_head
+            and _tested != delivery_head
+        )
 
     if dest_ok:
         checks["ruff_destino"] = _run(["ruff", "check", "."], dest_root)
@@ -395,30 +419,86 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI orchestratio
     # ---- Automatic critical detection (no judgment, only flags) ----
     criticals: list[str] = []
     warnings: list[str] = []
-    if pytest_last.get("present") and pytest_last.get("exit_code") not in (0, None):
-        # WOT-2026-021m: classify a nonzero exit by its CAUSE. Branch order matters:
-        # a real test failure (failed/error ids) wins over a state-leak, and an
-        # unexplained nonzero exit stays critical (fail-safe, never silenced).
-        # Truthiness (never `!= []`): state_leak is a non-empty list or absent/None.
-        if pytest_last.get("failed_test_ids") or pytest_last.get("error_test_ids"):
-            criticals.append("pytest_safe_last_run_nonzero")
-        elif pytest_last.get("state_leak"):
-            # exit-1 caused ONLY by the state-leak of gitignored projections
-            # (AUDIT_*/STRATEGY_* that the suite legitimately mutates) -> WARN, not
-            # a real red suite. The leak is still surfaced, just not a critical.
-            warnings.append("pytest_safe_last_run_stateleak_only")
+
+    def _flag_last_run(lr: dict, *, is_delivery: bool) -> dict:
+        """Classify ONE repo's last-run and return its STRUCTURED verdict.
+
+        Severity comes from delivery_authority; VISIBILITY never does -- the
+        non-delivery repo is warned about, never silenced.
+
+        The findings are ALSO returned as a block rather than only appended to the flat
+        lists. A warning appended to `automatic_warnings` is easy to bury in a list that
+        already holds stale/lint noise; the caller publishes these blocks as
+        `authoritative_health` / `non_authoritative_health` so a red non-delivery repo is
+        a first-class fact with its own `verdict`, not a string someone has to grep for.
+
+        The delivery repo keeps the original finding names, so existing consumers of
+        findings.json are untouched; the other repo gets the same names suffixed with
+        its repo, which is new information rather than changed information.
+        """
+        sev = criticals if is_delivery else warnings
+        tag = "" if is_delivery else f"_{lr['source']}"
+        mine: list[str] = []
+
+        def _emit(target: list[str], name: str) -> None:
+            target.append(f"{name}{tag}")
+            mine.append(f"{name}{tag}")
+
+        verdict = "green"
+
+        if lr.get("present") is False:
+            # Cannot confirm green. For the delivery repo that is a blocker; for the
+            # other one it is a fact the auditor should see, not a gate.
+            _emit(sev, "pytest_safe_last_run_missing")
+            verdict = "unknown"
         else:
-            # nonzero exit with no failed/error ids and no state_leak -> unexplained;
-            # keep it critical (fail-safe).
-            criticals.append("pytest_safe_last_run_nonzero")
-    if pytest_last.get("present") is False:
-        criticals.append("pytest_safe_last_run_missing")  # cannot confirm green
+            if lr.get("exit_code") not in (0, None):
+                # WOT-2026-021m: classify a nonzero exit by its CAUSE. Branch order
+                # matters: a real test failure (failed/error ids) wins over a state-leak,
+                # and an unexplained nonzero exit stays at the repo's severity (fail-safe,
+                # never silenced). Truthiness (never `!= []`): state_leak is a non-empty
+                # list or absent/None.
+                if lr.get("failed_test_ids") or lr.get("error_test_ids"):
+                    _emit(sev, "pytest_safe_last_run_nonzero")
+                    verdict = "red"
+                elif lr.get("state_leak"):
+                    # exit-1 caused ONLY by the state-leak of gitignored projections
+                    # (AUDIT_*/STRATEGY_* that the suite legitimately mutates) -> WARN,
+                    # not a real red suite. The leak is surfaced, just not a critical.
+                    _emit(warnings, "pytest_safe_last_run_stateleak_only")
+                    verdict = "stateleak"
+                else:
+                    # nonzero, no failed/error ids, no state_leak -> unexplained.
+                    _emit(sev, "pytest_safe_last_run_nonzero")
+                    verdict = "red"
+
+            # WOT-2026-021n: stale is ALWAYS a warning, for either repo. It never
+            # silences a red and never downgrades one -- a stale red stays red AND stale.
+            if lr.get("stale"):
+                _emit(warnings, "pytest_safe_last_run_stale")
+
+        return {
+            "repo": lr["source"],
+            "is_delivery": is_delivery,
+            "verdict": verdict,  # green | red | stateleak | unknown
+            "blocking": is_delivery and verdict in ("red", "unknown"),
+            "stale": bool(lr.get("stale")),
+            "exit_code": lr.get("exit_code"),
+            "findings": mine,
+            "last_run": lr,
+        }
+
+    motor_health = _flag_last_run(motor_last, is_delivery=not delivery_is_dest)
+    dest_health = (
+        _flag_last_run(dest_last, is_delivery=delivery_is_dest)
+        if dest_last is not None
+        else None
+    )
+    authoritative = motor_health if not delivery_is_dest else dest_health
+    non_authoritative = dest_health if not delivery_is_dest else motor_health
+
     if checks.get("validate_motor", {}).get("exit_code") not in (0, None):
         criticals.append("validate_motor_nonzero")
-    # WOT-2026-021n: a stale last-run (tested an old commit) is a WARN, never a
-    # critical -- the green/red verdict stays with exit_code + the 021m classification.
-    if pytest_last.get("stale"):
-        warnings.append("pytest_safe_last_run_stale")
 
     # ---- Write raw evidence ----
     for name, res in checks.items():
@@ -454,7 +534,16 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI orchestratio
         "checks": {
             k: {"exit_code": v["exit_code"], "ok": v["ok"]} for k, v in checks.items()
         },
+        # The DELIVERY repo's record, under the original key (consumers unchanged).
         "pytest_safe_last_run": pytest_last,
+        # WOT-2026-022v: both repos are reported as STRUCTURED blocks, so the one that is
+        # not delivering cannot be buried in a flat warnings list. `non_authoritative_health`
+        # carries its own `verdict` (green/red/stateleak/unknown): a red destino during a
+        # motor ticket is a first-class fact that does not block, not a string to grep for.
+        # `delivery_authority` is surfaced because it decides severity and used to be invisible.
+        "authoritative_health": authoritative,
+        "non_authoritative_health": non_authoritative,
+        "delivery_authority": delivery_authority,
         "inventory": {
             "motor_tracked_count": len(motor_tracked),
             "destino_tracked_count": len(dest_tracked),
@@ -515,6 +604,15 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI orchestratio
         f"[collect] mode={mode} degraded={degraded} "
         f"automatic_criticals={criticals} automatic_warnings={warnings}"
     )
+    # WOT-2026-022v: say the non-delivery repo's verdict OUT LOUD. It does not block, and
+    # that is exactly why it needs a line of its own -- a non-blocking fact buried in a
+    # warnings list is how a red destino stays invisible in practice.
+    if non_authoritative and non_authoritative["verdict"] != "green":
+        print(
+            f"[collect] OJO: el repo que NO entrega ({non_authoritative['repo']}) esta en "
+            f"'{non_authoritative['verdict']}' (exit_code={non_authoritative['exit_code']}, "
+            f"stale={non_authoritative['stale']}). No bloquea este ticket, pero NO esta verde."
+        )
     return 1 if criticals else 0
 
 

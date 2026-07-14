@@ -238,10 +238,22 @@ def test_failure_and_leak_together_is_critical(tmp_path, monkeypatch):
 # ---- WOT-2026-021c: read the DESTINO's last-run when dest_ok (not the motor's) ----
 
 
-def _fake_dest(tmp_path, lastrun: dict | None):
-    """A repo_destino with a .agent/ workspace and, optionally, its own last-run.json."""
+def _fake_dest(tmp_path, lastrun: dict | None, delivery_authority: str | None = None):
+    """A repo_destino with a .agent/ workspace and, optionally, its own last-run.json.
+
+    WOT-2026-022v: `delivery_authority` defaults to None = NO work_plan field at all,
+    because that is the shape of 12 of the 13 REAL destinos. A fixture that always
+    declares the field would hide the very default that turned a red destino silent.
+    """
     dest = tmp_path / "dest"
     (dest / ".agent").mkdir(parents=True)
+    if delivery_authority is not None:
+        collab = dest / ".agent" / "collaboration"
+        collab.mkdir(parents=True, exist_ok=True)
+        (collab / "work_plan.md").write_text(
+            f"# Work Plan\n\n- **delivery_authority:** {delivery_authority}\n",
+            encoding="utf-8",
+        )
     if lastrun is not None:
         psafe = dest / ".agent" / "runtime" / "pytest-safe"
         psafe.mkdir(parents=True)
@@ -249,13 +261,15 @@ def _fake_dest(tmp_path, lastrun: dict | None):
     return dest
 
 
-def _run_full(tmp_path, monkeypatch, motor_lastrun, dest_lastrun):
+def _run_full(
+    tmp_path, monkeypatch, motor_lastrun, dest_lastrun, delivery_authority=None
+):
     """Run main() in full mode (motor + destino); return (rc, findings)."""
     motor = _fake_motor(tmp_path)
     (motor / ".agent" / "runtime" / "pytest-safe" / "last-run.json").write_text(
         json.dumps(motor_lastrun), encoding="utf-8"
     )
-    dest = _fake_dest(tmp_path, dest_lastrun)
+    dest = _fake_dest(tmp_path, dest_lastrun, delivery_authority)
     monkeypatch.setattr(csh, "_run", _fake_run_factory())
     out = tmp_path / "out"
     rc = csh.main(
@@ -275,19 +289,24 @@ def _run_full(tmp_path, monkeypatch, motor_lastrun, dest_lastrun):
 
 
 def test_dest_green_motor_stale_is_not_false_red(tmp_path, monkeypatch):
-    """Fixture 1: motor last-run stale (exit 1), destino green (exit 0).
+    """Fixture 1: motor last-run stale (exit 1), destino green (exit 0), DESTINO ticket.
 
-    The collector must read the DESTINO's last-run -> no false-RED of the destino.
+    The destino is delivering, so ITS last-run is the critical axis -> no false-RED.
+    022v: the ticket must DECLARE repo_destino, because that is what makes the destino
+    the delivery repo. The motor's red does not vanish -- it is now a WARNING (visible).
     """
     _rc, findings = _run_full(
         tmp_path,
         monkeypatch,
         motor_lastrun={"exit_code": 1},
         dest_lastrun={"exit_code": 0},
+        delivery_authority="repo_destino",
     )
     assert "pytest_safe_last_run_nonzero" not in findings["automatic_criticals"]
     assert findings["pytest_safe_last_run"]["source"] == "destino"
     assert findings["pytest_safe_last_run"]["exit_code"] == 0
+    # ...and the motor's red is SURFACED, not discarded: the old code never even read it.
+    assert "pytest_safe_last_run_nonzero_motor" in findings["automatic_warnings"]
 
 
 def test_dest_real_failure_is_critical(tmp_path, monkeypatch):
@@ -297,6 +316,7 @@ def test_dest_real_failure_is_critical(tmp_path, monkeypatch):
         monkeypatch,
         motor_lastrun={"exit_code": 0},
         dest_lastrun={"exit_code": 1, "failed_test_ids": ["tests/x.py::test_y"]},
+        delivery_authority="repo_destino",
     )
     assert "pytest_safe_last_run_nonzero" in findings["automatic_criticals"]
     assert findings["pytest_safe_last_run"]["source"] == "destino"
@@ -305,18 +325,261 @@ def test_dest_real_failure_is_critical(tmp_path, monkeypatch):
 def test_dest_missing_lastrun_is_missing_critical_not_motor_fallback(
     tmp_path, monkeypatch
 ):
-    """Fixture 4: dest_ok but destino has NO last-run.json.
+    """Fixture 4: a DESTINO ticket whose destino has NO last-run.json.
 
-    Must emit pytest_safe_last_run_missing (cannot confirm green) and NOT silently
-    fall back to the motor's last-run (that would be a false-green). Guards the
-    principal risk of the plan audit.
+    Must emit pytest_safe_last_run_missing (cannot confirm the delivery) and NOT silently
+    fall back to the motor's last-run (that would be a false-green).
     """
     _rc, findings = _run_full(
-        tmp_path, monkeypatch, motor_lastrun={"exit_code": 0}, dest_lastrun=None
+        tmp_path,
+        monkeypatch,
+        motor_lastrun={"exit_code": 0},
+        dest_lastrun=None,
+        delivery_authority="repo_destino",
     )
     assert "pytest_safe_last_run_missing" in findings["automatic_criticals"]
     assert findings["pytest_safe_last_run"]["present"] is False
     assert findings["pytest_safe_last_run"]["source"] == "destino"
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-022v: delivery_authority decides SEVERITY, never VISIBILITY.
+#
+# The three tests above declare repo_destino. 12 of the 13 REAL destinos declare
+# NOTHING -- and the previous attempt at this ticket routed the last-run FILE by that
+# field, so a non-declaring destino had its own last-run silently discarded in favour of
+# the motor's. A destino with a genuinely red suite reported rc=0, criticals=[].
+# `Unificar_recibos_norma_43` carries a red last-run TODAY. An adversarial audit caught
+# it before push. These are the tests that would have caught it here.
+# ---------------------------------------------------------------------------
+
+
+def test_a_red_destino_is_never_silent_even_when_it_declares_nothing(
+    tmp_path, monkeypatch
+):
+    """THE false-green, in fixture form. Motor green + destino REALLY red + no declaration.
+
+    The motor is the delivery repo (nothing declared), so the destino's red is not a
+    blocker -- but it must be VISIBLE. Silence is the one thing that is not allowed.
+    """
+    rc, findings = _run_full(
+        tmp_path,
+        monkeypatch,
+        motor_lastrun={"exit_code": 0},
+        dest_lastrun={"exit_code": 1, "failed_test_ids": ["tests/x.py::test_roto"]},
+        delivery_authority=None,  # 12 of 13 real destinos
+    )
+    assert "pytest_safe_last_run_nonzero_destino" in findings["automatic_warnings"], (
+        "a red destino suite was DISCARDED: the collector went silent about it"
+    )
+    # It is not the delivery repo, so it does not block the motor's ticket...
+    assert findings["automatic_criticals"] == []
+    assert rc == 0
+    # ...but its record is reported, not thrown away.
+    assert findings["non_authoritative_health"]["repo"] == "destino"
+    assert findings["non_authoritative_health"]["verdict"] == "red"
+    assert findings["non_authoritative_health"]["last_run"]["exit_code"] == 1
+
+
+def test_a_missing_destino_lastrun_is_visible_when_it_declares_nothing(
+    tmp_path, monkeypatch
+):
+    """8 real destinos have .agent/ and no last-run. Not a blocker for a motor ticket,
+    but 'I cannot confirm this repo is green' must reach the auditor."""
+    rc, findings = _run_full(
+        tmp_path,
+        monkeypatch,
+        motor_lastrun={"exit_code": 0},
+        dest_lastrun=None,
+        delivery_authority=None,
+    )
+    assert "pytest_safe_last_run_missing_destino" in findings["automatic_warnings"]
+    assert findings["automatic_criticals"] == []
+    assert rc == 0
+
+
+def test_a_red_motor_is_never_silent_during_a_destino_ticket(tmp_path, monkeypatch):
+    """The MIRROR bug, which the ORIGINAL code had: keying the file on `dest_ok` meant
+    that whenever a destino was passed, the motor's last-run was never read at all. A red
+    motor was invisible. Reproduced against the pre-fix code before writing this.
+    """
+    _rc, findings = _run_full(
+        tmp_path,
+        monkeypatch,
+        motor_lastrun={"exit_code": 1, "failed_test_ids": ["tests/m.py::test_motor"]},
+        dest_lastrun={"exit_code": 0},
+        delivery_authority="repo_destino",
+    )
+    assert "pytest_safe_last_run_nonzero_motor" in findings["automatic_warnings"], (
+        "a red MOTOR was discarded because a destino was being audited"
+    )
+    assert findings["non_authoritative_health"]["repo"] == "motor"
+    assert findings["non_authoritative_health"]["verdict"] == "red"
+    assert findings["non_authoritative_health"]["last_run"]["exit_code"] == 1
+
+
+def test_the_dogfooding_fossil_does_not_false_red_a_green_motor(tmp_path, monkeypatch):
+    """THE original 022v symptom. The dogfooding workspace never runs the canonical
+    suite; its last-run is a fossil (exit=5, runner=unittest, 2026-07-10). With the motor
+    green, auditing a MOTOR ticket must not go CRITICAL on that fossil -- but the fossil
+    must still be visible as a warning.
+    """
+    rc, findings = _run_full(
+        tmp_path,
+        monkeypatch,
+        motor_lastrun={"exit_code": 0},
+        dest_lastrun={"exit_code": 5, "runner": "unittest"},
+        delivery_authority=None,
+    )
+    assert findings["automatic_criticals"] == []
+    assert rc == 0
+    assert "pytest_safe_last_run_nonzero_destino" in findings["automatic_warnings"]
+
+
+def test_the_non_authoritative_verdict_is_structured_not_buried(tmp_path, monkeypatch):
+    """A warning appended to a flat list is easy to bury next to lint/stale noise.
+
+    The non-delivery repo's health must be a FIRST-CLASS block with its own verdict, so a
+    consumer can ask "is the other repo green?" without grepping strings.
+    """
+    _rc, findings = _run_full(
+        tmp_path,
+        monkeypatch,
+        motor_lastrun={"exit_code": 0},
+        dest_lastrun={"exit_code": 1, "failed_test_ids": ["tests/x.py::test_roto"]},
+        delivery_authority=None,
+    )
+    auth = findings["authoritative_health"]
+    non_auth = findings["non_authoritative_health"]
+
+    assert auth["repo"] == "motor"
+    assert auth["is_delivery"] is True
+    assert auth["verdict"] == "green"
+    assert auth["blocking"] is False
+
+    assert non_auth["repo"] == "destino"
+    assert non_auth["is_delivery"] is False
+    assert non_auth["verdict"] == "red", "el destino rojo debe tener veredicto propio"
+    assert non_auth["blocking"] is False, "no bloquea un ticket del motor..."
+    assert "pytest_safe_last_run_nonzero_destino" in non_auth["findings"]
+    assert non_auth["last_run"]["exit_code"] == 1
+
+
+HEALTH_BLOCK_KEYS = {
+    "repo",
+    "is_delivery",
+    "verdict",
+    "blocking",
+    "stale",
+    "exit_code",
+    "findings",
+    "last_run",
+}
+VERDICTS = {"green", "red", "stateleak", "unknown"}
+
+
+def test_health_block_shape_is_stable(tmp_path, monkeypatch):
+    """CONTRACT on the SHAPE, not on one field at a time.
+
+    Partial asserts drift: a refactor can drop a key and every existing test still passes
+    because none of them looked at that key. This pins the exact key set and the closed
+    set of verdicts for BOTH blocks, so removing or renaming one is a red test.
+    """
+    _rc, findings = _run_full(
+        tmp_path,
+        monkeypatch,
+        motor_lastrun={"exit_code": 0},
+        dest_lastrun={"exit_code": 1, "failed_test_ids": ["tests/x.py::test_roto"]},
+        delivery_authority=None,
+    )
+
+    for key in ("authoritative_health", "non_authoritative_health"):
+        block = findings[key]
+        assert set(block) == HEALTH_BLOCK_KEYS, (
+            f"{key} cambio de forma: {sorted(block)}"
+        )
+        assert block["repo"] in {"motor", "destino"}
+        assert block["verdict"] in VERDICTS, f"{key}.verdict fuera del enum"
+        assert isinstance(block["is_delivery"], bool)
+        assert isinstance(block["blocking"], bool)
+        assert isinstance(block["stale"], bool)
+        assert isinstance(block["findings"], list)
+        assert isinstance(block["last_run"], dict)
+
+    # Exactly one of the two blocks delivers, and only a delivering repo can block.
+    auth, non_auth = (
+        findings["authoritative_health"],
+        findings["non_authoritative_health"],
+    )
+    assert auth["is_delivery"] is True
+    assert non_auth["is_delivery"] is False
+    assert non_auth["blocking"] is False
+    assert auth["repo"] != non_auth["repo"]
+    # `delivery_authority` must be published: it is what decides severity.
+    assert findings["delivery_authority"] in {"repo_motor", "repo_destino"}
+
+
+def test_console_announces_a_red_non_authoritative_repo(tmp_path, monkeypatch, capsys):
+    """The JSON block is for machines; a human reads the console. A non-blocking red repo
+    that only exists inside findings.json is a red repo nobody will ever look at."""
+    _run_full(
+        tmp_path,
+        monkeypatch,
+        motor_lastrun={"exit_code": 0},
+        dest_lastrun={"exit_code": 1, "failed_test_ids": ["tests/x.py::test_roto"]},
+        delivery_authority=None,
+    )
+    out = capsys.readouterr().out
+    assert "el repo que NO entrega (destino)" in out
+    assert "'red'" in out
+    assert "NO esta verde" in out
+
+
+def test_console_stays_quiet_when_the_other_repo_is_green(
+    tmp_path, monkeypatch, capsys
+):
+    """Control: the notice must be a SIGNAL, not a permanent banner. If it printed always,
+    it would be ignored always -- and the test above would pass for the wrong reason.
+    """
+    _run_full(
+        tmp_path,
+        monkeypatch,
+        motor_lastrun={"exit_code": 0},
+        dest_lastrun={"exit_code": 0},
+        delivery_authority=None,
+    )
+    out = capsys.readouterr().out
+    assert "el repo que NO entrega" not in out
+
+
+def test_the_delivery_repo_block_is_marked_blocking_when_red(tmp_path, monkeypatch):
+    """Control on the same structure: the delivery repo's block must say `blocking`."""
+    _rc, findings = _run_full(
+        tmp_path,
+        monkeypatch,
+        motor_lastrun={"exit_code": 1, "failed_test_ids": ["tests/m.py::test_m"]},
+        dest_lastrun={"exit_code": 0},
+        delivery_authority=None,
+    )
+    assert findings["authoritative_health"]["verdict"] == "red"
+    assert findings["authoritative_health"]["blocking"] is True
+    assert findings["non_authoritative_health"]["verdict"] == "green"
+
+
+def test_a_red_delivery_repo_still_blocks(tmp_path, monkeypatch):
+    """Control: severity routing must not degrade into 'nothing is ever critical'.
+
+    Without this, making everything a warning would satisfy every test above.
+    """
+    rc, findings = _run_full(
+        tmp_path,
+        monkeypatch,
+        motor_lastrun={"exit_code": 1, "failed_test_ids": ["tests/m.py::test_motor"]},
+        dest_lastrun={"exit_code": 0},
+        delivery_authority=None,  # motor delivers
+    )
+    assert "pytest_safe_last_run_nonzero" in findings["automatic_criticals"]
+    assert rc == 1
 
 
 def test_motor_only_still_reads_motor(tmp_path, monkeypatch):
@@ -399,10 +662,27 @@ def _write_wp(root: Path, delivery_authority: str):
 
 
 def _run_full_staleness(
-    tmp_path, monkeypatch, *, dest_delivery, dest_lastrun, head_fails=False
+    tmp_path,
+    monkeypatch,
+    *,
+    dest_delivery,
+    dest_lastrun,
+    head_fails=False,
+    motor_lastrun=None,
 ):
-    """Run full mode with distinct motor/dest HEADs; return findings."""
+    """Run full mode with distinct motor/dest HEADs; return findings.
+
+    WOT-2026-022v: `motor_lastrun` exists because the DELIVERY repo's record is the one
+    under `pytest_safe_last_run`. For a repo_motor ticket that is the MOTOR's file, so a
+    staleness test for that case must be able to STAMP it. Without this the test asserts
+    `stale is False` about a fixture that has no tested_commit_sha at all, and passes for
+    the wrong reason -- which it did, until a mutation of the SHA axis failed to kill it.
+    """
     motor = _fake_motor(tmp_path)
+    if motor_lastrun is not None:
+        (motor / ".agent" / "runtime" / "pytest-safe" / "last-run.json").write_text(
+            json.dumps(motor_lastrun), encoding="utf-8"
+        )
     dest = _fake_dest(tmp_path, dest_lastrun)
     _write_wp(dest, dest_delivery)
     monkeypatch.setattr(
@@ -456,16 +736,21 @@ def test_repo_motor_ticket_compares_vs_motor_not_dest(tmp_path, monkeypatch):
     """DoD-c (the BLOCKER): dest_ok + delivery_authority repo_motor + last-run stamped
     with the MOTOR head must compare vs MOTOR head -> NOT stale (no false-positive).
 
-    This is the exact real-world topology: a destino runs the suite for a repo_motor
-    ticket; the last-run file lives under the destino but tested_commit_sha is the
-    MOTOR HEAD. Comparing against dest_head (the v1-plan bug) would be spurious stale.
+    022v REWROTE this test. It used to stamp only the DESTINO's last-run and assert "not
+    stale". Once the DELIVERY repo's record is the one under `pytest_safe_last_run`, a
+    repo_motor ticket reads the MOTOR's file -- so the old fixture asserted about a record
+    with no tested_commit_sha at all and passed VACUOUSLY (no mutation of the SHA axis
+    could turn it red). Now the MOTOR's last-run carries the sha and the DESTINO's carries
+    a DECOY that must not be compared against the motor's HEAD.
     """
     findings = _run_full_staleness(
         tmp_path,
         monkeypatch,
         dest_delivery="repo_motor",  # default authority
-        dest_lastrun={"exit_code": 0, "tested_commit_sha": _MOTOR_SHA},
+        motor_lastrun={"exit_code": 0, "tested_commit_sha": _MOTOR_SHA},
+        dest_lastrun={"exit_code": 0, "tested_commit_sha": "c" * 40},  # decoy
     )
+    assert findings["pytest_safe_last_run"]["source"] == "motor"
     assert findings["pytest_safe_last_run"]["stale"] is False, (
         "repo_motor ticket must compare tested_sha vs MOTOR head, not dest head"
     )
