@@ -27,6 +27,7 @@ After: prints violations and returns exit code 0 (clean) or 1 (violations).
 
 from __future__ import annotations
 
+import argparse
 import json
 import subprocess
 import sys
@@ -167,9 +168,133 @@ def _resolve_settings_path(arg: str | None) -> Path:
     return p
 
 
+def _discover_destinations(motor_root: Path) -> list[Path]:
+    """Find destination repos under parent(motor_root) that have motor_destination_link.json."""
+    destinations: list[Path] = []
+    parent = motor_root.parent
+    if not parent.is_dir():
+        return destinations
+    for child in sorted(parent.iterdir()):
+        if not child.is_dir():
+            continue
+        link = child / ".agent" / "config" / "motor_destination_link.json"
+        if not link.exists():
+            continue
+        try:
+            data = json.loads(link.read_text(encoding="utf-8"))
+            dest_root = data.get("destination_root")
+            if dest_root:
+                p = Path(dest_root)
+                if p.is_dir():
+                    destinations.append(p)
+        except (json.JSONDecodeError, OSError, KeyError):
+            continue
+    return destinations
+
+
+def check_hook_file_exists(dest_root: Path) -> list[str]:
+    """Verify the hook file referenced by the canonical command exists for this destination.
+
+    The canonical command resolves claude_guard_entry.py via:
+    1. dest_root/.agent/hooks/claude_guard_entry.py (local)
+    2. motor_root via motor_destination_link.json (remote)
+    If neither exists, the entrypoint exits 2 (fail-closed), but the operator
+    should know the hook file is missing so they can fix it.
+    """
+    local = dest_root / ".agent" / "hooks" / "claude_guard_entry.py"
+    if local.exists():
+        return []
+    link = dest_root / ".agent" / "config" / "motor_destination_link.json"
+    if link.exists():
+        try:
+            data = json.loads(link.read_text(encoding="utf-8"))
+            motor_root = data.get("motor_root")
+            if motor_root:
+                motor_hook = (
+                    Path(motor_root) / ".agent" / "hooks" / "claude_guard_entry.py"
+                )
+                if motor_hook.exists():
+                    return []
+        except (json.JSONDecodeError, OSError, KeyError):
+            pass
+    return [
+        "claude_guard_entry.py not found locally nor via motor_destination_link.json; "
+        "write guard will fail-closed (exit 2) but the hook file is missing"
+    ]
+
+
+def fleet_check(
+    motor_root: Path,
+) -> tuple[list[tuple[str, str]], list[str], list[tuple[str, str]]]:
+    """Check all destinations. Returns (violations, sin_settings, missing_hook_files).
+
+    Each violation is (dest_name, message).
+    """
+    destinations = _discover_destinations(motor_root)
+    violations: list[tuple[str, str]] = []
+    sin_settings: list[str] = []
+    missing_hook: list[tuple[str, str]] = []
+    for dest in destinations:
+        settings_path = dest / ".claude" / "settings.json"
+        if not settings_path.exists():
+            sin_settings.append(dest.name)
+            continue
+        violations.extend(
+            (dest.name, msg) for msg in check_settings_file(settings_path)
+        )
+        missing_hook.extend((dest.name, msg) for msg in check_hook_file_exists(dest))
+    return violations, sin_settings, missing_hook
+
+
+def _report_fleet(
+    violations: list[tuple[str, str]],
+    sin_settings: list[str],
+    missing_hook: list[tuple[str, str]],
+) -> int:
+    """Print fleet report and return exit code."""
+    if violations:
+        print("[FLEET] Destinations with VIOLATIONS:")
+        for name, msg in violations:
+            print(f"  [{name}] {msg}")
+    if missing_hook:
+        print("[FLEET] Destinations with missing hook file:")
+        for name, msg in missing_hook:
+            print(f"  [{name}] {msg}")
+    if sin_settings:
+        print("[FLEET] Destinations WITHOUT .claude/settings.json (no write guard):")
+        for name in sin_settings:
+            print(f"  [{name}]")
+    if not violations and not sin_settings and not missing_hook:
+        print("[FLEET] All destinations have valid .claude/settings.json")
+    print(
+        f"[FLEET] Summary: {len(sin_settings)} without settings, "
+        f"{len(violations)} violations, {len(missing_hook)} missing hook files"
+    )
+    return 1 if violations or sin_settings or missing_hook else 0
+
+
 def main(argv: list[str] | None = None) -> int:
-    argv = list(sys.argv[1:] if argv is None else argv)
-    path = _resolve_settings_path(argv[0] if argv else None)
+    parser = argparse.ArgumentParser(
+        description="Portability/security gate for tracked .claude/settings.json"
+    )
+    parser.add_argument(
+        "path",
+        nargs="?",
+        default=None,
+        help="Path to settings.json or directory containing .claude/settings.json",
+    )
+    parser.add_argument(
+        "--fleet",
+        action="store_true",
+        help="Check .claude/settings.json across all destination repos under parent(motor_root)",
+    )
+    args = parser.parse_args(argv if argv is not None else sys.argv[1:])
+
+    if args.fleet:
+        v, ss, mh = fleet_check(_PROJECT_ROOT)
+        return _report_fleet(v, ss, mh)
+
+    path = _resolve_settings_path(args.path)
     violations = check_settings_file(path)
     if violations:
         print(f"[check-claude-settings-portability] {path}: NOT portable/secure:")

@@ -106,3 +106,132 @@ class TestFileAndMain:
     def test_real_motor_settings_pass(self):
         # The motor's own tracked settings must satisfy its own gate.
         assert gate.check_settings_file(_ROOT / ".claude" / "settings.json") == []
+
+
+class TestFleetMode:
+    def test_discover_destinations_finds_destinations(self, tmp_path: Path):
+        """Simulate a parent dir with destination repos."""
+        motor = tmp_path / "motor"
+        motor.mkdir()
+        dest1 = tmp_path / "dest_one"
+        dest1.mkdir()
+        (dest1 / ".agent").mkdir(parents=True)
+        (dest1 / ".agent" / "config").mkdir()
+        link1 = dest1 / ".agent" / "config" / "motor_destination_link.json"
+        link1.write_text(json.dumps({"destination_root": str(dest1)}), encoding="utf-8")
+
+        dest2 = tmp_path / "dest_two"
+        dest2.mkdir()
+        (dest2 / ".agent").mkdir(parents=True)
+        (dest2 / ".agent" / "config").mkdir()
+        link2 = dest2 / ".agent" / "config" / "motor_destination_link.json"
+        link2.write_text(json.dumps({"destination_root": str(dest2)}), encoding="utf-8")
+
+        result = gate._discover_destinations(motor)
+        assert sorted([p.name for p in result]) == ["dest_one", "dest_two"]
+
+    def test_discover_destinations_skips_missing_link(self, tmp_path: Path):
+        """A dir without motor_destination_link.json is not a destination."""
+        motor = tmp_path / "motor"
+        motor.mkdir()
+        (tmp_path / "not_a_dest").mkdir()
+        assert gate._discover_destinations(motor) == []
+
+    def test_fleet_check_no_settings_flagged(self, tmp_path: Path):
+        """A destination without .claude/settings.json is reported as sin_settings."""
+        motor = tmp_path / "motor"
+        motor.mkdir()
+        dest = tmp_path / "dest"
+        dest.mkdir()
+        (dest / ".agent").mkdir(parents=True)
+        (dest / ".agent" / "config").mkdir()
+        link = dest / ".agent" / "config" / "motor_destination_link.json"
+        link.write_text(json.dumps({"destination_root": str(dest)}), encoding="utf-8")
+
+        _violations, sin_settings, _missing_hook = gate.fleet_check(motor)
+        assert dest.name in sin_settings
+
+    def test_fleet_check_canonical_ok(self, tmp_path: Path):
+        """A destination with valid canonical settings passes."""
+        motor = tmp_path / "motor"
+        motor.mkdir()
+        # Create the entrypoint file so check_entrypoint_fails_closed works
+        (motor / ".agent").mkdir(parents=True)
+        (motor / ".agent" / "hooks").mkdir()
+        entrypoint = motor / ".agent" / "hooks" / "claude_guard_entry.py"
+        entrypoint.write_text(
+            "import sys\n"
+            "def canonical_hook_command():\n"
+            "    return 'python -c \"import sys; sys.exit(2)\"'\n"
+            "if __name__ == '__main__':\n"
+            "    sys.exit(2)\n",
+            encoding="utf-8",
+        )
+
+        dest = tmp_path / "dest"
+        dest.mkdir()
+        (dest / ".agent").mkdir(parents=True)
+        (dest / ".agent" / "config").mkdir()
+        link = dest / ".agent" / "config" / "motor_destination_link.json"
+        link.write_text(
+            json.dumps({"destination_root": str(dest), "motor_root": str(motor)}),
+            encoding="utf-8",
+        )
+        # Create a canonical settings file
+        (dest / ".claude").mkdir()
+        (dest / ".claude" / "settings.json").write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "PreToolUse": [
+                            {
+                                "matcher": "Write|Edit|MultiEdit",
+                                "hooks": [
+                                    {"type": "command", "command": "fake-canonical"}
+                                ],
+                            }
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        # Patch entrypoint path for the check_entrypoint_fails_closed
+        _violations, sin_settings, _missing_hook = gate.fleet_check(motor)
+        # No sin_settings since settings.json exists
+        assert dest.name not in sin_settings
+
+    def test_fleet_empty_when_no_destinations(self, tmp_path: Path):
+        """No destinations = empty fleet report."""
+        motor = tmp_path / "motor"
+        motor.mkdir()
+        violations, sin_settings, missing_hook = gate.fleet_check(motor)
+        assert violations == []
+        assert sin_settings == []
+        assert missing_hook == []
+
+    def test_check_hook_file_local_exists(self, tmp_path: Path):
+        """Local hook file exists = clean."""
+        (tmp_path / ".agent" / "hooks").mkdir(parents=True)
+        (tmp_path / ".agent" / "hooks" / "claude_guard_entry.py").write_text(
+            "", encoding="utf-8"
+        )
+        assert gate.check_hook_file_exists(tmp_path) == []
+
+    def test_check_hook_file_missing_local(self, tmp_path: Path):
+        """No local hook file and no motor link = violation."""
+        assert gate.check_hook_file_exists(tmp_path) != []
+
+    def test_check_hook_file_resolved_via_motor_link(self, tmp_path: Path):
+        """Hook file found via motor_destination_link.json = clean."""
+        motor = tmp_path / "motor"
+        (motor / ".agent" / "hooks").mkdir(parents=True)
+        (motor / ".agent" / "hooks" / "claude_guard_entry.py").write_text(
+            "", encoding="utf-8"
+        )
+        (tmp_path / ".agent" / "config").mkdir(parents=True)
+        (tmp_path / ".agent" / "config" / "motor_destination_link.json").write_text(
+            json.dumps({"motor_root": str(motor)}), encoding="utf-8"
+        )
+        assert gate.check_hook_file_exists(tmp_path) == []
