@@ -125,6 +125,24 @@ reserva para la familia completa; el artefacto de estrategia de un ticket es
 | `STRATEGY_WOT-<ID>.md` | **Estrategia tecnica del ticket** (opcional). Sustituye al antiguo `PLAN_WT-<ID>.md`. Libera "PLAN" para la familia. Legacy: `PLAN_WP-*`, `PLAN_WT-*`. |
 | `AUDIT_WOT-<ID>.md` | **Criterios de auditoria del ticket.** Solo cambia el prefijo `WT->WOT`. Legacy: `AUDIT_WP-*`, `AUDIT_WT-*`. |
 
+**REGLA: en contextos inter-ticket o inter-repo, usa el ID COMPLETO con prefijo.**
+Referencia cada ticket con su identificador completo `<PREFIJO>-YYYY-NNNx` (p.ej.
+`CTL-2026-008k`, `WOT-2026-020p`, `EXF-2026-007a`) en chat, commits, memoria, backlog,
+work_plan y cualquier artefacto operativo. Motivo: se trabajan varios repos/destinos en
+PARALELO, y cada uno tiene su propio prefijo (`CTL-`, `WOT-`, `EXF-`, ...); la forma corta
+`008k` a secas es AMBIGUA -- es imposible saber a que repositorio/destino pertenece. El
+numero `NNNx` solo es unico DENTRO de un prefijo+ano, no globalmente. La forma corta `008k`
+solo es aceptable si el prefijo/familia ya quedo EXPLICITAMENTE desambiguado en el mismo
+contexto inmediato (p.ej. tras citar `WOT-2026-009a`, referir `009b..009g` como esa familia
+en el mismo parrafo); fuera de ese contexto local, siempre el ID completo.
+
+El prefijo ademas RESUELVE el repo destino: cada destino declara su `ticket_prefix` en su
+`motor_destination_link.json` / `PROJECT.md`, y el mapeo inverso prefijo->repo se deriva de
+ahi (ver WOT-2026-020s: prefix-resolver + bootstrap guard). Convencion para repos NUEVOS
+(sin retrofit de los existentes): sugerir el prefijo desde las iniciales del nombre (3
+letras, mayusculas) y verificar unicidad contra los prefijos ya declarados antes de
+adoptarlo -- la convencion sugiere, el registro (los links por-destino) resuelve.
+
 **Clases de patron para consumidores de codigo** (archivador, pre-handoff guard,
 validador de prosa, review bridge, motor_checkpoint):
 - `canonical`: `STRATEGY_WOT-*`, `AUDIT_WOT-*`.
@@ -132,8 +150,8 @@ validador de prosa, review bridge, motor_checkpoint):
   conservan con alias de transicion; eliminarlos dejaria sin archivar los
   tickets historicos.
 
-**Prompt de auditoria de contrato:** `prompts/audit_ticket_contract.md` (antes
-`prompts/audit_plan.md`, ahora stub alias). Audita el contrato/plan operativo
+**Prompt de auditoria de contrato:** `prompts/audit_ticket_contract.md` (renombrado
+desde `audit_plan.md`; stub retirado en WOT-2026-011d). Audita el contrato/plan operativo
 del ticket ANTES de Builder; no confundir con review de implementacion, bus,
 cierre o publicacion.
 
@@ -206,12 +224,13 @@ append `--project-root <destino>` to commands that operate on project state.
 - Memoria consolidada: `python scripts/memory_consolidate.py [--apply|--dry-run] [--project-root <workspace>]`
 - Integridad del motor: `python scripts/check_motor_pristine.py --snapshot --motor-root <repo_motor> --out <snapshot.json>` y despues `python scripts/check_motor_pristine.py --check --snapshot-file <snapshot.json> --report <result.json> --motor-root <repo_motor>`
 - Auditoria de publicacion Git: `python scripts/classify_publication.py --repo-root <repo_destino> --out <repo_destino>/orchestrator_pipeline/reports/publication_manifest.json`
+- Bundle de contexto para Hermes: `python scripts/hermes_build_context_bundle.py --output-root <hermes_agent>/uploads --soul-output <hermes_agent>/soul.md`. Genera snapshots con version, commit y hashes; no edites copias derivadas como fuentes canonicas.
 - Migrar config: `python .agent/agents_config.py --migrate [--dry-run] [--project-root <workspace>]`
 - Comparar con repo GitHub: skill `/repo-compare`
 - Orquestar backlog por chat: skill `/pipeline` (`prompts/orchestrator_pipeline.md`)
 - Meta-auditar pipeline cerrado: skill `/audit-pipeline`
 - Auditar publicacion Git: skill `/audit-git-publication`
-- Auditar salud del sistema post-cambio (motor+destino+integracion): skill `/audit-system-health`. Recolector determinista: `python scripts/collect_system_health.py --motor-root <repo_motor> --project-root <repo_destino> --mode auto`. El script RECOLECTA (read-only); el agente AUDITA. Salida en `<repo_destino>/.agent/audits/system_health/general_audit_YYYYMMDD[_HHMM]/`. Ver `prompts/audit_post_change_system_health.md`.
+- Auditar salud del sistema post-cambio (motor+destino+integracion): skill `/audit-system-health`. Recolector determinista: `python scripts/collect_system_health.py --motor-root <repo_motor> --project-root <repo_destino> --mode auto`. El script RECOLECTA (read-only: por defecto no toca ningun fichero TRACKED); el agente AUDITA. Salida en `<repo_destino>/.agent/audits/system_health/general_audit_YYYYMMDD[_HHMM]/`. El registro en `INDEX.md` (fichero tracked en el workspace) es opt-in via `--publish-index`, OFF por defecto (WOT-2026-023x). Ver `prompts/audit_post_change_system_health.md`.
 - Interaccion por terminal: `python scripts/ticket_supervisor.py --reactive [--project-root <workspace>]`
 - Tests: `python scripts/run_pytest_safe.py [--project-root <workspace>]`
   - NO usar `python -m pytest` directo sobre tests que importan el controller:
@@ -313,6 +332,8 @@ CEM es el contrato minimo para trabajar con agentes sin convertir cada ticket en
 - **Memoria despues de aprender:** si una familia de fallos puede repetirse, deja barrera automatica o deuda explicita con ticket y criterio de salida.
 - **Rigor proporcional:** docs y typos no cargan la misma ceremonia que bus, supervisor, seguridad, rutas o estado compartido.
 - **Barrera verificada:** un guard, hook o test nuevo no cuenta hasta demostrar que bloquea el fallo que promete bloquear.
+- **Barrera cableada:** ademas de morder, algo tiene que INVOCARLA. Un guard solo es barrera si lo llama un camino que corre solo (pre-commit, CI, `prepush_check`, closeout, preflight, controlador). Citarlo en un prompt, una skill o este AGENTS.md **no es cableado: es una norma**, y una norma depende de que alguien se acuerde. Barrera de la barrera: `scripts/check_guard_wiring.py` (WOT-2026-024u) - un guard nuevo sin cablear FALLA; la deuda legacy solo puede quedar en WARN si esta DECLARADA con su ticket dueno.
+- **Criterio invariante, evidencia fechada:** un DoD debe ser un INVARIANTE, no una MEDICION. Un criterio que fija un numero ("quedan 11 hits", "243 auditorias") caduca solo, sin que nadie toque la ficha, y el Builder ya no puede distinguir "el numero cambio porque el mundo avanzo" de "cambio porque he roto algo". El numero es EVIDENCIA: va etiquetado como snapshot fechado, nunca como criterio de aceptacion (WOT-2026-024t).
 - **Fixtures realistas:** un test verde contra un fixture irreal es sospechoso; cuando el contrato sea operativo, contrasta contra artefactos reales.
 - **Gates self-service:** un gate preserva autonomia solo si explica que fallo, como reproducirlo y como volver a validar sin escalar al humano.
 - **Relaunch con root verificado:** antes de relanzar Builder, valida `AGENT_PROJECT_ROOT`, `repo_motor`, `repo_destino`, bus legible y ticket activo.
@@ -328,6 +349,24 @@ El repositorio define skills operativas formales para estructurar el trabajo del
 - **Systematic Debugging** (`skills/systematic-debugging/SKILL.md`): Usar ante errores no triviales. Exige investigación de causa raíz antes de parchear y establece un límite estricto de 3 intentos antes de detener la iteración y cuestionar el entendimiento del problema.
 
 No uses estos skills si contradicen el flujo general (ej. usar TDD para escribir un README o depuración para un typo reportado por el linter).
+
+### Gobierno skill<->prompt: skill apunta, prompt gobierna (WOT-2026-014r / X-09)
+
+Cuando una skill tiene prompt canonico (declara `contract_id` + `source_prompt`/`source_of_truth`), la skill es
+PUNTERO operativo, no fuente normativa. PROHIBIDO re-declarar criterios normativos (gates, veredictos, estados,
+barreras) en la `SKILL.md`: viven una vez en el prompt y la skill remite. Si divergen, prevalece el prompt y la
+divergencia es un bug de la skill. Verificado en vivo: el SKILL de `manager-review-implementation` OMITIA
+mutation-verify (E3) y el de `orchestrate-pipeline` OMITIA el reconcile post-close (E6) por re-declarar en vez de
+apuntar.
+
+**Auditoria automatica (R2):** un linter/gate puede grepear las `SKILL.md` por marcadores normativos
+(`DECISION:`, `deliverable_type`, `0 errors`, `APROBADO|CHANGES|BLOCKER`, `exit code`). Un marcador en una skill
+que TIENE prompt canonico es candidato a re-declaracion: el gate exige que la skill REMITA al prompt (cita
+`contract_id`) en vez de definir el criterio. Si el criterio diverge del prompt -> hallazgo automatico, prevalece
+el prompt. Verificado (3a pasada): 9 `SKILL.md` contienen esos marcadores -- adopt-existing-project, audit-pipeline,
+builder-run-quality-gates, manager-create-work-plan, manager-review-implementation, orchestrate-pipeline,
+refactor-manager, session-close-full-audit, setup-agent-system -- candidatas a re-declaracion (una parte solo
+menciona el marcador). La matriz de ownership de artefactos asociada vive en `prompts/_shared/artifact_ownership.md`.
 
 ## Atribuciones externas (CREDITS.md)
 
@@ -352,8 +391,9 @@ centralizada en `bus/memory_loader.py` para bootstrap, review bridge y pre-compa
 - **L1 — `observations.jsonl`**: Fuente de evidencia canonica. Contiene todas las observaciones persistentes. `memory_loader.recall_observations()` ofrece acceso directo con filtro opcional por keyword.
 - `MEMORY.md` es un indice humano acotado, con tope de 80 lineas. No es una fuente primaria.
 - `scripts/memory_consolidate.py` declara `MEMORY_MD_LINE_CAP = 80` y trunca el indice con un marcador visible cuando se supera el limite. Ademas genera L2 y L3 con `--apply`.
-- `bus/memory_loader.py` es la unica puerta de entrada: `get_bootstrap_context()` (L3 -> L2 -> L1), `get_review_context(domain)` (L2 por dominio), `get_compact_context()` (L3+L2).<｜｜DSML｜｜parameter name="endString" string="true">
-## deliverable_type (work_plan schema, V2)
+- `bus/memory_loader.py` es la unica puerta de entrada: `get_bootstrap_context()` (L3 -> L2 -> L1), `get_review_context(domain)` (L2 por dominio), `get_compact_context()` (L3+L2).
+- **La memoria PRIVADA de un agente no es autoritativa.** Cada backend (Claude Code, Kilo, Codex...) tiene su propio almacen personal, invisible para los demas y para el repo. Lo canonico es lo VERSIONADO: `archive/observations.YYYY-MM.jsonl`, este AGENTS.md, los prompts, las skills y los tests. Si una leccion solo vive en la memoria privada de un backend, para el sistema NO EXISTE.
+- **Deuda conocida (WOT-2026-024r):** `memory_loader` lee `observations.jsonl` (gitignored, por worktree), NO el `archive/` trackeado. O sea: hoy la memoria portable se escribe, se versiona y se pushea, y **nadie la lee de vuelta**. Promover una leccion al archive la hace PORTABLE, no VIVA.
 
 ## deliverable_type (work_plan schema, V2)
 
@@ -568,15 +608,15 @@ python scripts/memory_context.py --status
 | `workspace_activo` | Raíz operativa con `.agent/` desde la que corre el ticket actual |
 | `entorno_multi_root` | IDE con `repo_motor` + `repo_destino` abiertos simultáneamente |
 
-Regla de repos: toda operación git de tooling corre en `repo_motor`. El estado operativo (tickets, memoria de proyecto) vive en `repo_destino`.
+Regla de repos: toda operación git de tooling corre en `repo_motor`. El estado operativo (tickets, memoria de proyecto) vive en `repo_destino`. En dogfooding del motor bajo la topología worktree-dev (WOT-2026-019m), el `repo_motor` operativo donde se commitea/pushea es la worktree `orquestador_de_agentes_dev` (lleva `main`; ver "Resumen breve del sistema" y `QUICKSTART.md` "0d"); el checkout principal `orquestador_de_agentes` queda DETACHED en `origin/main` como fuente estable de solo-consumo, no se ejecutan operaciones git de tickets allí.
 
 ## Resumen breve del sistema
 
-- **Runtime activo:** `orquestador_de_agentes/` (`repo_motor`, portable).
+- **Runtime activo:** `repo_motor` portable. Topologia worktree-dev (WOT-2026-019m): el motor se EVOLUCIONA en la worktree `orquestador_de_agentes_dev` (lleva `main`, cwd de desarrollo); el checkout principal `orquestador_de_agentes` queda DETACHED en `origin/main` como fuente estable que consumen los destinos via `motor_destination_link.json`. Ver `QUICKSTART.md` seccion "0d. Motor dev worktree" y `scripts/setup_dev_worktree.ps1`.
 - **Roles:** Manager (OpenCode via `scripts/manager_review_bridge.py`, modelo configurable en `.agent/config/agents.json`) y Builder (OpenCode, modelo `opencode-go/deepseek-v4-flash`).
 - **Bus canonico:** `.agent/runtime/events/events.jsonl` (append-only, autoridad absoluta).
 - **Proyecciones:** `TURN.md`, `STATE.md`, `work_plan.md`, `execution_log.md` se derivan del bus.
-- **Namespaces de tickets:** el `<PREFIX>` de ticket se lee del contrato del repo activo (`AGENTS.md`/`CLAUDE.md` autocargado del destino); `WOT-` es prefijo SOLO del motor/dogfooding, no universal. Motor usa `WOT-YYYY-NNNx` (canonical; `WP-`/`WT-` legacy historico); destino usa `XXX-YYYY-NNN` declarado en su contrato local. Verificacion via `agent_controller --validate`.
+- **Namespaces de tickets:** el `<PREFIX>` de ticket se lee del contrato del repo activo (`AGENTS.md`/`CLAUDE.md` autocargado del destino); `WOT-` es prefijo SOLO del motor/dogfooding, no universal. Motor usa `WOT-YYYY-NNNx` (canonical; `WP-`/`WT-` legacy historico); destino usa `XXX-YYYY-NNN` declarado en su contrato local. Verificacion via `agent_controller --validate`. El mapeo inverso prefijo->repo se deriva de los `motor_destination_link.json` bajo `parent(motor_root)` via `scripts/prefix_resolver.py` (WOT-2026-020s); el guard `--guard <TICKET>` bloquea (stderr + exit!=0, sin evento de bus) si el ticket no pertenece al cwd actual.
 - **Launcher:** `scripts/launch_agent_terminals.ps1` abre Supervisor + Bridge + Builder segun `TURN.md`. WP-2026-067 integro OpenCode con prompt compuesto desde ticket.
 - **Config de agentes:** `.agent/config/agents.json` mapea backend->ejecutable. Builder=opencode, Manager=opencode, Supervisor=default.
 - **Validate:** `python .agent/agent_controller.py --validate --json --force` debe pasar antes de cualquier cierre. Verifica entre otras cosas que destinos `host-project` tengan `Ticket prefix:` declarado.
@@ -599,6 +639,69 @@ Si no existe o esta incompleto, recomienda usar el Contract Formation Pipeline
 antes de `orchestrator_pipeline.md`. El pipeline de implantacion es autonomo
 cuando el contrato esta congelado; la fase de definicion requiere decisiones del
 usuario.
+
+## Modo ORQUESTADOR de pipeline multi-ticket (paso 0)
+
+Si la sesion va a encadenar tickets del backlog con Manager y Builder como
+subagentes reales (dogfooding: repo_motor == repo_destino), tu rol es el
+ORQUESTADOR del pipeline. Contrato completo: `prompts/orchestrator_pipeline.md`
+(seccion 3, flujo por ticket). Plantilla del Builder:
+`prompts/orchestrator_launch_builder.md`. Cierre de sesion:
+`prompts/orchestrator_session_close_full_audit.md` (5 bloques adversariales).
+
+Paso 0 (antes de tocar nada):
+1. Lee el handoff durable que INDIQUE el humano. Si no se indica, busca
+   PRIMERO candidatos en `.agent/runtime/session/` del destino
+   (WOT-2026-022c/022d, `scripts/init_session_scratch.py`); si no hay
+   candidatos alli, cae como FALLBACK a `C:\tmp\HANDOFF_*.md` relacionados
+   con el motor/orquestador; si hay mas de uno plausible, LISTA los
+   candidatos y pide seleccion. NO infieras por fecha solamente (`C:\tmp`
+   puede contener handoffs de otros proyectos/sesiones -> riesgo de arrancar
+   con contexto equivocado). Lee tambien la memoria privada. Los SHA que
+   citen estan DESFASADOS por definicion: manda el PREFLIGHT, no el handoff.
+2. PREFLIGHT (topologia worktree-dev, WOT-2026-019m): arranca con cwd=`orquestador_de_agentes_dev`
+   (la worktree que lleva `main`, donde se evoluciona el motor; usa su
+   `.venv\Scripts\python.exe`). Verifica que esa worktree existe y lleva `main`
+   (si no, crearla con `scripts/setup_dev_worktree.ps1`). En la worktree-dev:
+   HEAD == origin/main, arbol limpio, `--validate` en 0 errors / 0 warnings.
+   El checkout PRINCIPAL `orquestador_de_agentes` queda DETACHED en origin/main
+   (fuente estable de los destinos), NO se trabajan tickets alli. Reporta el
+   estado real ANTES de elegir ticket. Ver `QUICKSTART.md` "0d". Ademas de
+   este chequeo en prosa, ejecuta la version programatica del guard
+   (WOT-2026-021g) para el ticket WOT activo:
+   ```powershell
+   python scripts/check_worktree_topology.py --ticket <TICKET_WOT_ACTIVO> --motor-root orquestador_de_agentes --project-root orquestador_de_agentes_workspace
+   ```
+   Exit 0 continua; exit 1/2 DETENTE y reporta el motivo exacto antes de
+   elegir o continuar un ticket.
+3. Elige ticket por VALOR/RIESGO del backlog vivo del workspace. Fase 0
+   SIEMPRE verifica la premisa de la ficha contra el codigo real: las fichas
+   traen premisas falsas de forma recurrente (patron verificado en 016c,
+   016s/016t, 019b, 019c).
+
+Reglas duras del orquestador (verificadas en sesiones reales):
+- NUNCA cierres por el reporte de un subagente: el mutation-verify lo
+  re-corres TU sobre el repo real (cazo false-greens y typos que los reportes
+  ocultaban).
+- Modo por defecto: encadenar cierres canonicos EN LOCAL y UN solo push al
+  final de la cola, con OK humano explicito. Los guards operan sobre HEAD
+  local, no sobre origin.
+- Review 2 adversarial fresh-context OBLIGATORIA si el ticket toca
+  gate/bus/estado/CI/hooks/seguridad. NUNCA lances dos reviews en paralelo
+  que muten el mismo archivo: usa git worktree aislada o copia en scratchpad.
+- Antes de cualquier push: re-lee `last-run.json` FRESCO (status=finished,
+  tested_commit_sha == HEAD) y confirma 0 procesos python vivos (existen
+  suites fantasma en vuelo con el interprete del PATH). El conteo
+  "NNNN passed" vive en `last-run.log`, no en el `.json`.
+- El churn de cierre (archivado de PLAN/AUDIT + proyecciones a COMPLETED)
+  desalinea el stamp ~2 veces por ticket: re-suite sobre el HEAD final antes
+  del mini-audit.
+- Mini-audit de 7 checks por ticket antes de saltar al siguiente: STATE
+  COMPLETED, arbol limpio, autores noreply, validate 0/0, stamp fresco
+  sha==HEAD, diff dentro de scope, 0 PII nueva en diff/mensajes.
+- Barrera CI-only (flaky de runner, workflow): cerrar local con el mecanismo
+  mutation-verified + estado CLOSED_PENDING_CI; el criterio de cierre real es
+  el run verde post-push. Si el CI sigue rojo con el mismo traceback, reabrir.
 
 ## Ciclo canonico de un ticket
 
@@ -627,6 +730,8 @@ usuario.
 - **OAuth race Codex:** Resuelto por WP-072 mediante el cambio al backend OpenCode. La dependencia de Codex como backend del Manager ha sido eliminada por defecto.
 - **Manager-approve CLI:** Se realiza mediante `python .agent/agent_controller.py --manager-approve --ticket WOT-XXXX --force` (canonical closeout sin scripts ad-hoc).
 - **No abras WP nuevos sin instruccion explicita del usuario.**
+- **Gate de loop-readiness (WOT-2026-014s):** antes de activar /goal autonomo para cualquier ticket, aplicar `prompts/_shared/loop_readiness.md` (cid-loop-readiness-v0). Si NO_LOOPEABLE, no activar /goal y registrar la causa.
+- **Goal-checker aislado (WOT-2026-014t):** para /goal multi-ticket o con push, verificar cumplimiento con `prompts/audit_goal_completion.md` (cid-audit-goal-completion-v0); checker en fresh-context/modelo distinto, read-only, solo evidencia dura.
 
 ## Comportamiento esperado
 
@@ -643,6 +748,11 @@ Cuando termines la lectura, di "Sistema internalizado" y enumera en 5 lineas max
 ## Cuando usarlo
 
 - Primera interaccion con un agente nuevo en una sesion limpia.
+- Al lanzar una sesion de pipeline multi-ticket (rol ORQUESTADOR con Manager y
+  Builder como subagentes): pega este bloque y sigue la seccion "Modo
+  ORQUESTADOR de pipeline multi-ticket (paso 0)". Complementa (no sustituye) el
+  handoff durable de la sesion previa en `C:\tmp\HANDOFF_*.md`, que aporta el
+  estado volatil (SHA, cola, pendientes).
 - Al recuperarse de una conversacion comprimida donde el agente perdio contexto.
 - Al cambiar de backend (de Claude Code a Codex, de Kilo a OpenCode, etc.) y necesitar que el nuevo backend asuma rapido.
 
@@ -744,7 +854,7 @@ tags: [core, system]
 
 Skill para comparar el proyecto local (identificado desde `.agent/runtime/audit/AUDIT.md`) con cualquier repositorio público de GitHub y detectar funcionalidades, utilidades o patrones de alto valor que se puedan incorporar.
 
-Usa `.agent/runtime/audit/AUDIT.md` como **Fase 0 autoritativa** del contexto local, eliminando hallucinación sobre "qué ya existe". Lee el repo remoto vía GitHub MCP (`mcp__github__get_file_contents`, `mcp__github__search_code`).
+Usa `.agent/runtime/audit/AUDIT.md` como **Fase 0 autoritativa** del contexto local, eliminando hallucinación sobre "qué ya existe". Cuando exista, lee también `repo_charter.md` para filtrar oportunidades contra `Non-Goals`, `Quality Bar`, `Security Constraints` y restricciones de intent. Lee el repo remoto vía GitHub MCP (`mcp__github__get_file_contents`, `mcp__github__search_code`).
 
 ## When to activate
 
@@ -781,6 +891,9 @@ de tokens y eliminando la exploración manual.
   - Si falta o `generated_at > 24h`: intentar ejecutar `python scripts/local_audit.py --quick` automáticamente.
   - Si el entorno no permite shell: pedir al usuario que lo ejecute.
 - Cargar `AUDIT.md` como contexto Fase 0.
+- Intentar cargar `repo_charter.md` si existe. Rutas canónicas a probar, en orden: raíz del `repo_destino`, luego `.agent/planning/repo_charter.md`.
+  - Si existe, usarlo como filtro de intent y citar la sección concreta cuando una oportunidad se marque compatible.
+  - Si no existe en ninguna ruta, marcar `Intent Audit: no verificable` en el reporte y no inventar compatibilidad estratégica.
 
 ### Paso 2: Validar input
 - Requiere URL GitHub `https://github.com/<owner>/<repo>`.
@@ -800,9 +913,14 @@ de tokens y eliminando la exploración manual.
 - 3-5 oportunidades con plantilla canónica (ver `references/output-format.md`).
 - Cada oportunidad incluye:
   - Campo `¿Ya existe en el proyecto local?` citando ruta + sección de AUDIT.md (no `Yes/No` a secas).
+  - Campo `Compatibilidad con charter` citando sección concreta de `repo_charter.md`, o `Intent Audit: no verificable` si no existe charter.
+  - Campo `Nota de topología` indicando si la oportunidad parece afectar `repo_motor`, `repo_destino` o `ambos` antes de formalizar ticket. Glosario (ver `PROMPT_TEMPLATE.md §Reglas absolutas`): `repo_motor` = motor portable `orquestador_de_agentes/`; `repo_destino` = proyecto activo que lo consume; `ambos` = exige cambios coordinados en motor y destino.
   - Campo `📎 Fuente verificada: [AUDIT.md sección X | GitHub: owner/repo/path:L# | Ambos]`.
 - Matriz final (Impacto / Esfuerzo / Encaje / Decisión).
 - Sección "Qué Ignorar" + "Acción Inmediata".
+- La `Acción Inmediata` debe ser condicional:
+  - oportunidad simple/local -> `/refactor`
+  - oportunidad que toca arquitectura, topología motor/destino o seguridad -> `manager-create-work-plan`
 - **Bloque candidato CREDITS** al final del reporte (ver `references/output-format.md` sección "Credits Block Template"): tabla con una fila Markdown lista para pegar en `CREDITS.md` cuando el humano decida adoptar la idea. **El agente NO escribe en CREDITS.md directamente** — solo emite el bloque sugerido.
 - Persistir output a `.agent/runtime/compare/<owner>-<repo>-<ref>-<YYYY-MM-DD>.md` (default `ref=HEAD`, idealmente capturar SHA real vía `mcp__github__list_commits` paginación 1).
 
