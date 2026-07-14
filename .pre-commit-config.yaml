@@ -67,6 +67,18 @@ repos:
         pass_filenames: false
         stages: [pre-commit]
 
+      # Guard-of-guards: a guard nobody invokes is a norm, not a barrier. Measured on
+      # 2026-07-14: 15 of 25 guards ran on their own -- among the nine "cited in a prompt
+      # but executed by nobody" were three the orchestrator had used BY HAND that same day
+      # as mandatory barriers. Existing debt WARNS (it is declared, with its ticket);
+      # a NEW unwired guard FAILS. That asymmetry is what stops the debt from growing.
+      - id: check-guard-wiring
+        name: check guard wiring (a guard nobody invokes is a norm, not a barrier)
+        entry: uv run python scripts/check_guard_wiring.py
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
       # Guard against dangerous truncation of execution_log.md without archive compensation
       - id: check-history-truncation
         name: check history truncation guard
