@@ -17,7 +17,11 @@ from unittest.mock import MagicMock
 
 import pytest
 from bus.event_bus import EventBus
-from bus.evidence import _own_git_root, resolve_evidence
+from bus.evidence import (
+    _own_git_root,
+    motor_uncommitted_productive,
+    resolve_evidence,
+)
 from bus.review_bridge import ReviewBridge, ReviewDecision
 
 from tests.test_pre_handoff_guard import init_git_repo
@@ -1050,3 +1054,14 @@ class TestEvidenceHermeticity020r:
     def test_own_git_root_rejects_dir_without_git(self, tmp_path):
         assert _own_git_root(tmp_path) is None
         assert _own_git_root(None) is None
+
+    def test_own_git_root_tolerates_a_falsy_root(self):
+        """The code this replaced read `if not motor_root or not (...).exists()`, so a
+        falsy root returned [] rather than raising. Guarding on `root is None` dropped
+        that branch: `"" / ".git"` raises TypeError. Unreachable via today's callers
+        (all pass Path|None), but it is behaviour that was removed by accident.
+
+        Caught by an adversarial audit of the 020r commit, not by this suite.
+        """
+        assert _own_git_root("") is None
+        assert motor_uncommitted_productive("") == []

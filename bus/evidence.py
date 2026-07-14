@@ -56,8 +56,16 @@ def _own_git_root(root: Path | None) -> Path | None:
 
     `.git` is a FILE in a linked worktree (`_dev` is one), so the predicate is
     existence, not is_dir().
+
+    The guard is `not root`, not `root is None`: the function it replaced in
+    motor_uncommitted_productive read `if not motor_root or not (...).exists()`, so an
+    empty/falsy root returned [] instead of raising. `root is None` silently dropped
+    that branch -- `_own_git_root("")` would do `"" / ".git"` and raise TypeError where
+    the old code returned []. No caller passes a falsy root today (all pass Path|None),
+    so it was unreachable; it is still a behaviour I removed by accident, not by choice.
+    A Path is never falsy (Path("") is Path(".")), so this only catches ""/0/None.
     """
-    if root is None:
+    if not root:
         return None
     return root if (root / ".git").exists() else None
 
