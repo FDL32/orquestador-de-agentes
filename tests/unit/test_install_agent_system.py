@@ -1034,12 +1034,22 @@ def _build_motor_template(tmp_path: Path) -> Path:
 
 
 def _build_destination_with_own_cf(tmp_path: Path) -> Path:
-    """Destination whose planning/ holds its OWN Contract Formation artifacts."""
+    """Destination whose planning/ holds its OWN Contract Formation artifacts.
+
+    Ships a valid hooks_config.json so ensure_hooks_config_integrity passes and a
+    full sync can reach rc == 0: otherwise the sync ABORTS mid-way and an
+    end-to-end test would silently measure a truncated run (sister-audit nit).
+    """
     project_agent = tmp_path / "dest" / ".agent"
     planning = project_agent / "planning"
     planning.mkdir(parents=True)
     for name in _CF_ARTIFACTS:
         (planning / name).write_text(f"DESTINATION-OWNED: {name}\n", encoding="utf-8")
+    config = project_agent / "config"
+    config.mkdir(parents=True)
+    (config / "hooks_config.json").write_text(
+        json.dumps({"version": "1", "enabled": True}), encoding="utf-8"
+    )
     return project_agent
 
 
@@ -1086,8 +1096,19 @@ def test_copy_tree_does_not_clobber_destination_planning(tmp_path):
     assert _MOTOR_SEED not in owned.read_text(encoding="utf-8")
 
 
-def test_copy_tree_dry_run_does_not_list_destination_owned_as_copied(tmp_path):
-    """A dry-run that promises a copy it will skip is a lying dry-run."""
+def test_copy_tree_dry_run_reports_at_directory_granularity(tmp_path):
+    """Pins the REAL (and coarser) dry-run contract, so nobody re-asserts a lie.
+
+    An earlier version of this test asserted that dry-run "does not list the
+    destination-owned file as copied" and passed -- but VACUOUSLY: copy_tree
+    returns at its is_dir() branch before reaching _copy_allowlisted_dir, so a
+    dry-run NEVER yields per-file entries and that assert was trivially true with
+    or without the no-clobber guard. It was also the only new test with no
+    mutation covering it. Caught by the sister audit (WOT-2026-024d).
+
+    What is true and worth pinning: dry-run reports the DIRECTORY, and therefore
+    cannot announce which files a real run would preserve (follow-up 025g).
+    """
     template_agent = _build_motor_template(tmp_path)
     project_agent = _build_destination_with_own_cf(tmp_path)
 
@@ -1098,7 +1119,15 @@ def test_copy_tree_dry_run_does_not_list_destination_owned_as_copied(tmp_path):
         allowlist={".agent/planning/"},
     )
 
-    assert Path("planning/ticket_contracts.md") not in copied
+    assert copied == [Path("planning")], (
+        "dry-run contract changed: it now descends into the directory. If this is "
+        "deliberate, the no-clobber guard must grow a dry_run branch and 025g applies."
+    )
+    # And the DECISIVE property: a dry-run must not touch the destination at all.
+    owned = project_agent / "planning" / "ticket_contracts.md"
+    assert (
+        owned.read_text(encoding="utf-8") == "DESTINATION-OWNED: ticket_contracts.md\n"
+    )
 
 
 def test_detect_destination_residues_excludes_destination_owned(tmp_path):
@@ -1112,8 +1141,12 @@ def test_detect_destination_residues_excludes_destination_owned(tmp_path):
 
     residues = detect_destination_residues(template_agent, project_agent)
 
-    assert residues == [], (
-        f"destination-owned CF artifacts flagged as residues: {residues}"
+    # Assert on the planning surface specifically. Other entries the motor does
+    # not ship (e.g. the destination's config/) ARE legitimate residues, so a
+    # blanket `== []` would fail for reasons unrelated to what this protects.
+    planning_residues = [r for r in residues if r.parts and r.parts[0] == "planning"]
+    assert planning_residues == [], (
+        f"destination-owned CF artifacts flagged as residues: {planning_residues}"
     )
 
 
@@ -1127,6 +1160,9 @@ def test_sync_preserves_destination_contract_formation_end_to_end(tmp_path):
     The sandbox reproduces the Upscaler condition: dest has no .git, so
     _filter_git_tracked_residues finds nothing tracked and the WOT-2026-003d
     fail-safe does NOT protect these files.
+
+    Asserts rc == 0 on purpose: a sync that ABORTS half-way would still leave the
+    files intact and turn this into a false green (sister-audit nit).
     """
     template_agent = _build_motor_template(tmp_path)
     project_agent = _build_destination_with_own_cf(tmp_path)
@@ -1136,8 +1172,11 @@ def test_sync_preserves_destination_contract_formation_end_to_end(tmp_path):
         for name in _CF_ARTIFACTS
     }
 
-    sync_agent_system(template_agent, project_agent)
+    rc = sync_agent_system(template_agent, project_agent)
 
+    assert rc == 0, (
+        f"the sync aborted (rc={rc}); this test would measure a truncated run"
+    )
     for name in _CF_ARTIFACTS:
         target = planning / name
         assert target.exists(), f"sync DELETED the destination's {name}"

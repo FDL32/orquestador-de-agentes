@@ -391,19 +391,19 @@ def _copy_allowlisted_dir(
         # It is a file (and is allowlisted)
         dst_child = dest_root / child_rel
         # WOT-2026-024d: deposit destination-owned content when missing, never
-        # clobber it. Checked BEFORE the dry_run branch so --dry-run reports what
-        # a real run would actually do instead of claiming a copy that is skipped.
+        # clobber it.
+        # NOTE on --dry-run: this helper is unreachable when dry_run is True --
+        # copy_tree returns at its is_dir() branch (`copied.append(rel); continue`)
+        # before calling us, so a dry-run reports at DIRECTORY granularity and can
+        # never announce this per-file skip. No dry_run branch here: it would be
+        # dead code. Consequence (declared, not hidden): `--dry-run` says
+        # "planning would be copied/updated" without revealing which files are
+        # actually preserved. Follow-up: WOT-2026-025g.
         if is_destination_owned(child_rel) and dst_child.exists():
-            if dry_run:
-                print(
-                    f"[DRY-RUN] Would skip destination-owned path (no-clobber): "
-                    f"{child_rel.as_posix()}"
-                )
-            else:
-                print(
-                    f"[SKIP] Destination-owned path already exists (no-clobber): "
-                    f"{child_rel.as_posix()}"
-                )
+            print(
+                f"[SKIP] Destination-owned path already exists (no-clobber): "
+                f"{child_rel.as_posix()}"
+            )
             continue
         if dry_run:
             copied.append(child_rel)
