@@ -52,9 +52,12 @@ python scripts/check_worktree_topology.py --ticket {{TICKET_ID}} --motor-root <r
 ```
 
 `--project-root <workspace_activo>` es OBLIGATORIO para tickets `WOT`: sin el,
-la Verificacion B (workspace activo == orquestador_de_agentes_workspace) no
-puede derivar el workspace y el guard devuelve exit 1 (falso CHANGES). Para
-tickets `WOT`, `<workspace_activo>` es `orquestador_de_agentes_workspace`.
+la Verificacion B (que el workspace activo es el par de estado del motor) no
+puede derivar el workspace y el guard devuelve exit 1 (falso CHANGES).
+`<workspace_activo>` se resuelve de forma PORTABLE via `AGENT_PROJECT_ROOT` o
+`motor_destination_link.json` (`runtime/motor_link.py`), NUNCA con un nombre de
+directorio fijo: el motor es agnostico del destino y no puede hardcodear la ruta
+del workspace de una instalacion concreta.
 
 Si el exit code no es 0, el veredicto es `CHANGES` con blocker "topologia de
 worktree violada durante la implementacion". Esta es verificacion de

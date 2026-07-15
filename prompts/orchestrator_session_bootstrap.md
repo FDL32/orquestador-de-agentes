@@ -110,7 +110,10 @@ Paso 0 (antes de tocar nada):
    este chequeo en prosa, ejecuta la version programatica del guard
    (WOT-2026-021g) para el ticket WOT activo:
    ```powershell
-   python scripts/check_worktree_topology.py --ticket <TICKET_WOT_ACTIVO> --motor-root orquestador_de_agentes --project-root orquestador_de_agentes_workspace
+   # <repo_motor> y <workspace_activo> se resuelven de forma PORTABLE (AGENT_PROJECT_ROOT
+   # / motor_destination_link.json, runtime/motor_link.py), NUNCA con nombres de directorio
+   # fijos: el motor es agnostico del destino.
+   python scripts/check_worktree_topology.py --ticket <TICKET_WOT_ACTIVO> --motor-root <repo_motor> --project-root <workspace_activo>
    ```
    Exit 0 continua; exit 1/2 DETENTE y reporta el motivo exacto antes de
    elegir o continuar un ticket.

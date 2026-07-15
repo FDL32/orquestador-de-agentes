@@ -62,7 +62,8 @@ La base asume un `repo_destino` con bus, `pipeline_closeout_*.md` y
 
 1. **Topologia:** no hay `repo_destino` separado. El CODIGO auditado vive en la
    worktree `_dev` del motor; el BACKLOG y los cierres viven en el WORKSPACE
-   (`orquestador_de_agentes_workspace`). Son dos repos git distintos con el
+   (`<workspace_activo>`, resuelto via `AGENT_PROJECT_ROOT` /
+   `motor_destination_link.json`, no un nombre fijo). Son dos repos git distintos con el
    MISMO origin/main logico (el `_dev` es worktree del motor; el workspace es su
    par de estado). El informe se escribe en el WORKSPACE.
 2. **Cierre manual = CASO NORMAL (no excepcion):** el "Caso A — Cierre manual"
