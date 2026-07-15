@@ -1,10 +1,24 @@
-"""Tests for the Claude settings portability/security gate (WOT-2026-003c)."""
+"""Tests for the Claude settings portability/security gate (WOT-2026-003c).
+
+Fleet-mode tests (WOT-2026-024f-A) build their fixtures under
+``conftest.REAL_SYSTEM_TEMP`` (a real system-temp dir OUTSIDE the repo tree),
+not under the repo-rooted ``tmp_path``: fleet discovery walks parent(motor_root)
+and resolves paths by walking up, so a fixture inside the repo tree would
+pollute that walk-up. Each fixture cleans up after itself.
+"""
 
 from __future__ import annotations
 
 import json
+import shutil
 import sys
+import uuid
+from collections.abc import Iterator
 from pathlib import Path
+
+import pytest
+
+from tests.conftest import REAL_SYSTEM_TEMP
 
 
 _ROOT = Path(__file__).resolve().parent.parent.parent
@@ -18,6 +32,48 @@ import claude_guard_entry  # noqa: E402
 
 _CANONICAL = claude_guard_entry.canonical_hook_command()
 _NON_CANONICAL = 'python -c "import sys; sys.exit(2)"'
+
+
+@pytest.fixture
+def fleet_root() -> Iterator[Path]:
+    """A hermetic parent dir OUTSIDE the repo tree for fleet fixtures.
+
+    Returns the parent under which a ``motor`` dir and destination siblings are
+    created. Built under ``REAL_SYSTEM_TEMP`` so ``_discover_destinations``'s
+    ``.resolve()`` walk-up never reaches the real motor repo.
+    """
+    root = REAL_SYSTEM_TEMP / f"fleet_024f_{uuid.uuid4().hex}"
+    root.mkdir(parents=True, exist_ok=True)
+    try:
+        yield root
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _make_link(
+    dest_dir: Path,
+    *,
+    destination_root: str | None = None,
+    motor_root: str | None = None,
+) -> None:
+    """Write a motor_destination_link.json under ``dest_dir/.agent/config/``."""
+    cfg = dest_dir / ".agent" / "config"
+    cfg.mkdir(parents=True, exist_ok=True)
+    payload: dict[str, str] = {}
+    if destination_root is not None:
+        payload["destination_root"] = destination_root
+    if motor_root is not None:
+        payload["motor_root"] = motor_root
+    (cfg / "motor_destination_link.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+
+
+def _make_settings(dest_dir: Path, command: str = _CANONICAL) -> None:
+    """Write a .claude/settings.json with a write-gating hook ``command``."""
+    claude = dest_dir / ".claude"
+    claude.mkdir(parents=True, exist_ok=True)
+    (claude / "settings.json").write_text(json.dumps(_settings(command)), "utf-8")
 
 
 def _settings(command: str = _CANONICAL, matcher: str = "Write|Edit|MultiEdit") -> dict:
@@ -109,129 +165,335 @@ class TestFileAndMain:
 
 
 class TestFleetMode:
-    def test_discover_destinations_finds_destinations(self, tmp_path: Path):
-        """Simulate a parent dir with destination repos."""
-        motor = tmp_path / "motor"
+    # --- DoD-1: no silent skip; census invariant -------------------------
+    def test_discover_destinations_finds_destinations(self, fleet_root: Path):
+        """Two distinct external destinations are both INCLUDED."""
+        motor = fleet_root / "motor"
         motor.mkdir()
-        dest1 = tmp_path / "dest_one"
+        dest1 = fleet_root / "dest_one"
         dest1.mkdir()
-        (dest1 / ".agent").mkdir(parents=True)
-        (dest1 / ".agent" / "config").mkdir()
-        link1 = dest1 / ".agent" / "config" / "motor_destination_link.json"
-        link1.write_text(json.dumps({"destination_root": str(dest1)}), encoding="utf-8")
-
-        dest2 = tmp_path / "dest_two"
+        _make_link(dest1, destination_root=str(dest1))
+        dest2 = fleet_root / "dest_two"
         dest2.mkdir()
-        (dest2 / ".agent").mkdir(parents=True)
-        (dest2 / ".agent" / "config").mkdir()
-        link2 = dest2 / ".agent" / "config" / "motor_destination_link.json"
-        link2.write_text(json.dumps({"destination_root": str(dest2)}), encoding="utf-8")
+        _make_link(dest2, destination_root=str(dest2))
 
         result = gate._discover_destinations(motor)
-        assert sorted([p.name for p in result]) == ["dest_one", "dest_two"]
+        assert sorted(p.name for p in result.included) == ["dest_one", "dest_two"]
+        # Census invariant: nothing dropped silently.
+        assert (
+            len(result.included)
+            + len(result.skipped)
+            + len(result.excluded)
+            + len(result.deduped)
+            == result.links_total
+        )
 
-    def test_discover_destinations_skips_missing_link(self, tmp_path: Path):
+    def test_discover_destinations_skips_missing_link(self, fleet_root: Path):
         """A dir without motor_destination_link.json is not a destination."""
-        motor = tmp_path / "motor"
+        motor = fleet_root / "motor"
         motor.mkdir()
-        (tmp_path / "not_a_dest").mkdir()
-        assert gate._discover_destinations(motor) == []
+        (fleet_root / "not_a_dest").mkdir()
+        result = gate._discover_destinations(motor)
+        assert result.included == []
+        assert result.links_total == 0
 
-    def test_fleet_check_no_settings_flagged(self, tmp_path: Path):
+    def test_discover_destinations_no_destination_root_is_skipped(
+        self, fleet_root: Path
+    ):
+        """DoD-1: a link WITHOUT destination_root is SKIPPED with reason, not dropped.
+
+        Mutation intent: removing destination_root from a link must make it
+        surface in the SKIPPED list and drive --fleet non-zero, never vanish.
+        """
+        motor = fleet_root / "motor"
+        motor.mkdir()
+        dest = fleet_root / "dest_incomplete"
+        dest.mkdir()
+        _make_link(dest)  # no destination_root
+
+        result = gate._discover_destinations(motor)
+        assert dest.name not in [p.name for p in result.included]
+        skipped_names = [name for name, _reason in result.skipped]
+        assert dest.name in skipped_names
+        assert result.links_total == 1
+        # Census invariant holds even with a skip.
+        assert (
+            len(result.included)
+            + len(result.skipped)
+            + len(result.excluded)
+            + len(result.deduped)
+            == result.links_total
+        )
+        # And --fleet is non-zero when there is an unresolved skip.
+        report = gate.fleet_check(motor)
+        assert gate._report_fleet(report) == 1
+
+    # --- DoD-2: published denominator; inspected==0 is RED ---------------
+    def test_fleet_inspected_zero_is_red(self, fleet_root: Path, capsys):
+        """DoD-2: no inspectable destination -> RED (non-zero), denominator printed."""
+        motor = fleet_root / "motor"
+        motor.mkdir()
+        report = gate.fleet_check(motor)
+        assert gate._report_fleet(report) == 1
+        out = capsys.readouterr().out
+        assert "denominator" in out
+        assert "inspected=0" in out
+
+    def test_fleet_check_no_settings_flagged(self, fleet_root: Path):
         """A destination without .claude/settings.json is reported as sin_settings."""
-        motor = tmp_path / "motor"
+        motor = fleet_root / "motor"
         motor.mkdir()
-        dest = tmp_path / "dest"
+        dest = fleet_root / "dest"
         dest.mkdir()
-        (dest / ".agent").mkdir(parents=True)
-        (dest / ".agent" / "config").mkdir()
-        link = dest / ".agent" / "config" / "motor_destination_link.json"
-        link.write_text(json.dumps({"destination_root": str(dest)}), encoding="utf-8")
+        _make_link(dest, destination_root=str(dest))
 
-        _violations, sin_settings, _missing_hook = gate.fleet_check(motor)
-        assert dest.name in sin_settings
+        report = gate.fleet_check(motor)
+        assert dest.name in report.sin_settings
 
-    def test_fleet_check_canonical_ok(self, tmp_path: Path):
-        """A destination with valid canonical settings passes."""
-        motor = tmp_path / "motor"
+    def test_fleet_check_canonical_ok(self, fleet_root: Path):
+        """DoD-6: a destination with the REAL canonical command + resolvable hook.
+
+        The fixture uses the UNMODIFIED return of canonical_hook_command() (not a
+        synthetic canonical). A correct canonical destination must NOT be flagged.
+        The external dest declares an UPSTREAM motor (not the fleet's own motor),
+        so the identity-based exclusion does not remove it.
+        """
+        motor = fleet_root / "motor"
         motor.mkdir()
-        # Create the entrypoint file so check_entrypoint_fails_closed works
-        (motor / ".agent").mkdir(parents=True)
-        (motor / ".agent" / "hooks").mkdir()
-        entrypoint = motor / ".agent" / "hooks" / "claude_guard_entry.py"
-        entrypoint.write_text(
-            "import sys\n"
-            "def canonical_hook_command():\n"
-            "    return 'python -c \"import sys; sys.exit(2)\"'\n"
-            "if __name__ == '__main__':\n"
-            "    sys.exit(2)\n",
-            encoding="utf-8",
+        # Upstream motor the external dest points at (NOT the fleet's own motor).
+        upstream = fleet_root / "upstream_motor"
+        (upstream / ".agent" / "hooks").mkdir(parents=True)
+        (upstream / ".agent" / "hooks" / "claude_guard_entry.py").write_text(
+            "", "utf-8"
         )
 
-        dest = tmp_path / "dest"
+        dest = fleet_root / "dest"
         dest.mkdir()
-        (dest / ".agent").mkdir(parents=True)
-        (dest / ".agent" / "config").mkdir()
-        link = dest / ".agent" / "config" / "motor_destination_link.json"
-        link.write_text(
-            json.dumps({"destination_root": str(dest), "motor_root": str(motor)}),
-            encoding="utf-8",
-        )
-        # Create a canonical settings file
-        (dest / ".claude").mkdir()
-        (dest / ".claude" / "settings.json").write_text(
-            json.dumps(
-                {
-                    "hooks": {
-                        "PreToolUse": [
-                            {
-                                "matcher": "Write|Edit|MultiEdit",
-                                "hooks": [
-                                    {"type": "command", "command": "fake-canonical"}
-                                ],
-                            }
-                        ]
-                    }
-                }
-            ),
-            encoding="utf-8",
-        )
+        _make_link(dest, destination_root=str(dest), motor_root=str(upstream))
+        _make_settings(dest, command=_CANONICAL)  # REAL canonical
 
-        # Patch entrypoint path for the check_entrypoint_fails_closed
-        _violations, sin_settings, _missing_hook = gate.fleet_check(motor)
-        # No sin_settings since settings.json exists
-        assert dest.name not in sin_settings
+        report = gate.fleet_check(motor)
+        assert dest.name not in report.sin_settings
+        assert dest.name in report.inspected
+        # No missing-hook flag: canonical + entry resolvable via motor link.
+        assert all(name != dest.name for name, _ in report.missing_hook)
 
-    def test_fleet_empty_when_no_destinations(self, tmp_path: Path):
-        """No destinations = empty fleet report."""
-        motor = tmp_path / "motor"
+    def test_fleet_empty_when_no_destinations(self, fleet_root: Path):
+        """No destinations = empty inspection with a published (zero) denominator."""
+        motor = fleet_root / "motor"
         motor.mkdir()
-        violations, sin_settings, missing_hook = gate.fleet_check(motor)
-        assert violations == []
-        assert sin_settings == []
-        assert missing_hook == []
+        report = gate.fleet_check(motor)
+        assert report.violations == []
+        assert report.sin_settings == []
+        assert report.missing_hook == []
+        assert report.inspected == []
+        assert report.discovery.included == []
 
-    def test_check_hook_file_local_exists(self, tmp_path: Path):
-        """Local hook file exists = clean."""
-        (tmp_path / ".agent" / "hooks").mkdir(parents=True)
-        (tmp_path / ".agent" / "hooks" / "claude_guard_entry.py").write_text(
-            "", encoding="utf-8"
+    # --- DoD-3: dedupe BEFORE exclusion ---------------------------------
+    def test_dedupe_before_exclusion_alias_counts_once(self, fleet_root: Path):
+        """DoD-3: two links resolving to the same root count ONCE.
+
+        Mutation intent: two links to the same destination_root -> INCLUDED once,
+        not twice.
+        """
+        motor = fleet_root / "motor"
+        motor.mkdir()
+        dest = fleet_root / "shared_dest"
+        dest.mkdir()
+        alias_a = fleet_root / "alias_a"
+        alias_a.mkdir()
+        alias_b = fleet_root / "alias_b"
+        alias_b.mkdir()
+        _make_link(alias_a, destination_root=str(dest))
+        _make_link(alias_b, destination_root=str(dest))
+
+        result = gate._discover_destinations(motor)
+        resolved_included = [p for p in result.included if p == dest.resolve()]
+        assert len(resolved_included) == 1
+        assert result.links_total == 2
+        # The collapsed alias is accounted for (not silently dropped).
+        assert len(result.deduped) == 1
+        assert (
+            len(result.included)
+            + len(result.skipped)
+            + len(result.excluded)
+            + len(result.deduped)
+            == result.links_total
         )
-        assert gate.check_hook_file_exists(tmp_path) == []
 
-    def test_check_hook_file_missing_local(self, tmp_path: Path):
-        """No local hook file and no motor link = violation."""
-        assert gate.check_hook_file_exists(tmp_path) != []
+    def test_dogfooding_workspace_excluded_by_motor_root_identity(
+        self, fleet_root: Path
+    ):
+        """DoD-3: THIS motor's dogfooding is excluded by motor_root IDENTITY.
 
-    def test_check_hook_file_resolved_via_motor_link(self, tmp_path: Path):
-        """Hook file found via motor_destination_link.json = clean."""
-        motor = tmp_path / "motor"
+        The excluded workspace is identified by its link's ``motor_root``
+        resolving to the running motor -- a resolved-topology FACT in the data --
+        NOT by any directory-name convention. Deliberately, the workspace here
+        has a NON-conventional name (no ``_workspace`` suffix) to prove the
+        exclusion does not key off spelling. The motor root itself is also
+        excluded.
+        """
+        motor = fleet_root / "the_motor"
+        motor.mkdir()
+        upstream = fleet_root / "upstream_motor"
+        upstream.mkdir()
+        # Dogfooding workspace of THIS motor, NON-conventionally named. ONLY its
+        # own link declares motor_root == this motor -> must be EXCLUDED.
+        workspace = fleet_root / "zzz_dogfood_area"
+        workspace.mkdir()
+        _make_link(workspace, destination_root=str(workspace), motor_root=str(motor))
+        # The principal's alias link ALSO resolves to the workspace but declares
+        # an UPSTREAM motor_root, and sorts BEFORE the workspace's own dir
+        # ("aaa_" < "zzz_"). It therefore wins the dedupe naming slot and would
+        # MASK the this-motor identity if the signal were not OR-ed per path.
+        alias = fleet_root / "aaa_principal_alias"
+        alias.mkdir()
+        _make_link(alias, destination_root=str(workspace), motor_root=str(upstream))
+        # A link resolving to the motor itself -> excluded (motor is not a dest).
+        motor_alias = fleet_root / "motor_alias"
+        motor_alias.mkdir()
+        _make_link(motor_alias, destination_root=str(motor), motor_root=str(upstream))
+        # A genuine external destination whose motor_root points ELSEWHERE.
+        ext = fleet_root / "external_dest"
+        ext.mkdir()
+        _make_link(ext, destination_root=str(ext), motor_root=str(upstream))
+
+        result = gate._discover_destinations(motor)
+        included = result.included
+        excluded_paths = [path for _name, path in result.excluded]
+        # Dogfooding workspace and the motor itself are excluded by identity.
+        assert workspace.resolve() not in included
+        assert str(workspace.resolve()) in excluded_paths
+        assert motor.resolve() not in included
+        assert str(motor.resolve()) in excluded_paths
+        # The external destination survives.
+        assert ext.resolve() in included
+
+    def test_conventionally_named_but_foreign_dest_is_included(self, fleet_root: Path):
+        """Anti-heuristic: a ``foo_dev`` / ``*_workspace`` dir whose motor_root points
+        ELSEWHERE must be INCLUDED (proves the name heuristic is gone).
+
+        A prior implementation excluded by stripping ``_dev`` / appending
+        ``_workspace`` on the motor name; that would WRONGLY drop these external
+        repos. The identity rule keys off motor_root, so they are external.
+        """
+        motor = fleet_root / "acme"
+        motor.mkdir()
+        upstream = fleet_root / "some_other_motor"
+        upstream.mkdir()
+        # Named like the old heuristic's targets, but foreign (motor_root != motor).
+        looks_like_dev = fleet_root / "acme_dev"
+        looks_like_dev.mkdir()
+        _make_link(
+            looks_like_dev,
+            destination_root=str(looks_like_dev),
+            motor_root=str(upstream),
+        )
+        looks_like_ws = fleet_root / "acme_workspace"
+        looks_like_ws.mkdir()
+        _make_link(
+            looks_like_ws, destination_root=str(looks_like_ws), motor_root=str(upstream)
+        )
+
+        result = gate._discover_destinations(motor)
+        assert looks_like_dev.resolve() in result.included
+        assert looks_like_ws.resolve() in result.included
+        assert result.excluded == []
+
+    # --- DoD-4: real hook, 3 CLOSED classes -----------------------------
+    def test_classify_canonical_by_equality(self, fleet_root: Path):
+        """DoD-4/DoD-6: the canonical class is EQUALITY to the REAL canonical."""
+        dest = fleet_root / "d"
+        dest.mkdir()
+        cls, path = gate.classify_hook_command(_CANONICAL, dest)
+        assert cls == gate.CLASS_CANONICAL
+        assert path is None
+
+    def test_classify_python_path_relative_to_dest(self, fleet_root: Path):
+        """DoD-4: `python <ruta>.py` is parsed and resolved relative to dest_root."""
+        dest = fleet_root / "d"
+        dest.mkdir()
+        cls, path = gate.classify_hook_command(
+            "python .agent/hooks/guard_paths.py", dest
+        )
+        assert cls == gate.CLASS_PYTHON_PATH
+        assert path == dest / ".agent" / "hooks" / "guard_paths.py"
+
+    def test_classify_unparseable(self, fleet_root: Path):
+        """DoD-4: neither canonical nor python-path -> noncanonical_unparseable."""
+        dest = fleet_root / "d"
+        dest.mkdir()
+        cls, path = gate.classify_hook_command("bash -c 'echo hi'", dest)
+        assert cls == gate.CLASS_UNPARSEABLE
+        assert path is None
+
+    def test_upscaler_missing_referenced_py_is_flagged(self, fleet_root: Path):
+        """DoD-4: a command referencing a NON-EXISTENT .py is flagged missing.
+
+        Upscaler case: `python .agent/hooks/guard_paths.py` with the file absent.
+        `0 missing hook files` must be impossible while this destination exists.
+        """
+        dest = fleet_root / "upscaler"
+        dest.mkdir()
+        # No guard_paths.py file created.
+        violations = gate.check_hook_file_exists(
+            dest, "python .agent/hooks/guard_paths.py"
+        )
+        assert violations != []
+        assert "does not exist" in violations[0]
+
+    def test_python_path_present_py_is_clean(self, fleet_root: Path):
+        """DoD-4: `python <ruta>.py` whose file EXISTS -> no missing-hook flag."""
+        dest = fleet_root / "ok"
+        (dest / ".agent" / "hooks").mkdir(parents=True)
+        (dest / ".agent" / "hooks" / "guard_paths.py").write_text("", "utf-8")
+        assert (
+            gate.check_hook_file_exists(dest, "python .agent/hooks/guard_paths.py")
+            == []
+        )
+
+    def test_fleet_missing_hook_surfaces_in_report(self, fleet_root: Path):
+        """DoD-4 end-to-end: an Upscaler-like destination drives missing_hook + non-zero.
+
+        The dest points at an UPSTREAM motor (not the fleet's own motor) so it is
+        counted as external, not excluded as this motor's dogfooding.
+        """
+        motor = fleet_root / "motor"
+        motor.mkdir()
+        upstream = fleet_root / "upstream_motor"
+        upstream.mkdir()
+        dest = fleet_root / "upscaler"
+        dest.mkdir()
+        _make_link(dest, destination_root=str(dest), motor_root=str(upstream))
+        _make_settings(dest, command="python .agent/hooks/guard_paths.py")
+
+        report = gate.fleet_check(motor)
+        assert any(name == dest.name for name, _ in report.missing_hook)
+        assert gate._report_fleet(report) == 1
+
+    # --- Adapted signature tests (check_hook_file_exists now takes command) ---
+    def test_check_hook_file_canonical_local_exists(self, fleet_root: Path):
+        """Canonical command + local claude_guard_entry.py present = clean."""
+        dest = fleet_root / "d"
+        (dest / ".agent" / "hooks").mkdir(parents=True)
+        (dest / ".agent" / "hooks" / "claude_guard_entry.py").write_text("", "utf-8")
+        assert gate.check_hook_file_exists(dest, _CANONICAL) == []
+
+    def test_check_hook_file_canonical_missing_local(self, fleet_root: Path):
+        """Canonical command, no local hook and no motor link = violation."""
+        dest = fleet_root / "d"
+        dest.mkdir()
+        assert gate.check_hook_file_exists(dest, _CANONICAL) != []
+
+    def test_check_hook_file_canonical_resolved_via_motor_link(self, fleet_root: Path):
+        """REFRAMED: the remote branch is CORRECT for the CANONICAL command.
+
+        The motor-link resolution of claude_guard_entry.py is valid only for the
+        canonical class; here the command IS canonical, so it is clean.
+        """
+        motor = fleet_root / "motor"
         (motor / ".agent" / "hooks").mkdir(parents=True)
-        (motor / ".agent" / "hooks" / "claude_guard_entry.py").write_text(
-            "", encoding="utf-8"
-        )
-        (tmp_path / ".agent" / "config").mkdir(parents=True)
-        (tmp_path / ".agent" / "config" / "motor_destination_link.json").write_text(
-            json.dumps({"motor_root": str(motor)}), encoding="utf-8"
-        )
-        assert gate.check_hook_file_exists(tmp_path) == []
+        (motor / ".agent" / "hooks" / "claude_guard_entry.py").write_text("", "utf-8")
+        dest = fleet_root / "d"
+        _make_link(dest, motor_root=str(motor))
+        assert gate.check_hook_file_exists(dest, _CANONICAL) == []
