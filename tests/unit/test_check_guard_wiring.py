@@ -70,6 +70,7 @@ EXPECTED_WIRED_REAL = {
     "check_claude_settings_portability",
     "check_commit_worktree",
     "check_deliverables_exist",
+    "check_distribution_agnostic",  # WOT-2026-024z(d): cableado en pre-commit (entry: uv run python)
     "check_encoding_guard",
     "check_guard_wiring",
     "check_no_history_truncation",
