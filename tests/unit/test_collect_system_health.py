@@ -26,13 +26,13 @@ _SPEC.loader.exec_module(csh)
 
 def test_relativize_strips_personal_paths():
     roots = {
-        "MOTOR_ROOT": Path("C:/Users/fdl/motor"),
-        "DESTINO_ROOT": Path("C:/Users/fdl/dest"),
+        "MOTOR_ROOT": Path("C:/Users/testuser/motor"),
+        "DESTINO_ROOT": Path("C:/Users/testuser/dest"),
     }
-    text = r"error at C:\Users\fdl\motor\x.py and C:/Users/fdl/dest/y.py"
+    text = r"error at C:\Users\testuser\motor\x.py and C:/Users/testuser/dest/y.py"
     out = csh._relativize(text, roots)
-    assert "C:/Users/fdl" not in out
-    assert "C:\\Users\\fdl" not in out
+    assert "C:/Users/testuser" not in out
+    assert "C:\\Users\\testuser" not in out
     assert "<MOTOR_ROOT>" in out
     assert "<DESTINO_ROOT>" in out
 

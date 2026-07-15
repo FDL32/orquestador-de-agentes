@@ -109,7 +109,7 @@ def test_append_observation_redacts_windows_path(
     obs: dict[str, Any] = {
         "timestamp": "2026-06-02T00:00:00Z",
         "topic": "test",
-        "signal": r"Project in C:\Users\fdl\Proyectos",
+        "signal": r"Project in C:\Users\testuser\Proyectos",
         "source": "test",
     }
     assert memory_helpers_mod.append_observation(obs)
@@ -117,7 +117,7 @@ def test_append_observation_redacts_windows_path(
     obs_file = agent_dir / "runtime" / "memory" / "observations.jsonl"
     persisted = json.loads(obs_file.read_text(encoding="utf-8").strip())
     assert r"C:\Users\***REDACTED***" in persisted["signal"]
-    assert r"C:\Users\fdl" not in persisted["signal"]
+    assert r"C:\Users\testuser" not in persisted["signal"]
 
 
 def test_append_observation_clean_entries_pass_through(
@@ -309,13 +309,13 @@ def test_consolidate_redact_entry_windows_path() -> None:
     """_redact_entry redacts Windows username in paths."""
     original: dict[str, Any] = {
         "timestamp": "2026-06-02T00:00:00Z",
-        "signal": r"Located at C:\Users\fdl\code",
+        "signal": r"Located at C:\Users\testuser\code",
         "topic": "paths",
         "source": "test",
     }
     redacted = _redact_entry(original)
     assert r"C:\Users\***REDACTED***" in redacted["signal"]
-    assert r"C:\Users\fdl" not in redacted["signal"]
+    assert r"C:\Users\testuser" not in redacted["signal"]
 
 
 def test_consolidate_redact_entry_clean_passthrough() -> None:

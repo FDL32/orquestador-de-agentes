@@ -309,7 +309,7 @@ def test_redaction_risk_has_redaction_verdict(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
     (repo / "notes.md").write_text(
-        "Local path: C:\\Users\\fdl\\private\\note.txt\n", encoding="utf-8"
+        "Local path: C:\\Users\\testuser\\private\\note.txt\n", encoding="utf-8"
     )
 
     manifest = classify_publication.build_manifest(repo, scan_history=True)
@@ -675,7 +675,7 @@ def test_d1_tests_redaction_fixture_is_not_a_redaction(tmp_path: Path) -> None:
     (repo / "tests").mkdir()
     (repo / "tests" / "test_fixture.py").write_text(
         "SAMPLE_EMAIL = 'test@example.com'\n"
-        "SAMPLE_PATH = r'C:\\Users\\fdl\\private\\note.txt'\n",
+        "SAMPLE_PATH = r'C:\\Users\\testuser\\private\\note.txt'\n",
         encoding="utf-8",
     )
     _git(repo, "add", "tests/test_fixture.py")
@@ -725,7 +725,7 @@ def test_d1_redaction_outside_tests_is_unaffected(tmp_path: Path) -> None:
     _init_repo(repo)
     (repo / "scripts").mkdir()
     (repo / "scripts" / "tool.py").write_text(
-        "# see C:\\Users\\fdl\\private\\note.txt\n", encoding="utf-8"
+        "# see C:\\Users\\testuser\\private\\note.txt\n", encoding="utf-8"
     )
     _git(repo, "add", "scripts/tool.py")
     _git(repo, "commit", "-m", "add prod file with dev path")
@@ -973,7 +973,7 @@ def test_d6b_meta_doc_path_suppresses_redaction(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
     (repo / "CHANGELOG.md").write_text(
-        "Documented example path: C:\\Users\\fdl\\example\\file.md\n",
+        "Documented example path: C:\\Users\\testuser\\example\\file.md\n",
         encoding="utf-8",
     )
     _git(repo, "add", "CHANGELOG.md")
@@ -1012,7 +1012,7 @@ def test_d6b_non_meta_doc_still_redacts_dev_path(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
     (repo / "GUIDE.md").write_text(
-        "Edit C:\\Users\\fdl\\private\\note.txt\n", encoding="utf-8"
+        "Edit C:\\Users\\testuser\\private\\note.txt\n", encoding="utf-8"
     )
     _git(repo, "add", "GUIDE.md")
     _git(repo, "commit", "-m", "add guide with dev path")

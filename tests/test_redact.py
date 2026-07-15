@@ -27,14 +27,14 @@ def test_redact_email():
 
 
 def test_redact_windows_user_path():
-    text = r"Project located at C:\Users\fdl\Proyectos_Python\z_scripts"
+    text = r"Project located at C:\Users\testuser\Proyectos_Python\z_scripts"
     assert (
         redact(text)
         == r"Project located at C:\Users\***REDACTED***\Proyectos_Python\z_scripts"
     )
 
     # Forward slash variant
-    text_slash = "Path: c:/users/fdl/some_dir"
+    text_slash = "Path: c:/users/testuser/some_dir"
     assert redact(text_slash) == "Path: c:/users/***REDACTED***/some_dir"
 
 
@@ -44,7 +44,7 @@ def test_redact_idempotency():
         "User token is eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
         "Authorization: Bearer 12345-abcde.token_value",
         "Contact us at support@example.com for help",
-        r"Project located at C:\Users\fdl\Proyectos_Python\z_scripts",
+        r"Project located at C:\Users\testuser\Proyectos_Python\z_scripts",
         "Multiple things: sk-abcdefghijklmnopqrstuvwxyz12345 and support@example.com",
     ]
     for text in raw_texts:

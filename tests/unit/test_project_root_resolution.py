@@ -249,18 +249,18 @@ class TestMangledRootGuard:
         """Absolute-looking raw whose resolved tail is not the intended name."""
         from runtime.project_root import _is_mangled_root
 
-        raw = r"C:\Users\fdl\Proyectos_Python\Crear_Texto_LLM"
+        raw = r"C:\Users\testuser\Proyectos_Python\Crear_Texto_LLM"
         # Simulate the POSIX-flavour mangle: the whole value collapsed into one
         # segment joined under cwd, so the resolved tail is the raw blob, not
         # "Crear_Texto_LLM".
-        mangled_resolved = Path.cwd() / "UsersfdlProyectos_PythonCrear_Texto_LLM"
+        mangled_resolved = Path.cwd() / "UserstestuserProyectos_PythonCrear_Texto_LLM"
         assert _is_mangled_root(raw, mangled_resolved) is True
 
     def test_is_mangled_root_accepts_genuine_absolute(self) -> None:
         """A correctly resolved absolute path is not flagged."""
         from runtime.project_root import _is_mangled_root
 
-        raw = r"C:\Users\fdl\Proyectos_Python\Crear_Texto_LLM"
+        raw = r"C:\Users\testuser\Proyectos_Python\Crear_Texto_LLM"
         good_resolved = Path(raw).resolve()
         # Only meaningful where the local flavour parses C:\ as absolute; if it
         # does, the guard must accept it. If it does not (POSIX flavour), the
