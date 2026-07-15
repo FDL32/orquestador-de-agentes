@@ -46,6 +46,34 @@ ejecutor), el veredicto de esta auditoria es invalido: no emitas ninguno de
 los cuatro veredictos canonicos; declara la corrida `NO AUDITABLE POR FALTA
 DE AISLAMIENTO` y detente.
 
+### Presupuesto de contexto para auditorias fresh-context
+
+El aislamiento fresh-context no autoriza un fan-out ilimitado. Antes de
+lanzar varios auditores/subagentes, pide autorizacion explicita y declara:
+
+- numero de agentes;
+- fase (`recon`, `ataque focal`, `sintesis`, otra);
+- coste esperado (`bajo` / `medio` / `alto`);
+- riesgo de agotar la sesion antes de emitir la sintesis/veredicto;
+- recomendacion de modelo. Si el coste es `medio` o `alto`, recomienda bajar
+  el nivel para fases repetitivas o exploratorias (por ejemplo, `Opus` ->
+  `Sonnet`, `GPT-5.5` -> `GPT-5.4`) y reservar el modelo mas fuerte para la
+  sintesis final o ataques criticos.
+
+Reglas:
+
+- Por defecto, usa 3-5 auditores como maximo. Mas de 5 exige justificacion
+  explicita y aprobacion antes de lanzar.
+- Ejecuta en fases: `recon compacto -> resumen normalizado -> ataque focal ->
+  sintesis`. No pases transcripts completos a todos los agentes si basta un
+  resumen normalizado.
+- Cada auditor debe emitir salida compacta con tabla
+  `claim/vector/evidencia/veredicto/bloquea`. La narrativa larga va solo en
+  anexos o scratchpad.
+- Reserva cuota para el sintetizador final. Un fan-out que produce ataques
+  pero muere antes de la sintesis queda `INCOMPLETO`, aunque haya hallazgos
+  utiles.
+
 ---
 
 ## 1. Herencia (no reimplementa nada)

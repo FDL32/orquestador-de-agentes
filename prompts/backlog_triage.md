@@ -180,6 +180,33 @@ backlog desde angulos distintos) es RECOMENDADO para backlogs grandes (mas de
 distintas dentro del mismo backlog). Es OPCIONAL para backlogs pequenos: un
 solo agente en una pasada basta.
 
+### Presupuesto de fan-out multiagente
+
+Antes de lanzar un fan-out multiagente, pide autorizacion explicita y declara
+el presupuesto de contexto:
+
+- numero de agentes previstos;
+- fase y objetivo de cada grupo de agentes;
+- coste esperado (`bajo` / `medio` / `alto`);
+- riesgo de agotar la sesion antes de la sintesis final;
+- recomendacion de modelo: si el coste es `medio` o `alto`, recomienda bajar
+  el nivel para fases repetitivas o exploratorias (por ejemplo, `Opus` ->
+  `Sonnet`, `GPT-5.5` -> `GPT-5.4`) y reservar el modelo mas fuerte para
+  sintesis final o ataques criticos.
+
+Reglas operativas:
+
+- Por defecto, usa 3-5 agentes como maximo. Mas de 5 agentes requiere
+  justificacion explicita en el prompt de autorizacion.
+- No entregues el historial completo a todos los agentes. Usa fases:
+  `recon compacto -> resumen normalizado -> ataque focal -> sintesis`.
+- Los agentes de recon/ataque deben devolver salidas compactas en tabla
+  (`claim/vector/evidencia/veredicto/bloquea`), no transcripts narrativos
+  largos salvo que sean evidencia imprescindible.
+- Reserva un agente final de sintesis que reciba solo los hallazgos
+  normalizados, no todos los transcripts completos. Quedarse sin cuota antes
+  de la sintesis invalida el valor del fan-out.
+
 ---
 
 ## Los 5 riesgos codificados
