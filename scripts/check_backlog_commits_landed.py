@@ -78,11 +78,16 @@ is resolved is ``--git-repo`` (default: the motor root); it is NOT assumed to be
 particular worktree.
 
 Exit codes:
-    0 = all audited SHAs OK / OK_BY_SUBJECT / WARN (no lost close).
+    0 = all audited SHAs OK / OK_BY_SUBJECT / WARN (no lost close) AND the denominator
+        is clean (skipped_required == 0).
     1 = collector self-failure (backlog unparseable, git missing, etc.).
     2 = argument / topology error (bad --motor-root / --git-repo).
     3 = degraded topology (backlog link unresolved).
     4 = VERDICT: at least one SHA is ERROR (a recorded close did not land).
+    5 = DENOMINATOR: at least one REQUIRED row (terminal + code/mixed) carries NO
+        commit evidence -- skipped_required > 0 (WOT-2026-024c). ERROR=0 is only a
+        legitimate exit 0 when the guard actually audited its whole denominator; a row
+        it silently skipped is exposed here, never invented into evidence.
 """
 
 from __future__ import annotations
@@ -92,6 +97,7 @@ import json
 import re
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 
 
@@ -103,6 +109,9 @@ EXIT_SELF_FAIL = 1
 EXIT_ARG = 2
 EXIT_DEGRADED = 3
 EXIT_VERDICT_ERROR = 4
+# WOT-2026-024c DoD-2: a required row with no commit evidence was silently skipped.
+# ERROR=0 is not enough for exit 0 -- the denominator must be clean too.
+EXIT_SKIPPED_REQUIRED = 5
 
 # Verdicts (per-SHA).
 OK = "OK"
@@ -114,11 +123,33 @@ PENDING_GROUPED_PUSH = "PENDING_GROUPED_PUSH"
 ERROR = "ERROR"
 WARN = "WARN"
 
-# Only these archive-table rows are audited: closed rows carrying a commit token.
+# Only closed rows carrying a commit token are auditED, but the DENOMINATOR (which
+# rows OUGHT to carry one) keys on the full set of terminal states, not just
+# "completed". WOT-2026-024c: anchoring requiredness to == "completed" alone is
+# FAIL-OPEN -- a `done`/`completed-partial` row of type code/mixed without a commit
+# cell would be invisible. The set is FIXED (a frozenset membership check), NOT a
+# state-machine parser: the whole fix is this closed enumeration.
 _COMPLETED_STATE = "completed"
+_TERMINAL_STATES = frozenset(
+    {"completed", "done", "completed-partial", "completed-via-010n"}
+)
+# Evidence cell: singular `commit:` OR plural `commits:`. WOT-2026-024c P3: a
+# `commits:sha1+sha2` cell fails `.startswith("commit:")` (position 6 is 's', not
+# ':'), so the plural rows -- SHAs VALID -- were silently skipped. Both prefixes are
+# recognized here; the SHA-group split on `+` is unchanged.
 _COMMIT_PREFIX = "commit:"
+_COMMITS_PREFIX = "commits:"
+_COMMIT_CELL_PREFIXES = (_COMMIT_PREFIX, _COMMITS_PREFIX)
 # Ticket-ID shape: WOT-2026-021o / WT-2026-250c / WP-2026-... (prefix-YYYY-suffix).
 _TICKET_ID_RE = re.compile(r"^(?:WOT|WP|WT|CTL)-\d{4}-[0-9a-z]+$", re.IGNORECASE)
+# deliverable_type lives as a SUBSTRING inside the row's prose Titulo/comment cell
+# (e.g. `... deliverable_type: code | ...`), NOT as a discrete column. A positional
+# cell read returns 0 (wrong); the substring returns the real set. WOT-2026-024c.
+_DELIVERABLE_TYPE_RE = re.compile(
+    r"deliverable_type[:\s]+\**\s*(code|mixed|documentation|research|analysis)"
+)
+# The deliverable types whose rows REQUIRE landing evidence (a commit/commits cell).
+_LANDING_REQUIRED_TYPES = frozenset({"code", "mixed"})
 # Revert subjects to exclude from CAPA 3 (git's `Revert "..."` and manual revert:).
 _REVERT_RE = re.compile(r"^\s*revert\b", re.IGNORECASE)
 
@@ -219,35 +250,126 @@ def _resolve_destino_root(
     return Path(dest).resolve(), None
 
 
+def _row_cells(line: str) -> list[str] | None:
+    """Split a markdown table ROW into stripped cells, or None if it is not a row."""
+    stripped = line.strip()
+    if not stripped.startswith("|"):
+        return None
+    return [c.strip() for c in stripped.strip("|").split("|")]
+
+
+def _commit_cell(cells: list[str]) -> str | None:
+    """The evidence cell of a row: the first cell starting with ``commit:``/``commits:``.
+
+    WOT-2026-024c P3: BOTH the singular and the plural prefix count as evidence. The
+    old ``.startswith("commit:")`` silently rejected ``commits:...`` (its 7th char is
+    's', not ':'), skipping valid-SHA plural rows.
+    """
+    return next(
+        (c for c in cells if c.startswith(_COMMIT_CELL_PREFIXES)),
+        None,
+    )
+
+
+def _shas_from_commit_cell(commit_cell: str) -> list[str]:
+    """Split a ``commit:``/``commits:`` cell into its individual SHAs (grouped by ``+``).
+
+    Strips whichever prefix is present, then splits the LITERAL ``+`` group so every
+    SHA is emitted (never collapse ``sha1+sha2`` to its first member).
+    """
+    for prefix in _COMMIT_CELL_PREFIXES:
+        if commit_cell.startswith(prefix):
+            token = commit_cell[len(prefix) :].strip()
+            break
+    else:
+        token = commit_cell.strip()
+    return [sha.strip() for sha in token.split("+") if sha.strip()]
+
+
 def parse_archived_commits(content: str) -> list[tuple[str, str]]:
-    """Extract (ticket_id, sha) pairs from ``completed`` rows carrying a commit token.
+    """Extract (ticket_id, sha) pairs from terminal rows carrying a commit token.
 
     Robust to a literal ``|`` inside the Titulo cell (e.g. the live WOT-2026-021i row
     embeds ``system|infra`` -> 9 cells, not 8): the ticket-ID is the first cell whose
     text matches _TICKET_ID_RE, and the commit token is the cell that starts with
-    ``commit:``. The token groups several SHAs with a LITERAL ``+``
-    (``commit:sha1+sha2+sha3``); EVERY SHA is emitted as its own pair so each is
-    audited (never collapse a group to its first member). A row is audited only if it
-    has both a ``completed`` cell and a ``commit:`` cell.
+    ``commit:`` OR ``commits:`` (WOT-2026-024c P3: the plural prefix is now recognized
+    so its valid SHAs are audited, not skipped). The token groups several SHAs with a
+    LITERAL ``+`` (``commit:sha1+sha2+sha3``); EVERY SHA is emitted as its own pair so
+    each is audited (never collapse a group to its first member). A row is audited only
+    if it has both a terminal-state cell and a commit(s) cell.
     """
     pairs: list[tuple[str, str]] = []
     for line in content.splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("|"):
+        cells = _row_cells(line)
+        if cells is None:
             continue
-        cells = [c.strip() for c in stripped.strip("|").split("|")]
-        if _COMPLETED_STATE not in cells:
+        if not any(c in _TERMINAL_STATES for c in cells):
             continue
         ticket_id = next((c for c in cells if _TICKET_ID_RE.match(c)), None)
-        commit_cell = next((c for c in cells if c.startswith(_COMMIT_PREFIX)), None)
+        commit_cell = _commit_cell(cells)
         if not ticket_id or not commit_cell:
             continue
-        token = commit_cell[len(_COMMIT_PREFIX) :].strip()
-        for sha in token.split("+"):
-            sha = sha.strip()
-            if sha:
-                pairs.append((ticket_id, sha))
+        pairs.extend((ticket_id, sha) for sha in _shas_from_commit_cell(commit_cell))
     return pairs
+
+
+def census_archived(content: str) -> dict:
+    """Compute the guard's DENOMINATOR over the archive (WOT-2026-024c, DoD-1/5).
+
+    Before this, the guard reported ``audited = len(results)`` and never asked how many
+    rows it OUGHT to have audited: ``ERROR=0`` meant "of what I looked at, nothing
+    failed", not "everything landed". This walks every markdown ROW once and classifies
+    the TERMINAL rows (state in ``_TERMINAL_STATES``, DoD-4: NOT just "completed") that
+    carry a ticket-ID:
+
+      - ``required``         : deliverable_type in {code, mixed} (landing REQUIRED).
+      - ``audited``          : required rows that DO carry a commit(s) cell.
+      - ``skipped_required`` : required rows with NO commit(s) cell -> the silent skip
+                               this ticket exists to expose (their tickets are listed).
+      - ``skipped_legacy``   : terminal rows with NO deliverable_type at all (exempt).
+
+    deliverable_type is read as a SUBSTRING of the whole row text (DoD-1 surface fix),
+    never as a positional column. Duplicate ticket-ids across terminal rows are counted
+    (DoD-5): a ticket appearing twice is reported, never silently double-counted.
+
+    Returns a dict with the four counts, the sorted list of skipped-required ticket-ids
+    (``skipped_required_tickets``), and the map of duplicate ticket-ids
+    (``duplicate_tickets``: id -> count). Pure string parsing; touches no git and no disk.
+    """
+    required = audited = skipped_required = skipped_legacy = 0
+    skipped_required_tickets: list[str] = []
+    terminal_ids: list[str] = []
+    for line in content.splitlines():
+        cells = _row_cells(line)
+        if cells is None:
+            continue
+        if not any(c in _TERMINAL_STATES for c in cells):
+            continue
+        ticket_id = next((c for c in cells if _TICKET_ID_RE.match(c)), None)
+        if not ticket_id:
+            continue
+        terminal_ids.append(ticket_id)
+        match = _DELIVERABLE_TYPE_RE.search(line)
+        dtype = match.group(1) if match else None
+        has_commit = _commit_cell(cells) is not None
+        if dtype in _LANDING_REQUIRED_TYPES:
+            required += 1
+            if has_commit:
+                audited += 1
+            else:
+                skipped_required += 1
+                skipped_required_tickets.append(ticket_id)
+        elif dtype is None:
+            skipped_legacy += 1
+    duplicate_tickets = {tid: n for tid, n in Counter(terminal_ids).items() if n > 1}
+    return {
+        "required": required,
+        "audited": audited,
+        "skipped_required": skipped_required,
+        "skipped_legacy": skipped_legacy,
+        "skipped_required_tickets": sorted(skipped_required_tickets),
+        "duplicate_tickets": duplicate_tickets,
+    }
 
 
 def _has_object(sha: str, repo: Path) -> bool:
@@ -416,6 +538,40 @@ def audit(pairs: list[tuple[str, str]], ref: str, repo: Path) -> list[dict]:
     return results
 
 
+def _print_text_report(
+    results: list[dict], counts: dict, census: dict, ref: str
+) -> None:
+    """Human-readable report: the audit counts, the PUBLISHED denominator (DoD-1), the
+    per-SHA non-OK verdicts, the required-without-evidence tickets (DoD-2), and the
+    duplicate ticket-ids (DoD-5). Pure stdout; the exit decision stays in main()."""
+    print(f"[landed] audited {len(results)} commit(s) against {ref}")
+    # DoD-1: the denominator is now PUBLISHED, not implicit.
+    print(
+        f"[landed] required={census['required']} audited={census['audited']} "
+        f"skipped_required={census['skipped_required']} "
+        f"skipped_legacy={census['skipped_legacy']}"
+    )
+    print(
+        f"[landed] OK={counts[OK]} OK_BY_SUBJECT={counts[OK_BY_SUBJECT]} "
+        f"PENDING_GROUPED_PUSH={counts[PENDING_GROUPED_PUSH]} "
+        f"WARN={counts[WARN]} ERROR={counts[ERROR]}"
+    )
+    for r in results:
+        if r["verdict"] in (ERROR, WARN, PENDING_GROUPED_PUSH):
+            print(
+                f"[landed]   {r['verdict']}: {r['ticket_id']} {r['sha']} -- {r['detail']}"
+            )
+    # DoD-2: list the required tickets that carry NO landing evidence.
+    for tid in census["skipped_required_tickets"]:
+        print(
+            f"[landed]   SKIPPED_REQUIRED: {tid} -- terminal code/mixed row with no "
+            "commit(s) evidence (landing UNVERIFIED; needs human decision)"
+        )
+    # DoD-5: report ticket-ids that appear in more than one terminal row.
+    for tid, n in sorted(census["duplicate_tickets"].items()):
+        print(f"[landed]   DUPLICATE: {tid} appears in {n} terminal rows")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Audit that backlog-closed commits landed in origin/main (3 layers)."
@@ -482,6 +638,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[landed] ERROR: cannot read archive {archive}: {exc}", file=sys.stderr)
         return EXIT_SELF_FAIL
 
+    # WOT-2026-024c: compute the DENOMINATOR before auditing. `census` answers "how
+    # many rows OUGHT to carry landing evidence", so ERROR=0 can be told apart from
+    # "I skipped the rows that would have failed".
+    census = census_archived(content)
     pairs = parse_archived_commits(content)
     results = audit(pairs, args.ref, git_repo)
 
@@ -498,22 +658,13 @@ def main(argv: list[str] | None = None) -> int:
             "schema": SCHEMA_VERSION,
             "ref": args.ref,
             "audited": len(results),
+            "census": census,
             "counts": counts,
             "results": results,
         }
         print(_relativize(json.dumps(payload, indent=2, ensure_ascii=False), roots))
     else:
-        print(f"[landed] audited {len(results)} commit(s) against {args.ref}")
-        print(
-            f"[landed] OK={counts[OK]} OK_BY_SUBJECT={counts[OK_BY_SUBJECT]} "
-            f"PENDING_GROUPED_PUSH={counts[PENDING_GROUPED_PUSH]} "
-            f"WARN={counts[WARN]} ERROR={counts[ERROR]}"
-        )
-        for r in results:
-            if r["verdict"] in (ERROR, WARN, PENDING_GROUPED_PUSH):
-                print(
-                    f"[landed]   {r['verdict']}: {r['ticket_id']} {r['sha']} -- {r['detail']}"
-                )
+        _print_text_report(results, counts, census, args.ref)
 
     if errors:
         print(
@@ -521,6 +672,16 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return EXIT_VERDICT_ERROR
+    # DoD-2: ERROR=0 is a legitimate exit 0 ONLY if the denominator is clean. A row the
+    # guard silently skipped (required, no evidence) makes exit 0 a false green.
+    if census["skipped_required"] > 0:
+        print(
+            f"[landed] FAIL: {census['skipped_required']} required row(s) "
+            f"(terminal + code/mixed) carry NO commit evidence -- the guard cannot "
+            f"confirm they landed. Tickets: {', '.join(census['skipped_required_tickets'])}",
+            file=sys.stderr,
+        )
+        return EXIT_SKIPPED_REQUIRED
     return EXIT_OK
 
 

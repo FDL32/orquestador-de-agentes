@@ -93,6 +93,35 @@ def _archive_with(tmp_path, work, pairs):
     return dest
 
 
+def _archive_raw(tmp_path, work, rows_text):
+    """A minimal DESTINO root whose archived backlog is exactly `rows_text`.
+
+    Lets a census/exit-code test lay out arbitrary rows (a code row WITHOUT a commit
+    cell, a plural `commits:` cell, a `done` state) that `_archive_with` -- which always
+    emits a `completed` + `commit:` shape -- cannot express. Also drops the
+    MANIFEST.distribute main() requires of the motor root.
+    """
+    (work / "MANIFEST.distribute").write_text("x\n", encoding="utf-8")
+    dest = tmp_path / "destino"
+    archive = dest / ".agent" / "collaboration" / "_archive"
+    archive.mkdir(parents=True, exist_ok=True)
+    (archive / "backlog_done.md").write_text(rows_text, encoding="utf-8")
+    return dest
+
+
+def _run_main(tmp_path, work, dest):
+    return gl.main(
+        [
+            "--motor-root",
+            str(work),
+            "--project-root",
+            str(dest),
+            "--ref",
+            "origin/main",
+        ]
+    )
+
+
 # --------------------------------------------------------------------------- #
 # CAPA 1 -- direct ancestor -> OK
 # --------------------------------------------------------------------------- #
@@ -646,3 +675,228 @@ def test_022x_a_real_lost_close_still_fails_the_guard(tmp_path):
     assert rc == gl.EXIT_VERDICT_ERROR, (
         f"a lost close (unreachable object) must still fail the guard; got exit {rc}"
     )
+
+
+# =========================================================================== #
+# WOT-2026-024c -- the guard KNOWS and PUBLISHES its denominator.
+#
+# Before this ticket parse_archived_commits `continue`d over `completed` code/mixed
+# rows that had no `commit:` cell with NO counter, and main() reported only
+# `audited = len(results)`. ERROR=0 meant "of what I looked at, nothing failed", not
+# "everything landed". These tests pin the census, the plural recognition, the
+# terminal-state set, uniqueness, and the prose-is-not-evidence rule. Numbers are NOT
+# asserted as thresholds (they are dated snapshots); the INVARIANTS are.
+# =========================================================================== #
+
+# A terminal code row with deliverable_type in the prose cell but NO commit cell --
+# the exact silent-skip shape this ticket exposes (mirrors live 021e/021j).
+_ROW_CODE_NO_COMMIT = (
+    "| Media | WOT-2026-0S1S | some fix deliverable_type: code | motor/x | "
+    "completed | - | session-s | some-note |"
+)
+# A terminal code row WITH a plural commits: cell (mirrors live 019j/016e plural rows).
+_ROW_CODE_PLURAL = (
+    "| Media | WOT-2026-0P1P | plural work deliverable_type: code | motor/x | "
+    "completed | - | session-p | commits:aaaaaaa+bbbbbbb |"
+)
+# A terminal legacy row: no deliverable_type substring at all -> exempt.
+_ROW_LEGACY = (
+    "| Baja | WOT-2026-0L1L | legacy row no dtype | motor/x | completed | - | "
+    "session-l | some-note |"
+)
+# A `done`-state code row without commit -- terminal but NOT "completed" (DoD-4).
+_ROW_DONE_CODE_NO_COMMIT = (
+    "| Alta | WOT-2026-0D1D | done code deliverable_type: code | motor/x | done | "
+    "- | session-d | some-note |"
+)
+
+
+# --------------------------------------------------------------------------- #
+# DoD-1: the census publishes required / audited / skipped_required / skipped_legacy,
+# and deliverable_type is read as a SUBSTRING of the prose cell, not a column.
+# --------------------------------------------------------------------------- #
+def test_dod1_census_publishes_denominator_from_prose_substring():
+    """DoD-1. A `completed`+code row with NO commit cell must land in skipped_required
+    (it must NOT silently vanish), and a legacy row (no deliverable_type) in
+    skipped_legacy. deliverable_type is a substring of the Titulo cell.
+
+    Reachable mutation: read deliverable_type as a positional cell (equality) instead
+    of a substring -> the code rows classify as `None` -> skipped_required drops to 0
+    and this assertion goes RED.
+    """
+    content = "\n".join([_ROW_CODE_NO_COMMIT, _ROW_CODE_PLURAL, _ROW_LEGACY]) + "\n"
+    census = gl.census_archived(content)
+    # 2 required rows (both code), 1 audited (the plural one), 1 skipped_required, 1 legacy
+    assert census["required"] == 2
+    assert census["audited"] == 1
+    assert census["skipped_required"] == 1
+    assert census["skipped_legacy"] == 1
+    assert census["skipped_required_tickets"] == ["WOT-2026-0S1S"]
+
+
+def test_dod1_deliverable_type_is_substring_not_column():
+    """DoD-1 surface fix, isolated: a positional/equality read of deliverable_type
+    returns nothing (the token is embedded in prose), the substring read returns it.
+
+    Reachable mutation: replace the substring search with a per-cell equality read ->
+    dtype resolves to None -> required drops to 0.
+    """
+    cells = [c.strip() for c in _ROW_CODE_NO_COMMIT.strip().strip("|").split("|")]
+    # No single cell EQUALS a bare deliverable_type value -- the equality read is blind.
+    assert not any(c in gl._LANDING_REQUIRED_TYPES for c in cells)
+    # The substring read over the whole row DOES find it.
+    assert gl._DELIVERABLE_TYPE_RE.search(_ROW_CODE_NO_COMMIT).group(1) == "code"
+    assert gl.census_archived(_ROW_CODE_NO_COMMIT + "\n")["required"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# DoD-2: ERROR=0 exits 0 ONLY if skipped_required == 0; otherwise the guard exits
+# non-zero and lists the tickets. Asserted at the EXIT-CODE layer (main owns it).
+# --------------------------------------------------------------------------- #
+def test_dod2_skipped_required_makes_guard_exit_nonzero(tmp_path):
+    """DoD-2. A required (terminal code) row with no commit evidence makes main() exit
+    non-zero EVEN WHEN there are zero ERROR verdicts (nothing to audit at all here).
+
+    Reachable mutation: return EXIT_OK regardless of census['skipped_required'] (the
+    pre-fix behaviour) -> this goes RED. This is the core bug: ERROR=0 was a false
+    green while a required row was silently skipped.
+    """
+    _origin, work = _make_repo(tmp_path)
+    dest = _archive_raw(tmp_path, work, _ROW_CODE_NO_COMMIT + "\n")
+    rc = _run_main(tmp_path, work, dest)
+    assert rc == gl.EXIT_SKIPPED_REQUIRED, (
+        f"a required code row with no commit evidence must fail the guard even with "
+        f"ERROR=0; got exit {rc}"
+    )
+
+
+def test_dod2_clean_denominator_exits_ok(tmp_path):
+    """DoD-2 twin: with every required row carrying evidence (skipped_required == 0)
+    and no ERROR verdict, the guard exits 0. Guards against a fix that always fails.
+    """
+    _origin, work = _make_repo(tmp_path)
+    landed = _commit(work, "a.txt", "a\n", "WOT-2026-0K1K: landed")
+    _g(["push", "-q", "origin", "main"], work)
+    _g(["fetch", "-q", "origin"], work)
+    row = (
+        f"| Media | WOT-2026-0K1K | work deliverable_type: code | motor/x | "
+        f"completed | - | s | commit:{landed} |\n"
+    )
+    dest = _archive_raw(tmp_path, work, row)
+    assert _run_main(tmp_path, work, dest) == gl.EXIT_OK
+
+
+# --------------------------------------------------------------------------- #
+# DoD-3: a plural `commits:sha1+sha2` row is AUDITED (each SHA), not skipped or
+# counted as an offender. `"commits:x".startswith("commit:")` is False today.
+# --------------------------------------------------------------------------- #
+def test_dod3_plural_commits_prefix_is_audited_not_skipped():
+    """DoD-3. Every SHA of a `commits:a+b` cell is emitted as a pair (audited), and the
+    row counts toward `audited`, NOT `skipped_required`.
+
+    Reachable mutation: revert recognition of the plural prefix (recognize only
+    `commit:`) -> the plural row parses to zero pairs AND falls into skipped_required.
+    This test asserts both halves, so that mutation goes RED.
+    """
+    pairs = gl.parse_archived_commits(_ROW_CODE_PLURAL)
+    assert pairs == [
+        ("WOT-2026-0P1P", "aaaaaaa"),
+        ("WOT-2026-0P1P", "bbbbbbb"),
+    ]
+    census = gl.census_archived(_ROW_CODE_PLURAL + "\n")
+    assert census["audited"] == 1
+    assert census["skipped_required"] == 0
+
+
+def test_dod3_startswith_singular_is_false_for_plural():
+    """DoD-3, the exact defect pinned: the naive singular check rejects the plural
+    cell, which is why the plural rows were skipped. Documents the trap the fix closes.
+    """
+    assert "commits:x".startswith("commit:") is False
+    assert "commits:x".startswith(gl._COMMIT_CELL_PREFIXES) is True
+
+
+# --------------------------------------------------------------------------- #
+# DoD-4: requiredness keys on a FIXED SET of terminal states, not just "completed".
+# No live `done`+code row exists, so this uses a FIXTURE (contract note).
+# --------------------------------------------------------------------------- #
+def test_dod4_done_state_code_row_is_required_not_fail_open():
+    """DoD-4. A `done`+code row with no commit is REQUIRED (skipped_required), it does
+    not escape through `!= 'completed'`.
+
+    Reachable mutation: anchor requiredness to `== 'completed'` only -> the `done` row
+    is invisible -> required and skipped_required drop to 0. This goes RED.
+    """
+    assert "done" in gl._TERMINAL_STATES  # the fixed set, not a state-machine
+    census = gl.census_archived(_ROW_DONE_CODE_NO_COMMIT + "\n")
+    assert census["required"] == 1
+    assert census["skipped_required"] == 1
+    assert census["skipped_required_tickets"] == ["WOT-2026-0D1D"]
+
+
+def test_dod4_done_state_code_row_fails_the_guard_exit_code(tmp_path):
+    """DoD-4 at the exit-code layer: a terminal-but-not-`completed` required row with
+    no evidence must fail main(), proving the fail-open state is actually closed.
+    """
+    _origin, work = _make_repo(tmp_path)
+    dest = _archive_raw(tmp_path, work, _ROW_DONE_CODE_NO_COMMIT + "\n")
+    assert _run_main(tmp_path, work, dest) == gl.EXIT_SKIPPED_REQUIRED
+
+
+# --------------------------------------------------------------------------- #
+# DoD-5: a ticket-id appearing twice in terminal rows is detected, not silently
+# double-counted (live dups: 019g/019h/019l/016e).
+# --------------------------------------------------------------------------- #
+def test_dod5_duplicate_ticket_ids_detected():
+    """DoD-5. A ticket-id in two terminal rows is reported in duplicate_tickets.
+
+    Reachable mutation: drop the Counter/uniqueness check (return no duplicate_tickets)
+    -> this goes RED.
+    """
+    dup_a = (
+        "| Media | WOT-2026-0DUP | first row deliverable_type: code | motor/x | "
+        "completed | - | s | commit:aaaaaaa |"
+    )
+    dup_b = (
+        "| Media | WOT-2026-0DUP | second row deliverable_type: code | motor/x | "
+        "completed | - | s | commit:bbbbbbb |"
+    )
+    census = gl.census_archived("\n".join([dup_a, dup_b, _ROW_LEGACY]) + "\n")
+    assert census["duplicate_tickets"] == {"WOT-2026-0DUP": 2}
+
+
+# --------------------------------------------------------------------------- #
+# DoD-6: a SHA appearing ONLY in prose (no commit:/commits: cell) is NOT evidence.
+# --------------------------------------------------------------------------- #
+def test_dod6_prose_sha_is_not_landing_evidence():
+    """DoD-6. A row that cites a SHA only in its prose Titulo cell (no commit(s) cell)
+    yields NO audit pairs and counts as skipped_required, never audited.
+
+    Reachable mutation: accept a bare 7-40 hex token in prose as evidence -> the row
+    would parse to a pair and move from skipped_required to audited. This goes RED.
+    """
+    prose_only = (
+        "| Media | WOT-2026-0PRO | fix cites d33da49 in prose deliverable_type: code "
+        "| motor/x | completed | - | s | reconciled:something |"
+    )
+    assert gl.parse_archived_commits(prose_only) == []
+    census = gl.census_archived(prose_only + "\n")
+    assert census["audited"] == 0
+    assert census["skipped_required"] == 1
+    assert census["skipped_required_tickets"] == ["WOT-2026-0PRO"]
+
+
+# --------------------------------------------------------------------------- #
+# NO-GOAL: the guard EXPOSES irrecoverable required rows, it does NOT invent
+# evidence. A skipped_required row must never be reclassified as audited/OK.
+# --------------------------------------------------------------------------- #
+def test_no_goal_guard_exposes_but_never_fabricates_evidence():
+    """The guard lists the required-without-evidence tickets and keeps them OUT of
+    `audited`; it never synthesizes a commit for them.
+    """
+    census = gl.census_archived(_ROW_CODE_NO_COMMIT + "\n")
+    assert census["audited"] == 0
+    assert census["skipped_required"] == 1
+    assert "WOT-2026-0S1S" in census["skipped_required_tickets"]
+    # And no phantom pair is emitted for the evidence-less row.
+    assert gl.parse_archived_commits(_ROW_CODE_NO_COMMIT) == []
