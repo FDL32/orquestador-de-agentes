@@ -7,6 +7,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+# WOT-2026-013n / vocabulario de cierre: la terminalidad de un ticket la define
+# UNA sola autoridad -- bus/state_machine.py. Este validador NO mantiene su propia
+# lista de estados terminales (asi no puede divergir del runtime: un terminal nuevo
+# en el enum lo conoce este guard automaticamente). Precedente del import:
+# scripts/reconcile_ticket.py:29-33.
+_MOTOR_ROOT = Path(__file__).resolve().parent.parent
+if str(_MOTOR_ROOT) not in sys.path:
+    sys.path.insert(0, str(_MOTOR_ROOT))
+from bus.state_machine import terminal_state_strings  # noqa: E402
+
+
 REVALIDATE = "python scripts/validate_contract_formation.py {file}"
 
 
@@ -55,25 +66,64 @@ TICKET_REQUIRED = [
     "CONTRACT_GAP",
     "Builder clarification",
 ]
-STATUS_VALID = {"draft", "review", "frozen", "invalidated"}
+
+# Estados de un contrato VIVO (en formacion): exigen TODO el checklist TICKET_REQUIRED.
+STATUS_LIVE = {"draft", "review", "frozen", "invalidated"}
+
+
+# Estados TERMINALES: derivados de la UNICA autoridad (bus/state_machine.py). Un
+# contrato terminal NO es un contrato en formacion -> se exime del checklist de
+# campos-vivos (no tiene sentido exigir "Premise Re-check" a un ticket cerrado);
+# solo exige `status` valido + una traza minima de cierre (`closed:` o `Evidence:`).
+# terminal_state_strings() da COMPLETED/SUPERSEDED/BLOCKED_FINAL (+legacy CLOSED);
+# se normaliza a minusculas y se aceptan las variantes con guion que el vocabulario
+# de contrato uso historicamente (blocked-final == BLOCKED_FINAL).
+def _terminal_status_tokens() -> set[str]:
+    toks: set[str] = set()
+    for s in terminal_state_strings(include_legacy=True):
+        low = s.lower()
+        toks.add(low)
+        toks.add(low.replace("_", "-"))  # blocked_final <-> blocked-final
+    return toks
+
+
+STATUS_TERMINAL = _terminal_status_tokens()
+STATUS_VALID = STATUS_LIVE | STATUS_TERMINAL
 
 
 def _chk_ticket(block: str, tid: str, fp: str, res: VResult) -> None:
     bl = block.lower()
+    sm = re.search(r"\*\*status:?\*\*:?\s*([A-Za-z_-]+)", block, re.IGNORECASE)
+    st = sm.group(1).strip("*,'\"").lower() if sm else None
+
+    # Un contrato TERMINAL con traza valida se exime del checklist de campos-vivos
+    # (un ticket cerrado no necesita "Premise Re-check"); solo exige la traza de
+    # cierre. Cualquier otra cosa -- vivo, sin status, o status invalido -- NO es
+    # un cierre legitimo y se le exige el checklist COMPLETO de contrato-en-formacion
+    # (asi un contrato al que le falte status no escapa a la validacion de campos).
+    if st in STATUS_TERMINAL:
+        if "closed:" not in bl and "evidence:" not in bl:
+            res.add(
+                fp,
+                "closure_trace",
+                f"Ticket terminal {tid} ('{st}') sin traza de cierre "
+                "(se exige `closed:` o `Evidence:`)",
+            )
+        return
+
+    if st is None:
+        res.add(fp, "status", f"Campo status no encontrado en ticket {tid}")
+    elif st not in STATUS_VALID:
+        res.add(
+            fp,
+            "status",
+            f"Valor invalido en {tid}: '{st}'. Validos: {sorted(STATUS_VALID)}",
+        )
+
+    # Contrato VIVO (o con status ausente/invalido): exige el checklist completo.
     for fld in TICKET_REQUIRED:
         if fld.lower() not in bl:
             res.add(fp, fld, f"Campo obligatorio ausente en ticket {tid}")
-    sm = re.search(r"\*\*status:?\*\*:?\s*(\S+)", block, re.IGNORECASE)
-    if sm:
-        st = sm.group(1).strip("*,'\"")
-        if st not in STATUS_VALID:
-            res.add(
-                fp,
-                "status",
-                f"Valor invalido en {tid}: '{st}'. Validos: {sorted(STATUS_VALID)}",
-            )
-    else:
-        res.add(fp, "status", f"Campo status no encontrado en ticket {tid}")
 
 
 def validate_ticket_contracts(fp: str, res: VResult) -> None:

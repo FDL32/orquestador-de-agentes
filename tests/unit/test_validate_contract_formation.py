@@ -597,3 +597,78 @@ class TestNewRequiredTicketFields:
         assert any("Context Baseline" in e.field_ for e in res.errors), (
             "must report missing Context Baseline"
         )
+
+
+# ===========================================================================
+# Vocabulario de estados terminales (WOT: cierre de sesion 2026-07-15)
+# El validador NO mantiene su propia lista de terminales: la deriva de la UNICA
+# autoridad bus/state_machine.py. Un contrato terminal se exime del checklist de
+# campos-vivos pero exige traza de cierre.
+# ===========================================================================
+
+
+class TestTerminalStatusVocabulary:
+    def _block(self, tid: str, status: str, *, extra: str = "") -> str:
+        # bloque MINIMO: solo ticket_id + status (+ extra). Sin campos-vivos.
+        return f"## {tid}\n\n- **ticket_id:** {tid}\n- **status:** {status}\n{extra}"
+
+    def _run(self, block: str):
+        from scripts.validate_contract_formation import _chk_ticket
+
+        res = VResult()
+        _chk_ticket(block, "T-X-001", "f.md", res)
+        return [e.field_ for e in res.errors]
+
+    def test_terminal_vocab_comes_from_authority(self):
+        # El conjunto terminal del validador == la autoridad, no una lista propia.
+        from bus.state_machine import terminal_state_strings
+        from scripts.validate_contract_formation import STATUS_TERMINAL
+
+        for s in terminal_state_strings(include_legacy=True):
+            assert s.lower() in STATUS_TERMINAL, f"{s} deberia ser terminal"
+        # los tres honestos y el legacy
+        assert {"completed", "superseded", "blocked_final", "closed"} <= STATUS_TERMINAL
+
+    def test_terminal_with_evidence_is_exempt_from_live_fields(self):
+        # completed + Evidence -> NO exige Premise/DoD/etc (contrato cerrado).
+        block = self._block(
+            "T-X-001", "completed", extra="- **Evidence:** commit:abc1234"
+        )
+        assert self._run(block) == [], (
+            "un terminal con traza no debe exigir campos-vivos"
+        )
+
+    def test_terminal_without_trace_fails(self):
+        # completed SIN closed:/Evidence: -> closure_trace (no dejar huerfanos).
+        block = self._block("T-X-001", "completed")
+        fields = self._run(block)
+        assert any("closure_trace" in f for f in fields), fields
+
+    def test_superseded_and_blocked_final_accepted(self):
+        for st in ("superseded", "blocked-final", "blocked_final"):
+            block = self._block("T-X-001", st, extra="- **closed:** 2026-06-21")
+            assert self._run(block) == [], (
+                f"{st} deberia ser un terminal valido con traza"
+            )
+
+    def test_live_status_still_requires_full_checklist(self):
+        # frozen (vivo) sin campos -> exige el checklist completo (regresion guard).
+        block = self._block("T-X-001", "frozen")
+        fields = self._run(block)
+        assert any("Premise" in f for f in fields)
+        assert any("DoD" in f for f in fields)
+
+    def test_missing_status_still_requires_checklist(self):
+        # sin status NO es un cierre legitimo -> sigue exigiendo campos (el bug que
+        # el refactor introdujo y este test bloquea).
+        block = "## T-X-001\n\n- **ticket_id:** T-X-001\n- **Objective-Link:** OBJ-1\n"
+        fields = self._run(block)
+        assert any("status" in f for f in fields)
+        assert any("DoD" in f for f in fields), "sin status debe seguir pidiendo DoD"
+
+    def test_unknown_status_rejected(self):
+        block = self._block("T-X-001", "absorbed", extra="- **Evidence:** x")
+        fields = self._run(block)
+        assert any("status" in f for f in fields), (
+            "un estado fuera de vocabulario falla"
+        )
