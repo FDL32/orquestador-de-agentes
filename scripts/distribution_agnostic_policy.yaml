@@ -1,0 +1,48 @@
+# POLITICA DE AGNOSTICISMO DE DISTRIBUCION (WOT-2026-025e) -- datos, no codigo.
+#
+# Por que este fichero es YAML y no un dict dentro de check_distribution_agnostic.py:
+# los LITERALES de las agujas (el nombre del workspace, el sufijo de la worktree, la
+# raiz de perfiles) NO pueden viajar dentro de un .py que se distribuye -- serian
+# ellos mismos hardcodes de esta maquina en el codigo que audita hardcodes. Los datos
+# viven fuera del codigo que se publica. (Verificado: ni el guard ni este YAML estan
+# en MANIFEST.distribute, asi que ninguno entra en su propio denominador.)
+#
+# needles  : nombre -> {pattern (regex), reason}. Cada aguja es un literal que NOMBRA
+#            esta maquina/instalacion y por tanto no debe viajar en lo distribuido.
+# allowlist: exenciones DECLARADAS (file+line+needle+reason con dueno). NUNCA se relaja
+#            un regex para tragar un falso positivo: se declara la excepcion exacta.
+#            Una entrada cuya (file,line) ya no produce hit es STALE y FALLA (no
+#            sobrevive al fichero que la justificaba).
+
+needles:
+  workspace_motor:
+    pattern: 'orquestador_de_agentes_workspace'
+    reason: 'nombre del workspace activo (topologia de esta instalacion, no viaja)'
+  worktree_dev:
+    pattern: 'orquestador_de_agentes_dev'
+    reason: 'nombre de la worktree de dogfooding (sufijo _dev; no viaja)'
+  user_profile_root:
+    pattern: 'C:[\\/]Users'
+    reason: 'raiz de perfiles de usuario de Windows (ruta de maquina, no viaja)'
+  # username: NO hay literal aqui a proposito. Escribir el username real en este
+  # fichero versionado seria PII (regresion contra WOT-2026-025a). Se deriva en
+  # runtime con getpass.getuser() (ver check_distribution_agnostic.py, aguja username).
+
+# checkout_princ ('orquestador_de_agentes' SIN sufijo) NO es aguja: MEDIDO ~47 usos
+# legitimos del NOMBRE CANONICO del repo (PROJECT.md, AGENTS.md "El motor vive una
+# unica vez en orquestador_de_agentes/", docstrings del instalador). Tratarlo como
+# fuga = 47 falsos rojos = la enfermedad que este guard diagnostica.
+
+allowlist:
+  # META-MENCION: el prompt de auditoria PII ENSENA a buscar `C:\Users\...` como
+  # sintoma. La aguja es el SUJETO del texto, no un valor de esta maquina.
+  - file: 'prompts/audit_git_publication.md'
+    line: 111
+    needle: user_profile_root
+    reason: 'meta-mencion: ensena a buscar C:\Users\... como sintoma de PII; la aguja es el sujeto, no un valor'
+  # META-MENCION: comentario de WOT-2026-020t que explica POR QUE se excluyen rutas
+  # C:\Users\<user>\ de la proyeccion de los destinos.
+  - file: 'scripts/install_agent_system.py'
+    line: 113
+    needle: user_profile_root
+    reason: 'meta-mencion: comentario WOT-2026-020t que explica por que se excluyen rutas C:\Users\<user>\ de la proyeccion del destino'

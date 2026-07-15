@@ -83,6 +83,20 @@ repos:
         always_run: true
         stages: [pre-commit]
 
+      # Guard: lo que VIAJA no puede nombrar ESTA maquina. El denominador sale de
+      # MANIFEST.distribute (52 entradas -> 143 ficheros tracked; skills/ expande a
+      # 92). Caza el nombre del workspace, el sufijo _dev de la worktree, la raiz de
+      # perfiles y el username en runtime. La norma ya vivia en el prompt de cierre
+      # (seccion 3.5); esto es el MECANISMO. always_run + pass_filenames:false porque
+      # el denominador viene del MANIFEST, no del argv.
+      - id: check-distribution-agnostic
+        name: check distribution agnostic (lo que viaja no nombra esta maquina)
+        entry: uv run python scripts/check_distribution_agnostic.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
       # Guard against dangerous truncation of execution_log.md without archive compensation
       - id: check-history-truncation
         name: check history truncation guard

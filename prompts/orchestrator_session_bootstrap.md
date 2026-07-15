@@ -48,11 +48,11 @@ python scripts/memory_context.py --status
 | `workspace_activo` | Raíz operativa con `.agent/` desde la que corre el ticket actual |
 | `entorno_multi_root` | IDE con `repo_motor` + `repo_destino` abiertos simultáneamente |
 
-Regla de repos: toda operación git de tooling corre en `repo_motor`. El estado operativo (tickets, memoria de proyecto) vive en `repo_destino`. En dogfooding del motor bajo la topología worktree-dev (WOT-2026-019m), el `repo_motor` operativo donde se commitea/pushea es la worktree `orquestador_de_agentes_dev` (lleva `main`; ver "Resumen breve del sistema" y `QUICKSTART.md` "0d"); el checkout principal `orquestador_de_agentes` queda DETACHED en `origin/main` como fuente estable de solo-consumo, no se ejecutan operaciones git de tickets allí.
+Regla de repos: toda operación git de tooling corre en `repo_motor`. El estado operativo (tickets, memoria de proyecto) vive en `repo_destino`. En dogfooding del motor bajo la topología worktree-dev (WOT-2026-019m), el `repo_motor` operativo donde se commitea/pushea es la **worktree de desarrollo** (la que lleva `main`; su nombre se resuelve de forma PORTABLE via `AGENT_PROJECT_ROOT` o `motor_destination_link.json` / `runtime/motor_link.py`, NUNCA con un nombre de directorio fijo; en la instalación del motor esa worktree es, a modo de ejemplo, un checkout hermano con sufijo `_dev` — ver "Resumen breve del sistema" y `QUICKSTART.md` "0d"); el **checkout principal** (el que lleva el nombre canónico del repo) queda DETACHED en `origin/main` como fuente estable de solo-consumo, no se ejecutan operaciones git de tickets allí.
 
 ## Resumen breve del sistema
 
-- **Runtime activo:** `repo_motor` portable. Topologia worktree-dev (WOT-2026-019m): el motor se EVOLUCIONA en la worktree `orquestador_de_agentes_dev` (lleva `main`, cwd de desarrollo); el checkout principal `orquestador_de_agentes` queda DETACHED en `origin/main` como fuente estable que consumen los destinos via `motor_destination_link.json`. Ver `QUICKSTART.md` seccion "0d. Motor dev worktree" y `scripts/setup_dev_worktree.ps1`.
+- **Runtime activo:** `repo_motor` portable. Topologia worktree-dev (WOT-2026-019m): el motor se EVOLUCIONA en la **worktree de desarrollo** (lleva `main`, cwd de desarrollo; su ruta se resuelve de forma PORTABLE via `AGENT_PROJECT_ROOT` o `motor_destination_link.json`, no por un nombre fijo — en la instalacion del motor es, a modo de ejemplo, el checkout hermano con sufijo `_dev`); el **checkout principal** (nombre canonico del repo) queda DETACHED en `origin/main` como fuente estable que consumen los destinos via `motor_destination_link.json`. Ver `QUICKSTART.md` seccion "0d. Motor dev worktree" y `scripts/setup_dev_worktree.ps1`.
 - **Roles:** Manager (OpenCode via `scripts/manager_review_bridge.py`, modelo configurable en `.agent/config/agents.json`) y Builder (OpenCode, modelo `opencode-go/deepseek-v4-flash`).
 - **Bus canonico:** `.agent/runtime/events/events.jsonl` (append-only, autoridad absoluta).
 - **Proyecciones:** `TURN.md`, `STATE.md`, `work_plan.md`, `execution_log.md` se derivan del bus.
@@ -99,8 +99,11 @@ Paso 0 (antes de tocar nada):
    puede contener handoffs de otros proyectos/sesiones -> riesgo de arrancar
    con contexto equivocado). Lee tambien la memoria privada. Los SHA que
    citen estan DESFASADOS por definicion: manda el PREFLIGHT, no el handoff.
-2. PREFLIGHT (topologia worktree-dev, WOT-2026-019m): arranca con cwd=`orquestador_de_agentes_dev`
-   (la worktree que lleva `main`, donde se evoluciona el motor; usa su
+2. PREFLIGHT (topologia worktree-dev, WOT-2026-019m): arranca con cwd = la
+   **worktree de desarrollo** (la que lleva `main`, donde se evoluciona el
+   motor; su ruta se resuelve de forma PORTABLE via `AGENT_PROJECT_ROOT` o
+   `motor_destination_link.json`, no por un nombre fijo — en la instalacion del
+   motor es, a modo de ejemplo, el checkout hermano con sufijo `_dev`; usa su
    `.venv\Scripts\python.exe`). Verifica que esa worktree existe y lleva `main`
    (si no, crearla con `scripts/setup_dev_worktree.ps1`). En la worktree-dev:
    HEAD == origin/main, arbol limpio, `--validate` en 0 errors / 0 warnings.
