@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Guard-of-guards: a guard nobody invokes is a norm, not a barrier (WOT-2026-024u).
+r"""Guard-of-guards: a guard nobody invokes is a norm, not a barrier (WOT-2026-024u).
 
 Un guard esta WIRED sii una superficie que CORRE SOLA alcanza una POSICION DE
 EJECUCION cuyo argumento es (transitivamente, con UN salto interprocedural) el
@@ -49,6 +49,44 @@ La asimetria -- ahora DOBLE (WOT-2026-024u, hallazgo del des-cableado)
   sostenian tambien con prosa viva, asi que borrar su call-site real no los ponia
   unwired. El baseline por-ARISTA (fichero) lo caza sin falsos rojos por edits.
 
+LIMITE CONOCIDO Y ABIERTO: la ruta PYTHON-SINK tiene falso-WIRED (WOT-2026-025c)
+-------------------------------------------------------------------------------
+NO confies en el veredicto WIRED de un guard cuya UNICA evidencia venga de un
+string dentro de un fichero .py de la frontera. Esa ruta NO esta cerrada, y esta
+seccion existe para que nadie lo descubra por las malas.
+
+La ruta CONFIG (pre-commit `entry:`, workflow `run:`, settings `command`) SI es
+solida: se parsea estructuralmente y solo se leen los campos que ejecutan.
+
+La ruta PYTHON-SINK intenta decidir si un string que llega a `subprocess.run(...)`
+es un COMANDO o es PROSA. Ocho intentos, ocho agujeros (2026-07-15):
+
+  4o  una FRASE en un sink que no ejecuta:  `run(["echo", "recuerda check_x.py"])`
+  5o  una frase que empieza por un lanzador: `echo "python revisa check_x.py"`
+  6o  una frase unida por coma o `;`:        `echo "revisa,check_x.py,manual"`
+  7o  una frase con una palabra que esta en la lista de subcomandos (run/script/
+      exec/tool): `echo "python run check_x.py"`; y args que NO son argv
+      (`env={...}`, `input=...`) que igualmente se inspeccionaban
+  8o  una frase en kebab/snake_case o con `:`, que no lleva separadores y pasa como
+      "un token": `echo "pendiente-cablear-scripts/check_x.py"`  <-- ESTE REPO
+      ESCRIBE ASI ("des-cableado", "auto-DoSea"): un recordatorio real lo dispara
+
+Los agujeros 4-6 estan cerrados (`_sink_arg_tokens`, `_prefix_is_command_shaped`,
+`_SEP`). El 7o y el 8o siguen ABIERTOS: dos auditorias independientes los
+encontraron el mismo dia, en paralelo, sobre el fix del anterior. El patron ya no
+es "falto un caso": es que **tokenizar prosa para adivinar si es un comando no
+converge**. Mientras el discriminante sea "esto PARECE una linea de comando",
+habra frases que lo parezcan.
+
+La reformulacion correcta (solo el argumento que ES el comando; solo elementos
+LITERALES de la lista argv; nunca re-tokenizar prosa) es un ANALIZADOR ESTATICO DE
+EJECUCION -- otro ticket, no un parche mas: **WOT-2026-025c**. Los 8 vectores estan
+en el corpus con su origen, listos para el rediseno.
+
+Que hacer mientras tanto: el veredicto de la ruta config es fiable; el de la ruta
+python-sink puede sobre-declarar (falso-WIRED). Si un guard sale WIRED y no ves su
+call-site, VERIFICALO A MANO antes de fiarte.
+
 Lo que el AST no decide se DECLARA, no se adivina
 -------------------------------------------------
 Makefile / shell / callable a >1 salto / glob-discovery / wiring-via-test:
@@ -89,6 +127,11 @@ GUARD_DIRS = ("scripts", ".agent/hooks", "skills", "tools", "bus", "runtime")
 
 _TICKET = re.compile(r"^WOT-\d{4}-\d{3}[a-z]$")
 _BY_DESIGN = "BY-DESIGN:"
+
+# Separadores de token, FUENTE UNICA. El gate de _sink_arg_tokens y el tokenizador
+# _path_tokens_in DEBEN usar el mismo conjunto -- el 6o agujero (2026-07-15) fue que
+# discrepaban (\s vs [\s,;]+) y una frase unida por coma pasaba el gate.
+_SEP = re.compile(r"[\s,;]")
 
 # Lista CERRADA de sinks de ejecucion. `echo`/`print`/`cat` NO estan: eso es lo que
 # mata la prosa-con-un-path. Se comparan por nombre punteado y por forma corta.
@@ -193,7 +236,7 @@ def _path_tokens_in(s: str) -> list[str]:
     NOT a token -- that keeps a `name=`/`choices=`/Enum value out. Y una FRASE con
     un .py incrustado en markdown/backticks tampoco casa: el token debe ser limpio."""
     out: list[str] = []
-    for raw in re.split(r"[\s,;]+", s.strip()):
+    for raw in _SEP.split(s.strip()):  # misma FUENTE que el gate (ver _SEP)
         tok = raw.strip().strip("\"'")
         if tok.lower().endswith(".py") and re.fullmatch(
             r"[A-Za-z0-9_.:/\\~$@{}+-]+", tok
@@ -202,7 +245,37 @@ def _path_tokens_in(s: str) -> list[str]:
     return out
 
 
-def _command_tokens(s: str, depth: int = 0) -> list[str]:
+def _sink_arg_tokens(s: str) -> list[str]:
+    """Tokens de guard de un string que llega como ARGUMENTO de un sink (subprocess,
+    etc.). Un elemento de argv es UN token de path aislado (`"scripts/check_x.py"`) o
+    una linea de comando entera (`"python scripts/check_x.py"`).
+
+    NO una FRASE. Una frase con espacios que MENCIONA un .py (`"recuerda check_x.py a
+    mano"`, un mensaje de commit, un log de error) es prosa: llega a un sink real
+    (`echo`, `git -m`, `logger`) que NO ejecuta su argumento. v1-v3 murieron por medir
+    la propiedad con vara floja; v4 la media bien en la ruta CONFIG (via _command_tokens,
+    que exige lanzador en argv[0]) y MAL en la ruta python-sink, donde _path_tokens_in
+    extraia el .py de cualquier frase (4o agujero, auditoria hermana 2026-07-15).
+
+    Simetria con el lado config: exigimos que el string sea una linea de comando con
+    lanzador reconocido (_command_tokens), O un unico token de path SIN espacios
+    (_path_tokens_in sobre un string de un solo token). Una frase no es ninguna cosa.
+    """
+    cmd = _command_tokens(s)
+    if cmd:
+        return cmd
+    # solo si el string ES un unico token (un elemento de argv), no una frase.
+    # 6o agujero (auditoria hermana del fix, 2026-07-15): el gate rechazaba solo por
+    # \s, pero _path_tokens_in parte por [\s,;]+ -- una frase unida por COMA o
+    # PUNTO-Y-COMA ("revisa,check_x.py,manual") no tiene espacios, pasaba el gate, y el
+    # .py se extraia igual (cablaba una lista entera de guards de golpe). El gate DEBE
+    # usar los MISMOS separadores que el tokenizador: `_SEP`.
+    if s.strip() and not _SEP.search(s.strip()):
+        return _path_tokens_in(s)
+    return []
+
+
+def _command_tokens(s: str, depth: int = 0) -> list[str]:  # noqa: C901 - parser de linea de comando: flags/-m/-c/prosa-antes-de-path
     """Path-token basenames of a command line whose argv[0] is an allowlisted
     launcher. Recurses into -c/-lc payloads (depth<=2). Empty for a phrase."""
     s = (s or "").strip()
@@ -235,9 +308,48 @@ def _command_tokens(s: str, depth: int = 0) -> list[str]:
                 out.append(mod + ".py")
             i += 2
             continue
-        out += _path_tokens_in(tok)
+        pts = _path_tokens_in(tok)
+        if pts and not _prefix_is_command_shaped(argv[1:i]):
+            # 5o agujero (2026-07-15): una FRASE cuya 1a palabra coincide con un lanzador
+            # ("python revisa scripts/check_x.py luego") pasa el filtro exe y luego
+            # _path_tokens_in extrae el .py. Un comando REAL solo tiene flags/opciones/
+            # subcomandos entre el lanzador y el script; una frase tiene palabras-prosa.
+            # Si hay prosa antes de este .py, no es una linea de comando: descartalo.
+            i += 1
+            continue
+        out += pts
         i += 1
     return out
+
+
+# Subcomandos de lanzadores que preceden legitimamente a un script (uv run python x.py,
+# pre-commit run, poetry run). Lista CERRADA: una palabra fuera de aqui, de los flags y
+# de los propios paths, es prosa.
+_LAUNCHER_SUBCOMMANDS = {
+    "run",
+    "exec",
+    "tool",
+    "python",
+    "python3",
+    "-m",
+    "shell",
+    "script",
+}
+
+
+def _prefix_is_command_shaped(prefix: list[str]) -> bool:
+    """True si todo lo que hay entre el lanzador y un .py es FLAG, opcion o subcomando
+    conocido -- no una palabra de prosa. `python revisa check_x.py` tiene "revisa" en
+    medio -> prosa -> False. `uv run python check_x.py` -> todo subcomando -> True."""
+    for tok in prefix:
+        if tok.startswith("-"):
+            continue  # flag/opcion
+        if tok.lower() in _LAUNCHER_SUBCOMMANDS:
+            continue
+        if _path_tokens_in(tok) or "/" in tok or "\\" in tok or "=" in tok:
+            continue  # un path o una asignacion VAR=x, no prosa
+        return False  # una palabra que no es flag/subcomando/path -> prosa
+    return True
 
 
 def _payload_tokens(payload: str, exe: str, depth: int) -> list[str]:
@@ -381,16 +493,16 @@ def _python_invocations(src: str) -> list[tuple[str, int]]:  # noqa: C901 - el n
             args = list(n.args) + [kw.value for kw in n.keywords]
             for arg in args:
                 for s in _strings_in(arg):
-                    for base in _path_tokens_in(s) or _command_tokens(s):
+                    for base in _sink_arg_tokens(s):
                         out.append((base, getattr(arg, "lineno", n.lineno)))  # noqa: PERF401
                 for sub in ast.walk(arg):
                     if isinstance(sub, ast.Name):
                         for s in env.get(sub.id, []) + returns.get(sub.id, []):
-                            for base in _path_tokens_in(s) or _command_tokens(s):
+                            for base in _sink_arg_tokens(s):
                                 out.append((base, n.lineno))  # noqa: PERF401
                     if isinstance(sub, ast.Call) and _dotted(sub.func) in returns:
                         for s in returns[_dotted(sub.func)]:
-                            for base in _path_tokens_in(s) or _command_tokens(s):
+                            for base in _sink_arg_tokens(s):
                                 out.append((base, n.lineno))  # noqa: PERF401
     return out
 

@@ -119,21 +119,31 @@ NEGATIVE_REASONS = {
     "label_only",  # aparece en una etiqueta humana (name:), no en el comando (entry:)
     "path_nonexecuted",  # se construye el path... y no se ejecuta
     "config_nonexec",  # vive en un config, en una clave que no ejecuta nada
+    "prose_in_sink_arg",  # una FRASE (no linea de comando) como arg de un sink real (echo/git -m)
 }
 
 
 def test_every_negative_declares_a_reason_from_the_closed_taxonomy():
-    """Y ningun positivo lleva `negative_reason`: no puede haber un caso ambiguo."""
+    """Un negativo declara su reason de la taxonomia cerrada. Un positivo PURO no lleva
+    reason. Excepcion: un RESIDUAL declarado (`should_wire_override: true` sobre un caso
+    semanticamente negativo) SI lleva `negative_reason` -- documenta la familia que v4 no
+    puede resolver y por eso lo clasifica WIRED. Es la forma honesta de nombrar un limite."""
     for c in CASES:
-        if c["should_wire"]:
-            assert "negative_reason" not in c, (
-                f"{c['case_id']} es POSITIVO y declara negative_reason"
+        has_reason = "negative_reason" in c
+        # semanticamente negativo = should_wire false, O un residual declarado
+        # (should_wire_override marca "v4 lo clasifica WIRED aunque conceptualmente no
+        # cablea"). Solo estos llevan reason; un positivo PURO no.
+        is_semantic_negative = not c["should_wire"] or "should_wire_override" in c
+        if has_reason:
+            assert is_semantic_negative, (
+                f"{c['case_id']} es POSITIVO PURO y declara negative_reason"
             )
-        else:
-            reason = c.get("negative_reason")
-            assert reason in NEGATIVE_REASONS, (
-                f"{c['case_id']}: negative_reason={reason!r} fuera de la taxonomia cerrada "
-                f"{sorted(NEGATIVE_REASONS)}"
+            assert c["negative_reason"] in NEGATIVE_REASONS, (
+                f"{c['case_id']}: reason fuera de la taxonomia {sorted(NEGATIVE_REASONS)}"
+            )
+        elif not c["should_wire"]:
+            raise AssertionError(
+                f"{c['case_id']} es negativo y NO declara negative_reason"
             )
 
 
@@ -144,6 +154,28 @@ def test_the_taxonomy_has_no_dead_classes():
     covered = {c["negative_reason"] for c in CASES if not c["should_wire"]}
     missing = NEGATIVE_REASONS - covered
     assert not missing, f"clases de la taxonomia SIN NINGUN CASO: {sorted(missing)}"
+
+
+def test_open_defects_are_traceable_to_their_ticket():
+    """Un `should_wire_override: true` sobre un caso NEGATIVO significa "v4 dice WIRED
+    aqui HOY, y es un DEFECTO CONOCIDO" -- no "esto esta bien". Sin esta guarda, un
+    lector futuro tomaria el override por comportamiento correcto y el defecto se
+    fosilizaria: exactamente como 022v llevo un diagnostico falso desde el dia 1.
+
+    Cada override sobre un negativo debe citar el ticket que lo rediseña.
+    """
+    overrides = [
+        c
+        for c in CASES
+        if c.get("should_wire_override") is True and not c["should_wire"]
+    ]
+    assert overrides, "sin overrides: si se cierran todos, borra este test"
+    for c in overrides:
+        origin = c.get("regression_origin", "")
+        assert "WOT-" in origin, (
+            f"{c['case_id']}: es un DEFECTO ABIERTO (override sobre un negativo) y no "
+            f"cita el ticket que lo rediseña. Un defecto sin dueno se fosiliza."
+        )
 
 
 def test_case_ids_are_unique_and_stable():

@@ -426,7 +426,9 @@ cases:
       wrapper existe, o alguien lo llama (WIRED correcto) o es codigo muerto que
       deberia borrarse (falso-WIRED, pero de una funcion con un sink REAL, no de
       prosa). Se marca should_wire:true y se documenta como el limite del 1-salto.
-    regression_origin: "attack_space P28; limite declarado del wrapper-local de R_EXEC2"
+    regression_origin: >
+      attack_space P28; limite declarado del wrapper-local de R_EXEC2. ABIERTO ->
+      WOT-2026-025c (el rediseno del clasificador decide si un wrapper no llamado cabla)
     should_wire_override: true
     files:
       scripts/prepush_check.py: |
@@ -489,3 +491,213 @@ cases:
 
 
         _run([sys.executable, "scripts/{GUARD}.py"])
+
+  # ---- Familia PROSE_IN_SINK_ARG (2026-07-15, auditoria hermana del v4):
+  # el CUARTO agujero. La defensa "echo/print no es ejecucion" vivia solo en la
+  # ruta CONFIG (_command_tokens exige launcher); _path_tokens_in la cortocircuitaba
+  # en la ruta PYTHON-SINK, extrayendo el .py de CUALQUIER frase que llegara como
+  # argumento de un subprocess real. Los 21 negativos de prosa ponian la prosa en
+  # print()/MSG=/LINES=[] que NUNCA se pasan a un sink -> la clase quedo sin cubrir.
+  # Leccion: una propiedad forzada por DOS rutas de codigo se prueba en AMBAS.
+  - case_id: prose_in_echo_arg
+    surface: python_self_running
+    should_wire: false
+    negative_reason: prose_in_sink_arg
+    why: >
+      Una frase con un .py incrustado como argumento de `echo` (que NO ejecuta su
+      arg). El string llega a un sink REAL (subprocess.run) pero no es una linea de
+      comando con lanzador: es prosa que menciona el guard.
+    regression_origin: "v4 (2026-07-15): auditoria hermana; _path_tokens_in cortocircuita el filtro de lanzador"
+    files:
+      scripts/prepush_check.py: |
+        import subprocess
+
+        subprocess.run(["echo", "recuerda correr scripts/{GUARD}.py a mano"])
+
+  - case_id: prose_in_commit_message_arg
+    surface: python_self_running
+    should_wire: false
+    negative_reason: prose_in_sink_arg
+    why: >
+      Un mensaje de commit que menciona el guard en un TODO. Llega a subprocess
+      (git commit -m) pero es prosa, no una invocacion.
+    regression_origin: "v4 (2026-07-15): auditoria hermana"
+    files:
+      scripts/prepush_check.py: |
+        import subprocess
+
+        subprocess.run(["git", "commit", "-m", "TODO: cablear scripts/{GUARD}.py"])
+
+  - case_id: prose_in_sink_arg_via_variable
+    surface: python_self_running
+    should_wire: false
+    negative_reason: prose_in_sink_arg
+    why: >
+      La misma frase, pero pasando por una variable (1 salto env) antes del sink.
+      Cubre la segunda ruta de _python_invocations (env -> arg de sink).
+    regression_origin: "v4 (2026-07-15): auditoria hermana; ruta env del 1-salto"
+    files:
+      scripts/prepush_check.py: |
+        import subprocess
+
+        msg = "por favor ejecuta scripts/{GUARD}.py antes de continuar"
+        subprocess.run(["echo", msg])
+
+  - case_id: isolated_pathtoken_in_echo
+    surface: python_self_running
+    should_wire: true
+    should_wire_override: true
+    negative_reason: prose_in_sink_arg
+    why: >
+      RESIDUAL DECLARADO (no maquillado). `subprocess.run(["echo", "scripts/check_x.py"])`
+      -- un TOKEN de path aislado (sin espacios) como argumento de echo. v4 lo marca
+      WIRED porque no puede distinguir un arg que se ejecuta de uno que solo se imprime
+      SIN una lista abierta de "comandos que no ejecutan su arg" (echo/logger/cat/git-m).
+      Esa lista NUNCA es completa -- el auditor advirtio de NO construirla. La regla
+      cerrada (token aislado -> cuenta) prefiere este falso-WIRED raro y RUIDOSO (exige
+      escribir un path de guard suelto en echo, ausente del repo real) a una lista negra
+      que se pudre. Es fail-CLOSED en el sentido que importa: no oculta el limite, lo
+      DECLARA. Un guard afectado se declararia en known_unwired si de verdad ocurriera.
+    regression_origin: "v4 (2026-07-15): limite declarado de la regla token-aislado; residual honesto de la auditoria hermana"
+    files:
+      scripts/prepush_check.py: |
+        import subprocess
+
+        subprocess.run(["echo", "scripts/{GUARD}.py"])
+
+  - case_id: prose_starting_with_launcher_word
+    surface: python_self_running
+    should_wire: false
+    negative_reason: prose_in_sink_arg
+    why: >
+      QUINTA ruta (2026-07-15, la encontre yo verificando el fix del 4o agujero). Una
+      FRASE cuya PRIMERA palabra coincide por accidente con un lanzador
+      (`"python revisa scripts/check_x.py luego"`). shlex.split la parte y argv[0]
+      resulta "python", asi que _command_tokens la acepta y extrae el .py de la frase.
+      El filtro de lanzador es necesario pero NO suficiente: una frase que empieza por
+      "python"/"make"/"sh"/"node" lo pasa. Un comando REAL tiene el .py como path
+      ejecutable o tras un flag, no precedido de palabras-prosa que no son ni flags ni
+      opciones.
+    regression_origin: "v4 (2026-07-15): 5o agujero, autoverificacion del fix del 4o"
+    files:
+      scripts/prepush_check.py: |
+        import subprocess
+
+        subprocess.run(["echo", "python revisa scripts/{GUARD}.py luego"])
+
+  - case_id: prose_comma_joined
+    surface: python_self_running
+    should_wire: false
+    negative_reason: prose_in_sink_arg
+    why: >
+      SEXTA ruta (auditoria hermana del fix, 2026-07-15). Una frase cuyas palabras se
+      unen con COMA en vez de espacio (`"revisa,scripts/check_x.py,manual"`). El gate de
+      _sink_arg_tokens rechazaba solo por WHITESPACE (\s), pero _path_tokens_in tokeniza
+      con [\s,;]+ -- coma Y punto-y-coma incluidos. Gate y tokenizador discrepaban sobre
+      "un solo token": una frase sin espacios pero con comas pasaba el gate y el .py se
+      extraia igual. Peor: cablea una LISTA entera de guards separados por comas de golpe.
+    regression_origin: >
+      v4 (2026-07-15): 6o agujero; el gate rechazaba solo por \s mientras el
+      tokenizador partia por whitespace, coma y punto-y-coma
+    files:
+      scripts/prepush_check.py: |
+        import subprocess
+
+        subprocess.run(["echo", "revisa,scripts/{GUARD}.py,a,mano"])
+
+  - case_id: prose_semicolon_joined
+    surface: python_self_running
+    should_wire: false
+    negative_reason: prose_in_sink_arg
+    why: >
+      La gemela con PUNTO-Y-COMA (`"TODO;scripts/check_x.py;luego"`). Mismo defecto:
+      el gate debe usar los MISMOS separadores que el tokenizador.
+    regression_origin: "v4 (2026-07-15): 6o agujero, gemela ;"
+    files:
+      scripts/prepush_check.py: |
+        import subprocess
+
+        subprocess.run(["echo", "TODO;scripts/{GUARD}.py;luego"])
+
+  - case_id: dash_m_as_separate_list_element
+    surface: python_self_running
+    should_wire: false
+    should_wire_override: false
+    negative_reason: prose_in_sink_arg
+    why: >
+      RESIDUAL FALSO-UNWIRED declarado (fail-closed, teorico). `["python","-m",
+      "scripts.check_x"]` con -m como ELEMENTO SEPARADO de la lista: cada string se
+      procesa por _sink_arg_tokens por separado, y "scripts.check_x" no acaba en .py,
+      asi que v4 no lo ve -> unwired. La forma en UNA sola string ("python -m
+      scripts.check_x") SI funciona. Es falso-UNWIRED (ruidoso, seguro), no falso-WIRED:
+      ningun guard real se cablea asi (grep vacio). Resolverlo exigiria analisis
+      cross-token en listas argv -- complejidad que no compensa para un caso ausente.
+      Si algun dia ocurriera, se declara en wired_via. should_wire false porque v4
+      HOY lo da unwired y ese es su comportamiento documentado, no un objetivo a romper.
+    regression_origin: "v4 (2026-07-15): limite fail-closed de la rama -m; prueba de estres del fix"
+    files:
+      scripts/prepush_check.py: |
+        import subprocess
+
+        subprocess.run(["python", "-m", "scripts.{GUARD}"])
+
+  # ==================================================================
+  # AGUJEROS 7 y 8: ABIERTOS. Documentados, NO cerrados (WOT-2026-025c).
+  # should_wire_override: true = "v4 dice WIRED aqui HOY, y es un DEFECTO".
+  # El caso NO se borra ni se maquilla: queda como especificacion ejecutable
+  # del rediseno. Cuando 025c aterrice, estos overrides desaparecen y los
+  # casos deben pasar a unwired.
+  # ==================================================================
+
+  - case_id: prose_word_in_subcommand_list
+    surface: python_self_running
+    should_wire: false
+    should_wire_override: true
+    negative_reason: prose_in_sink_arg
+    why: >
+      7o agujero, ABIERTO. `_LAUNCHER_SUBCOMMANDS` (run/script/exec/tool) es una lista
+      ABIERTA disfrazada de cerrada: son palabras corrientes. Una frase que use
+      cualquiera de ellas pasa `_prefix_is_command_shaped`. Es el error exacto contra el
+      que la 1a auditoria hermana advirtio ("no parchees con una lista negra"), cometido
+      una capa mas abajo. NO se parchea: el rediseno (025c) elimina la clase.
+    regression_origin: "v4 (2026-07-15): 7o agujero, autoverificacion del fix del 5o; ABIERTO -> WOT-2026-025c"
+    files:
+      scripts/prepush_check.py: |
+        import subprocess
+
+        subprocess.run(["echo", "python run scripts/{GUARD}.py"])
+
+  - case_id: prose_kebab_case_no_separators
+    surface: python_self_running
+    should_wire: false
+    should_wire_override: true
+    negative_reason: prose_in_sink_arg
+    why: >
+      8o agujero, ABIERTO. Una frase en kebab-case/snake_case (o con `:`) no lleva
+      separadores de `_SEP`, asi que pasa el gate como si fuera UN token de path. El
+      regex de "token limpio" acepta guion, guion-bajo y dos-puntos -- que es justo lo
+      que usa una frase sin espacios. CRITICO EN ESTE REPO: su prosa usa kebab-case
+      constantemente ("des-cableado", "auto-DoSea"), asi que un recordatorio real lo
+      dispara. Encontrado por una auditoria hermana FOCAL, en paralelo al 7o.
+    regression_origin: "v4 (2026-07-15): 8o agujero, hermana focal; ABIERTO -> WOT-2026-025c"
+    files:
+      scripts/prepush_check.py: |
+        import subprocess
+
+        subprocess.run(["echo", "pendiente-cablear-scripts/{GUARD}.py"])
+
+  - case_id: token_in_non_argv_kwarg
+    surface: python_self_running
+    should_wire: false
+    should_wire_override: true
+    negative_reason: prose_in_sink_arg
+    why: >
+      7o agujero (2a cara), ABIERTO. Se inspeccionan TODOS los args de un sink, incluidos
+      los que no son argv (`env=`, `input=`, `cwd=`). Solo el argumento que ES el comando
+      puede cablear. Parte del rediseno 025c.
+    regression_origin: "v4 (2026-07-15): 7o agujero cara-B; ABIERTO -> WOT-2026-025c"
+    files:
+      scripts/prepush_check.py: |
+        import subprocess
+
+        subprocess.run(["ls"], env={"GUARD": "scripts/{GUARD}.py"})
