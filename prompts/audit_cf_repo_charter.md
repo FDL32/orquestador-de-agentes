@@ -14,7 +14,10 @@
 
 Lee antes de evaluar:
 
-- `.agent/planning/repo_charter.md` (objeto de la auditoria).
+- `repo_charter.md` (objeto de la auditoria). **Resolucion de ruta:** en el MOTOR vive en la
+  RAIZ (`<motor>/repo_charter.md`), porque el motor no es un `repo_destino`; en un `repo_destino`
+  vive en `<destino>/.agent/planning/repo_charter.md`. Busca primero la raiz del motor, luego el
+  planning del destino.
 - `.agent/planning/evidence_catalog.md` (para verificar que los claims del charter
   tienen evidencia con fiabilidad declarada).
 - `.agent/planning/decisions.md` (decisiones `DEC-*` que sostienen el charter).
