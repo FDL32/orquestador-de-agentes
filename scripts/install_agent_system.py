@@ -51,6 +51,23 @@ LOCAL_DIRS = {"collaboration", "runtime", "audits"}
 # Contrast with LOCAL_DIRS (never synced at all).
 INSTALLER_MANAGED_PATHS: frozenset[str] = frozenset({"glossary.md", "microagents"})
 
+# Directories whose CONTENT belongs to the destination once it exists (WOT-2026-024d).
+# The motor ships only a seed (.agent/planning/ticket_contracts.md); the destination's
+# Contract Formation Pipeline then produces its own artifacts there. So the installer
+# deposits these when missing (a fresh install needs the seed) but must NEVER
+# overwrite and NEVER prune them.
+#
+# Contrast with the two neighbouring mechanisms:
+#   LOCAL_DIRS              -> never copied at all; a fresh install gets nothing.
+#   INSTALLER_MANAGED_PATHS -> excluded from the residue/prune calculation only.
+#   DESTINATION_OWNED_DIRS  -> deposited if absent, never clobbered, never pruned.
+#
+# Both halves are load-bearing: without the no-clobber, --sync overwrites the
+# destination's contracts; without the prune filter, --sync DELETES every Contract
+# Formation artifact the motor does not itself ship (the motor has only the seed, so
+# repo_charter/plan_graph/decisions/evidence_catalog all look like residues).
+DESTINATION_OWNED_DIRS: frozenset[str] = frozenset({"planning"})
+
 # Generated / transient directories that should not be part of canonical sync.
 IGNORED_NAMES = {"__pycache__", ".ruff_cache", ".tmp"}
 
@@ -208,6 +225,18 @@ def is_preserved(rel_path: Path) -> bool:
     return bool(rel_path.parts) and rel_path.parts[0] in LOCAL_DIRS
 
 
+def is_destination_owned(rel_path: Path) -> bool:
+    """True if rel_path lives under a directory the destination owns.
+
+    Before: rel_path is relative to the .agent/ root (same convention as
+            is_preserved: is_in_allowlist prepends '.agent/', so the walk
+            yields e.g. Path('planning/ticket_contracts.md')).
+    During: Matches on parts[0] against DESTINATION_OWNED_DIRS.
+    After:  Returns True for the directory itself and anything beneath it.
+    """
+    return bool(rel_path.parts) and rel_path.parts[0] in DESTINATION_OWNED_DIRS
+
+
 def is_ignored(rel_path: Path) -> bool:
     return any(part in IGNORED_NAMES for part in rel_path.parts)
 
@@ -280,13 +309,15 @@ def detect_destination_residues(source: Path, dest: Path) -> list[Path]:
     """
     Detect entries in dest that do not exist in source (potential residues).
 
-    Before: source and dest are valid directory paths; INSTALLER_MANAGED_PATHS
-            and LOCAL_DIRS constants exist.
+    Before: source and dest are valid directory paths; INSTALLER_MANAGED_PATHS,
+            LOCAL_DIRS and DESTINATION_OWNED_DIRS constants exist.
     During: Canonical entries are collected from both directories. Preserved
-            (LOCAL_DIRS) and installer-managed (INSTALLER_MANAGED_PATHS) entries
-            are excluded before computing the diff. LOCAL_DIRS paths are never
-            synced; INSTALLER_MANAGED_PATHS were deposited once and belong to
-            the destination.
+            (LOCAL_DIRS), installer-managed (INSTALLER_MANAGED_PATHS) and
+            destination-owned (DESTINATION_OWNED_DIRS) entries are excluded
+            before computing the diff. LOCAL_DIRS paths are never synced;
+            INSTALLER_MANAGED_PATHS were deposited once and belong to the
+            destination; DESTINATION_OWNED_DIRS hold content the destination
+            produced and the motor does not ship.
     After: Returns sorted, compacted list of residue relative paths.
     """
     source_entries = set(iter_canonical_entries(source, include_ignored=False))
@@ -297,6 +328,13 @@ def detect_destination_residues(source: Path, dest: Path) -> list[Path]:
     # against the INSTALLER_MANAGED_PATHS set. LOCAL_DIRS paths are already excluded
     # by iter_canonical_entries(); INSTALLER_MANAGED_PATHS are excluded here.
     residues = {r for r in residues if r.parts[0] not in INSTALLER_MANAGED_PATHS}
+    # WOT-2026-024d: destination-owned content is never pruned. The motor ships only
+    # .agent/planning/ticket_contracts.md, so every OTHER Contract Formation artifact
+    # the destination produced (repo_charter, plan_graph, decisions, evidence_catalog)
+    # is absent from source_entries and would otherwise be deleted by the strict
+    # --sync. The git-tracked fail-safe does not cover them: a destination that
+    # gitignores .agent/ has them untracked (measured: Upscaler, 4 files).
+    residues = {r for r in residues if not is_destination_owned(r)}
     # Also exclude bootstrap-specific paths (full path matching, not just r.parts[0])
     residues = {r for r in residues if r.as_posix() not in INSTALLER_BOOTSTRAP_PATHS}
     return compact_paths(residues)
@@ -351,10 +389,25 @@ def _copy_allowlisted_dir(
                 (dest_root / child_rel).mkdir(parents=True, exist_ok=True)
             continue
         # It is a file (and is allowlisted)
+        dst_child = dest_root / child_rel
+        # WOT-2026-024d: deposit destination-owned content when missing, never
+        # clobber it. Checked BEFORE the dry_run branch so --dry-run reports what
+        # a real run would actually do instead of claiming a copy that is skipped.
+        if is_destination_owned(child_rel) and dst_child.exists():
+            if dry_run:
+                print(
+                    f"[DRY-RUN] Would skip destination-owned path (no-clobber): "
+                    f"{child_rel.as_posix()}"
+                )
+            else:
+                print(
+                    f"[SKIP] Destination-owned path already exists (no-clobber): "
+                    f"{child_rel.as_posix()}"
+                )
+            continue
         if dry_run:
             copied.append(child_rel)
             continue
-        dst_child = dest_root / child_rel
         dst_child.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(disk_path, dst_child)
         copied.append(child_rel)

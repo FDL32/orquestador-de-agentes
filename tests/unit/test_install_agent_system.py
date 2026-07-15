@@ -11,12 +11,14 @@ Covers:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import textwrap
 from pathlib import Path
 
 from scripts.install_agent_system import (
+    TEMPLATE_ROOT,
     copy_destination_bootstrap,
     copy_gitleaks_config,
     copy_project_template,
@@ -26,6 +28,8 @@ from scripts.install_agent_system import (
     merge_memory_rules,
     parse_wing_sections,
     prune_residues,
+    read_manifest_allowlist,
+    sync_agent_system,
     sync_memory_rules,
     write_motor_destination_link,
 )
@@ -986,3 +990,167 @@ def test_malformed_existing_link_degrades_to_none(tmp_path):
     link.write_text("{ not json", encoding="utf-8")
     link = _write_link(tmp_path, prefix=None)
     assert _read_prefix(link) is None
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-024d: .agent/planning/ is destination-owned
+#
+# The motor ships ONE seed file (planning/ticket_contracts.md); the destination's
+# Contract Formation Pipeline then produces its own artifacts there. --sync
+# threatened that content through TWO independent vectors, and a fix for only one
+# of them is a false-green:
+#   vector 1 (overwrite): copy_tree -> _copy_allowlisted_dir -> unconditional copy2
+#   vector 2 (prune):     everything the motor does NOT ship looks like a residue
+# Measured 2026-07-15: 9 destinations hold their own ticket_contracts.md (0 equal to
+# the seed) and Upscaler gitignores .agent/, so the WOT-2026-003d git-tracked
+# fail-safe leaves its 4 other CF artifacts unprotected.
+# ---------------------------------------------------------------------------
+
+# The Contract Formation set a destination owns. ticket_contracts.md is the only
+# one the motor also ships: the other four exercise the prune vector specifically.
+_CF_ARTIFACTS = (
+    "ticket_contracts.md",
+    "repo_charter.md",
+    "plan_graph.md",
+    "decisions.md",
+    "evidence_catalog.md",
+)
+
+_MOTOR_SEED = "SEED FROM MOTOR: dogfooding contracts\n"
+
+
+def _build_motor_template(tmp_path: Path) -> Path:
+    """Motor template shipping ONLY the planning seed, like the real one."""
+    template_root = tmp_path / "template"
+    template_agent = template_root / ".agent"
+    (template_agent / "planning").mkdir(parents=True)
+    (template_agent / "planning" / "ticket_contracts.md").write_text(
+        _MOTOR_SEED, encoding="utf-8"
+    )
+    (template_root / "MANIFEST.workspace").write_text(
+        ".agent/planning/\n", encoding="utf-8"
+    )
+    return template_agent
+
+
+def _build_destination_with_own_cf(tmp_path: Path) -> Path:
+    """Destination whose planning/ holds its OWN Contract Formation artifacts."""
+    project_agent = tmp_path / "dest" / ".agent"
+    planning = project_agent / "planning"
+    planning.mkdir(parents=True)
+    for name in _CF_ARTIFACTS:
+        (planning / name).write_text(f"DESTINATION-OWNED: {name}\n", encoding="utf-8")
+    return project_agent
+
+
+def test_copy_tree_deposits_planning_when_absent(tmp_path):
+    """DoD (a): a fresh install must still receive the seed.
+
+    Mutation-2 target: putting 'planning' in LOCAL_DIRS makes this FAIL, because
+    LOCAL_DIRS means 'never copied at all' and would starve a fresh install.
+    """
+    template_agent = _build_motor_template(tmp_path)
+    project_agent = tmp_path / "dest" / ".agent"
+    project_agent.mkdir(parents=True)
+
+    copy_tree(
+        template_agent,
+        project_agent,
+        allowlist={".agent/planning/"},
+    )
+
+    seeded = project_agent / "planning" / "ticket_contracts.md"
+    assert seeded.exists(), "a fresh install must receive the Contract Formation seed"
+    assert seeded.read_text(encoding="utf-8") == _MOTOR_SEED
+
+
+def test_copy_tree_does_not_clobber_destination_planning(tmp_path):
+    """DoD (b), vector 1: --sync must not overwrite the destination's contracts.
+
+    Fails today without the no-clobber guard (measured: copy2 is unconditional).
+    Mutation-1 target.
+    """
+    template_agent = _build_motor_template(tmp_path)
+    project_agent = _build_destination_with_own_cf(tmp_path)
+    owned = project_agent / "planning" / "ticket_contracts.md"
+    before = hashlib.sha256(owned.read_bytes()).hexdigest()
+
+    copy_tree(
+        template_agent,
+        project_agent,
+        allowlist={".agent/planning/"},
+    )
+
+    after = hashlib.sha256(owned.read_bytes()).hexdigest()
+    assert after == before, "sync clobbered the destination's own ticket_contracts.md"
+    assert _MOTOR_SEED not in owned.read_text(encoding="utf-8")
+
+
+def test_copy_tree_dry_run_does_not_list_destination_owned_as_copied(tmp_path):
+    """A dry-run that promises a copy it will skip is a lying dry-run."""
+    template_agent = _build_motor_template(tmp_path)
+    project_agent = _build_destination_with_own_cf(tmp_path)
+
+    copied = copy_tree(
+        template_agent,
+        project_agent,
+        dry_run=True,
+        allowlist={".agent/planning/"},
+    )
+
+    assert Path("planning/ticket_contracts.md") not in copied
+
+
+def test_detect_destination_residues_excludes_destination_owned(tmp_path):
+    """Vector 2 in isolation: destination-owned artifacts are not residues.
+
+    Mutation-3 target: dropping the DESTINATION_OWNED_DIRS filter makes the four
+    artifacts the motor does not ship reappear as residues (and prune deletes them).
+    """
+    template_agent = _build_motor_template(tmp_path)
+    project_agent = _build_destination_with_own_cf(tmp_path)
+
+    residues = detect_destination_residues(template_agent, project_agent)
+
+    assert residues == [], (
+        f"destination-owned CF artifacts flagged as residues: {residues}"
+    )
+
+
+def test_sync_preserves_destination_contract_formation_end_to_end(tmp_path):
+    """DoD (e): the WHOLE sync (copy + prune) must not destroy the destination's CF.
+
+    This asserts at the level where the damage happens. The copy_tree-level tests
+    above can all pass while sync_agent_system still deletes four files, because
+    the second vector lives in prune_residues, not in copy_tree.
+
+    The sandbox reproduces the Upscaler condition: dest has no .git, so
+    _filter_git_tracked_residues finds nothing tracked and the WOT-2026-003d
+    fail-safe does NOT protect these files.
+    """
+    template_agent = _build_motor_template(tmp_path)
+    project_agent = _build_destination_with_own_cf(tmp_path)
+    planning = project_agent / "planning"
+    before = {
+        name: hashlib.sha256((planning / name).read_bytes()).hexdigest()
+        for name in _CF_ARTIFACTS
+    }
+
+    sync_agent_system(template_agent, project_agent)
+
+    for name in _CF_ARTIFACTS:
+        target = planning / name
+        assert target.exists(), f"sync DELETED the destination's {name}"
+        after = hashlib.sha256(target.read_bytes()).hexdigest()
+        assert after == before[name], f"sync MODIFIED the destination's {name}"
+
+
+def test_manifest_workspace_really_allowlists_planning():
+    """Contract guard: if planning ever leaves MANIFEST.workspace, the tests above
+    would keep passing VACUOUSLY (nothing to copy => nothing to clobber). This test
+    pins the premise they depend on, against the real manifest.
+    """
+    allowlist = read_manifest_allowlist(TEMPLATE_ROOT)
+
+    assert allowlist, "MANIFEST.workspace not found or empty"
+    assert ".agent/planning/" in allowlist
