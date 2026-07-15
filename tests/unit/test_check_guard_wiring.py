@@ -1,289 +1,285 @@
-"""Tests for scripts/check_guard_wiring.py (WOT-2026-024u).
+"""Tests for scripts/check_guard_wiring.py v4 (WOT-2026-024u).
 
-The irony to avoid: a guard-of-guards that passes vacuously would be the very defect it
-exists to catch. So the counterfactual (`test_a_wired_guard_is_recognised`) is not a nice
-extra -- without it, every other test here could pass because `audit()` returns nothing.
+The corpus (test_guard_wiring_corpus.py) is the executable spec of the FORM/POSITION
+axis. This file holds the tests that need the REAL repo or the policy machinery:
 
-The four tests marked FALSO-VERDE are the ones an adversarial sibling audit extracted from
-the first version of this module, which shipped all four and would have reached origin.
-Each of them is a way of blessing a NORM as a MECHANISM -- exactly what the module claims
-it will never do. They are the reason this file exists in this shape.
+  T-REAL-BASELINE : audit(REAL_REPO) is exactly the expected wired/unwired split.
+                    A synthetic corpus models the easy cross-function case; only the
+                    real repo has `guard_paths` (return-with-name) and the injected
+                    callable. This is the test the three previous versions lacked.
+  T-DEWIRING      : delete a guard's real call-site -> it must go UNWIRED (the twin
+                    asymmetry). v3 was blind: prose kept it WIRED.
+  T-DENOM         : the recursive denominator sees a guard in a subdir and the
+                    declared no-prefix guards.
+  T-FRONTIER      : the derived frontier includes what settings.json/imports reach,
+                    and BOTH .yml and .yaml.
+  T-SELFDOS       : printing the debt (KNOWN_UNWIRED lives in YAML, not this .py) does
+                    not wire the declared guards.
+  T-STALE / owners: the policy format-checks (conserved from v2).
 
-Hermetic: each test builds a synthetic motor root. The verdict is decided by the code
-under test, never by the state of the real repo (which changes with every ticket -- the
-failure mode WOT-2026-020q taught us). The single exception is the last test, which is a
-LIVE contract on this repo and is meant to go red when someone adds an unwired guard.
+Hermetic where it can be; explicitly a LIVE contract on the real repo where the point
+IS the real repo (the failure mode WOT-2026-020q: a synthetic-only test is blind to
+the boundary with the real tree).
 """
 
 from __future__ import annotations
 
 import importlib.util
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 
+_ROOT = Path(__file__).resolve().parents[2]
 _SPEC = importlib.util.spec_from_file_location(
-    "check_guard_wiring",
-    Path(__file__).resolve().parents[2] / "scripts" / "check_guard_wiring.py",
+    "check_guard_wiring", _ROOT / "scripts" / "check_guard_wiring.py"
 )
 cgw = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(cgw)
 
 
+# --------------------------------------------------------------------- helpers
 def _motor(
-    tmp_path: Path,
-    *,
-    guards: list[str],
-    hooks: list[dict] | None = None,
-    extra_yaml: str = "",
+    tmp_path: Path, files: dict[str, str], guards: list[str] | None = None
 ) -> Path:
-    """Synthetic motor: guards in scripts/, and a pre-commit config that may invoke them."""
     (tmp_path / "scripts").mkdir(exist_ok=True)
-    for g in guards:
+    for g in guards or []:
         (tmp_path / "scripts" / f"{g}.py").write_text("# guard\n", encoding="utf-8")
-
-    body = ["repos:", "  - repo: local", "    hooks:"]
-    for h in hooks or []:
-        body.append(f"      - id: {h['id']}")
-        body.append(f"        entry: uv run python scripts/{h['id']}.py")
-        if "stages" in h:
-            body.append(f"        stages: [{', '.join(h['stages'])}]")
-    if not hooks:
-        body.append("      []")
-    text = "\n".join(body) + "\n" + extra_yaml
-    (tmp_path / ".pre-commit-config.yaml").write_text(text, encoding="utf-8")
+    for rel, body in files.items():
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(body, encoding="utf-8")
+    if not (tmp_path / ".pre-commit-config.yaml").exists():
+        (tmp_path / ".pre-commit-config.yaml").write_text(
+            "repos:\n  - repo: local\n    hooks:\n      []\n", encoding="utf-8"
+        )
     return tmp_path
 
 
-def test_a_wired_guard_is_recognised(tmp_path):
-    """COUNTERFACTUAL. Without this, every other test could pass because audit() finds
-    nothing at all -- the exact vacuous-green this module exists to prevent.
-    """
-    root = _motor(tmp_path, guards=["check_alpha"], hooks=[{"id": "check_alpha"}])
-
-    wired, unwired = cgw.audit(root)
-
-    assert wired == ["check_alpha"]
-    assert unwired == []
+_EMPTY_POLICY = {"known_unwired": {}, "extra_guards": {}, "wired_via": {}}
 
 
-def test_an_unwired_guard_is_caught(tmp_path):
-    """The whole point: a guard nobody invokes."""
-    root = _motor(
+# ---------------------------------------------------------------- T-REAL-BASELINE
+# The 12 guards genuinely wired in the real repo, each verified against its call-site.
+# "12" is not the invariant -- the SAME set is (a classifier that drops a real call-site
+# and picks up a bogus one also prints 12).
+EXPECTED_WIRED_REAL = {
+    "check_backlog_contract",
+    "check_claude_settings_portability",
+    "check_commit_worktree",
+    "check_deliverables_exist",
+    "check_encoding_guard",
+    "check_guard_wiring",
+    "check_no_history_truncation",
+    "check_worktree_topology",
+    "delivery_hygiene_check",  # v4: denominador ve el guard sin prefijo, y lo cabla
+    "guard_paths",
+    "validate_all",
+    "validate_ticket_prose",
+}
+
+
+def test_real_repo_wired_set_is_exactly_expected():
+    """T-REAL-BASELINE. The decisive test: a synthetic corpus passed 32/32 while the
+    real repo still lost guard_paths (return-with-name). Only the real repo exercises it."""
+    wired, _unwired = cgw.audit(_ROOT)
+    got = set(wired)
+    missing = EXPECTED_WIRED_REAL - got  # un call-site real que dejo de verse
+    extra = got - EXPECTED_WIRED_REAL  # algo nuevo, sospechoso de falso-WIRED
+    assert not missing, (
+        f"falso-UNWIRED (regresion sobre codigo vivo): {sorted(missing)}"
+    )
+    assert not extra, f"WIRED nuevo, revisar si es falso-WIRED: {sorted(extra)}"
+
+
+def test_real_repo_audit_is_clean():
+    """main() sobre el repo real -> rc 0 (exit real via subprocess, nunca tras un pipe)."""
+    r = subprocess.run(
+        [sys.executable, str(_ROOT / "scripts" / "check_guard_wiring.py")],
+        cwd=_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+# ----------------------------------------------------------------- T-DEWIRING
+DEWIRING_TARGETS = {
+    # guard : (fichero, literal-a-romper, sustituto) -- borra el call-site REAL dejando
+    # la prosa viva (docstring, mensaje de error). v3 seguia WIRED; v4 debe ir UNWIRED.
+    "guard_paths": (
+        ".agent/hooks/claude_guard_entry.py",
+        "guard_paths.py",
+        "OTRO_NO_GUARD.py",
+    ),
+}
+
+
+@pytest.mark.parametrize("guard", sorted(DEWIRING_TARGETS))
+def test_dewiring_is_caught(guard, tmp_path):
+    """La asimetria gemela, ejecutada. Copiamos SOLO el fichero relevante a un motor
+    sintetico minimo, rompemos el call-site real, y exigimos que _dewired lo cace.
+
+    (No mutamos el repo real: WOT-2026-023x, un guard read-only no muta el arbol.)"""
+    rel, literal, sub = DEWIRING_TARGETS[guard]
+    src = (_ROOT / rel).read_text(encoding="utf-8")
+    assert literal in src, f"el literal {literal} ya no esta en {rel} (test caducado)"
+
+    # motor sintetico: el fichero mutado + la semilla que lo mete en frontera + el guard
+    settings = (
+        '{"hooks": {"PreToolUse": [{"hooks": [{"type": "command",'
+        f' "command": "python {rel}"}}]}}]}}}}'
+    )
+    muted = src.replace(literal, sub)
+    motor = _motor(
         tmp_path,
-        guards=["check_alpha", "check_orphan"],
-        hooks=[{"id": "check_alpha"}],
+        {rel: muted, ".claude/settings.json": settings},
+        guards=[],
     )
-
-    wired, unwired = cgw.audit(root)
-
-    assert wired == ["check_alpha"]
-    assert unwired == ["check_orphan"]
-
-
-def test_a_prompt_citation_is_not_wiring(tmp_path):
-    """The load-bearing distinction: being named in a prompt is a NORM, not a mechanism."""
-    root = _motor(tmp_path, guards=["check_only_a_norm"], hooks=[])
-    (root / "prompts").mkdir()
-    (root / "prompts" / "p.md").write_text(
-        "Corre `python scripts/check_only_a_norm.py` antes de cerrar.\n",
-        encoding="utf-8",
+    # el guard existe en el motor (para estar en el denominador)
+    (motor / ".agent" / "hooks" / f"{guard}.py").parent.mkdir(
+        parents=True, exist_ok=True
     )
-
-    wired, unwired = cgw.audit(root)
-
-    assert unwired == ["check_only_a_norm"]
-    assert wired == []
-
-
-def test_a_yaml_comment_is_not_wiring(tmp_path):
-    """FALSO-VERDE #1 (real, shipped): the first version matched raw text, so a guard named
-    only inside a YAML comment counted as wired.
-
-    In the live repo that was `check_ruff_hook_scope`: its ONE appearance in
-    .pre-commit-config.yaml is the comment `# Hook scope protected by
-    scripts/check_ruff_hook_scope.py`, and nothing executes it. The guard-of-guards was
-    blessing it.
-
-    Mutation: go back to substring-matching the raw file text -> this test fails.
-    """
-    root = _motor(
-        tmp_path,
-        guards=["check_mentioned_in_a_comment"],
-        hooks=[],
-        extra_yaml="# protected by scripts/check_mentioned_in_a_comment.py\n",
-    )
-
-    wired, unwired = cgw.audit(root)
-
-    assert unwired == ["check_mentioned_in_a_comment"], "un comentario no ejecuta nada"
-    assert wired == []
-
-
-def test_a_manual_only_hook_is_not_wiring(tmp_path):
-    """FALSO-VERDE #2 (real, shipped): a hook with `stages: [manual]` does not run on its
-    own -- a human must remember to invoke it, which is the definition of a norm.
-
-    Live case: `check_hook_interpreter`. Mutation: count manual hooks -> this fails.
-    """
-    root = _motor(
-        tmp_path,
-        guards=["check_manual", "check_auto"],
-        hooks=[
-            {"id": "check_manual", "stages": ["manual"]},
-            {"id": "check_auto", "stages": ["pre-commit"]},
-        ],
-    )
-
-    wired, unwired = cgw.audit(root)
-
-    assert wired == ["check_auto"]
-    assert unwired == ["check_manual"]
-
-
-def test_a_hook_on_pre_push_is_wiring(tmp_path):
-    """...but `stages: [pre-push, manual]` DOES run on its own (pre-push is automatic).
-
-    The falso-rojo twin of the test above: over-correcting would make every multi-stage
-    hook look unwired. Mutation: treat any hook listing `manual` as non-automatic -> fails.
-    """
-    root = _motor(
-        tmp_path,
-        guards=["check_prepush"],
-        hooks=[{"id": "check_prepush", "stages": ["pre-push", "manual"]}],
-    )
-
-    wired, _ = cgw.audit(root)
-
-    assert wired == ["check_prepush"]
-
-
-def test_a_name_that_is_a_prefix_of_a_wired_guard_is_not_wired(tmp_path):
-    """FALSO-VERDE #3 (real, shipped): substring matching meant a NEW `check_backlog.py`
-    would be blessed by the existing `check_backlog_commits_landed`, because
-    `"check_backlog" in "...check_backlog_commits_landed..."` is True.
-
-    That silently voids the module's only fail-closed rule. Mutation: drop the word
-    boundaries from is_wired() -> this test fails.
-    """
-    root = _motor(
-        tmp_path,
-        guards=["check_alpha", "check_alpha_extended"],
-        hooks=[{"id": "check_alpha_extended"}],
-    )
-
-    wired, unwired = cgw.audit(root)
-
-    assert wired == ["check_alpha_extended"]
-    assert unwired == ["check_alpha"], "el prefijo no hereda el cableado del largo"
-
-
-def test_guards_outside_scripts_are_inventoried(tmp_path):
-    """FALSO-VERDE #4 (real, shipped): find_guards() only globbed scripts/, so the
-    write-guard `.agent/hooks/guard_paths.py` -- the example the module's own docstring
-    cites as THE disease -- was not even in the inventory.
-
-    An inventory blind to a whole directory reports 'all clear' about a place it never
-    looked. Mutation: restrict GUARD_DIRS back to ('scripts',) -> this test fails.
-    """
-    root = _motor(tmp_path, guards=[], hooks=[])
-    (root / ".agent" / "hooks").mkdir(parents=True)
-    (root / ".agent" / "hooks" / "guard_elsewhere.py").write_text(
+    (motor / ".agent" / "hooks" / f"{guard}.py").write_text(
         "# guard\n", encoding="utf-8"
     )
 
-    assert "guard_elsewhere" in cgw.find_guards(root)
-
-
-def test_an_undeclared_unwired_guard_fails(tmp_path, monkeypatch):
-    """The rule that stops the debt from growing: a NEW guard, wired nowhere, undeclared."""
-    root = _motor(tmp_path, guards=["check_brandnew"], hooks=[])
-    monkeypatch.setattr(cgw, "KNOWN_UNWIRED", {})
-
-    assert cgw.main(["--motor-root", str(root)]) == 1
-
-
-def test_declared_debt_only_warns(tmp_path, monkeypatch):
-    """Declared debt must NOT block: a retroactive fail would be dead noise and would
-    block every close until every guard is wired.
-    """
-    root = _motor(tmp_path, guards=["check_known"], hooks=[])
-    monkeypatch.setattr(cgw, "KNOWN_UNWIRED", {"check_known": "WOT-2026-024u"})
-
-    assert cgw.main(["--motor-root", str(root)]) == 0
-
-
-def test_strict_mode_fails_on_the_declared_debt(tmp_path, monkeypatch):
-    """--strict is the retro audit: the debt counts as failure."""
-    root = _motor(tmp_path, guards=["check_known"], hooks=[])
-    monkeypatch.setattr(cgw, "KNOWN_UNWIRED", {"check_known": "WOT-2026-024u"})
-
-    assert cgw.main(["--motor-root", str(root), "--strict"]) == 1
-
-
-def test_strict_mode_does_not_fail_on_a_by_design_exemption(tmp_path, monkeypatch):
-    """...but a BY-DESIGN exemption is not debt: nobody will ever 'pay' it.
-
-    `check_hook_interpreter` is manual on purpose -- an automatic hook would be circular.
-    If --strict failed on it, the retro audit could never reach zero and would be ignored.
-    Mutation: treat BY-DESIGN as debt -> this test fails.
-    """
-    root = _motor(tmp_path, guards=["check_by_design"], hooks=[])
-    monkeypatch.setattr(
-        cgw, "KNOWN_UNWIRED", {"check_by_design": "BY-DESIGN: circular por naturaleza"}
+    edges = cgw.wiring_edges(motor, _EMPTY_POLICY)
+    assert not edges.get(guard), (
+        f"des-cableado NO detectado: {guard} sigue con arista {edges.get(guard)} tras "
+        f"romper su unico call-site real (v3 era ciego a esto por la prosa viva)"
     )
 
-    assert cgw.main(["--motor-root", str(root), "--strict"]) == 0
 
-
-def test_a_stale_allowlist_entry_fails(tmp_path, monkeypatch):
-    """An entry for a guard that IS wired (or no longer exists) must be removed.
-
-    Otherwise the allowlist rots into a cemetery, and -- worse -- it pre-blesses any
-    future file with that name: someone creates scripts/check_ghost.py years later and it
-    sails through, already 'declared'. Mutation: stop reporting stale entries -> fails.
-    """
-    root = _motor(tmp_path, guards=["check_alpha"], hooks=[{"id": "check_alpha"}])
-    monkeypatch.setattr(cgw, "KNOWN_UNWIRED", {"check_alpha": "WOT-2026-024u"})
-
-    assert cgw.main(["--motor-root", str(root)]) == 1
-
-
-def test_a_free_text_owner_is_rejected(tmp_path, monkeypatch):
-    """The owner must be a ticket or an explicit BY-DESIGN reason.
-
-    Free text is how the ghost ticket WOT-2026-021a survived: decision accepted, zero rows
-    in the backlog. An owner nobody can look up is not an owner. Mutation: skip the owner
-    format check -> this test fails.
-    """
-    root = _motor(tmp_path, guards=["check_known"], hooks=[])
-    monkeypatch.setattr(cgw, "KNOWN_UNWIRED", {"check_known": "pendiente, ya lo vere"})
-
-    assert cgw.main(["--motor-root", str(root)]) == 1
-
-
-def test_an_unreadable_self_running_path_fails_closed(tmp_path):
-    """If a self-running path cannot be parsed, we CANNOT claim any guard is wired.
-
-    Staying quiet here would be the module's own disease: a missing denominator reported
-    as 'all clear'. Mutation: swallow the exception and continue -> this test fails.
-    """
-    root = _motor(tmp_path, guards=["check_alpha"], hooks=[{"id": "check_alpha"}])
-    (root / ".pre-commit-config.yaml").write_text(
-        "repos: [ unclosed\n", encoding="utf-8"
+# ------------------------------------------------------------------- T-DENOM
+def test_denominator_is_recursive(tmp_path):
+    """rglob, no glob plano: un guard en un subdirectorio DEBE estar en el denominador
+    (v3 era ciego a scripts/sandbox/check_wp_087_deliverable.py)."""
+    (tmp_path / "scripts" / "sub").mkdir(parents=True)
+    (tmp_path / "scripts" / "sub" / "check_nested.py").write_text(
+        "# g\n", encoding="utf-8"
     )
+    guards = cgw.find_guards(tmp_path)
+    assert "check_nested" in guards
 
-    with pytest.raises(SystemExit):
-        cgw.audit(root)
+
+def test_denominator_includes_declared_no_prefix_guards(tmp_path):
+    """Un guard REAL sin prefijo (pre_handoff_guard) solo entra si se DECLARA."""
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "pre_handoff_guard.py").write_text(
+        "# g\n", encoding="utf-8"
+    )
+    without = cgw.find_guards(tmp_path)
+    assert "pre_handoff_guard" not in without, "sin declarar no debe adivinarse"
+    with_extra = cgw.find_guards(
+        tmp_path, {"pre_handoff_guard": "scripts/pre_handoff_guard.py"}
+    )
+    assert "pre_handoff_guard" in with_extra
 
 
-def test_the_real_repo_has_no_undeclared_unwired_guard():
-    """LIVE contract on THIS repo -- and the only thing that can catch this module being
-    unwired from itself.
+def test_real_denominator_sees_the_subdir_guard():
+    """Contrato vivo: el guard en subdir del repo real esta en el denominador."""
+    guards = cgw.find_guards(_ROOT, cgw._load_policy()["extra_guards"])
+    assert "check_wp_087_deliverable" in guards
 
-    check_guard_wiring does not exempt itself from the inventory, but it obviously cannot
-    fail when nothing runs it. This test can: it runs in the suite, the suite runs in CI.
-    Delete the pre-commit hook and CI goes red. That is what closes the loop.
-    """
-    assert cgw.main([]) == 0
+
+# ----------------------------------------------------------------- T-FRONTIER
+def test_frontier_includes_both_yml_and_yaml(tmp_path):
+    """El glob de v3 solo veia *.yml. GitHub acepta ambos: un guard cableado en
+    ci.yaml saldria falso-UNWIRED."""
+    wf = tmp_path / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "a.yaml").write_text(
+        "on:\n  push:\njobs:\n  j:\n    steps:\n      - run: python scripts/check_yaml.py\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "scripts").mkdir(exist_ok=True)
+    (tmp_path / "scripts" / "check_yaml.py").write_text("# g\n", encoding="utf-8")
+    wired, _ = cgw.audit(tmp_path, _EMPTY_POLICY)
+    assert "check_yaml" in wired, "un guard en *.yaml debe verse igual que en *.yml"
+
+
+def test_frontier_derives_settings_hook_targets():
+    """La frontera del repo real DERIVA claude_guard_entry.py del command de
+    settings.json, y encoding_post_write_hook.py del otro hook."""
+    fr = {p.name for p in cgw.self_running_paths(_ROOT)}
+    assert "claude_guard_entry.py" in fr
+    assert "encoding_post_write_hook.py" in fr
+
+
+# ------------------------------------------------------------------ T-SELFDOS
+def test_printing_the_debt_does_not_wire_it(tmp_path):
+    """Auto-DoS: un fichero de la frontera que IMPRIME la deuda para reportarla NO
+    debe cablear a los declarados. Con KNOWN_UNWIRED en YAML (no en este .py) pasa."""
+    motor = _motor(
+        tmp_path,
+        {
+            "scripts/prepush_check.py": (
+                "DEBT = {\n"
+                '    "check_declared_a": "WOT-2026-024w",\n'
+                '    "check_declared_b": "WOT-2026-024w",\n'
+                "}\n"
+                "for g, owner in DEBT.items():\n"
+                "    print(f'  {g} -> {owner}')\n"
+            )
+        },
+        guards=["check_declared_a", "check_declared_b"],
+    )
+    wired, _ = cgw.audit(motor, _EMPTY_POLICY)
+    assert "check_declared_a" not in wired
+    assert "check_declared_b" not in wired
+
+
+# ---------------------------------------------------- policy format-checks (v2)
+def test_bad_owner_is_rejected(tmp_path, monkeypatch):
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "check_new.py").write_text("# g\n", encoding="utf-8")
+    (tmp_path / ".pre-commit-config.yaml").write_text(
+        "repos:\n  - repo: local\n    hooks:\n      []\n", encoding="utf-8"
+    )
+    policy_yaml = tmp_path / "scripts" / "guard_wiring_policy.yaml"
+    policy_yaml.write_text(
+        "known_unwired:\n  check_new: 'texto libre no es ticket'\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(cgw, "POLICY_PATH", policy_yaml)
+    assert cgw.main(["--motor-root", str(tmp_path)]) == 1
+
+
+def test_stale_declaration_fails(tmp_path, monkeypatch):
+    """Un guard DECLARADO unwired que en realidad ESTA cableado -> stale -> FALLA."""
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "check_wired.py").write_text("# g\n", encoding="utf-8")
+    (tmp_path / ".pre-commit-config.yaml").write_text(
+        "repos:\n  - repo: local\n    hooks:\n"
+        "      - id: h\n        entry: python scripts/check_wired.py\n"
+        "        stages: [pre-commit]\n",
+        encoding="utf-8",
+    )
+    policy_yaml = tmp_path / "scripts" / "guard_wiring_policy.yaml"
+    policy_yaml.write_text(
+        "known_unwired:\n  check_wired: WOT-2026-024w\n", encoding="utf-8"
+    )
+    baseline_yaml = tmp_path / "baseline.yaml"
+    baseline_yaml.write_text("wired_baseline: {}\n", encoding="utf-8")
+    monkeypatch.setattr(cgw, "POLICY_PATH", policy_yaml)
+    monkeypatch.setattr(cgw, "BASELINE_PATH", baseline_yaml)
+    assert cgw.main(["--motor-root", str(tmp_path)]) == 1
+
+
+def test_prefix_is_not_a_substring_match(tmp_path):
+    """Regresion de v1 conservada: check_backlog no casa check_backlog_commits_landed."""
+    motor = _motor(
+        tmp_path,
+        {
+            "scripts/prepush_check.py": (
+                "import subprocess, sys\n"
+                'subprocess.run([sys.executable, "scripts/check_backlog_long.py"])\n'
+            )
+        },
+        guards=["check_backlog", "check_backlog_long"],
+    )
+    wired, unwired = cgw.audit(motor, _EMPTY_POLICY)
+    assert "check_backlog_long" in wired
+    assert "check_backlog" in unwired, "el prefijo no hereda el cableado del largo"

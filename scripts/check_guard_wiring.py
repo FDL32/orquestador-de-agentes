@@ -1,66 +1,68 @@
 #!/usr/bin/env python3
 """Guard-of-guards: a guard nobody invokes is a norm, not a barrier (WOT-2026-024u).
 
-The disease this exists to stop
--------------------------------
-On 2026-07-14 the same failure appeared five times in one day, always with the same
-shape: **the guard existed, worked, was fail-closed -- and nothing invoked it.**
+Un guard esta WIRED sii una superficie que CORRE SOLA alcanza una POSICION DE
+EJECUCION cuyo argumento es (transitivamente, con UN salto interprocedural) el
+nombre de ese guard. Dos ejes ortogonales; ambos deben ser verdad:
 
-- `check_worktree_topology.py` detects "you are committing from the detached consumption
-  checkout" and exits 1 with the right message. It was in ZERO of the pre-commit hooks.
-  A session committed there anyway; its two commits landed on a detached HEAD, reachable
-  from no branch, one `sync_principal.py` away from being lost.
-- `check_motor_pristine.py --check` has no call-site at all.
-- The portable-memory archive is written, versioned and pushed -- and **nothing reads
-  it back** (`bus/memory_loader.py` reads the gitignored runtime file, not the archive).
+  EJE FRONTERA  -- la superficie corre sola: un hook de pre-commit no-manual, un
+    step de workflow bajo push/pull_request sin `if:false`, el `command` de un
+    hook de settings.json, y el cuerpo (mas su cierre de imports) de prepush /
+    session_closeout / closeout_steps / preflight / el controller. Prompts,
+    skills, comentarios, docstrings y TESTS no son superficies: son normas.
 
-What counts as WIRED (and what emphatically does not)
------------------------------------------------------
-A guard is WIRED if something that RUNS ON ITS OWN invokes it: an automatic pre-commit
-hook, CI, `prepush_check`, the session closeout, a pipeline preflight, the controller, or
-the Claude Code tool-call hooks. Being cited in a prompt, a skill or AGENTS.md is NOT
-wiring: it is a norm, and this repo has broken its own norms repeatedly.
+  EJE POSICION  -- el nombre esta como argumento de un SINK de lista CERRADA
+    (subprocess.*, os.system/exec*, runpy, importlib.import_module,
+    spec_from_file_location, exec/eval, un import, o un callable INYECTADO por
+    parametro), o fluye a el por UN salto: (a) una variable de fichero asignada
+    con el string; (b) un wrapper local (una funcion del mismo fichero que
+    contiene un sink es ella misma un sink); (c) el return con nombre resuelto de
+    una funcion local. En YAML/JSON, el `entry:` / `run:` / `command` ES la
+    posicion (se tokeniza como linea de comando).
 
-The first version of this module was itself a false-green -- caught by an adversarial
-sibling audit before it ever reached origin. It matched guard names against the raw TEXT
-of the self-running files, which meant:
+Todo lo demas es UNWIRED por defecto (FAIL-CLOSED). Un print, un help=, un
+mensaje de error, una clave de dict, un `name:` de hook, una lista de bullets, un
+`SKIP_GUARDS`, un `if False:`, un `permissions.deny`, un `stages:[manual]`, un
+`workflow_dispatch` -- ninguno alcanza un sink bajo una superficie que corre sola.
+Preferimos SIEMPRE un falso-UNWIRED ruidoso (el guard grita "declara esto") a un
+falso-WIRED silencioso (que apaga la asimetria sin avisar).
 
-- a guard named only inside a **YAML comment** counted as wired (`check_ruff_hook_scope`
-  appears exactly once in `.pre-commit-config.yaml`, in the comment on the ruff hook --
-  and nothing executes it);
-- a hook with **`stages: [manual]`** counted as wired, though a manual hook is by
-  definition something a human must remember to run (`check_hook_interpreter`);
-- a **substring** counted as a match, so a future `scripts/check_backlog.py` would have
-  been blessed by the existing `check_backlog_commits_landed`;
-- and the inventory only globbed `scripts/`, so it never even saw `.agent/hooks/
-  guard_paths.py` -- the write-guard, the very example the docstring above cites.
+Por que existe (y por que esta es la 4a version)
+------------------------------------------------
+El 2026-07-14 el mismo fallo salio cinco veces en un dia: el guard existia,
+funcionaba, era fail-closed... y nada lo invocaba. v1 bendecia COMENTARIOS de
+YAML; v2 filtraba comentarios y conservaba cualquier CONSTANTE STRING (print,
+help=); v3 clasificaba por CONTENEDOR (listas, path-chains) -- 54 de 56
+construcciones de prosa salian WIRED. Las tres midieron su propiedad con una vara
+mas floja que la que predican y salieron verdes: 16 tests, 4 gates y 4094 de
+suite pasaron sobre el defecto, porque todos eran hermeticos y el fallo vivia en
+la frontera con el repo REAL. Los cazo una auditoria adversarial en contexto
+fresco. Un workflow de recon+diseno+ataque (3+3+6 agentes) refuto por ejecucion
+la "restriccion dura" que yo daba por cierta: posicion + 1 salto SI decide el
+cableado aqui (12/12 cableados reales, 0 regresiones), medido en el repo vivo.
 
-So this version extracts invocations STRUCTURALLY (YAML is parsed; Python is parsed with
-`ast`, and comments and docstrings are discarded) and matches on word boundaries. A guard
-mentioned in prose is not a guard that runs.
+La asimetria -- ahora DOBLE (WOT-2026-024u, hallazgo del des-cableado)
+---------------------------------------------------------------------
+- Un guard NUEVO sin cablear y sin declarar FALLA. Es lo unico que frena la deuda.
+- Un guard que ESTABA cableado por un call-site y deja de estarlo tambien FALLA
+  (deteccion de des-cableado). v3 era CIEGO a esto: 3 de los cableados se
+  sostenian tambien con prosa viva, asi que borrar su call-site real no los ponia
+  unwired. El baseline por-ARISTA (fichero) lo caza sin falsos rojos por edits.
 
-The asymmetric rule
--------------------
-- **Existing debt WARNS.** Failing on every unwired guard would be dead noise and would
-  block every close until they are all wired.
-- **A NEW guard FAILS.** If you add a guard and wire it nowhere, this check stops you.
-  That is the only rule that makes the debt stop growing.
-- **A STALE entry FAILS.** If a declared-unwired guard gets wired (or deleted), its
-  allowlist entry must go. Otherwise the allowlist rots into a cemetery that pre-blesses
-  any future file with that name.
+Lo que el AST no decide se DECLARA, no se adivina
+-------------------------------------------------
+Makefile / shell / callable a >1 salto / glob-discovery / wiring-via-test:
+`wired_via` (fichero:linea + probe), con la misma asimetria y deteccion de stale
+que `known_unwired`. Guards reales SIN prefijo (`pre_handoff_guard`): `extra_guards`.
+Los tres bloques viven en `scripts/guard_wiring_policy.yaml` -- NO en este .py: la
+deuda dentro de un fichero de la frontera se auto-DoSea (un paso que la imprima
+para reportarla cablearia a los declarados; medido: 2/3).
 
-The debt is NAMED IN CODE (`KNOWN_UNWIRED`), each entry with the ticket that owns it, or
-an explicit `BY-DESIGN:` reason. A silent allowlist is how debt becomes invisible; a loud
-one is how it gets paid. The owner is format-checked: a free-text owner is how the ghost
-ticket WOT-2026-021a survived (decision accepted, zero rows in the backlog).
-
-This module does NOT exempt itself. It cannot fail when it is unwired -- nothing would run
-it -- but `tests/unit/test_check_guard_wiring.py` audits the real repo, and the suite runs
-in CI. Remove the hook and CI goes red. That is what closes the loop.
-
-Before: run from anywhere; resolves the motor root from this file's location.
-After:  exit 0 = every unwired guard is a declared, ticketed exception.
-        exit 1 = a guard runs nowhere and is undeclared, or an allowlist entry is stale.
+Antes: se corre desde cualquier sitio; resuelve el motor desde la ruta del fichero.
+Despues: exit 0 = cada guard sin cablear es una excepcion declarada y con dueno, y
+         cada guard del baseline sigue cableado desde su fichero. exit 1 = un guard
+         corre en ningun sitio y no esta declarado, una entrada esta stale, o un
+         guard se ha des-cableado.
 """
 
 from __future__ import annotations
@@ -69,6 +71,9 @@ import argparse
 import ast
 import json
 import re
+import shlex
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -76,186 +81,634 @@ import yaml
 
 
 MOTOR_ROOT = Path(__file__).resolve().parent.parent
+POLICY_PATH = MOTOR_ROOT / "scripts" / "guard_wiring_policy.yaml"
+BASELINE_PATH = MOTOR_ROOT / "tests" / "fixtures" / "guard_wiring_wired_baseline.yaml"
 
 GUARD_PREFIXES = ("check_", "validate_", "guard_")
-
-# Where a guard can live. `scripts/` is not the only place: the write-guard lives in
-# `.agent/hooks/`, and the first version of this module was blind to it.
 GUARD_DIRS = ("scripts", ".agent/hooks", "skills", "tools", "bus", "runtime")
 
-# An owner is a ticket that will wire it, or an explicit by-design exemption. Free text is
-# how a ghost ticket (WOT-2026-021a: decision accepted, zero rows in the backlog) survives.
 _TICKET = re.compile(r"^WOT-\d{4}-\d{3}[a-z]$")
 _BY_DESIGN = "BY-DESIGN:"
 
-KNOWN_UNWIRED: dict[str, str] = {
-    # Cited in prompts, executed by nobody. The orchestrator ran these BY HAND on
-    # 2026-07-14 as mandatory barriers -- they worked because someone remembered.
-    "check_backlog_commits_landed": "WOT-2026-024c",  # barrera 6 del batch, a mano
-    "validate_batch_dag": "WOT-2026-023t",  # gate de frescura del DAG, a mano
-    "validate_observations": "WOT-2026-024r",  # canal de memoria, a mano
-    "check_portable_memory_promotion": "WOT-2026-024r",
-    "check_motor_pristine": "WOT-2026-023y",  # --check no tiene un solo call-site
-    "check_destino_publish_ready": "WOT-2026-023b",
-    "validate_contract_formation": "WOT-2026-023m",
-    "validate_agent_config": "WOT-2026-019o",  # su ficha lo declara: no valida agents.json
-    # Deuda que el parser HONESTO destapo (la version anterior los daba por cableados).
-    # WOT-2026-024w es el ticket que los cablea o los retira: un dueno REAL, no un puntero
-    # al propio 024u, cuyos NON-GOALS dicen por escrito que no los va a cablear.
-    "check_ruff_hook_scope": "WOT-2026-024w",  # su unica cita era un COMENTARIO del yaml
-    "check_skill_collisions": "WOT-2026-024w",
-    "check_ticket_nomenclature": "WOT-2026-024w",
-    "check_closeout_reconciliation": "WOT-2026-024w",
-    "check_motor_destination_integration": "WOT-2026-024w",
-    "check_publication_gate": "WOT-2026-024w",
-    "check_template_conformity": "WOT-2026-024w",
-    "validate_authority": "WOT-2026-024w",
-    # Exencion DELIBERADA, no deuda: un hook automatico seria circular -- el propio hook
-    # roto no puede invocar de forma fiable al check que detecta que esta roto.
-    "check_hook_interpreter": (
-        f"{_BY_DESIGN} stage manual deliberado; un hook automatico seria circular "
-        "(el hook roto no puede invocar al check que detecta que esta roto)"
-    ),
+# Lista CERRADA de sinks de ejecucion. `echo`/`print`/`cat` NO estan: eso es lo que
+# mata la prosa-con-un-path. Se comparan por nombre punteado y por forma corta.
+_EXEC_SINKS = frozenset(
+    {
+        "subprocess.run",
+        "subprocess.Popen",
+        "subprocess.call",
+        "subprocess.check_call",
+        "subprocess.check_output",
+        "os.system",
+        "os.popen",
+        "os.execv",
+        "os.execvp",
+        "os.execve",
+        "runpy.run_path",
+        "runpy.run_module",
+        "importlib.import_module",
+        "import_module",
+        "__import__",
+        # carga dinamica por ruta de fichero -> ejecuta el modulo (construct H):
+        "importlib.util.spec_from_file_location",
+        "util.spec_from_file_location",
+        "spec_from_file_location",
+        "exec",
+        "eval",
+        # formas cortas (from subprocess import run):
+        "run",
+        "Popen",
+        "call",
+        "check_call",
+        "check_output",
+        "system",
+    }
+)
+
+_LAUNCHERS = {
+    "python",
+    "python3",
+    "python.exe",
+    "py",
+    "uv",
+    "uvx",
+    "pipx",
+    "poetry",
+    "hatch",
+    "sh",
+    "bash",
+    "zsh",
+    "pwsh",
+    "powershell",
+    "cmd",
+    "node",
+    "npx",
+    "pytest",
+    "pre-commit",
+    "make",
+    "just",
+    "nox",
+    "tox",
+}
+_C_FLAGS = {"-c", "-lc", "-Command", "-command", "/c"}
+_AUTO_TRIGGERS = {
+    "push",
+    "pull_request",
+    "pull_request_target",
+    "schedule",
+    "merge_group",
+    "release",
 }
 
 
-def self_running_paths(root: Path) -> list[Path]:
-    """Paths that RUN ON THEIR OWN. Being invoked from one of these is what wired means.
+# --------------------------------------------------------------------- policy I/O
+def _load_policy(path: Path | None = None) -> dict:
+    path = path or POLICY_PATH
+    if not path.exists():
+        return {"known_unwired": {}, "extra_guards": {}, "wired_via": {}}
+    data = yaml.safe_load(path.read_text(encoding="utf-8", errors="replace")) or {}
+    return {
+        "known_unwired": data.get("known_unwired") or {},
+        "extra_guards": data.get("extra_guards") or {},
+        "wired_via": data.get("wired_via") or {},
+    }
 
-    Prompts, skills and AGENTS.md are deliberately absent: those are norms, not mechanisms.
-    """
+
+def _load_baseline(path: Path | None = None) -> dict[str, list[str]]:
+    path = path or BASELINE_PATH
+    if not path.exists():
+        return {}
+    data = yaml.safe_load(path.read_text(encoding="utf-8", errors="replace")) or {}
+    return data.get("wired_baseline") or {}
+
+
+# --------------------------------------------------------------- form of a token
+def _guard_stem(basename: str) -> str | None:
+    stem = basename[:-3] if basename.endswith(".py") else basename
+    return stem if stem.startswith(GUARD_PREFIXES) else None
+
+
+def _path_tokens_in(s: str) -> list[str]:
+    """Basenames of .py path TOKENS in a command line. A bare stem ('check_x') is
+    NOT a token -- that keeps a `name=`/`choices=`/Enum value out. Y una FRASE con
+    un .py incrustado en markdown/backticks tampoco casa: el token debe ser limpio."""
+    out: list[str] = []
+    for raw in re.split(r"[\s,;]+", s.strip()):
+        tok = raw.strip().strip("\"'")
+        if tok.lower().endswith(".py") and re.fullmatch(
+            r"[A-Za-z0-9_.:/\\~$@{}+-]+", tok
+        ):
+            out.append(re.split(r"[/\\]", tok)[-1])
+    return out
+
+
+def _command_tokens(s: str, depth: int = 0) -> list[str]:
+    """Path-token basenames of a command line whose argv[0] is an allowlisted
+    launcher. Recurses into -c/-lc payloads (depth<=2). Empty for a phrase."""
+    s = (s or "").strip()
+    if not s or depth > 2:
+        return []
+    try:
+        argv = shlex.split(s, posix=True)
+    except ValueError:
+        argv = s.split()
+    while (
+        argv and "=" in argv[0] and not argv[0].startswith("-") and "/" not in argv[0]
+    ):
+        argv = argv[1:]  # VAR=x prefix
+    if not argv:
+        return []
+    exe = re.split(r"[/\\]", argv[0])[-1].lower()
+    if exe not in _LAUNCHERS:
+        return []
+    out: list[str] = []
+    i = 1
+    while i < len(argv):
+        tok = argv[i]
+        if tok in _C_FLAGS and i + 1 < len(argv):
+            out += _payload_tokens(argv[i + 1], exe, depth + 1)
+            i += 2
+            continue
+        if tok == "-m" and i + 1 < len(argv):
+            mod = argv[i + 1].split(".")[-1]
+            if _guard_stem(mod):
+                out.append(mod + ".py")
+            i += 2
+            continue
+        out += _path_tokens_in(tok)
+        i += 1
+    return out
+
+
+def _payload_tokens(payload: str, exe: str, depth: int) -> list[str]:
+    """A -c payload: python source (parse it) or a shell line (recurse)."""
+    if exe.startswith("py"):
+        try:
+            return [b for b, _ in _python_invocations(payload)]
+        except SyntaxError:
+            return []
+    out: list[str] = []
+    for line in re.split(r"[\n;&|]+", payload):
+        out += _command_tokens(line, depth)
+    return out
+
+
+# ------------------------------------------------ python: position + 1 hop
+def _dotted(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return f"{_dotted(node.value)}.{node.attr}"
+    return ""
+
+
+def _strings_in(node: ast.AST) -> list[str]:
     return [
-        root / ".pre-commit-config.yaml",
-        *(root / ".github" / "workflows").glob("*.yml"),
-        root / ".claude" / "settings.json",  # los hooks de tool-call: corren solos
-        root
-        / ".agent"
-        / "hooks"
-        / "claude_guard_entry.py",  # el dispatcher del write-guard
-        root / "scripts" / "prepush_check.py",
-        root / "scripts" / "session_closeout.py",
-        *(root / "scripts" / "closeout_steps").glob("*.py"),
-        *(root / "scripts").glob("preflight_*.py"),
-        root / ".agent" / "agent_controller.py",
+        n.value
+        for n in ast.walk(node)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str)
     ]
 
 
-def _hook_runs_on_its_own(hook: dict) -> bool:
-    """A hook whose ONLY stage is `manual` does not run on its own: it is a norm."""
-    stages = hook.get("stages")
-    if not stages:
-        return True  # sin `stages` -> todos los stages por defecto
-    return any(s != "manual" for s in stages)
+def _is_const_false(node: ast.AST) -> bool:
+    """`False`, `0`, `None` como condicion literal de un `if` -> rama muerta."""
+    return isinstance(node, ast.Constant) and not node.value
 
 
-def _invocations_in_yaml(path: Path) -> str:
-    """Parse the YAML. Comments vanish; manual-only pre-commit hooks are dropped."""
-    data = yaml.safe_load(path.read_text(encoding="utf-8", errors="replace")) or {}
-    if path.name == ".pre-commit-config.yaml":
-        auto = [
-            h
-            for repo in data.get("repos", [])
-            for h in repo.get("hooks", [])
-            if _hook_runs_on_its_own(h)
-        ]
-        return json.dumps(auto)
-    return json.dumps(data)
+def _prune_dead_branches(tree: ast.AST) -> None:
+    """Vacia in-place el cuerpo de cada `if <falsy-literal>:` (deja el `orelse`).
 
-
-def _invocations_in_python(path: Path) -> str:
-    """Strings and imports, via `ast`. Comments and docstrings are NOT invocations."""
-    tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
-    docstrings: set[int] = set()
+    No es un evaluador de constantes general (eso seria adivinar): solo el literal
+    directo, que es la forma de la familia disabled_code (`if False:`)."""
     for node in ast.walk(tree):
-        is_scope = isinstance(
-            node, ast.Module | ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
+        for field in ("body", "orelse", "finalbody"):
+            block = getattr(node, field, None)
+            if not isinstance(block, list):
+                continue
+            for stmt in block:
+                if isinstance(stmt, ast.If) and _is_const_false(stmt.test):
+                    stmt.body = []  # la rama que nunca corre
+
+
+def _python_invocations(src: str) -> list[tuple[str, int]]:  # noqa: C901 - el nucleo del analisis: 3 aristas de 1 salto + sinks + imports en una pasada
+    """(basename, lineno) de cada token de path de un guard en POSICION DE
+    EJECUCION de `src`, siguiendo las tres aristas de 1 salto. Los imports cuentan
+    (importar ejecuta el cuerpo).
+
+    Posicion, nunca contenedor: `["python", "scripts/check_x.py"]` casa porque es
+    una lista de comando en un arg de subprocess; `LINES = ["- check_x.py -manual"]`
+    no, porque el string es una frase (sin lanzador) y su lista no es arg de sink.
+    """
+    tree = ast.parse(src)
+    _prune_dead_branches(tree)
+    funcs: dict[str, ast.AST] = {
+        n.name: n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
+    }
+
+    def _has_sink(fn: ast.AST, depth: int = 2) -> bool:
+        for n in ast.walk(fn):
+            if isinstance(n, ast.Call):
+                d = _dotted(n.func)
+                if d in _EXEC_SINKS:
+                    return True
+                if depth and d in funcs and _has_sink(funcs[d], depth - 1):
+                    return True
+        return False
+
+    wrappers = {name for name, fn in funcs.items() if _has_sink(fn)}
+    sinks = _EXEC_SINKS | wrappers
+
+    env: dict[str, list[str]] = {}
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Assign):
+            for t in n.targets:
+                if isinstance(t, ast.Name):
+                    env.setdefault(t.id, []).extend(_strings_in(n.value))
+        elif isinstance(n, ast.AugAssign) and isinstance(n.target, ast.Name):
+            env.setdefault(n.target.id, []).extend(_strings_in(n.value))
+
+    returns: dict[str, list[str]] = {}
+    for name, fn in funcs.items():
+        rs: list[str] = []
+        for n in ast.walk(fn):
+            if isinstance(n, ast.Return) and n.value is not None:
+                rs += _strings_in(n.value)
+                for sub in ast.walk(n.value):
+                    if isinstance(sub, ast.Name) and sub.id in env:
+                        rs += env[sub.id]
+        returns[name] = rs
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Assign):
+            for t in n.targets:
+                if isinstance(t, ast.Name):
+                    for sub in ast.walk(n.value):
+                        if isinstance(sub, ast.Call) and _dotted(sub.func) in returns:
+                            env.setdefault(t.id, []).extend(returns[_dotted(sub.func)])
+
+    out: list[tuple[str, int]] = []
+
+    # imports = ejecucion. Casar el segmento MODULO, no un symbol importado (una
+    # colision de nombres bendeciria `from scripts.check_x import main` como `main`).
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Import):
+            for a in n.names:
+                for seg in a.name.split("."):
+                    if _guard_stem(seg):
+                        out.append((seg + ".py", n.lineno))  # noqa: PERF401
+        elif isinstance(n, ast.ImportFrom):
+            for seg in (n.module or "").split("."):
+                if _guard_stem(seg):
+                    out.append((seg + ".py", n.lineno))  # noqa: PERF401
+
+    params_of: dict[str, set[str]] = {}
+    for name, fn in funcs.items():
+        params_of[name] = {a.arg for a in fn.args.args} | {
+            a.arg for a in getattr(fn.args, "kwonlyargs", [])
+        }
+
+    for scope in [tree, *funcs.values()]:
+        sname = getattr(scope, "name", None)
+        params = params_of.get(sname, set())
+        for n in ast.walk(scope):
+            if not isinstance(n, ast.Call):
+                continue
+            d = _dotted(n.func)
+            injected = isinstance(n.func, ast.Name) and n.func.id in params
+            if d not in sinks and not injected:
+                continue
+            args = list(n.args) + [kw.value for kw in n.keywords]
+            for arg in args:
+                for s in _strings_in(arg):
+                    for base in _path_tokens_in(s) or _command_tokens(s):
+                        out.append((base, getattr(arg, "lineno", n.lineno)))  # noqa: PERF401
+                for sub in ast.walk(arg):
+                    if isinstance(sub, ast.Name):
+                        for s in env.get(sub.id, []) + returns.get(sub.id, []):
+                            for base in _path_tokens_in(s) or _command_tokens(s):
+                                out.append((base, n.lineno))  # noqa: PERF401
+                    if isinstance(sub, ast.Call) and _dotted(sub.func) in returns:
+                        for s in returns[_dotted(sub.func)]:
+                            for base in _path_tokens_in(s) or _command_tokens(s):
+                                out.append((base, n.lineno))  # noqa: PERF401
+    return out
+
+
+# -------------------------------------------------- config: does it run on its own
+def _git() -> str:
+    return shutil.which("git") or "git"
+
+
+def _tracked(root: Path) -> list[str]:
+    try:
+        p = subprocess.run(  # noqa: S603
+            [_git(), "-C", str(root), "ls-files"],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
-        if is_scope and node.body and isinstance(node.body[0], ast.Expr):
-            val = node.body[0].value
-            if isinstance(val, ast.Constant) and isinstance(val.value, str):
-                docstrings.add(id(val))
-    out: list[str] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Constant):
-            if isinstance(node.value, str) and id(node) not in docstrings:
-                out.append(node.value)
-        elif isinstance(node, ast.Import):
-            out.extend(a.name for a in node.names)
-        elif isinstance(node, ast.ImportFrom):
-            mod = node.module or ""
-            out.append(mod)
-            out.extend(f"{mod}.{a.name}" for a in node.names)
-    return "\n".join(out)
+        if p.returncode == 0 and p.stdout.strip():
+            return p.stdout.splitlines()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return [
+        str(x.relative_to(root)).replace("\\", "/")
+        for x in root.rglob("*")
+        if x.is_file()
+    ]
 
 
-def invocation_text(root: Path) -> str:
-    """The haystack: only what the self-running paths actually INVOKE."""
-    chunks: list[str] = []
-    for p in self_running_paths(root):
-        if not p.exists():
+def _hook_fires(hook: dict, default_stages, files: list[str]) -> bool:
+    stages = hook.get("stages") or default_stages or []
+    if stages and all(s == "manual" for s in stages):
+        return False  # manual-only: es una norma
+    if hook.get("always_run"):
+        return True
+    inc, exc = hook.get("files"), hook.get("exclude")
+    cands = files
+    if inc:
+        cands = [f for f in cands if re.search(inc, f)]
+    if exc:
+        cands = [f for f in cands if not re.search(exc, f)]
+    return bool(cands)  # exclude:'.*' o files:'^$' -> nunca dispara
+
+
+def _workflow_runs(data: dict) -> bool:
+    on = data.get("on")
+    if on is None:
+        on = data.get(True)  # PyYAML parsea `on:` a secas como True
+    if isinstance(on, str):
+        on = [on]
+    if isinstance(on, dict | list):
+        return bool(_AUTO_TRIGGERS & set(on))
+    return False
+
+
+def _step_runs(step: dict) -> bool:
+    cond = step.get("if")
+    if cond is None:
+        return True
+    c = str(cond).strip().lower().replace("${{", "").replace("}}", "").strip()
+    return c not in {"false", "0", "'false'"}
+
+
+def _config_commands(root: Path) -> list[tuple[str, str]]:  # noqa: C901 - un parser por formato de config (yaml/json), ramas inherentes
+    """Cada comando que un ROOT config entrega a un shell, estructuralmente: (where,
+    cmd). Solo campos que EJECUTAN: `entry:` de un hook no-manual, `run:` de un step
+    vivo bajo un trigger automatico, `command` de un hook de settings.json
+    habilitado. Nunca `name:`, `exclude:`, `permissions.deny`, ni el dict/texto."""
+    cmds: list[tuple[str, str]] = []
+
+    pc = root / ".pre-commit-config.yaml"
+    if pc.exists():
+        data = yaml.safe_load(pc.read_text(encoding="utf-8", errors="replace")) or {}
+        files = _tracked(root)
+        ds = data.get("default_stages")
+        for repo in data.get("repos", []):
+            for h in repo.get("hooks", []):
+                if _hook_fires(h, ds, files) and h.get("entry"):
+                    entry_cmd = " ".join([h["entry"], *(h.get("args") or [])])
+                    cmds.append((f"{pc.name}:{h.get('id')}", entry_cmd))
+
+    wdir = root / ".github" / "workflows"
+    if wdir.exists():
+        for wf in sorted(list(wdir.glob("*.yml")) + list(wdir.glob("*.yaml"))):
+            data = (
+                yaml.safe_load(wf.read_text(encoding="utf-8", errors="replace")) or {}
+            )
+            if not _workflow_runs(data):
+                continue
+            for jname, job in (data.get("jobs") or {}).items():
+                if str((job or {}).get("if", "")).strip().lower() in (
+                    "false",
+                    "${{ false }}",
+                ):
+                    continue
+                for step in (job or {}).get("steps") or []:
+                    if not _step_runs(step) or not step.get("run"):
+                        continue
+                    for line in re.split(r"[\n;]+|&&|\|\|", step["run"]):
+                        line = line.split("#", 1)[0].strip()
+                        if line:
+                            cmds.append((f"{wf.name}:{jname}", line))
+
+    st = root / ".claude" / "settings.json"
+    if st.exists():
+        try:
+            data = json.loads(st.read_text(encoding="utf-8", errors="replace"))
+        except json.JSONDecodeError:
+            data = {}
+        for event, groups in (data.get("hooks") or {}).items():
+            for g in groups or []:
+                for h in g.get("hooks") or []:
+                    if h.get("enabled") is False or h.get("type") != "command":
+                        continue
+                    if h.get("command"):
+                        cmds.append((f"settings.json:{event}", h["command"]))
+    return cmds
+
+
+# ---------------------------------------------------------- derived frontier
+_DECLARED_ROOTS = (
+    "scripts/prepush_check.py",
+    "scripts/session_closeout.py",
+    ".agent/agent_controller.py",
+)
+_DECLARED_ROOT_GLOBS = ("scripts/preflight_*.py",)
+
+
+def _settings_py_literals(root: Path) -> list[Path]:
+    """Hallazgo #6: los hooks de settings.json son `python -c "<shim>"`. El shim es
+    un bootstrap sin prosa cuyo unico fin es localizar+ejecutar UN hook. MAX-RECALL
+    acotado: absorbe TODO `.py`-literal del payload a la frontera (la forma
+    `next(cands)` esconde el nombre de un sink; aqui la recall es segura porque no
+    hay superficie de prosa dentro de un shim de subprocess)."""
+    out: list[Path] = []
+    st = root / ".claude" / "settings.json"
+    if not st.exists():
+        return out
+    try:
+        data = json.loads(st.read_text(encoding="utf-8", errors="replace"))
+    except json.JSONDecodeError:
+        return out
+    for groups in (data.get("hooks") or {}).values():
+        for g in groups or []:
+            for h in g.get("hooks") or []:
+                if h.get("enabled") is False:
+                    continue
+                cmd = h.get("command") or ""
+                for m in re.finditer(r"[\w./\\-]+\.py", cmd):
+                    base = re.split(r"[/\\]", m.group(0))[-1]
+                    for d in (".agent/hooks", "scripts", ".", "tools"):
+                        p = root / d / base
+                        if p.exists():
+                            out.append(p)
+    return out
+
+
+def self_running_paths(root: Path) -> list[Path]:  # noqa: C901 - frontera derivada: semillas + config + cierre de imports
+    """La frontera DERIVADA: semillas + lo que ejecutan + su cierre de imports."""
+    seen: set[Path] = set()
+    order: list[Path] = []
+
+    def add(p: Path):
+        p = p.resolve()
+        if p.exists() and p not in seen:
+            seen.add(p)
+            order.append(p)
+
+    for rel in _DECLARED_ROOTS:
+        add(root / rel)
+    for pat in _DECLARED_ROOT_GLOBS:
+        for p in root.glob(pat):
+            add(p)
+    for _where, raw in _config_commands(root):
+        for base in _command_tokens(raw):
+            for d in ("scripts", ".agent/hooks", ".", "tools", "skills"):
+                add(root / d / base)
+    for p in _settings_py_literals(root):
+        add(p)
+
+    queue = list(order)
+    while queue:
+        cur = queue.pop()
+        if cur.suffix != ".py":
             continue
         try:
-            if p.suffix in (".yaml", ".yml"):
-                chunks.append(_invocations_in_yaml(p))
-            elif p.suffix == ".py":
-                chunks.append(_invocations_in_python(p))
-            else:
-                chunks.append(p.read_text(encoding="utf-8", errors="replace"))
-        except (yaml.YAMLError, SyntaxError, OSError) as exc:
-            # Fail-closed: si no puedo LEER un camino automatico, no puedo afirmar que un
-            # guard este cableado. Callarme aqui es exactamente el fallo que persigo.
-            raise SystemExit(
-                f"[guard-wiring] ERROR: no puedo analizar {p}: {exc}"
-            ) from exc
-    return "\n".join(chunks)
+            tree = ast.parse(cur.read_text(encoding="utf-8", errors="replace"))
+        except (SyntaxError, OSError):
+            continue
+        mods: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                mods += [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                mods.append(node.module)
+        for m in mods:
+            cand = root.joinpath(*m.split("."))
+            for p in (cand.with_suffix(".py"), cand / "__init__.py"):
+                if p.exists() and p.resolve() not in seen:
+                    add(p)
+                    queue.append(p.resolve())
+    return sorted(order)
 
 
-def find_guards(root: Path) -> list[str]:
-    names = {
-        p.stem
-        for d in GUARD_DIRS
-        for p in (root / d).glob("*.py")
-        if p.stem.startswith(GUARD_PREFIXES)
-    }
-    return sorted(names)
+# -------------------------------------------------------------- the audit
+def find_guards(root: Path, extra_guards: dict | None = None) -> dict[str, Path]:
+    """Denominador. rglob (no glob plano: v3 era ciego a subdirectorios) + los
+    guards sin prefijo DECLARADOS (no hay heuristica fiable de "esto es un guard")."""
+    names: dict[str, Path] = {}
+    for d in GUARD_DIRS:
+        base = root / d
+        if not base.exists():
+            continue
+        for p in base.rglob("*.py"):
+            if p.stem.startswith(GUARD_PREFIXES):
+                names.setdefault(p.stem, p)
+    for stem, rel in (extra_guards or {}).items():
+        p = root / rel
+        if p.exists():
+            names[stem] = p
+    return names
 
 
-def is_wired(guard: str, haystack: str) -> bool:
-    """Word-boundary match: `check_backlog` must NOT match `check_backlog_commits_landed`.
+def collect_evidence(
+    root: Path, extra_guards: dict | None = None
+) -> dict[str, list[tuple[str, int]]]:
+    """guard -> [(fichero_relativo, linea)] que lo cablean. La ARISTA (que fichero)
+    es subproducto: la usa la deteccion de des-cableado."""
+    ev: dict[str, list[tuple[str, int]]] = {}
+    extra_stems = set(extra_guards or {})
 
-    `_` is a word character, so `\\b` does not fire between `backlog` and `_commits`.
-    """
-    return re.search(rf"\b{re.escape(guard)}\b", haystack) is not None
+    def push(base: str, where: str, line: int):
+        stem = base[:-3] if base.endswith(".py") else base
+        g = _guard_stem(base) or (stem if stem in extra_stems else None)
+        if g:
+            ev.setdefault(g, []).append((where, line))
+
+    for where, raw in _config_commands(root):
+        for base in _command_tokens(raw):
+            push(base, where, 0)
+
+    for p in self_running_paths(root):
+        if p.suffix != ".py":
+            continue
+        try:
+            src = p.read_text(encoding="utf-8", errors="replace")
+            rel = (
+                str(p.relative_to(root)).replace("\\", "/")
+                if root in p.parents
+                else p.name
+            )
+            for base, line in _python_invocations(src):
+                push(base, rel, line)
+        except (SyntaxError, OSError, ValueError):
+            continue
+    return ev
 
 
-def audit(root: Path) -> tuple[list[str], list[str]]:
-    haystack = invocation_text(root)
+def audit(root: Path, policy: dict | None = None):
+    """Devuelve (wired, unwired) -- compat con la firma de v1-v3."""
+    policy = policy or _load_policy()
+    guards = find_guards(root, policy["extra_guards"])
+    ev = collect_evidence(root, policy["extra_guards"])
     wired, unwired = [], []
-    for g in find_guards(root):
-        (wired if is_wired(g, haystack) else unwired).append(g)
+    for g in sorted(guards):
+        (wired if ev.get(g) else unwired).append(g)
     return wired, unwired
 
 
-def _bad_owners() -> list[str]:
+def wiring_edges(root: Path, policy: dict | None = None) -> dict[str, set[str]]:
+    """guard -> conjunto de FICHEROS que lo cablean. La 'arista' robusta a edits
+    inocentes (no fija numeros de linea, solo el fichero+config de origen)."""
+    policy = policy or _load_policy()
+    ev = collect_evidence(root, policy["extra_guards"])
+    return {g: {where.split(":")[0] for where, _ln in sites} for g, sites in ev.items()}
+
+
+# ---------------------------------------------------------------- format-check
+def _bad_owners(known_unwired: dict) -> list[str]:
     return [
         f"{g} -> {owner!r}"
-        for g, owner in KNOWN_UNWIRED.items()
-        if not (_TICKET.match(owner) or owner.startswith(_BY_DESIGN))
+        for g, owner in known_unwired.items()
+        if not (_TICKET.match(str(owner)) or str(owner).startswith(_BY_DESIGN))
     ]
 
 
-def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+def _dewired(root: Path, policy: dict) -> list[str]:
+    """Guards del baseline que YA NO se cablean desde su fichero declarado. La
+    asimetria gemela: un guard que estaba WIRED por un call-site y lo perdio."""
+    baseline = _load_baseline()
+    if not baseline:
+        return []
+    edges = wiring_edges(root, policy)
+    bad: list[str] = []
+    for guard, expected_files in baseline.items():
+        got = edges.get(guard, set())
+        exp = {e.split(":")[0] for e in expected_files}
+        if not got or not (got & exp):
+            bad.append(
+                f"{guard}: esperaba cableado desde {sorted(exp)}, ahora {sorted(got) or 'NADA'}"
+            )
+    return bad
+
+
+def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI: format-check + des-cableado + declarados + stale
+    ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[0])
     ap.add_argument("--motor-root", default=str(MOTOR_ROOT))
     ap.add_argument(
         "--strict",
         action="store_true",
-        help="fail on the declared debt too (retro audit; the BY-DESIGN entries never fail)",
+        help="fail on the declared debt too (retro audit; BY-DESIGN never fails)",
     )
     args = ap.parse_args(argv)
     root = Path(args.motor_root).resolve()
+    policy = _load_policy()
+    known = policy["known_unwired"]
+    wired_via = policy["wired_via"]
 
-    bad = _bad_owners()
+    bad = _bad_owners(known)
     if bad:
         print("[guard-wiring] ERROR: allowlist entries with an unusable owner:")
         for b in bad:
@@ -263,54 +716,67 @@ def main(argv: list[str] | None = None) -> int:
         print("  An owner must be a ticket (WOT-YYYY-NNNx) or start with 'BY-DESIGN:'.")
         return 1
 
-    wired, unwired = audit(root)
-    undeclared = [g for g in unwired if g not in KNOWN_UNWIRED]
-    declared = [g for g in unwired if g in KNOWN_UNWIRED]
-    stale = sorted(set(KNOWN_UNWIRED) - set(unwired))
+    wired, unwired = audit(root, policy)
+    unwired = [g for g in unwired if g not in wired_via]
+    undeclared = [g for g in unwired if g not in known]
+    declared = [g for g in unwired if g in known]
+    stale = sorted((set(known) | set(wired_via)) & set(wired))
 
     print(
         f"[guard-wiring] {len(wired)} wired / {len(unwired)} unwired "
-        f"({len(declared)} declared, {len(undeclared)} UNDECLARED, {len(stale)} stale)"
+        f"({len(declared)} declared, {len(undeclared)} UNDECLARED, "
+        f"{len(wired_via)} via, {len(stale)} stale)"
     )
+
+    dewired = _dewired(root, policy)
+    if dewired:
+        print("\n[guard-wiring] ERROR: guard(s) DES-CABLEADOS (estaban wired, ya no):")
+        for d in dewired:
+            print(f"    {d}")
+        print(
+            "\n  La asimetria gemela: un guard que perdio su call-site real sigue\n"
+            "  pareciendo cableado si otra cosa (prosa, otro fichero) lo menciona.\n"
+            "  Restaura el cableado, o si el des-cableado es intencional actualiza\n"
+            "  tests/fixtures/guard_wiring_wired_baseline.yaml en este mismo commit."
+        )
+        return 1
 
     if declared:
         print("[guard-wiring] declared, each with its owner:")
         for g in declared:
-            print(f"    {g}  -> {KNOWN_UNWIRED[g]}")
+            print(f"    {g}  -> {known[g]}")
 
     if undeclared:
         print("\n[guard-wiring] ERROR: guard(s) that run NOWHERE and are NOT declared:")
         for g in undeclared:
             print(f"    {g}")
         print(
-            "\n  A guard nobody invokes is a norm, not a barrier -- and this repo has\n"
-            "  broken its own norms repeatedly. WIRE IT into a self-running path\n"
-            "  (pre-commit, CI, prepush, closeout, preflight, controller, tool-call\n"
-            "  hooks), or add it to KNOWN_UNWIRED with the ticket that will."
+            "\n  A guard nobody invokes is a norm, not a barrier. WIRE IT into a\n"
+            "  self-running path, or declare it in scripts/guard_wiring_policy.yaml\n"
+            "  (known_unwired with a ticket, or wired_via with file:line + probe)."
         )
         return 1
 
     if stale:
-        print(
-            "\n[guard-wiring] ERROR: stale allowlist entr(ies) -- wired now, or gone:"
-        )
+        print("\n[guard-wiring] ERROR: stale declaration(s) -- wired now, or gone:")
         for g in stale:
-            print(f"    {g}  (declared unwired, but it is not)")
+            print(f"    {g}  (declared unwired/via, but it IS wired)")
         print(
-            "\n  Remove them. An allowlist that keeps entries for guards that no longer\n"
-            "  need them rots into a cemetery, and pre-blesses any future file with that\n"
-            "  name -- the exact false-green this module exists to stop."
+            "\n  Remove them from guard_wiring_policy.yaml. A cemetery pre-blesses any\n"
+            "  future file with that name -- the exact false-green this module stops."
         )
         return 1
 
-    debt = [g for g in declared if not KNOWN_UNWIRED[g].startswith(_BY_DESIGN)]
+    debt = [g for g in declared if not str(known[g]).startswith(_BY_DESIGN)]
     if args.strict and debt:
         print(
             f"\n[guard-wiring] --strict: {len(debt)} guard(s) of declared debt count as failure."
         )
         return 1
 
-    print("[guard-wiring] OK: every unwired guard is a declared, owned exception.")
+    print(
+        "[guard-wiring] OK: cada guard sin cablear esta declarado; el baseline se sostiene."
+    )
     return 0
 
 

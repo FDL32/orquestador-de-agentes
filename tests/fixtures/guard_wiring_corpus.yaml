@@ -1,0 +1,491 @@
+# CORPUS DE CABLEADO (WOT-2026-024u) -- la especificacion EJECUTABLE de check_guard_wiring.
+#
+# Por que existe. Este modulo ha fallado TRES veces con la MISMA forma: el autor enumera
+# las posiciones de invocacion que se le ocurren, escribe tests exactamente para esas, y
+# la mutation-verify sale verde -- porque solo demuestra que los tests cubren las ramas
+# que el autor IMAGINO. Enumerar no demuestra completitud.
+#
+# El corpus rompe ese bucle: la enumeracion deja de vivir en la cabeza del autor y pasa a
+# ser DATO versionado, revisable y ampliable. Cada caso que una auditoria adversarial
+# encuentre se ANADE AQUI, con su origen. El fichero crece; la memoria del autor no.
+#
+# Campos:
+#   case_id           identificador estable
+#   surface           que superficie auto-ejecutable se planta
+#   should_wire       veredicto ESPERADO (true = el guard debe salir WIRED)
+#   why               por que. Un `false` siempre explica que NADIE lo ejecuta.
+#   regression_origin de donde sale el caso: que version lo clasifico mal, o que
+#                     call-site REAL lo justifica. Un caso sin origen es un caso inventado.
+#   files             ficheros a plantar en el motor sintetico. {GUARD} = nombre del guard.
+#
+# El guard se llama siempre {GUARD} (= check_zzz) y vive en scripts/{GUARD}.py.
+# Si un caso no declara .pre-commit-config.yaml, se planta uno SIN hooks.
+
+version: 1
+guard_name: check_zzz
+
+cases:
+
+  # ------------------------------------------------------------------
+  # POSITIVOS: formas REALES de invocacion en este repo. Si alguna deja de
+  # salir WIRED, el clasificador introduce un FALSO-ROJO sobre codigo vivo.
+  # ------------------------------------------------------------------
+
+  - case_id: precommit_entry
+    surface: pre_commit
+    should_wire: true
+    why: El `entry:` de un hook automatico ES el comando que se ejecuta.
+    regression_origin: >
+      real: check_commit_worktree, check_guard_wiring, check_encoding_guard,
+      check_no_history_truncation, check_claude_settings_portability
+    files:
+      .pre-commit-config.yaml: |
+        repos:
+          - repo: local
+            hooks:
+              - id: the-hook
+                name: un hook cualquiera
+                entry: uv run python scripts/{GUARD}.py
+                stages: [pre-commit]
+
+  - case_id: precommit_prepush_stage
+    surface: pre_commit
+    should_wire: true
+    why: pre-push es automatico. Solo `manual` a secas deja de correr solo.
+    regression_origin: "falso-rojo gemelo del v1: sobrecorregir y matar todo hook multi-stage"
+    files:
+      .pre-commit-config.yaml: |
+        repos:
+          - repo: local
+            hooks:
+              - id: the-hook
+                entry: uv run python scripts/{GUARD}.py
+                stages: [pre-push, manual]
+
+  - case_id: python_import
+    surface: python_self_running
+    should_wire: true
+    why: Importar el modulo y llamarlo es ejecutarlo.
+    regression_origin: "real: check_backlog_contract (prepush_check.py), check_deliverables_exist (agent_controller.py)"
+    files:
+      scripts/prepush_check.py: |
+        from scripts.{GUARD} import validate
+
+        validate()
+
+  - case_id: command_list_to_subprocess
+    surface: python_self_running
+    should_wire: true
+    why: El string es un elemento del argv que se pasa a subprocess.
+    regression_origin: "real: check_worktree_topology (preflight_codeonly_pipeline.py:257)"
+    files:
+      scripts/prepush_check.py: |
+        import subprocess
+        import sys
+
+        subprocess.run([sys.executable, "scripts/{GUARD}.py", "--json"], check=False)
+
+  - case_id: path_chain_then_subprocess
+    surface: python_self_running
+    should_wire: true
+    why: El path se construye con `/` y se ejecuta en la MISMA funcion.
+    regression_origin: "real: validate_all (prepush_check.py:323)"
+    files:
+      scripts/prepush_check.py: |
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        p = Path(".") / "scripts" / "{GUARD}.py"
+        subprocess.run([sys.executable, str(p)], check=False)
+
+  - case_id: cross_function_return_then_subprocess
+    surface: python_self_running
+    should_wire: true
+    why: >
+      El path se construye en una funcion y se EJECUTA en otra. Cualquier regla
+      "el string debe alcanzar un sink en su propia funcion" da aqui un FALSO-ROJO
+      sobre el write-guard, que es el guard mas importante del repo.
+    regression_origin: "real: guard_paths (.agent/hooks/claude_guard_entry.py: resolve_guard_paths() -> main())"
+    files:
+      # claude_guard_entry.py entra en la frontera DERIVADO del command de settings.json
+      # (asi es en el repo real). Plantar el fichero sin la semilla lo dejaria fuera.
+      .claude/settings.json: |
+        {"hooks": {"PreToolUse": [{"hooks": [{"type": "command",
+          "command": "python .agent/hooks/claude_guard_entry.py"}]}]}}
+      .agent/hooks/claude_guard_entry.py: |
+        import subprocess
+        import sys
+        from pathlib import Path
+
+
+        def resolve_guard() -> Path:
+            return Path(".") / ".agent" / "hooks" / "{GUARD}.py"
+
+
+        def main() -> int:
+            g = resolve_guard()
+            return subprocess.run([sys.executable, str(g)], check=False).returncode
+
+  - case_id: injected_callable_runner
+    surface: python_self_running
+    should_wire: true
+    why: >
+      El modulo NO tiene subprocess: pasa el nombre del script a un callable INYECTADO
+      desde el llamador. La ejecucion cruza el limite del modulo, asi que "invocacion
+      probada" NO es decidible estaticamente. Reconocerlo es obligatorio.
+    regression_origin: "real: validate_ticket_prose (closeout_steps/gates.py:131 -> run_script_fn, inyectado por session_closeout.py)"
+    files:
+      # gates.py entra en la frontera por el import transitivo desde session_closeout.py
+      # (un DECLARED_ROOT). Sin la semilla, el fichero quedaria fuera de la frontera.
+      scripts/session_closeout.py: |
+        from scripts.closeout_steps.gates import step_validate  # noqa: F401
+      scripts/closeout_steps/__init__.py: ""
+      scripts/closeout_steps/gates.py: |
+        def step_validate(project_root, *, run_script_fn):
+            return run_script_fn("{GUARD}.py", ["--json"])
+
+  - case_id: workflow_run_on_push
+    surface: github_workflow
+    should_wire: true
+    why: Un step `run:` de un workflow que dispara en push corre solo.
+    regression_origin: "superficie automatica declarada en self_running_paths"
+    files:
+      .github/workflows/ci.yml: |
+        on:
+          push:
+        jobs:
+          j:
+            steps:
+              - run: python scripts/{GUARD}.py
+
+  # ------------------------------------------------------------------
+  # NEGATIVOS: menciones que NO ejecutan NADA. Un `true` aqui es un
+  # FALSO-WIRED, que desactiva en silencio la unica regla asimetrica del
+  # modulo ("un guard NUEVO sin cablear FALLA"). Es el defecto CRITICO.
+  # ------------------------------------------------------------------
+
+  - case_id: prose_list_of_manual_checks
+    surface: python_self_running
+    should_wire: false
+    negative_reason: prose
+    why: >
+      Una lista de bullets de markdown. El guard aparece dentro de una FRASE, no como
+      token de path. Nadie la ejecuta: es una lista de NORMAS.
+    regression_origin: >
+      v3 (2026-07-15) lo clasificaba WIRED. VECTOR VIVO: scripts/closeout_steps/support.py
+      contiene una lista titulada "The following checks are recommended but NOT automated
+      in this pipeline" -- anadir un guard ahi lo habria dado por cableado.
+    files:
+      scripts/prepush_check.py: |
+        LINES = [
+            "## Manual Recommendations",
+            "The following checks are recommended but not automated in this pipeline:",
+            "- `{GUARD}.py` - run manually if significant changes",
+        ]
+
+  - case_id: help_text_of_argparse
+    surface: python_self_running
+    should_wire: false
+    negative_reason: prose
+    why: Un `help=` es documentacion que se le imprime a un humano. No ejecuta nada.
+    regression_origin: "v2 (2026-07-14) lo clasificaba WIRED"
+    files:
+      scripts/prepush_check.py: |
+        import argparse
+
+        ap = argparse.ArgumentParser()
+        ap.add_argument("--x", help="ver scripts/{GUARD}.py para el detalle")
+
+  - case_id: print_message
+    surface: python_self_running
+    should_wire: false
+    negative_reason: prose
+    why: Un print() recuerda algo a un humano. Recordar no es ejecutar.
+    regression_origin: "v2 (2026-07-14) lo clasificaba WIRED"
+    files:
+      scripts/prepush_check.py: |
+        print("recuerda correr scripts/{GUARD}.py antes del push")
+
+  - case_id: error_message_constant
+    surface: python_self_running
+    should_wire: false
+    negative_reason: prose
+    why: >
+      Un mensaje de error asignado a una constante. Menciona el guard para decir que
+      NO esta disponible.
+    regression_origin: >
+      v2. Caso casi-vivo: claude_guard_entry.py lleva
+      "SECURITY HOOK INACTIVE: guard_paths.py could not be resolved" -- guard_paths solo
+      se clasificaba bien porque ADEMAS tiene un call-site real.
+    files:
+      scripts/prepush_check.py: |
+        MSG = "SECURITY HOOK INACTIVE: {GUARD}.py could not be resolved; write blocked"
+
+  - case_id: path_chain_only_printed
+    surface: python_self_running
+    should_wire: false
+    negative_reason: path_nonexecuted
+    why: >
+      El path se construye con `/` pero solo se IMPRIME. Construir un path no es
+      ejecutarlo. El docstring de v3 decia "(then executed)" y el codigo nunca lo
+      comprobaba.
+    regression_origin: "v3 (2026-07-15) lo clasificaba WIRED"
+    files:
+      scripts/prepush_check.py: |
+        from pathlib import Path
+
+        doc = Path(".") / "scripts" / "{GUARD}.py"
+        print(f"consulta {doc} para el detalle")
+
+  - case_id: docs_dict
+    surface: python_self_running
+    should_wire: false
+    negative_reason: prose
+    why: Un diccionario de documentacion. Es prosa con llaves.
+    regression_origin: "v3 (2026-07-15) lo clasificaba WIRED"
+    files:
+      scripts/prepush_check.py: |
+        DOCS = {"barreras": ["{GUARD}.py (a mano, obligatorio antes de cerrar)"]}
+
+  - case_id: yaml_comment
+    surface: pre_commit
+    should_wire: false
+    negative_reason: config_nonexec
+    why: Un comentario no ejecuta nada.
+    regression_origin: >
+      v1 (2026-07-14) lo clasificaba WIRED. Caso real: check_ruff_hook_scope, cuya UNICA
+      aparicion en .pre-commit-config.yaml es un comentario.
+    files:
+      .pre-commit-config.yaml: |
+        repos:
+          - repo: local
+            hooks:
+              []
+        # protegido por scripts/{GUARD}.py
+
+  - case_id: hook_name_label
+    surface: pre_commit
+    should_wire: false
+    negative_reason: label_only
+    why: >
+      El `name:` de un hook es una etiqueta humana; el `entry:` es el comando. Aqui el
+      hook EJECUTA otro script y solo MENCIONA a este en su etiqueta.
+    regression_origin: "v3 (2026-07-15) lo clasificaba WIRED (volcaba el dict entero del hook)"
+    files:
+      scripts/check_otro.py: |
+        # otro guard, este si se ejecuta
+      .pre-commit-config.yaml: |
+        repos:
+          - repo: local
+            hooks:
+              - id: the-hook
+                name: protege el arbol (ver scripts/{GUARD}.py)
+                entry: uv run python scripts/check_otro.py
+                stages: [pre-commit]
+
+  - case_id: manual_only_hook
+    surface: pre_commit
+    should_wire: false
+    negative_reason: manual_only
+    why: >
+      `stages: [manual]` significa que un humano tiene que acordarse de correrlo. Eso es
+      la definicion de NORMA.
+    regression_origin: "v1 (2026-07-14) lo clasificaba WIRED. Caso real: check_hook_interpreter"
+    files:
+      .pre-commit-config.yaml: |
+        repos:
+          - repo: local
+            hooks:
+              - id: the-hook
+                entry: uv run python scripts/{GUARD}.py
+                stages: [manual]
+
+  - case_id: workflow_dispatch_only
+    surface: github_workflow
+    should_wire: false
+    negative_reason: manual_only
+    why: >
+      `on: workflow_dispatch` = solo se lanza a mano. Es el GEMELO EXACTO del
+      `stages: [manual]` de pre-commit, y v3 arreglo uno y dejo el otro abierto.
+    regression_origin: "v3 (2026-07-15) lo clasificaba WIRED"
+    files:
+      .github/workflows/ci.yml: |
+        on:
+          workflow_dispatch:
+        jobs:
+          j:
+            steps:
+              - run: python scripts/{GUARD}.py
+
+  - case_id: workflow_step_if_false
+    surface: github_workflow
+    should_wire: false
+    negative_reason: disabled_ci
+    why: Un step deshabilitado no corre.
+    regression_origin: "v3 (2026-07-15) lo clasificaba WIRED"
+    files:
+      .github/workflows/ci.yml: |
+        on:
+          push:
+        jobs:
+          j:
+            steps:
+              - if: false
+                run: python scripts/{GUARD}.py
+
+  - case_id: prompt_citation
+    surface: prompt
+    should_wire: false
+    negative_reason: prose
+    why: >
+      La distincion que sostiene el modulo entero: ser citado en un prompt es una NORMA,
+      y este repo ha incumplido sus propias normas repetidamente.
+    regression_origin: "principio fundacional de 024u"
+    files:
+      prompts/cierre.md: |
+        Corre `python scripts/{GUARD}.py` antes de cerrar la sesion.
+
+  - case_id: settings_json_prose
+    surface: claude_settings
+    should_wire: false
+    negative_reason: config_nonexec
+    why: >
+      .claude/settings.json se leia como TEXTO CRUDO, asi que cualquier prosa suya
+      contaba. Solo el `command:` de un hook ejecuta.
+    regression_origin: "v3 (2026-07-15): sexto vector, destapado al arreglar los otros cinco"
+    files:
+      .claude/settings.json: |
+        {
+          "description": "recuerda: scripts/{GUARD}.py es obligatorio antes de publicar",
+          "hooks": {}
+        }
+
+  # ==================================================================
+  # AMPLIACION 2026-07-15 (workflow recon+ataque): familias que el corpus
+  # de 21 casos NO cubria y que la auditoria adversarial destapo VIVAS.
+  # ==================================================================
+
+  # ---- Familia INVERSION: declarar-desactivado marca como cableado (la mas perversa)
+  - case_id: skip_guards_list
+    surface: python_self_running
+    should_wire: false
+    negative_reason: inversion
+    why: >
+      Una lista que NOMBRA guards para SALTARLOS. El nombre aparece para excluirlo
+      de la ejecucion; leerlo como cableado invierte la semantica.
+    regression_origin: "attack_space P33 (workflow ataque 2026-07-15); WIRED en v1/v2/v3"
+    files:
+      scripts/prepush_check.py: |
+        SKIP_GUARDS = ["{GUARD}"]
+
+  - case_id: config_disabled_guards
+    surface: python_self_running
+    should_wire: false
+    negative_reason: inversion
+    why: Un dict de config que lista guards DESACTIVADOS. Lo mismo, con llaves.
+    regression_origin: "attack_space P34; WIRED en v1/v2/v3"
+    files:
+      scripts/prepush_check.py: |
+        CONFIG = {"disabled_guards": ["{GUARD}"]}
+
+  - case_id: settings_permissions_deny
+    surface: claude_settings
+    should_wire: false
+    negative_reason: inversion
+    why: >
+      permissions.deny NOMBRA un comando para PROHIBIRLO. La declaracion de que un
+      guard esta VETADO no puede ser lo que lo certifica como cableado.
+    regression_origin: "attack_space S01; settings.json leido como texto crudo en v1-v3"
+    files:
+      .claude/settings.json: |
+        {"permissions": {"deny": ["Bash(python scripts/{GUARD}.py)"]}}
+
+  # ---- Familia DISABLED_CODE: codigo que no corre
+  - case_id: if_false_dead_code
+    surface: python_self_running
+    should_wire: false
+    negative_reason: disabled_code
+    why: Un `if False:` no ejecuta su cuerpo. El subprocess esta muerto.
+    regression_origin: "attack_space P26; WIRED en v3"
+    files:
+      scripts/prepush_check.py: |
+        import subprocess
+
+        if False:
+            subprocess.run(["python", "scripts/{GUARD}.py"])
+
+  - case_id: function_never_called
+    surface: python_self_running
+    should_wire: false
+    negative_reason: disabled_code
+    why: >
+      Una funcion que contiene un sink pero que NADIE llama. NOTA: v4 la marca
+      WIRED (el wrapper-local es un sink por definicion, sin analisis de
+      alcanzabilidad de la funcion). Es un residual CONOCIDO y fail-SEGURO: si el
+      wrapper existe, o alguien lo llama (WIRED correcto) o es codigo muerto que
+      deberia borrarse (falso-WIRED, pero de una funcion con un sink REAL, no de
+      prosa). Se marca should_wire:true y se documenta como el limite del 1-salto.
+    regression_origin: "attack_space P28; limite declarado del wrapper-local de R_EXEC2"
+    should_wire_override: true
+    files:
+      scripts/prepush_check.py: |
+        import subprocess
+
+
+        def _never_called():
+            subprocess.run(["python", "scripts/{GUARD}.py"])
+
+  # ---- Familia DENOMINATOR: el guard ni se ve
+  - case_id: guard_in_subdir_recursive
+    surface: python_self_running
+    should_wire: true
+    why: >
+      Un guard en un SUBDIRECTORIO. El glob plano de v3 era ciego; el rglob de v4
+      lo ve, y el subprocess desde una semilla lo cabla.
+    regression_origin: "denominador: check_wp_087_deliverable vivia en scripts/sandbox/ e invisible"
+    files:
+      scripts/prepush_check.py: |
+        import subprocess
+        import sys
+
+        subprocess.run([sys.executable, "scripts/sub/{GUARD}.py"], check=False)
+      scripts/sub/{GUARD}.py: "# guard en subdirectorio\n"
+
+  # ---- Positivos nuevos: formas REALES que v4 debe reconocer
+  - case_id: importlib_dynamic_spec
+    surface: python_self_running
+    should_wire: true
+    why: >
+      spec_from_file_location + exec_module ejecuta el modulo dinamicamente
+      (construct H). El 2o arg es el path-chain con el literal.
+    regression_origin: "real: delivery_hygiene_check (agent_controller.py:1107)"
+    files:
+      .agent/agent_controller.py: |
+        import importlib.util
+        from pathlib import Path
+
+        spec = importlib.util.spec_from_file_location(
+            "{GUARD}", Path(".") / "scripts" / "{GUARD}.py"
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+  - case_id: wrapper_local_sink
+    surface: python_self_running
+    should_wire: true
+    why: >
+      Una funcion local que contiene subprocess ES un sink; llamarla con el argv
+      del guard lo cabla. R_EXEC (posicion cruda) lo perdia; R_EXEC2 lo recupera.
+    regression_origin: "real: check_worktree_topology (preflight_codeonly_pipeline.py: _run wrapper)"
+    files:
+      scripts/prepush_check.py: |
+        import subprocess
+        import sys
+
+
+        def _run(cmd):
+            return subprocess.run(cmd, check=False)
+
+
+        _run([sys.executable, "scripts/{GUARD}.py"])

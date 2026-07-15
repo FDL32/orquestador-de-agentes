@@ -1,0 +1,63 @@
+# POLITICA DE CABLEADO (WOT-2026-024u) -- datos, no codigo.
+#
+# Por que este fichero es YAML y no un dict dentro de check_guard_wiring.py:
+# la deuda declarada dentro de un .py de la FRONTERA se auto-sabotea -- un paso
+# de closeout que la imprima para reportarla cablearia a los declarados
+# (auto-DoS, medido: 2/3). Los datos viven fuera del codigo que se audita.
+#
+# Tres bloques, cada uno con su format-check y su deteccion de stale:
+#   known_unwired : guard -> ticket que lo cablea o BY-DESIGN. Deuda NOMBRADA.
+#   extra_guards  : guards REALES cuyo nombre no lleva prefijo (check_/validate_/
+#                   guard_). No se adivinan por heuristica: se declaran.
+#   wired_via     : cableados que el AST no puede deducir (Makefile, shell,
+#                   callable a >1 salto, glob-discovery). Cada entrada exige
+#                   fichero:linea + probe reproducible; una entrada cuyo destino
+#                   ya no existe es STALE y FALLA.
+
+known_unwired:
+  # Citados en prompts, ejecutados por nadie. El orquestador corrio estos A MANO
+  # el 2026-07-14 como barreras obligatorias -- funcionaron porque alguien se acordo.
+  check_backlog_commits_landed: WOT-2026-024c
+  validate_batch_dag: WOT-2026-023t
+  validate_observations: WOT-2026-024r
+  check_portable_memory_promotion: WOT-2026-024r
+  check_motor_pristine: WOT-2026-023y
+  check_destino_publish_ready: WOT-2026-023b
+  validate_contract_formation: WOT-2026-023m
+  validate_agent_config: WOT-2026-019o
+  # Deuda que el parser HONESTO de v2 destapo (v1 los daba por cableados).
+  check_ruff_hook_scope: WOT-2026-024w
+  check_skill_collisions: WOT-2026-024w
+  check_ticket_nomenclature: WOT-2026-024w
+  check_closeout_reconciliation: WOT-2026-024w
+  check_motor_destination_integration: WOT-2026-024w
+  check_publication_gate: WOT-2026-024w
+  check_template_conformity: WOT-2026-024w
+  validate_authority: WOT-2026-024w
+  # Deuda que el denominador RECURSIVO de v4 destapo (el glob plano era ciego a
+  # subdirectorios; este gate ad-hoc de WP-2026-087 llevaba invisible desde entonces).
+  check_wp_087_deliverable: WOT-2026-024w
+  # Exencion DELIBERADA, no deuda: un hook automatico seria circular -- el propio
+  # hook roto no puede invocar de forma fiable al check que detecta que esta roto.
+  check_hook_interpreter: >-
+    BY-DESIGN: stage manual deliberado; un hook automatico seria circular
+    (el hook roto no puede invocar al check que detecta que esta roto)
+
+extra_guards:
+  # Barreras REALES sin prefijo de guard. v3 no podia ni verlas ni contarlas.
+  pre_handoff_guard: scripts/pre_handoff_guard.py
+  delivery_hygiene_check: scripts/delivery_hygiene_check.py
+
+wired_via:
+  # Cableado REAL de 2 saltos que el AST de 1 salto no alcanza (residual R5 de la spec):
+  # guard_script = SCRIPT_DIR.parent/"scripts"/"pre_handoff_guard.py"  (salto 1: path->var)
+  # cmd = [sys.executable, str(guard_script), ...]                     (salto 2: var->lista)
+  # subprocess.run(cmd)                                                (sink)
+  # Probe: python -c "import ast,pathlib; ...; assert 'pre_handoff_guard.py' in
+  #   pathlib.Path('.agent/agent_controller.py').read_text()" -> el literal existe y el
+  #   controller (frontera) lo ejecuta via _run_pre_handoff_guard.
+  pre_handoff_guard: >-
+    .agent/agent_controller.py:2926 (guard_script = SCRIPT_DIR.parent/"scripts"/
+    "pre_handoff_guard.py") -> cmd=[...] :2931 -> subprocess.run(cmd) en
+    _run_pre_handoff_guard, llamado desde :3357. Probe: grep pre_handoff_guard.py
+    .agent/agent_controller.py (2 saltos, fuera del alcance de 1-hop del AST)

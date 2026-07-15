@@ -1,0 +1,55 @@
+# BASELINE DE CABLEADO POR ARISTA (WOT-2026-024u) -- la asimetria gemela.
+#
+# El defecto mas grave que destapo la auditoria adversarial: check_guard_wiring
+# era CIEGO al DES-CABLEADO. 3 de los guards (guard_paths, validate_all,
+# validate_ticket_prose) se sostenian TAMBIEN con prosa viva (un mensaje de error,
+# un epilogo de argparse, un StepResult(name=...) en la rama dry_run que no ejecuta
+# nada). Si borrabas su call-site REAL, el guard seguia saliendo WIRED por la
+# prosa, y nadie se enteraba. La asimetria del modulo protegia "guard nuevo sin
+# cablear -> falla" pero NO "guard existente des-cableado -> silencio".
+#
+# Este fichero fija, por cada guard cableado HOY, el/los FICHERO(S) desde los que se
+# cablea -- la ARISTA, no el numero de linea. Un edit inocente (reordenar, renombrar
+# una variable local, `ruff format`) mueve lineas pero NO cambia el fichero, asi que
+# NO produce falso-rojo. El test T-DEWIRING falla solo cuando un guard del baseline
+# deja de cablearse desde CUALQUIERA de sus ficheros esperados -- que es exactamente
+# el des-cableado que se quiere cazar.
+#
+# Cuando un des-cableado es INTENCIONAL (se retira un guard a proposito), se
+# ACTUALIZA este fichero en el MISMO commit. El diff del baseline es la senal
+# revisable de "aqui alguien quito un cableado", igual que el diff de known_unwired
+# es la senal de "aqui alguien reconocio deuda".
+#
+# Generado por: wiring_edges(repo) el 2026-07-15. Regenerable con:
+#   python -c "import sys; sys.path.insert(0,'.'); from scripts.check_guard_wiring \
+#     import wiring_edges, _load_policy; from pathlib import Path; \
+#     print(sorted(wiring_edges(Path('.'), _load_policy())))"
+
+wired_baseline:
+  check_backlog_contract:
+    - scripts/prepush_check.py
+  check_claude_settings_portability:
+    - .pre-commit-config.yaml
+  check_commit_worktree:
+    - .pre-commit-config.yaml
+  check_deliverables_exist:
+    - .agent/agent_controller.py
+  check_encoding_guard:
+    - .pre-commit-config.yaml
+  check_guard_wiring:
+    - .pre-commit-config.yaml
+  check_no_history_truncation:
+    - .pre-commit-config.yaml
+  check_worktree_topology:
+    - scripts/check_commit_worktree.py
+    - scripts/preflight_codeonly_pipeline.py
+  delivery_hygiene_check:
+    - .agent/agent_controller.py
+  guard_paths:
+    - .agent/hooks/claude_guard_entry.py
+  validate_all:
+    - scripts/prepush_check.py
+  validate_ticket_prose:
+    - .agent/agent_controller.py
+    - scripts/closeout_steps/gates.py
+    - scripts/preflight_codeonly_pipeline.py
