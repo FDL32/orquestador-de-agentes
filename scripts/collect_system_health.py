@@ -7,11 +7,18 @@ Before:
     - Mode: full (requires both), motor-only, or auto (degrade with notice).
 
 During:
-    - Runs read-only deterministic checks (ruff, pytest-safe last-run, validate,
-      encoding guard, motor-pristine snapshot, git inventories, manifest-vs-tracked
-      diff). Captures raw stdout/exit per check under <out>/raw/. Builds a
-      normalized findings.json with RELATIVIZED paths. Writes skeleton .md files
-      with the fixed header block for the agent to fill (Pass B / judgment).
+    - Runs read-only deterministic checks (ruff on motor and destino, validate on
+      both, discover-skills contract, motor-pristine snapshot, pytest-safe
+      last-run inventory, git inventories). Captures raw stdout/exit per check
+      under <out>/raw/. Builds a normalized findings.json with RELATIVIZED paths.
+      Writes skeleton .md files with the fixed header block for the agent to fill
+      (Pass B / judgment).
+    - WOT-2026-024m: this list enumerates ONLY the checks the collector actually
+      runs (see the ``checks[...]`` block below). Two checks that earlier
+      versions of this docstring advertised are NOT run: there is no doc-encoding
+      verification here, and MANIFEST.distribute is only checked for EXISTENCE as
+      a motor-root precondition (line ~260), never compared against the tracked
+      tree.
     - By default writes ONLY inside the output dir (self-contained evidence);
       it does not touch any tracked file. The append-only INDEX.md register is
       opt-in via --publish-index (OFF by default): a pure collector never
@@ -211,7 +218,7 @@ SKELETON_FILES = {
     "01_motor_audit.md": ("01 - Auditoria del repo_motor", "salud del motor"),
     "02_workspace_audit.md": ("02 - Auditoria del repo_destino", "salud del destino"),
     "03_integration_audit.md": ("03 - Auditoria de integracion", "motor+destino"),
-    "04_quality_gates.md": ("04 - Quality gates", "ruff/pytest-safe/encoding/validate"),
+    "04_quality_gates.md": ("04 - Quality gates", "ruff/pytest-safe last-run/validate"),
     "05_archive_plan.md": ("05 - Archive plan", "KEEP/ARCHIVE/DELETE por ruta"),
     "06_tickets.md": ("06 - Tickets propuestos", "un ticket por familia"),
     "07_adversarial_review.md": (

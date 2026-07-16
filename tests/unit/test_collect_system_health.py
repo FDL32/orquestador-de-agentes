@@ -909,3 +909,46 @@ def test_publish_index_flag_writes_the_register(tmp_path, monkeypatch):
     body = index.read_text(encoding="utf-8")
     assert "System Health Audits" in body
     assert out.name in body  # the row references this run's dir
+
+
+# ---- WOT-2026-024m: docstring vs actually-executed checks -------------------
+
+
+def test_docstring_does_not_promise_checks_the_collector_never_runs(
+    tmp_path, monkeypatch
+):
+    """WOT-2026-024m: the module docstring must not advertise a check the
+    collector does not actually run.
+
+    The docstring used to list "encoding guard" and a "manifest-vs-tracked
+    diff" among the checks, but the real ``checks[...]`` block runs neither
+    (MANIFEST.distribute is only checked for existence, never diffed). That
+    doc-vs-code drift misleads anyone reading the collector's contract.
+
+    This test runs main() and reads the checks the collector REALLY produced,
+    then asserts the phantom phrases are absent from the docstring. Mutation:
+    re-add "encoding guard" (or "manifest-vs-tracked") to the docstring without
+    implementing the check -> this test fails.
+    """
+    motor = _fake_motor(tmp_path)
+    monkeypatch.setattr(csh, "_run", _fake_run_factory())
+    out = tmp_path / "out"
+    rc = csh.main(["--motor-root", str(motor), "--mode", "auto", "--out", str(out)])
+    assert rc == 0
+
+    findings = json.loads((out / "findings.json").read_text(encoding="utf-8"))
+    real_checks = set(findings["checks"].keys())
+
+    # No real check corresponds to an encoding guard or a manifest diff.
+    assert not any("encoding" in c for c in real_checks)
+    assert not any("manifest" in c.lower() for c in real_checks)
+
+    doc = csh.__doc__ or ""
+    doc_lower = doc.lower()
+    # The phantom phrases must NOT appear in the "During" checks enumeration.
+    assert "encoding guard" not in doc_lower, (
+        "docstring advertises an 'encoding guard' check the collector never runs"
+    )
+    assert "manifest-vs-tracked" not in doc_lower, (
+        "docstring advertises a 'manifest-vs-tracked diff' the collector never runs"
+    )
