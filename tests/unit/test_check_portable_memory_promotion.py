@@ -208,3 +208,33 @@ def test_no_runtime_memory_is_clean(tmp_path: Path) -> None:
     repo = _make_repo(tmp_path)
     r = _run(repo)
     assert r.returncode == EXIT_OK, r.stdout + r.stderr
+
+
+def test_same_topic_different_source_ticket_is_still_an_orphan(tmp_path: Path) -> None:
+    """WOT-2026-023g: record_key is (topic, source_ticket), NEVER topic alone.
+
+    Two lessons share a topic but differ in source_ticket; one is already in
+    the archive, the other is only in the gitignored runtime. The guard must
+    STILL flag the un-archived one -- the archived twin does NOT cover it,
+    because they are different lessons from different tickets.
+
+    Mutation: collapse record_key to a bare ``topic`` and this test goes RED,
+    because the archived twin's topic would mask the orphan (a silent
+    false-green, which the 19 prior tests did not catch).
+    """
+    repo = _make_repo(tmp_path)
+    archived_twin = _obs("manager-review-rubric", "WOT-2026-555a")
+    orphan = _obs("manager-review-rubric", "WOT-2026-666b")
+    _write(repo / OBS_REL, [archived_twin, orphan])
+    _write(repo / _archive_rel(), [archived_twin])  # only the twin travelled
+
+    r = _run(repo)
+    assert r.returncode == EXIT_ORPHANS, (
+        "a lesson sharing a topic with an ARCHIVED one but under a DIFFERENT "
+        "source_ticket is still an orphan; the archived twin must not mask it. "
+        f"got {r.returncode}. stdout: {r.stdout} stderr: {r.stderr}"
+    )
+    assert "WOT-2026-666b" in r.stdout, "the un-archived lesson must be named"
+    assert "WOT-2026-555a" not in r.stdout, (
+        "the archived twin has travelled; it must NOT be reported as an orphan"
+    )
