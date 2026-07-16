@@ -192,8 +192,19 @@ clasificacion CEM (S.6), igual que cualquier hallazgo heredado.
 
 El batch declara, antes de correr, un predicado verificable por maquina
 (diseno S.12.bis.2.b). Esta auditoria EVALUA el predicado COMANDO A COMANDO,
-con exit codes reales, nunca por relato del ejecutor. Reproduce las 7
-condiciones exactas:
+con exit codes reales, nunca por relato del ejecutor.
+
+**Input fail-closed (WOT-2026-023v):** el `batch_run_<ts>.json` de la corrida
+es INPUT OBLIGATORIO de esta auditoria. Si NO existe, o existe sin bloque
+`PREDICATE`, la corrida NO es auditable: declara
+`salida_obligatoria_ausente`, emite `NO ACEPTAR TODAVIA` y detente. NO
+reconstruyas el fichero retrospectivamente para el ejecutor: eso ocurrio en el
+viaje inaugural y convierte al auditor en maker del artefacto que audita
+(falso verde estructural, viola B3). La condicion 6 llega del ejecutor como
+`PENDING` por contrato dual (P5): que este PENDING en el `batch_run` NO es un
+hallazgo -- es el diseno; el hallazgo seria un ejecutor que la auto-certifico.
+
+Reproduce las 7 condiciones exactas:
 
 1. **`schema_valido`** -- el DAG-JSON de la corrida valida contra el schema
    v1 mediante:

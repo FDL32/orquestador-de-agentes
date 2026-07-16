@@ -438,3 +438,35 @@ def test_barrier3_enumerates_gate(gate: str) -> None:
         f"barrier 3 must ENUMERATE the gate {gate!r} as a bullet (WOT-2026-024b):"
         " a partial gate run is falso_verde, so the list cannot be left to memory"
     )
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-023v: mandatory outputs get a MECHANICAL barrier. In the inaugural
+# run the executor omitted batch_run_<ts>.json (written retrospectively) and
+# self-evaluated condition 6, and nothing detected either. The barrier is the
+# sibling audit's fail-closed input contract + this blocking DONE step.
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_declares_blocking_done_step() -> None:
+    """The batch cannot be declared DONE without batch_run_<ts>.json ON DISK
+    (read back by command, not from memory) and the sibling audit LAUNCHED.
+    Mutation: drop the blocking-step section -> RED."""
+    text = _read()
+    assert "Blocking close step" in text, (
+        "the prompt must carry the WOT-2026-023v blocking close step"
+    )
+    assert "may NOT be declared `DONE`" in text
+    assert "READING the actual file back" in text, (
+        "existence of batch_run must be verified by command, never by memory"
+    )
+
+
+def test_predicate_cond6_is_dual_contract_pending() -> None:
+    """Cond 6 (auditor_emitido) is DUAL CONTRACT (P5): the executor emits it
+    as PENDING -- it cannot self-certify -- and only the sibling audit
+    resolves it. Mutation: drop the annotation from the PREDICATE row -> RED."""
+    text = _read()
+    assert "DUAL CONTRACT" in text
+    assert "PENDING" in text
+    assert "self-certify" in text

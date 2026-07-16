@@ -783,3 +783,37 @@ def test_skill_collision_name_is_distinct_from_executor_skill() -> None:
     assert skill_dir.name == "audit-autonomous-ticket-batch"
     executor_skill_dir = SKILLS / "orchestrate-autonomous-ticket-batch"
     assert skill_dir != executor_skill_dir
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-023v: the batch_run is a fail-closed INPUT of this audit. This is
+# the mechanical half of "batch sin batch_run -> el cierre falla": without the
+# file the sibling cannot audit, so condition 6 can never resolve and the
+# batch can never reach DONE.
+# ---------------------------------------------------------------------------
+
+
+def test_audit_requires_batch_run_input_fail_closed() -> None:
+    """batch_run_<ts>.json (with PREDICATE block) is a MANDATORY input; if it
+    is missing the run is NOT auditable (salida_obligatoria_ausente -> NO
+    ACEPTAR TODAVIA), and the auditor must NEVER rebuild it for the executor
+    (maker-checker violation, the inaugural-run failure mode). Mutation: drop
+    the clause -> RED."""
+    text = AUDIT_PROMPT.read_text(encoding="utf-8")
+    normalized = " ".join(text.split())
+    assert "salida_obligatoria_ausente" in text, (
+        "the audit prompt must declare the missing-batch_run fail-closed cause"
+    )
+    assert "INPUT OBLIGATORIO" in text
+    assert "NO reconstruyas" in normalized, (
+        "the auditor must be forbidden from rebuilding the executor's output"
+    )
+
+
+def test_audit_treats_cond6_pending_as_design_not_finding() -> None:
+    """Dual contract (P5): condition 6 arrives PENDING from the executor BY
+    DESIGN; the finding would be an executor that self-certified it. Pinning
+    this stops a future auditor from flagging PENDING as a defect."""
+    text = AUDIT_PROMPT.read_text(encoding="utf-8")
+    assert "contrato dual" in text
+    assert "PENDING" in text

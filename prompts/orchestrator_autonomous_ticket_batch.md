@@ -305,6 +305,30 @@ real false-green in the evidence that informed this design:
 All of these are written to the **destino-rol**, never to `repo_motor`
 (portability rule above).
 
+### Blocking close step (WOT-2026-023v): DONE requires the outputs ON DISK
+
+In the inaugural run the executor OMITTED `batch_run_<ts>.json` (it was written
+retrospectively, a day later) and condition 6 was self-evaluated during the
+run -- and nothing detected either. The executor's own outputs get the same
+discipline as barrier 3: verified by command, never by memory ("guard que no
+ve la fila").
+
+The batch may NOT be declared `DONE` until ALL of:
+
+1. `batch_run_<ts>.json` EXISTS on disk in the destino-rol reports dir, with
+   its `PREDICATE` block -- verified by READING the actual file back (listing
+   or parse command), not from the executor's recollection of writing it.
+2. The sibling audit (`prompts/audit_autonomous_ticket_batch.md`) has been
+   LAUNCHED in fresh context over that file. The sibling's input contract is
+   fail-closed: without `batch_run_<ts>.json` it declares the run not
+   auditable, so a batch that skipped the file can never reach `DONE` -- that
+   is the mechanical barrier, not the executor's discipline.
+3. Condition 6 (`auditor_emitido`) is DUAL-CONTRACT by design (precision P5):
+   the executor records it as `PENDING` in `batch_run_<ts>.json` -- the
+   executor CANNOT self-certify it -- and ONLY the sibling audit resolves it
+   to pass. A `batch_run` with condition 6 self-marked as pass by the executor
+   is self-certification: `falso_verde`.
+
 ---
 
 ## The PREDICATE: declare it BEFORE running, emit it in `batch_run_<ts>.json`
@@ -321,7 +345,7 @@ declared `DONE` only if ALL 7 conditions hold:
 | 3 | `contabilidad_completa` | every ticket of the DAG ends in EXACTLY ONE state: closed, frozen-with-`GROUP_STOP_REPORT`, or not-reached-by-budget. No ticket is lost |
 | 4 | `cierres_auditables` | per closed ticket, an archived row with a `commit:` cell AND the `audited` counter of `check_backlog_commits_landed` WENT UP; final `ERROR=0` |
 | 5 | `suite_final_verde` | canonical suite post-last-commit with `tested_sha == HEAD`, read from the REAL output ("N passed / N failed"), NEVER the wrapper's exit code |
-| 6 | `auditor_emitido` | the isolated auditor's report exists, verdict != `NO ACEPTAR TODAVIA` |
+| 6 | `auditor_emitido` | the isolated auditor's report exists, verdict != `NO ACEPTAR TODAVIA`. DUAL CONTRACT (P5, WOT-2026-023v): the executor emits this row as `PENDING` -- it cannot self-certify it; only the sibling audit resolves it to pass |
 | 7 | `arboles_limpios` | dirty=0 across the repos ENUMERATED from the resolved topology (never a hardcoded count) |
 
 Conditions 4 and 5 encode real false-greens: `ERROR=0` is **not** the same as
