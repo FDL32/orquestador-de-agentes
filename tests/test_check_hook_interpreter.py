@@ -204,3 +204,66 @@ def test_default_hooks_dir_resolves_through_worktree_gitlink(tmp_path: Path) -> 
     )
     # The common hooks dir lives under the MAIN repo's .git, not the worktree.
     assert "hooks" in resolved.name
+
+
+@pytest.mark.skipif(
+    __import__("shutil").which("git") is None, reason="git not available"
+)
+def test_main_from_worktree_sees_installed_hooks_e2e(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """WOT-2026-025l (F3 audit): END-TO-END. Run main() FROM a linked worktree
+    (no --hooks-dir) with real hooks installed in the shared common dir, and
+    require the OUTPUT to SEE them (pre-commit, pre-push) -- not the fail-open
+    "(none present)".
+
+    The sibling test above only calls _default_hooks_dir() directly; it never
+    runs main()'s resolve+report path from the worktree, so the behaviour the
+    docstring promises ("the check SEES the hooks") was never exercised e2e.
+
+    Mutation (teeth): revert _default_hooks_dir to `repo_root / ".git" / "hooks"`
+    and this test FAILS -- from a worktree `.git` is a gitlink FILE, so the
+    literal join does not exist and the check reports "(none present)" instead
+    of seeing the hooks.
+    """
+    import subprocess
+
+    main_repo = tmp_path / "main"
+    main_repo.mkdir()
+    _git(["init"], main_repo)
+    _git(["config", "user.email", "t@t.t"], main_repo)
+    _git(["config", "user.name", "t"], main_repo)
+    (main_repo / "f.txt").write_text("x\n", encoding="utf-8")
+    _git(["add", "f.txt"], main_repo)
+    _git(["commit", "-m", "init"], main_repo)
+
+    worktree = tmp_path / "wt"
+    _git(["worktree", "add", str(worktree)], main_repo)
+
+    # Resolve the SHARED common hooks dir via git itself (independent oracle,
+    # NOT the function under test) and install real hooks there.
+    proc = subprocess.run(
+        ["git", "-C", str(worktree), "rev-parse", "--git-path", "hooks"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    common_hooks = Path(proc.stdout.strip())
+    if not common_hooks.is_absolute():
+        common_hooks = (worktree / common_hooks).resolve()
+
+    interp = _existing_interpreter(tmp_path)
+    for hook_type in chi.HOOK_TYPES:
+        _write_hook(common_hooks, hook_type, interp)
+
+    # Run main() FROM the worktree; _default_hooks_dir must resolve the shared dir.
+    rc = chi.main(["--repo-root", str(worktree)])
+    out = capsys.readouterr().out
+
+    assert rc == 0, f"expected PASS from worktree, got rc={rc}; out={out!r}"
+    assert "none present" not in out, (
+        f"check fell open to '(none present)' from the worktree; out={out!r}"
+    )
+    assert "pre-commit" in out and "pre-push" in out, (
+        f"check did not SEE both hooks from the worktree common dir; out={out!r}"
+    )
