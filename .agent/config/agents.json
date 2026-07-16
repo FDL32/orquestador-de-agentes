@@ -50,7 +50,10 @@
     "codex": {
       "executable": "codex.cmd",
       "args": [
-        "exec"
+        "exec",
+        "--skip-git-repo-check",
+        "-c",
+        "service_tier=\"fast\""
       ],
       "discovery": {
         "method": "path_only",
