@@ -185,3 +185,264 @@ def test_is_completed_plan_public_helper():
     assert is_completed_plan(_WP_COMPLETED) is True
     assert is_completed_plan(_WP_IN_PROGRESS) is False
     assert is_completed_plan("no metadata here") is False
+
+
+# --------------------------------------------------------------------------- #
+# session_state (WOT-2026-022f): derive_session_state() unit fixtures.
+# Consumes the exact schema emitted by `init_session_scratch.py list
+# --include-archive` ({"session_id", "record_count", "lock_state", "archived"}).
+# --------------------------------------------------------------------------- #
+def test_session_state_none_when_no_sessions():
+    # empty list -> none. Also covers a session that only has archived/empty
+    # entries (never counted as a live signal).
+    assert pcp.derive_session_state([]) == "none"
+    assert (
+        pcp.derive_session_state(
+            [
+                {
+                    "session_id": "a",
+                    "record_count": 0,
+                    "lock_state": "none",
+                    "archived": False,
+                }
+            ]
+        )
+        == "none"
+    )
+
+
+def test_session_state_active_when_lock_live():
+    sessions = [
+        {
+            "session_id": "20260716-1200-abc123-aaaa",
+            "record_count": 3,
+            "lock_state": "live",
+            "archived": False,
+        }
+    ]
+    assert pcp.derive_session_state(sessions) == "active"
+
+
+def test_session_state_stale_when_lock_expired_or_corrupt():
+    # lock_state == "stale" (expired expires_at) and lock_state == "none" (no
+    # lock file / corrupt+unreadable) on a non-empty, non-archived session both
+    # count as reclaimable/stale -- neither is a live session in use.
+    stale_expired = [
+        {
+            "session_id": "20260716-1200-abc123-bbbb",
+            "record_count": 2,
+            "lock_state": "stale",
+            "archived": False,
+        }
+    ]
+    stale_no_lock = [
+        {
+            "session_id": "20260716-1200-abc123-cccc",
+            "record_count": 1,
+            "lock_state": "none",
+            "archived": False,
+        }
+    ]
+    assert pcp.derive_session_state(stale_expired) == "stale"
+    assert pcp.derive_session_state(stale_no_lock) == "stale"
+
+
+def test_session_state_ignores_archived_sessions():
+    # An archived session with a live lock must NOT count toward "active": the
+    # aggregate only looks at active (non-archived) sessions.
+    sessions = [
+        {
+            "session_id": "20260716-1200-abc123-dddd",
+            "record_count": 5,
+            "lock_state": "live",
+            "archived": True,
+        }
+    ]
+    assert pcp.derive_session_state(sessions) == "none"
+
+
+def test_latest_archived_summary_path_picks_max_by_id():
+    from pathlib import Path
+
+    from scripts.init_session_scratch import _archive_root
+
+    sessions = [
+        {"session_id": "20260710-0900-aaa-1111", "archived": True},
+        {"session_id": "20260716-1200-bbb-2222", "archived": True},
+        {"session_id": "20260716-1300-ccc-3333", "archived": False},
+    ]
+    workspace = Path("C:/fake/workspace")
+    result = pcp._latest_archived_summary_path(workspace, sessions)
+    assert result == str(_archive_root(workspace) / "20260716-1200-bbb-2222")
+
+
+def test_latest_archived_summary_path_none_when_no_archived():
+    from pathlib import Path
+
+    assert pcp._latest_archived_summary_path(Path("C:/fake"), []) is None
+
+
+# --------------------------------------------------------------------------- #
+# EJE fixture: the session lives in a repo DISTINCT from the motor, and the
+# preflight FINDS it via --workspace-root (not --dev-root). Without this fixture
+# the check is blind to the structural leak described in the ticket contract:
+# looking for the session in the motor would report `none` unconditionally.
+# --------------------------------------------------------------------------- #
+class TestSessionStateEjeWorkspaceRoot:
+    def test_session_found_in_workspace_root_not_motor(self, tmp_path):
+        import subprocess
+        import uuid
+        from datetime import datetime, timezone
+
+        motor_root = Path(__file__).resolve().parent.parent.parent
+        init_script = motor_root / "scripts" / "init_session_scratch.py"
+
+        # workspace repo, DISTINCT from the motor, with its own .agent/
+        workspace = tmp_path / "workspace_repo"
+        workspace.mkdir()
+        (workspace / ".agent").mkdir()
+        subprocess.run(
+            ["git", "init"], cwd=str(workspace), capture_output=True, timeout=10
+        )
+
+        now = datetime.now(timezone.utc)
+        sid = f"{now.strftime('%Y%m%d-%H%M')}-nogit-{uuid.uuid4().hex[:8]}"
+
+        init_res = subprocess.run(
+            [
+                sys.executable,
+                str(init_script),
+                "--project-root",
+                str(workspace),
+                "init",
+                "--session-id",
+                sid,
+                "--generator",
+                "eje_test",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert init_res.returncode == 0, init_res.stderr
+
+        add_res = subprocess.run(
+            [
+                sys.executable,
+                str(init_script),
+                "--project-root",
+                str(workspace),
+                "add",
+                "--session-id",
+                sid,
+                "--event",
+                "artifact_added",
+                "--generator",
+                "eje_test",
+                "--artifact-path",
+                "artifact.txt",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert add_res.returncode == 0, add_res.stderr
+
+        # Sanity: the session must NOT exist under the motor's own session dir.
+        motor_session_dir = motor_root / ".agent" / "runtime" / "session" / sid
+        assert not motor_session_dir.exists()
+
+        findings: dict = {"checks": {}, "automatic_criticals": []}
+        args = type("Args", (), {})()
+        pcp._check_session_state(findings, args, motor_root, workspace)
+
+        check = findings["checks"]["session_state"]
+        assert check["root_source"] == "workspace"
+        assert check["session_state"] == "active", check
+        assert check["session_count"] >= 1
+
+
+# --------------------------------------------------------------------------- #
+# End-to-end `stale` fixture (real subprocess through `init_session_scratch.py
+# list`), the one the TTL mutation must break. Writes an EXPIRED lock.json
+# directly (expires_at in the past) on top of a real session with records, then
+# asserts _check_session_state reports "stale" via the real entry point.
+# --------------------------------------------------------------------------- #
+class TestSessionStateEjeStaleLock:
+    def test_session_state_stale_end_to_end(self, tmp_path):
+        import json as _json
+        import subprocess
+        import uuid
+        from datetime import datetime, timedelta, timezone
+
+        motor_root = Path(__file__).resolve().parent.parent.parent
+        init_script = motor_root / "scripts" / "init_session_scratch.py"
+
+        workspace = tmp_path / "workspace_repo_stale"
+        workspace.mkdir()
+        (workspace / ".agent").mkdir()
+        subprocess.run(
+            ["git", "init"], cwd=str(workspace), capture_output=True, timeout=10
+        )
+
+        now = datetime.now(timezone.utc)
+        sid = f"{now.strftime('%Y%m%d-%H%M')}-nogit-{uuid.uuid4().hex[:8]}"
+
+        init_res = subprocess.run(
+            [
+                sys.executable,
+                str(init_script),
+                "--project-root",
+                str(workspace),
+                "init",
+                "--session-id",
+                sid,
+                "--generator",
+                "eje_stale_test",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert init_res.returncode == 0, init_res.stderr
+
+        add_res = subprocess.run(
+            [
+                sys.executable,
+                str(init_script),
+                "--project-root",
+                str(workspace),
+                "add",
+                "--session-id",
+                sid,
+                "--event",
+                "artifact_added",
+                "--generator",
+                "eje_stale_test",
+                "--artifact-path",
+                "artifact.txt",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert add_res.returncode == 0, add_res.stderr
+
+        # Overwrite lock.json with an EXPIRED expires_at (foreign pid, past TTL).
+        session_dir = workspace / ".agent" / "runtime" / "session" / sid
+        lock_path = session_dir / "lock.json"
+        expired = {
+            "pid": 999999,
+            "session_id": sid,
+            "op": "init",
+            "created_at": (now - timedelta(seconds=2000)).isoformat(),
+            "expires_at": (now - timedelta(seconds=100)).isoformat(),
+        }
+        lock_path.write_text(_json.dumps(expired), encoding="utf-8")
+
+        findings: dict = {"checks": {}, "automatic_criticals": []}
+        args = type("Args", (), {})()
+        pcp._check_session_state(findings, args, motor_root, workspace)
+
+        check = findings["checks"]["session_state"]
+        assert check["session_state"] == "stale", check

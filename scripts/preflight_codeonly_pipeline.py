@@ -36,6 +36,18 @@ Exit codes (collect_system_health.py convention):
         actionable warnings / topology fail / consumers found). STOP and
         reconcile before proceeding.
     2 = execution/collection error (bad paths, git unavailable).
+
+session_state (WOT-2026-022f): reports the session-scratch lifecycle signal
+(`none` / `active` / `stale`) by CONSUMING the canonical 022c entry point
+(`scripts/init_session_scratch.py list --project-root <workspace-root>`), never
+re-deriving the session path by hand. The session lives in `--workspace-root`
+(the active repo_destino), NOT in the motor `--dev-root` -- looking for it in the
+motor would report `none` unconditionally (a structural false-green). `stale` is
+authoritative on the lock TTL (`expires_at`), exactly as `_lock_is_live` in
+init_session_scratch.py; a dead pid is an AUXILIARY, best-effort signal only,
+never a standalone fixture. Also reports (path only, never content) the most
+recently archived session summary under `_archive/`, if any, to close the N->N+1
+bootstrap loop without inflating context.
 """
 
 from __future__ import annotations
@@ -58,6 +70,7 @@ if str(_MOTOR_ROOT_BOOTSTRAP) not in sys.path:
     sys.path.insert(0, str(_MOTOR_ROOT_BOOTSTRAP))
 
 from runtime.project_root import clear_cache, is_motor_code_only  # noqa: E402
+from scripts.init_session_scratch import _archive_root  # noqa: E402
 from scripts.validate_ticket_prose import is_completed_plan  # noqa: E402
 
 
@@ -251,6 +264,105 @@ def _check_validate(findings: dict, dev) -> None:
         findings["automatic_criticals"].append("validate_actionable_warnings")
 
 
+def derive_session_state(sessions: list[dict]) -> str:
+    """Derive the aggregate `session_state` signal from `init_session_scratch list`.
+
+    Before: `sessions` is the `sessions` array of the JSON emitted by
+        `scripts/init_session_scratch.py list --include-archive
+        --project-root <workspace-root>` (schema: `{"session_id", "record_count",
+        "lock_state", "archived"}` per entry). `lock_state` is one of
+        `"live"`/`"stale"`/`"none"` as computed by `_lock_is_live` (022c), which is
+        TTL-pure on `expires_at` -- never a pid-liveness check.
+    During: filters out archived entries (`archived=True`) and entries with
+        `record_count == 0` (no session with ledger activity == no session, per
+        the contract). Among the remaining ACTIVE, non-empty sessions: if any has
+        `lock_state == "live"`, the aggregate is `"active"` (a live session takes
+        priority: it is currently in use). Else, if any remains, the aggregate is
+        `"stale"` (expired/corrupt/reclaimable lock, or no lock at all on a
+        non-empty session). If none remain, `"none"`.
+    After: returns exactly one of `"none"` / `"active"` / `"stale"`. Never raises;
+        an empty or malformed `sessions` list yields `"none"` (fail-closed to the
+        least alarming signal, consistent with a collector that must never invent
+        state).
+    """
+    candidates = [
+        s
+        for s in sessions
+        if not s.get("archived") and (s.get("record_count") or 0) > 0
+    ]
+    if not candidates:
+        return "none"
+    if any(s.get("lock_state") == "live" for s in candidates):
+        return "active"
+    return "stale"
+
+
+def _latest_archived_summary_path(workspace: Path, sessions: list[dict]) -> str | None:
+    """Path (never content) of the most recently archived session, if any.
+
+    Session IDs sort lexicographically by their `YYYYMMDD-HHMM-...` prefix, so the
+    max of the archived subset is the most recent. Uses `_archive_root` (022c's own
+    helper) to build the path -- never re-derives the `_archive/` layout by hand.
+    """
+    archived_ids = sorted(s["session_id"] for s in sessions if s.get("archived"))
+    if not archived_ids:
+        return None
+    return str(_archive_root(workspace) / archived_ids[-1])
+
+
+def _check_session_state(findings: dict, args, dev, workspace) -> None:
+    """Report `session_state` by consuming the 022c `list` entry point.
+
+    The session lives in `--workspace-root` (the active repo_destino), NOT in
+    `--dev-root` (the motor): a code-only pipeline run has no session of its own,
+    so looking in the motor would report `none` unconditionally regardless of
+    reality (structural false-green, EJE ESCRITOR/LECTOR). Falls back to `dev`
+    only when no `--workspace-root` was supplied, so the check still runs (with a
+    `root_source` marker) for callers that operate entirely inside the motor.
+    """
+    session_root = workspace if workspace is not None else dev
+    root_source = "workspace" if workspace is not None else "dev_fallback"
+
+    list_result = _run(
+        [
+            sys.executable,
+            str(dev / "scripts" / "init_session_scratch.py"),
+            "--project-root",
+            str(session_root),
+            "list",
+            "--include-archive",
+        ],
+        dev,
+    )
+
+    sessions: list[dict] = []
+    parse_ok = False
+    if list_result["returncode"] == 0 and list_result["stdout"].strip():
+        try:
+            payload = json.loads(list_result["stdout"])
+            sessions = payload.get("sessions") or []
+            parse_ok = True
+        except json.JSONDecodeError:
+            parse_ok = False
+
+    state = derive_session_state(sessions) if parse_ok else "none"
+    archived_summary_path = (
+        _latest_archived_summary_path(session_root, sessions) if parse_ok else None
+    )
+
+    findings["checks"]["session_state"] = {
+        "session_state": state,
+        "root_source": root_source,
+        "root": str(session_root),
+        "returncode": list_result["returncode"],
+        "parse_ok": parse_ok,
+        "session_count": len(sessions),
+        "latest_archived_summary_path": archived_summary_path,
+    }
+    if not parse_ok and list_result["returncode"] != 0:
+        findings["automatic_criticals"].append("session_state_list_failed")
+
+
 def _check_topology(findings: dict, args, dev, principal, workspace) -> None:
     topo_cmd = [
         sys.executable,
@@ -325,6 +437,7 @@ def collect(args: argparse.Namespace) -> dict:
 
     _check_shas(findings, args, dev, principal, workspace)
     _check_validate(findings, dev)
+    _check_session_state(findings, args, dev, workspace)
     _check_topology(findings, args, dev, principal, workspace)
     _check_consumers(findings, args, dev)
     return findings
@@ -353,6 +466,16 @@ def _report(findings: dict) -> None:
     )
     for w in v.get("actionable_warnings", []):
         print(f"    [actionable] {w}")
+    ss = findings["checks"].get("session_state", {})
+    if ss:
+        print(
+            f"session_state: {ss.get('session_state')} "
+            f"(root_source={ss.get('root_source')}, sessions={ss.get('session_count')})"
+        )
+        if ss.get("latest_archived_summary_path"):
+            print(
+                f"    latest_archived_summary: {ss.get('latest_archived_summary_path')}"
+            )
     t = findings["checks"].get("topology", {})
     print(f"topology     : ok={t.get('ok')}")
     cons = findings["checks"].get("consumers")
