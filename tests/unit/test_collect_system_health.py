@@ -1075,3 +1075,114 @@ def test_caducated_helper_fail_safe_without_timestamp():
         csh._last_run_is_caducated({"finished_at": "2020-01-01T00:00:00+00:00"}, now)
         is True
     )
+
+
+# ---- WOT-2026-024a: --validate --no-heal keeps the collector read-only ---------
+
+
+def test_validate_no_heal_does_not_write_state_md_real_path(tmp_path):
+    """`agent_controller --validate --no-heal` must NOT heal (write) the tracked
+    STATE.md, even under real bus drift.
+
+    REAL PATH by design: a subprocess to the controller (NOT a mocked csh._run),
+    so it exercises the actual sync_state_projection call that the mocked-_run
+    tests in this file can never reach -- a hermetic mock of _run passes GREEN
+    with the defect live (that is exactly why 024a needs a real-path test).
+
+    Mutation (teeth): remove the `if not no_heal:` guard in _handle_validate (heal
+    always) and the --no-heal run heals STATE.md -> the byte-identity assert FAILS.
+    """
+    import subprocess
+
+    controller = Path(__file__).resolve().parents[2] / ".agent" / "agent_controller.py"
+    project_root = Path(__file__).resolve().parents[2]
+
+    fx = tmp_path / "fx"
+    collab = fx / ".agent" / "collaboration"
+    events = fx / ".agent" / "runtime" / "events"
+    collab.mkdir(parents=True)
+    events.mkdir(parents=True)
+    # Non-seed-neutral (ID != none) so --validate reaches the heal branch.
+    (collab / "work_plan.md").write_text(
+        "# Plan\n\n- **ID:** WOT-TEST-001\n- **Estado:** IN_PROGRESS\n",
+        encoding="utf-8",
+    )
+    (collab / "execution_log.md").write_text(
+        "# Log\n\n- **Estado:** IN_PROGRESS\n", encoding="utf-8"
+    )
+    state = collab / "STATE.md"
+    state_content = "ACTIVE_TICKET: WOT-TEST-001\nSTATUS: IN_PROGRESS\n"
+    state.write_text(state_content, encoding="utf-8")
+    # Bus derives READY_FOR_REVIEW != STATE.md's IN_PROGRESS -> DRIFTED.
+    (events / "events.jsonl").write_text(
+        '{"event_type": "STATE_CHANGED", "ticket_id": "WOT-TEST-001", '
+        '"payload": {"to_state": "READY_FOR_REVIEW"}}\n',
+        encoding="utf-8",
+    )
+    # git-init the fixture so any git walk-up stays hermetic (WOT-2026-020r).
+    subprocess.run(["git", "init", "-q", str(fx)], check=True)
+
+    def _validate(*extra: str) -> None:
+        subprocess.run(
+            [
+                sys.executable,
+                str(controller),
+                "--validate",
+                "--json",
+                "--force",
+                *extra,
+                "--project-root",
+                str(fx),
+            ],
+            cwd=str(project_root),
+            capture_output=True,
+            text=True,
+        )
+
+    # --no-heal: STATE.md content is UNCHANGED (no write under drift).
+    _validate("--no-heal")
+    assert state.read_text(encoding="utf-8") == state_content, (
+        "STATE.md was healed under --no-heal (read-only contract violated)"
+    )
+
+    # Sanity: the fixture genuinely drifts and the REAL heal path fires WITHOUT the
+    # flag -- so the assertion above is meaningful, not vacuous.
+    _validate()
+    healed = state.read_text(encoding="utf-8")
+    assert healed != state_content and "READY_FOR_REVIEW" in healed, (
+        "fixture did not drift/heal without --no-heal; the --no-heal test would be vacuous"
+    )
+
+
+def test_collector_passes_no_heal_to_both_validate_invocations(tmp_path, monkeypatch):
+    """The READ-ONLY collector passes --no-heal to BOTH --validate invocations
+    (motor and destino). Mutation: drop --no-heal from either invocation -> FAILS."""
+    motor = _fake_motor(tmp_path)
+    dest = _fake_dest(tmp_path, lastrun={"exit_code": 0})
+
+    captured: list[list[str]] = []
+    passthrough = _fake_run_factory()
+
+    def _spy(cmd, cwd, timeout=600):
+        captured.append(list(cmd))
+        return passthrough(cmd, cwd, timeout)
+
+    monkeypatch.setattr(csh, "_run", _spy)
+    csh.main(
+        [
+            "--motor-root",
+            str(motor),
+            "--project-root",
+            str(dest),
+            "--mode",
+            "full",
+            "--out",
+            str(tmp_path / "out"),
+        ]
+    )
+    validate_cmds = [cmd for cmd in captured if "--validate" in cmd]
+    assert len(validate_cmds) >= 2, (
+        f"expected motor + destino --validate invocations; got {validate_cmds}"
+    )
+    for cmd in validate_cmds:
+        assert "--no-heal" in cmd, f"--validate invocation missing --no-heal: {cmd}"

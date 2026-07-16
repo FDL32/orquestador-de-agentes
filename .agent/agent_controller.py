@@ -5893,7 +5893,7 @@ def _collect_deliverable_type_warnings(plan_content: str) -> dict[str, list[str]
     return {"work_plan.md": deliverable_warnings}
 
 
-def _handle_validate(json_output: bool) -> int:  # noqa: C901
+def _handle_validate(json_output: bool, no_heal: bool = False) -> int:  # noqa: C901
     """Handle --validate flag.
 
     Aggregates many independent validators (state files, scope, bus drift,
@@ -5966,18 +5966,24 @@ def _handle_validate(json_output: bool) -> int:  # noqa: C901
         if scope_warnings:
             warnings.setdefault("scope", []).extend(scope_warnings)
 
-    # Check bus drift - heal first, then report any residual
+    # Check bus drift - heal first (unless --no-heal), then report any residual.
+    # WOT-2026-024a: a READ-ONLY caller (e.g. scripts/collect_system_health.py,
+    # which AGENTS.md documents as a read-only collector) passes no_heal=True so
+    # --validate NEVER writes the git-TRACKED STATE.md via sync_state_projection
+    # (state_projection_sync.py write_text on DRIFTED). The residual drift is
+    # still REPORTED as a warning below -- read-only observation, not mutation.
     if not seed_neutral:
-        try:
-            from scripts.state_projection_sync import sync_state_projection
+        if not no_heal:
+            try:
+                from scripts.state_projection_sync import sync_state_projection
 
-            sync_state_projection(
-                runtime_dir=get_runtime_dir() / "events",
-                collaboration_dir=get_collab_dir(),
-                ticket_id=get_plan_id(plan_content),
-            )
-        except Exception:  # noqa: S110 - sync is best-effort and must not block validate
-            pass
+                sync_state_projection(
+                    runtime_dir=get_runtime_dir() / "events",
+                    collaboration_dir=get_collab_dir(),
+                    ticket_id=get_plan_id(plan_content),
+                )
+            except Exception:  # noqa: S110 - sync is best-effort and must not block validate
+                pass
         drift_warnings = _check_bus_drift(plan_content, log_status)
         if drift_warnings:
             warnings.setdefault("bus_drift", []).extend(drift_warnings)
@@ -6350,6 +6356,8 @@ Mode flags:
   --force             Continue when local safety checks would otherwise stop.
   --strict            Run strict validation mode.
   --dry-run           Preview the operation without applying changes.
+  --no-heal           With --validate: report bus drift read-only, never write
+                      the tracked STATE.md (WOT-2026-024a; for read-only callers).
 
 Action flags:
   --mark-ready                    Mark the active ticket as READY_FOR_REVIEW.
@@ -6567,7 +6575,9 @@ def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
 
     # Check for --validate via direct call (see FLAG_HANDLERS comment above)
     if "--validate" in sys.argv:
-        return _handle_validate(json_output)
+        # WOT-2026-024a: --no-heal makes --validate read-only (report drift, never
+        # write STATE.md). Default (flag absent) heals as before: additive, no regression.
+        return _handle_validate(json_output, no_heal="--no-heal" in sys.argv)
 
     # Check for specific flag handlers
     for flag, handler in FLAG_HANDLERS.items():

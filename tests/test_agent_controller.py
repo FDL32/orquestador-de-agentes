@@ -1801,7 +1801,11 @@ class TestMotorCodeOnlyGuard:
 
         # We need to also patch the validate handler to return 0, since it reads
         # files from the real filesystem and will fail.
-        monkeypatch.setattr(agent_controller, "_handle_validate", lambda json_output: 0)
+        # WOT-2026-024a: _handle_validate gained a `no_heal` kwarg; the mock must
+        # accept it or main()'s call `_handle_validate(json_output, no_heal=...)` raises.
+        monkeypatch.setattr(
+            agent_controller, "_handle_validate", lambda json_output, no_heal=False: 0
+        )
 
         exit_code = agent_controller.main()
         assert exit_code == 0

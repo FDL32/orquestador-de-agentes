@@ -382,6 +382,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI orchestratio
             "--validate",
             "--json",
             "--force",
+            # WOT-2026-024a: this collector is READ-ONLY (AGENTS.md); --no-heal
+            # stops --validate from healing bus drift into the tracked STATE.md.
+            "--no-heal",
         ],
         motor_root,
     )
@@ -467,6 +470,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI orchestratio
                 "--validate",
                 "--json",
                 "--force",
+                # WOT-2026-024a: read-only collector -> never heal the destino's
+                # tracked STATE.md.
+                "--no-heal",
                 "--project-root",
                 str(dest_root),
             ],
