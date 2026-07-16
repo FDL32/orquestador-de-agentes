@@ -592,3 +592,47 @@ def test_executor_auditor_parity_on_level_all_cond5() -> None:
         "auditor already does, and a split contract between the two is the "
         "measured cause of the F1 false-green (sibling audit 20260716-1427)"
     )
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-025q: the cond-3 accounting universe is the tickets of groups[].
+# tickets[] entries that belong to NO group are triage context: never counted
+# (neither closed nor lost), but ENUMERATED as excluded -- never silently
+# omitted. Measured case (F3, sibling audit 20260716-1427): WOT-2026-020t sat
+# in tickets[] of the consumed DAG belonging to no group and reached no
+# terminal state; "every ticket of the DAG" was ambiguous about it.
+# ---------------------------------------------------------------------------
+
+
+def test_predicate_row3_universe_is_groups() -> None:
+    """PREDICATE row 3 must anchor the accounting universe to the literal
+    `groups[]` AND require visible enumeration of the excluded tickets[]
+    entries. Mutation: drop either anchor from row 3 -> RED."""
+    row3 = _predicate_row(3)
+    assert "groups[]" in row3, (
+        "PREDICATE row 3 must fix the accounting universe = tickets listed "
+        "in groups[] (WOT-2026-025q): 'every ticket of the DAG' was "
+        "ambiguous about tickets[] entries with no group (F3)"
+    )
+    assert "ENUMERATED" in row3, (
+        "row 3 must require the excluded tickets[] entries to be ENUMERATED "
+        "as context (in the DAG or the batch_run accounting note): a silent "
+        "omission is the F3 silhouette legitimized"
+    )
+
+
+def test_executor_auditor_parity_on_cond3_universe() -> None:
+    """PARITY (WOT-2026-025q): both prompts must anchor cond-3's universe to
+    the literal `groups[]` (each in its own language). Mutation: drop the
+    token from either file's cond-3 -> RED."""
+    auditor_text = AUDITOR_PROMPT.read_text(encoding="utf-8")
+    idx = auditor_text.index("contabilidad_completa")
+    auditor_cond3 = auditor_text[idx : idx + 900]
+    assert "groups[]" in auditor_cond3, (
+        "the auditor's cond-3 must fix the accounting universe = tickets of "
+        "groups[]; tickets[] entries with no group are context, not accounting"
+    )
+    assert "groups[]" in _predicate_row(3), (
+        "the executor's PREDICATE row 3 must fix the same groups[] universe: "
+        "a split contract between executor and auditor on cond-3 recreates F3"
+    )

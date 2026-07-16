@@ -219,12 +219,19 @@ Reproduce las 7 condiciones exactas:
    rechazo. Documenta el exit code y, si el validador lo reporta, el detalle
    del ciclo.
 
-3. **`contabilidad_completa`** -- cada ticket que aparecia en el DAG termina
-   en EXACTAMENTE UN estado de {`cerrado` | `congelado-con-GROUP_STOP_REPORT`
-   | `no-alcanzado-por-budget`}. Ningun ticket "perdido" (ni ausente de los
-   tres estados, ni presente en mas de uno). Re-deriva la cuenta tu mismo
-   desde `batch_run_<ts>.json` + los `GROUP_STOP_REPORT` + el DAG-JSON
-   original; no aceptes solo el resumen del ejecutor.
+3. **`contabilidad_completa`** -- el universo de la contabilidad son los
+   tickets listados en `groups[]` del DAG (WOT-2026-025q); cada ticket de ese
+   universo termina en EXACTAMENTE UN estado de {`cerrado` |
+   `congelado-con-GROUP_STOP_REPORT` | `no-alcanzado-por-budget`}. Ningun
+   ticket "perdido" (ni ausente de los tres estados, ni presente en mas de
+   uno). Las entradas de `tickets[]` que NO pertenecen a ningun grupo son
+   contexto del triage, no contabilidad: no cuentan (ni como cerradas ni como
+   perdidas) pero deben quedar ENUMERADAS como excluidas -- en el propio DAG o
+   en la nota de contabilidad del `batch_run` --, nunca omitidas en silencio
+   (F3: un DAG consumido llevaba una entrada de `tickets[]` sin grupo y sin
+   estado terminal, y "cada ticket del DAG" era ambiguo sobre ella). Re-deriva
+   la cuenta tu mismo desde `batch_run_<ts>.json` + los `GROUP_STOP_REPORT` +
+   el DAG-JSON original; no aceptes solo el resumen del ejecutor.
 
 4. **`cierres_auditables`** -- por cada ticket marcado `cerrado`: existe una
    fila archivada con celda `commit:<sha>` Y el contador `audited` de
