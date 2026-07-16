@@ -300,26 +300,70 @@ class TestDetermineNextAction:
 class TestShouldOverwriteTurn:
     """Test should_overwrite_turn determines if TURN.md needs reset."""
 
-    def test_should_overwrite_turn_returns_bool(self):
-        """should_overwrite_turn returns boolean."""
+    def test_should_overwrite_turn_true_when_file_absent(self):
+        """WOT-2026-023e: a missing TURN.md must be overwritten -> True.
+
+        Was `assert isinstance(result, bool)`, which accepted True OR False and
+        verified nothing. Now asserts the VALUE. Mutation: make
+        should_overwrite_turn return False for a missing file -> this fails.
+        """
         with patch.object(Path, "exists", return_value=False):
             result = should_overwrite_turn(Path("/fake/TURN.md"))
 
-        assert isinstance(result, bool)
+        assert result is True
+
+    def test_should_overwrite_turn_false_when_file_present_and_clean(self):
+        """The counterpart value: a present TURN.md with no UNKNOWN/
+        MANUAL_INTERVENTION marker must NOT be overwritten -> False."""
+        with (
+            patch.object(Path, "exists", return_value=True),
+            patch.object(Path, "read_text", return_value="TURN: builder ready\n"),
+        ):
+            result = should_overwrite_turn(Path("/fake/TURN.md"))
+
+        assert result is False
 
 
 class TestUpdateLogStatus:
     """Test update_log_status modifies execution log."""
 
-    def test_update_log_status_returns_bool(self):
-        """update_log_status returns success boolean."""
+    def test_update_log_status_true_when_estado_line_present(self):
+        """WOT-2026-023e: happy path. A log that HAS an `**Estado:**` line gets
+        it rewritten and the function returns True.
+
+        The old test used a fixture WITHOUT `**Estado:**`, so it actually
+        exercised the FAILURE path (return False) while its name promised the
+        happy path -- and `assert isinstance(result, bool)` masked the mismatch
+        (same defect class as WOT-2026-023a). Now the fixture reaches the write
+        branch and the assert checks the VALUE.
+
+        Mutation: make the write branch return False -> this fails.
+        """
+        log_with_estado = "# Execution Log\n\n**Estado:** READY\n"
         with (
-            patch("agent_controller.read_file", return_value="# Execution Log\n"),
-            patch("agent_controller.write_file"),
+            patch("agent_controller.read_file", return_value=log_with_estado),
+            patch("agent_controller.write_file") as mock_write,
         ):
             result = update_log_status("IN_PROGRESS", "test note")
 
-        assert isinstance(result, bool)
+        assert result is True
+        # And it actually wrote the new status (the write branch really ran).
+        mock_write.assert_called_once()
+        written = mock_write.call_args[0][1]
+        assert "**Estado:** IN_PROGRESS" in written
+        assert "test note" in written
+
+    def test_update_log_status_false_when_no_estado_line(self):
+        """The counterpart value: a log without an `**Estado:**` line cannot be
+        updated -> False, and nothing is written."""
+        with (
+            patch("agent_controller.read_file", return_value="# Execution Log\n"),
+            patch("agent_controller.write_file") as mock_write,
+        ):
+            result = update_log_status("IN_PROGRESS", "test note")
+
+        assert result is False
+        mock_write.assert_not_called()
 
 
 class TestRunQualityGates:
