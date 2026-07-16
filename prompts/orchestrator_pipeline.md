@@ -1,5 +1,11 @@
 # Orchestrator Pipeline Prompt
 
+<!-- PROMPT-SUMMARY
+what: Meta-prompt del agente orquestador que procesa tickets del backlog de un repo_destino usando el motor como fuente canonica (contract_id cid-orchestrator-pipeline-v1).
+when: Para orquestar el pipeline por-ticket en modo destino con bus vivo: bootstrap -> builder -> review -> cierre por bus.
+not: NO es el modo motor code-only (ver orchestrator_pipeline_codeonly.md) ni el ejecutor de batch autonomo (ver orchestrator_autonomous_ticket_batch.md) ni el bootstrap de sesion.
+-->
+
 > Meta-prompt para un agente orquestador que procesa tickets desde el backlog
 > de un `repo_destino`, usando el motor `orquestador_de_agentes` como fuente
 > canonica de prompts, skills y scripts.

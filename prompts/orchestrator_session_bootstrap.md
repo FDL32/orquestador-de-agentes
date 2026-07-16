@@ -1,5 +1,11 @@
 # Session Bootstrap Prompt
 
+<!-- PROMPT-SUMMARY
+what: Bloque de arranque canonico que orienta a un agente/backend nuevo sobre orquestador_de_agentes apuntando a archivos canonicos, sin gastar contexto embebiendo docs.
+when: Al iniciar una conversacion nueva (nuevo agente o backend, post-compactacion, recuperacion de sesion); se pega tal cual como PRIMER mensaje.
+not: NO es el pipeline de ejecucion de tickets (ver orchestrator_pipeline.md) ni un contrato normativo; es solo el briefing de arranque.
+-->
+
 Pega este bloque tal cual al iniciar una nueva conversacion con un agente nuevo (Claude Code, Codex, OpenCode o cualquier backend) que vaya a operar sobre `orquestador_de_agentes`. Esta optimizado para orientar al agente sin gastar la ventana de contexto inicial cargando documentacion completa: apunta a archivos canonicos en lugar de embeber contenido.
 
 ---
