@@ -275,8 +275,13 @@ real false-green in the evidence that informed this design:
    - `ruff check .`
    - `ruff format --check .`  -- a SEPARATE gate from `ruff check`; this is the
      one that leaked. Running only `ruff check` is NOT running the gates.
-   - `python scripts/run_pytest_safe.py`  -- read "N passed" from the real
-     output, never the wrapper's exit code (barrier: WOT-2026-021m).
+   - `python scripts/run_pytest_safe.py --level all`  -- the flag is part of
+     the gate (WOT-2026-025p): WITHOUT `--level all` the wrapper runs the
+     unit level only (integration tests DESELECTED), and the executor once
+     declared green three times following this prompt to the letter -- a
+     formal false-green caught only by the sibling audit. Read "N passed"
+     from the real output, never the wrapper's exit code (barrier:
+     WOT-2026-021m), and expect 0 deselected.
    - `python scripts/pip_audit_project.py`  -- CONDITIONAL: run iff the ticket's
      Files Likely Touched include a dependency manifest (`pyproject.toml`,
      `uv.lock`, `requirements*.txt`); otherwise emit an AUDITABLE skip, never a
@@ -349,7 +354,7 @@ declared `DONE` only if ALL 7 conditions hold:
 | 2 | `dag_aciclico` | the same validator reports no cycle (exit 0) |
 | 3 | `contabilidad_completa` | every ticket of the DAG ends in EXACTLY ONE state: closed, frozen-with-`GROUP_STOP_REPORT`, or not-reached-by-budget. No ticket is lost |
 | 4 | `cierres_auditables` | per closed ticket, an archived row with a `commit:` cell AND the `audited` counter of `check_backlog_commits_landed` WENT UP; final `ERROR=0` |
-| 5 | `suite_final_verde` | canonical suite post-last-commit with `tested_sha == HEAD`, read from the REAL output ("N passed / N failed"), NEVER the wrapper's exit code |
+| 5 | `suite_final_verde` | `python scripts/run_pytest_safe.py --level all` post-last-commit with `tested_sha == HEAD`, read from the REAL output ("N passed / N failed"), NEVER the wrapper's exit code (WOT-2026-025p: without `--level all` the run is unit-only and its green is a formal false-green) |
 | 6 | `auditor_emitido` | the isolated auditor's report exists, verdict != `NO ACEPTAR TODAVIA`. DUAL CONTRACT (P5, WOT-2026-023v): the executor emits this row as `PENDING` -- it cannot self-certify it; only the sibling audit resolves it to pass |
 | 7 | `arboles_limpios` | dirty=0 across the repos ENUMERATED from the resolved topology (never a hardcoded count) |
 

@@ -526,3 +526,69 @@ def test_ledger_cites_real_batch_retry_schema() -> None:
     assert "ticket_id" in text
     assert "subtipo_cem" in text
     assert "LEDGER_FIELDS" in text
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-025p: the canonical-suite gate must carry --level all EXPLICITLY,
+# in barrier 3 AND in PREDICATE row 5, and executor<->auditor must stay in
+# PARITY on it. Split contract, measured: run_pytest_safe WITHOUT the flag
+# runs the unit level only (integration deselected), and the executor
+# declared green three times FOLLOWING ITS OWN PROMPT (F1/F2 of the sibling
+# audit 20260716-1427) while the auditor's cond-5 did require --level all.
+# ---------------------------------------------------------------------------
+
+AUDITOR_PROMPT = PROMPTS / "audit_autonomous_ticket_batch.md"
+
+
+def test_barrier3_suite_gate_carries_level_all() -> None:
+    """Every barrier-3 bullet that enumerates the canonical suite must carry
+    --level all. Mutation: drop --level all from the run_pytest_safe bullet
+    in barrier 3 -> RED."""
+    bullet_lines = [
+        ln for ln in _barrier3_block().splitlines() if ln.lstrip().startswith("-")
+    ]
+    suite_bullets = [ln for ln in bullet_lines if "run_pytest_safe.py" in ln]
+    assert suite_bullets, "barrier 3 must enumerate the canonical suite gate"
+    assert all("--level all" in ln for ln in suite_bullets), (
+        "barrier 3 must cite `run_pytest_safe.py --level all` explicitly "
+        "(WOT-2026-025p): without the flag the wrapper runs the unit level "
+        "and a green there is a formal false-green for a batch close"
+    )
+
+
+def _predicate_row(n: int) -> str:
+    """The PREDICATE table row for condition `n` (single line starting
+    '| n |'), so assertions are scoped to the table, not prose elsewhere."""
+    rows = [ln for ln in _read().splitlines() if ln.strip().startswith(f"| {n} |")]
+    assert len(rows) == 1, f"expected exactly one PREDICATE row for cond {n}"
+    return rows[0]
+
+
+def test_predicate_row5_cites_level_all() -> None:
+    """PREDICATE row 5 (suite_final_verde) must cite --level all explicitly,
+    not 'canonical suite' prose. Mutation: drop --level all from row 5 ->
+    RED."""
+    row5 = _predicate_row(5)
+    assert "--level all" in row5, (
+        "PREDICATE row 5 must cite `run_pytest_safe.py --level all` "
+        "(WOT-2026-025p): 'canonical suite' without the flag is the exact "
+        "split contract that produced the F1 false-green"
+    )
+
+
+def test_executor_auditor_parity_on_level_all_cond5() -> None:
+    """PARITY (WOT-2026-025p): the auditor's cond-5 requires --level all;
+    the executor's row 5 must require it too. This test reads BOTH prompts,
+    so the parity cannot silently diverge in either direction. Mutation:
+    drop --level all from either file's cond-5 -> RED."""
+    auditor_text = AUDITOR_PROMPT.read_text(encoding="utf-8")
+    idx = auditor_text.index("suite_final_verde")
+    auditor_cond5 = auditor_text[idx : idx + 400]
+    assert "--level all" in auditor_cond5, (
+        "the auditor's cond-5 (suite_final_verde) must require --level all"
+    )
+    assert "--level all" in _predicate_row(5), (
+        "the executor's PREDICATE row 5 must require --level all: the "
+        "auditor already does, and a split contract between the two is the "
+        "measured cause of the F1 false-green (sibling audit 20260716-1427)"
+    )
