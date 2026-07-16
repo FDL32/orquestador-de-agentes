@@ -2,40 +2,40 @@
 
 > Multi-agent orchestration template (Manager/Builder/Supervisor). Python 3.10+ runtime, OpenCode backend, terminal-driven flow, canonical state in `.agent/`, skills under `skills/`, hard scope gate, anti-fabrication verification protocol. Local audit + repo compare + refactor manager are first-class skills.
 
-Repo: https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main
+Repo: https://raw.githubusercontent.com/FDL32/orquestador-de-agentes/main
 
 ## Core entry points
 
-- [AGENTS.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/AGENTS.md)
-- [CLAUDE.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/CLAUDE.md)
-- [QUICKSTART.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/QUICKSTART.md)
-- [PROJECT.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/PROJECT.md)
-- [CHANGELOG.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/CHANGELOG.md)
+- [AGENTS.md](https://raw.githubusercontent.com/FDL32/orquestador-de-agentes/main/AGENTS.md)
+- [CLAUDE.md](https://raw.githubusercontent.com/FDL32/orquestador-de-agentes/main/CLAUDE.md)
+- [QUICKSTART.md](https://raw.githubusercontent.com/FDL32/orquestador-de-agentes/main/QUICKSTART.md)
+- [PROJECT.md](https://raw.githubusercontent.com/FDL32/orquestador-de-agentes/main/PROJECT.md)
+- [CHANGELOG.md](https://raw.githubusercontent.com/FDL32/orquestador-de-agentes/main/CHANGELOG.md)
 
 ## Configuration
 
-- [INTERACTION_MODES.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/INTERACTION_MODES.md)
-- [agents.json](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/.agent/config/agents.json)
-- [pyproject.toml](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/pyproject.toml)
+- [INTERACTION_MODES.md](https://raw.githubusercontent.com/FDL32/orquestador-de-agentes/main/INTERACTION_MODES.md)
+- [agents.json](https://raw.githubusercontent.com/FDL32/orquestador-de-agentes/main/.agent/config/agents.json)
+- [pyproject.toml](https://raw.githubusercontent.com/FDL32/orquestador-de-agentes/main/pyproject.toml)
 
 ## Debugging & introspection
 
-- [local_audit.py](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/scripts/local_audit.py)
-- [agent_controller.py](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/.agent/agent_controller.py)
-- [test_manager_smoke.ps1](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/scripts/test_manager_smoke.ps1)
+- [local_audit.py](https://raw.githubusercontent.com/FDL32/orquestador-de-agentes/main/scripts/local_audit.py)
+- [agent_controller.py](https://raw.githubusercontent.com/FDL32/orquestador-de-agentes/main/.agent/agent_controller.py)
+- [test_manager_smoke.ps1](https://raw.githubusercontent.com/FDL32/orquestador-de-agentes/main/scripts/test_manager_smoke.ps1)
 
 ## Philosophy & onboarding
 
-- [orchestrator_session_bootstrap.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/prompts/orchestrator_session_bootstrap.md)
-- [orchestrator_refactor_bootstrap.md](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/prompts/orchestrator_refactor_bootstrap.md)
+- [orchestrator_session_bootstrap.md](https://raw.githubusercontent.com/FDL32/orquestador-de-agentes/main/prompts/orchestrator_session_bootstrap.md)
+- [orchestrator_refactor_bootstrap.md](https://raw.githubusercontent.com/FDL32/orquestador-de-agentes/main/prompts/orchestrator_refactor_bootstrap.md)
 
 ## Skills (read RESOLVER first)
 
-- [skills/local-audit](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/skills/local-audit/SKILL.md)
-- [skills/repo-compare](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/skills/repo-compare/SKILL.md)
-- [skills/refactor-manager](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/skills/refactor-manager/SKILL.md)
-- [skills/project-finalize](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/skills/project-finalize/SKILL.md)
-- [skills/version-changelog](https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main/skills/version-changelog/SKILL.md)
+- [skills/local-audit](https://raw.githubusercontent.com/FDL32/orquestador-de-agentes/main/skills/local-audit/SKILL.md)
+- [skills/repo-compare](https://raw.githubusercontent.com/FDL32/orquestador-de-agentes/main/skills/repo-compare/SKILL.md)
+- [skills/refactor-manager](https://raw.githubusercontent.com/FDL32/orquestador-de-agentes/main/skills/refactor-manager/SKILL.md)
+- [skills/project-finalize](https://raw.githubusercontent.com/FDL32/orquestador-de-agentes/main/skills/project-finalize/SKILL.md)
+- [skills/version-changelog](https://raw.githubusercontent.com/FDL32/orquestador-de-agentes/main/skills/version-changelog/SKILL.md)
 
 ## Operational tips
 
@@ -329,6 +329,15 @@ CEM es el contrato minimo para trabajar con agentes sin convertir cada ticket en
 
 - **Contrato antes que fix:** identifica que comportamiento canonico protege el cambio antes de tocar codigo o tests.
 - **Evidencia antes que relato:** ningun auto-reporte de agente es evidencia; usa diff, exit code, test, evento de bus, commit o artefacto verificable.
+- **Un `exit 0` puede significar "no hice nada":** en operaciones IDEMPOTENTES o con SKIP (cierres, syncs, instaladores), `exit 0` es indistinguible de "ya estaba hecho" o "me salte el trabajo". `exit code` es evidencia NECESARIA pero no SUFICIENTE para estas: verifica el ARTEFACTO (fichero/informe/diff/contador que la operacion debia producir), no solo el codigo de salida; y busca en la salida las palabras de skip (`already`, `skipped`, `nothing to do`, `none present`, `up to date`, `no files to check`). Y lee el CODIGO antes de temer un flag: un `--force` puede vencer SOLO la idempotencia sin tocar los gates (leer 12 lineas convierte un "no me atrevo" en un cierre real). Caso: `--session-close` dio `exit 0` sin cerrar nada (`[INFO] Session already completed`), disparado por un `.session_state.json` STALE que ademas se contradecia con `work_plan.md` (2026-07-15).
+- **Equivalencia de ruta productiva (evidencia exploratoria vs evidencia de cierre):** un `exit_code:` solo es evidencia de CIERRE si el probe **reproduce la ruta que corre en produccion**. Aplica **rigor proporcional**: obligatorio para todo lo que toca runtime (hooks, guards, CI, tests, scripts ejecutables, instalador); se salta para docs, typos y prosa sin logica de ejecucion.
+  - **Asimetria dura:** un probe que NO reproduce la ruta productiva puede **REFUTAR** una hipotesis, pero **NUNCA CONFIRMAR un cierre**. La confirmacion es la que mata: hoy el probe de PowerShell *confirmo* una hipotesis falsa, y fue el probe en la ruta REAL (Git Bash) el que la refuto.
+  - **Recibo obligatorio (no basta afirmarlo):** el probe **imprime** su propio contexto -- `sys.executable`, `cwd`, la parte relevante de `PATH`/env, y la cadena de launcher-- y ese recibo se pega junto al `exit_code:`. Sin recibo, es evidencia exploratoria por defecto.
+  - **Declara y justifica:** actor real, launcher real, shell, cwd, PATH/env, fichero/config leido, y **POR QUE** ese probe reproduce la ruta productiva.
+  - **Vector git (WOT-2026-020r):** si el probe invoca git, pregunta explicitamente **¿el cwd tiene su propio `.git`?** Si no lo tiene, el walk-up de git **alcanza el repo REAL** y te contesta el arbol de la maquina, no el fixture: el probe NO es hermetico y su verde no significa nada.
+  - **Por que esto es una regla y no un consejo:** un probe en la ruta equivocada se ve IDENTICO a uno bueno -- tiene `command:` y tiene `exit_code:` -- y por eso atraviesa a los revisores. Casos: `check_entrypoint_fails_closed` valida el entrypoint con `[sys.executable, ENTRYPOINT]` mientras produccion lo lanza **por shell** con `python` pelado, asi que prueba una ruta que produccion nunca toma; y el diagnostico de WOT-2026-020o midio `python` en **PowerShell** cuando el hook corre en **Git Bash**, lo que subio la ficha a Alta y ato WOT-2026-024f a ella sobre una premisa falsa (2026-07-15).
+  - **ESTATUS DECLARADO: esto es una NORMA, no una barrera** (segun la definicion de "Barrera cableada" de esta misma lista: nadie la invoca sola, depende de que el agente se acuerde). Se declara asi a proposito en vez de disfrazarla de gate. El recibo es mecanizable y los checks POR DOMINIO si son cableables (p.ej. el censo de WOT-2026-024f debe resolver en Git Bash); un verificador GENERICO de equivalencia no es trivial, porque **no existe oraculo universal de "la ruta productiva"**: para comparar contra produccion hay que ejecutar en produccion, y entonces la comparacion sobra. Deuda declarada con dueno: **WOT-2026-025f**.
+- **El conflicto entre probes ES el hallazgo:** si dos mediciones del mismo hecho se contradicen, **no elijas la que confirma tu tesis, ni promedies, ni descartes la incomoda**: averigua QUE mide cada una, porque casi siempre **una de las dos no es produccion**. `python -c "pass"` dio TRES exit codes el mismo dia en la misma maquina -- `subprocess(shell=False)` -> 0 (CreateProcess resuelve primero el dir del ejecutable PADRE: el python del venv), cmd/PowerShell -> 1 (shim `python.BAT`), Git Bash -> 0 (el `python.exe` real). Dos de los tres producian un veredicto FALSO sobre produccion: uno un falso VERDE y otro un falso ROJO. La contradiccion es material de auditoria de primer nivel, no ruido a resolver por mayoria.
 - **Memoria despues de aprender:** si una familia de fallos puede repetirse, deja barrera automatica o deuda explicita con ticket y criterio de salida.
 - **Rigor proporcional:** docs y typos no cargan la misma ceremonia que bus, supervisor, seguridad, rutas o estado compartido.
 - **Barrera verificada:** un guard, hook o test nuevo no cuenta hasta demostrar que bloquea el fallo que promete bloquear.
@@ -341,6 +350,49 @@ CEM es el contrato minimo para trabajar con agentes sin convertir cada ticket en
 - **Relaunch con root verificado:** antes de relanzar Builder, valida `AGENT_PROJECT_ROOT`, `repo_motor`, `repo_destino`, bus legible y ticket activo.
 
 Referencia ampliada: `.agent/rules/common/sustainable_engineering.md`.
+
+## Hacer ahora vs aplazar (criterio de decision)
+
+El coste de APLAZAR **no es cero**: fichar "para la proxima sesion" cuesta prompt de arranque, recarga de contexto, re-medicion y revalidacion de premisas, y sobre todo **asciende el diagnostico de hoy a premisa heredada sin verificar**. Pero ese coste NO autoriza a perseguir parches que degeneran.
+
+**Asimetria (regla de oro, y mas en autonomo):** los gates de abajo son un filtro para PERMITIR hacer ahora, **nunca una obligacion de hacerlo**. Ante duda no resuelta POR EVIDENCIA, **aplazar gana**. Si el trabajo se sale del objetivo del ticket, se ficha y pasa a la sesion siguiente. El sistema debe ser fuente de soluciones, no de problemas: un arreglo dudoso metido a presion es un problema nuevo con commit.
+
+**Cada gate se responde con un ARTEFACTO, no con un juicio.** Un gate que se contesta con una opinion se relaja solo en cuanto el agente quiere avanzar (misma enfermedad que "aplicate tu propia vara"). Si no puedes pegar el artefacto, el gate NO pasa.
+
+### Hazlo ahora SOLO si cumple los 8
+
+1. **Localizacion EJECUTADA EN LA RUTA PRODUCTIVA.** No basta "se la linea"; **ni siquiera basta "lo ejecute"**. Aplica la **equivalencia de ruta productiva** de CEM: declara actor real, launcher real, shell, cwd, PATH/env, fichero/config leido, y **por que ese probe reproduce la ruta que corre en produccion**. Si no la reproduce es **evidencia exploratoria** y este gate **NO pasa** (orienta, no cierra). Artefacto: `command:` + `exit_code:` + `shell/cwd/env:` + la frase de equivalencia. Si dos probes se contradicen, **el conflicto ES el hallazgo** (CEM): resuelvelo antes de tocar nada.
+2. **DoD con dientes.** Existe test/probe que falla HOY con el bug y pasa con el fix, o mutacion **alcanzable** definida (un test que no puede ALCANZAR la rama que muta no cuenta). Artefacto: node-id + rc rojo previo.
+3. **Una superficie acotada.** Una superficie, no una familia. Artefacto: lista de ficheros a tocar (numero cerrado).
+4. **Arquitectura existente.** Conecta una pieza ya prevista o corrige una desviacion local; no inventa subsistema. Artefacto: la ruta del mecanismo que extiendes.
+5. **Cadena fresca.** "Desbloquea la cadena" solo vale si el DAG/triage se revalido EN ESTA SESION; un DAG en disco caduca solo (WOT-2026-023t). Si esta caducado, **re-triage primero**. Artefacto: fecha/SHA del triage.
+6. **Cabe completo:** fix + tests + mutation + gates + commit + review proporcional. Artefacto: la balanza de abajo.
+7. **Bisect-safe:** cada commit publicable queda verde en su propio HEAD.
+8. **Sin decision humana pendiente.** Trade-off de producto, politica o arquitectura -> se pregunta o se ficha.
+
+### STOP de degeneracion (durante el arreglo)
+
+Si tras el primer parche aparece cualquiera de estos, **parar y re-planificar**: superficie nueva no prevista; heuristica nueva; mas de un fichero/familia adicional; el test inicial no alcanza la rama real; el fix empieza a parecer diseno de sistema. **No parchear el parche:** ficha el alcance nuevo o abre sesion propia (WOT-2026-024u: de 3 lineas a "disenar un analizador estatico" en 5 parches; salio a WOT-2026-025c).
+
+### Aplazalo si
+
+No hay probe ejecutado en contexto de produccion; el DoD es aspiracional; requiere medir la flota completa o datos externos; mezcla familias de commits; depende de decision humana; el DAG esta caducado; la solucion correcta es diseno nuevo; no puede quedar bisect-safe; o el contexto es largo y el riesgo de falso-verde sube.
+
+### Balanza minima obligatoria (con cifras, no adjetivos)
+
+Sin al menos una cifra por columna la balanza es sesgo de presente: el agente subestima siempre lo hipotetico.
+
+| Hacer ahora | Aplazar |
+|---|---|
+| ficheros tocados (n) | re-medicion requerida: si/no |
+| tests/probes nuevos (n) | contexto a recargar |
+| tiempo/review estimado | riesgo vivo si se deja |
+| blast radius | sesiones futuras estimadas (n) |
+
+### Dos reglas durables
+
+- **Corregir un documento desechable NO corrige el sistema.** Si la ficha/backlog/memoria durable sigue con el diagnostico falso, el arreglo esta A MEDIAS. Un prompt de arranque es desechable y caduca; el backlog es la fuente durable (WOT-2026-024d/024f: el mismo diagnostico falso se pago dos veces).
+- **Los 8 gates NO son un detector de premisas falsas.** Caso fundacional (2026-07-15): WOT-2026-020o-B pasaba los 8 -- linea exacta, DoD con mutacion, una superficie, arquitectura existente, cadena fresca, sin decision humana -- y **el bug no existia**: el probe se habia medido en PowerShell, no en Git Bash (el shell REAL del hook). Lo unico que lo cazo fue **seguir midiendo hasta refutarse**, y el hallazgo llego DESPUES de que los 8 gates dieran verde. Por eso el gate 1 exige contexto de produccion y por eso la duda se resuelve aplazando.
 
 ## Skills Formales de Proceso
 
@@ -610,11 +662,11 @@ python scripts/memory_context.py --status
 | `workspace_activo` | Raíz operativa con `.agent/` desde la que corre el ticket actual |
 | `entorno_multi_root` | IDE con `repo_motor` + `repo_destino` abiertos simultáneamente |
 
-Regla de repos: toda operación git de tooling corre en `repo_motor`. El estado operativo (tickets, memoria de proyecto) vive en `repo_destino`. En dogfooding del motor bajo la topología worktree-dev (WOT-2026-019m), el `repo_motor` operativo donde se commitea/pushea es la worktree `orquestador_de_agentes_dev` (lleva `main`; ver "Resumen breve del sistema" y `QUICKSTART.md` "0d"); el checkout principal `orquestador_de_agentes` queda DETACHED en `origin/main` como fuente estable de solo-consumo, no se ejecutan operaciones git de tickets allí.
+Regla de repos: toda operación git de tooling corre en `repo_motor`. El estado operativo (tickets, memoria de proyecto) vive en `repo_destino`. En dogfooding del motor bajo la topología worktree-dev (WOT-2026-019m), el `repo_motor` operativo donde se commitea/pushea es la **worktree de desarrollo** (la que lleva `main`; su nombre se resuelve de forma PORTABLE via `AGENT_PROJECT_ROOT` o `motor_destination_link.json` / `runtime/motor_link.py`, NUNCA con un nombre de directorio fijo; en la instalación del motor esa worktree es, a modo de ejemplo, un checkout hermano con sufijo `_dev` — ver "Resumen breve del sistema" y `QUICKSTART.md` "0d"); el **checkout principal** (el que lleva el nombre canónico del repo) queda DETACHED en `origin/main` como fuente estable de solo-consumo, no se ejecutan operaciones git de tickets allí.
 
 ## Resumen breve del sistema
 
-- **Runtime activo:** `repo_motor` portable. Topologia worktree-dev (WOT-2026-019m): el motor se EVOLUCIONA en la worktree `orquestador_de_agentes_dev` (lleva `main`, cwd de desarrollo); el checkout principal `orquestador_de_agentes` queda DETACHED en `origin/main` como fuente estable que consumen los destinos via `motor_destination_link.json`. Ver `QUICKSTART.md` seccion "0d. Motor dev worktree" y `scripts/setup_dev_worktree.ps1`.
+- **Runtime activo:** `repo_motor` portable. Topologia worktree-dev (WOT-2026-019m): el motor se EVOLUCIONA en la **worktree de desarrollo** (lleva `main`, cwd de desarrollo; su ruta se resuelve de forma PORTABLE via `AGENT_PROJECT_ROOT` o `motor_destination_link.json`, no por un nombre fijo — en la instalacion del motor es, a modo de ejemplo, el checkout hermano con sufijo `_dev`); el **checkout principal** (nombre canonico del repo) queda DETACHED en `origin/main` como fuente estable que consumen los destinos via `motor_destination_link.json`. Ver `QUICKSTART.md` seccion "0d. Motor dev worktree" y `scripts/setup_dev_worktree.ps1`.
 - **Roles:** Manager (OpenCode via `scripts/manager_review_bridge.py`, modelo configurable en `.agent/config/agents.json`) y Builder (OpenCode, modelo `opencode-go/deepseek-v4-flash`).
 - **Bus canonico:** `.agent/runtime/events/events.jsonl` (append-only, autoridad absoluta).
 - **Proyecciones:** `TURN.md`, `STATE.md`, `work_plan.md`, `execution_log.md` se derivan del bus.
@@ -661,8 +713,11 @@ Paso 0 (antes de tocar nada):
    puede contener handoffs de otros proyectos/sesiones -> riesgo de arrancar
    con contexto equivocado). Lee tambien la memoria privada. Los SHA que
    citen estan DESFASADOS por definicion: manda el PREFLIGHT, no el handoff.
-2. PREFLIGHT (topologia worktree-dev, WOT-2026-019m): arranca con cwd=`orquestador_de_agentes_dev`
-   (la worktree que lleva `main`, donde se evoluciona el motor; usa su
+2. PREFLIGHT (topologia worktree-dev, WOT-2026-019m): arranca con cwd = la
+   **worktree de desarrollo** (la que lleva `main`, donde se evoluciona el
+   motor; su ruta se resuelve de forma PORTABLE via `AGENT_PROJECT_ROOT` o
+   `motor_destination_link.json`, no por un nombre fijo — en la instalacion del
+   motor es, a modo de ejemplo, el checkout hermano con sufijo `_dev`; usa su
    `.venv\Scripts\python.exe`). Verifica que esa worktree existe y lleva `main`
    (si no, crearla con `scripts/setup_dev_worktree.ps1`). En la worktree-dev:
    HEAD == origin/main, arbol limpio, `--validate` en 0 errors / 0 warnings.
@@ -672,7 +727,10 @@ Paso 0 (antes de tocar nada):
    este chequeo en prosa, ejecuta la version programatica del guard
    (WOT-2026-021g) para el ticket WOT activo:
    ```powershell
-   python scripts/check_worktree_topology.py --ticket <TICKET_WOT_ACTIVO> --motor-root orquestador_de_agentes --project-root orquestador_de_agentes_workspace
+   # <repo_motor> y <workspace_activo> se resuelven de forma PORTABLE (AGENT_PROJECT_ROOT
+   # / motor_destination_link.json, runtime/motor_link.py), NUNCA con nombres de directorio
+   # fijos: el motor es agnostico del destino.
+   python scripts/check_worktree_topology.py --ticket <TICKET_WOT_ACTIVO> --motor-root <repo_motor> --project-root <workspace_activo>
    ```
    Exit 0 continua; exit 1/2 DETENTE y reporta el motivo exacto antes de
    elegir o continuar un ticket.

@@ -13,12 +13,16 @@ without editing source.
 
 from __future__ import annotations
 
+import argparse
 import os
 from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_BASE = "https://raw.githubusercontent.com/FDL32/orquestacion-agentes/main"
+# WOT-2026-024g: default points to the REAL public repo. The old default
+# (FDL32/orquestacion-agentes) is a 404; the canonical repo is
+# FDL32/orquestador-de-agentes (verified public, HTTP 200, 2026-07-16).
+DEFAULT_BASE = "https://raw.githubusercontent.com/FDL32/orquestador-de-agentes/main"
 
 # Entries listed in the order an agent should read them.
 # Each: (label, relative_path, section_heading).
@@ -200,14 +204,69 @@ def build_full_block(base_url: str, index: str) -> str:
     return "\n".join(chunks)
 
 
-def main() -> int:
-    base_url = os.environ.get("LLMS_REPO_BASE", DEFAULT_BASE).rstrip("/")
+def _resolve_base(cli_base: str | None) -> str:
+    """Resolve the URL base. Precedence: --base > LLMS_REPO_BASE env > DEFAULT_BASE.
 
+    Forks keep overriding via the env var without editing source; the CLI flag
+    wins when both are present so a one-off regeneration can target any repo.
+    """
+    if cli_base:
+        return cli_base.rstrip("/")
+    return os.environ.get("LLMS_REPO_BASE", DEFAULT_BASE).rstrip("/")
+
+
+def render(base_url: str) -> tuple[str, str]:
+    """Render llms.txt + llms-full.txt content IN MEMORY (no disk writes)."""
     index = build_index_block(base_url)
-    (PROJECT_ROOT / "llms.txt").write_text(index, encoding="utf-8")
-
     full = build_full_block(base_url, index)
-    (PROJECT_ROOT / "llms-full.txt").write_text(full, encoding="utf-8")
+    return index, full
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Generate (or --check) llms.txt + llms-full.txt doc map."
+    )
+    parser.add_argument(
+        "--base",
+        default=None,
+        help=(
+            "URL base for the repo (default: real public repo, or LLMS_REPO_BASE "
+            "env). Forks may override here or via the env var."
+        ),
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help=(
+            "Regenerate in memory and compare against the files on disk. "
+            "Exit 0 if identical, exit 1 (drift) if not. Writes nothing."
+        ),
+    )
+    args = parser.parse_args(argv)
+
+    base_url = _resolve_base(args.base)
+    index, full = render(base_url)
+
+    index_path = PROJECT_ROOT / "llms.txt"
+    full_path = PROJECT_ROOT / "llms-full.txt"
+
+    if args.check:
+        drift: list[str] = []
+        for path, expected in ((index_path, index), (full_path, full)):
+            on_disk = path.read_text(encoding="utf-8") if path.exists() else None
+            if on_disk != expected:
+                drift.append(path.name)
+        if drift:
+            print(
+                f"[DRIFT] {', '.join(drift)} out of sync with generator. "
+                f"Run `python scripts/build_llms.py` to regenerate."
+            )
+            return 1
+        print(f"[OK] llms.txt + llms-full.txt in sync (base {base_url}).")
+        return 0
+
+    index_path.write_text(index, encoding="utf-8")
+    full_path.write_text(full, encoding="utf-8")
 
     print(
         f"[OK] llms.txt ({len(index)} bytes) + llms-full.txt ({len(full)} bytes) generated."
