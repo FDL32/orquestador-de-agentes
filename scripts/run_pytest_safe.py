@@ -1122,6 +1122,25 @@ def main() -> int:  # noqa: C901
                 else ""
             )
             summary.update(_metrics)
+            # WOT-2026-022h: sanity signal for silent telemetry degradation. If the
+            # suite finished green (exit_code == 0) but the summary line yielded NO
+            # passed count, the regex almost certainly stopped matching pytest's
+            # output format -- run-history would fill with counts=None WITHOUT any
+            # signal, mitigated only by the fail-soft defaults. Emit a WARNING (not
+            # an abort: the non-goal is to preserve fail-soft) so the degradation is
+            # visible instead of silent.
+            if exit_code == 0 and _metrics.get("passed") is None:
+                summary["telemetry_sanity_warning"] = (
+                    "exit_code==0 but parse_run_metrics found no 'passed' count; "
+                    "the pytest summary-line regex may no longer match the output "
+                    "format (run-history telemetry would be empty)."
+                )
+                print(
+                    "[pytest-safe] WARNING: telemetria vacia inesperada "
+                    "(exit 0 pero passed=None): el formato de la linea resumen de "
+                    "pytest pudo cambiar; revise _parse_pytest_summary_line.",
+                    file=sys.stderr,
+                )
         except Exception:  # noqa: S110 - telemetry enrichment must not abort
             pass
         # WOT-2026-017a: persist node-ids of failed tests so pre_handoff_guard

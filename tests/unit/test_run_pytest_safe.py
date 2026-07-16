@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import sys
 from pathlib import Path
@@ -35,13 +36,63 @@ def _load_conftest():
     return module
 
 
+# WOT-2026-022g: every runner instance loaded during the test session gets its
+# write-path constants redirected to a per-session tmp dir by the autouse fixture
+# below. This registry lets the fixture reach instances created AFTER it ran
+# (load_runner_module is called inside test bodies, not at collection time).
+_LOADED_RUNNERS: list = []
+_RUN_HISTORY_REDIRECT: dict = {}
+
+
 def load_runner_module():
     spec = importlib.util.spec_from_file_location("run_pytest_safe", RUNNER_PATH)
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    # WOT-2026-022g: structural anti-contamination. If the autouse fixture has
+    # installed a redirect, EVERY freshly loaded runner points its run-history /
+    # last-run write paths at the per-test tmp. A new harness that calls main()
+    # and forgets to monkeypatch RUN_HISTORY_JSONL no longer pollutes the real
+    # runtime file: the default is already isolated.
+    if _RUN_HISTORY_REDIRECT:
+        module.RUN_HISTORY_JSONL = _RUN_HISTORY_REDIRECT["run_history"]
+        module.LAST_RUN_JSON = _RUN_HISTORY_REDIRECT["last_run_json"]
+        module.LAST_RUN_LOG = _RUN_HISTORY_REDIRECT["last_run_log"]
+    _LOADED_RUNNERS.append(module)
     return module
+
+
+@pytest.fixture(autouse=True)
+def _isolate_run_history(tmp_path):
+    """WOT-2026-022g: redirect RUN_HISTORY_JSONL / LAST_RUN_JSON / LAST_RUN_LOG of
+    EVERY runner instance to a per-test tmp dir, so no main() can write the real
+    runtime telemetry file even if its harness forgets the manual monkeypatch.
+
+    This turns the anti-contamination invariant from DISCIPLINE (5 scattered
+    manual patches) into a STRUCTURAL BARRIER. Tests may still override these
+    paths explicitly; this only changes the DEFAULT from "the real file" to "an
+    isolated tmp".
+    """
+    base = tmp_path / "_run_history_isolation" / ".agent" / "runtime" / "pytest-safe"
+    base.mkdir(parents=True, exist_ok=True)
+    _RUN_HISTORY_REDIRECT.clear()
+    _RUN_HISTORY_REDIRECT.update(
+        {
+            "run_history": base / "run_history.jsonl",
+            "last_run_json": base / "last-run.json",
+            "last_run_log": base / "last-run.log",
+        }
+    )
+    # Redirect any runner already loaded during THIS test (rare: load happens in
+    # the body, but be safe).
+    for mod in _LOADED_RUNNERS:
+        mod.RUN_HISTORY_JSONL = _RUN_HISTORY_REDIRECT["run_history"]
+        mod.LAST_RUN_JSON = _RUN_HISTORY_REDIRECT["last_run_json"]
+        mod.LAST_RUN_LOG = _RUN_HISTORY_REDIRECT["last_run_log"]
+    yield
+    _LOADED_RUNNERS.clear()
+    _RUN_HISTORY_REDIRECT.clear()
 
 
 def load_selection_module():
@@ -1146,6 +1197,69 @@ class TestParseRunMetrics:
         assert m["top_slowest"][0]["nodeid"] == "tests/x.py::test_a[param with space]"
 
 
+class TestTelemetrySanityWarning:
+    """WOT-2026-022h: main() must emit a sanity signal when the suite finishes
+    green (exit_code == 0) but parse_run_metrics found no 'passed' count -- the
+    symptom of a pytest summary-line format change that would silently degrade
+    run-history telemetry to counts=None.
+    """
+
+    def _run_main_with_log(self, tmp_path, monkeypatch, capsys, log_text):
+        mod = load_runner_module()
+        base = Path(mod.LAST_RUN_JSON).parent
+        base.mkdir(parents=True, exist_ok=True)
+        # The log parse_run_metrics reads is LAST_RUN_LOG; write our text there.
+        Path(mod.LAST_RUN_LOG).write_text(log_text, encoding="utf-8")
+
+        monkeypatch.setattr(mod, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(mod, "_PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(mod, "_PROJECT_ROOT_BOOTSTRAP", tmp_path)
+        # exit_code 0, and stream_pytest must NOT overwrite our log.
+        monkeypatch.setattr(mod, "stream_pytest", lambda cmd: (0, [], []))
+        monkeypatch.setattr(mod, "_delivery_head_sha", lambda: "sha0")
+        monkeypatch.setattr(mod, "acquire_lock", lambda force_unlock=False: {"pid": 0})
+        monkeypatch.setattr(mod, "release_lock", lambda: None)
+        monkeypatch.setattr(
+            mod, "cleanup_known_temp_dirs", lambda: {"removed": [], "failed": []}
+        )
+        monkeypatch.setattr(mod, "check_canonical_state_leak", lambda snap: [])
+        monkeypatch.setattr(mod, "snapshot_canonical_state", lambda: {})
+        monkeypatch.setattr(
+            mod,
+            "select_test_runner",
+            lambda interp, args, xdist, run_dir, test_dir: (["echo"], "pytest"),
+        )
+        monkeypatch.setattr(mod, "resolve_test_interpreter", lambda: sys.executable)
+        monkeypatch.setattr(sys, "argv", ["run_pytest_safe.py", "--level", "all"])
+        mod.main()
+        # Read the persisted summary from last-run.json.
+        summary = json.loads(Path(mod.LAST_RUN_JSON).read_text(encoding="utf-8"))
+        return summary, capsys.readouterr()
+
+    def test_green_run_without_summary_line_warns(self, tmp_path, monkeypatch, capsys):
+        """exit 0 + no 'passed' count -> sanity warning present.
+
+        Mutation: drop the `if exit_code == 0 and _metrics.get("passed") is None`
+        branch in main() and this fails (no warning emitted).
+        """
+        log = "collected 0 items\nno summary line here at all\n"
+        summary, captured = self._run_main_with_log(tmp_path, monkeypatch, capsys, log)
+        assert summary.get("telemetry_sanity_warning"), (
+            "a green run whose log has no 'passed' count must carry a "
+            "telemetry_sanity_warning in the summary"
+        )
+        assert "telemetria vacia inesperada" in captured.err
+
+    def test_green_run_with_normal_summary_does_not_warn(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """exit 0 + a real 'N passed' line -> no sanity warning (no false alarm)."""
+        log = "===== 5 passed in 1.23s =====\n"
+        summary, captured = self._run_main_with_log(tmp_path, monkeypatch, capsys, log)
+        assert "telemetry_sanity_warning" not in summary
+        assert "telemetria vacia inesperada" not in captured.err
+
+
 class TestAppendRunHistory:
     """append_run_history: append-only jsonl, tail-cap, fail-open."""
 
@@ -1355,6 +1469,63 @@ class TestRunHistoryTestIsolation:
             "el harness debe parchear RUN_HISTORY_JSONL a tmp_path"
         )
         assert harness_hist.exists(), "el harness aislado debe escribir en su tmp"
+
+    def test_forgetful_harness_still_cannot_touch_real_run_history(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """WOT-2026-022g: the STRUCTURAL barrier. A harness that calls main() and
+        FORGETS to monkeypatch RUN_HISTORY_JSONL still does not pollute the real
+        runtime telemetry, because the autouse fixture already redirected the
+        default write path to a per-test tmp.
+
+        This is what TestRunHistoryTestIsolation's single-body test could not
+        guarantee: it only proved its OWN body was isolated. Here we deliberately
+        OMIT the RUN_HISTORY_JSONL patch and rely on the structural default.
+
+        Mutation: clear _RUN_HISTORY_REDIRECT in load_runner_module (disable the
+        structural redirect) and this test RED-flags, because main() would write
+        the real (module-default) run_history path.
+        """
+        mod = load_runner_module()
+
+        # The default RUN_HISTORY_JSONL is ALREADY inside the per-test tmp thanks
+        # to the autouse fixture. Capture it and assert main() writes THERE, never
+        # under the real repo runtime dir.
+        default_hist = Path(mod.RUN_HISTORY_JSONL)
+        assert default_hist.is_relative_to(tmp_path), (
+            "the autouse fixture must redirect RUN_HISTORY_JSONL into the test tmp"
+        )
+        assert not default_hist.is_relative_to(
+            PROJECT_ROOT / ".agent" / "runtime" / "pytest-safe"
+        ), "RUN_HISTORY_JSONL must NOT default to the real runtime dir under test"
+
+        # A forgetful harness: patches only stream/lock, NOT RUN_HISTORY_JSONL.
+        base = Path(mod.LAST_RUN_JSON).parent
+        base.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(mod, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(mod, "_PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(mod, "_PROJECT_ROOT_BOOTSTRAP", tmp_path)
+        monkeypatch.setattr(mod, "stream_pytest", lambda cmd: (0, [], []))
+        monkeypatch.setattr(mod, "_delivery_head_sha", lambda: "sha0")
+        monkeypatch.setattr(mod, "acquire_lock", lambda force_unlock=False: {"pid": 0})
+        monkeypatch.setattr(mod, "release_lock", lambda: None)
+        monkeypatch.setattr(
+            mod, "cleanup_known_temp_dirs", lambda: {"removed": [], "failed": []}
+        )
+        monkeypatch.setattr(mod, "check_canonical_state_leak", lambda snap: [])
+        monkeypatch.setattr(mod, "snapshot_canonical_state", lambda: {})
+        monkeypatch.setattr(
+            mod,
+            "select_test_runner",
+            lambda interp, args, xdist, run_dir, test_dir: (["echo"], "pytest"),
+        )
+        monkeypatch.setattr(mod, "resolve_test_interpreter", lambda: sys.executable)
+        monkeypatch.setattr(sys, "argv", ["run_pytest_safe.py", "--level", "all"])
+
+        mod.main()
+
+        # main() wrote (if anything) to the isolated default path, inside tmp.
+        assert default_hist.is_relative_to(tmp_path)
 
 
 # =============================================================================
