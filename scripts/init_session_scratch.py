@@ -61,12 +61,20 @@ ARCHIVE_DIRNAME = "_archive"
 
 SESSION_ID_RE = re.compile(r"^\d{8}-\d{4}-(?:[0-9a-f]{4,40}|nogit)-[0-9a-f]{4,32}$")
 
-EVENTS = frozenset({"artifact_added", "artifact_decision", "lock_reclaimed"})
+EVENTS = frozenset(
+    {"artifact_added", "artifact_decision", "lock_reclaimed", "batch_retry"}
+)
 
 REQUIRED_BY_EVENT: dict[str, frozenset[str]] = {
     "artifact_added": frozenset({"generator", "artifact_path"}),
     "artifact_decision": frozenset({"generator", "decision"}),
     "lock_reclaimed": frozenset(),
+    # WOT-2026-023w: the autonomous-batch anti-loop rule
+    # (prompts/orchestrator_autonomous_ticket_batch.md) records each failed
+    # attempt so a retry can declare a DIFFERENT enfoque than the ones already
+    # tried. Without enfoque_intentado the record cannot discriminate a repeat,
+    # so it is the one mandatory field; the rest are allowlisted below.
+    "batch_retry": frozenset({"enfoque_intentado"}),
 }
 
 LEDGER_FIELDS = frozenset(
@@ -84,6 +92,18 @@ LEDGER_FIELDS = frozenset(
         "error_count",
         "corrected_after_use",
         "decision",
+        # WOT-2026-023w: autonomous-batch anti-loop record (event=batch_retry).
+        # Before this, the allowlist scrub (cmd_add) silently DROPPED every one
+        # of these, so the batch's anti-loop rule would have been unverifiable
+        # on the first run WITH retries -- the executor could not read the
+        # enfoques already tried because the ledger threw them away. The ticket
+        # field maps to the existing ticket_id above.
+        "stage",
+        "gate_fallante",
+        "subtipo_cem",
+        "evidencia",
+        "enfoque_intentado",
+        "refutacion",
     }
 )
 
@@ -773,6 +793,18 @@ def cmd_add(args: argparse.Namespace) -> int:  # noqa: C901
             )
         )
         return 2
+    if "enfoque_intentado" in required and not args.enfoque_intentado:
+        print(
+            json.dumps(
+                {
+                    "written": False,
+                    "reason": (
+                        f"missing required field for event={event}: enfoque_intentado"
+                    ),
+                }
+            )
+        )
+        return 2
 
     artifact_path = args.artifact_path
     if artifact_path is not None and not _validate_artifact_path(artifact_path, sdir):
@@ -820,6 +852,19 @@ def cmd_add(args: argparse.Namespace) -> int:  # noqa: C901
         record["corrected_after_use"] = True
     if args.decision:
         record["decision"] = args.decision
+    # WOT-2026-023w: anti-loop fields for event=batch_retry.
+    if args.stage:
+        record["stage"] = args.stage
+    if args.gate_fallante:
+        record["gate_fallante"] = args.gate_fallante
+    if args.subtipo_cem:
+        record["subtipo_cem"] = args.subtipo_cem
+    if args.evidencia:
+        record["evidencia"] = args.evidencia
+    if args.enfoque_intentado:
+        record["enfoque_intentado"] = args.enfoque_intentado
+    if args.refutacion:
+        record["refutacion"] = args.refutacion
 
     scrubbed: dict[str, Any] = {k: v for k, v in record.items() if k in LEDGER_FIELDS}
     scrubbed = redact_payload(scrubbed)
@@ -1181,6 +1226,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_p.add_argument("--decision", default=None, help="Decision text.")
     add_p.add_argument("--repo-role", default=None, help="Override repo role.")
+    # WOT-2026-023w: anti-loop fields for event=batch_retry.
+    add_p.add_argument(
+        "--stage", default=None, help="Owner-stage of the failed attempt."
+    )
+    add_p.add_argument(
+        "--gate-fallante", default=None, help="Gate that failed on this attempt."
+    )
+    add_p.add_argument(
+        "--subtipo-cem", default=None, help="CEM subtype of the failure."
+    )
+    add_p.add_argument(
+        "--evidencia",
+        default=None,
+        help="Evidence (command/exit/output) of the failure.",
+    )
+    add_p.add_argument(
+        "--enfoque-intentado",
+        default=None,
+        help="Approach attempted (anti-loop discriminator; required for batch_retry).",
+    )
+    add_p.add_argument(
+        "--refutacion", default=None, help="Why the attempted approach was refuted."
+    )
     add_p.set_defaults(func=cmd_add)
 
     list_p = subparsers.add_parser("list", help="List sessions.")

@@ -479,6 +479,79 @@ class TestExitCodes:
 
 
 # ---------------------------------------------------------------------------
+# WOT-2026-023w: autonomous-batch anti-loop fields survive the allowlist scrub
+# ---------------------------------------------------------------------------
+
+
+_ANTILOOP_023W = {
+    "ticket_id": "WOT-2026-023w",
+    "stage": "BUILDER",
+    "gate_fallante": "pytest-safe",
+    "subtipo_cem": "mock_drift",
+    "evidencia": "rc=1 focal red en test_scrub",
+    "enfoque_intentado": "parchear el scrub sin ampliar la allowlist",
+    "refutacion": "el probe no reproduce la ruta productiva del ledger",
+}
+
+
+class TestBatchRetryAntiLoop023w:
+    """The batch anti-loop rule persists each failed attempt so a retry can
+    declare a DIFFERENT enfoque. Before this ticket cmd_add scrubbed every
+    record to LEDGER_FIELDS and NONE of the 6 anti-loop fields were in it, so
+    they were dropped SILENTLY -- the rule would have been unverifiable on the
+    first batch run with retries.
+    """
+
+    def test_batch_retry_fields_round_trip(self, tmp_path):
+        """add(event=batch_retry, <6 anti-loop fields>) -> all persisted INTACT.
+
+        Mutation-to-prove (DoD c): removing the fields from LEDGER_FIELDS makes
+        the scrub drop them again and this exact assertion goes red.
+        """
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"br_{uuid.uuid4().hex[:8]}")
+        sid = _sentinel_id()
+        _init_session(repo, sid)
+
+        result = _add_record(repo, sid, event="batch_retry", **_ANTILOOP_023W)
+        assert result.returncode == 0, f"add failed: {result.stdout}"
+
+        manifest = repo / ".agent" / "runtime" / "session" / sid / "manifest.jsonl"
+        records = [
+            json.loads(line)
+            for line in manifest.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        assert len(records) == 1
+        rec = records[0]
+        assert rec["event"] == "batch_retry"
+        # Every anti-loop field must round-trip with its exact value.
+        for key, value in _ANTILOOP_023W.items():
+            assert rec.get(key) == value, (
+                f"anti-loop field {key!r} lost/altered in the scrub:"
+                f" got {rec.get(key)!r}, expected {value!r}"
+            )
+
+        # And the audit must accept the record (batch_retry is a known event).
+        session_dir = repo / ".agent" / "runtime" / "session" / sid
+        audit = _audit_session(session_dir, sid)
+        assert audit["valid"] is True, audit["findings"]
+
+    def test_batch_retry_requires_enfoque_intentado(self, tmp_path):
+        """enfoque_intentado is the anti-loop discriminator -> required."""
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"bre_{uuid.uuid4().hex[:8]}")
+        sid = _sentinel_id()
+        _init_session(repo, sid)
+
+        result = _add_record(
+            repo, sid, event="batch_retry", ticket_id="WOT-2026-023w", stage="BUILDER"
+        )
+        assert result.returncode == 2, (
+            f"batch_retry without enfoque_intentado should exit 2: {result.stdout}"
+        )
+        assert "enfoque_intentado" in json.loads(result.stdout)["reason"]
+
+
+# ---------------------------------------------------------------------------
 # lock_reclaimed without generator -> audit clean (anti-fosilizacion)
 # ---------------------------------------------------------------------------
 
