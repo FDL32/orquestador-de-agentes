@@ -1,3 +1,56 @@
+# 2026-07-16 (3a corrida) - Batch autonomo: G-BATCH-HARDENING cerrado (3) + nucleo de 019o (GROUP_STOP del piloto)
+
+### Fixed
+- 3 tickets del grupo G-BATCH-HARDENING cerrados y RATIFICADOS por el usuario
+  en la parada final (commit-directo, motor code-only; Contract Formation +
+  CF-audit adversarial fresh-context ANTES de cada Builder; TDD red->green con
+  pares mutation-verify de exit codes; suite canonica `--level all` post-commit
+  por ticket con tested_sha == commit; verificacion fresh-context por ticket;
+  hermana: ACEPTAR CON NITS, cero falsos verdes, PREDICATE re-derivado):
+  `025p` (barrera 3 y fila 5 del PREDICATE citan `run_pytest_safe.py
+  --level all` literal + contract-test de PARIDAD cond-5 ejecutor<->auditor;
+  mata la causa estructural del F1 de la 2a corrida, `d02218d`),
+  `025r` (barrera de modo en el preflight code-only: `_check_mode` siempre-on
+  con critical `mode_env_contradiction`; par VIVO medido en ruta productiva:
+  env->workspace daba collector exit 0 falso-verde, ahora exit 1; Paso 0
+  documenta la precondicion, `c865b26`),
+  `025q` (universo de contabilidad cond-3 = tickets de `groups[]` en ambos
+  prompts, con exclusion ENUMERADA de tickets[] sin grupo; token ancla
+  pineado por contract-test, `9149be6`).
+
+### Added
+- `019o` NUCLEO (`9d07fdb`): `scripts/ensemble_dispatch.py` stdlib-only
+  (round_0=premise_check INVARIANTE; scorecard append-only UTF-8 sin BOM con
+  fila en TODAS las rondas incl. no-aportacion; `adjudicate` con evidencia
+  obligatoria + veto humano via evento supersede; `backend_leaders.json`
+  derivado con sha256 de fuente, lider solo con n>=5 y politica de exploracion
+  como campo; `privacy_preflight` fail-closed EN el camino de envio -- sin el,
+  el payload sale: par de mutacion medido; resolucion de config
+  MOTOR-explicita independiente de AGENT_PROJECT_ROOT). Schema `ensemble_*`
+  en capa UNICA (`agents_config._validate_config`) + migracion 1.2->1.3 con
+  el precedente de backups/_migrations; `validate_agent_config.py` lo invoca
+  como gate CLI (paso 4). Credenciales SOLO por `api_key_env`; clave de
+  credencial literal en agents.json -> validacion falla. 27 tests hermeticos
+  (transporte inyectado). Endurecimiento medido en vivo: kill de ARBOL de
+  procesos en timeout del transporte agent (pipe-inheritance hang de
+  codex/node, 25+ min colgado; `_kill_process_tree`).
+- GROUP_STOP declarado del paso smoke/piloto de 019o: el harness bloqueo el
+  trafico real hacia endpoints API de terceros sin confirmacion del usuario
+  (regla del contrato: NUNCA fabricar el smoke). Decision del usuario:
+  opcion (c) -> `025s` (smoke+piloto con autorizacion explicita; cierra 019o).
+  Fichas nuevas ademas: `025t` (harness_governance como causa clasificada +
+  validador recovery_owner_stage), `025u` (nits 025q: pin ASCII del auditor +
+  ventana posicional), `025v` (saneamiento plan_graph historico).
+
+### Changed
+- Los retries del batch quedaron en el ledger (2 eventos batch_retry):
+  tests de migracion que pineaban la cadena como SNAPSHOT (leccion 024t;
+  ahora derivados del registro MIGRATIONS) y el pipe-inheritance hang.
+  Veredictos de cierre y archivado de filas se DIFERIERON a la parada del
+  usuario por adaptacion de gobernanza (el harness bloqueo el patron
+  reviewer-con-decision-artifact); la hermana adjudico la adaptacion como
+  honesta (difiere, no fabrica).
+
 # 2026-07-16 (2a corrida) - Batch autonomo: 7 tickets cerrados (DAG-2c, commit-directo)
 
 ### Fixed
