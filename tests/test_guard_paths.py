@@ -430,6 +430,11 @@ class TestExtraRootDestination:
 
     def setup_method(self):
         _clean_workspace()
+        # WOT-2026-021r: capture the pre-existing env value so teardown restores
+        # it instead of unconditionally popping (which would leak an empty
+        # AGENT_PROJECT_ROOT into the rest of the suite when the process env had
+        # it set, e.g. when the motor is invoked with AGENT_PROJECT_ROOT).
+        self._saved_project_root = os.environ.get("AGENT_PROJECT_ROOT")
         self.motor_root = (TEST_WORKSPACE / "motor").resolve()
         self.destino_root = (TEST_WORKSPACE / "destino").resolve()
         self.outside_root = (TEST_WORKSPACE / "outside").resolve()
@@ -440,7 +445,11 @@ class TestExtraRootDestination:
         (self.destino_root / ".claude").mkdir(parents=True, exist_ok=True)
 
     def teardown_method(self):
-        os.environ.pop("AGENT_PROJECT_ROOT", None)
+        # WOT-2026-021r: restore, never blindly pop.
+        if self._saved_project_root is None:
+            os.environ.pop("AGENT_PROJECT_ROOT", None)
+        else:
+            os.environ["AGENT_PROJECT_ROOT"] = self._saved_project_root
         _clean_workspace()
 
     def _write_link(self, destination_root: Path) -> None:
@@ -561,6 +570,9 @@ class TestExtraRootViaTargetLink:
 
     def setup_method(self):
         _clean_workspace()
+        # WOT-2026-021r: capture the pre-existing env value so teardown restores
+        # it instead of unconditionally popping.
+        self._saved_project_root = os.environ.get("AGENT_PROJECT_ROOT")
         self.motor_root = (TEST_WORKSPACE / "motor").resolve()
         self.destino_root = (TEST_WORKSPACE / "destino").resolve()
         self.outside_root = (TEST_WORKSPACE / "outside").resolve()
@@ -571,7 +583,11 @@ class TestExtraRootViaTargetLink:
         (self.destino_root / ".claude").mkdir(parents=True, exist_ok=True)
 
     def teardown_method(self):
-        os.environ.pop("AGENT_PROJECT_ROOT", None)
+        # WOT-2026-021r: restore, never blindly pop.
+        if self._saved_project_root is None:
+            os.environ.pop("AGENT_PROJECT_ROOT", None)
+        else:
+            os.environ["AGENT_PROJECT_ROOT"] = self._saved_project_root
         _clean_workspace()
 
     def _write_link_in_destino(self, motor_root: Path) -> None:
@@ -699,3 +715,67 @@ class TestGitSegmentMatch:
         )
         assert blocked is True
         assert "protegida por patron" in reason
+
+
+class TestEnvIsolation:
+    """WOT-2026-021r: teardown_method must RESTORE a pre-existing
+    AGENT_PROJECT_ROOT, never unconditionally pop it. If it pops, a suite run
+    with AGENT_PROJECT_ROOT set in the process env (the motor is invoked that
+    way) loses the value for every test that runs afterwards.
+
+    Mutation: revert teardown to a bare ``os.environ.pop(...)`` and this test
+    fails, because the sentinel value is gone after the class lifecycle.
+    """
+
+    SENTINEL = "___WOT_2026_021r_sentinel_value___"
+
+    def _run_lifecycle(self, cls):
+        instance = cls()
+        instance.setup_method()
+        try:
+            pass
+        finally:
+            instance.teardown_method()
+
+    def test_extra_root_destination_restores_env(self):
+        saved = os.environ.get("AGENT_PROJECT_ROOT")
+        os.environ["AGENT_PROJECT_ROOT"] = self.SENTINEL
+        try:
+            self._run_lifecycle(TestExtraRootDestination)
+            assert os.environ.get("AGENT_PROJECT_ROOT") == self.SENTINEL, (
+                "teardown_method must restore the pre-existing "
+                "AGENT_PROJECT_ROOT, not pop it (WOT-2026-021r)"
+            )
+        finally:
+            if saved is None:
+                os.environ.pop("AGENT_PROJECT_ROOT", None)
+            else:
+                os.environ["AGENT_PROJECT_ROOT"] = saved
+
+    def test_extra_root_via_target_link_restores_env(self):
+        saved = os.environ.get("AGENT_PROJECT_ROOT")
+        os.environ["AGENT_PROJECT_ROOT"] = self.SENTINEL
+        try:
+            self._run_lifecycle(TestExtraRootViaTargetLink)
+            assert os.environ.get("AGENT_PROJECT_ROOT") == self.SENTINEL, (
+                "teardown_method must restore the pre-existing "
+                "AGENT_PROJECT_ROOT, not pop it (WOT-2026-021r)"
+            )
+        finally:
+            if saved is None:
+                os.environ.pop("AGENT_PROJECT_ROOT", None)
+            else:
+                os.environ["AGENT_PROJECT_ROOT"] = saved
+
+    def test_env_absent_stays_absent(self):
+        # If the env var was NOT set before, teardown must leave it unset.
+        saved = os.environ.pop("AGENT_PROJECT_ROOT", None)
+        try:
+            self._run_lifecycle(TestExtraRootDestination)
+            assert "AGENT_PROJECT_ROOT" not in os.environ, (
+                "teardown must not introduce AGENT_PROJECT_ROOT when it was "
+                "absent before the test (WOT-2026-021r)"
+            )
+        finally:
+            if saved is not None:
+                os.environ["AGENT_PROJECT_ROOT"] = saved
