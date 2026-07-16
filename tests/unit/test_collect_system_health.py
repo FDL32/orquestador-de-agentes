@@ -94,6 +94,22 @@ def _fake_run_factory(validate_exit=0):
                 "stderr": "",
                 "ok": True,
             }
+        if "check_guard_wiring" in joined:
+            # WOT-2026-024v: a HEALTHY guard-wiring baseline (rc0 + owner block) so
+            # unrelated collector tests do not trip the new fail-closed critical.
+            return {
+                "cmd": cmd,
+                "exit_code": 0,
+                "stdout": (
+                    "[guard-wiring] 13 wired / 18 unwired\n"
+                    "[guard-wiring] declared, each with its owner:\n"
+                    "    check_backlog_commits_landed  -> WOT-2026-024c\n"
+                    "    validate_observations  -> WOT-2026-024r\n"
+                    "[guard-wiring] OK: baseline holds.\n"
+                ),
+                "stderr": "",
+                "ok": True,
+            }
         return {"cmd": cmd, "exit_code": 0, "stdout": "ok", "stderr": "", "ok": True}
 
     return _fake_run
@@ -647,6 +663,19 @@ def _fake_run_per_root(motor: Path, dest: Path, *, head_fails: bool = False):
                 "stderr": "",
                 "ok": True,
             }
+        if "check_guard_wiring" in joined:
+            # WOT-2026-024v: healthy baseline so the staleness axis tests do not trip
+            # the new guard-wiring fail-closed critical.
+            return {
+                "cmd": cmd,
+                "exit_code": 0,
+                "stdout": (
+                    "[guard-wiring] declared, each with its owner:\n"
+                    "    check_backlog_commits_landed  -> WOT-2026-024c\n"
+                ),
+                "stderr": "",
+                "ok": True,
+            }
         return {"cmd": cmd, "exit_code": 0, "stdout": "ok", "stderr": "", "ok": True}
 
     return _fake
@@ -1186,3 +1215,113 @@ def test_collector_passes_no_heal_to_both_validate_invocations(tmp_path, monkeyp
     )
     for cmd in validate_cmds:
         assert "--no-heal" in cmd, f"--validate invocation missing --no-heal: {cmd}"
+
+
+# ---- WOT-2026-024v: guard-wiring debt inventory in the read-only collector -------
+
+
+def _run_collector_with_guard_wiring(tmp_path, monkeypatch, gw_result):
+    """Run the collector with check_guard_wiring's _run result overridden; return findings."""
+    motor = _fake_motor(tmp_path)
+    base = _fake_run_factory()
+
+    def _fake(cmd, cwd, timeout=600):
+        if any("check_guard_wiring" in str(part) for part in cmd):
+            return gw_result
+        return base(cmd, cwd, timeout)
+
+    monkeypatch.setattr(csh, "_run", _fake)
+    out = tmp_path / "out"
+    csh.main(["--motor-root", str(motor), "--mode", "auto", "--out", str(out)])
+    return json.loads((out / "findings.json").read_text(encoding="utf-8"))
+
+
+def test_guard_wiring_section_present_with_owner_per_entry(tmp_path, monkeypatch):
+    """DoD (a): findings.json carries a guard_wiring_debt section with the owner per
+    entry, parsed from check_guard_wiring's owner block; healthy baseline = no critical.
+    Mutation: drop the guard_wiring_debt key from findings -> this test FAILS."""
+    findings = _run_collector_with_guard_wiring(
+        tmp_path,
+        monkeypatch,
+        {
+            "cmd": ["check_guard_wiring.py"],
+            "exit_code": 0,
+            "stdout": (
+                "[guard-wiring] declared, each with its owner:\n"
+                "    check_backlog_commits_landed  -> WOT-2026-024c\n"
+                "    check_hook_interpreter  -> BY-DESIGN: stage manual deliberado\n"
+            ),
+            "stderr": "",
+            "ok": True,
+        },
+    )
+    debt = findings["guard_wiring_debt"]
+    assert debt["status"] == "ok"
+    owners = {e["guard"]: e["owner"] for e in debt["entries"]}
+    assert owners["check_backlog_commits_landed"] == "WOT-2026-024c"
+    assert owners["check_hook_interpreter"].startswith("BY-DESIGN")
+    assert not any(
+        c.startswith("guard_wiring_") for c in findings["automatic_criticals"]
+    )
+
+
+def test_guard_wiring_invoked_read_only_without_strict(tmp_path, monkeypatch):
+    """DoD (b) + CF-audit MAJOR fix: the guard is invoked via _run (read-only
+    subprocess) EXACTLY ONCE and WITHOUT --strict (--strict overloads rc=1,
+    conflating expected debt with a real regression). Mutation: pass --strict, or
+    invoke via a writing path -> this test FAILS."""
+    motor = _fake_motor(tmp_path)
+    captured: list[list[str]] = []
+    base = _fake_run_factory()
+
+    def _spy(cmd, cwd, timeout=600):
+        captured.append(list(cmd))
+        return base(cmd, cwd, timeout)
+
+    monkeypatch.setattr(csh, "_run", _spy)
+    csh.main(
+        ["--motor-root", str(motor), "--mode", "auto", "--out", str(tmp_path / "out")]
+    )
+    gw = [c for c in captured if any("check_guard_wiring" in str(p) for p in c)]
+    assert len(gw) == 1, f"expected exactly one check_guard_wiring invocation; got {gw}"
+    assert "--strict" not in gw[0], (
+        f"--strict must NOT be passed (rc=1 overload): {gw[0]}"
+    )
+
+
+def test_guard_wiring_fail_closed_on_structural_regression(tmp_path, monkeypatch):
+    """DoD (c): rc==1 (a guard de-wired/undeclared/stale) is a STRUCTURAL regression
+    -> fail-closed critical, NOT a silently-absorbed 'expected debt' (the exact
+    false-green --strict would have caused). Mutation: bucket rc==1 as ok -> FAILS."""
+    findings = _run_collector_with_guard_wiring(
+        tmp_path,
+        monkeypatch,
+        {
+            "cmd": ["check_guard_wiring.py"],
+            "exit_code": 1,
+            "stdout": "[guard-wiring] DES-CABLEADO: a guard lost its call-site\n",
+            "stderr": "",
+            "ok": False,
+        },
+    )
+    assert findings["guard_wiring_debt"]["status"] == "fail_regression"
+    assert "guard_wiring_fail_regression" in findings["automatic_criticals"]
+
+
+def test_guard_wiring_fail_closed_when_guard_missing_or_crashes(tmp_path, monkeypatch):
+    """DoD (c): if check_guard_wiring can't run (exit_code None from _run's spawn
+    failure) the collector REPORTS it as a critical, never swallows it. Mutation:
+    swallow the failure / treat None as ok -> this test FAILS."""
+    findings = _run_collector_with_guard_wiring(
+        tmp_path,
+        monkeypatch,
+        {
+            "cmd": ["check_guard_wiring.py"],
+            "exit_code": None,
+            "stdout": "",
+            "stderr": "No such file or directory",
+            "ok": False,
+        },
+    )
+    assert findings["guard_wiring_debt"]["status"] == "fail_error"
+    assert "guard_wiring_fail_error" in findings["automatic_criticals"]

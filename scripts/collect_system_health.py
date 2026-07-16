@@ -252,6 +252,47 @@ SKELETON_FILES = {
 }
 
 
+def _parse_guard_wiring(run_result: dict) -> dict:
+    """Parse check_guard_wiring output into a debt inventory + a fail-closed verdict.
+
+    WOT-2026-024v. Before: ``run_result`` is a ``_run`` dict from invoking
+    ``scripts/check_guard_wiring.py`` WITHOUT ``--strict`` (--strict overloads rc=1,
+    conflating EXPECTED declared debt with a real regression -> false-green).
+    During: parse the ``    <guard>  -> <owner>`` owner block and classify by OUTPUT
+    CONTENT, not exit-code band. After: returns ``{status, entries, exit_code, count}``
+    with ``status`` one of:
+        - ``ok``: rc==0 AND an owner block parsed (baseline holds; the declared debt
+          is INVENTORIED, not alarmed);
+        - ``fail_regression``: rc==1 (a guard de-wired/undeclared/stale -- the
+          structural regression this collector must surface);
+        - ``fail_unparseable``: rc==0 but no owner block (unexpected output);
+        - ``fail_error``: rc is None (spawn/timeout via _run) or any other code
+          (e.g. 2 = argparse / can't-open-file -> guard missing). Fail-closed:
+          a broken/missing guard is NEVER silently swallowed.
+    """
+    rc = run_result.get("exit_code")
+    stdout = run_result.get("stdout") or ""
+    entries: list[dict] = []
+    for line in stdout.splitlines():
+        match = re.match(r"^\s+(\S+)\s+->\s+(.+)$", line)
+        if match:
+            entries.append({"guard": match.group(1), "owner": match.group(2).strip()})
+    if rc == 0 and entries:
+        status = "ok"
+    elif rc == 0:
+        status = "fail_unparseable"
+    elif rc == 1:
+        status = "fail_regression"
+    else:
+        status = "fail_error"
+    return {
+        "status": status,
+        "entries": entries,
+        "exit_code": rc,
+        "count": len(entries),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI orchestration of read-only checks
     parser = argparse.ArgumentParser(
         description="Collect system-health evidence (collector, not auditor)."
@@ -390,6 +431,19 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI orchestratio
     )
     checks["discover_skills_contract"] = _run(
         [sys.executable, "scripts/discover_skills.py", "--check-contract"], motor_root
+    )
+    # WOT-2026-024v: inventory guard-wiring debt (read-only). NO --strict: --strict
+    # OVERLOADS rc=1, conflating EXPECTED declared debt with a real regression, which
+    # would let a de-wired guard slip through as "expected" (false-green). Without
+    # --strict, rc==0=baseline-ok (+ owner block) and rc==1=structural regression.
+    checks["guard_wiring"] = _run(
+        [
+            sys.executable,
+            "scripts/check_guard_wiring.py",
+            "--motor-root",
+            str(motor_root),
+        ],
+        motor_root,
     )
     pristine_snap = out_dir / "raw" / "motor_snapshot.json"
     checks["motor_pristine_snapshot"] = _run(
@@ -596,6 +650,13 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI orchestratio
             "\n".join(dest_tracked), encoding="utf-8"
         )
 
+    # WOT-2026-024v: inventory the declared guard-wiring debt (read-only) and
+    # fail-closed if the guard is missing/broken or reports a structural regression.
+    # The auditor (Bloque 1) JUDGES this section; the collector only collects.
+    guard_wiring = _parse_guard_wiring(checks.get("guard_wiring", {}))
+    if guard_wiring["status"] != "ok":
+        criticals.append(f"guard_wiring_{guard_wiring['status']}")
+
     # ---- findings.json (normalized, relativized) ----
     findings = {
         "schema": SCHEMA_VERSION,
@@ -626,6 +687,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI orchestratio
             "motor_tracked_count": len(motor_tracked),
             "destino_tracked_count": len(dest_tracked),
         },
+        "guard_wiring_debt": guard_wiring,
         "automatic_criticals": criticals,
         "automatic_warnings": warnings,
         "note": "Collector output is [RELATO]; the agent produces the verdict (Pass B).",
