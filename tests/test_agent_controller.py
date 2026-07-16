@@ -850,6 +850,89 @@ class TestTicketProseIntegration:
         # Should still work and return 0
         assert exit_code == 0
 
+    def _setup_backlog_validate(self, tmp_path, monkeypatch, reactivation_cell):
+        """Wire _handle_validate with a real backlog whose ACTIVE ticket carries
+        the given Reactivation cell. Returns (rc, parsed JSON output).
+
+        WOT-2026-019f: the active ticket is WOT-2026-999z in completed-partial.
+        """
+        import sys
+        from io import StringIO
+
+        active_id = "WOT-2026-999z"
+        collab = tmp_path / "collab"
+        collab.mkdir()
+        backlog = collab / "backlog.md"
+        header = (
+            "| Prioridad | Ticket | Titulo | Scope | Estado | Depende de "
+            "| Origen | Reactivation |\n"
+            "|--|--|--|--|--|--|--|--|\n"
+        )
+        row = (
+            f"| Media | {active_id} | titulo de prueba | motor/x "
+            f"| completed-partial | - | session-test | {reactivation_cell} |\n"
+        )
+        backlog.write_text(
+            "## Vista rapida\n\n" + header + row + "\n", encoding="utf-8"
+        )
+
+        plan_text = (
+            f"# Plan\n\n## Metadata\n- **ID:** {active_id}\n- **Estado:** APPROVED\n"
+        )
+        monkeypatch.setattr(agent_controller, "read_file", lambda x: plan_text)
+        monkeypatch.setattr(agent_controller, "get_collab_dir", lambda: collab)
+        monkeypatch.setattr(agent_controller, "validate_state_files", lambda: {})
+        monkeypatch.setattr(
+            agent_controller, "_collect_deliverable_type_warnings", lambda x: {}
+        )
+        monkeypatch.setattr(agent_controller, "get_status", lambda x, y: "APPROVED")
+        monkeypatch.setattr(
+            agent_controller, "_check_scope_for_validate", lambda x, y: ([], [])
+        )
+        monkeypatch.setattr(agent_controller, "_check_bus_drift", lambda x, y: [])
+        monkeypatch.setattr(
+            agent_controller,
+            "_check_invariants",
+            lambda x, y, z: {"errors": [], "warnings": []},
+        )
+        prose_mod = type(
+            "M",
+            (),
+            {"validate_ticket_prose": staticmethod(lambda *a, **k: {"warnings": []})},
+        )()
+        monkeypatch.setitem(sys.modules, "scripts.validate_ticket_prose", prose_mod)
+
+        captured = StringIO()
+        old = sys.stdout
+        sys.stdout = captured
+        try:
+            rc = agent_controller._handle_validate(json_output=True)
+        finally:
+            sys.stdout = old
+        return rc, json.loads(captured.getvalue())
+
+    def test_validate_flags_free_prose_reactivation_early(self, tmp_path, monkeypatch):
+        """WOT-2026-019f: a terminal ticket with a Reactivation in FREE PROSE must
+        fail the per-ticket --validate, not only the closeout.
+
+        Mutation: drop the backlog_reactivation branch from _handle_validate and
+        this fails (the free-prose Reactivation would slip through to closeout).
+        """
+        rc, output = self._setup_backlog_validate(tmp_path, monkeypatch, "pendiente")
+        assert rc != 0, "free-prose Reactivation on the active ticket must block early"
+        errors_blob = json.dumps(output.get("errors", {}))
+        assert "999z" in errors_blob or "Reactivation" in errors_blob
+
+    def test_validate_accepts_structured_reactivation(self, tmp_path, monkeypatch):
+        """The counterpart: a well-formed structured Reactivation does NOT block."""
+        _rc, output = self._setup_backlog_validate(
+            tmp_path, monkeypatch, "condition:algo-resuelto"
+        )
+        backlog_errs = json.dumps(output.get("errors", {}))
+        assert "backlog_reactivation" not in backlog_errs, (
+            "a structured Reactivation must not raise a backlog contract error"
+        )
+
 
 class TestSessionClose:
     """WP-2026-169: Test --session-close handler delegation and idempotency."""

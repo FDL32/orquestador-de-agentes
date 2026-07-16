@@ -5927,6 +5927,35 @@ def _handle_validate(json_output: bool) -> int:  # noqa: C901
         except ImportError:
             pass  # Gracefully degrade if validator not available
 
+    # WOT-2026-019f: validate the ACTIVE ticket's Reactivation format early.
+    # The backlog contract (structured Reactivation) used to be enforced ONLY at
+    # --session-close (prepush_check, closeout_mode), so a Reactivation written in
+    # free prose passed the per-ticket --validate and blocked the close hours
+    # later, far from the write that caused it. We validate here too, but scoped
+    # to the ACTIVE ticket only: validate_backlog checks the WHOLE live queue, and
+    # failing --validate on another ticket's historical debt would block unrelated
+    # work.
+    if not seed_neutral:
+        try:
+            from scripts.check_backlog_contract import validate_backlog
+
+            active_id = get_plan_id(plan_content)
+            backlog_path = get_collab_dir() / "backlog.md"
+            if active_id and backlog_path.exists():
+                backlog_violations = validate_backlog(backlog_path)
+                # Error strings are formatted "<ticket>: <detail>"; keep only the
+                # active ticket's Reactivation/status violations.
+                own = [
+                    v
+                    for v in backlog_violations
+                    if v.startswith(f"{active_id}:")
+                    and ("Reactivation" in v or "status" in v)
+                ]
+                if own:
+                    errors.setdefault("backlog_reactivation", []).extend(own)
+        except ImportError:
+            pass  # Gracefully degrade if the contract checker is unavailable.
+
     # Check scope violations
     if not seed_neutral:
         scope_errors, scope_warnings = _check_scope_for_validate(
