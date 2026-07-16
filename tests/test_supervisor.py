@@ -6454,9 +6454,10 @@ def test_verify_builder_start_bounded_by_env_not_host_default(tmp_path, monkeypa
 # WOT-2026-023a: _is_supervisor_lock_stale seam coverage (real Windows tasklist
 # branch, forced on every platform incl. CI Linux)
 #
-# builder_locks._is_pid_alive short-circuits to False whenever os.name != "nt"
-# (bus/builder_locks.py:67), so on Linux the tasklist probe is dead code. The
-# only LIVE caller of _is_pid_alive is
+# builder_locks._is_pid_alive uses the Windows tasklist probe when os.name ==
+# "nt" and an os.kill(pid, 0) probe on POSIX (WOT-2026-023d; before that fix
+# the POSIX branch short-circuited to False and the tasklist probe below was
+# dead code on Linux). The only LIVE caller of _is_pid_alive is
 # SequentialTicketSupervisor._is_supervisor_lock_stale (bus/supervisor.py:368-
 # 398, call-site line 390), and until this ticket its real body had zero
 # coverage (other test files only ever substitute MagicMocks for it).
@@ -6658,27 +6659,27 @@ def test_is_supervisor_lock_stale_mtime_fallback_keeps_fresh_lock(
     assert result is False
 
 
-def test_is_pid_alive_fails_closed_to_dead_on_posix(tmp_path, monkeypatch):
-    """DOCUMENTS current behavior (B6, NOT fixed by this ticket).
+def test_is_pid_alive_probes_posix_and_reports_live(tmp_path, monkeypatch):
+    """WOT-2026-023d: on POSIX, _is_pid_alive PROBES via os.kill(pid, 0).
 
-    builder_locks._is_pid_alive is fail-closed-to-dead: on any non-"nt"
-    platform it returns False WITHOUT EVER consulting tasklist (bus/
-    builder_locks.py:67, ``if os.name != "nt": return False``). This is a
-    real production bug (tracked as B6 in .agent/collaboration/work_plan.md
-    and a separate ticket): on CI Linux, a supervisor lock held by another
-    LIVE process but with mtime > 900s gets wrongly declared stale, breaking
-    the lock out from under a still-alive holder.
+    Regression target for B6, the production bug that WOT-2026-023a only
+    DOCUMENTED. Before this fix bus/builder_locks.py did
+    ``if os.name != "nt": return False`` so on Linux the liveness probe was
+    dead code, and (via _is_supervisor_lock_stale) a LIVE foreign supervisor
+    lock past its 900s TTL got broken out from under a still-running holder.
 
-    WOT-2026-023a does NOT fix this -- it only makes the current behavior
-    VISIBLE via a test, so nobody can accidentally "fix" _is_pid_alive's
-    semantics without this test forcing them to notice the change. The spy
-    proves tasklist is never even called on this branch (0 invocations),
-    which is the whole point: the PID-alive check is skipped entirely, not
-    merely answered False.
+    The os.kill seam is MOCKED, never the real one: on the actual Windows
+    test host os.kill(pid, 0) calls TerminateProcess and raises SystemError
+    (trap verified in WOT-2026-022c), so exercising the real syscall here
+    would be both dangerous and wrong. What this test owns is the
+    exception->verdict mapping of the POSIX branch -- exactly the code that
+    runs in production on Linux.
+
+    Mutation-to-prove: reverting the POSIX branch to ``return False`` makes
+    the spy assertion (``called["n"] == 1``) fail -- the probe is skipped
+    again.
     """
-    import types
-
-    from bus.builder_locks import _is_pid_alive
+    import bus.builder_locks as bl
 
     from tests._seam_helpers import force_os_name
 
@@ -6686,22 +6687,129 @@ def test_is_pid_alive_fails_closed_to_dead_on_posix(tmp_path, monkeypatch):
 
     called = {"n": 0}
 
-    def fake_run(cmd, **kw):
+    def fake_kill(pid, sig):
         called["n"] += 1
-        return types.SimpleNamespace(returncode=0, stdout="4242\n", stderr="")
+        return None  # live process: os.kill(pid, 0) returns None
 
-    monkeypatch.setattr(
-        "bus.builder_locks.subprocess",
-        types.SimpleNamespace(
-            run=fake_run,
-            TimeoutExpired=__import__("subprocess").TimeoutExpired,
-        ),
+    monkeypatch.setattr(bl.os, "kill", fake_kill, raising=False)
+
+    assert bl._is_pid_alive(4242) is True
+    assert called["n"] == 1, (
+        "WOT-2026-023d: la rama posix DEBE sondear via os.kill,"
+        " no cortocircuitar a muerto sin consultar"
     )
 
-    result = _is_pid_alive(4242)
 
-    assert result is False, "B6: en posix, _is_pid_alive es fail-closed-a-muerto"
-    assert called["n"] == 0, (
-        "B6: tasklist NO debe ser consultado en absoluto en la rama posix"
-        " -- el bug es que el chequeo se SALTA, no que responda False"
+def test_is_pid_alive_posix_dead_process(monkeypatch):
+    """os.kill raising ProcessLookupError (ESRCH) -> dead -> False."""
+    import bus.builder_locks as bl
+
+    from tests._seam_helpers import force_os_name
+
+    force_os_name(monkeypatch, "posix")
+
+    def fake_kill(pid, sig):
+        raise ProcessLookupError
+
+    monkeypatch.setattr(bl.os, "kill", fake_kill, raising=False)
+    assert bl._is_pid_alive(4242) is False
+
+
+def test_is_pid_alive_posix_foreign_live_process(monkeypatch):
+    """os.kill raising PermissionError (EPERM): the process EXISTS but is owned
+    by another user -> ALIVE (True). This is the exact case that broke a live
+    foreign lock before WOT-2026-023d."""
+    import bus.builder_locks as bl
+
+    from tests._seam_helpers import force_os_name
+
+    force_os_name(monkeypatch, "posix")
+
+    def fake_kill(pid, sig):
+        raise PermissionError
+
+    monkeypatch.setattr(bl.os, "kill", fake_kill, raising=False)
+    assert bl._is_pid_alive(4242) is True
+
+
+def test_is_pid_alive_posix_rejects_nonpositive_pid(monkeypatch):
+    """pid <= 0 is not a valid single-process liveness query (os.kill(0, 0)
+    would target the caller's whole process group); the guard returns False
+    WITHOUT probing, mirroring _is_pid_alive_best_effort."""
+    import bus.builder_locks as bl
+
+    from tests._seam_helpers import force_os_name
+
+    force_os_name(monkeypatch, "posix")
+
+    called = {"n": 0}
+
+    def fake_kill(pid, sig):
+        called["n"] += 1
+        return None
+
+    monkeypatch.setattr(bl.os, "kill", fake_kill, raising=False)
+    assert bl._is_pid_alive(0) is False
+    assert bl._is_pid_alive(-1) is False
+    assert called["n"] == 0
+
+
+def test_is_supervisor_lock_stale_posix_pid_alive(tmp_path, monkeypatch):
+    """WOT-2026-023d: a LIVE foreign supervisor lock on POSIX is NOT stale,
+    even aged past the 900s TTL.
+
+    This is the production consequence the fix protects: bus/supervisor.py:390
+    calls self._is_pid_alive(pid) -> builder_locks._is_pid_alive. Before the
+    fix, on Linux that always returned False, so the mtime fallback governed
+    and an aged-but-LIVE foreign lock was wrongly declared stale and broken.
+
+    BRANCH ISOLATION (leccion 021u): the lock is aged past the 900s TTL so the
+    mtime fallback ALONE would say stale (True). The only way to get False is
+    the live-PID branch actually governing the verdict. Mutating
+    builder_locks._is_pid_alive back to ``return False`` on posix flips this
+    test to red -- the whole point.
+    """
+    import json
+    import os
+    import time
+
+    import bus.builder_locks as bl
+    from bus.supervisor import SequentialTicketSupervisor
+
+    from tests._seam_helpers import force_os_name
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor = SequentialTicketSupervisor(
+        project_root=tmp_path,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+        auto_sync=False,
+    )
+
+    pid = 4242
+    supervisor.supervisor_lock_path.write_text(
+        json.dumps({"pid": pid}), encoding="utf-8"
+    )
+    # Age the lock past the 900s TTL: the mtime fallback would say stale (True),
+    # so a False verdict can ONLY come from the live-PID branch.
+    old_time = time.time() - 1000
+    os.utime(supervisor.supervisor_lock_path, (old_time, old_time))
+
+    force_os_name(monkeypatch, "posix")
+
+    called = {"n": 0}
+
+    def fake_kill(p, sig):
+        called["n"] += 1
+        return None  # live
+
+    monkeypatch.setattr(bl.os, "kill", fake_kill, raising=False)
+
+    assert supervisor._is_supervisor_lock_stale() is False
+    assert called["n"] >= 1, (
+        "la rama live-PID no goberno el veredicto (aislamiento roto)"
     )

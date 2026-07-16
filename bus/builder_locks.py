@@ -66,7 +66,25 @@ def _parse_iso_datetime(iso_str: str) -> datetime:
 
 def _is_pid_alive(pid: int) -> bool:
     if os.name != "nt":
-        return False
+        # WOT-2026-023d: POSIX must PROBE, not fail-closed-to-dead. The old
+        # `return False` made this a no-op on Linux, so _is_supervisor_lock_stale
+        # (bus/supervisor.py:390) fell to the mtime fallback and broke a LIVE
+        # foreign lock past its 900s TTL. Mirrors _is_pid_alive_best_effort
+        # (scripts/init_session_scratch.py): ProcessLookupError (ESRCH) = dead;
+        # PermissionError (EPERM) = exists but owned by another user = ALIVE.
+        # os.kill(pid, 0) is POSIX-ONLY here: on Windows os.kill terminates the
+        # target and raises SystemError (not an OSError subclass) for a foreign
+        # live PID (trap verified in WOT-2026-022c), so the tasklist branch
+        # below must keep owning the "nt" platform.
+        if pid <= 0:
+            return False
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except (PermissionError, OSError):
+            return True
+        return True
     tasklist = shutil.which("tasklist")
     if not tasklist:
         return False
