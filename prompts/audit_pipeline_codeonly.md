@@ -333,6 +333,27 @@ leyendo el informe.
 
 ---
 
+## CI remoto post-push (barrera de publicacion, WOT-2026-023c)
+
+En code-only el cierre es commit-directo y SE PUBLICA (push a origin/main): una
+suite LOCAL verde NO es evidencia de portabilidad. El pipeline code-only era el
+que se usaba y NO mencionaba el CI en absoluto (brecha WOT-2026-023c). Incidente
+fundacional (2026-07-12): suite local verde, push, y el CI ubuntu fallo -- sin
+gate. Causa raiz: un test que PASABA POR EL CAMINO EQUIVOCADO (rama gateada por
+`os.name`/plataforma, mockeada sin FORZAR el gate = codigo INALCANZABLE en la
+otra plataforma; ver WOT-2026-023a). La auditoria code-only verifica las DOS
+caras:
+
+- Preventiva: todo test de rama gateada por plataforma FUERZA el gate (seam
+  `force_os_name` o equivalente); mockear la API sin ejecutar la rama es
+  hallazgo, no cobertura.
+- Detectiva: si el repo tiene CI remoto, el cierre PUBLICADO exige CI verde
+  verificado con `gh run list`/`gh run watch` LEYENDO EL RETURNCODE REAL
+  (`subprocess.returncode` o `PIPESTATUS`, NUNCA `$?` tras un pipe). CI rojo o
+  AUSENTE -> el cierre registra el estado declarado `PUBLICADO_CON_CI_PENDIENTE`
+  con su evidencia: WARN configurable a FAIL, NO hard-block por defecto (gh
+  puede faltar, el CI puede ser flaky). Un estado declarado no es un silencio.
+
 ## Salida 1: informe markdown
 
 Ruta: `<workspace>/orchestrator_pipeline/reports/pipeline_audit_codeonly_<YYYYMMDD-HHMM>.md`

@@ -191,6 +191,18 @@ auto-reporte. Leccion repetida toda la serie.
    WORKSPACE (fila con `completed` + `commit:<sha>` + bloque de cierre). Registrar
    follow-ups con evidencia. `check_backlog_contract.py` OK.
 4. **Memoria**: promocionar solo aprendizajes con evidencia verificable.
+5. **CI remoto post-push (WOT-2026-023c)**: una suite LOCAL verde NO es
+   evidencia de portabilidad -- una rama gateada por `os.name`/plataforma,
+   mockeada sin FORZAR el gate, es codigo INALCANZABLE en la otra plataforma
+   (ver WOT-2026-023a). Dos caras. Preventiva: los tests de ramas gateadas
+   FUERZAN el gate (seam `force_os_name` o equivalente), no mockean la API
+   dejando la rama sin ejecutar. Detectiva: si el repo tiene CI remoto, tras el
+   push verificar el CI con `gh run list`/`gh run watch` LEYENDO EL RETURNCODE
+   REAL (`subprocess.returncode`/`PIPESTATUS`, NUNCA `$?` tras un pipe). CI
+   verde -> cierre publicado; CI rojo o AUSENTE (`gh` no disponible / sin
+   workflow) -> registrar el estado declarado `PUBLICADO_CON_CI_PENDIENTE` con
+   su evidencia. Es WARN configurable a FAIL, NO hard-block por defecto (gh
+   puede faltar, el CI puede ser flaky); un estado declarado no es un silencio.
 
 ---
 

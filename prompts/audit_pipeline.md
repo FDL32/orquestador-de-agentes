@@ -298,6 +298,27 @@ trabajo no supervisado desde una auditoria.
 
 ---
 
+## CI remoto post-push (barrera de publicacion, WOT-2026-023c)
+
+Una suite LOCAL verde NO es evidencia de portabilidad. Incidente fundacional
+(2026-07-12): la suite local dio passed / 0 failed, se pusheo, y el CI ubuntu
+fallo -- ningun gate lo bloqueo. La causa raiz no fue "el entorno difiere" sino
+un test que PASABA POR EL CAMINO EQUIVOCADO: una rama gateada por
+`os.name`/plataforma, mockeada sin FORZAR el gate, quedaba como codigo
+INALCANZABLE en la otra plataforma (ver WOT-2026-023a). La auditoria verifica
+las DOS caras:
+
+- Preventiva: todo test de una rama gateada por plataforma FUERZA el gate (seam
+  `force_os_name` o equivalente); un mock de la API que no ejecuta la rama es un
+  hallazgo, no cobertura.
+- Detectiva: si el repo tiene CI remoto, el cierre PUBLICADO exige CI verde
+  verificado con `gh run list`/`gh run watch` LEYENDO EL RETURNCODE REAL
+  (`subprocess.returncode` o `PIPESTATUS`, NUNCA `$?` tras un pipe). CI rojo o
+  AUSENTE (`gh` no disponible / sin workflow) -> el cierre registra el estado
+  declarado `PUBLICADO_CON_CI_PENDIENTE` con su evidencia: WARN configurable a
+  FAIL, NO hard-block por defecto (gh puede faltar, el CI puede ser flaky). Un
+  estado declarado no es un silencio.
+
 ## Salida 1: informe markdown
 
 Ruta: `repo_destino/orchestrator_pipeline/reports/pipeline_audit_<YYYYMMDD-HHMM>.md`

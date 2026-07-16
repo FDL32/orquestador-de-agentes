@@ -333,6 +333,25 @@ esa decision no se delega a un pipeline autonomo.
 
 ---
 
+## 8.5. CI remoto post-push (barrera de publicacion, WOT-2026-023c)
+
+Si el batch cerro tickets y se PUBLICO (push a origin/main), una suite LOCAL
+verde NO es evidencia de portabilidad. La condicion 5 del PREDICATE
+(`suite_final_verde`) mide la suite LOCAL; no cubre el CI remoto. El auditor
+verifica, ademas del PREDICATE, las DOS caras de la barrera de publicacion:
+
+- Preventiva: los tests de ramas gateadas por `os.name`/plataforma FUERZAN el
+  gate (seam `force_os_name` o equivalente); un mock de la API que deja la rama
+  sin ejecutar es un hallazgo (codigo INALCANZABLE en la otra plataforma; ver
+  WOT-2026-023a).
+- Detectiva: si el repo tiene CI remoto, el cierre PUBLICADO exige CI verde
+  verificado con `gh run list`/`gh run watch` LEYENDO EL RETURNCODE REAL
+  (`subprocess.returncode` o `PIPESTATUS`, NUNCA `$?` tras un pipe). CI rojo o
+  AUSENTE -> el batch debe haber registrado el estado declarado
+  `PUBLICADO_CON_CI_PENDIENTE` con su evidencia (WARN configurable a FAIL, NO
+  hard-block por defecto: gh puede faltar, el CI puede ser flaky). Un cierre
+  publicado que queda MUDO sobre el CI es un hallazgo.
+
 ## 9. Restriccion dura (read-only, heredada + reforzada)
 
 - NO reabre tickets.
