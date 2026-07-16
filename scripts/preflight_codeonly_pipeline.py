@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -123,6 +124,33 @@ def _tree_clean(cwd: Path) -> bool | None:
     if r["returncode"] != 0:
         return None
     return r["stdout"].strip() == ""
+
+
+def _check_mode(findings: dict) -> None:
+    """BARRIER (WOT-2026-025r): commit-directo preflight requires CODE-ONLY mode.
+
+    Before: `findings` carries initialized `checks` and `automatic_criticals`.
+        The process env may or may not define `AGENT_PROJECT_ROOT`.
+    During: clears the project-root cache and reads the LIVE result of
+        `is_motor_code_only()`; records it plus the raw `AGENT_PROJECT_ROOT`
+        value (receipt) in `checks.mode`. Always-on by design: this collector
+        exists ONLY for the code-only pipeline (Paso 0), so a destino-mode
+        result here is always a contradiction, never a legitimate config.
+    After: if the motor is NOT code-only, appends the automatic critical
+        `mode_env_contradiction` (main() then exits 1). Measured incident
+        (2026-07-16): `AGENT_PROJECT_ROOT` pointing at a workspace INVERTED
+        the mode and `run_pytest_safe` ran against the workspace's EMPTY
+        tests/ (exit 5, "Ran 0 tests") -- a structural false-green baseline;
+        at HEAD d02218d this collector still returned exit 0 in that state.
+    """
+    clear_cache()
+    code_only = is_motor_code_only()
+    findings["checks"]["mode"] = {
+        "is_motor_code_only": code_only,
+        "agent_project_root": os.environ.get("AGENT_PROJECT_ROOT") or None,
+    }
+    if not code_only:
+        findings["automatic_criticals"].append("mode_env_contradiction")
 
 
 def _check_shas(findings: dict, args, dev, principal, workspace) -> None:
@@ -435,6 +463,7 @@ def collect(args: argparse.Namespace) -> dict:
         findings["automatic_criticals"].append("dev_root_not_a_repo")
         return findings
 
+    _check_mode(findings)
     _check_shas(findings, args, dev, principal, workspace)
     _check_validate(findings, dev)
     _check_session_state(findings, args, dev, workspace)
@@ -447,6 +476,11 @@ def _report(findings: dict) -> None:
     print("=" * 64)
     print(f"  PREFLIGHT code-only pipeline  ticket={findings['ticket']}")
     print("=" * 64)
+    mode = findings["checks"].get("mode", {})
+    print(
+        f"mode         : code_only={mode.get('is_motor_code_only')}  "
+        f"AGENT_PROJECT_ROOT={mode.get('agent_project_root')}"
+    )
     dev = findings["checks"].get("dev", {})
     print(f"_dev HEAD    : {dev.get('head')}  clean={dev.get('tree_clean')}", end="")
     if dev.get("sha_matches") is not None:

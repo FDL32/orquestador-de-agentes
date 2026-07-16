@@ -446,3 +446,84 @@ class TestSessionStateEjeStaleLock:
 
         check = findings["checks"]["session_state"]
         assert check["session_state"] == "stale", check
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-025r: mode barrier. The commit-directo (code-only) preflight must
+# run with is_motor_code_only() == True. AGENT_PROJECT_ROOT pointing at a
+# workspace INVERTS the mode (destino/bus) and empties the canonical suite
+# (measured 2026-07-16: run_pytest_safe against the workspace's empty tests/
+# -> exit 5, "Ran 0 tests" -- a textbook false-green baseline). Live red leg
+# reproduced at HEAD d02218d: env->workspace, is_motor_code_only()=False and
+# the collector still returned exit 0 with "no automatic criticals".
+# Mutation each test names: remove the _check_mode call from collect() (or
+# the critical append) -> the corresponding test flips RED.
+# --------------------------------------------------------------------------- #
+
+
+def test_mode_env_contradiction_is_automatic_critical(monkeypatch):
+    """Destino mode (is_motor_code_only False) -> checks.mode recorded AND
+    the automatic critical `mode_env_contradiction` present (exit 1 path)."""
+    monkeypatch.setattr(pcp, "is_motor_code_only", lambda: False)
+    monkeypatch.setenv("AGENT_PROJECT_ROOT", "X:/some/workspace")
+
+    findings: dict = {"checks": {}, "automatic_criticals": []}
+    pcp._check_mode(findings)
+
+    mode = findings["checks"]["mode"]
+    assert mode["is_motor_code_only"] is False
+    assert mode["agent_project_root"] == "X:/some/workspace"
+    assert "mode_env_contradiction" in findings["automatic_criticals"]
+
+
+def test_mode_code_only_true_is_clean(monkeypatch):
+    """Code-only mode (the correct config: env UNSET) -> mode check recorded,
+    NO critical appended."""
+    monkeypatch.setattr(pcp, "is_motor_code_only", lambda: True)
+    monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+
+    findings: dict = {"checks": {}, "automatic_criticals": []}
+    pcp._check_mode(findings)
+
+    mode = findings["checks"]["mode"]
+    assert mode["is_motor_code_only"] is True
+    assert mode["agent_project_root"] is None
+    assert findings["automatic_criticals"] == []
+
+
+def test_collect_wires_mode_check(monkeypatch, tmp_path):
+    """WIRING: collect() itself must invoke the mode barrier (a check nobody
+    calls is a norm, not a barrier). Heavy sibling checks are stubbed to
+    no-ops; is_motor_code_only patched to False; the critical must surface in
+    collect()'s own findings. Mutation: drop the _check_mode call from
+    collect() -> RED (the unit tests above stay green, this one flips)."""
+    monkeypatch.setattr(pcp, "is_motor_code_only", lambda: False)
+    for heavy in (
+        "_check_shas",
+        "_check_validate",
+        "_check_session_state",
+        "_check_topology",
+        "_check_consumers",
+    ):
+        monkeypatch.setattr(pcp, heavy, lambda *a, **k: None)
+    (tmp_path / ".git").mkdir()  # collect() requires a git-looking dev root
+
+    args = type(
+        "Args",
+        (),
+        {
+            "dev_root": str(tmp_path),
+            "principal_root": None,
+            "workspace_root": None,
+            "ticket": "WOT-2026-025r",
+            "retire_token": None,
+            "retire_owner": None,
+            "expect_dev_sha": None,
+            "expect_principal_sha": None,
+            "expect_workspace_sha": None,
+        },
+    )()
+    findings = pcp.collect(args)
+
+    assert "mode" in findings["checks"], "collect() must wire _check_mode"
+    assert "mode_env_contradiction" in findings["automatic_criticals"]

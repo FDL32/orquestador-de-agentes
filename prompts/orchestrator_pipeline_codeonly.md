@@ -44,6 +44,16 @@ El canonico usa bus + `--session-close`. Aqui:
 
 ## PASO 0: PREFLIGHT (obligatorio, antes de tocar nada)
 
+**PRECONDICION DE MODO (WOT-2026-025r):** el cierre commit-directo requiere
+`is_motor_code_only() == True`, y eso exige `AGENT_PROJECT_ROOT` **UNSET** (o
+apuntando al propio motor). Una env apuntando a un workspace INVIERTE el modo
+(destino/bus) y ademas vacia la suite canonica: `run_pytest_safe` correria
+contra el `tests/` VACIO del workspace (medido 2026-07-16: exit 5, "Ran 0
+tests" -- baseline falso-verde). El workspace se pasa SOLO via flags explicitos
+(`--workspace-root` / `--project-root`) al tooling operativo, nunca via env.
+El recolector de abajo lo verifica en su check `mode` y bloquea con el critical
+`mode_env_contradiction` (exit 1) si la env contradice el modo.
+
 Correr el recolector determinista:
 
 ```
@@ -54,6 +64,8 @@ python <MOTOR_ROOT>/scripts/preflight_codeonly_pipeline.py \
 
 Es un RECOLECTOR (testigo read-only), NO un ejecutor: reporta senales, TU juzgas.
 Verifica y reporta:
+- **Modo code-only vivo** (`is_motor_code_only()` == True; env que lo invierte
+  -> critical automatico `mode_env_contradiction`, ver arriba).
 - SHAs de los 3 repos (`_dev`, principal, workspace) + limpieza del arbol `_dev`.
 - `--validate --json --force` = 0 errores (warnings bus_drift NORMALES).
 - Guard de topologia (`check_worktree_topology.py`): worktree `_dev`/main correcta.
