@@ -1,3 +1,47 @@
+# 2026-07-16 (2a corrida) - Batch autonomo: 7 tickets cerrados (DAG-2c, commit-directo)
+
+### Fixed
+- 7 tickets APTO del DAG-2c cerrados en 2 olas (commit-directo, motor
+  code-only), cada uno con premisa-con-probe ejecutado, TDD red->green,
+  mutation-verify con dientes (aislamiento de rama) y gates del orquestador.
+  Hermana fresh-context: APROBADO CON NITS tras remediar F1 pre-push (las
+  suites del batch corrieron nivel unit por defecto; re-corrido canonico
+  `--level all`: 4306 passed, 47 skipped, 0 deselected @ `04a415e`). CI remoto
+  adjudicado VERDE post-push (Security Audit + Quality Gates success).
+  Cierres (rango `f9bb63e..04a415e`):
+  `023d` (_is_pid_alive sondea en POSIX via os.kill; un lock ajeno VIVO ya no
+  se rompe en Linux, `a2a3364`),
+  `024l` (INDEX.md regenerado 38 skills/30 prompts + gate check-index-stale
+  cableado en pre-commit, `172e59b`),
+  `023w` (el ledger persiste los 6 campos anti-loop del batch via evento
+  batch_retry; antes el scrub los descartaba en silencio, `8b1a704`),
+  `023c` (clausula de CI remoto post-push en los 4 prompts del motor;
+  D-023c: WARN configurable a FAIL + estado declarado
+  PUBLICADO_CON_CI_PENDIENTE, `dfa2882`),
+  `024b` (la barrera 3 del batch ENUMERA los gates como lista cerrada;
+  contract-test scoped al bloque, `097b352`),
+  `023v` (salidas obligatorias del batch con barrera mecanica: paso DONE
+  bloqueante + input fail-closed del auditor + cond-6 con contrato dual
+  PENDING, `1ed9513`),
+  `023t` (gate de frescura del DAG: validate_batch_dag --live-backlog con
+  match por celda + --head-sha WARN + clausula SEAM-1; incluye DoD-d de 023w,
+  `04a415e`).
+
+### Changed
+- El contrato dual de cond-6 (023v) se estreno en su propia corrida: el
+  ejecutor emitio PENDING y la hermana lo resolvio. El gate de frescura (023t)
+  se probo sobre el artefacto real (DAG-2c + backlog vivo: exit 0 con WARN de
+  HEAD avanzado, la razon exacta del diseno WARN-no-bloqueo).
+- Memoria: el archive trackeado NO se toco a proposito (tension declarada
+  024r/025b/025o pendiente de decision humana); las lecciones de la corrida
+  viven en `batch_run_20260716-1416.json`, en la auditoria hermana
+  `audit_autonomous_batch_20260716-1427` y en las fichas nuevas
+  `025p` (codificar `--level all` en barrera 3 + fila 5 del PREDICATE: causa
+  estructural del F1), `025q` (wording cond-3 para tickets[] sin grupo) y
+  `025r` (el ARRANQUE code-only prescribia AGENT_PROJECT_ROOT->workspace:
+  invierte el modo y vacia la suite; preflight debe probar
+  is_motor_code_only()==True).
+
 # 2026-07-16 - Batch autonomo: 13 tickets cerrados (commit-directo, code-only)
 
 ### Fixed
