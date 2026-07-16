@@ -400,6 +400,7 @@ def run_preflight_check(
     project_root: Path | None = None,
     expected_artifacts: list[str] | None = None,
     closeout_mode: bool = False,
+    skip_gates: bool = False,
 ) -> int:
     """Ejecuta todos los checks de preflight de entrega.
 
@@ -418,9 +419,15 @@ def run_preflight_check(
             Default None preserves current behavior (any dirty file fails).
         closeout_mode: When True, enforce the live backlog contract as a blocking
             gate (session-close only). Default False leaves it off.
+        skip_gates: WOT-2026-020i. When True, the checks STILL RUN and their
+            results are printed, but a blocking failure no longer forces exit 1:
+            the operator explicitly chose to close over pre-existing debt
+            (--session-close --skip-gates --force). Default False preserves the
+            blocking behavior. Never silences the report -- only its verdict.
 
     Returns:
-        Exit code: 0 si todos los checks bloqueantes pasan, 1 si alguno falla.
+        Exit code: 0 si todos los checks bloqueantes pasan, 1 si alguno falla
+        (o siempre 0 con skip_gates, que degrada el veredicto a no-bloqueante).
     """
     _configure_stdio()
 
@@ -478,8 +485,23 @@ def run_preflight_check(
 
         print()
 
+    _print_preflight_verdict(blocking_failed, skip_gates)
+
+    if skip_gates:
+        return 0
+    return 0 if not blocking_failed else 1
+
+
+def _print_preflight_verdict(blocking_failed: bool, skip_gates: bool) -> None:
+    """Print the closing verdict banner (WOT-2026-020i extracted this to keep
+    run_preflight_check under the complexity cap)."""
     print("=" * 60)
-    if blocking_failed:
+    if blocking_failed and skip_gates:
+        # The operator asked to skip the gate verdict. Show the failures (never
+        # silent) but degrade to non-blocking.
+        print("PREFLIGHT CON FALLOS pero --skip-gates activo: cierre NO bloqueado")
+        print("  (los fallos de arriba se ignoran por decision explicita del operador)")
+    elif blocking_failed:
         print("PREFLIGHT BLOQUEADO: corrija los problemas antes de push")
         print("Ejecute la pasada mutadora manualmente si hace falta:")
         print("  uv run pre-commit run --all-files --hook-stage pre-commit")
@@ -487,8 +509,6 @@ def run_preflight_check(
     else:
         print("PREFLIGHT EXITOSO: arbol listo para push")
     print("=" * 60)
-
-    return 0 if not blocking_failed else 1
 
 
 def main() -> int:
@@ -536,6 +556,16 @@ Si el preflight falla:
             "the general pre-push gate MUST NOT pass it (default behavior unchanged)."
         ),
     )
+    parser.add_argument(
+        "--skip-gates",
+        action="store_true",
+        default=False,
+        help=(
+            "WOT-2026-020i: run the checks and print the report, but degrade a "
+            "blocking failure to non-blocking (exit 0). For an operator who "
+            "explicitly chooses to close over pre-existing debt."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -548,6 +578,7 @@ Si el preflight falla:
         project_root=args.project_root,
         expected_artifacts=artifacts,
         closeout_mode=args.closeout_mode,
+        skip_gates=args.skip_gates,
     )
 
 

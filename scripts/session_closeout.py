@@ -360,7 +360,9 @@ def _generate_report(report: CloseoutReport, project_root: Path) -> Path:
     )
 
 
-def _step_prepush_check(project_root: Path, dry_run: bool) -> StepResult:
+def _step_prepush_check(
+    project_root: Path, dry_run: bool, skip_gates: bool = False
+) -> StepResult:
     """Run prepush_check.py as the blocking quality gate."""
     return _step_prepush_check_impl(
         project_root,
@@ -368,6 +370,7 @@ def _step_prepush_check(project_root: Path, dry_run: bool) -> StepResult:
         run_script_fn=_run_script,
         process_diagnostic_fn=_process_diagnostic,
         step_result_cls=StepResult,
+        skip_gates=skip_gates,
     )
 
 
@@ -550,12 +553,17 @@ def run_closeout(
     dry_run: bool = False,
     skip_slow: bool = False,
     explicit_tickets: list[str] | None = None,
+    skip_gates: bool = False,
 ) -> int:
     """Run the full session closeout pipeline.
 
     Before: project_root is the repository root.
     During: Executes all closeout steps in order, collecting results.
     After: Returns exit code (0=success, 1=blocking failure).
+
+    WOT-2026-020i: skip_gates forwards --skip-gates to prepush_check so a
+    blocking prepush failure no longer aborts the close (operator chose to close
+    over pre-existing debt). Default False preserves blocking behavior.
     """
     report = CloseoutReport(dry_run=dry_run, skip_slow=skip_slow)
     _window_start, window_src = _resolve_session_window(project_root)
@@ -569,7 +577,7 @@ def run_closeout(
             detail=f"Source: {ticket_src}. Tickets: {ticket_ids or 'none'}",
         )
     )
-    prepush = _step_prepush_check(project_root, dry_run)
+    prepush = _step_prepush_check(project_root, dry_run, skip_gates=skip_gates)
     report.steps.append(prepush)
     if prepush.status == "FAIL":
         # Write report and exit early. Announce the report path to stderr (the
@@ -693,6 +701,15 @@ def main() -> int:
         default=None,
         help="Comma-separated ticket IDs to audit (e.g., WOT-2026-010a,WOT-2026-009g)",
     )
+    parser.add_argument(
+        "--skip-gates",
+        action="store_true",
+        default=False,
+        help=(
+            "WOT-2026-020i: forward --skip-gates to prepush_check so a blocking "
+            "prepush failure does not abort the close (close over pre-existing debt)."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -715,6 +732,7 @@ def main() -> int:
         dry_run=args.dry_run,
         skip_slow=args.skip_slow,
         explicit_tickets=explicit_tickets,
+        skip_gates=args.skip_gates,
     )
 
 

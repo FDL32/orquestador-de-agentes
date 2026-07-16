@@ -476,6 +476,43 @@ class TestPreflightCheckIntegration:
 
         assert exit_code == 0  # validate_all is non-blocking
 
+    def test_skip_gates_degrades_blocking_failure_to_exit_zero(
+        self, tmp_path: Path
+    ) -> None:
+        """WOT-2026-020i: with skip_gates=True, a BLOCKING failure still runs and
+        prints, but no longer forces exit 1 (operator closes over known debt).
+
+        Mutation: drop the `if skip_gates: return 0` short-circuit in
+        run_preflight_check and this test goes RED (the blocking failure would
+        force exit 1 again).
+        """
+        mock_pass = CheckResult(name="Mock", passed=True, output="OK")
+        mock_fail = CheckResult(
+            name="Ruff", passed=False, output="E501", is_blocking=True
+        )
+
+        with (
+            patch(
+                "scripts.prepush_check.run_delivery_hygiene_check",
+                return_value=mock_pass,
+            ),
+            patch("scripts.prepush_check.run_ruff_check", return_value=mock_fail),
+            patch(
+                "scripts.prepush_check.run_ruff_format_check", return_value=mock_pass
+            ),
+            patch(
+                "scripts.prepush_check.run_agent_controller_validate",
+                return_value=mock_pass,
+            ),
+            patch("scripts.prepush_check.run_git_status_check", return_value=mock_pass),
+            patch("scripts.prepush_check.run_validate_all", return_value=mock_pass),
+        ):
+            blocked = run_preflight_check(tmp_path)
+            skipped = run_preflight_check(tmp_path, skip_gates=True)
+
+        assert blocked == 1, "without skip_gates a blocking ruff failure blocks"
+        assert skipped == 0, "with skip_gates the same failure no longer blocks"
+
 
 class TestCheckResult:
     """Tests for CheckResult named tuple."""

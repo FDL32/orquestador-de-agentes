@@ -502,6 +502,49 @@ class TestRunCloseout:
             args=[], returncode=0, stdout="ok", stderr=""
         )
 
+    def test_skip_gates_is_forwarded_to_prepush_check(self, tmp_path: Path) -> None:
+        """WOT-2026-020i: run_closeout(skip_gates=True) must forward --skip-gates
+        to the prepush_check.py subprocess.
+
+        Mutation: drop the `if skip_gates: prepush_args.append("--skip-gates")`
+        in step_prepush_check and this test fails (the flag never reaches the
+        subprocess).
+        """
+        _write_work_plan(tmp_path, "WP-2026-168")
+        captured_args: dict[str, list[str]] = {}
+
+        def _mock_run(script_name, args, project_root, timeout=120):
+            if script_name == "prepush_check.py":
+                captured_args["prepush"] = list(args)
+            return subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="ok", stderr=""
+            )
+
+        with patch("scripts.session_closeout._run_script", side_effect=_mock_run):
+            run_closeout(tmp_path, dry_run=False, skip_gates=True)
+
+        assert "prepush" in captured_args, "prepush_check.py must have been invoked"
+        assert "--skip-gates" in captured_args["prepush"], (
+            "run_closeout(skip_gates=True) must forward --skip-gates to prepush_check"
+        )
+
+    def test_skip_gates_absent_by_default(self, tmp_path: Path) -> None:
+        """Without skip_gates, --skip-gates must NOT reach prepush_check."""
+        _write_work_plan(tmp_path, "WP-2026-168")
+        captured_args: dict[str, list[str]] = {}
+
+        def _mock_run(script_name, args, project_root, timeout=120):
+            if script_name == "prepush_check.py":
+                captured_args["prepush"] = list(args)
+            return subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="ok", stderr=""
+            )
+
+        with patch("scripts.session_closeout._run_script", side_effect=_mock_run):
+            run_closeout(tmp_path, dry_run=False)
+
+        assert "--skip-gates" not in captured_args.get("prepush", [])
+
     def test_dry_run_generates_report(self, tmp_path: Path) -> None:
         """Dry-run mode writes an ignored preview, not the durable report."""
         _write_work_plan(tmp_path, "WP-2026-168")

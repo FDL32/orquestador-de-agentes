@@ -23,8 +23,14 @@ def step_prepush_check(
     run_script_fn,
     process_diagnostic_fn,
     step_result_cls: type[StepResult],
+    skip_gates: bool = False,
 ) -> StepResult:
-    """Run prepush_check.py as the blocking quality gate."""
+    """Run prepush_check.py as the blocking quality gate.
+
+    WOT-2026-020i: when skip_gates is True, forward --skip-gates so a blocking
+    prepush failure no longer blocks the close (the operator chose to close over
+    pre-existing debt). Default False preserves the blocking behavior.
+    """
     if dry_run:
         return step_result_cls(
             name="prepush_check",
@@ -33,13 +39,16 @@ def step_prepush_check(
             blocking=True,
         )
     try:
+        prepush_args = ["--project-root", str(project_root), "--closeout-mode"]
+        if skip_gates:
+            prepush_args.append("--skip-gates")
         result = run_script_fn(
             "prepush_check.py",
             # WOT-2026-014a: pass --closeout-mode so check_git_tree_clean forgives
             # expected runtime artifacts (session_close_report.md, etc.) that the
             # closeout itself generates. Non-closeout callers of prepush_check do
             # NOT pass this flag, preserving the general pre-push gate unchanged.
-            ["--project-root", str(project_root), "--closeout-mode"],
+            prepush_args,
             project_root,
             timeout=300,
         )

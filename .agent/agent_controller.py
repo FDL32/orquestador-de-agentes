@@ -6059,6 +6059,7 @@ def _handle_session_close(  # noqa: C901 - delegation handler with flag building
     tickets: str | None,
     force_mode: bool,
     json_output: bool,
+    skip_gates: bool = False,
 ) -> int:
     """Handle --session-close flag by delegating to scripts/session_closeout.py.
 
@@ -6113,6 +6114,11 @@ def _handle_session_close(  # noqa: C901 - delegation handler with flag building
         cmd.append("--dry-run")
     if skip_slow:
         cmd.append("--skip-slow")
+    if skip_gates:
+        # WOT-2026-020i: forward --skip-gates so session_closeout passes it on to
+        # prepush_check. Previously the flag was parsed but never reached the
+        # closeout, so --session-close --skip-gates had no effect.
+        cmd.append("--skip-gates")
     if ticket:
         cmd.extend(["--ticket", ticket])
     if tickets:
@@ -6556,6 +6562,7 @@ def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
             tickets=session_tickets,
             force_mode=force_mode,
             json_output=json_output,
+            skip_gates=skip_gates,
         )
 
     # Check for --validate via direct call (see FLAG_HANDLERS comment above)
