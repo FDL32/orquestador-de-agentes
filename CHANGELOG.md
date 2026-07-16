@@ -1,3 +1,36 @@
+# 2026-07-16 - Batch autonomo: 13 tickets cerrados (commit-directo, code-only)
+
+### Fixed
+- 13 tickets cerrados en un batch autonomo de 3 olas (commit-directo, modo motor
+  code-only), cada uno con premisa-con-probe, gates por el orquestador,
+  mutation-verify con dientes y suite canonica post-commit. Auditados por un
+  auditor aislado (modelo distinto: APROBADO CON NITS, PREDICATE 7/7) tras
+  reparar F1 (mapa tickets{} del batch_run incompleto, cazado por su propio
+  verificador). Cierres (rango `0e43c99..9804782`, suite 4272 passed):
+  `021r` (restaurar AGENT_PROJECT_ROOT en teardown, no pop ciego, `8344f76`),
+  `024g` (build_llms --base/--check + repo real, `1a80422`),
+  `024m` (docstring del recolector de salud vs checks reales, `e40c3f7`),
+  `025d` (check_hook_interpreter worktree-safe, no fail-open, `0f7cd6c`),
+  `019f` (validar Reactivation en --validate por-ticket, no solo closeout, `aad0615`),
+  `023g` (barrera record_key=(topic,source_ticket), `edc7f34`),
+  `020i` (reenviar --skip-gates a session_closeout/prepush, `e3f2134`),
+  `022f` (preflight code-only reporta session_state, `33d398a`),
+  `022g`+`022h` (aislar run-history estructuralmente + sanidad de telemetria, `5ce0825`),
+  `023e` (erradicar assert isinstance(result,bool) que enmascaraba fixtures, `d7498cf`),
+  `022p` (wrappers anti-trampa de shell run_and_exit+winpath, `1b7d36e`),
+  `022l` (last-run caducado degrada a WARN, no critico, `9804782`).
+
+### Added
+- `scripts/tools/run_and_exit.py` + `scripts/tools/winpath.py`: wrappers
+  anti-trampa de shell (exit real sin pipe; normalizacion `/c/...` -> `C:\...`).
+
+### Changed
+- Memoria portable: 5 lecciones engine/meta promovidas al archive trackeado
+  (`.agent/runtime/memory/archive/observations.2026-07.jsonl`) desde el piloto
+  real de multi-backend (WOT-2026-019o): opencode-run-exit0-con-AuthError,
+  LiteLLM-virtual-key-sk-no-nvapi, multi-backend-clasificar-sensibilidad-antes-del-routing,
+  env-no-propaga-a-procesos-vivos, API-directa-vs-agente-CLI-para-review.
+
 # 2026-06-26 - Repo-compare intent-gate + memory crystallization
 
 ### Changed
