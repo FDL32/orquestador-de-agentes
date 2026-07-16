@@ -168,10 +168,15 @@ A retry that repeats the same approach is noise. Value comes from returning
 to a trusted state and re-approaching with a different, failure-informed
 approach.
 
-- **Learning ledger (append-only)**: each failed attempt writes a record to
-  the session's `manifest.jsonl` (`.agent/runtime/session/<id>/`, wired by
-  `scripts/init_session_scratch.py`). Fields: `{ticket, stage, gate_fallante,
-  subtipo_CEM, evidencia, enfoque_intentado, refutacion}`.
+- **Learning ledger (append-only)**: each failed attempt writes an
+  `event=batch_retry` record to the session's `manifest.jsonl`
+  (`.agent/runtime/session/<id>/`, wired by `scripts/init_session_scratch.py
+  add`). REAL persisted schema (WOT-2026-023w: these keys are allowlisted in
+  `LEDGER_FIELDS`; any other key is silently scrubbed, so cite THESE, not an
+  aspirational spelling): `{ticket_id, stage, gate_fallante, subtipo_cem,
+  evidencia, enfoque_intentado, refutacion}`. `enfoque_intentado` is
+  MANDATORY (the anti-loop discriminator); `ticket` maps to `ticket_id` and
+  `subtipo_CEM` to `subtipo_cem`.
 - **Retry rule**: a new attempt MUST declare an `enfoque_intentado` DIFFERENT
   from every one already recorded for that `(ticket, gate)`. A retry with the
   same approach does not execute: that is the operational definition of an
@@ -381,11 +386,34 @@ executor reads, and never rewrites:
 Before consuming any DAG produced by `/backlog-triage`, run:
 
 ```
-python <MOTOR_ROOT>/scripts/validate_batch_dag.py <destino>/orchestrator_pipeline/reports/backlog_triage_output.json
+python <MOTOR_ROOT>/scripts/validate_batch_dag.py \
+    <destino>/orchestrator_pipeline/reports/backlog_triage_output.json \
+    --live-backlog <destino>/.agent/collaboration/backlog.md \
+    --head-sha <HEAD actual del motor>
 ```
 
 Require exit 0. A DAG that does not validate is not a valid input: return it
 to the triage for correction; do not patch around it in the executor.
+
+### Freshness gate (WOT-2026-023t): a valid-but-DEAD DAG must not run
+
+Schema + acyclicity are NOT enough: the inaugural run consumed a DAG whose
+`recommended_start` ticket was already closed and archived, and only a human
+caught it -- the executor runs AUTONOMOUS. Freshness is SEMANTIC and runs when
+the batch STARTS:
+
+- `--live-backlog` requires every ticket of `groups` to still be a `pending`
+  row (cell-based, never substring) in the live queue; a DAG citing an
+  archived/completed/absent ticket is DEAD -> exit != 0, return to re-triage.
+- `state_at_triage.motor != HEAD` is only a WARN (`--head-sha`), NEVER a
+  block: the motor HEAD advances with every close of the batch itself, so an
+  equality gate would self-block after the first ticket. Between tickets,
+  Tier 0's re-triage already covers staleness.
+- **Regeneration is forensic (SEAM-1)**: every DAG regenerated after a stop
+  MUST bump `generated_at` and ship a NEW narrative `.md` alongside it. That
+  pair is the only forensic way to distinguish a real re-triage from the
+  executor editing the DAG to unblock its own path (the inaugural DAG kept
+  its predecessor's `generated_at`).
 
 ---
 

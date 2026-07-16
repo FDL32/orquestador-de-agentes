@@ -41,9 +41,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
+
+
+# WOT-2026-023t: a cell that IS exactly a ticket id (fullmatch on the trimmed
+# cell). Cell-based on purpose: the description cell of a backlog row cites
+# OTHER ticket ids inside prose, and the word "pending" can appear inside
+# prose too -- substring matching would count both (layout/cell trap measured
+# in WOT-2026-024c). Prefix legacy-compat: WP-/WT- rows still resolve.
+_TICKET_CELL_RE = re.compile(r"[A-Z]{2,4}-\d{4}-\d{3}[a-z]?")
 
 
 REQUIRED_SCHEMA = "autonomous-batch-dag/v1"
@@ -303,6 +312,63 @@ def _errors_surface_overlap(groups: list[dict[str, Any]]) -> list[str]:
     return errors
 
 
+def _pending_tickets_in_backlog(text: str) -> set[str]:
+    """Ticket ids that appear in a LIVE `pending` row of the backlog.
+
+    Before: text is the raw markdown of the live backlog queue.
+    During: scans table rows only (lines starting with '|'); a ticket counts
+            as pending iff the SAME row has one cell that IS the ticket id
+            (fullmatch, trimmed) and another cell exactly equal to 'pending'.
+            Cell-based, never substring: prose cells cite other ticket ids and
+            may contain the word 'pending' (trap measured in WOT-2026-024c).
+    After: returns the set of pending ticket ids; no I/O, no mutation.
+    """
+    pending: set[str] = set()
+    for line in text.splitlines():
+        if not line.lstrip().startswith("|"):
+            continue
+        cells = [c.strip() for c in line.split("|")]
+        if "pending" not in cells:
+            continue
+        pending.update(c for c in cells if _TICKET_CELL_RE.fullmatch(c))
+    return pending
+
+
+def _errors_live_backlog(data: dict[str, Any], backlog_text: str) -> list[str]:
+    """WOT-2026-023t: freshness is SEMANTIC, not `motor == HEAD`.
+
+    A schema-valid DAG can be DEAD: the inaugural run consumed a DAG whose
+    recommended_start ticket was already closed and archived, and only a human
+    caught it. The correct gate, run when the batch STARTS: every ticket of
+    `groups` must still be a `pending` row in the live backlog queue. A DAG
+    citing a ticket that is archived/completed/absent is a dead DAG -> the
+    executor returns it to the triage (re-triage), never patches around it.
+    (`state_at_triage.motor != HEAD` is deliberately NOT an error: the motor
+    HEAD advances with every close of the batch itself, so an equality gate
+    would self-block after the first ticket; it is only a WARN via --head-sha.)
+    """
+    errors: list[str] = []
+    groups = data.get("groups")
+    if not isinstance(groups, list):
+        return errors
+    pending = _pending_tickets_in_backlog(backlog_text)
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        group_id = group.get("id", "<sin id>")
+        tickets = group.get("tickets")
+        if not isinstance(tickets, list):
+            continue
+        errors.extend(
+            f"frescura (WOT-2026-023t): el ticket '{ticket}' del grupo "
+            f"'{group_id}' no esta 'pending' en la cola viva del backlog -- "
+            f"DAG muerto, devolver al triage (re-triage), no ejecutarlo"
+            for ticket in tickets
+            if isinstance(ticket, str) and ticket not in pending
+        )
+    return errors
+
+
 def validate_dag(data: dict[str, Any]) -> list[str]:
     """Run all validation rules and return the combined list of errors."""
     errors: list[str] = []
@@ -319,6 +385,38 @@ def validate_dag(data: dict[str, Any]) -> list[str]:
     return errors
 
 
+def _freshness_errors(live_backlog: Path | None, data: dict[str, Any]) -> list[str]:
+    """Resolve --live-backlog into freshness errors (fail-closed on I/O)."""
+    if live_backlog is None:
+        return []
+    if not live_backlog.exists():
+        return [f"frescura (WOT-2026-023t): backlog vivo no existe: {live_backlog}"]
+    try:
+        backlog_text = live_backlog.read_text(encoding="utf-8")
+    except OSError as e:
+        return [f"frescura (WOT-2026-023t): no se pudo leer el backlog vivo: {e}"]
+    return _errors_live_backlog(data, backlog_text)
+
+
+def _head_sha_warnings(head_sha: str | None, data: dict[str, Any]) -> list[str]:
+    """--head-sha vs state_at_triage.motor: WARN on mismatch, never an error
+    (the motor HEAD advances with every close of the batch itself). Prefix
+    tolerant so short and long SHAs compare equal."""
+    if not head_sha:
+        return []
+    state = data.get("state_at_triage")
+    triage_motor = str(state.get("motor", "")) if isinstance(state, dict) else ""
+    if triage_motor and not (
+        head_sha.startswith(triage_motor) or triage_motor.startswith(head_sha)
+    ):
+        return [
+            f"state_at_triage.motor={triage_motor} != HEAD={head_sha}: re-verificar "
+            "premisas antes de ejecutar (WARN, no bloquea: el HEAD avanza con "
+            "cada cierre del propio batch, WOT-2026-023t)"
+        ]
+    return []
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -329,6 +427,25 @@ def main(argv: list[str] | None = None) -> int:
         "--json",
         action="store_true",
         help="Emitir el resultado en formato JSON (machine-readable)",
+    )
+    parser.add_argument(
+        "--live-backlog",
+        type=Path,
+        default=None,
+        help=(
+            "Ruta al backlog.md VIVO del destino. Activa el gate de frescura "
+            "WOT-2026-023t: todo ticket de groups debe seguir 'pending' en la "
+            "cola viva; un DAG valido-pero-MUERTO falla en vez de pasar."
+        ),
+    )
+    parser.add_argument(
+        "--head-sha",
+        default=None,
+        help=(
+            "SHA actual del motor. Si difiere de state_at_triage.motor emite "
+            "WARN (re-verificar premisas), NUNCA bloquea: el HEAD avanza con "
+            "cada cierre del propio batch (WOT-2026-023t)."
+        ),
     )
 
     args = parser.parse_args(argv)
@@ -361,10 +478,25 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     errors = validate_dag(data)
+    errors.extend(_freshness_errors(args.live_backlog, data))
+    warnings = _head_sha_warnings(args.head_sha, data)
+    return _emit_result(args.json, args.dag_path, errors, warnings)
 
-    if args.json:
-        print(json.dumps({"valid": len(errors) == 0, "errors": errors}))
+
+def _emit_result(
+    json_mode: bool, dag_path: Path, errors: list[str], warnings: list[str]
+) -> int:
+    """Print the verdict (JSON or human) and return the exit code."""
+    if json_mode:
+        print(
+            json.dumps(
+                {"valid": len(errors) == 0, "errors": errors, "warnings": warnings}
+            )
+        )
         return 0 if not errors else 1
+
+    for warning in warnings:
+        print(f"WARN: {warning}", file=sys.stderr)
 
     if errors:
         for error in errors:
@@ -375,7 +507,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    print(f"Validacion EXITOSA: {args.dag_path} es valido")
+    print(f"Validacion EXITOSA: {dag_path} es valido")
     return 0
 
 

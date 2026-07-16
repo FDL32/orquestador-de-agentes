@@ -311,3 +311,121 @@ def test_022w_error_message_shows_the_paths_the_user_wrote(tmp_path: Path) -> No
     assert "Scripts/A.py" in result.stderr, (
         "the message must show the path as the user wrote it"
     )
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-023t: freshness gate (--live-backlog). A schema-valid DAG can be
+# DEAD: the inaugural run consumed a DAG whose recommended_start ticket was
+# already closed and archived, and only a human caught it. Freshness is
+# SEMANTIC (every DAG ticket still pending in the live queue), NOT
+# `state_at_triage.motor == HEAD` (the motor HEAD advances with every close of
+# the batch itself; an equality gate would self-block after the first ticket).
+# ---------------------------------------------------------------------------
+
+
+def _run_with(dag_path: Path, *extra: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [str(PYTHON), str(SCRIPT_PATH), str(dag_path), *extra],
+        capture_output=True,
+        text=True,
+    )
+
+
+def _write_backlog(tmp_path: Path, rows: list[str]) -> Path:
+    path = tmp_path / "backlog.md"
+    header = "| Prio | Ticket | Descripcion | Dominio | Estado | Dep | Origen | Nota |"
+    sep = "|---|---|---|---|---|---|---|---|"
+    path.write_text("\n".join([header, sep, *rows]) + "\n", encoding="utf-8")
+    return path
+
+
+def _pending_row(ticket: str) -> str:
+    return f"| Media | {ticket} | descripcion breve | motor/x | pending | - | s | - |"
+
+
+_DAG_TICKETS = ("WOT-2026-022i", "WOT-2026-021k", "WOT-2026-019z")
+
+
+def test_live_backlog_all_pending_passes(tmp_path: Path) -> None:
+    backlog = _write_backlog(tmp_path, [_pending_row(t) for t in _DAG_TICKETS])
+    result = _run_with(
+        _write_dag(tmp_path, _valid_dag()), "--live-backlog", str(backlog)
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_live_backlog_dead_ticket_fails(tmp_path: Path) -> None:
+    """DoD mutation at artifact level: a DAG citing a ticket whose live row is
+    `completed` (archived shape) must FAIL with exit != 0 naming the ticket."""
+    rows = [
+        _pending_row("WOT-2026-022i"),
+        _pending_row("WOT-2026-021k"),
+        "| Media | WOT-2026-019z | cerrado hace dias | motor/x | completed |"
+        " - | s | commit:abc1234 |",
+    ]
+    backlog = _write_backlog(tmp_path, rows)
+    result = _run_with(
+        _write_dag(tmp_path, _valid_dag()), "--live-backlog", str(backlog)
+    )
+    assert result.returncode == 1
+    assert "WOT-2026-019z" in result.stderr
+    assert "frescura" in result.stderr
+
+
+def test_live_backlog_absent_ticket_fails(tmp_path: Path) -> None:
+    """A DAG ticket with NO row at all in the live queue is equally dead."""
+    backlog = _write_backlog(
+        tmp_path, [_pending_row("WOT-2026-022i"), _pending_row("WOT-2026-021k")]
+    )
+    result = _run_with(
+        _write_dag(tmp_path, _valid_dag()), "--live-backlog", str(backlog)
+    )
+    assert result.returncode == 1
+    assert "WOT-2026-019z" in result.stderr
+
+
+def test_live_backlog_pending_in_prose_does_not_count(tmp_path: Path) -> None:
+    """Cell-based rule (WOT-2026-024c trap): a row whose STATE cell is
+    `completed` must not be revived because the word 'pending' or the ticket id
+    appear again INSIDE a prose cell."""
+    rows = [
+        _pending_row("WOT-2026-022i"),
+        _pending_row("WOT-2026-021k"),
+        "| Media | WOT-2026-019z | quedo pending mucho tiempo, ver WOT-2026-019z |"
+        " motor/x | completed | - | s | - |",
+    ]
+    backlog = _write_backlog(tmp_path, rows)
+    result = _run_with(
+        _write_dag(tmp_path, _valid_dag()), "--live-backlog", str(backlog)
+    )
+    assert result.returncode == 1, (
+        "a completed row must NOT count as pending via prose mentions"
+    )
+
+
+def test_live_backlog_missing_file_fails(tmp_path: Path) -> None:
+    """Fail-closed: pointing the gate at a nonexistent backlog is an error,
+    never a silent skip."""
+    result = _run_with(
+        _write_dag(tmp_path, _valid_dag()),
+        "--live-backlog",
+        str(tmp_path / "nope.md"),
+    )
+    assert result.returncode == 1
+    assert "no existe" in result.stderr
+
+
+def test_head_sha_mismatch_warns_but_passes(tmp_path: Path) -> None:
+    """state_at_triage.motor != HEAD -> WARN with premise re-check, NEVER a
+    block (the HEAD advances with every close of the batch itself)."""
+    result = _run_with(_write_dag(tmp_path, _valid_dag()), "--head-sha", "fff999")
+    assert result.returncode == 0, result.stderr
+    assert "WARN" in result.stderr
+    assert "abc123" in result.stderr
+
+
+def test_head_sha_match_no_warning(tmp_path: Path) -> None:
+    """Matching SHA (prefix-tolerant) emits no warning."""
+    result = _run_with(_write_dag(tmp_path, _valid_dag()), "--head-sha", "abc123")
+    assert result.returncode == 0
+    assert "WARN" not in result.stderr

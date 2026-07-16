@@ -470,3 +470,59 @@ def test_predicate_cond6_is_dual_contract_pending() -> None:
     assert "DUAL CONTRACT" in text
     assert "PENDING" in text
     assert "self-certify" in text
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-023t: the 'Validate the DAG' section wires the FRESHNESS gate. A
+# schema-valid DAG can be DEAD (inaugural run: its recommended_start ticket
+# was already closed and archived; only a human caught it).
+# ---------------------------------------------------------------------------
+
+
+def test_validate_section_wires_live_backlog_freshness_gate() -> None:
+    """The validation command must carry --live-backlog (semantic freshness:
+    every DAG ticket still pending in the live queue). Mutation: drop the flag
+    from the section -> RED."""
+    text = _read()
+    assert "--live-backlog" in text, (
+        "the 'Validate the DAG' section must wire the WOT-2026-023t freshness"
+        " gate via --live-backlog"
+    )
+    assert "Freshness gate" in text
+
+
+def test_freshness_head_sha_is_warn_never_block() -> None:
+    """state_at_triage.motor != HEAD must be documented as WARN, never a
+    block: the motor HEAD advances with every close of the batch itself, so an
+    equality gate would self-block after the first ticket."""
+    text = _read()
+    assert "--head-sha" in text
+    assert "self-block" in text
+
+
+def test_dag_regeneration_is_forensic_seam1() -> None:
+    """SEAM-1 (DoD-EXTRA): a DAG regenerated after a stop must bump
+    generated_at and ship a NEW narrative .md -- the only forensic distinction
+    between a real re-triage and the executor editing the DAG to unblock its
+    own path. Mutation: drop the clause -> RED."""
+    text = _read()
+    assert "bump `generated_at`" in text
+    assert "narrative" in text
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-023w (DoD d): the prompt cites the schema the ledger REALLY
+# persists. Before 023w, LEDGER_FIELDS silently scrubbed every anti-loop
+# field; a prompt citing an aspirational spelling would recreate the gap.
+# ---------------------------------------------------------------------------
+
+
+def test_ledger_cites_real_batch_retry_schema() -> None:
+    """The anti-loop record is event=batch_retry with the allowlisted keys
+    (ticket_id, subtipo_cem -- not ticket / subtipo_CEM). Mutation: revert the
+    citation to the pre-023w spelling -> RED."""
+    text = _read()
+    assert "batch_retry" in text
+    assert "ticket_id" in text
+    assert "subtipo_cem" in text
+    assert "LEDGER_FIELDS" in text
