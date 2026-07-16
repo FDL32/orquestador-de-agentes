@@ -952,3 +952,126 @@ def test_docstring_does_not_promise_checks_the_collector_never_runs(
     assert "manifest-vs-tracked" not in doc_lower, (
         "docstring advertises a 'manifest-vs-tracked diff' the collector never runs"
     )
+
+
+# ---- WOT-2026-022l: caducated last-run degrades to WARN, not critical ------
+
+
+def _run_full_with_session_start(
+    tmp_path, monkeypatch, motor_lastrun, dest_lastrun, session_start
+):
+    """Like _run_full but passes --session-start (WOT-2026-022l)."""
+    motor = _fake_motor(tmp_path)
+    (motor / ".agent" / "runtime" / "pytest-safe" / "last-run.json").write_text(
+        json.dumps(motor_lastrun), encoding="utf-8"
+    )
+    dest = _fake_dest(tmp_path, dest_lastrun, delivery_authority="repo_motor")
+    monkeypatch.setattr(csh, "_run", _fake_run_factory())
+    out = tmp_path / "out"
+    rc = csh.main(
+        [
+            "--motor-root",
+            str(motor),
+            "--project-root",
+            str(dest),
+            "--mode",
+            "full",
+            "--out",
+            str(out),
+            "--session-start",
+            session_start,
+        ]
+    )
+    findings = json.loads((out / "findings.json").read_text(encoding="utf-8"))
+    return rc, findings
+
+
+def test_caducated_destino_nonzero_is_warn_not_critical(tmp_path, monkeypatch):
+    """WOT-2026-022l decision (b): a destino last-run that FINISHED BEFORE the
+    session started, with an unexplained nonzero (exit 5, no-tests-collected),
+    degrades to a WARN (evidencia caducada), NOT a spurious critical.
+
+    The dogfooding workspace keeps an old exit-5 last-run that used to
+    false-critical EVERY code-only close even with a green fresh motor suite.
+    """
+    # Destino delivers (repo_motor authority makes MOTOR the delivery repo, so the
+    # DESTINO is the non-delivery repo -> its nonzero is already a warning-severity
+    # target; but its CAUSE classification still applies). Old finished_at.
+    dest_old = {
+        "exit_code": 5,
+        "failed_test_ids": [],
+        "error_test_ids": [],
+        "finished_at": "2026-07-10T09:00:00+00:00",  # before session_start
+    }
+    motor_green = {"exit_code": 0, "finished_at": "2026-07-16T02:00:00+00:00"}
+    _rc, findings = _run_full_with_session_start(
+        tmp_path,
+        monkeypatch,
+        motor_green,
+        dest_old,
+        session_start="2026-07-16T01:00:00+00:00",
+    )
+    # The caducated nonzero must NOT be a critical; it is a classified WARN.
+    assert "pytest_safe_last_run_nonzero_destino" not in findings["automatic_criticals"]
+    assert (
+        "pytest_safe_last_run_stale_nonzero_destino" in findings["automatic_warnings"]
+    ), "a caducated nonzero must degrade to a classified WARN, not a critical"
+
+
+def test_recent_destino_nonzero_stays_critical(tmp_path, monkeypatch):
+    """The counterpart (never option (a)): a RECENT unexplained nonzero (finished
+    AFTER the session start) stays a critical -- a real exit-5 today must not be
+    silenced by the caducation rule.
+
+    Here the destino IS the delivery repo (declares repo_destino) so its nonzero
+    is a critical when recent.
+    """
+    dest = _fake_dest(
+        tmp_path,
+        {
+            "exit_code": 5,
+            "failed_test_ids": [],
+            "error_test_ids": [],
+            "finished_at": "2026-07-16T03:00:00+00:00",  # AFTER session_start
+        },
+        delivery_authority="repo_destino",
+    )
+    motor = _fake_motor(tmp_path)
+    (motor / ".agent" / "runtime" / "pytest-safe" / "last-run.json").write_text(
+        json.dumps({"exit_code": 0, "finished_at": "2026-07-16T03:00:00+00:00"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(csh, "_run", _fake_run_factory())
+    out = tmp_path / "out"
+    csh.main(
+        [
+            "--motor-root",
+            str(motor),
+            "--project-root",
+            str(dest),
+            "--mode",
+            "full",
+            "--out",
+            str(out),
+            "--session-start",
+            "2026-07-16T01:00:00+00:00",
+        ]
+    )
+    findings = json.loads((out / "findings.json").read_text(encoding="utf-8"))
+    assert "pytest_safe_last_run_nonzero" in findings["automatic_criticals"], (
+        "a RECENT unexplained nonzero must stay critical (never silenced)"
+    )
+
+
+def test_caducated_helper_fail_safe_without_timestamp():
+    """_last_run_is_caducated fails safe to NOT caducated when finished_at is
+    absent/unparseable -- we never silence a red we cannot date."""
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 7, 16, tzinfo=timezone.utc)
+    assert csh._last_run_is_caducated({"exit_code": 5}, now) is False
+    assert csh._last_run_is_caducated({"finished_at": "not-a-date"}, now) is False
+    assert (
+        csh._last_run_is_caducated({"finished_at": "2020-01-01T00:00:00+00:00"}, now)
+        is True
+    )

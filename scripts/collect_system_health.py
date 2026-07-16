@@ -193,6 +193,29 @@ def _read_pytest_last_run(motor_root: Path) -> dict:
         return {"present": False, "exit_code": None, "error": str(exc)}
 
 
+def _last_run_is_caducated(lr: dict, session_start: datetime) -> bool:
+    """WOT-2026-022l: True if this last-run FINISHED BEFORE the session started.
+
+    A last-run whose ``finished_at`` predates ``session_start`` is pre-session
+    evidence: it describes a state from before this audit/close, so an
+    unexplained nonzero exit from it is caducated, not a fresh red suite.
+
+    Fail-safe to NOT caducated (returns False) when finished_at is absent or
+    unparseable: without a timestamp we cannot prove the evidence is old, so we
+    keep the stricter verdict (never silence a red we cannot date).
+    """
+    finished_at_raw = lr.get("finished_at")
+    if not finished_at_raw:
+        return False
+    try:
+        finished_at = datetime.fromisoformat(str(finished_at_raw))
+    except (ValueError, TypeError):
+        return False
+    if finished_at.tzinfo is None:
+        finished_at = finished_at.replace(tzinfo=timezone.utc)
+    return finished_at < session_start
+
+
 HEADER_TEMPLATE = """# {title}
 
 ## Bloque de cabecera
@@ -259,9 +282,40 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI orchestratio
             "which is a TRACKED file in the dogfooding workspace."
         ),
     )
+    parser.add_argument(
+        "--session-start",
+        default=None,
+        help=(
+            "WOT-2026-020i/022l: ISO-8601 timestamp of the session/close start. A "
+            "destino last-run whose finished_at PREDATES this is EVIDENCE STALE: a "
+            "nonzero exit from it degrades to WARN (caducated evidence), never a "
+            "critical. Default: the collector's own start time."
+        ),
+    )
     # NOTE: --apply-fixes is intentionally NOT implemented in v0. The collector is
     # strictly read-only. A future v1 may add it for small doc/CLI drift fixes only.
     args = parser.parse_args(argv)
+
+    # WOT-2026-022l: resolve the session-start cutoff. A last-run finished BEFORE
+    # this instant is pre-session evidence: its nonzero exit is caducated, not a
+    # fresh red suite. Default to now() so a run without the flag treats every
+    # last-run finished before the collector started as stale evidence.
+    _collector_started = datetime.now(timezone.utc)
+    session_start: datetime | None = None
+    if args.session_start:
+        try:
+            session_start = datetime.fromisoformat(args.session_start)
+            if session_start.tzinfo is None:
+                session_start = session_start.replace(tzinfo=timezone.utc)
+        except (ValueError, TypeError):
+            print(
+                f"[collect] WARNING: --session-start not ISO-8601, ignoring: "
+                f"{args.session_start}",
+                file=sys.stderr,
+            )
+            session_start = None
+    if session_start is None:
+        session_start = _collector_started
 
     motor_root = Path(args.motor_root).resolve()
     if not (motor_root / "MANIFEST.distribute").exists():
@@ -474,8 +528,19 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI orchestratio
                     # not a real red suite. The leak is surfaced, just not a critical.
                     _emit(warnings, "pytest_safe_last_run_stateleak_only")
                     verdict = "stateleak"
+                elif _last_run_is_caducated(lr, session_start):
+                    # WOT-2026-022l, decision (b): an UNEXPLAINED nonzero from a
+                    # last-run that FINISHED BEFORE the session started is caducated
+                    # evidence, not a fresh red suite. In a code-only close the
+                    # dogfooding workspace keeps an old exit-5 (no-tests-collected)
+                    # last-run that would false-critical EVERY close. Degrade to
+                    # WARN with the CAUSE spelled out: WARN por evidencia caducada,
+                    # NO por suite verde. A recent unexplained nonzero stays a
+                    # critical (never option (a): that would silence a real red).
+                    _emit(warnings, "pytest_safe_last_run_stale_nonzero")
+                    verdict = "stale"
                 else:
-                    # nonzero, no failed/error ids, no state_leak -> unexplained.
+                    # nonzero, no failed/error ids, no state_leak, RECENT -> unexplained.
                     _emit(sev, "pytest_safe_last_run_nonzero")
                     verdict = "red"
 
