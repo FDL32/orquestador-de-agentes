@@ -398,3 +398,43 @@ def test_group_stop_report_evidence_level_and_confidence_are_separate() -> None:
         "the prompt must state that auditor_confidence never substitutes "
         "for evidence_level"
     )
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-024b: barrier 3 must enumerate a CLOSED gate list, not a trust
+# instruction. The leak (2026-07-14): the executor ran `ruff check` green and
+# shipped, but `ruff format --check` -- a SEPARATE gate -- was red. A partial
+# gate run is falso_verde; the list must be explicit so omitting one is visible.
+# ---------------------------------------------------------------------------
+
+REQUIRED_GATE_TOKENS = [
+    "ruff check",
+    "ruff format --check",
+    "run_pytest_safe.py",
+    "pip_audit_project.py",
+]
+
+
+def _barrier3_block() -> str:
+    """The text of barrier 3 only (between the '3.' and '4.' headings), so the
+    assertion is scoped to the ENUMERATION, not any prose mention elsewhere in
+    the prompt (the incident narrative also names the gates)."""
+    text = _read()
+    start = text.index("3. **Gates run by the orchestrator")
+    end = text.index("4. **Mutation", start)
+    return text[start:end]
+
+
+@pytest.mark.parametrize("gate", REQUIRED_GATE_TOKENS)
+def test_barrier3_enumerates_gate(gate: str) -> None:
+    """Barrier 3 must enumerate each closed-list gate AS A BULLET, not merely
+    mention it in prose. Mutation: drop a gate's bullet from barrier 3 -> that
+    parametrized case flips RED (even though the incident narrative still names
+    the gate, so a whole-file grep would NOT have teeth)."""
+    bullet_lines = [
+        ln for ln in _barrier3_block().splitlines() if ln.lstrip().startswith("-")
+    ]
+    assert any(gate in ln for ln in bullet_lines), (
+        f"barrier 3 must ENUMERATE the gate {gate!r} as a bullet (WOT-2026-024b):"
+        " a partial gate run is falso_verde, so the list cannot be left to memory"
+    )

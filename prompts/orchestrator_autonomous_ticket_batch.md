@@ -260,7 +260,26 @@ real false-green in the evidence that informed this design:
 1. **Live premise with an EXECUTED PROBE** (never a read). A premise "verified"
    by reading only is not verified.
 2. **Adversarial plan-audit of the contract BEFORE the Builder.**
-3. **Gates run by the orchestrator**, never by the Builder's self-report.
+3. **Gates run by the orchestrator, from a CLOSED enumerated list** (never the
+   Builder's self-report, and never "ran ruff and moved on"). The project gate
+   is MORE than one command; a partial run is `falso_verde` (WOT-2026-024b,
+   2026-07-14: the executor ran `ruff check` green, declared "gates green", and
+   shipped -- but `ruff format --check` was RED, caught only by Review 2, and it
+   would have broken CI and prepush). The closed, verifiable list, ALL required
+   GREEN before the per-ticket commit:
+   - `ruff check .`
+   - `ruff format --check .`  -- a SEPARATE gate from `ruff check`; this is the
+     one that leaked. Running only `ruff check` is NOT running the gates.
+   - `python scripts/run_pytest_safe.py`  -- read "N passed" from the real
+     output, never the wrapper's exit code (barrier: WOT-2026-021m).
+   - `python scripts/pip_audit_project.py`  -- CONDITIONAL: run iff the ticket's
+     Files Likely Touched include a dependency manifest (`pyproject.toml`,
+     `uv.lock`, `requirements*.txt`); otherwise emit an AUDITABLE skip, never a
+     silent one.
+   Where a `work_plan.md` exists, `scripts/run_gates_dispatch.py` runs this exact
+   set by `deliverable_type` and returns a single verdict; in code-only batch
+   (no work_plan) run the enumerated list above explicitly. Omitting any gate is
+   `falso_verde`.
 4. **Mutation-to-prove with teeth**, isolating the branch (lesson 021u): the
    mutation fixture must force the state where the branch under test is the
    ONLY thing deciding the verdict.
