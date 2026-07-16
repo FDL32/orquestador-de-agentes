@@ -95,10 +95,17 @@ def test_existing_interpreter_passes(tmp_path: Path) -> None:
 
 
 def test_absent_hook_is_not_a_false_positive(tmp_path: Path) -> None:
-    """No hooks generated yet (empty dir) -> exit 0, not a spurious failure."""
-    hooks_dir = tmp_path / ".git" / "hooks"
+    """No hooks + repo does NOT declare hooks -> exit 0, not a spurious failure.
+
+    WOT-2026-025d: the ``--repo-root`` is now an explicit config-less repo, so
+    the "none present" PASS is only granted when the repo does not declare
+    .pre-commit-config.yaml. A repo that declares hooks but installs none is a
+    FAILURE (see test_declared_but_not_installed_fails).
+    """
+    repo_root = tmp_path / "repo"
+    hooks_dir = repo_root / ".git" / "hooks"
     hooks_dir.mkdir(parents=True)
-    assert chi.main(["--hooks-dir", str(hooks_dir)]) == 0
+    assert chi.main(["--repo-root", str(repo_root), "--hooks-dir", str(hooks_dir)]) == 0
 
 
 def test_barrier_interpreter_existence_is_the_discriminant(tmp_path: Path) -> None:
@@ -131,3 +138,69 @@ def test_mixed_one_good_one_stale_still_fails(tmp_path: Path) -> None:
     statuses = {s.hook_type: s for s in chi.check_all(hooks_dir)}
     assert statuses["pre-commit"].stale is False
     assert statuses["pre-push"].stale is True
+
+
+# ---- WOT-2026-025d: worktree fail-open ------------------------------------
+
+
+def test_declared_but_not_installed_fails(tmp_path: Path) -> None:
+    """DoD (b): a repo that DECLARES hooks (.pre-commit-config.yaml) but has
+    none installed must FAIL, not PASS with '(none present)'."""
+    repo_root = tmp_path / "repo"
+    hooks_dir = repo_root / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True)
+    (repo_root / ".pre-commit-config.yaml").write_text("repos: []\n", encoding="utf-8")
+
+    rc = chi.main(["--repo-root", str(repo_root), "--hooks-dir", str(hooks_dir)])
+    assert rc == 1, "declared-but-not-installed hooks must fail closed"
+
+
+def _git(args: list[str], cwd: Path) -> None:
+    import subprocess
+
+    subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+@pytest.mark.skipif(
+    __import__("shutil").which("git") is None, reason="git not available"
+)
+def test_default_hooks_dir_resolves_through_worktree_gitlink(tmp_path: Path) -> None:
+    """DoD (c) + (d): from a linked worktree, .git is a FILE (gitlink), so the
+    literal <worktree>/.git/hooks does NOT exist. _default_hooks_dir must
+    resolve via `git rev-parse --git-path hooks` to the common hooks dir, so the
+    check SEES the hooks instead of fail-open '(none present)'.
+
+    Mutation: revert _default_hooks_dir to `repo_root / '.git' / 'hooks'` and
+    this test fails, because the literal path in a worktree is not a directory.
+    """
+    main_repo = tmp_path / "main"
+    main_repo.mkdir()
+    _git(["init"], main_repo)
+    _git(["config", "user.email", "t@t.t"], main_repo)
+    _git(["config", "user.name", "t"], main_repo)
+    (main_repo / "f.txt").write_text("x\n", encoding="utf-8")
+    _git(["add", "f.txt"], main_repo)
+    _git(["commit", "-m", "init"], main_repo)
+
+    worktree = tmp_path / "wt"
+    _git(["worktree", "add", str(worktree)], main_repo)
+
+    # In the worktree, .git is a FILE (gitlink), not a dir.
+    assert (worktree / ".git").is_file()
+    literal_join = worktree / ".git" / "hooks"
+    assert not literal_join.is_dir(), "the literal join must NOT resolve in a worktree"
+
+    # The fix: _default_hooks_dir resolves to the REAL (common) hooks dir.
+    resolved = chi._default_hooks_dir(worktree.resolve())
+    assert resolved.is_dir(), (
+        "worktree-safe hooks dir must exist (git rev-parse --git-path hooks); "
+        f"got {resolved}"
+    )
+    # The common hooks dir lives under the MAIN repo's .git, not the worktree.
+    assert "hooks" in resolved.name

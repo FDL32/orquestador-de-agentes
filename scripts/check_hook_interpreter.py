@@ -109,8 +109,41 @@ def check_all(hooks_dir: Path) -> list[HookStatus]:
 
 
 def _default_hooks_dir(repo_root: Path) -> Path:
-    """Before: repo_root is a git repo. During: join. After: `.git/hooks` path."""
-    return repo_root / ".git" / "hooks"
+    """Resolve the real hooks dir, worktree-safe (WOT-2026-025d).
+
+    Before: repo_root is a git repo (a normal checkout OR a linked worktree).
+    During: ask git for the hooks path via ``git rev-parse --git-path hooks``,
+    which resolves through the gitlink of a worktree to the common git dir.
+    After: return the resolved hooks dir. Falls back to the literal
+    ``.git/hooks`` join only when git is unavailable or the command fails --
+    a normal checkout, where the literal join is correct anyway.
+
+    The literal join was FAIL-OPEN in a worktree: there ``.git`` is a FILE
+    (gitlink), so ``<worktree>/.git/hooks`` does not exist, every hook reports
+    present=False, and the check printed "PASS (none present)" without looking
+    at anything.
+    """
+    try:
+        proc = subprocess.run(  # noqa: S603
+            ["git", "-C", str(repo_root), "rev-parse", "--git-path", "hooks"],  # noqa: S607
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except OSError:
+        return repo_root / ".git" / "hooks"
+    if proc.returncode != 0:
+        return repo_root / ".git" / "hooks"
+    hooks = proc.stdout.strip()
+    if not hooks:
+        return repo_root / ".git" / "hooks"
+    hooks_path = Path(hooks)
+    if not hooks_path.is_absolute():
+        # git prints the path relative to repo_root for a normal checkout.
+        hooks_path = (repo_root / hooks_path).resolve()
+    return hooks_path
 
 
 def _regenerate_hooks(repo_root: Path) -> subprocess.CompletedProcess[str]:
@@ -191,17 +224,23 @@ def main(argv: list[str] | None = None) -> int:
             else _default_hooks_dir(repo_root)
         )
 
+        # WOT-2026-025d: a repo that DECLARES hooks (.pre-commit-config.yaml)
+        # but has none installed is a FAILURE, not a PASS. That "none present"
+        # PASS was the fail-open the literal .git/hooks join produced in a
+        # worktree.
+        config_present = (repo_root / ".pre-commit-config.yaml").is_file()
+
+        def _problem(statuses: list[HookStatus]) -> tuple[list[HookStatus], bool]:
+            """Return (stale hooks, declared-but-not-installed)."""
+            stale_ = [s for s in statuses if s.stale]
+            present_ = [s for s in statuses if s.present]
+            not_installed = config_present and not present_
+            return stale_, not_installed
+
         statuses = check_all(hooks_dir)
-        stale = [s for s in statuses if s.stale]
+        stale, not_installed = _problem(statuses)
 
-        if not stale:
-            checked = (
-                ", ".join(s.hook_type for s in statuses if s.present) or "none present"
-            )
-            print(f"[check-hook-interpreter] PASS: hook interpreters ok ({checked}).")
-            return 0
-
-        if args.fix:
+        if args.fix and (stale or not_installed):
             proc = _regenerate_hooks(repo_root)
             if proc.returncode != 0:
                 print(
@@ -210,20 +249,28 @@ def main(argv: list[str] | None = None) -> int:
                     file=sys.stderr,
                 )
                 return 1
-            # Re-inspect to confirm the regeneration actually fixed the paths.
+            # Re-inspect to confirm the regeneration actually installed/fixed.
             statuses = check_all(hooks_dir)
-            stale = [s for s in statuses if s.stale]
-            if not stale:
-                print(
-                    "[check-hook-interpreter] PASS: regenerated hooks; "
-                    "interpreters now exist on disk."
-                )
-                return 0
+            stale, not_installed = _problem(statuses)
+
+        if stale:
             print(_actionable_message(repo_root, stale), file=sys.stderr)
             return 1
+        if not_installed:
+            print(
+                "[check-hook-interpreter] FAIL: repo declares "
+                ".pre-commit-config.yaml but no managed hook is installed in "
+                f"{hooks_dir} (hooks declared but not installed).\n"
+                "  Fix: python scripts/check_hook_interpreter.py --fix",
+                file=sys.stderr,
+            )
+            return 1
 
-        print(_actionable_message(repo_root, stale), file=sys.stderr)
-        return 1
+        checked = (
+            ", ".join(s.hook_type for s in statuses if s.present) or "none present"
+        )
+        print(f"[check-hook-interpreter] PASS: hook interpreters ok ({checked}).")
+        return 0
 
     except OSError as exc:
         print(f"[check-hook-interpreter] ERROR: {exc}", file=sys.stderr)
