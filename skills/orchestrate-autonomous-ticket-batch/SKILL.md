@@ -4,8 +4,8 @@ version: 1.0.0
 description: Ejecuta un batch autonomo de tickets consumiendo el DAG de grupos que produce backlog-triage; cierra el maximo de tickets CON GARANTIAS (Tier 0-1) con hard-stop y GROUP_STOP_REPORT, congela solo el subgrafo del grupo caido y sigue con los independientes; detecta el modo (destino con bus vivo / motor code-only) y DELEGA en el pipeline por ticket que corresponda, sin duplicar la logica de cierre de ninguno
 triggers: [/orchestrate-autonomous-ticket-batch, orchestrate-autonomous-ticket-batch, batch-autonomo-de-tickets]
 author: agent
-role: orchestrator
-stage: execute
+role: shared
+stage: meta
 writes_memory: false
 quality_gate: false
 tags: [core, system, orchestration, autonomy, batch]

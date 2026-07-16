@@ -113,7 +113,7 @@
 | skill | `skills/manager-review-implementation/SKILL.md` | active | agent | manager | model-invoked | /approve, /review, code-review |
 | skill | `skills/manager-session-closeout/SKILL.md` | active | agent | manager | model-invoked | /close-session, /closeout, /session-closeout |
 | skill | `skills/memory-consolidate/SKILL.md` | active | agent | shared | model-invoked | /consolidate, /dream-cycle, /memory |
-| skill | `skills/orchestrate-autonomous-ticket-batch/SKILL.md` | active | agent | orchestrator | model-invoked | /orchestrate-autonomous-ticket-batch, batch-autonomo-de-tickets, orchestrate-autonomous-ticket-batch |
+| skill | `skills/orchestrate-autonomous-ticket-batch/SKILL.md` | active | agent | shared | model-invoked | /orchestrate-autonomous-ticket-batch, batch-autonomo-de-tickets, orchestrate-autonomous-ticket-batch |
 | skill | `skills/orchestrate-destination-batch/SKILL.md` | active | agent | shared | model-invoked | /batch-destinos, batch-publicacion, orchestrate-destination-batch, preparar-repos |
 | skill | `skills/orchestrate-pipeline-codeonly/SKILL.md` | active | agent | manager | model-invoked | /orchestrate-pipeline-codeonly, orchestrate-pipeline-codeonly, pipeline-codeonly |
 | skill | `skills/orchestrate-pipeline/SKILL.md` | active | agent | shared | model-invoked | /pipeline, ejecutar-backlog, implantar-planes, orchestrate-pipeline, run-backlog |
