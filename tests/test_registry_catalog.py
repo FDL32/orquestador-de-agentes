@@ -243,6 +243,34 @@ class TestIndexStaleGate:
         catalog = build_catalog()
         assert render_index(catalog) == render_index(catalog)
 
+    def test_check_index_wired_in_precommit(self):
+        """WOT-2026-024l: the freshness gate is only a BARRIER if something
+        invokes it. check_index_stale + the --check-index CLI existed for
+        commits, but nothing ran them, so INDEX.md drifted (skill 31/prompt 22
+        vs 38/30 real). Assert .pre-commit-config.yaml wires --check-index
+        fail-closed at the pre-commit stage (a guard cited but unwired is a
+        norm, not a gate -- AGENTS.md 'Barrera cableada')."""
+        import yaml
+
+        repo_root = Path(__file__).resolve().parent.parent
+        config = yaml.safe_load(
+            (repo_root / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+        )
+        hooks = [h for repo in config["repos"] for h in repo.get("hooks", [])]
+        matching = [
+            h for h in hooks if "discover_skills.py --check-index" in h.get("entry", "")
+        ]
+        assert len(matching) == 1, (
+            "exactamente un hook de pre-commit debe invocar"
+            " discover_skills.py --check-index"
+        )
+        hook = matching[0]
+        # Fires on every commit (incl. pure-deletion commits) and derives the
+        # catalog from the live tree, not from argv.
+        assert hook.get("always_run") is True
+        assert hook.get("pass_filenames") is False
+        assert "pre-commit" in hook.get("stages", ["pre-commit"])
+
 
 class TestPromptLifecycle011d:
     """WOT-2026-011d: prompt status is derived from a real source in the file

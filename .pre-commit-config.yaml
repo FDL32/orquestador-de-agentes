@@ -123,6 +123,22 @@ repos:
         pass_filenames: false
         stages: [pre-commit]
 
+      # WOT-2026-024l: docs/registry/INDEX.md es una PROYECCION generada por
+      # discover_skills.py --generate-index. Un artefacto con estado embebido
+      # CADUCA solo: se midio desincronizado (skill 31/prompt 22 vs 38/30 reales,
+      # familias batch/codeonly ausentes) porque el CLI --check-index existia pero
+      # NADIE lo invocaba (una barrera que nadie llama es una norma, no un gate).
+      # Fail-closed: regenera el catalogo en memoria y compara; drift -> exit 1.
+      # always_run + pass_filenames:false: el catalogo sale del arbol vivo, no del
+      # argv, y un commit que solo BORRA una skill tambien debe re-verificar.
+      - id: check-index-stale
+        name: check registry INDEX.md freshness (proyeccion no caduca en silencio)
+        entry: uv run python scripts/discover_skills.py --check-index
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
       # pip-audit: auditoria CVE desde uv.lock (todos los grupos).
       # El wrapper exporta uv.lock a requirements.txt temporal y llama pip-audit -r.
       # Garantia: audita la superficie real del proyecto, no el Python del sistema.

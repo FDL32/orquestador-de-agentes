@@ -10,39 +10,47 @@
 
 | kind | total |
 |------|-------|
-| prompt | 22 |
+| prompt | 30 |
 | reference | 33 |
 | script-consumer | 5 |
 | shared | 3 |
-| skill | 31 |
-| **total** | **94** |
+| skill | 38 |
+| **total** | **109** |
 
 ## Entradas
 
 | kind | path | status | owner | role | invocation | aliases |
 |------|------|--------|-------|------|------------|---------|
 | prompt | `prompts/audit_agent_output.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/audit_autonomous_ticket_batch.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/audit_bus.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/audit_cf_plan_graph.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/audit_cf_repo_charter.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/audit_cf_ticket_contract.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/audit_complete_motor_destination.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/audit_git_publication.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/audit_goal_completion.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/audit_pipeline.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/audit_pipeline_codeonly.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/audit_portability_legacy_surface.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/audit_post_change_system_health.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/audit_ticket_contract.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/backlog_triage.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/contract_formation_pipeline.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/hermes_soul.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/manager_review.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/memory_upload.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/orchestrator_autonomous_ticket_batch.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/orchestrator_destination_batch.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/orchestrator_destination_bootstrap.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/orchestrator_launch_builder.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/orchestrator_pipeline.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/orchestrator_pipeline_codeonly.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/orchestrator_refactor_bootstrap.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/orchestrator_session_bootstrap.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/orchestrator_session_close_chat.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/orchestrator_session_close_full_audit.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/suite_optimization.md` | active | system | shared | model-invoked | — |
 | reference | `skills/audit-pipeline/references/audit-checklist.md` | active | system | shared | model-invoked | — |
 | reference | `skills/builder-implement-from-plan/references/code-rules.md` | active | system | shared | model-invoked | — |
 | reference | `skills/builder-implement-from-plan/references/log-format.md` | active | system | shared | model-invoked | — |
@@ -85,8 +93,11 @@
 | shared | `skills/_shared/ap-schema.md` | active | system | shared | model-invoked | — |
 | shared | `skills/_shared/ticket-anti-patterns.md` | active | system | shared | model-invoked | — |
 | skill | `skills/adopt-existing-project/SKILL.md` | active | agent | user | model-invoked | /adecuar-proyecto, /adopt-existing, /adopt-project |
+| skill | `skills/audit-autonomous-ticket-batch/SKILL.md` | active | agent | auditor | model-invoked | /audit-autonomous-ticket-batch, audit-autonomous-ticket-batch, auditar-batch-autonomo |
 | skill | `skills/audit-git-publication/SKILL.md` | active | agent | auditor | model-invoked | /audit-git-publication, audit-git-publication, auditar-publicacion-git, publicar-git |
+| skill | `skills/audit-pipeline-codeonly/SKILL.md` | active | agent | auditor | model-invoked | /audit-pipeline-codeonly, audit-pipeline-codeonly, auditar-pipeline-codeonly |
 | skill | `skills/audit-pipeline/SKILL.md` | active | agent | auditor | model-invoked | /audit-pipeline, audit-pipeline, auditar-pipeline |
+| skill | `skills/backlog-triage/SKILL.md` | active | agent | manager | model-invoked | /backlog-triage, backlog-triage |
 | skill | `skills/builder-implement-from-plan/SKILL.md` | active | agent | builder | model-invoked | /code, /implement, implement |
 | skill | `skills/builder-run-quality-gates/SKILL.md` | active | agent | builder | model-invoked | /check, /gates, quality-gates |
 | skill | `skills/builder-self-audit/SKILL.md` | active | agent | builder | model-invoked | /inspect, /self-audit, audit |
@@ -102,6 +113,9 @@
 | skill | `skills/manager-review-implementation/SKILL.md` | active | agent | manager | model-invoked | /approve, /review, code-review |
 | skill | `skills/manager-session-closeout/SKILL.md` | active | agent | manager | model-invoked | /close-session, /closeout, /session-closeout |
 | skill | `skills/memory-consolidate/SKILL.md` | active | agent | shared | model-invoked | /consolidate, /dream-cycle, /memory |
+| skill | `skills/orchestrate-autonomous-ticket-batch/SKILL.md` | active | agent | orchestrator | model-invoked | /orchestrate-autonomous-ticket-batch, batch-autonomo-de-tickets, orchestrate-autonomous-ticket-batch |
+| skill | `skills/orchestrate-destination-batch/SKILL.md` | active | agent | shared | model-invoked | /batch-destinos, batch-publicacion, orchestrate-destination-batch, preparar-repos |
+| skill | `skills/orchestrate-pipeline-codeonly/SKILL.md` | active | agent | manager | model-invoked | /orchestrate-pipeline-codeonly, orchestrate-pipeline-codeonly, pipeline-codeonly |
 | skill | `skills/orchestrate-pipeline/SKILL.md` | active | agent | shared | model-invoked | /pipeline, ejecutar-backlog, implantar-planes, orchestrate-pipeline, run-backlog |
 | skill | `skills/project-finalize/SKILL.md` | active | agent | shared | model-invoked | /finalize, /finish, close |
 | skill | `skills/refactor-manager/SKILL.md` | active | agent | shared | model-invoked | /refactor, refactor, refactor-manager |
@@ -111,6 +125,7 @@
 | skill | `skills/session-close-full-audit/SKILL.md` | active | agent | auditor | model-invoked | /close-full-audit, /session-close-full-audit, auditar-cierre-completo-sesion |
 | skill | `skills/session-close-observations/SKILL.md` | active | agent | shared | model-invoked | /close-observations, /generate-observations, /session-close |
 | skill | `skills/setup-agent-system/SKILL.md` | active | agent | user | model-invoked | /agent-install, /agent-setup, /init |
+| skill | `skills/suite-optimization/SKILL.md` | active | agent | manager | model-invoked | /suite-optimization, optimizar-suite, suite-optimization |
 | skill | `skills/system-health-audit/SKILL.md` | active | agent | auditor | model-invoked | /audit-system-health, auditar-salud-sistema, system-health-audit |
 | skill | `skills/systematic-debugging/SKILL.md` | active | agent | shared | model-invoked | /debug, /systematic-debugging, debug |
 | skill | `skills/test-driven-development/SKILL.md` | active | agent | shared | model-invoked | /tdd, /test-driven, tdd |
