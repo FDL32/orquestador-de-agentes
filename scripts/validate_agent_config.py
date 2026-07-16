@@ -7,6 +7,12 @@ Validates:
 - .agent_denylist.json structure
 - Skill trigger uniqueness (no duplicates)
 - Skill frontmatter validity
+- agents.json of the MOTOR, including the ensemble_* keys (WOT-2026-019o).
+  The schema itself lives ONCE in .agent/agents_config.py::_validate_config
+  (single-layer rule); this script only invokes it as a CLI gate. Resolution
+  is MOTOR-EXPLICIT (M9): the motor root is derived from THIS file's location,
+  independent of AGENT_PROJECT_ROOT (whose priority-1 resolution would point
+  at a workspace whose agents.json has no ensemble_* keys).
 
 Exit codes: 0 (valid), 1 (invalid)
 """
@@ -21,6 +27,18 @@ try:
     from discover_skills import discover_skills, extract_frontmatter
 except ImportError:
     from scripts.discover_skills import discover_skills, extract_frontmatter
+
+# Motor-explicit root (M9): the repo that owns THIS script, never the env.
+MOTOR_ROOT = Path(__file__).resolve().parent.parent
+_AGENT_DIR = MOTOR_ROOT / ".agent"
+# APPEND, never insert(0): with .agent up front, `runtime` would resolve to
+# `.agent/runtime/` instead of `<motor>/runtime/` (pytest-collection hazard
+# documented in AGENTS.md).
+if str(_AGENT_DIR) not in sys.path:
+    sys.path.append(str(_AGENT_DIR))
+
+from agents_config import AgentsConfigError, load_agents_config  # noqa: E402
+
 
 # Default configurations (used when files are missing or invalid)
 DEFAULT_ALLOWLIST = {
@@ -109,6 +127,27 @@ def validate_skill_frontmatter() -> list[str]:
     return errors
 
 
+def validate_motor_agents_config() -> str | None:
+    """CLI gate over the motor's agents.json (WOT-2026-019o).
+
+    Before: MOTOR_ROOT/.agent/config/agents.json exists (the motor's own
+        versioned config, resolved from this file's location -- M9: never via
+        AGENT_PROJECT_ROOT, whose priority-1 resolution points at a workspace
+        that has, and will keep having, 0 ensemble_* keys).
+    During: invokes agents_config.load_agents_config(project_root=MOTOR_ROOT),
+        the SINGLE validation layer (schema_version, backends, roles,
+        ensemble_profiles/pipelines/private_roots, credential-literal ban).
+        This function re-declares NO schema of its own.
+    After: returns None if valid; returns the error message string if invalid
+        (the caller prints it and exits 1).
+    """
+    try:
+        load_agents_config(project_root=MOTOR_ROOT)
+    except AgentsConfigError as exc:
+        return str(exc)
+    return None
+
+
 def main() -> int:
     # 1. Load configurations (always succeeds due to defaults)
     load_allowlist()
@@ -126,6 +165,12 @@ def main() -> int:
         print("Validation FAILED: Frontmatter errors:")
         for err in frontmatter_errors:
             print(f"  - {err}")
+        return 1
+
+    # 4. Validate the motor's agents.json (single layer: agents_config.py)
+    agents_error = validate_motor_agents_config()
+    if agents_error:
+        print(f"Validation FAILED: agents.json invalid: {agents_error}")
         return 1
 
     print("Configuration valid — all checks passed.")

@@ -21,6 +21,7 @@ if str(_agent_dir) not in sys.path:
 
 
 from agents_config import (  # noqa: E402
+    MIGRATIONS,
     AgentsConfigError,
     _migrate_1_0_to_1_1,
     get_backend_args,
@@ -32,6 +33,13 @@ from agents_config import (  # noqa: E402
     migrate_agents_config,
     resolve_executable,
 )
+
+
+# WOT-2026-019o (leccion 024t): las expectativas de la cadena de migraciones se
+# DERIVAN del registro, nunca se pinean como snapshot -- un numero/lista fijada
+# caduca sola con cada migracion nueva sin que el invariante haya cambiado.
+ALL_MIGRATION_IDS = [m.id for m in MIGRATIONS]
+LATEST_SCHEMA = MIGRATIONS[-1].to_version
 
 
 VALID_CONFIG = {
@@ -398,9 +406,9 @@ class TestMigrationFramework:
         )
         report1 = migrate_agents_config(cfg)
         report2 = migrate_agents_config(cfg)
-        assert report1.applied == ["1.0_to_1.1", "1.1_to_1.2"]
+        assert report1.applied == ALL_MIGRATION_IDS
         assert report2.applied == []
-        assert report2.skipped == ["1.0_to_1.1", "1.1_to_1.2"]
+        assert report2.skipped == ALL_MIGRATION_IDS
         assert report2.backups == []
 
     def test_migrate_creates_timestamped_backup(self, tmp_path):
@@ -428,9 +436,9 @@ class TestMigrationFramework:
             )
         )
         report = migrate_agents_config(cfg)
-        assert len(report.backups) == 2  # dos migraciones = dos backups
-        assert report.backups[0].exists()
-        assert report.backups[1].exists()
+        # un backup por migracion aplicada, derivado del registro (024t)
+        assert len(report.backups) == len(ALL_MIGRATION_IDS)
+        assert all(b.exists() for b in report.backups)
 
     def test_migrate_updates_migrations_list(self, tmp_path):
         """
@@ -458,23 +466,25 @@ class TestMigrationFramework:
         )
         migrate_agents_config(cfg)
         result = json.loads(cfg.read_text())
-        assert result["_migrations"] == ["1.0_to_1.1", "1.1_to_1.2"]
-        assert result["schema_version"] == "1.2"
+        assert result["_migrations"] == ALL_MIGRATION_IDS
+        assert result["schema_version"] == LATEST_SCHEMA
 
     def test_legacy_config_without_migrations_field(self, tmp_path):
         """
-        Test #4: config con schema_version: "1.2" pero sin _migrations.
+        Test #4: config ya en la ULTIMA version del registro pero sin _migrations.
 
-        Before: Config ya en 1.2 pero sin _migrations field.
+        Before: Config en LATEST_SCHEMA (derivada del registro, 024t) sin
+                _migrations field.
         During: migrate_agents_config detecta legacy y hace backfill retroactivo.
-        After: _migrations: ["1.0_to_1.1", "1.1_to_1.2"] poblado sin re-ejecutar handler.
+        After: _migrations poblado con TODOS los ids del registro sin
+               re-ejecutar ningun handler.
         """
         cfg = tmp_path / "agents.json"
-        # Config ya en 1.2 pero sin _migrations
+        # Config ya en la ultima version pero sin _migrations
         cfg.write_text(
             json.dumps(
                 {
-                    "schema_version": "1.2",
+                    "schema_version": LATEST_SCHEMA,
                     "backends": {
                         "opencode": {
                             "executable": "opencode",
@@ -489,11 +499,10 @@ class TestMigrationFramework:
         )
         report = migrate_agents_config(cfg)
         result = json.loads(cfg.read_text())
-        assert result["_migrations"] == ["1.0_to_1.1", "1.1_to_1.2"]
+        assert result["_migrations"] == ALL_MIGRATION_IDS
         assert result["role_models"]["BUILDER"] == "x"  # no overwrite
         assert report.applied == []  # no handler ejecutado
-        assert "1.0_to_1.1" in report.skipped
-        assert "1.1_to_1.2" in report.skipped
+        assert set(ALL_MIGRATION_IDS).issubset(set(report.skipped))
 
     def test_dry_run_no_writes(self, tmp_path):
         """
@@ -523,10 +532,8 @@ class TestMigrationFramework:
         report = migrate_agents_config(cfg, dry_run=True)
         mtime_after = cfg.stat().st_mtime
         assert mtime_before == mtime_after
-        assert report.applied == [
-            "1.0_to_1.1",
-            "1.1_to_1.2",
-        ]  # report sí muestra lo que pasaría
+        # report si muestra lo que pasaria (derivado del registro, 024t)
+        assert report.applied == ALL_MIGRATION_IDS
         assert report.backups == []
 
     def test_migration_handler_pure(self):
@@ -581,7 +588,7 @@ class TestMigrationFramework:
         )
         migrate_agents_config(cfg)
         result = json.loads(cfg.read_text())
-        assert result["schema_version"] == "1.2"
+        assert result["schema_version"] == LATEST_SCHEMA
         assert "role_models" in result
         assert result["role_models"]["BUILDER"] == "opencode-go/deepseek-v4-flash"
         assert result["role_models"]["MANAGER"] == "openai/gpt-5.4-mini"
@@ -590,6 +597,10 @@ class TestMigrationFramework:
         assert "minimal" in result["profiles"]
         assert "standard" in result["profiles"]
         assert "strict" in result["profiles"]
+        # 1.2 -> 1.3 (WOT-2026-019o): claves ensemble_* backfilled vacias
+        assert result["ensemble_profiles"] == {}
+        assert result["ensemble_pipelines"] == {}
+        assert result["ensemble_private_roots"] == []
 
 
 class TestSkillAllowlists:

@@ -226,6 +226,9 @@ def _validate_config(config: dict, config_path: Path) -> None:
     # Check strictness_profile and profiles (schema 1.2+, retrocompatible)
     _validate_strictness_profiles(config, config_path)
 
+    # Check ensemble_* keys (schema 1.3+, retrocompatible)
+    _validate_ensemble(config, config_path)
+
 
 def _validate_strictness_profiles(config: dict, config_path: Path) -> None:
     """Validate the strictness_profile and profiles section (schema 1.2+, retrocompatible).
@@ -265,6 +268,179 @@ def _validate_strictness_profiles(config: dict, config_path: Path) -> None:
                 raise AgentsConfigError(
                     f"Invalid profile '{profile_name}' in profiles: must be an object"
                 )
+
+
+_ENSEMBLE_CHANNELS = {"api", "agent"}
+_ENSEMBLE_SENSITIVITIES = {"public", "private", "secret"}
+# Credenciales SOLO por nombre de variable de entorno (api_key_env). Una clave
+# de credencial literal en agents.json (fichero versionado) es fuga versionada.
+_FORBIDDEN_CREDENTIAL_KEYS = {"api_key", "apikey", "token", "secret", "password"}
+_ENSEMBLE_MAX_ROUNDS_CAP = 3
+
+
+def _is_env_var_name(value: object) -> bool:
+    """True si value tiene forma de NOMBRE de variable de entorno (MAYUS_CON_GUION_BAJO)."""
+    if not isinstance(value, str) or not value:
+        return False
+    if value[0].isdigit():
+        return False
+    if value != value.upper():
+        return False
+    return all(c.isalnum() or c == "_" for c in value)
+
+
+def _validate_ensemble(config: dict, config_path: Path) -> None:
+    """Validate the ensemble_* sections (schema 1.3+, retrocompatible; WOT-2026-019o).
+
+    Before: config es el dict ya parseado de agents.json; las claves
+        `ensemble_profiles` / `ensemble_pipelines` / `ensemble_private_roots`
+        pueden faltar (configs pre-1.3: retrocompatible, no valida nada).
+    During: valida en UNA sola capa (regla M4 del contrato: prohibido un
+        segundo schema divergente) que:
+        - cada perfil declara `backend` existente en `backends` y `channel`
+          en {api, agent}; `data_sensitivity` (si esta) en {public, private,
+          secret}; `write` bool; `channel=api` exige `api_key_env` (forma de
+          NOMBRE de env var, nunca un valor) y `api_base_url`;
+        - ninguna clave de credencial literal (`api_key`, `token`, ...)
+          aparece en perfiles ni en backends (M7: fuga versionada);
+        - cada pipeline referencia perfiles existentes (proposer/challenger),
+          declara `rubric`, y `max_rounds` (si esta) es int en [1, 3];
+        - `backends.<n>.trusted` (si esta) es bool -- es el atributo del que
+          cuelga el privacy_preflight (M5: atributo del BACKEND, ausente =
+          false, fail-closed);
+        - `ensemble_private_roots` (si esta) es lista de strings.
+    After: retorna None si todo es valido; lanza AgentsConfigError con el
+        campo exacto en el mensaje ante el primer defecto (gate self-service).
+    """
+    profiles = config.get("ensemble_profiles")
+    pipelines = config.get("ensemble_pipelines")
+    private_roots = config.get("ensemble_private_roots")
+
+    if profiles is None and pipelines is None and private_roots is None:
+        return  # pre-1.3: retrocompatible
+
+    if private_roots is not None and (
+        not isinstance(private_roots, list)
+        or not all(isinstance(r, str) for r in private_roots)
+    ):
+        raise AgentsConfigError(
+            f"Invalid 'ensemble_private_roots' in {config_path}: "
+            "must be a list of strings"
+        )
+
+    backends = config.get("backends", {})
+    for backend_name, backend in backends.items():
+        _validate_ensemble_backend_extras(backend_name, backend)
+
+    if profiles is not None:
+        if not isinstance(profiles, dict):
+            raise AgentsConfigError(
+                f"Invalid 'ensemble_profiles' in {config_path}: must be an object"
+            )
+        for prof_name, prof in profiles.items():
+            _validate_ensemble_profile(prof_name, prof, backends)
+
+    if pipelines is not None:
+        if not isinstance(pipelines, dict):
+            raise AgentsConfigError(
+                f"Invalid 'ensemble_pipelines' in {config_path}: must be an object"
+            )
+        for pipe_name, pipe in pipelines.items():
+            _validate_ensemble_pipeline(pipe_name, pipe, profiles or {})
+
+
+def _validate_ensemble_backend_extras(backend_name: str, backend: dict) -> None:
+    """Chequeos de backend introducidos por 1.3: `trusted` bool + ban de credenciales."""
+    if "trusted" in backend and not isinstance(backend["trusted"], bool):
+        raise AgentsConfigError(
+            f"Backend '{backend_name}': 'trusted' must be a bool "
+            "(absent means false, fail-closed)"
+        )
+    leaked = _FORBIDDEN_CREDENTIAL_KEYS.intersection(k.lower() for k in backend)
+    if leaked:
+        raise AgentsConfigError(
+            f"Backend '{backend_name}' carries literal credential key(s) "
+            f"{sorted(leaked)}: credentials are referenced ONLY by env "
+            "var name (api_key_env) -- agents.json is a versioned file"
+        )
+
+
+def _validate_ensemble_profile(prof_name: str, prof: object, backends: dict) -> None:
+    """Un perfil de ensemble: backend existente, channel valido, sin credenciales."""
+    if not isinstance(prof, dict):
+        raise AgentsConfigError(f"Ensemble profile '{prof_name}': must be an object")
+    leaked = _FORBIDDEN_CREDENTIAL_KEYS.intersection(k.lower() for k in prof)
+    if leaked:
+        raise AgentsConfigError(
+            f"Ensemble profile '{prof_name}' carries literal "
+            f"credential key(s) {sorted(leaked)}: use api_key_env"
+        )
+    if prof.get("backend") not in backends:
+        raise AgentsConfigError(
+            f"Ensemble profile '{prof_name}' references unknown "
+            f"backend '{prof.get('backend')}'"
+        )
+    if prof.get("channel") not in _ENSEMBLE_CHANNELS:
+        raise AgentsConfigError(
+            f"Ensemble profile '{prof_name}': 'channel' must be one "
+            f"of {sorted(_ENSEMBLE_CHANNELS)}, got '{prof.get('channel')}'"
+        )
+    sensitivity = prof.get("data_sensitivity")
+    if sensitivity is not None and sensitivity not in _ENSEMBLE_SENSITIVITIES:
+        raise AgentsConfigError(
+            f"Ensemble profile '{prof_name}': 'data_sensitivity' "
+            f"must be one of {sorted(_ENSEMBLE_SENSITIVITIES)}"
+        )
+    if "write" in prof and not isinstance(prof["write"], bool):
+        raise AgentsConfigError(
+            f"Ensemble profile '{prof_name}': 'write' must be a bool"
+        )
+    if prof["channel"] == "api":
+        _validate_ensemble_api_fields(prof_name, prof)
+
+
+def _validate_ensemble_api_fields(prof_name: str, prof: dict) -> None:
+    """channel=api exige api_key_env (NOMBRE de env var) y api_base_url https."""
+    if not _is_env_var_name(prof.get("api_key_env")):
+        raise AgentsConfigError(
+            f"Ensemble profile '{prof_name}': channel=api "
+            "requires 'api_key_env' shaped like an ENV VAR NAME "
+            "(e.g. DEEPSEEK_API_KEY), never a literal value"
+        )
+    base_url = prof.get("api_base_url")
+    if not isinstance(base_url, str) or not base_url.startswith("https://"):
+        raise AgentsConfigError(
+            f"Ensemble profile '{prof_name}': channel=api "
+            "requires an https 'api_base_url'"
+        )
+
+
+def _validate_ensemble_pipeline(
+    pipe_name: str, pipe: object, known_profiles: dict
+) -> None:
+    """Un pipeline de ensemble: roles hacia perfiles existentes, rubric, rondas."""
+    if not isinstance(pipe, dict):
+        raise AgentsConfigError(f"Ensemble pipeline '{pipe_name}': must be an object")
+    for role_key in ("proposer", "challenger"):
+        ref = pipe.get(role_key)
+        if ref not in known_profiles:
+            raise AgentsConfigError(
+                f"Ensemble pipeline '{pipe_name}': '{role_key}' must "
+                f"reference an existing ensemble profile, got '{ref}'"
+            )
+    if not isinstance(pipe.get("rubric"), str) or not pipe["rubric"]:
+        raise AgentsConfigError(
+            f"Ensemble pipeline '{pipe_name}': 'rubric' (canonical "
+            "prompt path) is required"
+        )
+    if "max_rounds" in pipe:
+        rounds = pipe["max_rounds"]
+        if not isinstance(rounds, int) or not (1 <= rounds <= _ENSEMBLE_MAX_ROUNDS_CAP):
+            raise AgentsConfigError(
+                f"Ensemble pipeline '{pipe_name}': 'max_rounds' must "
+                f"be an int in [1, {_ENSEMBLE_MAX_ROUNDS_CAP}] "
+                "(default=2, tope=3)"
+            )
 
 
 def _validate_backend(name: str, backend: dict, config_path: Path) -> None:
@@ -543,6 +719,29 @@ def _migrate_1_1_to_1_2(config: dict) -> dict:
     return new
 
 
+def _migrate_1_2_to_1_3(config: dict) -> dict:
+    """
+    Pure migration handler 1.2 -> 1.3 (WOT-2026-019o).
+
+    Before: Config con schema_version "1.2" sin claves ensemble_*.
+    During: Backfills ensemble_profiles = {}, ensemble_pipelines = {} y
+            ensemble_private_roots = [] si faltan. Las estructuras nacen
+            VACIAS: los perfiles/pipelines reales son contenido del motor
+            (versionado aparte), no de la migracion. `ensemble_private_roots`
+            nace vacia A PROPOSITO (m5 del contrato): raices privadas
+            concretas solo en config local del destino o via env, nunca en
+            este fichero versionado.
+    After: Retorna nuevo dict con schema_version "1.3" y las tres claves
+           ensemble_* presentes.
+    """
+    new = dict(config)
+    new["schema_version"] = "1.3"
+    new.setdefault("ensemble_profiles", {})
+    new.setdefault("ensemble_pipelines", {})
+    new.setdefault("ensemble_private_roots", [])
+    return new
+
+
 MIGRATIONS: list[Migration] = [
     Migration(
         id="1.0_to_1.1",
@@ -555,6 +754,12 @@ MIGRATIONS: list[Migration] = [
         from_version="1.1",
         to_version="1.2",
         apply=_migrate_1_1_to_1_2,
+    ),
+    Migration(
+        id="1.2_to_1.3",
+        from_version="1.2",
+        to_version="1.3",
+        apply=_migrate_1_2_to_1_3,
     ),
     # Future migrations appended chronologically here.
 ]
