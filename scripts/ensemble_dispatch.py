@@ -190,6 +190,15 @@ def privacy_preflight(
     return True, "payload public sin raices privadas"
 
 
+# WOT-2026-029f: api.nan.builders vive tras Cloudflare, que rechaza la firma
+# por defecto de urllib (Python-urllib/3.x -> HTTP 403, body "error code: 1010")
+# ANTES de evaluar la auth; con un UA explicito la MISMA clave devuelve 200
+# (par medido 2026-07-18: "orquestador-ensemble/1.0" -> 200;
+# "Python-urllib/3.12" -> 403/1010). Sin esta cabecera, todo el canal nan_api
+# muere en el WAF y el 403 se confunde con clave invalida.
+ENSEMBLE_USER_AGENT = "orquestador-ensemble/1.0"
+
+
 def _transport_api(
     profile: dict, backend_cfg: dict, messages: list[dict], timeout: int
 ) -> str:
@@ -213,6 +222,7 @@ def _transport_api(
         headers={
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}",
+            "User-Agent": ENSEMBLE_USER_AGENT,
         },
         method="POST",
     )

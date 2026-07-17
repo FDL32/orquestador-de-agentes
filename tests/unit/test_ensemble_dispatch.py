@@ -947,6 +947,49 @@ def test_motor_agents_json_validates_via_single_layer():
 
 
 # --------------------------------------------------------------------------- #
+# WOT-2026-029f: User-Agent explicito en el canal nan_api. Cloudflare delante
+# de api.nan.builders rechaza la firma por defecto de urllib (HTTP 403, body
+# "error code: 1010") ANTES de la auth, asi que sin la cabecera el canal entero
+# muere pareciendo clave invalida (par medido 2026-07-18: UA explicito -> 200;
+# Python-urllib/3.12 -> 403/1010). Mutation: quitar la cabecera User-Agent del
+# request de _transport_api -> este test cae.
+# --------------------------------------------------------------------------- #
+
+
+def test_transport_api_sends_explicit_user_agent(monkeypatch):
+    """El Request de _transport_api DEBE llevar User-Agent explicito (no la
+    firma Python-urllib que Cloudflare bloquea con error 1010)."""
+    captured: dict = {}
+
+    class _Resp:
+        def read(self):
+            return json.dumps({"choices": [{"message": {"content": "ok"}}]}).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def fake_urlopen(req, timeout=None):
+        captured["req"] = req
+        return _Resp()
+
+    monkeypatch.setattr(ed.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setenv("FAKE_NAN_KEY_029F", "not-a-real-key")
+    profile = {
+        "api_key_env": "FAKE_NAN_KEY_029F",
+        "api_base_url": "https://api.nan.builders/v1/chat/completions",
+        "model": "deepseek-v4-flash",
+    }
+    out = ed._transport_api(profile, {}, [{"role": "user", "content": "x"}], timeout=5)
+    assert out == "ok"
+    ua = captured["req"].get_header("User-agent")
+    assert ua == ed.ENSEMBLE_USER_AGENT
+    assert ua and not ua.lower().startswith("python-urllib")
+
+
+# --------------------------------------------------------------------------- #
 # WOT-2026-025z: gateway nan canonico para challengers (datos puros en
 # agents.json) + barrera de lo que el schema no ve (fallback_profile
 # colgante, credenciales anidadas). Each test below pins a mutation branch
