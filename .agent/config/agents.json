@@ -81,20 +81,6 @@
       },
       "trusted": true
     },
-    "deepseek_api": {
-      "executable": "",
-      "args": [],
-      "discovery": {
-        "method": "path_only"
-      }
-    },
-    "qwen_api": {
-      "executable": "",
-      "args": [],
-      "discovery": {
-        "method": "path_only"
-      }
-    },
     "nan_api": {
       "executable": "",
       "args": [],
@@ -119,26 +105,6 @@
       "write": false,
       "data_sensitivity": "public"
     },
-    "challenger_deepseek": {
-      "backend": "deepseek_api",
-      "channel": "api",
-      "model": "deepseek-chat",
-      "api_base_url": "https://api.deepseek.com/v1/chat/completions",
-      "api_key_env": "DEEPSEEK_API_KEY",
-      "context": "diff-o-artefacto-publico",
-      "write": false,
-      "data_sensitivity": "public"
-    },
-    "challenger_qwen": {
-      "backend": "qwen_api",
-      "channel": "api",
-      "model": "qwen-plus",
-      "api_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
-      "api_key_env": "DASHSCOPE_API_KEY",
-      "context": "diff-o-artefacto-publico",
-      "write": false,
-      "data_sensitivity": "public"
-    },
     "challenger_codex": {
       "backend": "codex",
       "channel": "agent",
@@ -155,8 +121,7 @@
       "api_key_env": "NAN_API_KEY",
       "context": "diff-o-artefacto-publico",
       "write": false,
-      "data_sensitivity": "public",
-      "fallback_profile": "challenger_deepseek"
+      "data_sensitivity": "public"
     },
     "challenger_nan_qwen3_6": {
       "backend": "nan_api",
@@ -166,8 +131,7 @@
       "api_key_env": "NAN_API_KEY",
       "context": "diff-o-artefacto-publico",
       "write": false,
-      "data_sensitivity": "public",
-      "fallback_profile": "challenger_qwen"
+      "data_sensitivity": "public"
     },
     "challenger_nan_mimo_v2_5": {
       "backend": "nan_api",

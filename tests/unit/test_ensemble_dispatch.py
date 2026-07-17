@@ -1001,10 +1001,10 @@ def _find_forbidden_credential_keys(node, path=""):
 
 
 def test_nan_backend_shape_matches_direct_api_backends_without_trusted():
-    """(a): backends.nan_api tiene la MISMA forma que deepseek_api/qwen_api
-    (executable vacio, args vacios, discovery path_only) y JAMAS declara
-    'trusted' -- Forbidden Surface / BLOCKER de seguridad. Mutation M1:
-    anadir "trusted": true a nan_api hace este test FALLAR."""
+    """(a): backends.nan_api tiene la forma canonica de los backends path_only
+    (executable vacio, args vacios, discovery path_only, como kilo/codex/default)
+    y JAMAS declara 'trusted' -- Forbidden Surface / BLOCKER de seguridad.
+    Mutation M1: anadir "trusted": true a nan_api hace este test FALLAR."""
     config = ed.load_motor_config()
     nan_backend = config["backends"]["nan_api"]
     assert nan_backend["executable"] == ""
@@ -1052,31 +1052,37 @@ def test_review_adversarial_challenger_is_nan_canonical():
     assert challenger_profile["backend"] == "nan_api"
 
 
-def test_fallback_declared_not_deleted_and_referentially_valid():
-    """(d): challenger_deepseek/qwen (+ backends) siguen intactos -- FALLBACK
-    DECLARADO (D1), nunca borrado. fallback_profile (string, primer nivel)
-    presente en deepseek-v4-flash/qwen3.6 apunta a un perfil EXISTENTE;
-    ausente en mimo-v2.5/gemma4. Integridad referencial: el schema NO lo
-    valida (HALLAZGO 2) -- este test es la UNICA barrera. Mutation M2:
-    fallback_profile -> perfil fantasma hace este test FALLAR."""
+def test_direct_backends_removed_nan_is_sole_api_channel():
+    """(d) [A8, decision usuario 2026-07-17]: los perfiles directos
+    challenger_deepseek/qwen y sus backends deepseek_api/qwen_api eran
+    scaffolding de WOT-2026-019o que apuntaba a APIs que el proyecto NO tiene
+    (DEEPSEEK_API_KEY/DASHSCOPE_API_KEY AUSENTES; solo NAN_API_KEY definida).
+    Un fallback a una API sin credencial es un fallback MUERTO -> se ELIMINAN.
+    nan es el UNICO canal api. Ningun perfil declara fallback_profile.
+    Integridad referencial defensiva: si algun dia se reintroduce un
+    fallback_profile, debe ser string plano y apuntar a un perfil EXISTENTE.
+    Mutation M2 (A8): reintroducir challenger_deepseek/deepseek_api hace este
+    test FALLAR (nan deja de ser el unico canal)."""
     config = ed.load_motor_config()
     profiles = config["ensemble_profiles"]
     backends = config["backends"]
 
-    assert "challenger_deepseek" in profiles, "FALLBACK DECLARADO, NO se borra"
-    assert "challenger_qwen" in profiles, "FALLBACK DECLARADO, NO se borra"
-    assert profiles["challenger_deepseek"]["backend"] == "deepseek_api"
-    assert profiles["challenger_qwen"]["backend"] == "qwen_api"
-    assert "deepseek_api" in backends
-    assert "qwen_api" in backends
+    assert "challenger_deepseek" not in profiles, "directo muerto, eliminado (A8)"
+    assert "challenger_qwen" not in profiles, "directo muerto, eliminado (A8)"
+    assert "deepseek_api" not in backends, "backend directo muerto, eliminado (A8)"
+    assert "qwen_api" not in backends, "backend directo muerto, eliminado (A8)"
 
-    deepseek_nan = profiles["challenger_nan_deepseek_v4_flash"]
-    qwen_nan = profiles["challenger_nan_qwen3_6"]
-    assert deepseek_nan.get("fallback_profile") == "challenger_deepseek"
-    assert qwen_nan.get("fallback_profile") == "challenger_qwen"
-    assert "fallback_profile" not in profiles["challenger_nan_mimo_v2_5"]
-    assert "fallback_profile" not in profiles["challenger_nan_gemma4"]
+    # nan es el UNICO canal api: todo perfil channel=api usa backend nan_api.
+    api_profiles = [p for p in profiles.values() if p.get("channel") == "api"]
+    assert api_profiles, "debe haber al menos un perfil api (los 4 nan)"
+    for prof in api_profiles:
+        assert prof["backend"] == "nan_api", (
+            "nan es el unico canal api (A8): un perfil api con otro backend "
+            "reintroduce un directo muerto"
+        )
 
+    # Ningun perfil declara fallback_profile hoy; el invariante defensivo se
+    # mantiene por si se reintroduce alguno.
     for prof_name, prof in profiles.items():
         fallback = prof.get("fallback_profile")
         if fallback is None:
@@ -1097,8 +1103,8 @@ def test_no_forbidden_credential_keys_at_any_depth_in_motor_config():
     tiene un nombre normalizado (k.lower()) IGUAL a un elemento de
     _FORBIDDEN_CREDENTIAL_KEYS. Match por IGUALDAD EXACTA: api_key_env
     contiene la subcadena api_key y NO debe disparar. Mutation M3: anadir
-    `{"fallback": {"api_key": "sk-..."}}` anidado en un perfil nan hace este
-    test FALLAR."""
+    una clave `api_key` anidada a cualquier profundidad en un perfil nan (p.ej.
+    `{"discovery": {"api_key": "sk-..."}}`) hace este test FALLAR."""
     config = ed.load_motor_config()
     hits = []
     hits.extend(_find_forbidden_credential_keys(config.get("ensemble_profiles", {})))
