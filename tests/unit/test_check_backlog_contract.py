@@ -225,3 +225,104 @@ def test_relative_path_from_destino_cwd_is_the_bug(tmp_path: Path) -> None:
     )
     assert r.returncode != 0
     assert "can't open file" in (r.stderr or "") or "No such file" in (r.stderr or "")
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-023o: STATE.md ACTIVE_TICKET vs the scheduling surfaces (bus projection)
+# ---------------------------------------------------------------------------
+
+_ARCHIVE_HEADER = "# Backlog -- historico\n\n"
+
+
+def _write_state(root: Path, ticket: str, status: str) -> None:
+    collab = root / ".agent" / "collaboration"
+    collab.mkdir(parents=True, exist_ok=True)
+    (collab / "STATE.md").write_text(
+        f"ACTIVE_TICKET: {ticket}\nSTATUS: {status}\n", encoding="utf-8"
+    )
+
+
+def _write_archive(root: Path, rows: str) -> None:
+    """Archive layout: ID in the FIRST cell (no Prioridad column), unlike the
+    live backlog where it is the SECOND cell. This is the two-layout trap."""
+    arch = root / ".agent" / "collaboration" / "_archive"
+    arch.mkdir(parents=True, exist_ok=True)
+    (arch / "backlog_done.md").write_text(_ARCHIVE_HEADER + rows, encoding="utf-8")
+
+
+def test_active_ticket_ghost_blocks(tmp_path: Path) -> None:
+    """A ghost ACTIVE_TICKET (no row in backlog nor archive) is a violation
+    regardless of STATUS: the bus projection declares active something no
+    scheduling surface knows."""
+    _write_backlog(tmp_path, _VALID_ROWS)
+    _write_state(tmp_path, "WOT-2026-999z", "IN_PROGRESS")
+    errs = cbc.validate_active_ticket_state(tmp_path)
+    assert any("ghost" in e and "WOT-2026-999z" in e for e in errs), errs
+
+
+def test_active_ticket_non_terminal_archive_only_blocks(tmp_path: Path) -> None:
+    """The WOT-2026-022i incident: STATE.md declares a NON-terminal STATUS
+    (READY_FOR_REVIEW) over a ticket that only exists in the archive."""
+    _write_backlog(tmp_path, _VALID_ROWS)  # no live row for the archived ticket
+    _write_archive(
+        tmp_path, "| WOT-2026-022i | completed | archived | - | x | commit:9b852a1 |\n"
+    )
+    _write_state(tmp_path, "WOT-2026-022i", "READY_FOR_REVIEW")
+    errs = cbc.validate_active_ticket_state(tmp_path)
+    assert any(
+        "only exists in the archive" in e and "WOT-2026-022i" in e for e in errs
+    ), errs
+
+
+def test_active_ticket_terminal_archive_only_passes(tmp_path: Path) -> None:
+    """Complement: a COMPLETED (terminal) STATUS pointing to an archived ticket
+    is the normal post-close residual -- must NOT block. Distinguishing this from
+    the non-terminal case above is the whole point of the STATUS sensitivity."""
+    _write_backlog(tmp_path, _VALID_ROWS)
+    _write_archive(
+        tmp_path, "| WOT-2026-022i | completed | archived | - | x | commit:9b852a1 |\n"
+    )
+    _write_state(tmp_path, "WOT-2026-022i", "COMPLETED")
+    assert cbc.validate_active_ticket_state(tmp_path) == []
+
+
+def test_active_ticket_live_row_passes(tmp_path: Path) -> None:
+    """A non-terminal STATUS pointing to a ticket present in the LIVE backlog is
+    exactly the healthy case."""
+    _write_backlog(tmp_path, _VALID_ROWS)  # 001a is a live 'pending' row
+    _write_state(tmp_path, "WOT-2026-001a", "IN_PROGRESS")
+    assert cbc.validate_active_ticket_state(tmp_path) == []
+
+
+def test_layout_archive_id_first_cell_is_found(tmp_path: Path) -> None:
+    """Two-layout trap: the archived ID sits in the FIRST cell. The cell-scan
+    finds it (terminal STATUS -> passes). A parser anchored on cell[1] would miss
+    it and raise a false ghost -- this test dies under that positional mutation."""
+    _write_backlog(tmp_path, _VALID_ROWS)
+    _write_archive(
+        tmp_path, "| WOT-2026-070x | completed | nota | - | x | commit:abc |\n"
+    )
+    _write_state(tmp_path, "WOT-2026-070x", "COMPLETED")
+    assert cbc.validate_active_ticket_state(tmp_path) == []
+
+
+def test_layout_backlog_id_second_cell_is_found(tmp_path: Path) -> None:
+    """Two-layout trap, other side: the live-backlog ID sits in the SECOND cell
+    (after Prioridad). A parser anchored on cell[0] would read the priority and
+    raise a false ghost -- this test dies under that positional mutation."""
+    _write_backlog(tmp_path, _VALID_ROWS)  # 001b in cell[1] after 'Media'
+    _write_state(tmp_path, "WOT-2026-001b", "IN_PROGRESS")
+    assert cbc.validate_active_ticket_state(tmp_path) == []
+
+
+def test_no_state_md_not_applicable(tmp_path: Path) -> None:
+    _write_backlog(tmp_path, _VALID_ROWS)
+    assert cbc.validate_active_ticket_state(tmp_path) == []
+
+
+def test_state_md_without_active_ticket_not_applicable(tmp_path: Path) -> None:
+    collab = tmp_path / ".agent" / "collaboration"
+    collab.mkdir(parents=True, exist_ok=True)
+    (collab / "STATE.md").write_text("STATUS: UNKNOWN\n", encoding="utf-8")
+    _write_backlog(tmp_path, _VALID_ROWS)
+    assert cbc.validate_active_ticket_state(tmp_path) == []

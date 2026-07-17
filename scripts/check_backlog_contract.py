@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""WOT-2026-012b: fail-closed gate for the live backlog contract.
+"""WOT-2026-012b / WOT-2026-023o: fail-closed gate for the collaboration
+backlog + bus-projection contract.
 
 Turns the parseable live-queue contract that WOT-2026-012a fixed into an
-executable barrier. Reads ONLY the active "Vista rapida" table of
-repo_destino/.agent/collaboration/backlog.md and validates its structure and
-the closed Status / Reactivation vocabulary.
+executable barrier. Validates the active "Vista rapida" table of
+repo_destino/.agent/collaboration/backlog.md (structure + closed Status /
+Reactivation vocabulary) AND (WOT-2026-023o) the bus projection: STATE.md's
+ACTIVE_TICKET must not be a ghost (no row in backlog.md nor the archive) nor an
+archived ticket still declared active by a non-terminal STATUS.
 
 Before: project_root MUST be given via --project-root or AGENT_PROJECT_ROOT.
     Unlike runtime.project_root.resolve_project_root(), this gate does NOT fall
@@ -26,6 +29,17 @@ import os
 import re
 import sys
 from pathlib import Path
+
+
+# WOT-2026-023o: terminality authority. STATE.md's STATUS uses the BUS vocabulary
+# (TicketState.value, UPPERCASE) -- distinct from the backlog row vocabulary
+# (LIVE_STATES, lowercase). NON_TERMINAL_STATES is the single source of truth
+# (bus.state_machine; _is_state_terminal delegates to it). Terminal, by complement,
+# is {COMPLETED, BLOCKED_FINAL, SUPERSEDED, UNKNOWN}. We import it rather than
+# hardcode a list so this gate never drifts from the machine it audits.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from bus.state_machine import NON_TERMINAL_STATES, TicketState
 
 
 # WOT-2026-012a closed vocabulary for the LIVE queue. Terminal states
@@ -219,6 +233,106 @@ def _check_ficha_bodies(content: str) -> list[str]:
     return errors
 
 
+# ---------------------------------------------------------------------------
+# WOT-2026-023o: the bus projection must not declare an ACTIVE_TICKET that is a
+# ghost (no row anywhere) or that is ARCHIVED while its STATUS is still active.
+# The motivating incident: STATE.md said ACTIVE_TICKET WOT-2026-022i /
+# READY_FOR_REVIEW over a ticket already archived as completed, and no gate saw
+# it. A COMPLETED/terminal STATUS pointing only to the archive is the normal
+# post-close residual and passes.
+# ---------------------------------------------------------------------------
+
+_ACTIVE_TICKET_RE = re.compile(r"^ACTIVE_TICKET:\s*(\S+)", re.MULTILINE)
+_STATUS_RE = re.compile(r"^STATUS:\s*(\S+)", re.MULTILINE)
+
+
+def _read_active_ticket(root: Path) -> tuple[str | None, str | None]:
+    """Return (active_ticket, status) from STATE.md, or (None, None) if absent.
+
+    STATE.md is the bus projection (written by bus/supervisor.py). Missing file
+    or missing ACTIVE_TICKET means the check does not apply -- it never invents a
+    violation from an absent projection.
+    """
+    state_path = root / ".agent" / "collaboration" / "STATE.md"
+    if not state_path.exists():
+        return None, None
+    content = state_path.read_text(encoding="utf-8-sig")
+    m = _ACTIVE_TICKET_RE.search(content)
+    if not m:
+        return None, None
+    ticket = m.group(1).strip()
+    status_m = _STATUS_RE.search(content)
+    status = status_m.group(1).strip() if status_m else None
+    return (ticket or None), status
+
+
+def _status_is_non_terminal(status: str | None) -> bool:
+    """True only for a KNOWN active (non-terminal) bus state.
+
+    Terminality authority = bus.state_machine.NON_TERMINAL_STATES. An unknown or
+    unparseable STATUS is NOT treated as non-terminal: this gate does not flag a
+    malformed STATUS (a different concern); the ghost check still covers a missing
+    row regardless of STATUS.
+    """
+    if not status:
+        return False
+    try:
+        return TicketState(status) in NON_TERMINAL_STATES
+    except ValueError:
+        return False
+
+
+def _ticket_has_row(ticket_id: str, path: Path) -> bool:
+    """True if a markdown table row in ``path`` carries ``ticket_id`` as its ID.
+
+    LAYOUT-ROBUST (WOT-2026-023o, the trap this ticket exists for): the ID lives
+    in DIFFERENT columns across surfaces -- cell[1] in backlog.md (after the
+    Prioridad column) and cell[0] in _archive/backlog_done.md (no Prioridad), plus
+    the archive has a later ``| Ticket | Estado | Nota |`` section. In every known
+    layout the ID is the FIRST or SECOND cell, so we match those two by EXACT token
+    equality. We deliberately do NOT scan every cell: a later cell (e.g. 'Depende
+    de') can hold another ticket's id as a dependency, which would false-match.
+    """
+    if not path.exists():
+        return False
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            continue
+        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        head = cells[:2]  # ID is cell[0] (archive) or cell[1] (live backlog)
+        if ticket_id in head:
+            return True
+    return False
+
+
+def validate_active_ticket_state(root: Path) -> list[str]:
+    """Return violations for STATE.md's ACTIVE_TICKET vs the scheduling surfaces."""
+    ticket, status = _read_active_ticket(root)
+    if not ticket:
+        return []  # no projection to audit
+
+    collab = root / ".agent" / "collaboration"
+    in_live = _ticket_has_row(ticket, collab / "backlog.md")
+    in_archive = _ticket_has_row(ticket, collab / "_archive" / "backlog_done.md")
+
+    if not in_live and not in_archive:
+        return [
+            f"STATE.md ACTIVE_TICKET '{ticket}' (STATUS {status}) has NO row in "
+            f"backlog.md nor _archive/backlog_done.md -- a ghost the bus projection "
+            f"declares active that no scheduling surface knows."
+        ]
+    if not in_live and in_archive and _status_is_non_terminal(status):
+        return [
+            f"STATE.md ACTIVE_TICKET '{ticket}' has a NON-terminal STATUS "
+            f"('{status}') but only exists in the archive (terminal history) -- the "
+            f"bus projection declares active/in-progress a ticket already archived "
+            f"(the WOT-2026-022i drift). Reconcile STATE.md or archive the row's real "
+            f"live state."
+        ]
+    return []
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Fail-closed gate for the live backlog contract (WOT-2026-012b)."
@@ -237,6 +351,8 @@ def main(argv: list[str] | None = None) -> int:
 
     backlog = root / ".agent" / "collaboration" / "backlog.md"
     violations = validate_backlog(backlog)
+    # WOT-2026-023o: also audit the bus projection (STATE.md ACTIVE_TICKET).
+    violations = violations + validate_active_ticket_state(root)
     if violations:
         print(
             f"[backlog-contract] {len(violations)} violation(s) in {backlog}:",
