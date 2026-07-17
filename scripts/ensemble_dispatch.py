@@ -11,11 +11,22 @@ During: expone subcomandos CLI:
       exit code (`opencode run` devuelve exit 0 con Auth Error, medido).
     - `run`: ejecuta un pipeline; ROUND 0 = premise_check es INVARIANTE del
       dispatcher (no configurable: las premisas falsas son el modo de fallo
-      dominante medido). Escribe una fila de scorecard por CADA intervencion,
-      incluida `no-aportacion` (sin ceros hay sesgo de supervivencia).
+      dominante medido). `task_type` se valida contra `TASK_TYPES` (enum
+      cerrado) en la ENTRADA de `run_pipeline`, antes de ROUND 0; invalido
+      -> ValueError (WOT-2026-025y, D2). Cada fila de ronda mide
+      `latency_ms` con `time.perf_counter()` (monotonico, nunca estimado) y
+      porta `session_id` opcional (`--session-id`). Escribe una fila de
+      scorecard por CADA intervencion, incluida `no-aportacion` (sin ceros
+      hay sesgo de supervivencia).
     - `adjudicate`: el TERCER rol (sesion orquestadora) adjudica el outcome
-      con evidencia OBLIGATORIA; el veto humano usa `--supersede` (evento
-      nuevo, nunca mutacion de filas: append-only se preserva por evento).
+      con evidencia OBLIGATORIA; registra `adjudicator_backend`
+      (OBLIGATORIO) y `adjudicator_model` (opcional) para no perder QUIEN
+      adjudico, en campos NUEVOS que no tocan `backend`/`task_type`
+      (siguen copiados del SOURCE: mover la identidad ahi corrompe la
+      proyeccion, WOT-2026-025y). `session_id` en la fila adjudicada viene
+      del flag `--session-id` de la adjudicacion, nunca del source. El veto
+      humano usa `--supersede` (evento nuevo, nunca mutacion de filas:
+      append-only se preserva por evento).
     - `leaders`: regenera `backend_leaders.json` DERIVADO del scorecard
       (hash de la fuente; lider solo con n>=5; politica de exploracion
       documentada en el propio artefacto).
@@ -43,6 +54,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -79,6 +91,15 @@ SCORECARD_FIELDS = [
     "input_bytes",
     "context_kind",
     "failure_mode",
+    # WOT-2026-025y: los 4 campos siguientes van SIEMPRE al final. El
+    # prefijo de 16 campos de arriba es INVARIANTE (frozen, ver
+    # test_scorecard_fields_prefix_is_frozen): insertar algo en medio
+    # reordena la comprehension de append_scorecard y rompe consumidores
+    # posicionales.
+    "session_id",
+    "latency_ms",
+    "adjudicator_backend",
+    "adjudicator_model",
 ]
 
 ADJUDICATED_OUTCOMES = {
@@ -87,6 +108,16 @@ ADJUDICATED_OUTCOMES = {
     "falso-positivo",
     "error-factual",
     "no-aportacion",
+}
+
+TASK_TYPES = {
+    "code-gen",
+    "code-review",
+    "prose",
+    "translation",
+    "triage",
+    "contract-audit",
+    "adjudication",
 }
 
 LEADER_MIN_N = 5
@@ -461,6 +492,8 @@ def _record_round(
     input_bytes: int,
     context_kind: str,
     failure_mode: str | None = None,
+    session_id: str | None = None,
+    latency_ms: int | None = None,
 ) -> None:
     text = (reply or "").strip()
     append_scorecard(
@@ -480,6 +513,8 @@ def _record_round(
             "input_bytes": input_bytes,
             "context_kind": context_kind,
             "failure_mode": failure_mode,
+            "session_id": session_id,
+            "latency_ms": latency_ms,
         },
     )
 
@@ -496,12 +531,26 @@ def run_pipeline(
     context_kind: str = "diff",
     transport=None,
     max_rounds: int | None = None,
+    session_id: str | None = None,
 ) -> list[dict]:
     """Ejecuta un bucle proposer/challenger. ROUND 0 = premise_check SIEMPRE.
 
-    B2 (default): las respuestas de los backends se capturan como PROPUESTAS
-    (retorno + scorecard); este dispatcher no aplica nada al arbol.
+    Before: `task_type` debe pertenecer a `TASK_TYPES` (enum cerrado); es la
+        UNICA puerta de validacion (D2b: gobierna el 100% de la provenance,
+        `append_scorecard` no revalida).
+    During: B2 (default): las respuestas de los backends se capturan como
+        PROPUESTAS (retorno + scorecard); este dispatcher no aplica nada al
+        arbol. Cada envio a `send_to_profile` se cronometra con
+        `time.perf_counter()` (monotonico) y el delta en ms entero se
+        persiste como `latency_ms` de la fila. `session_id` (opcional) se
+        propaga tal cual a cada fila de ronda.
+    After: retorna el transcript en memoria; `ValueError` si `task_type` es
+        invalido (WOT-2026-025y, D2), listando `sorted(TASK_TYPES)`.
     """
+    if task_type not in TASK_TYPES:
+        raise ValueError(
+            f"task_type '{task_type}' invalido; usa uno de {sorted(TASK_TYPES)}"
+        )
     pipe = config["ensemble_pipelines"][pipeline_name]
     rounds_cap = int(pipe.get("max_rounds", 2))
     total_rounds = min(max_rounds or rounds_cap, rounds_cap)
@@ -522,6 +571,7 @@ def run_pipeline(
     for rol, prof_name in participants:
         profile = config["ensemble_profiles"][prof_name]
         content = f"{PREMISE_CHECK_PREAMBLE}\n\n{payload}"
+        _t0 = time.perf_counter()
         reply = send_to_profile(
             prof_name,
             [{"role": "user", "content": content}],
@@ -529,6 +579,7 @@ def run_pipeline(
             sensitivity=sensitivity,
             transport=transport,
         )
+        latency_ms = round((time.perf_counter() - _t0) * 1000)
         _record_round(
             project_root,
             ticket=ticket,
@@ -540,6 +591,8 @@ def run_pipeline(
             reply=reply,
             input_bytes=input_bytes,
             context_kind=context_kind,
+            session_id=session_id,
+            latency_ms=latency_ms,
         )
         transcript.append({"ronda": 0, "rol": rol, "reply": reply})
 
@@ -565,6 +618,7 @@ def run_pipeline(
                 if t["reply"]
             )
             content = f"{instruction}\n\n=== MATERIAL ===\n{payload}\n\n=== RONDAS PREVIAS ===\n{prior}"
+            _t0 = time.perf_counter()
             reply = send_to_profile(
                 prof_name,
                 [{"role": "user", "content": content}],
@@ -572,6 +626,7 @@ def run_pipeline(
                 sensitivity=sensitivity,
                 transport=transport,
             )
+            latency_ms = round((time.perf_counter() - _t0) * 1000)
             _record_round(
                 project_root,
                 ticket=ticket,
@@ -583,6 +638,8 @@ def run_pipeline(
                 reply=reply,
                 input_bytes=input_bytes,
                 context_kind=context_kind,
+                session_id=session_id,
+                latency_ms=latency_ms,
             )
             transcript.append({"ronda": ronda, "rol": rol, "reply": reply})
     return transcript
@@ -596,13 +653,30 @@ def adjudicate(
     rol: str,
     outcome: str,
     evidence: str,
+    adjudicator_backend: str | None = None,
+    adjudicator_model: str | None = None,
     finding_confirmed_by: str | None = None,
+    session_id: str | None = None,
     supersede: bool = False,
 ) -> Path:
     """Adjudicacion del TERCER rol (o veto humano via --supersede).
 
-    La evidencia (comando + salida / artefacto) es OBLIGATORIA. El evento se
-    APPENDEA (nunca muta filas previas) y regenera la proyeccion.
+    Before: existe una fila `event=ronda` previa para (ticket, ronda, rol);
+        `evidence` y `adjudicator_backend` son OBLIGATORIOS (idiom de
+        evidence, WOT-2026-025y D4): una adjudicacion sin evidencia es
+        relato y una sin adjudicador es anonima.
+    During: La evidencia (comando + salida / artefacto) es OBLIGATORIA. El
+        evento se APPENDEA (nunca muta filas previas) y regenera la
+        proyeccion. `adjudicator_backend`/`adjudicator_model` registran QUIEN
+        adjudico en columnas NUEVAS, sin tocar `backend`/`task_type`
+        (siguen copiados del SOURCE: HALLAZGO 1, mover la identidad ahi
+        corrompe el bucket/cell_key de `regenerate_leaders`).
+        `session_id` se toma del FLAG de esta llamada, NUNCA de
+        `source.get('session_id')` (es la sesion en que se ADJUDICA, no la
+        de la ronda original).
+    After: retorna la ruta de `backend_leaders.json` regenerado; lanza
+        `ValueError` si `outcome`, `evidence` o `adjudicator_backend` son
+        invalidos/ausentes, o si no existe la fila de ronda fuente.
     """
     if outcome not in ADJUDICATED_OUTCOMES:
         raise ValueError(
@@ -612,6 +686,13 @@ def adjudicate(
         raise ValueError(
             "adjudication_evidence es OBLIGATORIA (comando + salida o "
             "artefacto verificable); una adjudicacion sin evidencia es relato"
+        )
+    if not adjudicator_backend or not adjudicator_backend.strip():
+        raise ValueError(
+            "adjudicator_backend es OBLIGATORIO (WOT-2026-025y D4): la fila "
+            "REGISTRA la identidad de quien adjudico (veto humano usa "
+            "--adjudicator-backend human); una adjudicacion sin adjudicador "
+            "es anonima"
         )
     rows, _sha = _read_scorecard(project_root)
     source = next(
@@ -647,6 +728,9 @@ def adjudicate(
             "adjudication_evidence": evidence,
             "input_bytes": source.get("input_bytes"),
             "context_kind": source.get("context_kind"),
+            "session_id": session_id,
+            "adjudicator_backend": adjudicator_backend,
+            "adjudicator_model": adjudicator_model,
         },
     )
     return regenerate_leaders(project_root)
@@ -680,6 +764,7 @@ def _cmd_run(args, config) -> int:
         sensitivity=args.data_sensitivity,
         context_kind=args.context_kind,
         max_rounds=args.max_rounds,
+        session_id=args.session_id,
     )
     print(json.dumps({"transcript": transcript}, ensure_ascii=False, indent=2))
     return 0
@@ -694,7 +779,10 @@ def _cmd_adjudicate(args, config) -> int:
         rol=args.rol,
         outcome=args.outcome,
         evidence=args.evidence,
+        adjudicator_backend=args.adjudicator_backend,
+        adjudicator_model=args.adjudicator_model,
         finding_confirmed_by=args.finding_confirmed_by,
+        session_id=args.session_id,
         supersede=args.supersede,
     )
     print(f"[adjudicate] evento registrado; proyeccion regenerada: {out_path}")
@@ -731,6 +819,11 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument("--context-kind", default="diff")
     p_run.add_argument("--max-rounds", type=int, default=None)
     p_run.add_argument("--project-root", required=True)
+    p_run.add_argument(
+        "--session-id",
+        default=None,
+        help="sesion scratch opcional (D5: legitimo correr fuera de una)",
+    )
 
     p_adj = sub.add_parser("adjudicate", help="adjudicar outcome de una ronda")
     p_adj.add_argument("--ticket", required=True)
@@ -738,7 +831,18 @@ def main(argv: list[str] | None = None) -> int:
     p_adj.add_argument("--rol", required=True, choices=["proposer", "challenger"])
     p_adj.add_argument("--outcome", required=True)
     p_adj.add_argument("--evidence", required=True)
+    p_adj.add_argument(
+        "--adjudicator-backend",
+        required=True,
+        help="identidad de quien adjudico (OBLIGATORIO, D4); veto humano usa 'human'",
+    )
+    p_adj.add_argument("--adjudicator-model", default=None)
     p_adj.add_argument("--finding-confirmed-by", default=None)
+    p_adj.add_argument(
+        "--session-id",
+        default=None,
+        help="sesion en la que se ADJUDICA (nunca la del source)",
+    )
     p_adj.add_argument(
         "--supersede",
         action="store_true",
