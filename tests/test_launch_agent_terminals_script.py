@@ -109,20 +109,19 @@ def test_launcher_uses_startup_templates() -> None:
     assert "Start-DeferredFileCleanup" not in content
     assert "--manager-prompt-file" not in content
 
-    # Check that manager_legacy template exists and contains variables
+    # Check that builder_kilo template exists and contains variables
     from pathlib import Path
 
     project_root = Path(__file__).resolve().parents[1]
-    manager_template = project_root / "templates" / "startup" / "manager_legacy.md"
-    assert manager_template.exists()
-    manager_content = manager_template.read_text(encoding="utf-8")
-    assert "{{ticket_id}}" in manager_content
-    assert "{{work_plan}}" in manager_content
-    assert "{{close_command}}" in manager_content
-    assert "{{role}}" in manager_content
-    assert "{{backend}}" in manager_content
-    assert "{{role}}" in manager_content
-    assert "{{backend}}" in manager_content
+    builder_template = project_root / "templates" / "startup" / "builder_kilo.md"
+    assert builder_template.exists()
+    builder_content = builder_template.read_text(encoding="utf-8")
+    assert "{{ticket_id}}" in builder_content
+    assert "{{work_plan}}" in builder_content
+    assert "{{role}}" in builder_content
+    assert "{{backend}}" in builder_content
+    # WOT-2026-024n: el call-site real (launch_agent_terminals.ps1:1868) no pasa -CloseCommand;
+    # close_command solo se rellena en la ruta OpenCode via Add-BuilderCloseout (ver test_builder_templates_do_not_inject_close_command).
 
 
 def test_launcher_multi_root_precedence() -> None:
