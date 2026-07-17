@@ -29,6 +29,7 @@ After (Post-condiciones y Errores):
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from contextlib import suppress
@@ -396,6 +397,49 @@ def run_backlog_contract_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_contract_reconcile_check(project_root: Path) -> CheckResult:
+    """WOT-2026-024e: frozen contracts in ticket_contracts.md with no scheduling
+    row (the batch reads only backlog.md, so it can never execute them).
+
+    The SCRIPT is fail-closed (check_contract_backlog_reconcile.find_orphans lists
+    them). The WARN/FAIL verdict lives HERE: WARN by default (is_blocking=False,
+    reports but does not fail the close), FAIL when CONTRACT_RECONCILE_STRICT=1
+    (is_blocking=True). The toggle is what keeps this a real barrier (it CAN block
+    on demand) rather than a never-blocks reporter (WOT-2026-024e / M20).
+    """
+    name = "Contract-Backlog Reconcile (WOT-2026-024e)"
+    strict = os.environ.get("CONTRACT_RECONCILE_STRICT", "").strip() == "1"
+    try:
+        from scripts.check_contract_backlog_reconcile import find_orphans
+    except ImportError:
+        from check_contract_backlog_reconcile import (
+            find_orphans,  # type: ignore[no-redef]
+        )
+    orphans = find_orphans(project_root)
+    if orphans:
+        detail = "\n".join(f"  - {t}" for t in orphans)
+        mode = (
+            "BLOCKING (CONTRACT_RECONCILE_STRICT=1)."
+            if strict
+            else "WARN only; set CONTRACT_RECONCILE_STRICT=1 to block."
+        )
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=(
+                f"{len(orphans)} frozen contract(s) with no scheduling row:\n{detail}\n"
+                f"Materialize a backlog row for each (human action). {mode}"
+            ),
+            is_blocking=strict,
+        )
+    return CheckResult(
+        name=name,
+        passed=True,
+        output="every frozen contract has a scheduling row",
+        is_blocking=strict,
+    )
+
+
 def run_preflight_check(
     project_root: Path | None = None,
     expected_artifacts: list[str] | None = None,
@@ -455,6 +499,8 @@ def run_preflight_check(
     # 6. Backlog Contract Check (solo en cierre de sesion; bloqueante)
     if closeout_mode:
         results.append(run_backlog_contract_check(project_root))
+        # 6b. Contract-Backlog Reconcile (WOT-2026-024e; WARN default, FAIL opt-in)
+        results.append(run_contract_reconcile_check(project_root))
 
     # Check informacional (no bloqueante)
     results.append(run_validate_all(project_root))

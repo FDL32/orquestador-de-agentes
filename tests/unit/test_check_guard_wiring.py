@@ -70,6 +70,7 @@ EXPECTED_WIRED_REAL = {
     "check_backlog_contract",
     "check_claude_settings_portability",
     "check_commit_worktree",
+    "check_contract_backlog_reconcile",  # WOT-2026-024e: cableado en prepush_check.py (closeout, WARN/FAIL)
     "check_deliverables_exist",
     "check_distribution_agnostic",  # WOT-2026-024z(d): cableado en pre-commit (entry: uv run python)
     "check_encoding_guard",
