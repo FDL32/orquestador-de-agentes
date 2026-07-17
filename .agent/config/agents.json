@@ -95,6 +95,13 @@
         "method": "path_only"
       }
     },
+    "nan_api": {
+      "executable": "",
+      "args": [],
+      "discovery": {
+        "method": "path_only"
+      }
+    },
     "default": {
       "executable": "",
       "args": [],
@@ -139,12 +146,54 @@
       "context": "diff-o-artefacto-publico",
       "write": false,
       "data_sensitivity": "public"
+    },
+    "challenger_nan_deepseek_v4_flash": {
+      "backend": "nan_api",
+      "channel": "api",
+      "model": "deepseek-v4-flash",
+      "api_base_url": "https://api.nan.builders/v1/chat/completions",
+      "api_key_env": "NAN_API_KEY",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "fallback_profile": "challenger_deepseek"
+    },
+    "challenger_nan_qwen3_6": {
+      "backend": "nan_api",
+      "channel": "api",
+      "model": "qwen3.6",
+      "api_base_url": "https://api.nan.builders/v1/chat/completions",
+      "api_key_env": "NAN_API_KEY",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "fallback_profile": "challenger_qwen"
+    },
+    "challenger_nan_mimo_v2_5": {
+      "backend": "nan_api",
+      "channel": "api",
+      "model": "mimo-v2.5",
+      "api_base_url": "https://api.nan.builders/v1/chat/completions",
+      "api_key_env": "NAN_API_KEY",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public"
+    },
+    "challenger_nan_gemma4": {
+      "backend": "nan_api",
+      "channel": "api",
+      "model": "gemma4",
+      "api_base_url": "https://api.nan.builders/v1/chat/completions",
+      "api_key_env": "NAN_API_KEY",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public"
     }
   },
   "ensemble_pipelines": {
     "review_adversarial": {
       "proposer": "proposer_claude",
-      "challenger": "challenger_deepseek",
+      "challenger": "challenger_nan_deepseek_v4_flash",
       "rubric": "prompts/audit_agent_output.md",
       "max_rounds": 2,
       "continue_if": "objecion-CONFIRMADA-con-evidencia"

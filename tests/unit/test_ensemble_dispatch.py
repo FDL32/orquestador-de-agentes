@@ -40,6 +40,7 @@ if str(_AGENT_DIR) not in sys.path:
     sys.path.append(str(_AGENT_DIR))
 
 from agents_config import (  # noqa: E402
+    _FORBIDDEN_CREDENTIAL_KEYS,
     AgentsConfigError,
     _migrate_1_2_to_1_3,
     _validate_ensemble,
@@ -943,3 +944,198 @@ def test_motor_agents_json_validates_via_single_layer():
     import validate_agent_config as vac
 
     assert vac.validate_motor_agents_config() is None
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-025z: gateway nan canonico para challengers (datos puros en
+# agents.json) + barrera de lo que el schema no ve (fallback_profile
+# colgante, credenciales anidadas). Each test below pins a mutation branch
+# from the frozen contract T-025Z-001 (see MUTATION_WOT-2026-025z.md for the
+# persisted red/green pairs). The structural self-check (g2) scans the
+# source text after the marker declared below; its helper constants live
+# ABOVE the marker so the checker never matches its own declaration.
+# --------------------------------------------------------------------------- #
+
+
+_FORBIDDEN_TEST_DIFF_TOKENS = (
+    "os.environ",
+    "os.getenv",
+    "monkeypatch.setenv",
+    "setx",
+    "send_to_profile",
+    "_transport_api",
+    "smoke_profile",
+    "urllib",
+)
+
+_WOT_025Z_SECTION_MARKER = "# === WOT-2026-025z substantive tests start ==="
+
+_NAN_MODELS = {
+    "deepseek-v4-flash": "challenger_nan_deepseek_v4_flash",
+    "qwen3.6": "challenger_nan_qwen3_6",
+    "mimo-v2.5": "challenger_nan_mimo_v2_5",
+    "gemma4": "challenger_nan_gemma4",
+}
+
+
+def _find_forbidden_credential_keys(node, path=""):
+    """Recursively walk `node` collecting `path.to.key` for every dict key
+    whose NORMALIZED name (k.lower()) is an EXACT match (never substring) of
+    an entry in `_FORBIDDEN_CREDENTIAL_KEYS`. Mirrors agents_config.py:372
+    (`_validate_ensemble_profile`), extended to recursion (ENMIENDA 1):
+    `api_key_env` contains the substring `api_key` and must NOT match."""
+    hits = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            child_path = f"{path}.{key}" if path else str(key)
+            if isinstance(key, str) and key.lower() in _FORBIDDEN_CREDENTIAL_KEYS:
+                hits.append(child_path)
+            hits.extend(_find_forbidden_credential_keys(value, child_path))
+    elif isinstance(node, list):
+        for index, item in enumerate(node):
+            hits.extend(_find_forbidden_credential_keys(item, f"{path}[{index}]"))
+    return hits
+
+
+# === WOT-2026-025z substantive tests start ===
+
+
+def test_nan_backend_shape_matches_direct_api_backends_without_trusted():
+    """(a): backends.nan_api tiene la MISMA forma que deepseek_api/qwen_api
+    (executable vacio, args vacios, discovery path_only) y JAMAS declara
+    'trusted' -- Forbidden Surface / BLOCKER de seguridad. Mutation M1:
+    anadir "trusted": true a nan_api hace este test FALLAR."""
+    config = ed.load_motor_config()
+    nan_backend = config["backends"]["nan_api"]
+    assert nan_backend["executable"] == ""
+    assert nan_backend["args"] == []
+    assert nan_backend["discovery"]["method"] == "path_only"
+    assert "trusted" not in nan_backend, (
+        "nan_api CON trusted:true seria un BLOCKER de seguridad (M1): "
+        "privacy_preflight pasaria siempre pase lo que pase la sensibilidad"
+    )
+
+
+def test_nan_profiles_one_per_model_with_canonical_shape():
+    """(b): EXACTAMENTE un perfil por modelo nan {deepseek-v4-flash, qwen3.6,
+    mimo-v2.5, gemma4}; cada uno backend=nan_api, channel=api, api_base_url
+    completo, api_key_env=NAN_API_KEY, context=diff-o-artefacto-publico,
+    write=false, data_sensitivity=public. Mutation M4: borrar un perfil nan
+    hace este test FALLAR (conteo y presencia por nombre)."""
+    config = ed.load_motor_config()
+    profiles = config["ensemble_profiles"]
+    nan_profile_names = [
+        name for name, prof in profiles.items() if prof.get("backend") == "nan_api"
+    ]
+    assert len(nan_profile_names) == 4, (
+        f"esperados EXACTAMENTE 4 perfiles nan, hallados: {nan_profile_names}"
+    )
+    for model, expected_name in _NAN_MODELS.items():
+        assert expected_name in profiles, f"falta perfil {expected_name}"
+        prof = profiles[expected_name]
+        assert prof["backend"] == "nan_api"
+        assert prof["channel"] == "api"
+        assert prof["model"] == model
+        assert prof["api_base_url"] == "https://api.nan.builders/v1/chat/completions"
+        assert prof["api_key_env"] == "NAN_API_KEY"
+        assert prof["context"] == "diff-o-artefacto-publico"
+        assert prof["write"] is False
+        assert prof["data_sensitivity"] == "public"
+
+
+def test_review_adversarial_challenger_is_nan_canonical():
+    """(c): ensemble_pipelines.review_adversarial.challenger resuelve a un
+    perfil backend=nan_api -- nan se vuelve CANONICO de hecho (D1)."""
+    config = ed.load_motor_config()
+    challenger_name = config["ensemble_pipelines"]["review_adversarial"]["challenger"]
+    challenger_profile = config["ensemble_profiles"][challenger_name]
+    assert challenger_profile["backend"] == "nan_api"
+
+
+def test_fallback_declared_not_deleted_and_referentially_valid():
+    """(d): challenger_deepseek/qwen (+ backends) siguen intactos -- FALLBACK
+    DECLARADO (D1), nunca borrado. fallback_profile (string, primer nivel)
+    presente en deepseek-v4-flash/qwen3.6 apunta a un perfil EXISTENTE;
+    ausente en mimo-v2.5/gemma4. Integridad referencial: el schema NO lo
+    valida (HALLAZGO 2) -- este test es la UNICA barrera. Mutation M2:
+    fallback_profile -> perfil fantasma hace este test FALLAR."""
+    config = ed.load_motor_config()
+    profiles = config["ensemble_profiles"]
+    backends = config["backends"]
+
+    assert "challenger_deepseek" in profiles, "FALLBACK DECLARADO, NO se borra"
+    assert "challenger_qwen" in profiles, "FALLBACK DECLARADO, NO se borra"
+    assert profiles["challenger_deepseek"]["backend"] == "deepseek_api"
+    assert profiles["challenger_qwen"]["backend"] == "qwen_api"
+    assert "deepseek_api" in backends
+    assert "qwen_api" in backends
+
+    deepseek_nan = profiles["challenger_nan_deepseek_v4_flash"]
+    qwen_nan = profiles["challenger_nan_qwen3_6"]
+    assert deepseek_nan.get("fallback_profile") == "challenger_deepseek"
+    assert qwen_nan.get("fallback_profile") == "challenger_qwen"
+    assert "fallback_profile" not in profiles["challenger_nan_mimo_v2_5"]
+    assert "fallback_profile" not in profiles["challenger_nan_gemma4"]
+
+    for prof_name, prof in profiles.items():
+        fallback = prof.get("fallback_profile")
+        if fallback is None:
+            continue
+        assert isinstance(fallback, str), (
+            f"{prof_name}.fallback_profile debe ser STRING plano (HALLAZGO "
+            "1: un valor anidado se cuela por el ban ciego de primer nivel)"
+        )
+        assert fallback in profiles, (
+            f"{prof_name}.fallback_profile='{fallback}' NO existe: "
+            "referencia colgante (HALLAZGO 2, el schema no lo valida)"
+        )
+
+
+def test_no_forbidden_credential_keys_at_any_depth_in_motor_config():
+    """[ENMIENDA 1] (e): recursive scan sobre ensemble_profiles Y backends
+    del agents.json REAL del motor -- ninguna clave, a NINGUNA profundidad,
+    tiene un nombre normalizado (k.lower()) IGUAL a un elemento de
+    _FORBIDDEN_CREDENTIAL_KEYS. Match por IGUALDAD EXACTA: api_key_env
+    contiene la subcadena api_key y NO debe disparar. Mutation M3: anadir
+    `{"fallback": {"api_key": "sk-..."}}` anidado en un perfil nan hace este
+    test FALLAR."""
+    config = ed.load_motor_config()
+    hits = []
+    hits.extend(_find_forbidden_credential_keys(config.get("ensemble_profiles", {})))
+    hits.extend(_find_forbidden_credential_keys(config.get("backends", {})))
+    assert hits == [], f"clave(s) de credencial hallada(s) a profundidad: {hits}"
+
+
+def test_nan_backend_fail_closed_on_private_payload():
+    """(f): privacy_preflight sobre la rama REAL de nan_api -- BLOQUEA un
+    payload sensitivity=private (backend nan_api no declara trusted:true).
+    Mutation M1: anadir "trusted": true a nan_api hace este test FALLAR
+    (allowed pasaria a True)."""
+    config = ed.load_motor_config()
+    backend_cfg = config["backends"]["nan_api"]
+    allowed, reason = ed.privacy_preflight(
+        "material cualquiera",
+        "private",
+        backend_cfg,
+        config.get("ensemble_private_roots", []),
+    )
+    assert allowed is False, (
+        f"nan_api debe fallar-cerrado ante sensitivity=private; reason={reason}"
+    )
+
+
+def test_no_env_or_transport_leakage_in_025z_test_section():
+    """(g2): invariante ESTRUCTURAL sobre el DIFF del propio fichero de
+    tests -- ninguno de los tests NUEVOS de este ticket toca ninguno de los
+    tokens declarados en `_FORBIDDEN_TEST_DIFF_TOKENS` (arriba, ANTES del
+    marcador, para que este propio checker no se autodispare). Un grep por
+    nombre de variable no basta (medido: 0 hits con y sin la violacion via
+    la forma indirecta de leer una env var por su nombre dinamico); este
+    check opera sobre el TEXTO CRUDO del bloque de tests posterior al
+    marcador `_WOT_025Z_SECTION_MARKER`, no sobre nombres de variables en
+    runtime."""
+    source = Path(__file__).read_text(encoding="utf-8")
+    marker_index = source.index(_WOT_025Z_SECTION_MARKER)
+    section = source[marker_index:]
+    hits = [token for token in _FORBIDDEN_TEST_DIFF_TOKENS if token in section]
+    assert hits == [], f"token(s) prohibido(s) en el bloque de tests: {hits}"
