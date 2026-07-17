@@ -261,6 +261,26 @@ Lo que ningun Review 2 por-ticket puede ver:
   marcar `NO_VERIFICABLE` para "drift acumulado por-ticket" (esperado). El
   aterrizaje de cada cierre se verifica con `check_backlog_commits_landed.py`.
 
+  **Check de frontera code-only (WOT-2026-023y):** el `NO_VERIFICABLE`
+  anterior aplica SOLO al drift acumulado por-ticket FUERA de la frontera del
+  motor (lo que ya declaran las lineas previas). La frontera del motor en si
+  (`MANIFEST.distribute` / `MANIFEST.workspace`) SI es verificable de forma
+  binaria en code-only, sin bus:
+
+  - Comando: `git -C <_dev> diff --name-only <BASE_SHA>..HEAD --
+    MANIFEST.distribute MANIFEST.workspace` donde `BASE_SHA` es el sha del
+    motor registrado en `state_at_start` del `batch_run` auditado.
+  - Criterio binario: salida VACIA => frontera intacta; la dimension
+    "frontera del motor" se reporta VERIFICADO (deja de ser `NO_VERIFICABLE`
+    en code-only).
+  - Salida NO vacia => semantica cerrada: para cada fichero listado en la
+    salida, `git log --format=%H <BASE_SHA>..HEAD -- <fichero>` debe producir
+    al menos un sha que aparezca como `commit:<sha>` en un bloque de cierre
+    archivado del `batch_run` auditado, y ese bloque debe mencionar
+    explicitamente `MANIFEST.distribute` o `MANIFEST.workspace` en su texto.
+    Si ningun commit del batch cumple ambas condiciones a la vez ->
+    `INTEGRITY_VIOLATION_DETECTED`.
+
 Estados de integridad (heredados):
 
 - `INTEGRITY_VIOLATION_DETECTED`: git evidencia cambios reales no declarados en
@@ -377,6 +397,7 @@ Estructura obligatoria (adaptada de la base):
 | Regla de seleccion | orden de backlog + commits con el ID |
 | Modo de cierre | commit-directo (code-only, sin bus) |
 | check_motor_pristine | <resultado> |
+| frontera_manifest (023y) | <resultado> |
 | check_backlog_commits_landed | <OK/OK_BY_SUBJECT/WARN/ERROR por commit> |
 
 ## 3. Matriz objetivo -> ticket -> evidencia -> estado
