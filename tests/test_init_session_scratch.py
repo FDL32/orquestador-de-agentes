@@ -789,6 +789,17 @@ class TestAuditModes:
         sid = _sentinel_id()
         _init_session(repo, sid)
         _add_record(repo, sid, generator="test", artifact_path="file.txt")
+        # WOT-2026-022e: the completeness invariant requires a matching
+        # artifact_decision for every artifact_added, or this session would be
+        # INCOMPLETE -- not the "valid" case this test is about.
+        _add_record(
+            repo,
+            sid,
+            event="artifact_decision",
+            generator="test",
+            artifact_path="file.txt",
+            decision="kept",
+        )
 
         result = _run_scratch(
             ["--project-root", str(repo), "audit", "--session-id", sid]
@@ -1040,6 +1051,17 @@ class TestArchiveFlow:
         sid = _sentinel_id()
         _init_session(repo, sid)
         _add_record(repo, sid, generator="test", artifact_path="file.txt")
+        # WOT-2026-022e: completeness invariant -- archive needs a decision
+        # for every artifact_added, or it refuses (see
+        # TestArtifactCompletenessInvariant for the refusal path itself).
+        _add_record(
+            repo,
+            sid,
+            event="artifact_decision",
+            generator="test",
+            artifact_path="file.txt",
+            decision="kept",
+        )
 
         result = _run_scratch(
             ["--project-root", str(repo), "archive", "--session-id", sid]
@@ -1058,6 +1080,16 @@ class TestArchiveFlow:
         sid = _sentinel_id()
         _init_session(repo, sid)
         _add_record(repo, sid, generator="test", artifact_path="file.txt")
+        # WOT-2026-022e: cmd_archive audits BEFORE checking --dry-run, so an
+        # incomplete session (added without its decision) would stop here too.
+        _add_record(
+            repo,
+            sid,
+            event="artifact_decision",
+            generator="test",
+            artifact_path="file.txt",
+            decision="kept",
+        )
 
         result = _run_scratch(
             ["--project-root", str(repo), "archive", "--session-id", sid, "--dry-run"]
@@ -1095,6 +1127,93 @@ class TestArchiveFlow:
         assert output["status"] == "stop"
         assert output["session_intact"] is True
         assert session_dir.is_dir(), "Session should be INTACT after audit fail"
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-022e: cross-record completeness invariant (added-vs-decided)
+# ---------------------------------------------------------------------------
+
+
+class TestArtifactCompletenessInvariant:
+    """An artifact_added with no matching artifact_decision (same
+    artifact_path) makes the session audit INCOMPLETE -> archive refuses
+    (fail-safe, session left intact for debugging). Since gc only ever
+    touches ARCHIVED sessions, an incomplete session can never reach it, so
+    an artifact without a recorded decision is never silently lost.
+    """
+
+    def test_missing_decision_blocks_archive(self, tmp_path):
+        """One artifact_added (file.txt), no artifact_decision.
+
+        _audit_session must report EXACTLY the completeness finding -- and
+        NOT a generic "missing required field" finding, which would mean
+        archive stopped for the WRONG reason (the floor this assertion rules
+        out, per the CF-audit Q4 amendment). archive itself must then refuse,
+        leaving the session directory untouched.
+
+        Mutation-to-prove (DoD d): removing the completeness check from
+        _audit_session makes this go green-to-red the other way -- the
+        findings assertion fails first (empty findings), and if that check
+        were removed too, archive would exit 0 instead of 1.
+        """
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"mdba_{uuid.uuid4().hex[:8]}")
+        sid = _sentinel_id()
+        _init_session(repo, sid)
+        _add_record(repo, sid, generator="test", artifact_path="file.txt")
+
+        session_dir = repo / ".agent" / "runtime" / "session" / sid
+        audit = _audit_session(session_dir, sid)
+        errors = [f["error"] for f in audit["findings"]]
+        assert errors == ["missing artifact_decision for artifact_path: file.txt"], (
+            f"expected EXACTLY the completeness finding, got: {errors}"
+        )
+        assert not any("missing required field" in e for e in errors), (
+            "a required-field finding would mean archive stops for the WRONG "
+            f"reason (the floor this test rules out): {errors}"
+        )
+        assert audit["valid"] is False
+
+        archive_dest = repo / ".agent" / "runtime" / "session" / "_archive" / sid
+        result = _run_scratch(
+            ["--project-root", str(repo), "archive", "--session-id", sid]
+        )
+        assert result.returncode == 1, (
+            f"archive should refuse an incomplete session: {result.stdout}"
+        )
+        output = json.loads(result.stdout)
+        assert output["status"] == "stop"
+        assert output["session_intact"] is True
+        assert session_dir.is_dir(), "session must survive the refused archive"
+        assert not archive_dest.exists(), "nothing should have been archived"
+
+    def test_matching_decision_unblocks_archive(self, tmp_path):
+        """Same shape as above, PLUS the artifact_decision for file.txt ->
+        the session is COMPLETE (set-by-path, not multiset) and archive
+        succeeds.
+        """
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"mdua_{uuid.uuid4().hex[:8]}")
+        sid = _sentinel_id()
+        _init_session(repo, sid)
+        _add_record(repo, sid, generator="test", artifact_path="file.txt")
+        _add_record(
+            repo,
+            sid,
+            event="artifact_decision",
+            generator="test",
+            artifact_path="file.txt",
+            decision="kept",
+        )
+
+        session_dir = repo / ".agent" / "runtime" / "session" / sid
+        audit = _audit_session(session_dir, sid)
+        assert audit["valid"] is True, audit["findings"]
+
+        result = _run_scratch(
+            ["--project-root", str(repo), "archive", "--session-id", sid]
+        )
+        assert result.returncode == 0, f"archive should succeed: {result.stdout}"
+        output = json.loads(result.stdout)
+        assert output["status"] == "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -1199,6 +1318,17 @@ class TestMaidenVoyage:
         sid = _sentinel_id()
         _init_session(repo, sid)
         _add_record(repo, sid, generator="test", artifact_path="file.txt")
+        # WOT-2026-022e: this test asserts audit-only leaves the session
+        # intact, not the completeness invariant -- give it a matching
+        # decision so the audit is VALID (0/0) rather than incomplete.
+        _add_record(
+            repo,
+            sid,
+            event="artifact_decision",
+            generator="test",
+            artifact_path="file.txt",
+            decision="kept",
+        )
 
         audit_result = _run_scratch(
             ["--project-root", str(repo), "audit", "--session-id", sid]
@@ -1557,8 +1687,23 @@ class TestListCommand:
         _init_session(repo, active_sid)
         _init_session(repo, archived_sid)
         _add_record(repo, archived_sid, generator="test", artifact_path="file.txt")
-        _run_scratch(
+        # WOT-2026-022e: without its decision the session is INCOMPLETE, so
+        # archive would refuse and the session would never leave the active
+        # listing -- give it a matching decision so archive actually succeeds
+        # (this test is about list/_archive, not about the refusal path).
+        _add_record(
+            repo,
+            archived_sid,
+            event="artifact_decision",
+            generator="test",
+            artifact_path="file.txt",
+            decision="kept",
+        )
+        archive_result = _run_scratch(
             ["--project-root", str(repo), "archive", "--session-id", archived_sid]
+        )
+        assert archive_result.returncode == 0, (
+            f"archive setup for this test must succeed: {archive_result.stdout}"
         )
 
         result = _run_scratch(["--project-root", str(repo), "list"])

@@ -140,6 +140,29 @@ Esta es la barrera critica que el flujo anterior omitia: la salida del Builder n
 
 PUNTO DE CONTROL antes del Bloque 3: la sesion debe estar VERDE y RECONCILIADA. Si el Bloque 2 destapa un false-green o una contradiccion, vuelve al Builder; NO continues.
 
+== BLOQUE 2.5: AUDITORIA DE ARTEFACTOS DE SESION (WOT-2026-022e) ==
+Audita los artefactos que los prompts generaron durante la sesion, registrados en el manifest.jsonl de la infra session-scratch (`scripts/init_session_scratch.py`, WOT-2026-022c). Es INFORMATIVO: NO bloquea el cierre, con UNA sola excepcion binaria (ver 2.5.f). Su salida alimenta el Bloque 4 (memoria) y el Bloque 5 (backlog), NUNCA un tercer destino persistente.
+
+2.5.a SKIP si vacio: si `<repo_destino>/.agent/runtime/session/` no tiene sesiones, SALTA este bloque entero (no gastes tokens en carpeta vacia) y dilo: "Bloque 2.5: sin sesiones, SKIP".
+
+2.5.b Fuente UNICA = el manifest, no los logs. Lee cada sesion con la CLI, jamas escrapeando `execution_log` (no tiene schema para reintentos):
+   - `python scripts/init_session_scratch.py --project-root <repo_destino> list`
+   - `python scripts/init_session_scratch.py --project-root <repo_destino> audit --session-id <sid>` (exit 1 si el manifest es invalido; usa `--report-only` para inventario sin fallar).
+
+2.5.c Metrica de friccion operacional por `prompt_version`. Para cada generator del manifest, agrega: num. de reintentos + `error_count` + `corrected_after_use`. Una friccion alta y concentrada en un `prompt_version` concreto es la senal; el MAYOR ROI es la friccion con los prompts CANONICOS (evidencia: el maiden voyage de 021z cazo 3 defectos de usabilidad de `audit_pipeline_codeonly.md` en su 1er uso real).
+
+2.5.d Regla `prompt_override` (la desviacion recurrente ES el bug): si >=3 sesiones usan la MISMA override (identidad = prompt_name + override_hash) sobre un prompt CANONICO, abre un ticket de refactor de ese prompt canonico. Una override puntual no; la MISMA repetida >=3 veces si.
+
+2.5.e Triage obligatorio de hallazgos: pasa cada hallazgo de 2.5.c / 2.5.d por `prompts/_shared/finding_triage_protocol.md` ANTES de convertirlo en accion. El destino es el Bloque 4 (memoria, si es aprendizaje con evidencia) o el Bloque 5 (backlog, si es follow-up con evidencia), NUNCA un tercer sitio persistente. Sin evidencia verificable -> se descarta.
+
+2.5.f Decision por artefacto (append-only ESTRICTO). Para cada artefacto de sesion decide `kept` / `promoted` / `discarded` y REGISTRALA como EVENTO NUEVO `artifact_decision` en el manifest, CON su `artifact_path`:
+   - `python scripts/init_session_scratch.py --project-root <repo_destino> add --session-id <sid> --event artifact_decision --generator <g> --artifact-path <path> --decision <kept|promoted|discarded>`
+   JAMAS edites la entrada original: el manifest es append-only. UNICA EXCEPCION BINARIA que SI bloquea: si un artefacto marcado `kept` o `promoted` contiene PII/secret, BLOQUEA ESA promocion (solo esa, no el cierre entero) y trata el hallazgo como incidente de seguridad segun el triage de 2.5.e.
+
+2.5.g Cierre del ciclo de sesion (fail-safe). Archiva la sesion SOLO tras auditoria COMPLETA -- si el cierre falla, conservala intacta para debug: `... archive --session-id <sid>` REHUSA (`status:stop`, `session_intact:True`) si algun `artifact_added` no tiene su `artifact_decision` (invariante de completitud, match por `artifact_path`). Despues, purga las archivadas conservando K=10: `... gc`. FAIL-SAFE: una sesion con un artefacto sin decision NO se archiva, y como `gc` solo toca sesiones ARCHIVADAS, ese artefacto nunca se pierde silenciosamente.
+
+2.5.h Fuera de alcance aqui: la dimension ROL (Role Fit Review, ajuste de rol por friccion recurrente) es WOT-2026-022k, un sub-bloque hermano que EXTIENDE este; no la apliques en esta pasada.
+
 == BLOQUE 3: CIERRE CANONICO ==
 Invariante de arbol de cierre (v3 P1 delta): antes de correr `prepush_check`/`--session-close`, NINGUN write-surface no incluido en `EXPECTED_CLOSEOUT_RUNTIME_ARTIFACTS` puede haber sido modificado por este flujo (en particular `backlog.md`). Si lo fue, es un error de ORDEN del propio flujo: difiere esa escritura al post-cierre (Bloque 5). El gate no se relaja; el flujo se reordena.
 

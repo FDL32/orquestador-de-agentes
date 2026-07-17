@@ -67,7 +67,12 @@ EVENTS = frozenset(
 
 REQUIRED_BY_EVENT: dict[str, frozenset[str]] = {
     "artifact_added": frozenset({"generator", "artifact_path"}),
-    "artifact_decision": frozenset({"generator", "decision"}),
+    # WOT-2026-022e: artifact_path is required here too so the cross-record
+    # completeness check below (added-vs-decided, matched BY artifact_path) has
+    # a path to match on. The CLI parser already accepted --artifact-path on
+    # any event (cmd_add writes it whenever present) -- this only tightens the
+    # per-record contract, it does not add new CLI surface.
+    "artifact_decision": frozenset({"generator", "decision", "artifact_path"}),
     "lock_reclaimed": frozenset(),
     # WOT-2026-023w: the autonomous-batch anti-loop rule
     # (prompts/orchestrator_autonomous_ticket_batch.md) records each failed
@@ -978,6 +983,32 @@ def _audit_session(sdir: Path, sid: str) -> dict[str, Any]:
                     "error": "prompt_version missing sha256",
                 }
             )
+
+    # WOT-2026-022e: cross-record completeness invariant. Identity of an
+    # artifact = artifact_path (SET semantics, not multiset: the same path
+    # added twice is still one artifact, one decision covers it). Matching is
+    # order-insensitive -- the ledger is append-only, so a decision covers its
+    # artifact_path whether it was recorded before or after the corresponding
+    # artifact_added. An empty session (no artifact_added at all) satisfies
+    # the invariant vacuously: there is nothing to lose.
+    added_paths = {
+        rec["artifact_path"]
+        for rec in records
+        if rec.get("event") == "artifact_added" and rec.get("artifact_path")
+    }
+    decided_paths = {
+        rec["artifact_path"]
+        for rec in records
+        if rec.get("event") == "artifact_decision" and rec.get("artifact_path")
+    }
+    findings.extend(
+        {
+            "line": None,
+            "error": f"missing artifact_decision for artifact_path: {path}",
+        }
+        for path in sorted(added_paths - decided_paths)
+    )
+
     return {
         "session_id": sid,
         "records": len(records),
