@@ -161,7 +161,16 @@ Audita los artefactos que los prompts generaron durante la sesion, registrados e
 
 2.5.g Cierre del ciclo de sesion (fail-safe). Archiva la sesion SOLO tras auditoria COMPLETA -- si el cierre falla, conservala intacta para debug: `... archive --session-id <sid>` REHUSA (`status:stop`, `session_intact:True`) si algun `artifact_added` no tiene su `artifact_decision` (invariante de completitud, match por `artifact_path`). Despues, purga las archivadas conservando K=10: `... gc`. FAIL-SAFE: una sesion con un artefacto sin decision NO se archiva, y como `gc` solo toca sesiones ARCHIVADAS, ese artefacto nunca se pierde silenciosamente.
 
-2.5.h Fuera de alcance aqui: la dimension ROL (Role Fit Review, ajuste de rol por friccion recurrente) es WOT-2026-022k, un sub-bloque hermano que EXTIENDE este; no la apliques en esta pasada.
+2.5.h Role Fit Review -- dimension ROL (WOT-2026-022k, EXTIENDE la regla prompt_override de 2.5.d). Ademas de detectar friccion por PROMPT, detecta cuando la friccion recurrente pertenece a un ROL y no a un prompt concreto.
+   - Atribucion de rol POR JUICIO: el manifest NO tiene campo de rol de agente (`repo_role` es {motor,no_motor,unknown}, otra cosa). Mapea cada generator con friccion a su rol canonico de AGENTS.md (orchestrator / manager / builder / auditor / user) y REGISTRA la atribucion en una tabla `generator -> prompt_version -> rol_atribuido -> motivo -> friccion`. Un generator ambiguo (no atribuible a un solo rol) se queda a nivel de prompt: NO se agrega por rol.
+   - Precedencia y NO doble-conteo: la regla `prompt_override` de 2.5.d GANA para el prompt concreto. Si la friccion se concentra en UN prompt (>=3 misma override) -> es refactor de ESE prompt (2.5.d) y esos hits se EXCLUYEN de la agregacion por rol. Ningun hallazgo alimenta a la vez `prompt_override` y Role Fit Review.
+   - Disparo de ROLE_FOLLOWUP: SOLO sobre la friccion RESIDUAL (la que queda tras excluir los hits de `prompt_override`) cuando se DISPERSA por >=2 prompts del MISMO rol y recurre en >=3 sesiones. Ese patron dice que el problema es el ROL (su encaje/definicion), no un prompt.
+   - Verdictos (distingue "sin datos" de "sin problema"):
+     - `SKIP_NO_TELEMETRY`: <2-3 sesiones de telemetria acumulada. Es ausencia de EVIDENCIA, no de problema: un Role Fit Review sin datos es auto-reporte y CEM lo prohibe. SALTA con este verdicto explicito; NO lo llames NO_ROLE_CHANGE.
+     - `NO_ROLE_CHANGE`: hay datos suficientes y la friccion no se concentra por rol.
+     - `ROLE_FOLLOWUP`: friccion residual por rol -> ficha de ajuste de rol, registrada en el Bloque 5 (backlog) via el triage de 2.5.e.
+     - `MEMORY_ONLY`: senal de rol con evidencia pero sin accion de ticket -> Bloque 4 (memoria) via 2.5.e.
+   - NUNCA ROLE_HOTFIX: el cierre solo REGISTRA la senal; cambiar un rol (definicion, backend, allowlist) exige ticket propio, jamas edicion de rol en caliente durante el cierre.
 
 == BLOQUE 3: CIERRE CANONICO ==
 Invariante de arbol de cierre (v3 P1 delta): antes de correr `prepush_check`/`--session-close`, NINGUN write-surface no incluido en `EXPECTED_CLOSEOUT_RUNTIME_ARTIFACTS` puede haber sido modificado por este flujo (en particular `backlog.md`). Si lo fue, es un error de ORDEN del propio flujo: difiere esa escritura al post-cierre (Bloque 5). El gate no se relaja; el flujo se reordena.
