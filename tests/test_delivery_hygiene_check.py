@@ -449,7 +449,16 @@ def test_run_delivery_hygiene_check_clean(tmp_path: Path) -> None:
 
 
 def test_run_delivery_hygiene_check_mutator_in_pre_push(tmp_path: Path) -> None:
-    """Test flujo con mutador en pre-push falla."""
+    """Test flujo con mutador en pre-push falla.
+
+    WOT-2026-023p: needs its OWN repo. Without a local ``.git`` the ceiling cuts
+    ``check_archive_rename_complete``'s ``git status`` (rc=128 -> passed=False),
+    which alone forces ``exit_code == 1`` and OVER-DETERMINES the assert below:
+    the test would stay green even with the config check dead. The local repo
+    keeps this assert load-bearing on the CONFIG, which is what it tests.
+    """
+    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
+
     config_file = tmp_path / ".pre-commit-config.yaml"
     config_file.write_text(CONFIG_WITH_MUTATOR_IN_PRE_PUSH, encoding="utf-8")
 
@@ -459,7 +468,14 @@ def test_run_delivery_hygiene_check_mutator_in_pre_push(tmp_path: Path) -> None:
 
 
 def test_run_delivery_hygiene_check_no_stages(tmp_path: Path) -> None:
-    """Test flujo con mutador sin stages falla."""
+    """Test flujo con mutador sin stages falla.
+
+    WOT-2026-023p: needs its OWN repo -- see
+    ``test_run_delivery_hygiene_check_mutator_in_pre_push`` for why (without it
+    the ceiling forces exit_code=1 and over-determines the assert).
+    """
+    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
+
     config_file = tmp_path / ".pre-commit-config.yaml"
     config_file.write_text(CONFIG_WITHOUT_STAGES_MUTATOR, encoding="utf-8")
 
@@ -469,7 +485,14 @@ def test_run_delivery_hygiene_check_no_stages(tmp_path: Path) -> None:
 
 
 def test_run_delivery_hygiene_check_artifacts_not_excluded(tmp_path: Path) -> None:
-    """Test flujo con artefactos no excluidos falla."""
+    """Test flujo con artefactos no excluidos falla.
+
+    WOT-2026-023p: needs its OWN repo -- see
+    ``test_run_delivery_hygiene_check_mutator_in_pre_push`` for why (without it
+    the ceiling forces exit_code=1 and over-determines the assert).
+    """
+    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
+
     config_file = tmp_path / ".pre-commit-config.yaml"
     config_file.write_text(
         CONFIG_WITH_GENERATED_ARTIFACTS_NOT_EXCLUDED, encoding="utf-8"
@@ -481,7 +504,19 @@ def test_run_delivery_hygiene_check_artifacts_not_excluded(tmp_path: Path) -> No
 
 
 def test_run_delivery_hygiene_check_artifacts_excluded(tmp_path: Path) -> None:
-    """Test flujo con artefactos correctamente excluidos pasa."""
+    """Test flujo con artefactos correctamente excluidos pasa.
+
+    WOT-2026-023p: this tmp_path needs its OWN repo. ``run_delivery_hygiene_check``
+    calls ``check_archive_rename_complete`` UNCONDITIONALLY -- independent of
+    ``check_tree`` -- and that check runs ``git status`` with ``cwd=project_root``.
+    With no local ``.git`` the query used to ASCEND into the REAL motor, so this
+    test passed only because the motor happened to be clean: a false-green that
+    leaked the developer's tree state into the assert. The 023p ceiling
+    (``tmp_path.parent``) cuts that ascent, so the honest fix is a local empty
+    repo -- clean by construction and independent of the motor.
+    """
+    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
+
     config_file = tmp_path / ".pre-commit-config.yaml"
     config_file.write_text(CONFIG_WITH_GENERATED_ARTIFACTS_EXCLUDED, encoding="utf-8")
 

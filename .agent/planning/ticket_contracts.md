@@ -109,6 +109,52 @@ se reintroduzcan.**
    > discrimina nada**. Por eso el DoD de abajo tiene **DOS barreras separadas, cada una con
    > su mutacion**, y no una sola.
 
+> ### ERRATUM FECHADO 2026-07-17 (WOT-2026-023p) -- NO es una correccion de este contrato
+>
+> **El texto de arriba NO se reescribe: era y SIGUE siendo tecnicamente correcto.** La REGLA
+> REAL DEL CEILING de 021k (`ceiling == dir escaneado -> ASCIENDE`; `ceiling entre el dir
+> escaneado y el repo ofensor -> CORTA`) se re-verifico con probe EJECUTADO el 2026-07-17
+> (`python scripts/probe_sandbox_git_ascension.py`, motor `_dev` @ 7588ce6):
+> `ceiling=scanned_dir -> rc=0` (falso-verde) y `ceiling=strict_ancestor -> rc=2`
+> (fail-closed). La regla se confirma punto por punto.
+>
+> **Que cambia:** el residuo que 021k scopeo explicitamente como follow-up -- *"git invoked
+> with cwd == tmp_path exactly ... KNOWN residue, follow-up, not 021k's scope"*
+> (`tests/conftest.py`) -- queda **CERRADO** por **WOT-2026-023p**, que migra el ceiling del
+> fixture autouse **GLOBAL** de `str(tmp_path)` a `str(tmp_path.parent)` (ancestro ESTRICTO
+> de todo `tmp_path`, aun muy por debajo de `PROJECT_ROOT`). 023p **EJECUTA el follow-up que
+> este contrato declaro**; no corrige un error suyo.
+>
+> **Que NO cierra (no conflacionar los dos follow-ups):** la Premise-4 de este contrato
+> declara un follow-up DISTINTO -- los fixtures construidos FUERA de `tmp_path`
+> (`REAL_SYSTEM_TEMP`, `tempfile.mkdtemp()`, rutas fijas: `tests/test_init_session_scratch.py`,
+> `tests/unit/test_run_pytest_safe.py`), para los que el ceiling no es ancestro. **023p NO lo
+> cierra** y sigue VIVO. Son dos residuos distintos: 023p cierra el de `cwd == tmp_path`.
+>
+> **Que NO cambia (Forbidden Surface de 021k, respetada):** los **2 ceilings MODULE-LEVEL**
+> (`tests/unit/test_check_worktree_topology.py:137`, `tests/unit/test_prefix_resolver.py:322,417`)
+> **NO se tocan.** Siguen poniendo su ceiling en `tmp_path` y escaneando `tmp_path/<algo>`
+> (ancestro estricto -> SI protegen), tal y como este contrato establecio en su bloque
+> *"CLAIM FALSO DE LA v1, NO LO REINTRODUZCAS"*. 023p toca **solo el ceiling GLOBAL de
+> `tests/conftest.py`**: son dos superficies distintas y el claim prohibido NO se reintroduce.
+>
+> **Blast radius MEDIDO** (suite `--level all` con el ceiling nuevo, 2026-07-17): exactamente
+> **3 tests CAMBIAN DE VEREDICTO** -- los 2 asserts del valor en
+> `tests/unit/test_sandbox_git_hermeticity.py` y el falso-verde vivo
+> `tests/test_delivery_hygiene_check.py::test_run_delivery_hygiene_check_artifacts_excluded`
+> (que 023p convierte en repo local honesto con `git init`). Ningun otro test SE ROMPE:
+> `tmp_path.parent` no sobre-corta nada legitimo (4393 passed / 3 failed esperados).
+>
+> **LIMITE DEL INSTRUMENTO (leccion de la auditoria adversarial 2026-07-17):** contar
+> CAMBIOS DE VEREDICTO **no mide AFLOJAMIENTO de barreras**. Un test que sigue VERDE pero
+> pierde discriminacion es INVISIBLE a ese recuento por construccion. Medido con mutacion:
+> el ceiling nuevo dejaba 3 tests hermanos (`mutator_in_pre_push`, `no_stages`,
+> `artifacts_not_excluded`) SOBRE-DETERMINADOS -- sin `.git` local, el ceiling forzaba
+> `exit_code=1` por rc=128, y su `assert exit_code == 1` pasaba aunque el check de config
+> estuviera muerto (mutacion: matar ambos checks -> PRE-023p 3 failed / 023p 3 passed).
+> **023p les da `git init` propio** y la discriminacion queda restaurada (mutacion
+> re-ejecutada: 3 failed). Medir aflojamiento EXIGE mutacion, no recuento de veredictos.
+
 5. **rc=2 ES EL VEREDICTO CORRECTO, NO UN FALLO** (la v1 lo trataba como fallo -> DoD
    imposible). Con un `.git` corrupto la topologia **NO ES DETERMINABLE**: el veredicto
    honesto es **rc=2 (fail-closed)**, no rc=1 ("topologia incorrecta conocida"). Exigir rc=1

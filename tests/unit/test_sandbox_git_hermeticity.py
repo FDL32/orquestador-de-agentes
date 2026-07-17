@@ -79,7 +79,9 @@ def test_global_ceiling_blocks_ascent_to_real_motor(tmp_path: Path) -> None:
     # The barrier EXISTS. If the global fixture loses its autouse or gets renamed
     # (or shadowed by a same-named module fixture), this says so directly instead
     # of letting us infer it from an exit code.
-    assert os.environ.get("GIT_CEILING_DIRECTORIES") == str(tmp_path)
+    # WOT-2026-023p: the global ceiling is tmp_path.PARENT (strict ancestor of
+    # tmp_path), which also cuts a git invoked with cwd == tmp_path exactly.
+    assert os.environ.get("GIT_CEILING_DIRECTORIES") == str(tmp_path.parent)
 
     # CONTROL against a vacuous test: git works and DOES resolve where it should.
     # Without this, "git is missing from PATH" would make the barrier assert below
@@ -216,9 +218,10 @@ def test_internal_ceiling_kills_the_false_green(
     )
     assert cwt.prefix_resolver.load_overrides() == {}  # the patch bit
 
-    # --- 1) NO internal ceiling: only the GLOBAL one (= tmp_path), which does
-    #        NOT cover this case (the synthetic parent hangs BELOW it).
-    assert os.environ["GIT_CEILING_DIRECTORIES"] == str(tmp_path)
+    # --- 1) NO internal ceiling: only the GLOBAL one (= tmp_path.parent since
+    #        WOT-2026-023p), which does NOT cover this case either: the synthetic
+    #        parent hangs BELOW tmp_path, so it is below the global ceiling too.
+    assert os.environ["GIT_CEILING_DIRECTORIES"] == str(tmp_path.parent)
     exit_code, message = cwt.check_topology("WOT-2026-021k", fixture, motor, workspace)
     assert exit_code == 0, message  # THE DAMAGE: the guard approves a foreign topology
     assert "topologia correcta" in message
@@ -228,7 +231,7 @@ def test_internal_ceiling_kills_the_false_green(
     # does not switch off the protection against the REAL motor while it runs.
     monkeypatch.setenv(
         "GIT_CEILING_DIRECTORIES",
-        os.pathsep.join([str(fixture.parent), str(tmp_path)]),
+        os.pathsep.join([str(fixture.parent), str(tmp_path.parent)]),
     )
     exit_code_2, message_2 = cwt.check_topology(
         "WOT-2026-021k", fixture, motor, workspace

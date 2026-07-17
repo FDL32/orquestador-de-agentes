@@ -268,11 +268,14 @@ def _isolate_git_discovery_global(
 
     EXACT SCOPE -- do not describe it as more than it is (an optimistic docstring
     is the very defect this ticket exists to kill):
-      COVERS     git invoked from a STRICT descendant of tmp_path (the dominant
-                 pattern) -> it cannot see the motor's .git.
-      DOES NOT   git invoked with cwd == tmp_path exactly: the ceiling is then the
-                 scanned dir itself -> ignored, and the walk still reaches the
-                 motor. KNOWN residue, follow-up, not 021k's scope.
+      COVERS     git invoked from tmp_path OR any descendant, INCLUDING cwd ==
+                 tmp_path exactly -> it cannot see the motor's .git. WOT-2026-023p:
+                 the ceiling is tmp_path.PARENT (SESSION_RUNTIME_ROOT/factory, a
+                 STRICT ancestor of every tmp_path, far below PROJECT_ROOT), so a
+                 git invoked AT tmp_path is below the ceiling and the walk is cut.
+                 This CLOSES the cwd == tmp_path residue that 021k scoped as a
+                 follow-up (value tmp_path left scanned-dir == ceiling -> ignored;
+                 tmp_path.parent is a strict ancestor -> it cuts).
       DOES NOT   fixtures built OUTSIDE tmp_path (REAL_SYSTEM_TEMP,
                  tempfile.mkdtemp(), fixed paths): the ceiling is not their
                  ancestor.
@@ -284,8 +287,10 @@ def _isolate_git_discovery_global(
     """
     # git IGNORES a ceiling that is not a native absolute path (relative, empty,
     # MSYS-style "/c/...") SILENTLY -- it fails OPEN, with no warning. Measured.
-    assert tmp_path.is_absolute(), tmp_path
-    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    # WOT-2026-023p: ceiling = tmp_path.PARENT (a STRICT ancestor of tmp_path), so
+    # even a git invoked with cwd == tmp_path exactly is cut (see EXACT SCOPE).
+    assert tmp_path.parent.is_absolute(), tmp_path
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
