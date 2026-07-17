@@ -527,3 +527,56 @@ def test_collect_wires_mode_check(monkeypatch, tmp_path):
 
     assert "mode" in findings["checks"], "collect() must wire _check_mode"
     assert "mode_env_contradiction" in findings["automatic_criticals"]
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-026e / T-026E-001 criterion (i): RUTA PRODUCTIVA. The preflight's
+# OWN productive path (collect(), unmocked) must SURFACE the agents_accessible
+# signal when run against the REAL motor config -- never an injected/mocked
+# profile set. This is DISTINCT from criterion (h) (which is tested via
+# check_guard_wiring.py and only proves the IMPORT is wired): mutating away the
+# INVOCATION `_check_agents_accessible(findings, dev)` inside `collect()` while
+# leaving the import untouched leaves check_guard_wiring GREEN (an import is
+# still evidence of wiring) but makes the signal vanish from THIS test's
+# output -- which is exactly the "import-only, dead" false-green the frozen
+# contract calls out.
+# --------------------------------------------------------------------------- #
+class TestAgentsAccessibleWiredInPreflight:
+    def test_agents_accessible_signal_emitted_by_real_preflight(self):
+        motor_root = Path(__file__).resolve().parent.parent.parent
+        args = type(
+            "Args",
+            (),
+            {
+                "dev_root": str(motor_root),
+                "principal_root": None,
+                "workspace_root": None,
+                "ticket": "WOT-2026-026e",
+                "retire_token": None,
+                "retire_owner": None,
+                "expect_dev_sha": None,
+                "expect_principal_sha": None,
+                "expect_workspace_sha": None,
+            },
+        )()
+
+        findings = pcp.collect(args)
+
+        assert "agents_accessible" in findings["checks"], (
+            "collect() must wire _check_agents_accessible -- the signal is "
+            "missing from the real preflight's own output"
+        )
+        signal = findings["checks"]["agents_accessible"]
+        assert "error" not in signal, signal.get("error")
+        # STRUCTURE only, NEVER a hardcoded profile COUNT (criterion (k): 025z
+        # can add/remove ensemble_profiles without invalidating this test).
+        assert signal["n_total"] > 0
+        assert signal["n_total"] == signal["n_checked"] + signal["n_excluded"]
+        real_profile_names = set(
+            pcp.load_agents_config(project_root=motor_root)["ensemble_profiles"]
+        )
+        assert signal["profiles"], (
+            "must contain REAL profiles read from the motor's own agents.json, "
+            "not an injected/mocked set"
+        )
+        assert set(signal["profiles"]) <= real_profile_names

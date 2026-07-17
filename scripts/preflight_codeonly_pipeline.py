@@ -16,6 +16,12 @@ Checks:
       deliberate history (CHANGELOG/DEC/.agent/collaboration). Empty result = 0
       consumers = safe to retire. This is the check that makes a deprecated-code
       retirement safe; topology + SHAs alone are not enough.
+    - agents_accessible (WOT-2026-026e): NIVEL 0 presence/liveness signal for every
+      `ensemble_profiles` agent, via `check_agents_accessible.collect_accessibility`
+      (imported, never re-implemented). WARN-only: never appended to
+      `automatic_criticals`, matching this collector's "reports SIGNALS; the AGENT
+      judges" contract -- it never gates the pipeline's verdict on a specific
+      agent's reachability.
 
 Warnings taxonomy (WOT-2026-021u): `validate --json` emits `warnings` as a dict
 keyed by CATEGORY (`ticket_prose`, `bus_drift`, `invariants`, ...); `ticket_prose`
@@ -71,6 +77,11 @@ if str(_MOTOR_ROOT_BOOTSTRAP) not in sys.path:
     sys.path.insert(0, str(_MOTOR_ROOT_BOOTSTRAP))
 
 from runtime.project_root import clear_cache, is_motor_code_only  # noqa: E402
+from scripts.check_agents_accessible import (  # noqa: E402
+    AgentsConfigError,
+    collect_accessibility,
+    load_agents_config,
+)
 from scripts.init_session_scratch import _archive_root  # noqa: E402
 from scripts.validate_ticket_prose import is_completed_plan  # noqa: E402
 
@@ -444,6 +455,34 @@ def _check_consumers(findings: dict, args, dev) -> None:
         findings["automatic_criticals"].append("consumer_grep_error")
 
 
+def _check_agents_accessible(findings: dict, dev: Path) -> None:
+    """SIGNAL (WOT-2026-026e): NIVEL 0 presence/liveness of `ensemble_profiles` agents.
+
+    Before: `dev` is the motor root passed via `--dev-root` (in real invocations
+        it IS the motor that owns `check_agents_accessible.py`, per that
+        module's own MOTOR_ROOT bootstrap).
+    During: loads `agents.json` via the SAME `load_agents_config` that
+        `check_agents_accessible.py` uses (single schema layer, no
+        re-derivation) and calls `collect_accessibility()` with an EMPTY
+        `require` -- this preflight never gates the pipeline's verdict on any
+        specific agent being reachable; it is a WARN-only signal, matching
+        this collector's "reports SIGNALS; the AGENT judges" contract.
+    After: `findings["checks"]["agents_accessible"]` carries the full
+        `collect_accessibility()` result (denominator + per-profile verdicts).
+        On an invalid `agents.json`, records `{"error": <message>}` instead.
+        NEVER appends to `findings["automatic_criticals"]` in either branch --
+        this signal cannot fail the preflight (criterion (i) of the frozen
+        contract: presence, not correctness).
+    """
+    try:
+        config = load_agents_config(project_root=dev)
+        findings["checks"]["agents_accessible"] = collect_accessibility(
+            config, require=[]
+        )
+    except AgentsConfigError as exc:
+        findings["checks"]["agents_accessible"] = {"error": str(exc)}
+
+
 def collect(args: argparse.Namespace) -> dict:
     dev = Path(args.dev_root).resolve()
     principal = Path(args.principal_root).resolve() if args.principal_root else None
@@ -469,7 +508,22 @@ def collect(args: argparse.Namespace) -> dict:
     _check_session_state(findings, args, dev, workspace)
     _check_topology(findings, args, dev, principal, workspace)
     _check_consumers(findings, args, dev)
+    _check_agents_accessible(findings, dev)
     return findings
+
+
+def _report_agents_accessible(aa: dict | None) -> None:
+    """SIGNAL line for the WOT-2026-026e NIVEL 0 accessibility check."""
+    if not aa:
+        return
+    if "error" in aa:
+        print(f"agents_acc.  : ERROR loading agents.json: {aa['error']}")
+        return
+    print(
+        f"agents_acc.  : N={aa.get('n_total')} -> M={aa.get('n_checked')} "
+        f"({aa.get('n_excluded')} excluidos); "
+        f"ok={aa.get('n_ok')} warn={aa.get('n_warn')} fail={aa.get('n_fail')}"
+    )
 
 
 def _report(findings: dict) -> None:
@@ -517,6 +571,7 @@ def _report(findings: dict) -> None:
         print(f"consumers    : {cons.get('verdict')} (hits={cons.get('hit_count')})")
         for h in cons.get("hits", []):
             print(f"    {h}")
+    _report_agents_accessible(findings["checks"].get("agents_accessible"))
     crits = findings["automatic_criticals"]
     print("-" * 64)
     if crits:

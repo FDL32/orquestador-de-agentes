@@ -62,10 +62,11 @@ _EMPTY_POLICY = {"known_unwired": {}, "extra_guards": {}, "wired_via": {}}
 
 
 # ---------------------------------------------------------------- T-REAL-BASELINE
-# The 12 guards genuinely wired in the real repo, each verified against its call-site.
-# "12" is not the invariant -- the SAME set is (a classifier that drops a real call-site
-# and picks up a bogus one also prints 12).
+# The guards genuinely wired in the real repo, each verified against its call-site.
+# The COUNT is not the invariant -- the SAME set is (a classifier that drops a real
+# call-site and picks up a bogus one prints the same number).
 EXPECTED_WIRED_REAL = {
+    "check_agents_accessible",  # WOT-2026-026e(A7): cableado por import en preflight_codeonly_pipeline.py
     "check_backlog_contract",
     "check_claude_settings_portability",
     "check_commit_worktree",
