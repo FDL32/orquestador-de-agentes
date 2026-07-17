@@ -440,6 +440,48 @@ def run_contract_reconcile_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_handoff_state_sha_check(project_root: Path) -> CheckResult:
+    """WOT-2026-024t (superficie 2): a handoff's STATE section must not embed a SHA
+    (it rots the instant HEAD moves). WARN by default (is_blocking=False), FAIL when
+    HANDOFF_STATE_SHA_STRICT=1. The toggle keeps it a real barrier (it CAN block on
+    demand) rather than a never-blocks reporter (M20). Reports every hit; the current
+    reports dir may hold a consumed ARRANQUE with a stale SHA -- WARN default avoids a
+    false red on that legacy handoff while still surfacing it.
+    """
+    name = "Handoff State SHA (WOT-2026-024t)"
+    strict = os.environ.get("HANDOFF_STATE_SHA_STRICT", "").strip() == "1"
+    try:
+        from scripts.check_handoff_state_sha import scan_handoffs
+    except ImportError:
+        from check_handoff_state_sha import scan_handoffs  # type: ignore[no-redef]
+    findings = scan_handoffs(project_root)
+    if findings:
+        detail = "\n".join(
+            f"  - {f['file']}:{f['line']} under '{f['heading']}': {f['sha']}"
+            for f in findings
+        )
+        mode = (
+            "BLOCKING (HANDOFF_STATE_SHA_STRICT=1)."
+            if strict
+            else "WARN only; set HANDOFF_STATE_SHA_STRICT=1 to block."
+        )
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=(
+                f"{len(findings)} SHA(s) embedded in a handoff STATE section:\n{detail}\n"
+                f"Verify state against git instead of embedding a SHA. {mode}"
+            ),
+            is_blocking=strict,
+        )
+    return CheckResult(
+        name=name,
+        passed=True,
+        output="no SHA embedded in a handoff state section",
+        is_blocking=strict,
+    )
+
+
 def run_preflight_check(
     project_root: Path | None = None,
     expected_artifacts: list[str] | None = None,
@@ -501,6 +543,8 @@ def run_preflight_check(
         results.append(run_backlog_contract_check(project_root))
         # 6b. Contract-Backlog Reconcile (WOT-2026-024e; WARN default, FAIL opt-in)
         results.append(run_contract_reconcile_check(project_root))
+        # 6c. Handoff State SHA (WOT-2026-024t s2; WARN default, FAIL opt-in)
+        results.append(run_handoff_state_sha_check(project_root))
 
     # Check informacional (no bloqueante)
     results.append(run_validate_all(project_root))

@@ -75,6 +75,7 @@ EXPECTED_WIRED_REAL = {
     "check_distribution_agnostic",  # WOT-2026-024z(d): cableado en pre-commit (entry: uv run python)
     "check_encoding_guard",
     "check_guard_wiring",
+    "check_handoff_state_sha",  # WOT-2026-024t(s2): cableado en prepush_check.py (closeout, WARN/FAIL)
     "check_no_history_truncation",
     "check_worktree_topology",
     "delivery_hygiene_check",  # v4: denominador ve el guard sin prefijo, y lo cabla
