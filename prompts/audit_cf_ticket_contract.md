@@ -49,6 +49,8 @@ Lee antes de evaluar:
 9. **Evidencia minima para frozen:** cada claim central del contrato necesita
    artefacto concreto (`path:`, `command:` + `exit_code:`, `commit:` cuando
    aplique). Una etiqueta sin artefacto es relato y no habilita `frozen`.
+   Para verificar que un `path:` declarado corresponde al repo correcto
+   (`repo_motor` vs `repo_destino`), usa `prompts/_shared/topology_artifact_locations.md`.
 
 ## Severidad de hallazgos
 

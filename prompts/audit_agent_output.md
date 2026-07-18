@@ -34,6 +34,9 @@ implementacion desde el prompt de output.
 Antes de validar claims sobre archivos, estado o artefactos, verifica TU
 propia topologia. El auditor no esta exento del error que busca:
 
+> Mapa canonico de que artefacto vive en `repo_motor` vs `repo_destino`:
+> `prompts/_shared/topology_artifact_locations.md`.
+
 1. **Confirma que miras el repositorio correcto.** Si el output audito habla
    de `repo_destino`, verifica en `repo_destino`, no en `repo_motor` ni en
    un seed/plantilla. Si habla de `workspace_activo`, resuelvelo via
@@ -88,6 +91,7 @@ Evalua con CEM v0:
 
 4. **Root y topologia antes de ejecucion**
    - Verifica `repo_motor`, `repo_destino`, `workspace_activo`, bus legible y ticket activo antes de validar claims sobre Builder, Manager o cierre.
+   - Mapa canonico de ubicacion de artefactos: `prompts/_shared/topology_artifact_locations.md`.
 
 5. **Barrera antes que memoria**
    - Cuando el aprendizaje sea recurrente, prefiere convertirlo en test, hook, fixture realista, prompt compuesto o gate automatico.
