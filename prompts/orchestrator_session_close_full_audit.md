@@ -23,6 +23,40 @@ El contrato del auditor lo gobierna integramente `prompts/audit_agent_output.md`
 prompt NO lo reproduce, solo lo aplica al cierre de sesion. MODO read-only por
 defecto: audita y propone el cambio minimo; no parchea salvo instruccion explicita.
 
+### Dos modos: cierre FINAL vs mid-flight (WOT-2026-029c)
+
+Este prompt esta escrito para el cierre FINAL de una sesion. Antes de correrlo,
+DECIDE en cual de los dos modos estas -- porque el Bloque 3 (cierre canonico) es
+DESTRUCTIVO del estado de continuacion y no debe ejecutarse a mitad de vuelo:
+
+- **Cierre FINAL** (modo por defecto de este prompt): la sesion TERMINO, no queda
+  ningun ticket `IN_PROGRESS` ni vuelo abierto. Flujo COMPLETO: Bloques 1->2->2.5,
+  y luego el Bloque 3 corre `agent_controller.py --session-close` (archiva la
+  colaboracion, resetea STATE a IDLE, rota proyecciones) + Bloque 4 (memoria) +
+  Bloque 5 (backlog). El humano revisa y pushea. Es el unico modo que ejecuta el
+  Bloque 3.
+
+- **Mid-flight** (parada a mitad de vuelo, NO cierre): quieres auditar y dejar un
+  handoff en un checkpoint mientras el vuelo/lote SIGUE abierto (hay tickets por
+  delante o un ticket `IN_PROGRESS`). Flujo RECORTADO y read-only:
+  - Corre los Bloques 1 y 2 (salud + auditoria adversarial de los diffs hasta aqui)
+    y 2.5 (proceso), TODO informativo.
+  - **NO corras el Bloque 3.** `--session-close` archivaria la colaboracion y
+    resetearia STATE -> BORRARIA el estado de continuacion que el vuelo necesita
+    para retomarse. Es el error que este modo existe para prevenir.
+  - Handoff **SHA-free** (no incrustes el HEAD como estado; ver
+    `scripts/check_handoff_state_sha.py` / WOT-2026-024t): el estado se VERIFICA
+    contra git al retomar, no se escribe en prosa que caduca.
+  - **NO push.** El humano decide cuando publicar; una parada mid-flight es local.
+  - Memoria/backlog: difiere la promocion (Bloques 4/5) al cierre FINAL; en mid-flight
+    solo se dejan DRAFTs con evidencia (no se materializan tickets ni memoria todavia).
+  - Emite un parte de parada (que quedo hecho, que sigue pendiente, punto exacto de
+    retomada) en `orchestrator_pipeline/reports/`, NO un cierre.
+
+  Regla dura: si hay un ticket `IN_PROGRESS` o un lote abierto, estas en mid-flight
+  por definicion -> Bloques 1/2/2.5 SI, Bloque 3 NO. La seccion "Cuando NO usarlo"
+  de abajo (ticket `IN_PROGRESS`) se refiere al Bloque 3, no a la auditoria.
+
 Distincion con skills hermanas:
 - `system-health-audit` = salud de las 3 capas (es el Bloque 1 de esta pasada).
 - `audit-pipeline` = meta-auditoria post-pipeline TRANSVERSAL del backlog completo (TODOS los tickets cerrados, no uno solo).
@@ -230,7 +264,11 @@ Recordatorio: responde con conclusiones etiquetadas (VERIFICADO/INFERIDO/NO VERI
 
 ## Cuando NO usarlo
 
-- Durante un ticket aun en `IN_PROGRESS` (usa el cierre normal del ticket).
+- Para el **Bloque 3 (cierre canonico) con un ticket aun en `IN_PROGRESS` o un
+  vuelo abierto**: NO corras `--session-close` (borraria el estado de
+  continuacion). Los Bloques 1/2/2.5 SI se pueden correr como auditoria
+  mid-flight read-only (ver "Dos modos" arriba, WOT-2026-029c); lo prohibido a
+  mitad de vuelo es el Bloque 3, no la auditoria.
 - Para arrancar una sesion nueva (usa `orchestrator_session_bootstrap.md`).
 - Como sustituto del cierre operativo: esta pasada audita y precede; el cierre
   real lo ejecuta `agent_controller.py --session-close`.
