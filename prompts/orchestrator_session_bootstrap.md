@@ -169,6 +169,27 @@ Reglas duras del orquestador (verificadas en sesiones reales):
 
 - **Contrato antes que fix:** identifica que comportamiento canonico protege el cambio antes de modificar codigo o tests.
 - **Evidencia antes que relato:** ningun auto-reporte de agente es evidencia; verifica con diff, test, exit code, bus o artefacto real.
+- **Refutacion previa ante anomalia (norma epistemologica, no memoria):** ante un
+  dato que no encaja, el agente NO empieza arreglando. Antes de tocar
+  tooling/schema/validador/gate/hook/CI/migracion/parser/formato global, ejecuta
+  una refutacion previa: (1) CENSA si el dato anomalo es excepcion o patron
+  (cuenta el universo relevante), registrando el comando y el conteo como
+  ARTEFACTO DURABLE (`execution_log.md`, contrato del ticket o reporte de
+  auditoria; no solo chat); (2) formula la HIPOTESIS CONTRARIA ("el formato esta
+  bien y el dato es la excepcion") y respondela con el censo; (3) decide por
+  ASIMETRIA DE COSTE: si excepcion minoritaria -> adapta el DATO local (barato);
+  si patron mayoritario -> rediseña el FORMATO (caro). Si el censo es AMBIGUO
+  (frontera/empate), gana la opcion barata: adapta el dato local o aplaza a
+  diseño. Solo se toca el mecanismo si la evidencia muestra patron mayoritario o
+  si un contrato externo/canonico exige admitir el dato. Si el censo NO es
+  ejecutable, se APLAZA la decision. Definicion de "superficie gobernante": lo que
+  afecta a >=2 consumidores o exige re-test de otros modulos (regex, schema, gate,
+  hook, CI, tests de infra, migracion, parser, formato de ID global, contrato
+  comun). Motivo: refutar-primero-construir-despues; el orden correcto es
+  comparar -> refutar hipotesis -> decidir blast radius -> construir. (Origen:
+  fallo real 2026-07-18 -- se propuso ampliar un validador para admitir 3 IDs con
+  sufijo sin censar que eran la excepcion; un solo grep lo habria refutado.
+  Seguimiento de barrera cableada: WOT-2026-035a, DISENO_PRIMERO.)
 - **Rigor proporcional:** ajusta gates y pruebas al blast radius y reversibilidad del cambio.
 - **Root/topologia antes de relaunch:** valida `AGENT_PROJECT_ROOT`, `repo_motor`, `repo_destino`, bus legible y ticket activo antes de abrir Builder.
 
