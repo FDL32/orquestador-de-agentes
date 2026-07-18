@@ -173,9 +173,16 @@ Reglas duras del orquestador (verificadas en sesiones reales):
   dato que no encaja, el agente NO empieza arreglando. Antes de tocar
   tooling/schema/validador/gate/hook/CI/migracion/parser/formato global, ejecuta
   una refutacion previa: (1) CENSA si el dato anomalo es excepcion o patron
-  (cuenta el universo relevante), registrando el comando y el conteo como
-  ARTEFACTO DURABLE (`execution_log.md`, contrato del ticket o reporte de
-  auditoria; no solo chat); (2) formula la HIPOTESIS CONTRARIA ("el formato esta
+  (cuenta el universo relevante), registrando como ARTEFACTO DURABLE
+  (`execution_log.md`, contrato del ticket o reporte de auditoria; no solo chat)
+  el comando, el conteo Y **el UNIVERSO censado** -- un conteo sin universo
+  declarado es evidencia falsificable: un censo estrecho parece evidencia y pasa
+  el gate igual que uno honesto. Declara CADA poblacion que mides por separado,
+  porque pueden discrepar (ej. para un ID: "IDs en el backlog vivo", "entradas
+  que consume el DAG", "consumidores de `_TICKET_CELL_RE` en el codigo"). Es la
+  version censo del defecto "aplicate tu propia vara": la vara del censo se
+  afloja sola hacia la poblacion que confirma la tesis. (2) formula la HIPOTESIS
+  CONTRARIA ("el formato esta
   bien y el dato es la excepcion") y respondela con el censo; (3) decide por
   ASIMETRIA DE COSTE: si excepcion minoritaria -> adapta el DATO local (barato);
   si patron mayoritario -> rediseña el FORMATO (caro). Si el censo es AMBIGUO
