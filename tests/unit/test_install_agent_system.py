@@ -17,6 +17,7 @@ import subprocess
 import textwrap
 from pathlib import Path
 
+import scripts.install_agent_system as ias
 from scripts.install_agent_system import (
     TEMPLATE_ROOT,
     copy_destination_bootstrap,
@@ -25,12 +26,14 @@ from scripts.install_agent_system import (
     copy_tree,
     detect_destination_residues,
     ensure_destination_projections_ignored,
+    install_agent_system,
     merge_memory_rules,
     parse_wing_sections,
     prune_residues,
     read_manifest_allowlist,
     sync_agent_system,
     sync_memory_rules,
+    untrack_ignored_projections,
     write_motor_destination_link,
 )
 
@@ -1193,3 +1196,167 @@ def test_manifest_workspace_really_allowlists_planning():
 
     assert allowlist, "MANIFEST.workspace not found or empty"
     assert ".agent/planning/" in allowlist
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-020t: --untrack-existing (OPT-IN ONLY) + hard anti-fail-open barrier
+# ---------------------------------------------------------------------------
+
+
+def _untrack_git(repo: Path, *args: str) -> str:
+    proc = subprocess.run(
+        ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True
+    )
+    return proc.stdout
+
+
+def _build_git_destination(tmp_path: Path) -> Path:
+    """Destination repo (own git init, vector WOT-2026-020r) that TRACKS the
+    managed projections: link file + collaboration/ + a runtime file, plus one
+    unrelated tracked file that must never be touched."""
+    root = tmp_path / "dest"
+    config = root / ".agent" / "config"
+    config.mkdir(parents=True)
+    (config / "motor_destination_link.json").write_text("{}\n", encoding="utf-8")
+    (config / "hooks_config.json").write_text(
+        json.dumps({"version": "1", "enabled": True}), encoding="utf-8"
+    )
+    collab = root / ".agent" / "collaboration"
+    collab.mkdir(parents=True)
+    (collab / "execution_log.md").write_text("C:/Users/x local\n", encoding="utf-8")
+    runtime = root / ".agent" / "runtime"
+    runtime.mkdir(parents=True)
+    (runtime / "state.json").write_text("{}\n", encoding="utf-8")
+    (root / "README.md").write_text("keep me tracked\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(root), "init", "-q", "-b", "main"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(root), "add", "-A"], check=True, capture_output=True
+    )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "-m",
+            "fixture",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return root
+
+
+def test_untrack_removes_index_only_and_is_idempotent(tmp_path):
+    """DoD (e): index cleared for managed entries, worktree intact, unrelated
+    tracked files untouched, second run is a no-op."""
+    root = _build_git_destination(tmp_path)
+    motor = tmp_path / "motor"
+    motor.mkdir()
+
+    untracked = untrack_ignored_projections(root, motor_root=motor)
+
+    assert untracked, "expected tracked managed projections to be untracked"
+    assert _untrack_git(root, "ls-files", "--", ".agent/collaboration/") == ""
+    assert (
+        _untrack_git(
+            root, "ls-files", "--", ".agent/config/motor_destination_link.json"
+        )
+        == ""
+    )
+    assert _untrack_git(root, "ls-files", "--", ".agent/runtime/") == ""
+    # Worktree intact + unrelated file still tracked + nothing committed.
+    assert (root / ".agent" / "collaboration" / "execution_log.md").exists()
+    assert (root / ".agent" / "config" / "motor_destination_link.json").exists()
+    assert "README.md" in _untrack_git(root, "ls-files")
+    assert _untrack_git(root, "diff", "--cached", "--name-only") != ""
+    # Idempotent: second run finds nothing tracked.
+    assert untrack_ignored_projections(root, motor_root=motor) == []
+
+
+def test_untrack_dry_run_does_not_mutate_index(tmp_path):
+    root = _build_git_destination(tmp_path)
+    motor = tmp_path / "motor"
+    motor.mkdir()
+    before = _untrack_git(root, "ls-files")
+
+    would = untrack_ignored_projections(root, dry_run=True, motor_root=motor)
+
+    assert would, "dry-run must report what it would untrack"
+    assert _untrack_git(root, "ls-files") == before
+
+
+def test_untrack_motor_identity_is_noop(tmp_path):
+    """DoD (f): the motor itself (dogfooding) is never untracked."""
+    root = _build_git_destination(tmp_path)
+
+    assert untrack_ignored_projections(root, motor_root=root) == []
+    assert _untrack_git(root, "ls-files", "--", ".agent/collaboration/") != ""
+
+
+def test_untrack_without_own_git_is_noop(tmp_path):
+    """Vector WOT-2026-020r: without its own .git, git would walk up; no-op."""
+    root = tmp_path / "dest_nogit"
+    (root / ".agent" / "collaboration").mkdir(parents=True)
+
+    assert untrack_ignored_projections(root, motor_root=tmp_path / "motor") == []
+
+
+def test_sync_without_flag_never_untracks(tmp_path):
+    """DoD (d), mutation-2 of the ticket (HARD BARRIER): a sync WITHOUT
+    --untrack-existing must leave the tracked set byte-identical. If this test
+    ever fails, the barrier went fail-open and a routine --sync would de-track
+    published repos through the back door."""
+    template_agent = _build_motor_template(tmp_path)
+    root = _build_git_destination(tmp_path)
+    project_agent = root / ".agent"
+    before = _untrack_git(root, "ls-files")
+
+    rc = sync_agent_system(template_agent, project_agent)
+
+    assert rc == 0, f"sync aborted (rc={rc}); this would measure a truncated run"
+    assert _untrack_git(root, "ls-files") == before, (
+        "FAIL-OPEN: sync without --untrack-existing changed the tracked set"
+    )
+
+
+def test_sync_with_flag_untracks(tmp_path):
+    """Positive control pairing the mutation-2 test: without it, a sync that
+    silently IGNORED untrack_existing would pass the barrier test vacuously."""
+    template_agent = _build_motor_template(tmp_path)
+    root = _build_git_destination(tmp_path)
+    project_agent = root / ".agent"
+
+    rc = sync_agent_system(template_agent, project_agent, untrack_existing=True)
+
+    assert rc == 0
+    assert _untrack_git(root, "ls-files", "--", ".agent/collaboration/") == ""
+    assert (root / ".agent" / "collaboration" / "execution_log.md").exists()
+
+
+def test_install_calls_untrack_only_with_flag(tmp_path, monkeypatch):
+    """DoD (d), install path: the untrack call happens IFF the flag was passed.
+    (A fresh install has nothing tracked, so the observable contract here is
+    the call gate itself, patched at the real call-site name.)"""
+    calls: list[Path] = []
+    monkeypatch.setattr(
+        ias, "untrack_ignored_projections", lambda root, **kw: calls.append(root)
+    )
+    template_agent = _build_motor_template(tmp_path)
+
+    install_agent_system(template_agent, tmp_path / "d1" / ".agent")
+    assert calls == [], "install WITHOUT the flag must never invoke untrack"
+
+    install_agent_system(
+        template_agent, tmp_path / "d2" / ".agent", untrack_existing=True
+    )
+    assert calls == [tmp_path / "d2"], "install WITH the flag must invoke untrack"

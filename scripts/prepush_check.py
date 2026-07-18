@@ -482,6 +482,62 @@ def run_handoff_state_sha_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_destination_pii_check(
+    project_root: Path, motor_root: Path | None = None
+) -> CheckResult:
+    """WOT-2026-020t: destinations on this machine must not track the link file nor
+    .agent/collaboration/ (they carry local absolute paths and leak PII on push).
+
+    The SCRIPT is fail-closed (exit 1 on leaks, exit 2 when an included
+    destination cannot be audited). The WARN/FAIL verdict lives HERE: WARN by
+    default (the known dirty published destinations are live debt owned by
+    WOT-2026-023b, human-gated -- failing every close until a human acts would
+    be a false red), FAIL when DESTINATION_PII_STRICT=1. The toggle keeps this
+    a real barrier (M20). motor_root defaults to THIS repo: the census is
+    machine-wide and anchored at the motor, independent of the project being
+    closed.
+    """
+    name = "Destination PII Leak (WOT-2026-020t)"
+    strict = os.environ.get("DESTINATION_PII_STRICT", "").strip() == "1"
+    try:
+        from scripts.check_destination_pii_leak import run_audit
+    except ImportError:
+        from check_destination_pii_leak import run_audit  # type: ignore[no-redef]
+    root = (
+        motor_root if motor_root is not None else Path(__file__).resolve().parent.parent
+    )
+    audits, _discovery = run_audit(root)
+    leaking = [a for a in audits if a.leaking]
+    unauditable = [a for a in audits if a.error is not None]
+    if leaking or unauditable:
+        lines = [
+            f"  - LEAK {a.root}: {len(a.tracked_files)} tracked file(s)"
+            for a in leaking
+        ] + [f"  - UNAUDITABLE {a.root}: {a.error}" for a in unauditable]
+        mode = (
+            "BLOCKING (DESTINATION_PII_STRICT=1)."
+            if strict
+            else "WARN only; set DESTINATION_PII_STRICT=1 to block."
+        )
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=(
+                f"{len(leaking)} leaking / {len(unauditable)} unauditable "
+                f"destination(s):\n" + "\n".join(lines) + "\n"
+                f"Untrack is human-gated (WOT-2026-023b); the installer only "
+                f"untracks under --untrack-existing. {mode}"
+            ),
+            is_blocking=strict,
+        )
+    return CheckResult(
+        name=name,
+        passed=True,
+        output="no destination tracks the managed PII surfaces",
+        is_blocking=strict,
+    )
+
+
 def run_preflight_check(
     project_root: Path | None = None,
     expected_artifacts: list[str] | None = None,
@@ -545,6 +601,8 @@ def run_preflight_check(
         results.append(run_contract_reconcile_check(project_root))
         # 6c. Handoff State SHA (WOT-2026-024t s2; WARN default, FAIL opt-in)
         results.append(run_handoff_state_sha_check(project_root))
+        # 6d. Destination PII Leak (WOT-2026-020t; WARN default, FAIL opt-in)
+        results.append(run_destination_pii_check(project_root))
 
     # Check informacional (no bloqueante)
     results.append(run_validate_all(project_root))

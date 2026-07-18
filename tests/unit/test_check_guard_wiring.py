@@ -72,6 +72,7 @@ EXPECTED_WIRED_REAL = {
     "check_commit_worktree",
     "check_contract_backlog_reconcile",  # WOT-2026-024e: cableado en prepush_check.py (closeout, WARN/FAIL)
     "check_deliverables_exist",
+    "check_destination_pii_leak",  # WOT-2026-020t: cableado en prepush_check.py (closeout, WARN/FAIL)
     "check_distribution_agnostic",  # WOT-2026-024z(d): cableado en pre-commit (entry: uv run python)
     "check_encoding_guard",
     "check_guard_wiring",

@@ -159,6 +159,97 @@ def ensure_destination_projections_ignored(
     return missing
 
 
+def _tracked_managed_projections(project_root: Path, git: str) -> list[str]:
+    """Tracked files under the managed gitignore entries (single source with
+    the block ensure_destination_projections_ignored writes)."""
+    entries = PROJECTIONS_GITIGNORE_ENTRIES + DESTINATION_ONLY_PROJECTION_ENTRIES
+    tracked: list[str] = []
+    for entry in entries:
+        proc = subprocess.run(  # noqa: S603
+            [git, "-C", str(project_root), "ls-files", "--", entry],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            print(
+                f"[UNTRACK] WARN: git ls-files failed for {entry}: "
+                f"{proc.stderr.strip()[:200]}"
+            )
+            continue
+        tracked.extend(line for line in proc.stdout.splitlines() if line.strip())
+    return tracked
+
+
+def untrack_ignored_projections(
+    project_root: Path,
+    dry_run: bool = False,
+    motor_root: Path | None = None,
+) -> list[str]:
+    """WOT-2026-020t (BUG-1): opt-in untrack of already-tracked managed projections.
+
+    A gitignore entry never UN-tracks what was committed before it existed, so a
+    destination that versioned .agent/collaboration/ keeps publishing it (local
+    absolute paths -> PII). This function is the ONLY untrack path and callers
+    invoke it ONLY under the explicit --untrack-existing flag: the two
+    ensure_destination_projections_ignored call-sites run unattended on
+    install/sync, and an unconditional `git rm --cached` there would de-track
+    published repos through the back door (hard design barrier of the ticket).
+
+    Before: project_root is the destination root; the human explicitly passed
+            --untrack-existing.
+    During: no-op on the motor itself (identity check, dogfooding) and on roots
+            without their own .git (git would walk up to a parent repo,
+            WOT-2026-020r). Scope derives from PROJECTIONS_GITIGNORE_ENTRIES +
+            DESTINATION_ONLY_PROJECTION_ENTRIES (single source with the managed
+            gitignore block) resolved via `git ls-files`; removal uses
+            `git rm --cached` (index only: worktree untouched, nothing
+            committed -- the human decides the commit).
+    After: returns the list of untracked paths (empty on any no-op). Idempotent:
+           a second run finds nothing tracked and is a no-op.
+    """
+    if motor_root is not None and project_root.resolve() == motor_root.resolve():
+        print("[UNTRACK] motor itself (dogfooding): no-op.")
+        return []
+    if not (project_root / ".git").exists():
+        print(
+            f"[UNTRACK] {project_root} has no .git of its own: no-op (WOT-2026-020r)."
+        )
+        return []
+    git = shutil.which("git")
+    if git is None:
+        print("[UNTRACK] ERROR: git not found on PATH; nothing untracked.")
+        return []
+    tracked = _tracked_managed_projections(project_root, git)
+    if not tracked:
+        print("[UNTRACK] nothing tracked among managed projections: no-op.")
+        return []
+    if dry_run:
+        print(f"[DRY-RUN] Would untrack {len(tracked)} file(s) (index only):")
+        for f in tracked:
+            print(f"  - {f}")
+        return tracked
+    proc = subprocess.run(  # noqa: S603
+        [git, "-C", str(project_root), "rm", "--cached", "-q", "--", *tracked],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        print(
+            f"[UNTRACK] ERROR: git rm --cached rc={proc.returncode}: "
+            f"{proc.stderr.strip()[:300]}"
+        )
+        return []
+    print(
+        f"[UNTRACK] {len(tracked)} file(s) removed from the index "
+        "(worktree intact, nothing committed):"
+    )
+    for f in tracked:
+        print(f"  - {f}")
+    return tracked
+
+
 def read_json(path: Path) -> dict | None:
     if not path.exists():
         return None
@@ -1276,6 +1367,7 @@ def install_agent_system(
     ticket_prefix: str | None = None,
     dry_run: bool = False,
     auto_yes: bool = False,
+    untrack_existing: bool = False,
 ) -> int:
     print("[INSTALL] Agent System from orquestador_de_agentes/")
 
@@ -1296,6 +1388,12 @@ def install_agent_system(
     ensure_destination_projections_ignored(
         project_agent.parent, dry_run=dry_run, motor_root=template_agent.parent
     )
+    # WOT-2026-020t: un-tracking is OPT-IN ONLY (hard barrier). This call-site
+    # runs unattended, so it must never untrack without the explicit flag.
+    if untrack_existing:
+        untrack_ignored_projections(
+            project_agent.parent, dry_run=dry_run, motor_root=template_agent.parent
+        )
 
     # Read allowlist from MANIFEST.workspace
     template_root = template_agent.parent
@@ -1380,6 +1478,7 @@ def sync_agent_system(  # noqa: C901
     strict_sync: bool = False,
     prune: bool = False,
     auto_yes: bool = False,
+    untrack_existing: bool = False,
 ) -> int:
     print("[SYNC] Agent System from orquestador_de_agentes/")
 
@@ -1393,6 +1492,12 @@ def sync_agent_system(  # noqa: C901
     ensure_destination_projections_ignored(
         project_agent.parent, dry_run=dry_run, motor_root=template_agent.parent
     )
+    # WOT-2026-020t: un-tracking is OPT-IN ONLY (hard barrier). This call-site
+    # runs unattended, so it must never untrack without the explicit flag.
+    if untrack_existing:
+        untrack_ignored_projections(
+            project_agent.parent, dry_run=dry_run, motor_root=template_agent.parent
+        )
 
     manifest_version = get_manifest_version(template_agent)
     if manifest_version:
@@ -1567,6 +1672,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip interactive confirmation for host-setup hook (CI mode)",
     )
+    parser.add_argument(
+        "--untrack-existing",
+        action="store_true",
+        help=(
+            "WOT-2026-020t opt-in: also remove already-tracked managed projections "
+            "from the destination's git index (index only, worktree intact, nothing "
+            "committed). NEVER runs without this flag."
+        ),
+    )
     return parser
 
 
@@ -1624,6 +1738,7 @@ def main(argv: list[str] | None = None) -> int:
             ticket_prefix=args.prefix,
             dry_run=args.dry_run,
             auto_yes=args.yes,
+            untrack_existing=args.untrack_existing,
         )
 
     # Sync updates from template to project root.
@@ -1637,6 +1752,7 @@ def main(argv: list[str] | None = None) -> int:
         strict_sync=args.strict_sync,
         prune=args.prune,
         auto_yes=args.yes,
+        untrack_existing=args.untrack_existing,
     )
 
 
