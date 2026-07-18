@@ -29,7 +29,8 @@ repos:
 
   - repo: local
     hooks:
-      # Hook scope protected by scripts/check_ruff_hook_scope.py to prevent non-Python/Markdown drift
+      # Hook scope enforced by the check-ruff-hook-scope hook below (WOT-2026-024w:
+      # cableado real, ya no un comentario sin ejecutar).
       - id: ruff-check
         name: ruff check
         entry: uv run ruff check
@@ -78,6 +79,34 @@ repos:
       - id: check-guard-wiring
         name: check guard wiring (a guard nobody invokes is a norm, not a barrier)
         entry: uv run python scripts/check_guard_wiring.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      # WOT-2026-024w: tres guards que el parser honesto de check_guard_wiring
+      # (024u) destapo como HUERFANOS -- barreras reales que nadie invocaba. Se
+      # cablean aqui como hooks always_run: escanean el arbol vivo (no ficheros
+      # concretos), corren sin args (--root defaults al motor) y son fail-closed.
+      - id: check-ruff-hook-scope
+        name: check ruff hook scope (ruff hooks stay Python-only)
+        entry: uv run python scripts/check_ruff_hook_scope.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: check-skill-collisions
+        name: check skill collisions (no duplicate skill name/trigger)
+        entry: uv run python scripts/check_skill_collisions.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: check-ticket-nomenclature
+        name: check ticket nomenclature (no live generator uses a legacy prefix)
+        entry: uv run python scripts/check_ticket_nomenclature.py
         language: system
         pass_filenames: false
         always_run: true

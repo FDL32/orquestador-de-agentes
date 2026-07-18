@@ -22,21 +22,28 @@ known_unwired:
   validate_observations: WOT-2026-024r
   check_portable_memory_promotion: WOT-2026-024r
   check_motor_pristine: WOT-2026-023y
-  check_destino_publish_ready: WOT-2026-023b
+  # check_destino_publish_ready (era WOT-2026-023b): quedo CABLEADO como efecto
+  # colateral de WOT-2026-024w -- el nuevo run_motor_destination_integration_check en
+  # prepush importa check_motor_destination_integration, que delega en
+  # check_destino_publish_ready.main(). El AST lo alcanza ahora -> wired. Sale de
+  # known_unwired (mantenerlo aqui seria una declaracion STALE que el propio gate caza).
   validate_contract_formation: WOT-2026-023m
   validate_agent_config: WOT-2026-019o
-  # Deuda que el parser HONESTO de v2 destapo (v1 los daba por cableados).
-  check_ruff_hook_scope: WOT-2026-024w
-  check_skill_collisions: WOT-2026-024w
-  check_ticket_nomenclature: WOT-2026-024w
-  check_closeout_reconciliation: WOT-2026-024w
-  check_motor_destination_integration: WOT-2026-024w
-  check_publication_gate: WOT-2026-024w
-  check_template_conformity: WOT-2026-024w
-  validate_authority: WOT-2026-024w
-  # Deuda que el denominador RECURSIVO de v4 destapo (el glob plano era ciego a
-  # subdirectorios; este gate ad-hoc de WP-2026-087 llevaba invisible desde entonces).
-  check_wp_087_deliverable: WOT-2026-024w
+  # WOT-2026-024w DISPUSO los 9 huerfanos que el parser honesto de v2/v4 destapo:
+  #   - 3 CABLEADOS a pre-commit always_run: check_ruff_hook_scope,
+  #     check_skill_collisions, check_ticket_nomenclature (.pre-commit-config.yaml).
+  #   - 2 CABLEADOS a prepush closeout-mode WARN/STRICT: check_closeout_reconciliation,
+  #     check_motor_destination_integration (scripts/prepush_check.py).
+  #   - 2 REPORTER renombrados sin prefijo check_ (precedente 022q): check_template_conformity
+  #     -> template_conformity_report.py; validate_authority -> authority_report.py.
+  #   - 1 RETIRADO: check_wp_087_deliverable (valida un artefacto inexistente; codigo muerto).
+  # Ninguno queda como deuda -> 024w (DoD binario de la ficha satisfecho).
+  # publication_gate NO se cablea a la fuerza: su dominio es una DECISION HUMANA.
+  check_publication_gate: >-
+    BY-DESIGN: gate de publicacion con checklist HUMANA (crear remoto privado,
+    TOCTOU, verificacion final) -- su dominio es una decision humana de
+    publicacion, no corre en un hook automatico. NO es deuda unwired. Follow-up
+    (fuera de 024w): separar el nucleo automatico de la checklist humana.
   # Exencion DELIBERADA, no deuda: un hook automatico seria circular -- el propio
   # hook roto no puede invocar de forma fiable al check que detecta que esta roto.
   check_hook_interpreter: >-

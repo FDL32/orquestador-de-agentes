@@ -1,4 +1,4 @@
-"""Tests for validate_authority script."""
+"""Tests for authority_report script."""
 
 import sys
 from pathlib import Path
@@ -10,7 +10,7 @@ scripts_dir = Path(__file__).parent.parent / "scripts"
 if str(scripts_dir) not in sys.path:
     sys.path.insert(0, str(scripts_dir))
 
-from validate_authority import (  # noqa: E402
+from authority_report import (  # noqa: E402
     detect_legacy_copies,
     extract_ticket_id,
     is_canonical_authority,
@@ -67,7 +67,7 @@ class TestDetectLegacyCopies:
 
 
 class TestMainFunction:
-    @patch("validate_authority.find_all_agent_dirs")
+    @patch("authority_report.find_all_agent_dirs")
     def test_main_success(self, mock_find):
         mock_root = Path(__file__).resolve().parents[1]
         mock_find.return_value = {
@@ -78,7 +78,7 @@ class TestMainFunction:
             result = main()
         assert result == 0
 
-    @patch("validate_authority.find_all_agent_dirs")
+    @patch("authority_report.find_all_agent_dirs")
     def test_main_failure_no_canonical(self, mock_find):
         mock_find.return_value = {"/other/.agent/collaboration": "WP-2026-051"}
         with patch("builtins.print"):

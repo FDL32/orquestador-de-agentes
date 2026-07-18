@@ -70,14 +70,20 @@ EXPECTED_WIRED_REAL = {
     "check_backlog_contract",
     "check_claude_settings_portability",
     "check_commit_worktree",
+    "check_closeout_reconciliation",  # WOT-2026-024w: cableado en prepush_check.py (closeout, WARN/STRICT)
     "check_contract_backlog_reconcile",  # WOT-2026-024e: cableado en prepush_check.py (closeout, WARN/FAIL)
     "check_deliverables_exist",
     "check_destination_pii_leak",  # WOT-2026-020t: cableado en prepush_check.py (closeout, WARN/FAIL)
+    "check_destino_publish_ready",  # WOT-2026-024w (colateral): wired via check_motor_destination_integration en prepush
     "check_distribution_agnostic",  # WOT-2026-024z(d): cableado en pre-commit (entry: uv run python)
     "check_encoding_guard",
     "check_guard_wiring",
     "check_handoff_state_sha",  # WOT-2026-024t(s2): cableado en prepush_check.py (closeout, WARN/FAIL)
+    "check_motor_destination_integration",  # WOT-2026-024w: cableado en prepush_check.py (closeout, WARN/STRICT)
     "check_no_history_truncation",
+    "check_ruff_hook_scope",  # WOT-2026-024w: cableado en .pre-commit-config.yaml (always_run)
+    "check_skill_collisions",  # WOT-2026-024w: cableado en .pre-commit-config.yaml (always_run)
+    "check_ticket_nomenclature",  # WOT-2026-024w: cableado en .pre-commit-config.yaml (always_run)
     "check_worktree_topology",
     "delivery_hygiene_check",  # v4: denominador ve el guard sin prefijo, y lo cabla
     "guard_paths",
@@ -185,9 +191,26 @@ def test_denominator_includes_declared_no_prefix_guards(tmp_path):
 
 
 def test_real_denominator_sees_the_subdir_guard():
-    """Contrato vivo: el guard en subdir del repo real esta en el denominador."""
-    guards = cgw.find_guards(_ROOT, cgw._load_policy()["extra_guards"])
-    assert "check_wp_087_deliverable" in guards
+    """Contrato vivo: el denominador del repo real es RECURSIVO (rglob), no un glob
+    plano de scripts/*.py. WOT-2026-024w retiro check_wp_087_deliverable (el unico
+    guard en scripts/sandbox/), asi que este contrato ya no se ancla en un guard
+    concreto: se verifica materializando un guard en un subdir temporal DENTRO del
+    arbol de scripts/ real y comprobando que el denominador lo ve. El fixture se
+    limpia; la propiedad (recursividad sobre el arbol vivo) es la que importa."""
+    subdir = _ROOT / "scripts" / "sandbox"
+    created_dir = not subdir.exists()
+    probe = subdir / "check_recursion_probe_024w.py"
+    subdir.mkdir(parents=True, exist_ok=True)
+    probe.write_text("# recursion probe (WOT-2026-024w)\n", encoding="utf-8")
+    try:
+        guards = cgw.find_guards(_ROOT, cgw._load_policy()["extra_guards"])
+        assert "check_recursion_probe_024w" in guards, (
+            "denominador NO recursivo: un guard en scripts/sandbox/ no se ve"
+        )
+    finally:
+        probe.unlink(missing_ok=True)
+        if created_dir:
+            subdir.rmdir()
 
 
 # ----------------------------------------------------------------- T-FRONTIER

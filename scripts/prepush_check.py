@@ -29,6 +29,8 @@ After (Post-condiciones y Errores):
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import os
 import subprocess
 import sys
@@ -538,6 +540,89 @@ def run_destination_pii_check(
     )
 
 
+def run_closeout_reconciliation_check(project_root: Path) -> CheckResult:
+    """WOT-2026-024w: the live backlog must reconcile with the bus SUPERVISOR_CLOSED
+    events (drift = a ticket closed on the bus but still live in the backlog, or
+    declared-done without its bus event).
+
+    The SCRIPT is fail-closed (run_gate report["all_pass"] False on drift). The
+    WARN/FAIL verdict lives HERE: WARN by default, FAIL when
+    CLOSEOUT_RECONCILE_STRICT=1. The toggle keeps it a real barrier (M20) that CAN
+    block on demand, without failing every close today over pre-existing drift owned
+    by older tickets (measured 2026-07-18: 5 drifts from 010s/010u/011f/013o/016a --
+    a hard block would be a false red on debt this ticket does not own).
+    """
+    name = "Closeout Reconciliation (WOT-2026-024w)"
+    strict = os.environ.get("CLOSEOUT_RECONCILE_STRICT", "").strip() == "1"
+    try:
+        from scripts.check_closeout_reconciliation import run_gate
+    except ImportError:
+        from check_closeout_reconciliation import run_gate  # type: ignore[no-redef]
+    report = run_gate(project_root)
+    if not report["all_pass"]:
+        mode = (
+            "BLOCKING (CLOSEOUT_RECONCILE_STRICT=1)."
+            if strict
+            else "WARN only; set CLOSEOUT_RECONCILE_STRICT=1 to block."
+        )
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=(
+                f"backlog<->bus drift detected (bus_closed={report.get('bus_closed')}, "
+                f"live_backlog={report.get('live_backlog')}). {mode}"
+            ),
+            is_blocking=strict,
+        )
+    return CheckResult(
+        name=name,
+        passed=True,
+        output="live backlog reconciles with the bus SUPERVISOR_CLOSED events",
+        is_blocking=strict,
+    )
+
+
+def run_motor_destination_integration_check(
+    project_root: Path, motor_root: Path | None = None
+) -> CheckResult:
+    """WOT-2026-024w: the motor<->destino integration gate (link coherence, single
+    canonical authority, context resolution, publish-ready delegation).
+
+    run_integration returns EXIT_OK (0) on a healthy integration; any non-zero is a
+    real failure. WARN by default, FAIL when MOTOR_DEST_INTEGRATION_STRICT=1 (M20:
+    a real barrier that CAN block, not a never-blocks reporter).
+    """
+    name = "Motor<->Destino Integration (WOT-2026-024w)"
+    strict = os.environ.get("MOTOR_DEST_INTEGRATION_STRICT", "").strip() == "1"
+    try:
+        from scripts.check_motor_destination_integration import run_integration
+    except ImportError:
+        from check_motor_destination_integration import (  # type: ignore[no-redef]
+            run_integration,
+        )
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = run_integration(project_root, motor_root, audit_publication=False)
+    if rc != 0:
+        mode = (
+            "BLOCKING (MOTOR_DEST_INTEGRATION_STRICT=1)."
+            if strict
+            else "WARN only; set MOTOR_DEST_INTEGRATION_STRICT=1 to block."
+        )
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=f"integration gate rc={rc}:\n{buf.getvalue().strip()}\n{mode}",
+            is_blocking=strict,
+        )
+    return CheckResult(
+        name=name,
+        passed=True,
+        output="motor<->destino integration gate passed",
+        is_blocking=strict,
+    )
+
+
 def run_preflight_check(
     project_root: Path | None = None,
     expected_artifacts: list[str] | None = None,
@@ -603,6 +688,10 @@ def run_preflight_check(
         results.append(run_handoff_state_sha_check(project_root))
         # 6d. Destination PII Leak (WOT-2026-020t; WARN default, FAIL opt-in)
         results.append(run_destination_pii_check(project_root))
+        # 6e. Closeout Reconciliation (WOT-2026-024w; WARN default, FAIL opt-in)
+        results.append(run_closeout_reconciliation_check(project_root))
+        # 6f. Motor<->Destino Integration (WOT-2026-024w; WARN default, FAIL opt-in)
+        results.append(run_motor_destination_integration_check(project_root))
 
     # Check informacional (no bloqueante)
     results.append(run_validate_all(project_root))

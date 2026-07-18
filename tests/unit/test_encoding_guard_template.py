@@ -17,7 +17,7 @@ Guards (Check 2; cross-repo):
 (e) NO FALSE POSITIVE: output conforme al template Product con divergencia
     legitima de 1 H2 (8 vs 9 = ``H2_TOLERANCE``) -> 0 issues (no falso positivo
     sobre el caso real medido que diverge del template).
-(f) CLI: ``check_template_conformity.py`` exit 0 conforme / 1 no conforme /
+(f) CLI: ``template_conformity_report.py`` exit 0 conforme / 1 no conforme /
     2 pathing invalido (fail-closed).
 (g) THRESHOLDS: ``H2_TOLERANCE`` y ``TEMPLATE_ACCENT_FRACTION`` son constantes
     nombradas con los valores medidos (medicion reproducible sobre
@@ -43,7 +43,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 _MOTOR_ROOT = Path(__file__).resolve().parents[2]
-_CLI = _MOTOR_ROOT / "scripts" / "check_template_conformity.py"
+_CLI = _MOTOR_ROOT / "scripts" / "template_conformity_report.py"
 
 from encoding_guard import (  # noqa: E402
     H2_TOLERANCE,

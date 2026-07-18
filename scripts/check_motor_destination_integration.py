@@ -7,7 +7,7 @@ lifecycle by DELEGATING to live checks instead of reinventing validators:
 - ``motor_destination_link.json`` resolves coherent motor_root + destination_root
   (fail-closed on missing/invalid link).
 - destination authority is canonical for the destination tree (reuses
-  validate_authority helpers by import; does NOT call its motor-only main()).
+  authority_report helpers by import; does NOT call its motor-only main()).
 - destination context resolves the motor link (reuses destination_context).
 - operational pre-push gate (delegates to check_destino_publish_ready.main()).
 - OPTIONAL first-publication audit behind an explicit flag (delegates to
@@ -36,14 +36,14 @@ _MOTOR_ROOT_BOOTSTRAP = Path(__file__).resolve().parent.parent
 if str(_MOTOR_ROOT_BOOTSTRAP) not in sys.path:
     sys.path.insert(0, str(_MOTOR_ROOT_BOOTSTRAP))
 
-from scripts.check_destino_publish_ready import main as publish_ready_main  # noqa: E402
-from scripts.classify_publication import build_manifest  # noqa: E402
-from scripts.destination_context import resolve_motor_link  # noqa: E402
-from scripts.validate_authority import (  # noqa: E402
+from scripts.authority_report import (  # noqa: E402
     detect_legacy_copies,
     find_all_agent_dirs,
     is_canonical_authority,
 )
+from scripts.check_destino_publish_ready import main as publish_ready_main  # noqa: E402
+from scripts.classify_publication import build_manifest  # noqa: E402
+from scripts.destination_context import resolve_motor_link  # noqa: E402
 
 
 # Exit codes (documented in the module docstring and --help).
@@ -56,9 +56,9 @@ EXIT_CONFIG_ERROR = 3
 def check_destination_authority(project_root: Path) -> tuple[bool, str]:
     """Confirm <project_root>/.agent/collaboration is the canonical authority.
 
-    Reuses validate_authority helpers BY IMPORT (is_canonical_authority,
+    Reuses authority_report helpers BY IMPORT (is_canonical_authority,
     find_all_agent_dirs, detect_legacy_copies). This deliberately does NOT use
-    validate_authority.main(), which is CLI-only and hardcodes the motor as the
+    authority_report.main(), which is CLI-only and hardcodes the motor as the
     canonical root; here the canonical root is the destination's own collab dir.
 
     Before: project_root points at a repo_destino.
@@ -80,7 +80,7 @@ def check_destination_authority(project_root: Path) -> tuple[bool, str]:
     legacy = detect_legacy_copies(copies, str(canonical_root))
     # Backup snapshots (.agent/backups/, _backups/) are intentional historical
     # copies, not an operational split-brain. detect_legacy_copies only filters
-    # test fixtures, so exclude backups here (the guarded validate_authority.py
+    # test fixtures, so exclude backups here (the guarded authority_report.py
     # is not modified). Any remaining copy is a real divergence.
     operational_legacy = {
         path: ticket

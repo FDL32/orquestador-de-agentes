@@ -73,6 +73,10 @@ def test_preflight_closeout_mode_includes_gate(tmp_path: Path, monkeypatch) -> N
         "run_agent_controller_validate",
         "run_git_status_check",
         "run_validate_all",
+        # WOT-2026-024w: dos gates nuevos de closeout que leen bus/git; se aislan
+        # aqui como los demas para probar SOLO la inclusion del backlog gate.
+        "run_closeout_reconciliation_check",
+        "run_motor_destination_integration_check",
     ):
         monkeypatch.setattr(pc, fn, lambda *a, **k: ok)
 

@@ -239,8 +239,8 @@ class TestValidateAuthorityExtractTicket:
     @pytest.fixture(scope="class")
     def fn(self):
         spec = importlib.util.spec_from_file_location(
-            "validate_authority",
-            _MOTOR_ROOT / "scripts" / "validate_authority.py",
+            "authority_report",
+            _MOTOR_ROOT / "scripts" / "authority_report.py",
         )
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
