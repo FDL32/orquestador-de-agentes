@@ -711,6 +711,46 @@ def append_run_history(summary: dict) -> None:
         pass
 
 
+def emit_suite_regression_report() -> None:
+    """WOT-2026-031a: invoke the suite performance regression REPORT (INFORMATIVE).
+
+    Before: ``append_run_history`` has just written this run to
+        ``RUN_HISTORY_JSONL``. The reporter (``scripts/suite_regression_report.py``,
+        WOT-2026-022q) has existed and been tested but nobody invoked it -- useful
+        dead code. It compares the current ``level=all`` run against the median of
+        prior comparable runs and prints classified WARN lines.
+    During: import the reporter lazily (stdlib-only, no import-time side effects)
+        and call ``analyze`` over the SAME ``RUN_HISTORY_JSONL`` this runner
+        appends to, so a test that isolates ``RUN_HISTORY_JSONL`` also isolates
+        the report. Prints an ``[suite-regression]`` info line plus any WARN lines.
+    After: returns None. This is STRICTLY INFORMATIVE and FAIL-OPEN: it NEVER
+        touches ``exit_code`` and ANY error (missing history, import failure,
+        reporter bug) is swallowed. A performance-report failure must NEVER break
+        or fail a pytest run (pattern WOT-2026-022e / append_run_history). It is
+        NOT a blocking gate.
+    """
+    try:
+        scripts_dir = str(Path(__file__).resolve().parent)
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        import suite_regression_report as srr
+
+        history = Path(RUN_HISTORY_JSONL)
+        if not history.exists():
+            return
+        records = srr._iter_records(history)
+        if not records:
+            return
+        warns, info = srr.analyze(
+            records, srr.DEFAULT_WINDOW, srr.DEFAULT_THRESHOLD_PCT
+        )
+        print(f"[suite-regression] {info}")
+        for w in warns:
+            print(f"[suite-regression] {w}")
+    except Exception:  # noqa: S110 - fail-open reporter, never affect the run rc
+        pass
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Runner seguro para pytest en agent_system."
@@ -1183,6 +1223,10 @@ def main() -> int:  # noqa: C901
         # AFTER last-run.json is written and is fully fail-open (its own
         # try/except) so it can never abort the run nor block release_lock().
         append_run_history(summary)
+        # WOT-2026-031a: emit the suite performance regression REPORT (INFORMATIVE,
+        # fail-open, never affects exit_code). Placed AFTER append_run_history so
+        # it reads a history that already includes this run. NOT a blocking gate.
+        emit_suite_regression_report()
         release_lock()
 
 

@@ -1703,3 +1703,120 @@ class TestIsPidRunningWindowsSafe:
         monkeypatch.setattr(os, "kill", _boom)
         with pytest.raises(RuntimeError):
             mod.acquire_lock(force_unlock=False)
+
+
+class TestSuiteRegressionReportWiring:
+    """WOT-2026-031a: the suite performance regression REPORT is wired post-suite.
+
+    The reporter (scripts/suite_regression_report.py, WOT-2026-022q) existed and
+    was tested but nobody invoked it. These tests prove: (1) main() actually
+    invokes it after append_run_history, and (2) it is STRICTLY INFORMATIVE --
+    a reporter that BLOWS UP must NEVER change main()'s exit_code.
+    """
+
+    def _run_main(
+        self, mod, tmp_path: Path, monkeypatch, stream_return: tuple
+    ) -> tuple[int, str]:
+        """Run main() in a tmp-isolated env; return (exit_code, captured stdout)."""
+        monkeypatch.setattr(mod, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(mod, "_PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(mod, "_PROJECT_ROOT_BOOTSTRAP", tmp_path)
+        base = tmp_path / ".agent" / "runtime" / "pytest-safe"
+        base.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(mod, "LAST_RUN_JSON", base / "last-run.json")
+        monkeypatch.setattr(mod, "LAST_RUN_LOG", base / "last-run.log")
+        monkeypatch.setattr(mod, "RUN_HISTORY_JSONL", base / "run_history.jsonl")
+
+        monkeypatch.setattr(mod, "stream_pytest", lambda cmd: stream_return)
+        monkeypatch.setattr(mod, "_delivery_head_sha", lambda: "abc123")
+        lock_obj = {
+            "pid": 0,
+            "started_at": "2026-01-01T00:00:00+00:00",
+            "cwd": str(tmp_path),
+        }
+        monkeypatch.setattr(mod, "acquire_lock", lambda force_unlock=False: lock_obj)
+        monkeypatch.setattr(mod, "release_lock", lambda: None)
+        monkeypatch.setattr(
+            mod, "cleanup_known_temp_dirs", lambda: {"removed": [], "failed": []}
+        )
+        monkeypatch.setattr(mod, "check_canonical_state_leak", lambda snap: [])
+        monkeypatch.setattr(mod, "snapshot_canonical_state", lambda: {})
+        monkeypatch.setattr(
+            mod,
+            "select_test_runner",
+            lambda interp, args, xdist, run_dir, test_dir: (["echo"], "pytest"),
+        )
+        monkeypatch.setattr(mod, "resolve_test_interpreter", lambda: sys.executable)
+        monkeypatch.setattr(sys, "argv", ["run_pytest_safe.py", "--level", "all"])
+
+        import contextlib
+        import io
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = mod.main()
+        return code, buf.getvalue()
+
+    def test_reporter_is_invoked_post_suite(self, tmp_path: Path, monkeypatch) -> None:
+        """main() prints an [suite-regression] line -> the reporter IS wired.
+
+        Without the WOT-2026-031a wiring, nothing invokes the reporter and the
+        '[suite-regression]' marker never appears in main()'s stdout.
+        """
+        mod = load_runner_module()
+        code, out = self._run_main(
+            mod, tmp_path, monkeypatch, stream_return=(0, [], [])
+        )
+        assert code == 0
+        assert "[suite-regression]" in out, (
+            "main() must invoke suite_regression_report post-suite "
+            "(no '[suite-regression]' marker -> reporter not wired)"
+        )
+
+    def test_reporter_exception_does_not_change_exit_code(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """MUTATION WITH TEETH: if the reporter RAISES, exit_code is unchanged.
+
+        This isolates the 'never affects rc' invariant: we monkeypatch the
+        reporter's analyze() to raise, and assert main() still returns the
+        pytest exit_code (0). If the wiring were NOT fail-open (e.g. the call
+        sat outside a try/except, or propagated the exception), main() would
+        crash or return a non-zero code -- this test would then fail.
+        """
+        mod = load_runner_module()
+
+        scripts_dir = str(PROJECT_ROOT / "scripts")
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        import suite_regression_report as srr
+
+        def _boom(*a, **k):
+            raise RuntimeError("reporter blew up mid-analysis")
+
+        monkeypatch.setattr(srr, "analyze", _boom)
+
+        code, _out = self._run_main(
+            mod, tmp_path, monkeypatch, stream_return=(0, [], [])
+        )
+        assert code == 0, (
+            "a reporter that raises must NOT change main()'s exit_code: "
+            "the post-suite report is strictly informative and fail-open"
+        )
+
+    def test_reporter_nonzero_would_not_break_rc_on_red_suite(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """On a RED suite, exit_code stays the pytest code, unaffected by the report.
+
+        The reporter never returns rc to main() (main ignores its return), but
+        this guards the pairing: a failing pytest run keeps its own exit_code 1
+        with the reporter wired in, and the report does not mask/alter it.
+        """
+        mod = load_runner_module()
+        failing = ["tests/foo/test_bar.py::test_x"]
+        code, out = self._run_main(
+            mod, tmp_path, monkeypatch, stream_return=(1, failing, [])
+        )
+        assert code == 1, "red suite must keep exit_code 1 with the reporter wired"
+        assert "[suite-regression]" in out
