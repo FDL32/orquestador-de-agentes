@@ -67,6 +67,44 @@ invoke the executor. No cycle.
 
 ---
 
+## Paso 0: backend-accessibility gate (Nivel 0, HARD-STOP before any ticket)
+
+Before the state machine touches a single ticket, the executor MUST run the
+Nivel 0 accessibility census over every backend the flight's DAG depends on.
+This is a BINARY gate, not a warning: **every REQUIRED profile must be
+ACCESIBLE, or the batch HARD-STOPS before executing tickets.**
+
+- **Tool**: `scripts/check_agents_accessible.py`, invoked with one
+  `--require <profile>` per profile the DAG's groups actually depend on
+  (never the full `ensemble_profiles` set blindly -- only what this flight
+  needs). The CLI already encodes the binary criterion: exit 0 iff every
+  `--require`d profile is `ACCESIBLE`; exit 1 if any required profile is
+  `INACCESIBLE`/`INACCESIBLE-timeout`/excluded; exit 2 on a usage error
+  (an unknown profile name in `--require`).
+- **Criterion**: treat the exit code as the whole verdict -- do not
+  re-interpret a non-zero exit as advisory. A required profile that is
+  inaccessible is a HARD-STOP with `cause_type: TOPOLOGY` (no ticket has
+  started yet, so there is no `GROUP_STOP_REPORT` group to freeze; report the
+  missing/inaccessible profile names directly and stop).
+- **Programmatic equivalent**: the same census is available as
+  `collect_accessibility(config, require=[...])` (imported from
+  `scripts.check_agents_accessible`), returning `n_fail`, `missing_required`
+  and a per-profile `status` map, for callers that need the structured result
+  instead of the CLI's exit code (e.g. `scripts/preflight_codeonly_pipeline.py`
+  already consumes it this way).
+- **Scope note (Nivel 0 vs Nivel 1)**: this gate proves a backend is
+  REACHABLE (a subprocess starts, or an API key env var is present) -- it is
+  NOT a round-trip / real-task guarantee. Accessibility != round-trip; the
+  Nivel 1 smoke-traffic check is explicitly out of scope for this executor
+  (see `check_agents_accessible.py --level 1`, which refuses unconditionally).
+
+This gate is a sibling of the "Validate the DAG before executing it" section
+below: both are pre-flight barriers that run BEFORE the state machine, and
+both fail closed rather than let an inaccessible dependency surface mid-batch
+as a confusing per-ticket failure.
+
+---
+
 ## PORTABILITY (root requirement) -- this executor is of the MOTOR, not of any single dogfooding instance
 
 This is a portable tool: it must be able to run against **any `repo_destino`**,

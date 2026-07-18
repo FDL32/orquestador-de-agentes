@@ -323,3 +323,44 @@ def test_cli_against_real_motor_config_smoke():
 def test_collect_accessibility_is_importable_standalone():
     """Sanity: the function the preflight imports exists with the exact name."""
     assert callable(caa.collect_accessibility)
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-026h: EXECUTING contract-test for the batch prompt's Paso 0 gate.
+# Drives collect_accessibility() directly (never a string assertion on the
+# prompt) over a REQUIRED profile in two sibling fixtures: present+accessible
+# (accept) and missing/inaccessible (reject) -- proving the binary
+# required-profile criterion the prompt's Paso 0 gate now mandates.
+# --------------------------------------------------------------------------- #
+
+
+def test_required_profile_present_and_accessible_is_accepted():
+    """Binary criterion, ACCEPT leg: a REQUIRED profile that is present in the
+    config and ACCESIBLE must clear the gate cleanly -- no missing_required
+    entry, zero required failures."""
+    config = _agent_config(sys.executable)
+    result = caa.collect_accessibility(config, require=["proposer_x"])
+    assert result["missing_required"] == []
+    assert result["n_fail"] == 0
+    assert result["status"]["proposer_x"] == "ok"
+
+
+def test_required_profile_missing_from_config_is_rejected():
+    """Binary criterion, REJECT leg (missing): a REQUIRED profile absent from
+    the config's ensemble_profiles surfaces in missing_required -- the exact
+    signal the Paso 0 gate's HARD-STOP is built on."""
+    config = _agent_config(sys.executable)  # only declares 'proposer_x'
+    result = caa.collect_accessibility(config, require=["proposer_x", "ghost_profile"])
+    assert "ghost_profile" in result["missing_required"]
+
+
+def test_required_profile_inaccessible_is_rejected_via_n_fail():
+    """Binary criterion, REJECT leg (inaccessible): a REQUIRED profile present
+    in the config but not ACCESIBLE must surface as a required failure
+    (n_fail > 0), never silently pass -- this is what --require's exit 1
+    is built on."""
+    config = _agent_config(str(Path("/definitely/not/here/ghost.exe")))
+    result = caa.collect_accessibility(config, require=["proposer_x"])
+    assert result["missing_required"] == []  # present in config, just unreachable
+    assert result["n_fail"] > 0
+    assert result["status"]["proposer_x"] == "fail"

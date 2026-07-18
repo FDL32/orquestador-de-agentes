@@ -636,3 +636,44 @@ def test_executor_auditor_parity_on_cond3_universe() -> None:
         "the executor's PREDICATE row 3 must fix the same groups[] universe: "
         "a split contract between executor and auditor on cond-3 recreates F3"
     )
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-026h: Paso 0 backend-accessibility gate. The prompt had NO
+# pre-flight barrier over backend reachability before this ticket (grep for
+# "check_agents_accessible" returned nothing); the mechanism already existed
+# (scripts/check_agents_accessible.py::collect_accessibility, wired into
+# scripts/preflight_codeonly_pipeline.py by WOT-2026-026e) but no prompt
+# layer mandated it for the autonomous batch executor.
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_wires_backend_accessibility_gate() -> None:
+    """The prompt must reference the canonical Nivel 0 accessibility script
+    and its binary --require criterion as a HARD-STOP before any ticket runs.
+
+    Mutation: drop the Paso 0 section (or the --require reference) -> RED.
+    """
+    text = _read()
+    assert "check_agents_accessible.py" in text, (
+        "the prompt must invoke the canonical Nivel 0 accessibility script "
+        "scripts/check_agents_accessible.py before executing any ticket"
+    )
+    assert "--require" in text, (
+        "the prompt must wire the --require binary criterion: every REQUIRED "
+        "profile must be ACCESIBLE or the batch hard-stops"
+    )
+    assert "HARD-STOP" in text and "Nivel 0" in text, (
+        "the accessibility gate must be framed as a Nivel 0 HARD-STOP before "
+        "any ticket runs, not an advisory warning"
+    )
+
+
+def test_backend_accessibility_gate_script_reference_is_real() -> None:
+    """Seam guard: scripts/check_agents_accessible.py, cited by the Paso 0
+    gate, must actually exist on disk (mirrors the existing dangling-script
+    seam guard pattern for this prompt)."""
+    assert (SCRIPTS / "check_agents_accessible.py").is_file(), (
+        "the Paso 0 gate cites scripts/check_agents_accessible.py, which "
+        "must exist on disk for the reference to be real"
+    )
