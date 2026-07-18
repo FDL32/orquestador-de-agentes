@@ -172,7 +172,7 @@ mencionan `repo_motor`.
 |---|---|---|---|
 | `scripts/install_agent_system.py` | OK-agnostico | `grep -n "pull --ff-only\|checkout principal\|worktree\|cwd.*motor\|main vive"` -> 0 coincidencias en 1533 lineas. No asume ruta/rama del checkout que rompa bajo la worktree nueva. | -- |
 | `scripts/destination_context.py` | OK-agnostico | `grep -n` de los mismos marcadores -> 0 coincidencias en 700 lineas. | -- |
-| `scripts/validate_authority.py` | OK-agnostico | `grep -n` de los mismos marcadores -> 0 coincidencias en 135 lineas. | -- |
+| `scripts/authority_report.py` | OK-agnostico | `grep -n` de los mismos marcadores -> 0 coincidencias en 135 lineas. | -- |
 | `scripts/update_project_map.py` | OK-agnostico | `grep -n` de los mismos marcadores -> 0 coincidencias en 358 lineas. | -- |
 | `.agent/session_tracker.py` | OK-agnostico | `grep -n` de los mismos marcadores -> 0 coincidencias en 212 lineas. | -- |
 | `.agent/agent_controller.py` | OK-agnostico | `grep -n "pull --ff-only\|checkout principal\|worktree\|main vive"` -> 0 coincidencias en 6458 lineas. | -- |

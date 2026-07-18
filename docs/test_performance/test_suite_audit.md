@@ -121,7 +121,7 @@ nombre/agrupacion, no confirmada test-por-test).
 ### Controller / validate / closeout / completion  -- core regression  [V]
 - **Archivos:** `test_agent_controller.py`, `test_controller_integration.py`,
   `test_session_closeout.py`, `test_get_closeout_skip.py`,
-  `test_validate_authority.py`, `test_completion_checker.py`,
+  `test_authority_report.py`, `test_completion_checker.py`,
   `test_completion_common.py`, `test_completion_integration.py`,
   `test_manager_approve.py`, `test_mark_ready_idempotency.py`,
   `test_session_close_observations.py`, `test_closeout_lessons.py`.

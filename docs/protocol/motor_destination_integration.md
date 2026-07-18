@@ -48,11 +48,11 @@ python scripts/check_motor_destination_integration.py --project-root <repo_desti
 | `check_destino_publish_ready.py` | `main(argv)` por import + propagacion de exit code. NO se reescribe `_run_validate`. |
 | `classify_publication.py` | `build_manifest(...)` (helper publico, dry-run). |
 | `destination_context.py` | `resolve_motor_link(...)`. |
-| `validate_authority.py` | helpers `is_canonical_authority`, `find_all_agent_dirs`, `detect_legacy_copies` por import. NO se usa `main()` (es CLI-only y valida el motor). |
+| `authority_report.py` | helpers `is_canonical_authority`, `find_all_agent_dirs`, `detect_legacy_copies` por import. NO se usa `main()` (es CLI-only y valida el motor). |
 
-### Nota sobre `validate_authority.py`
+### Nota sobre `authority_report.py`
 
-El contrato preveia extraer un helper exportable en `validate_authority.py`. El
+El contrato preveia extraer un helper exportable en `authority_report.py`. El
 hook de seguridad `guard_paths` protege rutas que casan el patron `auth`, por lo
 que editar ese archivo queda bloqueado. La logica de autoridad de destino vive
 por tanto en el propio wrapper (`check_destination_authority`), reutilizando los
