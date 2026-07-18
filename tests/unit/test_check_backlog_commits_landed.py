@@ -900,3 +900,111 @@ def test_no_goal_guard_exposes_but_never_fabricates_evidence():
     assert "WOT-2026-0S1S" in census["skipped_required_tickets"]
     # And no phantom pair is emitted for the evidence-less row.
     assert gl.parse_archived_commits(_ROW_CODE_NO_COMMIT) == []
+
+
+# =========================================================================== #
+# WOT-2026-026g -- EXECUTING contract test for the with/without-`commit:<sha>`
+# criterion, driven over a SYNTHETIC GIT FIXTURE end to end (census_archived ->
+# classify -> audit -> main exit code). This replaces prose-pinning (asserting
+# a fragment is present in a .md file, which never runs the guard) with a test
+# that actually EXECUTES the productive path in scripts/check_backlog_commits_
+# landed.py against two sibling repos: one whose required row's sha genuinely
+# landed, one whose sibling required row has no commit cell at all.
+#
+# EXPLICITLY OUT OF SCOPE (per WOT-2026-026g adjudication): the MANIFEST.
+# distribute/workspace frontier-drift check pinned as prose in
+# prompts/audit_pipeline_codeonly.md (WOT-2026-023y) has no executable
+# implementation anywhere in the codebase; it is NOT touched or exercised here.
+# =========================================================================== #
+def test_026g_row_with_landed_commit_cell_is_audited_end_to_end(tmp_path):
+    """A terminal code row WHOSE `commit:<sha>` cell really landed in
+    origin/main is counted as `audited` by census_archived (no integrity
+    violation for that row), AND main() exits EXIT_OK end to end.
+
+    Reachable mutation: see test_026g_mut_dropping_commit_cell_gate_hides_the_skip
+    below, which flips this same criterion's OTHER arm from RED to a false
+    GREEN when the `has_commit` gate in census_archived is removed.
+    """
+    _origin, work = _make_repo(tmp_path)
+    landed = _commit(work, "land.txt", "landed payload\n", "WOT-2026-026G1: lands")
+    _g(["push", "-q", "origin", "main"], work)
+    _g(["fetch", "-q", "origin"], work)
+
+    row_with_commit = (
+        f"| Media | WOT-2026-026G1 | landed work deliverable_type: code | motor/x | "
+        f"completed | - | s | commit:{landed} |\n"
+    )
+    census = gl.census_archived(row_with_commit)
+    assert census["required"] == 1
+    assert census["audited"] == 1
+    assert census["skipped_required"] == 0
+
+    dest = _archive_raw(tmp_path, work, row_with_commit)
+    rc = _run_main(tmp_path, work, dest)
+    assert rc == gl.EXIT_OK, (
+        f"a required row whose commit cell genuinely landed must exit OK; got {rc}"
+    )
+
+
+def test_026g_sibling_row_missing_commit_cell_is_exposed_end_to_end(tmp_path):
+    """The SIBLING fixture: the same kind of required (terminal, code) row, but
+    with NO `commit:<sha>` cell at all. census_archived must classify it as
+    `skipped_required` (the silent-skip this guard exists to expose), and
+    main() must NOT report a false EXIT_OK -- it must exit EXIT_SKIPPED_REQUIRED,
+    listing the offending ticket.
+    """
+    _origin, work = _make_repo(tmp_path)
+
+    row_without_commit = (
+        "| Media | WOT-2026-026G2 | missing evidence deliverable_type: code | "
+        "motor/x | completed | - | s | no-evidence-here |\n"
+    )
+    census = gl.census_archived(row_without_commit)
+    assert census["required"] == 1
+    assert census["audited"] == 0
+    assert census["skipped_required"] == 1
+    assert census["skipped_required_tickets"] == ["WOT-2026-026G2"]
+    # And the parser never fabricates a pair for the evidence-less row.
+    assert gl.parse_archived_commits(row_without_commit) == []
+
+    dest = _archive_raw(tmp_path, work, row_without_commit)
+    rc = _run_main(tmp_path, work, dest)
+    assert rc == gl.EXIT_SKIPPED_REQUIRED, (
+        f"a required row with no commit(s) cell must be EXPOSED (non-zero exit), "
+        f"never silently reported as EXIT_OK; got {rc}"
+    )
+
+
+def test_026g_mut_dropping_commit_cell_gate_hides_the_skip():
+    """MUTATION-VERIFY pair (manual, applied and reverted against production during
+    this ticket's gates -- see execution_log.md / builder report for the two real
+    exit codes). Documents in-repo, with teeth, exactly which branch the two tests
+    above are isolating.
+
+    MUTATION: in census_archived(), replace the `if has_commit: audited += 1 else:
+    skipped_required += 1 ...` branch with an unconditional `audited += 1` (i.e.
+    treat every required row as audited regardless of whether it carries a
+    commit(s) cell). That single-branch mutation:
+      - leaves test_026g_row_with_landed_commit_cell_is_audited_end_to_end GREEN
+        (that row already has a commit cell, so the unconditional branch agrees).
+      - flips test_026g_sibling_row_missing_commit_cell_is_exposed_end_to_end RED,
+        because the row with NO commit cell would now also be counted as
+        `audited` (skipped_required stays 0) and main() would report EXIT_OK
+        instead of EXIT_SKIPPED_REQUIRED -- exactly the silent-skip false-green
+        WOT-2026-024c/026g exist to prevent.
+
+    This test itself re-asserts the un-mutated (correct) behaviour directly on
+    the gate expression, so a naive `git diff` reviewer can see the isolated
+    branch without re-deriving it from the two end-to-end tests above.
+    """
+    row_without_commit = (
+        "| Media | WOT-2026-026G3 | isolates the has_commit gate "
+        "deliverable_type: code | motor/x | completed | - | s | none |\n"
+    )
+    has_commit = gl._commit_cell(gl._row_cells(row_without_commit.strip())) is not None
+    assert has_commit is False  # the exact condition the mutation would invert
+    census = gl.census_archived(row_without_commit)
+    assert census["skipped_required"] == 1, (
+        "the has_commit gate in census_archived must route a commit-cell-less "
+        "required row into skipped_required, not audited"
+    )
