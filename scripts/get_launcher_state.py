@@ -247,6 +247,37 @@ def _role_action_for_state(state: TicketState) -> tuple[str, str]:
     return mapping.get(state, ("BUILDER", "IMPLEMENT"))
 
 
+# Tolerante a los dialectos de work_plan.md: `- **Estado:** X`, `**Estado:** X`,
+# `Estado: X`, `- **Estado del ticket:** X`. Anclado a linea; `[^:\n]*` absorbe el
+# markdown/sufijo hasta el primer `:`, `\**` los asteriscos de cierre.
+_WORK_PLAN_STATE_PATTERN = re.compile(r"(?im)^[ \t*_-]*Estado[^:\n]*:\**[ \t]*(\w+)")
+
+
+def _terminal_state_from_work_plan(project_root: Path) -> TicketState | None:
+    """WOT-2026-STATE-RECON: read the declared `Estado:` from work_plan.md and
+    return it ONLY if it is an irreversible terminal (COMPLETED/SUPERSEDED/
+    BLOCKED_FINAL).
+
+    Before: work_plan.md exists (the caller already read the ticket from it).
+    During: parse the `- **Estado:** <STATE>` line (tolerant of dialect).
+    After: returns the TicketState if terminal, else None. Non-terminal declared
+        states (APPROVED/IN_PROGRESS/...) return None on purpose: a freshly
+        created ticket with an empty bus must still start in BUILDER/IMPLEMENT.
+    """
+    work_plan_path = project_root / WORK_PLAN_REL
+    try:
+        content = work_plan_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    match = _WORK_PLAN_STATE_PATTERN.search(content)
+    if not match:
+        return None
+    declared = TicketState.__members__.get(match.group(1).upper())
+    if declared is not None and TicketState.is_approved_or_terminal(declared):
+        return declared
+    return None
+
+
 def derive_launcher_state(project_root: Path) -> dict[str, str]:
     ticket_id = _read_active_ticket(project_root)
 
@@ -258,13 +289,30 @@ def derive_launcher_state(project_root: Path) -> dict[str, str]:
     event_bus = EventBus(runtime_dir=project_root / RUNTIME_EVENTS_REL)
     events = [record.to_dict() for record in event_bus.read_events(ticket_id=ticket_id)]
     state = StateMachine.derive_state_from_events(events)
+    source = "event_bus"
+
+    # WOT-2026-STATE-RECON (2026-07-18): if the bus has NO events for the active
+    # ticket, `derive_state_from_events` yields UNKNOWN, whose default role/action
+    # is BUILDER/IMPLEMENT. That is correct for a just-created ticket (no events
+    # yet), but WRONG when work_plan.md declares a TERMINAL state: the per-ticket
+    # state machine got frozen at a COMPLETED ticket of an old session (flights do
+    # not drive it), so the next flight would try to launch a Builder to IMPLEMENT
+    # a closed ticket. When the bus is silent, honor the terminal Estado declared
+    # in work_plan.md (its own ticket source) -> MANAGER/CREATE_PLAN, never a
+    # relaunch. Non-terminal declared states keep the BUILDER/IMPLEMENT default.
+    if state is TicketState.UNKNOWN:
+        terminal = _terminal_state_from_work_plan(project_root)
+        if terminal is not None:
+            state = terminal
+            source = "work_plan_terminal_fallback"
+
     role, action = _role_action_for_state(state)
     payload: dict[str, str] = {
         "ticket_id": ticket_id,
         "state": state.value,
         "role": role,
         "action": action,
-        "source": "event_bus",
+        "source": source,
     }
 
     if drift_result.get("drift_detected"):

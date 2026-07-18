@@ -17,7 +17,9 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from scripts.get_launcher_state import derive_launcher_state  # noqa: E402
 
 
-def _write_work_plan(project_root: Path, ticket_id: str) -> None:
+def _write_work_plan(
+    project_root: Path, ticket_id: str, estado: str = "APPROVED"
+) -> None:
     collab = project_root / ".agent" / "collaboration"
     collab.mkdir(parents=True, exist_ok=True)
     (collab / "work_plan.md").write_text(
@@ -27,7 +29,7 @@ def _write_work_plan(project_root: Path, ticket_id: str) -> None:
                 "",
                 "## Metadata",
                 f"- **ID:** {ticket_id}",
-                "- **Estado:** APPROVED",
+                f"- **Estado:** {estado}",
             ]
         ),
         encoding="utf-8",
@@ -66,6 +68,34 @@ def test_derive_launcher_state_defaults_to_builder_for_unknown_bus(
     assert state["state"] == TicketState.UNKNOWN.value
     assert state["role"] == "BUILDER"
     assert state["action"] == "IMPLEMENT"
+
+
+def test_derive_launcher_state_honors_terminal_work_plan_when_bus_empty(
+    tmp_path: Path,
+) -> None:
+    """WOT-2026-STATE-RECON: un work_plan TERMINAL (COMPLETED) con el bus VACIO no
+    debe caer al default BUILDER/IMPLEMENT.
+
+    El caso motivador (2026-07-18): el estado por-ticket queda congelado en un
+    ticket COMPLETED de una sesion vieja (el vuelo no usa la maquina de estados).
+    Al arrancar el proximo vuelo, `derive_launcher_state` leia el bus VACIO ->
+    UNKNOWN -> default BUILDER/IMPLEMENT, es decir, el launcher intentaria lanzar
+    un Builder a IMPLEMENTAR un ticket ya cerrado. Con el bus vacio, se honra el
+    Estado TERMINAL declarado en work_plan.md -> MANAGER/CREATE_PLAN (crear el
+    siguiente plan), como haria un COMPLETED derivado del bus. Los estados NO
+    terminales (APPROVED/IN_PROGRESS) con bus vacio NO cambian: un ticket recien
+    creado sin eventos debe seguir arrancando en BUILDER (test de arriba).
+    """
+    ticket_id = "WT-2026-216"
+    _write_work_plan(tmp_path, ticket_id, estado="COMPLETED")
+
+    state = derive_launcher_state(tmp_path)
+
+    assert state["ticket_id"] == ticket_id
+    assert state["state"] == TicketState.COMPLETED.value
+    assert state["role"] == "MANAGER"
+    assert state["action"] == "CREATE_PLAN"
+    assert state["source"] == "work_plan_terminal_fallback"
 
 
 def test_derive_launcher_state_accepts_custom_ticket_prefix(tmp_path: Path) -> None:
