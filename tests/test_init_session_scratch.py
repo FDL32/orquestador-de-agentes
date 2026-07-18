@@ -552,6 +552,119 @@ class TestBatchRetryAntiLoop023w:
 
 
 # ---------------------------------------------------------------------------
+# WOT-2026-026d: process-audit reference events
+# ---------------------------------------------------------------------------
+
+
+_PROCESS_AUDIT_EVENTS_026D = (
+    "prompt_designed",
+    "tool_used",
+    "ensemble_ref",
+    "backlog_triage_decision",
+)
+
+
+class TestProcessAuditRefEvents026d:
+    """The close audit (Bloque 2.5) crosses prompts-designed / tools-used /
+    ensemble rounds / triage decisions against the scorecard. Each is a
+    REFERENCE event carrying a `reference` pointer (hash/path/id), never a copy
+    (the scorecard owns the per-round verdict -- one datum, one writer). Before
+    this ticket these events did not exist; the scrub to LEDGER_FIELDS would
+    have dropped `reference` and cmd_add would have rejected the event as
+    unknown.
+    """
+
+    def test_reference_event_round_trips(self, tmp_path):
+        """add(event=<ref event>, generator, reference) -> reference persisted INTACT.
+
+        Mutation-to-prove: removing `reference` from LEDGER_FIELDS makes the
+        scrub drop it and this exact assertion goes red; removing the event from
+        EVENTS makes cmd_add reject it as unknown (returncode 2).
+        """
+        for event in _PROCESS_AUDIT_EVENTS_026D:
+            repo = _make_repo(REAL_SYSTEM_TEMP, f"pa_{uuid.uuid4().hex[:8]}")
+            sid = _sentinel_id()
+            _init_session(repo, sid)
+
+            ref = f"sha256:deadbeef/{event}"
+            result = _add_record(
+                repo, sid, event=event, generator="orchestrator", reference=ref
+            )
+            assert result.returncode == 0, f"{event} add failed: {result.stdout}"
+
+            manifest = repo / ".agent" / "runtime" / "session" / sid / "manifest.jsonl"
+            records = [
+                json.loads(line)
+                for line in manifest.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            assert len(records) == 1
+            rec = records[0]
+            assert rec["event"] == event
+            assert rec.get("reference") == ref, (
+                f"{event}: reference lost/altered in the scrub: got "
+                f"{rec.get('reference')!r}, expected {ref!r}"
+            )
+            # The audit must accept the record (it is a known event with its
+            # required fields present).
+            session_dir = repo / ".agent" / "runtime" / "session" / sid
+            audit = _audit_session(session_dir, sid)
+            assert audit["valid"] is True, f"{event}: {audit['findings']}"
+
+    def test_reference_event_requires_reference(self, tmp_path):
+        """`reference` is the pointer that keeps the event from being an empty
+        marker -> required for every process-audit event."""
+        for event in _PROCESS_AUDIT_EVENTS_026D:
+            repo = _make_repo(REAL_SYSTEM_TEMP, f"par_{uuid.uuid4().hex[:8]}")
+            sid = _sentinel_id()
+            _init_session(repo, sid)
+
+            result = _add_record(repo, sid, event=event, generator="orchestrator")
+            assert result.returncode == 2, (
+                f"{event} without reference should exit 2: {result.stdout}"
+            )
+            reason = json.loads(result.stdout)["reason"]
+            assert "reference" in reason, f"{event}: unexpected reason {reason!r}"
+
+    def test_reference_event_requires_generator(self, tmp_path):
+        """`generator` names WHO produced the referenced artifact -> required."""
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"pag_{uuid.uuid4().hex[:8]}")
+        sid = _sentinel_id()
+        _init_session(repo, sid)
+
+        result = _add_record(repo, sid, event="prompt_designed", reference="sha256:abc")
+        assert result.returncode == 2, (
+            f"prompt_designed without generator should exit 2: {result.stdout}"
+        )
+        assert "generator" in json.loads(result.stdout)["reason"]
+
+    def test_reference_event_does_not_trigger_completeness_invariant(self, tmp_path):
+        """A lone reference event must NOT trip the 022e added-vs-decided check.
+
+        The cross-record completeness invariant is scoped to
+        artifact_added/artifact_decision by artifact_path; a process-audit event
+        carries no artifact_path, so a session with only reference events is
+        vacuously complete and archivable.
+        """
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"pac_{uuid.uuid4().hex[:8]}")
+        sid = _sentinel_id()
+        _init_session(repo, sid)
+        for event in _PROCESS_AUDIT_EVENTS_026D:
+            r = _add_record(
+                repo, sid, event=event, generator="orchestrator", reference="ref:x"
+            )
+            assert r.returncode == 0, f"{event}: {r.stdout}"
+
+        session_dir = repo / ".agent" / "runtime" / "session" / sid
+        audit = _audit_session(session_dir, sid)
+        assert audit["valid"] is True, audit["findings"]
+        # No "missing artifact_decision" finding: there was no artifact_added.
+        assert not any(
+            "missing artifact_decision" in f.get("error", "") for f in audit["findings"]
+        ), audit["findings"]
+
+
+# ---------------------------------------------------------------------------
 # lock_reclaimed without generator -> audit clean (anti-fosilizacion)
 # ---------------------------------------------------------------------------
 

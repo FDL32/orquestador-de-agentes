@@ -140,8 +140,8 @@ Esta es la barrera critica que el flujo anterior omitia: la salida del Builder n
 
 PUNTO DE CONTROL antes del Bloque 3: la sesion debe estar VERDE y RECONCILIADA. Si el Bloque 2 destapa un false-green o una contradiccion, vuelve al Builder; NO continues.
 
-== BLOQUE 2.5: AUDITORIA DE ARTEFACTOS DE SESION (WOT-2026-022e) ==
-Audita los artefactos que los prompts generaron durante la sesion, registrados en el manifest.jsonl de la infra session-scratch (`scripts/init_session_scratch.py`, WOT-2026-022c). Es INFORMATIVO: NO bloquea el cierre, con UNA sola excepcion binaria (ver 2.5.f). Su salida alimenta el Bloque 4 (memoria) y el Bloque 5 (backlog), NUNCA un tercer destino persistente.
+== BLOQUE 2.5: AUDITORIA DE ARTEFACTOS Y PROCESO DE SESION (WOT-2026-022e, ampliado 026d) ==
+Audita los artefactos que los prompts generaron durante la sesion Y el PROCESO que la sesion siguio (prompts disenados, herramientas usadas, rondas de ensemble, decisiones de triage), registrados en el manifest.jsonl de la infra session-scratch (`scripts/init_session_scratch.py`, WOT-2026-022c) y cruzados con el scorecard de ensembles (2.5.i). Es INFORMATIVO: NO bloquea el cierre, con UNA sola excepcion binaria (ver 2.5.f). Su salida alimenta el Bloque 4 (memoria) y el Bloque 5 (backlog), NUNCA un tercer destino persistente. El sub-bloque 2.5.j (PROCESS IMPROVEMENT PROPOSAL) SOLO PROPONE mejoras de proceso; la escritura va por los canales existentes (Bloques 4/5).
 
 2.5.a SKIP si vacio: si `<repo_destino>/.agent/runtime/session/` no tiene sesiones, SALTA este bloque entero (no gastes tokens en carpeta vacia) y dilo: "Bloque 2.5: sin sesiones, SKIP".
 
@@ -171,6 +171,17 @@ Audita los artefactos que los prompts generaron durante la sesion, registrados e
      - `ROLE_FOLLOWUP`: friccion residual por rol -> ficha de ajuste de rol, registrada en el Bloque 5 (backlog) via el triage de 2.5.e.
      - `MEMORY_ONLY`: senal de rol con evidencia pero sin accion de ticket -> Bloque 4 (memoria) via 2.5.e.
    - NUNCA ROLE_HOTFIX: el cierre solo REGISTRA la senal; cambiar un rol (definicion, backend, allowlist) exige ticket propio, jamas edicion de rol en caliente durante el cierre.
+
+2.5.i Cruce con el scorecard de ensembles (WOT-2026-026d, dep WOT-2026-025y). El Bloque 2.5 hasta aqui audita SOLO la friccion de prompts (manifest). Amplia el ambito a lo que la sesion HIZO -- prompts disenados, herramientas usadas, rondas de ensemble, decisiones de triage -- cruzando el manifest con el scorecard:
+   - **Eventos de REFERENCIA del manifest** (el mismo `manifest.jsonl`, nuevos eventos de 026d): `prompt_designed`, `tool_used`, `ensemble_ref`, `backlog_triage_decision`. Cada uno lleva un campo `reference` (hash/ruta/id), NUNCA una copia del payload. El scorecard es DUENO del veredicto por ronda; el manifest solo apunta a el (`ensemble_ref.reference` = fila/id del scorecard). Un dato, un escritor: no dupliques el veredicto del scorecard en el manifest.
+   - **Cruce**: para cada `ensemble_ref` del manifest, resuelve su `reference` contra el scorecard de la sesion (`session_id` comun, aportado por 025y) y agrega: que backend propuso/adjudico, latencia, evidencia. Para cada `tool_used`/`prompt_designed`, agrega su recurrencia y si coincide con friccion de 2.5.c/2.5.h.
+   - **INFORMATIVO** (misma regla que el resto del bloque): NO bloquea el cierre. Si NO hay scorecard de la sesion (o `session_id` no cruza), dilo explicito ("2.5.i: sin scorecard cruzable para esta sesion, SKIP del cruce") y sigue con lo que el manifest si tenga -- ausencia de scorecard no es fallo.
+
+2.5.j PROCESS IMPROVEMENT PROPOSAL (WOT-2026-026d; pieza SEPARADA de `memory_upload.md`, decision usuario 2026-07-16). Con la telemetria de 2.5.c/2.5.h/2.5.i ya agregada, emite propuestas de mejora de PROCESO. Entrada = ledger de sesion + scorecard + prompts usados + herramientas usadas + errores/retries. Salida = propuestas CLASIFICADAS, SOLO PROPONE (no escribe aqui):
+   - Clases: `prompt_refactor` / `skill_refactor` / `script_guard` / `memory_candidate` / `backlog_ticket`. Cada propuesta lleva su EVIDENCIA verificable (SHA/diff/exit-code/cita de prompt/fila de scorecard); sin evidencia -> se descarta (mismo umbral que 2.5.e / Bloque 4).
+   - **La escritura va por los canales EXISTENTES, no por un tercer destino**: `memory_candidate` -> Bloque 4 (memoria, con confirmacion humana); `prompt_refactor`/`skill_refactor`/`script_guard`/`backlog_ticket` -> Bloque 5 (backlog persistente del workspace del motor) via el triage de 2.5.e.
+   - **CLAUSULA DE PERSISTENCIA (nit revisor 2026-07-16)**: toda propuesta `script_guard`/`backlog_ticket` que SOBREVIVA el triage DEBE materializarse via el Bloque 5 en el backlog persistente. El ledger de sesion es gitignored y se purga (gc, KEEP_LAST_K=10): una propuesta que solo viva ahi es EFIMERA y se pierde. No la dejes en el ledger creyendo que quedo registrada.
+   - Promocion de lo aprendido SOLO por Bloques 4/5 post-cierre (verde). Este sub-bloque PROPONE; NUNCA escribe backlog ni memoria durante el Bloque 2.5 (respeta el invariante de arbol de cierre de mas abajo: nada se escribe en `backlog.md` antes de `--session-close`).
 
 == BLOQUE 3: CIERRE CANONICO ==
 Invariante de arbol de cierre (v3 P1 delta): antes de correr `prepush_check`/`--session-close`, NINGUN write-surface no incluido en `EXPECTED_CLOSEOUT_RUNTIME_ARTIFACTS` puede haber sido modificado por este flujo (en particular `backlog.md`). Si lo fue, es un error de ORDEN del propio flujo: difiere esa escritura al post-cierre (Bloque 5). El gate no se relaja; el flujo se reordena.

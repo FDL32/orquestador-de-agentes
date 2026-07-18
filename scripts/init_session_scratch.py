@@ -62,7 +62,22 @@ ARCHIVE_DIRNAME = "_archive"
 SESSION_ID_RE = re.compile(r"^\d{8}-\d{4}-(?:[0-9a-f]{4,40}|nogit)-[0-9a-f]{4,32}$")
 
 EVENTS = frozenset(
-    {"artifact_added", "artifact_decision", "lock_reclaimed", "batch_retry"}
+    {
+        "artifact_added",
+        "artifact_decision",
+        "lock_reclaimed",
+        "batch_retry",
+        # WOT-2026-026d: process-audit REFERENCE events. Each captures a POINTER
+        # (hash/path/id) to something produced during the session so the close
+        # audit (Bloque 2.5) can cross prompts-designed / tools-used / ensemble
+        # rounds / triage decisions against the scorecard. They carry a
+        # `reference`, NEVER a copy of the payload (the scorecard owns the
+        # per-round verdict -- one datum, one writer).
+        "prompt_designed",
+        "tool_used",
+        "ensemble_ref",
+        "backlog_triage_decision",
+    }
 )
 
 REQUIRED_BY_EVENT: dict[str, frozenset[str]] = {
@@ -80,6 +95,13 @@ REQUIRED_BY_EVENT: dict[str, frozenset[str]] = {
     # tried. Without enfoque_intentado the record cannot discriminate a repeat,
     # so it is the one mandatory field; the rest are allowlisted below.
     "batch_retry": frozenset({"enfoque_intentado"}),
+    # WOT-2026-026d: each process-audit event needs its `reference` pointer so
+    # the record is not an empty marker. `generator` names WHO produced it; the
+    # rest of the payload is a reference (hash/path/id), never a copy.
+    "prompt_designed": frozenset({"generator", "reference"}),
+    "tool_used": frozenset({"generator", "reference"}),
+    "ensemble_ref": frozenset({"generator", "reference"}),
+    "backlog_triage_decision": frozenset({"generator", "reference"}),
 }
 
 LEDGER_FIELDS = frozenset(
@@ -109,6 +131,10 @@ LEDGER_FIELDS = frozenset(
         "evidencia",
         "enfoque_intentado",
         "refutacion",
+        # WOT-2026-026d: pointer for the process-audit reference events
+        # (prompt_designed / tool_used / ensemble_ref / backlog_triage_decision).
+        # A reference (hash/path/id), never a copy of the referenced payload.
+        "reference",
     }
 )
 
@@ -810,6 +836,16 @@ def cmd_add(args: argparse.Namespace) -> int:  # noqa: C901
             )
         )
         return 2
+    if "reference" in required and not args.reference:
+        print(
+            json.dumps(
+                {
+                    "written": False,
+                    "reason": f"missing required field for event={event}: reference",
+                }
+            )
+        )
+        return 2
 
     artifact_path = args.artifact_path
     if artifact_path is not None and not _validate_artifact_path(artifact_path, sdir):
@@ -870,6 +906,9 @@ def cmd_add(args: argparse.Namespace) -> int:  # noqa: C901
         record["enfoque_intentado"] = args.enfoque_intentado
     if args.refutacion:
         record["refutacion"] = args.refutacion
+    # WOT-2026-026d: reference pointer for the process-audit events.
+    if args.reference:
+        record["reference"] = args.reference
 
     scrubbed: dict[str, Any] = {k: v for k, v in record.items() if k in LEDGER_FIELDS}
     scrubbed = redact_payload(scrubbed)
@@ -1279,6 +1318,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_p.add_argument(
         "--refutacion", default=None, help="Why the attempted approach was refuted."
+    )
+    # WOT-2026-026d: reference pointer for process-audit events
+    # (prompt_designed / tool_used / ensemble_ref / backlog_triage_decision).
+    add_p.add_argument(
+        "--reference",
+        default=None,
+        help=(
+            "Reference pointer (hash/path/id) for a process-audit event; "
+            "never a copy of the referenced payload."
+        ),
     )
     add_p.set_defaults(func=cmd_add)
 
