@@ -582,6 +582,16 @@ class TestLockReclaimedAudit:
         )
 
     def test_artifact_decision_requires_decision(self, tmp_path):
+        # WOT-2026-032a: this barrier was degraded by 022e. 022e made
+        # artifact_path a REQUIRED field for artifact_decision too, so a record
+        # that omits BOTH `decision` and `artifact_path` is invalid for TWO
+        # reasons -- and asserting only `valid is False` no longer isolates
+        # "decision is required": the artifact_path finding alone would satisfy
+        # it. Restore specificity by (a) supplying a valid artifact_path so the
+        # ONLY remaining defect is the missing decision, and (b) asserting the
+        # SPECIFIC decision finding is present while the artifact_path finding
+        # is absent. Mutation: removing `decision` from REQUIRED_BY_EVENT makes
+        # the record fully valid -> this test goes red on the specific finding.
         repo = _make_repo(REAL_SYSTEM_TEMP, f"ad_{uuid.uuid4().hex[:8]}")
         sid = _sentinel_id()
         session_dir = repo / ".agent" / "runtime" / "session" / sid
@@ -596,12 +606,30 @@ class TestLockReclaimedAudit:
                 "event": "artifact_decision",
                 "repo_role": "unknown",
                 "generator": "test",
+                # Present + non-empty so 022e's artifact_path requirement is
+                # satisfied and does NOT contribute a finding: the record's
+                # ONLY defect is the missing `decision`.
+                "artifact_path": "reports/decided.md",
             },
         )
 
         result = _audit_session(session_dir, sid)
         assert result["valid"] is False, (
             "artifact_decision without decision should be invalid"
+        )
+        errors = [f.get("error", "") for f in result["findings"]]
+        decision_finding = (
+            "missing required field for event=artifact_decision: decision"
+        )
+        assert decision_finding in errors, (
+            "the test must fail on the SPECIFIC missing-decision finding, not "
+            f"merely on `valid is False`; findings were: {result['findings']}"
+        )
+        # Isolation: artifact_path was supplied, so it must NOT be flagged --
+        # proving the missing `decision` is the sole reason this record fails.
+        assert not any("artifact_decision: artifact_path" in e for e in errors), (
+            "artifact_path was supplied and must not be a finding: the barrier "
+            f"must isolate the missing decision. findings were: {result['findings']}"
         )
 
     def test_artifact_added_requires_artifact_path(self, tmp_path):
