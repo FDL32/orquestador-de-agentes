@@ -27,14 +27,72 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
 
-# Headings that name the CURRENT state of a flight/session (where a SHA rots).
-_STATE_HEADING_RE = re.compile(
-    r"estado|status|\bstate\b|donde\s+est|where\s+is|donde\s+va|situacion",
-    re.IGNORECASE,
+# WOT-2026-034b: state-heading detection is accent-normalized and looks at the
+# MAIN TERM (the heading's subject), not a raw substring over prose. Two defects
+# motivated this (both reproduced live before the fix):
+#   (1) false NEGATIVE: an ACCENTED state heading (`## Donde esta el vuelo` with
+#       the accents present) did not match the unaccented regex -- IGNORECASE
+#       does not fold accents. The motivating flight's own handoff escaped the
+#       guard for exactly this reason.
+#   (2) false POSITIVE: a heading where the state word is subordinated by a
+#       LEADING genitive (`## Resumen del estado del arte` -> the subject is
+#       "Resumen", "estado" is its object) was flagged, because `.search()`
+#       matched the substring anywhere. That SHA is prose, not stale state.
+#
+# Deliberately NARROW (WOT-2026-034b re-review, adversarial audit): only a
+# genitive BEFORE the term subordinates it. A TRAILING `de(l)` does NOT, because
+# `Estado del motor` / `Estado del vuelo` / `Estado de la sesion` are the single
+# most natural way to write a real state heading in Spanish -- suppressing them
+# would reintroduce the exact false negative this ticket closes (a real
+# `## Estado del motor` with an embedded HEAD SHA was found escaping an earlier,
+# over-broad version of this guard). The pure idiom `## Estado del arte` as a
+# standalone heading therefore stays flagged: an accepted, rare FALSE POSITIVE
+# (a self-correcting spurious red) is far safer than a false negative that lets
+# a rot-prone SHA escape. Other known accepted limits (conservative by design,
+# WOT-2026-024t): plurals/morphology (`estados`, `estatus`), and English
+# `of`-genitives (`State of the art` is not folded like `de`/`del`).
+#
+# Terms that name the CURRENT state of a flight/session (where a SHA rots).
+# Split into whole-word terms (need \b bounds) and phrase terms (the
+# `donde est...` family deliberately has NO trailing bound so it matches
+# `esta`/`esta(n)`/`estamos`, etc., after accent-folding).
+_STATE_TERM_RE = re.compile(
+    r"(?:\b(?:estado|status|state|situacion)\b)"
+    r"|(?:\b(?:donde\s+est|donde\s+va|where\s+is))",
 )
+# A genitive `de`/`del` BEFORE the term subordinates it to another subject
+# (`Resumen del estado ...`) -> prose, not the heading's own state subject.
+_GENITIVE_BEFORE_RE = re.compile(r"\b(?:de|del)\b")
+
+
+def _strip_accents(text: str) -> str:
+    """NFD-decompose and drop combining marks, then lowercase (accent-fold)."""
+    decomposed = unicodedata.normalize("NFD", text)
+    return "".join(c for c in decomposed if unicodedata.category(c) != "Mn").lower()
+
+
+def _is_state_heading(heading: str) -> bool:
+    """True if `heading` names the CURRENT state (accent-folded, main-term).
+
+    A heading is a state heading when a state term appears as the heading's own
+    SUBJECT: accent-folded, matched as a word/phrase, and NOT subordinated by a
+    genitive `de`/`del` appearing BEFORE it. Conservative by design
+    (WOT-2026-024t): an unusual state heading is an accepted false negative; we
+    do not want false reds on history/prose. This is a bounded heuristic, not a
+    grammar parser -- see the module comment for its declared accepted limits
+    (the standalone idiom `estado del arte`, plurals, and English `of`).
+    """
+    folded = _strip_accents(heading)
+    match = _STATE_TERM_RE.search(folded)
+    if match is None:
+        return False
+    return not _GENITIVE_BEFORE_RE.search(folded[: match.start()])
+
+
 # A git SHA shape: 7-40 hex. `\b` bounds keep it from matching inside longer tokens.
 _SHA_RE = re.compile(r"\b[0-9a-f]{7,40}\b", re.IGNORECASE)
 _HEADING_RE = re.compile(r"^#{1,6}\s+(.*)$")
@@ -61,7 +119,7 @@ def find_state_section_shas(text: str) -> list[dict]:
         hm = _HEADING_RE.match(line)
         if hm:
             current_heading = hm.group(1).strip()
-            in_state = bool(_STATE_HEADING_RE.search(current_heading))
+            in_state = _is_state_heading(current_heading)
             continue
         if in_state:
             hits.extend(

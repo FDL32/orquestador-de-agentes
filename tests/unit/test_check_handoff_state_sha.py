@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 from scripts.check_handoff_state_sha import (
+    _strip_accents,
     find_state_section_shas,
     main,
     scan_handoffs,
@@ -64,6 +65,60 @@ def test_clean_state_section_no_hits() -> None:
         find_state_section_shas("## Estado\n\nHEAD verificado con git, sin SHA.\n")
         == []
     )
+
+
+def test_accented_state_heading_is_flagged() -> None:
+    """WOT-2026-034b defect (1): an ACCENTED state heading must be flagged.
+
+    `## Donde esta el vuelo` with the accents present did NOT match the
+    unaccented regex (IGNORECASE does not fold accents), so a SHA under it
+    escaped the guard -- the motivating flight's own handoff bug. After the
+    accent-folding fix it is flagged like its unaccented twin.
+    Mutation: drop `_strip_accents` and this test goes red.
+    """
+    accented = f"## Dónde está el vuelo\n\n- HEAD esperado `{_STATE_SHA}`\n"
+    hits = find_state_section_shas(accented)
+    assert len(hits) == 1
+    assert hits[0]["sha"] == _STATE_SHA
+    assert "nde est" in _strip_accents(hits[0]["heading"])
+
+
+def test_prose_leading_genitive_state_word_is_not_flagged() -> None:
+    """WOT-2026-034b defect (2): a state word subordinated by a LEADING genitive is prose.
+
+    In `## Resumen del estado del arte` the subject is "Resumen"; "estado" is its
+    genitive object -> prose, not a state section, so its SHA is a legitimate
+    reference. Before the fix, `.search()` matched the substring and produced a
+    false red. Mutation: drop the leading-genitive guard and this test goes red.
+    """
+    prose = f"## Resumen del estado del arte de la implementacion\n\ncommit `{_STATE_SHA}`\n"
+    assert find_state_section_shas(prose) == []
+    # Another genitive-prefixed prose heading:
+    prose2 = f"## Analisis del estado de la cuestion\n\nref `{_STATE_SHA}`\n"
+    assert find_state_section_shas(prose2) == []
+
+
+def test_trailing_genitive_state_heading_stays_flagged() -> None:
+    """WOT-2026-034b (adversarial audit): `Estado del <thing>` IS a state section.
+
+    `## Estado del motor` / `## Estado del vuelo` / `## Estado de la sesion` are
+    the most natural way to write a real state heading in Spanish -- the state
+    term is the SUBJECT and `de(l) X` names what is in that state. An earlier,
+    over-broad version of this guard suppressed all `<term> de(l) X` as idiom,
+    which let a real `## Estado del motor` heading with an embedded HEAD SHA
+    escape (found live in flight_20260717/ARRANQUE_NUEVA_SESION.md). These must
+    stay flagged. Mutation: re-add a trailing-genitive suppression and this
+    regression test goes red.
+    """
+    for heading in (
+        "## Estado del motor (VERIFICA con git; NO confies en este texto)",
+        "## Estado del vuelo",
+        "## Estado de la sesion",
+    ):
+        text = f"{heading}\n\n- HEAD esperado `{_STATE_SHA}`\n"
+        hits = find_state_section_shas(text)
+        assert len(hits) == 1, f"{heading!r} must be a flagged state heading: {hits}"
+        assert hits[0]["sha"] == _STATE_SHA
 
 
 def test_scan_handoffs_finds_arranque(tmp_path: Path) -> None:
