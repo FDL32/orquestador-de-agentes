@@ -27,11 +27,15 @@ Este prompt hereda el patron de `prompts/audit_goal_completion.md` --
 **"checker AISLADO del orquestador-ejecutor"** -- y lo aplica al batch
 completo, no a un unico `/goal`:
 
-- **B1 - Aislamiento real (no aspiracional):** el auditor satisface AL MENOS
-  UNA de: (a) modelo distinto del ejecutor (model id auditor != model id
-  ejecutor); (b) sub-agente en FRESH CONTEXT, sin el transcript de la sesion
-  que ejecuto el batch. Si el auditor es la MISMA family leyendo el MISMO
-  contexto del ejecutor, comparte sus sesgos: el veredicto NO CUENTA.
+- **B1 - Aislamiento real (no aspiracional):** el auditor DEBE correr en FRESH
+  CONTEXT, SIN el transcript de la sesion que ejecuto el batch -- esto es
+  OBLIGATORIO e innegociable. Un modelo distinto del ejecutor es un REFUERZO
+  opcional (mas diversidad), NUNCA un sustituto del fresh-context: un modelo
+  distinto que LEE EL MISMO TRANSCRIPT del ejecutor hereda su encuadre y su
+  seleccion de evidencia -> se auto-certifica igual que la misma family. La
+  regla no es "modelo distinto O fresh-context"; es "fresh-context SIEMPRE, y
+  modelo distinto encima si se puede". Si el auditor comparte el contexto/
+  transcript del ejecutor (misma family o no), el veredicto NO CUENTA.
 - **B3 - Aislamiento de privilegios (read-only):** el auditor opera
   ESTRICTAMENTE read-only. Ningun `Write`/`Edit`/`Bash` mutante sobre el
   repositorio auditado. Un auditor con capacidad de escritura podria
@@ -246,8 +250,9 @@ Reproduce las 7 condiciones exactas:
    `audited` moverse.
 
 5. **`suite_final_verde`** -- `run_pytest_safe --level all` corrido
-   DESPUES del ULTIMO commit del batch, con `tested_sha == HEAD` leido del
-   `last-run.json`/output REAL, nunca del exit code del wrapper (el wrapper
+   DESPUES del ULTIMO commit del batch, con `tested_commit_sha == HEAD` leido del
+   `last-run.json`/output REAL (el campo se llama `tested_commit_sha`, no
+   `tested_sha`; es lo que escribe `run_pytest_safe.py`), nunca del exit code del wrapper (el wrapper
    puede dar exit 0 con fallos reales y exit 1 sin fallos por state-leak,
    leccion recurrente de esta familia). Lee la linea literal "N passed / N
    failed" del output real.
@@ -316,12 +321,17 @@ Uno de (canonico, de `prompts/audit_agent_output.md`):
 - `CAMBIOS NECESARIOS`
 - `NO ACEPTAR TODAVIA`
 
-**Regla dura:** un `falso_verde` confirmado (cualquiera de los 8 puntos del
-S.3, o una condicion del PREDICATE del S.4 que fallo pero fue reportada como
-verde por el ejecutor) o un `CLOSURE_NOT_LANDED` (un `commit:<sha>` archivado
-que no aterrizo en `origin/main`, verificado con
-`check_backlog_commits_landed.py`) BLOQUEAN el veredicto: no puede emitirse
-`APROBADO` ni `APROBADO CON NITS` mientras alguno este abierto.
+**Regla dura:** BLOQUEAN el veredicto (no puede emitirse `APROBADO` ni `APROBADO
+CON NITS` mientras alguno este abierto):
+- cualquier condicion del PREDICATE del S.4 con `cumple:false` en TU re-derivacion
+  (las 1-5 y 7; la 6 sin informe emitido) -- da igual que el ejecutor la reportara
+  verde, la omitiera, o nunca la evaluara. El caso mas comun en un batch autonomo NO
+  es un `falso_verde` REPORTADO, sino una condicion que el ejecutor OMITIO y que tu
+  re-derivas false: eso bloquea igual. No exijas que el ejecutor la haya declarado
+  verde para bloquear;
+- un `falso_verde` confirmado en cualquiera de los 8 puntos del S.3;
+- un `CLOSURE_NOT_LANDED` (un `commit:<sha>` archivado que no aterrizo en
+  `origin/main`, verificado con `check_backlog_commits_landed.py`).
 
 No emitas ningun veredicto si el aislamiento del S.0 no esta confirmado.
 
@@ -459,7 +469,7 @@ Ruta paralela:
     "dag_aciclico": {"command": "...", "exit_code": 0, "cumple": true},
     "contabilidad_completa": {"tickets_total": 0, "cerrado": 0, "congelado": 0, "no_alcanzado": 0, "perdidos": 0, "cumple": true},
     "cierres_auditables": {"audited_before": 0, "audited_after": 0, "error_count": 0, "cumple": true},
-    "suite_final_verde": {"tested_sha": "...", "head": "...", "passed": 0, "failed": 0, "cumple": true},
+    "suite_final_verde": {"tested_commit_sha": "...", "head": "...", "passed": 0, "failed": 0, "cumple": true},
     "auditor_emitido": {"report_path": "...", "cumple": true},
     "arboles_limpios": {"dirty_by_repo": {}, "cumple": true}
   },

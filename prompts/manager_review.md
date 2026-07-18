@@ -37,14 +37,17 @@ Identifica el tipo de entrega del Builder:
 
 Para cierres de codigo exige:
 - diff revisable;
-- commit visible en `repo_motor`;
+- commit visible en el repo de `delivery_authority` (`repo_motor` para cambios del
+  motor; `workspace_activo`/`repo_destino` para tickets `WOT` y todo ticket con
+  `delivery_authority: repo_destino`, ver Paso 1b) -- NO asumas `repo_motor`: el
+  commit productivo puede vivir en el destino;
 - estado git limpio o dirty tree justificado;
 - gates ejecutados con salida real;
 - exit codes o resultado verificable;
 - bus canonico coherente.
 
 ## Paso 1b: Verificacion de topologia de worktree (WOT-2026-021g)
-Para tickets de prefijo `WOT`, releas el guard de topologia contra el estado
+Para tickets de prefijo `WOT`, relanzas el guard de topologia contra el estado
 actual del repo tras la entrega del Builder:
 
 ```powershell
@@ -151,8 +154,13 @@ Objetivo: demostrar que al menos un test falla sin el fix y pasa con el fix.
 Ruta segura:
 - preferir `git worktree` temporal o copia aislada;
 - usar checkout parcial solo con `git status --short` limpio;
-- revertir el conjunto minimo de archivos centrales del fix, no asumir que es un
-  unico archivo;
+- revertir SOLO la produccion corregida (el conjunto minimo de archivos centrales
+  del fix, no asumir que es un unico archivo), **CONSERVANDO el test/guard de
+  regresion aplicado**: si el test que evidencia el bug vive en el MISMO commit que
+  la produccion, revertirlo junto con ella lo hace desaparecer -> `mutation-verify`
+  daria falso-verde (el test ausente no puede fallar) o falso-rojo (rompes por otra
+  causa). Aisla: revierte produccion, deja el test; si no son separables, usa un
+  worktree en el commit base y aplica encima SOLO el test de regresion;
 - restaurar inmediatamente despues de la prueba;
 - no usar `git reset --hard` ni revertir cambios no relacionados.
 

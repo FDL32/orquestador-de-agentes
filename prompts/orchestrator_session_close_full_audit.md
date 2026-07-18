@@ -39,8 +39,16 @@ DESTRUCTIVO del estado de continuacion y no debe ejecutarse a mitad de vuelo:
 - **Mid-flight** (parada a mitad de vuelo, NO cierre): quieres auditar y dejar un
   handoff en un checkpoint mientras el vuelo/lote SIGUE abierto (hay tickets por
   delante o un ticket `IN_PROGRESS`). Flujo RECORTADO y read-only:
-  - Corre los Bloques 1 y 2 (salud + auditoria adversarial de los diffs hasta aqui)
-    y 2.5 (proceso), TODO informativo.
+  - Corre los Bloques 1 y 2 (salud + auditoria adversarial de los diffs hasta aqui).
+  - Del Bloque 2.5, en mid-flight SOLO sus sub-bloques de LECTURA y PROPUESTA
+    (2.5.a-2.5.e leen el manifest y triagean; 2.5.h-2.5.j solo PROPONEN). **NO
+    ejecutes 2.5.f ni 2.5.g:** 2.5.f (`add artifact_decision`) ESCRIBE al
+    `manifest.jsonl`, y 2.5.g (`archive` + `gc`) MUTA y PURGA sesiones -- `gc`
+    borra con `shutil.rmtree` de forma IRREVERSIBLE. Eso materializa/destruye
+    estado y contradice la parada read-only; la decision por artefacto (2.5.f) y
+    el archive/gc (2.5.g) se DIFIEREN al cierre FINAL. "Informativo" en 2.5
+    significa "no bloquea el cierre", NO "no escribe a disco": por eso 2.5.f/2.5.g
+    quedan fuera del mid-flight.
   - **NO corras el Bloque 3.** `--session-close` archivaria la colaboracion y
     resetearia STATE -> BORRARIA el estado de continuacion que el vuelo necesita
     para retomarse. Es el error que este modo existe para prevenir.
@@ -86,8 +94,8 @@ Ejecuta en este orden y reporta por bloque:
    REGLA: todos los comandos de 3.4/3.5 se corren con cwd=`<repo_motor>` (el checkout donde se COMMITEA) y con `<repo_motor>\.venv\Scripts\python.exe`. Nunca desde el `principal` (audita codigo stale: da rc=0 sobre codigo viejo) ni con el `python` del PATH. Antes de empezar: `git -C <repo_motor> rev-parse HEAD` == el HEAD que cierras.
    - `<repo_motor>\.venv\Scripts\python.exe scripts/check_guard_wiring.py` -> **exit 0 obligatorio**. UNDECLARED o stale BLOQUEAN el cierre (mecanizado: el script devuelve 1).
    - `<repo_motor>\.venv\Scripts\python.exe scripts/check_hook_interpreter.py --hooks-dir "$(git rev-parse --path-format=absolute --git-common-dir)/hooks"`
-     **`--hooks-dir` NO es opcional, y `exit 0` NO basta: la salida DEBE terminar en `(pre-commit, pre-push)`.** Si dice `(none present)`, el check no miro nada y salio verde igual -> cierre ROJO, corrige el `--hooks-dir`. LEE Y CITA ese parentesis en el reporte; es el unico discriminante.
-     Por que (defecto de produccion, NO lo arregles aqui): **WOT-2026-025d**. Stage manual deliberado: un hook automatico seria circular.
+     **`--hooks-dir` NO es opcional.** El discriminante es el **rc + contexto**, no solo la cadena: tras **WOT-2026-025d** el script devuelve `rc=1` si hay `.pre-commit-config.yaml` PERO ningun hook instalado (el viejo fail-open "salio verde igual" ya esta cerrado). Por tanto `exit 0` con `--hooks-dir` correcto YA es fail-closed. Cuidado con el caso legitimo: `(none present)` con `rc=0` es CORRECTO cuando NO hay `.pre-commit-config.yaml` en absoluto (nada declarado, nada que instalar) -- NO lo trates como rojo. La salida termina en `(pre-commit, pre-push)` cuando hay hooks; CITA ese parentesis como confirmacion informativa, pero el veredicto lo da el rc. Si `--hooks-dir` apunta mal (p.ej. al `.git` del worktree en vez del `common-git-dir`), el check no mira nada -> corrigelo.
+     Por que (defecto de produccion ya CERRADO por 025d; esta nota es historica): stage manual deliberado -- un hook automatico seria circular.
    - Los hooks reales viven en `<common-git-dir>/hooks` (el checkout PRINCIPAL), no en el `.git` del worktree.
    - **LIMITE del veredicto (leelo antes de fiarte):** `check_guard_wiring` es fiable en la ruta CONFIG (parseo estructural de `entry:`/`run:`/`command`). Su ruta PYTHON-SINK puede SOBRE-DECLARAR (falso-WIRED). Si un guard sale WIRED y no ves su call-site, VERIFICALO A MANO. Detalle y alcance: docstring del modulo + los casos `should_wire_override` del corpus -> **WOT-2026-025c** (ojo: no todos desaparecen con 025c; el corpus dice cual sobrevive).
 
@@ -234,7 +242,7 @@ Invariante de arbol de cierre (v3 P1 delta): antes de correr `prepush_check`/`--
    - Declara el destino ANTES de escribir: Claude privada / portable motor (repo_motor) / portable destino (repo_destino) / varios.
    - Distingue OBSERVACION (hecho objetivo, lo posee session-close-observations) de LEARNING (regla generalizable con evidencia, lo posee manager-session-closeout). No los mezcles en el mismo tier.
    - Sin evidencia verificable (diff/commit/test/exit-code/evento-bus) no hay entrada portable: degrada a dudoso o descarta.
-   - Gate de schema-drift: si `observations.jsonl` esta en drift, NO se admiten entradas portables nuevas. Valida contra `skills/_shared/ap-schema.md` y el consumidor real `bus/memory_loader.py`.
+   - Gate de schema-drift: si `observations.jsonl` esta en drift, NO se admiten entradas portables nuevas. Valida contra `skills/_shared/ap-schema.md` con el validador ejecutable `python scripts/validate_observations.py --strict --file <archive>` (exit 0). NO uses `bus/memory_loader.py` como validador: es un loader tolerante ("never raises", devuelve strings vacios ante JSON corrupto), NO valida schema -> da falso-verde. La barrera real es `validate_observations.py --strict`.
    - Promocion a repo_motor (engine/meta) exige confirmacion humana explicita. Las alas portables no se escriben sin aprobacion.
    - Si el Manager detecto un false-positive o fixture drift en el Bloque 2, ese "aprendizaje" NO se cristaliza como hecho: el loop de feedback lo bloquea.
 

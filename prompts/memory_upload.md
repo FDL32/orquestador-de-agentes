@@ -83,15 +83,27 @@ Antes de escribir cualquier memoria, declara EXPLÍCITAMENTE su destino. No bast
 Procedimiento de promoción (con confirmación humana explícita):
 
 1. Muestra el JSON exacto que se insertaría y **espera aprobación**.
-2. Promueve con el reconciliador, que escribe en el archive del checkout canónico y
-   valida `--strict` antes y después (fail-closed):
+2. **Materializa el JSON aprobado en el `observations.jsonl` del worktree source.**
+   El reconciliador NO recibe el JSON por CLI: `reconcile_portable_memory.py` solo
+   lee `<source>/.agent/runtime/memory/observations.jsonl`, filtra las lecciones y
+   las promueve al archive del checkout canónico. Si el JSON aprobado no está en ese
+   `observations.jsonl`, no se promueve nada (eslabón perdido). La API de inserción
+   EXISTE (`scripts/session_close_observations.py::append_observations(entries)`), pero
+   este procedimiento no la cablea: añade la entrada aprobada al `observations.jsonl`
+   del source vía `append_observations` (o el hook de escritura de observaciones) ANTES
+   del paso 3. No edites el jsonl a mano (rompe el "propose-before-write").
+3. Promueve con el reconciliador (escribe en el archive del checkout canónico y
+   valida `--strict` antes y después, fail-closed). **`--source` debe ser un worktree
+   DISTINTO del canónico:** si `source == dest` (el propio checkout canónico), el
+   reconciliador responde "ya es el checkout canónico: nada que reconciliar" y no
+   promueve. Ejecuta desde el worktree de trabajo, no desde el canónico:
 
    ```
    python scripts/reconcile_portable_memory.py --source <worktree> --apply
    ```
 
-3. **COMMITEA el archive.** Sin commit, la promoción no existe.
-4. Barrera de verificación: `python scripts/check_portable_memory_promotion.py
+4. **COMMITEA el archive.** Sin commit, la promoción no existe.
+5. Barrera de verificación: `python scripts/check_portable_memory_promotion.py
    --project-root <repo>` reporta toda lección que esté en `observations.jsonl` y NO en
    el archive (**exit 4** = hay huérfanas; exit 1 = la herramienta falló; exit 0 = limpio).
 
@@ -105,10 +117,14 @@ Reglas de decisión (binarias):
    memoria `Claude privada` puede ser preferencia/hábito sin artefacto, pero entonces NO es
    promovible a portable tal cual.
 3. **Promoción al archive portable (`archive/observations.YYYY-MM.jsonl`):** solo si la
-   entrada valida contra el schema canónico (`skills/_shared/ap-schema.md`) Y contra el
-   consumidor real del motor
-   (`bus/memory_loader.py`). Si no valida o no hay evidencia, etiquétala `NO PROMOVIBLE`
-   con el motivo y déjala en `Claude privada` o como deuda explícita con ticket.
+   entrada valida contra el schema canónico (`skills/_shared/ap-schema.md`) Y pasa el
+   validador ejecutable `python scripts/validate_observations.py --strict --file <archive>`
+   (exit 0). NO uses `bus/memory_loader.py` como barrera: ese consumidor es un loader
+   tolerante ("never raises", devuelve strings vacíos ante JSON corrupto) -- NO valida
+   schema, así que "pasa" siempre y da falso-verde. La barrera real de schema es
+   `validate_observations.py --strict` (la misma que el reconciliador ejecuta antes/después).
+   Si no valida o no hay evidencia, etiquétala `NO PROMOVIBLE` con el motivo y déjala en
+   `Claude privada` o como deuda explícita con ticket.
 4. **Aprendizaje útil pero privado:** si durante el ciclo guardaste algo en `Claude
    privada`, decide EXPLÍCITAMENTE si debe promoverse a portable. Si sí, aplica las reglas
    2-3. Si no, registra por qué se queda privado (no promovible / fuera de contrato).
@@ -152,15 +168,18 @@ Antes de escribir nada, dame una propuesta con estos campos:
 
 ### Canonical schema for `observations.jsonl`
 
-If you propose an entry for `observations.jsonl`, validate it against
-`skills/_shared/ap-schema.md` and against the real motor consumer before
-promoting it.
+The schema (mandatory fields, enums, ranges, ordering rules) lives ONCE in
+`skills/_shared/ap-schema.md` -- do NOT re-declare it here (that duplicated
+surface drifts; WOT-2026-014r). If you propose an entry, validate it against
+`skills/_shared/ap-schema.md` AND with the executable validator
+`python scripts/validate_observations.py --strict --file <archive>` (exit 0) --
+NOT against `bus/memory_loader.py`, which is a tolerant loader that never validates.
 
-- `applies_to` must be a **single string** from the canonical enum:
-  `code`, `mixed`, `docs`, or `all`.
-  Accepted values: `all`, `code`, `mixed`, `docs`.
-- Do not use arrays or compound strings such as `code,mixed`; the migrator
-  normalizes them to `mixed`, but that creates unnecessary drift in new memory.
+Notes that are NOT in the schema (usage guidance, keep them here):
+
+- Do not use arrays or compound strings for `applies_to` such as `code,mixed`;
+  the migrator normalizes them to `mixed`, but that creates unnecessary drift in
+  new memory. (The canonical `applies_to` enum itself is defined in `ap-schema.md`.)
 - `category` is **legacy/backward-compatible**. Do not use it in new entries
   unless you are migrating or preserving a historical record.
 - If you introduce extra non-canonical fields (for example `memory_class`),
