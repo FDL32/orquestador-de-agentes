@@ -587,3 +587,147 @@ class TestRuntimeRetentionDocs:
             # A bare "newest file inside the dir" claim is only allowed when negated.
             if "newest file inside the dir" in low:
                 assert "not the newest file inside the dir" in low, src
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# WOT-2026-036a: the prune is CABLED inside
+# agent_controller.archive_old_notifications(), not just invocable standalone.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestControllerArchiveWiresThePrune:
+    """Contract-test that EXERCISES the wired path (not the standalone CLI).
+
+    Mutation: if the `select_all`/`prune` invocation is removed from
+    archive_old_notifications(), snapshots accumulate unbounded (>10) and this
+    test FAILS.
+    """
+
+    def _import_controller(self):
+        agent_dir = _MOTOR_ROOT / ".agent"
+        if str(agent_dir) not in sys.path:
+            sys.path.insert(0, str(agent_dir))
+        import agent_controller
+
+        return agent_controller
+
+    def test_archiving_prunes_old_snapshots_to_keep_10_newest(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Fixture: 14 pre-existing notifications_*.md snapshots (ascending
+        mtime) + a live notifications.md with >20 entries (forces a NEW
+        archive to be written by archive_old_notifications() itself). After
+        the call: exactly 10 snapshots remain on disk, and they are the 10
+        NEWEST (the 4 oldest pre-existing snapshots are gone; the freshly
+        written one survives; the 5 next-oldest pre-existing ones are pruned
+        to make room)."""
+        controller = self._import_controller()
+
+        collab = tmp_path / ".agent" / "collaboration"
+        archive_dir = collab / "archive"
+        archive_dir.mkdir(parents=True)
+        base = time.time()
+
+        # 14 pre-existing snapshots, strictly ascending mtime (oldest -> newest),
+        # ALL stamped in the past relative to `base` so the snapshot written
+        # moments from now by archive_old_notifications() (real wall-clock mtime)
+        # is unambiguously the newest of the 15 candidates.
+        pre_existing_names = [f"notifications_pre_{i:02d}.md" for i in range(14)]
+        pre_existing_mtimes: dict[str, float] = {}
+        for i, name in enumerate(pre_existing_names):
+            stamp = base - 1000 + i
+            _touch_with_mtime(archive_dir / name, stamp)
+            pre_existing_mtimes[name] = stamp
+
+        # Live notifications.md: >20 entries triggers archiving.
+        entries = [f"Entry {i}" for i in range(25)]
+        notifications_content = (
+            "# Registro de Notificaciones\n\n---\n\n" + "\n\n---\n\n".join(entries)
+        )
+        notifications_path = collab / "notifications.md"
+        notifications_path.write_text(notifications_content, encoding="utf-8")
+
+        # Redirect the controller's lazy path singletons at the hermetic tmp tree
+        # (mirrors how NOTIFICATIONS/ARCHIVE_DIR/PROJECT_ROOT are consumed inside
+        # archive_old_notifications(): plain Path objects satisfy every operation
+        # the function performs on them).
+        monkeypatch.setattr(controller, "NOTIFICATIONS", notifications_path)
+        monkeypatch.setattr(controller, "ARCHIVE_DIR", archive_dir)
+        monkeypatch.setattr(controller, "PROJECT_ROOT", tmp_path)
+
+        result = controller.archive_old_notifications()
+
+        assert result is not None, "archiving must have run (>20 entries)"
+        new_archive = Path(result)
+        assert new_archive.exists(), "the newly written snapshot must exist"
+
+        remaining = sorted(archive_dir.glob("notifications_*.md"))
+        # DoD (b): exactly 10 remain, never unbounded accumulation.
+        assert len(remaining) == 10, (
+            f"expected exactly 10 notifications_*.md snapshots after prune, "
+            f"got {len(remaining)}: {[p.name for p in remaining]}"
+        )
+
+        # The newest-kept set is deterministic: the 15 candidates (14 pre-existing
+        # + 1 freshly written) ranked by mtime, keep the top 10. Use the mtimes
+        # RECORDED at stamp time (not re-read from disk): the pruned files no
+        # longer exist by the time this assertion runs.
+        candidate_mtimes = dict(pre_existing_mtimes)
+        candidate_mtimes[new_archive.name] = new_archive.stat().st_mtime
+
+        expected_kept = set(
+            sorted(candidate_mtimes, key=lambda n: candidate_mtimes[n], reverse=True)[
+                :10
+            ]
+        )
+        actual_kept = {p.name for p in remaining}
+        assert actual_kept == expected_kept, (
+            f"kept snapshots must be the 10 newest by mtime.\n"
+            f"expected: {sorted(expected_kept)}\nactual:   {sorted(actual_kept)}"
+        )
+        # The just-written snapshot (newest by construction) must survive.
+        assert new_archive.name in actual_kept
+
+        # The 4 oldest pre-existing snapshots must be gone (14 + 1 new - 10 kept
+        # = 5 pruned; the oldest 5 of the 14 pre-existing ones).
+        oldest_5 = pre_existing_names[:5]
+        for name in oldest_5:
+            assert not (archive_dir / name).exists(), f"{name} should have been pruned"
+
+    def test_prune_failure_is_best_effort_and_does_not_break_archiving(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """DoD (c): a prune failure must NOT break archiving. Force select_all to
+        raise and confirm archive_old_notifications() still returns the new
+        archive path (archiving succeeded despite the prune blowing up)."""
+        controller = self._import_controller()
+
+        collab = tmp_path / ".agent" / "collaboration"
+        archive_dir = collab / "archive"
+        archive_dir.mkdir(parents=True)
+
+        entries = [f"Entry {i}" for i in range(25)]
+        notifications_content = (
+            "# Registro de Notificaciones\n\n---\n\n" + "\n\n---\n\n".join(entries)
+        )
+        notifications_path = collab / "notifications.md"
+        notifications_path.write_text(notifications_content, encoding="utf-8")
+
+        monkeypatch.setattr(controller, "NOTIFICATIONS", notifications_path)
+        monkeypatch.setattr(controller, "ARCHIVE_DIR", archive_dir)
+        monkeypatch.setattr(controller, "PROJECT_ROOT", tmp_path)
+
+        def _boom(*_args, **_kwargs):
+            raise RuntimeError("simulated prune failure")
+
+        monkeypatch.setattr(
+            "scripts.prune_runtime_retention.select_all",
+            _boom,
+        )
+
+        result = controller.archive_old_notifications()
+
+        assert result is not None
+        assert Path(result).exists(), (
+            "archiving must succeed even when the prune call raises"
+        )

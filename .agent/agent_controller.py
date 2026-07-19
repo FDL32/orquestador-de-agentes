@@ -2122,6 +2122,17 @@ def archive_old_notifications() -> str | None:
     new_content += "\n\n---\n"
     write_file(NOTIFICATIONS, new_content)
 
+    # WOT-2026-036a: prune old notifications_*.md snapshots after archiving a
+    # new one. Best-effort: pruning is disk hygiene, not a gate, so a failure
+    # here must never break archiving or session close.
+    try:
+        from scripts.prune_runtime_retention import prune, select_all
+
+        selection = select_all(PROJECT_ROOT, {"keep_notification_archives": 10})
+        prune(selection, apply=True)
+    except Exception as exc:
+        print(f"[WARN] Notification archive prune failed: {exc}")
+
     return str(archive_file)
 
 
