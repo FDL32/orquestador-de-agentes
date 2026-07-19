@@ -26,6 +26,7 @@ from scripts.install_agent_system import (
     copy_tree,
     detect_destination_residues,
     ensure_destination_projections_ignored,
+    get_motor_head_sha,
     install_agent_system,
     merge_memory_rules,
     parse_wing_sections,
@@ -993,6 +994,68 @@ def test_malformed_existing_link_degrades_to_none(tmp_path):
     link.write_text("{ not json", encoding="utf-8")
     link = _write_link(tmp_path, prefix=None)
     assert _read_prefix(link) is None
+
+
+# ---------------------------------------------------------------------------
+# motor_sha field written into the link (WOT-2026-024j)
+# ---------------------------------------------------------------------------
+
+
+def test_link_contains_motor_sha_when_provided(tmp_path):
+    """The written link carries motor_sha when the caller passes one.
+
+    Mutation-to-prove: dropping the `motor_sha` key from the payload dict
+    makes this KeyError/AssertionError instead of finding "deadbeef".
+    """
+    link = _write_link(tmp_path, prefix="WOT", motor_sha="deadbeef")
+    data = json.loads(link.read_text(encoding="utf-8"))
+    assert data["motor_sha"] == "deadbeef"
+
+
+def test_link_motor_sha_defaults_to_unknown(tmp_path):
+    """Without a motor_sha, the link degrades to 'unknown' (mirrors
+    motor_version's existing 'unknown' fallback) instead of a missing key
+    or None -- destination_context's drift guard relies on this sentinel."""
+    link = _write_link(tmp_path, prefix="WOT")
+    data = json.loads(link.read_text(encoding="utf-8"))
+    assert data["motor_sha"] == "unknown"
+
+
+def test_get_motor_head_sha_real_git_repo(tmp_path):
+    """get_motor_head_sha resolves a real repo's HEAD sha (40 hex chars)."""
+    motor_root = tmp_path / "motor"
+    motor_root.mkdir()
+    subprocess.run(["git", "init"], cwd=motor_root, capture_output=True, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=motor_root,
+        capture_output=True,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=motor_root,
+        capture_output=True,
+        check=True,
+    )
+    (motor_root / "f.txt").write_text("x", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=motor_root, capture_output=True, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "init"], cwd=motor_root, capture_output=True, check=True
+    )
+
+    sha = get_motor_head_sha(motor_root)
+    assert sha is not None
+    assert len(sha) == 40
+    assert all(c in "0123456789abcdef" for c in sha)
+
+
+def test_get_motor_head_sha_non_git_dir_degrades_to_none(tmp_path):
+    """A plain non-git directory must NOT crash -- degrades to None (best
+    effort metadata, never a gate)."""
+    plain_dir = tmp_path / "not_a_repo"
+    plain_dir.mkdir()
+    assert get_motor_head_sha(plain_dir) is None
 
 
 # ---------------------------------------------------------------------------

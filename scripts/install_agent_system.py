@@ -312,6 +312,32 @@ def get_manifest_version(agent_dir: Path) -> str | None:
     return None
 
 
+def get_motor_head_sha(motor_root: Path) -> str | None:
+    """Return the motor's current HEAD commit sha, or None if unavailable.
+
+    Before: motor_root is a path that may or may not be a git worktree
+            (e.g. during tests, a plain tmp dir with no .git).
+    During: Runs `git -C <motor_root> rev-parse HEAD`. Any failure (git
+            not installed, not a repo, detached/corrupt state) is swallowed.
+    After: Returns the 40-char sha string on success, None on any failure.
+            NEVER raises -- this is best-effort metadata for the link file,
+            not a gate.
+    """
+    try:
+        result = subprocess.run(  # noqa: S603
+            ["git", "-C", str(motor_root), "rev-parse", "HEAD"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    sha = result.stdout.strip()
+    return sha if sha else None
+
+
 def is_preserved(rel_path: Path) -> bool:
     return bool(rel_path.parts) and rel_path.parts[0] in LOCAL_DIRS
 
@@ -827,6 +853,7 @@ def write_motor_destination_link(
     ticket_prefix: str | None = None,
     dry_run: bool = False,
     clear_ticket_prefix: bool = False,
+    motor_sha: str | None = None,
 ) -> None:
     """
     Write the motor-destination link file in the destination workspace.
@@ -847,6 +874,10 @@ def write_motor_destination_link(
     - motor_root: absolute or derived path to the external motor
     - destination_root: absolute path to the destination workspace
     - motor_version: technical version from .agent/.version_manifest.json
+    - motor_sha: motor HEAD commit sha at install/sync time (WOT-2026-024j).
+      Used by destination_context.py as a live drift SIGNAL (never a gate):
+      compares this pinned sha against the motor's current HEAD to warn how
+      many commits stale the destination's motor reference is.
     - destination_id: stable identifier for the destination (optional, derived from path)
     - ticket_prefix: local ticket namespace prefix (e.g., 'XXX' for 'XXX-YYYY-NNN')
     - created_at: ISO-8601 UTC timestamp of install/sync
@@ -862,6 +893,9 @@ def write_motor_destination_link(
             When None, an existing prefix in the link is preserved rather than nulled.
         dry_run: If True, simulate without writing.
         clear_ticket_prefix: Explicitly null the prefix instead of preserving it.
+        motor_sha: Optional motor HEAD sha at write time (see get_motor_head_sha).
+            Mirrors motor_version's "unknown" fallback when absent (additive,
+            default None -- callers that don't pass it get "unknown", never a crash).
     """
     config_dir = project_agent / "config"
     link_file = config_dir / "motor_destination_link.json"
@@ -876,6 +910,7 @@ def write_motor_destination_link(
         "motor_root": str(motor_root.resolve()),
         "destination_root": str(destination_root.resolve()),
         "motor_version": motor_version or "unknown",
+        "motor_sha": motor_sha or "unknown",
         "destination_id": destination_id,
         "ticket_prefix": ticket_prefix,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -1412,6 +1447,7 @@ def install_agent_system(
     motor_version = get_manifest_version(template_agent)
     destination_root = project_agent.parent
     motor_root = template_agent.parent
+    motor_sha = get_motor_head_sha(motor_root)
     write_motor_destination_link(
         project_agent=project_agent,
         motor_root=motor_root,
@@ -1419,6 +1455,7 @@ def install_agent_system(
         motor_version=motor_version,
         ticket_prefix=ticket_prefix,
         dry_run=dry_run,
+        motor_sha=motor_sha,
     )
 
     # Copy PROJECT_TEMPLATE.md as PROJECT.md (only if not exists)
@@ -1537,6 +1574,7 @@ def sync_agent_system(  # noqa: C901
     motor_version = get_manifest_version(template_agent)
     destination_root = project_agent.parent
     motor_root = template_agent.parent
+    motor_sha = get_motor_head_sha(motor_root)
     write_motor_destination_link(
         project_agent=project_agent,
         motor_root=motor_root,
@@ -1544,6 +1582,7 @@ def sync_agent_system(  # noqa: C901
         motor_version=motor_version,
         ticket_prefix=ticket_prefix,
         dry_run=dry_run,
+        motor_sha=motor_sha,
     )
 
     # Copy PROJECT_TEMPLATE.md as PROJECT.md (only if not exists)

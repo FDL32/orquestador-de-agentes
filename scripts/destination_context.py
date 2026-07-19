@@ -96,6 +96,136 @@ def resolve_motor_link(project_root: Path) -> dict | None:
         return None
 
 
+def _resolve_motor_head(motor_link: dict) -> tuple[str | None, str | None]:
+    """Resolve the motor's current HEAD from the link.
+
+    Returns (head_sha, warn): exactly one is non-None. `warn` is a soft WARN
+    string when the motor_root is missing/absent/unresolvable (benign, never
+    fatal); `head_sha` is the resolved HEAD otherwise. Extracted from
+    compute_motor_drift to keep that function under the complexity cap
+    (WOT-2026-024j).
+    """
+    motor_root_raw = motor_link.get("motor_root")
+    if not motor_root_raw:
+        return None, "[WARN] motor drift: link sin motor_root, no se puede calcular"
+
+    motor_root = Path(str(motor_root_raw))
+    if not motor_root.is_dir():
+        return None, (
+            "[WARN] motor drift: motor_root del link no existe en disco, "
+            "no se puede calcular"
+        )
+
+    head_result = subprocess.run(  # noqa: S603
+        ["git", "-C", str(motor_root), "rev-parse", "HEAD"],  # noqa: S607
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    head = head_result.stdout.strip() if head_result.returncode == 0 else ""
+    if not head:
+        return None, "[WARN] motor drift: no se pudo resolver HEAD del motor actual"
+    return head, None
+
+
+def _sha_resolvable(motor_root: str, sha: str) -> bool:
+    """True iff `sha` resolves in the motor repo. Guards `rev-list <sha>..HEAD`
+    from `fatal: Invalid revision range` on an unresolvable sha (verified by
+    probe before this guard existed, WOT-2026-024j)."""
+    cat_file = subprocess.run(  # noqa: S603
+        ["git", "-C", motor_root, "cat-file", "-t", sha],  # noqa: S607
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    return cat_file.returncode == 0
+
+
+def compute_motor_drift(motor_link: dict) -> str | None:
+    """Compute a motor staleness SIGNAL (never a gate) from the link.
+
+    Before: motor_link is the parsed motor_destination_link.json dict (may
+            or may not have a 'motor_root' / 'motor_sha' key; may be stale
+            or hand-edited).
+    During: Resolves the motor's current HEAD sha (via `git -C <motor_root>
+            rev-parse HEAD`) and compares it against the sha pinned in the
+            link, following an ordered guard chain so that no combination of
+            missing/unresolvable/non-ancestor shas can ever raise or leave
+            this function propagating an exception:
+              1. motor_sha absent/falsy/"unknown" -> soft WARN, skip.
+              2. motor_sha present but not resolvable in the motor repo
+                 (`git cat-file -t <sha>` fails) -> soft WARN, skip. This
+                 guard exists because `git rev-list --count <bad>..HEAD`
+                 raises `fatal: Invalid revision range` for an unresolvable
+                 sha -- verified by probe before writing this guard.
+              3. motor_sha == current HEAD -> up to date, no WARN (None).
+              4. motor_sha is a valid ancestor different from HEAD -> WARN
+                 with the exact commit count via `git rev-list --count
+                 <sha>..HEAD`.
+    After: Returns a one-line WARN string to print, or None when there is
+           nothing to warn about (up to date, or drift could not be
+           determined for a benign reason already reported elsewhere).
+           NEVER raises: any unexpected failure degrades to a soft WARN
+           string instead of propagating. This is a SIGNAL, not a gate --
+           callers must never let this function's outcome affect exit code.
+    """
+    try:
+        motor_sha = motor_link.get("motor_sha")
+
+        # Guard 1: motor_sha absent/falsy/"unknown" -> soft WARN, skip.
+        if not motor_sha or motor_sha == "unknown":
+            return (
+                "[WARN] motor drift: link sin motor_sha "
+                "(se actualiza en el proximo sync)"
+            )
+
+        head, head_warn = _resolve_motor_head(motor_link)
+        if head_warn is not None:
+            return head_warn
+
+        motor_root = str(motor_link["motor_root"])
+        unresolvable = (
+            "[WARN] motor drift: motor_sha del link no resoluble contra el motor actual"
+        )
+
+        # Guard 2: motor_sha not resolvable -> soft WARN (protects Guard 4).
+        if not _sha_resolvable(motor_root, str(motor_sha)):
+            return unresolvable
+
+        # Guard 3: already up to date.
+        if str(motor_sha) == head:
+            return None
+
+        # Guard 4: valid, different -> count commits behind.
+        count_result = subprocess.run(  # noqa: S603
+            [  # noqa: S607
+                "git",
+                "-C",
+                motor_root,
+                "rev-list",
+                "--count",
+                f"{motor_sha}..{head}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        count_str = count_result.stdout.strip()
+        if count_result.returncode != 0 or not count_str.isdigit():
+            return unresolvable
+
+        n = int(count_str)
+        if n <= 0:
+            return None
+        return (
+            f"[WARN] motor drift: {n} commits detras "
+            f"(link_sha={str(motor_sha)[:12]} vs HEAD={head[:12]})"
+        )
+    except Exception:
+        # This is a SIGNAL, not a gate: never propagate, never affect exit code.
+        return "[WARN] motor drift: no se pudo calcular drift del motor"
+
+
 def get_git_info(project_root: Path) -> dict | None:
     """Get git status if available.
 
@@ -395,6 +525,10 @@ def build_map(project_root: Path, max_bytes: int) -> str:  # noqa: C901
         if tp:
             identity_lines.append(f"- **Ticket prefix:** {tp}")
         identity_lines.append("- **Motor link:** valid")
+
+        drift_warning = compute_motor_drift(motor_link)
+        if drift_warning:
+            identity_lines.append(f"- **Motor drift:** {drift_warning}")
     else:
         identity_lines.append(
             "- **Motor root:** not resolvable (link missing or invalid)"
@@ -605,6 +739,10 @@ def _print_summary(
     print(f"Project: {project_root.name}")
     print(f"Motor:   {link.get('motor_root', 'unknown')}")
     print("Mode:    destination-hosted")
+
+    drift_warning = compute_motor_drift(link)
+    if drift_warning:
+        print(drift_warning)
 
     collab = project_root / ".agent" / "collaboration"
     wp = collab / "work_plan.md"

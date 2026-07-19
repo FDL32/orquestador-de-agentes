@@ -132,6 +132,7 @@ falla solo ante un generador/ejemplo vivo con prefijo legacy sin etiqueta.
 - Los comandos canonical y legacy se documentan por separado.
 - Estado actual: `v9.17.1` motor central + workspace destino, cierre canonico con suite verde, pipeline autonomo por chat, meta-auditoria, auditoria de publicacion Git, guard de integridad del motor, encoding guard endurecido y CEM v0 adoptado.
 - El motor vive una unica vez en `orquestador_de_agentes/`; los proyectos destino lo referencian externamente.
+- La senal VIVA de staleness NO es esta cadena de version hardcodeada (queda fija hasta el proximo bump manual): es `motor_sha` en el link motor<->destino, comparado en vivo contra el HEAD real del motor en cada `destination_context.py --bootstrap` (WOT-2026-024j, WARN de drift, nunca gate).
 
 ## MANIFEST.distribute y MANIFEST.workspace (WP-2026-111)
 

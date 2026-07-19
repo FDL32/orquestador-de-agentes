@@ -12,10 +12,12 @@ Covers:
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 from scripts.destination_context import (
     build_map,
+    compute_motor_drift,
     extract_file_preview,
     get_git_info,
     get_operational_state,
@@ -443,3 +445,186 @@ def test_handoff_blocked_absent_bus(tmp_path):
     from scripts.destination_context import _latest_handoff_blocked
 
     assert _latest_handoff_blocked(tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
+# compute_motor_drift (WOT-2026-024j) — motor_sha staleness SIGNAL, never a gate
+# ---------------------------------------------------------------------------
+
+
+def _init_git_repo(root: Path) -> None:
+    """Init a REAL (non-shallow) git repo with a working commit graph."""
+    subprocess.run(["git", "init"], cwd=root, capture_output=True, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=root,
+        capture_output=True,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=root,
+        capture_output=True,
+        check=True,
+    )
+
+
+def _commit(root: Path, filename: str, content: str) -> str:
+    """Write filename, commit it, and return the new commit sha."""
+    (root / filename).write_text(content, encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=root, capture_output=True, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", f"add {filename}"],
+        cwd=root,
+        capture_output=True,
+        check=True,
+    )
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+def _make_motor_repo(tmp_path: Path) -> tuple[Path, str, str]:
+    """Build a real git repo with 2 commits.
+
+    Returns (motor_root, old_sha, head_sha).
+    """
+    motor_root = tmp_path / "motor"
+    motor_root.mkdir()
+    _init_git_repo(motor_root)
+    old_sha = _commit(motor_root, "a.txt", "1")
+    head_sha = _commit(motor_root, "b.txt", "2")
+    return motor_root, old_sha, head_sha
+
+
+def test_compute_motor_drift_old_sha_gives_warn_with_count(tmp_path):
+    """Guard 4: link_sha is a valid ancestor != HEAD -> WARN with commit count."""
+    motor_root, old_sha, head_sha = _make_motor_repo(tmp_path)
+    link = {"motor_root": str(motor_root), "motor_sha": old_sha}
+
+    warning = compute_motor_drift(link)
+
+    assert warning is not None
+    assert "1 commits detras" in warning
+    assert old_sha[:12] in warning
+    assert head_sha[:12] in warning
+
+
+def test_compute_motor_drift_head_sha_no_warn(tmp_path):
+    """Guard 3: link_sha == HEAD -> no drift, returns None."""
+    motor_root, _old_sha, head_sha = _make_motor_repo(tmp_path)
+    link = {"motor_root": str(motor_root), "motor_sha": head_sha}
+
+    assert compute_motor_drift(link) is None
+
+
+def test_compute_motor_drift_missing_sha_soft_warn(tmp_path):
+    """Guard 1: motor_sha absent -> soft WARN, no crash."""
+    motor_root, _old_sha, _head_sha = _make_motor_repo(tmp_path)
+    link = {"motor_root": str(motor_root)}
+
+    warning = compute_motor_drift(link)
+
+    assert warning is not None
+    assert "sin motor_sha" in warning
+
+
+def test_compute_motor_drift_unknown_sentinel_soft_warn(tmp_path):
+    """Guard 1: motor_sha == 'unknown' (old-installer sentinel) -> soft WARN."""
+    motor_root, _old_sha, _head_sha = _make_motor_repo(tmp_path)
+    link = {"motor_root": str(motor_root), "motor_sha": "unknown"}
+
+    warning = compute_motor_drift(link)
+
+    assert warning is not None
+    assert "sin motor_sha" in warning
+
+
+def test_compute_motor_drift_unresolvable_sha_soft_warn_no_crash(tmp_path):
+    """Guard 2: motor_sha does not resolve in the motor repo -> soft WARN,
+    NEVER a crash. This is the guard that exists because
+    `git rev-list --count <bad-sha>..HEAD` raises `fatal: Invalid revision
+    range` for an unresolvable sha (verified by probe before writing this
+    guard) -- without guard 2, this call would blow up compute_motor_drift.
+    """
+    motor_root, _old_sha, _head_sha = _make_motor_repo(tmp_path)
+    link = {"motor_root": str(motor_root), "motor_sha": "0" * 40}
+
+    warning = compute_motor_drift(link)
+
+    assert warning is not None
+    assert "no resoluble" in warning
+
+
+def test_compute_motor_drift_mutation_guard(tmp_path):
+    """Mutation-to-prove (DoD c): if the sha comparison were removed and
+    compute_motor_drift always returned None, this test goes red."""
+    motor_root, old_sha, _head_sha = _make_motor_repo(tmp_path)
+    link = {"motor_root": str(motor_root), "motor_sha": old_sha}
+
+    assert compute_motor_drift(link) is not None
+
+
+def test_main_bootstrap_emits_drift_warn_for_stale_link(tmp_path, capsys):
+    """Full --bootstrap flow: a destination whose link pins an old motor_sha
+    prints the drift WARN on stdout and exits 0 (signal, not a gate)."""
+    motor_root, old_sha, _head_sha = _make_motor_repo(tmp_path)
+
+    config_dir = tmp_path / ".agent" / "config"
+    config_dir.mkdir(parents=True)
+    payload = {
+        "motor_root": str(motor_root),
+        "destination_root": str(tmp_path.resolve()),
+        "motor_version": "9.17.1",
+        "motor_sha": old_sha,
+        "destination_id": tmp_path.name,
+        "ticket_prefix": "WOT",
+        "created_at": "2026-07-19T00:00:00+00:00",
+        "manifest_version": "1.0",
+    }
+    (config_dir / "motor_destination_link.json").write_text(
+        json.dumps(payload, indent=2), encoding="utf-8"
+    )
+
+    exit_code = main(["--bootstrap", "--project-root", str(tmp_path)])
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "motor drift" in captured.out
+    assert "1 commits detras" in captured.out
+
+    map_file = tmp_path / ".agent" / "context" / "destination_map.md"
+    content = map_file.read_text(encoding="utf-8")
+    assert "Motor drift" in content
+
+
+def test_main_bootstrap_no_drift_warn_when_sha_matches_head(tmp_path, capsys):
+    """A link pinned to the CURRENT motor HEAD must not print a drift WARN."""
+    motor_root, _old_sha, head_sha = _make_motor_repo(tmp_path)
+
+    config_dir = tmp_path / ".agent" / "config"
+    config_dir.mkdir(parents=True)
+    payload = {
+        "motor_root": str(motor_root),
+        "destination_root": str(tmp_path.resolve()),
+        "motor_version": "9.17.1",
+        "motor_sha": head_sha,
+        "destination_id": tmp_path.name,
+        "ticket_prefix": "WOT",
+        "created_at": "2026-07-19T00:00:00+00:00",
+        "manifest_version": "1.0",
+    }
+    (config_dir / "motor_destination_link.json").write_text(
+        json.dumps(payload, indent=2), encoding="utf-8"
+    )
+
+    exit_code = main(["--bootstrap", "--project-root", str(tmp_path)])
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "motor drift" not in captured.out
