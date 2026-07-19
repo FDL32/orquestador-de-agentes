@@ -51,6 +51,12 @@ known_unwired:
   check_hook_interpreter: >-
     BY-DESIGN: stage manual deliberado; un hook automatico seria circular
     (el hook roto no puede invocar al check que detecta que esta roto)
+  # bundle-guard determinista v0 (mejora-continua, arreglo rapido 2026-07-19). Valida
+  # los bundles de gobierno (receipts). Su cableado natural es el flujo del colector
+  # ANTES del fan-out, que toca los prompts de gobierno -> anti-recursion 026b prohibe
+  # tocarlos en vuelo. Cableado + pasada Codex diferidos al ticket PDCA WOT-2026-038b
+  # (componente 1). Deuda NOMBRADA con dueno real.
+  check_bundle_receipts: WOT-2026-038b
 
 extra_guards:
   # Barreras REALES sin prefijo de guard. v3 no podia ni verlas ni contarlas.
