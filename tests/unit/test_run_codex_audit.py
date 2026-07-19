@@ -1,4 +1,4 @@
-"""Tests for scripts/run_codex_audit.py (WOT-2026-029d).
+"""Tests for scripts/run_codex_audit.py (WOT-2026-029d, WOT-2026-035c).
 
 Hermetic by construction: every test injects a FAKE codex executable (a
 tiny Python script run via `sys.executable`) as `codex_executable`. No real
@@ -14,10 +14,18 @@ The load-bearing barrier, with its mutation:
   - exit code is NOT the verdict: a fake that exits non-zero but prints
     content must report the real returncode while preserving stdout and
     NOT inventing success/failure from the exit code alone.
+
+WOT-2026-035c: the prompt must travel via STDIN, not argv, to avoid
+Windows' ~32KB `CreateProcess` command-line limit ([WinError 206]).
+`_stdin_echo_codex_executable` below builds a fake that reads stdin and
+echoes it back (rather than ignoring argv like the older fakes), which
+lets tests prove BOTH halves of the contract: (i) the prompt is absent
+from argv, and (ii) the prompt arrives intact via stdin.
 """
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -77,6 +85,101 @@ def _fake_codex_executable(tmp_path: Path, *, stdout: str, returncode: int) -> s
         )
         shim.chmod(0o755)
         return str(shim)
+
+
+def _stdin_echo_codex_executable(tmp_path: Path) -> str:
+    """Build a fake codex executable that ECHOES stdin and reports argv.
+
+    Unlike `_fake_codex_executable` (which ignores argv and prints a
+    hardcoded string), this fake:
+      - reads the FULL content of stdin,
+      - prints a marker line with its own argv (json-encoded, one line),
+      - prints a marker line with the stdin content it received.
+
+    This lets a test assert BOTH halves of the WOT-2026-035c contract from
+    a single invocation: what argv looked like (must NOT contain the
+    prompt, MUST contain the "-" sentinel) and what arrived via stdin (must
+    be exactly the prompt).
+    """
+    script = tmp_path / "fake_codex_stdin_echo.py"
+    script.write_text(
+        "import json\n"
+        "import sys\n"
+        "argv_line = json.dumps(sys.argv[1:])\n"
+        "stdin_content = sys.stdin.read()\n"
+        'sys.stdout.write("ARGV:" + argv_line + "\\n")\n'
+        'sys.stdout.write("STDIN:" + stdin_content)\n'
+        "sys.stdout.flush()\n"
+        "sys.exit(0)\n",
+        encoding="utf-8",
+    )
+    if sys.platform == "win32":
+        shim = tmp_path / "fake_codex_stdin_echo.cmd"
+        shim.write_text(
+            f'@echo off\r\n"{sys.executable}" "{script}" %*\r\n',
+            encoding="utf-8",
+        )
+        return str(shim)
+    else:  # pragma: no cover -- POSIX shim, not exercised on this Windows CI
+        shim = tmp_path / "fake_codex_stdin_echo.sh"
+        shim.write_text(
+            f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n',
+            encoding="utf-8",
+        )
+        shim.chmod(0o755)
+        return str(shim)
+
+
+def test_prompt_delivered_via_stdin_not_argv(tmp_path):
+    """WOT-2026-035c DOUBLE mutation proof (contract DoD-b, refined).
+
+    Not enough to prove the prompt arrives on stdin (a code path that
+    ALSO left it in argv would pass that alone). Must prove BOTH:
+      (i)  the prompt is ABSENT from argv, and "-" IS present in argv
+           (the codex-exec stdin sentinel);
+      (ii) the prompt arrives intact via stdin (the echoing fake reports
+           it back in stdout, and run_codex_audit's returned dict carries
+           that echo).
+    """
+    codex_exe = _stdin_echo_codex_executable(tmp_path)
+    prompt = "audit this specific unique prompt marker 8f3c1"
+
+    result = rca.run_codex_audit(prompt, codex_executable=codex_exe, timeout=30)
+
+    stdout = result["stdout"]
+    argv_line, stdin_line = stdout.split("\n", 1)
+    argv = json.loads(argv_line[len("ARGV:") :])
+    stdin_received = stdin_line[len("STDIN:") :]
+
+    # (i) argv does NOT contain the prompt, DOES contain the "-" sentinel.
+    assert prompt not in argv
+    assert "-" in argv
+
+    # (ii) the prompt was delivered via stdin, verbatim.
+    assert stdin_received == prompt
+
+
+def test_large_prompt_via_stdin_does_not_raise_winerror_206(tmp_path):
+    """A >32KB prompt must NOT raise WinError 206 / OSError.
+
+    Windows' CreateProcess has a ~32KB total command-line length limit.
+    Before WOT-2026-035c, a large prompt was appended to argv and could
+    exceed that limit. After the fix, the prompt travels via stdin (which
+    has no such limit), so a 40_000-byte prompt must round-trip cleanly.
+    """
+    codex_exe = _stdin_echo_codex_executable(tmp_path)
+    large_prompt = "x" * 40_000
+
+    result = rca.run_codex_audit(large_prompt, codex_executable=codex_exe, timeout=30)
+
+    stdout = result["stdout"]
+    argv_line, stdin_line = stdout.split("\n", 1)
+    argv = json.loads(argv_line[len("ARGV:") :])
+    stdin_received = stdin_line[len("STDIN:") :]
+
+    assert large_prompt not in argv
+    assert stdin_received == large_prompt
+    assert result["ok"] is True
 
 
 def test_nonempty_output_exit_zero_is_ok(tmp_path):

@@ -10,12 +10,18 @@ Before:
 During:
     - Builds the "M4" command around `codex exec`:
       `codex exec --sandbox read-only --skip-git-repo-check
-      -c service_tier=fast <prompt>`.
-    - Launches it with `subprocess.Popen(..., stdin=subprocess.DEVNULL,
+      -c service_tier=fast -` (the trailing `-` sentinel tells `codex exec`
+      to read the prompt from STDIN instead of argv). The prompt text is
+      NOT part of argv: on Windows, `CreateProcess` has a ~32KB command-line
+      limit ([WinError 206]), which a large audit prompt can exceed if
+      passed positionally (reproduced in auditoria 19219, contrato+objetivo
+      ~35KB).
+    - Launches it with `subprocess.Popen(..., stdin=subprocess.PIPE,
       stdout=PIPE, stderr=PIPE, text=True, shell=False, encoding="utf-8",
       errors="replace")`, mirroring the productive shape measured in
       `scripts/ensemble_dispatch.py::_transport_agent` (Windows
-      pipe-inheritance hang, 2026-07-16 smoke).
+      pipe-inheritance hang, 2026-07-16 smoke), and delivers the prompt via
+      `proc.communicate(input=prompt, timeout=timeout)`.
     - On `subprocess.TimeoutExpired`, kills the FULL process tree (Windows:
       `taskkill /T /F`; POSIX: `os.kill(pid, SIGKILL)`) before raising,
       replicating the minimal shape of
@@ -115,30 +121,34 @@ def run_codex_audit(
 
     Before: `codex_executable` must be resolvable (bare name via PATH, or an
         injected path/script for tests). `prompt` is the audit instruction
-        text passed as the final positional argument to `codex exec`.
-    During: builds `[codex_executable, *M4_ARGS, *extra_args, prompt]` and
-        runs it via `subprocess.Popen` with `stdin=DEVNULL`, capturing
-        stdout+stderr as text (UTF-8, replace-on-error). On timeout, kills
-        the process tree and re-raises as `TimeoutError` with diagnostic
-        context (no silent success is invented).
+        text delivered to `codex exec` via STDIN (not argv), to avoid
+        Windows' ~32KB `CreateProcess` command-line limit ([WinError 206])
+        on large prompts.
+    During: builds `[codex_executable, *M4_ARGS, *extra_args, "-"]` (the
+        `-` sentinel tells `codex exec` to read the prompt from stdin) and
+        runs it via `subprocess.Popen` with `stdin=PIPE`, sending `prompt`
+        through `proc.communicate(input=prompt, timeout=timeout)` and
+        capturing stdout+stderr as text (UTF-8, replace-on-error). On
+        timeout, kills the process tree and re-raises as `TimeoutError`
+        with diagnostic context (no silent success is invented).
     After: on 0-byte stdout, raises `CodexAuditEmptyOutputError` (backend is dead
         per CEM), regardless of returncode. Otherwise returns a dict with
         `returncode`, `stdout`, `stdout_bytes`, `ok` (`returncode == 0`),
         and `reason`.
     """
-    cmd = [codex_executable, *M4_ARGS, *(extra_args or []), prompt]
+    cmd = [codex_executable, *M4_ARGS, *(extra_args or []), "-"]
     proc = subprocess.Popen(  # noqa: S603
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        stdin=subprocess.DEVNULL,
+        stdin=subprocess.PIPE,
         text=True,
         shell=False,
         encoding="utf-8",
         errors="replace",
     )
     try:
-        out, err = proc.communicate(timeout=timeout)
+        out, err = proc.communicate(input=prompt, timeout=timeout)
     except subprocess.TimeoutExpired:
         _kill_process_tree(proc.pid)
         raise TimeoutError(
