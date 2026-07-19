@@ -489,6 +489,11 @@ Origen del patrón: OpenHands `.openhands/setup.sh` (MIT).
   portable y sin rutas absolutas del `repo_destino` actual. Los permisos
   `external_directory` especificos del proyecto se inyectan en runtime desde el
   launcher y se restauran al terminar; no deben quedar commiteados en el motor.
+- Proteger `main` del motor en origin (WOT-2026-024i): `main` es la fuente
+  canonica de los destinos; debe llevar un ruleset de GitHub que bloquee
+  force-push y deletion (sin exigir PRs, para no romper el push directo del
+  cierre). La activacion es accion humana; la verificacion re-ejecutable y la
+  prueba de rechazo no destructiva viven en `RELEASE_CHECKLIST.md` (paso 6).
 
 ## Robust Builder Relaunch (WP-2026-084)
 
