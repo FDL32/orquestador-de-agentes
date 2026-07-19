@@ -181,13 +181,17 @@ def test_mutation_removing_broken_entry_flips_finding_to_clean(tmp_path: Path) -
         f"got {broken.returncode}"
     )
 
-    # Mutate: remove the broken entry (leave the file with zero records).
-    _write(archive_file, [])
+    # Mutate: replace the broken entry with a CANONICAL valid one (not an empty
+    # file). This proves POSITIVE schema compliance -- the fixed state passes
+    # because the entry is valid, not merely because errors are absent -- so the
+    # test does not silently rely on validate_file's "empty file == valid"
+    # contract (MANAGER_REVIEW qwen3, WOT-2026-035b).
+    _write(archive_file, [_valid_entry()])
 
     fixed = _run(repo)
     assert fixed.returncode == EXIT_OK, (
-        "after removing the incident-pattern entry, the same archive file "
-        f"must pass; got {fixed.returncode}. stdout: {fixed.stdout} "
+        "after replacing the incident-pattern entry with a valid one, the same "
+        f"archive file must pass; got {fixed.returncode}. stdout: {fixed.stdout} "
         f"stderr: {fixed.stderr}"
     )
 
