@@ -2123,11 +2123,18 @@ def archive_old_notifications() -> str | None:
     write_file(NOTIFICATIONS, new_content)
 
     # WOT-2026-036a: prune old notifications_*.md snapshots after archiving a
-    # new one. Best-effort: pruning is disk hygiene, not a gate, so a failure
-    # here must never break archiving or session close.
-    try:
-        from scripts.prune_runtime_retention import prune, select_all
+    # new one. Best-effort: pruning is disk hygiene, not a gate, so an
+    # OPERATIONAL failure here must never break archiving or session close.
+    #
+    # The import is OUTSIDE the try/except on purpose (MANAGER_REVIEW 1->9->2,
+    # comun branch): an ImportError is a PROGRAMMING/deployment error, not an
+    # operational one -- swallowing it as a WARN would silently disable pruning
+    # forever and reintroduce the unbounded-growth defect this ticket fixes,
+    # with no signal. Let it propagate so CI/tests catch it. Only the prune
+    # EXECUTION is best-effort.
+    from scripts.prune_runtime_retention import prune, select_all
 
+    try:
         selection = select_all(PROJECT_ROOT, {"keep_notification_archives": 10})
         prune(selection, apply=True)
     except Exception as exc:
