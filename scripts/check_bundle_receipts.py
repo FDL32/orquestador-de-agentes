@@ -29,8 +29,9 @@ Rules enforced (fail-closed):
   - every `## PROBE` section has a ```receipt fenced block;
   - each receipt declares `command:` and `exit_code:` (a claim without a receipt
     is exploratory evidence, never a closing probe -- CEM);
-  - every `path:` in a receipt RESOLVES on disk relative to --root (a probe that
-    cites a non-existent file is a false receipt);
+  - every `path:` in a receipt is RELATIVE, stays INSIDE --root, and RESOLVES on
+    disk (an absolute path or a `..`-escape would .exists() outside the repo -> a
+    wrong-root false green; a non-existent file is a false receipt);
   - `exit_code:` is an integer.
 A PROBE section explicitly marked `<!-- no-receipt: <reason> -->` is exempt (for
 narrative/context sections that make no executable claim); the reason is required.
@@ -103,7 +104,25 @@ def validate_receipt(body: str, root: Path) -> tuple[bool, list[str]]:
             problems.append(f"exit_code is not an integer: {raw!r}")
     for path_m in _PATH_RE.finditer(receipt):
         rel = path_m.group(1).strip()
-        if not (root / rel).exists():
+        # A receipt path must be INSIDE --root and resolve. An absolute path (or a
+        # `..` escape) would let `root / rel` land OUTSIDE the repo and still
+        # .exists() -> a wrong-root false green (Codex closing audit 2026-07-19).
+        # Reject anything that is absolute or resolves outside root FIRST.
+        cand = Path(rel)
+        if cand.is_absolute():
+            problems.append(
+                f"cited path is absolute (must be relative to --root): {rel}"
+            )
+            continue
+        try:
+            resolved = (root / cand).resolve()
+            root_r = root.resolve()
+            inside = resolved == root_r or root_r in resolved.parents
+        except (OSError, ValueError):
+            inside = False
+        if not inside:
+            problems.append(f"cited path escapes --root: {rel}")
+        elif not resolved.exists():
             problems.append(f"cited path does not resolve: {rel}")
     return (not problems), problems
 

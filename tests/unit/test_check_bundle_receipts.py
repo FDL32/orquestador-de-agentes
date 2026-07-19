@@ -61,6 +61,26 @@ _EXEMPT = """# Bundle
 Some prose.
 """
 
+# Codex closing audit 2026-07-19: an ABSOLUTE receipt path outside --root would
+# .exists() and pass -> wrong-root false green. Must be rejected.
+_ABSOLUTE_PATH = """# Bundle
+## PROBE 1 -- cites an absolute path outside the repo
+```receipt
+command: cat SOMEFILE
+exit_code: 0
+path: {abspath}
+```
+"""
+
+_ESCAPE_PATH = """# Bundle
+## PROBE 1 -- cites a ..-escape path
+```receipt
+command: cat escaped
+exit_code: 0
+path: ../../../Windows/System32/notepad.exe
+```
+"""
+
 
 def _run(text: str, tmp_path: Path, root: Path | None = None) -> int:
     b = tmp_path / "bundle.md"
@@ -81,6 +101,25 @@ def test_receipt_citing_nonexistent_path_fails(tmp_path: Path):
     """Mutation teeth: a false receipt (cited path does not resolve) must FAIL --
     a guard that only checked 'a receipt block exists' would pass this."""
     assert _run(_BAD_PATH, tmp_path) == 1
+
+
+def test_receipt_absolute_path_outside_root_fails(tmp_path: Path):
+    """Codex closing audit 2026-07-19: an ABSOLUTE path that EXISTS but is OUTSIDE
+    --root would pass `(root / rel).exists()` (root / abspath == abspath) -> a
+    wrong-root false green. It must be rejected as absolute."""
+    outside = tmp_path.parent / "bundle_guard_outside_probe.txt"
+    outside.write_text("x", encoding="utf-8")
+    try:
+        text = _ABSOLUTE_PATH.format(abspath=str(outside))
+        # root is _ROOT (the repo); the abspath is a real existing file OUTSIDE it.
+        assert _run(text, tmp_path, root=_ROOT) == 1
+    finally:
+        outside.unlink(missing_ok=True)
+
+
+def test_receipt_dotdot_escape_path_fails(tmp_path: Path):
+    """A `..` escape that resolves outside --root must FAIL even if it exists."""
+    assert _run(_ESCAPE_PATH, tmp_path, root=_ROOT) == 1
 
 
 def test_receipt_without_exit_code_fails(tmp_path: Path):
