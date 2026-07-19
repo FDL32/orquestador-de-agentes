@@ -182,6 +182,65 @@ TRIAGE -> CONTRACT_FORMATION -> CONTRACT_AUDIT -> BOOTSTRAP_RUNTIME
        -> BUILDER -> BUILDER_SELF_CHECK -> MANAGER_REVIEW -> CHAIN_AUDIT -> CLOSE
 ```
 
+### Ensemble governance loops (WOT-2026-037a)
+
+Three governance stages run an ADVERSARIAL MULTI-MODEL LOOP, not a single pass.
+A single reviewer misses false-greens that independent models catch (measured
+repeatedly in this repo's design history). Each governance decision -- approve a
+contract, approve code, close the flight -- goes through a fan-out whose lens
+each model owns, then a synthesis on the MAIN thread (never a subagent's verdict).
+
+| Stage | When | Loop | Source prompt |
+|---|---|---|---|
+| `CONTRACT_AUDIT` | Manager formed the ticket, BEFORE the Builder | `1->9->2` | `audit_cf_ticket_contract.md` |
+| `MANAGER_REVIEW` | Builder finished the code, BEFORE the next ticket | `1->9->2` | `manager_review.md` |
+| `CLOSE` | End of the flight | `1->9->2` (phase 1) + challenge phase 2 | `orchestrator_session_close_full_audit.md` + `memory_upload.md` + `audit_autonomous_ticket_batch.md` |
+
+**The canonical loop shapes (WOT-2026-037a, exact -- do not abbreviate):**
+
+`1->9->2` (CONTRACT_AUDIT, MANAGER_REVIEW, and CLOSE phase 1):
+- **`1` = collector (Claude, with filesystem).** Builds the enriched bundle: the
+  artifact under review + git state + probes ALREADY EXECUTED. The nan models
+  have NO filesystem; the probes must be IN the bundle or they emit systematic
+  false-positives ("ref broken / ticket missing").
+- **`9` = fan-out of NINE lenses = (4 nan comun + 4 nan dif) + 1 Claude reader.**
+  The 4 nan profiles run TWICE: a `comun` branch (same triage prompt, for A/B
+  contrast) and a `dif` branch (a specialized lens per profile). The `+1` Claude
+  reader WITH filesystem is MANDATORY -- it catches the nan false-positives the
+  models cannot see without a tree. **mode=parallel**: independence IS the
+  guarantee; NEVER `chain` to verify.
+- **`2` = synthesis = Claude -> Claude -> Codex.** Claude consolidates and
+  VERIFIES each finding against the real tree (discards nan false-positives); a
+  second Claude pass hardens the synthesis; then Codex refutes it. Codex runs in
+  `cwd=repo_motor` and does NOT see the destino workspace -- a Codex "REFUTA:
+  does not exist" on a workspace artifact is a WRONG-SCOPE false negative;
+  resolve the probe conflict BY SCOPE, never by convenience (CEM: the conflict
+  IS the finding). Pass the prompt to Codex via STDIN, never argv (Windows
+  WinError 206 on prompts > ~32KB).
+
+CLOSE adds a **phase 2 (challenge)** after phase 1's `1->9->2`:
+- **`1` = collector (Claude).** Re-bundles phase 1's consolidated synthesis as
+  the artifact to challenge.
+- **`9` = challenge fan-out = Claude + 4 nan + 1 Claude reader.** A Claude
+  challenger leads, the 4 nan attack, a Claude reader (filesystem) arbitrates.
+- **close = Claude -> glm -> Codex (final).** Claude drafts the close verdict;
+  glm-5.2 (via `opencode run --model opencode-go/glm-5.2`) refines it
+  incrementally (chain -- refine, never verify); Codex delivers the final
+  adversarial pass. If glm fails (0 bytes / timeout / rc!=0 / no round-trip),
+  fall back to the best nan by scorecard (WOT-2026-034a).
+- **then Claude Code iterations UNTIL TOTAL GREEN.** After the close verdict,
+  the orchestrator iterates on the real tree (fixes + gates) until every gate is
+  green -- the close is not done while anything is red.
+
+Dispatch particulars are non-negotiable and cost real time when ignored: NEVER
+more than 4-5 nan concurrent (HTTP 429); prefer sequential with a pause, retry
+429s; verdict by CONTENT, never by rc (PONG-019o). Canonical loop reference:
+`prompts/backlog_triage.md`. The DAG's `ensemble_policy` per group (see
+`backlog_triage_output.json`) declares which extra loops a group triggers beyond
+these three fixed governance loops; the schema formalization is `WOT-2026-026b`.
+The synthesis verdict is ALWAYS the main thread's, never a subagent's self-report
+(harness lesson, 3rd batch run).
+
 Each fault returns to the stage that OWNS the problem, never "breaks" at the
 symptom:
 

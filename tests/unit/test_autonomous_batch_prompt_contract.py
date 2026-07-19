@@ -677,3 +677,105 @@ def test_backend_accessibility_gate_script_reference_is_real() -> None:
         "the Paso 0 gate cites scripts/check_agents_accessible.py, which "
         "must exist on disk for the reference to be real"
     )
+
+
+# --- WOT-2026-037a: ensemble governance loops wired into the 3 gov stages ---
+# These tests EXECUTE the contract (verify the loop wiring + that every source
+# prompt the loop table cites resolves on disk), not just grep for prose
+# (lesson 026g: pinning prose is a norm, not a barrier).
+
+
+def test_037a_governance_loops_section_exists() -> None:
+    """The ensemble governance loops section is declared."""
+    txt = _read()
+    assert "Ensemble governance loops" in txt, (
+        "WOT-2026-037a: the prompt must declare the ensemble governance "
+        "loops section wiring the fan-out at the 3 governance stages"
+    )
+
+
+def test_037a_contract_audit_loop_is_1_9_2() -> None:
+    """CONTRACT_AUDIT (pre-Builder) runs a 1->9->2 loop with audit_cf."""
+    txt = _read()
+    # the CONTRACT_AUDIT row must pair the 1->9->2 loop with audit_cf_ticket_contract
+    assert re.search(
+        r"CONTRACT_AUDIT.*1->9->2.*audit_cf_ticket_contract\.md",
+        txt,
+    ), "037a: CONTRACT_AUDIT must run 1->9->2 with audit_cf_ticket_contract.md"
+
+
+def test_037a_manager_review_loop_is_1_9_2() -> None:
+    """MANAGER_REVIEW (post-Builder) runs a 1->9->2 loop with manager_review."""
+    txt = _read()
+    assert re.search(
+        r"MANAGER_REVIEW.*1->9->2.*manager_review\.md",
+        txt,
+    ), "037a: MANAGER_REVIEW must run 1->9->2 with manager_review.md"
+
+
+def test_037a_close_has_phase2_challenge() -> None:
+    """CLOSE = phase 1 (1->9->2) + phase 2 challenge, with the exact close
+    chain Claude -> glm -> Codex and iterations until total green."""
+    txt = _read()
+    # phase 2 challenge fan-out and the exact close chain
+    assert "challenge" in txt and "phase 2" in txt.lower(), (
+        "037a: CLOSE must add a phase 2 challenge after phase 1's 1->9->2"
+    )
+    assert re.search(r"Claude\s*->\s*glm\s*->\s*Codex", txt), (
+        "037a: CLOSE phase 2 must close with Claude -> glm -> Codex (final)"
+    )
+    assert "UNTIL TOTAL GREEN" in txt or "until every gate is" in txt, (
+        "037a: CLOSE must iterate until total green after the verdict"
+    )
+
+
+def test_037a_loops_are_parallel_never_chain_to_verify() -> None:
+    """The governance loops verify by independence (mode=parallel)."""
+    txt = _read()
+    assert "mode=parallel" in txt and "NEVER" in txt and "chain" in txt, (
+        "037a: governance loops must use mode=parallel (independence is the "
+        "guarantee); chain must be forbidden for verification"
+    )
+
+
+def test_037a_nine_lens_shape_is_exact() -> None:
+    """The '9' is (4 nan comun + 4 nan dif) + 1 Claude reader -- exact."""
+    txt = _read()
+    assert re.search(r"4 nan comun.*4 nan dif.*Claude reader", txt, re.DOTALL), (
+        "037a: the 9 fan-out must be (4 nan comun + 4 nan dif) + 1 Claude reader"
+    )
+
+
+def test_037a_synthesis_is_claude_claude_codex() -> None:
+    """The '2' synthesis is Claude -> Claude -> Codex -- exact."""
+    txt = _read()
+    assert re.search(r"Claude\s*->\s*Claude\s*->\s*Codex", txt), (
+        "037a: the 2 synthesis must be Claude -> Claude -> Codex"
+    )
+
+
+def test_037a_close_loop_source_prompts_exist_on_disk() -> None:
+    """Seam guard (EXECUTES, not greps): every source prompt the CLOSE loop
+    cites must resolve on disk -- a dangling reference would silently break
+    the close loop (mutation: rename any of them -> RED)."""
+    close_sources = [
+        "orchestrator_session_close_full_audit.md",
+        "memory_upload.md",
+        "audit_autonomous_ticket_batch.md",
+    ]
+    txt = _read()
+    for src in close_sources:
+        assert src in txt, f"037a: CLOSE loop must cite {src}"
+        assert (PROMPTS / src).is_file(), (
+            f"037a seam guard: CLOSE loop cites prompts/{src} but it does "
+            f"not exist on disk (dangling reference breaks the close loop)"
+        )
+
+
+def test_037a_contract_and_review_source_prompts_exist_on_disk() -> None:
+    """Seam guard: the per-ticket loop source prompts resolve on disk."""
+    for src in ("audit_cf_ticket_contract.md", "manager_review.md"):
+        assert (PROMPTS / src).is_file(), (
+            f"037a seam guard: governance loop cites prompts/{src} but it "
+            f"does not exist on disk"
+        )
