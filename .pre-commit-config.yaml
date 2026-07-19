@@ -168,6 +168,21 @@ repos:
         always_run: true
         stages: [pre-commit]
 
+      # WOT-2026-035b: el 2026-07-18 el archive TRACKEADO de memoria portable
+      # (.agent/runtime/memory/archive/observations.YYYY-MM.jsonl) llevo 2
+      # entradas con schema NO canonico y ninguna barrera cableada lo caza:
+      # validate_observations.py existia pero nadie lo invocaba sobre el
+      # archive. always_run + pass_filenames:false: el denominador sale del
+      # glob del arbol vivo, no del argv (un commit de solo-borrados tambien
+      # debe re-verificar).
+      - id: check-portable-memory-archive
+        name: check portable memory archive (archive/observations.*.jsonl schema)
+        entry: uv run python scripts/check_portable_memory_archive_schema.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
       # pip-audit: auditoria CVE desde uv.lock (todos los grupos).
       # El wrapper exporta uv.lock a requirements.txt temporal y llama pip-audit -r.
       # Garantia: audita la superficie real del proyecto, no el Python del sistema.

@@ -81,6 +81,7 @@ EXPECTED_WIRED_REAL = {
     "check_handoff_state_sha",  # WOT-2026-024t(s2): cableado en prepush_check.py (closeout, WARN/FAIL)
     "check_motor_destination_integration",  # WOT-2026-024w: cableado en prepush_check.py (closeout, WARN/STRICT)
     "check_no_history_truncation",
+    "check_portable_memory_archive_schema",  # WOT-2026-035b: cableado en .pre-commit-config.yaml (always_run) + prepush_check.py
     "check_ruff_hook_scope",  # WOT-2026-024w: cableado en .pre-commit-config.yaml (always_run)
     "check_skill_collisions",  # WOT-2026-024w: cableado en .pre-commit-config.yaml (always_run)
     "check_ticket_nomenclature",  # WOT-2026-024w: cableado en .pre-commit-config.yaml (always_run)
@@ -88,6 +89,7 @@ EXPECTED_WIRED_REAL = {
     "delivery_hygiene_check",  # v4: denominador ve el guard sin prefijo, y lo cabla
     "guard_paths",
     "validate_all",
+    "validate_observations",  # WOT-2026-035b: cableado via import estatico en check_portable_memory_archive_schema.py (retirado de known_unwired)
     "validate_ticket_prose",
 }
 

@@ -356,6 +356,10 @@ class TestPreflightCheckIntegration:
             patch(
                 "scripts.prepush_check.run_git_status_check", return_value=mock_result
             ),
+            patch(
+                "scripts.prepush_check.run_portable_memory_archive_check",
+                return_value=mock_result,
+            ),
             patch("scripts.prepush_check.run_validate_all", return_value=mock_result),
         ):
             exit_code = run_preflight_check(tmp_path)
@@ -467,6 +471,10 @@ class TestPreflightCheckIntegration:
                 return_value=mock_pass,
             ),
             patch("scripts.prepush_check.run_git_status_check", return_value=mock_pass),
+            patch(
+                "scripts.prepush_check.run_portable_memory_archive_check",
+                return_value=mock_pass,
+            ),
             patch(
                 "scripts.prepush_check.run_validate_all",
                 return_value=mock_fail_nonblocking,

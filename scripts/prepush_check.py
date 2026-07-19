@@ -13,12 +13,17 @@ During (Proceso y Recursos):
       (3) uv run ruff format --check .
       (4) agent_controller --validate --json --force
       (5) git status --short
+      (6) checks adicionales bloqueantes solo en closeout_mode (backlog contract,
+          reconcile, handoff SHA, destination PII, closeout reconciliation,
+          motor<->destino integration)
+      (7) check_portable_memory_archive_schema.py --motor-root <root>
+          (WOT-2026-035b; siempre, no solo en closeout_mode)
     - Ejecuta skills/validate_all.py de forma informacional (no bloqueante).
     - Cada check imprime estado OK/FAIL con diagnostico legible.
     - No modifica archivos; solo verifica y reporta.
 
 After (Post-condiciones y Errores):
-    - Retorna exit code 0 si los cinco checks bloqueantes pasan.
+    - Retorna exit code 0 si todos los checks bloqueantes pasan.
     - Retorna exit code 1 si algun check bloqueante falla.
     - git status --short no debe mostrar cambios tras la ejecucion.
     - skills/validate_all.py se ejecuta pero no afecta el exit code.
@@ -623,6 +628,32 @@ def run_motor_destination_integration_check(
     )
 
 
+def run_portable_memory_archive_check(project_root: Path) -> CheckResult:
+    """Ejecuta el guard de schema del archive de memoria portable (WOT-2026-035b).
+
+    Valida `.agent/runtime/memory/archive/observations.*.jsonl` (el UNICO
+    vehiculo portable de la memoria del motor) contra el schema canonico.
+    Blocking: el 2026-07-18 el archive trackeado llevo 2 entradas invalidas
+    y ninguna barrera cableada lo detecto antes de este ticket.
+
+    Args:
+        project_root: Raiz del proyecto donde ejecutar el guard.
+
+    Returns:
+        CheckResult con el estado del check de schema del archive.
+    """
+    return run_subprocess_check(
+        cmd=[
+            sys.executable,
+            str(project_root / "scripts" / "check_portable_memory_archive_schema.py"),
+            "--motor-root",
+            str(project_root),
+        ],
+        name="Portable Memory Archive Schema (WOT-2026-035b)",
+        project_root=project_root,
+    )
+
+
 def run_preflight_check(
     project_root: Path | None = None,
     expected_artifacts: list[str] | None = None,
@@ -692,6 +723,10 @@ def run_preflight_check(
         results.append(run_closeout_reconciliation_check(project_root))
         # 6f. Motor<->Destino Integration (WOT-2026-024w; WARN default, FAIL opt-in)
         results.append(run_motor_destination_integration_check(project_root))
+
+    # 7. Portable Memory Archive Schema (WOT-2026-035b; bloqueante siempre,
+    # no solo en closeout_mode: el archive puede corromperse en cualquier push)
+    results.append(run_portable_memory_archive_check(project_root))
 
     # Check informacional (no bloqueante)
     results.append(run_validate_all(project_root))

@@ -68,6 +68,7 @@ def test_preflight_closeout_mode_includes_gate(tmp_path: Path, monkeypatch) -> N
     ok = pc.CheckResult(name="stub", passed=True, output="", is_blocking=True)
     for fn in (
         "run_delivery_hygiene_check",
+        "run_portable_memory_archive_check",
         "run_ruff_check",
         "run_ruff_format_check",
         "run_agent_controller_validate",
