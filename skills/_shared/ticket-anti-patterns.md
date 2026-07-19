@@ -151,7 +151,7 @@ Detectado por el guard de handoff (`pre_handoff_guard.py`) que bloquea si M3 fal
 ✅ Ejemplo bueno:
 > "La exclusion va acompanada de un test de regresion con comando y fixture literales: `python scripts/classify_publication.py --repo-root <fixture>` sobre `tests/fixtures/secret_in_allowlisted_path.txt` (que contiene un `AKIAIOSFODNN7EXAMPLE`) DEBE dar exit 1 / `BLOQUEADO_POR_SECRETO`. El test falla si la allowlist abre la zona ciega."
 
-Evidencia origen: WOT-2026-015e D4 -- `EXCLUDE_PATTERNS` creaba una zona ciega en el secret-scan de `classify_publication.py`; se corrigio con `git rm --cached` + `.gitignore` + un test de regresion que prueba que el secreto sigue bloqueando, en vez de excluir el path.
+Origen del anti-patron: WOT-2026-015e D4 (la correccion canonica fue anadir un test de regresion que prueba que el secreto sigue bloqueando, no ampliar la exclusion).
 
 ## AP-D05 - Green local no-hermetico vs CI clon-limpio
 
