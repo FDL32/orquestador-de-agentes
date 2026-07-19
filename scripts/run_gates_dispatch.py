@@ -5,10 +5,17 @@ Reads .agent/collaboration/work_plan.md, extracts deliverable_type, invokes
 the appropriate gate sequence. Fallback to 'code' with warning if missing.
 
 WP-2026-122: Uses runtime.project_root for dynamic project root resolution.
+
+WOT-2026-035d: `main()` parses argv via `build_parser()` BEFORE any gate
+runs, so `--help`/`-h` (or invalid argv) exits immediately (SystemExit 0/2)
+without reading work_plan.md or invoking run_pytest_safe -- previously
+`--help` fell through into the full gate run and clobbered the shared
+`last-run.json`.
 """
 
 from __future__ import annotations
 
+import argparse
 import os
 import re
 import subprocess
@@ -226,7 +233,56 @@ def run_deliverable_gates() -> int:
     return rc
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """Build the CLI parser for this dispatcher.
+
+    Before: none.
+    During: declares a description-only parser (no positional/optional
+        arguments beyond argparse's built-in `--help`/`-h`). Kept separate
+        from `main()` so it can be constructed and inspected (e.g. in
+        tests) without triggering any gate side effect.
+    After: returns an `argparse.ArgumentParser`. Calling `.parse_args()`
+        with `--help`/`-h` prints usage and raises `SystemExit(0)`
+        natively; invalid argv raises `SystemExit(2)`. Neither path
+        touches `read_deliverable_type()` or runs any gate.
+    """
+    return argparse.ArgumentParser(
+        description=(
+            "Dispatch quality gates (ruff, pytest-safe, pip-audit, "
+            "deliverable-existence, contract/naming/backlog barriers) "
+            "by the deliverable_type declared in work_plan.md. Invoked "
+            "with no arguments, it reads work_plan.md and runs the "
+            "corresponding gate sequence immediately."
+        )
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entrypoint: dispatch quality gates by deliverable_type.
+
+    Before: `argv` is the raw CLI argument list. Defaults to `[]` (NOT
+        `sys.argv[1:]`) when `None`, so calling `main()` bare -- e.g. from
+        another module, from tests, or from the `if __name__ ==
+        "__main__"` guard below (which passes `sys.argv[1:]` explicitly) --
+        preserves the pre-WOT-2026-035d behavior of dispatching immediately
+        with no CLI arguments to parse. No side effect has happened yet.
+    During: parses `argv` with `build_parser()` FIRST, before touching
+        `read_deliverable_type()` or running any gate. `--help`/`-h` and
+        invalid argv are intercepted natively by argparse (`SystemExit(0)`
+        / `SystemExit(2)` respectively) and propagate out of `main()`
+        without reading work_plan.md or invoking any subprocess -- this is
+        the WOT-2026-035d fix: previously `--help` fell through into the
+        full gate run (including `run_pytest_safe`, which clobbers the
+        shared `last-run.json`). With empty argv (the normal dispatch
+        path), parsing succeeds trivially and control proceeds exactly as
+        before.
+    After: on `--help`/invalid argv, raises `SystemExit` (propagated by
+        argparse, not caught here) before any gate runs. Otherwise returns
+        the same int return code as before this fix (0 on all gates
+        passing, first non-zero gate return code otherwise).
+    """
+    build_parser().parse_args([] if argv is None else argv)
+
     dtype = read_deliverable_type()
     delivery_authority = read_delivery_authority()
     print(f"[dispatch] deliverable_type='{dtype}'")
@@ -282,4 +338,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

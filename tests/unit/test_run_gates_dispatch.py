@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import scripts.pip_audit_policy as pip_audit_policy
 
 
@@ -354,6 +355,111 @@ def test_resolve_motor_root_path_returns_resolved_path(tmp_path):
 
 # WOT-2026-019i: regression barrier — .agent must never shadow the top-level
 # runtime package at module level.
+
+
+# WOT-2026-035d: --help must be side-effect-free (no gate execution, no
+# last-run.json mutation). Previously main() had no argparse and fell
+# through directly into read_deliverable_type() + gate execution, so
+# `run_gates_dispatch.py --help` ran the FULL suite (including
+# run_pytest_safe, which clobbers the shared last-run.json).
+
+
+def test_help_exits_zero_and_prints_usage(capsys):
+    """`main(["--help"])` exits 0 and prints usage, mirroring the
+    run_codex_audit.py::test_cli_help_exits_zero_and_prints_usage pattern."""
+    with pytest.raises(SystemExit) as exc_info:
+        dispatch.main(["--help"])
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "usage" in captured.out.lower()
+    assert "dispatch quality gates" in captured.out.lower()
+
+
+def test_help_does_not_touch_last_run_json(tmp_path, monkeypatch):
+    """WOT-2026-035d DoD-b: --help must not touch the shared last-run.json.
+
+    Hermetic sentinel: creates a fake last-run.json with a known mtime, then
+    invokes `main(["--help"])`. If --help correctly short-circuits BEFORE
+    read_deliverable_type()/any gate, the sentinel file is never touched
+    (mtime invariant, content invariant). To make this hermetic (never
+    actually runs the real suite), read_deliverable_type and subprocess.run
+    are ALSO monkeypatched to explode if called -- so if the argparse
+    interception were ever bypassed, this test would fail loudly instead of
+    silently running the real gates.
+    """
+    sentinel = tmp_path / "last-run.json"
+    sentinel.write_text('{"level": "all"}', encoding="utf-8")
+    mtime_before = sentinel.stat().st_mtime_ns
+    content_before = sentinel.read_text(encoding="utf-8")
+
+    def _explode_if_called(*args, **kwargs):
+        raise AssertionError(
+            "--help must short-circuit before any gate touches "
+            "deliverable_type or spawns a subprocess"
+        )
+
+    monkeypatch.setattr(dispatch, "read_deliverable_type", _explode_if_called)
+    monkeypatch.setattr(dispatch, "read_delivery_authority", _explode_if_called)
+    monkeypatch.setattr(dispatch.subprocess, "run", _explode_if_called)
+
+    with pytest.raises(SystemExit) as exc_info:
+        dispatch.main(["--help"])
+    assert exc_info.value.code == 0
+
+    assert sentinel.stat().st_mtime_ns == mtime_before
+    assert sentinel.read_text(encoding="utf-8") == content_before
+
+
+def test_help_mutation_removing_parser_reaches_read_deliverable_type(monkeypatch):
+    """Mutation-with-teeth (contract DoD-c): "remove the parser -> the test
+    falls". Simulates the PRE-fix main() by monkeypatching `build_parser` to
+    return a no-op parser that never inspects argv (so `--help` is silently
+    swallowed instead of raising SystemExit) -- reproducing the exact defect
+    this ticket fixes: `--help` falling through into gate territory.
+
+    Asserts that under this mutation, `main(["--help"])` does NOT raise
+    SystemExit(0) and instead proceeds to call `read_deliverable_type()` --
+    i.e. this exact call sequence is what test_help_does_not_touch_last_run_json
+    guards against via its explode-if-called monkeypatches. This proves the
+    real (unmutated) `build_parser().parse_args(argv)` call in `main()` is
+    the ONLY thing standing between `--help` and a full gate run: remove it,
+    and this test demonstrates the fall-through the contract warns about.
+    """
+
+    class _NoOpParser:
+        def parse_args(self, argv):
+            return None  # never raises SystemExit, unlike the real parser
+
+    monkeypatch.setattr(dispatch, "build_parser", lambda: _NoOpParser())
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        dispatch, "read_deliverable_type", lambda: calls.append("dtype") or "code"
+    )
+    monkeypatch.setattr(dispatch, "read_delivery_authority", lambda: "repo_motor")
+    monkeypatch.setattr(dispatch, "run_code_gates", lambda *_a, **_kw: 0)
+    monkeypatch.setattr(dispatch, "run_deliverable_gates", lambda *_a, **_kw: 0)
+    monkeypatch.setattr(
+        dispatch.subprocess,
+        "run",
+        lambda *_a, **_kw: type("R", (), {"returncode": 0})(),
+    )
+
+    # No SystemExit raised: the mutation makes --help fall through, exactly
+    # the pre-fix WOT-2026-035d bug.
+    rc = dispatch.main(["--help"])
+
+    assert rc == 0
+    assert calls == ["dtype"], (
+        "under the no-op-parser mutation, main(['--help']) reached "
+        "read_deliverable_type() instead of short-circuiting via "
+        "SystemExit(0) -- this is the exact WOT-2026-035d defect the real "
+        "build_parser().parse_args(argv) call prevents; removing that call "
+        "(or neutering build_parser as this test does) makes "
+        "test_help_exits_zero_and_prints_usage and "
+        "test_help_does_not_touch_last_run_json FAIL, since neither "
+        "SystemExit nor the explode-if-called guards would fire"
+    )
 
 
 def test_run_gates_dispatch_importable_without_module_shadowing():
