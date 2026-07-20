@@ -621,14 +621,40 @@ def test_predicate_row3_universe_is_groups() -> None:
     )
 
 
+def _auditor_predicate_section() -> str:
+    """The auditor's PREDICATE section (## 4 ... until the next TOP-LEVEL section
+    heading ``## <n>.`` with n > 4), so cond-3 assertions are scoped to the
+    machine-checkable PREDICATE, not a stray `contabilidad_completa` mention in
+    the OUTPUT template later in the file. WOT-2026-025u(b): replaces the fragile
+    `idx : idx+900` window, which (a) anchored on the FIRST occurrence of the
+    token and (b) assumed cond-3's `groups[]` sat within 900 chars of it -- both
+    break if the prose shifts. Header-anchored, like _barrier3_block.
+
+    The delimiter matches the next ``## <n>.`` whose number is > 4 (Codex-FS:
+    a hypothetical ``## 4.5`` subsection must NOT truncate the section early).
+    """
+    text = AUDITOR_PROMPT.read_text(encoding="utf-8")
+    start = text.index("## 4. El PREDICATE machine-checkable")
+    # Delimiter: the next TOP-LEVEL heading '## <n>.' with n > 4. Scanning for
+    # n > 4 (not merely the next '## ') means a hypothetical '## 4.5' subsection
+    # does NOT truncate the section early (Codex-FS).
+    for m in re.finditer(r"\n##\s+(\d+)\.", text[start + 1 :]):
+        if int(m.group(1)) > 4:
+            return text[start : start + 1 + m.start()]
+    return text[start:]
+
+
 def test_executor_auditor_parity_on_cond3_universe() -> None:
     """PARITY (WOT-2026-025q): both prompts must anchor cond-3's universe to
-    the literal `groups[]` (each in its own language). Mutation: drop the
-    token from either file's cond-3 -> RED."""
-    auditor_text = AUDITOR_PROMPT.read_text(encoding="utf-8")
-    idx = auditor_text.index("contabilidad_completa")
-    auditor_cond3 = auditor_text[idx : idx + 900]
-    assert "groups[]" in auditor_cond3, (
+    the literal `groups[]` (each in its own language). WOT-2026-025u(b): the
+    auditor side is now anchored by the section HEADER, not idx+900.
+    Mutation: drop the token from either file's cond-3 -> RED."""
+    section4 = _auditor_predicate_section()
+    # cond-3 lives in the PREDICATE section; its universe must be groups[].
+    assert "contabilidad_completa" in section4, (
+        "cond-3 (contabilidad_completa) must live in the '## 4 PREDICATE' section"
+    )
+    assert "groups[]" in section4, (
         "the auditor's cond-3 must fix the accounting universe = tickets of "
         "groups[]; tickets[] entries with no group are context, not accounting"
     )
@@ -636,6 +662,80 @@ def test_executor_auditor_parity_on_cond3_universe() -> None:
         "the executor's PREDICATE row 3 must fix the same groups[] universe: "
         "a split contract between executor and auditor on cond-3 recreates F3"
     )
+
+
+def test_cond3_anchor_is_robust_to_multiple_token_occurrences() -> None:
+    """WOT-2026-025u(b) MUTATION ENDURECIDA (Codex): the OLD anchor was
+    `text.index("contabilidad_completa")` + a fixed 900-char window. That token
+    appears 3x in the file (PREDICATE cond-3 AND the OUTPUT-template rows), so
+    the first-occurrence + fixed-window anchor is fragile: if the PREDICATE
+    prose grew past the window, or the occurrence order changed, the check would
+    read the wrong region.
+
+    Proof the section-anchor is not window-bound: it must still locate cond-3's
+    `groups[]` even when the PREDICATE section is padded FAR beyond 900 chars
+    between the `contabilidad_completa` token and its `groups[]`. The old
+    idx+900 window would miss it; the header-anchored section does not.
+    """
+    text = AUDITOR_PROMPT.read_text(encoding="utf-8")
+    assert text.count("contabilidad_completa") >= 2, (
+        "premise: the token is not unique -- a first-occurrence anchor is unsafe"
+    )
+    section4 = _auditor_predicate_section()
+    # Pad the section between the token and its groups[] with >900 chars.
+    padded_section = section4.replace("groups[]", ("(relleno) " * 120) + "groups[]", 1)
+    padded = text.replace(section4, padded_section, 1)
+
+    # NEGATIVE assertion (Codex-FS): the OLD idx+900 window MISSES groups[] in the
+    # padded variant -- this is the concrete failure the section-anchor fixes.
+    old_idx = padded.index("contabilidad_completa")
+    old_window = padded[old_idx : old_idx + 900]
+    assert "groups[]" not in old_window, (
+        "the padded variant must push groups[] outside the old 900-char window "
+        "so the contrast is real (else the test proves nothing)"
+    )
+
+    # POSITIVE assertion: the header-anchored section STILL contains groups[].
+    s = padded.index("## 4. El PREDICATE machine-checkable")
+    m = re.search(r"\n##\s+(\d+)\.", padded[s + 1 :])
+    while m and int(m.group(1)) <= 4:
+        m = re.search(
+            r"\n##\s+(\d+)\.", padded[s + 1 + m.end() :]
+        )  # pragma: no cover - no 4.x today
+    e = (s + 1 + m.start()) if m else len(padded)
+    padded_section4 = padded[s:e]
+    assert "groups[]" in padded_section4, (
+        "the header-anchored section still contains cond-3's groups[] even when "
+        "it sits >900 chars from the token -- the idx+900 window (asserted above) "
+        "missed it"
+    )
+
+
+def test_predicate_section_survives_a_45_subsection() -> None:
+    """WOT-2026-025u(b) (Codex-FS finding 2): a hypothetical `## 4.5` subsection
+    between cond-3 and `## 5` must NOT truncate the extracted PREDICATE section.
+    Inject a `## 4.5 ...` header right after cond-3's groups[] and assert the
+    section still reaches it (a naive `next '## '` delimiter would cut early)."""
+    text = AUDITOR_PROMPT.read_text(encoding="utf-8")
+    section4 = _auditor_predicate_section()
+    marker = "groups[]"
+    injected = section4.replace(
+        marker, marker + "\n\n## 4.5. Subseccion nueva\n\ncontenido.\n", 1
+    )
+    variant = text.replace(section4, injected, 1)
+    # Re-extract with the SAME robust delimiter logic the helper uses.
+    s = variant.index("## 4. El PREDICATE machine-checkable")
+    end = None
+    for mm in re.finditer(r"\n##\s+(\d+)\.", variant[s + 1 :]):
+        if int(mm.group(1)) > 4:
+            end = s + 1 + mm.start()
+            break
+    section4_variant = variant[s:end] if end else variant[s:]
+    assert "## 4.5. Subseccion nueva" in section4_variant, (
+        "the '## 4.5' subsection must remain INSIDE the extracted section, not "
+        "act as its terminator (n>4 delimiter, not next-'## ')"
+    )
+    assert "groups[]" in section4_variant
 
 
 # ---------------------------------------------------------------------------
