@@ -30,8 +30,12 @@ EXIT CODES (diferenciados a proposito: "hay huerfanas" != "la herramienta esta r
 Uso:
     python scripts/check_portable_memory_promotion.py --project-root <repo>
 
-Remedio: `python scripts/reconcile_portable_memory.py --source <worktree> --apply`
-y COMMITEAR el archive.
+Remedio (depende de la topologia, WOT-2026-038j):
+- Worktree NO canonica: `python scripts/reconcile_portable_memory.py --source <worktree>
+  --apply` + commit del archive.
+- Checkout canonico / repo_destino independiente (source==dest, el reconciliador seria
+  NO-OP): la promocion la hace `memory_consolidate` por ANTIGUEDAD (cutoff 30d) en un
+  closeout SIN --skip-slow, seguido de commit del archive.
 """
 
 from __future__ import annotations
@@ -41,6 +45,13 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+# Reutiliza la canonicalizacion del PROPIO reconciliador (misma fuente de verdad sobre
+# "esta worktree es su checkout canonico"). No se re-implementa la deteccion: si el
+# reconciliador cambia de criterio, el guard lo sigue automaticamente (WOT-2026-038j).
+from reconcile_portable_memory import is_canonical
 
 
 OBS_REL = Path(".agent/runtime/memory/observations.jsonl")
@@ -135,6 +146,53 @@ def find_orphans(root: Path) -> list[dict]:
     ]
 
 
+def _print_remedy(root: Path) -> None:
+    """Imprime el remedio APLICABLE a la topologia de `root` (WOT-2026-038j).
+
+    El remedio historico (`reconcile_portable_memory --source <worktree> --apply`) SOLO
+    promueve algo cuando `root` es una worktree NO canonica: el reconciliador calcula
+    `dest = canonical_checkout(source)` y RETORNA NO-OP si `source == dest`
+    (reconcile_portable_memory.py:276-278). En un repo_destino independiente -- que es su
+    PROPIO checkout canonico -- ese comando sale exit 0 sin escribir nada. Dirigir ahi al
+    operador es la trampa del "exit 0 = no hice nada" DENTRO de la barrera que existe para
+    evitarla. Por eso se ramifica por `is_canonical`, reutilizando la canonicalizacion del
+    propio reconciliador (misma fuente de verdad, sin heuristica nueva).
+    """
+    if is_canonical(root):
+        print(
+            "[promotion-guard] REMEDIO (este repo ES su checkout canonico: el "
+            "reconciliador seria NO-OP aqui, source==dest):"
+        )
+        print(
+            "[promotion-guard]   La promocion la hace memory_consolidate por ANTIGUEDAD: "
+            "una leccion cruza al archive trackeado (memory_consolidate.py:653-664)"
+        )
+        print(
+            "[promotion-guard]   solo cuando su timestamp supera el cutoff de 30 dias "
+            "(split_by_age, memory_consolidate.py:144-160). Una leccion RECIENTE NO se"
+        )
+        print(
+            "[promotion-guard]   puede forzar aqui: no hay reconciliador que la mueva; "
+            "espera a que cruce el umbral."
+        )
+        print(
+            "[promotion-guard]   Comando: python scripts/memory_consolidate.py --apply "
+            f"y luego COMMITEA {ARCHIVE_DIR_REL.as_posix()} "
+        )
+        print(
+            "[promotion-guard]   (el closeout lo corre solo si NO pasas --skip-slow)."
+        )
+    else:
+        print(
+            "[promotion-guard] REMEDIO: python scripts/reconcile_portable_memory.py "
+            "--source <worktree> --apply"
+        )
+        print(
+            f"[promotion-guard] y COMMITEA {ARCHIVE_DIR_REL.as_posix()}: "
+            "sin commit la promocion no existe."
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     parser.add_argument(
@@ -177,14 +235,7 @@ def main(argv: list[str] | None = None) -> int:
             f"[promotion-guard]   - {r.get('topic')} "
             f"(source_ticket={r.get('source_ticket')})"
         )
-    print(
-        "[promotion-guard] REMEDIO: python scripts/reconcile_portable_memory.py "
-        "--source <worktree> --apply"
-    )
-    print(
-        f"[promotion-guard] y COMMITEA {ARCHIVE_DIR_REL.as_posix()}: "
-        "sin commit la promocion no existe."
-    )
+    _print_remedy(root)
     return EXIT_ORPHANS
 
 

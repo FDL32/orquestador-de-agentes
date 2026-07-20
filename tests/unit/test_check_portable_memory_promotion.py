@@ -114,7 +114,80 @@ def test_lesson_absent_from_archive_is_an_orphan_and_is_named(tmp_path: Path) ->
     )
     assert "leccion-huerfana" in r.stdout, "the guard must NAME each orphan"
     assert "WOT-2026-111a" in r.stdout, "the guard must report the source_ticket"
-    assert "reconcile_portable_memory.py" in r.stdout, "must point at the remedy"
+    # WOT-2026-038j: `_make_repo` builds a STANDALONE repo -- it is its own canonical
+    # checkout (is_canonical == True), so the reconciler is a no-op here. The remedy
+    # printed MUST be the applicable one (memory_consolidate by age), NOT the reconciler,
+    # which would send the operator down the "exit 0 = did nothing" trap.
+    assert "memory_consolidate" in r.stdout, (
+        "in a canonical checkout the applicable promotion vehicle is memory_consolidate "
+        f"by age, not the reconciler. stdout: {r.stdout}"
+    )
+    assert "reconcile_portable_memory.py --source" not in r.stdout, (
+        "the reconciler remedy is a NO-OP in a canonical checkout (source==dest); "
+        "printing it is the very trap this guard exists to prevent"
+    )
+
+
+def test_orphan_in_canonical_checkout_names_the_applicable_remedy(
+    tmp_path: Path,
+) -> None:
+    """(038j) A standalone repo (an independent repo_destino) IS its own canonical
+    checkout: `reconcile_portable_memory --source <it>` returns 'nada que reconciliar'
+    (source==dest) and writes nothing -- exit 0. A guard that fires exit 4 and then
+    hands the operator that no-op command is the 'exit 0 = I did nothing' trap living
+    INSIDE the barrier meant to prevent it. The applicable vehicle here is
+    memory_consolidate archiving by age.
+
+    Mutation: keep the old unconditional reconciler remedy -> RED (memory_consolidate
+    absent, reconciler present).
+    """
+    repo = _make_repo(tmp_path)
+    _write(repo / OBS_REL, [_obs("leccion-en-canonico", "WOT-2026-777a")])
+    _write(repo / _archive_rel(), [])
+
+    r = _run(repo)
+
+    assert r.returncode == EXIT_ORPHANS, r.stdout + r.stderr
+    assert "memory_consolidate" in r.stdout, (
+        "a canonical checkout must be told the APPLICABLE remedy (memory_consolidate "
+        f"by age); got: {r.stdout}"
+    )
+    assert "reconcile_portable_memory.py --source" not in r.stdout, (
+        "the reconciler is a no-op in a canonical checkout; the guard must NOT point "
+        f"at it here. got: {r.stdout}"
+    )
+
+
+def test_orphan_in_noncanonical_worktree_points_at_the_reconciler(
+    tmp_path: Path,
+) -> None:
+    """(038j) The reconciler is NOT a no-op everywhere: in a LINKED worktree
+    (is_canonical == False) it genuinely moves the lesson to the canonical archive.
+    There the guard must keep pointing at it -- the fix branches the remedy, it does
+    not delete a valid one.
+
+    Mutation: make the remedy unconditional-memory_consolidate -> RED (reconciler
+    absent in the branch where it IS the right answer).
+    """
+    canonical = _make_repo(tmp_path)
+    linked = tmp_path / "linked_worktree"
+    subprocess.run(
+        ["git", "worktree", "add", str(linked)],
+        cwd=str(canonical),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    _write(linked / OBS_REL, [_obs("leccion-en-worktree", "WOT-2026-888b")])
+    _write(linked / _archive_rel(), [])
+
+    r = _run(linked)
+
+    assert r.returncode == EXIT_ORPHANS, r.stdout + r.stderr
+    assert "reconcile_portable_memory.py" in r.stdout, (
+        "a non-canonical worktree CAN be reconciled to its canonical checkout; the "
+        f"guard must point at the reconciler here. got: {r.stdout}"
+    )
 
 
 def test_lesson_present_in_archive_is_clean(tmp_path: Path) -> None:
