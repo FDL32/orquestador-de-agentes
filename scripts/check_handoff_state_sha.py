@@ -15,7 +15,8 @@ unusual heading is a false negative we accept; we do not want false reds on hist
 
 Surface 1 of the ticket -- detecting a stale MEASUREMENT embedded under a `DoD:`
 marker in the backlog -- is an irreducibly fuzzy classifier (CF-audit Codex,
-2026-07-17) and was deferred to a design follow-up (WOT-2026-024t-S1).
+2026-07-17) and was deferred to a design follow-up: ticket WOT-2026-034c
+(ex-024t-S1), tracked in the destino backlog.
 
 Before: a project root (repo_destino) whose reports dir may hold handoff docs.
 During: parse each handoff doc by heading; collect SHAs under state headings.
