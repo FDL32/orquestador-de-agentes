@@ -580,17 +580,76 @@ def test_executor_auditor_parity_on_level_all_cond5() -> None:
     """PARITY (WOT-2026-025p): the auditor's cond-5 requires --level all;
     the executor's row 5 must require it too. This test reads BOTH prompts,
     so the parity cannot silently diverge in either direction. Mutation:
-    drop --level all from either file's cond-5 -> RED."""
-    auditor_text = AUDITOR_PROMPT.read_text(encoding="utf-8")
-    idx = auditor_text.index("suite_final_verde")
-    auditor_cond5 = auditor_text[idx : idx + 400]
-    assert "--level all" in auditor_cond5, (
+    drop --level all from either file's cond-5 -> RED.
+
+    WOT-2026-026i: the auditor side is anchored by the section HEADER
+    (`_auditor_predicate_section()`), not the fragile `idx : idx+400` window
+    on the FIRST occurrence of `suite_final_verde` (the same anti-pattern
+    025u(b) removed for cond-3). cond-5 lives in the same `## 4. PREDICATE`
+    section as cond-3, so the header-anchored helper scopes it robustly."""
+    section4 = _auditor_predicate_section()
+    assert "suite_final_verde" in section4, (
+        "cond-5 (suite_final_verde) must live in the '## 4 PREDICATE' section"
+    )
+    assert "--level all" in section4, (
         "the auditor's cond-5 (suite_final_verde) must require --level all"
     )
     assert "--level all" in _predicate_row(5), (
         "the executor's PREDICATE row 5 must require --level all: the "
         "auditor already does, and a split contract between the two is the "
         "measured cause of the F1 false-green (sibling audit 20260716-1427)"
+    )
+
+
+def test_cond5_anchor_is_robust_to_prose_growth() -> None:
+    """WOT-2026-026i MUTATION (mirror of cond-3's 025u(b) robustness proof):
+    the OLD cond-5 anchor was `text.index("suite_final_verde")` + a fixed
+    400-char window. `suite_final_verde` appears multiple times in the file
+    (PREDICATE cond-5 AND the OUTPUT-template rows), so a first-occurrence +
+    fixed-window anchor is fragile: if the PREDICATE prose grew so `--level all`
+    sat past the 400-char window, the check would read the wrong region and
+    pass on a split contract (parity false-green).
+
+    Proof the section-anchor is not window-bound: it must still locate cond-5's
+    `--level all` even when the PREDICATE section is padded FAR beyond 400 chars
+    between the `suite_final_verde` token and its `--level all`. The old idx+400
+    window would miss it; the header-anchored section does not.
+    """
+    text = AUDITOR_PROMPT.read_text(encoding="utf-8")
+    assert text.count("suite_final_verde") >= 2, (
+        "premise: the token is not unique -- a first-occurrence anchor is unsafe"
+    )
+    section4 = _auditor_predicate_section()
+    # Pad the section between the token and its --level all with >400 chars,
+    # inserted right AFTER the first token occurrence so the old window (which
+    # starts AT that token) is pushed past `--level all`.
+    padded_section = section4.replace(
+        "suite_final_verde", "suite_final_verde" + (" (relleno)" * 60), 1
+    )
+    padded = text.replace(section4, padded_section, 1)
+
+    # NEGATIVE assertion (mirror of cond-3): the OLD idx+400 window MISSES
+    # --level all in the padded variant -- the concrete failure the anchor fixes.
+    old_idx = padded.index("suite_final_verde")
+    old_window = padded[old_idx : old_idx + 400]
+    assert "--level all" not in old_window, (
+        "the padded variant must push --level all outside the old 400-char "
+        "window so the contrast is real (else the test proves nothing)"
+    )
+
+    # POSITIVE assertion: the header-anchored section STILL contains --level all.
+    s = padded.index("## 4. El PREDICATE machine-checkable")
+    m = re.search(r"\n##\s+(\d+)\.", padded[s + 1 :])
+    while m and int(m.group(1)) <= 4:
+        m = re.search(
+            r"\n##\s+(\d+)\.", padded[s + 1 + m.end() :]
+        )  # pragma: no cover - no 4.x today
+    e = (s + 1 + m.start()) if m else len(padded)
+    padded_section4 = padded[s:e]
+    assert "--level all" in padded_section4, (
+        "the header-anchored section still contains cond-5's --level all even "
+        "when it sits >400 chars from the token -- the idx+400 window (asserted "
+        "above) missed it"
     )
 
 
