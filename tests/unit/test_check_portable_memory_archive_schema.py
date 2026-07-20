@@ -216,3 +216,95 @@ def test_non_repo_root_is_a_tool_error_not_a_finding(tmp_path: Path) -> None:
         "a path that is not a git checkout root is a TOOL failure (exit 1), "
         f"not a finding; got {r.returncode}"
     )
+
+
+# --- WOT-2026-038n: guard bloqueante de COLISION DE IDENTIDAD ------------------
+# El reconciliador deduplica por record_key = (topic, source_ticket). Dos lecciones
+# DISTINTAS del mismo ticket (mismo topic+ticket, id/signal distintos) colisionan en
+# esa clave: si el reconciliador las reprocesa en la misma tanda, PIERDE una. El
+# conflicto "re-edicion vs leccion nueva" es indistinguible por datos (decision humana,
+# consenso 4-nan+Codex 2026-07-20). Este guard NO adivina la intencion: BLOQUEA (exit 5)
+# una colision no revisada para que el humano decida, y una allowlist declara los pares
+# ya aceptados.
+
+EXIT_IDENTITY_COLLISION = 5
+
+
+def _entry(topic: str, ticket: str, signal: str) -> dict:
+    e = _valid_entry(ticket)
+    e["topic"] = topic
+    e["signal"] = signal
+    return e
+
+
+def test_same_topic_ticket_different_signal_is_a_collision(tmp_path: Path) -> None:
+    """(038n) THE GUARD'S TEST: two records with the same (topic, source_ticket)
+    but different content are distinct lessons the reconciler's dedup would
+    collapse -- a silent-loss risk. A collision NOT on the allowlist must BLOCK
+    (exit 5), never a warning that lets the ambiguous batch proceed.
+
+    Mutation: drop the collision detection -> exit 0 -> RED.
+    """
+    repo = _make_repo(tmp_path)
+    _write(
+        repo / ARCHIVE_DIR_REL / "observations.2026-07.jsonl",
+        [
+            _entry("shared", "WOT-2026-100a", "leccion A"),
+            _entry("shared", "WOT-2026-100a", "leccion B distinta"),
+        ],
+    )
+
+    r = _run(repo)
+
+    assert r.returncode == EXIT_IDENTITY_COLLISION, (
+        "two records sharing (topic, source_ticket) with different content are an "
+        f"identity collision the dedup would lose -> must BLOCK (exit 5); got "
+        f"{r.returncode}. stdout: {r.stdout} stderr: {r.stderr}"
+    )
+    combined = r.stdout + r.stderr
+    assert "shared" in combined and "WOT-2026-100a" in combined, (
+        "the guard must NAME the colliding key for human decision"
+    )
+
+
+def test_same_topic_different_ticket_is_not_a_collision(tmp_path: Path) -> None:
+    """A shared topic across DIFFERENT tickets is legitimate (the identity is
+    (topic, source_ticket), not topic alone). Must NOT block."""
+    repo = _make_repo(tmp_path)
+    _write(
+        repo / ARCHIVE_DIR_REL / "observations.2026-07.jsonl",
+        [
+            _entry("shared", "WOT-2026-100a", "leccion A"),
+            _entry("shared", "WOT-2026-200b", "leccion B"),
+        ],
+    )
+
+    r = _run(repo)
+    assert r.returncode == EXIT_OK, (
+        "same topic under DIFFERENT tickets are distinct records, not a collision; "
+        f"got {r.returncode}. stdout: {r.stdout}"
+    )
+
+
+def test_allowlisted_collision_pair_is_accepted(tmp_path: Path) -> None:
+    """The 3 pre-existing collision pairs in the real motor archive are ACCEPTED
+    (reviewed distinct lessons). An allowlisted pair must pass (exit 0), so the
+    guard blocks only NEW, unreviewed collisions -- not the healthy current state.
+
+    Mutation: ignore the allowlist -> the accepted pair blocks (exit 5) -> RED.
+    """
+    repo = _make_repo(tmp_path)
+    # Reuse a real allowlisted key so the test proves the wiring, not a stub.
+    _write(
+        repo / ARCHIVE_DIR_REL / "observations.2026-07.jsonl",
+        [
+            _entry("delivery-hook-mutation", "WT-2026-191", "end-of-file-fixer muto"),
+            _entry("delivery-hook-mutation", "WT-2026-191", "ruff format reformateo"),
+        ],
+    )
+
+    r = _run(repo)
+    assert r.returncode == EXIT_OK, (
+        "a collision pair on the accepted allowlist must pass (exit 0); the guard "
+        f"blocks only NEW collisions. got {r.returncode}. stdout: {r.stdout} stderr: {r.stderr}"
+    )

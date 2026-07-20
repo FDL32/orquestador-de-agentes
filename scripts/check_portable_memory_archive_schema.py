@@ -51,6 +51,7 @@ Uso:
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -70,6 +71,21 @@ ARCHIVE_DIR_REL = Path(".agent/runtime/memory/archive")
 EXIT_OK = 0
 EXIT_TOOL_ERROR = 1
 EXIT_SCHEMA_INVALID = 4
+EXIT_IDENTITY_COLLISION = 5
+
+# Pares de identidad (topic, source_ticket) YA REVISADOS como lecciones DISTINTAS y
+# legitimas del mismo ticket (WOT-2026-038n, medido 2026-07-20). El reconciliador
+# deduplica por (topic, source_ticket); estos comparten esa clave con `id`/`signal`
+# distintos. Estan en la allowlist para que el guard bloquee solo colisiones NUEVAS
+# sin revisar, no el estado sano actual. Anadir aqui una clave es una DECISION HUMANA
+# (declarar "estas dos son lecciones distintas, no una re-edicion").
+ACCEPTED_COLLISIONS = frozenset(
+    {
+        ("manager-review-rubric", "WP-2026-137"),
+        ("manager-review-rubric", "WP-2026-133"),
+        ("delivery-hook-mutation", "WT-2026-191"),
+    }
+)
 
 
 class ToolError(Exception):
@@ -105,6 +121,46 @@ def find_archive_files(root: Path) -> list[Path]:
     if not archive_dir.is_dir():
         return []
     return sorted(archive_dir.glob("observations.*.jsonl"))
+
+
+def find_identity_collisions(paths: list[Path]) -> dict[tuple[str, str], set[str]]:
+    """Colisiones de identidad: claves (topic, source_ticket) con >1 leccion DISTINTA.
+
+    Recorre todos los archive files, agrupa por (topic, source_ticket) y marca como
+    colision cualquier clave con mas de un `id` distinto (dos lecciones distintas que
+    el dedup del reconciliador fusionaria, perdiendo una). Devuelve {clave: {ids}} solo
+    para las claves colisionantes NO presentes en ACCEPTED_COLLISIONS.
+
+    Un registro repetido byte a byte (mismo contenido dos veces) NO es colision de
+    identidad: es un duplicado exacto que el dedup resuelve correctamente. Solo CONTENIDO
+    DISTINTO bajo la misma clave es el caso peligroso.
+
+    La huella de contenido se calcula sobre el registro SIN su propio `id` (para no
+    depender de que `id` este presente ni de si fue regenerado): dos registros con el
+    mismo contenido util producen la misma huella aunque a uno le falte el `id`.
+    """
+
+    def _fingerprint(rec: dict) -> str:
+        body = {k: v for k, v in rec.items() if k != "id"}
+        return json.dumps(body, sort_keys=True, ensure_ascii=False)
+
+    by_key: dict[tuple[str, str], set[str]] = {}
+    for path in paths:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                # El schema-check ya reporta JSON invalido; aqui lo saltamos.
+                continue
+            key = (rec.get("topic", ""), rec.get("source_ticket", ""))
+            by_key.setdefault(key, set()).add(_fingerprint(rec))
+    return {
+        key: fps
+        for key, fps in by_key.items()
+        if len(fps) > 1 and key not in ACCEPTED_COLLISIONS
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -163,9 +219,29 @@ def main(argv: list[str] | None = None) -> int:
         )
         return EXIT_SCHEMA_INVALID
 
+    collisions = find_identity_collisions(archive_files)
+    if collisions:
+        print(
+            f"[archive-schema-guard] COLISION DE IDENTIDAD: {len(collisions)} clave(s) "
+            "(topic, source_ticket) con lecciones DISTINTAS que el dedup fusionaria:"
+        )
+        for (topic, ticket), fps in sorted(collisions.items()):
+            print(
+                f"[archive-schema-guard]   - {topic} | {ticket} | "
+                f"{len(fps)} lecciones distintas bajo la misma clave",
+                file=sys.stderr,
+            )
+        print(
+            "[archive-schema-guard] DECISION HUMANA: son re-ediciones de la MISMA "
+            "leccion (fusiona/borra una) o lecciones DISTINTAS del mismo ticket "
+            "(anade la clave a ACCEPTED_COLLISIONS)? El dedup del reconciliador "
+            "perderia una en silencio; por eso se bloquea (ver WOT-2026-038n)."
+        )
+        return EXIT_IDENTITY_COLLISION
+
     print(
         f"[archive-schema-guard] OK: {len(archive_files)} archive file(s) validos "
-        "contra el schema."
+        "contra el schema (0 colisiones de identidad no revisadas)."
     )
     return EXIT_OK
 
