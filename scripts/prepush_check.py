@@ -470,6 +470,84 @@ def run_contract_formation_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_workspace_contract_formation_check(project_root: Path) -> CheckResult:
+    """WOT-2026-026l parte A: extiende el alcance del gate CF al repo_destino.
+
+    ``run_contract_formation_check`` solo validaba el triple del MOTOR; el
+    ``ticket_contracts.md`` del WORKSPACE (repo_destino) -- donde se acumularon
+    72 contratos con 20 errores CF vivos -- NUNCA se miraba. Es el mismo defecto
+    de alcance que ``check_encoding_guard`` tuvo cubriendo solo ``.py``
+    ("barrera del alcance, no solo del mecanismo"). Este check hermano cubre la
+    superficie del destino.
+
+    FASE TRANSITORIA (WARN, no bloqueante): la deuda historica de esos 20 errores
+    la limpia la parte B (sub-ticket WOT-2026-026l-B); bloquear ahora paralizaria
+    todo cierre. Cuando B limpie la deuda, un ticket futuro sube este WARN a
+    bloqueante para deuda CF NUEVA en el destino.
+
+    Contrato del WARN en este runner (Codex contract-audit): ``run_preflight_check``
+    imprime ``result.output`` SOLO si ``not result.passed``. Un WARN modelado como
+    ``passed=True`` seria INVISIBLE -- justo la deuda-invisible que 026l combate.
+    Por eso WARN == ``passed=False`` + ``is_blocking=False``, nunca ``passed=True``.
+
+    Before: project_root resoluble. Si ``project_root.resolve() == _MOTOR_ROOT``
+    (dogfooding del motor, sin destino separado) -> skip: ese ticket_contracts ya
+    lo valida el triple del motor. Si el destino no tiene ticket_contracts -> skip.
+    During: corre validate_contract_formation SOLO sobre el ticket_contracts del
+    destino (no exige charter/plan_graph del destino: superficie de otro ticket).
+    After: passed=True + skip si no aplica o esta limpio; passed=False +
+    is_blocking=False (WARN visible con fichero+conteo+owner) si hay errores CF.
+    """
+    name = "Workspace Contract Formation Check (closeout, WARN)"
+    # Skip: el motor como su propio project_root ya cubre su triple.
+    if project_root.resolve() == _MOTOR_ROOT.resolve():
+        return CheckResult(
+            name=name,
+            passed=True,
+            output="project_root is the motor itself (covered by motor triple); skip",
+            is_blocking=False,
+        )
+    tickets = project_root / ".agent" / "planning" / "ticket_contracts.md"
+    if not tickets.exists():
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=f"no workspace ticket_contracts.md at {tickets} (skip)",
+            is_blocking=False,
+        )
+    try:
+        from scripts.validate_contract_formation import main as validate_cf_main
+    except ImportError:
+        from validate_contract_formation import (
+            main as validate_cf_main,  # type: ignore[no-redef]
+        )
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = validate_cf_main(["--tickets", str(tickets)])
+    if rc != 0:
+        out = buf.getvalue().strip()
+        # Cuenta SOLO las lineas de error individuales (prefijo 'ERROR '), no la
+        # linea-resumen 'ERRORS: N' del validador -- si no, el conteo sale +1.
+        n_errors = sum(1 for ln in out.splitlines() if ln.startswith("ERROR "))
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=(
+                f"WARN: workspace ticket_contracts.md has {n_errors} CF structure "
+                f"error(s) [owner: WOT-2026-026l-B]. WARN only until "
+                f"WOT-2026-026l-B cleans the historical CF debt; then this becomes "
+                f"blocking for NEW workspace CF debt.\n{out}"
+            ),
+            is_blocking=False,
+        )
+    return CheckResult(
+        name=name,
+        passed=True,
+        output="workspace ticket_contracts.md CF-clean (0 structure errors)",
+        is_blocking=False,
+    )
+
+
 def run_contract_reconcile_check(project_root: Path) -> CheckResult:
     """WOT-2026-024e: frozen contracts in ticket_contracts.md with no scheduling
     row (the batch reads only backlog.md, so it can never execute them).
@@ -817,6 +895,9 @@ def run_preflight_check(
         results.append(run_motor_destination_integration_check(project_root))
         # 6g. Contract Formation Check (WOT-2026-023m(c); bloqueante en cierre)
         results.append(run_contract_formation_check(project_root))
+        # 6h. Workspace Contract Formation Check (WOT-2026-026l parte A; WARN,
+        # no bloqueante hasta que 026l-B limpie la deuda historica del destino)
+        results.append(run_workspace_contract_formation_check(project_root))
 
     # 7. Portable Memory Archive Schema (WOT-2026-035b; bloqueante siempre,
     # no solo en closeout_mode: el archive puede corromperse en cualquier push)
