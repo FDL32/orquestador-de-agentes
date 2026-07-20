@@ -429,3 +429,105 @@ def test_head_sha_match_no_warning(tmp_path: Path) -> None:
     result = _run_with(_write_dag(tmp_path, _valid_dag()), "--head-sha", "abc123")
     assert result.returncode == 0
     assert "WARN" not in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-023u: `depends_on_groups` models REAL dependency (consumes an
+# artifact/state of A, or shares a serialized surface), NOT order preference.
+# Two groups with no dependency edge and no shared surface are INDEPENDENT:
+# their order in the `groups[]` list must NOT serialize them, and the
+# containment freeze must never cascade from one to the other. The inaugural
+# run (2026-07-13) chained G1->G2->G3 by preference; G1 stopped and containment
+# would have frozen G2/G3 that depended on nothing.
+#
+# NOT tautological (the trap the design warns about): the validator cannot
+# detect a "disguised preference" from semantics alone (025f-shaped oracle).
+# So the contract is pinned by the ASYMMETRY the validator CAN enforce:
+#   (c1) independent groups pass in EITHER list order (order is not contract);
+#   (c2) the SAME pair, once it shares a REAL surface with no dependency,
+#        FAILS (check 4) -- serialization is demanded by real surface, not by
+#        list position. The mutation from (c1) to (c2) is a single shared
+#        surface, and it flips the verdict: that is what makes (c1) meaningful.
+# ---------------------------------------------------------------------------
+
+
+def _two_independent_groups() -> dict[str, Any]:
+    """A minimal valid DAG with exactly G2 and G3, no dependency edge between
+    them, and DISJOINT shared_surfaces -- genuinely independent."""
+    return {
+        "schema": "autonomous-batch-dag/v1",
+        "generated_at": "2026-07-13T00:00:00Z",
+        "state_at_triage": {"motor": "abc123", "workspace": "def456", "dirty": 0},
+        "groups": [
+            {
+                "id": "G2",
+                "tickets": ["WOT-2026-023q"],
+                "depends_on_groups": [],
+                "blocks_groups": [],
+                "shared_surfaces": ["scripts/g2_only.py"],
+                "class": "M",
+                "autonomy_mode": "autonomous",
+                "common_gate": "pytest tests/unit/test_g2.py",
+                "recovery_owner_stage": "BUILDER",
+                "max_recovery_attempts": 2,
+            },
+            {
+                "id": "G3",
+                "tickets": ["WOT-2026-023s"],
+                "depends_on_groups": [],
+                "blocks_groups": [],
+                "shared_surfaces": ["scripts/g3_only.py"],
+                "class": "S",
+                "autonomy_mode": "autonomous",
+                "common_gate": "pytest tests/unit/test_g3.py",
+                "recovery_owner_stage": "BUILDER",
+                "max_recovery_attempts": 1,
+            },
+        ],
+        "stop_policy": {
+            "hard_stop_causes": ["gate_fail"],
+            "recoverable_causes": ["flaky_timeout"],
+            "max_unclassified_stops": 1,
+        },
+        "budget": {"max_tickets_closed": 5, "max_group_recoveries": 3},
+    }
+
+
+def test_023u_independent_groups_pass_in_either_list_order(tmp_path: Path) -> None:
+    """(c1) Independent groups (no dependency edge, disjoint surfaces) validate
+    regardless of their position in `groups[]`. The list order is NOT the DAG:
+    a preference like 'G2 before G3' has no place in depends_on_groups, so
+    reversing the list must not change the verdict. Both orders -> exit 0."""
+    dag = _two_independent_groups()
+    forward = _run(_write_dag(tmp_path, dag, "forward.json"))
+    assert forward.returncode == 0, (
+        f"G2 before G3 (independent) must validate: {forward.stderr}"
+    )
+
+    reversed_dag = copy.deepcopy(dag)
+    reversed_dag["groups"] = list(reversed(reversed_dag["groups"]))
+    backward = _run(_write_dag(tmp_path, reversed_dag, "backward.json"))
+    assert backward.returncode == 0, (
+        "reversing the groups[] list must NOT change the verdict for "
+        f"independent groups -- list order is not a dependency: {backward.stderr}"
+    )
+
+
+def test_023u_same_pair_sharing_real_surface_without_dep_fails(
+    tmp_path: Path,
+) -> None:
+    """(c2) MUTATION that makes (c1) non-tautological: take the SAME independent
+    pair and give them a REAL shared surface with no dependency edge. Now
+    check 4 must reject them -- serialization is demanded by a real surface,
+    not by list position. Revert the shared surface (back to c1) -> exit 0;
+    add it -> exit 1. That exit-code pair is the contract's teeth."""
+    dag = _two_independent_groups()
+    # The ONLY change vs the passing (c1) fixture: a genuinely shared surface.
+    dag["groups"][0]["shared_surfaces"] = ["scripts/g2_only.py", "shared/race.py"]
+    dag["groups"][1]["shared_surfaces"] = ["scripts/g3_only.py", "shared/race.py"]
+    result = _run(_write_dag(tmp_path, dag))
+    assert result.returncode == 1, (
+        "independent groups sharing a REAL surface must be rejected (check 4): "
+        "the shared surface IS a real dependency and demands serialization"
+    )
+    assert "solapamiento" in result.stderr.lower()

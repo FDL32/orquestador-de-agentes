@@ -136,6 +136,26 @@ suficiente: la colision de superficie es una dependencia OCULTA tan real
 como una declarada, y omitirla produce una carrera de escritura si dos
 grupos se ejecutan en paralelo.
 
+### DEPENDENCIA REAL vs PREFERENCIA DE ORDEN (WOT-2026-023u)
+
+`depends_on_groups` (y su reciproco `blocks_groups`) modela SOLO dependencia
+REAL: el grupo B **consume un artefacto o estado que produce A**, hay un
+bloqueo explicito, o **comparten una superficie serializada** (surface scan
+de arriba). La preferencia de orden SIN consumo ni superficie compartida
+-- "prefiero correr A antes que B" -- **NO DEBE** entrar en
+`depends_on_groups`/`blocks_groups`: dos grupos asi son INDEPENDIENTES. El
+orden preferido se expresa con `recommended_start`, el orden de la lista de
+grupos o el `rationale`, nunca con una arista del DAG.
+
+Por que importa (incidente inaugural 2026-07-13): el triage encadeno
+G1(022v)->G2(023q)->G3(023s) como `depends_on` cuando solo era preferencia
+("instrumentos antes que produccion"); G1 paro en el contract-audit y la
+regla de contencion habria CONGELADO G2 y G3, que no dependian de 022v para
+nada. Una arista falsa en el DAG convierte una parada local en una cascada
+global. Ante la duda: si B corriera ANTES que A y no consumiera nada suyo ni
+tocara su superficie, ¿seguiria siendo correcto? Si la respuesta es si, son
+independientes -- no hay arista.
+
 ### Autoridad de la clasificacion
 
 `class` (S/M/L) y `autonomy_mode` (p.ej. `autonomous`,

@@ -938,3 +938,52 @@ def test_037a_contract_and_review_source_prompts_exist_on_disk() -> None:
             f"037a seam guard: governance loop cites prompts/{src} but it "
             f"does not exist on disk"
         )
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-023u: both prompts must break the depends_on_groups ambiguity --
+# it models REAL dependency (consumes artifact/state or shares a serialized
+# surface), never mere order preference. The executor's schema legend and the
+# triage's Phase 2 must SAY this, so a re-triage cannot silently chain groups
+# by preference again (inaugural incident 2026-07-13: G1->G2->G3 by preference
+# would have frozen independent G2/G3 when G1 stopped).
+# ---------------------------------------------------------------------------
+
+TRIAGE_PROMPT = PROMPTS / "backlog_triage.md"
+
+
+def test_023u_executor_depends_on_is_real_dependency_not_order() -> None:
+    """The executor's schema legend for `depends_on_groups` must say it is a
+    REAL dependency, not 'execution order'. Mutation: revert l.473 back to
+    '(execution order)' -> RED."""
+    text = _read()
+    assert "depends_on_groups" in text
+    assert "real dependency" in text, (
+        "the executor must legend depends_on_groups as a REAL dependency "
+        "(consumes artifact/state or shares a serialized surface), not "
+        "'execution order' (WOT-2026-023u): the ambiguity chained G1->G2->G3 "
+        "by preference in the inaugural run"
+    )
+    assert (
+        "execution-order preference" in text or "execution order preference" in text
+    ), (
+        "the executor must NAME the excluded meaning (order preference) so the "
+        "contrast is explicit, not just assert the included one"
+    )
+
+
+def test_023u_triage_phase2_separates_dependency_from_preference() -> None:
+    """backlog_triage Phase 2 must define depends_on_groups = real dependency
+    and forbid order-preference edges (MUST NOT). Mutation: drop the MUST NOT
+    clause -> RED."""
+    text = TRIAGE_PROMPT.read_text(encoding="utf-8")
+    assert "depends_on_groups" in text
+    assert "dependencia" in text.lower() and "preferencia de orden" in text.lower(), (
+        "Phase 2 must contrast REAL dependency vs order preference (WOT-2026-023u)"
+    )
+    assert "NO DEBE" in text, (
+        "Phase 2 must forbid (NO DEBE / MUST NOT) putting an order-preference "
+        "edge into depends_on_groups: a false edge turns a local stop into a "
+        "global cascade (inaugural incident 2026-07-13)"
+    )
+    assert TRIAGE_PROMPT.is_file()

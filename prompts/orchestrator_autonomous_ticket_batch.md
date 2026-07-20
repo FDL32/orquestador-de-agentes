@@ -317,14 +317,20 @@ without evidence.
 
 ## Containment rule (design section 10)
 
-If a ticket fails and does not recover, ONLY its subgraph freezes:
+If a ticket fails and does not recover, ONLY its subgraph freezes. The
+subgraph is defined by REAL dependency, never by order preference
+(WOT-2026-023u): a group listed later merely because the triage preferred to
+run it later is NOT a dependent and MUST NOT freeze. Freeze exactly:
 
 - the ticket itself;
-- its direct dependents (`blocks_groups`);
+- its direct dependents (`blocks_groups`) -- i.e. groups that consume its
+  artifact/state, the real dependency `depends_on_groups` encodes;
 - groups sharing an affected `shared_surfaces`.
 
 **The batch continues with the independent groups.** A local failure never
-becomes global chaos.
+becomes global chaos. (Inaugural incident 2026-07-13: G1->G2->G3 were chained
+by preference, not dependency; G1 stopped and containment would have frozen
+G2/G3 that depended on nothing -- 022v had to be pulled from the DAG by hand.)
 
 ---
 
@@ -470,7 +476,9 @@ The DAG is produced by `/backlog-triage` and validated with
 `scripts/validate_batch_dag.py` BEFORE the batch executes anything. The
 executor reads, and never rewrites:
 
-- per group: `id`, `tickets`, `depends_on_groups` (execution order),
+- per group: `id`, `tickets`, `depends_on_groups` (real dependency:
+  consumes an artifact/state of another group, or shares a serialized
+  surface -- NOT mere execution-order preference; WOT-2026-023u),
   `blocks_groups` and `shared_surfaces` (containment, see the freeze rule),
   `class` and `autonomy_mode` (**assigned by the triage; the executor NEVER
   reclassifies**), `common_gate`, `recovery_owner_stage`,
