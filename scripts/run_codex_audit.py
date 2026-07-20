@@ -21,7 +21,17 @@ During:
       errors="replace")`, mirroring the productive shape measured in
       `scripts/ensemble_dispatch.py::_transport_agent` (Windows
       pipe-inheritance hang, 2026-07-16 smoke), and delivers the prompt via
-      `proc.communicate(input=prompt, timeout=timeout)`.
+      `proc.communicate(input=prompt, timeout=timeout)`. When `repo_root`
+      is given (keyword-only, `str | Path | None`, default `None`), it is
+      passed as `cwd=repo_root` to that `Popen` call, so `codex exec`'s own
+      `rg`/`git grep` resolve relative paths against that tree instead of
+      the parent process's inherited cwd (WOT-2026-038l: an agent with a
+      filesystem must be told WHERE to search, not just WHAT to analyze).
+      When `repo_root is None`, `cwd=` is NOT passed at all (today's
+      inherited-cwd behavior is preserved exactly) and a single warning is
+      emitted to STDERR noting that codex will see the inherited parent
+      cwd; the warning never fires when `repo_root` is given, and never
+      goes to STDOUT.
     - On `subprocess.TimeoutExpired`, kills the FULL process tree (Windows:
       `taskkill /T /F`; POSIX: `os.kill(pid, SIGKILL)`) before raising,
       replicating the minimal shape of
@@ -116,6 +126,7 @@ def run_codex_audit(
     codex_executable: str = DEFAULT_CODEX_EXECUTABLE,
     timeout: int = DEFAULT_TIMEOUT,
     extra_args: list[str] | None = None,
+    repo_root: str | Path | None = None,
 ) -> dict:
     """Run `codex exec` with the M4 recipe and validate output by content.
 
@@ -123,20 +134,38 @@ def run_codex_audit(
         injected path/script for tests). `prompt` is the audit instruction
         text delivered to `codex exec` via STDIN (not argv), to avoid
         Windows' ~32KB `CreateProcess` command-line limit ([WinError 206])
-        on large prompts.
+        on large prompts. `repo_root` (keyword-only, `str | Path | None`,
+        default `None`) is the absolute tree codex should search from; if
+        `None`, codex inherits the parent process's cwd (today's behavior).
     During: builds `[codex_executable, *M4_ARGS, *extra_args, "-"]` (the
         `-` sentinel tells `codex exec` to read the prompt from stdin) and
-        runs it via `subprocess.Popen` with `stdin=PIPE`, sending `prompt`
-        through `proc.communicate(input=prompt, timeout=timeout)` and
-        capturing stdout+stderr as text (UTF-8, replace-on-error). On
-        timeout, kills the process tree and re-raises as `TimeoutError`
-        with diagnostic context (no silent success is invented).
+        runs it via `subprocess.Popen` with `stdin=PIPE`, passing
+        `cwd=repo_root` ONLY when `repo_root is not None` (an omitted
+        `cwd=` preserves the exact inherited-cwd behavior of before this
+        param existed), sending `prompt` through
+        `proc.communicate(input=prompt, timeout=timeout)` and capturing
+        stdout+stderr as text (UTF-8, replace-on-error). When `repo_root is
+        None`, emits ONE warning to STDERR (never STDOUT) noting codex will
+        see the inherited parent cwd. On timeout, kills the process tree
+        and re-raises as `TimeoutError` with diagnostic context (no silent
+        success is invented).
     After: on 0-byte stdout, raises `CodexAuditEmptyOutputError` (backend is dead
         per CEM), regardless of returncode. Otherwise returns a dict with
         `returncode`, `stdout`, `stdout_bytes`, `ok` (`returncode == 0`),
         and `reason`.
     """
+    if repo_root is None:
+        print(
+            "WARNING: run_codex_audit: no repo_root given; codex will see "
+            "the inherited parent cwd, not a declared search tree "
+            "(WOT-2026-038l)",
+            file=sys.stderr,
+        )
+
     cmd = [codex_executable, *M4_ARGS, *(extra_args or []), "-"]
+    popen_kwargs = {}
+    if repo_root is not None:
+        popen_kwargs["cwd"] = repo_root
     proc = subprocess.Popen(  # noqa: S603
         cmd,
         stdout=subprocess.PIPE,
@@ -146,6 +175,7 @@ def run_codex_audit(
         shell=False,
         encoding="utf-8",
         errors="replace",
+        **popen_kwargs,
     )
     try:
         out, err = proc.communicate(input=prompt, timeout=timeout)
@@ -219,6 +249,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_TIMEOUT,
         help=f"Timeout in seconds (default: {DEFAULT_TIMEOUT}).",
     )
+    parser.add_argument(
+        "--repo-root",
+        default=None,
+        help=(
+            "Absolute tree codex should search from (passed as cwd= to the "
+            "Popen). If omitted, codex inherits the parent process's cwd "
+            "and a warning is printed to stderr (WOT-2026-038l)."
+        ),
+    )
     return parser
 
 
@@ -248,6 +287,7 @@ def main(argv: list[str] | None = None) -> int:
             prompt,
             codex_executable=args.codex_executable,
             timeout=args.timeout,
+            repo_root=args.repo_root,
         )
     except CodexAuditEmptyOutputError as exc:
         print(json.dumps({"ok": False, "reason": str(exc)}, indent=2))

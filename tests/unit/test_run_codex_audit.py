@@ -26,6 +26,7 @@ from argv, and (ii) the prompt arrives intact via stdin.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -274,6 +275,148 @@ def test_cli_nonempty_output_exits_zero(tmp_path, capsys):
     assert exit_code == 0
     captured = capsys.readouterr()
     assert "all good" in captured.out
+
+
+def _cwd_reporting_codex_executable(tmp_path: Path) -> str:
+    """Build a fake codex executable that prints its own `os.getcwd()`.
+
+    Used to prove (WOT-2026-038l) whether `run_codex_audit` passed `cwd=`
+    to the real `Popen` at line ~140: the child process's reported cwd is
+    the only observable signal of what `cwd=` the Popen actually received.
+    """
+    script = tmp_path / "fake_codex_cwd.py"
+    script.write_text(
+        "import os\nprint(os.getcwd())\n",
+        encoding="utf-8",
+    )
+    if sys.platform == "win32":
+        shim = tmp_path / "fake_codex_cwd.cmd"
+        shim.write_text(
+            f'@echo off\r\n"{sys.executable}" "{script}" %*\r\n',
+            encoding="utf-8",
+        )
+        return str(shim)
+    else:  # pragma: no cover -- POSIX shim, not exercised on this Windows CI
+        shim = tmp_path / "fake_codex_cwd.sh"
+        shim.write_text(
+            f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n',
+            encoding="utf-8",
+        )
+        shim.chmod(0o755)
+        return str(shim)
+
+
+def test_repo_root_sets_child_cwd(tmp_path):
+    """WOT-2026-038l DoD 1+2: `repo_root` is passed as `cwd=` to the real Popen.
+
+    PROBE in the productive path: the fake codex executable is invoked
+    THROUGH the real Popen at line ~140 (not a re-implemented Popen). The
+    child prints `os.getcwd()`; the test asserts that printed cwd equals
+    `repo_root`, which is a separate directory (`tmp_path`) strictly
+    different from the test process's own cwd, so the assertion actually
+    distinguishes the fix from the pre-fix (inherited-cwd) behavior.
+    """
+    assert str(tmp_path) != os.getcwd(), (
+        "tmp_path must differ from the test process cwd for this probe "
+        "to distinguish fix/no-fix"
+    )
+    codex_exe = _cwd_reporting_codex_executable(tmp_path)
+
+    result = rca.run_codex_audit(
+        "audit this prompt",
+        codex_executable=codex_exe,
+        repo_root=tmp_path,
+        timeout=30,
+    )
+
+    child_cwd = result["stdout"].strip()
+    assert child_cwd == str(tmp_path)
+
+
+def test_repo_root_none_preserves_inherited_cwd(tmp_path):
+    """WOT-2026-038l DoD 1 control/negative: `repo_root=None` -> no `cwd=`.
+
+    Concretely proves the param actually changes behavior: with
+    `repo_root=None`, the child inherits the PARENT (test process) cwd,
+    NOT `tmp_path`. This is the negative control for
+    `test_repo_root_sets_child_cwd` above -- without it, a no-op
+    implementation of `repo_root` could still pass the positive test by
+    accident (e.g. if `tmp_path` happened to equal the parent cwd).
+    """
+    codex_exe = _cwd_reporting_codex_executable(tmp_path)
+    parent_cwd = os.getcwd()
+
+    result = rca.run_codex_audit(
+        "audit this prompt",
+        codex_executable=codex_exe,
+        repo_root=None,
+        timeout=30,
+    )
+
+    child_cwd = result["stdout"].strip()
+    assert child_cwd == parent_cwd
+    assert child_cwd != str(tmp_path)
+
+
+def test_repo_root_none_emits_stderr_warning(tmp_path, capsys):
+    """WOT-2026-038l DoD 1: `repo_root=None` emits ONE stderr warning.
+
+    The warning must land on STDERR only, never STDOUT (stdout is
+    content-validated by callers per the module's core contract).
+    """
+    codex_exe = _fake_codex_executable(tmp_path, stdout="ok\n", returncode=0)
+
+    result = rca.run_codex_audit(
+        "audit this prompt",
+        codex_executable=codex_exe,
+        repo_root=None,
+        timeout=30,
+    )
+
+    captured = capsys.readouterr()
+    assert "cwd" in captured.err.lower()
+    assert "cwd" not in result["stdout"].lower()
+    assert captured.out == ""
+
+
+def test_repo_root_given_emits_no_stderr_warning(tmp_path, capsys):
+    """WOT-2026-038l DoD 1: `repo_root` given -> NO stderr warning.
+
+    The warning must fire ONLY in the `repo_root is None` path; giving an
+    explicit `repo_root` must never trigger it (the normal/fixed path must
+    stay silent).
+    """
+    codex_exe = _fake_codex_executable(tmp_path, stdout="ok\n", returncode=0)
+
+    rca.run_codex_audit(
+        "audit this prompt",
+        codex_executable=codex_exe,
+        repo_root=tmp_path,
+        timeout=30,
+    )
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+
+
+def test_cli_repo_root_flag_threads_to_run_codex_audit(tmp_path):
+    """WOT-2026-038l DoD 1: `--repo-root` CLI flag is wired to `main()`."""
+    codex_exe = _cwd_reporting_codex_executable(tmp_path)
+
+    exit_code = rca.main(
+        [
+            "--prompt",
+            "audit this",
+            "--codex-executable",
+            codex_exe,
+            "--timeout",
+            "30",
+            "--repo-root",
+            str(tmp_path),
+        ]
+    )
+
+    assert exit_code == 0
 
 
 def test_mutation_removes_zero_bytes_guard(tmp_path, monkeypatch):
