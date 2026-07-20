@@ -92,8 +92,8 @@ def test_workspace_cf_debt_warns_not_blocks(tmp_path: Path, monkeypatch) -> None
     )
     assert "ticket_contracts.md" in result.output
     assert "error" in result.output.lower()
-    assert "026l" in result.output, (
-        "the WARN must name the owner sub-ticket (WOT-2026-026l-B) so it is "
+    assert "026m" in result.output, (
+        "the WARN must name the owner sub-ticket (WOT-2026-026m) so it is "
         "accionable, not anonymous noise"
     )
 

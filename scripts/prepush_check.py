@@ -481,7 +481,7 @@ def run_workspace_contract_formation_check(project_root: Path) -> CheckResult:
     superficie del destino.
 
     FASE TRANSITORIA (WARN, no bloqueante): la deuda historica de esos 20 errores
-    la limpia la parte B (sub-ticket WOT-2026-026l-B); bloquear ahora paralizaria
+    la limpia la parte B (sub-ticket WOT-2026-026m); bloquear ahora paralizaria
     todo cierre. Cuando B limpie la deuda, un ticket futuro sube este WARN a
     bloqueante para deuda CF NUEVA en el destino.
 
@@ -534,8 +534,8 @@ def run_workspace_contract_formation_check(project_root: Path) -> CheckResult:
             passed=False,
             output=(
                 f"WARN: workspace ticket_contracts.md has {n_errors} CF structure "
-                f"error(s) [owner: WOT-2026-026l-B]. WARN only until "
-                f"WOT-2026-026l-B cleans the historical CF debt; then this becomes "
+                f"error(s) [owner: WOT-2026-026m]. WARN only until "
+                f"WOT-2026-026m cleans the historical CF debt; then this becomes "
                 f"blocking for NEW workspace CF debt.\n{out}"
             ),
             is_blocking=False,
@@ -896,7 +896,7 @@ def run_preflight_check(
         # 6g. Contract Formation Check (WOT-2026-023m(c); bloqueante en cierre)
         results.append(run_contract_formation_check(project_root))
         # 6h. Workspace Contract Formation Check (WOT-2026-026l parte A; WARN,
-        # no bloqueante hasta que 026l-B limpie la deuda historica del destino)
+        # no bloqueante hasta que 026m limpie la deuda historica del destino)
         results.append(run_workspace_contract_formation_check(project_root))
 
     # 7. Portable Memory Archive Schema (WOT-2026-035b; bloqueante siempre,
