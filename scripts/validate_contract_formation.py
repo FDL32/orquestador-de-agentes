@@ -178,6 +178,36 @@ def validate_repo_charter(fp: str, res: VResult) -> None:
         res.add(fp, "Non-Goals", "Seccion Non-Goals vacia o insuficiente (< 20 chars)")
 
 
+# WOT-2026-025v: marcadores TERMINALES de un bloque PLAN en el plan_graph. Son
+# etiquetas EDITORIALES del header (## PLAN-xxx -- [MARKER]), NO estados runtime
+# del bus (STATUS_TERMINAL vive en otro dominio; mezclarlos contaminaria a los
+# consumidores de estados canonicos -- adjudicado Codex-FS 2026-07-20). Un bloque
+# terminal (cancelado/no-perseguido/bloqueado-final) no tiene superficie operativa,
+# asi que 'n/a' en paralelizable y la ausencia de shared_dependencies son LEGITIMOS.
+# La exencion mira el MARKER DEL HEADER, nunca el valor invalido: un bloque VIVO con
+# 'n/a' sigue siendo ERROR.
+PLAN_TERMINAL_MARKERS = ("CANCELADO", "NOT-PURSUED", "BLOCKED-FINAL")
+
+
+def _plan_header_is_terminal(header_line: str) -> bool:
+    """True si el header de un bloque PLAN lleva un marker terminal en corchetes.
+
+    Casa ``## PLAN-xxx -- [CANCELADO / ABSORBED ...]`` / ``[NOT-PURSUED]`` /
+    ``[BLOCKED-FINAL]`` por allowlist EXACTA sobre el PRIMER token del ``[...]``.
+    El token es la primera palabra dentro de los corchetes (partido por espacio o
+    ``/``), normalizada a mayusculas. Asi ``NO-CANCELADO``, ``CANCELADO-PARCIAL`` o
+    ``XBLOCKED-FINALY`` NO casan (Codex-FS: un substring laxo contradiria "exacta").
+    No casa un marker fuera de corchetes ni en el cuerpo.
+    """
+    m = re.search(r"\[([^\]]+)\]", header_line)
+    if not m:
+        return False
+    inside = m.group(1).upper().strip()
+    # primer token: hasta el primer separador (espacio o '/')
+    first_token = re.split(r"[\s/]+", inside, maxsplit=1)[0]
+    return first_token in PLAN_TERMINAL_MARKERS
+
+
 VALID_PARALELIZABLE_RE = re.compile(r"^\s*(yes|no|after\s+PLAN-\d+)\s*$", re.IGNORECASE)
 
 TABLE_PLAN_ROW_RE = re.compile(r"^\|\s*PLAN-\d+.*\|$", re.IGNORECASE | re.MULTILINE)
@@ -199,11 +229,33 @@ def _find_paralelizable_column_index(impact_body: str) -> int | None:
     return None
 
 
-def _validate_paralelizable_values(fp: str, impact_body: str, res: VResult) -> None:
+def _terminal_plan_ids(content: str) -> set[str]:
+    """Set of EXACT PLAN ids whose block HEADER carries a terminal marker (025v).
+
+    Scans every ``## PLAN-<id> -- [MARKER]`` header line and collects the FULL
+    plan id (e.g. ``PLAN-013B-002``) UP-CASED when ``_plan_header_is_terminal``
+    matches. Consumers match by EXACT (case-normalized) id -- never by family
+    prefix (Codex-FS: ``PLAN-013`` must NOT be exempted by a terminal *child*
+    ``PLAN-013B-002``; a live family block/row keeps its checks).
+    """
+    terminal: set[str] = set()
+    for line in content.splitlines():
+        hm = re.match(r"##\s+(PLAN-[A-Z0-9-]+)", line, re.IGNORECASE)
+        if hm and _plan_header_is_terminal(line):
+            terminal.add(hm.group(1).upper())
+    return terminal
+
+
+def _validate_paralelizable_values(
+    fp: str, impact_body: str, res: VResult, terminal_pids: set[str]
+) -> None:
     """Validate strict paralelizable values in Impact Simulation table rows.
 
     Locates the Paralelizable column by header name (not position) and
-    validates each data row's value against the strict regex.
+    validates each data row's value against the strict regex. WOT-2026-025v:
+    a row whose FULL plan-id is terminal (EXACT, case-normalized match against
+    ``terminal_pids``) is exempt -- a cancelled/not-pursued/blocked plan
+    legitimately declares ``n/a``. A live row is NOT exempt.
     """
     col_index = _find_paralelizable_column_index(impact_body)
     if col_index is None:
@@ -219,6 +271,8 @@ def _validate_paralelizable_values(fp: str, impact_body: str, res: VResult) -> N
             if col_index < len(real_cells):
                 paralelizable_val = real_cells[col_index]
                 pid = real_cells[0]
+                if pid.upper() in terminal_pids:
+                    continue  # WOT-2026-025v: terminal block, 'n/a' is legitimate
                 if not VALID_PARALELIZABLE_RE.match(paralelizable_val):
                     res.add(
                         fp,
@@ -230,6 +284,10 @@ def _validate_paralelizable_values(fp: str, impact_body: str, res: VResult) -> N
 
 def validate_plan_graph(fp: str, res: VResult) -> None:
     content = Path(fp).read_text(encoding="utf-8")
+    # WOT-2026-025v: PLAN blocks whose header carries a terminal marker are exempt
+    # from the paralelizable-value and shared_dependencies checks (no operational
+    # surface -> 'n/a' and absent shared_deps are legitimate).
+    terminal_pids = _terminal_plan_ids(content)
     if not re.findall(r"##\s+PLAN-\d+", content):
         res.add(fp, "PLAN-*", "No se encontraron planes PLAN-* en plan_graph")
     if "impact simulation" not in content.lower():
@@ -254,7 +312,7 @@ def validate_plan_graph(fp: str, res: VResult) -> None:
                 )
         # --- Strict paralelizable value validation ---
         impact_full = impact_m.group(1) if impact_m else ""
-        _validate_paralelizable_values(fp, impact_full, res)
+        _validate_paralelizable_values(fp, impact_full, res, terminal_pids)
     if "forbidden surfaces" not in content.lower():
         res.add(
             fp, "Forbidden Surfaces", "Seccion Forbidden Surfaces ausente en plan_graph"
@@ -265,8 +323,19 @@ def validate_plan_graph(fp: str, res: VResult) -> None:
             "Merge Regression Audit",
             "Seccion Merge Regression Audit ausente (obligatoria en plan_graph)",
         )
-    for pm in re.finditer(r"##\s+(PLAN-\d+)(.*?)(?=\n##|\Z)", content, re.DOTALL):
-        pid, pbody = pm.group(1), pm.group(2)
+    for pm in re.finditer(
+        r"##\s+(PLAN-[A-Z0-9-]+)([^\n]*)(.*?)(?=\n##|\Z)",
+        content,
+        re.IGNORECASE | re.DOTALL,
+    ):
+        full_pid, header_rest, pbody = pm.group(1), pm.group(2), pm.group(3)
+        # WOT-2026-025v: terminal block (marker in ITS OWN header) is exempt;
+        # keyed on THIS block's full id, never a family prefix (Codex-FS).
+        if full_pid.upper() in terminal_pids or _plan_header_is_terminal(header_rest):
+            continue
+        # Report using the family form (PLAN-\d+) to preserve the historic field key.
+        fam = re.match(r"(PLAN-\d+)", full_pid, re.IGNORECASE)
+        pid = fam.group(1) if fam else full_pid
         if "shared_dep" not in pbody.lower() and "shared dep" not in pbody.lower():
             res.add(
                 fp,

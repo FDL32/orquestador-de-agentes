@@ -194,6 +194,187 @@ class TestValidatePlanGraph:
             f"yes should be valid, got: {paralelizable_errors}"
         )
 
+    # ---- WOT-2026-025v: terminal PLAN blocks are exempt from paralelizable/shared_deps ----
+
+    def _terminal_block(self, marker: str) -> str:
+        """A PLAN block whose header carries a terminal marker, with n/a
+        paralelizable and NO shared_dependencies -- both legitimate for a
+        cancelled/not-pursued/blocked plan with no operational surface."""
+        return (
+            f"## PLAN-013B-002 -- [{marker}]\n\n"
+            "- sin superficie operativa.\n\n"
+            "## Impact Simulation\n\n"
+            "| Plan | Superficies | Shared deps | Conflicto esperado | Mitigacion | Paralelizable |\n"
+            "|------|-------------|------------|--------------------|-------------|---------------|\n"
+            "| PLAN-013B-002 | [CANCELADO] sin superficie | n/a | n/a | ninguna | n/a |\n"
+            "\n"
+            "## Forbidden Surfaces\n\nN/A\n\n"
+            "## Merge Regression Audit\n\nN/A\n"
+        )
+
+    def test_terminal_cancelado_block_na_is_exempt(self, tmp_path):
+        """MUTATION rama A: bloque terminal [CANCELADO] con n/a -> exit 0 (exento)."""
+        f = tmp_path / "terminal_cancelado.md"
+        f.write_text(
+            self._terminal_block("CANCELADO / ABSORBED por PLAN-011I-001"),
+            encoding="utf-8",
+        )
+        res = VResult()
+        validate_plan_graph(str(f), res)
+        offending = [
+            e
+            for e in res.errors
+            if "paralelizable" in e.field_ or "shared_dep" in e.field_
+        ]
+        assert not offending, (
+            f"terminal block must be exempt from paralelizable/shared_deps, got: "
+            f"{[(e.field_, e.reason) for e in offending]}"
+        )
+
+    def test_terminal_not_pursued_block_na_is_exempt(self, tmp_path):
+        """[NOT-PURSUED] tambien exime."""
+        f = tmp_path / "terminal_not_pursued.md"
+        f.write_text(self._terminal_block("NOT-PURSUED"), encoding="utf-8")
+        res = VResult()
+        validate_plan_graph(str(f), res)
+        offending = [
+            e
+            for e in res.errors
+            if "paralelizable" in e.field_ or "shared_dep" in e.field_
+        ]
+        assert not offending, f"[NOT-PURSUED] must be exempt, got {offending}"
+
+    def test_terminal_blocked_final_block_na_is_exempt(self, tmp_path):
+        """[BLOCKED-FINAL] tambien exime."""
+        f = tmp_path / "terminal_blocked_final.md"
+        f.write_text(self._terminal_block("BLOCKED-FINAL"), encoding="utf-8")
+        res = VResult()
+        validate_plan_graph(str(f), res)
+        offending = [
+            e
+            for e in res.errors
+            if "paralelizable" in e.field_ or "shared_dep" in e.field_
+        ]
+        assert not offending, f"[BLOCKED-FINAL] must be exempt, got {offending}"
+
+    def test_live_family_not_exempted_by_terminal_child(self, tmp_path):
+        """Codex-FS: un bloque VIVO PLAN-013D-001 con n/a NO se exime solo porque
+        exista un hermano terminal PLAN-013B-002 [CANCELADO]. La exencion es por
+        id EXACTO, nunca por familia PLAN-013."""
+        content = (
+            "## PLAN-013B-002 -- [CANCELADO / ABSORBED]\n\n- terminal.\n\n"
+            "## PLAN-013D-001 -- Bloque vivo (misma familia 013)\n\n"
+            "- superficie real.\n\n"
+            "## Impact Simulation\n\n"
+            "| Plan | Superficies | Shared deps | Conflicto | Mitigacion | Paralelizable |\n"
+            "|------|-------------|------------|-----------|------------|---------------|\n"
+            "| PLAN-013B-002 | [CANCELADO] | n/a | n/a | ninguna | n/a |\n"
+            "| PLAN-013D-001 | a.py | none | ninguno | serializar | n/a |\n"
+            "\n## Forbidden Surfaces\n\nN/A\n\n## Merge Regression Audit\n\nN/A\n"
+        )
+        f = tmp_path / "live_family.md"
+        f.write_text(content, encoding="utf-8")
+        res = VResult()
+        validate_plan_graph(str(f), res)
+        para = [e for e in res.errors if "paralelizable" in e.field_]
+        # the LIVE 013D-001 row must still error; the terminal 013B-002 must not.
+        assert any("PLAN-013D-001" in e.field_ for e in para), (
+            f"live 013D-001 with n/a must still error; got {[e.field_ for e in para]}"
+        )
+        assert not any("PLAN-013B-002" in e.field_ for e in para), (
+            "terminal 013B-002 must be exempt"
+        )
+
+    def test_live_family_missing_shared_dep_still_errors(self, tmp_path):
+        """Codex-FS finding 1 (shared_dep path): un bloque VIVO PLAN-013D-001 que
+        OMITE shared_dependencies debe dar ERROR, aunque exista un hermano terminal
+        PLAN-013B-002. La exencion NO se propaga por familia."""
+        content = (
+            "## PLAN-013B-002 -- [CANCELADO / ABSORBED]\n\n- terminal, sin shared_dep.\n\n"
+            "## PLAN-013D-001 -- Bloque vivo misma familia, SIN shared_dep\n\n"
+            "- superficie real pero olvida declarar dependencias.\n\n"
+            "## Impact Simulation\n\n"
+            "| Plan | Superficies | Shared deps | Conflicto | Mitigacion | Paralelizable |\n"
+            "|------|---|---|---|---|---|\n"
+            "| PLAN-013D-001 | a.py | none | ninguno | serializar | yes |\n"
+            "\n## Forbidden Surfaces\n\nN/A\n\n## Merge Regression Audit\n\nN/A\n"
+        )
+        f = tmp_path / "live_family_no_shared.md"
+        f.write_text(content, encoding="utf-8")
+        res = VResult()
+        validate_plan_graph(str(f), res)
+        shd = [e for e in res.errors if "shared_dep" in e.field_]
+        assert shd, (
+            "a LIVE family block missing shared_dependencies must ERROR even with a "
+            "terminal sibling (exemption must not propagate by family prefix)"
+        )
+
+    def test_lowercase_terminal_header_still_exempts(self, tmp_path):
+        """Codex-FS finding 3: header en minusculas debe eximir igual (case-norm)."""
+        content = (
+            "## plan-013b-002 -- [cancelado / absorbed]\n\n- terminal.\n\n"
+            "## Impact Simulation\n\n"
+            "| Plan | Superficies | Shared deps | Conflicto | Mitigacion | Paralelizable |\n"
+            "|------|-------------|------------|-----------|------------|---------------|\n"
+            "| plan-013b-002 | [cancelado] | n/a | n/a | ninguna | n/a |\n"
+            "\n## Forbidden Surfaces\n\nN/A\n\n## Merge Regression Audit\n\nN/A\n"
+        )
+        f = tmp_path / "lower_terminal.md"
+        f.write_text(content, encoding="utf-8")
+        res = VResult()
+        validate_plan_graph(str(f), res)
+        offending = [
+            e
+            for e in res.errors
+            if "paralelizable" in e.field_ or "shared_dep" in e.field_
+        ]
+        assert not offending, f"lowercase terminal header must exempt, got {offending}"
+
+    def test_lookalike_marker_not_exempted(self, tmp_path):
+        """Codex-FS findings 6/7: 'NO-CANCELADO' / 'CANCELADO-PARCIAL' NO son
+        terminales (allowlist EXACTA del primer token, no substring)."""
+        for fake in ("NO-CANCELADO", "CANCELADO-PARCIAL", "XBLOCKED-FINALY"):
+            content = (
+                f"## PLAN-013B-002 -- [{fake}]\n\n- no realmente terminal.\n\n"
+                "## Impact Simulation\n\n"
+                "| Plan | Superficies | Shared deps | Conflicto | Mitigacion | Paralelizable |\n"
+                "|------|-------------|------------|-----------|------------|---------------|\n"
+                "| PLAN-013B-002 | x | none | ninguno | serializar | n/a |\n"
+                "\n## Forbidden Surfaces\n\nN/A\n\n## Merge Regression Audit\n\nN/A\n"
+            )
+            f = tmp_path / f"fake_{fake}.md"
+            f.write_text(content, encoding="utf-8")
+            res = VResult()
+            validate_plan_graph(str(f), res)
+            para = [e for e in res.errors if "paralelizable" in e.field_]
+            assert para, f"lookalike marker '{fake}' must NOT exempt (still ERROR)"
+
+    def test_nonterminal_block_na_still_errors(self, tmp_path):
+        """MUTATION rama B: bloque NO-terminal con n/a -> exit 1 (sigue ERROR).
+
+        Aisla que la exencion mira el ESTADO del header, no que apaga el check:
+        un plan VIVO no puede esconderse tras 'n/a'.
+        """
+        content = (
+            "## PLAN-001 -- Example (vivo, sin marker terminal)\n\n"
+            "- superficie operativa real.\n\n"
+            "## Impact Simulation\n\n"
+            "| Plan | Superficies | Shared deps | Conflicto esperado | Mitigacion | Paralelizable |\n"
+            "|------|-------------|------------|--------------------|-------------|---------------|\n"
+            "| PLAN-001 | a.py | none | ninguno | serializar | n/a |\n"
+            "\n"
+            "## Forbidden Surfaces\n\nN/A\n\n"
+            "## Merge Regression Audit\n\nN/A\n"
+        )
+        f = tmp_path / "nonterminal_na.md"
+        f.write_text(content, encoding="utf-8")
+        res = VResult()
+        validate_plan_graph(str(f), res)
+        para_errors = [e for e in res.errors if "paralelizable" in e.field_]
+        assert para_errors, (
+            "a LIVE (non-terminal) block with n/a paralelizable must still ERROR"
+        )
+
     def test_valid_paralelizable_no_passes(self, tmp_path):
         content = (
             "## PLAN-001 -- Example\n\n"
