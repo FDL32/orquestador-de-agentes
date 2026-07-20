@@ -90,6 +90,7 @@ EXPECTED_WIRED_REAL = {
     "delivery_hygiene_check",  # v4: denominador ve el guard sin prefijo, y lo cabla
     "guard_paths",
     "validate_all",
+    "validate_contract_formation",  # WOT-2026-023m(c): cableado via import estatico en prepush_check.py::run_contract_formation_check (closeout; valida el CF triple del motor)
     "validate_observations",  # WOT-2026-035b: cableado via import estatico en check_portable_memory_archive_schema.py (retirado de known_unwired)
     "validate_ticket_prose",
 }

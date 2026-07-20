@@ -78,6 +78,9 @@ def test_preflight_closeout_mode_includes_gate(tmp_path: Path, monkeypatch) -> N
         # aqui como los demas para probar SOLO la inclusion del backlog gate.
         "run_closeout_reconciliation_check",
         "run_motor_destination_integration_check",
+        # WOT-2026-023m(c): CF gate reads the real motor CF triple; isolate it here
+        # so this test probes ONLY the backlog gate's inclusion.
+        "run_contract_formation_check",
     ):
         monkeypatch.setattr(pc, fn, lambda *a, **k: ok)
 

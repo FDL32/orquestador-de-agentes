@@ -404,6 +404,72 @@ def run_backlog_contract_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_contract_formation_check(project_root: Path) -> CheckResult:
+    """WOT-2026-023m(c): gate bloqueante de cierre sobre el CF triple del motor.
+
+    ``validate_contract_formation`` ya validaba la ESTRUCTURA de charter +
+    plan_graph + ticket_contracts, pero era un guard que NADIE invocaba (declarado
+    en ``known_unwired``, owner 023m): un plan_graph mal formado no rompia ningun
+    gate = verde de laboratorio. Este gate lo ENCHUFA (no es logica nueva) sobre
+    los tres ficheros CANONICOS del motor (``repo_charter.md`` + ``plan_graph.md``
+    en raiz + ``.agent/planning/ticket_contracts.md``). Se ejecuta SOLO en
+    closeout-mode. El import es ESTATICO para que ``check_guard_wiring`` lo alcance
+    (precedente: ``validate_observations``, 035b).
+
+    Nota de ambito: valida el CF del MOTOR (donde viven los ficheros canonicos,
+    sha 3fe1363), NO el plan_graph del workspace (esa es superficie de 025v).
+
+    Before: motor_root resoluble; los tres ficheros CF existen y estan tracked.
+    During: importa validate_contract_formation.main y lo corre sobre el triple.
+    After: CheckResult passed=True si 0 errores; False (bloqueante) si el
+    validador reporta errores de estructura. Si algun fichero falta -> skip no
+    bloqueante (un motor sin CF materializado no debe bloquear el push).
+    """
+    name = "Contract Formation Check (closeout)"
+    charter = _MOTOR_ROOT / "repo_charter.md"
+    plan_graph = _MOTOR_ROOT / "plan_graph.md"
+    tickets = _MOTOR_ROOT / ".agent" / "planning" / "ticket_contracts.md"
+    if not (charter.exists() and plan_graph.exists() and tickets.exists()):
+        return CheckResult(
+            name=name,
+            passed=True,
+            output="motor CF triple not materialized (skipped)",
+            is_blocking=True,
+        )
+    try:
+        from scripts.validate_contract_formation import main as validate_cf_main
+    except ImportError:
+        from validate_contract_formation import (
+            main as validate_cf_main,  # type: ignore[no-redef]
+        )
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = validate_cf_main(
+            [
+                "--charter",
+                str(charter),
+                "--plan",
+                str(plan_graph),
+                "--tickets",
+                str(tickets),
+            ]
+        )
+    if rc != 0:
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=buf.getvalue().strip()
+            or "validate_contract_formation reported errors",
+            is_blocking=True,
+        )
+    return CheckResult(
+        name=name,
+        passed=True,
+        output="motor CF triple valid (0 structure errors)",
+        is_blocking=True,
+    )
+
+
 def run_contract_reconcile_check(project_root: Path) -> CheckResult:
     """WOT-2026-024e: frozen contracts in ticket_contracts.md with no scheduling
     row (the batch reads only backlog.md, so it can never execute them).
@@ -749,6 +815,8 @@ def run_preflight_check(
         results.append(run_closeout_reconciliation_check(project_root))
         # 6f. Motor<->Destino Integration (WOT-2026-024w; WARN default, FAIL opt-in)
         results.append(run_motor_destination_integration_check(project_root))
+        # 6g. Contract Formation Check (WOT-2026-023m(c); bloqueante en cierre)
+        results.append(run_contract_formation_check(project_root))
 
     # 7. Portable Memory Archive Schema (WOT-2026-035b; bloqueante siempre,
     # no solo en closeout_mode: el archive puede corromperse en cualquier push)

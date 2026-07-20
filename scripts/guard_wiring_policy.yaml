@@ -33,7 +33,10 @@ known_unwired:
   # prepush importa check_motor_destination_integration, que delega en
   # check_destino_publish_ready.main(). El AST lo alcanza ahora -> wired. Sale de
   # known_unwired (mantenerlo aqui seria una declaracion STALE que el propio gate caza).
-  validate_contract_formation: WOT-2026-023m
+  # validate_contract_formation: RETIRADO (WOT-2026-023m(c)) -- ahora cableado via
+  # import estatico en prepush_check.py::run_contract_formation_check (closeout,
+  # bloqueante) sobre el CF triple del motor. El AST lo alcanza ahora -> wired.
+  # Dejarlo aqui seria una declaracion STALE que el propio gate caza.
   validate_agent_config: WOT-2026-019o
   # WOT-2026-024w DISPUSO los 9 huerfanos que el parser honesto de v2/v4 destapo:
   #   - 3 CABLEADOS a pre-commit always_run: check_ruff_hook_scope,
