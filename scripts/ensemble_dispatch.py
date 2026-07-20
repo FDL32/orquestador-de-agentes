@@ -274,21 +274,39 @@ def _transport_agent(
     opencode): el caller valida por CONTENIDO. En timeout se mata el ARBOL de
     procesos (ver _kill_process_tree) y se lanza RuntimeError: el caller lo
     registra como backend caido (STEP_SKIP), nunca lo inventa.
+
+    WOT-2026-026n -- entrega del prompt:
+    - Por DEFECTO el prompt va por argv (backward-compat).
+    - Si el backend declara ``prompt_via_stdin: true``, el prompt va por STDIN
+      (``communicate(input=...)``) y el cmd lleva el sentinel ``-``. Es la causa
+      raiz del hang del bucle ``run`` en Windows: ``proposer_claude``
+      (channel=agent) metia el payload completo en la linea de comando y el CLI
+      colgaba (analogo al WinError 206 de codex, WOT-2026-035c, resuelto igual:
+      prompt por stdin). Los backends ``channel: api`` (los nan) no pasan por
+      aqui -- van por HTTP y nunca sufrieron el hang.
     """
     prompt = "\n\n".join(m["content"] for m in messages)
-    cmd = [backend_cfg["executable"], *backend_cfg.get("args", []), prompt]
+    via_stdin = bool(backend_cfg.get("prompt_via_stdin"))
+    if via_stdin:
+        cmd = [backend_cfg["executable"], *backend_cfg.get("args", []), "-"]
+        stdin_mode = subprocess.PIPE
+        stdin_payload: str | None = prompt
+    else:
+        cmd = [backend_cfg["executable"], *backend_cfg.get("args", []), prompt]
+        stdin_mode = subprocess.DEVNULL
+        stdin_payload = None
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        stdin=subprocess.DEVNULL,
+        stdin=stdin_mode,
         text=True,
         shell=False,
         encoding="utf-8",
         errors="replace",
     )
     try:
-        out, _err = proc.communicate(timeout=timeout)
+        out, _err = proc.communicate(input=stdin_payload, timeout=timeout)
     except subprocess.TimeoutExpired:
         _kill_process_tree(proc.pid)
         raise RuntimeError(

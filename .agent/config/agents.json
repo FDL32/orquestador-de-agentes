@@ -76,6 +76,7 @@
       "args": [
         "-p"
       ],
+      "prompt_via_stdin": true,
       "discovery": {
         "method": "path_only"
       },

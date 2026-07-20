@@ -792,7 +792,7 @@ def test_transport_agent_timeout_kills_process_tree(monkeypatch):
         def __init__(self, *a, **k):
             pass
 
-        def communicate(self, timeout=None):
+        def communicate(self, input=None, timeout=None):
             raise _sp.TimeoutExpired(cmd="fake", timeout=timeout)
 
     monkeypatch.setattr(ed.subprocess, "Popen", _HangingPopen)
@@ -809,6 +809,82 @@ def test_transport_agent_timeout_kills_process_tree(monkeypatch):
         "el timeout DEBE matar el arbol de procesos: sin eso, un descendiente "
         "que herede los pipes congela el smoke/piloto entero"
     )
+
+
+def test_transport_agent_passes_prompt_via_stdin_when_configured(monkeypatch):
+    """WOT-2026-026n: un backend con `prompt_via_stdin: true` debe recibir el
+    prompt por STDIN (communicate(input=...)), NO en argv. El prompt por argv es
+    la causa raiz del hang del bucle `run` en Windows: `proposer_claude`
+    (channel=agent, backend=claude) mete el payload completo en la linea de
+    comando y el CLI cuelga (analogo al WinError 206 de codex, WOT-2026-035c, que
+    se resolvio pasando el prompt por stdin). Mutation: ignorar el flag y volver a
+    argv -> este test flip RED (el prompt aparece en cmd y input queda None)."""
+    captured: dict = {}
+
+    class _CapturingPopen:
+        pid = 111
+
+        def __init__(self, cmd, *a, **k):
+            captured["cmd"] = cmd
+            captured["stdin"] = k.get("stdin")
+
+        def communicate(self, input=None, timeout=None):
+            captured["input"] = input
+            return ("respuesta-backend", "")
+
+    monkeypatch.setattr(ed.subprocess, "Popen", _CapturingPopen)
+
+    big_prompt = "PAYLOAD-" + ("x" * 5000)
+    out = ed._transport_agent(
+        {"backend": "claude"},
+        {"executable": "claude", "args": ["-p"], "prompt_via_stdin": True},
+        [{"role": "user", "content": big_prompt}],
+        timeout=10,
+    )
+    assert out == "respuesta-backend"
+    # El prompt viaja por STDIN, no por argv.
+    assert captured["input"] == big_prompt, (
+        "con prompt_via_stdin=true el prompt debe ir por communicate(input=...)"
+    )
+    assert big_prompt not in captured["cmd"], (
+        "el prompt NUNCA debe estar en argv cuando prompt_via_stdin=true (es la "
+        "causa raiz del hang: payload grande en la linea de comando)"
+    )
+    # El cmd debe llevar un sentinel de stdin (p.ej. '-'), no el prompt.
+    assert captured["cmd"][-1] == "-", (
+        "el cmd debe terminar en el sentinel '-' que le dice al CLI que lea stdin"
+    )
+
+
+def test_transport_agent_keeps_argv_when_flag_absent(monkeypatch):
+    """Backward-compat (WOT-2026-026n): sin `prompt_via_stdin`, el comportamiento
+    es el de siempre -- prompt por argv, stdin=DEVNULL. Cero regresion para
+    backends que no declaran el flag. Mutation: forzar stdin siempre -> RED."""
+    captured: dict = {}
+
+    class _CapturingPopen:
+        pid = 222
+
+        def __init__(self, cmd, *a, **k):
+            captured["cmd"] = cmd
+            captured["stdin"] = k.get("stdin")
+
+        def communicate(self, input=None, timeout=None):
+            captured["input"] = input
+            return ("ok", "")
+
+    monkeypatch.setattr(ed.subprocess, "Popen", _CapturingPopen)
+
+    ed._transport_agent(
+        {"backend": "fake"},
+        {"executable": "fake-cli", "args": []},
+        [{"role": "user", "content": "hola"}],
+        timeout=10,
+    )
+    assert captured["cmd"] == ["fake-cli", "hola"], (
+        "sin el flag, el prompt sigue yendo por argv (backward-compat)"
+    )
+    assert captured["input"] is None, "sin el flag, communicate no recibe input"
 
 
 def test_run_pipeline_writes_only_ensemble_runtime(tmp_path):
