@@ -22,6 +22,7 @@ from scripts.prepush_check import (
     run_agent_controller_validate,
     run_delivery_hygiene_check,
     run_git_status_check,
+    run_portable_memory_archive_check,
     run_preflight_check,
     run_ruff_check,
     run_ruff_format_check,
@@ -548,3 +549,67 @@ class TestCheckResult:
         )
 
         assert result.is_blocking is False
+
+
+class TestPortableMemoryArchiveCheck:
+    """WOT-2026-038j: the guard must resolve its script against the MOTOR.
+
+    The gate lives ONLY in the motor (`scripts/check_portable_memory_archive_schema.py`).
+    Building its path from `project_root` makes the gate self-destruct whenever
+    motor != destino -- the real topology of this repo -- with a FALSE RED
+    ("can't open file ... under the destino's scripts/"), blocking the closeout
+    for a file that was never supposed to be there.
+    """
+
+    def test_script_path_resolves_to_motor_not_destination(
+        self, tmp_path: Path
+    ) -> None:
+        """The command must point at the motor's copy of the guard.
+
+        `tmp_path` stands for a repo_destino that has no `scripts/` at all.
+        Mutation: rebuild the path from `project_root` and this goes red,
+        because the destination path does not exist.
+        """
+        captured: dict = {}
+
+        def _fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            return CheckResult(name="x", passed=True, output="", is_blocking=False)
+
+        with patch("scripts.prepush_check.run_subprocess_check", _fake_run):
+            run_portable_memory_archive_check(tmp_path)
+
+        script_arg = Path(captured["cmd"][1])
+        assert script_arg.is_file(), (
+            f"the guard script must resolve to an EXISTING file; got {script_arg}. "
+            "Building it from project_root self-destructs when motor != destino."
+        )
+        assert tmp_path not in script_arg.parents, (
+            f"the guard script must NOT be resolved under the destino ({tmp_path}); "
+            f"got {script_arg}"
+        )
+
+    def test_motor_root_argument_is_the_motor(self, tmp_path: Path) -> None:
+        """`--motor-root` must carry the motor, not the destino.
+
+        Passing the destino makes the guard audit the WRONG archive (or none),
+        which is a false green rather than a false red -- the worse failure.
+        """
+        captured: dict = {}
+
+        def _fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            return CheckResult(name="x", passed=True, output="", is_blocking=False)
+
+        with patch("scripts.prepush_check.run_subprocess_check", _fake_run):
+            run_portable_memory_archive_check(tmp_path)
+
+        cmd = captured["cmd"]
+        motor_root_value = Path(cmd[cmd.index("--motor-root") + 1])
+        assert motor_root_value != tmp_path, (
+            "--motor-root must not be the destino: the guard would audit the wrong "
+            "archive (false green)."
+        )
+        assert (motor_root_value / "scripts").is_dir(), (
+            f"--motor-root must point at a real motor checkout; got {motor_root_value}"
+        )

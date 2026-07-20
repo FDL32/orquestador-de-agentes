@@ -636,18 +636,44 @@ def run_portable_memory_archive_check(project_root: Path) -> CheckResult:
     Blocking: el 2026-07-18 el archive trackeado llevo 2 entradas invalidas
     y ninguna barrera cableada lo detecto antes de este ticket.
 
+    WOT-2026-038j: el guard vive SOLO en el motor, asi que su ruta y su
+    `--motor-root` se resuelven contra el MOTOR, nunca contra `project_root`.
+    Construirlos desde el destino hacia que el gate se autodestruyese en la
+    topologia real (motor != destino) con un FALSO ROJO -- "can't open file
+    <destino>/scripts/check_portable_memory_archive_schema.py" -- bloqueando el
+    closeout por un fichero que nunca estuvo ahi. Se usa el mismo patron ya
+    canonico en este modulo (`run_validate_all`): `_MOTOR_ROOT` como base y
+    `resolve_motor_root` solo si resuelve un candidato existente.
+
     Args:
-        project_root: Raiz del proyecto donde ejecutar el guard.
+        project_root: Raiz del proyecto (destino) sobre la que corre el preflight.
 
     Returns:
         CheckResult con el estado del check de schema del archive.
     """
+    motor_root = _MOTOR_ROOT
+    try:
+        from runtime.motor_link import resolve_motor_root
+
+        resolved_motor_root = resolve_motor_root(project_root)
+        if (
+            resolved_motor_root is not None
+            and (
+                resolved_motor_root
+                / "scripts"
+                / "check_portable_memory_archive_schema.py"
+            ).exists()
+        ):
+            motor_root = resolved_motor_root
+    except ImportError:
+        pass
+
     return run_subprocess_check(
         cmd=[
             sys.executable,
-            str(project_root / "scripts" / "check_portable_memory_archive_schema.py"),
+            str(motor_root / "scripts" / "check_portable_memory_archive_schema.py"),
             "--motor-root",
-            str(project_root),
+            str(motor_root),
         ],
         name="Portable Memory Archive Schema (WOT-2026-035b)",
         project_root=project_root,
