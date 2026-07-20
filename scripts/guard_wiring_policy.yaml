@@ -17,7 +17,11 @@
 known_unwired:
   # Citados en prompts, ejecutados por nadie. El orquestador corrio estos A MANO
   # el 2026-07-14 como barreras obligatorias -- funcionaron porque alguien se acordo.
-  check_backlog_commits_landed: WOT-2026-024c
+  # check_backlog_commits_landed: RETIRADO (WOT-2026-024q) -- ahora cableado via
+  # import estatico: agent_controller.py::_ticket_landed_by_archived_commit hace
+  # `from scripts.check_backlog_commits_landed import audit, parse_archived_commits`
+  # y agent_controller --validate corre en pre-commit/closeout. El AST lo alcanza
+  # ahora -> wired. Dejarlo aqui seria una declaracion STALE que el propio gate caza.
   validate_batch_dag: WOT-2026-023t
   # validate_observations: RETIRADO (WOT-2026-035b) -- ahora cableado via
   # check_portable_memory_archive_schema.py (pre-commit always_run + prepush),

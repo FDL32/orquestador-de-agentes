@@ -4262,6 +4262,13 @@ def _check_bus_drift(plan_content: str, log_status: str) -> list[str]:
         return ["No active ticket found for bus drift check"]
     if _ticket_events_archived(plan_id):
         return []
+    # WOT-2026-024q: bus ABSENT for the ticket + commit landed in origin/main ->
+    # closure evidence satisfied by commit, not by bus (no fabrication). Bus
+    # PRESENT but missing the required event stays a real drift (below).
+    if not closure_invariants.bus_has_ticket_events(
+        event_bus, plan_id
+    ) and _ticket_landed_by_archived_commit(plan_id):
+        return []
     return closure_invariants.check_bus_drift(event_bus, plan_id, log_status)
 
 
@@ -4285,6 +4292,55 @@ def _ticket_events_archived(plan_id: str) -> bool:
     return archive_file.exists()
 
 
+def _ticket_landed_by_archived_commit(plan_id: str) -> bool:
+    """True when the ticket's archived backlog row cites a commit that LANDED.
+
+    WOT-2026-024q. In code-only closure (bus muerto), a ticket's canonical state
+    is proven by its COMMIT reaching ``origin/main``, not by a bus event. The
+    post-closure invariants only know how to verify by bus, so for a landed-by-
+    commit ticket they emit spurious "no STATE_CHANGED"/"cannot verify" warnings.
+
+    This recognizes the EXISTING evidence -- the archived
+    ``_archive/backlog_done.md`` row + the landed-commit guard semantics -- WITHOUT
+    fabricating any bus event. It reuses ``parse_archived_commits`` and ``audit``
+    from ``scripts.check_backlog_commits_landed`` (import is NOT circular: that
+    script imports neither agent_controller nor closure_invariants). ONLY the
+    verdicts ``OK`` / ``OK_BY_SUBJECT`` count as landed -- ``PENDING_GROUPED_PUSH``
+    (committed but unpushed), ``WARN`` (no git object) and ``ERROR`` (lost close)
+    do NOT, so validate never blesses a close that has not actually reached
+    origin/main.
+
+    Before: ``plan_id`` non-empty. Reads the archive file and runs read-only git
+    against the motor repo; never mutates.
+    During: parses the archive, filters to this ticket's (id, sha) pairs, and
+    classifies them against ``origin/main`` in the motor repo.
+    After: returns True iff the ticket has at least one cited pair and ALL of
+    them land as OK / OK_BY_SUBJECT (a grouped ``commit:sha1+sha2`` row must land
+    in full); False on any read/parse/git error (fail-closed: unproven).
+    """
+    try:
+        from scripts.check_backlog_commits_landed import audit, parse_archived_commits
+
+        archive = get_collab_dir() / "_archive" / "backlog_done.md"
+        content = archive.read_text(encoding="utf-8-sig")
+        pairs = [
+            (tid, sha) for tid, sha in parse_archived_commits(content) if tid == plan_id
+        ]
+        if not pairs:
+            return False
+        motor_root = _MOTOR_ROOT.resolve()
+        results = audit(pairs, "origin/main", motor_root)
+        # WOT-2026-024q (Codex-FS review): a row may cite SEVERAL grouped SHAs
+        # (``commit:sha1+sha2``); parse_archived_commits emits one pair per SHA.
+        # ALL of them must land -- ``any`` would bless a ticket whose landed SHA
+        # sits beside a PENDING/ERROR sibling, the exact false-green 024q blocks.
+        return bool(results) and all(
+            r["verdict"] in ("OK", "OK_BY_SUBJECT") for r in results
+        )
+    except Exception:
+        return False
+
+
 def _check_post_closure_built_exit(
     plan_id: str, log_status: str
 ) -> tuple[list[str], list[str]]:
@@ -4292,6 +4348,11 @@ def _check_post_closure_built_exit(
     if not BUS_AVAILABLE or not event_bus:
         return [], []
     if _ticket_events_archived(plan_id):
+        return [], []
+    # WOT-2026-024q: see _check_bus_drift -- landed-by-commit + bus absent.
+    if not closure_invariants.bus_has_ticket_events(
+        event_bus, plan_id
+    ) and _ticket_landed_by_archived_commit(plan_id):
         return [], []
     return closure_invariants.check_post_closure_built_exit(
         event_bus, plan_id, log_status
@@ -4319,6 +4380,11 @@ def _check_post_closure_state_changed(
     if not BUS_AVAILABLE or not event_bus:
         return [], []
     if _ticket_events_archived(plan_id):
+        return [], []
+    # WOT-2026-024q: see _check_bus_drift -- landed-by-commit + bus absent.
+    if not closure_invariants.bus_has_ticket_events(
+        event_bus, plan_id
+    ) and _ticket_landed_by_archived_commit(plan_id):
         return [], []
     return closure_invariants.check_post_closure_state_changed(
         event_bus, plan_id, log_status

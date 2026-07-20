@@ -67,6 +67,7 @@ _EMPTY_POLICY = {"known_unwired": {}, "extra_guards": {}, "wired_via": {}}
 # call-site and picks up a bogus one prints the same number).
 EXPECTED_WIRED_REAL = {
     "check_agents_accessible",  # WOT-2026-026e(A7): cableado por import en preflight_codeonly_pipeline.py
+    "check_backlog_commits_landed",  # WOT-2026-024q: cableado via import estatico en agent_controller.py::_ticket_landed_by_archived_commit (retirado de known_unwired)
     "check_backlog_contract",
     "check_claude_settings_portability",
     "check_commit_worktree",
