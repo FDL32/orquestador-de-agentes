@@ -409,8 +409,9 @@ def test_leaders_requires_min_n(tmp_path):
 
 def test_scorecard_fields_prefix_is_frozen():
     """R0 pin: the 16 EXISTING fields keep their name/order (invariant); the
-    4 new WOT-2026-025y fields are appended AFTER them. Mutation: insert a
-    new field in the middle of the list -> this assertion goes RED."""
+    4 WOT-2026-025y fields + 3 WOT-2026-037b fields are appended AFTER them.
+    Mutation: insert a new field in the middle of the list -> this assertion
+    goes RED."""
     assert ed.SCORECARD_FIELDS[:16] == [
         "ts",
         "event",
@@ -434,7 +435,18 @@ def test_scorecard_fields_prefix_is_frozen():
         "latency_ms",
         "adjudicator_backend",
         "adjudicator_model",
-    ], "los 4 campos nuevos deben ir DESPUES del prefijo frozen (D1)"
+        "phase",
+        "loop_id",
+        "backend_key",
+    ], "los 7 campos nuevos deben ir DESPUES del prefijo frozen (D1)"
+    # WOT-2026-037b review (mimo lens): append_scorecard normaliza via
+    # {k: row.get(k) for k in SCORECARD_FIELDS}; una clave DUPLICADA se
+    # colapsaria en silencio (la 2a pisa la 1a) sin error. Invariante: la
+    # lista no tiene duplicados.
+    assert len(ed.SCORECARD_FIELDS) == len(set(ed.SCORECARD_FIELDS)), (
+        "SCORECARD_FIELDS no puede tener claves duplicadas: append_scorecard "
+        "las colapsaria silenciosamente (dict-comprehension)."
+    )
 
 
 def test_task_types_enum_frozen():
@@ -936,10 +948,33 @@ def test_migration_1_2_to_1_3_backfills_empty_structures():
 
 
 def test_motor_agents_json_validates_via_single_layer():
-    """El agents.json REAL del motor (1.3) pasa la capa unica, y el gate CLI
-    la invoca sin re-declarar schema."""
+    """El agents.json REAL del motor pasa la capa unica, y el gate CLI la
+    invoca sin re-declarar schema.
+
+    schema_version NO se pinea a un snapshot literal (WOT-2026-024t: un
+    "== 1.3" caduca solo en la proxima migracion real). Pero tampoco basta
+    ">= (1,3)": eso deja pasar un bump a mano (schema_version=1.4 con un id
+    de migracion 1.3_to_1.4 fabricado que NO existe en MIGRATIONS), justo el
+    landmine que caza este test (review adversarial 037b: una migracion real
+    futura con ese id la saltaria por idempotencia). El INVARIANTE correcto:
+    schema_version DEBE ser exactamente el to_version de la ultima migracion
+    REGISTRADA, y _migrations no puede declarar ids que MIGRATIONS no conoce.
+    Esto no caduca (crece con MIGRATIONS) y si detecta el drift."""
+    import agents_config as ac
+
     config = ed.load_motor_config()
-    assert config["schema_version"] == "1.3"
+    latest = ac.MIGRATIONS[-1].to_version if ac.MIGRATIONS else "1.0"
+    assert config["schema_version"] == latest, (
+        f"schema_version={config['schema_version']!r} debe igualar el "
+        f"to_version de la ultima migracion registrada ({latest!r}); un bump "
+        "a mano sin handler en MIGRATIONS es un estado imposible."
+    )
+    known_ids = {m.id for m in ac.MIGRATIONS}
+    unknown = [mid for mid in config.get("_migrations", []) if mid not in known_ids]
+    assert not unknown, (
+        f"_migrations declara ids que MIGRATIONS no conoce: {unknown} "
+        "(migracion fabricada a mano sin handler)."
+    )
     assert "review_adversarial" in config["ensemble_pipelines"]
     import validate_agent_config as vac
 

@@ -103,7 +103,8 @@
       "model": null,
       "context": "diff-o-artefacto-publico",
       "write": false,
-      "data_sensitivity": "public"
+      "data_sensitivity": "public",
+      "backend_key": "BA01"
     },
     "challenger_codex": {
       "backend": "codex",
@@ -111,7 +112,8 @@
       "model": null,
       "context": "diff-o-artefacto-publico",
       "write": false,
-      "data_sensitivity": "public"
+      "data_sensitivity": "public",
+      "backend_key": "BA05"
     },
     "challenger_nan_deepseek_v4_flash": {
       "backend": "nan_api",
@@ -121,7 +123,8 @@
       "api_key_env": "NAN_API_KEY",
       "context": "diff-o-artefacto-publico",
       "write": false,
-      "data_sensitivity": "public"
+      "data_sensitivity": "public",
+      "backend_key": "BA10"
     },
     "challenger_nan_qwen3_6": {
       "backend": "nan_api",
@@ -131,7 +134,8 @@
       "api_key_env": "NAN_API_KEY",
       "context": "diff-o-artefacto-publico",
       "write": false,
-      "data_sensitivity": "public"
+      "data_sensitivity": "public",
+      "backend_key": "BA11"
     },
     "challenger_nan_mimo_v2_5": {
       "backend": "nan_api",
@@ -141,7 +145,8 @@
       "api_key_env": "NAN_API_KEY",
       "context": "diff-o-artefacto-publico",
       "write": false,
-      "data_sensitivity": "public"
+      "data_sensitivity": "public",
+      "backend_key": "BA12"
     },
     "challenger_nan_gemma4": {
       "backend": "nan_api",
@@ -151,7 +156,8 @@
       "api_key_env": "NAN_API_KEY",
       "context": "diff-o-artefacto-publico",
       "write": false,
-      "data_sensitivity": "public"
+      "data_sensitivity": "public",
+      "backend_key": "BA13"
     }
   },
   "ensemble_pipelines": {
@@ -160,8 +166,155 @@
       "challenger": "challenger_nan_deepseek_v4_flash",
       "rubric": "prompts/audit_agent_output.md",
       "max_rounds": 2,
-      "continue_if": "objecion-CONFIRMADA-con-evidencia"
+      "continue_if": "objecion-CONFIRMADA-con-evidencia",
+      "loop_id": "L800"
     }
+  },
+  "ensemble_registry": {
+    "backend_keys": {
+      "BA01": {
+        "backend": "claude",
+        "model": null,
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA05": {
+        "backend": "codex",
+        "model": null,
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA10": {
+        "backend": "nan_api",
+        "model": "deepseek-v4-flash",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA11": {
+        "backend": "nan_api",
+        "model": "qwen3.6",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA12": {
+        "backend": "nan_api",
+        "model": "mimo-v2.5",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA13": {
+        "backend": "nan_api",
+        "model": "gemma4",
+        "backend_version": null,
+        "status": "active"
+      }
+    },
+    "loop_shapes": {
+      "L700": {
+        "name": "BUC-01",
+        "launched_from": "chat",
+        "steps": [
+          {
+            "phase": "collector",
+            "function": "participant",
+            "backend_key": "BA01"
+          },
+          {
+            "phase": "fanout-comun",
+            "function": "participant",
+            "backend_key": "BA10"
+          },
+          {
+            "phase": "fanout-comun",
+            "function": "participant",
+            "backend_key": "BA11"
+          },
+          {
+            "phase": "fanout-comun",
+            "function": "participant",
+            "backend_key": "BA12"
+          },
+          {
+            "phase": "fanout-comun",
+            "function": "participant",
+            "backend_key": "BA13"
+          },
+          {
+            "phase": "fanout-dif",
+            "function": "participant",
+            "backend_key": "BA10"
+          },
+          {
+            "phase": "fanout-dif",
+            "function": "participant",
+            "backend_key": "BA11"
+          },
+          {
+            "phase": "fanout-dif",
+            "function": "participant",
+            "backend_key": "BA12"
+          },
+          {
+            "phase": "fanout-dif",
+            "function": "participant",
+            "backend_key": "BA13"
+          },
+          {
+            "phase": "fanout-lector-fs",
+            "function": "participant",
+            "backend_key": "BA01"
+          }
+        ],
+        "status": "active"
+      },
+      "L800": {
+        "name": "CHA-01",
+        "launched_from": "chat",
+        "steps": [
+          {
+            "phase": "collector",
+            "function": "participant",
+            "backend_key": "BA01"
+          },
+          {
+            "phase": "challenge-fanout",
+            "function": "participant",
+            "backend_key": "BA01"
+          },
+          {
+            "phase": "challenge-fanout",
+            "function": "participant",
+            "backend_key": "BA10"
+          },
+          {
+            "phase": "challenge-fanout",
+            "function": "participant",
+            "backend_key": "BA11"
+          },
+          {
+            "phase": "challenge-fanout",
+            "function": "participant",
+            "backend_key": "BA12"
+          },
+          {
+            "phase": "challenge-fanout",
+            "function": "participant",
+            "backend_key": "BA13"
+          },
+          {
+            "phase": "challenge-fanout-lector-fs",
+            "function": "participant",
+            "backend_key": "BA01"
+          }
+        ],
+        "status": "active"
+      }
+    },
+    "statuses": [
+      "active",
+      "deprecated",
+      "archived"
+    ]
   },
   "ensemble_private_roots": [],
   "role_assignments": {

@@ -100,6 +100,11 @@ SCORECARD_FIELDS = [
     "latency_ms",
     "adjudicator_backend",
     "adjudicator_model",
+    # WOT-2026-037b: campos del registro citable de bucles, tambien SIEMPRE
+    # al final por el mismo motivo (prefijo frozen invariante).
+    "phase",
+    "loop_id",
+    "backend_key",
 ]
 
 ADJUDICATED_OUTCOMES = {
