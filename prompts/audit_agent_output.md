@@ -233,19 +233,25 @@ Si el agente reporta tests:
 - Si el cambio corrige un bug real, existe prueba de barrera suficiente: evidencia de que el test o guard habria fallado sin el fix?
 - **Claims de creacion/escritura de archivos:** Un agente reporta "archivo X creado" o "backlog escrito". Evidencia minima, despues de verificar topologia en la seccion 1: (1) el archivo existe y es legible con una verificacion compatible con el entorno actual (`Test-Path`, `test -f`, `read_file`, diff real o equivalente; Python/pathlib solo como fallback portable), (2) el contenido es consistente con lo declarado (no solo que exista, sino que tiene la estructura esperada). Un exit code de script o encoding guard NO sustituyen la verificacion de existencia. Si el output solo reporta exito sin evidencia de lectura, marca el claim como `NO VERIFICADO`.
 - **Claims de "quedo en memoria" / "memoria subida":** "memoria" NO es un destino
-  unico. Un claim de persistencia de aprendizaje exige, ademas de la verificacion de
-  existencia anterior: (1) DESTINO EXACTO declarado y verificado -- `repo_motor`
-  (`<motor>/.agent/runtime/memory/observations.jsonl`, wing engine/meta),
-  `repo_destino` (`<destino>/.agent/runtime/memory/observations.jsonl`, wing project)
-  o `Claude privada` (`~/.claude/.../memory/*.md`, NO portable, NO validada por
-  schema); (2) si el destino es portable, el `observations.jsonl` EXISTE y contiene
-  el `topic` reclamado (`grep "topic":"<slug>"`); (3) `validate_observations.py`
-  exit 0 sobre ese archivo; (4) si el claim dice "portable", el archivo debe estar
-  VERSIONADO (`git ls-files`) o el output debe explicar por que es gitignored por
-  diseno (p.ej. memoria de runtime del motor). Un claim "quedo en memoria" sostenido
-  solo por archivos en `Claude privada` es FALSO VERDE si se presento como portable:
-  marca `NO VERIFICADO` la portabilidad y `VERIFICADO POR TOPOLOGIA` solo la copia
-  privada. Subtipo CEM: `memoria_no_portable`.
+  unico, y el destino PORTABLE no es el que parece. Un claim de persistencia de
+  aprendizaje exige, ademas de la verificacion de existencia anterior: (1) DESTINO
+  EXACTO declarado y verificado. El `observations.jsonl` de runtime
+  (`<motor>/.agent/runtime/memory/observations.jsonl` o
+  `<destino>/.agent/runtime/memory/observations.jsonl`) esta **GITIGNORED**: es la
+  FUENTE desde la que se promueve, NO el destino portable (WOT-2026-024r). El
+  **DESTINO PORTABLE es el ARCHIVE VERSIONADO** (`archive/observations.YYYY-MM.jsonl`),
+  lo unico que viaja en el repo (canon: `memory_upload.md`, `AGENTS.md`); `Claude
+  privada` (`~/.claude/.../memory/*.md`) NO es portable NI validada por schema. (2) si
+  el claim es "portable", el `topic` reclamado debe existir en el ARCHIVE versionado
+  (`grep "topic":"<slug>" archive/observations.*.jsonl`), no solo en el
+  `observations.jsonl` gitignored; (3) `validate_observations.py` exit 0 sobre ese
+  archivo; (4) si el claim dice "portable", el archive debe estar VERSIONADO
+  (`git ls-files`); un aprendizaje que solo vive en el `observations.jsonl` gitignored
+  o en `Claude privada` NO es portable (esta escrito pero nadie lo lee de vuelta:
+  promover al archive lo hace portable). Un claim "quedo en memoria" sostenido solo
+  por archivos en `Claude privada` o por el `observations.jsonl` gitignored es FALSO
+  VERDE si se presento como portable: marca `NO VERIFICADO` la portabilidad y
+  `VERIFICADO POR TOPOLOGIA` solo la copia no-portable. Subtipo CEM: `memoria_no_portable`.
 - **Claims de ausencia de datos/secretos en repos SIN commits:** `git ls-files` lista el INDICE; en un repo recien creado con 0 commits y sin `git add`, devuelve vacio TRIVIALMENTE. Un `ls-files` vacio NO prueba "no hay datos sensibles", solo "no hay indice". (Verificado: en adopciones recientes, repos con 0 commits daban `ls-files` vacio mientras tenian `data/*.csv`/`*.txt` reales en disco.) Para verificar ausencia de fuga pre-publicacion, exige las tres: (1) existencia en DISCO con `find`/`Get-ChildItem` usando las EXTENSIONES reales del repo (no un set generico csv/db: detecta `.txt`/`.xls`/`.docx`/`.pdf`/`.sqlite` segun el repo), (2) `git status --porcelain` para ver candidatos a stage, (3) `git check-ignore -v` para confirmar cobertura del `.gitignore`. Antes de citar `ls-files` como evidencia de limpieza, comprueba `git rev-list --count HEAD`: si es 0, `ls-files` es NO CONCLUYENTE. Ademas, en un repo UNBORN, audita quien crea el PRIMER commit baseline: un ticket `documentation` de `Files Likely Touched` estrecho NO debe crear el baseline si eso arrastra el arbol entero (incluido ruido de build o superficies de otros tickets) e invalida premisas frozen de tickets dependientes (p.ej. un ticket cuyo contrato asume `git_head = sin commits`). Si el output reporta el ticket documental como `COMPLETED` con un commit-baseline propio en esas condiciones, es scope creep: el estado honesto es `VERIFIED_PENDING_BASELINE` (gates verdes, sin cierre canonico hasta que el ticket de higiene del baseline lo cree). Subtipo CEM: `baseline_prematuro`.
 - **`git check-ignore` sobre ARCHIVOS REALES, nunca sobre rutas ficticias:** correr `git check-ignore data/x.xls` (ruta inventada top-level) NO prueba que los datos esten ignorados: matchea el patron `data/*.xls` pero los archivos reales suelen vivir ANIDADOS (`data/2026/01/x.xls`), que un patron top-level NO cubre. (Verificado CG-COM-2026-002a: `.gitignore` con `data/*.xls`, 18 .xls/.xlsx de PII en `data/2025|2026/` -> 18 NO ignorados, fuga, mientras `check-ignore data/x.xls` daba falso verde.) Regla: itera `git check-ignore -q` sobre la SALIDA de `find <dir> -type f` (los archivos que existen de verdad), cuenta cuantos NO estan ignorados (debe ser 0), y confirma con `git add -n .` que ninguno se stagearia. Un DoD que verifica un patron string o una ruta ficticia esta verificando lo equivocado.
 - **Checks de presencia de secretos no deben volcar el valor:** un DoD o gate que
