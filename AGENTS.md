@@ -46,6 +46,24 @@ No usar "workspace" a secas: el termino es ambiguo porque describe tanto el repo
 | `workspace_activo` | Raiz operativa con `.agent/` desde la que corre el ticket actual. En la topologia actual coincide con `repo_destino`. Se configura via `AGENT_PROJECT_ROOT` o `motor_destination_link.json`. |
 | `entorno_multi_root` | IDE abierto con `repo_motor` + `repo_destino` a la vez (VS Code multi-folder workspace). No es un concepto de codigo: solo describe el entorno de desarrollo. |
 
+### Tipos de SESION: DISENO vs DESARROLLO (WOT-2026-039c)
+
+Solo hay DOS tipos de sesion y este es su vocabulario canonico. **No usar "research"** para
+designarlas: lo que produce una sesion de planificacion es un DISENO (un artefacto: el flight plan,
+la ficha, el DAG), no una investigacion.
+
+| Termino | Que hace | Escribe en | Prompts (bootstrap / cierre) |
+|---------|----------|------------|------------------------------|
+| `sesion_diseno` | Tria el backlog, disena planes de vuelo y redacta fichas. READ-ONLY sobre el codigo: NO implementa, NO commitea codigo, NO escribe `backlog.md`. | `queued/`, `reports/`, `backlog_inbox/` | `orchestrator_session_bootstrap_design.md` / `orchestrator_session_close_full_audit_design.md` |
+| `sesion_desarrollo` | Ejecuta un vuelo: implementa, commitea, mueve `queued/ -> in_flight/ -> done/` y escribe `backlog.md`. | codigo, `backlog.md`, `in_flight/`, `done/` | `orchestrator_session_bootstrap.md` / `orchestrator_session_close_full_audit.md` |
+
+El contrato de no-colision entre ambas vive en `<destino>/orchestrator_pipeline/flight_plans/INDEX.md`.
+
+**Convencion de nombres (deliberada):** el sufijo `_design` va al FINAL del nombre de fichero, no al
+principio (`..._bootstrap_design.md`, no `design_..._bootstrap.md`), aunque en ingles seria mas
+normativo el adjetivo delante. Motivo: asi cada par diseno/desarrollo queda ADYACENTE al ordenar el
+directorio alfabeticamente, que es como se buscan en la practica. Ergonomia sobre gramatica.
+
 **Regla de repos:** toda operacion git del tooling (diff, log, commit) corre con `cwd=repo_motor`. El estado operativo (tickets, memoria, events) vive en `repo_destino`.
 
 **Regla de `AGENT_PROJECT_ROOT`:** el motor se invoca siempre con esta variable apuntando al `workspace_activo`. Sin ella, el motor usa modo code-only y bloquea escrituras operativas.

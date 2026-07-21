@@ -1,4 +1,4 @@
-# Prompt: Arranque de SESIoN DE DISEnO (research / planning, read-only)
+# Prompt: Arranque de SESIoN DE DISEnO (planning, read-only)
 
 > **Modo:** READ-ONLY sobre el codigo. Una SESIoN DE DISEnO triar el backlog, disena planes de
 > vuelo y redacta fichas de tickets, EN PARALELO a una SESIoN DE DESARROLLO que puede estar

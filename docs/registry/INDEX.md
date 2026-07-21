@@ -48,10 +48,10 @@
 | prompt | `prompts/orchestrator_pipeline_codeonly.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/orchestrator_refactor_bootstrap.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/orchestrator_session_bootstrap.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/orchestrator_session_bootstrap_design.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/orchestrator_session_close_chat.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/orchestrator_session_close_full_audit.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/orchestrator_session_close_full_audit_design.md` | active | system | shared | model-invoked | — |
-| prompt | `prompts/research_session_bootstrap.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/suite_optimization.md` | active | system | shared | model-invoked | — |
 | reference | `skills/audit-pipeline/references/audit-checklist.md` | active | system | shared | model-invoked | — |
 | reference | `skills/builder-implement-from-plan/references/code-rules.md` | active | system | shared | model-invoked | — |
