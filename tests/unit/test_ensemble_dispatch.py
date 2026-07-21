@@ -890,6 +890,61 @@ def test_transport_agent_keeps_argv_when_flag_absent(monkeypatch):
     assert captured["input"] is None, "sin el flag, communicate no recibe input"
 
 
+def test_real_config_codex_delivers_multiline_prompt_intact(monkeypatch):
+    """WOT-2026-027k: el backend `codex` de la CONFIG REAL debe entregar por stdin.
+
+    Los dos tests de arriba prueban el MECANISMO con un backend_cfg inventado a
+    mano, asi que salian verdes mientras la config real dejaba a `codex` sin el
+    flag -- fixture drift: el mecanismo funcionaba y el consumidor no lo usaba.
+    Este test lee `.agent/config/agents.json` y ejerce la ruta que corre de verdad.
+
+    Por que un rc=0 NO habria cazado esto: con el prompt multilinea por argv el CLI
+    no falla -- pierde la instruccion y responde PLAUSIBLEMENTE sobre otra cosa
+    (medido 2026-07-21: contesto sobre '# AGENTS.md' en vez de seguir la orden).
+    Un falso-verde semantico solo se caza afirmando sobre el TRANSPORTE.
+
+    Mutation: quitar `prompt_via_stdin` del backend codex -> este test cae.
+    """
+    cfg = ed.load_motor_config()
+    backend_cfg = cfg["backends"]["codex"]
+    captured: dict = {}
+
+    class _CapturingPopen:
+        pid = 333
+
+        def __init__(self, cmd, *a, **k):
+            captured["cmd"] = cmd
+
+        def communicate(self, input=None, timeout=None):
+            captured["input"] = input
+            return ("ok", "")
+
+    monkeypatch.setattr(ed.subprocess, "Popen", _CapturingPopen)
+
+    nonce = "NONCE-027K-9f3a"
+    prompt = f"Primera linea de la instruccion.\nSEGUNDA LINEA: {nonce}\nTercera."
+    ed._transport_agent(
+        {"backend": "codex"},
+        backend_cfg,
+        [{"role": "user", "content": prompt}],
+        timeout=10,
+    )
+
+    # (1) el prompt NO viaja en argv -- ni entero ni por partes
+    assert not any(nonce in str(part) for part in captured["cmd"]), (
+        f"el prompt no puede ir en argv: cmd={captured['cmd']}"
+    )
+    # (2) el sentinel de stdin es el ultimo argumento
+    assert captured["cmd"][-1] == "-", (
+        "codex exec lee de stdin cuando recibe '-' (ver `codex exec --help` y el "
+        "precedente de scripts/run_codex_audit.py)"
+    )
+    # (3) stdin recibe el prompt INTEGRO, con sus saltos de linea
+    assert captured["input"] == prompt, (
+        "stdin debe recibir el prompt entero; perder lineas es el defecto 027k"
+    )
+
+
 def test_run_pipeline_writes_only_ensemble_runtime(tmp_path):
     """B2: el dispatcher no aplica nada al arbol; su unica escritura es el
     runtime de ensemble bajo el project_root."""
