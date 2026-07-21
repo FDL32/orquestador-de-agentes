@@ -477,3 +477,151 @@ def test_strict_validation_covers_every_archive_that_feeds_the_dedup(
     assert "NO valida --strict" in r.stdout
     assert "2020-01" in r.stdout, "el error debe NOMBRAR el archive culpable"
     assert not (canon / _archive_rel()).exists(), "no debe escribir nada"
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-026f / D1: via CURADA explicita (--promote-id)
+#
+# DEC-026F-001 (politica B1): la ANTIGUEDAD (cutoff 30d de memory_consolidate)
+# sigue siendo el camino AUTOMATICO, y ADEMAS existe una via curada explicita
+# para promover UNA leccion concreta YA, con confirmacion humana.
+#
+# El agujero que cierra: en un checkout CANONICO (source == dest) el
+# reconciliador sale no-op, asi que una leccion reciente del propio canonico no
+# tenia NINGUNA via de promocion -- y el promotion-guard recomendaba justo ese
+# comando no-op ("exit 0 = no hice nada" DENTRO de la barrera que existe para
+# evitarlo).
+# ---------------------------------------------------------------------------
+
+
+def _obs_id(obs_id: str, topic: str, ticket: str) -> dict:
+    r = _obs(topic, ticket)
+    r["id"] = obs_id
+    return r
+
+
+def _run_promote(source: Path, obs_id: str, apply: bool = True):
+    args = [
+        sys.executable,
+        str(SCRIPT),
+        "--source",
+        str(source),
+        "--promote-id",
+        obs_id,
+    ]
+    if apply:
+        args.append("--apply")
+    return subprocess.run(args, capture_output=True, text=True, check=False)
+
+
+def test_promote_id_works_in_the_canonical_checkout(tmp_path: Path) -> None:
+    """D1: en el canonico (source==dest), --promote-id SI promueve.
+
+    Es el caso que hoy es un no-op y deja la leccion huerfana para siempre.
+    """
+    canon, _ = _make_worktree_pair(tmp_path)
+    _write(
+        canon / OBS_REL,
+        [
+            _obs_id("obs-uno", "tema-uno", "WOT-2026-026f"),
+            _obs_id("obs-dos", "tema-dos", "WOT-2026-026f"),
+        ],
+    )
+
+    r = _run_promote(canon, "obs-uno")
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    promoted = _load(canon / _archive_rel())
+    ids = [x.get("id") for x in promoted]
+    assert ids == ["obs-uno"], f"solo la leccion pedida se promueve: {ids}"
+
+
+def test_promote_id_is_deduped_by_id(tmp_path: Path) -> None:
+    """D1: promover dos veces la misma leccion NO la duplica (idempotente)."""
+    canon, _ = _make_worktree_pair(tmp_path)
+    _write(canon / OBS_REL, [_obs_id("obs-uno", "tema-uno", "WOT-2026-026f")])
+
+    first = _run_promote(canon, "obs-uno")
+    second = _run_promote(canon, "obs-uno")
+
+    assert first.returncode == 0 and second.returncode == 0
+    assert len(_load(canon / _archive_rel())) == 1, "la 2a pasada duplico la leccion"
+
+
+def test_promote_id_unknown_fails_closed(tmp_path: Path) -> None:
+    """D1: un id inexistente es un ERROR, no un exit 0 silencioso.
+
+    Si saliera 0, el operador creeria haber promovido algo que no existe: la
+    trampa del "exit 0 = no hice nada" otra vez.
+
+    NO basta con `returncode != 0`: un argparse que no conozca el flag tambien
+    da != 0, asi que ese assert pasaria SIN la feature (falso verde real, cazado
+    por la review adversarial y reproducido borrando el flag: el test seguia
+    verde). Por eso se afirma sobre el MENSAJE de la logica de negocio.
+    """
+    canon, _ = _make_worktree_pair(tmp_path)
+    _write(canon / OBS_REL, [_obs_id("obs-uno", "tema-uno", "WOT-2026-026f")])
+
+    r = _run_promote(canon, "obs-INEXISTENTE")
+
+    assert r.returncode == 1, f"rc esperado 1 (fallo de negocio), no {r.returncode}"
+    out = r.stdout + r.stderr
+    assert "obs-INEXISTENTE" in out, (
+        f"el error debe NOMBRAR el id que no encontro; got: {out}"
+    )
+    assert "no se promueve lo que no existe" in out, (
+        f"debe fallar por la LOGICA, no por argparse; got: {out}"
+    )
+    assert len(_load(canon / _archive_rel())) == 0
+
+
+def test_promote_id_dry_run_writes_nothing(tmp_path: Path) -> None:
+    """D1: sin --apply no se escribe (confirmacion explicita)."""
+    canon, _ = _make_worktree_pair(tmp_path)
+    _write(canon / OBS_REL, [_obs_id("obs-uno", "tema-uno", "WOT-2026-026f")])
+
+    r = _run_promote(canon, "obs-uno", apply=False)
+
+    assert r.returncode == 0
+    assert _load(canon / _archive_rel()) == []
+
+
+def test_promote_id_refuses_to_write_onto_an_invalid_archive(tmp_path: Path) -> None:
+    """D1: `--strict` ANTES de escribir (fail-closed), como la via automatica.
+
+    Sin esta mitad, la via curada seria un bypass de la barrera que protege la
+    memoria portable: promoveria sobre un archive ya invalido.
+
+    Como en el test de arriba, `returncode != 0` NO basta (argparse tambien lo
+    da): se afirma sobre el mensaje fail-closed del reconciliador.
+    """
+    canon, _ = _make_worktree_pair(tmp_path)
+    _write(canon / OBS_REL, [_obs_id("obs-uno", "tema-uno", "WOT-2026-026f")])
+    bad = _obs("malo", "WOT-2026-000a")
+    bad["applies_to"] = "process"  # fuera del enum VALID_APPLIES_TO
+    _write(canon / _archive_rel(), [bad])
+
+    r = _run_promote(canon, "obs-uno")
+
+    assert r.returncode == 1, f"rc esperado 1 (fail-closed), no {r.returncode}"
+    out = r.stdout + r.stderr
+    assert "NO valida --strict" in out, (
+        f"debe negarse por la VALIDACION del archive, no por argparse; got: {out}"
+    )
+    assert len(_load(canon / _archive_rel())) == 1, "no anadio nada"
+
+
+def test_default_reconcile_on_canonical_is_still_a_noop(tmp_path: Path) -> None:
+    """No-regresion: SIN --promote-id, el canonico sigue siendo no-op.
+
+    D1 es ADITIVA. Si el comportamiento por defecto cambiara, la via automatica
+    por antiguedad (B1) quedaria cortocircuitada.
+    """
+    canon, _ = _make_worktree_pair(tmp_path)
+    _write(canon / OBS_REL, [_obs_id("obs-uno", "tema-uno", "WOT-2026-026f")])
+
+    r = _run(canon)
+
+    assert r.returncode == 0
+    assert "YA es el checkout canonico" in r.stdout
+    assert _load(canon / _archive_rel()) == []

@@ -30,12 +30,23 @@ EXIT CODES (diferenciados a proposito: "hay huerfanas" != "la herramienta esta r
 Uso:
     python scripts/check_portable_memory_promotion.py --project-root <repo>
 
-Remedio (depende de la topologia, WOT-2026-038j):
+Remedio (depende de la topologia, WOT-2026-038j; politica actualizada por
+WOT-2026-026f / DEC-026F-001):
 - Worktree NO canonica: `python scripts/reconcile_portable_memory.py --source <worktree>
   --apply` + commit del archive.
-- Checkout canonico / repo_destino independiente (source==dest, el reconciliador seria
-  NO-OP): la promocion la hace `memory_consolidate` por ANTIGUEDAD (cutoff 30d) en un
-  closeout SIN --skip-slow, seguido de commit del archive.
+- Checkout canonico / repo_destino independiente (source==dest, donde ese comando A SECAS
+  seria NO-OP). DOS vias legitimas, ninguna sustituye a la otra:
+  (A) VIA CURADA (explicita, para promover UNA leccion valiosa YA):
+      `python scripts/reconcile_portable_memory.py --source <repo> --promote-id <id>
+      --apply`. Confirmacion humana + `validate_observations --strict` antes y despues +
+      dedup por id. Es la via que formaliza `prompts/memory_upload.md`.
+  (B) VIA AUTOMATICA (rutinaria, por ANTIGUEDAD): `memory_consolidate` promueve cuando la
+      leccion cruza el cutoff de 30 dias, en un closeout SIN --skip-slow.
+  En ambas: commit del archive, o la promocion no viaja.
+
+NO es cierto que "una leccion RECIENTE no se pueda forzar" (clausula retirada): no se
+promueve por ANTIGUEDAD, pero SI por la via curada. Medido 2026-07-21: 2 lecciones de 45
+minutos promovidas -> `--strict` exit 0, 0 huerfanas, commit 0562f78.
 """
 
 from __future__ import annotations
@@ -157,30 +168,55 @@ def _print_remedy(root: Path) -> None:
     operador es la trampa del "exit 0 = no hice nada" DENTRO de la barrera que existe para
     evitarla. Por eso se ramifica por `is_canonical`, reutilizando la canonicalizacion del
     propio reconciliador (misma fuente de verdad, sin heuristica nueva).
+
+    WOT-2026-026f / DEC-026F-001 (politica B1) -- ACTUALIZA 038j: la version previa de
+    esta rama declaraba que "una leccion RECIENTE NO se puede forzar: espera a que cruce
+    el umbral". Eso contradecia a `prompts/memory_upload.md`, que exige promover con
+    CONFIRMACION HUMANA explicita y sin mencion de cutoff; y la contradiccion se resolvio
+    MIDIENDO: el 2026-07-21 se promovieron 2 lecciones de 45 MINUTOS escribiendo al
+    archive trackeado y el resultado fue PERFECTAMENTE VALIDO (`validate_observations
+    --strict` exit 0, 0 huerfanas, commit 0562f78). O sea: la via que 038j declaraba
+    imposible producia estado valido. La clausula correcta es "no se promueve POR
+    ANTIGUEDAD; usa la via curada explicita".
+
+    Contrato mutuo (D3): esta rama y `prompts/memory_upload.md` se CITAN entre si para no
+    volver a divergir. Las DOS vias son legitimas:
+      (A) curada    -> `reconcile_portable_memory.py --promote-id <id> --apply`
+      (B) antiguedad -> `memory_consolidate.py --apply` (cutoff 30d)
     """
     if is_canonical(root):
         print(
-            "[promotion-guard] REMEDIO (este repo ES su checkout canonico: el "
-            "reconciliador seria NO-OP aqui, source==dest):"
+            "[promotion-guard] REMEDIO (este repo ES su checkout canonico: "
+            "`reconcile --source <este repo> --apply` A SECAS seria NO-OP, source==dest):"
         )
         print(
-            "[promotion-guard]   La promocion la hace memory_consolidate por ANTIGUEDAD: "
-            "una leccion cruza al archive trackeado (memory_consolidate.py:653-664)"
+            "[promotion-guard]   (A) VIA CURADA -- promueve UNA leccion concreta YA, sin "
+            "esperar al cutoff (WOT-2026-026f / DEC-026F-001):"
         )
         print(
-            "[promotion-guard]   solo cuando su timestamp supera el cutoff de 30 dias "
-            "(split_by_age, memory_consolidate.py:144-160). Una leccion RECIENTE NO se"
+            "[promotion-guard]       python scripts/reconcile_portable_memory.py "
+            "--source <este repo> --promote-id <id> --apply"
         )
         print(
-            "[promotion-guard]   puede forzar aqui: no hay reconciliador que la mueva; "
-            "espera a que cruce el umbral."
+            "[promotion-guard]       (dry-run sin --apply; valida --strict antes y "
+            "despues; dedup por id. El `id` es el campo `id` del record)."
         )
         print(
-            "[promotion-guard]   Comando: python scripts/memory_consolidate.py --apply "
-            f"y luego COMMITEA {ARCHIVE_DIR_REL.as_posix()} "
+            "[promotion-guard]   (B) VIA AUTOMATICA -- por ANTIGUEDAD: memory_consolidate "
+            "promueve una leccion cuando su timestamp supera"
         )
         print(
-            "[promotion-guard]   (el closeout lo corre solo si NO pasas --skip-slow)."
+            "[promotion-guard]       el cutoff de 30 dias (split_by_age, "
+            "memory_consolidate.py:144-160):"
+        )
+        print("[promotion-guard]       python scripts/memory_consolidate.py --apply")
+        print(
+            "[promotion-guard]   Una leccion RECIENTE no se promueve POR ANTIGUEDAD "
+            "(hay que esperar), pero SI por la via curada (A)."
+        )
+        print(
+            f"[promotion-guard]   En ambos casos COMMITEA {ARCHIVE_DIR_REL.as_posix()}: "
+            "sin commit la promocion no viaja."
         )
     else:
         print(

@@ -299,7 +299,99 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
 
-def _run(argv: list[str] | None = None) -> int:
+def _promote_one(
+    *,
+    motor_root: Path,
+    source: Path,
+    dest: Path,
+    obs_id: str,
+    apply: bool,
+) -> int:
+    """VIA CURADA: promueve UNA leccion por `id` (WOT-2026-026f / DEC-026F-001).
+
+    Por que existe: la promocion automatica va POR ANTIGUEDAD (cutoff 30d de
+    `memory_consolidate.split_by_age`), y el reconciliador solo mueve memoria
+    ENTRE worktrees. En un checkout CANONICO (`source == dest`) no habia ninguna
+    via: una leccion valiosa de hoy quedaba huerfana hasta cruzar el umbral, y el
+    promotion-guard recomendaba precisamente el comando que ahi es NO-OP -- la
+    trampa del "exit 0 = no hice nada" dentro de la barrera que existe para
+    evitarla. DEC-026F-001 (B1) formaliza esta via SIN quitar la automatica.
+
+    Es ADITIVA y explicita: exige `--promote-id` + `--apply` (confirmacion), y
+    reutiliza la MISMA barrera fail-closed que la via automatica
+    (`validate_dest_archive` antes, `validate_strict` despues). No es un bypass.
+
+    Before: `source` legible; `obs_id` es el campo `id` de un record de
+        `observations.jsonl` del source.
+    During: localiza el record por `id` (fail-closed si no existe o si hay
+        ambiguedad), deduplica contra TODOS los archive/*.jsonl del destino
+        (por `id` y por `record_key`), valida `--strict` ANTES de escribir y
+        vuelve a validar DESPUES.
+    After: 0 si promovio (o si ya estaba / dry-run); != 0 si el id no existe, si
+        el archive no valida, o si la escritura dejo memoria invalida.
+    """
+    src_obs = source / OBS_REL
+    dst_archive = current_archive_file(dest)
+    print(f"[reconcile] VIA CURADA (--promote-id {obs_id})")
+    print(f"[reconcile] destino (ARCHIVE TRACKEADO): {dst_archive}")
+
+    src = load_records(src_obs)
+    matches = [r for r in src if r.get("id") == obs_id]
+    if not matches:
+        print(
+            f"[reconcile] ERROR: no hay ninguna leccion con id={obs_id!r} en {src_obs}"
+        )
+        print("[reconcile] no se promueve lo que no existe (fail-closed)")
+        return 1
+    if len(matches) > 1:
+        print(
+            f"[reconcile] ERROR: id={obs_id!r} aparece {len(matches)} veces en el source"
+        )
+        print("[reconcile] no se adivina cual promover (fail-closed)")
+        return 1
+    record = matches[0]
+    if not is_lesson(record):
+        print(f"[reconcile] ERROR: id={obs_id!r} no es una LECCION (es autogenerado)")
+        print("[reconcile] la via curada promueve lecciones, no telemetria")
+        return 1
+
+    if not validate_dest_archive(motor_root, dest, dst_archive):
+        return 1
+
+    dst = load_archive_records(dest)
+    if any(r.get("id") == obs_id for r in dst) or record_key(record) in {
+        record_key(r) for r in dst
+    }:
+        print(f"[reconcile] = ya en el archive, NO se sobrescribe: {obs_id}")
+        return 0
+
+    print(
+        f"[reconcile]   + [{record.get('domain')}] {record.get('topic')} "
+        f"({record.get('source_ticket')})"
+    )
+    if not apply:
+        print("[reconcile] DRY-RUN: no se ha escrito nada (usa --apply)")
+        return 0
+
+    dst_archive.parent.mkdir(parents=True, exist_ok=True)
+    with dst_archive.open("a", encoding="utf-8", newline="\n") as fh:
+        fh.write(json.dumps(record, ensure_ascii=True) + "\n")
+
+    rc = validate_strict(motor_root, dst_archive)
+    print(f"[reconcile] destino valida --strict tras escribir (returncode={rc})")
+    if rc != 0:
+        print("[reconcile] ERROR: la escritura dejo la memoria invalida")
+        return 1
+
+    print(f"[reconcile] OK: leccion {obs_id} promovida al ARCHIVE")
+    print(f"[reconcile] SIGUIENTE PASO: commitea {ARCHIVE_DIR_REL.as_posix()} -- sin")
+    print("[reconcile] commit, la promocion no viaja.")
+    return 0
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    """CLI del reconciliador. Extraido de `_run` para que la rama de la via
+    curada (WOT-2026-026f) no empuje la complejidad de `_run` sobre el limite."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     parser.add_argument(
         "--source", required=True, help="worktree cuya memoria se reconcilia"
@@ -307,7 +399,20 @@ def _run(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--apply", action="store_true", help="escribir (por defecto: dry-run)"
     )
-    args = parser.parse_args(argv)
+    parser.add_argument(
+        "--promote-id",
+        metavar="ID",
+        help=(
+            "VIA CURADA (WOT-2026-026f / DEC-026F-001): promueve UNA leccion "
+            "concreta por su campo `id` al archive trackeado, tambien cuando el "
+            "source ES el checkout canonico. Requiere --apply para escribir."
+        ),
+    )
+    return parser
+
+
+def _run(argv: list[str] | None = None) -> int:
+    args = _build_parser().parse_args(argv)
 
     source = Path(args.source).resolve()
     if not source.is_dir():
@@ -320,10 +425,36 @@ def _run(argv: list[str] | None = None) -> int:
     print(f"[reconcile] source (worktree)  : {source}")
     print(f"[reconcile] dest   (CANONICO)  : {dest}")
 
+    if args.promote_id:
+        return _promote_one(
+            motor_root=motor_root,
+            source=source,
+            dest=dest,
+            obs_id=args.promote_id,
+            apply=args.apply,
+        )
+
     if source == dest:
         print("[reconcile] source YA es el checkout canonico: nada que reconciliar")
+        print(
+            "[reconcile] (para promover UNA leccion concreta YA, usa la via curada: "
+            "--promote-id <id> --apply)"
+        )
         return 0
 
+    return _reconcile_all(
+        motor_root=motor_root, source=source, dest=dest, apply=args.apply
+    )
+
+
+def _reconcile_all(*, motor_root: Path, source: Path, dest: Path, apply: bool) -> int:
+    """Via AUTOMATICA (historica): promueve TODAS las lecciones nuevas de un
+    worktree NO canonico al archive del canonico.
+
+    Extraida de `_run` al anadir la via curada (WOT-2026-026f): `_run` queda como
+    despachador entre las dos rutas simetricas y ninguna de las dos carga con la
+    complejidad de la otra.
+    """
     src_obs = source / OBS_REL
     dst_archive = current_archive_file(dest)
 
@@ -361,7 +492,7 @@ def _run(argv: list[str] | None = None) -> int:
     for r in collisions:
         print(f"[reconcile]   = ya en el archive, NO se sobrescribe: {record_key(r)}")
 
-    if not args.apply:
+    if not apply:
         print("[reconcile] DRY-RUN: no se ha escrito nada (usa --apply)")
         return 0
 

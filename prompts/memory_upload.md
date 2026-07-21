@@ -93,14 +93,32 @@ Procedimiento de promoción (con confirmación humana explícita):
    del source vía `append_observations` (o el hook de escritura de observaciones) ANTES
    del paso 3. No edites el jsonl a mano (rompe el "propose-before-write").
 3. Promueve con el reconciliador (escribe en el archive del checkout canónico y
-   valida `--strict` antes y después, fail-closed). **`--source` debe ser un worktree
-   DISTINTO del canónico:** si `source == dest` (el propio checkout canónico), el
-   reconciliador responde "ya es el checkout canónico: nada que reconciliar" y no
-   promueve. Ejecuta desde el worktree de trabajo, no desde el canónico:
+   valida `--strict` antes y después, fail-closed). Elige la vía según la topología
+   (política **B1**, `DEC-026F-001`; la contraparte de esta regla vive en el docstring
+   de `scripts/check_portable_memory_promotion.py::_print_remedy`, que cita este prompt):
 
-   ```
-   python scripts/reconcile_portable_memory.py --source <worktree> --apply
-   ```
+   - **Desde un worktree DISTINTO del canónico** (vía histórica):
+
+     ```
+     python scripts/reconcile_portable_memory.py --source <worktree> --apply
+     ```
+
+   - **Desde el propio checkout canónico** (`source == dest`), donde el comando anterior
+     A SECAS responde *"ya es el checkout canónico: nada que reconciliar"* y **no
+     promueve** — usa la **vía curada explícita**, que es justamente el procedimiento con
+     confirmación humana que describe este prompt:
+
+     ```
+     python scripts/reconcile_portable_memory.py --source <repo> --promote-id <id> --apply
+     ```
+
+     Promueve UNA lección concreta por su campo `id`, con `--strict` antes y después y
+     dedup por id. Sin `--apply` es dry-run.
+
+   > **No es cierto que una lección RECIENTE no se pueda promover.** No se promueve por
+   > ANTIGÜEDAD (ese es el camino automático de `memory_consolidate`, cutoff 30d), pero sí
+   > por la vía curada. Medido 2026-07-21: 2 lecciones de 45 minutos promovidas ->
+   > `validate_observations --strict` exit 0, 0 huérfanas, commit `0562f78`.
 
 4. **COMMITEA el archive.** Sin commit, la promoción no existe.
 5. Barrera de verificación: `python scripts/check_portable_memory_promotion.py

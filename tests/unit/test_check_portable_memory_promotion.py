@@ -115,16 +115,22 @@ def test_lesson_absent_from_archive_is_an_orphan_and_is_named(tmp_path: Path) ->
     assert "leccion-huerfana" in r.stdout, "the guard must NAME each orphan"
     assert "WOT-2026-111a" in r.stdout, "the guard must report the source_ticket"
     # WOT-2026-038j: `_make_repo` builds a STANDALONE repo -- it is its own canonical
-    # checkout (is_canonical == True), so the reconciler is a no-op here. The remedy
-    # printed MUST be the applicable one (memory_consolidate by age), NOT the reconciler,
-    # which would send the operator down the "exit 0 = did nothing" trap.
+    # checkout (is_canonical == True), so a BARE reconciler call is a no-op here. The
+    # remedy printed must be an APPLICABLE one, never the "exit 0 = did nothing" trap.
+    # WOT-2026-026f narrows the ban: `--promote-id` IS applicable in a canonical
+    # checkout (it is the curated route), so only the bare invocation stays forbidden.
     assert "memory_consolidate" in r.stdout, (
-        "in a canonical checkout the applicable promotion vehicle is memory_consolidate "
-        f"by age, not the reconciler. stdout: {r.stdout}"
+        "in a canonical checkout the automatic promotion vehicle is memory_consolidate "
+        f"by age. stdout: {r.stdout}"
     )
-    assert "reconcile_portable_memory.py --source" not in r.stdout, (
-        "the reconciler remedy is a NO-OP in a canonical checkout (source==dest); "
-        "printing it is the very trap this guard exists to prevent"
+    bare_reconciler = [
+        line
+        for line in r.stdout.splitlines()
+        if "reconcile_portable_memory.py" in line and "--promote-id" not in line
+    ]
+    assert not bare_reconciler, (
+        "a BARE reconciler remedy is a NO-OP in a canonical checkout (source==dest); "
+        f"printing it is the very trap this guard exists to prevent: {bare_reconciler}"
     )
 
 
@@ -152,9 +158,23 @@ def test_orphan_in_canonical_checkout_names_the_applicable_remedy(
         "a canonical checkout must be told the APPLICABLE remedy (memory_consolidate "
         f"by age); got: {r.stdout}"
     )
-    assert "reconcile_portable_memory.py --source" not in r.stdout, (
-        "the reconciler is a no-op in a canonical checkout; the guard must NOT point "
-        f"at it here. got: {r.stdout}"
+    # WOT-2026-026f: the invariant is "no NO-OP remedy", and the proxy for it had to
+    # change. Until 026f, ANY `reconcile --source` here was a no-op, so banning the
+    # substring was a faithful proxy. Now `--promote-id` makes the reconciler a REAL
+    # route in a canonical checkout (DEC-026F-001), so the ban narrows to the BARE
+    # invocation -- the one that still exits 0 without writing.
+    bare_reconciler = [
+        line
+        for line in r.stdout.splitlines()
+        if "reconcile_portable_memory.py" in line and "--promote-id" not in line
+    ]
+    assert not bare_reconciler, (
+        "a BARE `reconcile --source ... --apply` is still a no-op in a canonical "
+        f"checkout; the guard must not point at it. got: {bare_reconciler}"
+    )
+    assert "--promote-id" in r.stdout, (
+        "the canonical branch must offer the curated route (WOT-2026-026f / D2); "
+        f"got: {r.stdout}"
     )
 
 
@@ -311,3 +331,97 @@ def test_same_topic_different_source_ticket_is_still_an_orphan(tmp_path: Path) -
     assert "WOT-2026-555a" not in r.stdout, (
         "the archived twin has travelled; it must NOT be reported as an orphan"
     )
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-026f / D2-D3: el remedio deja de ser NO-OP y las dos politicas
+# (038j y memory_upload.md) se citan mutuamente en vez de contradecirse.
+# ---------------------------------------------------------------------------
+
+
+def _remedy_text(root) -> str:
+    import io
+    from contextlib import redirect_stdout
+
+    import scripts.check_portable_memory_promotion as guard
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        guard._print_remedy(root)
+    return buf.getvalue()
+
+
+def test_canonical_remedy_offers_the_curated_route_not_a_noop(tmp_path, monkeypatch):
+    """D2: en un canonico el remedio debe ofrecer --promote-id, NO un no-op.
+
+    El defecto original: el guard imprimia `reconcile --source <canonico> --apply`,
+    que en source==dest sale exit 0 SIN escribir. Recomendar eso es la trampa del
+    "exit 0 = no hice nada" DENTRO de la barrera que existe para evitarla.
+    """
+    import scripts.check_portable_memory_promotion as guard
+
+    monkeypatch.setattr(guard, "is_canonical", lambda root: True)
+
+    text = _remedy_text(tmp_path)
+
+    assert "--promote-id" in text, "el remedio del canonico debe ofrecer la via curada"
+    assert "memory_consolidate.py --apply" in text, "y la via por antiguedad"
+
+
+def test_canonical_remedy_no_longer_claims_recent_cannot_be_promoted(
+    tmp_path, monkeypatch
+):
+    """D3: se retira la clausula 'una leccion RECIENTE NO se puede forzar'.
+
+    DEC-026F-001 la invalida con evidencia medida (2 lecciones de 45 min promovidas
+    con --strict exit 0). Lo que NO se puede es promoverla POR ANTIGUEDAD.
+    """
+    import scripts.check_portable_memory_promotion as guard
+
+    monkeypatch.setattr(guard, "is_canonical", lambda root: True)
+
+    text = _remedy_text(tmp_path)
+
+    assert "espera a que cruce el umbral" not in text, (
+        "sigue diciendo que hay que esperar: esa clausula esta invalidada"
+    )
+    assert "POR ANTIGUEDAD" in text or "por ANTIGUEDAD" in text
+
+
+def test_038j_and_memory_upload_cite_each_other(tmp_path):
+    """D3: las dos superficies de la politica se CITAN, para no re-divergir.
+
+    Sin cita mutua, cada una puede evolucionar sola y volver a contradecirse: eso
+    es exactamente lo que produjo WOT-2026-026f.
+    """
+    root = Path(__file__).resolve().parents[2]
+    guard_src = (root / "scripts" / "check_portable_memory_promotion.py").read_text(
+        encoding="utf-8"
+    )
+    prompt_src = (root / "prompts" / "memory_upload.md").read_text(encoding="utf-8")
+
+    assert "memory_upload.md" in guard_src, "el guard debe citar el prompt"
+    assert "check_portable_memory_promotion" in prompt_src, (
+        "el prompt debe citar el guard"
+    )
+    assert "DEC-026F-001" in guard_src and "DEC-026F-001" in prompt_src
+
+
+def test_the_two_lessons_promoted_on_20260721_are_still_in_the_archive():
+    """D4: las 2 lecciones ya promovidas SE CONSERVAN (revertirlas esta PROHIBIDO).
+
+    DEC-026F-001 lo declara explicitamente: son estado valido, no deuda.
+    """
+    root = Path(__file__).resolve().parents[2]
+    archive = root / ".agent" / "runtime" / "memory" / "archive"
+    body = "\n".join(
+        p.read_text(encoding="utf-8") for p in archive.glob("observations.*.jsonl")
+    )
+
+    for obs_id in (
+        "obs-parada-humana-requiere-group-stop-report",
+        "obs-profundidad-auditoria-proporcional-al-riesgo",
+    ):
+        assert obs_id in body, (
+            f"leccion revertida (PROHIBIDO por DEC-026F-001): {obs_id}"
+        )
