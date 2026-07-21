@@ -15,7 +15,10 @@ Cobertura (una idea por test):
   T-DENOM-PUBLICA    : la salida trae 'N entradas -> M ficheros'.
   T-AGUJA-*          : cada aguja detecta SU fuga -> exit 1.
   T-FAILCLOSED-*     : git ausente / denominador vacio -> exit 1, jamas 0.
-  T-ALLOWLIST-EXIME  : (file,line,needle) exacto exime; T-ALLOWLIST-STALE: no-hit -> 1.
+  T-ALLOWLIST-EXIME  : (file,match,needle) exacto exime; T-ALLOWLIST-STALE: no-hit -> 1.
+                       El ancla es el TEXTO de la linea, no su ordinal (WOT-2026-026r):
+                       sobrevive a lineas insertadas aguas arriba, y MUERE (STALE) si la
+                       linea eximida se borra o se edita -- esa mitad no se puede perder.
   T-USERNAME-SKIP    : usuario generico -> SKIPPED; T-USERNAME-ACTIVA via env -> caza.
   T-NO-UTF8          : bytes invalidos se auditan (decode replace), no se saltan.
 """
@@ -178,11 +181,42 @@ def test_allowlist_exempts_exact_hit(fake_motor: Path):
     _commit_all(fake_motor)
     pol = _policy(
         {"user_profile_root": {"pattern": r"C:[\\/]Users"}},
-        [{"file": "AGENTS.md", "line": 2, "needle": "user_profile_root"}],
+        [
+            {
+                "file": "AGENTS.md",
+                "match": "path C:\\Users\\bob",
+                "needle": "user_profile_root",
+            }
+        ],
     )
     code, lines = cda.audit(fake_motor, pol)
     assert code == 0, lines
     assert any("1 eximidos" in ln for ln in lines), lines
+
+
+def test_allowlist_survives_lines_inserted_above(fake_motor: Path):
+    """WOT-2026-026r: el ancla es el TEXTO, no el ordinal.
+
+    El incidente que cierra este ticket: anadir lineas AGUAS ARRIBA desplazaba la
+    linea eximida, la entrada quedaba STALE y la suite se ponia ROJA por un cambio
+    que NO tocaba la fuga. Con el ancla estable la exencion se mueve CON su linea.
+    """
+    _wb(fake_motor / "MANIFEST.distribute", "AGENTS.md\n")
+    _wb(fake_motor / "AGENTS.md", "relleno\n" * 12 + "path C:\\Users\\bob\n")
+    _commit_all(fake_motor)
+    pol = _policy(
+        {"user_profile_root": {"pattern": r"C:[\\/]Users"}},
+        [
+            {
+                "file": "AGENTS.md",
+                "match": "path C:\\Users\\bob",
+                "needle": "user_profile_root",
+            }
+        ],
+    )
+    code, lines = cda.audit(fake_motor, pol)
+    assert code == 0, lines
+    assert any("0 hits (1 eximidos)" in ln for ln in lines), lines
 
 
 def test_allowlist_stale_when_no_hit(fake_motor: Path):
@@ -192,29 +226,123 @@ def test_allowlist_stale_when_no_hit(fake_motor: Path):
     _commit_all(fake_motor)
     pol = _policy(
         {"user_profile_root": {"pattern": r"C:[\\/]Users"}},
-        [{"file": "AGENTS.md", "line": 2, "needle": "user_profile_root"}],
+        [
+            {
+                "file": "AGENTS.md",
+                "match": "path C:\\Users\\bob",
+                "needle": "user_profile_root",
+            }
+        ],
     )
     code, lines = cda.audit(fake_motor, pol)
     assert code == 1
     assert any("STALE" in ln for ln in lines), lines
 
 
-def test_allowlist_does_not_exempt_other_line(fake_motor: Path):
-    """A leak on a DIFFERENT line than the exempted one -> exit 1 (the allowlist
-    exempts a line, not the whole file)."""
+def test_allowlist_stale_when_exempted_line_is_deleted(fake_motor: Path):
+    """LA MITAD QUE NO SE PUEDE PERDER (NON-GOAL explicito de WOT-2026-026r).
+
+    Cambiar el ancla NO debe relajar el guard: si la linea que justificaba la
+    exencion se BORRA, la entrada deja de disparar -> STALE -> exit 1. Sin esta
+    mitad, mover el ancla habria convertido la allowlist en un cementerio que
+    pre-bendice cualquier futura fuga en ese fichero.
+    """
     _wb(fake_motor / "MANIFEST.distribute", "AGENTS.md\n")
-    # leak on line 2 (exempt) AND on line 3 (not exempt)
+    _wb(fake_motor / "AGENTS.md", "la linea eximida ya no esta\n")
+    _commit_all(fake_motor)
+    pol = _policy(
+        {"user_profile_root": {"pattern": r"C:[\\/]Users"}},
+        [
+            {
+                "file": "AGENTS.md",
+                "match": "path C:\\Users\\bob",
+                "needle": "user_profile_root",
+            }
+        ],
+    )
+    code, lines = cda.audit(fake_motor, pol)
+    assert code == 1, lines
+    assert any("STALE" in ln for ln in lines), lines
+
+
+def test_allowlist_stale_when_exempted_line_is_edited(fake_motor: Path):
+    """Editar el TEXTO eximido tambien mata la exencion: el ancla es exacto.
+
+    Es lo que impide que una exencion escrita para una meta-mencion sobreviva a
+    que esa linea se convierta en una fuga REAL con otro contenido.
+    """
+    _wb(fake_motor / "MANIFEST.distribute", "AGENTS.md\n")
+    _wb(fake_motor / "AGENTS.md", "path C:\\Users\\OTRO_VALOR\n")
+    _commit_all(fake_motor)
+    pol = _policy(
+        {"user_profile_root": {"pattern": r"C:[\\/]Users"}},
+        [
+            {
+                "file": "AGENTS.md",
+                "match": "path C:\\Users\\bob",
+                "needle": "user_profile_root",
+            }
+        ],
+    )
+    code, lines = cda.audit(fake_motor, pol)
+    assert code == 1, lines
+    assert any("STALE" in ln for ln in lines), lines
+    # y ademas la linea editada se reporta como fuga NO eximida
+    assert any("1 hits (0 eximidos)" in ln for ln in lines), lines
+
+
+def test_allowlist_does_not_exempt_other_line(fake_motor: Path):
+    """Una fuga con OTRO texto en el mismo fichero -> exit 1.
+
+    La exencion cubre una LINEA concreta (identificada por su texto), no el
+    fichero entero: es lo que impide que declarar una meta-mencion legitima
+    convierta ese fichero en zona franca para fugas reales.
+    """
+    _wb(fake_motor / "MANIFEST.distribute", "AGENTS.md\n")
+    # una linea eximida y otra fuga distinta que NO lo esta
     _wb(fake_motor / "AGENTS.md", "ok\nC:\\Users\\bob\nC:\\Users\\eve\n")
     _commit_all(fake_motor)
     pol = _policy(
         {"user_profile_root": {"pattern": r"C:[\\/]Users"}},
-        [{"file": "AGENTS.md", "line": 2, "needle": "user_profile_root"}],
+        [
+            {
+                "file": "AGENTS.md",
+                "match": "C:\\Users\\bob",
+                "needle": "user_profile_root",
+            }
+        ],
     )
     code, lines = cda.audit(fake_motor, pol)
     assert code == 1
     assert any("aguja user_profile_root: 1 hits (1 eximidos)" in ln for ln in lines), (
         lines
     )
+
+
+def test_allowlist_is_scoped_to_its_file(fake_motor: Path):
+    """El mismo TEXTO en OTRO fichero no queda eximido: el par (file,match) manda.
+
+    Con el ancla de texto este limite es MAS necesario que con el ordinal: un
+    texto identico puede aparecer en varios ficheros, y la exencion solo vale
+    donde se justifico.
+    """
+    _wb(fake_motor / "MANIFEST.distribute", "AGENTS.md\nOTRO.md\n")
+    _wb(fake_motor / "AGENTS.md", "path C:\\Users\\bob\n")
+    _wb(fake_motor / "OTRO.md", "path C:\\Users\\bob\n")
+    _commit_all(fake_motor)
+    pol = _policy(
+        {"user_profile_root": {"pattern": r"C:[\\/]Users"}},
+        [
+            {
+                "file": "AGENTS.md",
+                "match": "path C:\\Users\\bob",
+                "needle": "user_profile_root",
+            }
+        ],
+    )
+    code, lines = cda.audit(fake_motor, pol)
+    assert code == 1, lines
+    assert any("1 hits (1 eximidos)" in ln for ln in lines), lines
 
 
 # ---------------------------------------------------------------- T-USERNAME

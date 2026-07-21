@@ -9,10 +9,17 @@
 #
 # needles  : nombre -> {pattern (regex), reason}. Cada aguja es un literal que NOMBRA
 #            esta maquina/instalacion y por tanto no debe viajar en lo distribuido.
-# allowlist: exenciones DECLARADAS (file+line+needle+reason con dueno). NUNCA se relaja
+# allowlist: exenciones DECLARADAS (file+needle+match+reason con dueno). NUNCA se relaja
 #            un regex para tragar un falso positivo: se declara la excepcion exacta.
-#            Una entrada cuya (file,line) ya no produce hit es STALE y FALLA (no
-#            sobrevive al fichero que la justificaba).
+#            Una entrada cuyo (file,needle,match) ya no produce hit es STALE y FALLA
+#            (no sobrevive a la linea que la justificaba).
+#
+#            `match` es el TEXTO de la linea eximida, no su numero (WOT-2026-026r).
+#            El ordinal derivaba SOLO: anadir un comentario aguas arriba desplazaba
+#            el codigo, la exencion quedaba STALE y la suite se ponia roja por un
+#            cambio que no tocaba la fuga. El texto se mueve CON la linea; borrarla
+#            o editarla sigue dando STALE, que es la mitad que no se puede perder.
+#            Se compara ya normalizado (strip + primeros 100 caracteres).
 
 needles:
   workspace_motor:
@@ -37,12 +44,12 @@ allowlist:
   # META-MENCION: el prompt de auditoria PII ENSENA a buscar `C:\Users\...` como
   # sintoma. La aguja es el SUJETO del texto, no un valor de esta maquina.
   - file: 'prompts/audit_git_publication.md'
-    line: 111
+    match: '(`C:\Users\...`, `/home/...`), emails, hostnames `.local`, nombres sensibles'
     needle: user_profile_root
     reason: 'meta-mencion: ensena a buscar C:\Users\... como sintoma de PII; la aguja es el sujeto, no un valor'
   # META-MENCION: comentario de WOT-2026-020t que explica POR QUE se excluyen rutas
   # C:\Users\<user>\ de la proyeccion de los destinos.
   - file: 'scripts/install_agent_system.py'
-    line: 125
+    match: '# (execution_log/STATE/TURN/work_plan carry local C:\Users\<user>\ paths and'
     needle: user_profile_root
     reason: 'meta-mencion: comentario WOT-2026-020t que explica por que se excluyen rutas C:\Users\<user>\ de la proyeccion del destino'

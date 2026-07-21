@@ -205,27 +205,50 @@ def _norm(p: str) -> str:
     return p.replace("\\", "/").strip()
 
 
+# `scan_needle` guarda el hit ya recortado (`.strip()[:100]`). El ancla de la
+# allowlist se normaliza IGUAL para que una entrada escrita a partir de la linea
+# real case, y para que la indentacion no forme parte del contrato.
+_MATCH_TRUNC = 100
+
+
+def _norm_match(text: str) -> str:
+    return text.strip()[:_MATCH_TRUNC]
+
+
 def partition_hits(
     needle: str,
     hits: list[tuple[str, int, str]],
     allowlist: list[dict],
 ) -> tuple[list[tuple[str, int, str]], set[int]]:
     """Split hits into (not_exempt, indices of allowlist entries that fired).
-    An entry exempts a hit iff (file, line, needle) match EXACTLY."""
-    exempt_keys = {}
+
+    An entry exempts a hit iff (file, needle, match) match EXACTLY, where ``match``
+    is the TEXT of the exempted line -- never its ordinal (WOT-2026-026r).
+
+    Anclar en `line:` obligaba a mantener a mano un numero que caduca SOLO: medido
+    en la ficha, anadir un comentario aguas arriba en install_agent_system.py
+    desplazo el codigo 12 lineas, la exencion quedo STALE y la suite se puso ROJA
+    por un cambio que NO tocaba la fuga. El `needle` y el TEXTO ya identifican la
+    meta-mencion sin depender de donde caiga en el fichero.
+
+    La mitad que NO se pierde: el matching sigue siendo EXACTO, asi que borrar o
+    editar la linea eximida deja la entrada sin disparar -> STALE -> FALLA. Se
+    cambia el ancla, no se relaja el criterio (NON-GOAL explicito de la ficha).
+    """
+    exempt: dict[tuple[str, str], int] = {}
     for idx, entry in enumerate(allowlist):
         if entry.get("needle") != needle:
             continue
-        key = (_norm(str(entry.get("file", ""))), int(entry.get("line", -1)))
-        exempt_keys[key] = idx
+        key = (_norm(str(entry.get("file", ""))), _norm_match(entry.get("match", "")))
+        exempt[key] = idx
     not_exempt: list[tuple[str, int, str]] = []
     fired: set[int] = set()
     for f, ln, text in hits:
-        key = (_norm(f), ln)
-        if key in exempt_keys:
-            fired.add(exempt_keys[key])
-        else:
+        idx = exempt.get((_norm(f), _norm_match(text)))
+        if idx is None:
             not_exempt.append((f, ln, text))
+        else:
+            fired.add(idx)
     return not_exempt, fired
 
 
@@ -288,12 +311,12 @@ def audit(root: Path, policy: dict | None = None) -> tuple[int, list[str]]:
     if stale_entries:
         stale = True
         out.append("")
-        out.append("[dist-agnostic] ERROR: allowlist STALE (no producen hit; linea")
+        out.append("[dist-agnostic] ERROR: allowlist STALE (no producen hit; la linea")
         out.append(
-            "  movida o borrada -- la exencion no puede sobrevivir a su fichero):"
+            "  eximida se borro o cambio -- la exencion no sobrevive a su justificacion):"
         )
         out.extend(
-            f"      {e.get('file')}:{e.get('line')} needle={e.get('needle')}"
+            f"      {e.get('file')} needle={e.get('needle')} match={e.get('match')!r}"
             for e in stale_entries
         )
 
