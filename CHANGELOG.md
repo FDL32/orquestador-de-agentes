@@ -1,3 +1,44 @@
+# 2026-07-21 - Vuelo FP-20260721 (3/4): barreras de batch/reconcile/review + 024h congelado
+
+### Fixed
+- Vuelo code-only commit-directo FP-20260721, cierre parcial 3/4 (motor code-only;
+  cada ticket rojo->verde->mutation-verify aislada con par de exit-codes literal->
+  review adversarial L700 [8 nan + lector-Claude-FS + Codex-FS APPROVE]->suite
+  `--level all` verde @HEAD->push verificado a origin/main `a4c415b..90ae7a5`):
+  - `025k` (`d704333`): `scripts/check_batch_run_accounting.py` -- barrera invariante
+    GSR-subset del `batch_run_<ts>.json` (todo `group_stop_reports[].ticket` presente
+    en `tickets{}`); cableada en `batch_destination_controller.py` + `prepush_check.py`
+    (closeout, WARN) + el auditor `audit_autonomous_ticket_batch.md`.
+  - `025m` (`e3d8328`): `reconcile_portable_memory.py::canonical_checkout` resuelve el
+    checkout destino por `git worktree list --porcelain` (la worktree con `main`), no
+    por `--git-common-dir` (que resolvia al primario detached). DoD por ARTEFACTO
+    (donde se escribio, no por exit-code). Fail-closed en ambiguedad.
+  - `026k` (`90ae7a5`): fortalecer el arranque del bucle de review con barreras
+    MECANICAS (sin oraculo semantico, NON-GOAL 025f): `check_prompt_bias.py`
+    (allowlist de siembra + confirmar-vs-trazar), `review_bundle_contract.py`
+    (universo de codigo por `git ls-tree` + sha256 vs recorte), y
+    `resolve_fallback_backend` (backend de clase distinta o fail-closed). 5 DoD con
+    node-id + meta_gate_self_false_green. `check_prompt_bias` declarado
+    `known_unwired: WOT-2026-026k` (wiring al loop = `bus/`, forbidden surface).
+
+### Frozen / Follow-ups
+- `024h` (superficie canonica de contratos CF): APLAZADO por decision humana
+  (`GROUP_STOP_REPORT_024h.json`, cause_type HUMAN_GATE). La premisa del vuelo
+  (charter NG-1 cerraba la superficie) NO se confirmo en vivo: el charter DELEGA la
+  decision a 024h. Sigue `pending`; requiere que el usuario fije la superficie (a/b/c).
+- `WOT-2026-039a` (nuevo): SEAM del PREDICATE del batch -- la condicion 7
+  (`arboles_limpios`) verifica `git status --porcelain` pero NO `agent_controller
+  --validate`; un arbol limpio con estado operativo invalido rompio el CI. Cazado por
+  el bucle de auditoria adversarial (8 nan + Codex-FS); subsanado en vivo, fichado
+  como cambio de contrato.
+
+### Memory (portable, wing meta)
+- `human-decision-stop-needs-group-stop-report` (WOT-2026-024h): una parada por
+  decision humana requiere GROUP_STOP_REPORT para ser estado terminal canonico.
+- `audit-depth-proportional-to-blast-radius` (WOT-2026-024h): dimensiona la
+  profundidad/aislamiento de la auditoria al blast radius; el sibling ligero acepto
+  huecos que solo el bucle profundo cazo (refuerza AGENTS.md 'Aplicate tu propia vara').
+
 # 2026-07-16 (3a corrida) - Batch autonomo: G-BATCH-HARDENING cerrado (3) + nucleo de 019o (GROUP_STOP del piloto)
 
 ### Fixed
