@@ -261,30 +261,41 @@ def partition_hits(
     por la exencion de su gemela. Para no relajar nada, una entrada exime UNA
     ocurrencia por defecto; si la meta-mencion aparece legitimamente varias veces,
     se declara `count: N` EXPLICITAMENTE. Las ocurrencias que exceden el cupo se
-    reportan como fuga, y un cupo que sobra deja la entrada STALE.
+    reportan como fuga, y un cupo que SOBRA deja la entrada STALE.
+
+    Esa ultima mitad no es adorno: `fired` significa "la entrada consumio su cupo
+    ENTERO", no "disparo al menos una vez". Un `count: 5` con 1 ocurrencia viva
+    dejaria 4 unidades de permiso LATENTES que eximirian en silencio futuras lineas
+    identicas -- una relajacion no declarada del guard, justo el NON-GOAL de la
+    ficha. Al no marcarse como fired, cae en `stale_allowlist` y FALLA, que es el
+    aviso de que el cupo declarado ya no corresponde a la realidad.
     """
     entries = [
         (idx, e, _norm(str(e.get("file", ""))), _norm_match(e.get("match", "")))
         for idx, e in enumerate(allowlist)
         if e.get("needle") == needle
     ]
-    remaining: dict[int, int] = {
-        idx: max(1, int(e.get("count", 1) or 1)) for idx, e, _f, _m in entries
+    # `count` ausente = 1. Un `count: 0` (o negativo) NO se silencia coercionandolo
+    # a 1: se respeta como cupo 0, de modo que la entrada no exime nada y sale
+    # STALE -- declarar un cupo nulo es una entrada muerta, no una exencion.
+    quota: dict[int, int] = {
+        idx: max(0, int(e.get("count", 1) or 0)) for idx, e, _f, _m in entries
     }
+    remaining = dict(quota)
     by_key: dict[tuple[str, str], int] = {
         (f, mtext): idx for idx, _e, f, mtext in entries
     }
 
     not_exempt: list[tuple[str, int, str]] = []
-    fired: set[int] = set()
     for f, ln, text in hits:
         idx = by_key.get((_norm(f), _norm_match(text)))
         if idx is not None and remaining.get(idx, 0) > 0:
             remaining[idx] -= 1
-            fired.add(idx)
         else:
             # sin entrada, o la entrada ya agoto su cupo declarado
             not_exempt.append((f, ln, text))
+    # Solo cuenta como "viva" la entrada que agoto su cupo COMPLETO.
+    fired = {idx for idx, left in remaining.items() if quota[idx] > 0 and left == 0}
     return not_exempt, fired
 
 

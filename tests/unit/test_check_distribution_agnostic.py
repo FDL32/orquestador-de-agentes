@@ -473,6 +473,90 @@ def test_allowlist_count_declares_legitimate_repetitions(fake_motor: Path):
     assert any("1 hits (1 eximidos)" in ln for ln in lines), lines
 
 
+def test_norm_match_is_exact_and_never_truncates(fake_motor: Path):
+    """El ancla es exacta en AMBOS extremos: `scan_needle` Y `_norm_match`.
+
+    Hallazgo del auditor de cierre: el test anti-colision ejercia el truncado de
+    `scan_needle`, pero NADIE cubria `_norm_match` -- truncarlo ahi reintroducia la
+    misma colision con la suite entera en VERDE (medido: `[:40]` -> 23 passed).
+    Una barrera que cubre un extremo del ancla y no el otro certifica una propiedad
+    que no existe.
+    """
+    prefix = "y" * 60 + " C:\\Users"
+    exempted = prefix + " COLA_EXIMIDA"
+    leak = prefix + " COLA_QUE_ES_FUGA_REAL"
+    # normalizar NO puede colapsar dos lineas distintas, sea cual sea su longitud
+    assert cda._norm_match(exempted) != cda._norm_match(leak)
+    # ...y solo debe quitar la indentacion, nunca contenido
+    assert cda._norm_match("   " + exempted + "  ") == exempted
+
+    _wb(fake_motor / "MANIFEST.distribute", "AGENTS.md\n")
+    _wb(fake_motor / "AGENTS.md", f"{exempted}\n{leak}\n")
+    _commit_all(fake_motor)
+    pol = _policy(
+        {"user_profile_root": {"pattern": r"C:[\\/]Users"}},
+        [{"file": "AGENTS.md", "match": exempted, "needle": "user_profile_root"}],
+    )
+    code, lines = cda.audit(fake_motor, pol)
+    assert code == 1, lines
+    assert any("1 hits (1 eximidos)" in ln for ln in lines), lines
+
+
+def test_surplus_quota_is_stale_not_a_latent_permit(fake_motor: Path):
+    """Un `count:` que SOBRA deja la entrada STALE (contrato de la policy).
+
+    Hallazgo del auditor de cierre: `fired` significaba "disparo al menos una vez",
+    asi que un `count: 5` con 1 ocurrencia real dejaba 4 unidades de permiso
+    LATENTES -- eximirian en silencio futuras lineas identicas. Relajacion no
+    declarada del guard, y ademas la prosa prometia un STALE que el codigo no daba.
+    """
+    linea = "path C:\\Users\\bob"
+    _wb(fake_motor / "MANIFEST.distribute", "AGENTS.md\n")
+    _wb(fake_motor / "AGENTS.md", f"{linea}\n")
+    _commit_all(fake_motor)
+    pol = _policy(
+        {"user_profile_root": {"pattern": r"C:[\\/]Users"}},
+        [
+            {
+                "file": "AGENTS.md",
+                "match": linea,
+                "needle": "user_profile_root",
+                "count": 5,
+            }
+        ],
+    )
+    code, lines = cda.audit(fake_motor, pol)
+    assert code == 1, lines
+    assert any("STALE" in ln for ln in lines), lines
+
+
+def test_zero_quota_exempts_nothing(fake_motor: Path):
+    """`count: 0` es una entrada MUERTA: no exime y sale STALE.
+
+    Antes se coercionaba con `max(1, ...)`, que silenciaba el cupo nulo y lo
+    convertia en una exencion de 1 que nadie habia declarado.
+    """
+    linea = "path C:\\Users\\bob"
+    _wb(fake_motor / "MANIFEST.distribute", "AGENTS.md\n")
+    _wb(fake_motor / "AGENTS.md", f"{linea}\n")
+    _commit_all(fake_motor)
+    pol = _policy(
+        {"user_profile_root": {"pattern": r"C:[\\/]Users"}},
+        [
+            {
+                "file": "AGENTS.md",
+                "match": linea,
+                "needle": "user_profile_root",
+                "count": 0,
+            }
+        ],
+    )
+    code, lines = cda.audit(fake_motor, pol)
+    assert code == 1, lines
+    assert any("1 hits (0 eximidos)" in ln for ln in lines), lines
+    assert any("STALE" in ln for ln in lines), lines
+
+
 # T-REAL: contrato vivo sobre el arbol real del motor.
 def test_real_repo_is_green():
     """LIVE contract: after Part 2 the real repo must audit clean (143 files, 0
