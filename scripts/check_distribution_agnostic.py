@@ -44,10 +44,16 @@ activa en test sin depender de quien corra. El match usa \b...\b: un token corto
 
 ALLOWLIST con dueno y deteccion de STALE (patron guard_wiring_policy)
 --------------------------------------------------------------------
-Un hit se exime SOLO si (file, line, needle) coincide EXACTO con una entrada de la
-allowlist. Si una entrada de allowlist YA NO produce hit (linea movida o borrada)
-la exencion es STALE -> exit 1: una exencion no puede sobrevivir al fichero que la
-justificaba.
+Un hit se exime SOLO si (file, needle, match) coincide EXACTO con una entrada de la
+allowlist, donde `match` es el TEXTO de la linea eximida. Si una entrada YA NO
+produce hit (linea borrada o editada) la exencion es STALE -> exit 1: una exencion
+no puede sobrevivir a la linea que la justificaba.
+
+El ancla es el texto y NO el numero de linea (WOT-2026-026r): el ordinal derivaba
+solo -- una edicion aguas arriba desplazaba la linea, la exencion quedaba stale y
+la suite se ponia roja por un cambio que no tocaba la fuga. El texto se mueve CON
+su linea. Y no se trunca: comparar por un prefijo haria colisionar dos lineas
+distintas, que es el matching fuzzy que este guard NO admite.
 
 Antes: se corre desde cualquier sitio; resuelve el motor desde la ruta del fichero.
 Despues: exit 0 = ninguna aguja tiene hits sin eximir sobre el denominador entero.
@@ -196,7 +202,14 @@ def scan_needle(
             continue
         for i, line in enumerate(txt.splitlines(), 1):
             if rx.search(line):
-                hits.append((f, i, line.strip()[:100]))
+                # WOT-2026-026r: el hit conserva la linea ENTERA. El `[:100]` que
+                # habia aqui era solo para IMPRIMIR; desde que el texto es tambien
+                # el ANCLA de la allowlist, truncarlo hace COLISIONAR dos lineas
+                # distintas que comparten los primeros 100 caracteres -- el
+                # matching fuzzy que la ficha declara NON-GOAL, y con el una fuga
+                # real quedaria eximida por la exencion de otra linea. El recorte
+                # vive ahora en el punto de impresion (`_ellipsis`).
+                hits.append((f, i, line.strip()))
     return hits
 
 
@@ -205,14 +218,21 @@ def _norm(p: str) -> str:
     return p.replace("\\", "/").strip()
 
 
-# `scan_needle` guarda el hit ya recortado (`.strip()[:100]`). El ancla de la
-# allowlist se normaliza IGUAL para que una entrada escrita a partir de la linea
-# real case, y para que la indentacion no forme parte del contrato.
-_MATCH_TRUNC = 100
+# El ancla de la allowlist es la linea ENTERA: solo se normaliza la indentacion,
+# que no debe formar parte del contrato. NO se trunca -- el recorte a 100 chars es
+# de PRESENTACION, y aplicarlo a la comparacion volveria FUZZY un matching que la
+# ficha exige exacto (hallazgo F5 del review adversarial, medido con un probe de
+# colision: dos lineas con el mismo prefijo de 100 chars se eximian entre si).
+_DISPLAY_TRUNC = 100
 
 
 def _norm_match(text: str) -> str:
-    return text.strip()[:_MATCH_TRUNC]
+    return text.strip()
+
+
+def _ellipsis(text: str) -> str:
+    """Recorta SOLO para imprimir; nunca para comparar (WOT-2026-026r, F5)."""
+    return text if len(text) <= _DISPLAY_TRUNC else text[:_DISPLAY_TRUNC] + "..."
 
 
 def partition_hits(
@@ -234,21 +254,37 @@ def partition_hits(
     La mitad que NO se pierde: el matching sigue siendo EXACTO, asi que borrar o
     editar la linea eximida deja la entrada sin disparar -> STALE -> FALLA. Se
     cambia el ancla, no se relaja el criterio (NON-GOAL explicito de la ficha).
+
+    CARDINALIDAD (hallazgo del review adversarial). El ordinal era unico POR
+    CONSTRUCCION: eximia una linea y solo una. El texto no lo es, asi que una
+    entrada podria eximir N ocurrencias identicas y una fuga real quedaria tapada
+    por la exencion de su gemela. Para no relajar nada, una entrada exime UNA
+    ocurrencia por defecto; si la meta-mencion aparece legitimamente varias veces,
+    se declara `count: N` EXPLICITAMENTE. Las ocurrencias que exceden el cupo se
+    reportan como fuga, y un cupo que sobra deja la entrada STALE.
     """
-    exempt: dict[tuple[str, str], int] = {}
-    for idx, entry in enumerate(allowlist):
-        if entry.get("needle") != needle:
-            continue
-        key = (_norm(str(entry.get("file", ""))), _norm_match(entry.get("match", "")))
-        exempt[key] = idx
+    entries = [
+        (idx, e, _norm(str(e.get("file", ""))), _norm_match(e.get("match", "")))
+        for idx, e in enumerate(allowlist)
+        if e.get("needle") == needle
+    ]
+    remaining: dict[int, int] = {
+        idx: max(1, int(e.get("count", 1) or 1)) for idx, e, _f, _m in entries
+    }
+    by_key: dict[tuple[str, str], int] = {
+        (f, mtext): idx for idx, _e, f, mtext in entries
+    }
+
     not_exempt: list[tuple[str, int, str]] = []
     fired: set[int] = set()
     for f, ln, text in hits:
-        idx = exempt.get((_norm(f), _norm_match(text)))
-        if idx is None:
-            not_exempt.append((f, ln, text))
-        else:
+        idx = by_key.get((_norm(f), _norm_match(text)))
+        if idx is not None and remaining.get(idx, 0) > 0:
+            remaining[idx] -= 1
             fired.add(idx)
+        else:
+            # sin entrada, o la entrada ya agoto su cupo declarado
+            not_exempt.append((f, ln, text))
     return not_exempt, fired
 
 
@@ -305,7 +341,7 @@ def audit(root: Path, policy: dict | None = None) -> tuple[int, list[str]]:
             f"({len(fired)} eximidos){suffix}"
         )
         for f, ln, text in not_exempt:
-            out.append(f"      {f}:{ln}: {text}")
+            out.append(f"      {f}:{ln}: {_ellipsis(text)}")
 
     stale_entries = stale_allowlist(allowlist, all_fired)
     if stale_entries:
@@ -316,7 +352,8 @@ def audit(root: Path, policy: dict | None = None) -> tuple[int, list[str]]:
             "  eximida se borro o cambio -- la exencion no sobrevive a su justificacion):"
         )
         out.extend(
-            f"      {e.get('file')} needle={e.get('needle')} match={e.get('match')!r}"
+            f"      {e.get('file')} needle={e.get('needle')} "
+            f"match={_ellipsis(str(e.get('match', '')))!r}"
             for e in stale_entries
         )
 

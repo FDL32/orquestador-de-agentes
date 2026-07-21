@@ -396,6 +396,83 @@ def test_non_utf8_file_is_audited_not_skipped(fake_motor: Path):
     assert any("aguja worktree_dev: 1 hits" in ln for ln in lines), lines
 
 
+def test_allowlist_does_not_collide_on_long_shared_prefix(fake_motor: Path):
+    """HALLAZGO F5 del review adversarial (WOT-2026-026r): el ancla NO se trunca.
+
+    Dos lineas DISTINTAS que comparten los primeros 100 caracteres no pueden
+    colisionar. Mientras el hit se guardo recortado (`[:100]`), la exencion de una
+    eximia tambien a la otra y una fuga REAL se silenciaba -- justo el matching
+    fuzzy que la ficha declara NON-GOAL. El recorte es de PRESENTACION, jamas de
+    comparacion.
+    """
+    prefix = "x" * 90 + " C:\\Users"
+    assert len(prefix) >= 99, "el prefijo compartido debe rozar el limite de 100"
+    exempted = prefix + " COLA_EXIMIDA"
+    leak = prefix + " COLA_QUE_ES_FUGA_REAL"
+    _wb(fake_motor / "MANIFEST.distribute", "AGENTS.md\n")
+    _wb(fake_motor / "AGENTS.md", f"{exempted}\n{leak}\n")
+    _commit_all(fake_motor)
+    pol = _policy(
+        {"user_profile_root": {"pattern": r"C:[\\/]Users"}},
+        [{"file": "AGENTS.md", "match": exempted, "needle": "user_profile_root"}],
+    )
+    code, lines = cda.audit(fake_motor, pol)
+    assert code == 1, lines
+    # exactamente una de cada: la eximida no cuenta, la otra sigue siendo fuga
+    assert any("1 hits (1 eximidos)" in ln for ln in lines), lines
+    assert not any("STALE" in ln for ln in lines), lines
+
+
+def test_allowlist_entry_exempts_one_occurrence_by_default(fake_motor: Path):
+    """CARDINALIDAD (hallazgo del review adversarial, WOT-2026-026r).
+
+    El ordinal era unico POR CONSTRUCCION: eximia una linea y solo una. El texto no
+    lo es, asi que sin cupo una entrada taparia N ocurrencias identicas y una fuga
+    real quedaria oculta tras la exencion de su gemela. Por defecto se exime UNA.
+    """
+    linea = "path C:\\Users\\bob"
+    _wb(fake_motor / "MANIFEST.distribute", "AGENTS.md\n")
+    _wb(fake_motor / "AGENTS.md", f"{linea}\nrelleno\n{linea}\n")
+    _commit_all(fake_motor)
+    pol = _policy(
+        {"user_profile_root": {"pattern": r"C:[\\/]Users"}},
+        [{"file": "AGENTS.md", "match": linea, "needle": "user_profile_root"}],
+    )
+    code, lines = cda.audit(fake_motor, pol)
+    assert code == 1, lines
+    assert any("2 hits" not in ln and "1 hits (1 eximidos)" in ln for ln in lines), (
+        lines
+    )
+
+
+def test_allowlist_count_declares_legitimate_repetitions(fake_motor: Path):
+    """`count: N` declara EXPLICITAMENTE una meta-mencion repetida.
+
+    Y el cupo tampoco se regala: si sobra (la repeticion desaparece), la entrada no
+    llega a agotarse... pero SI dispara, luego no es stale. Lo que no puede pasar es
+    que un cupo declarado exima MAS ocurrencias de las declaradas.
+    """
+    linea = "path C:\\Users\\bob"
+    _wb(fake_motor / "MANIFEST.distribute", "AGENTS.md\n")
+    _wb(fake_motor / "AGENTS.md", f"{linea}\nrelleno\n{linea}\n{linea}\n")
+    _commit_all(fake_motor)
+    pol = _policy(
+        {"user_profile_root": {"pattern": r"C:[\\/]Users"}},
+        [
+            {
+                "file": "AGENTS.md",
+                "match": linea,
+                "needle": "user_profile_root",
+                "count": 2,
+            }
+        ],
+    )
+    code, lines = cda.audit(fake_motor, pol)
+    # 3 ocurrencias, cupo 2 -> la tercera sigue siendo fuga
+    assert code == 1, lines
+    assert any("1 hits (1 eximidos)" in ln for ln in lines), lines
+
+
 # T-REAL: contrato vivo sobre el arbol real del motor.
 def test_real_repo_is_green():
     """LIVE contract: after Part 2 the real repo must audit clean (143 files, 0

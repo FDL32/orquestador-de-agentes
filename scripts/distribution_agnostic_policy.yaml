@@ -19,7 +19,15 @@
 #            el codigo, la exencion quedaba STALE y la suite se ponia roja por un
 #            cambio que no tocaba la fuga. El texto se mueve CON la linea; borrarla
 #            o editarla sigue dando STALE, que es la mitad que no se puede perder.
-#            Se compara ya normalizado (strip + primeros 100 caracteres).
+#            Se compara la linea ENTERA (solo se normaliza la indentacion): truncar
+#            haria colisionar dos lineas con el mismo prefijo, y eso es el matching
+#            fuzzy que este guard NO admite.
+#
+#            CARDINALIDAD: el ordinal era unico por construccion; el texto no. Una
+#            entrada exime UNA ocurrencia por defecto -- si no, una fuga real
+#            quedaria tapada por la exencion de su linea gemela. Si una meta-mencion
+#            se repite legitimamente, se declara `count: N` EXPLICITAMENTE, y las
+#            ocurrencias que excedan el cupo se siguen reportando como fuga.
 
 needles:
   workspace_motor:

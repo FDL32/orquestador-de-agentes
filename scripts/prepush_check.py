@@ -725,6 +725,79 @@ def run_distributable_planning_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_guard_wiring_orphan_check(project_root: Path) -> CheckResult:
+    """WOT-2026-026v: deuda declarada cuyo ticket dueno ya esta ARCHIVADO.
+
+    Por que AQUI y no en el hook de pre-commit. `check_guard_wiring` ya corre en
+    pre-commit, pero ALLI no hay destino que consultar: el hook corre sobre el motor
+    y no puede llevar cableada una ruta de esta maquina sin dejar de ser portable
+    (justo lo que prohibe check_distribution_agnostic). Sin destino, la deteccion de
+    huerfanos SKIPEA -- y un SKIP permanente convierte la capacidad en una NORMA que
+    depende de que alguien recuerde pasar la flag, no en una barrera. El cierre SI
+    conoce el destino (`project_root`), asi que es la superficie que corre sola donde
+    la comprobacion puede ser REAL. Hallazgo del review adversarial del propio ticket.
+
+    WARN (is_blocking=False) a proposito: la deuda huerfana que existe HOY es
+    historica (3 owners archivados, medidos), y bloquear el cierre con ella seria un
+    falso-rojo heredado. El import es ESTATICO para que `check_guard_wiring` alcance
+    este call-site (precedente: `run_distributable_planning_check`).
+
+    Before: project_root resoluble; el guard lee el backlog VIVO del destino.
+    During: cruza cada owner de known_unwired contra la cola viva; BY-DESIGN exento.
+    After:  passed=True si no hay huerfanos o el destino no es resoluble (SKIP
+            explicito, nunca un verde mudo); False (WARN) con el listado si los hay.
+            Read-only.
+    """
+    name = "Guard Wiring Orphan Debt (WOT-2026-026v)"
+    try:
+        from scripts.check_guard_wiring import (
+            _live_owner_tickets,
+            _load_policy,
+            _orphan_owners,
+            audit,
+        )
+    except ImportError:
+        from check_guard_wiring import (  # type: ignore[no-redef]
+            _live_owner_tickets,
+            _load_policy,
+            _orphan_owners,
+            audit,
+        )
+    live, err = _live_owner_tickets(project_root)
+    if live is None:
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=f"SKIP: {err}",
+            is_blocking=False,
+        )
+    policy = _load_policy()
+    known = policy["known_unwired"]
+    _wired, unwired = audit(_MOTOR_ROOT, policy)
+    declared = [g for g in unwired if g in known and g not in policy["wired_via"]]
+    orphans = _orphan_owners(known, declared, live)
+    if orphans:
+        detail = "\n".join(f"  - {o}" for o in orphans)
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=(
+                f"{len(orphans)} guard(s) of DECLARED debt whose owner is archived "
+                f"while the guard is STILL unwired:\n{detail}\n"
+                "Nobody is going to wire these: the declaration stopped bounding the "
+                "debt and started hiding it. Reopen the ticket, wire the guard, or "
+                "re-declare it with a LIVE owner in scripts/guard_wiring_policy.yaml."
+            ),
+            is_blocking=False,
+        )
+    return CheckResult(
+        name=name,
+        passed=True,
+        output=f"no orphan debt ({len(declared)} declared, all owners live/BY-DESIGN)",
+        is_blocking=False,
+    )
+
+
 def run_handoff_state_sha_check(project_root: Path) -> CheckResult:
     """WOT-2026-024t (superficie 2): a handoff's STATE section must not embed a SHA
     (it rots the instant HEAD moves). WARN by default (is_blocking=False), FAIL when
@@ -1036,6 +1109,11 @@ def run_preflight_check(
         results.append(run_batch_run_accounting_check(project_root))
         # 6j. Distributable Planning Clean (WOT-2026-024h C4'; bloqueante)
         results.append(run_distributable_planning_check(project_root))
+        # 6k. Guard Wiring Orphan Debt (WOT-2026-026v; WARN -- la deuda huerfana
+        # de hoy es historica. Va en el cierre y no en pre-commit porque es el
+        # unico punto que corre solo Y conoce el destino cuyo backlog decide si
+        # un owner sigue vivo.)
+        results.append(run_guard_wiring_orphan_check(project_root))
 
     # 7. Portable Memory Archive Schema (WOT-2026-035b; bloqueante siempre,
     # no solo en closeout_mode: el archive puede corromperse en cualquier push)
