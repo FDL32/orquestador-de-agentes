@@ -668,3 +668,80 @@ class TestMainIntegration:
             assert "warnings" in parsed
             assert "warning_count" in parsed
             assert exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-026w: un work_plan.md COMPLETED no genera warnings de PROSA.
+#
+# El docstring del modulo declara el proposito: "solo advierte para mejorar la
+# calidad ANTES DEL HANDOFF". Sobre un plan ya COMPLETED (y archivado) no queda
+# handoff que mejorar: el warning no es accionable POR NADIE, y reescribir la
+# prosa de un ticket cerrado para silenciarlo falsearia su historia.
+#
+# La politica NO es nueva: `preflight_codeonly_pipeline.classify_warnings` YA
+# clasifica los `TP-PROSE-*`/`TP-STRUCT-*` como `accepted_advisories` cuando
+# `is_completed_plan(work_plan_content)` es True (docstring l.214-216). Lo que
+# faltaba era que el propio validador -- y por tanto `agent_controller
+# --validate` -- aplicase el MISMO criterio. Esto propaga la politica existente,
+# no inventa una.
+#
+# Se conserva a proposito lo estructural: TP-FATAL-01 (fichero ausente) sigue
+# disparando, porque eso NO es prosa opinable sino un hecho roto.
+# ---------------------------------------------------------------------------
+
+_WP_COMPLETED_WITH_VAGUE_PROSE = """# Plan de Trabajo: WOT-2026-026k - Fortalecer el arranque
+
+## Metadata
+- **ID:** WOT-2026-026k
+- **Estado:** COMPLETED
+- **deliverable_type:** code
+
+## Objetivo
+Criterios de aceptacion verificables (los 5 DoD con node-id, todos verdes):
+"""
+
+_WP_ACTIVE_WITH_VAGUE_PROSE = _WP_COMPLETED_WITH_VAGUE_PROSE.replace(
+    "- **Estado:** COMPLETED", "- **Estado:** IN_PROGRESS"
+)
+
+
+def test_completed_plan_emits_no_prose_warnings(tmp_path):
+    """ROJO antes del fix: 'Fortalecer' (TP-PROSE-02) y 'todos' (TP-PROSE-04)
+    disparaban sobre un plan ya cerrado, dejando `--validate` en 0 errors /
+    2 warnings de forma permanente e inarreglable sin falsear el plan."""
+    wp = tmp_path / "work_plan.md"
+    wp.write_text(_WP_COMPLETED_WITH_VAGUE_PROSE, encoding="utf-8")
+
+    result = validate_ticket_prose(wp, tmp_path)
+
+    assert result["warning_count"] == 0, (
+        "un plan COMPLETED no debe generar warnings de prosa (no hay handoff que "
+        f"mejorar); got: {[w['rule_id'] for w in result['warnings']]}"
+    )
+
+
+def test_active_plan_still_emits_prose_warnings(tmp_path):
+    """La MITAD que impide que el fix degenere en apagar el validador.
+
+    Sobre el MISMO texto con Estado IN_PROGRESS, las reglas SIGUEN disparando:
+    ahi el warning si es accionable (el plan aun se puede corregir antes del
+    handoff, que es exactamente para lo que existe el validador).
+    """
+    wp = tmp_path / "work_plan.md"
+    wp.write_text(_WP_ACTIVE_WITH_VAGUE_PROSE, encoding="utf-8")
+
+    result = validate_ticket_prose(wp, tmp_path)
+
+    ids = {w["rule_id"] for w in result["warnings"]}
+    assert "TP-PROSE-02" in ids, f"un plan ACTIVO debe seguir avisando; got {ids}"
+    assert "TP-PROSE-04" in ids, f"un plan ACTIVO debe seguir avisando; got {ids}"
+
+
+def test_missing_work_plan_still_fatal_even_though_not_active(tmp_path):
+    """Lo ESTRUCTURAL no se amnistia: un work_plan.md ausente sigue siendo
+    TP-FATAL-01. No es prosa opinable, es un hecho roto -- si la exencion lo
+    tragase, el fix habria abierto un agujero real."""
+    result = validate_ticket_prose(tmp_path / "no_existe.md", tmp_path)
+
+    assert result["warning_count"] == 1
+    assert result["warnings"][0]["rule_id"] == "TP-FATAL-01"

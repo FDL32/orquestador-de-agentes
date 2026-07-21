@@ -609,6 +609,29 @@ def validate_ticket_prose(work_plan_path: Path, collab_dir: Path) -> ValidationR
 
     all_warnings: list[ProseWarning] = []
 
+    # WOT-2026-026w: un plan COMPLETED no genera warnings de PROSA.
+    #
+    # El proposito declarado de este validador (docstring del modulo) es
+    # "advertir para mejorar la calidad ANTES DEL HANDOFF". Sobre un plan ya
+    # terminal no queda handoff que mejorar: el warning no es accionable por
+    # nadie, y reescribir la prosa de un ticket cerrado para silenciarlo
+    # falsearia su historia. El resultado practico era una deuda PERMANENTE:
+    # `agent_controller --validate` quedaba clavado en "0 errors / N warnings"
+    # despues de cada cierre, y ese ruido fijo entrena a ignorar la senal --
+    # justo lo contrario de lo que el validador persigue.
+    #
+    # NO es politica nueva: `preflight_codeonly_pipeline.classify_warnings` ya
+    # trata los `TP-PROSE-*`/`TP-STRUCT-*` como `accepted_advisories` cuando
+    # `is_completed_plan(...)` es True. Aqui se PROPAGA ese mismo criterio al
+    # validador, para que todos los consumidores (incluido `--validate`) vean
+    # lo mismo en vez de contradecirse.
+    #
+    # Lo ESTRUCTURAL no se amnistia: TP-FATAL-01 (work_plan.md ausente) se emite
+    # antes de llegar aqui y sigue disparando -- no es prosa opinable, es un
+    # hecho roto.
+    if plan_is_completed:
+        return ValidationResult(warnings=[], warning_count=0)
+
     # Ejecutar todas las reglas de prosa
     all_warnings.extend(detect_throat_clearing(content))
     all_warnings.extend(detect_vague_declarative(content))
@@ -623,7 +646,11 @@ def validate_ticket_prose(work_plan_path: Path, collab_dir: Path) -> ValidationR
     all_warnings.extend(detect_missing_architectural_decision(content))
     all_warnings.extend(detect_ghost_dependency(content))
 
-    # Verificacion estructural de AUDIT solo para planes activos.
+    # Verificacion estructural de AUDIT: solo para planes activos.
+    # (Un plan COMPLETED ya retorno arriba, asi que llegar aqui implica activo.
+    # La guarda explicita se conserva por legibilidad y por si el early-return
+    # cambiara: la propiedad "esto no corre sobre un plan terminal" queda
+    # afirmada en el propio sitio donde importa, no solo 20 lineas mas arriba.)
     if not plan_is_completed:
         all_warnings.extend(detect_audit_missing_tp_check(collab_dir))
         all_warnings.extend(detect_audit_malformed_tp_check(collab_dir))
