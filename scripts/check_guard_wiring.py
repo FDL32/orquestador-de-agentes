@@ -115,6 +115,17 @@ contra la cola VIVA del repo_destino (`backlog.md`), resuelto por la via canonic
 Sin destino resoluble el check SKIPEA EXPLICITAMENTE y lo IMPRIME (no calla): un
 guard del motor que reviente en un destino sin backlog seria peor que la deuda que
 cierra. En modo normal es WARN nombrado; con `--strict`, falla.
+
+El SKIP tiene que ser ALCANZABLE, no solo estar escrito: el backlog se decodifica
+en ESTRICTO y una cola sin un solo ticket tambien SKIPEA. Un backlog ilegible que
+se lee "a la fuerza" produce cero owners vivos, y cero owners vivos se parece
+exactamente a "todos archivados" -- o sea, a un informe de huerfanos del 100% que
+seria falso entero (medido: 6 falsos vs 3 reales).
+
+Y la comprobacion vive CABLEADA en el cierre (`prepush_check`, closeout_mode), no
+en el hook de pre-commit: alli no hay destino que consultar y cablear una ruta de
+esta maquina romperia la portabilidad. Un SKIP permanente habria dejado esto en
+NORMA -- que es justo lo que este modulo existe para no tolerar.
 """
 
 from __future__ import annotations
@@ -856,15 +867,36 @@ def _live_owner_tickets(dest_root: Path) -> tuple[set[str] | None, str | None]:
     During: reads ``.agent/collaboration/backlog.md`` and scrapes every canonical
     ticket ID. Only the LIVE queue counts -- an ID that survives solely in
     ``_archive/backlog_done.md`` is precisely the archived owner we hunt.
-    After: ``(set, None)``, or ``(None, reason)`` when the backlog is absent or
-    unreadable, so the caller SKIPS instead of inventing orphans.
+    After: ``(set, None)``, or ``(None, reason)`` when the backlog is absent,
+    unreadable or unparseable, so the caller SKIPS instead of inventing orphans.
+
+    La lectura es ESTRICTA a proposito. Con ``errors="replace"`` un backlog no-UTF8
+    (UTF-16, ANSI de Windows...) no lanzaba: devolvia mojibake, el scraper no
+    encontraba NINGUN ticket, y ese conjunto vacio es indistinguible de "todos los
+    owners estan archivados" -- el SKIP que este contrato promete se volvia
+    INALCANZABLE y el cierre acusaba de huerfana a TODA la deuda declarada,
+    incluidos owners literalmente presentes y VIVOS en el fichero. Medido: 6
+    huerfanos falsos frente a los 3 reales. Es la misma enfermedad que el ticket
+    cierra: medir con una vara mas floja que la que se predica.
     """
     backlog = dest_root / ".agent" / "collaboration" / "backlog.md"
     try:
-        content = backlog.read_text(encoding="utf-8-sig", errors="replace")
+        content = backlog.read_bytes().decode("utf-8-sig")
     except OSError as exc:
         return None, f"cannot read {backlog}: {exc}"
-    return set(_TICKET_ANYWHERE.findall(content)), None
+    except UnicodeDecodeError as exc:
+        return None, f"{backlog} is not valid UTF-8 ({exc.reason}); refusing to guess"
+    live = set(_TICKET_ANYWHERE.findall(content))
+    if not live:
+        # Una cola viva SIN UN SOLO ticket no sostiene la conclusion "todos
+        # archivados": es mucho mas probable un backlog truncado, a medio escribir
+        # o en otro formato. Fail-safe hacia el SKIP nombrado, nunca hacia acusar
+        # de huerfana a toda la deuda declarada.
+        return (
+            None,
+            f"{backlog} names no ticket at all; refusing to read that as 'all archived'",
+        )
+    return live, None
 
 
 def _orphan_owners(

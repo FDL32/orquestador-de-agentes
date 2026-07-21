@@ -85,6 +85,41 @@ def test_skips_explicitly_without_a_resolvable_destino(tmp_path: Path):
     assert result.output.startswith("SKIP:")
 
 
+def test_non_utf8_backlog_skips_instead_of_inventing_orphans(tmp_path: Path):
+    """Backlog no-UTF8 -> SKIP nombrado, NO un informe de huerfanos falso.
+
+    Hallazgo del auditor adversarial con FS. Con `errors="replace"` la lectura no
+    lanzaba: devolvia mojibake, no se encontraba NINGUN ticket, y ese conjunto
+    vacio era indistinguible de "todos archivados". Medido entonces: 6 huerfanos
+    falsos -- incluido un owner LITERALMENTE presente y vivo en el fichero. La
+    lectura estricta es lo que hace ALCANZABLE el SKIP que el contrato promete.
+    """
+    p = tmp_path / ".agent" / "collaboration" / "backlog.md"
+    p.parent.mkdir(parents=True)
+    fila = "| Alta | WOT-2026-023t | VIVO en la cola | s | pending | - | t | - |\n"
+    p.write_bytes(fila.encode("utf-16"))
+
+    result = run_guard_wiring_orphan_check(tmp_path)
+    assert result.passed, result.output
+    assert "not valid UTF-8" in result.output
+    assert "023t" not in result.output, "un owner vivo jamas puede salir como huerfano"
+
+
+def test_backlog_without_any_ticket_skips(tmp_path: Path):
+    """Una cola viva sin UN SOLO ticket no sostiene "todos archivados".
+
+    Es mucho mas probable un backlog truncado o a medio escribir. Fail-safe hacia
+    el SKIP nombrado antes que acusar de huerfana a toda la deuda declarada.
+    """
+    p = tmp_path / ".agent" / "collaboration" / "backlog.md"
+    p.parent.mkdir(parents=True)
+    p.write_text(LIVE_HEADER, encoding="utf-8")
+
+    result = run_guard_wiring_orphan_check(tmp_path)
+    assert result.passed, result.output
+    assert "names no ticket at all" in result.output
+
+
 @pytest.mark.parametrize("owner_kind", ["by-design", "ticket-vivo"])
 def test_by_design_and_live_owners_never_count_as_orphans(owner_kind: str):
     """BY-DESIGN no tiene dueno que archivar; un ticket vivo esta acotado."""
