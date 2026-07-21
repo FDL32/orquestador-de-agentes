@@ -37,6 +37,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from scripts.check_batch_run_accounting import check_batch_run_accounting
+
 
 PLANNING_FILES = (
     ".agent/planning/repo_charter.md",
@@ -295,6 +297,33 @@ def _has_closed_pending_ci(root: Path) -> bool:
     return False
 
 
+def _batch_run_orphan_gsr_tickets(root: Path) -> dict[str, list[str]]:
+    """WOT-2026-025k: GSR-subset check over every batch_run report of a repo.
+
+    Before:
+        root may hold `orchestrator_pipeline/reports/batch_run_*.json` written
+        by the autonomous ticket batch (see `check_batch_run_accounting.py`).
+    During:
+        Runs the GSR-subset check per report; malformed/unreadable reports are
+        skipped (this is a read-only inspection pass, not a hard gate here).
+    After:
+        Returns {report_filename: [orphan_ticket, ...]} for every report that
+        has at least one orphan ticket. Empty dict = clean or no reports found.
+    """
+    reports_dir = root / "orchestrator_pipeline/reports"
+    if not reports_dir.exists():
+        return {}
+    findings: dict[str, list[str]] = {}
+    for report in sorted(reports_dir.glob("batch_run_*.json")):
+        try:
+            orphans = check_batch_run_accounting(report)
+        except (OSError, json.JSONDecodeError, ValueError):
+            continue
+        if orphans:
+            findings[report.name] = orphans
+    return findings
+
+
 def inspect_repo(
     spec: RepoSpec,
     motor_root: Path,
@@ -367,6 +396,7 @@ def inspect_repo(
     audit_passed = _publication_audit_passed(root)
     closed_pending_ci = _has_closed_pending_ci(root)
     flatten = _detect_needs_flatten(root)
+    batch_run_orphan_gsr_tickets = _batch_run_orphan_gsr_tickets(root)
 
     states = {
         "adopted": adopted,
@@ -378,6 +408,7 @@ def inspect_repo(
         "publication_classified": classified_verdict == PUBLISH_READY_VERDICT,
         "publication_audit_passed": audit_passed,
         "closed_pending_ci": closed_pending_ci,
+        "batch_run_accounting_clean": not batch_run_orphan_gsr_tickets,
     }
     # publishable requires ALL three layers; the classify verdict is only RELATO.
     states["publishable"] = (
@@ -403,6 +434,7 @@ def inspect_repo(
         },
         "shared_surfaces": list(spec.shared_surfaces),
         "flatten_signals": flatten["signals"],
+        "batch_run_orphan_gsr_tickets": batch_run_orphan_gsr_tickets,
         "evidence": evidence,
         "next_action": _next_action(
             states=states,

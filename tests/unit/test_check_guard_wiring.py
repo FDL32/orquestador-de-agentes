@@ -69,6 +69,7 @@ EXPECTED_WIRED_REAL = {
     "check_agents_accessible",  # WOT-2026-026e(A7): cableado por import en preflight_codeonly_pipeline.py
     "check_backlog_commits_landed",  # WOT-2026-024q: cableado via import estatico en agent_controller.py::_ticket_landed_by_archived_commit (retirado de known_unwired)
     "check_backlog_contract",
+    "check_batch_run_accounting",  # WOT-2026-025k: cableado via import estatico en batch_destination_controller.py::_batch_run_orphan_gsr_tickets y prepush_check.py::run_batch_run_accounting_check (closeout, WARN)
     "check_claude_settings_portability",
     "check_commit_worktree",
     "check_closeout_reconciliation",  # WOT-2026-024w: cableado en prepush_check.py (closeout, WARN/STRICT)

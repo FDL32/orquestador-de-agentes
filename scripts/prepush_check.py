@@ -548,6 +548,71 @@ def run_workspace_contract_formation_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_batch_run_accounting_check(project_root: Path) -> CheckResult:
+    """WOT-2026-025k: GSR-subset check over autonomous batch_run reports.
+
+    In a `batch_run_<ts>.json` from the autonomous ticket batch, `tickets{}`
+    is the CANONICAL index of terminal states. `group_stop_reports` (GSR) must
+    never reference a ticket ABSENT from `tickets{}`. Origin (F1 2026-07-16):
+    PREDICATE #3 (`contabilidad_completa`) self-declared PASS with an
+    incomplete `tickets{}`; an auditor re-deriving the universe SOLELY from
+    `tickets{}` would silently lose GSR-only tickets -- a false green.
+
+    WARN, not blocking: this reconciles HISTORICAL reports already on disk
+    (`orchestrator_pipeline/reports/batch_run_*.json`); it is not a contract
+    this ticket's own scope controls, so it never blocks a push/close. It
+    exists to surface accounting gaps the moment a new report lands.
+
+    Before: project_root resoluble; reports dir may or may not exist.
+    During: imports check_batch_run_accounting.check_batch_run_accounting
+    (static import so check_guard_wiring's AST walker reaches it) and runs it
+    over every batch_run_*.json found.
+    After: passed=True if no report has an orphan GSR ticket (or none exist);
+    passed=False + is_blocking=False (WARN, listing offending reports/tickets)
+    otherwise. Never raises: unreadable/malformed reports are skipped.
+    """
+    name = "Batch Run Accounting Check (GSR-subset, WARN)"
+    from scripts.check_batch_run_accounting import check_batch_run_accounting
+
+    reports_dir = project_root / "orchestrator_pipeline" / "reports"
+    if not reports_dir.exists():
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=f"no {reports_dir} (skip)",
+            is_blocking=False,
+        )
+
+    findings: dict[str, list[str]] = {}
+    for report in sorted(reports_dir.glob("batch_run_*.json")):
+        try:
+            orphans = check_batch_run_accounting(report)
+        except (OSError, ValueError) as exc:
+            findings[report.name] = [f"UNREADABLE: {exc}"]
+            continue
+        if orphans:
+            findings[report.name] = orphans
+
+    if findings:
+        lines = [
+            "WARN: orphan GSR ticket(s) absent from tickets{} [owner: WOT-2026-025k]:"
+        ]
+        for report_name, orphans in findings.items():
+            lines.append(f"  {report_name}: {', '.join(orphans)}")
+        return CheckResult(
+            name=name,
+            passed=False,
+            output="\n".join(lines),
+            is_blocking=False,
+        )
+    return CheckResult(
+        name=name,
+        passed=True,
+        output="every batch_run_*.json GSR ticket is present in tickets{}",
+        is_blocking=False,
+    )
+
+
 def run_contract_reconcile_check(project_root: Path) -> CheckResult:
     """WOT-2026-024e: frozen contracts in ticket_contracts.md with no scheduling
     row (the batch reads only backlog.md, so it can never execute them).
@@ -898,6 +963,8 @@ def run_preflight_check(
         # 6h. Workspace Contract Formation Check (WOT-2026-026l parte A; WARN,
         # no bloqueante hasta que 026m limpie la deuda historica del destino)
         results.append(run_workspace_contract_formation_check(project_root))
+        # 6i. Batch Run Accounting Check (WOT-2026-025k; GSR-subset, WARN)
+        results.append(run_batch_run_accounting_check(project_root))
 
     # 7. Portable Memory Archive Schema (WOT-2026-035b; bloqueante siempre,
     # no solo en closeout_mode: el archive puede corromperse en cualquier push)

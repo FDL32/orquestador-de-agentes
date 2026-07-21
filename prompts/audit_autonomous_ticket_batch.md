@@ -237,6 +237,25 @@ Reproduce las 7 condiciones exactas:
    la cuenta tu mismo desde `batch_run_<ts>.json` + los `GROUP_STOP_REPORT` +
    el DAG-JSON original; no aceptes solo el resumen del ejecutor.
 
+   **GSR-subset check (WOT-2026-025k):** ademas de re-derivar la cuenta a
+   mano, corre el chequeo determinista sobre el `batch_run_<ts>.json` de la
+   corrida:
+   ```
+   python <MOTOR_ROOT>/scripts/check_batch_run_accounting.py <batch_run.json>
+   ```
+   Origen (F1, 2026-07-16): `contabilidad_completa` se auto-declaro `PASS` con
+   un `tickets{}` incompleto; un auditor que re-derive el universo SOLO desde
+   `tickets{}` pierde cualquier ticket que alcanzo estado terminal via
+   `group_stop_reports` sin fila propia en `tickets{}` -- exactamente el falso
+   verde que este script hace explicito (exit 1 + ticket(s) huerfano(s) por
+   nombre; exit 0 si cada `group_stop_reports[].ticket` esta presente en el
+   indice `tickets{}`, tolerando dict, list o ausencia de `tickets`). Un exit
+   1 de este script BLOQUEA `contabilidad_completa`, aunque el resumen del
+   ejecutor la reporte verde. El mismo check corre como WARN no-bloqueante en
+   `scripts/prepush_check.py::run_batch_run_accounting_check` (closeout_mode)
+   para cualquier `batch_run_*.json` que ya este en disco; la auditoria de
+   este prompt es la que decide si ese WARN bloquea el veredicto del batch.
+
 4. **`cierres_auditables`** -- por cada ticket marcado `cerrado`: existe una
    fila archivada con celda `commit:<sha>` Y el contador `audited` de
    ```
