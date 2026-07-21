@@ -123,6 +123,7 @@ TASK_TYPES = {
     "triage",
     "contract-audit",
     "adjudication",
+    "prompt-audit",
 }
 
 LEADER_MIN_N = 5
@@ -510,6 +511,60 @@ def smoke_profile(
         "alive": alive,
         "detail": (reply or "")[:200].strip(),
     }
+
+
+def resolve_fallback_backend(
+    pool_backend: str,
+    *,
+    config: dict,
+    check_alive=None,
+) -> str:
+    """Elige un perfil de backend con `backend` DISTINTO al del pool auditado.
+
+    Before: `pool_backend` es el valor `backend` (p.ej. `nan_api`) del pool
+        que se esta auditando; "clase distinta" (WOT-2026-026k) se define
+        como `profile["backend"] != pool_backend`, NUNCA una taxonomia mas
+        fina. `config` es la config ya cargada (`load_motor_config()` o
+        equivalente) con `ensemble_profiles` y `backends`. `check_alive` es
+        inyectable para tests hermeticos; por defecto usa `smoke_profile`
+        (round-trip real por CONTENIDO, nunca por exit code).
+    During: recorre `ensemble_profiles` en orden estable (orden de
+        insercion del dict de config), descarta los perfiles cuyo
+        `backend` coincide con `pool_backend`, y prueba cada candidato con
+        `check_alive(profile_name, config=config)` hasta encontrar uno
+        vivo. `check_alive` debe devolver un dict con clave `alive: bool`
+        (mismo contrato que `smoke_profile`).
+    After: retorna el `profile_name` del primer candidato vivo de clase
+        distinta. Si no hay NINGUN candidato de clase distinta (o ninguno
+        vivo), lanza `DispatchBlockedError` fail-cerrado: el caller NUNCA
+        debe caer de vuelta a `pool_backend` en silencio.
+    """
+    if check_alive is None:
+        check_alive = smoke_profile
+
+    profiles = config.get("ensemble_profiles", {})
+    candidates = [
+        name
+        for name, profile in profiles.items()
+        if profile.get("backend") != pool_backend
+    ]
+    if not candidates:
+        raise DispatchBlockedError(
+            f"sin candidatos de clase distinta a '{pool_backend}' en "
+            "ensemble_profiles: fallback fail-cerrado (WOT-2026-026k)"
+        )
+
+    tried: list[str] = []
+    for name in candidates:
+        result = check_alive(name, config=config)
+        tried.append(f"{name}:{'alive' if result.get('alive') else 'dead'}")
+        if result.get("alive"):
+            return name
+
+    raise DispatchBlockedError(
+        f"ningun candidato de clase distinta a '{pool_backend}' esta vivo "
+        f"(probados: {', '.join(tried)}); fallback fail-cerrado (WOT-2026-026k)"
+    )
 
 
 def _record_round(

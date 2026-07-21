@@ -64,6 +64,13 @@ known_unwired:
   # tocarlos en vuelo. Cableado + pasada Codex diferidos al ticket PDCA WOT-2026-038b
   # (componente 1). Deuda NOMBRADA con dueno real.
   check_bundle_receipts: WOT-2026-038b
+  # check_prompt_bias (WOT-2026-026k): gate MECANICO de sesgo del PROMPT de review.
+  # Su cableado natural es el arranque del bucle de review (ensemble dispatch /
+  # review bridge), que vive en `bus/` -- FORBIDDEN SURFACE del contrato frozen
+  # T-026K-001 (FLT acotada a los 3 scripts + 2 tests; bus/ prohibido). El
+  # MECANISMO se entrega aqui; su invocacion desde el loop es follow-up declarado.
+  # Deuda NOMBRADA con dueno real (no huerfano undeclared).
+  check_prompt_bias: WOT-2026-026k
 
 extra_guards:
   # Barreras REALES sin prefijo de guard. v3 no podia ni verlas ni contarlas.

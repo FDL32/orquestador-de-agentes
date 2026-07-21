@@ -450,6 +450,8 @@ def test_scorecard_fields_prefix_is_frozen():
 
 
 def test_task_types_enum_frozen():
+    # WOT-2026-026k: "prompt-audit" anadido al enum cerrado (uso del nuevo
+    # check_prompt_bias/review_bundle_contract vía run_pipeline).
     assert {
         "code-gen",
         "code-review",
@@ -458,6 +460,7 @@ def test_task_types_enum_frozen():
         "triage",
         "contract-audit",
         "adjudication",
+        "prompt-audit",
     } == ed.TASK_TYPES
 
 
