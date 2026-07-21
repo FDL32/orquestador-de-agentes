@@ -98,6 +98,42 @@ def _make_worktree_pair(tmp_path: Path) -> tuple[Path, Path]:
     return canon, linked
 
 
+def _make_multi_worktree_topology(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """Reproduces the REAL machine topology (WOT-2026-025m): a primary checkout
+    left DETACHED, a linked worktree carrying `main` (where memory is actually
+    published), and a third linked worktree that plays the `--source`.
+
+    `git worktree add` refuses the same branch checked out twice, so the
+    primary must be detached BEFORE `main` is added to the second worktree
+    (mirrors `_make_git_tree` in test_check_worktree_topology.py).
+
+    Returns (primary_detached, dev_with_main, source_worktree).
+    """
+    primary = tmp_path / "primary"
+    primary.mkdir()
+
+    def run(cwd: Path, *a: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", *a], cwd=str(cwd), capture_output=True, text=True, check=True
+        )
+
+    run(primary, "init", "-b", "main")
+    run(primary, "config", "user.email", "t@t.t")
+    run(primary, "config", "user.name", "t")
+    (primary / "README").write_text("x", encoding="utf-8")
+    run(primary, "add", "-A")
+    run(primary, "commit", "-m", "base")
+    run(primary, "checkout", "--detach", "main")
+
+    dev = tmp_path / "dev"
+    run(primary, "worktree", "add", str(dev), "main")
+
+    source = tmp_path / "source"
+    run(primary, "worktree", "add", "-b", "source-branch", str(source))
+
+    return primary, dev, source
+
+
 def _run(source: Path, apply: bool = True) -> subprocess.CompletedProcess:
     args = [sys.executable, str(SCRIPT), "--source", str(source)]
     if apply:
@@ -116,10 +152,12 @@ def _load(path: Path) -> list[dict]:
     ]
 
 
-def test_canonical_checkout_is_resolved_from_git_common_dir(tmp_path: Path) -> None:
-    """The canonical checkout is resolved by --git-common-dir, not by a heuristic
-    on the --git-dir string (searching for "worktrees/" works by accident of
-    naming, not by construction)."""
+def test_canonical_checkout_is_the_worktree_carrying_main(tmp_path: Path) -> None:
+    """The canonical checkout is the worktree carrying `main` (resolved from
+    `git worktree list --porcelain`), NOT whatever `--git-common-dir` points at
+    (WOT-2026-025m: the old heuristic silently resolved to a detached primary).
+    In this fixture the canonical checkout has `main` checked out directly, so it
+    is the sole match and both the old and new mechanisms agree here."""
     canon, linked = _make_worktree_pair(tmp_path)
     sys.path.insert(0, str(SCRIPT.parent))
     try:
@@ -342,6 +380,76 @@ def test_corrupt_archive_fails_closed_with_a_message_not_a_traceback(
     assert "2020-01" in r.stdout, "el error debe NOMBRAR el fichero"
     assert "Traceback" not in r.stderr, "debe salir por la barrera, no por crash"
     assert not (canon / _archive_rel()).exists(), "no debe escribir nada"
+
+
+def test_canonical_checkout_resolves_to_the_worktree_carrying_main(
+    tmp_path: Path,
+) -> None:
+    """LOAD-BEARING (WOT-2026-025m). In a multi-worktree topology, the checkout
+    that PUBLISHES portable memory is the one carrying the `main` branch, not
+    whichever worktree `--git-common-dir` happens to point at.
+
+    On the real machine the primary checkout is left DETACHED and `main` lives
+    in a linked worktree (`_dev`). The old `--git-common-dir` heuristic always
+    resolves to the primary's parent directory regardless of which worktree
+    has `main` checked out, so it silently promotes memory into the detached
+    checkout -- content that is never on `main` and never gets pushed.
+
+    Mutation: revert to resolving by `--git-common-dir` alone -> this goes RED
+    (the archive lands in `primary`, not in `dev`).
+    """
+    primary, dev, source = _make_multi_worktree_topology(tmp_path)
+    _write(dev / _archive_rel(), [_obs("existing-lesson", "WOT-2026-001a")])
+    _write(source / OBS_REL, [_obs("nueva-leccion", "WOT-2026-025m")])
+
+    r = _run(source)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    dev_archived = [x["topic"] for x in _load(dev / _archive_rel())]
+    assert "nueva-leccion" in dev_archived, (
+        "the archive must be written into the worktree that carries `main` "
+        f"({dev}), not into the detached primary checkout ({primary}). "
+        f"stdout: {r.stdout}"
+    )
+
+    primary_archived = [x["topic"] for x in _load(primary / _archive_rel())]
+    assert "nueva-leccion" not in primary_archived, (
+        "nothing must be written into the detached primary checkout: it does "
+        "not carry `main` and is not the portable-memory publication point"
+    )
+
+
+def test_ambiguous_or_missing_main_worktree_fails_closed(tmp_path: Path) -> None:
+    """LOAD-BEARING (WOT-2026-025m): if the destination worktree cannot be
+    determined UNAMBIGUOUSLY (zero or more than one worktree carries `main`),
+    the reconciler must refuse to guess and exit non-zero with a diagnostic,
+    rather than silently falling back to some other checkout.
+    """
+    tmp_path2 = tmp_path / "no_main_case"
+    tmp_path2.mkdir()
+
+    def run(cwd: Path, *a: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", *a], cwd=str(cwd), capture_output=True, text=True, check=True
+        )
+
+    repo = tmp_path2 / "repo"
+    repo.mkdir()
+    run(repo, "init", "-b", "trunk")
+    run(repo, "config", "user.email", "t@t.t")
+    run(repo, "config", "user.name", "t")
+    (repo / "README").write_text("x", encoding="utf-8")
+    run(repo, "add", "-A")
+    run(repo, "commit", "-m", "base")
+    # No worktree carries `main` here (branch is `trunk`): ambiguity case
+    # (zero matches) must fail closed rather than default to some checkout.
+    _write(repo / OBS_REL, [_obs("leccion", "WOT-2026-025m")])
+
+    r = _run(repo)
+    assert r.returncode != 0, (
+        "when no worktree carries `main`, the reconciler must fail-closed "
+        f"instead of guessing a destination. stdout: {r.stdout}"
+    )
 
 
 def test_strict_validation_covers_every_archive_that_feeds_the_dedup(

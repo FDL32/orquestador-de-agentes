@@ -91,25 +91,68 @@ def _git(repo: Path, *args: str) -> str:
     return r.stdout.strip()
 
 
-def canonical_checkout(repo: Path) -> Path:
-    """La raiz del checkout CANONICO del repo que contiene `repo`.
+class AmbiguousCanonicalCheckoutError(Exception):
+    """Ninguna o mas de una worktree lleva la rama que publica memoria portable.
 
-    Se resuelve por `--git-common-dir` (el `.git` REAL, compartido por todas las
-    worktrees): su directorio padre es el checkout canonico. Es robusto, a diferencia
-    de heuristicas sobre la cadena del `--git-dir` (buscar "worktrees/" en el path
-    funciona por accidente de nombres, no por construccion).
+    Fail-closed deliberado (WOT-2026-025m): adivinar el destino en presencia de
+    ambiguedad escribiria en el checkout equivocado en silencio (returncode 0
+    y memoria perdida), exactamente el defecto que este ticket corrige.
     """
-    raw = Path(_git(repo, "rev-parse", "--git-common-dir"))
-    # `--git-common-dir` puede venir RELATIVO (p.ej. ".git" en el propio canonico).
-    # Un `.resolve()` directo lo resolveria contra el CWD DEL PROCESO, no contra el
-    # repo -> raiz equivocada. Hay que anclarlo al repo.
-    common = raw if raw.is_absolute() else (repo / raw)
-    return common.resolve().parent
+
+
+# Rama que publica la memoria portable. En esta topologia es siempre `main`:
+# es la rama que se pushea y de la que vive el archive trackeado.
+PUBLISHING_BRANCH = "main"
+
+
+def canonical_checkout(repo: Path) -> Path:
+    """La raiz del checkout que PUBLICA memoria portable: la worktree que
+    tiene ``PUBLISHING_BRANCH`` (``main``) haciendo checkout, no la que
+    resuelva ``--git-common-dir``.
+
+    CORRECCION (WOT-2026-025m): la version anterior resolvia por
+    ``--git-common-dir`` (el `.git` REAL compartido por todas las worktrees) y
+    devolvia su directorio padre. Eso es robusto para localizar el `.git`
+    compartido, pero NO identifica que worktree tiene `main` -- en una
+    topologia con el checkout primario DETACHED y `main` en una worktree
+    enlazada (p.ej. `_dev`), `--git-common-dir` sigue apuntando al primario, y
+    el reconciliador promocionaba memoria a un checkout que nunca se pushea.
+
+    Se enumera `git worktree list --porcelain` y se elige la worktree cuya
+    linea `branch` es `refs/heads/<PUBLISHING_BRANCH>`. Fail-closed si no hay
+    exactamente una coincidencia (ver `AmbiguousCanonicalCheckoutError`).
+    """
+    raw = _git(repo, "worktree", "list", "--porcelain")
+    matches: list[Path] = []
+    current_worktree: Path | None = None
+    for line in raw.splitlines():
+        if line.startswith("worktree "):
+            current_worktree = Path(line[len("worktree ") :]).resolve()
+        elif (
+            line == f"branch refs/heads/{PUBLISHING_BRANCH}"
+            and current_worktree is not None
+        ):
+            matches.append(current_worktree)
+
+    if len(matches) == 1:
+        return matches[0]
+
+    # Un solo checkout (sin worktrees adicionales) sigue funcionando: si `repo`
+    # mismo tiene `main`, ya esta en `matches` con longitud 1 y se devolvio
+    # arriba. Si no hay NINGUNA coincidencia o hay MAS DE UNA, no se adivina.
+    raise AmbiguousCanonicalCheckoutError(
+        f"no se pudo determinar de forma UNAMBIGUA la worktree que publica "
+        f"'{PUBLISHING_BRANCH}' (coincidencias: {len(matches)}). "
+        f"git worktree list --porcelain:\n{raw}"
+    )
 
 
 def is_canonical(repo: Path) -> bool:
     toplevel = Path(_git(repo, "rev-parse", "--show-toplevel")).resolve()
-    return toplevel == canonical_checkout(repo)
+    try:
+        return toplevel == canonical_checkout(repo)
+    except AmbiguousCanonicalCheckoutError:
+        return False
 
 
 class CorruptMemoryError(Exception):
@@ -249,6 +292,10 @@ def main(argv: list[str] | None = None) -> int:
     except CorruptMemoryError as exc:
         print(f"[reconcile] ERROR: memoria corrupta: {exc}")
         print("[reconcile] no se escribe sobre una memoria ilegible (fail-closed)")
+        return 1
+    except AmbiguousCanonicalCheckoutError as exc:
+        print(f"[reconcile] ERROR: destino ambiguo: {exc}")
+        print("[reconcile] no se adivina el checkout canonico (fail-closed)")
         return 1
 
 
