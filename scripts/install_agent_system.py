@@ -52,20 +52,32 @@ LOCAL_DIRS = {"collaboration", "runtime", "audits"}
 INSTALLER_MANAGED_PATHS: frozenset[str] = frozenset({"glossary.md", "microagents"})
 
 # Directories whose CONTENT belongs to the destination once it exists (WOT-2026-024d).
-# The motor ships only a seed (.agent/planning/ticket_contracts.md); the destination's
-# Contract Formation Pipeline then produces its own artifacts there. So the installer
-# deposits these when missing (a fresh install needs the seed) but must NEVER
-# overwrite and NEVER prune them.
+# The destination's Contract Formation Pipeline produces its artifacts here, so the
+# installer must NEVER overwrite and NEVER prune them.
+#
+# WOT-2026-024h / DEC-024H-001: the motor NO LONGER ships a seed here. It used to
+# version .agent/planning/ticket_contracts.md (49881 B) with 3 REAL dogfooding
+# contracts (021k/023r/023s) that a fresh --install deposited into every new
+# destination (measured 2026-07-21: 3 '## WOT-' headers in a clean tmp dest). That
+# file is now out of version control; a fresh install deposits NOTHING here (probed:
+# with no seed present, copy_tree does not even create planning/). The destination
+# bootstraps its own planning by copying docs/contract_formation/templates/
+# (docs/contract_formation/README.md:26).
+#
+# .agent/planning/ STAYS in MANIFEST.workspace on purpose: that entry is what makes
+# the prune filter below protect the DESTINATION's own artifacts. Removing it would
+# regress 024d, not complete 024h.
 #
 # Contrast with the two neighbouring mechanisms:
 #   LOCAL_DIRS              -> never copied at all; a fresh install gets nothing.
 #   INSTALLER_MANAGED_PATHS -> excluded from the residue/prune calculation only.
 #   DESTINATION_OWNED_DIRS  -> deposited if absent, never clobbered, never pruned.
 #
-# Both halves are load-bearing: without the no-clobber, --sync overwrites the
-# destination's contracts; without the prune filter, --sync DELETES every Contract
-# Formation artifact the motor does not itself ship (the motor has only the seed, so
-# repo_charter/plan_graph/decisions/evidence_catalog all look like residues).
+# The no-clobber half is now latent for planning (the motor ships nothing to clobber
+# WITH) but stays load-bearing for any future destination-owned dir; the prune filter
+# is what does the work today: --sync would otherwise DELETE every Contract Formation
+# artifact the motor does not ship (repo_charter/plan_graph/decisions/evidence_catalog
+# -- and now ticket_contracts.md too -- all look like residues).
 DESTINATION_OWNED_DIRS: frozenset[str] = frozenset({"planning"})
 
 # Generated / transient directories that should not be part of canonical sync.
@@ -445,11 +457,14 @@ def detect_destination_residues(source: Path, dest: Path) -> list[Path]:
     # against the INSTALLER_MANAGED_PATHS set. LOCAL_DIRS paths are already excluded
     # by iter_canonical_entries(); INSTALLER_MANAGED_PATHS are excluded here.
     residues = {r for r in residues if r.parts[0] not in INSTALLER_MANAGED_PATHS}
-    # WOT-2026-024d: destination-owned content is never pruned. The motor ships only
-    # .agent/planning/ticket_contracts.md, so every OTHER Contract Formation artifact
-    # the destination produced (repo_charter, plan_graph, decisions, evidence_catalog)
-    # is absent from source_entries and would otherwise be deleted by the strict
-    # --sync. The git-tracked fail-safe does not cover them: a destination that
+    # WOT-2026-024d: destination-owned content is never pruned. The motor ships NO
+    # planning artifact at all since WOT-2026-024h (it used to ship
+    # .agent/planning/ticket_contracts.md), so EVERY Contract Formation artifact the
+    # destination produced (ticket_contracts, repo_charter, plan_graph, decisions,
+    # evidence_catalog) is absent from source_entries and would otherwise be deleted
+    # by the strict --sync. Retiring the seed made this filter MORE load-bearing, not
+    # less: ticket_contracts.md moved from "shipped" to "looks like a residue".
+    # The git-tracked fail-safe does not cover them: a destination that
     # gitignores .agent/ has them untracked (measured: Upscaler, 4 files).
     residues = {r for r in residues if not is_destination_owned(r)}
     # Also exclude bootstrap-specific paths (full path matching, not just r.parts[0])

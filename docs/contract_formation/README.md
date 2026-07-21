@@ -24,7 +24,17 @@ implante sin preguntar.
 ## Plantillas
 
 Rellenar copiando a `DESTINO_ROOT/.agent/planning/` (no editar las plantillas
-del motor):
+del motor).
+
+> **Esta es la UNICA via de bootstrap del planning de un destino** (WOT-2026-024h,
+> DEC-024H-001). El motor NO versiona ya `.agent/planning/ticket_contracts.md` y un
+> `install` fresco NO deposita ningun contrato: hasta 2026-07-21 embarcaba 49881 B
+> con 3 contratos REALES de su propio dogfooding (021k/023r/023s), que aterrizaban
+> en cada destino nuevo. El destino crea su planning copiando estas plantillas; lo
+> que produzca es SUYO y ni `--sync` ni la poda lo tocan (WOT-2026-024d).
+> No re-introduzcas un seed ni un placeholder en el motor: el CONTRACT_GAP
+> `CG-WOT-2026-024h.md` probo que ninguna forma pasa `validate_contract_formation`.
+> Barrera: `scripts/check_distributable_planning_clean.py` (closeout, bloqueante).
 
 | Plantilla | Instancia destino |
 |-----------|-------------------|

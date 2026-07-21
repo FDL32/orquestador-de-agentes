@@ -148,12 +148,50 @@ def test_workspace_check_skips_when_no_ticket_contracts(
     assert "skip" in result.output.lower()
 
 
-def test_motor_cf_triple_valid_passes() -> None:
-    """The real motor CF triple is well-formed -> gate passes (0 structure errors)."""
+def test_motor_cf_valid_passes() -> None:
+    """El CF REAL del motor esta bien formado -> gate pasa (0 structure errors).
+
+    WOT-2026-024h: el conjunto es VARIABLE (ticket_contracts.md ya no se versiona);
+    lo que se afirma es que lo que EXISTE valida, no que existan los tres.
+    """
     result = run_contract_formation_check(Path(__file__).resolve().parents[1])
     assert result.passed is True
     assert result.is_blocking is True
     assert "0 structure errors" in result.output
+
+
+def test_charter_and_plan_still_validated_without_tickets(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """WOT-2026-024h (anti falso-verde): sin ticket_contracts.md, charter y
+    plan_graph SIGUEN validandose.
+
+    Es la mitad que impide que la retirada del seed (024h) apague de rebote la
+    barrera que 023m(c) acababa de encender: con la condicion AND original, un
+    motor sin tickets devolvia 'skipped' y un plan_graph MALFORMADO pasaba el
+    cierre sin que nadie lo mirase. Aqui no hay tickets Y el plan_graph esta roto:
+    el gate DEBE bloquear.
+    """
+    real_root = Path(__file__).resolve().parents[1]
+    (tmp_path / "repo_charter.md").write_text(
+        (real_root / "repo_charter.md").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    (tmp_path / "plan_graph.md").write_text(
+        "# Plan Graph\n\n## PLAN-001\n\n"
+        "### Impact Simulation\n\n"
+        "- PLAN-001-001: paralelizable: bogus-value\n",
+        encoding="utf-8",
+    )
+    assert not (tmp_path / ".agent" / "planning" / "ticket_contracts.md").exists()
+    monkeypatch.setattr(pc, "_MOTOR_ROOT", tmp_path)
+
+    result = run_contract_formation_check(tmp_path)
+
+    assert result.passed is False, (
+        "sin tickets, un plan_graph malformado debe SEGUIR bloqueando; "
+        f"got: {result.output}"
+    )
+    assert "skipped" not in result.output.lower()
 
 
 def test_malformed_cf_blocks(tmp_path: Path, monkeypatch) -> None:
@@ -165,19 +203,13 @@ def test_malformed_cf_blocks(tmp_path: Path, monkeypatch) -> None:
     """
     charter = tmp_path / "repo_charter.md"
     plan_graph = tmp_path / "plan_graph.md"
-    tickets = tmp_path / ".agent" / "planning" / "ticket_contracts.md"
-    tickets.parent.mkdir(parents=True, exist_ok=True)
-    # Copy the real (valid) charter + tickets so ONLY plan_graph is the defect.
+    # Copy the real (valid) charter so ONLY plan_graph is the defect.
     real_root = Path(__file__).resolve().parents[1]
     charter.write_text(
         (real_root / "repo_charter.md").read_text(encoding="utf-8"), encoding="utf-8"
     )
-    tickets.write_text(
-        (real_root / ".agent" / "planning" / "ticket_contracts.md").read_text(
-            encoding="utf-8"
-        ),
-        encoding="utf-8",
-    )
+    # WOT-2026-024h: the motor no longer versions ticket_contracts.md, so the
+    # fixture no longer copies one. Only plan_graph is the defect under test.
     # Malform the plan_graph: an invalid `paralelizable` value the validator rejects.
     plan_graph.write_text(
         "# Plan Graph\n\n## PLAN-001\n\n"

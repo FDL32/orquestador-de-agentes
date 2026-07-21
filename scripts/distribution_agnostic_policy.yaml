@@ -43,6 +43,6 @@ allowlist:
   # META-MENCION: comentario de WOT-2026-020t que explica POR QUE se excluyen rutas
   # C:\Users\<user>\ de la proyeccion de los destinos.
   - file: 'scripts/install_agent_system.py'
-    line: 113
+    line: 125
     needle: user_profile_root
     reason: 'meta-mencion: comentario WOT-2026-020t que explica por que se excluyen rutas C:\Users\<user>\ de la proyeccion del destino'

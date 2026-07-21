@@ -419,17 +419,33 @@ def run_contract_formation_check(project_root: Path) -> CheckResult:
     Nota de ambito: valida el CF del MOTOR (donde viven los ficheros canonicos,
     sha 3fe1363), NO el plan_graph del workspace (esa es superficie de 025v).
 
-    Before: motor_root resoluble; los tres ficheros CF existen y estan tracked.
-    During: importa validate_contract_formation.main y lo corre sobre el triple.
+    WOT-2026-024h: ``ticket_contracts.md`` ya NO se versiona en el motor
+    (DEC-024H-001), asi que el "triple" pasa a ser un CONJUNTO VARIABLE: se valida
+    lo que EXISTE. Exigir los tres habria convertido la retirada del seed en un
+    SKIP SILENCIOSO que deja charter y plan_graph sin validar -- es decir, 024h
+    habria apagado de rebote la barrera que 023m(c) acababa de encender. En
+    dogfooding el motor puede seguir teniendo un ticket_contracts.md LOCAL
+    (gitignored); si esta, tambien se valida.
+
+    Before: motor_root resoluble. Ningun fichero CF es obligatorio.
+    During: importa validate_contract_formation.main y lo corre sobre los ficheros
+    CF del motor que existan (charter, plan_graph y -- si esta -- tickets).
     After: CheckResult passed=True si 0 errores; False (bloqueante) si el
-    validador reporta errores de estructura. Si algun fichero falta -> skip no
+    validador reporta errores de estructura. Si NO existe ninguno -> skip no
     bloqueante (un motor sin CF materializado no debe bloquear el push).
     """
     name = "Contract Formation Check (closeout)"
     charter = _MOTOR_ROOT / "repo_charter.md"
     plan_graph = _MOTOR_ROOT / "plan_graph.md"
     tickets = _MOTOR_ROOT / ".agent" / "planning" / "ticket_contracts.md"
-    if not (charter.exists() and plan_graph.exists() and tickets.exists()):
+    present: list[str] = []
+    if charter.exists():
+        present += ["--charter", str(charter)]
+    if plan_graph.exists():
+        present += ["--plan", str(plan_graph)]
+    if tickets.exists():
+        present += ["--tickets", str(tickets)]
+    if not present:
         return CheckResult(
             name=name,
             passed=True,
@@ -444,16 +460,7 @@ def run_contract_formation_check(project_root: Path) -> CheckResult:
         )
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        rc = validate_cf_main(
-            [
-                "--charter",
-                str(charter),
-                "--plan",
-                str(plan_graph),
-                "--tickets",
-                str(tickets),
-            ]
-        )
+        rc = validate_cf_main(present)
     if rc != 0:
         return CheckResult(
             name=name,
@@ -653,6 +660,68 @@ def run_contract_reconcile_check(project_root: Path) -> CheckResult:
         passed=True,
         output="every frozen contract has a scheduling row",
         is_blocking=strict,
+    )
+
+
+def run_distributable_planning_check(project_root: Path) -> CheckResult:
+    """WOT-2026-024h (C4'): la superficie DISTRIBUIBLE no puede llevar contratos
+    de planning REALES del motor.
+
+    Barrera de la retirada decidida en DEC-024H-001 (opcion c): el motor dejo de
+    versionar ``.agent/planning/ticket_contracts.md`` porque sus 3 contratos de
+    dogfooding (021k/023r/023s) aterrizaban en CADA destino nuevo (medido: un
+    ``--install`` real depositaba 3 cabeceras ``## WOT-``). Sin este gate, el seed
+    puede volver por la puerta de atras y nadie se entera hasta el siguiente
+    destino contaminado.
+
+    Ambito: mide lo que VIAJA -- los paths de planning de ``MANIFEST.workspace``
+    tal como estan EN EL ARBOL DE TRABAJO. Estar gitignored NO exime: el
+    instalador copia del filesystem, asi que un contrato untracked bajo esa ruta
+    llega igual al destino (medido en la ruta productiva; una version previa de
+    este gate filtraba por git-tracked y daba FALSO VERDE sobre ese caso).
+    Un gate sobre "hay planning" seria falso-rojo permanente; la propiedad
+    correcta es "hay contratos REALES en lo que el instalador copiaria".
+
+    BLOQUEANTE a proposito (no WARN opt-in): a diferencia de la deuda historica de
+    un destino, esto es un invariante del motor que HOY ya se cumple, asi que no
+    puede haber falso-rojo legacy que amnistiar. El import es ESTATICO para que
+    ``check_guard_wiring`` lo alcance (precedente: ``validate_observations``, 035b).
+
+    Before: project_root resoluble; el gate mide el MOTOR (_MOTOR_ROOT), no el destino.
+    During: ejecuta find_contaminated sobre la superficie distribuible del motor.
+    After:  passed=True si no hay contaminacion; False (bloqueante) con el listado
+            de fichero->ids si la hay. Read-only.
+    """
+    name = "Distributable Planning Clean (WOT-2026-024h)"
+    try:
+        from scripts.check_distributable_planning_clean import find_contaminated
+    except ImportError:
+        from check_distributable_planning_clean import (
+            find_contaminated,  # type: ignore[no-redef]
+        )
+    hits = find_contaminated(_MOTOR_ROOT)
+    if hits:
+        detail = "\n".join(
+            f"  - {rel}: {', '.join(sorted(set(ids)))}"
+            for rel, ids in sorted(hits.items())
+        )
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=(
+                f"{len(hits)} distributable planning file(s) carry REAL motor "
+                f"contracts (they would travel to every fresh destination):\n{detail}\n"
+                "Migrate them to the WORKSPACE ticket_contracts.md (non-destructive "
+                "append) and `git rm --cached` the file. Do NOT add a neutral seed: "
+                "CG-WOT-2026-024h proved no form passes validate_contract_formation."
+            ),
+            is_blocking=True,
+        )
+    return CheckResult(
+        name=name,
+        passed=True,
+        output="no distributable planning surface carries real motor contracts",
+        is_blocking=True,
     )
 
 
@@ -965,6 +1034,8 @@ def run_preflight_check(
         results.append(run_workspace_contract_formation_check(project_root))
         # 6i. Batch Run Accounting Check (WOT-2026-025k; GSR-subset, WARN)
         results.append(run_batch_run_accounting_check(project_root))
+        # 6j. Distributable Planning Clean (WOT-2026-024h C4'; bloqueante)
+        results.append(run_distributable_planning_check(project_root))
 
     # 7. Portable Memory Archive Schema (WOT-2026-035b; bloqueante siempre,
     # no solo en closeout_mode: el archive puede corromperse en cualquier push)

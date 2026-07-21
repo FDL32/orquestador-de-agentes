@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import subprocess
 import textwrap
 from pathlib import Path
@@ -1423,3 +1424,70 @@ def test_install_calls_untrack_only_with_flag(tmp_path, monkeypatch):
         template_agent, tmp_path / "d2" / ".agent", untrack_existing=True
     )
     assert calls == [tmp_path / "d2"], "install WITH the flag must invoke untrack"
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-024h: the motor stops versioning .agent/planning/ticket_contracts.md
+#
+# DEC-024H-001 chose option (c): no seed, no neutral placeholder, no change to
+# validate_contract_formation. The motor shipped 49881 B with 3 REAL dogfooding
+# contracts (021k/023r/023s) that landed in EVERY fresh destination (measured
+# 2026-07-21 by a real --install into a clean tmp dir: 3 '## WOT-' headers).
+#
+# Scope note: .agent/planning/ STAYS in MANIFEST.workspace on purpose. It is what
+# keeps the DESTINATION's own Contract Formation artifacts safe from the --sync
+# prune (WOT-2026-024d). Probed: with no seed file present, copy_tree deposits
+# nothing at all -- not even an empty planning/ dir -- so removing the file is
+# sufficient and removing the manifest entry would REGRESS 024d.
+# ---------------------------------------------------------------------------
+
+
+def test_motor_ships_no_ticket_contracts_seed():
+    """C1': the seed file must not exist in the motor's distributable surface.
+
+    Nace ROJO: the file exists and is git-tracked at HEAD ecd496c.
+    """
+    seed = TEMPLATE_ROOT / ".agent" / "planning" / "ticket_contracts.md"
+
+    assert not seed.exists(), (
+        "the motor must not ship .agent/planning/ticket_contracts.md "
+        "(DEC-024H-001 option (c)); it travels to every fresh destination"
+    )
+
+
+def test_fresh_install_deposits_no_real_wot_contracts(tmp_path):
+    """C3': a fresh install must not deposit REAL WOT contracts.
+
+    Asserts on the OUTCOME at the destination (where the damage lands), not on
+    the absence of a file: this stays meaningful even if the seed returns under
+    another name.
+    """
+    project_agent = tmp_path / "dest" / ".agent"
+    project_agent.mkdir(parents=True)
+
+    copy_tree(
+        TEMPLATE_ROOT / ".agent",
+        project_agent,
+        allowlist=read_manifest_allowlist(TEMPLATE_ROOT),
+    )
+
+    contracts = project_agent / "planning" / "ticket_contracts.md"
+    if not contracts.exists():
+        return  # nothing deposited: the C1' end-state
+    body = contracts.read_text(encoding="utf-8-sig")
+    leaked = re.findall(r"^##\s+WOT-\d{4}-\d+[a-z]?", body, flags=re.MULTILINE)
+    assert leaked == [], f"fresh install deposited real WOT contracts: {leaked}"
+
+
+def test_destination_can_still_bootstrap_planning_from_templates():
+    """C3' other half: removing the seed must not orphan the destination.
+
+    The documented bootstrap (docs/contract_formation/README.md:26) is copying the
+    templates. If those disappear, the destination has no route to a planning set
+    and (c) would have degraded into option (a).
+    """
+    templates = TEMPLATE_ROOT / "docs" / "contract_formation" / "templates"
+
+    assert (templates / "ticket_contract.md").exists(), (
+        "the destination bootstraps its planning by copying this template"
+    )
