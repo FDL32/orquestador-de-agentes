@@ -101,6 +101,20 @@ Despues: exit 0 = cada guard sin cablear es una excepcion declarada y con dueno,
          cada guard del baseline sigue cableado desde su fichero. exit 1 = un guard
          corre en ningun sitio y no esta declarado, una entrada esta stale, o un
          guard se ha des-cableado.
+
+La TERCERA asimetria: la deuda HUERFANA (WOT-2026-026v)
+-------------------------------------------------------
+Una declaracion `known_unwired` acota la deuda solo mientras su dueno siga VIVO.
+Si el ticket se archiva y el guard sigue sin cablear, ya no queda nadie que vaya a
+cablearlo: la declaracion dejo de ACOTAR la deuda y paso a ESCONDERLA -- y este
+gate salia verde igual (el mismo mal que su propio docstring predica: medir la
+propiedad con una vara mas floja que la que exige). El cruce owner-vivo se hace
+contra la cola VIVA del repo_destino (`backlog.md`), resuelto por la via canonica
+(`--project-root` / `AGENT_PROJECT_ROOT` / `motor_destination_link.json`).
+
+Sin destino resoluble el check SKIPEA EXPLICITAMENTE y lo IMPRIME (no calla): un
+guard del motor que reviente en un destino sin backlog seria peor que la deuda que
+cierra. En modo normal es WARN nombrado; con `--strict`, falla.
 """
 
 from __future__ import annotations
@@ -108,6 +122,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import os
 import re
 import shlex
 import shutil
@@ -126,6 +141,11 @@ GUARD_PREFIXES = ("check_", "validate_", "guard_")
 GUARD_DIRS = ("scripts", ".agent/hooks", "skills", "tools", "bus", "runtime")
 
 _TICKET = re.compile(r"^WOT-\d{4}-\d{3}[a-z]$")
+# Gemelo NO anclado de _TICKET: _TICKET valida la FORMA de un owner (string
+# completo); este scrapea IDs incrustados en la prosa del backlog. Misma
+# gramatica a proposito -- si una diverge, un owner valido dejaria de casar
+# con su propia fila viva y se reportaria huerfano en falso.
+_TICKET_ANYWHERE = re.compile(r"WOT-\d{4}-\d{3}[a-z]")
 _BY_DESIGN = "BY-DESIGN:"
 
 # Separadores de token, FUENTE UNICA. El gate de _sink_arg_tokens y el tokenizador
@@ -788,6 +808,85 @@ def _bad_owners(known_unwired: dict) -> list[str]:
     ]
 
 
+def _resolve_destino_root(
+    project_root: str | None, workspace_root: str | None
+) -> tuple[Path | None, str | None]:
+    """Resolve the repo_destino whose backlog says which owners are still alive.
+
+    Before: ``project_root``/``workspace_root`` come from the CLI, both optional
+    (the pre-commit call-site passes neither).
+    During: precedence (1) ``--project-root`` verbatim; (2) ``AGENT_PROJECT_ROOT``;
+    (3) the workspace's ``motor_destination_link.json`` ``destination_root``. The
+    link is machine-specific/gitignored, so it is resolved at runtime.
+    After: returns ``(Path, None)`` on success, or ``(None, reason)`` so the caller
+    SKIPS explicitly. Never raises: a motor guard that crashes in a destination
+    without a backlog is worse than the debt it closes.
+
+    Mirror of ``check_backlog_commits_landed._resolve_destino_root``.
+    """
+    if project_root:
+        return Path(project_root).resolve(), None
+    env_root = os.environ.get("AGENT_PROJECT_ROOT")
+    if env_root:
+        return Path(env_root).resolve(), None
+    if not workspace_root:
+        return None, "no --project-root, no AGENT_PROJECT_ROOT and no --workspace-root"
+    link = (
+        Path(workspace_root).resolve()
+        / ".agent"
+        / "config"
+        / "motor_destination_link.json"
+    )
+    try:
+        data = json.loads(link.read_text(encoding="utf-8"))
+    except OSError:
+        return None, f"motor_destination_link.json not found under {workspace_root}"
+    except json.JSONDecodeError as exc:
+        return None, f"motor_destination_link.json unreadable: {exc}"
+    dest = data.get("destination_root")
+    if not dest:
+        return None, "motor_destination_link.json has no destination_root"
+    return Path(dest).resolve(), None
+
+
+def _live_owner_tickets(dest_root: Path) -> tuple[set[str] | None, str | None]:
+    """Ticket IDs present in the DESTINO's LIVE backlog queue.
+
+    Before: ``dest_root`` is a resolved repo_destino.
+    During: reads ``.agent/collaboration/backlog.md`` and scrapes every canonical
+    ticket ID. Only the LIVE queue counts -- an ID that survives solely in
+    ``_archive/backlog_done.md`` is precisely the archived owner we hunt.
+    After: ``(set, None)``, or ``(None, reason)`` when the backlog is absent or
+    unreadable, so the caller SKIPS instead of inventing orphans.
+    """
+    backlog = dest_root / ".agent" / "collaboration" / "backlog.md"
+    try:
+        content = backlog.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError as exc:
+        return None, f"cannot read {backlog}: {exc}"
+    return set(_TICKET_ANYWHERE.findall(content)), None
+
+
+def _orphan_owners(
+    known_unwired: dict, declared: list[str], live: set[str]
+) -> list[str]:
+    """Declared debt whose OWNER is archived while the guard is STILL unwired.
+
+    Before: ``declared`` are the guards this run found unwired AND declared;
+    ``live`` are the ticket IDs still in the destino's live backlog.
+    During: an entry is an orphan iff its owner is a ticket (BY-DESIGN entries are
+    always exempt -- they have no owner to archive) that is NOT live. Guards that got
+    wired are not considered: they are already reported as ``stale``.
+    After: returns the sorted ``guard -> owner`` lines. The INVARIANT is the
+    criterion (archived owner + still unwired), never a count (WOT-2026-024t).
+    """
+    return sorted(
+        f"{g} -> {known_unwired[g]}"
+        for g in declared
+        if _TICKET.match(str(known_unwired[g])) and str(known_unwired[g]) not in live
+    )
+
+
 def _dewired(root: Path, policy: dict) -> list[str]:
     """Guards del baseline que YA NO se cablean desde su fichero declarado. La
     asimetria gemela: un guard que estaba WIRED por un call-site y lo perdio."""
@@ -813,6 +912,16 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI: format-chec
         "--strict",
         action="store_true",
         help="fail on the declared debt too (retro audit; BY-DESIGN never fails)",
+    )
+    ap.add_argument(
+        "--project-root",
+        default=None,
+        help="repo_destino whose live backlog decides if a debt owner is still alive",
+    )
+    ap.add_argument(
+        "--workspace-root",
+        default=None,
+        help="workspace holding .agent/config/motor_destination_link.json (fallback)",
     )
     args = ap.parse_args(argv)
     root = Path(args.motor_root).resolve()
@@ -878,6 +987,36 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI: format-chec
             "  future file with that name -- the exact false-green this module stops."
         )
         return 1
+
+    # WOT-2026-026v: la declaracion existe para ACOTAR la deuda; si su dueno se
+    # archiva y el guard sigue sin cablear, la declaracion se vuelve su ESCONDITE
+    # y este gate seguia saliendo verde. El criterio es el INVARIANTE (owner
+    # archivado + aun sin cablear), nunca un conteo (WOT-2026-024t).
+    dest_root, dest_err = _resolve_destino_root(args.project_root, args.workspace_root)
+    if dest_root is None:
+        print(f"[guard-wiring] SKIP orphan-owner check: {dest_err}.")
+    else:
+        live, live_err = _live_owner_tickets(dest_root)
+        if live is None:
+            print(f"[guard-wiring] SKIP orphan-owner check: {live_err}.")
+        else:
+            orphans = _orphan_owners(known, declared, live)
+            if orphans:
+                label = "ERROR" if args.strict else "WARN"
+                print(
+                    f"\n[guard-wiring] {label}: deuda HUERFANA "
+                    "-- owner archivado y guard AUN sin cablear:"
+                )
+                for o in orphans:
+                    print(f"    {o}")
+                print(
+                    "\n  El ticket dueno ya no esta en la cola viva, asi que nadie va a\n"
+                    "  cablear este guard: la declaracion dejo de acotar la deuda y paso\n"
+                    "  a esconderla. Reabre el ticket, cablea el guard, o re-declaralo\n"
+                    "  con un dueno VIVO en scripts/guard_wiring_policy.yaml."
+                )
+                if args.strict:
+                    return 1
 
     debt = [g for g in declared if not str(known[g]).startswith(_BY_DESIGN)]
     if args.strict and debt:

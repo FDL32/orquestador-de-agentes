@@ -317,3 +317,147 @@ def test_prefix_is_not_a_substring_match(tmp_path):
     wired, unwired = cgw.audit(motor, _EMPTY_POLICY)
     assert "check_backlog_long" in wired
     assert "check_backlog" in unwired, "el prefijo no hereda el cableado del largo"
+
+
+# ------------------------------------------- deuda HUERFANA (WOT-2026-026v)
+# La declaracion acota la deuda solo mientras su dueno siga VIVO. Owner archivado
+# + guard AUN sin cablear = la declaracion paso de ACOTAR la deuda a ESCONDERLA.
+# El criterio es el INVARIANTE, nunca el conteo (WOT-2026-024t).
+def _destino(tmp_path: Path, live_rows: str, name: str = "destino") -> Path:
+    """repo_destino minimo con la cola VIVA que decide si un owner sigue vivo."""
+    dest = tmp_path / name
+    (dest / ".agent" / "collaboration").mkdir(parents=True, exist_ok=True)
+    (dest / ".agent" / "collaboration" / "backlog.md").write_text(
+        live_rows, encoding="utf-8"
+    )
+    return dest
+
+
+@pytest.mark.parametrize(
+    "owner, live_rows, expected",
+    [
+        # el fallo que este ticket cierra: dueno archivado, guard sin cablear
+        ("WOT-2026-023t", "| Alta | WOT-2026-019o | otra cosa viva |\n", ["check_new"]),
+        # con el dueno VIVO NO dispara: es deuda declarada y acotada, no huerfana
+        ("WOT-2026-023t", "| Alta | WOT-2026-023t | sigue en cola |\n", []),
+        # BY-DESIGN no tiene dueno que archivar -> nunca es huerfana
+        ("BY-DESIGN: circular por diseno", "| Alta | WOT-2026-019o | x |\n", []),
+    ],
+    ids=["owner-archivado-dispara", "owner-vivo-no-dispara", "by-design-exento"],
+)
+def test_orphan_owner_invariant(owner, live_rows, expected):
+    known = {"check_new": owner}
+    got = cgw._orphan_owners(
+        known, ["check_new"], set(cgw._TICKET_ANYWHERE.findall(live_rows))
+    )
+    assert [g.split(" -> ")[0] for g in got] == expected
+
+
+def test_orphan_owner_ignores_guards_that_got_wired(tmp_path):
+    """Un guard con owner archivado que YA esta cableado no es huerfano: es `stale`.
+
+    Sin este limite el gate reportaria dos veces el mismo hecho con dos remedios
+    contradictorios ("reabre el ticket" vs "borra la declaracion").
+    """
+    known = {"check_new": "WOT-2026-023t"}
+    # `declared` solo contiene guards que esta pasada vio UNWIRED; si esta wired
+    # no entra, y por tanto no puede salir como huerfano.
+    assert cgw._orphan_owners(known, [], {"WOT-2026-019o"}) == []
+
+
+def test_orphan_owner_fails_only_under_strict(tmp_path, monkeypatch):
+    """Mutation-verify de EXTREMO A EXTREMO por el CLI real (no por la funcion pura).
+
+    Mismo arbol, mismo destino: normal -> exit 0 (WARN nombrado);
+    `--strict` -> exit 1. El par de exit codes ES la barrera.
+    """
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "check_new.py").write_text("# g\n", encoding="utf-8")
+    (tmp_path / ".pre-commit-config.yaml").write_text(
+        "repos:\n  - repo: local\n    hooks:\n      []\n", encoding="utf-8"
+    )
+    policy_yaml = tmp_path / "scripts" / "guard_wiring_policy.yaml"
+    policy_yaml.write_text(
+        "known_unwired:\n  check_new: WOT-2026-023t\n", encoding="utf-8"
+    )
+    baseline_yaml = tmp_path / "baseline.yaml"
+    baseline_yaml.write_text("wired_baseline: {}\n", encoding="utf-8")
+    monkeypatch.setattr(cgw, "POLICY_PATH", policy_yaml)
+    monkeypatch.setattr(cgw, "BASELINE_PATH", baseline_yaml)
+    monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+    dest = _destino(tmp_path, "| Alta | WOT-2026-019o | el dueno NO esta aqui |\n")
+    argv = ["--motor-root", str(tmp_path), "--project-root", str(dest)]
+
+    assert cgw.main(argv) == 0, (
+        "en modo normal la huerfana es WARN, no rompe pre-commit"
+    )
+    assert cgw.main([*argv, "--strict"]) == 1, "en --strict la huerfana FALLA"
+
+
+def test_orphan_check_skips_explicitly_without_destino(tmp_path, monkeypatch, capsys):
+    """Sin destino resoluble: SKIP IMPRESO y exit 0 -- nunca crash, nunca silencio.
+
+    Es la forma EXACTA del call-site real (`.pre-commit-config.yaml`, que no pasa
+    ninguna de las dos flags). Un guard del motor que reviente en un destino sin
+    backlog es peor que la deuda que cierra.
+    """
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "check_new.py").write_text("# g\n", encoding="utf-8")
+    (tmp_path / ".pre-commit-config.yaml").write_text(
+        "repos:\n  - repo: local\n    hooks:\n      []\n", encoding="utf-8"
+    )
+    policy_yaml = tmp_path / "scripts" / "guard_wiring_policy.yaml"
+    policy_yaml.write_text(
+        "known_unwired:\n  check_new: WOT-2026-023t\n", encoding="utf-8"
+    )
+    baseline_yaml = tmp_path / "baseline.yaml"
+    baseline_yaml.write_text("wired_baseline: {}\n", encoding="utf-8")
+    monkeypatch.setattr(cgw, "POLICY_PATH", policy_yaml)
+    monkeypatch.setattr(cgw, "BASELINE_PATH", baseline_yaml)
+    monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+
+    # SIN --strict a proposito: `--strict` falla por la deuda DECLARADA (regla
+    # preexistente) y ese 1 enmascararia el veredicto que aqui se mide.
+    assert cgw.main(["--motor-root", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "SKIP orphan-owner check" in out, "el skip se IMPRIME, no se calla"
+    assert "HUERFANA" not in out, "sin destino no se puede afirmar que un owner murio"
+
+
+def test_orphan_check_skips_when_destino_has_no_backlog(tmp_path, monkeypatch, capsys):
+    """Destino RESUELTO pero sin backlog.md -> SKIP, no un mar de falsos huerfanos.
+
+    Sin este limite un destino recien instalado veria TODA la deuda declarada
+    reportada como huerfana: el backlog vacio no dice 'todos archivados'.
+    """
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "check_new.py").write_text("# g\n", encoding="utf-8")
+    (tmp_path / ".pre-commit-config.yaml").write_text(
+        "repos:\n  - repo: local\n    hooks:\n      []\n", encoding="utf-8"
+    )
+    policy_yaml = tmp_path / "scripts" / "guard_wiring_policy.yaml"
+    policy_yaml.write_text(
+        "known_unwired:\n  check_new: WOT-2026-023t\n", encoding="utf-8"
+    )
+    baseline_yaml = tmp_path / "baseline.yaml"
+    baseline_yaml.write_text("wired_baseline: {}\n", encoding="utf-8")
+    monkeypatch.setattr(cgw, "POLICY_PATH", policy_yaml)
+    monkeypatch.setattr(cgw, "BASELINE_PATH", baseline_yaml)
+    monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+    empty = tmp_path / "sin_backlog"
+    empty.mkdir()
+
+    assert cgw.main(["--motor-root", str(tmp_path), "--project-root", str(empty)]) == 0
+    out = capsys.readouterr().out
+    assert "SKIP orphan-owner check" in out
+    assert "HUERFANA" not in out, "backlog ausente != 'todos los owners archivados'"
+
+
+def test_ticket_anywhere_matches_the_owner_grammar():
+    """Los dos regex son gemelos deliberados; si divergen, un owner VIVO se
+    reportaria huerfano en falso por no casar con su propia fila del backlog."""
+    owner = "WOT-2026-023t"
+    assert cgw._TICKET.match(owner)
+    assert cgw._TICKET_ANYWHERE.findall(f"| Alta | {owner} | prosa alrededor |") == [
+        owner
+    ]
