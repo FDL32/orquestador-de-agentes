@@ -6120,11 +6120,22 @@ def _handle_archive() -> int:
 
 
 def _sync_state_after_session_close() -> None:
-    """Sync STATE.md to COMPLETED after a real session close.
+    """Sync STATE.md to a TERMINAL, ticket-less state after a real session close.
 
-    Before: STATE.md exists with some state.
-    During: Replaces the 'Estado actual:' line with 'COMPLETED'.
-    After: STATE.md reflects terminal state for the next cycle.
+    Before: STATE.md exists con el formato vivo (``ACTIVE_TICKET:``/``STATUS:``) o
+        con el legacy (``Estado actual:``).
+    During: pone el estado en COMPLETED y, en el formato vivo, LIBERA el ticket
+        (``ACTIVE_TICKET: -``): tras cerrar la sesion ya no hay ticket activo.
+    After: STATE.md no arrastra el ticket de la sesion cerrada al siguiente ciclo.
+
+    Por que se toca esto (defecto medido 2026-07-21): esta funcion regexeaba SOLO
+    ``Estado actual:``, pero el fichero vivo usa ``ACTIVE_TICKET:``/``STATUS:``, asi
+    que el sub nunca casaba, ``updated == state_content`` y NO SE ESCRIBIA NADA. El
+    cierre creia haber sincronizado y STATE.md arrastraba el ticket de una sesion
+    anterior indefinidamente (medido: cerrando el vuelo de 026v/026r, STATE.md
+    seguia en WOT-2026-022i). De ahi que ``--session-close`` resolviera el ticket
+    por FALLBACK del work_plan stale. Es el mecanismo concreto detras del sintoma
+    que WOT-2026-037c(c) describe. Un no-op silencioso: exit 0, cero efecto.
     """
     state_content = read_file(STATE_FILE)
     if not state_content:
@@ -6136,6 +6147,20 @@ def _sync_state_after_session_close() -> None:
         r"^(- \*\*Estado actual:\*\*|Estado actual:) .+",
         "Estado actual: COMPLETED",
         state_content,
+        flags=re.MULTILINE,
+    )
+    # Formato vivo: dos claves separadas. El ticket se LIBERA -- dejarlo apuntando
+    # al de la sesion cerrada es lo que contamina el arranque siguiente.
+    updated = re.sub(
+        r"^ACTIVE_TICKET:[^\r\n]*",
+        "ACTIVE_TICKET: -",
+        updated,
+        flags=re.MULTILINE,
+    )
+    updated = re.sub(
+        r"^STATUS:[^\r\n]*",
+        "STATUS: COMPLETED",
+        updated,
         flags=re.MULTILINE,
     )
     if updated != state_content:
