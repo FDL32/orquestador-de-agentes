@@ -907,6 +907,23 @@ def test_real_config_codex_delivers_multiline_prompt_intact(monkeypatch):
     """
     cfg = ed.load_motor_config()
     backend_cfg = cfg["backends"]["codex"]
+    # ANCLAJE POR IDENTIDAD A LA CONFIG REAL (hallazgo de la manager-review, MUT-1).
+    # Sin esto, sustituir `load_motor_config()` por un dict inline dejaba el test
+    # VERDE -- reintroduciendo el mismo fixture drift que este test existe para
+    # prevenir. NO basta releer el fichero de disco y afirmar sobre EL: la mutacion
+    # cambia el objeto que se USA, no el fichero, asi que esa asercion pasaba igual.
+    # Hay que exigir que el backend_cfg ejercido sea IDENTICO (mismo contenido) al
+    # que devuelve el loader canonico. Se afirma sobre la PROCEDENCIA del dato,
+    # nunca sobre una ruta de maquina: el motor es agnostico del destino.
+    assert backend_cfg == ed.load_motor_config()["backends"]["codex"], (
+        "el backend_cfg ejercido debe venir de load_motor_config(), no de un dict "
+        "inline: desconectar el test de la config real es el fixture drift que este "
+        "test existe para impedir"
+    )
+    assert backend_cfg.get("prompt_via_stdin") is True, (
+        "el backend codex de la CONFIG REAL debe declarar prompt_via_stdin: si esta "
+        "asercion cae, el fix de 027k se ha perdido del fichero versionado"
+    )
     captured: dict = {}
 
     class _CapturingPopen:
