@@ -285,6 +285,18 @@ def _transport_agent(
       colgaba (analogo al WinError 206 de codex, WOT-2026-035c, resuelto igual:
       prompt por stdin). Los backends ``channel: api`` (los nan) no pasan por
       aqui -- van por HTTP y nunca sufrieron el hang.
+
+    WOT-2026-038o -- contrato de AMBITO:
+    - `backend_cfg["repo_root"]` (opcional) es el arbol desde el que el hijo
+      debe operar. Se pasa como `cwd=` al Popen SOLO si viene declarado; si
+      falta, el hijo hereda el cwd del padre (conducta previa intacta).
+    - Sin esto, un codex despachado por esta ruta refutaba sobre el arbol del
+      PROCESO PADRE, no sobre el repo que la llamada declara. 038l cerro la
+      misma clase de fallo en run_codex_audit.py y dejo ESTA ruta declarada
+      OUT-OF-SCOPE; aqui se cierra con el mismo patron (repo_root opcional,
+      `cwd=` condicional) y sin tocar la firma publica del transporte
+      `transport(profile, backend_cfg, messages, timeout)`, que los tests
+      inyectan como `_FakeTransport` con esa aridad exacta.
     """
     prompt = "\n\n".join(m["content"] for m in messages)
     via_stdin = bool(backend_cfg.get("prompt_via_stdin"))
@@ -296,6 +308,10 @@ def _transport_agent(
         cmd = [backend_cfg["executable"], *backend_cfg.get("args", []), prompt]
         stdin_mode = subprocess.DEVNULL
         stdin_payload = None
+    repo_root = backend_cfg.get("repo_root")
+    popen_kwargs: dict = {}
+    if repo_root is not None:
+        popen_kwargs["cwd"] = repo_root
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
@@ -305,6 +321,7 @@ def _transport_agent(
         shell=False,
         encoding="utf-8",
         errors="replace",
+        **popen_kwargs,
     )
     try:
         out, _err = proc.communicate(input=stdin_payload, timeout=timeout)

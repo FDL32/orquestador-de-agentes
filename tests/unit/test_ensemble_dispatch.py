@@ -1374,3 +1374,87 @@ def test_no_env_or_transport_leakage_in_025z_test_section():
     section = source[marker_index:]
     hits = [token for token in _FORBIDDEN_TEST_DIFF_TOKENS if token in section]
     assert hits == [], f"token(s) prohibido(s) en el bloque de tests: {hits}"
+
+
+# --- WOT-2026-038o: contrato de AMBITO del Popen de _transport_agent ---------
+#
+# ROJO que fija: el Popen de _transport_agent NO recibia `cwd=`, asi que un
+# codex despachado por esa ruta refutaba sobre el arbol del PROCESO PADRE, no
+# sobre el repo que la llamada declara. 038l cerro la misma clase de fallo en
+# run_codex_audit.py y declaro ESTA ruta OUT-OF-SCOPE explicitamente.
+#
+# El probe es de RUTA PRODUCTIVA (CEM): no inspecciona el kwarg ni mockea el
+# Popen -- lanza un shim REAL por ESE Popen y le pregunta al HIJO su os.getcwd().
+# Por eso la mutacion de cierre (quitar `cwd=<repo_root>`) lo hace CAER: el
+# hijo vuelve a imprimir el cwd del padre.
+#
+# La firma publica transport(profile, backend_cfg, messages, timeout) NO se
+# toca (los tests inyectan _FakeTransport con esa aridad): el cwd viaja DENTRO
+# de backend_cfg, nunca como 5o parametro posicional.
+
+
+def _fake_cwd_echo_executable(tmp_path: Path) -> str:
+    """Shim REAL que imprime su propio os.getcwd() y sale con 0.
+
+    Mismo patron que tests/unit/test_run_codex_audit.py::_fake_codex_executable
+    (.cmd en Windows, .sh + chmod en POSIX). Vive en tmp_path, FUERA del arbol:
+    dirty=0 garantizado.
+    """
+    script = tmp_path / "echo_cwd.py"
+    script.write_text(
+        "import os,sys\nsys.stdout.write(os.getcwd())\nsys.stdout.flush()\n",
+        encoding="utf-8",
+    )
+    if sys.platform == "win32":
+        shim = tmp_path / "echo_cwd.cmd"
+        shim.write_text(
+            f'@echo off\r\n"{sys.executable}" "{script}"\r\n', encoding="utf-8"
+        )
+        return str(shim)
+    else:  # pragma: no cover -- POSIX shim, not exercised on this Windows CI
+        shim = tmp_path / "echo_cwd.sh"
+        shim.write_text(
+            f'#!/bin/sh\nexec "{sys.executable}" "{script}"\n', encoding="utf-8"
+        )
+        shim.chmod(0o755)
+        return str(shim)
+
+
+def test_038o_transport_agent_runs_child_in_declared_repo_root(tmp_path):
+    """DoD (b): el hijo observa el repo_root DECLARADO, no el cwd del padre.
+
+    MUTACION DE CIERRE: quitar `cwd=` del Popen -> el hijo imprime el cwd del
+    padre y este test CAE. (Inyectar `cwd=None` es EQUIVALENTE a omitirlo: esa
+    mutacion sintactica NO cierra el ticket, por eso se compara contra un
+    directorio REAL distinto del cwd del padre.)
+    """
+    repo_root = tmp_path / "declared_repo"
+    repo_root.mkdir()
+    parent_cwd = Path.cwd().resolve()
+    assert repo_root.resolve() != parent_cwd, "fixture invalido: cwd padre == repo_root"
+
+    backend_cfg = {
+        "executable": _fake_cwd_echo_executable(tmp_path),
+        "args": [],
+        "repo_root": str(repo_root),
+    }
+    out = ed._transport_agent({"channel": "agent"}, backend_cfg, [{"content": "x"}], 60)
+
+    assert Path(out.strip()).resolve() == repo_root.resolve(), (
+        f"el hijo observo {out.strip()!r}, no el repo_root declarado "
+        f"{repo_root}; el Popen esta corriendo en el arbol equivocado"
+    )
+    assert Path(out.strip()).resolve() != parent_cwd
+
+
+def test_038o_transport_agent_without_repo_root_inherits_parent_cwd(tmp_path):
+    """Backward-compat: sin `repo_root`, el hijo hereda el cwd del padre.
+
+    Fija que el kwarg se pasa SOLO si viene declarado (mismo contrato que
+    run_codex_audit.py:129-157). Sin este test, pasar siempre `cwd=` seria un
+    cambio de conducta silencioso para toda llamada que no lo declare.
+    """
+    backend_cfg = {"executable": _fake_cwd_echo_executable(tmp_path), "args": []}
+    out = ed._transport_agent({"channel": "agent"}, backend_cfg, [{"content": "x"}], 60)
+
+    assert Path(out.strip()).resolve() == Path.cwd().resolve()
