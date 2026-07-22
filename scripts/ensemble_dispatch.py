@@ -52,6 +52,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -165,6 +166,54 @@ def _resolve_project_root(raw: str) -> Path:
     return root
 
 
+# WOT-2026-027n: gate de CONTENIDO, acotado a ASIGNACION CON VALOR DE ALTA
+# ENTROPIA y a prefijos de credencial inequivocos. NUNCA substring suelto.
+#
+# POR QUE ACOTADO (medido 2026-07-22, no teorico): un gate por substring
+# ('token', 'secret', 'api_key', 'sk-') bloquea bundles REALES del repo que
+# citan esos terminos en PROSA TECNICA -- incluido el bundle de gobernanza de
+# este mismo ticket, con lo que el vuelo se auto-bloquearia en su propio
+# MANAGER_REVIEW. Un gate que bloquea el trabajo legitimo ensena al operador a
+# saltarselo, y un gate que se saltan es peor que no tenerlo (anti-patron
+# "aplicate tu propia vara", AGENTS.md). Los fixtures versionados de
+# tests/fixtures/ensemble_bundles/ fijan ese limite: DEBEN pasar.
+#
+# RIESGO RESIDUAL DECLARADO (no lo cierra este ticket): de los 7 vectores
+# medidos, esto cierra .env clasico, clave privada PEM y tokens con prefijo
+# reconocible. SIGUEN SALIENDO: valor sin patron, base64 opaco, PII y rutas de
+# maquina. Hoy el riesgo es BAJO porque el AGENTE elige que va en el bundle; se
+# dispara cuando lo elija el MODELO (WOT-2026-027m, que declara 027n como
+# precondicion dura).
+_HIGH_ENTROPY_ASSIGNMENT = re.compile(
+    r"(password|api_key|token|secret)\s*=\s*[\"'][^\"']{8,}[\"']",
+    re.IGNORECASE,
+)
+_CREDENTIAL_LITERALS = (
+    re.compile(r"sk-[A-Za-z0-9]{16,}"),
+    re.compile(r"ghp_[A-Za-z0-9]{20,}"),
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
+)
+
+
+def _content_leak(payload_text: str) -> str | None:
+    """Nombre del patron de credencial detectado, o None si el payload esta limpio.
+
+    Before: `payload_text` es el material serializado que saldria hacia el
+        backend. No se asume ningun encoding ni tamano.
+    During: casa (1) asignacion `clave = "<valor de >=8 chars>"` y (2) los
+        prefijos de credencial inequivocos. Ambos exigen un VALOR, de modo que
+        la mencion en prosa del nombre de la clave no dispara.
+    After: retorna la etiqueta del patron (para el `reason` del caller) o None.
+        No lanza: el caller decide el veredicto.
+    """
+    if _HIGH_ENTROPY_ASSIGNMENT.search(payload_text):
+        return "asignacion con valor de alta entropia"
+    for pattern in _CREDENTIAL_LITERALS:
+        if pattern.search(payload_text):
+            return f"literal de credencial ({pattern.pattern})"
+    return None
+
+
 def privacy_preflight(
     payload_text: str,
     sensitivity: str | None,
@@ -178,8 +227,11 @@ def privacy_preflight(
         se trata como `private` (fail-closed); `backend_cfg` es la entrada de
         `backends` (con `trusted` opcional, ausente = false).
     During: un backend `trusted: true` pasa siempre. Para el resto: bloquea
-        si la sensibilidad no es `public`, o si el payload contiene alguna
-        raiz declarada en `ensemble_private_roots` (rama de contenido).
+        si la sensibilidad no es `public`; en la rama `public` bloquea ademas
+        si el payload nombra una raiz de `ensemble_private_roots` (filtro por
+        RUTA) o si contiene una credencial (filtro por CONTENIDO, WOT-2026-027n:
+        `_content_leak`, acotado a asignacion con valor de alta entropia y a
+        prefijos inequivocos -- la mencion en prosa NO dispara).
     After: retorna (allowed, reason). El caller DEBE abortar el envio si
         allowed es False; `send_to_profile` lo hace lanzando
         DispatchBlockedError ANTES de tocar red (mutation: sin este paso,
@@ -193,7 +245,10 @@ def privacy_preflight(
     for root in private_roots or []:
         if root and root in payload_text:
             return False, f"payload contiene raiz privada declarada: {root}"
-    return True, "payload public sin raices privadas"
+    leak = _content_leak(payload_text)
+    if leak is not None:
+        return False, f"payload contiene contenido sensible: {leak}"
+    return True, "payload public sin raices privadas ni contenido sensible"
 
 
 # WOT-2026-029f: api.nan.builders vive tras Cloudflare, que rechaza la firma

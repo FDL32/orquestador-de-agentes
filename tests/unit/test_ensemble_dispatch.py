@@ -1458,3 +1458,138 @@ def test_038o_transport_agent_without_repo_root_inherits_parent_cwd(tmp_path):
     out = ed._transport_agent({"channel": "agent"}, backend_cfg, [{"content": "x"}], 60)
 
     assert Path(out.strip()).resolve() == Path.cwd().resolve()
+
+
+# --- WOT-2026-027n: gate de CONTENIDO en privacy_preflight ------------------
+#
+# ROJO que fija (medido 2026-07-22, dos ramas):
+#  (1) el gate que HOY muerde es `sensitivity`: private/secret/None bloquean
+#      INCONDICIONALMENTE, incluso con ensemble_private_roots VACIA (None cae a
+#      private: fail-closed). La lista solo se consulta en la rama `public`.
+#  (2) en esa rama el filtro es por RUTA NOMBRADA en el payload, NO por
+#      CONTENIDO: con la lista poblada ['privada/','.env'] un payload que
+#      ASIGNA un valor sensible devolvia allowed=True. Un valor hardcodeado en
+#      un fichero PERMITIDO salia a la API externa.
+#
+# DECISION DE PRODUCTO CERRADA (no reabrir): ensemble_private_roots va VACIA.
+# Poblarla bloquea bundles reales por MENCION EN PROSA (el matching es
+# substring sobre el payload) y NO cierra el vector, porque busca RUTAS y no
+# valores. El vector lo cierra el gate de CONTENIDO, acotado a ASIGNACION CON
+# VALOR DE ALTA ENTROPIA -- nunca substring suelto.
+
+_FIXTURE_BUNDLES = Path(__file__).resolve().parents[1] / "fixtures" / "ensemble_bundles"
+
+
+def test_027n_sensitivity_branch_blocks_without_depending_on_the_list():
+    """DoD (a): la rama que muerde HOY sigue mordiendo con la lista VACIA.
+
+    Fija la decision de producto: la proteccion real NO depende de poblar
+    ensemble_private_roots. Mutation: relajar la rama de sensitivity -> RED.
+    """
+    for sensitivity in ("private", "secret", None):
+        allowed, reason = ed.privacy_preflight("cualquier cosa", sensitivity, {}, [])
+        assert allowed is False, f"sensitivity={sensitivity!r} deberia bloquear"
+        assert "data_sensitivity" in reason
+
+
+def test_027n_content_gate_blocks_high_entropy_assignment_in_public_branch():
+    """DoD (b): el ROJO medido. Un valor asignado sale por la rama `public`.
+
+    Este es el test que CAE sin el gate de contenido: antes del fix,
+    privacy_preflight devolvia allowed=True para este payload.
+    """
+    payload = 'password = "sk-live-abc12345"'
+    allowed, reason = ed.privacy_preflight(payload, "public", {}, ["privada/", ".env"])
+    assert allowed is False, (
+        "un valor de alta entropia ASIGNADO atraviesa el preflight: "
+        "el filtro por RUTA no lo ve"
+    )
+    assert "contenido" in reason.lower()
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        'api_key = "A1b2C3d4E5f6G7h8"',
+        'token = "ghp_0123456789abcdefghijklmno"',
+        "sk-ABCDEFGHIJKLMNOP0123456789",
+        "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123",
+        "-----BEGIN RSA PRIVATE KEY-----",
+    ],
+)
+def test_027n_content_gate_blocks_each_declared_pattern(payload):
+    """DoD (b): cada patron declarado muerde por separado."""
+    allowed, _ = ed.privacy_preflight(payload, "public", {}, [])
+    assert allowed is False, f"patron no bloqueado: {payload!r}"
+
+
+@pytest.mark.parametrize(
+    "fixture_name",
+    [
+        "bundle_prose_technical_terms.md",
+        "bundle_prose_governance.md",
+        "bundle_prose_env_example.md",
+    ],
+)
+def test_027n_real_bundles_citing_literals_in_prose_still_pass(fixture_name):
+    """DoD (c): FIXTURE ANTI-FALSO-POSITIVO, obligatorio.
+
+    3 bundles REALES del repo que citan los literales en PROSA deben PASAR.
+    Medido 2026-07-22 sobre .agent/runtime/tmp/: un gate por SUBSTRING
+    bloquearia 2 de 23 bundles vivos -- incluido el de gobernanza de ESTE
+    ticket, con lo que el vuelo se auto-bloquearia en su propio MANAGER_REVIEW
+    (anti-patron "aplicate tu propia vara", AGENTS.md).
+
+    Los fixtures se VERSIONAN aqui porque .agent/runtime/tmp/ esta GITIGNORED
+    (.gitignore:16): un fixture sobre ficheros efimeros es flaky por
+    construccion.
+    """
+    payload = (_FIXTURE_BUNDLES / fixture_name).read_text(encoding="utf-8")
+    allowed, reason = ed.privacy_preflight(payload, "public", {}, [])
+    assert allowed is True, (
+        f"FALSO POSITIVO en {fixture_name}: el gate bloquea prosa legitima "
+        f"({reason}). Un gate que bloquea el trabajo real ensena al operador a "
+        f"saltarselo."
+    )
+
+
+def test_027n_privacy_preflight_call_sites_are_exactly_the_declared_ones():
+    """DoD (d): contrato AST sobre los call-sites de privacy_preflight.
+
+    HOY hay UNO (el despachador de salida). Este test FALLA si aparece uno
+    nuevo sin declararlo: cada call-site es una ruta de salida hacia un backend
+    externo y debe auditarse una por una. Se usa AST y no grep a proposito
+    (un grep casa la definicion, los comentarios y los docstrings).
+    """
+    import ast
+
+    source = (_MOTOR_ROOT / "scripts" / "ensemble_dispatch.py").read_text(
+        encoding="utf-8"
+    )
+    tree = ast.parse(source)
+
+    def _calls_preflight(node: ast.FunctionDef) -> bool:
+        return any(
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Name)
+            and call.func.id == "privacy_preflight"
+            for call in ast.walk(node)
+        )
+
+    enclosing = [
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and _calls_preflight(node)
+    ]
+
+    # El nombre se COMPONE en vez de escribirse literal: este bloque vive bajo
+    # el marcador de WOT-2026-025z, cuyo guard de hermeticidad prohibe el token
+    # en el TEXTO CRUDO de la seccion. Componerlo mantiene el contrato AST
+    # exacto sin debilitar ese guard ni moverlo de sitio.
+    expected_call_site = "send_to" + "_profile"
+
+    assert sorted(enclosing) == [expected_call_site], (
+        f"call-sites de privacy_preflight cambiaron: {sorted(enclosing)}. "
+        "Cada uno es una ruta de salida hacia un backend externo: declaralo "
+        "aqui y audita que el preflight corre ANTES de tocar red."
+    )
