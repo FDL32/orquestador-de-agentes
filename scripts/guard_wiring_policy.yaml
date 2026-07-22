@@ -22,12 +22,22 @@ known_unwired:
   # `from scripts.check_backlog_commits_landed import audit, parse_archived_commits`
   # y agent_controller --validate corre en pre-commit/closeout. El AST lo alcanza
   # ahora -> wired. Dejarlo aqui seria una declaracion STALE que el propio gate caza.
-  validate_batch_dag: WOT-2026-023t
+  # validate_batch_dag: su dueno original WOT-2026-023t quedo ARCHIVADO con el
+  # guard aun unwired (huerfano cazado por el orphan-owner check en el cierre
+  # 2026-07-22). Se RE-DECLARA con dueno VIVO: WOT-2026-038b ya posee el cableado
+  # de check_bundle_receipts en el MISMO flujo (el colector del bucle antes del
+  # fan-out); validate_batch_dag pertenece al mismo arranque de vuelo (el
+  # orquestador lo corre A MANO en cada Paso 0, medido 2026-07-22: funciono
+  # porque alguien se acordo -- norma, no barrera).
+  validate_batch_dag: WOT-2026-038b
   # validate_observations: RETIRADO (WOT-2026-035b) -- ahora cableado via
   # check_portable_memory_archive_schema.py (pre-commit always_run + prepush),
   # que lo importa. Dejarlo aqui seria una declaracion STALE.
   check_portable_memory_promotion: WOT-2026-024r
-  check_motor_pristine: WOT-2026-023y
+  # check_motor_pristine: RETIRADO de known_unwired (cierre 2026-07-22) -- SI esta
+  # cableado, pero a 2 saltos que el AST de 1-hop no alcanza (string en lista de
+  # subprocess dentro del recolector). Movido a wired_via con probe. Su dueno
+  # original WOT-2026-023y esta archivado, coherente: el trabajo se hizo.
   # check_destino_publish_ready (era WOT-2026-023b): quedo CABLEADO como efecto
   # colateral de WOT-2026-024w -- el nuevo run_motor_destination_integration_check en
   # prepush importa check_motor_destination_integration, que delega en
@@ -69,8 +79,14 @@ known_unwired:
   # review bridge), que vive en `bus/` -- FORBIDDEN SURFACE del contrato frozen
   # T-026K-001 (FLT acotada a los 3 scripts + 2 tests; bus/ prohibido). El
   # MECANISMO se entrega aqui; su invocacion desde el loop es follow-up declarado.
-  # Deuda NOMBRADA con dueno real (no huerfano undeclared).
-  check_prompt_bias: WOT-2026-026k
+  # RE-DECLARADO 2026-07-22 (su dueno original WOT-2026-026k quedo archivado con
+  # el guard aun unwired -- huerfano cazado por el orphan-owner check): el dueno
+  # VIVO es WOT-2026-038b, que ya posee el cableado del bundle-guard hermano
+  # (check_bundle_receipts) en el mismo arranque del bucle. Nota de estado real:
+  # build_extraction_prompt.py (WOT-2026-027q, commit 76b761b) ya lo importa y lo
+  # ejecuta en sus gates, pero ese generador aun no tiene invocador de frontera
+  # propio -- cablear ambos es el mismo trabajo de 038b.
+  check_prompt_bias: WOT-2026-038b
 
 extra_guards:
   # Barreras REALES sin prefijo de guard. v3 no podia ni verlas ni contarlas.
@@ -90,3 +106,11 @@ wired_via:
     "pre_handoff_guard.py") -> cmd=[...] :2931 -> subprocess.run(cmd) en
     _run_pre_handoff_guard, llamado desde :3357. Probe: grep pre_handoff_guard.py
     .agent/agent_controller.py (2 saltos, fuera del alcance de 1-hop del AST)
+  # check_motor_pristine (movido desde known_unwired, cierre 2026-07-22): el
+  # recolector de salud lo EJECUTA como subprocess en cada auditoria de cierre
+  # (camino que corre solo). String-en-lista = 2 saltos, el AST de 1-hop no lo ve.
+  check_motor_pristine: >-
+    scripts/collect_system_health.py:449-460 (checks["motor_pristine_snapshot"] =
+    _run([sys.executable, "scripts/check_motor_pristine.py", "--snapshot", ...])).
+    Probe: grep -n "check_motor_pristine.py" scripts/collect_system_health.py
+    -> :452; el recolector corre en cada system-health audit del cierre.
