@@ -79,44 +79,219 @@ _OBJECTION_MARKERS = re.compile(
     re.IGNORECASE,
 )
 
+# H8 (WOT-2026-039c): la NEGACION invertia el filtro. "Confirmado: no hay bug"
+# matchea el marcador 'bug' y salia clasificado como objecion, que es lo
+# contrario de lo que dice. Allowlist mecanica de negadores, acotada y
+# declarada: si un marcador va precedido por uno de estos EN LA MISMA ORACION,
+# no cuenta como objecion. Perseguir mas formas es parsing linguistico y es
+# NON-GOAL declarado del ticket.
+_NEGATORS = ("no", "sin", "ningun", "ninguna", "without")
 
-def classify_verdict(text: str) -> str:
-    """Clasifica la FORMA del veredicto: 'objection' | 'confirmation'.
+# Segmentacion mecanica de oracion: corte en .;: y salto de linea. Definicion
+# cerrada en el contrato (O6) para que "misma clausula" no sea interpretable.
+_SENTENCE_SPLIT = re.compile(r"[.;:\n]")
+
+# El negador 'sin' colisiona con el marcador 'sin embargo': ahi 'sin' NO niega,
+# forma parte del propio marcador. Caso borde declarado en el contrato.
+_NEGATOR_FALSE_FRIENDS = ("sin embargo",)
+
+# Schema lens-answer/v1: bloque ```cite con path/line/quote. NO admite
+# command/exit_code -- un receipt de EJECUCION emitido por una lente sin
+# filesystem es fabricacion estructural (H9 cerrado por construccion en esta
+# ruta: el call-site del ensemble es CITE-ONLY).
+_RECEIPT_PRESENT_RE = re.compile(r"```receipt\s*\n", re.DOTALL)
+_CITE_FENCE_RE = re.compile(r"```cite\s*\n(.*?)```", re.DOTALL)
+_CITE_PATH_RE = re.compile(r"^path:\s*(.+)$", re.MULTILINE)
+_CITE_LINE_RE = re.compile(r"^line:\s*(.+)$", re.MULTILINE)
+_CITE_QUOTE_RE = re.compile(r"^quote:\s*(.+)$", re.MULTILINE)
+
+# Longitud minima de `quote`. Un quote de 1-2 caracteres casaria con cualquier
+# linea y convertiria la verificacion en un sello de goma (hueco cazado por
+# Codex en el CF-audit).
+_MIN_QUOTE_LEN = 8
+
+
+def _strip_negated_markers(text: str) -> str:
+    """Elimina de `text` los marcadores de objecion que estan NEGADOS.
 
     Before: `text` es la salida cruda de una lente.
-    During: si hay marcador de objecion en cualquier punto, es objecion (una
-        objecion precedida de cortesia sigue siendo objecion). Si NO lo hay y
-        el texto ABRE confirmando, es confirmacion.
-    After: retorna la etiqueta. NO juzga si la objecion es BUENA (non-goal).
+    During: segmenta por oracion (corte mecanico en `.;:` y salto de linea);
+        en cada oracion que contenga un negador ANTES de un marcador, borra
+        ese marcador del texto devuelto. El negador 'sin' se ignora cuando
+        forma parte de 'sin embargo' (que ES un marcador, no una negacion).
+    After: retorna el texto con los marcadores negados suprimidos, para que
+        `_OBJECTION_MARKERS.search` sobre el resultado no los cuente. No
+        modifica el original ni juzga semantica: es supresion posicional.
     """
-    if _OBJECTION_MARKERS.search(text):
+    kept: list[str] = []
+    for sentence in _SENTENCE_SPLIT.split(text):
+        lowered = sentence.lower()
+        for friend in _NEGATOR_FALSE_FRIENDS:
+            lowered = lowered.replace(friend, " " * len(friend))
+        negator_at = None
+        for negator in _NEGATORS:
+            match = re.search(rf"\b{negator}\b", lowered)
+            if match and (negator_at is None or match.start() < negator_at):
+                negator_at = match.start()
+        if negator_at is None:
+            kept.append(sentence)
+            continue
+        # Suprime los marcadores que aparecen DESPUES del negador.
+        head, tail = sentence[:negator_at], sentence[negator_at:]
+        kept.append(head + _OBJECTION_MARKERS.sub(" ", tail))
+    return "\n".join(kept)
+
+
+def classify_verdict(text: str) -> str:
+    """Clasifica la FORMA del veredicto: 'objection' | 'confirmation' | 'neutral'.
+
+    Before: `text` es la salida cruda de una lente.
+    During: (1) suprime los marcadores NEGADOS (H8: 'no hay bug' no es una
+        objecion sobre un bug); (2) si queda algun marcador de objecion, es
+        objecion -- una objecion precedida de cortesia sigue siendo objecion;
+        (3) si no y el texto ABRE confirmando, es confirmacion; (4) si no es
+        ninguna de las dos, es 'neutral'.
+    After: retorna la etiqueta. El estado 'neutral' cierra H7: antes el
+        default era 'objection', asi que RUIDO sin marcador ninguno se
+        contaba como aportacion (fail-open del clasificador de forma). NO
+        juzga si la objecion es BUENA (non-goal).
+    """
+    if _OBJECTION_MARKERS.search(_strip_negated_markers(text)):
         return "objection"
     if _CONFIRMATION_OPENERS.search(text):
         return "confirmation"
-    return "objection"
+    return "neutral"
 
 
-def filter_lens_output(text: str, root: Path) -> tuple[bool, str, list[str]]:
+def validate_lens_cites(text: str, root: Path) -> tuple[bool, list[str]]:
+    """Verifica los bloques ```cite del schema lens-answer/v1.
+
+    Before: `text` es la salida cruda de una lente sin filesystem; `root` es
+        el arbol contra el que se verifican las citas.
+    During: por cada bloque ```cite exige `path:` relativo dentro de root y
+        resoluble, `line:` entero existente en el fichero, y `quote:` de al
+        menos `_MIN_QUOTE_LEN` caracteres que APAREZCA en esa linea. Todo
+        read-only: abrir, leer, comparar substring. No ejecuta NADA (un
+        `command:` en la salida de una lente se ignora como prosa).
+    After: retorna `(ok, problems)`. `ok=False` con `problems` citables si no
+        hay bloque cite ('missing_cite_block') o si alguna cita no verifica.
+    """
+    blocks = _CITE_FENCE_RE.findall(text)
+    if not blocks:
+        return False, ["missing_cite_block (schema lens-answer/v1 exige ```cite)"]
+
+    problems: list[str] = []
+    for block in blocks:
+        problem = _validate_one_cite(block, root)
+        if problem:
+            problems.append(problem)
+    return (not problems), problems
+
+
+def _resolve_cited_path(rel: str, root: Path) -> tuple[Path | None, str | None]:
+    """Resuelve una ruta citada dentro de `root`, o devuelve el problema.
+
+    Una ruta absoluta o con `..` podria .exists() FUERA del repo y dar un
+    falso verde de wrong-root: se rechaza antes de tocar disco.
+    """
+    cand = Path(rel)
+    if cand.is_absolute():
+        return None, f"cited path is absolute (must be relative): {rel}"
+    try:
+        resolved = (root / cand).resolve()
+        root_r = root.resolve()
+        inside = resolved == root_r or root_r in resolved.parents
+    except (OSError, ValueError):
+        inside = False
+    if not inside:
+        return None, f"cited path escapes root: {rel}"
+    if not resolved.is_file():
+        return None, f"cited path does not resolve: {rel}"
+    return resolved, None
+
+
+def _validate_one_cite(block: str, root: Path) -> str | None:
+    """Valida UN bloque cite. Retorna el problema, o None si verifica."""
+    path_m = _CITE_PATH_RE.search(block)
+    line_m = _CITE_LINE_RE.search(block)
+    quote_m = _CITE_QUOTE_RE.search(block)
+    if not (path_m and line_m and quote_m):
+        return "cite block incompleto: exige path:, line: y quote:"
+
+    rel = path_m.group(1).strip()
+    resolved, problem = _resolve_cited_path(rel, root)
+    if problem:
+        return problem
+
+    try:
+        lineno = int(line_m.group(1).strip())
+    except ValueError:
+        return f"line is not an integer: {line_m.group(1).strip()!r}"
+
+    quote = quote_m.group(1).strip()
+    if len(quote) < _MIN_QUOTE_LEN:
+        return (
+            f"quote too short ({len(quote)} < {_MIN_QUOTE_LEN} chars): "
+            "casaria con cualquier linea"
+        )
+
+    lines = resolved.read_text(encoding="utf-8", errors="replace").splitlines()
+    if not (1 <= lineno <= len(lines)):
+        return f"line {lineno} out of range in {rel} ({len(lines)} lines)"
+    if quote not in lines[lineno - 1]:
+        return (
+            f"quote not found at {rel}:{lineno} (cita fabricada: la linea "
+            "existe pero no dice lo que la lente afirma)"
+        )
+    return None
+
+
+def filter_lens_output(
+    text: str, root: Path, *, cite_only: bool = False
+) -> tuple[bool, str, list[str]]:
     """Decide si la salida de una lente se acepta como APORTACION.
 
     Before: `text` es la salida cruda; `root` es el arbol contra el que se
         verifican las citas (el repo que la lente decia revisar).
-    During: (1) verifica las CITAS con `validate_receipt` -- una cita fabricada
-        (path que no resuelve, o que escapa del root) descarta la salida;
+        `cite_only=True` fuerza el schema lens-answer/v1 (bloque ```cite) e
+        IGNORA cualquier bloque ```receipt como prosa: es el modo del
+        call-site del ensemble, donde el emisor es una lente SIN filesystem y
+        un receipt de ejecucion solo puede ser fabricado (H9). El default
+        `False` conserva la conducta heredada del CLI standalone: receipt si
+        existe, cite si no (brazos CON filesystem que si ejecutan).
+    During: (1) verifica las CITAS -- fabricada (path que no resuelve, escapa
+        del root, o quote que no esta en la linea) descarta la salida;
         (2) clasifica la FORMA del veredicto. Ambos mecanismos son
         INDEPENDIENTES: quitar uno no enmascara al otro (DoD (d)).
-    After: retorna `(accepted, reason, problems)`. `accepted=False` con
-        `reason` en {'fabricated_citation', 'confirmation_no_objection'}.
+    After: retorna `(accepted, reason, problems)`. `reason` en
+        {'accepted', 'fabricated_citation', 'confirmation_no_objection',
+        'no_contribution'}.
     """
-    validate_receipt = _load_receipt_validator()
-    ok, problems = validate_receipt(text, root)
-    if not ok:
-        return False, "fabricated_citation", problems
+    if cite_only or not _RECEIPT_PRESENT_RE.search(text):
+        ok, problems = validate_lens_cites(text, root)
+        if not ok:
+            missing = any(p.startswith("missing_cite_block") for p in problems)
+            return (
+                False,
+                ("no_contribution" if missing else "fabricated_citation"),
+                (problems),
+            )
+    else:
+        validate_receipt = _load_receipt_validator()
+        ok, problems = validate_receipt(text, root)
+        if not ok:
+            return False, "fabricated_citation", problems
 
-    if classify_verdict(text) == "confirmation":
+    verdict = classify_verdict(text)
+    if verdict == "confirmation":
         return False, "confirmation_no_objection", []
+    if verdict == "neutral":
+        # H7: sin marcador de objecion NI apertura de confirmacion, la salida
+        # es RUIDO. Antes caia en el default 'objection' y se contaba como
+        # aportacion: fail-open del clasificador de forma.
+        return False, "no_contribution", ["veredicto neutro: no aporta objecion"]
 
-    return True, "objection_with_verified_citation", []
+    return True, "accepted", []
 
 
 def main(argv: list[str] | None = None) -> int:

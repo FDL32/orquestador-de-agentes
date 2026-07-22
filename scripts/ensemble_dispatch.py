@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -639,6 +640,27 @@ def resolve_fallback_backend(
     )
 
 
+def _load_lens_filter():
+    """Importa `filter_lens_output` del script hermano (WOT-2026-039c).
+
+    Before: `scripts/filter_lens_output.py` existe (entregado por 027o).
+    During: carga por ruta y registra en sys.modules antes de ejecutar
+        (el modulo carga a su vez check_bundle_receipts por el mismo patron).
+    After: retorna la funcion. Lanza ImportError si no carga: sin filtro NO se
+        corre en modo degradado -- un pipeline que declara el filtro y lo
+        pierde en silencio seria exactamente el fail-open que este ticket
+        cierra.
+    """
+    path = Path(__file__).resolve().parent / "filter_lens_output.py"
+    spec = importlib.util.spec_from_file_location("filter_lens_output", path)
+    if spec is None or spec.loader is None:  # pragma: no cover - defensivo
+        raise ImportError(f"no se puede cargar {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["filter_lens_output"] = module
+    spec.loader.exec_module(module)
+    return module.filter_lens_output
+
+
 def _record_round(
     project_root: Path,
     *,
@@ -654,7 +676,13 @@ def _record_round(
     failure_mode: str | None = None,
     session_id: str | None = None,
     latency_ms: int | None = None,
+    outcome_override: str | None = None,
 ) -> None:
+    # WOT-2026-039c: `outcome_override` permite registrar una salida DESCARTADA
+    # por el filtro de lente sin vaciar `reply` -- vaciarlo para forzar el
+    # outcome mentiria sobre lo que respondio el backend y borraria la
+    # evidencia. La derivacion original (texto vacio -> no-aportacion) se
+    # conserva intacta cuando no se pasa override.
     text = (reply or "").strip()
     append_scorecard(
         project_root,
@@ -668,7 +696,7 @@ def _record_round(
             "model": profile.get("model"),
             "backend_version": backend_version,
             "ronda": ronda,
-            "outcome": "no-aportacion" if not text else None,
+            "outcome": outcome_override or ("no-aportacion" if not text else None),
             "evidencia": text[:500] or "(respuesta vacia)",
             "input_bytes": input_bytes,
             "context_kind": context_kind,
@@ -756,6 +784,14 @@ def run_pipeline(
         )
         transcript.append({"ronda": 0, "rol": rol, "reply": reply})
 
+    # WOT-2026-039c: filtro de salida de lente. Clave AUSENTE = OFF = conducta
+    # heredada (aditividad real: los pipelines que no la declaran no cambian).
+    # Solo aplica al CHALLENGER y solo en rondas >=1: la ronda 0 es el
+    # premise_check, invariante del dispatcher, cuya respuesta legitima no
+    # trae bloque cite y quedaria siempre descartada.
+    lens_filter_on = bool(pipe.get("lens_output_filter", False))
+    filter_lens_output = _load_lens_filter() if lens_filter_on else None
+
     rubric = pipe.get("rubric", "")
     for ronda in range(1, total_rounds + 1):
         for rol, prof_name in participants:
@@ -775,7 +811,7 @@ def run_pipeline(
             prior = "\n\n".join(
                 f"[{t['rol']} r{t['ronda']}]\n{t['reply']}"
                 for t in transcript
-                if t["reply"]
+                if t["reply"] and not t.get("discarded_reason")
             )
             content = f"{instruction}\n\n=== MATERIAL ===\n{payload}\n\n=== RONDAS PREVIAS ===\n{prior}"
             _t0 = time.perf_counter()
@@ -787,6 +823,17 @@ def run_pipeline(
                 transport=transport,
             )
             latency_ms = round((time.perf_counter() - _t0) * 1000)
+
+            discarded_reason = None
+            if filter_lens_output is not None and rol == "challenger" and reply:
+                accepted, reason, problems = filter_lens_output(
+                    reply, project_root, cite_only=True
+                )
+                if not accepted:
+                    discarded_reason = reason
+                    if problems:
+                        discarded_reason = f"{reason}: {problems[0]}"
+
             _record_round(
                 project_root,
                 ticket=ticket,
@@ -800,8 +847,16 @@ def run_pipeline(
                 context_kind=context_kind,
                 session_id=session_id,
                 latency_ms=latency_ms,
+                failure_mode=discarded_reason,
+                outcome_override="no-aportacion" if discarded_reason else None,
             )
-            transcript.append({"ronda": ronda, "rol": rol, "reply": reply})
+            entry = {"ronda": ronda, "rol": rol, "reply": reply}
+            if discarded_reason:
+                # Se APPENDEA con marca (no se omite ni se vacia): el consumidor
+                # conserva la salida descartada -- sin ceros hay sesgo de
+                # supervivencia -- y el prior de la ronda siguiente la excluye.
+                entry["discarded_reason"] = discarded_reason
+            transcript.append(entry)
     return transcript
 
 

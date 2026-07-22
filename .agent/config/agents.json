@@ -169,7 +169,8 @@
       "rubric": "prompts/audit_agent_output.md",
       "max_rounds": 2,
       "continue_if": "objecion-CONFIRMADA-con-evidencia",
-      "loop_id": "L800"
+      "loop_id": "L800",
+      "lens_output_filter": true
     }
   },
   "ensemble_registry": {
