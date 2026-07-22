@@ -28,6 +28,7 @@ import argparse
 import os
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 
 
@@ -425,6 +426,80 @@ def validate_active_ticket_state(root: Path) -> list[str]:
     return []
 
 
+# ---------------------------------------------------------------------------
+# WOT-2026-027i: an id that appears BOTH as a live-queue row and an archived row
+# (or TWICE inside the archive) lies in both directions -- the reader of the queue
+# thinks it is pending, the reader of the archive thinks it is closed. Cell-based
+# (the id is the FIRST or SECOND cell across every known layout, same convention
+# as _ticket_has_row), never substring: a 'Depende de' cell cites other ids.
+# ---------------------------------------------------------------------------
+
+
+def _row_ticket_id(stripped: str) -> str | None:
+    """Return the ticket id of a Prioridad-led queue row, or None otherwise.
+
+    SCOPE (WOT-2026-027i, matched to its authoritative premise probe): a
+    scheduling-surface ticket row is Prioridad-led -- ``| Prioridad | Ticket |
+    ...`` -- so the id is at RAW split index 2 (index 0 is the empty token before
+    the first pipe, index 1 is Prioridad). This is the SAME position 027t's
+    _is_ticket_row uses, and it deliberately does NOT match:
+      - the archive's compact ``| Ticket | Estado | Nota |`` closure-log rows (id
+        at raw index 1) -- those are terminal notes, not queue rows, and a ticket
+        legitimately appears in BOTH a closure-log and an archived queue-snapshot;
+      - CREDITS / skills reference rows that merely start with a ticket id;
+      - a later 'Depende de' cell citing another id (never at index 2).
+    Cell-based, never substring.
+    """
+    if not stripped.startswith("| "):
+        return None
+    cells = stripped.split("|")
+    if len(cells) <= 3:
+        return None
+    candidate = cells[2].strip()
+    return candidate if _TICKET_ROW_CELL_RE.match(candidate) else None
+
+
+def _ticket_row_ids(path: Path) -> list[str]:
+    """Every ticket id that has a table row in ``path`` (WITH multiplicity)."""
+    if not path.exists():
+        return []
+    ids: list[str] = []
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        tid = _row_ticket_id(line.strip())
+        if tid:
+            ids.append(tid)
+    return ids
+
+
+def validate_live_archive_integrity(root: Path) -> list[str]:
+    """Return violations for duplicate ids across / within the scheduling surfaces.
+
+    (a) An id present as a LIVE row AND an ARCHIVE row: it lies in both directions.
+    (b) An id present TWICE inside the archive: the archive contradicts itself
+        (measured: WOT-2026-011b with `pending` and `completed` rows at once).
+    """
+    collab = root / ".agent" / "collaboration"
+    live_ids = set(_ticket_row_ids(collab / "backlog.md"))
+    archive_all = _ticket_row_ids(collab / "_archive" / "backlog_done.md")
+    archive_ids = set(archive_all)
+
+    errors: list[str] = [
+        f"{tid}: appears BOTH as a live-queue row in backlog.md AND an archived "
+        f"row in _archive/backlog_done.md -- it lies in both directions "
+        f"(WOT-2026-027i). Keep exactly one: remove the archived row if the "
+        f"ticket is still live, or the live row if it is closed."
+        for tid in sorted(live_ids & archive_ids)
+    ]
+    errors.extend(
+        f"{tid}: appears {n} times inside _archive/backlog_done.md -- the "
+        f"archive contradicts itself (WOT-2026-027i). Keep exactly one "
+        f"archived row for the ticket."
+        for tid, n in sorted(Counter(archive_all).items())
+        if n > 1
+    )
+    return errors
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Fail-closed gate for the live backlog contract (WOT-2026-012b)."
@@ -445,6 +520,8 @@ def main(argv: list[str] | None = None) -> int:
     violations = validate_backlog(backlog)
     # WOT-2026-023o: also audit the bus projection (STATE.md ACTIVE_TICKET).
     violations = violations + validate_active_ticket_state(root)
+    # WOT-2026-027i: duplicate ids across / within the scheduling surfaces.
+    violations = violations + validate_live_archive_integrity(root)
     if violations:
         print(
             f"[backlog-contract] {len(violations)} violation(s) in {backlog}:",

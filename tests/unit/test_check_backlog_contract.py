@@ -278,10 +278,92 @@ def test_dependency_cell_citing_ticket_id_is_not_a_stray_row(tmp_path: Path) -> 
 
 
 # ---------------------------------------------------------------------------
-# WOT-2026-023o: STATE.md ACTIVE_TICKET vs the scheduling surfaces (bus projection)
+# WOT-2026-027i: duplicate ids across (live<->archive) and within the archive.
 # ---------------------------------------------------------------------------
 
 _ARCHIVE_HEADER = "# Backlog -- historico\n\n"
+
+
+def _write_archive_prioridad(root: Path, rows: str) -> None:
+    """Archive with the Prioridad-led snapshot layout (id at raw index 2), the
+    layout 027i's guard scopes to."""
+    arch = root / ".agent" / "collaboration" / "_archive"
+    arch.mkdir(parents=True, exist_ok=True)
+    (arch / "backlog_done.md").write_text(
+        _ARCHIVE_HEADER
+        + "| Prioridad | Ticket | Titulo | Scope | Estado | Depende de | Origen | Reactivation |\n"
+        + "|--|--|--|--|--|--|--|--|\n"
+        + rows,
+        encoding="utf-8",
+    )
+
+
+def test_live_and_archive_duplicate_blocks(tmp_path: Path) -> None:
+    """An id present as a LIVE row AND an archived row lies in both directions.
+
+    FAIL-without-fix (mutation): drop validate_live_archive_integrity from main's
+    violation list -> this duplicate passes, the exact WOT-2026-027i defect.
+    """
+    _write_backlog(tmp_path, _VALID_ROWS)  # 001a is a live 'pending' row
+    _write_archive_prioridad(
+        tmp_path,
+        "| Alta | WOT-2026-001a | dup | s | completed-partial | - | x | commit:abc |\n",
+    )
+    errs = cbc.validate_live_archive_integrity(tmp_path)
+    assert any("WOT-2026-001a" in e and "both directions" in e for e in errs), errs
+
+
+def test_archive_internal_duplicate_blocks(tmp_path: Path) -> None:
+    """An id present TWICE inside the archive (the WOT-2026-011b contradiction:
+    a 'pending' and a 'completed' row for one ticket) is fail-closed."""
+    _write_backlog(tmp_path, _VALID_ROWS)
+    _write_archive_prioridad(
+        tmp_path,
+        "| Alta | WOT-2026-070z | v1 | s | pending | - | x | - |\n"
+        "| Alta | WOT-2026-070z | v2 | s | completed-partial | - | x | commit:abc |\n",
+    )
+    errs = cbc.validate_live_archive_integrity(tmp_path)
+    assert any("WOT-2026-070z" in e and "2 times" in e for e in errs), errs
+
+
+def test_no_duplicate_passes(tmp_path: Path) -> None:
+    """Clean surfaces: no id crosses live<->archive and none repeats in archive."""
+    _write_backlog(tmp_path, _VALID_ROWS)
+    _write_archive_prioridad(
+        tmp_path,
+        "| Alta | WOT-2026-070z | closed | s | completed-partial | - | x | commit:abc |\n",
+    )
+    assert cbc.validate_live_archive_integrity(tmp_path) == []
+
+
+def test_compact_closurelog_row_is_out_of_scope(tmp_path: Path) -> None:
+    """SCOPE (aplicate tu propia vara): a ticket legitimately appears BOTH in the
+    archive's compact ``| Ticket | Estado | Nota |`` closure-log (id at raw index
+    1) AND in a Prioridad-led snapshot -- that is normal archive layering, NOT the
+    027i contradiction. The guard scopes to the Prioridad-led position (raw index
+    2), so the compact row is not counted and does not false-flag. A cell[:2]
+    scan would raise a false positive here; this test dies under that widening."""
+    _write_backlog(tmp_path, _VALID_ROWS)
+    arch = tmp_path / ".agent" / "collaboration" / "_archive"
+    arch.mkdir(parents=True, exist_ok=True)
+    (arch / "backlog_done.md").write_text(
+        _ARCHIVE_HEADER
+        + "| Ticket | Estado | Nota |\n|--|--|--|\n"
+        + "| WOT-2026-070z | completed | cerrado canonico |\n\n"
+        + "## snapshot historico\n\n"
+        + "| Prioridad | Ticket | Titulo | Scope | Estado | Depende de | Origen | Reactivation |\n"
+        + "|--|--|--|--|--|--|--|--|\n"
+        + "| Alta | WOT-2026-070z | snap | s | completed-partial | - | x | commit:abc |\n",
+        encoding="utf-8",
+    )
+    # 070z appears once compact (index 1, ignored) + once Prioridad-led (index 2):
+    # counted exactly once -> no internal-dup violation.
+    assert cbc.validate_live_archive_integrity(tmp_path) == []
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-023o: STATE.md ACTIVE_TICKET vs the scheduling surfaces (bus projection)
+# ---------------------------------------------------------------------------
 
 
 def _write_state(root: Path, ticket: str, status: str) -> None:
