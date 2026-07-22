@@ -12,7 +12,44 @@ Revisa la última implantación del Builder, la revisión del Manager y el ciclo
    - Memoria persistente de Claude Code: `~/.claude/.../memory/`
 2. **Lee la documentación** relacionada con la redacción, niveles y estructura de la memoria.
 3. **Analiza** si el aprendizaje ya existe total o parcialmente en alguno de los sistemas.
-4. **Detecta** posibles duplicados, solapamientos o fusiones útiles con puntos ya establecidos.
+4. **Detecta** posibles duplicados, solapamientos o fusiones útiles con puntos ya establecidos,
+   siguiendo el procedimiento de barrido de abajo. No basta con "busqué duplicados".
+
+### Procedimiento de barrido anti-duplicado (obligatorio)
+
+Medido el 2026-07-22: **4 duplicados en un solo día, tres de ellos declarando "busqué
+duplicados"**. La causa raíz no fue descuido, fueron dos fallos de método:
+
+1. **Se barrió UNA superficie por vez.** El dedupe se hizo contra el archive de memoria y
+   nunca contra el backlog, que era donde estaba el duplicado. La deuda vive en LAS DOS.
+2. **Se filtró por keyword y se descartó por el TÍTULO.** En un caso la entrada duplicada
+   *apareció* en los hits y aun así se descartó sin leerla entera.
+
+Por eso el barrido es:
+
+- **Ambas superficies, siempre.** Memoria (`archive/observations.YYYY-MM.jsonl`) **y**
+  backlog (`backlog.md` vivo **y** `_archive/backlog_done.md`). Un candidato puede duplicar
+  una ficha de backlog sin duplicar ninguna lección, y al revés.
+- **Lectura COMPLETA de cada hit.** Nunca descartes por el título ni por el `id`: las
+  lecciones del archive están redactadas como **reglas abstractas** ("un guard que mide P
+  tiende a medirla con vara más floja") y los candidatos nuevos como **casos concretos**
+  ("el gate de X no cubría `--anchor`"). Los títulos no se parecen aunque el contenido sea
+  el mismo. Ese cruce es justo el que un grep por keyword no hace.
+- **Ayuda mecánica** (opcional, no sustituye la lectura):
+
+  ```
+  python scripts/find_similar_signals.py --text-file <candidato.txt> \
+      --archive <motor>/.agent/runtime/memory/archive/observations.2026-07.jsonl \
+      --backlog <workspace>/.agent/collaboration/backlog.md \
+      --backlog <workspace>/.agent/collaboration/_archive/backlog_done.md
+  ```
+
+  Lista los vecinos más próximos por solape de términos del **signal**, ponderado por IDF.
+  Es un **generador de señal, NUNCA un veredicto**: no decide si algo es duplicado, no
+  bloquea la promoción y siempre sale con exit 0 aunque encuentre vecinos idénticos.
+  Un score alto no confirma un duplicado y uno bajo no lo descarta — **la decisión y la
+  lectura siguen siendo tuyas**. Que no liste nada NO certifica que no exista un duplicado
+  redactado con otro vocabulario.
 
 ## Criterios de clasificación antes de proponer
 
