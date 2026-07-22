@@ -95,6 +95,26 @@ _SENTENCE_SPLIT = re.compile(r"[.;:\n]")
 # forma parte del propio marcador. Caso borde declarado en el contrato.
 _NEGATOR_FALSE_FRIENDS = ("sin embargo",)
 
+# Distancia maxima (caracteres) entre el fin de un negador y el inicio del
+# marcador para considerarlo negado. Cubre "no hay bug", "no es incorrecto",
+# "sin ningun bug"; NO cubre un marcador separado por media oracion, que casi
+# siempre pertenece a otra clausula y NO esta negado.
+#
+# RESIDUO DECLARADO (WOT-2026-039e, con tasa medida): la ventana es una
+# heuristica de ADYACENCIA, no de alcance sintactico. Un negador que gobierna
+# otro sujeto pero queda a menos de N caracteres de un marcador legitimo sigue
+# suprimiendolo -- p.ej. "El guard no muerde, contradice el docstring". Cerrar
+# ese resto exige analisis sintactico, que la STOP condition del contrato
+# PROHIBE explicitamente ("si cerrar H8 exige parsing linguistico mas alla de
+# la allowlist declarada -> PARAR y declarar el residuo como NON-GOAL con
+# ticket"). Medicion del brazo lector-FS sobre 429 .md del corpus real:
+# 5684 oraciones con marcador, 194 suprimidas = 3.4% ANTES de la ventana. La
+# ventana reduce ese residuo (4 de los 6 casos medidos pasan a clasificar
+# bien); el resto queda fichado, no escondido. Mitigante: la salida descartada
+# se APPENDEA con discarded_reason, asi que es auditable y recuperable, nunca
+# se pierde.
+_NEGATION_WINDOW = 12
+
 # Schema lens-answer/v1: bloque ```cite con path/line/quote. NO admite
 # command/exit_code -- un receipt de EJECUCION emitido por una lente sin
 # filesystem es fabricacion estructural (H9 cerrado por construccion en esta
@@ -112,33 +132,46 @@ _MIN_QUOTE_LEN = 8
 
 
 def _strip_negated_markers(text: str) -> str:
-    """Elimina de `text` los marcadores de objecion que estan NEGADOS.
+    """Elimina los marcadores de objecion NEGADOS por un negador ADYACENTE.
 
     Before: `text` es la salida cruda de una lente.
-    During: segmenta por oracion (corte mecanico en `.;:` y salto de linea);
-        en cada oracion que contenga un negador ANTES de un marcador, borra
-        ese marcador del texto devuelto. El negador 'sin' se ignora cuando
-        forma parte de 'sin embargo' (que ES un marcador, no una negacion).
-    After: retorna el texto con los marcadores negados suprimidos, para que
-        `_OBJECTION_MARKERS.search` sobre el resultado no los cuente. No
-        modifica el original ni juzga semantica: es supresion posicional.
+    During: segmenta por oracion (corte mecanico en `.;:` y salto de linea) y
+        suprime un marcador SOLO si un negador lo precede dentro de una
+        VENTANA CORTA (`_NEGATION_WINDOW` caracteres). El negador 'sin' se
+        ignora cuando forma parte de 'sin embargo' (que ES marcador, no
+        negacion).
+    After: retorna el texto con esos marcadores suprimidos, para que
+        `_OBJECTION_MARKERS.search` sobre el resultado no los cuente.
+
+    POR QUE VENTANA Y NO "RESTO DE LA ORACION" (falso positivo MEDIDO
+    2026-07-22, antes de cerrar el ticket): suprimir todo lo que sigue al
+    primer negador desclasificaba OBJECIONES LEGITIMAS en las que el negador
+    niega OTRA cosa -- "No valida el encoding, por eso el modulo falla"
+    (el negador niega 'valida', el marcador 'falla' NO esta negado) salia
+    'neutral' y se descartaba. Un filtro que descarta trabajo bueno ensena al
+    operador a apagarlo, y un filtro apagado no es barrera. La ventana es
+    mecanica y declarada: lo que quede fuera de ella es NON-GOAL, no deuda
+    oculta.
     """
     kept: list[str] = []
     for sentence in _SENTENCE_SPLIT.split(text):
         lowered = sentence.lower()
         for friend in _NEGATOR_FALSE_FRIENDS:
             lowered = lowered.replace(friend, " " * len(friend))
-        negator_at = None
-        for negator in _NEGATORS:
-            match = re.search(rf"\b{negator}\b", lowered)
-            if match and (negator_at is None or match.start() < negator_at):
-                negator_at = match.start()
-        if negator_at is None:
+        negator_spans = [
+            m.end()
+            for negator in _NEGATORS
+            for m in re.finditer(rf"\b{negator}\b", lowered)
+        ]
+        if not negator_spans:
             kept.append(sentence)
             continue
-        # Suprime los marcadores que aparecen DESPUES del negador.
-        head, tail = sentence[:negator_at], sentence[negator_at:]
-        kept.append(head + _OBJECTION_MARKERS.sub(" ", tail))
+
+        def _suppress(match: re.Match, ends=negator_spans) -> str:
+            near = any(0 <= match.start() - end <= _NEGATION_WINDOW for end in ends)
+            return " " if near else match.group(0)
+
+        kept.append(_OBJECTION_MARKERS.sub(_suppress, sentence))
     return "\n".join(kept)
 
 

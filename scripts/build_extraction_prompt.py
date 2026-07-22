@@ -182,14 +182,35 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    # GATE DE ENTRADA: rechaza ANTES de generar (nada se emite si dispara).
-    reason = reject_reason(args.extract)
-    if reason is not None:
+    # GATE DE ENTRADA sobre TODA la superficie de input, no solo --extract.
+    # Hallazgo MAJOR del MANAGER_REVIEW (2026-07-22): cubrir solo --extract
+    # dejaba --anchor y --target-file como vias de evasion con los patrones
+    # LITERALES de la propia allowlist ('cuantas', 'aprueba', 'veredicto'),
+    # que check_prompt_bias no conoce y por tanto el gate de salida tampoco
+    # cazaba. No son sinonimos ni parafrasis (eso SI es NON-GOAL): es la
+    # misma vara mecanica sin aplicar a los otros dos campos.
+    for field, value in (
+        ("--extract", args.extract),
+        ("--anchor", args.anchor),
+        ("--target-file", args.target_file),
+    ):
+        reason = reject_reason(value)
+        if reason is not None:
+            print(
+                f"[extraction-prompt] RECHAZADO antes de generar "
+                f"({field}): {reason}\n"
+                "Reformula como EXTRACCION de un dato literal: 'el valor de "
+                "retorno de la linea N', 'el patron regex declarado', 'el "
+                "encoding usado al abrir el fichero'.",
+                file=sys.stderr,
+            )
+            return 1
+
+    if not args.extract.strip():
         print(
-            f"[extraction-prompt] RECHAZADO antes de generar: {reason}\n"
-            "Reformula como EXTRACCION de un dato literal: 'el valor de "
-            "retorno de la linea N', 'el patron regex declarado', 'el "
-            "encoding usado al abrir el fichero'.",
+            "[extraction-prompt] RECHAZADO antes de generar (--extract): "
+            "vacio. Un prompt sin objeto ('Extrae, literalmente, .') no es "
+            "una pregunta de extraccion.",
             file=sys.stderr,
         )
         return 1
@@ -201,10 +222,16 @@ def main(argv: list[str] | None = None) -> int:
     # GATE DE SALIDA: el propio generador no puede emitir un prompt sesgado.
     bias = _load_bias_checker().check_prompt_bias(prompt)
     if bias["sesgado"]:
+        # El gate de entrada ya rechazo lo que venia sesgado en los flags, asi
+        # que llegar aqui significa que el sesgo lo introdujo la PLANTILLA:
+        # eso si es defecto del generador. No se culpa al consumidor a ciegas
+        # (hallazgo MINOR del MANAGER_REVIEW: el mensaje anterior mandaba al
+        # usuario por la via equivocada cuando el sesgo era suyo).
         print(
             f"[extraction-prompt] BLOQUEADO: el prompt generado quedo sesgado "
-            f"({bias['motivo']}). Es un defecto del generador, no del "
-            "consumidor: reportalo.",
+            f"({bias['motivo']}). El gate de entrada no lo detecto en los "
+            "flags, asi que el patron proviene de la plantilla: es un defecto "
+            "del generador y conviene reportarlo.",
             file=sys.stderr,
         )
         return 1

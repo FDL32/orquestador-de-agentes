@@ -215,6 +215,66 @@ def test_039c_h8_negated_marker_is_not_an_objection(cite_repo: Path):
     assert reason in ("confirmation_no_objection", "no_contribution")
 
 
+@pytest.mark.parametrize(
+    ("expected", "text"),
+    [
+        # El negador niega OTRA cosa: el marcador NO esta negado.
+        ("objection", "No valida el encoding, por eso el modulo falla."),
+        ("objection", "Sin validacion previa, el codigo es incorrecto."),
+        ("objection", "Ningun test cubre esa rama: hay un bug."),
+        ("objection", "El fix no funciona: la premisa es falsa."),
+        ("objection", "Incorrecto: no hay validacion de entrada."),
+        # El negador SI niega al marcador (adyacente).
+        ("confirmation", "Confirmado: no hay bug aqui."),
+        ("confirmation", "Confirmado, no hay ningun riesgo."),
+        ("neutral", "No encuentro problemas."),
+    ],
+)
+def test_039c_h8_negation_window_does_not_eat_legit_objections(
+    expected: str, text: str
+):
+    """El supresor de negados NO puede desclasificar objeciones legitimas.
+
+    FALSO POSITIVO MEDIDO 2026-07-22 antes de cerrar el ticket: la primera
+    version suprimia TODO marcador tras el primer negador hasta el fin de la
+    oracion, asi que "No valida el encoding, por eso el modulo falla" (el
+    negador niega 'valida'; el marcador 'falla' NO esta negado) salia
+    'neutral' y se descartaba. Un filtro que descarta trabajo bueno ensena al
+    operador a apagarlo, y un filtro apagado no es barrera -- por eso este
+    caso vale tanto como los de descarte.
+
+    La correccion fue acotar la negacion a una VENTANA de adyacencia; estos
+    fixtures fijan ambos lados del limite para que no pueda revertirse en
+    silencio.
+    """
+    assert flo.classify_verdict(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "El guard no muerde, contradice lo que afirma el docstring",
+        "No cierra H9, en realidad el receipt sigue vivo",
+    ],
+)
+def test_039c_h8_residual_false_positive_is_pinned_not_hidden(text: str):
+    """RESIDUO DECLARADO del mecanismo H8 (WOT-2026-039e), no defecto oculto.
+
+    La ventana de adyacencia es una heuristica POSICIONAL, no de alcance
+    sintactico: un negador que gobierna otro sujeto pero cae cerca de un
+    marcador legitimo sigue suprimiendolo. Cerrar el resto exige analisis
+    sintactico, que la STOP condition del contrato PROHIBE.
+
+    Este test PINNEA el limite conocido con casos medidos por el brazo
+    lector-con-filesystem del MANAGER_REVIEW (2026-07-22). Si algun dia
+    clasifican bien, este test cae y obliga a actualizar la declaracion: es
+    un cambio de contrato consciente, nunca una deriva silenciosa. Mitigante
+    vivo: la salida descartada se APPENDEA con discarded_reason -- auditable
+    y recuperable, no se pierde.
+    """
+    assert flo.classify_verdict(text) == "neutral"
+
+
 def test_039c_h8_sin_embargo_is_still_an_objection(cite_repo: Path):
     """Anti-falso-positivo de H8: 'sin embargo' es un MARCADOR, no una
     negacion. El negador 'sin' no debe desactivarlo -- si lo hiciera, el fix
