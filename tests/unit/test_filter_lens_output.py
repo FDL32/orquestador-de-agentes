@@ -253,6 +253,28 @@ def test_039c_h8_negation_window_does_not_eat_legit_objections(
 @pytest.mark.parametrize(
     "text",
     [
+        "No parece haber bug",
+        "No creo que exista un bug",
+    ],
+)
+def test_039c_h8_inverse_false_positive_is_pinned(text: str):
+    """La ventana MUEVE un falso positivo, no solo lo reduce (medido).
+
+    Estas son NEGACIONES que salen clasificadas como objecion porque la
+    distancia negador-marcador (14 y 17 chars) excede _NEGATION_WINDOW. Con la
+    version anterior (suprimir hasta fin de oracion) salian 'neutral'.
+
+    Se PINNEA la direccion que el residuo original NO declaraba. El coste es
+    asimetrico y por eso se acepta: este lado gasta trabajo del brazo caro, el
+    defecto original PERDIA aportacion legitima. Si algun dia se cierra, este
+    test cae y obliga a actualizar WOT-2026-039e -- cambio consciente, no deriva.
+    """
+    assert flo.classify_verdict(text) == "objection"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
         "El guard no muerde, contradice lo que afirma el docstring",
         "No cierra H9, en realidad el receipt sigue vivo",
     ],

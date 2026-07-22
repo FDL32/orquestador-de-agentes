@@ -100,6 +100,22 @@ _NEGATOR_FALSE_FRIENDS = ("sin embargo",)
 # "sin ningun bug"; NO cubre un marcador separado por media oracion, que casi
 # siempre pertenece a otra clausula y NO esta negado.
 #
+# DE DONDE SALE EL 12 (barrido MEDIDO en el cierre 2026-07-22, sobre la suite
+# real de este fichero -- no sobre fixtures ad-hoc):
+#   W=4 -> 4 failed | W=6 -> 2 | W=8 -> 2 | W=10 -> 1 | W>=12 -> 26 passed
+# 12 es el BORDE INFERIOR de una meseta ABIERTA: cualquier valor >=12 es
+# indistinguible por los fixtures actuales. No es magia (hay un minimo real),
+# pero tampoco un optimo: la COTA SUPERIOR no esta pinneada, asi que subirlo a
+# 30 ampliaria la supresion sin que ningun test caiga. Fichado en F5 del cierre.
+#
+# FALSO POSITIVO INVERSO (medido, direccion que el residuo NO declaraba):
+# "No parece haber bug" y "No creo que exista un bug" -> 'objection', porque la
+# distancia negador-marcador (14 y 17) excede la ventana. Son NEGACIONES. Con la
+# version anterior (resto-de-oracion) salian 'neutral'. La ventana no solo
+# reduce el falso positivo original: MUEVE otro de sitio. Coste asimetrico y por
+# eso se acepta: este lado gasta trabajo del brazo caro, el original PERDIA
+# aportacion legitima. Ampliado en WOT-2026-039e (F4).
+#
 # RESIDUO DECLARADO (WOT-2026-039e, con tasa medida): la ventana es una
 # heuristica de ADYACENCIA, no de alcance sintactico. Un negador que gobierna
 # otro sujeto pero queda a menos de N caracteres de un marcador legitimo sigue
