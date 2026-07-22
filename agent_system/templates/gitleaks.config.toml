@@ -43,3 +43,20 @@ regexes = [
   '''sk_live_0123456789abcdefXYZ''',
   '''valorsincomillas0123456789abcd''',
 ]
+
+# WOT-2026-027n: los tests del gate de CONTENIDO de privacy_preflight tienen que
+# CONTENER los literales que prueban que el gate los bloquea. Un test que
+# demuestra que `password = "sk-live-..."` no sale hacia la API externa no puede
+# escribirse sin ese literal: el fixture y el secreto son la misma cadena.
+# Van por VALOR EXACTO, como manda la politica de arriba, NUNCA por path del
+# test: un path-allowlist crearia una zona ciega y un secreto REAL futuro en ese
+# fichero pasaria sin bloquear.
+[[allowlists]]
+description = "fixtures sinteticos del gate de contenido de privacy_preflight (WOT-2026-027n). NO son credenciales: son los payloads que PRUEBAN el bloqueo."
+regexes = [
+  '''sk-live-abc12345''',
+  '''A1b2C3d4E5f6G7h8''',
+  '''ghp_0123456789abcdefghijklmno''',
+  '''sk-ABCDEFGHIJKLMNOP0123456789''',
+  '''ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123''',
+]
