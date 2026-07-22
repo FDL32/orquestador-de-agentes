@@ -44,6 +44,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -120,25 +121,57 @@ def extract_manifest_paths(packet_text: str) -> set[str]:
     return paths
 
 
-def _build_probe_sections(motor_root: Path, universe: dict, motor_head: str) -> str:
-    """Secciones ## PROBE con receipts de los probes REALMENTE ejecutados."""
+def _build_probe_sections(motor_root: Path, universe: dict) -> str:
+    """Secciones ## PROBE con receipts OBSERVADOS, no afirmados.
+
+    Before: `universe` ya calculado; `motor_root` es un repo git.
+    During: EJECUTA los dos probes como subprocesos reproducibles y captura su
+        rc REAL. Ninguno usa `check=True`: un rc distinto de 0 debe VIAJAR al
+        receipt, no abortar el packet -- si el exportador solo pudiera emitir
+        `exit_code: 0`, el receipt seria una afirmacion por construccion y
+        reintroduciria el HUECO-1 que `check_bundle_receipts` existe para
+        cerrar (hallazgo MAJOR-2 del MANAGER_REVIEW, 2026-07-22).
+    After: retorna las secciones con el rc observado. Los `command:` son
+        reproducibles por el lector desde una shell, no llamadas Python
+        internas que nadie puede re-ejecutar.
+    """
     n_paths = len(universe["paths"])
     sha12 = universe["sha256"][:12]
+
+    ls_tree = subprocess.run(
+        ["git", "ls-tree", "-r", "--name-only", "HEAD"],  # noqa: S607
+        cwd=motor_root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    rev_parse = subprocess.run(
+        ["git", "rev-parse", "HEAD"],  # noqa: S607
+        cwd=motor_root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    tracked_py = sum(
+        1 for line in ls_tree.stdout.splitlines() if line.strip().endswith(".py")
+    )
     return (
-        "## PROBE 1 -- universo mecanico de codigo (git ls-tree + sha256)\n"
+        "## PROBE 1 -- universo mecanico de codigo (git ls-tree, rc observado)\n"
         "```receipt\n"
-        "command: review_bundle_contract.compute_code_universe(motor_root)\n"
-        "exit_code: 0\n"
+        "command: git ls-tree -r --name-only HEAD -- '*.py'\n"
+        f"exit_code: {ls_tree.returncode}\n"
         "path: scripts/review_bundle_contract.py\n"
         "output: |\n"
-        f"  universe_paths={n_paths} sha256={sha12} (agregado sobre HEAD)\n"
+        f"  tracked_py={tracked_py} manifest_paths={n_paths} sha256={sha12}\n"
         "```\n\n"
-        "## PROBE 2 -- frescura del arbol del motor\n"
+        "## PROBE 2 -- frescura del arbol del motor (rc observado)\n"
         "```receipt\n"
-        f"command: git -C {motor_root} rev-parse HEAD\n"
-        "exit_code: 0\n"
+        "command: git rev-parse HEAD\n"
+        f"exit_code: {rev_parse.returncode}\n"
         "output: |\n"
-        f"  {motor_head}\n"
+        f"  {rev_parse.stdout.strip() or '(sin salida)'}\n"
         "```\n"
     )
 
@@ -154,6 +187,21 @@ def _build_manifest_section(universe: dict) -> str:
     )
 
 
+class TicketMismatchError(RuntimeError):
+    """El work_plan vivo describe OTRO ticket que el pedido en --ticket."""
+
+
+def workplan_ticket_id(work_plan_text: str) -> str | None:
+    """ID declarado en el work_plan (`- **ID:** WOT-...`), o None.
+
+    Before: `work_plan_text` es el contenido del work_plan canonico.
+    During: busca el campo ID en el formato canonico del schema V2.
+    After: retorna el ID o None si el work_plan no lo declara.
+    """
+    match = re.search(r"^\s*-?\s*\*\*ID:\*\*\s*(\S+)", work_plan_text, re.MULTILINE)
+    return match.group(1).strip() if match else None
+
+
 def export_packet(
     ticket_id: str, motor_root: Path, project_root: Path, *, force: bool = False
 ) -> tuple[Path, bool]:
@@ -161,12 +209,29 @@ def export_packet(
 
     Before: coherencia motor-root YA verificada por el caller CLI (o el
         caller de biblioteca asume el riesgo); work_plan.md existe.
-    During: computa clave; en HIT retorna sin regenerar; en MISS ensambla
-        via ReviewBridge (read-only) + probes + manifest y escribe el packet.
-    After: retorna (ruta, cache_hit). Propaga OSError/CalledProcessError.
+    During: verifica que el work_plan VIVO describa el ticket pedido -- el
+        bridge lee work_plan/STATE/TURN VERBATIM y solo usa `ticket_id` para
+        la seccion de execution_log, asi que pedir un ticket cuyo work_plan
+        es otro produce un packet formalmente valido con el contenido
+        EQUIVOCADO (hallazgo MAJOR-1 del MANAGER_REVIEW, 2026-07-22: el
+        packet de 027p salio con el plan y el veredicto de 026k). Despues
+        computa clave; en HIT retorna sin regenerar; en MISS ensambla via
+        ReviewBridge (read-only) + probes + manifest y escribe el packet.
+    After: retorna (ruta, cache_hit). Lanza TicketMismatchError si el
+        work_plan describe otro ticket (fail-closed); propaga
+        OSError/CalledProcessError.
     """
     work_plan = project_root / ".agent" / "collaboration" / "work_plan.md"
     work_plan_sha = hashlib.sha256(work_plan.read_bytes()).hexdigest()
+    wp_text = work_plan.read_text(encoding="utf-8")
+    declared = workplan_ticket_id(wp_text)
+    if declared is not None and declared != ticket_id:
+        raise TicketMismatchError(
+            f"el work_plan vivo describe {declared}, no {ticket_id}. El bridge "
+            "lee work_plan/STATE/TURN verbatim: el packet saldria con el "
+            "contexto del ticket equivocado. Cambia --ticket o actualiza el "
+            "work_plan del workspace."
+        )
     motor_head = _git_head(motor_root)
     destino_head = _git_head(project_root)
     key = compute_cache_key(ticket_id, motor_head, destino_head, work_plan_sha)
@@ -187,7 +252,6 @@ def export_packet(
     bus = EventBus(project_root / ".agent" / "runtime")
     bridge = ReviewBridge(bus, project_root)
     dtype = "code"
-    wp_text = work_plan.read_text(encoding="utf-8")
     for line in wp_text.splitlines():
         if line.lower().startswith("deliverable_type:"):
             dtype = line.split(":", 1)[1].strip() or "code"
@@ -203,7 +267,7 @@ def export_packet(
         f"cache_key: {key}\n"
         f"motor_head: {motor_head}\n"
         f"destino_head: {destino_head}\n\n"
-        + _build_probe_sections(motor_root, universe, motor_head)
+        + _build_probe_sections(motor_root, universe)
         + "\n"
         + _build_manifest_section(universe)
         + "\n## CANONICAL REVIEW CONTEXT\n"
@@ -259,6 +323,11 @@ def main(argv: list[str] | None = None) -> int:
         packet_path, cache_hit = export_packet(
             args.ticket, motor_root, project_root, force=args.force
         )
+    except TicketMismatchError as exc:
+        # Diagnostico self-service, no traceback: el operador debe poder
+        # corregirlo sin leer el codigo (gate self-service, CEM).
+        print(f"[export-packet] ERROR: ticket divergente: {exc}", file=sys.stderr)
+        return 2
     except FileNotFoundError as exc:
         print(f"[export-packet] ERROR: artefacto ausente: {exc}", file=sys.stderr)
         return 2

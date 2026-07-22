@@ -212,6 +212,51 @@ def test_mutation_truncated_manifest_rejected_dod_e(
     assert rc_trunc == 1
 
 
+def test_ticket_mismatch_fails_closed(fake_workspace: Path):
+    """El work_plan vivo describe OTRO ticket -> exit !=0, nada se exporta.
+
+    Hallazgo MAJOR-1 del MANAGER_REVIEW (2026-07-22): el bridge lee
+    work_plan/STATE/TURN VERBATIM y solo usa `ticket_id` para la seccion de
+    execution_log. Sin este guard, pedir --ticket WOT-2026-027p con el
+    work_plan de 026k producia un packet formalmente valido (receipts OK,
+    manifest completo) cuyo CONTENIDO era el plan y el veredicto de otro
+    ticket ya cerrado. Un DoD que solo mira exit codes no lo ve.
+    """
+    wp = fake_workspace / ".agent" / "collaboration" / "work_plan.md"
+    wp.write_text(
+        wp.read_text(encoding="utf-8").replace(
+            "**ID:** WOT-2026-027p", "**ID:** WOT-2026-026k"
+        ),
+        encoding="utf-8",
+    )
+    proc = _run_cli(fake_workspace)
+    assert proc.returncode != 0
+    combined = proc.stdout + proc.stderr
+    assert "WOT-2026-026k" in combined, combined
+
+
+def test_probe_receipts_carry_observed_exit_codes(fake_workspace: Path):
+    """Los receipts declaran comandos REPRODUCIBLES y rc OBSERVADO.
+
+    Hallazgo MAJOR-2: un `exit_code: 0` hardcodeado satisface
+    check_bundle_receipts por construccion y reintroduce el HUECO-1 que ese
+    guard existe para cerrar (una afirmacion sin recibo real). Este test
+    pinnea que el command sea un comando de shell re-ejecutable, no una
+    llamada Python interna que el lector no puede reproducir.
+    """
+    proc = _run_cli(fake_workspace)
+    assert proc.returncode == 0, proc.stderr
+    text = _packet_path_from_stdout(proc.stdout).read_text(encoding="utf-8")
+    # Acotado a las secciones PROBE que ESTE script genera: el resto del
+    # packet es contexto canonico del bridge (work_plan, diff, memoria) y
+    # puede contener cualquier texto sin que sea un receipt del exportador.
+    probes = text.split("## UNIVERSE MANIFEST", 1)[0]
+    assert "command: git ls-tree" in probes
+    assert "command: git rev-parse HEAD" in probes
+    # Ninguna llamada Python interna presentada como comando ejecutable.
+    assert "command: review_bundle_contract." not in probes
+
+
 def test_motor_root_mismatch_fails_closed(fake_workspace: Path, tmp_path: Path):
     """Coherencia motor-root (objecion Codex): link != --motor-root -> exit !=0."""
     link = fake_workspace / ".agent" / "config" / "motor_destination_link.json"
