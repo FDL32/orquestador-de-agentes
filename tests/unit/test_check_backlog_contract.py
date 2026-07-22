@@ -228,6 +228,56 @@ def test_relative_path_from_destino_cwd_is_the_bug(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# WOT-2026-027t: the live queue must not fragment -- a ticket row OUTSIDE the
+# 'Vista rapida' table (e.g. drifted under '## Fichas detalladas') is fail-closed.
+# ---------------------------------------------------------------------------
+
+
+def test_ticket_row_outside_table_blocks(tmp_path: Path) -> None:
+    """The fragmentation trap: a well-formed 8-cell ticket row placed AFTER the
+    Vista rapida table (under a later section) is invisible to the extractor, so
+    the old contract 'held' over half the queue. The guard now fails closed and
+    names the drifted row and its line.
+
+    FAIL-without-fix (mutation): remove the `_ticket_rows_outside_table` call from
+    validate_backlog -> this row passes silently, exactly the WOT-2026-027t defect.
+    """
+    fichas = (
+        "### WOT-2026-001a - ficha\n\n"
+        "| Alta | WOT-2026-099z | fuera de tabla | s | pending | - | x | - |\n"
+    )
+    root = _write_backlog(tmp_path, _VALID_ROWS, fichas)
+    errs = cbc.validate_backlog(root / ".agent" / "collaboration" / "backlog.md")
+    assert any("WOT-2026-099z" in e and "OUTSIDE" in e for e in errs), errs
+
+
+def test_all_ticket_rows_inside_table_passes(tmp_path: Path) -> None:
+    """Negative companion: when every ticket row lives inside the Vista rapida
+    table, the fragmentation check adds no violation."""
+    root = _write_backlog(tmp_path, _VALID_ROWS, "### WOT-2026-001a - ficha\n")
+    errs = cbc.validate_backlog(root / ".agent" / "collaboration" / "backlog.md")
+    assert not any("OUTSIDE" in e for e in errs), errs
+
+
+def test_dependency_cell_citing_ticket_id_is_not_a_stray_row(tmp_path: Path) -> None:
+    """Cell-based, never substring: a ficha bullet or a table cell that MENTIONS a
+    ticket id in prose (e.g. a 'Depende de' reference) is NOT a ticket row -- only
+    a row whose SECOND cell IS a bare id counts. A substring scan would false-flag
+    the mention; this test dies under that mutation."""
+    fichas = (
+        "### WOT-2026-001a - ficha\n"
+        "- **Depende de:** WOT-2026-099z (citado en prosa, no es una fila)\n"
+        "- Una tabla ajena de otro esquema:\n"
+        "| campo | WOT-2026-099z como dato | otro |\n"
+    )
+    root = _write_backlog(tmp_path, _VALID_ROWS, fichas)
+    errs = cbc.validate_backlog(root / ".agent" / "collaboration" / "backlog.md")
+    # The prose mention and the foreign-table cell (id in cell[2] but as free text
+    # 'WOT-2026-099z como dato', not a bare id) must not be flagged as stray rows.
+    assert not any("OUTSIDE" in e for e in errs), errs
+
+
+# ---------------------------------------------------------------------------
 # WOT-2026-023o: STATE.md ACTIVE_TICKET vs the scheduling surfaces (bus projection)
 # ---------------------------------------------------------------------------
 

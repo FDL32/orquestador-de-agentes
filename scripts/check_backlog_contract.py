@@ -78,6 +78,15 @@ _TABLE_HEADER_COLS = (
 )
 _FICHA_RE = re.compile(r"^### (WOT|WP|WT)-\d{4}-\w+(?:\s+-\s+.+)?$")
 
+# WOT-2026-027t: a live-queue ticket row is a markdown table row whose SECOND
+# cell (idx 2 after the leading empty split token) is a bare ticket id. The live
+# table fragmented once (35 rows drifted under '## Fichas detalladas', invisible
+# to _extract_active_table): the guard now fails closed if any such row appears
+# OUTSIDE the Vista rapida table body, so the fragmentation cannot silently
+# reappear. Cell-based (idx 2), never substring: a prose cell can cite a ticket
+# id (e.g. 'Depende de'), which must NOT match.
+_TICKET_ROW_CELL_RE = re.compile(r"^(?:WOT|WP|WT)-\d{4}-\w+$")
+
 # WOT-2026-013j: a detailed ficha must NOT re-declare Files Likely Touched. The
 # canonical FLT lives ONLY in the frozen contract (ticket_contracts.md) and then
 # work_plan.md; a ficha that re-declares it drifts and forces manual packet
@@ -152,6 +161,88 @@ def _extract_active_table(content: str) -> tuple[list[str], str | None]:
     return rows, None
 
 
+def _is_ticket_row(stripped: str) -> bool:
+    """True iff ``stripped`` is a table row whose id cell (idx 2) is a bare id.
+
+    Cell-based, never substring (the trap this guard exists for): a later cell
+    such as 'Depende de' can hold another ticket's id as a dependency, and prose
+    cells cite ids in running text; only a row whose SECOND cell IS a ticket id
+    counts as a live-queue ticket row.
+    """
+    if not stripped.startswith("| "):
+        return False
+    cells = stripped.split("|")
+    if len(cells) <= 3:
+        return False
+    return bool(_TICKET_ROW_CELL_RE.match(cells[2].strip()))
+
+
+def _vista_rapida_body_span(lines: list[str]) -> range:
+    """Return the line-index range of the Vista rapida table BODY (data rows).
+
+    The span starts two lines after the '| Prioridad' header (skipping the
+    |---| separator) and ends at the terminating blank line or next '## ' header
+    -- exactly _extract_active_table's stop rule. Returns an empty range when the
+    section or header is absent (those are reported by _extract_active_table).
+    """
+    try:
+        start = next(
+            i for i, line in enumerate(lines) if line.strip() == _VISTA_RAPIDA_HEADER
+        )
+    except StopIteration:
+        return range(0)
+
+    header_idx = None
+    for i in range(start + 1, len(lines)):
+        stripped = lines[i].strip()
+        if stripped.startswith("## "):
+            break
+        if stripped.startswith("| Prioridad"):
+            header_idx = i
+            break
+    if header_idx is None:
+        return range(0)
+
+    body_start = header_idx + 2
+    body_end = len(lines)
+    for i in range(body_start, len(lines)):
+        stripped = lines[i].strip()
+        if not stripped or stripped.startswith("## "):
+            body_end = i
+            break
+    return range(body_start, body_end)
+
+
+def _ticket_rows_outside_table(content: str) -> list[str]:
+    """WOT-2026-027t: fail closed on any ticket row OUTSIDE the Vista rapida table.
+
+    The live table fragmented once: 35 ticket rows drifted under a later section
+    ('## Fichas detalladas'), where _extract_active_table never sees them, so the
+    contract 'held' (exit 0) over an invisible half of the queue. This guard uses
+    the Vista rapida table body's line span and reports every ticket row that
+    lives elsewhere in the file. It does NOT re-parse those rows (that is
+    _extract_active_table's job for the rows it legitimately owns); it only proves
+    the queue is not fragmented, so the canonical table stays the single
+    parseable source.
+    """
+    lines = content.splitlines()
+    in_table = _vista_rapida_body_span(lines)
+    errors: list[str] = []
+    for i, line in enumerate(lines):
+        if i in in_table:
+            continue
+        stripped = line.strip()
+        if _is_ticket_row(stripped):
+            ticket = stripped.split("|")[2].strip()
+            errors.append(
+                f"{ticket}: ticket row at line {i + 1} is OUTSIDE the "
+                f"'{_VISTA_RAPIDA_HEADER}' table. The live queue must live in that "
+                f"single table (fragmentation trap, WOT-2026-027t). Move the row "
+                f"into the Vista rapida table."
+            )
+    return errors
+
+
 def _validate_reactivation(status: str, reactivation: str) -> str | None:
     """Return an error string for an invalid (status, reactivation) pair."""
     react = reactivation.strip()
@@ -200,6 +291,7 @@ def validate_backlog(backlog_path: Path) -> list[str]:
         if react_err:
             errors.append(f"{ticket}: {react_err}")
 
+    errors.extend(_ticket_rows_outside_table(content))
     errors.extend(_check_ficha_bodies(content))
     return errors
 
