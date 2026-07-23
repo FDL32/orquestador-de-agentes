@@ -512,6 +512,45 @@ def test_trim_uses_the_last_separator_not_the_first():
     )
 
 
+def test_separator_inside_the_final_section_does_not_eat_a_real_banner():
+    """Borde senalado por Codex en la fase 3, reproducido antes de corregir.
+
+    La primera version se quedaba con "lo que va tras el ULTIMO separador".
+    Si la seccion final trae OTRO separador despues del banner, ese recorte
+    se comia una cuota REAL (falso negativo). Ahora se descarta SOLO la
+    seccion del prompt echoado (entre los dos primeros separadores) y la
+    salida real se conserva entera.
+    """
+    stderr = (
+        "--------\n"
+        "user\n"
+        "prompt auditado\n"
+        "--------\n"
+        "ERROR: You've hit your usage limit.\n"
+        "--------\n"
+        "tokens used\n"
+    )
+    assert rca._detect_failure_mode(stderr) == "quota"
+
+
+def test_dashes_inside_a_diagnostic_line_do_not_break_the_trim():
+    """El separador se compara como LINEA COMPLETA (tras strip), no como
+    substring: una linea diagnostica legitima puede CONTENER guiones.
+
+    HONESTIDAD SOBRE EL ALCANCE DE ESTE TEST: fija la conducta observable
+    (el banner sobrevive), pero NO discrimina `line.strip() == SEP` de
+    `SEP in line` -- se midio: con la mutacion a substring este caso
+    tambien pasa, porque la linea con guiones cae DESPUES de los dos
+    separadores y el recorte es identico. Construir un caso que si
+    discrimine exige que la linea con guiones sea la SEGUNDA coincidencia,
+    y entonces la variante correcta pierde el banner: el borde se desplaza
+    en vez de cerrarse. Ver la DEUDA DECLARADA en el docstring de
+    `_strip_echoed_prompt` (owner: WOT-2026-027s).
+    """
+    stderr = "--------\nuser\nprompt\n--------\nERROR: quota exceeded -------- fin\n"
+    assert rca._detect_failure_mode(stderr) == "quota"
+
+
 def test_separator_trim_keeps_working_without_separators():
     """El recorte por seccion no puede romper el caso SIN separadores.
 

@@ -129,21 +129,73 @@ _DIAGNOSTIC_LINE_PREFIXES = (
 
 # Separador con el que `codex exec` delimita las secciones de su stderr:
 #   cabecera / -------- / user + PROMPT ECHOADO / -------- / salida y errores
-# Clasificar solo DESPUES del ultimo separador deja el prompt echoado fuera
-# por CONSTRUCCION, no por heuristica de contenido (ver `_diagnostic_lines`).
+# Se compara como LINEA COMPLETA (tras strip), NUNCA como substring: una
+# linea diagnostica legitima puede CONTENER guiones sin ser un separador
+# (endurecimiento pedido por Codex en la fase 3 del review, verificado
+# midiendo: `ERROR: quota exceeded -------- fin` se perdia).
 _CODEX_SECTION_SEPARATOR = "--------"
+
+
+def _strip_echoed_prompt(stderr: str) -> str:
+    """Descarta la SECCION del prompt echoado, conservando el resto.
+
+    Before: `stderr` crudo.
+    During: localiza las lineas que son EXACTAMENTE el separador (comparado
+        tras `strip()`, nunca como substring) y descarta el material
+        AUDITADO segun cuantas haya:
+          - >=2 separadores (forma real de `codex exec`): elimina el bloque
+            entre el PRIMERO y el SEGUNDO, que es donde va el prompt
+            echoado, y conserva cabecera + salida real. No se usa "lo que
+            va tras el ULTIMO" porque un separador dentro de la seccion
+            final se comeria un banner de cuota REAL (borde de Codex,
+            reproducido antes de corregir).
+          - exactamente 1 separador: se descarta TODO lo anterior a el. Es
+            el caso del test que pidio Codex, donde el log citado precede
+            al unico separador.
+          - 0 separadores: no se recorta nada (otro backend, stderr
+            desnudo); el filtro de prefijo sigue gobernando.
+    After: retorna el texto sin el material auditado.
+
+    DEUDA DECLARADA (owner: WOT-2026-027s) -- se PARA aqui a proposito.
+    Este detector lleva cuatro capas (patron -> exclusion por contexto ->
+    anclaje por linea -> recorte por seccion) y cada capa cerro un borde
+    abriendo otro. El borde vivo: si una linea del material auditado
+    CONTIENE el separador incrustado (`ERROR: x -------- fin`), la
+    deteccion de separadores se desalinea, y las dos variantes posibles
+    (comparar la linea COMPLETA o por SUBSTRING) pierden un banner real en
+    casos distintos: no hay opcion sin coste, hay que elegir cual falso
+    prefieres. Seguir puliendo aqui es disenar un parser del formato de
+    salida de codex, no arreglar un helper (STOP de degeneracion,
+    AGENTS.md).
+    Se acepta el residuo porque hoy NINGUN consumidor automatiza sobre
+    `failure_mode` (verificado por grep): el coste es una etiqueta menos
+    precisa en un JSON que lee una persona. Criterio de salida de la
+    deuda: si `failure_mode` pasa a gobernar una decision automatica
+    (reintento, rotacion de backend), esto deja de ser aceptable y hay
+    que parsear la salida de codex con su contrato real, no por
+    heuristica.
+    """
+    lines = (stderr or "").splitlines()
+    sep_idx = [
+        i for i, line in enumerate(lines) if line.strip() == _CODEX_SECTION_SEPARATOR
+    ]
+    if not sep_idx:
+        return stderr or ""
+    if len(sep_idx) == 1:
+        return "\n".join(lines[sep_idx[0] + 1 :])
+    first, second = sep_idx[0], sep_idx[1]
+    return "\n".join(lines[:first] + lines[second + 1 :])
 
 
 def _diagnostic_lines(stderr: str) -> list[str]:
     """Lineas de DIAGNOSTICO del stderr, descartando el cuerpo echoado.
 
     Before: `stderr` es el texto crudo capturado del proceso.
-    During: (1) RECORTA por ESTRUCTURA: si aparece
-        `_CODEX_SECTION_SEPARATOR`, se queda solo con lo que va DESPUES del
-        ULTIMO separador, que es donde `codex exec` emite su salida y sus
-        errores; el prompt echoado queda entre separadores y se descarta
-        entero. Sin separador (otro backend, stderr desnudo) se conserva
-        todo. (2) De ese resto, conserva las lineas que empiezan por un
+    During: (1) RECORTA por ESTRUCTURA con `_strip_echoed_prompt`: elimina
+        la seccion comprendida entre los DOS primeros separadores, que es
+        donde `codex exec` echoa el prompt, y conserva cabecera + salida
+        real. Sin dos separadores (otro backend, stderr desnudo) no recorta
+        nada. (2) De ese resto, conserva las lineas que empiezan por un
         prefijo de `_DIAGNOSTIC_LINE_PREFIXES`, ignorando sangria.
     After: retorna la lista de lineas diagnosticas en minusculas (vacia si
         no hay ninguna).
@@ -167,9 +219,7 @@ def _diagnostic_lines(stderr: str) -> list[str]:
     asi que el coste es una etiqueta menos precisa en un JSON que lee una
     persona, nunca una decision automatica equivocada.
     """
-    text = stderr or ""
-    if _CODEX_SECTION_SEPARATOR in text:
-        text = text.rsplit(_CODEX_SECTION_SEPARATOR, 1)[-1]
+    text = _strip_echoed_prompt(stderr)
     lines = []
     for raw_line in text.splitlines():
         line = raw_line.strip().lower()
