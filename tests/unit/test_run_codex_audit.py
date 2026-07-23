@@ -545,7 +545,7 @@ def test_dashes_inside_a_diagnostic_line_do_not_break_the_trim():
     discrimine exige que la linea con guiones sea la SEGUNDA coincidencia,
     y entonces la variante correcta pierde el banner: el borde se desplaza
     en vez de cerrarse. Ver la DEUDA DECLARADA en el docstring de
-    `_strip_echoed_prompt` (owner: WOT-2026-027t).
+    `_strip_echoed_prompt` (owner: WOT-2026-027u).
     """
     stderr = "--------\nuser\nprompt\n--------\nERROR: quota exceeded -------- fin\n"
     assert rca._detect_failure_mode(stderr) == "quota"
