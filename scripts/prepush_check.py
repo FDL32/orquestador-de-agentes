@@ -385,19 +385,23 @@ def run_backlog_contract_check(project_root: Path) -> CheckResult:
         )
     try:
         from scripts.check_backlog_contract import (
+            validate_archive_row_arity,
             validate_backlog,
             validate_live_archive_integrity,
         )
     except ImportError:
         from check_backlog_contract import (  # type: ignore[no-redef]
+            validate_archive_row_arity,
             validate_backlog,
             validate_live_archive_integrity,
         )
-    # WOT-2026-027i: the live<->archive duplicate check needs the destino root
-    # (it reads both backlog.md and _archive/backlog_done.md), so it is wired here
-    # alongside validate_backlog rather than inside it.
-    violations = validate_backlog(backlog) + validate_live_archive_integrity(
-        project_root
+    # WOT-2026-027i / WOT-2026-026z: the live<->archive duplicate check and the
+    # archive arity check both need the destino root (they read the archive), so
+    # they are wired here alongside validate_backlog rather than inside it.
+    violations = (
+        validate_backlog(backlog)
+        + validate_live_archive_integrity(project_root)
+        + validate_archive_row_arity(project_root)
     )
     if violations:
         detail = "\n".join(f"  - {v}" for v in violations)

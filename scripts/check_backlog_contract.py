@@ -79,9 +79,10 @@ _TABLE_HEADER_COLS = (
 )
 _FICHA_RE = re.compile(r"^### (WOT|WP|WT)-\d{4}-\w+(?:\s+-\s+.+)?$")
 
-# WOT-2026-027t: a live-queue ticket row is a markdown table row whose SECOND
-# cell (idx 2 after the leading empty split token) is a bare ticket id. The live
-# table fragmented once (35 rows drifted under '## Fichas detalladas', invisible
+# WOT-2026-027t: a live-queue ticket row is a Prioridad-led markdown table row
+# whose Ticket cell (RAW split index 2: empty token, Prioridad, Ticket) is a bare
+# ticket id. The live table fragmented once (35 rows drifted under '## Fichas
+# detalladas', invisible
 # to _extract_active_table): the guard now fails closed if any such row appears
 # OUTSIDE the Vista rapida table body, so the fragmentation cannot silently
 # reappear. Cell-based (idx 2), never substring: a prose cell can cite a ticket
@@ -163,11 +164,14 @@ def _extract_active_table(content: str) -> tuple[list[str], str | None]:
 
 
 def _is_ticket_row(stripped: str) -> bool:
-    """True iff ``stripped`` is a table row whose id cell (idx 2) is a bare id.
+    """True iff ``stripped`` is a Prioridad-led table row whose id cell is a bare id.
 
+    The id lives at RAW split index 2: ``"| Alta | WOT-... |".split("|")`` yields
+    ``['', ' Alta ', ' WOT-... ', ...]`` -- index 0 is the empty token before the
+    first pipe, index 1 is the Prioridad column, index 2 is the Ticket column.
     Cell-based, never substring (the trap this guard exists for): a later cell
     such as 'Depende de' can hold another ticket's id as a dependency, and prose
-    cells cite ids in running text; only a row whose SECOND cell IS a ticket id
+    cells cite ids in running text; only a row whose Ticket cell IS a ticket id
     counts as a live-queue ticket row.
     """
     if not stripped.startswith("| "):
@@ -477,6 +481,16 @@ def validate_live_archive_integrity(root: Path) -> list[str]:
     (a) An id present as a LIVE row AND an ARCHIVE row: it lies in both directions.
     (b) An id present TWICE inside the archive: the archive contradicts itself
         (measured: WOT-2026-011b with `pending` and `completed` rows at once).
+
+    DECLARED SCOPE (027i governance loop): both checks count only Prioridad-led
+    rows (id at raw index 2), never the archive's compact `| Ticket | Estado |`
+    closure-log rows (id at index 1). This is deliberate: a ticket MUST appear in
+    a closure-log to be closed, and it legitimately also appears in an archived
+    Prioridad-led snapshot -- counting the compact row would turn that normal
+    layering into a false positive. Consequence (verified against the real
+    archive: 0 compact-only internal dups today): a contradiction that existed
+    ONLY between two compact rows would be out of scope. The motivating bug
+    (011b) and every real contradiction are Prioridad-led, which this covers.
     """
     collab = root / ".agent" / "collaboration"
     live_ids = set(_ticket_row_ids(collab / "backlog.md"))
@@ -497,6 +511,91 @@ def validate_live_archive_integrity(root: Path) -> list[str]:
         for tid, n in sorted(Counter(archive_all).items())
         if n > 1
     )
+    return errors
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-026z: a Prioridad-led row in _archive/backlog_done.md must have the
+# canonical 8-cell arity. A row broken by an UNESCAPED pipe in its text gains
+# extra cells and its terminal commit: cell drifts OUT of the table -- the row is
+# archived WITHOUT its landing evidence, the exact datum the archive exists to
+# keep. The archive legitimately mixes arities (compact | Ticket | Estado | Nota |
+# sections and other schemas), so the guard scopes ONLY to Prioridad-led rows
+# (id at raw index 2, same position as _row_ticket_id). It does NOT demand arity
+# of the historical debt: the 17 known-broken rows measured 2026-07-21 are a
+# DECLARED baseline; a NEW Prioridad-led row with arity != 8 fails naming it.
+# The fix for a break is to REMOVE the pipe from the cell text, never to escape
+# it: the real consumer (check_backlog_commits_landed) splits on the RAW pipe.
+# ---------------------------------------------------------------------------
+
+# Declared legacy baseline (CENSUS anchored 2026-07-21/23, WOT-2026-026z): every
+# Prioridad-led archive row that does NOT have the canonical 8-cell arity TODAY.
+# The archive census measured: 252 rows at 8 cells (the norm), 3 at 7 cells (an
+# older pre-Reactivation 7-column section: 250c/008e/008j), and 17 broken by an
+# unescaped pipe (9-10 cells). All 20 non-8 rows are anchored here as declared
+# debt -- evidence, not criterion (WOT-2026-024t) -- so the guard NEVER demands
+# arity of history. Any ticket id NOT in this set must archive as a clean 8-cell
+# row. A future cleanup may repair a row and remove its entry; nothing may ADD an
+# entry to silence a FRESH break.
+_ARCHIVE_ARITY_LEGACY_BASELINE = frozenset(
+    {
+        # 17 pipe-break rows (9-10 cells).
+        "WOT-2026-004b",
+        "WOT-2026-010h",
+        "WOT-2026-013b",
+        "WOT-2026-011i",
+        "WOT-2026-011h",
+        "WOT-2026-013c",
+        "WOT-2026-014c",
+        "WOT-2026-014a",
+        "WOT-2026-014b",
+        "WOT-2026-014d",
+        "WOT-2026-014e",
+        "WOT-2026-014f",
+        "WOT-2026-014g",
+        "WOT-2026-014h",
+        "WOT-2026-014i",
+        "WOT-2026-015n",
+        "WOT-2026-021i",
+        # 3 rows of the older 7-column (pre-Reactivation) archive section.
+        "WT-2026-250c",
+        "WOT-2026-008e",
+        "WOT-2026-008j",
+    }
+)
+
+
+def validate_archive_row_arity(root: Path) -> list[str]:
+    """Return violations for NEW broken Prioridad-led rows in the archive (026z).
+
+    CANONICAL arity is 8 (the current schema). The archive's non-8 rows -- 3 of an
+    older 7-column section and 17 broken by an unescaped pipe -- are anchored in
+    _ARCHIVE_ARITY_LEGACY_BASELINE as DECLARED debt (the DoD's "ancla el censo
+    actual como baseline declarada"; the guard mira lo que se AÑADE). A NEW
+    Prioridad-led row -- any ticket id not in that baseline -- must have exactly 8
+    cells; a mismatch is a fresh break, almost always an unescaped pipe pushing the
+    terminal commit: cell out of the table. The fix is always to REMOVE the pipe
+    (the real consumer splits on the raw pipe), never to escape it.
+    """
+    archive = root / ".agent" / "collaboration" / "_archive" / "backlog_done.md"
+    if not archive.exists():
+        return []
+    want = len(_TABLE_HEADER_COLS)
+    errors: list[str] = []
+    for line in archive.read_text(encoding="utf-8-sig").splitlines():
+        stripped = line.strip()
+        tid = _row_ticket_id(stripped)
+        if tid is None or tid in _ARCHIVE_ARITY_LEGACY_BASELINE:
+            continue
+        n = len(stripped.strip("|").split("|"))
+        if n != want:
+            errors.append(
+                f"{tid}: archived row has {n} cells, expected {want} "
+                f"(WOT-2026-026z). Almost certainly an unescaped '|' in the row "
+                f"text pushed its terminal 'commit:' cell out of the table. REMOVE "
+                f"the pipe from the cell text (do NOT escape it: the real consumer "
+                f"splits on the raw pipe)."
+            )
     return errors
 
 
@@ -522,6 +621,8 @@ def main(argv: list[str] | None = None) -> int:
     violations = violations + validate_active_ticket_state(root)
     # WOT-2026-027i: duplicate ids across / within the scheduling surfaces.
     violations = violations + validate_live_archive_integrity(root)
+    # WOT-2026-026z: arity of NEW Prioridad-led rows in the archive.
+    violations = violations + validate_archive_row_arity(root)
     if violations:
         print(
             f"[backlog-contract] {len(violations)} violation(s) in {backlog}:",

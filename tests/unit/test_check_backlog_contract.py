@@ -362,6 +362,62 @@ def test_compact_closurelog_row_is_out_of_scope(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# WOT-2026-026z: arity of NEW Prioridad-led rows in the archive.
+# ---------------------------------------------------------------------------
+
+
+def _write_archive_arity(root: Path, rows: str) -> None:
+    arch = root / ".agent" / "collaboration" / "_archive"
+    arch.mkdir(parents=True, exist_ok=True)
+    (arch / "backlog_done.md").write_text(
+        _ARCHIVE_HEADER
+        + "| Prioridad | Ticket | Titulo | Scope | Estado | Depende de | Origen | Reactivation |\n"
+        + "|--|--|--|--|--|--|--|--|\n"
+        + rows,
+        encoding="utf-8",
+    )
+
+
+def test_new_archive_row_broken_by_pipe_blocks(tmp_path: Path) -> None:
+    """A NEW Prioridad-led archive row with an unescaped pipe gains cells and its
+    terminal commit: cell drifts out of the table -- fail closed naming it.
+
+    FAIL-without-fix (mutation): drop validate_archive_row_arity from main's
+    violations -> this broken row passes, the exact WOT-2026-026z defect.
+    """
+    _write_backlog(tmp_path, _VALID_ROWS)
+    _write_archive_arity(
+        tmp_path,
+        "| Alta | WOT-2026-088z | rompe grep -qE 'a | b' aqui | s | completed | - | x | commit:abc |\n",
+    )
+    errs = cbc.validate_archive_row_arity(tmp_path)
+    assert any("WOT-2026-088z" in e and "cells, expected 8" in e for e in errs), errs
+
+
+def test_clean_new_archive_row_passes(tmp_path: Path) -> None:
+    """A NEW Prioridad-led row with the canonical 8 cells (no stray pipe) passes."""
+    _write_backlog(tmp_path, _VALID_ROWS)
+    _write_archive_arity(
+        tmp_path,
+        "| Alta | WOT-2026-088z | titulo limpio sin pipe | s | completed | - | x | commit:abc |\n",
+    )
+    assert cbc.validate_archive_row_arity(tmp_path) == []
+
+
+def test_legacy_baseline_row_is_exempt(tmp_path: Path) -> None:
+    """A ticket id in the declared legacy baseline (a historical pipe-break or an
+    old 7-column row) is EXEMPT: the guard mira lo que se ANADE, never demands
+    arity of history. This test dies if the baseline exemption is removed."""
+    _write_backlog(tmp_path, _VALID_ROWS)
+    # WOT-2026-004b is in the baseline: a 10-cell row for it must NOT be flagged.
+    _write_archive_arity(
+        tmp_path,
+        "| Alta | WOT-2026-004b | fila legacy rota | s | completed | - | x | y | z | commit:abc |\n",
+    )
+    assert cbc.validate_archive_row_arity(tmp_path) == []
+
+
+# ---------------------------------------------------------------------------
 # WOT-2026-023o: STATE.md ACTIVE_TICKET vs the scheduling surfaces (bus projection)
 # ---------------------------------------------------------------------------
 
