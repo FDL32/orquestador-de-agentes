@@ -455,6 +455,14 @@ def test_archive_arity_baseline_is_pinned() -> None:
         f"baseline moved to {len(baseline)} entries: repairing a row is legitimate "
         "(update this test); ADDING one to silence a fresh break is not."
     )
+    # The prose above the dict states the census breakdown. A comment that drifts
+    # from the code is the very defect 026z exists to catch, so pin the shape too:
+    # 17 pipe-break rows (15 at 9 cells, 2 at 10) + 3 legacy 7-column rows = 20.
+    by_arity = {n: list(baseline.values()).count(n) for n in set(baseline.values())}
+    assert by_arity == {9: 15, 10: 2, 7: 3}, (
+        f"census breakdown is now {by_arity}; update the comment above "
+        "_ARCHIVE_ARITY_LEGACY_BASELINE so prose and code stay in lockstep."
+    )
     # Arity is part of the contract: the pair (id, arity) is what grants exemption.
     assert sorted(baseline.items()) == sorted(
         {
