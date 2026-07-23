@@ -1877,3 +1877,124 @@ class TestRepoRole:
         from scripts.init_session_scratch import _detect_repo_role
 
         assert _detect_repo_role(repo) == "no_motor"
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-039j: el fail-safe de archive muerde ante artifact_decision sin
+# artifact_path (par mutation rojo/verde), y la DECLARACION no-archivable
+# (un artifact_decision nuevo, valido y completo) NO cura los invalidos:
+# _audit_session valida CADA registro, sin reconciliacion.
+# ---------------------------------------------------------------------------
+
+
+class TestArchiveRejectsIncompleteArtifactDecision:
+    """WOT-2026-039j: par rojo/verde del fail-safe + append-only sin cura."""
+
+    def _write_manifest(self, repo: Path, sid: str, lines: list[dict]) -> Path:
+        sdir = repo / ".agent" / "runtime" / "session" / sid
+        manifest = sdir / "manifest.jsonl"
+        manifest.write_text(
+            "".join(json.dumps(rec) + "\n" for rec in lines), encoding="utf-8"
+        )
+        return manifest
+
+    def _base_record(self, sid: str, **extra) -> dict:
+        rec = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "session_id": sid,
+            "event": "artifact_decision",
+            "repo_role": "no_motor",
+        }
+        rec.update(extra)
+        return rec
+
+    def test_red_incomplete_decision_archive_stops_naming_line(self):
+        """ROJO: artifact_decision SIN artifact_path -> archive stop, exit 1.
+
+        Replica el caso vivo del ledger 20260716-2139 (3 registros invalidos
+        desde el 16-jul, bad==3 re-medido 2026-07-23): la barrera existente
+        DEBE morder nombrando la linea, con la sesion intacta.
+        """
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"j39r_{uuid.uuid4().hex[:8]}")
+        sid = _sentinel_id()
+        _init_session(repo, sid)
+        self._write_manifest(
+            repo,
+            sid,
+            [self._base_record(sid, generator="g", decision="sin path")],
+        )
+        result = _run_scratch(
+            ["--project-root", str(repo), "archive", "--session-id", sid]
+        )
+        assert result.returncode == 1, result.stdout
+        out = json.loads(result.stdout)
+        assert out["status"] == "stop"
+        assert out["session_intact"] is True
+        assert any(
+            f.get("line") == 1 and "artifact_path" in f.get("error", "")
+            for f in out["findings"]
+        ), out["findings"]
+
+    def test_green_complete_decision_archives_clean(self):
+        """VERDE: la misma sesion con TODOS los campos completos -> exit 0."""
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"j39g_{uuid.uuid4().hex[:8]}")
+        sid = _sentinel_id()
+        _init_session(repo, sid)
+        self._write_manifest(
+            repo,
+            sid,
+            [
+                self._base_record(
+                    sid,
+                    generator="g",
+                    decision="completo",
+                    artifact_path="manifest.jsonl",
+                )
+            ],
+        )
+        result = _run_scratch(
+            ["--project-root", str(repo), "archive", "--session-id", sid]
+        )
+        assert result.returncode == 0, result.stdout
+        assert json.loads(result.stdout)["status"] == "ok"
+
+    def test_new_valid_decision_does_not_cure_invalid_records(self):
+        """Adjudicacion 039j: un evento nuevo NO cura los invalidos.
+
+        _audit_session es per-record SIN reconciliacion: la sesion con un
+        registro invalido + una DECLARACION valida y completa sigue sin poder
+        archivarse (la salida acotada del ticket es DECLARAR, no curar). Si
+        alguien introduce reconciliacion en el validador (un registro nuevo
+        supersede al viejo), este test CAE -- eso es cambio de schema y el
+        plan lo veda.
+        """
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"j39c_{uuid.uuid4().hex[:8]}")
+        sid = _sentinel_id()
+        _init_session(repo, sid)
+        self._write_manifest(
+            repo,
+            sid,
+            [
+                self._base_record(sid, generator="g", decision="sin path"),
+                self._base_record(
+                    sid,
+                    generator="orquestador",
+                    decision=(
+                        "SESION declarada no-archivable: artifact_decision "
+                        "historico sin artifact_path; append-only impide "
+                        "repararlo"
+                    ),
+                    artifact_path="manifest.jsonl",
+                ),
+            ],
+        )
+        result = _run_scratch(
+            ["--project-root", str(repo), "archive", "--session-id", sid]
+        )
+        assert result.returncode == 1, result.stdout
+        out = json.loads(result.stdout)
+        assert out["status"] == "stop"
+        assert any(
+            f.get("line") == 1 and "artifact_path" in f.get("error", "")
+            for f in out["findings"]
+        ), out["findings"]
