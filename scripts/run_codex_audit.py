@@ -127,30 +127,51 @@ _DIAGNOSTIC_LINE_PREFIXES = (
     "stream error:",
 )
 
+# Separador con el que `codex exec` delimita las secciones de su stderr:
+#   cabecera / -------- / user + PROMPT ECHOADO / -------- / salida y errores
+# Clasificar solo DESPUES del ultimo separador deja el prompt echoado fuera
+# por CONSTRUCCION, no por heuristica de contenido (ver `_diagnostic_lines`).
+_CODEX_SECTION_SEPARATOR = "--------"
+
 
 def _diagnostic_lines(stderr: str) -> list[str]:
     """Lineas de DIAGNOSTICO del stderr, descartando el cuerpo echoado.
 
     Before: `stderr` es el texto crudo capturado del proceso.
-    During: parte en lineas y conserva solo las que empiezan por un prefijo
-        de `_DIAGNOSTIC_LINE_PREFIXES` (en minusculas, ignorando sangria).
+    During: (1) RECORTA por ESTRUCTURA: si aparece
+        `_CODEX_SECTION_SEPARATOR`, se queda solo con lo que va DESPUES del
+        ULTIMO separador, que es donde `codex exec` emite su salida y sus
+        errores; el prompt echoado queda entre separadores y se descarta
+        entero. Sin separador (otro backend, stderr desnudo) se conserva
+        todo. (2) De ese resto, conserva las lineas que empiezan por un
+        prefijo de `_DIAGNOSTIC_LINE_PREFIXES`, ignorando sangria.
     After: retorna la lista de lineas diagnosticas en minusculas (vacia si
         no hay ninguna).
 
-    POR QUE EXISTE (hallazgo de Codex en el MANAGER_REVIEW de
-    WOT-2026-027g, verificado midiendo): `codex exec` ECHOA el prompt
-    ENTERO por stderr. Tratar ese stderr como una BOLSA DE TEXTO y buscar
-    patrones por presencia global es incorrecto en las DOS direcciones:
-      - falso POSITIVO: un fallo generico cuyo prompt echoado mencione
-        "usage limit" (p.ej. el bundle de review de ESTE ticket) se
-        etiquetaba como cuota;
-      - falso NEGATIVO: una exclusion global ("disk quota") presente en el
-        material bajo revision anulaba un banner de cuota autentico.
-    Anclar en la LINEA diagnostica cierra ambas: el material auditado vive
-    en lineas sin prefijo y deja de contaminar la clasificacion.
+    POR QUE EXISTE (dos hallazgos de Codex en el MANAGER_REVIEW de
+    WOT-2026-027g, ambos verificados midiendo): `codex exec` ECHOA el
+    prompt ENTERO por stderr. Tratarlo como BOLSA DE TEXTO fallaba en las
+    dos direcciones -- falso POSITIVO si el material auditado mencionaba
+    "usage limit", falso NEGATIVO si mencionaba "disk quota"--. Anclar por
+    PREFIJO cerro casi todo, pero Codex encontro el residuo en su
+    re-review: un LOG CITADO dentro del material auditado tambien empieza
+    por `ERROR:`, asi que se colaba como diagnostico. Se midio contra el
+    bundle de review de ESTE mismo ticket: 9 lineas suyas pasaban el filtro
+    de prefijo. El recorte por SEPARADOR lo cierra por construccion, no por
+    adivinar el contenido: el material citado vive en otra seccion.
+
+    RESIDUO DECLARADO: si un backend emitiese un banner de cuota SIN
+    prefijo diagnostico, o no usara separadores, se clasificaria como fallo
+    generico (falso NEGATIVO conservador). Se acepta a proposito: hoy
+    ningun consumidor automatiza sobre `failure_mode` (verificado por grep),
+    asi que el coste es una etiqueta menos precisa en un JSON que lee una
+    persona, nunca una decision automatica equivocada.
     """
+    text = stderr or ""
+    if _CODEX_SECTION_SEPARATOR in text:
+        text = text.rsplit(_CODEX_SECTION_SEPARATOR, 1)[-1]
     lines = []
-    for raw_line in (stderr or "").splitlines():
+    for raw_line in text.splitlines():
         line = raw_line.strip().lower()
         if line.startswith(_DIAGNOSTIC_LINE_PREFIXES):
             lines.append(line)

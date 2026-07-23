@@ -459,6 +459,76 @@ def test_echoed_prompt_in_stderr_cannot_trigger_or_mute_the_classifier():
         )
 
 
+def test_quoted_log_inside_the_audited_bundle_is_not_a_diagnostic():
+    """RESIDUO que encontro Codex en su RE-REVIEW de WOT-2026-027g.
+
+    Anclar por PREFIJO cerraba la prosa echoada, pero no un LOG CITADO
+    dentro del material auditado: una linea copiada como
+    `ERROR: You've hit your usage limit.` dentro del bundle tambien empieza
+    por el prefijo y se colaba como diagnostico del proceso. No era
+    teorico: medido contra el bundle de review de ESTE ticket, 9 de sus
+    lineas pasaban el filtro de prefijo.
+
+    Lo cierra el recorte por ESTRUCTURA (`_CODEX_SECTION_SEPARATOR`): solo
+    cuenta lo que va despues del ULTIMO separador, donde codex emite su
+    salida real. El material citado vive en otra seccion y queda fuera POR
+    CONSTRUCCION, sin adivinar su contenido.
+
+    Este es literalmente el test que Codex pidio.
+    """
+    stderr = (
+        "user\n"
+        "ERROR: You've hit your usage limit.  # copied log inside audited bundle\n"
+        "--------\n"
+        "ERROR: panic: unexpected EOF while parsing config\n"
+    )
+    assert rca._detect_failure_mode(stderr) is None, (
+        "un log CITADO en el material auditado no es un diagnostico del "
+        "proceso: el fallo real es el panic, no una cuota"
+    )
+
+
+def test_trim_uses_the_last_separator_not_the_first():
+    """MUTACION VERDE cazada al ejercitar la barrera: cambiar `rsplit` por
+    `split` (recortar por el PRIMER separador en vez del ULTIMO) pasaba los
+    23 tests. Sin este caso, la eleccion de `rsplit` no estaba fijada.
+
+    Importa porque el stderr real de codex tiene DOS separadores
+    (cabecera / prompt echoado / salida): recortando por el primero, el
+    prompt echoado -- con sus logs citados-- sigue dentro y el residuo que
+    Codex encontro vuelve a abrirse.
+    """
+    stderr = (
+        "approval: never\n"
+        "--------\n"
+        "user\n"
+        "ERROR: You've hit your usage limit.  # log citado en el material\n"
+        "--------\n"
+        "ERROR: panic: unexpected EOF while parsing config\n"
+    )
+    assert rca._detect_failure_mode(stderr) is None, (
+        "hay que recortar por el ULTIMO separador: con el primero, el "
+        "prompt echoado sigue dentro y su log citado se clasifica"
+    )
+
+
+def test_separator_trim_keeps_working_without_separators():
+    """El recorte por seccion no puede romper el caso SIN separadores.
+
+    Un backend que no sea codex (o un stderr desnudo) no emite
+    `--------`; ahi se conserva el texto entero y la clasificacion sigue
+    dependiendo del prefijo diagnostico. Sin este pin, endurecer el
+    recorte podria enmudecer a cualquier otro productor de stderr.
+    """
+    assert (
+        rca._detect_failure_mode(
+            "stream error: You have hit your usage limit. Try again later."
+        )
+        == "quota"
+    )
+    assert rca._detect_failure_mode("ERROR: panic: unexpected EOF") is None
+
+
 def test_success_has_no_failure_mode(tmp_path):
     """Aditividad: el camino verde gana la clave con valor None, nunca una
     etiqueta de fallo inventada."""
