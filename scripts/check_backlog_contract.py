@@ -580,6 +580,11 @@ def validate_archive_row_arity(root: Path) -> list[str]:
     archive = root / ".agent" / "collaboration" / "_archive" / "backlog_done.md"
     if not archive.exists():
         return []
+    # DECLARED COUPLING (027i/026z governance loop): the archive's Prioridad-led
+    # 8-column sections carry the SAME columns as the live Vista rapida table, so
+    # the canonical arity reuses _TABLE_HEADER_COLS. Verified identical today. If
+    # the archive schema ever diverges from the live table, derive `want` from the
+    # archive's own header instead -- this reuse assumes they stay in lockstep.
     want = len(_TABLE_HEADER_COLS)
     errors: list[str] = []
     for line in archive.read_text(encoding="utf-8-sig").splitlines():
