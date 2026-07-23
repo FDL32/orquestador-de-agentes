@@ -88,6 +88,48 @@ def _fake_codex_executable(tmp_path: Path, *, stdout: str, returncode: int) -> s
         return str(shim)
 
 
+def _fake_codex_with_stderr(
+    tmp_path: Path, *, stdout: str, stderr: str, returncode: int, tag: str
+) -> str:
+    """Build a fake codex that writes to BOTH stdout and stderr.
+
+    WOT-2026-027g needs a fixture the older fakes cannot express: the quota
+    failure is characterized by stdout being NON-EMPTY (so the '0 bytes =
+    dead backend' contract never fires) while the quota banner travels on
+    STDERR. `tag` keeps concurrent fakes in one tmp_path from colliding.
+    """
+    script = tmp_path / f"fake_codex_{tag}.py"
+    script.write_text(
+        "import sys\n"
+        f"sys.stdout.write({stdout!r})\n"
+        f"sys.stderr.write({stderr!r})\n"
+        "sys.stdout.flush()\n"
+        "sys.stderr.flush()\n"
+        f"sys.exit({returncode})\n",
+        encoding="utf-8",
+    )
+    if sys.platform == "win32":
+        shim = tmp_path / f"fake_codex_{tag}.cmd"
+        shim.write_text(
+            f'@echo off\r\n"{sys.executable}" "{script}"\r\n', encoding="utf-8"
+        )
+        return str(shim)
+    else:  # pragma: no cover -- POSIX shim, not exercised on this Windows CI
+        shim = tmp_path / f"fake_codex_{tag}.sh"
+        shim.write_text(
+            f'#!/bin/sh\nexec "{sys.executable}" "{script}"\n', encoding="utf-8"
+        )
+        shim.chmod(0o755)
+        return str(shim)
+
+
+# Banner REAL medido en vivo 2026-07-21 (8 invocaciones consecutivas rc=1).
+_REAL_QUOTA_STDERR = (
+    "stream error: You have hit your usage limit. Try again later.\n"
+    "retrying 1/5 in 193ms...\n"
+)
+
+
 def _stdin_echo_codex_executable(tmp_path: Path) -> str:
     """Build a fake codex executable that ECHOES stdin and reports argv.
 
@@ -240,6 +282,148 @@ def test_nonzero_exit_with_content_reports_real_returncode(tmp_path):
     assert result["ok"] is False
     assert "partial output before crash" in result["stdout"]
     assert result["stdout_bytes"] > 0
+
+
+def test_quota_banner_on_stderr_is_a_distinguishable_failure_mode(tmp_path):
+    """WOT-2026-027g: la cuota agotada deja de ser un fallo generico.
+
+    El fixture reproduce la forma REAL medida en vivo (2026-07-21): stdout
+    NO-VACIO -- por eso el contrato '0 bytes = backend muerto' nunca se
+    dispara y el caso escapaba-- mas el banner de cuota en STDERR. Antes de
+    este ticket `err` se capturaba en communicate() y se DESCARTABA salvo en
+    la rama de 0 bytes, asi que este caso se reportaba como
+    'returned non-zero exit (1)' a secas, indistinguible de un crash.
+    """
+    codex_exe = _fake_codex_with_stderr(
+        tmp_path,
+        stdout="thinking...\n",
+        stderr=_REAL_QUOTA_STDERR,
+        returncode=1,
+        tag="quota",
+    )
+
+    result = rca.run_codex_audit(
+        "audit this prompt", codex_executable=codex_exe, timeout=30
+    )
+
+    assert result["failure_mode"] == "quota", (
+        "el banner de cuota en stderr debe producir un failure_mode "
+        "DISTINGUIBLE, no un fallo generico"
+    )
+    assert result["ok"] is False
+    # El contrato ortogonal sigue intacto: stdout no vacio, rc real, sin
+    # inventar exito ni perder contenido.
+    assert result["returncode"] == 1
+    assert "thinking..." in result["stdout"]
+    assert "usage limit" in result["reason"].lower() or "cuota" in result["reason"]
+
+
+def test_generic_failure_with_same_returncode_is_not_labeled_quota(tmp_path):
+    """EL DIENTE (endurecido por el lector-FS): rc!=0 a secas NO basta.
+
+    Este fake es GEMELO del de cuota -- mismo rc=1, mismo stdout no-vacio--
+    y solo difiere en el CONTENIDO de stderr. Si el detector mirase el rc (o
+    la mera presencia de stderr) en vez del patron, este test daria 'quota'
+    y la barrera seria cosmetica. Es el par que hace la mutacion no-trivial.
+    """
+    codex_exe = _fake_codex_with_stderr(
+        tmp_path,
+        stdout="thinking...\n",
+        stderr="panic: unexpected EOF while parsing config\n",
+        returncode=1,
+        tag="generic",
+    )
+
+    result = rca.run_codex_audit(
+        "audit this prompt", codex_executable=codex_exe, timeout=30
+    )
+
+    assert result["failure_mode"] is None, (
+        "un fallo generico con el MISMO rc y stderr no-vacio no puede "
+        "etiquetarse como cuota: el detector debe mirar el PATRON"
+    )
+    assert result["ok"] is False and result["returncode"] == 1
+
+
+def test_quota_patterns_do_not_match_unrelated_quota_prose():
+    """El patron no puede ser la palabra 'quota' a secas.
+
+    Hallazgo CONVERGENTE de las lentes deepseek y gemma4 en el
+    MANAGER_REVIEW de WOT-2026-027g, y CONFIRMADO midiendo antes de
+    corregir: con 'quota' suelto, 'disk quota exceeded' se etiquetaba como
+    cuota de backend. Un clasificador que miente es peor que no clasificar,
+    porque el llamador decidiria 'reintentar mas tarde' ante un disco lleno.
+
+    Pin en AMBAS direcciones: los banners reales siguen casando y la prosa
+    ajena deja de hacerlo.
+    """
+    for stderr in (
+        "You have hit your usage limit. Try again later.",
+        "429 Too Many Requests: rate limit exceeded",
+        "error: quota exceeded for this organization",
+    ):
+        assert rca._detect_failure_mode(stderr) == "quota", (
+            f"un banner REAL de cuota debe seguir casando: {stderr!r}"
+        )
+
+    for stderr in (
+        "disk quota exceeded while writing cache",
+        "error: user quota configuration invalid",
+        "panic: unexpected EOF while parsing config",
+        "",
+    ):
+        assert rca._detect_failure_mode(stderr) is None, (
+            f"prosa que NO es cuota de backend no puede etiquetarse: {stderr!r}"
+        )
+
+
+def test_real_quota_banner_wins_over_disk_quota_prose_in_the_same_stderr():
+    """FALSO NEGATIVO medido EN PRODUCCION durante este mismo MANAGER_REVIEW.
+
+    codex ECHOA el prompt entero por stderr. Como el material bajo revision
+    contenia la cadena 'disk quota' (era uno de mis propios fixtures), la
+    exclusion por contexto -- que en su primera version se evaluaba ANTES
+    del patron-- anulaba el banner AUTENTICO que codex emitia al final:
+
+        ERROR: You've hit your usage limit. Upgrade to Pro ...
+
+    El detector devolvia None ante una cuota REAL. Un falso negativo es peor
+    que el falso positivo que la exclusion arreglaba: el llamador seguiria
+    machacando un backend agotado en vez de rotar o esperar.
+
+    Pin de la PRECEDENCIA: banner inequivoco > exclusion por contexto.
+    """
+    stderr_real = (
+        "disk quota exceeded while writing cache\n"
+        "... (codex echoa aqui el prompt entero bajo revision) ...\n"
+        "ERROR: You've hit your usage limit. Upgrade to Pro "
+        "(https://chatgpt.com/explore/pro), visit "
+        "https://chatgpt.com/codex/settings/usage to purchase more credits "
+        "or try again at Jul 28th, 2026 7:56 PM.\n"
+    )
+    assert rca._detect_failure_mode(stderr_real) == "quota", (
+        "un banner INEQUIVOCO de cuota debe ganar aunque el stderr mencione "
+        "'disk quota' en otro punto (el prompt echoado no puede enmudecer "
+        "el error real del backend)"
+    )
+
+    # Y la exclusion SIGUE valiendo cuando no hay banner inequivoco: el
+    # arreglo del falso negativo no puede reabrir el falso positivo.
+    assert rca._detect_failure_mode("disk quota exceeded while writing cache") is None
+
+
+def test_success_has_no_failure_mode(tmp_path):
+    """Aditividad: el camino verde gana la clave con valor None, nunca una
+    etiqueta de fallo inventada."""
+    codex_exe = _fake_codex_executable(
+        tmp_path, stdout="audit findings: clean\n", returncode=0
+    )
+
+    result = rca.run_codex_audit(
+        "audit this prompt", codex_executable=codex_exe, timeout=30
+    )
+
+    assert result["ok"] is True and result["failure_mode"] is None
 
 
 def test_cli_help_exits_zero_and_prints_usage(capsys):

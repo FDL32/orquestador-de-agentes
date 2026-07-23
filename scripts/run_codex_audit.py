@@ -41,7 +41,11 @@ During:
 After:
     - Returns a structured dict: `returncode` (int), `stdout` (str),
       `stdout_bytes` (int, `len(stdout.encode("utf-8", errors="replace"))`),
-      `ok` (bool), `reason` (str).
+      `ok` (bool), `reason` (str), `failure_mode` (`str | None`).
+    - `failure_mode` distinguishes an EXHAUSTED QUOTA from a generic
+      failure (WOT-2026-027g). The quota banner goes to STDERR while stdout
+      stays non-empty, so the "0 bytes = dead" rule below never fires for
+      it and the bare returncode cannot tell it apart from a crash.
     - CEM hard-won lesson encoded here: exit code is NOT the verdict (codex
       can exit 0 on an Auth Error). The caller must validate by CONTENT.
       Per CEM, 0 bytes of stdout means the backend is DEAD (529), regardless
@@ -78,6 +82,80 @@ M4_ARGS = [
     "-c",
     "service_tier=fast",
 ]
+
+
+# WOT-2026-027g: patrones de CUOTA AGOTADA en stderr. El banner real medido
+# en vivo (2026-07-21, 8 invocaciones consecutivas) es "You have hit your
+# usage limit."; los otros dos cubren las variantes de rate-limit/quota que
+# emite la misma familia de backends. Se casan sobre stderr en minusculas.
+#
+# Por que hace falta un detector y no basta el rc: en este fallo stdout NO
+# queda vacio (codex ya habia emitido texto), asi que el contrato "0 bytes =
+# backend muerto" no lo caza, y el rc=1 es indistinguible del de un crash
+# cualquiera. Sin mirar el PATRON de stderr, cuota y panic son el mismo
+# fallo generico.
+# "quota" a SECAS no esta en la lista a proposito (hallazgo convergente de las
+# lentes deepseek y gemma4, CONFIRMADO midiendo: casaba "disk quota exceeded"
+# y "user quota configuration invalid", que no son cuota de backend). Se exige
+# el termino acompanado, que es como lo emiten los backends reales.
+_QUOTA_STDERR_PATTERNS = (
+    "usage limit",
+    "quota exceeded",
+    "quota reached",
+    "out of quota",
+    "insufficient quota",
+    "rate limit",
+)
+
+# Banners INEQUIVOCOS de cuota de backend: si aparece uno, es cuota, pase lo
+# que pase en el resto del stderr. Medido en vivo 2026-07-23: el banner real
+# es "You've hit your usage limit." (con apostrofo).
+_QUOTA_UNAMBIGUOUS_PATTERNS = (
+    "usage limit",
+    "rate limit",
+)
+
+# Frases de cuota que NO son de backend cuando aparecen con este SUJETO
+# (disco/fs/inodos). Solo desempatan cuando NO hay banner inequivoco.
+_NOT_BACKEND_QUOTA_CONTEXTS = (
+    "disk quota",
+    "disk space",
+    "quota configuration",
+    "filesystem quota",
+    "inode",
+)
+
+
+def _detect_failure_mode(stderr: str) -> str | None:
+    """Clasifica el stderr en un failure_mode conocido, o None.
+
+    Before: `stderr` es el texto capturado del proceso (puede ser vacio).
+    During: casa en minusculas contra `_QUOTA_STDERR_PATTERNS`; no toca red
+        ni disco.
+    After: retorna `"quota"` si reconoce el banner de cuota agotada del
+        BACKEND, `None` en cualquier otro caso (stderr vacio, fallo generico
+        con el mismo returncode, o una cuota que no es del backend --p.ej.
+        de disco--: la distincion es por CONTENIDO, nunca por rc ni por la
+        mera presencia de stderr).
+
+        PRECEDENCIA (medida en vivo 2026-07-23, no teorica): un banner
+        INEQUIVOCO gana SIEMPRE, y la exclusion por contexto solo desempata
+        cuando no lo hay. El orden inverso -- excluir primero-- produce un
+        FALSO NEGATIVO: el stderr real de codex ECHOA el prompt entero, asi
+        que basta con que el material bajo revision mencione "disk quota"
+        para anular un "usage limit" autentico del final. Se midio con este
+        mismo ticket: codex agoto cuota de verdad y el detector dijo None.
+        Un falso negativo es PEOR que el falso positivo que arregla: el
+        llamador seguiria machacando un backend sin cuota.
+    """
+    haystack = (stderr or "").lower()
+    if any(pattern in haystack for pattern in _QUOTA_UNAMBIGUOUS_PATTERNS):
+        return "quota"
+    if any(context in haystack for context in _NOT_BACKEND_QUOTA_CONTEXTS):
+        return None
+    if any(pattern in haystack for pattern in _QUOTA_STDERR_PATTERNS):
+        return "quota"
+    return None
 
 
 class CodexAuditEmptyOutputError(RuntimeError):
@@ -152,7 +230,12 @@ def run_codex_audit(
     After: on 0-byte stdout, raises `CodexAuditEmptyOutputError` (backend is dead
         per CEM), regardless of returncode. Otherwise returns a dict with
         `returncode`, `stdout`, `stdout_bytes`, `ok` (`returncode == 0`),
-        and `reason`.
+        `reason`, and `failure_mode` (`"quota"` when stderr carries the
+        usage-limit banner, else `None`; always `None` when `ok`).
+        WOT-2026-027g: the quota failure is NOT covered by the 0-bytes
+        contract -- stdout stays non-empty and the banner travels on stderr,
+        so without classifying by PATTERN it is indistinguishable from any
+        other non-zero exit.
     """
     if repo_root is None:
         print(
@@ -198,18 +281,28 @@ def run_codex_audit(
 
     returncode = proc.returncode
     ok = returncode == 0
-    reason = (
-        "codex exec succeeded: non-empty stdout, returncode 0"
-        if ok
-        else f"codex exec returned non-zero exit ({returncode}) but produced "
-        "non-empty stdout; content preserved, exit code is not the verdict"
-    )
+    # WOT-2026-027g: se clasifica SOLO en el camino de fallo. Un rc=0 nunca
+    # lleva etiqueta, aunque el stderr contenga ruido que case el patron.
+    failure_mode = None if ok else _detect_failure_mode(err or "")
+    if ok:
+        reason = "codex exec succeeded: non-empty stdout, returncode 0"
+    elif failure_mode == "quota":
+        reason = (
+            f"codex exec sin cuota (usage limit) segun stderr, exit {returncode}; "
+            "no es un fallo generico: reintentar mas tarde o rotar de backend"
+        )
+    else:
+        reason = (
+            f"codex exec returned non-zero exit ({returncode}) but produced "
+            "non-empty stdout; content preserved, exit code is not the verdict"
+        )
     return {
         "returncode": returncode,
         "stdout": stdout,
         "stdout_bytes": stdout_bytes,
         "ok": ok,
         "reason": reason,
+        "failure_mode": failure_mode,
     }
 
 
