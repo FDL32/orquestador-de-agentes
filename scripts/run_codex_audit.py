@@ -156,7 +156,7 @@ def _strip_echoed_prompt(stderr: str) -> str:
             desnudo); el filtro de prefijo sigue gobernando.
     After: retorna el texto sin el material auditado.
 
-    DEUDA DECLARADA (owner: WOT-2026-027s) -- se PARA aqui a proposito.
+    DEUDA DECLARADA (owner: WOT-2026-027t) -- se PARA aqui a proposito.
     Este detector lleva cuatro capas (patron -> exclusion por contexto ->
     anclaje por linea -> recorte por seccion) y cada capa cerro un borde
     abriendo otro. El borde vivo: si una linea del material auditado
