@@ -107,16 +107,9 @@ _QUOTA_STDERR_PATTERNS = (
     "rate limit",
 )
 
-# Banners INEQUIVOCOS de cuota de backend: si aparece uno, es cuota, pase lo
-# que pase en el resto del stderr. Medido en vivo 2026-07-23: el banner real
-# es "You've hit your usage limit." (con apostrofo).
-_QUOTA_UNAMBIGUOUS_PATTERNS = (
-    "usage limit",
-    "rate limit",
-)
-
 # Frases de cuota que NO son de backend cuando aparecen con este SUJETO
-# (disco/fs/inodos). Solo desempatan cuando NO hay banner inequivoco.
+# (disco/fs/inodos). Se evaluan DENTRO de la misma linea diagnostica, nunca
+# sobre el stderr entero.
 _NOT_BACKEND_QUOTA_CONTEXTS = (
     "disk quota",
     "disk space",
@@ -125,6 +118,44 @@ _NOT_BACKEND_QUOTA_CONTEXTS = (
     "inode",
 )
 
+# Prefijos que marcan una linea de DIAGNOSTICO del proceso, por oposicion al
+# cuerpo (que en codex incluye el prompt ECHOADO). Ver `_diagnostic_lines`.
+_DIAGNOSTIC_LINE_PREFIXES = (
+    "error:",
+    "warning:",
+    "fatal:",
+    "stream error:",
+)
+
+
+def _diagnostic_lines(stderr: str) -> list[str]:
+    """Lineas de DIAGNOSTICO del stderr, descartando el cuerpo echoado.
+
+    Before: `stderr` es el texto crudo capturado del proceso.
+    During: parte en lineas y conserva solo las que empiezan por un prefijo
+        de `_DIAGNOSTIC_LINE_PREFIXES` (en minusculas, ignorando sangria).
+    After: retorna la lista de lineas diagnosticas en minusculas (vacia si
+        no hay ninguna).
+
+    POR QUE EXISTE (hallazgo de Codex en el MANAGER_REVIEW de
+    WOT-2026-027g, verificado midiendo): `codex exec` ECHOA el prompt
+    ENTERO por stderr. Tratar ese stderr como una BOLSA DE TEXTO y buscar
+    patrones por presencia global es incorrecto en las DOS direcciones:
+      - falso POSITIVO: un fallo generico cuyo prompt echoado mencione
+        "usage limit" (p.ej. el bundle de review de ESTE ticket) se
+        etiquetaba como cuota;
+      - falso NEGATIVO: una exclusion global ("disk quota") presente en el
+        material bajo revision anulaba un banner de cuota autentico.
+    Anclar en la LINEA diagnostica cierra ambas: el material auditado vive
+    en lineas sin prefijo y deja de contaminar la clasificacion.
+    """
+    lines = []
+    for raw_line in (stderr or "").splitlines():
+        line = raw_line.strip().lower()
+        if line.startswith(_DIAGNOSTIC_LINE_PREFIXES):
+            lines.append(line)
+    return lines
+
 
 def _detect_failure_mode(stderr: str) -> str | None:
     """Clasifica el stderr en un failure_mode conocido, o None.
@@ -132,29 +163,27 @@ def _detect_failure_mode(stderr: str) -> str | None:
     Before: `stderr` es el texto capturado del proceso (puede ser vacio).
     During: casa en minusculas contra `_QUOTA_STDERR_PATTERNS`; no toca red
         ni disco.
-    After: retorna `"quota"` si reconoce el banner de cuota agotada del
-        BACKEND, `None` en cualquier otro caso (stderr vacio, fallo generico
-        con el mismo returncode, o una cuota que no es del backend --p.ej.
-        de disco--: la distincion es por CONTENIDO, nunca por rc ni por la
-        mera presencia de stderr).
+    After: retorna `"quota"` si ALGUNA linea DIAGNOSTICA anuncia cuota de
+        backend agotada, `None` en cualquier otro caso (stderr vacio, fallo
+        generico con el mismo returncode, cuota que no es de backend --de
+        disco/fs--, o mencion de cualquiera de esos terminos en el cuerpo
+        echoado). La distincion es por CONTENIDO y POR LINEA, nunca por rc
+        ni por la mera presencia de stderr.
 
-        PRECEDENCIA (medida en vivo 2026-07-23, no teorica): un banner
-        INEQUIVOCO gana SIEMPRE, y la exclusion por contexto solo desempata
-        cuando no lo hay. El orden inverso -- excluir primero-- produce un
-        FALSO NEGATIVO: el stderr real de codex ECHOA el prompt entero, asi
-        que basta con que el material bajo revision mencione "disk quota"
-        para anular un "usage limit" autentico del final. Se midio con este
-        mismo ticket: codex agoto cuota de verdad y el detector dijo None.
-        Un falso negativo es PEOR que el falso positivo que arregla: el
-        llamador seguiria machacando un backend sin cuota.
+        UNIDAD DE DECISION = LA LINEA, no el stderr entero (hallazgo de
+        Codex, verificado midiendo): `codex exec` echoa el prompt completo
+        por stderr, asi que una busqueda global se contamina con el
+        material bajo revision en AMBAS direcciones. Cada linea diagnostica
+        se juzga sola: si nombra un sujeto no-backend (disco, fs, inodos)
+        no cuenta, y si no, basta un patron de cuota para clasificar. Asi
+        "disk quota exceeded" y "quota exceeded for this organization"
+        pueden convivir en el mismo stderr y solo la segunda decide.
     """
-    haystack = (stderr or "").lower()
-    if any(pattern in haystack for pattern in _QUOTA_UNAMBIGUOUS_PATTERNS):
-        return "quota"
-    if any(context in haystack for context in _NOT_BACKEND_QUOTA_CONTEXTS):
-        return None
-    if any(pattern in haystack for pattern in _QUOTA_STDERR_PATTERNS):
-        return "quota"
+    for line in _diagnostic_lines(stderr):
+        if any(context in line for context in _NOT_BACKEND_QUOTA_CONTEXTS):
+            continue
+        if any(pattern in line for pattern in _QUOTA_STDERR_PATTERNS):
+            return "quota"
     return None
 
 

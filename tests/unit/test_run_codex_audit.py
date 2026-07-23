@@ -357,9 +357,11 @@ def test_quota_patterns_do_not_match_unrelated_quota_prose():
     Pin en AMBAS direcciones: los banners reales siguen casando y la prosa
     ajena deja de hacerlo.
     """
+    # Las dos formas REALES medidas de este backend, ambas con prefijo
+    # diagnostico: "stream error:" (2026-07-21) y "ERROR:" (2026-07-23).
     for stderr in (
-        "You have hit your usage limit. Try again later.",
-        "429 Too Many Requests: rate limit exceeded",
+        "stream error: You have hit your usage limit. Try again later.",
+        "ERROR: 429 Too Many Requests: rate limit exceeded",
         "error: quota exceeded for this organization",
     ):
         assert rca._detect_failure_mode(stderr) == "quota", (
@@ -367,9 +369,9 @@ def test_quota_patterns_do_not_match_unrelated_quota_prose():
         )
 
     for stderr in (
-        "disk quota exceeded while writing cache",
+        "ERROR: disk quota exceeded while writing cache",
         "error: user quota configuration invalid",
-        "panic: unexpected EOF while parsing config",
+        "ERROR: panic: unexpected EOF while parsing config",
         "",
     ):
         assert rca._detect_failure_mode(stderr) is None, (
@@ -394,7 +396,7 @@ def test_real_quota_banner_wins_over_disk_quota_prose_in_the_same_stderr():
     Pin de la PRECEDENCIA: banner inequivoco > exclusion por contexto.
     """
     stderr_real = (
-        "disk quota exceeded while writing cache\n"
+        "ERROR: disk quota exceeded while writing cache\n"
         "... (codex echoa aqui el prompt entero bajo revision) ...\n"
         "ERROR: You've hit your usage limit. Upgrade to Pro "
         "(https://chatgpt.com/explore/pro), visit "
@@ -402,14 +404,59 @@ def test_real_quota_banner_wins_over_disk_quota_prose_in_the_same_stderr():
         "or try again at Jul 28th, 2026 7:56 PM.\n"
     )
     assert rca._detect_failure_mode(stderr_real) == "quota", (
-        "un banner INEQUIVOCO de cuota debe ganar aunque el stderr mencione "
-        "'disk quota' en otro punto (el prompt echoado no puede enmudecer "
-        "el error real del backend)"
+        "una linea diagnostica de cuota REAL debe clasificar aunque OTRA "
+        "linea hable de 'disk quota' (la unidad de decision es la linea)"
     )
 
-    # Y la exclusion SIGUE valiendo cuando no hay banner inequivoco: el
-    # arreglo del falso negativo no puede reabrir el falso positivo.
-    assert rca._detect_failure_mode("disk quota exceeded while writing cache") is None
+    # Y la exclusion SIGUE valiendo en su propia linea: el arreglo del falso
+    # negativo no puede reabrir el falso positivo.
+    assert (
+        rca._detect_failure_mode("ERROR: disk quota exceeded while writing cache")
+        is None
+    )
+
+
+def test_echoed_prompt_in_stderr_cannot_trigger_or_mute_the_classifier():
+    """HALLAZGO DE CODEX en el MANAGER_REVIEW de WOT-2026-027g, verificado
+    midiendo: `codex exec` ECHOA el prompt entero por stderr, asi que tratar
+    ese stderr como una BOLSA DE TEXTO se contamina con el material bajo
+    revision en las DOS direcciones.
+
+    a) FALSO POSITIVO: un fallo generico cuyo prompt echoado mencione
+       'usage limit' (justo lo que hace el bundle de review de ESTE ticket)
+       se etiquetaba como cuota.
+    b) FALSO NEGATIVO: un banner de cuota NO cubierto por la antigua lista
+       de "inequivocos" quedaba anulado por un 'disk quota' del cuerpo.
+
+    Ambos se cierran anclando en la LINEA diagnostica: el cuerpo echoado no
+    lleva prefijo `ERROR:`/`stream error:` y por tanto no participa.
+    """
+    # (a) el prompt echoado menciona los patrones; el fallo real es un panic
+    echoed_generic = (
+        "user\n"
+        "# BUNDLE: este ticket habla de 'usage limit' y de 'rate limit'\n"
+        "porque son justo los patrones que el detector debe reconocer.\n"
+        "--------\n"
+        "ERROR: panic: unexpected EOF while parsing config\n"
+    )
+    assert rca._detect_failure_mode(echoed_generic) is None, (
+        "el prompt ECHOADO no puede disparar la clasificacion: el material "
+        "auditado no es un diagnostico del proceso"
+    )
+
+    # (b) banners de cuota que NO estaban en la lista de inequivocos, con
+    # una linea de disk-quota delante. Los tres son los casos que Codex
+    # midio como falso negativo.
+    for banner in (
+        "ERROR: quota exceeded for this organization",
+        "ERROR: insufficient quota for this organization",
+        "ERROR: out of quota for this organization",
+    ):
+        stderr = f"ERROR: disk quota exceeded while writing cache\n{banner}\n"
+        assert rca._detect_failure_mode(stderr) == "quota", (
+            f"falso negativo: {banner!r} es cuota de backend aunque otra "
+            "linea hable de disco"
+        )
 
 
 def test_success_has_no_failure_mode(tmp_path):
