@@ -485,6 +485,66 @@ def test_skill_states_the_predicate_cardinality() -> None:
     )
 
 
+def test_cond8_is_wired_into_the_auditors_machine_readable_surfaces() -> None:
+    """cond-8 must reach the auditor's OUTPUT contract, not just its prose.
+
+    LOAD-BEARING (WOT-2026-039a, found by the FS-reader lens of the
+    MANAGER_REVIEW loop). Every other auditor-side assertion is a file-wide
+    `assert name in text`, and the condition's own body paragraph keeps that
+    name alive. Measured: deleting the PREDICATE table row 8 AND renaming the
+    `predicate` JSON key both left the suite GREEN. The auditor could lose the
+    machine-readable surfaces it is supposed to EMIT while still "naming" the
+    condition -- a split between what it reads and what it reports.
+
+    Mutations: drop table row 8 -> RED; rename the JSON key -> RED.
+    """
+    text = _read()
+    condition = "estado_operativo_valido"
+
+    table_rows = [
+        line
+        for line in text.splitlines()
+        if line.lstrip().startswith("| 8 |") and condition in line
+    ]
+    assert len(table_rows) == 1, (
+        f"the auditor's PREDICATE report table must carry EXACTLY ONE row 8 "
+        f"naming {condition!r} (found {len(table_rows)}): without it the "
+        f"auditor reproduces the condition in prose but never reports it"
+    )
+
+    assert f'"{condition}"' in text, (
+        f"the auditor's `predicate` JSON output block must carry the "
+        f"{condition!r} key: the .json is the machine-readable verdict, and a "
+        f"condition missing there is invisible to every downstream consumer"
+    )
+
+
+def test_cond8_is_named_in_the_blocking_conditions_rule() -> None:
+    """The hard rule that enumerates blocking conditions BY INDEX must list 8.
+
+    HIGHEST-SEVERITY BARRIER (WOT-2026-039a). The auditor's blocking rule
+    enumerates which PREDICATE conditions block the verdict as an index list
+    (`las 1-5, 7 y 8; la 6 sin informe emitido`). Leaving it at `las 1-5 y 7`
+    makes cond-8 NON-BLOCKING BY OMISSION: the auditor can emit APROBADO with
+    `estado_operativo_valido: cumple=false`. Measured: that exact revert left
+    the suite GREEN -- the condition existed everywhere except where it counts.
+
+    Mutation: revert the rule to `(las 1-5 y 7;` -> RED.
+    """
+    text = _read()
+    match = re.search(r"\(las 1-5[^)]*\)", text)
+    assert match, (
+        "the auditor must keep the hard blocking rule that enumerates the "
+        "blocking PREDICATE conditions by index"
+    )
+    rule = match.group(0)
+    assert "8" in rule, (
+        f"the blocking-conditions rule {rule!r} must include condition 8: "
+        f"omitting it makes estado_operativo_valido non-blocking by omission, "
+        f"so a run can be APROBADO with the condition failing"
+    )
+
+
 def test_predicate_conditions_are_command_by_command() -> None:
     """The predicate must be evaluated command-by-command (real exit codes),
     not narrative -- design section 12.bis.2.b's core requirement."""

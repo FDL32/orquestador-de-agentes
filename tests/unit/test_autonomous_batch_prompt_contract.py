@@ -611,8 +611,12 @@ def test_predicate_row8_mandates_no_heal_and_project_root() -> None:
     - WITHOUT an explicit `--project-root`, pointing at the wrong repo returns
       GREEN, not RED (measured: the code-only motor also reports
       `total_errors: 0`; `is_motor_code_only()` gates only WRITE flags).
+    - WITHOUT `--json` there is no JSON to parse, so the stated criterion
+      ("`total_errors == 0` read from the REAL JSON") becomes unexecutable and
+      the condition degrades into prose. Measured: dropping `--json` from the
+      command left the whole suite GREEN before this assertion existed.
 
-    Mutation: drop either flag from row 8 -> RED.
+    Mutation: drop any of the three flags from row 8 -> RED.
     """
     row8 = _predicate_row(8)
     assert "estado_operativo_valido" in row8, (
@@ -633,9 +637,21 @@ def test_predicate_row8_mandates_no_heal_and_project_root() -> None:
         "pointed at the wrong repo this check returns GREEN, so the root is "
         "load-bearing and must live in the command itself"
     )
-    assert "total_errors" in row8, (
-        "PREDICATE row 8 must state the criterion is total_errors == 0 read "
-        "from the REAL JSON"
+    assert "--json" in command8, (
+        "PREDICATE row 8's COMMAND must carry `--json`: the criterion is read "
+        "from the REAL JSON, and without the flag `--validate` prints prose, "
+        "leaving `total_errors == 0` unparseable and the condition toothless"
+    )
+    # Scoped to the CRITERION clause, not the row: `total_errors` also appears
+    # in the row's two justifying parentheticals (the wrong-repo measurement and
+    # the exit-code clause), so a row-wide check is a floor assertion -- measured
+    # GREEN with the criterion itself gutted, while a decoy occurrence survived.
+    assert re.search(r"total_errors\s*==\s*0`?\s*read from the REAL JSON", row8), (
+        "PREDICATE row 8 must state the CRITERION as `total_errors == 0` READ "
+        "FROM THE REAL JSON. The bare token is a decoy: the row names "
+        "total_errors three times (the criterion, the wrong-repo measurement, "
+        "and the exit-code clause `0 if total_errors == 0`), so anything looser "
+        "survives gutting the criterion itself -- measured GREEN"
     )
 
 
@@ -677,7 +693,7 @@ def test_executor_auditor_parity_on_cond8_guards() -> None:
         span.append(audit_lines[start + len(span)])
     audit_command = " ".join(part.rstrip("\\ ").strip() for part in span)
     executor_command = _predicate_row_command(8)
-    for flag in ("--no-heal", "--project-root"):
+    for flag in ("--no-heal", "--project-root", "--json"):
         assert flag in audit_command, (
             f"the auditor's cond-8 COMMAND must carry {flag}: the executor "
             f"already does, and a split contract between the two is the "

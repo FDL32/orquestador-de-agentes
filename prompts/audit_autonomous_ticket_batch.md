@@ -303,8 +303,11 @@ Reproduce las 8 condiciones exactas:
      tambien reporta `total_errors: 0`; `is_motor_code_only()` solo bloquea
      flags de ESCRITURA). RE-DERIVA la ruta: el ejecutor debe haber REGISTRADO
      el path usado, y tu lo CONTRASTAS contra el destino de la topologia
-     resuelta (S.2). Path ausente o distinto del destino -> `root equivocado`
-     (S.7), falso verde.
+     resuelta (S.2). Path ausente o distinto del destino -> esta condicion 8 es
+     `cumple: false` (y ademas lo clasificas como `root equivocado`, S.7). La
+     clasificacion NO sustituye al bloqueo: un `total_errors: 0` medido sobre
+     el repo EQUIVOCADO no acredita nada, asi que un path no verificado no
+     puede dar la condicion por cumplida.
    - Los warnings NO bloquean (el exit es `0 if total_errors == 0`), pero
      deben aparecer CLASIFICADOS y REGISTRADOS en el batch_run.
 
