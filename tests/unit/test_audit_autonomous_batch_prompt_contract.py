@@ -11,7 +11,10 @@ self-report, which prompts/audit_agent_output.md (CEM v0) forbids.
     Mutation named explicitly: allow the executor to self-audit -> RED.
 (b) Form: contract_id, source_of_truth clause, READ-ONLY restriction, double
     output (.md + .json), verdict enum limited to the 4 canonical values.
-(c) PREDICATE: all 7 named conditions appear. Parametrized.
+(c) PREDICATE: all 8 named conditions appear. Parametrized. Plus CARDINALITY
+    and SKILL.md PARITY (WOT-2026-039a): presence-only asserts let a
+    half-landed condition stay green, so the count and the skill's condition
+    list are pinned too.
 (d) The 8 own-layer audit points are present. Parametrized.
 (e) Inheritance without reimplementation: audit_agent_output.md,
     manager_review.md, BOTH audit_pipeline.md and audit_pipeline_codeonly.md
@@ -32,6 +35,7 @@ self-report, which prompts/audit_agent_output.md (CEM v0) forbids.
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -53,6 +57,22 @@ def _read() -> str:
 
 def _read_skill() -> str:
     return SKILL_FILE.read_text(encoding="utf-8")
+
+
+def _predicate_binding_lengths() -> list[tuple[int, int]]:
+    """Every module-level `PREDICATE_CONDITIONS = ...` as (lineno, length).
+
+    Parses THIS file's source rather than reading the live global, because the
+    name is rebound and only the last binding survives at runtime (WOT-2026-039a).
+    """
+    tree = ast.parse(Path(__file__).resolve().read_text(encoding="utf-8"))
+    return [
+        (node.lineno, len(node.value.elts))
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name) and target.id == "PREDICATE_CONDITIONS"
+    ]
 
 
 def _section_zero() -> str:
@@ -120,7 +140,8 @@ def test_audited_artifacts_are_declared_emissions_of_the_executor(
     )
 
 
-# The 7 conditions of the machine-checkable predicate (design 12.bis.2.b).
+# The 8 conditions of the machine-checkable predicate (design 12.bis.2.b;
+# condition 8 added by WOT-2026-039a).
 PREDICATE_CONDITIONS = (
     "schema_valido",
     "dag_aciclico",
@@ -129,6 +150,7 @@ PREDICATE_CONDITIONS = (
     "suite_final_verde",
     "auditor_emitido",
     "arboles_limpios",
+    "estado_operativo_valido",
 )
 
 
@@ -366,7 +388,7 @@ def test_prompt_blocks_verdict_on_false_green_or_closure_not_landed() -> None:
 
 
 # ---------------------------------------------------------------------------
-# (c) PREDICATE: all 7 named conditions
+# (c) PREDICATE: all 8 named conditions
 # ---------------------------------------------------------------------------
 
 PREDICATE_CONDITIONS = [
@@ -377,6 +399,7 @@ PREDICATE_CONDITIONS = [
     "suite_final_verde",
     "auditor_emitido",
     "arboles_limpios",
+    "estado_operativo_valido",
 ]
 
 
@@ -386,6 +409,79 @@ def test_prompt_names_predicate_condition(condition: str) -> None:
     assert condition in text, (
         f"the prompt must reproduce the PREDICATE condition {condition!r} "
         f"(design section 12.bis.2.b)"
+    )
+
+
+def test_predicate_declares_its_cardinality(condition_count: int = 8) -> None:
+    """Both prompts must state the SAME condition COUNT as the list declares.
+
+    LOAD-BEARING (WOT-2026-039a). Every other predicate test is presence-only
+    (`assert condition in text`), and presence-only asserts cannot see a
+    HALF-LANDED condition: adding condition 8 to one prompt but not the other,
+    or to one PREDICATE_CONDITIONS binding but not its twin, left the whole
+    suite GREEN with the contract split between executor and auditor. That is
+    the same false-green class the 022s<->022t seam exists to prevent.
+
+    Mutation: add a condition to ONE prompt only (or to one list only) ->
+    RED here, because the two counts stop agreeing.
+    """
+    # Read BOTH module-level bindings by AST, never the live global: this
+    # module REBINDS PREDICATE_CONDITIONS (a tuple, then a list), and since
+    # @parametrize evaluates at DECORATION time each binding silently guards a
+    # DIFFERENT prompt. The live global only ever exposes the LAST one, so
+    # asserting on it would leave the first binding unguarded -- measured: the
+    # first version of this test stayed GREEN when the tuple was mutilated.
+    bindings = _predicate_binding_lengths()
+    assert len(bindings) == 2, (
+        f"expected exactly 2 module-level PREDICATE_CONDITIONS bindings, found "
+        f"{len(bindings)}: if the duplication was unified, collapse this test too"
+    )
+    for lineno, size in bindings:
+        assert size == condition_count, (
+            f"the PREDICATE_CONDITIONS binding at line {lineno} declares {size} "
+            f"conditions but the contract pins {condition_count}: BOTH bindings "
+            f"must be updated together, and each guards a different prompt"
+        )
+    audit_text = _read()
+    exec_text = EXECUTOR_PROMPT.read_text(encoding="utf-8")
+    assert f"{condition_count} condiciones" in audit_text, (
+        f"the auditor prompt must state it reproduces {condition_count} "
+        f"conditions; a stale count leaves a condition non-blocking by omission"
+    )
+    assert f"ALL {condition_count} conditions" in exec_text, (
+        f"the executor prompt must require ALL {condition_count} conditions to "
+        f"hold; a stale count silently drops the new condition from the gate"
+    )
+
+
+@pytest.mark.parametrize("condition", PREDICATE_CONDITIONS)
+def test_skill_lists_every_predicate_condition(condition: str) -> None:
+    """SKILL.md must name every predicate condition the prompts declare.
+
+    LOAD-BEARING (WOT-2026-039a). SKILL.md is the artifact the auditor LOADS,
+    and it enumerates the condition names. Nothing cross-checked it against the
+    prompts, so it could sit at 7 while both prompts said 8 and the suite
+    stayed GREEN -- a split contract that reaches the auditor at runtime.
+
+    Per AGENTS.md the skill is a POINTER, not a normative source: this pins the
+    condition NAMES and the count only, never the criteria (those live in the
+    prompt, which prevails on divergence).
+
+    Mutation: leave SKILL.md at 7 conditions with the prompts at 8 -> RED.
+    """
+    skill_text = _read_skill()
+    assert condition in skill_text, (
+        f"SKILL.md must list the PREDICATE condition {condition!r}: the auditor "
+        f"loads this skill, and a stale list splits the contract at runtime"
+    )
+
+
+def test_skill_states_the_predicate_cardinality() -> None:
+    """SKILL.md's stated condition count must match the declared list."""
+    skill_text = _read_skill()
+    expected = f"{len(PREDICATE_CONDITIONS)} condiciones"
+    assert expected in skill_text, (
+        f"SKILL.md must state {expected!r} to stay in sync with the prompts"
     )
 
 

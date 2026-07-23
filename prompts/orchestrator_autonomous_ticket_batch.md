@@ -449,7 +449,7 @@ The batch may NOT be declared `DONE` until ALL of:
 The batch declares a machine-checkable predicate BEFORE it runs, and the
 isolated auditor (`prompts/audit_autonomous_ticket_batch.md`) evaluates it
 **command by command, on real exit codes, not on narrative**. A run may be
-declared `DONE` only if ALL 7 conditions hold:
+declared `DONE` only if ALL 8 conditions hold:
 
 | # | Condition | How it is checked |
 |---|---|---|
@@ -460,6 +460,7 @@ declared `DONE` only if ALL 7 conditions hold:
 | 5 | `suite_final_verde` | `python scripts/run_pytest_safe.py --level all` post-last-commit with `tested_sha == HEAD`, read from the REAL output ("N passed / N failed"), NEVER the wrapper's exit code (WOT-2026-025p: without `--level all` the run is unit-only and its green is a formal false-green) |
 | 6 | `auditor_emitido` | the isolated auditor's report exists, verdict != `NO ACEPTAR TODAVIA`. DUAL CONTRACT (P5, WOT-2026-023v): the executor emits this row as `PENDING` -- it cannot self-certify it; only the sibling audit resolves it to pass |
 | 7 | `arboles_limpios` | dirty=0 across the repos ENUMERATED from the resolved topology (never a hardcoded count) |
+| 8 | `estado_operativo_valido` | `python .agent/agent_controller.py --validate --json --no-heal --project-root <DESTINO_ROOT>` over the DESTINO ONLY, `total_errors == 0` read from the REAL JSON. `--no-heal` is MANDATORY: without it `--validate` heals bus drift and WRITES the git-TRACKED `STATE.md` (WOT-2026-024a), dirtying the destino and breaking condition 7 in the same run. `--project-root <DESTINO_ROOT>` is MANDATORY and literal: pointed at the WRONG repo this check returns GREEN, not RED (measured: the code-only motor also reports `total_errors: 0`, and `is_motor_code_only()` gates only WRITE flags), so the executor RECORDS the resolved path it used and the auditor CROSS-CHECKS it equals the destino of the resolved topology. Warnings do NOT block (exit is `0 if total_errors == 0`), but are CLASSIFIED and RECORDED in the batch_run |
 
 Conditions 4 and 5 encode real false-greens: `ERROR=0` is **not** the same as
 audited (the landing guard used to SKIP rows lacking a `commit:` cell), and a

@@ -1,7 +1,7 @@
 ---
 name: audit-autonomous-ticket-batch
 version: 1.0.0
-description: Auditoria read-only, con aislamiento fresh-context obligatorio, de una corrida del batch autonomo de tickets (orchestrate-autonomous-ticket-batch); verifica el PREDICATE de 7 condiciones comando a comando y la capa propia del batch (paradas, exclusiones, recovery, checkpoints, contencion, autoridad, portabilidad, objetivo huerfano); propone (no ejecuta) el cierre de sesion
+description: Auditoria read-only, con aislamiento fresh-context obligatorio, de una corrida del batch autonomo de tickets (orchestrate-autonomous-ticket-batch); verifica el PREDICATE de 8 condiciones comando a comando y la capa propia del batch (paradas, exclusiones, recovery, checkpoints, contencion, autoridad, portabilidad, objetivo huerfano); propone (no ejecuta) el cierre de sesion
 triggers: [/audit-autonomous-ticket-batch, audit-autonomous-ticket-batch, auditar-batch-autonomo]
 author: agent
 role: auditor
@@ -23,7 +23,7 @@ Es la pieza simetrica obligatoria de ese ejecutor: sin esta auditoria, la
 autonomia del batch es auto-reporte, y `prompts/audit_agent_output.md` (CEM
 v0) lo prohibe explicitamente. NO reimplementa el metodo: el flujo completo
 (regla de aislamiento, herencia de las cuatro auditorias base, capa propia de
-8 puntos, PREDICATE de 7 condiciones, propuesta de cierre) vive en
+8 puntos, PREDICATE de 8 condiciones, propuesta de cierre) vive en
 `prompts/audit_autonomous_ticket_batch.md`, que a su vez hereda de
 `prompts/audit_agent_output.md`, `prompts/manager_review.md`,
 `prompts/audit_pipeline.md` / `prompts/audit_pipeline_codeonly.md` (segun
@@ -104,10 +104,11 @@ la resolucion real.
 8. `objetivo_huerfano` (herencia de `audit_goal_completion.md`): ticket verde
    con objetivo real incumplido.
 
-## PREDICATE (7 condiciones, comando a comando)
+## PREDICATE (8 condiciones, comando a comando)
 
 `schema_valido`, `dag_aciclico`, `contabilidad_completa`, `cierres_auditables`,
-`suite_final_verde`, `auditor_emitido`, `arboles_limpios`. Detalle completo,
+`suite_final_verde`, `auditor_emitido`, `arboles_limpios`,
+`estado_operativo_valido`. Detalle completo,
 comandos exactos y formato de salida en
 `prompts/audit_autonomous_ticket_batch.md` seccion 4.
 

@@ -208,7 +208,7 @@ viaje inaugural y convierte al auditor en maker del artefacto que audita
 `PENDING` por contrato dual (P5): que este PENDING en el `batch_run` NO es un
 hallazgo -- es el diseno; el hallazgo seria un ejecutor que la auto-certifico.
 
-Reproduce las 7 condiciones exactas:
+Reproduce las 8 condiciones exactas:
 
 1. **`schema_valido`** -- el DAG-JSON de la corrida valida contra el schema
    v1 mediante:
@@ -285,8 +285,31 @@ Reproduce las 7 condiciones exactas:
    la topologia RESUELTA (S.2), no en un numero fijo asumido de antemano.
    Verifica con `git status --porcelain` en cada repo resuelto.
 
+8. **`estado_operativo_valido`** -- el estado OPERATIVO del destino es valido,
+   no solo su arbol git. Observable DISTINTO de la condicion 7: el incidente de
+   origen (cierre FP-20260721) dejo el workspace con arbol LIMPIO y estado
+   INVALIDO, y solo lo cazo el CI remoto. Verifica con:
+   ```
+   python .agent/agent_controller.py --validate --json --no-heal \
+     --project-root <DESTINO_ROOT>
+   ```
+   y lee `total_errors == 0` del JSON REAL, nunca del relato del ejecutor.
+   - `--no-heal` es OBLIGATORIO: sin el, `--validate` sana el drift y ESCRIBE
+     `STATE.md`, que esta TRACKEADO (WOT-2026-024a). Un ejecutor que corrio la
+     condicion 8 SIN `--no-heal` pudo ensuciar el destino y romper la condicion
+     7 en su propia corrida: eso es hallazgo, no ruido.
+   - `--project-root <DESTINO_ROOT>` es OBLIGATORIO: apuntado al repo
+     EQUIVOCADO este check da VERDE, no rojo (medido: el motor code-only
+     tambien reporta `total_errors: 0`; `is_motor_code_only()` solo bloquea
+     flags de ESCRITURA). RE-DERIVA la ruta: el ejecutor debe haber REGISTRADO
+     el path usado, y tu lo CONTRASTAS contra el destino de la topologia
+     resuelta (S.2). Path ausente o distinto del destino -> `root equivocado`
+     (S.7), falso verde.
+   - Los warnings NO bloquean (el exit es `0 if total_errors == 0`), pero
+     deben aparecer CLASIFICADOS y REGISTRADOS en el batch_run.
+
 **Formato de salida:** bloque `PREDICATE` en el `.json` de esta auditoria
-(S.8), con cada una de las 7 condiciones -> comando ejecutado -> exit
+(S.8), con cada una de las 8 condiciones -> comando ejecutado -> exit
 code/valor observado -> `cumple: true|false`.
 
 **Mutation-demo del predicado (DoD de este ticket):** si falseas UNA
@@ -343,7 +366,7 @@ Uno de (canonico, de `prompts/audit_agent_output.md`):
 **Regla dura:** BLOQUEAN el veredicto (no puede emitirse `APROBADO` ni `APROBADO
 CON NITS` mientras alguno este abierto):
 - cualquier condicion del PREDICATE del S.4 con `cumple:false` en TU re-derivacion
-  (las 1-5 y 7; la 6 sin informe emitido) -- da igual que el ejecutor la reportara
+  (las 1-5, 7 y 8; la 6 sin informe emitido) -- da igual que el ejecutor la reportara
   verde, la omitiera, o nunca la evaluara. El caso mas comun en un batch autonomo NO
   es un `falso_verde` REPORTADO, sino una condicion que el ejecutor OMITIO y que tu
   re-derivas false: eso bloquea igual. No exijas que el ejecutor la haya declarado
@@ -442,7 +465,7 @@ B1 aplicado: <a:model=ID | b:fresh-context>. B3 (read-only): confirmado.
 | Grupos incluidos | ... |
 | Grupos excluidos/congelados | ... |
 
-## 3. PREDICATE (7 condiciones, comando a comando)
+## 3. PREDICATE (8 condiciones, comando a comando)
 | # | Condicion | Comando | Exit/valor | Cumple |
 |---|---|---|---|---|
 | 1 | schema_valido | ... | ... | si/no |
@@ -452,6 +475,7 @@ B1 aplicado: <a:model=ID | b:fresh-context>. B3 (read-only): confirmado.
 | 5 | suite_final_verde | ... | ... | si/no |
 | 6 | auditor_emitido | ... | ... | si/no |
 | 7 | arboles_limpios | ... | ... | si/no |
+| 8 | estado_operativo_valido | ... | ... | si/no |
 
 ## 4. Capa propia del batch (8 puntos)
 Uno por punto (paradas, exclusiones, recovery, checkpoints, contencion,
@@ -490,7 +514,8 @@ Ruta paralela:
     "cierres_auditables": {"audited_before": 0, "audited_after": 0, "error_count": 0, "cumple": true},
     "suite_final_verde": {"tested_commit_sha": "...", "head": "...", "passed": 0, "failed": 0, "cumple": true},
     "auditor_emitido": {"report_path": "...", "cumple": true},
-    "arboles_limpios": {"dirty_by_repo": {}, "cumple": true}
+    "arboles_limpios": {"dirty_by_repo": {}, "cumple": true},
+    "estado_operativo_valido": {"command": "...", "project_root_used": "...", "matches_resolved_destino": true, "total_errors": 0, "total_warnings": 0, "warnings_by_category": {}, "no_heal": true, "cumple": true}
   },
   "own_layer_findings": [
     {"point": "stop_decisions|hard_exclusions|recovery_loops|confidence_checkpoints|containment|authority|portability|objetivo_huerfano", "finding": "...", "evidence_label": "...", "cem_class": "...", "blocks_verdict": false}

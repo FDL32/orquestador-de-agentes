@@ -564,6 +564,130 @@ def _predicate_row(n: int) -> str:
     return rows[0]
 
 
+def _predicate_row_command(n: int) -> str:
+    """The `python .agent/agent_controller.py ...` COMMAND span of row `n`.
+
+    WOT-2026-039a (floor-assertion fix caught by the MANAGER_REVIEW loop): each
+    flag of row 8 appears TWICE -- once in the command and once in the prose
+    that justifies it ("`--no-heal` is MANDATORY: ..."). A substring assertion
+    over the whole row is therefore satisfied by the PROSE ALONE: dropping the
+    flag from the real command left the suite GREEN (measured: 188 passed),
+    contradicting the docstring's promise that the mutation goes RED. Scoping
+    to the command span is what gives the assertion teeth.
+    """
+    row = _predicate_row(n)
+    commands = re.findall(r"`(python [^`]+)`", row)
+    assert commands, f"PREDICATE row {n} must carry a backticked command"
+    # Select by IDENTITY, never by position (Codex refutation of the first fix):
+    # `commands[0]` would let a decoy command earlier in the row satisfy the
+    # flag assertions while the REAL agent_controller command loses them.
+    # Anchored at the START of the command (Codex 2nd refutation): a substring
+    # match would accept a decoy that merely CARRIES the string as an argument.
+    controller = [
+        c
+        for c in commands
+        if re.match(r"python [^ ]*agent_controller\.py --validate", c)
+    ]
+    assert len(controller) == 1, (
+        f"PREDICATE row {n} must carry EXACTLY ONE "
+        f"`agent_controller.py --validate` command (found {len(controller)}); "
+        f"more than one makes the flag assertions ambiguous"
+    )
+    return controller[0]
+
+
+def test_predicate_row8_mandates_no_heal_and_project_root() -> None:
+    """PREDICATE row 8 (estado_operativo_valido) must pin BOTH guards.
+
+    LOAD-BEARING (WOT-2026-039a). The condition exists because a close left the
+    destino with a CLEAN tree and an INVALID operational state: cond-7 only
+    reads `dirty==0`, so it passed straight through and only remote CI caught
+    it. Two measured facts make the bare command unsafe:
+
+    - WITHOUT `--no-heal`, `--validate` heals bus drift and WRITES the
+      git-TRACKED `STATE.md` (agent_controller `_handle_validate` ->
+      `sync_state_projection`, WOT-2026-024a). The check would DIRTY the
+      destino and break cond-7 in the same run.
+    - WITHOUT an explicit `--project-root`, pointing at the wrong repo returns
+      GREEN, not RED (measured: the code-only motor also reports
+      `total_errors: 0`; `is_motor_code_only()` gates only WRITE flags).
+
+    Mutation: drop either flag from row 8 -> RED.
+    """
+    row8 = _predicate_row(8)
+    assert "estado_operativo_valido" in row8, (
+        "PREDICATE row 8 must be the estado_operativo_valido condition"
+    )
+    # Scoped to the COMMAND span, never the whole row: the prose that justifies
+    # each flag also names it, so a row-wide substring check is a floor
+    # assertion (it survives dropping the flag from the real command).
+    command8 = _predicate_row_command(8)
+    assert "--no-heal" in command8, (
+        "PREDICATE row 8's COMMAND must carry `--no-heal`: without it "
+        "`--validate` writes the tracked STATE.md, dirtying the destino and "
+        "breaking cond-7 in the same run. Naming it only in the prose does not "
+        "count -- the executor copies the command, not the justification"
+    )
+    assert "--project-root" in command8, (
+        "PREDICATE row 8's COMMAND must carry `--project-root <DESTINO_ROOT>`: "
+        "pointed at the wrong repo this check returns GREEN, so the root is "
+        "load-bearing and must live in the command itself"
+    )
+    assert "total_errors" in row8, (
+        "PREDICATE row 8 must state the criterion is total_errors == 0 read "
+        "from the REAL JSON"
+    )
+
+
+def test_executor_auditor_parity_on_cond8_guards() -> None:
+    """PARITY (WOT-2026-039a): both prompts must pin cond-8's two guards.
+
+    Reads BOTH files so the parity cannot silently diverge in either
+    direction, mirroring the cond-5 parity test above. Mutation: drop
+    `--no-heal` or `--project-root` from either side -> RED.
+    """
+    audit_text = (PROMPTS / "audit_autonomous_ticket_batch.md").read_text(
+        encoding="utf-8"
+    )
+    assert "estado_operativo_valido" in audit_text, (
+        "the auditor must reproduce cond-8; otherwise the executor declares a "
+        "condition nobody re-derives"
+    )
+    # Both sides are scoped to their COMMAND, not to the file/row: `--no-heal`
+    # and `--project-root` also occur in each prompt's justifying prose, so a
+    # file-wide check cannot fail on a real parity divergence (floor
+    # assertion caught by the MANAGER_REVIEW loop, WOT-2026-039a).
+    # The auditor writes its command inside a fenced block, split across lines
+    # with a `\` continuation, so the span is joined before asserting -- a
+    # single-line scope would fail on the legitimate wrapped form.
+    audit_lines = audit_text.splitlines()
+    starts = [
+        i
+        for i, line in enumerate(audit_lines)
+        if re.search(r"python [^ ]*agent_controller\.py --validate", line)
+    ]
+    assert len(starts) == 1, (
+        "the auditor must spell out the cond-8 command EXACTLY ONCE (found "
+        f"{len(starts)}); a decoy occurrence would make the flag assertions "
+        "ambiguous, the same falsifiability Codex refuted on the executor side"
+    )
+    start = starts[0]
+    span = [audit_lines[start]]
+    while span[-1].rstrip().endswith("\\") and start + len(span) < len(audit_lines):
+        span.append(audit_lines[start + len(span)])
+    audit_command = " ".join(part.rstrip("\\ ").strip() for part in span)
+    executor_command = _predicate_row_command(8)
+    for flag in ("--no-heal", "--project-root"):
+        assert flag in audit_command, (
+            f"the auditor's cond-8 COMMAND must carry {flag}: the executor "
+            f"already does, and a split contract between the two is the "
+            f"false-green class this pair of prompts exists to prevent"
+        )
+        assert flag in executor_command, (
+            f"the executor's PREDICATE row 8 COMMAND must carry {flag}"
+        )
+
+
 def test_predicate_row5_cites_level_all() -> None:
     """PREDICATE row 5 (suite_final_verde) must cite --level all explicitly,
     not 'canonical suite' prose. Mutation: drop --level all from row 5 ->
