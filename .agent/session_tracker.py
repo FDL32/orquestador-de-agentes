@@ -75,6 +75,19 @@ def save_session() -> None:
         )
 
 
+def clear_session() -> None:
+    """Elimina el fichero de estado de sesion (tracker vacio).
+
+    WOT-2026-039d: al final de un --session-close EXITOSO sin ID de ticket
+    resoluble, el tracker se LIMPIA en vez de quedar apuntando a un ticket
+    ajeno/stale (que luego dispara el falso "[INFO] Session already
+    completed" / hints de recovery equivocados). Idempotente: sin fichero,
+    no-op.
+    """
+    with suppress(OSError):
+        _session_file().unlink(missing_ok=True)
+
+
 def detect_stale_session() -> bool:
     """Detecta si han pasado mas de 2 horas desde la ultima actividad."""
     session_file = _session_file()

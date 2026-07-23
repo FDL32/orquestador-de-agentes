@@ -80,7 +80,12 @@ except ImportError:
     hook_registry = None
 
 try:
-    from session_tracker import recover_session, save_session, show_recovery_hint
+    from session_tracker import (
+        clear_session,
+        recover_session,
+        save_session,
+        show_recovery_hint,
+    )
 
     SESSION_TRACKER_AVAILABLE = True
 except ImportError:
@@ -6167,6 +6172,33 @@ def _sync_state_after_session_close() -> None:
         write_file(STATE_FILE, updated)
 
 
+def _refresh_session_tracker_after_close() -> None:
+    """Refresca o limpia `.session_state.json` tras un close EXITOSO.
+
+    Before: el close real (no dry-run) acaba de retornar 0; el work_plan
+        canonico puede o no declarar un ID de ticket.
+    During: si el tracker esta disponible, resuelve el ID del work_plan
+        cerrado via `session_tracker._get_current_plan_id()`; con ID
+        resoluble llama `save_session()` (rama i); sin ID resoluble llama
+        `clear_session()` (rama ii). Nunca lanza: cualquier fallo del tracker
+        no debe convertir un close exitoso en fallido (el tracker es pista,
+        no clave del cierre -- NON-GOAL de WOT-2026-039d).
+    After: el tracker refleja el estado post-close (refrescado o vacio); en
+        un close FALLIDO esta funcion no se invoca y el tracker se preserva.
+    """
+    if not SESSION_TRACKER_AVAILABLE:
+        return
+    try:
+        from session_tracker import _get_current_plan_id
+
+        if _get_current_plan_id() != "N/A":
+            save_session()
+        else:
+            clear_session()
+    except Exception:  # noqa: S110 - tracker best-effort, nunca degrada el close
+        pass
+
+
 def _handle_session_close(  # noqa: C901 - delegation handler with flag building
     dry_run: bool,
     skip_slow: bool,
@@ -6259,6 +6291,17 @@ def _handle_session_close(  # noqa: C901 - delegation handler with flag building
         # Post-close sync: only for real close (not dry-run)
         if not dry_run:
             _sync_state_after_session_close()
+            # WOT-2026-039d: refresh-or-clear del session tracker AL FINAL de
+            # un close EXITOSO. Antes, save_session() vivia solo en la rama
+            # STATUS y el tracker quedaba STALE tras --session-close,
+            # apuntando a un ticket ajeno (caso 2026-07-15: disparo el falso
+            # "[INFO] Session already completed"). Logica adjudicada:
+            # (i) work_plan cerrado con ID resoluble -> save_session (refresca
+            #     active_plan + last_activity);
+            # (ii) sin ID resoluble -> clear_session (tracker vacio);
+            # (iii) close FALLIDO -> no se llega aqui (return antes): el
+            #     tracker se preserva como pista de recovery.
+            _refresh_session_tracker_after_close()
 
         if json_output:
             print(json.dumps({"status": "completed", "exit_code": 0}, indent=2))
