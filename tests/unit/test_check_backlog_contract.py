@@ -417,6 +417,71 @@ def test_legacy_baseline_row_is_exempt(tmp_path: Path) -> None:
     assert cbc.validate_archive_row_arity(tmp_path) == []
 
 
+def test_baseline_id_at_other_arity_is_a_fresh_break(tmp_path: Path) -> None:
+    """The RESTRICTIVE side of the exemption: a baseline id is forgiven ONLY at the
+    arity actually censused. A brand-new row under a baseline id at a DIFFERENT
+    arity is a fresh break and MUST fail.
+
+    Governance loop 2026-07-23: while the baseline was an id-only frozenset, this
+    case passed silently -- replacing a legacy row with a fresh broken one under
+    the same id exempted it forever. This test dies if the exemption is ever
+    widened back to id-only.
+    """
+    _write_backlog(tmp_path, _VALID_ROWS)
+    # WOT-2026-004b is censused at 10 cells; this NEW row has 9 -> fresh break.
+    row = "| Alta | WOT-2026-004b | fila NUEVA | rota | s | completed | - | x | commit:abc |\n"
+    # Self-verify the fixture's own premise before trusting the guard's verdict:
+    # a miscounted row silently turns this test into a no-op.
+    assert len(row.strip().strip("|").split("|")) == 9
+    _write_archive_arity(tmp_path, row)
+    errors = cbc.validate_archive_row_arity(tmp_path)
+    assert len(errors) == 1, errors
+    assert "WOT-2026-004b" in errors[0]
+    assert "9 cells" in errors[0]
+
+
+def test_archive_arity_baseline_is_pinned() -> None:
+    """Pin the declared census so it cannot be widened in silence.
+
+    The module comment states "nothing may ADD an entry to silence a FRESH break",
+    but prose is not a mechanism: adding an id was a one-line edit that stayed
+    green everywhere. This test makes that edit fail loudly.
+
+    REDUCING the baseline (repairing a row and removing its entry) is legitimate
+    and SHOULD update this test. ADDING an entry to silence a fresh break is not.
+    """
+    baseline = cbc._ARCHIVE_ARITY_LEGACY_BASELINE
+    assert len(baseline) == 20, (
+        f"baseline moved to {len(baseline)} entries: repairing a row is legitimate "
+        "(update this test); ADDING one to silence a fresh break is not."
+    )
+    # Arity is part of the contract: the pair (id, arity) is what grants exemption.
+    assert sorted(baseline.items()) == sorted(
+        {
+            "WOT-2026-004b": 10,
+            "WOT-2026-010h": 10,
+            "WOT-2026-013b": 9,
+            "WOT-2026-011i": 9,
+            "WOT-2026-011h": 9,
+            "WOT-2026-013c": 9,
+            "WOT-2026-014c": 9,
+            "WOT-2026-014a": 9,
+            "WOT-2026-014b": 9,
+            "WOT-2026-014d": 9,
+            "WOT-2026-014e": 9,
+            "WOT-2026-014f": 9,
+            "WOT-2026-014g": 9,
+            "WOT-2026-014h": 9,
+            "WOT-2026-014i": 9,
+            "WOT-2026-015n": 9,
+            "WOT-2026-021i": 9,
+            "WT-2026-250c": 7,
+            "WOT-2026-008e": 7,
+            "WOT-2026-008j": 7,
+        }.items()
+    )
+
+
 # ---------------------------------------------------------------------------
 # WOT-2026-023o: STATE.md ACTIVE_TICKET vs the scheduling surfaces (bus projection)
 # ---------------------------------------------------------------------------

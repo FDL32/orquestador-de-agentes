@@ -530,39 +530,46 @@ def validate_live_archive_integrity(root: Path) -> list[str]:
 
 # Declared legacy baseline (CENSUS anchored 2026-07-21/23, WOT-2026-026z): every
 # Prioridad-led archive row that does NOT have the canonical 8-cell arity TODAY.
-# The archive census measured: 252 rows at 8 cells (the norm), 3 at 7 cells (an
+# The archive census measured: 255 rows at 8 cells (the norm), 3 at 7 cells (an
 # older pre-Reactivation 7-column section: 250c/008e/008j), and 17 broken by an
-# unescaped pipe (9-10 cells). All 20 non-8 rows are anchored here as declared
-# debt -- evidence, not criterion (WOT-2026-024t) -- so the guard NEVER demands
-# arity of history. Any ticket id NOT in this set must archive as a clean 8-cell
-# row. A future cleanup may repair a row and remove its entry; nothing may ADD an
-# entry to silence a FRESH break.
-_ARCHIVE_ARITY_LEGACY_BASELINE = frozenset(
-    {
-        # 17 pipe-break rows (9-10 cells).
-        "WOT-2026-004b",
-        "WOT-2026-010h",
-        "WOT-2026-013b",
-        "WOT-2026-011i",
-        "WOT-2026-011h",
-        "WOT-2026-013c",
-        "WOT-2026-014c",
-        "WOT-2026-014a",
-        "WOT-2026-014b",
-        "WOT-2026-014d",
-        "WOT-2026-014e",
-        "WOT-2026-014f",
-        "WOT-2026-014g",
-        "WOT-2026-014h",
-        "WOT-2026-014i",
-        "WOT-2026-015n",
-        "WOT-2026-021i",
-        # 3 rows of the older 7-column (pre-Reactivation) archive section.
-        "WT-2026-250c",
-        "WOT-2026-008e",
-        "WOT-2026-008j",
-    }
-)
+# unescaped pipe (15 at 9 cells, 2 at 10). All 20 non-8 rows are anchored here as
+# declared debt -- evidence, not criterion (WOT-2026-024t) -- so the guard NEVER
+# demands arity of history. Any ticket id NOT in this mapping must archive as a
+# clean 8-cell row. A future cleanup may repair a row and remove its entry;
+# nothing may ADD an entry to silence a FRESH break (pinned by
+# test_archive_arity_baseline_is_pinned).
+#
+# The exemption is anchored to the PAIR (id, measured arity), NOT to the id alone
+# (governance loop 2026-07-23). An id-only frozenset exempted a baseline ticket
+# FOREVER: replacing a legacy row with a brand-new broken one under the same id
+# passed the guard silently (measured: a fresh 9-cell row for WOT-2026-014a
+# returned 0 violations). Keyed by arity, a baseline id is exempt ONLY at the
+# arity actually censused; any OTHER arity for that same id is a fresh break and
+# fails like any other row.
+_ARCHIVE_ARITY_LEGACY_BASELINE: dict[str, int] = {
+    # 17 pipe-break rows: 15 at 9 cells, 2 at 10.
+    "WOT-2026-004b": 10,
+    "WOT-2026-010h": 10,
+    "WOT-2026-013b": 9,
+    "WOT-2026-011i": 9,
+    "WOT-2026-011h": 9,
+    "WOT-2026-013c": 9,
+    "WOT-2026-014c": 9,
+    "WOT-2026-014a": 9,
+    "WOT-2026-014b": 9,
+    "WOT-2026-014d": 9,
+    "WOT-2026-014e": 9,
+    "WOT-2026-014f": 9,
+    "WOT-2026-014g": 9,
+    "WOT-2026-014h": 9,
+    "WOT-2026-014i": 9,
+    "WOT-2026-015n": 9,
+    "WOT-2026-021i": 9,
+    # 3 rows of the older 7-column (pre-Reactivation) archive section.
+    "WT-2026-250c": 7,
+    "WOT-2026-008e": 7,
+    "WOT-2026-008j": 7,
+}
 
 
 def validate_archive_row_arity(root: Path) -> list[str]:
@@ -576,6 +583,14 @@ def validate_archive_row_arity(root: Path) -> list[str]:
     cells; a mismatch is a fresh break, almost always an unescaped pipe pushing the
     terminal commit: cell out of the table. The fix is always to REMOVE the pipe
     (the real consumer splits on the raw pipe), never to escape it.
+
+    The baseline exempts the PAIR (id, censused arity), not the id: a baseline
+    ticket whose row appears at ANY other arity is a fresh break and fails.
+
+    DECLARED SCOPE: a pipe break located BEFORE the Ticket cell shifts the id out
+    of raw index 2, so _row_ticket_id returns None and the row falls outside this
+    guard entirely. Verified against the real archive today (20/20 censused rows
+    are detected), but it is a structural blind spot, not full coverage.
     """
     archive = root / ".agent" / "collaboration" / "_archive" / "backlog_done.md"
     if not archive.exists():
@@ -590,9 +605,14 @@ def validate_archive_row_arity(root: Path) -> list[str]:
     for line in archive.read_text(encoding="utf-8-sig").splitlines():
         stripped = line.strip()
         tid = _row_ticket_id(stripped)
-        if tid is None or tid in _ARCHIVE_ARITY_LEGACY_BASELINE:
+        if tid is None:
             continue
         n = len(stripped.strip("|").split("|"))
+        # Exempt by the PAIR (id, censused arity), never by id alone: a baseline
+        # ticket is forgiven ONLY at the arity actually measured, so a fresh break
+        # under a baseline id still fails.
+        if _ARCHIVE_ARITY_LEGACY_BASELINE.get(tid) == n:
+            continue
         if n != want:
             errors.append(
                 f"{tid}: archived row has {n} cells, expected {want} "
