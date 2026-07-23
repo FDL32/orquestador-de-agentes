@@ -257,6 +257,49 @@ def test_probe_receipts_carry_observed_exit_codes(fake_workspace: Path):
     assert "command: review_bundle_contract." not in probes
 
 
+def test_probe2_rc_travels_from_single_execution(tmp_path: Path):
+    """WOT-2026-039g (mutation por rama, opcion 1): el RC VIAJA al output.
+
+    Antes del fix, `_git_head(motor_root)` (check=True) corria ANTES de que
+    `_build_probe_sections` re-ejecutara `git rev-parse HEAD`, asi que el
+    `exit_code` del PROBE 2 era estructuralmente inalcanzable-!=0. Ahora hay
+    UNA ejecucion (`_git_head_observed`) cuyo CompletedProcess se inyecta.
+    Mutation con dientes: si alguien reintroduce el rev-parse duplicado
+    dentro de `_build_probe_sections` (ignorando el parametro), el rc
+    sintetico 7 de este test NO viaja al receipt y la asercion CAE.
+    """
+    universe = {"paths": ["a.py"], "sha256": "0" * 64}
+    fake = subprocess.CompletedProcess(
+        args=["git", "rev-parse", "HEAD"],
+        returncode=7,
+        stdout="deadbeef\n",
+        stderr="boom",
+    )
+    text = erp._build_probe_sections(_MOTOR_ROOT, universe, fake)
+    probe2 = text.split("## PROBE 2", 1)[1]
+    assert "exit_code: 7" in probe2
+    assert "deadbeef" in probe2
+
+
+def test_export_packet_fails_closed_on_rev_parse_failure(fake_workspace: Path):
+    """El fail-closed sobrevive al cambio: rc != 0 del motor -> aborta.
+
+    La ejecucion unica NO puede degradar el contrato previo (check=True
+    propagaba CalledProcessError): un motor cuyo rev-parse falla debe seguir
+    abortando el export, nunca emitir un packet con receipt rc != 0.
+    """
+    fake = subprocess.CompletedProcess(
+        args=["git", "rev-parse", "HEAD"], returncode=128, stdout="", stderr="fatal"
+    )
+    original = erp._git_head_observed
+    erp._git_head_observed = lambda repo: fake
+    try:
+        with pytest.raises(subprocess.CalledProcessError):
+            erp.export_packet("WOT-2026-027p", _MOTOR_ROOT, fake_workspace)
+    finally:
+        erp._git_head_observed = original
+
+
 def test_motor_root_mismatch_fails_closed(fake_workspace: Path, tmp_path: Path):
     """Coherencia motor-root (objecion Codex): link != --motor-root -> exit !=0."""
     link = fake_workspace / ".agent" / "config" / "motor_destination_link.json"

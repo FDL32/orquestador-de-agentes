@@ -78,6 +78,26 @@ def _git_head(repo: Path) -> str:
     return proc.stdout.strip()
 
 
+def _git_head_observed(repo: Path) -> subprocess.CompletedProcess:
+    """`git rev-parse HEAD` con rc OBSERVADO (check=False), UNA sola vez.
+
+    WOT-2026-039g: antes, `_git_head(motor_root)` (check=True) corria ANTES de
+    que `_build_probe_sections` re-ejecutara el MISMO comando para el PROBE 2,
+    de modo que el `exit_code` "observado" del receipt era estructuralmente
+    inalcanzable-!=0 (cualquier fallo abortaba antes). Ahora hay UNA sola
+    ejecucion sobre el motor y su rc REAL viaja al receipt; el fail-closed se
+    preserva en el caller (aborta si rc != 0), no re-ejecutando.
+    """
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],  # noqa: S607
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+
+
 def _linked_motor_root(project_root: Path) -> Path | None:
     """Motor declarado por el link del workspace, o None si no hay link."""
     link = project_root / ".agent" / "config" / "motor_destination_link.json"
@@ -121,16 +141,23 @@ def extract_manifest_paths(packet_text: str) -> set[str]:
     return paths
 
 
-def _build_probe_sections(motor_root: Path, universe: dict) -> str:
+def _build_probe_sections(
+    motor_root: Path, universe: dict, rev_parse: subprocess.CompletedProcess
+) -> str:
     """Secciones ## PROBE con receipts OBSERVADOS, no afirmados.
 
-    Before: `universe` ya calculado; `motor_root` es un repo git.
-    During: EJECUTA los dos probes como subprocesos reproducibles y captura su
-        rc REAL. Ninguno usa `check=True`: un rc distinto de 0 debe VIAJAR al
-        receipt, no abortar el packet -- si el exportador solo pudiera emitir
-        `exit_code: 0`, el receipt seria una afirmacion por construccion y
-        reintroduciria el HUECO-1 que `check_bundle_receipts` existe para
-        cerrar (hallazgo MAJOR-2 del MANAGER_REVIEW, 2026-07-22).
+    Before: `universe` ya calculado; `motor_root` es un repo git; `rev_parse`
+        es el CompletedProcess de la ejecucion UNICA de `git rev-parse HEAD`
+        sobre el motor (`_git_head_observed`, WOT-2026-039g: el rc real del
+        caller VIAJA al receipt en vez de re-ejecutarse aqui, donde un rc != 0
+        era estructuralmente inalcanzable por la precedencia del check=True).
+    During: EJECUTA el probe 1 como subproceso reproducible y captura su rc
+        REAL; el probe 2 reutiliza `rev_parse`. Ninguno usa `check=True`: un
+        rc distinto de 0 debe VIAJAR al receipt, no abortar el packet -- si el
+        exportador solo pudiera emitir `exit_code: 0`, el receipt seria una
+        afirmacion por construccion y reintroduciria el HUECO-1 que
+        `check_bundle_receipts` existe para cerrar (hallazgo MAJOR-2 del
+        MANAGER_REVIEW, 2026-07-22).
     After: retorna las secciones con el rc observado. Los `command:` son
         reproducibles por el lector desde una shell, no llamadas Python
         internas que nadie puede re-ejecutar.
@@ -140,14 +167,6 @@ def _build_probe_sections(motor_root: Path, universe: dict) -> str:
 
     ls_tree = subprocess.run(
         ["git", "ls-tree", "-r", "--name-only", "HEAD"],  # noqa: S607
-        cwd=motor_root,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
-    )
-    rev_parse = subprocess.run(
-        ["git", "rev-parse", "HEAD"],  # noqa: S607
         cwd=motor_root,
         capture_output=True,
         text=True,
@@ -232,7 +251,18 @@ def export_packet(
             "contexto del ticket equivocado. Cambia --ticket o actualiza el "
             "work_plan del workspace."
         )
-    motor_head = _git_head(motor_root)
+    # Ejecucion UNICA de rev-parse sobre el motor (WOT-2026-039g): el rc real
+    # viaja al PROBE 2; el fail-closed se preserva abortando aqui si rc != 0
+    # (equivalente al CalledProcessError del check=True anterior).
+    motor_rev_parse = _git_head_observed(motor_root)
+    if motor_rev_parse.returncode != 0:
+        raise subprocess.CalledProcessError(
+            motor_rev_parse.returncode,
+            motor_rev_parse.args,
+            output=motor_rev_parse.stdout,
+            stderr=motor_rev_parse.stderr,
+        )
+    motor_head = motor_rev_parse.stdout.strip()
     destino_head = _git_head(project_root)
     key = compute_cache_key(ticket_id, motor_head, destino_head, work_plan_sha)
 
@@ -267,7 +297,7 @@ def export_packet(
         f"cache_key: {key}\n"
         f"motor_head: {motor_head}\n"
         f"destino_head: {destino_head}\n\n"
-        + _build_probe_sections(motor_root, universe)
+        + _build_probe_sections(motor_root, universe, motor_rev_parse)
         + "\n"
         + _build_manifest_section(universe)
         + "\n## CANONICAL REVIEW CONTEXT\n"
