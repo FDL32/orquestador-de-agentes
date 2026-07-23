@@ -240,6 +240,104 @@ def test_empty_reply_recorded_as_no_aportacion(tmp_path):
     assert sum(1 for r in rows if r["outcome"] == "no-aportacion") == 3
 
 
+def test_loop_round_records_exactly_one_row_per_dispatch(tmp_path):
+    """WOT-2026-026q: la ruta de GOBIERNO (bucles `launched_from: chat`) deja
+    telemetria. Antes de este ticket el scorecard quedaba MUDO en esa ruta:
+    `run_pipeline` es el runner de la CLI y cubre solo sus propias rondas,
+    mientras el fan-out 1->9->2 despacha desde el chat y NUNCA llegaba a
+    `_record_round` -- de ahi que `phase`/`loop_id`/`backend_key` (schema
+    WOT-2026-037b) no tuvieran ni un solo escritor.
+
+    Dos dientes en la MISMA asercion (la adjudicacion del bucle adversarial):
+    - `== 1` y no `>= 1`: mata el DOBLE-CONTEO. Si el registro se cablease en
+      la primitiva `send_to_profile` *ademas* de aqui, esta cuenta seria 2.
+    - `== 1` y no `== 0`: mata la MUDEZ (rojo HOY: 0 filas).
+    """
+    transport = _FakeTransport(replies=["hallazgo"])
+    ed.run_loop_round(
+        "p_chal",
+        "revisa esto",
+        config=_config(),
+        project_root=tmp_path,
+        ticket="WOT-TEST-026q",
+        task_type="code-review",
+        rol="challenger",
+        phase="fanout-dif",
+        loop_id="L700",
+        backend_key="BA11",
+        sensitivity="public",
+        transport=transport,
+    )
+
+    rows = _rows(tmp_path)
+    assert len(rows) == 1, (
+        f"la ruta de gobierno debe dejar UNA fila por ronda, hubo {len(rows)}: "
+        "0 = scorecard MUDO (el fallo original); 2 = doble-conteo (el registro "
+        "se cablo tambien en la primitiva send_to_profile)"
+    )
+    row = rows[0]
+    assert row["event"] == "ronda"
+    assert row["ticket"] == "WOT-TEST-026q"
+    assert row["rol"] == "challenger"
+    assert row["evidencia"] == "hallazgo"
+    # Los 3 campos de WOT-2026-037b: sin escritor eran decorativos.
+    assert (row["phase"], row["loop_id"], row["backend_key"]) == (
+        "fanout-dif",
+        "L700",
+        "BA11",
+    ), "la fila debe portar el registro citable del bucle (WOT-2026-037b)"
+
+
+def test_loop_round_smoke_check_does_not_pollute_the_scorecard(tmp_path):
+    """La primitiva compartida `send_to_profile` la usa TAMBIEN el smoke check
+    (`_premise_check`), que DELIBERADAMENTE no debe contar: un backend caido no
+    puede ensuciar el ranking. Pin de la adjudicacion 'no registrar en la
+    primitiva': un envio directo por la primitiva deja el scorecard intacto.
+    """
+    transport = _FakeTransport(replies=["PONG"])
+    ed.send_to_profile(
+        "p_chal",
+        [{"role": "user", "content": "ping"}],
+        config=_config(),
+        sensitivity="public",
+        transport=transport,
+    )
+    assert not (tmp_path / ed.SCORECARD_REL).exists(), (
+        "la primitiva NO debe registrar: el smoke check la comparte y su "
+        "trafico no es una ronda de gobierno"
+    )
+
+
+def test_loop_round_invalid_task_type_blocks_before_dispatch(tmp_path):
+    """El enum cerrado `TASK_TYPES` gobierna TAMBIEN la ruta de gobierno, y lo
+    hace ANTES de tocar red: un task_type invalido no debe gastar una llamada
+    al backend ni dejar una fila con provenance corrupta.
+
+    Hallazgo de la lente qwen3.6 en el MANAGER_REVIEW de WOT-2026-026q: la
+    conducta ya era correcta, pero no estaba fijada por ningun test.
+    """
+    transport = _FakeTransport(replies=["no deberia llegar"])
+    with pytest.raises(ValueError, match="task_type"):
+        ed.run_loop_round(
+            "p_chal",
+            "material",
+            config=_config(),
+            project_root=tmp_path,
+            ticket="WOT-TEST-026q",
+            task_type="no-existe",
+            rol="challenger",
+            phase="fanout-dif",
+            loop_id="L700",
+            backend_key="BA11",
+            sensitivity="public",
+            transport=transport,
+        )
+    assert transport.calls == [], "valido el enum ANTES de despachar, no despues"
+    assert not (tmp_path / ed.SCORECARD_REL).exists(), (
+        "sin ronda no hay fila: un task_type invalido no puede dejar rastro"
+    )
+
+
 def test_scorecard_writer_utf8_no_bom(tmp_path):
     ed.append_scorecard(
         tmp_path,

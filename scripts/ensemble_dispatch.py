@@ -677,6 +677,9 @@ def _record_round(
     session_id: str | None = None,
     latency_ms: int | None = None,
     outcome_override: str | None = None,
+    phase: str | None = None,
+    loop_id: str | None = None,
+    backend_key: str | None = None,
 ) -> None:
     # WOT-2026-039c: `outcome_override` permite registrar una salida DESCARTADA
     # por el filtro de lente sin vaciar `reply` -- vaciarlo para forzar el
@@ -703,8 +706,93 @@ def _record_round(
             "failure_mode": failure_mode,
             "session_id": session_id,
             "latency_ms": latency_ms,
+            # WOT-2026-026q: ausentes (None) en las rondas del runner CLI, que
+            # no pertenece a ningun bucle del registro citable.
+            "phase": phase,
+            "loop_id": loop_id,
+            "backend_key": backend_key,
         },
     )
+
+
+def run_loop_round(
+    profile_name: str,
+    content: str,
+    *,
+    config: dict,
+    project_root: Path,
+    ticket: str,
+    task_type: str,
+    rol: str,
+    phase: str,
+    loop_id: str,
+    backend_key: str,
+    sensitivity: str,
+    ronda: int = 0,
+    context_kind: str = "diff",
+    transport=None,
+    session_id: str | None = None,
+) -> str:
+    """UNA ronda de un bucle de GOBIERNO (`launched_from: chat`), registrada.
+
+    WOT-2026-026q. `run_pipeline` es el runner de la CLI y registra SOLO sus
+    propias rondas; los bucles `1->9->2` (CONTRACT_AUDIT, MANAGER_REVIEW,
+    CLOSE) los despacha el chat paso a paso, sin pasar por ese bucle, y por
+    eso su telemetria se perdia entera: el scorecard quedaba MUDO y los campos
+    `phase`/`loop_id`/`backend_key` del schema (WOT-2026-037b) no tenian ni un
+    escritor. Esta funcion es el hueco que faltaba en el RUNNER.
+
+    El registro va AQUI y NO en `send_to_profile` a proposito: esa primitiva la
+    comparte el smoke check (`_premise_check`), cuyo trafico NO debe contar --
+    un backend caido no puede ensuciar el ranking-- y los callers de
+    `run_pipeline` ya registran via `_record_round`. Cablearlo en la primitiva
+    produciria doble-conteo mas ruido de smoke.
+
+    Before: `profile_name` existe en `ensemble_profiles`; `task_type` pertenece
+        a `TASK_TYPES`; `phase`/`loop_id`/`backend_key` son los del registro
+        citable de bucles (`.agent/config/agents.json::ensemble_registry`, ver
+        `scripts/discover_loops.py`).
+    During: despacha por `send_to_profile` (el preflight de privacidad corre
+        alli, fail-closed) cronometrando con `time.perf_counter()`; luego
+        APPENDEA exactamente UNA fila via `_record_round`. Una respuesta vacia
+        se registra como `no-aportacion`, nunca como fila ausente.
+    After: retorna el texto del backend tal cual (el consolidador es el chat,
+        nivel 0: esta funcion no interpreta ni adjudica). Propaga
+        `DispatchBlockedError` si el preflight bloquea -- en ese caso NO hay
+        fila, porque no hubo ronda.
+    """
+    if task_type not in TASK_TYPES:
+        raise ValueError(
+            f"task_type '{task_type}' invalido; usa uno de {sorted(TASK_TYPES)}"
+        )
+    profile = config["ensemble_profiles"][profile_name]
+    _t0 = time.perf_counter()
+    reply = send_to_profile(
+        profile_name,
+        [{"role": "user", "content": content}],
+        config=config,
+        sensitivity=sensitivity,
+        transport=transport,
+    )
+    latency_ms = round((time.perf_counter() - _t0) * 1000)
+    _record_round(
+        project_root,
+        ticket=ticket,
+        task_type=task_type,
+        rol=rol,
+        profile=profile,
+        backend_version=_backend_version(config["backends"][profile["backend"]]),
+        ronda=ronda,
+        reply=reply,
+        input_bytes=len(content.encode("utf-8")),
+        context_kind=context_kind,
+        session_id=session_id,
+        latency_ms=latency_ms,
+        phase=phase,
+        loop_id=loop_id,
+        backend_key=backend_key,
+    )
+    return reply
 
 
 def run_pipeline(
