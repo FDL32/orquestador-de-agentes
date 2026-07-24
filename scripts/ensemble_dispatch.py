@@ -49,6 +49,7 @@ desde la ubicacion de ESTE script, con independencia de AGENT_PROJECT_ROOT
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import importlib.util
 import json
@@ -60,6 +61,18 @@ import time
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+
+
+# WOT-2026-041b: lock de fichero por plataforma. Solo uno de los dos existe en
+# cada SO; el que falte queda en None y `_locked_for_append` degrada a no-op.
+try:  # Windows
+    import msvcrt
+except ImportError:  # pragma: no cover -- POSIX
+    msvcrt = None  # type: ignore[assignment]
+try:  # POSIX
+    import fcntl
+except ImportError:  # pragma: no cover -- Windows
+    fcntl = None  # type: ignore[assignment]
 
 
 MOTOR_ROOT = Path(__file__).resolve().parent.parent
@@ -530,13 +543,90 @@ def send_to_profile(
     return transport(profile, backend_cfg, messages, timeout)
 
 
+@contextlib.contextmanager
+def _locked_for_append(handle):
+    """Lock EXCLUSIVO del SO sobre el fichero abierto, liberado siempre.
+
+    WOT-2026-041b. Es lock de ESCRITURA unicamente: `_read_scorecard` no pasa
+    por aqui, asi que la lectura nunca se serializa.
+
+    Before: `handle` esta abierto en modo append binario.
+    During: toma el lock (msvcrt en Windows, fcntl en POSIX). Si la plataforma
+        no ofrece ninguno de los dos, degrada a no-op en vez de romper: el
+        append de una linea corta ya era el comportamiento historico.
+    After: libera el lock aunque el bloque levante.
+    """
+    locker = None
+    if msvcrt is not None:
+        locker = "msvcrt"
+    elif fcntl is not None:
+        locker = "fcntl"
+    if locker == "fcntl":
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    elif locker == "msvcrt":
+        # msvcrt.locking bloquea un RANGO relativo a la POSICION ACTUAL. Hay
+        # que anclarlo en un offset FIJO (el byte 0) que todos los procesos
+        # compartan: si cada uno bloquea desde su propio fin-de-fichero, los
+        # rangos son DISTINTOS y no se excluyen entre si -- el lock no serviria
+        # de nada. Medido: con el ancla en el EOF el unlock fallaba con
+        # "Permission denied" porque el write habia movido la posicion.
+        handle.seek(0)
+        while True:
+            try:
+                msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+                break
+            except OSError:
+                # LK_LOCK reintenta 10 veces y luego lanza: seguimos esperando
+                # en vez de perder la fila.
+                time.sleep(0.05)
+    try:
+        yield
+    finally:
+        # El fallo al LIBERAR no puede enmascarar la excepcion del cuerpo (un
+        # disco lleno debe seguir propagando), pero tampoco debe desaparecer en
+        # silencio: se avisa por stderr. El cierre del fichero libera el lock
+        # de todos modos. Hallazgo del MANAGER_REVIEW: el `except OSError:
+        # pass` original se tragaba esta senal entera.
+        try:
+            if locker == "fcntl":
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            elif locker == "msvcrt":
+                # mismo ancla que al tomarlo: el write dejo la posicion al
+                # final, y liberar desde ahi apuntaria a OTRO rango.
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        except OSError as exc:
+            print(
+                f"[WARN] no se pudo liberar el lock del scorecard: {exc}",
+                file=sys.stderr,
+            )
+
+
 def append_scorecard(project_root: Path, row: dict) -> Path:
-    """Append-only, UTF-8 SIN BOM, una linea JSON (claves normalizadas) por evento."""
+    """Append-only, UTF-8 SIN BOM, una linea JSON (claves normalizadas) por evento.
+
+    WOT-2026-041b: la escritura va bajo lock EXCLUSIVO del SO y en UNA sola
+    llamada `write` de bytes ya serializados. Con 4 HILOS nunca se corrompio
+    (el GIL serializa un write corto: 435 lineas reales, 0 corruptas), pero
+    con PROCESOS concurrentes -- hacia donde empuja el sistema-- dos appends
+    pueden entrelazarse y partir una linea. El formato de linea y
+    SCORECARD_FIELDS no cambian (contrato de WOT-2026-025y).
+    """
     path = project_root / SCORECARD_REL
     path.parent.mkdir(parents=True, exist_ok=True)
     normalized = {k: row.get(k) for k in SCORECARD_FIELDS}
-    with open(path, "a", encoding="utf-8", newline="\n") as f:
-        f.write(json.dumps(normalized, ensure_ascii=False) + "\n")
+    payload = (json.dumps(normalized, ensure_ascii=False) + "\n").encode("utf-8")
+    # binario a proposito: sin traduccion de saltos de linea y con el payload
+    # completo en un unico write, de modo que el lock cubre la linea entera.
+    # SIN os.fsync a proposito: el contrato de este ticket es NO CORRUPCION, y
+    # eso lo da el lock + el write unico. fsync anade DURABILIDAD ante corte de
+    # energia, que es otra propiedad y otro ticket. Medido (200 filas): 1.343
+    # ms/fila con fsync vs 1.118 sin el (~20%). Una lente del MANAGER_REVIEW
+    # estimo "100x mas lento" y pidio quitarlo; la cifra real es mucho menor,
+    # pero se retira igualmente por ALCANCE, no por coste.
+    with open(path, "ab") as f, _locked_for_append(f):
+        f.write(payload)
+        f.flush()
     return path
 
 

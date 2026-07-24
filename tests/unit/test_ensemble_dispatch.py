@@ -1484,6 +1484,97 @@ def test_transport_api_error_no_encadena_el_objeto_crudo(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# WOT-2026-041b: `append_scorecard` escribia sin lock del SO. La mutation usa
+# PROCESOS reales (multiprocessing.Process, no subprocess: subprocess no
+# comparte el file descriptor y no ejerce la carrera) con arranque
+# SINCRONIZADO por Barrier para maximizar la ventana.
+#
+# MEDIDO al quitar el lock (3/3 corridas, deterministico):
+#   PROCESOS: 89/100 filas -- lineas partidas por writes entrelazados
+#   HILOS:    98/100 filas, 0 lineas CORRUPTAS
+# El matiz importa y corrige el enunciado del DAG: con hilos el GIL serializa
+# el write, asi que NO se parte ninguna linea -- pero si se PIERDEN filas. Un
+# test con hilos que solo afirmase "ninguna linea corrupta" (el criterio que
+# proponia el DAG) pasaria sin el fix: floor assertion. Este test sobrevive a
+# ambos escenarios porque ademas cuenta las filas.
+# --------------------------------------------------------------------------- #
+
+_ROW_041B_PAYLOAD = "x" * 4096  # linea larga: estrecha la ventana atomica del SO
+
+
+def _writer_041b(project_root_str: str, worker: int, n_rows: int, barrier) -> None:
+    """Escribe n_rows filas identificables. Se ejecuta en un PROCESO aparte."""
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    _sys.path.insert(0, str(_Path(project_root_str).parent / "scripts"))
+    barrier.wait()  # arranque sincronizado: todos empujan a la vez
+    for i in range(n_rows):
+        ed.append_scorecard(
+            _Path(project_root_str),
+            {
+                "ts": f"w{worker}-r{i}",
+                "event": "mutation-041b",
+                "ticket": "WOT-2026-041b",
+                "evidencia": _ROW_041B_PAYLOAD,
+                "ronda": i,
+            },
+        )
+
+
+def test_append_scorecard_no_se_corrompe_con_procesos_concurrentes(tmp_path):
+    """N PROCESOS escribiendo a la vez -> toda linea es JSON valido y completo.
+
+    Con HILOS este test pasaria sin el fix (el GIL serializa el write): por eso
+    usa procesos. Sin el lock, dos appends pueden entrelazarse y partir una
+    linea; la asercion mira que NINGUNA linea este truncada ni mezclada, y que
+    no se pierda ni se duplique ninguna.
+    """
+    multiprocessing = pytest.importorskip("multiprocessing")
+    if multiprocessing.get_start_method(allow_none=True) is None:
+        multiprocessing.set_start_method("spawn", force=True)
+
+    n_workers, n_rows = 4, 25
+    barrier = multiprocessing.Barrier(n_workers)
+    procs = [
+        multiprocessing.Process(
+            target=_writer_041b, args=(str(tmp_path), w, n_rows, barrier)
+        )
+        for w in range(n_workers)
+    ]
+    for p in procs:
+        p.start()
+    for p in procs:
+        p.join(timeout=120)
+
+    assert all(p.exitcode == 0 for p in procs), [p.exitcode for p in procs]
+
+    path = tmp_path / ed.SCORECARD_REL
+    raw = path.read_bytes()
+    assert not raw.startswith(b"\xef\xbb\xbf"), "el fichero no debe llevar BOM"
+    lines = raw.decode("utf-8").splitlines()
+
+    # (1) ninguna linea corrupta: entrelazar dos writes rompe el JSON
+    for idx, line in enumerate(lines, 1):
+        if not line.strip():
+            continue
+        try:
+            json.loads(line)
+        except json.JSONDecodeError as exc:
+            pytest.fail(f"linea {idx} corrupta (write entrelazado): {exc}")
+
+    # (2) ni una fila perdida ni duplicada: el lock no puede comerse escrituras
+    seen = [json.loads(line)["ts"] for line in lines if line.strip()]
+    esperado = {f"w{w}-r{i}" for w in range(n_workers) for i in range(n_rows)}
+    assert len(seen) == n_workers * n_rows
+    assert set(seen) == esperado
+
+    # (3) el contrato de formato de WOT-2026-025y sobrevive
+    primera = json.loads(next(line for line in lines if line.strip()))
+    assert list(primera.keys()) == ed.SCORECARD_FIELDS
+
+
+# --------------------------------------------------------------------------- #
 # WOT-2026-025z: gateway nan canonico para challengers (datos puros en
 # agents.json) + barrera de lo que el schema no ve (fallback_profile
 # colgante, credenciales anidadas). Each test below pins a mutation branch
