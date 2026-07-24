@@ -260,6 +260,85 @@ def privacy_preflight(
 # muere en el WAF y el 403 se confunde con clave invalida.
 ENSEMBLE_USER_AGENT = "orquestador-ensemble/1.0"
 
+# WOT-2026-041a: el motor es un repo PUBLICO y `_transport_api` construye un
+# Request con "Authorization: Bearer <key>". Si urlopen levanta HTTPError, el
+# objeto crudo llega a los callers, que hacen `f"{type(exc).__name__}: {exc}"`
+# (:575) o lo imprimen a stderr (:1173). MEDIDO 2026-07-24 (probe propio, NO
+# heredado): `str(HTTPError)` NO contiene la key, pero `err.headers` SI (True) y
+# `repr(req.header_items())` SI (True). Por eso el saneado NO consiste en
+# reformatear el mensaje: consiste en no dejar salir el objeto crudo NI por
+# __cause__/__context__.
+#
+# LIMITE DECLARADO (no lo cierra este ticket, medido bajo mutation): la local
+# `api_key` de `_transport_api` sigue conteniendo la clave -- es necesaria para
+# construir el Request--, asi que un reporter de terceros que vuelque
+# `locals()` de los frames la vera. Cerrarlo exige no tener la clave en una
+# local, que es otra superficie. Tampoco cubre la key en el CUERPO que devuelva
+# el backend ni en query params de la URL.
+REDACTED_MARKER = "***REDACTED***"
+
+
+class TransportError(RuntimeError):
+    """Error de transporte SANEADO: nunca referencia al HTTPError/Request crudo.
+
+    Before: se construye solo desde `_transport_api` al capturar un fallo de
+    `urlopen`, con la api_key en mano para poder redactarla.
+    During: copia status/code y el cuerpo diagnostico ya redactado; no guarda
+    referencia al objeto original ni a sus headers.
+    After: `str()`, `repr()`, `.args` y el traceback quedan libres de la clave.
+    Se levanta FUERA del bloque `except` (ver `_transport_api`) para que ni
+    __cause__ ni __context__ apunten al HTTPError crudo.
+    """
+
+    def __init__(self, message: str, *, status: int | None, body: str | None) -> None:
+        super().__init__(message)
+        self.status = status
+        self.code = status  # alias: HTTPError expone ambos
+        self.body = body
+
+
+def _redact_secret(text: str, secret: str | None) -> str:
+    """Sustituye la clave por REDACTED_MARKER. Sin clave, devuelve el texto tal cual."""
+    if not secret:
+        return text
+    return text.replace(secret, REDACTED_MARKER)
+
+
+def _sanitized_transport_error(exc: Exception, api_key: str | None) -> TransportError:
+    """Convierte un fallo de urlopen en un TransportError sin secretos.
+
+    Preserva status/code y el cuerpo diagnostico (redactado) para no romper el
+    diagnostico de cuota/429 de WOT-2026-027g: silenciar el error tambien es un
+    fallo, no solo filtrarlo.
+    """
+    status = getattr(exc, "code", None)
+    body: str | None = None
+    read = getattr(exc, "read", None)
+    if callable(read):
+        try:
+            raw = read()
+        except Exception:  # cuerpo ilegible: no es motivo para perder el status
+            raw = None
+        if raw:
+            body = _redact_secret(
+                raw.decode("utf-8", errors="replace")
+                if isinstance(raw, bytes)
+                else str(raw),
+                api_key,
+            )
+    reason = _redact_secret(str(getattr(exc, "reason", "") or ""), api_key)
+    detail = _redact_secret(str(exc), api_key)
+    parts = [type(exc).__name__]
+    if status is not None:
+        parts.append(f"HTTP {status}")
+    if detail:
+        parts.append(detail)
+    if reason and reason not in detail:
+        parts.append(reason)
+    if body:
+        parts.append(f"body={body}")
+    return TransportError(" | ".join(parts), status=status, body=body)
+
 
 def _transport_api(
     profile: dict, backend_cfg: dict, messages: list[dict], timeout: int
@@ -288,8 +367,30 @@ def _transport_api(
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
-        data = json.loads(resp.read().decode("utf-8"))
+    # WOT-2026-041a: el saneado se CONSTRUYE dentro del except pero se LEVANTA
+    # fuera. Motivo medido: `raise ... from None` limpia __cause__, pero el
+    # interprete reasigna __context__ al ejecutar el `raise` DENTRO del except,
+    # y ahi vuelve a quedar el HTTPError crudo con sus headers (la asercion (d)
+    # de la mutation lo caza). Levantarlo fuera deja ambos encadenamientos en
+    # None. `req` tampoco se referencia nunca: repr(req) filtra la key.
+    #
+    # El try envuelve SOLO el urlopen y la lectura de la respuesta, NO el
+    # json.loads: una respuesta 200 con cuerpo malformado es un error de
+    # PARSEO, no de transporte, y convertirlo en TransportError con
+    # status=None borraria el tipo original (JSONDecodeError) que un caller
+    # podria estar discriminando. Hallazgo de dos lentes del MANAGER_REVIEW,
+    # confirmado midiendo: antes de acotarlo, un 200 con cuerpo no-JSON salia
+    # como "TransportError | JSONDecodeError ... status=None".
+    sanitized: TransportError | None = None
+    raw_body: bytes | None = None
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+            raw_body = resp.read()
+    except Exception as exc:
+        sanitized = _sanitized_transport_error(exc, api_key)
+    if sanitized is not None:
+        raise sanitized
+    data = json.loads(raw_body.decode("utf-8"))
     return data["choices"][0]["message"]["content"]
 
 

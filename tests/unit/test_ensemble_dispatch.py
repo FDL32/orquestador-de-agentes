@@ -20,8 +20,12 @@ it pins:
 
 from __future__ import annotations
 
+import email.message
+import io
 import json
 import sys
+import traceback
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -1271,6 +1275,212 @@ def test_transport_api_sends_explicit_user_agent(monkeypatch):
     ua = captured["req"].get_header("User-agent")
     assert ua == ed.ENSEMBLE_USER_AGENT
     assert ua and not ua.lower().startswith("python-urllib")
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-041a: el motor es un repo PUBLICO y _transport_api pone la api_key
+# en "Authorization: Bearer <key>". MEDIDO 2026-07-24 con probe propio: NO es
+# str(HTTPError) quien filtra (False), sino err.headers (True) y repr(req)
+# (True). Por eso la mutation lleva CUATRO aserciones y no una: solo (a) puede
+# satisfacerse con la fuga viva si el error saneado encadena el crudo.
+#   quitar el saneado  -> caen (a) y (d)
+#   silenciar el error -> caen (b) y (c)
+# --------------------------------------------------------------------------- #
+
+_LEAK_KEY_041A = "sk-live-041a-DEADBEEF-supersecret-value"
+
+
+def _http_error_carrying_the_key(url: str, key: str) -> urllib.error.HTTPError:
+    """HTTPError REAL cuyos headers llevan la Authorization, como en produccion."""
+    hdrs = email.message.Message()
+    hdrs["Content-Type"] = "application/json"
+    hdrs["Authorization"] = f"Bearer {key}"
+    return urllib.error.HTTPError(
+        url,
+        429,
+        "Too Many Requests",
+        hdrs,
+        io.BytesIO(b'{"error":{"message":"quota exceeded","type":"rate_limit"}}'),
+    )
+
+
+def test_transport_api_error_no_filtra_la_api_key(monkeypatch):
+    """El error propagado NO expone la clave por NINGUNA via (str/repr/args/cause)."""
+
+    def boom_urlopen(req, timeout=None):
+        raise _http_error_carrying_the_key(req.full_url, _LEAK_KEY_041A)
+
+    monkeypatch.setattr(ed.urllib.request, "urlopen", boom_urlopen)
+    monkeypatch.setenv("FAKE_NAN_KEY_041A", _LEAK_KEY_041A)
+    profile = {
+        "api_key_env": "FAKE_NAN_KEY_041A",
+        "api_base_url": "https://api.nan.builders/v1/chat/completions",
+        "model": "deepseek-v4-flash",
+    }
+
+    with pytest.raises(Exception) as excinfo:
+        ed._transport_api(profile, {}, [{"role": "user", "content": "x"}], timeout=5)
+    err = excinfo.value
+
+    # (a) la CADENA de la clave no aparece por NINGUNA superficie ALCANZABLE
+    #     del objeto propagado. Se busca la KEY, no "Authorization", para no
+    #     pasar por accidente.
+    #     OJO -- medido bajo mutation: str/repr/args por si solos NO
+    #     discriminan, porque `str(HTTPError)` tampoco contiene la clave (el
+    #     probe de premisa lo midio: False). Quien filtra es `.headers`. Un
+    #     test que solo mirase str() pasaria con la fuga VIVA: seria la floor
+    #     assertion clasica. Por eso se barre el estado publico del error.
+    assert _LEAK_KEY_041A not in str(err)
+    assert _LEAK_KEY_041A not in repr(err)
+    assert _LEAK_KEY_041A not in repr(err.args)
+    assert _LEAK_KEY_041A not in str(getattr(err, "headers", "") or "")
+    assert _LEAK_KEY_041A not in repr(vars(err))
+    assert _LEAK_KEY_041A not in repr(
+        {
+            name: getattr(err, name, None)
+            for name in dir(err)
+            if not name.startswith("__")
+        }
+    )
+
+    # (b) status/code preservado: silenciar el error rompe el diagnostico de
+    #     cuota de WOT-2026-027g, que es ortogonal a esta fuga.
+    assert getattr(err, "status", None) == 429
+    assert getattr(err, "code", None) == 429
+    assert "429" in str(err)
+
+    # (c) cuerpo diagnostico preservado (y saneado): sin el no se distingue un
+    #     429 de cuota de un 429 de otra causa.
+    assert "quota exceeded" in str(err)
+    assert _LEAK_KEY_041A not in str(getattr(err, "body", "") or "")
+
+    # (d) el error NO encadena el objeto crudo: con __cause__/__context__ vivos
+    #     la clave sigue alcanzable en el traceback aunque str(err) este limpio.
+    assert err.__cause__ is None
+    assert err.__context__ is None or not isinstance(
+        err.__context__, urllib.error.HTTPError
+    )
+    chained = err.__cause__ or err.__context__
+    assert chained is None or _LEAK_KEY_041A not in str(getattr(chained, "headers", ""))
+
+
+def test_transport_api_redacta_la_key_si_viene_en_el_cuerpo(monkeypatch):
+    """La redaccion del CUERPO se ejerce de verdad, no por accidente.
+
+    Hallazgo del MANAGER_REVIEW (lente adversarial): el fixture principal usa
+    un cuerpo que NO contiene la clave, asi que su asercion sobre `body`
+    pasaria igual sin redactar nada -- floor assertion. Aqui el cuerpo SI la
+    lleva (un backend que hace eco del header en su mensaje de error), de modo
+    que la asercion solo puede pasar si `_redact_secret` corre sobre el cuerpo.
+    """
+
+    def boom_urlopen(req, timeout=None):
+        hdrs = email.message.Message()
+        hdrs["Content-Type"] = "application/json"
+        hdrs["Authorization"] = f"Bearer {_LEAK_KEY_041A}"
+        body = json.dumps(
+            {"error": {"message": f"invalid key: {_LEAK_KEY_041A}", "code": "bad_key"}}
+        ).encode()
+        raise urllib.error.HTTPError(
+            req.full_url, 401, "Unauthorized", hdrs, io.BytesIO(body)
+        )
+
+    monkeypatch.setattr(ed.urllib.request, "urlopen", boom_urlopen)
+    monkeypatch.setenv("FAKE_NAN_KEY_041A", _LEAK_KEY_041A)
+    profile = {
+        "api_key_env": "FAKE_NAN_KEY_041A",
+        "api_base_url": "https://api.nan.builders/v1/chat/completions",
+        "model": "deepseek-v4-flash",
+    }
+    with pytest.raises(Exception) as excinfo:
+        ed._transport_api(profile, {}, [{"role": "user", "content": "x"}], timeout=5)
+    err = excinfo.value
+
+    assert _LEAK_KEY_041A not in str(err)
+    assert _LEAK_KEY_041A not in str(err.body or "")
+    assert ed.REDACTED_MARKER in str(err.body or "")
+    # el resto del cuerpo diagnostico sobrevive a la redaccion
+    assert "bad_key" in str(err.body or "")
+    assert err.status == 401
+
+
+def test_transport_api_no_convierte_error_de_parseo_en_error_de_transporte(monkeypatch):
+    """Un 200 con cuerpo malformado sigue siendo JSONDecodeError, no transporte.
+
+    Hallazgo del MANAGER_REVIEW (2 lentes independientes): envolver el
+    `json.loads` en el try del saneado convertia un error de PARSEO en
+    TransportError con status=None, borrando el tipo que un caller podria
+    estar discriminando.
+    """
+
+    class _Resp:
+        def read(self):
+            return b"esto no es json"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr(ed.urllib.request, "urlopen", lambda req, timeout=None: _Resp())
+    monkeypatch.setenv("FAKE_NAN_KEY_041A", _LEAK_KEY_041A)
+    profile = {
+        "api_key_env": "FAKE_NAN_KEY_041A",
+        "api_base_url": "https://api.nan.builders/v1/chat/completions",
+        "model": "deepseek-v4-flash",
+    }
+    with pytest.raises(json.JSONDecodeError):
+        ed._transport_api(profile, {}, [{"role": "user", "content": "x"}], timeout=5)
+
+
+def test_transport_api_error_no_encadena_el_objeto_crudo(monkeypatch):
+    """El error propagado no da acceso al HTTPError crudo por el ENCADENAMIENTO.
+
+    ALCANCE DECLARADO (WOT-2026-041a): esta prueba mira lo que el error LLEVA
+    CONSIGO al propagarse, que es lo que el ticket cierra. NO mira los
+    `locals()` de los frames: la variable `api_key` vive necesariamente en el
+    frame de `_transport_api` para poder construir el Request, y ningun saneado
+    del ERROR puede retirarla de ahi. Los tracebacks de terceros que vuelcan
+    locals estan EXPLICITAMENTE fuera del alcance del ticket (ver limites
+    declarados en el DAG); cerrarlos exigiria no tener la clave en una local
+    -- otro ticket, otra superficie.
+    """
+
+    def boom_urlopen(req, timeout=None):
+        raise _http_error_carrying_the_key(req.full_url, _LEAK_KEY_041A)
+
+    monkeypatch.setattr(ed.urllib.request, "urlopen", boom_urlopen)
+    monkeypatch.setenv("FAKE_NAN_KEY_041A", _LEAK_KEY_041A)
+    profile = {
+        "api_key_env": "FAKE_NAN_KEY_041A",
+        "api_base_url": "https://api.nan.builders/v1/chat/completions",
+        "model": "deepseek-v4-flash",
+    }
+    try:
+        ed._transport_api(profile, {}, [{"role": "user", "content": "x"}], timeout=5)
+    except Exception as exc:
+        rendered = traceback.format_exc()
+        err = exc
+    else:  # pragma: no cover -- el fixture siempre levanta
+        pytest.fail("se esperaba un error de transporte")
+
+    assert _LEAK_KEY_041A not in rendered
+
+    # Recorre la CADENA de encadenamiento completa: con la fuga viva el
+    # HTTPError crudo (y sus headers) queda alcanzable por aqui aunque
+    # str(err) este limpio.
+    seen: list = []
+    node = err
+    while node is not None and node not in seen:
+        seen.append(node)
+        node = node.__cause__ or node.__context__
+    for node in seen:
+        assert _LEAK_KEY_041A not in str(getattr(node, "headers", "") or ""), (
+            f"la clave sigue alcanzable via headers de {type(node).__name__}"
+        )
+        assert not isinstance(node.__cause__, urllib.error.HTTPError)
+        assert not isinstance(node.__context__, urllib.error.HTTPError)
 
 
 # --------------------------------------------------------------------------- #
