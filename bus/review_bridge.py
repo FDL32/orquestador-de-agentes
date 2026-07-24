@@ -380,18 +380,19 @@ class ReviewBridge:
             from agents_config import get_backend_for_role, load_agents_config
 
             config = load_agents_config(self.project_root)
-            return get_backend_for_role("MANAGER", config)
+            # WOT-2026-026j: role canonico 'manager' (role_mapping), no 'MANAGER'
+            return get_backend_for_role("manager", config)
         except Exception:
             # WP-2026-129: Fallback to opencode for the Manager
             return "opencode"
 
     def _get_manager_model(self) -> str | None:
-        """Get the model override for MANAGER from role_models."""
+        """Get the model override for the Manager from role_mapping (WOT-2026-026j)."""
         try:
             from agents_config import get_model_for_role, load_agents_config
 
             config = load_agents_config(self.project_root)
-            return get_model_for_role("MANAGER", config)
+            return get_model_for_role("manager", config)
         except Exception:
             return None
 

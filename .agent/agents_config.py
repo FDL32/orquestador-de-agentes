@@ -53,7 +53,19 @@ def _config_path() -> Path:
 
 CONFIG_PATH = _LazyPath(_config_path)
 
+# WOT-2026-026j: DOS enums, dos dominios distintos (recomendacion Codex, no
+# duplicacion de un dato):
+#  - KNOWN_ROLES: legacy MAYUSCULA. Valida los campos que 026j deja como basura
+#    no-referenciada (role_assignments, role_models) y los aun-vivos no migrados
+#    (skill_allowlists). No se amplia; muere cuando esos campos se retiren.
+#  - CANONICAL_ROLES: la taxonomia canonica de AGENTS.md, en MINUSCULA. Es el
+#    UNICO enum valido para role_mapping. SUPERVISOR NO esta aqui: es un actor
+#    runtime del bus, no un rol IA (va en el campo actor_runtime aparte).
 KNOWN_ROLES = {"BUILDER", "MANAGER", "SUPERVISOR"}
+CANONICAL_ROLES = {"orchestrator", "manager", "builder", "auditor", "challenger"}
+# Actores runtime del bus: NO son roles IA, no tienen backend/modelo. Pedir su
+# modelo/backend via get_*_for_role es un error (raise), no un None silencioso.
+ACTOR_RUNTIME_ROLES = {"SUPERVISOR"}
 REQUIRED_BACKEND_KEYS = {"executable", "args", "discovery"}
 REQUIRED_DISCOVERY_KEYS = {"method"}
 
@@ -161,8 +173,60 @@ def load_agents_config(project_root: Path | None = None) -> dict[str, Any]:
     except json.JSONDecodeError as e:
         raise AgentsConfigError(f"Invalid JSON in configuration file: {e}") from e
 
+    # WOT-2026-026j (D2): fusiona el override local ANTES de validar, de modo
+    # que el config resultante es el EFECTIVO (lo que runtime realmente usa) y
+    # la barrera fail-closed de _validate_config muerde tambien un override
+    # local invalido. La fusion vive AQUI (un solo sitio), no en cada get_*,
+    # asi ningun consumidor puede saltarse la cascada por accidente.
+    config = _merge_role_overrides(config, config_path.parent)
+
     _validate_config(config, config_path)
     return config
+
+
+def _local_overrides_path(config_dir: Path) -> Path:
+    """Ruta del override local gitignored, junto al agents.json versionado."""
+    return config_dir / "agents.local.json"
+
+
+def load_role_overrides(config_dir: Path) -> dict:
+    """Carga role_mapping de agents.local.json (gitignored, opcional).
+
+    Replica el patron tolerante de prefix_resolver.load_overrides: si el
+    fichero no existe o esta malformado, devuelve {} (no rompe el arranque).
+
+    Before: config_dir puede o no contener agents.local.json.
+    During: lee JSON {"role_mapping": {...}}.
+    After: devuelve el dict role_mapping local, o {} si ausente/ilegible.
+    """
+    path = _local_overrides_path(config_dir)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            rm = data.get("role_mapping", {})
+            return rm if isinstance(rm, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        pass
+    return {}
+
+
+def _merge_role_overrides(config: dict, config_dir: Path) -> dict:
+    """Devuelve el config EFECTIVO con el override local fusionado por rol.
+
+    El override local GANA sobre el versionado, entrada a entrada (nivel 1 de
+    la cascada local->versionado->default). Solo toca role_mapping; no muta el
+    dict de entrada (copia superficial de la seccion fusionada).
+    """
+    overrides = load_role_overrides(config_dir)
+    if not overrides:
+        return config
+    effective = dict(config)
+    merged = dict(config.get("role_mapping", {}))
+    merged.update(overrides)  # local gana
+    effective["role_mapping"] = merged
+    return effective
 
 
 def _validate_role_models(config: dict, config_path: Path) -> None:
@@ -180,6 +244,70 @@ def _validate_role_models(config: dict, config_path: Path) -> None:
         if role not in KNOWN_ROLES:
             raise AgentsConfigError(
                 f"Unknown role '{role}' in role_models. Known roles: {KNOWN_ROLES}"
+            )
+
+
+def _validate_role_mapping(config: dict, config_path: Path) -> None:
+    """Validate role_mapping FAIL-CLOSED against CANONICAL_ROLES (WOT-2026-026j).
+
+    Before: config puede o no declarar role_mapping (opcional hasta 1.4).
+    During: si existe, cada clave DEBE pertenecer al enum canonico en minuscula;
+        SUPERVISOR y cualquier rol MAYUS legacy quedan RECHAZADOS aqui (el
+        schema es la barrera, no un raise tardio en runtime). Cada entrada debe
+        ser un objeto con al menos 'backend'; el backend referenciado debe
+        existir en 'backends'.
+    After: retorna None si valido; lanza AgentsConfigError con mensaje que cita
+        'role_mapping' y el enum canonico en caso contrario.
+    """
+    if "role_mapping" not in config:
+        return
+
+    role_mapping = config["role_mapping"]
+    if not isinstance(role_mapping, dict):
+        raise AgentsConfigError(
+            f"Invalid 'role_mapping' in {config_path}: must be an object"
+        )
+
+    for role, spec in role_mapping.items():
+        if role not in CANONICAL_ROLES:
+            raise AgentsConfigError(
+                f"Unknown role '{role}' in role_mapping. "
+                f"Canonical roles (lowercase): {sorted(CANONICAL_ROLES)}. "
+                f"SUPERVISOR is an actor_runtime, not a role_mapping key."
+            )
+        if not isinstance(spec, dict) or "backend" not in spec:
+            raise AgentsConfigError(
+                f"Invalid entry for role '{role}' in role_mapping: "
+                f"must be an object with at least a 'backend' key"
+            )
+        backend = spec["backend"]
+        if backend not in config.get("backends", {}):
+            raise AgentsConfigError(
+                f"Role '{role}' in role_mapping references unknown backend '{backend}'"
+            )
+
+
+def _validate_actor_runtime(config: dict, config_path: Path) -> None:
+    """Validate the actor_runtime section FAIL-CLOSED (WOT-2026-026j D4).
+
+    Before: config puede o no declarar actor_runtime (opcional).
+    During: si existe, debe ser una lista y cada valor DEBE pertenecer a
+        ACTOR_RUNTIME_ROLES. Un rol IA canonico colado aqui (o al reves) es un
+        modelo mental equivocado: se rechaza en el schema, no en runtime.
+    After: retorna None si valido; lanza AgentsConfigError en caso contrario.
+    """
+    if "actor_runtime" not in config:
+        return
+    actor_runtime = config["actor_runtime"]
+    if not isinstance(actor_runtime, list):
+        raise AgentsConfigError(
+            f"Invalid 'actor_runtime' in {config_path}: must be a list"
+        )
+    for actor in actor_runtime:
+        if actor not in ACTOR_RUNTIME_ROLES:
+            raise AgentsConfigError(
+                f"Unknown actor_runtime '{actor}' in {config_path}. "
+                f"Known actor_runtime roles: {sorted(ACTOR_RUNTIME_ROLES)}"
             )
 
 
@@ -219,6 +347,12 @@ def _validate_config(config: dict, config_path: Path) -> None:
 
     # Check role_models (optional, retrocompatible)
     _validate_role_models(config, config_path)
+
+    # Check role_mapping (WOT-2026-026j, optional hasta schema 1.4)
+    _validate_role_mapping(config, config_path)
+
+    # Check actor_runtime (WOT-2026-026j D4, optional)
+    _validate_actor_runtime(config, config_path)
 
     # Check skill_allowlists (optional, retrocompatible)
     _validate_skill_allowlists(config, config_path)
@@ -466,32 +600,76 @@ def _validate_backend(name: str, backend: dict, config_path: Path) -> None:
         )
 
 
+def _is_actor_runtime(role: str) -> bool:
+    """True si el rol es un actor runtime del bus (case-insensitive, H3).
+
+    ACTOR_RUNTIME_ROLES esta en MAYUSCULA; pedir 'supervisor' o 'Supervisor'
+    debe reconocerse igual para RECHAZARLO como rol IA (H3 del bucle de cierre).
+    """
+    return role.upper() in ACTOR_RUNTIME_ROLES
+
+
+def _canonical_role(role: str) -> str:
+    """Normaliza un rol al enum canonico en minuscula (WOT-2026-026j).
+
+    Acepta el enum canonico y el legacy MAYUSCULA de los consumidores en
+    transicion (MANAGER, BUILDER -> manager, builder).
+
+    H2 [BLOQUEANTE]: un rol que NO es canonico NI legacy-normalizable conocido
+    (p.ej. un typo 'BUILDERR') se RECHAZA con AgentsConfigError, en vez de
+    degradar silencioso al centinela 'default'. Los actores runtime se filtran
+    ANTES en get_*_for_role (via _is_actor_runtime), no aqui.
+    """
+    lowered = role.lower()
+    if lowered in CANONICAL_ROLES:
+        return lowered
+    raise AgentsConfigError(
+        f"Unknown role '{role}': no es un rol canonico "
+        f"{sorted(CANONICAL_ROLES)} ni un actor_runtime conocido. "
+        f"Un typo NO debe degradar al backend 'default' (WOT-2026-026j H2)."
+    )
+
+
 def get_backend_for_role(role: str, config: dict | None = None) -> str:
     """
-    Get the backend name assigned to a role.
+    Get the backend name for a role via the role_mapping cascade.
 
-    Args:
-        role: The role name (e.g., "BUILDER", "MANAGER").
-        config: Optional pre-loaded configuration. If None, loads from file.
+    WOT-2026-026j: resuelve la cascada de TRES niveles (nivel 1 local y nivel 2
+    versionado ya vienen FUSIONADOS en config['role_mapping'] por
+    load_agents_config; aqui se aplica el nivel 3 default). Acepta el rol
+    canonico en minuscula y, por transicion, el legacy MAYUSCULA.
 
-    Returns:
-        The backend name assigned to the role.
-
-    Raises:
-        AgentsConfigError: If role is not assigned or unknown.
+    Before: config cargado (con role_mapping efectivo) o None (se carga).
+    During: rechaza actores runtime (SUPERVISOR); busca el rol canonico en
+        role_mapping; si falta, cae al backend centinela 'default' declarado en
+        'backends' (nivel 3), y solo si tampoco existe, lanza.
+    After: devuelve el nombre de backend (str). Lanza AgentsConfigError si el
+        rol es un actor runtime o no resoluble.
     """
     if config is None:
         config = load_agents_config()
 
-    role_assignments = config.get("role_assignments", {})
-
-    if role not in role_assignments:
+    if _is_actor_runtime(role):
         raise AgentsConfigError(
-            f"No backend assigned to role '{role}'. "
-            f"Available assignments: {list(role_assignments.keys())}"
+            f"'{role}' is an actor_runtime of the bus, not an IA role: "
+            f"it has no backend. Do not resolve it via get_backend_for_role."
         )
 
-    return role_assignments[role]
+    canonical = _canonical_role(role)
+    role_mapping = config.get("role_mapping", {})
+    if canonical in role_mapping:
+        return role_mapping[canonical]["backend"]
+
+    # Nivel 3: default REAL = el backend centinela 'default' declarado en
+    # 'backends' (el mismo que hoy resuelve SUPERVISOR='default' en la config
+    # viva). Es un backend existente, no una clave inventada. Si no existe, es
+    # un error de config, no un None crudo aguas abajo.
+    if "default" in config.get("backends", {}):
+        return "default"
+    raise AgentsConfigError(
+        f"No backend for role '{role}' in role_mapping and no 'default' "
+        f"backend declared. Declared roles: {sorted(role_mapping.keys())}"
+    )
 
 
 def get_backend_config(backend_name: str, config: dict | None = None) -> dict:
@@ -582,30 +760,38 @@ def get_discovery_method(backend_name: str, config: dict | None = None) -> str:
 
 def get_model_for_role(role: str, config: dict | None = None) -> str | None:
     """
-    Get the model override for a role from role_models.
+    Get the model override for a role via the role_mapping cascade.
 
-    This allows changing the model for a role by editing only agents.json
-    without touching code. Returns None if no model override is defined
-    (the backend should use its default from opencode.json or equivalent).
+    WOT-2026-026j: lee role_mapping[rol]['model'] (nivel 1 local + nivel 2
+    versionado ya FUSIONADOS por load_agents_config). Permite cambiar el modelo
+    de un rol editando solo agents.json (o agents.local.json), sin tocar codigo.
 
-    Args:
-        role: The role name (e.g., "BUILDER", "MANAGER").
-        config: Optional pre-loaded configuration. If None, loads from file.
+    Nivel 3 (default): devuelve None con la semantica EXPLICITA 'sin override ->
+    el backend usa su propio default (opencode.json o equivalente)'. None NO es
+    un error: es la ausencia de override, documentada y probada
+    (test_default_cuando_ni_local_ni_versionado).
 
-    Returns:
-        The model identifier string, or None if no override is defined.
-
-    Raises:
-        AgentsConfigError: If role is unknown.
+    Before: config con role_mapping efectivo, o None (se carga).
+    During: rechaza actores runtime (SUPERVISOR); normaliza el rol al canonico;
+        devuelve el 'model' del role_mapping o None si el rol/campo no existe.
+    After: str del modelo, o None si no hay override. Lanza AgentsConfigError
+        si el rol es un actor runtime.
     """
     if config is None:
         config = load_agents_config()
 
-    if role not in KNOWN_ROLES:
-        raise AgentsConfigError(f"Unknown role '{role}'. Known roles: {KNOWN_ROLES}")
+    if _is_actor_runtime(role):
+        raise AgentsConfigError(
+            f"'{role}' is an actor_runtime of the bus, not an IA role: "
+            f"it has no model. Do not resolve it via get_model_for_role."
+        )
 
-    role_models = config.get("role_models", {})
-    return role_models.get(role)
+    canonical = _canonical_role(role)
+    role_mapping = config.get("role_mapping", {})
+    entry = role_mapping.get(canonical)
+    if entry is None:
+        return None  # nivel 3: sin override -> el backend usa su default
+    return entry.get("model")
 
 
 def get_strictness_profile(config: dict | None = None) -> str:
@@ -668,19 +854,19 @@ def _migrate_1_0_to_1_1(config: dict) -> dict:
     """
     Pure migration handler 1.0 → 1.1.
 
-    Before: Config con schema_version "1.0" sin role_models.
-    During: Backfills role_models con los defaults de WP-072 si falta.
-    After: Retorna nuevo dict con schema_version "1.1" y role_models populated.
+    Before: Config con schema_version "1.0".
+    During: Solo actualiza schema_version a "1.1".
+    After: Retorna nuevo dict con schema_version "1.1".
 
-    Esta migración es retroactiva: formaliza el cambio manual hecho en WP-072.
+    WOT-2026-026j (D3, defecto 024t): este handler YA NO inyecta role_models con
+    'opencode-go/deepseek-v4-flash'. Sembrar el legacy aqui para limpiarlo en una
+    migracion posterior lo dejaba RESUCITADO transitoriamente (si un proceso muere
+    o un test captura estado intermedio, persiste). Es codigo de migracion, no
+    historia real del usuario: un install fresco no tiene datos que perder. El
+    contrato canonico de roles vive ahora en role_mapping (sembrado por 1.3->1.4).
     """
     new = dict(config)
     new["schema_version"] = "1.1"
-    if "role_models" not in new:
-        new["role_models"] = {
-            "BUILDER": "opencode-go/deepseek-v4-flash",
-            "MANAGER": "openai/gpt-5.4-mini",
-        }
     return new
 
 
@@ -742,6 +928,40 @@ def _migrate_1_2_to_1_3(config: dict) -> dict:
     return new
 
 
+# Mapeo legacy MAYUS -> canonico minuscula usado para SEMBRAR role_mapping desde
+# el role_assignments legacy en la migracion 1.3->1.4. SUPERVISOR NO se incluye:
+# es actor_runtime (va en el campo actor_runtime aparte), no un rol IA.
+_LEGACY_TO_CANONICAL_SEED = {"BUILDER": "builder", "MANAGER": "manager"}
+
+
+def _migrate_1_3_to_1_4(config: dict) -> dict:
+    """
+    Pure migration handler 1.3 -> 1.4 (WOT-2026-026j, D3).
+
+    Before: Config con schema_version "1.3" sin role_mapping (la fuente de verdad
+        canonica de roles IA).
+    During: Siembra role_mapping {rol_canonico: {backend}} DERIVANDOLO del
+        role_assignments legacy (BUILDER->builder, MANAGER->manager), de modo que
+        los backends referenciados ya existen en 'backends' (la config migrada se
+        re-valida al cargar). SUPERVISOR queda FUERA (actor_runtime). No inyecta
+        el modelo legacy: el modelo por rol es override opcional, no un default
+        cableado (defecto 024t cortado en origen).
+    After: Retorna nuevo dict con schema_version "1.4" y role_mapping presente
+        (posiblemente vacio si no habia role_assignments legacy que derivar).
+    """
+    new = dict(config)
+    new["schema_version"] = "1.4"
+    if "role_mapping" not in new:
+        seeded: dict[str, dict] = {}
+        legacy = new.get("role_assignments", {})
+        for legacy_role, backend in legacy.items():
+            canonical = _LEGACY_TO_CANONICAL_SEED.get(legacy_role)
+            if canonical is not None:
+                seeded[canonical] = {"backend": backend}
+        new["role_mapping"] = seeded
+    return new
+
+
 MIGRATIONS: list[Migration] = [
     Migration(
         id="1.0_to_1.1",
@@ -760,6 +980,12 @@ MIGRATIONS: list[Migration] = [
         from_version="1.2",
         to_version="1.3",
         apply=_migrate_1_2_to_1_3,
+    ),
+    Migration(
+        id="1.3_to_1.4",
+        from_version="1.3",
+        to_version="1.4",
+        apply=_migrate_1_3_to_1_4,
     ),
     # Future migrations appended chronologically here.
 ]

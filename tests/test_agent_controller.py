@@ -162,6 +162,74 @@ def test_reopen_terminal_ticket_positional_still_supported() -> None:
     )
 
 
+def _run_validate_with_agents_json(role_mapping: dict, extra: dict | None = None):
+    """Hermetic: --validate --json over a tmp project-root con un agents.json dado.
+
+    Escribe un agents.json minimo valido con el role_mapping/extra pedidos en un
+    project-root de usar-y-tirar y corre el CLI REAL (--validate --project-root).
+    Devuelve el CompletedProcess. No depende del workspace de dogfooding.
+    """
+    controller = PROJECT_ROOT / ".agent" / "agent_controller.py"
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg_dir = Path(tmp) / ".agent" / "config"
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        collab = Path(tmp) / ".agent" / "collaboration"
+        collab.mkdir(parents=True, exist_ok=True)
+        (collab / "work_plan.md").write_text(
+            "# Plan de Trabajo\n\nNo active ticket here.\n", encoding="utf-8"
+        )
+        cfg = {
+            "schema_version": "1.4",
+            "backends": {
+                "claude": {
+                    "executable": "claude",
+                    "args": ["run"],
+                    "discovery": {"method": "path_only"},
+                }
+            },
+            "role_assignments": {"BUILDER": "claude"},
+            "role_mapping": role_mapping,
+        }
+        if extra:
+            cfg.update(extra)
+        (cfg_dir / "agents.json").write_text(json.dumps(cfg), encoding="utf-8")
+        return subprocess.run(
+            [
+                sys.executable,
+                str(controller),
+                "--validate",
+                "--json",
+                "--project-root",
+                tmp,
+            ],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+
+def test_validate_wires_agents_json_schema_fail_closed() -> None:
+    """WOT-2026-026j D4: --validate FALLA (exit!=0) ante role_mapping fuera del enum.
+
+    Barrera CABLEADA: la barrera de schema fail-closed de agents_config debe
+    morder desde el gate self-service (--validate), no solo en el load de runtime.
+    Mutation: si se desconecta el bloque agents_config_schema de _handle_validate,
+    'foo' pasa y este test cae. El caso valido asegura que no es un falso-rojo.
+    """
+    # El tmp project-root tiene otros errores de estado (no hay ticket activo),
+    # asi que aislamos la barrera POR SU CLAVE, no por el exit total: un config
+    # valido NO produce el error agents_config_schema; uno invalido SI.
+    ok = _run_validate_with_agents_json({"manager": {"backend": "claude"}})
+    assert "agents_config_schema" not in ok.stdout, ok.stdout
+
+    bad = _run_validate_with_agents_json(
+        {"manager": {"backend": "claude"}, "foo": {"backend": "claude"}}
+    )
+    assert bad.returncode != 0
+    assert "agents_config_schema" in bad.stdout
+
+
 class TestReadFile:
     """Test read_file handles filesystem correctly."""
 

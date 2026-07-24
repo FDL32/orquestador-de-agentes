@@ -24,6 +24,7 @@ from agents_config import (  # noqa: E402
     MIGRATIONS,
     AgentsConfigError,
     _migrate_1_0_to_1_1,
+    _migrate_1_3_to_1_4,
     get_backend_args,
     get_backend_config,
     get_backend_for_role,
@@ -214,25 +215,34 @@ class TestLoadAgentsConfig:
 class TestGetBackendForRole:
     """Test role to backend lookup."""
 
+    # WOT-2026-026j: get_backend_for_role ahora lee role_mapping (canonico), no
+    # role_assignments (legacy basura no-referenciada). El legacy MAYUS se
+    # normaliza por transicion. Estos tests se migraron del contrato viejo.
     @patch("agents_config.load_agents_config")
     def test_get_builder_backend(self, mock_load):
-        """Test getting backend for BUILDER role."""
-        mock_load.return_value = VALID_CONFIG
-        backend = get_backend_for_role("BUILDER")
-        assert backend == "opencode"
+        """builder (o BUILDER legacy) resuelve por role_mapping."""
+        mock_load.return_value = _config_with_role_mapping(
+            {"builder": {"backend": "claude"}}
+        )
+        assert get_backend_for_role("builder") == "claude"
+        assert get_backend_for_role("BUILDER") == "claude"  # legacy normalizado
 
     @patch("agents_config.load_agents_config")
     def test_get_manager_backend(self, mock_load):
-        """Test getting backend for MANAGER role."""
-        mock_load.return_value = VALID_CONFIG
-        backend = get_backend_for_role("MANAGER")
-        assert backend == "kilo"
+        """manager (o MANAGER legacy) resuelve por role_mapping."""
+        mock_load.return_value = _config_with_role_mapping(
+            {"manager": {"backend": "nan"}}
+        )
+        assert get_backend_for_role("manager") == "nan"
+        assert get_backend_for_role("MANAGER") == "nan"
 
     @patch("agents_config.load_agents_config")
     def test_get_unassigned_role(self, mock_load):
-        """Test error when role has no backend assigned."""
-        mock_load.return_value = VALID_CONFIG
-        with pytest.raises(AgentsConfigError, match="No backend assigned"):
+        """SUPERVISOR es actor_runtime: get_backend_for_role lo RECHAZA (D4)."""
+        mock_load.return_value = _config_with_role_mapping(
+            {"manager": {"backend": "claude"}}
+        )
+        with pytest.raises(AgentsConfigError, match="actor_runtime"):
             get_backend_for_role("SUPERVISOR")
 
 
@@ -320,19 +330,22 @@ class TestGetDiscoveryMethod:
 class TestGetModelForRole:
     """Test model override retrieval from role_models."""
 
+    # WOT-2026-026j: get_model_for_role ahora lee role_mapping[rol]['model'].
     @patch("agents_config.load_agents_config")
     def test_get_model_with_override(self, mock_load):
-        """Test getting model when role_models is present."""
-        mock_load.return_value = VALID_CONFIG_WITH_MODELS
-        model = get_model_for_role("MANAGER")
-        assert model == "opencode-go/deepseek-v4-flash"
+        """El modelo del rol viene de role_mapping['manager']['model']."""
+        mock_load.return_value = _config_with_role_mapping(
+            {"manager": {"backend": "claude", "model": "claude-x"}}
+        )
+        assert get_model_for_role("MANAGER") == "claude-x"
 
     @patch("agents_config.load_agents_config")
     def test_get_builder_model_with_override(self, mock_load):
-        """Test getting BUILDER model when role_models is present."""
-        mock_load.return_value = VALID_CONFIG_WITH_MODELS
-        model = get_model_for_role("BUILDER")
-        assert model == "opencode-go/deepseek-v4-flash"
+        """El modelo de builder viene de role_mapping['builder']['model']."""
+        mock_load.return_value = _config_with_role_mapping(
+            {"builder": {"backend": "claude", "model": "builder-m"}}
+        )
+        assert get_model_for_role("BUILDER") == "builder-m"
 
     @patch("agents_config.load_agents_config")
     def test_get_model_without_override(self, mock_load):
@@ -352,11 +365,21 @@ class TestGetModelForRole:
         assert model is None
 
     @patch("agents_config.load_agents_config")
-    def test_get_model_unknown_role(self, mock_load):
-        """Test error when role is unknown."""
-        mock_load.return_value = VALID_CONFIG
-        with pytest.raises(AgentsConfigError, match="Unknown role"):
-            get_model_for_role("UNKNOWN_ROLE")
+    def test_get_model_actor_runtime_rechazado(self, mock_load):
+        """D4: pedir el modelo de un actor_runtime (SUPERVISOR) -> raise claro."""
+        mock_load.return_value = _config_with_role_mapping(
+            {"manager": {"backend": "claude"}}
+        )
+        with pytest.raises(AgentsConfigError, match="actor_runtime"):
+            get_model_for_role("SUPERVISOR")
+
+    @patch("agents_config.load_agents_config")
+    def test_get_model_role_no_en_mapping_es_none(self, mock_load):
+        """Un rol sin entrada en role_mapping -> None (usa default del backend)."""
+        mock_load.return_value = _config_with_role_mapping(
+            {"manager": {"backend": "claude"}}
+        )
+        assert get_model_for_role("auditor") is None
 
     def test_validate_role_models_unknown_role(self, tmp_path):
         """Test validation fails when role_models has unknown role."""
@@ -563,12 +586,16 @@ class TestMigrationFramework:
 
     def test_migrate_from_1_0(self, tmp_path):
         """
-        Test #7: migración 1.0 → 1.1 → 1.2 backfill role_models, strictness_profile y profiles.
+        Test #7: migración full 1.0 → LATEST backfill strictness_profile, profiles y role_mapping.
+
+        WOT-2026-026j D3: la cadena ya NO inyecta role_models legacy (ese era el
+        defecto 024t). role_models legacy queda como basura no-referenciada; el
+        contrato canonico vive en role_mapping (sembrado por 1.3->1.4).
 
         Before: Config legacy schema 1.0 sin role_models, strictness_profile ni profiles.
-        During: migrate_agents_config aplica handlers que backfills todo.
-        After: schema_version 1.2, role_models con defaults WP-072, strictness_profile=standard,
-               profiles con minimal/standard/strict, _migrations poblado.
+        During: migrate_agents_config aplica handlers que backfills todo salvo el legacy.
+        After: schema_version LATEST, strictness_profile=standard, profiles con
+               minimal/standard/strict, role_mapping canonico, _migrations poblado.
         """
         cfg = tmp_path / "agents.json"
         cfg.write_text(
@@ -589,9 +616,6 @@ class TestMigrationFramework:
         migrate_agents_config(cfg)
         result = json.loads(cfg.read_text())
         assert result["schema_version"] == LATEST_SCHEMA
-        assert "role_models" in result
-        assert result["role_models"]["BUILDER"] == "opencode-go/deepseek-v4-flash"
-        assert result["role_models"]["MANAGER"] == "openai/gpt-5.4-mini"
         assert result["strictness_profile"] == "standard"
         assert "profiles" in result
         assert "minimal" in result["profiles"]
@@ -601,6 +625,8 @@ class TestMigrationFramework:
         assert result["ensemble_profiles"] == {}
         assert result["ensemble_pipelines"] == {}
         assert result["ensemble_private_roots"] == []
+        # 1.3 -> 1.4 (WOT-2026-026j): role_mapping canonico sembrado
+        assert "role_mapping" in result
 
 
 class TestSkillAllowlists:
@@ -825,3 +851,308 @@ class TestStrictnessProfiles:
         }
         with pytest.raises(AgentsConfigError, match="Unknown strictness profile"):
             get_profile_config("nonexistent", config)
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-026j: rediseno de taxonomia de roles. role_mapping canonico (roles en
+# MINUSCULA), cascada local->versionado->default, migracion que corta el legacy
+# en origen, SUPERVISOR como actor_runtime aparte, barrera = SCHEMA FAIL-CLOSED.
+# Cada test fija una barrera del DoD; el nombre dice que mutation cubre.
+# --------------------------------------------------------------------------- #
+
+
+def _config_with_role_mapping(role_mapping: dict, extra: dict | None = None) -> dict:
+    """Config valido minimo que declara role_mapping (schema 1.4)."""
+    cfg = {
+        "schema_version": "1.4",
+        "backends": {
+            "claude": {
+                "executable": "claude",
+                "args": ["run"],
+                "discovery": {"method": "path_only"},
+            },
+            "codex": {
+                "executable": "codex.cmd",
+                "args": ["exec"],
+                "discovery": {"method": "path_only"},
+            },
+            "nan": {
+                "executable": "nan",
+                "args": ["run"],
+                "discovery": {"method": "path_only"},
+            },
+        },
+        "role_assignments": {"BUILDER": "claude"},
+        "role_mapping": role_mapping,
+    }
+    if extra:
+        cfg.update(extra)
+    return cfg
+
+
+class TestRoleMappingSchemaFailClosed:
+    """D1/D4: el schema RECHAZA claves de role_mapping fuera del enum canonico."""
+
+    def test_canonical_roles_accepted(self, tmp_path):
+        """H4: los 5 roles canonicos validan Y resuelven al backend esperado.
+
+        Antes era floor assertion (`assert path.exists()`, satisfecha aunque el
+        role_mapping se ignorara). Ahora aserta las 5 claves canonicas efectivas
+        y que 'manager' resuelve a su backend -- muerde si la cascada se rompe.
+        """
+        cfg = _config_with_role_mapping(
+            {
+                "orchestrator": {"backend": "claude"},
+                "manager": {"backend": "codex"},
+                "builder": {"backend": "claude"},
+                "auditor": {"backend": "codex"},
+                "challenger": {"backend": "nan"},
+            }
+        )
+        _create_test_config(tmp_path, cfg)
+        config = load_agents_config(tmp_path)
+        assert set(config["role_mapping"].keys()) == {
+            "orchestrator",
+            "manager",
+            "builder",
+            "auditor",
+            "challenger",
+        }
+        assert get_backend_for_role("manager", config) == "codex"
+
+    def test_role_mapping_rejects_supervisor(self, tmp_path):
+        """M-schema: SUPERVISOR dentro de role_mapping -> FALLA (es actor_runtime)."""
+        cfg = _config_with_role_mapping(
+            {"manager": {"backend": "claude"}, "SUPERVISOR": {"backend": "claude"}}
+        )
+        _create_test_config(tmp_path, cfg)
+        with pytest.raises(AgentsConfigError, match="role_mapping"):
+            load_agents_config(tmp_path)
+
+    def test_role_mapping_rejects_unknown_key(self, tmp_path):
+        """M-schema: una clave arbitraria fuera del enum -> FALLA fail-closed."""
+        cfg = _config_with_role_mapping(
+            {"manager": {"backend": "claude"}, "foo": {"backend": "claude"}}
+        )
+        _create_test_config(tmp_path, cfg)
+        with pytest.raises(AgentsConfigError, match="role_mapping"):
+            load_agents_config(tmp_path)
+
+    def test_role_mapping_rejects_uppercase_legacy(self, tmp_path):
+        """M-schema: los roles MAYUS legacy NO valen en role_mapping (solo minuscula)."""
+        cfg = _config_with_role_mapping({"MANAGER": {"backend": "claude"}})
+        _create_test_config(tmp_path, cfg)
+        with pytest.raises(AgentsConfigError, match="role_mapping"):
+            load_agents_config(tmp_path)
+
+
+class TestRoleMappingCascade:
+    """D2: get_*_for_role resuelven local -> versionado -> default REAL."""
+
+    def test_versionado_gana_sin_local(self, tmp_path):
+        """Nivel 2: sin agents.local.json, se lee el role_mapping versionado."""
+        cfg = _config_with_role_mapping(
+            {"manager": {"backend": "claude", "model": "claude-x"}}
+        )
+        _create_test_config(tmp_path, cfg)
+        config = load_agents_config(tmp_path)
+        assert get_model_for_role("manager", config) == "claude-x"
+        assert get_backend_for_role("manager", config) == "claude"
+
+    def test_local_gana_sobre_versionado(self, tmp_path):
+        """M-cascada-local: agents.local.json sobrescribe el modelo/backend versionado."""
+        cfg = _config_with_role_mapping(
+            {"manager": {"backend": "claude", "model": "versionado-Y"}}
+        )
+        _create_test_config(tmp_path, cfg)
+        # agents.local.json junto al agents.json versionado
+        local = tmp_path / ".agent" / "config" / "agents.local.json"
+        local.write_text(
+            json.dumps(
+                {"role_mapping": {"manager": {"backend": "nan", "model": "local-X"}}}
+            ),
+            encoding="utf-8",
+        )
+        config = load_agents_config(tmp_path)
+        assert get_model_for_role("manager", config) == "local-X"
+        assert get_backend_for_role("manager", config) == "nan"
+
+    def test_model_default_es_none_sin_override(self, tmp_path):
+        """Nivel 3 modelo: rol sin entrada -> None (backend usa su default)."""
+        cfg = _config_with_role_mapping({"manager": {"backend": "claude"}})
+        _create_test_config(tmp_path, cfg)
+        config = load_agents_config(tmp_path)
+        assert get_model_for_role("auditor", config) is None
+
+    def test_backend_default_devuelve_el_backend_centinela(self, tmp_path):
+        """M-cascada-default: rol ausente CON backend 'default' -> 'default'.
+
+        Con dientes: backends declara el centinela 'default'; auditor no esta en
+        role_mapping -> get_backend_for_role DEBE devolver 'default' (nivel 3).
+        Si se desactiva el fallback de nivel 3, lanza -> el test cae.
+        """
+        cfg = _config_with_role_mapping({"manager": {"backend": "claude"}})
+        cfg["backends"]["default"] = {
+            "executable": "default-be",
+            "args": [],
+            "discovery": {"method": "path_only"},
+        }
+        _create_test_config(tmp_path, cfg)
+        config = load_agents_config(tmp_path)
+        assert get_backend_for_role("auditor", config) == "default"
+
+    def test_backend_sin_default_lanza_claro(self, tmp_path):
+        """Nivel 3 sin default: no inventar backend -> AgentsConfigError claro."""
+        cfg = _config_with_role_mapping({"manager": {"backend": "claude"}})
+        _create_test_config(tmp_path, cfg)
+        config = load_agents_config(tmp_path)
+        with pytest.raises(AgentsConfigError, match="auditor"):
+            get_backend_for_role("auditor", config)
+
+
+class TestRoleRejectionH2H3:
+    """H2/H3: get_*_for_role rechaza roles no-canonicos y normaliza case."""
+
+    def test_typo_role_rechazado_no_degrada_a_default(self, tmp_path):
+        """H2 [BLOQUEANTE]: un typo ('BUILDERR') NO cae al centinela 'default'.
+
+        Con dientes: backends declara 'default'; sin la barrera H2 el typo
+        degrada silencioso a 'default'. La barrera exige raise que cite el rol.
+        """
+        cfg = _config_with_role_mapping({"manager": {"backend": "claude"}})
+        cfg["backends"]["default"] = {
+            "executable": "default-be",
+            "args": [],
+            "discovery": {"method": "path_only"},
+        }
+        _create_test_config(tmp_path, cfg)
+        config = load_agents_config(tmp_path)
+        with pytest.raises(AgentsConfigError, match="BUILDERR"):
+            get_backend_for_role("BUILDERR", config)
+
+    def test_typo_role_rechazado_en_get_model(self, tmp_path):
+        """H2: get_model_for_role tambien rechaza el rol invalido (no None mudo)."""
+        cfg = _config_with_role_mapping({"manager": {"backend": "claude"}})
+        _create_test_config(tmp_path, cfg)
+        config = load_agents_config(tmp_path)
+        with pytest.raises(AgentsConfigError, match="notarole"):
+            get_model_for_role("notarole", config)
+
+    def test_actor_runtime_case_insensitive(self, tmp_path):
+        """H3: 'supervisor' minuscula tambien se rechaza como actor_runtime."""
+        cfg = _config_with_role_mapping({"manager": {"backend": "claude"}})
+        _create_test_config(tmp_path, cfg)
+        config = load_agents_config(tmp_path)
+        with pytest.raises(AgentsConfigError, match="actor_runtime"):
+            get_backend_for_role("supervisor", config)
+        with pytest.raises(AgentsConfigError, match="actor_runtime"):
+            get_model_for_role("supervisor", config)
+
+    def test_legacy_uppercase_manager_sigue_resolviendo(self, tmp_path):
+        """H2 no rompe la transicion: 'MANAGER' legacy sigue normalizando a canonico."""
+        cfg = _config_with_role_mapping(
+            {"manager": {"backend": "codex", "model": "m-x"}}
+        )
+        _create_test_config(tmp_path, cfg)
+        config = load_agents_config(tmp_path)
+        assert get_backend_for_role("MANAGER", config) == "codex"
+        assert get_model_for_role("MANAGER", config) == "m-x"
+
+
+class TestMigrationCutsLegacyD3:
+    """D3: la migracion corta el legacy en ORIGEN y siembra role_mapping."""
+
+    def test_1_0_to_1_1_no_inyecta_legacy_model(self):
+        """M-migracion (unidad): _migrate_1_0_to_1_1 NO siembra role_models legacy.
+
+        Con dientes: restaurar la inyeccion de 'opencode-go/deepseek-v4-flash'
+        en el handler hace caer este assert.
+        """
+        result = _migrate_1_0_to_1_1({"schema_version": "1.0"})
+        assert result["schema_version"] == "1.1"
+        assert "role_models" not in result
+
+    def test_1_3_to_1_4_siembra_role_mapping_canonico(self):
+        """D3: _migrate_1_3_to_1_4 siembra role_mapping con claves canonicas."""
+        result = _migrate_1_3_to_1_4({"schema_version": "1.3"})
+        assert result["schema_version"] == "1.4"
+        assert "role_mapping" in result
+        assert set(result["role_mapping"].keys()) <= {
+            "orchestrator",
+            "manager",
+            "builder",
+            "auditor",
+            "challenger",
+        }
+
+    def test_invariante_024t_install_fresco_sin_legacy(self, tmp_path):
+        """INVARIANTE 024t: install fresco 1.0->1.4 -> 0 apariciones del legacy.
+
+        Criterio INVARIANTE (no 'hoy N hits'): el string legacy no debe aparecer
+        en NINGUNA parte del config migrado, ni en role_mapping ni en role_models.
+        Con dientes: si el handler 1.0->1.1 vuelve a inyectarlo, el conteo sube.
+        """
+        cfg = tmp_path / "agents.json"
+        cfg.write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0",
+                    "backends": {
+                        "opencode": {
+                            "executable": "opencode",
+                            "args": ["run"],
+                            "discovery": {"method": "path_only"},
+                        }
+                    },
+                    "role_assignments": {"BUILDER": "opencode"},
+                }
+            )
+        )
+        migrate_agents_config(cfg)
+        migrated_text = cfg.read_text()
+        assert migrated_text.count("opencode-go/deepseek-v4-flash") == 0
+
+
+class TestRealAgentsJsonContract:
+    """H1/D4/M-challenger: el agents.json REAL cumple el contrato canonico."""
+
+    @staticmethod
+    def _real_config() -> dict:
+        real_path = _project_root / ".agent" / "config" / "agents.json"
+        return load_agents_config(real_path.parent.parent.parent)
+
+    def test_real_config_declara_role_mapping_manager(self):
+        """H1: role_mapping['manager'] existe en el config real (no cae a default)."""
+        config = self._real_config()
+        assert "role_mapping" in config
+        assert "manager" in config["role_mapping"]
+        # get_backend_for_role('manager') resuelve al backend real, no al centinela
+        assert get_backend_for_role("manager", config) != "default"
+
+    def test_real_config_declara_actor_runtime_supervisor(self):
+        """D4: el config real declara actor_runtime con SUPERVISOR."""
+        config = self._real_config()
+        assert "actor_runtime" in config
+        assert "SUPERVISOR" in config["actor_runtime"]
+
+    def test_challenger_referencia_ensemble_profiles_no_copia_inline(self):
+        """M-challenger: challenger REFERENCIA ensemble_profiles, no copia los 4 nan.
+
+        Con dientes: si alguien inserta una copia inline de un perfil nan
+        (api_base_url / api_key_env / backend_key) dentro de role_mapping,
+        el assert cae. El dueno de los perfiles sigue siendo ensemble_profiles.
+        """
+        config = self._real_config()
+        challenger = config["role_mapping"]["challenger"]
+        inline_profile_markers = {"api_base_url", "api_key_env", "backend_key"}
+        assert not (inline_profile_markers & set(challenger.keys())), (
+            "challenger no debe copiar inline los perfiles nan; debe REFERENCIAR "
+            "ensemble_profiles"
+        )
+        # La referencia apunta a ensemble_profiles reales
+        ref = challenger.get("ensemble_profiles_ref", [])
+        assert ref, "challenger debe declarar ensemble_profiles_ref"
+        for profile_name in ref:
+            assert profile_name in config["ensemble_profiles"], (
+                f"challenger referencia perfil inexistente '{profile_name}'"
+            )

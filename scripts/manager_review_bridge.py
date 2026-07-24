@@ -98,7 +98,8 @@ def _resolve_manager_executable(explicit: Path | None) -> Path:
     try:
         from agents_config import get_backend_for_role, load_agents_config
 
-        backend = get_backend_for_role("MANAGER", load_agents_config(_project_root()))
+        # WOT-2026-026j: role canonico 'manager' (role_mapping), no 'MANAGER'
+        backend = get_backend_for_role("manager", load_agents_config(_project_root()))
     except Exception:
         backend = "opencode"  # agents.json ilegible -> default OpenCode
 

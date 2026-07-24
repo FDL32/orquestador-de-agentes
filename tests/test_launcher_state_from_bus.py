@@ -370,3 +370,57 @@ def test_derive_launcher_state_sends_non_success_terminals_to_manager(
     assert state["role"] == "MANAGER"
     assert state["action"] == "CREATE_PLAN"
     assert state["role"] != "BUILDER"
+
+
+# WOT-2026-026j (regresion cazada por bucle adversarial de cierre): la nueva
+# taxonomia hace que get_backend_for_role RECHACE actores runtime (SUPERVISOR).
+# El launcher (launch_agent_terminals.ps1:Get-BackendFromConfig) pasa el
+# ActiveRole sin filtrar, y SUPERVISOR es el rol de READY_TO_CLOSE/HUMAN_GATE/
+# BLOCKED. Antes, role_assignments['SUPERVISOR']='default' resolvia; con la
+# taxonomia nueva get_backend_for_role lanza -> el launcher hacia throw y
+# abortaba en esos 3 estados. Contrato: TODO rol que _role_action_for_state
+# puede emitir debe ser resoluble a un backend por el launcher.
+def _emitted_launcher_roles() -> set[str]:
+    from scripts.get_launcher_state import TicketState, _role_action_for_state
+
+    # _role_action_for_state usa mapping.get(state, fallback): no lanza para
+    # ningun TicketState, asi que el barrido es directo.
+    return {_role_action_for_state(st)[0] for st in TicketState}
+
+
+def test_every_launcher_role_is_backend_resolvable() -> None:
+    """Cada rol que el launcher puede emitir resuelve a un backend real.
+
+    Los roles IA (BUILDER/MANAGER) resuelven via get_backend_for_role sin lanzar.
+    SUPERVISOR es actor_runtime: get_backend_for_role lo RECHAZA por diseno, y el
+    launcher lo mapea al centinela 'default' (Get-BackendFromConfig). Este test
+    documenta ese contrato con dientes: si alguien anade un rol IA nuevo a
+    _role_action_for_state sin ponerlo en role_mapping, o quita el guard de
+    SUPERVISOR del launcher, la regresion vuelve.
+    """
+    from agents_config import (
+        ACTOR_RUNTIME_ROLES,
+        AgentsConfigError,
+        get_backend_for_role,
+        load_agents_config,
+    )
+
+    config = load_agents_config(PROJECT_ROOT)
+    emitted = _emitted_launcher_roles()
+    assert emitted, "el launcher debe emitir al menos un rol"
+
+    for role in emitted:
+        if role in ACTOR_RUNTIME_ROLES:
+            # Contrato Python: un actor runtime NO tiene backend IA -> raise.
+            with pytest.raises(AgentsConfigError):
+                get_backend_for_role(role, config)
+            # Contrato launcher: Get-BackendFromConfig lo mapea a 'default'.
+            script = SCRIPT_PATH.read_text(encoding="utf-8")
+            assert "'default'" in script and f"$Role -eq '{role}'" in script, (
+                f"el launcher debe mapear el actor_runtime '{role}' a 'default' "
+                f"en Get-BackendFromConfig (regresion WOT-2026-026j)"
+            )
+        else:
+            # Rol IA: DEBE resolver sin lanzar (no cae al centinela por crash).
+            backend = get_backend_for_role(role, config)
+            assert backend, f"rol IA '{role}' no resolvio a backend"

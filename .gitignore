@@ -1,6 +1,7 @@
 # Overrides locales del sistema multi-agente
 .claude/settings.local.json
 .agent/config/hooks_config.local.json
+.agent/config/agents.local.json
 
 # Caches y artefactos temporales
 .pytest_cache/

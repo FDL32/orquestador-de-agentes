@@ -1052,6 +1052,18 @@ function Resolve-BackendExecutable {
 function Get-BackendFromConfig {
     param([Parameter(Mandatory)] [string]$Role)
 
+    # WOT-2026-026j: los actores runtime del bus (SUPERVISOR) NO son roles IA y
+    # get_backend_for_role los RECHAZA por diseno (raise). Pero el launcher pasa
+    # el ActiveRole sin filtrar y SUPERVISOR es el rol de los estados
+    # READY_TO_CLOSE/HUMAN_GATE/BLOCKED (get_launcher_state). Antes de esta
+    # taxonomia, role_assignments['SUPERVISOR']='default' devolvia el centinela;
+    # replicamos ese comportamiento AQUI, en la frontera del launcher, en vez de
+    # debilitar el contrato de Python. El backend de un actor runtime es el
+    # centinela 'default' (mismo valor que resolvia antes), no un rol IA real.
+    if ($Role -eq 'SUPERVISOR') {
+        return 'default'
+    }
+
     $venvPython = Resolve-VenvPython -Root $script:_MotorCodeRoot
     $agentsConfigPath = Join-Path $script:_MotorCodeRoot '.agent\agents_config.py'
 

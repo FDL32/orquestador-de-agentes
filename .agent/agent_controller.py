@@ -6091,6 +6091,21 @@ def _handle_validate(json_output: bool, no_heal: bool = False) -> int:  # noqa: 
         if cg_errors:
             errors.setdefault("contract_gap", []).extend(cg_errors)
 
+    # WOT-2026-026j D4: agents.json schema fail-closed. Una clave de role_mapping
+    # fuera del enum canonico (o un actor_runtime desconocido) DEBE hacer fallar
+    # --validate (exit!=0), no solo el load en runtime. Cablea la barrera de
+    # schema al gate self-service que ya corre en bootstrap/preflight. No depende
+    # del ticket activo: la validez del config es transversal (no seed_neutral).
+    if AGENTS_CONFIG_PATH.exists():
+        try:
+            from agents_config import AgentsConfigError, load_agents_config
+
+            load_agents_config(PROJECT_ROOT)
+        except AgentsConfigError as exc:
+            errors.setdefault("agents_config_schema", []).append(str(exc))
+        except ImportError:
+            pass  # agents_config no disponible -> degradar sin bloquear
+
     total_errors = sum(len(errs) for errs in errors.values())
     total_warnings = sum(len(warns) for warns in warnings.values())
 
