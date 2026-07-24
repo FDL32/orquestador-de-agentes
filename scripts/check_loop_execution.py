@@ -141,12 +141,20 @@ def distinct_execution_backends(
       - su `challenge_nonce` fue emitido FUERA para este commit (y loop, si se da);
       - la emision del nonce es ANTERIOR a la ronda (`issued_before_ts <= ronda.ts`).
 
-    El emisor NO se excluye aqui por identidad (no sabemos su backend_key sin leer
-    la emision); se excluye en el gate porque el issuer_backend_key nunca ejecuta
-    una `ronda` -- solo emite. Devolver el CONJUNTO (no el conteo) deja que el
-    caller reporte QUIENES corrieron.
+    EXCLUSION DEL EMISOR (criterio adjudicado por Codex): el `issuer_backend_key`
+    no cuenta como lente ejecutora para N. En dogfooding el mismo backend (BA01 =
+    Claude) emite el nonce Y es la lente lector-FS -- SI ejecuta una ronda-- pero
+    contarlo inflaria N con una independencia que no existe: quien conoce el
+    challenge de antemano no es una lente ciega. Descontamos todos los emisores de
+    este commit. Devolver el CONJUNTO (no el conteo) deja que el caller reporte
+    QUIENES corrieron.
     """
     valid_nonces = _valid_nonces_for(emitted, commit_sha, loop_id)
+    issuers = {
+        row.get("issuer_backend_key")
+        for row in emitted
+        if row.get("commit_sha") == commit_sha and row.get("issuer_backend_key")
+    }
     backends: set[str] = set()
     for row in scorecard_rows:
         if row.get("event") != "ronda":
@@ -157,6 +165,8 @@ def distinct_execution_backends(
         nonce = row.get("challenge_nonce")
         if not bk or not nonce:
             continue
+        if bk in issuers:
+            continue  # el emisor no es una lente independiente del challenge
         emitted_ts = valid_nonces.get(nonce)
         if emitted_ts is None:
             continue  # nonce no emitido para este commit: fabricado

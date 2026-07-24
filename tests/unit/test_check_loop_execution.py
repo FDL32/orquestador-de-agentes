@@ -111,6 +111,22 @@ def test_wrong_commit_rounds_ignored():
     assert v["distinct_backends"] == []
 
 
+def test_issuer_backend_does_not_count_as_a_lens():
+    """CRITERIO ADJUDICADO POR CODEX: el issuer_backend_key del emisor NO cuenta
+    como lente ejecutora para N. En dogfooding BA01 (Claude) emite el nonce Y es
+    la lente lector-FS, asi que SI puede ejecutar una ronda -- pero contarlo
+    inflaria N con una independencia que no existe (quien emite no es una lente
+    independiente del challenge). El emisor BA01 + 3 lentes reales = 3, NO 4."""
+    emitted = [_emitted()]  # issuer_backend_key = BA01 (ver _emitted)
+    sc = [_ronda(bk) for bk in ("BA01", "BA10", "BA11", "BA12")]
+    v = cle.audit_commit(sc, emitted, commit_sha="abc", min_distinct=4)
+    assert "BA01" not in v["distinct_backends"], (
+        "el emisor BA01 NO puede contar como lente independiente para N"
+    )
+    assert v["distinct_backends"] == ["BA10", "BA11", "BA12"]
+    assert v["ok"] is False  # 3 lentes reales < 4 exigidas
+
+
 # ------------------------------------------------------------- N por deliverable
 def test_min_distinct_proportional_to_deliverable_type():
     """(b) DoD: N proporcional. code exige mas lentes que documentation."""
@@ -127,9 +143,10 @@ def test_unknown_deliverable_type_is_strict_fallback():
 
 
 def test_doc_deliverable_passes_with_two_distinct():
-    """Rigor proporcional: un doc con 2 lentes distintas basta (no exige 4)."""
-    emitted = [_emitted()]
-    sc = [_ronda(bk) for bk in ("BA01", "BA10")]
+    """Rigor proporcional: un doc con 2 lentes distintas (ninguna el emisor BA01)
+    basta (no exige 4)."""
+    emitted = [_emitted()]  # emisor BA01
+    sc = [_ronda(bk) for bk in ("BA10", "BA11")]  # 2 lentes reales, no el emisor
     v = cle.audit_commit(sc, emitted, commit_sha="abc", min_distinct=2)
     assert v["ok"] is True
 
