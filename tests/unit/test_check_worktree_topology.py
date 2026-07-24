@@ -529,3 +529,80 @@ def test_cli_help_documents_all_flags(capsys: pytest.CaptureFixture) -> None:
     assert "--motor-root" in out
     assert "--project-root" in out
     assert "--allow-diagnostic" in out
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-040q: worktree-por-vuelo (flight/<suffix>) es topologia valida.
+# El guard exigia _dev/main y era CIEGO al modelo de vuelos-paralelos, bloqueando
+# los 3 vuelos que corren en su propia worktree. Adjudicado por Codex 2026-07-25.
+# ---------------------------------------------------------------------------
+
+
+def _add_flight_worktree(motor: Path, tmp_path: Path, suffix: str) -> Path:
+    """Add a per-flight worktree on branch flight/<suffix> (e.g. flight/027h).
+
+    Mirrors the real launch: `git worktree add -b flight/<suffix> <path> main`.
+    The worktree basename does NOT end in _dev and the branch is NOT main, which
+    is EXACTLY what the pre-040q guard rejected."""
+    wt = tmp_path / f"orquestador_wt_{suffix}"
+    subprocess.run(
+        ["git", "worktree", "add", "-b", f"flight/{suffix}", str(wt), "main"],
+        cwd=motor,
+        check=True,
+        capture_output=True,
+    )
+    return wt
+
+
+def test_wot_flight_worktree_matching_suffix_exits_zero(tmp_path: Path) -> None:
+    """(d) DoD: WOT-2026-027h desde una worktree en rama flight/027h -> exit 0.
+    Es el caso que bloqueaba los 3 vuelos paralelos."""
+    motor, _dev = _make_git_tree(tmp_path)
+    workspace = tmp_path / "orquestador_de_agentes_workspace"
+    workspace.mkdir()
+    _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
+    flight = _add_flight_worktree(motor, tmp_path, "027h")
+
+    exit_code, message = check_topology("WOT-2026-027h", flight, motor, workspace)
+    assert exit_code == 0, message
+    assert "correcta" in message
+
+
+def test_wot_flight_worktree_cross_ticket_exits_one(tmp_path: Path) -> None:
+    """(b/d) DoD fail-closed: WOT-2026-025i desde flight/027h (CRUZADO) -> exit 1.
+    Un vuelo no puede trabajar un ticket distinto al que nombra su rama."""
+    motor, _dev = _make_git_tree(tmp_path)
+    workspace = tmp_path / "orquestador_de_agentes_workspace"
+    workspace.mkdir()
+    _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
+    flight = _add_flight_worktree(motor, tmp_path, "027h")
+
+    exit_code, message = check_topology("WOT-2026-025i", flight, motor, workspace)
+    assert exit_code == 1, message
+    assert "025i" in message or "flight" in message.lower()
+
+
+def test_wot_flight_worktree_wrong_workspace_exits_one(tmp_path: Path) -> None:
+    """Verification B se mantiene: flight correcto pero workspace equivocado -> exit 1."""
+    motor, _dev = _make_git_tree(tmp_path)
+    workspace = tmp_path / "orquestador_de_agentes_workspace"
+    workspace.mkdir()
+    _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
+    impostor = tmp_path / "otro_workspace"
+    impostor.mkdir()
+    flight = _add_flight_worktree(motor, tmp_path, "027h")
+
+    exit_code, message = check_topology("WOT-2026-027h", flight, motor, impostor)
+    assert exit_code == 1, message
+
+
+def test_wot_dev_main_still_valid_after_flight_support(tmp_path: Path) -> None:
+    """El flujo canonico _dev/main NO se rompe al anadir soporte de vuelo."""
+    motor, dev = _make_git_tree(tmp_path)
+    workspace = tmp_path / "orquestador_de_agentes_workspace"
+    workspace.mkdir()
+    _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
+
+    exit_code, message = check_topology("WOT-2026-027h", dev, motor, workspace)
+    assert exit_code == 0, message
+    assert "correcta" in message

@@ -178,8 +178,18 @@ def _find_dev_worktree(motor_root: Path) -> Path | None:
     return None
 
 
+def _flight_suffix_of(ticket: str) -> str | None:
+    """The NNNx suffix of a canonical WOT ticket, for matching flight/<suffix>.
+
+    WOT-2026-027h -> '027h'. Returns None for a project name / malformed id
+    (a flight worktree only exists for a real ticket)."""
+    if not prefix_resolver.TICKET_ID_RE.match(ticket):
+        return None
+    return ticket.rsplit("-", 1)[-1]
+
+
 def _check_wot_topology(
-    cwd: Path, motor_root: Path, project_root: Path
+    cwd: Path, motor_root: Path, project_root: Path, ticket: str
 ) -> tuple[int, str]:
     """Verification A (motor worktree) + Verification B (active workspace).
 
@@ -221,16 +231,36 @@ def _check_wot_topology(
             f"del mismo repo que motor_root ({motor_root})",
         )
 
+    branch = _git_current_branch(cwd)
+    cwd_toplevel = _git_common_dir_toplevel(cwd)
+
+    # WOT-2026-040q: worktree-por-vuelo es topologia valida ademas del canonico
+    # _dev/main. Un vuelo paralelo corre en su propia worktree en rama
+    # flight/<suffix> (git rechaza 'main' en varias worktrees a la vez, asi que
+    # cada vuelo NECESITA su rama). El ticket WOT-2026-027h solo es valido desde
+    # una worktree cuya rama sea flight/027h -- un vuelo/ticket CRUZADO
+    # (WOT-2026-025i desde flight/027h) FALLA fail-closed.
+    flight_suffix = _flight_suffix_of(ticket)
+    if flight_suffix is not None and branch == f"flight/{flight_suffix}":
+        return _verify_wot_workspace(motor_root, project_root)
+
+    # Camino canonico: la worktree _dev en rama main.
     dev_entry = _find_dev_worktree(motor_root)
     if dev_entry is None:
         return (
             1,
             "Crea la worktree _dev: .\\scripts\\setup_dev_worktree.ps1",
         )
-
-    branch = _git_current_branch(cwd)
-    cwd_toplevel = _git_common_dir_toplevel(cwd)
     if branch != "main" or cwd_toplevel != dev_entry.resolve():
+        # Mensaje discriminante: si la rama es un flight/* que NO casa el
+        # ticket, es un cruce vuelo/ticket, no el caso 'checkout principal'.
+        if branch and branch.startswith("flight/"):
+            return (
+                1,
+                f"Ticket {ticket} no puede trabajarse desde la rama {branch}: "
+                f"el vuelo esperaria la rama flight/{flight_suffix}. Vuelo/ticket "
+                "CRUZADO (WOT-2026-040q).",
+            )
         return (
             1,
             "Ticket WOT escribe en el MOTOR: usa la worktree _dev (rama "
@@ -238,6 +268,15 @@ def _check_wot_topology(
             "scripts/setup_dev_worktree.ps1.",
         )
 
+    return _verify_wot_workspace(motor_root, project_root)
+
+
+def _verify_wot_workspace(motor_root: Path, project_root: Path) -> tuple[int, str]:
+    """Verification B: the active workspace must be the WOT destination.
+
+    Shared by BOTH valid motor topologies (canonical _dev/main and the
+    per-flight worktree, WOT-2026-040q): once Verification A accepts the
+    motor worktree, the workspace check is identical."""
     expected_workspace = prefix_resolver.resolve_prefix(
         prefix_resolver.WOT_PREFIX, motor_root
     )
@@ -388,7 +427,7 @@ def check_topology(
         return coherence_issue
 
     if prefix == prefix_resolver.WOT_PREFIX:
-        return _check_wot_topology(cwd, motor_root, project_root)
+        return _check_wot_topology(cwd, motor_root, project_root, ticket_or_project)
     if prefix is not None:
         return _check_destination_topology(prefix, project_root, motor_root)
     # Project name (no ticket prefix): resolve like prefix_resolver.guard does.
