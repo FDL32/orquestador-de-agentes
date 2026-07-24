@@ -232,6 +232,24 @@ CLOSE adds a **phase 2 (challenge)** after phase 1's `1->9->2`:
   the orchestrator iterates on the real tree (fixes + gates) until every gate is
   green -- the close is not done while anything is red.
 
+**The loop is now a WIRED barrier, not just this prompt (WOT-2026-040b).** Before
+each governance fan-out, the orchestrator emits a challenge nonce EXTERNAL to the
+executor:
+
+    python scripts/ensemble_dispatch.py emit-nonce --commit <sha> --loop-id <L700|L800> \
+        --issuer-backend-key BA01 --project-root <destino>
+
+Pass that nonce (and the `--commit <sha>` under review) into every `run_loop_round`
+call: each round's receipt copies both, so `check_loop_execution` can later PROVE
+the fan-out ran -- `>=N` rounds with DISTINCT `backend_key` and a nonce emitted
+BEFORE the round. Then declare the flight's ticket commits in
+`.agent/collaboration/loop_execution_targets.txt` (one `sha[ deliverable_type]` per
+line); `prepush_check` (closeout) runs the barrier over them. The independence is
+OPERATIONAL, not cryptographic (a nonce the executor could forge proves only a
+separate prior step); the barrier that bites the DEGRADED-loop failure (N calls to
+the SAME model, measured twice) is the DISTINCT-`backend_key` count, not the nonce.
+Skipping emit-nonce leaves the barrier in SKIP -- the loop reverts to a norm.
+
 Dispatch particulars are non-negotiable and cost real time when ignored: NEVER
 more than 4-5 nan concurrent (HTTP 429); prefer sequential with a pause, retry
 429s; verdict by CONTENT, never by rc (PONG-019o). Canonical loop reference:

@@ -55,6 +55,7 @@ import importlib.util
 import json
 import os
 import re
+import secrets
 import subprocess
 import sys
 import time
@@ -88,6 +89,23 @@ from agents_config import load_agents_config  # noqa: E402
 
 SCORECARD_REL = Path(".agent/runtime/ensemble/scorecard.jsonl")
 LEADERS_REL = Path(".agent/runtime/ensemble/backend_leaders.json")
+# WOT-2026-040b: registro append-only de los challenge_nonce EMITIDOS antes de
+# cada fan-out de gobierno. Fuente externa contra la que check_loop_execution
+# valida cada receipt. Vive en el runtime del destino-rol (nunca en repo_motor).
+EMITTED_NONCES_REL = Path(".agent/runtime/ensemble/emitted_nonces.jsonl")
+# Campos de una fila de emision. issuer_role/issuer_backend_key documentan QUIEN
+# emitio (el gate exige que ese backend_key NO cuente como lente ejecutora para N);
+# issued_before_ts fija el orden emision-antes-que-receipt que prueba la ceremonia
+# previa (adjudicado por Codex 2026-07-24: independencia OPERACIONAL, no criptografica).
+EMITTED_NONCE_FIELDS = [
+    "ts",
+    "issuer_role",
+    "issuer_backend_key",
+    "issued_before_ts",
+    "commit_sha",
+    "loop_id",
+    "challenge_nonce",
+]
 
 SCORECARD_FIELDS = [
     "ts",
@@ -120,6 +138,13 @@ SCORECARD_FIELDS = [
     "phase",
     "loop_id",
     "backend_key",
+    # WOT-2026-040b: commit_sha ata el receipt al commit generado FUERA del
+    # ejecutor; challenge_nonce es el nonce emitido FUERA (emitted_nonces.jsonl)
+    # y copiado a cada receipt de ronda. check_loop_execution exige el join dual
+    # (commit + nonce match, emision anterior) para probar que la ronda respondio
+    # a ESE challenge de ESE commit. Al final (prefijo frozen invariante).
+    "commit_sha",
+    "challenge_nonce",
 ]
 
 ADJUDICATED_OUTCOMES = {
@@ -630,6 +655,79 @@ def append_scorecard(project_root: Path, row: dict) -> Path:
     return path
 
 
+def emit_nonce(
+    project_root: Path,
+    *,
+    commit_sha: str,
+    loop_id: str,
+    issuer_role: str,
+    issuer_backend_key: str,
+    nonce: str | None = None,
+) -> tuple[str, Path]:
+    """Emite (registra) un challenge_nonce ANTES de un fan-out de gobierno.
+
+    WOT-2026-040b. El nonce nace AQUI, en un paso SEPARADO del fan-out, para que
+    `check_loop_execution` pueda exigir que cada receipt de ronda copie un nonce
+    que ya existia en `emitted_nonces.jsonl`. La independencia es OPERACIONAL, no
+    criptografica (adjudicado por Codex 2026-07-24): en dogfooding el mismo agente
+    puede encarnar orquestador y ejecutor, asi que esto NO prueba "otro actor" --
+    prueba "paso previo separado, no derivable de los receipts". Por eso el gate
+    tambien excluye `issuer_backend_key` del recuento de N lentes distintas: quien
+    emite no cuenta como quien ejecuta.
+
+    Before: `project_root` es el destino-rol (no el motor); `commit_sha`/`loop_id`
+        identifican el fan-out; `issuer_role`/`issuer_backend_key` declaran quien
+        emite (p.ej. orchestrator / BA01). `nonce` se genera si no se pasa.
+    During: genera un nonce aleatorio (secrets.token_hex, si no se dio uno) y
+        APPENDEA UNA fila con los `EMITTED_NONCE_FIELDS` bajo lock exclusivo del SO
+        (mismo mecanismo que el scorecard). `issued_before_ts == ts` de emision.
+    After: retorna `(nonce, path)`. La fila es la unica prueba de que la ceremonia
+        previa ocurrio; sin ella, un receipt con ese nonce es un nonce fabricado.
+    """
+    if nonce is None:
+        nonce = secrets.token_hex(16)
+    ts = _now_iso()
+    row = {
+        "ts": ts,
+        "issuer_role": issuer_role,
+        "issuer_backend_key": issuer_backend_key,
+        "issued_before_ts": ts,
+        "commit_sha": commit_sha,
+        "loop_id": loop_id,
+        "challenge_nonce": nonce,
+    }
+    path = project_root / EMITTED_NONCES_REL
+    path.parent.mkdir(parents=True, exist_ok=True)
+    normalized = {k: row.get(k) for k in EMITTED_NONCE_FIELDS}
+    payload = (json.dumps(normalized, ensure_ascii=False) + "\n").encode("utf-8")
+    with open(path, "ab") as f, _locked_for_append(f):
+        f.write(payload)
+        f.flush()
+    return nonce, path
+
+
+def read_emitted_nonces(project_root: Path) -> list[dict]:
+    """Filas de emision del destino-rol (vacio si el fichero no existe).
+
+    Lectura ESTRICTA de UTF-8: un fichero ilegible NO se lee "a la fuerza" a
+    mojibake (que dejaria cero nonces = todo receipt rechazado en falso). Una
+    linea corrupta se salta con aviso, nunca se inventa un nonce.
+    """
+    path = project_root / EMITTED_NONCES_REL
+    if not path.exists():
+        return []
+    rows: list[dict] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError as exc:
+            print(f"[WARN] fila de nonce ilegible, saltada: {exc}", file=sys.stderr)
+    return rows
+
+
 def _read_scorecard(project_root: Path) -> tuple[list[dict], str]:
     path = project_root / SCORECARD_REL
     raw = path.read_bytes() if path.exists() else b""
@@ -871,6 +969,8 @@ def _record_round(
     phase: str | None = None,
     loop_id: str | None = None,
     backend_key: str | None = None,
+    commit_sha: str | None = None,
+    challenge_nonce: str | None = None,
 ) -> None:
     # WOT-2026-039c: `outcome_override` permite registrar una salida DESCARTADA
     # por el filtro de lente sin vaciar `reply` -- vaciarlo para forzar el
@@ -902,6 +1002,11 @@ def _record_round(
             "phase": phase,
             "loop_id": loop_id,
             "backend_key": backend_key,
+            # WOT-2026-040b: None en el runner CLI (no hay challenge emitido);
+            # solo los bucles de gobierno atan el receipt al commit + al nonce
+            # emitido fuera.
+            "commit_sha": commit_sha,
+            "challenge_nonce": challenge_nonce,
         },
     )
 
@@ -923,6 +1028,8 @@ def run_loop_round(
     context_kind: str = "diff",
     transport=None,
     session_id: str | None = None,
+    commit_sha: str | None = None,
+    challenge_nonce: str | None = None,
 ) -> str:
     """UNA ronda de un bucle de GOBIERNO (`launched_from: chat`), registrada.
 
@@ -942,11 +1049,16 @@ def run_loop_round(
     Before: `profile_name` existe en `ensemble_profiles`; `task_type` pertenece
         a `TASK_TYPES`; `phase`/`loop_id`/`backend_key` son los del registro
         citable de bucles (`.agent/config/agents.json::ensemble_registry`, ver
-        `scripts/discover_loops.py`).
+        `scripts/discover_loops.py`). `commit_sha`/`challenge_nonce`
+        (WOT-2026-040b), cuando el caller los pasa, atan el receipt al commit
+        bajo review y al nonce EMITIDO FUERA (`emit-nonce` ->
+        `emitted_nonces.jsonl`), NO uno que esta funcion invente.
     During: despacha por `send_to_profile` (el preflight de privacidad corre
         alli, fail-closed) cronometrando con `time.perf_counter()`; luego
-        APPENDEA exactamente UNA fila via `_record_round`. Una respuesta vacia
-        se registra como `no-aportacion`, nunca como fila ausente.
+        APPENDEA exactamente UNA fila via `_record_round`, copiando
+        `challenge_nonce` al receipt para que `check_loop_execution` pruebe que
+        esta ronda respondio a ESE challenge. Una respuesta vacia se registra
+        como `no-aportacion`, nunca como fila ausente.
     After: retorna el texto del backend tal cual (el consolidador es el chat,
         nivel 0: esta funcion no interpreta ni adjudica). Propaga
         `DispatchBlockedError` si el preflight bloquea -- en ese caso NO hay
@@ -982,6 +1094,8 @@ def run_loop_round(
         phase=phase,
         loop_id=loop_id,
         backend_key=backend_key,
+        commit_sha=commit_sha,
+        challenge_nonce=challenge_nonce,
     )
     return reply
 
@@ -1290,6 +1404,23 @@ def _cmd_leaders(args, config) -> int:
     return 0
 
 
+def _cmd_emit_nonce(args, config) -> int:
+    project_root = _resolve_project_root(args.project_root)
+    nonce, out_path = emit_nonce(
+        project_root,
+        commit_sha=args.commit_sha,
+        loop_id=args.loop_id,
+        issuer_role=args.issuer_role,
+        issuer_backend_key=args.issuer_backend_key,
+        nonce=args.nonce,
+    )
+    # El nonce va a stdout para que el orquestador lo pase al fan-out; la fila
+    # ya quedo registrada en emitted_nonces.jsonl (la prueba de la ceremonia).
+    print(nonce)
+    print(f"[emit-nonce] registrado en {out_path}", file=sys.stderr)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Ensemble dispatcher (WOT-2026-019o): proposer/challenger "
@@ -1347,6 +1478,29 @@ def main(argv: list[str] | None = None) -> int:
     p_lead = sub.add_parser("leaders", help="regenerar backend_leaders.json")
     p_lead.add_argument("--project-root", required=True)
 
+    p_nonce = sub.add_parser(
+        "emit-nonce",
+        help="emitir un challenge_nonce ANTES de un fan-out de gobierno (WOT-2026-040b)",
+    )
+    p_nonce.add_argument("--commit-sha", required=True)
+    p_nonce.add_argument("--loop-id", required=True, help="p.ej. L700 / L800")
+    p_nonce.add_argument(
+        "--issuer-role",
+        default="orchestrator",
+        help="rol que emite (NO cuenta como lente ejecutora para N)",
+    )
+    p_nonce.add_argument(
+        "--issuer-backend-key",
+        required=True,
+        help="backend_key del emisor (excluido del recuento de N lentes distintas)",
+    )
+    p_nonce.add_argument(
+        "--nonce",
+        default=None,
+        help="nonce explicito (default: aleatorio); util para tests reproducibles",
+    )
+    p_nonce.add_argument("--project-root", required=True)
+
     args = parser.parse_args(argv)
     config = load_motor_config()
 
@@ -1355,6 +1509,7 @@ def main(argv: list[str] | None = None) -> int:
         "run": _cmd_run,
         "adjudicate": _cmd_adjudicate,
         "leaders": _cmd_leaders,
+        "emit-nonce": _cmd_emit_nonce,
     }
     try:
         return handlers[args.command](args, config)

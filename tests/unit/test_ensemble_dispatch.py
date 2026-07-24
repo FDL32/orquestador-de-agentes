@@ -540,7 +540,15 @@ def test_scorecard_fields_prefix_is_frozen():
         "phase",
         "loop_id",
         "backend_key",
-    ], "los 7 campos nuevos deben ir DESPUES del prefijo frozen (D1)"
+        # WOT-2026-040b: commit_sha + challenge_nonce cierran el bucle de
+        # gobierno como barrera de EJECUCION -- cada receipt de send_to_profile
+        # ata el commit bajo review y copia el nonce emitido FUERA
+        # (emitted_nonces.jsonl) para que check_loop_execution pruebe que la
+        # ronda respondio a ESE challenge de ESE commit, no solo que hubo uno.
+        # Al final por el mismo motivo que 025y/037b: el prefijo es frozen.
+        "commit_sha",
+        "challenge_nonce",
+    ], "los 9 campos nuevos deben ir DESPUES del prefijo frozen (D1)"
     # WOT-2026-037b review (mimo lens): append_scorecard normaliza via
     # {k: row.get(k) for k in SCORECARD_FIELDS}; una clave DUPLICADA se
     # colapsaria en silencio (la 2a pisa la 1a) sin error. Invariante: la

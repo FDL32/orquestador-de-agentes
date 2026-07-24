@@ -813,6 +813,112 @@ def run_guard_wiring_orphan_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_loop_execution_check(project_root: Path) -> CheckResult:
+    """WOT-2026-040b: el bucle de gobierno 1->9->2 corrio de verdad, no degradado.
+
+    Cablea `check_loop_execution` en el cierre -- el punto que corre solo Y conoce
+    el destino cuyo `.agent/runtime/ensemble/` guarda los receipts. El import es
+    ESTATICO para que `check_guard_wiring` alcance este call-site y cuente el guard
+    como CABLEADO (precedente: `run_guard_wiring_orphan_check`). Retirar esta
+    invocacion deja el guard UNWIRED -> lo caza check_guard_wiring (mutation del DoD).
+
+    Que verifica: por cada commit de ticket del vuelo, >=N rondas de EJECUCION con
+    backend_key DISTINTO y un challenge_nonce emitido FUERA antes de la ronda. Los
+    commits a verificar los declara el orquestador via
+    `.agent/collaboration/loop_execution_targets.txt` (una linea `sha[ deliverable_type]`
+    por commit). SIN ese fichero, SKIPEA EXPLICITAMENTE -- un SKIP mudo convertiria
+    la barrera en norma; se IMPRIME el motivo. Hoy ningun vuelo emite todavia
+    receipts con nonce, asi que la barrera nace en WARN (is_blocking=False) para no
+    ser un falso-rojo heredado; el endurecimiento a bloqueante va con el primer
+    vuelo que emita.
+
+    Before: project_root resoluble.
+    During: lee el fichero de targets (si existe) y corre el guard sobre el
+        scorecard + emitted_nonces del destino. Read-only.
+    After: passed=True si no hay targets (SKIP nombrado) o todos pasan; False (WARN)
+        con el detalle de los commits sin fan-out ejecutado.
+    """
+    name = "Loop Execution Barrier (WOT-2026-040b)"
+    try:
+        from scripts.check_loop_execution import audit as _loop_audit
+    except ImportError:
+        from check_loop_execution import audit as _loop_audit  # type: ignore[no-redef]
+
+    targets_file = (
+        project_root / ".agent" / "collaboration" / "loop_execution_targets.txt"
+    )
+    if not targets_file.exists():
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=(
+                f"SKIP: no {targets_file.name} (el orquestador no declaro commits de "
+                "vuelo a verificar). Emite receipts con emit-nonce y declara los "
+                "commits para activar la barrera."
+            ),
+            is_blocking=False,
+        )
+    commit_shas: list[str] = []
+    per_commit_dtype: dict[str, str] = {}
+    try:
+        for line in targets_file.read_text(encoding="utf-8").splitlines():
+            line = line.split("#", 1)[0].strip()
+            if not line:
+                continue
+            parts = line.split()
+            sha = parts[0]
+            commit_shas.append(sha)
+            if len(parts) > 1:
+                per_commit_dtype[sha] = parts[1]
+    except OSError as exc:
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=f"SKIP: no se pudo leer {targets_file}: {exc}",
+            is_blocking=False,
+        )
+    if not commit_shas:
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=f"SKIP: {targets_file.name} no declara ningun commit.",
+            is_blocking=False,
+        )
+
+    failures: list[dict] = []
+    for sha in commit_shas:
+        verdicts = _loop_audit(
+            project_root,
+            commit_shas=[sha],
+            deliverable_type=per_commit_dtype.get(sha),
+        )
+        failures.extend(v for v in verdicts if not v["ok"])
+    if failures:
+        detail = "\n".join(
+            f"  - {v['commit_sha']}: {len(v['distinct_backends'])}/{v['min_distinct']} "
+            f"lentes distintas {v['distinct_backends']}"
+            for v in failures
+        )
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=(
+                f"{len(failures)} commit(s) sin el fan-out de gobierno 1->9->2 "
+                f"ejecutado (o ejecutado DEGRADADO):\n{detail}\n"
+                "Cada commit exige >=N rondas con backend_key DISTINTO y un "
+                "challenge_nonce emitido FUERA antes de la ronda. El bucle es una "
+                "barrera, no una norma (WOT-2026-040b)."
+            ),
+            is_blocking=False,
+        )
+    return CheckResult(
+        name=name,
+        passed=True,
+        output=f"{len(commit_shas)} commit(s) con fan-out de gobierno ejecutado.",
+        is_blocking=False,
+    )
+
+
 def run_handoff_state_sha_check(project_root: Path) -> CheckResult:
     """WOT-2026-024t (superficie 2): a handoff's STATE section must not embed a SHA
     (it rots the instant HEAD moves). WARN by default (is_blocking=False), FAIL when
@@ -1129,6 +1235,10 @@ def run_preflight_check(
         # unico punto que corre solo Y conoce el destino cuyo backlog decide si
         # un owner sigue vivo.)
         results.append(run_guard_wiring_orphan_check(project_root))
+        # 6l. Loop Execution Barrier (WOT-2026-040b; WARN -- el bucle 1->9->2 debe
+        # haber corrido de verdad, no degradado, por cada commit de ticket del
+        # vuelo. SKIPEA nombrado si el orquestador no declaro commits/targets.)
+        results.append(run_loop_execution_check(project_root))
 
     # 7. Portable Memory Archive Schema (WOT-2026-035b; bloqueante siempre,
     # no solo en closeout_mode: el archive puede corromperse en cualquier push)

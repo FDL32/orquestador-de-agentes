@@ -82,6 +82,7 @@ EXPECTED_WIRED_REAL = {
     "check_encoding_guard",
     "check_guard_wiring",
     "check_handoff_state_sha",  # WOT-2026-024t(s2): cableado en prepush_check.py (closeout, WARN/FAIL)
+    "check_loop_execution",  # WOT-2026-040b: cableado via import estatico en prepush_check.py::run_loop_execution_check (closeout, WARN). Barrera de ejecucion del bucle 1->9->2.
     "check_motor_destination_integration",  # WOT-2026-024w: cableado en prepush_check.py (closeout, WARN/STRICT)
     "check_no_history_truncation",
     "check_portable_memory_archive_schema",  # WOT-2026-035b: cableado en .pre-commit-config.yaml (always_run) + prepush_check.py
@@ -167,6 +168,47 @@ def test_dewiring_is_caught(guard, tmp_path):
     assert not edges.get(guard), (
         f"des-cableado NO detectado: {guard} sigue con arista {edges.get(guard)} tras "
         f"romper su unico call-site real (v3 era ciego a esto por la prosa viva)"
+    )
+
+
+def test_loop_execution_barrier_is_wired_from_prepush():
+    """WOT-2026-040b, POSITIVO en el repo real: la barrera de ejecucion del bucle
+    1->9->2 esta cableada desde prepush_check.py (import estatico). Si dejara de
+    estarlo, `check_guard_wiring` la caeria como UNWIRED (la asimetria que este
+    ticket EXTIENDE, no un subsistema nuevo)."""
+    edges = cgw.wiring_edges(_ROOT)
+    assert "scripts/prepush_check.py" in edges.get("check_loop_execution", set()), (
+        "check_loop_execution debe estar cableado desde prepush_check.py: es la "
+        "barrera de EJECUCION del bucle, no una norma en un prompt (WOT-2026-040b)."
+    )
+
+
+def test_loop_execution_dewiring_is_caught(tmp_path):
+    """MUTATION del DoD de 040b, EJECUTADA: retirar la invocacion de
+    check_loop_execution de prepush -> el guard sale UNWIRED en un motor sintetico.
+
+    Prueba que la barrera del bucle NO es solo prosa: es un call-site REAL que
+    check_guard_wiring cuenta. Copiamos prepush_check.py con la linea de import
+    ROTA y exigimos que _python_invocations ya no vea el guard."""
+    guard = "check_loop_execution"
+    src = (_ROOT / "scripts" / "prepush_check.py").read_text(encoding="utf-8")
+    literal = "check_loop_execution import audit"
+    assert literal in src, (
+        f"el literal del cableado {literal!r} ya no esta en prepush_check.py "
+        "(test caducado: el call-site cambio de forma)"
+    )
+    # motor sintetico: prepush con el import ROTO + el guard en el denominador +
+    # la semilla que mete prepush en la frontera (es un _DECLARED_ROOT).
+    muted = src.replace(literal, "OTRO_MODULO_NO_GUARD import audit")
+    (tmp_path / "scripts").mkdir(exist_ok=True)
+    (tmp_path / "scripts" / "prepush_check.py").write_text(muted, encoding="utf-8")
+    (tmp_path / "scripts" / "check_loop_execution.py").write_text(
+        "# guard\n", encoding="utf-8"
+    )
+    edges = cgw.wiring_edges(tmp_path, _EMPTY_POLICY)
+    assert not edges.get(guard), (
+        f"des-cableado NO detectado: {guard} sigue con arista {edges.get(guard)} "
+        "tras romper su import en prepush (la barrera seria falsa)."
     )
 
 
