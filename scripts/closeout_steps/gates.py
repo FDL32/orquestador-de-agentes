@@ -30,12 +30,20 @@ def step_prepush_check(
     WOT-2026-020i: when skip_gates is True, forward --skip-gates so a blocking
     prepush failure no longer blocks the close (the operator chose to close over
     pre-existing debt). Default False preserves the blocking behavior.
+
+    WOT-2026-040y: dry-run reports NOT_VERIFIED, not SKIP. SKIP is the same token
+    this report uses for "deliberately not applicable", so a gate that never ran
+    was indistinguishable from one that ran clean -- and since ``overall_status``
+    only inspects FAIL/WARN, a dry-run that verified nothing aggregated to PASS.
+    That is the invocation WOT-2026-040j consumed as closeout evidence. The
+    status is the whole fix: the callers that treat this gate as blocking key off
+    it (see session_closeout.overall_status and the early cut in run_closeout).
     """
     if dry_run:
         return step_result_cls(
             name="prepush_check",
-            status="SKIP",
-            detail="Skipped in dry-run mode",
+            status="NOT_VERIFIED",
+            detail="Not run in dry-run mode: this gate was not verified",
             blocking=True,
         )
     try:

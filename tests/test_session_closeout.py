@@ -572,6 +572,71 @@ class TestRunCloseout:
         assert "observations_all" in content
         assert "SKIP" in content
 
+    def test_dry_run_marks_prepush_not_verified_not_skip(self, tmp_path: Path) -> None:
+        """WOT-2026-040y: a dry-run must not emit a gate result that reads as PASS.
+
+        The 2026-07-25 measurement: ``--session-close --dry-run`` returned SKIP for
+        the blocking prepush gate *before running it*, and ``overall_status`` only
+        inspects FAIL/WARN -- so a run that verified nothing aggregated to a literal
+        ``PASS``. That is the exact invocation WOT-2026-040j used as closeout
+        evidence. SKIP is indistinguishable from "checked and fine"; NOT_VERIFIED is
+        not.
+        """
+        _write_work_plan(tmp_path, "WP-2026-168")
+
+        result = run_closeout(tmp_path, dry_run=True)
+
+        report_path = _generated_report_path(tmp_path, dry_run=True)
+        content = report_path.read_text(encoding="utf-8")
+        # The BLOCKING gate is the one that must be distinguishable: a reader
+        # (human or script) must be able to tell "did not run" from "ran and
+        # passed". Non-blocking steps may keep plain SKIP.
+        assert "| prepush_check | NOT_VERIFIED |" in content
+        # dry-run still previews the whole report (that is its job) and still
+        # exits 0; what changed is that the report no longer *claims* the
+        # blocking gate was satisfied.
+        assert result == 0
+        assert "**Overall:** PASS" not in content
+
+    def test_unverified_blocking_gate_never_aggregates_to_pass(self) -> None:
+        """WOT-2026-040y: an unverified blocking gate can never read as PASS.
+
+        This is the aggregation half of the fix, and the half that made the
+        2026-07-25 report dangerous: ``overall_status`` inspects only FAIL and
+        WARN, so a step that never ran fell through to ``return "PASS"``.
+
+        WARN, not FAIL, is the correct degradation: nothing failed, we simply do
+        not know. Calling it FAIL would trade one false signal for another.
+
+        Scoped deliberately to the aggregation rule rather than to run_closeout:
+        cutting the dry-run short would break its legitimate purpose (previewing
+        the whole report), which is why the early-cut variant of this fix was
+        withdrawn rather than shipped.
+        """
+        unverified = StepResult(
+            name="prepush_check",
+            status="NOT_VERIFIED",
+            detail="Not run in dry-run mode: this gate was not verified",
+            blocking=True,
+        )
+        report = CloseoutReport(dry_run=True)
+        report.steps.append(unverified)
+
+        assert report.overall_status == "WARN"
+
+        # Control: the same status on a NON-blocking step is not a safety signal
+        # and must not drag the close down.
+        informational = CloseoutReport(dry_run=True)
+        informational.steps.append(
+            StepResult(
+                name="informational",
+                status="NOT_VERIFIED",
+                detail="not run",
+                blocking=False,
+            )
+        )
+        assert informational.overall_status == "PASS"
+
     def test_prepush_failure_returns_1(self, tmp_path: Path) -> None:
         """When prepush_check fails, returns exit code 1 early."""
         _write_work_plan(tmp_path, "WP-2026-168")

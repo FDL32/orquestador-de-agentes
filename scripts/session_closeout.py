@@ -157,11 +157,18 @@ class CloseoutReport:
         exit 1 when no genuinely blocking gate failed. Before 013m this returned
         FAIL on ANY FAIL regardless of the flag, contradicting this docstring and
         blocking sessions on non-blocking findings.
+
+        WOT-2026-040y: a blocking step reporting ``NOT_VERIFIED`` never ran, so
+        this can never return PASS -- absence of evidence is not evidence of
+        health. It degrades to WARN rather than FAIL: nothing failed, we simply
+        do not know, and calling that FAIL would be its own false signal.
         """
         if any(s.status == "FAIL" and s.blocking for s in self.steps):
             return "FAIL"
         statuses = [s.status for s in self.steps]
         if "FAIL" in statuses or "WARN" in statuses:
+            return "WARN"
+        if any(s.status == "NOT_VERIFIED" and s.blocking for s in self.steps):
             return "WARN"
         return "PASS"
 
