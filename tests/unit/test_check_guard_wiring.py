@@ -81,6 +81,7 @@ EXPECTED_WIRED_REAL = {
     "check_distribution_agnostic",  # WOT-2026-024z(d): cableado en pre-commit (entry: uv run python)
     "check_encoding_guard",
     "check_guard_wiring",
+    "check_handoff_committed",  # WOT-2026-040t(P1): cableado en prepush_check.py (closeout, BLOQUEANTE)
     "check_handoff_state_sha",  # WOT-2026-024t(s2): cableado en prepush_check.py (closeout, WARN/FAIL)
     "check_loop_execution",  # WOT-2026-040b: cableado via import estatico en prepush_check.py::run_loop_execution_check (closeout, WARN). Barrera de ejecucion del bucle 1->9->2.
     "check_motor_destination_integration",  # WOT-2026-024w: cableado en prepush_check.py (closeout, WARN/STRICT)

@@ -961,6 +961,42 @@ def run_handoff_state_sha_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_handoff_committed_check(motor_root: Path | None = None) -> CheckResult:
+    """WOT-2026-040t (Pieza 1): reject a closeout whose work is not committed.
+
+    Wires the rejector into the path that runs on its own. This is the exact
+    moment the 2026-07-25 incident happened: the orchestrator ran the closeout
+    suite and the sister audit over a working tree that the flight was stashing
+    underneath it, and three measurements of the same tree disagreed. A commit
+    is immutable; a working tree is not.
+
+    BLOCKING by design, unlike its WARN-default neighbours. Those tolerate known
+    historical debt; this one has none -- an uncommitted tree or a pending stash
+    at closeout time is always a live defect, never legacy. Making it WARN would
+    reproduce the M20 never-blocks-reporter shape the policy rejects.
+
+    Scope is the MOTOR repo: refs/stash is global to the repository and shared
+    across every flight worktree, so a stash pushed by another flight is limbo
+    work indistinguishable from this one's (failure mode F3).
+    """
+    name = "Handoff Committed (WOT-2026-040t)"
+    try:
+        from scripts.check_handoff_committed import EXIT_OK, evaluate
+    except ImportError:
+        from check_handoff_committed import (  # type: ignore[no-redef]
+            EXIT_OK,
+            evaluate,
+        )
+    root = (motor_root or Path(__file__).resolve().parent.parent).resolve()
+    code, lines = evaluate(root)
+    return CheckResult(
+        name=name,
+        passed=code == EXIT_OK,
+        output="\n".join(lines),
+        is_blocking=True,
+    )
+
+
 def run_destination_pii_check(
     project_root: Path, motor_root: Path | None = None
 ) -> CheckResult:
@@ -1215,6 +1251,9 @@ def run_preflight_check(
         results.append(run_contract_reconcile_check(project_root))
         # 6c. Handoff State SHA (WOT-2026-024t s2; WARN default, FAIL opt-in)
         results.append(run_handoff_state_sha_check(project_root))
+        # 6c-bis. Handoff Committed (WOT-2026-040t Pieza 1; BLOQUEANTE: un arbol
+        # sucio o un stash pendiente en el cierre es siempre defecto vivo)
+        results.append(run_handoff_committed_check())
         # 6d. Destination PII Leak (WOT-2026-020t; WARN default, FAIL opt-in)
         results.append(run_destination_pii_check(project_root))
         # 6e. Closeout Reconciliation (WOT-2026-024w; WARN default, FAIL opt-in)
