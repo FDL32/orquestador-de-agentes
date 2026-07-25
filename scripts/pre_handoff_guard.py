@@ -189,6 +189,49 @@ def is_in_live_surface_dir(file_path: str, live_dirs: set[str]) -> bool:
     return False
 
 
+def _stash_entries(worktree: Path) -> list[str]:
+    """Return ``git stash list`` lines for *worktree* (WOT-2026-040x).
+
+    Delegates to ``check_handoff_committed.stash_entries`` so the closeout
+    rejector and this handoff rejector read the stash the same way: the STASH
+    POLICY was adjudicated once (any entry blocks) and two implementations of it
+    is how the two moments start disagreeing.
+
+    Before: *worktree* is a path that may or may not be a git repo.
+    During: one read-only ``git stash list``. Never pops, drops or resets.
+    After: list of entry lines, empty when clean. Never raises -- a repo that
+        cannot be read yields [] and lets the other checks speak.
+    """
+    try:
+        from scripts.check_handoff_committed import stash_entries
+
+        return stash_entries(worktree)
+    except Exception:
+        return []
+
+
+def apply_stash_rule(result: dict, pending_stash: list[str]) -> dict:
+    """Apply the STASH POLICY to a guard *result* (WOT-2026-040x).
+
+    Extracted as a pure function on purpose. Inlined in ``run_guard`` the rule
+    is untestable in isolation: a minimal fixture already has ``valid=False``
+    for unrelated reasons (no canonical suite run, no delivery-hygiene module),
+    so an assertion on ``valid`` passes whether or not this rule fires. That is
+    a floor assertion, and it was measured -- a mutant that reported the stash
+    without blocking survived two versions of the test.
+
+    Before: *result* is the guard result dict; *pending_stash* is the output of
+        ``git stash list`` (empty when clean).
+    During: Mutates *result* in place. No I/O.
+    After: Returns *result*. Any entry sets ``valid=False`` -- the policy was
+        adjudicated once for WOT-2026-040t Pieza 1 and is shared, not re-decided.
+    """
+    if pending_stash:
+        result["valid"] = False
+        result["pending_stash"] = pending_stash
+    return result
+
+
 def get_changed_files(project_root: Path) -> set[str]:
     """Obtener archivos cambiados (staged, unstaged, untracked) usando git status."""
     try:
@@ -865,6 +908,8 @@ def run_guard(
               contrario; bloquea si no vacio) [WOT-2026-009c]
             - excluded_operational: list[str] (archivos operativos en repo
               contrario; excluidos, informativo) [WOT-2026-009c]
+            - pending_stash: list[str] (entradas de ``git stash list``; bloquea
+              si no vacio) [WOT-2026-040x]
     """
     result = {
         "valid": True,
@@ -882,7 +927,21 @@ def run_guard(
         "excluded_operational": [],
         "forbidden_surface_violation": [],
         "commit_visible": None,
+        "pending_stash": [],
     }
+
+    # 0. WOT-2026-040x: a pending stash blocks the handoff.
+    #
+    # WOT-2026-040t Pieza 1 already rejects a stash at CLOSEOUT. The 2026-07-25
+    # incident happened hours before that, inside the audit window: the flight
+    # stashed while the orchestrator read the same tree, and three measurements
+    # of one tree disagreed. `git status` shows nothing for stashed work, so a
+    # tree holding it looks pristine to every other check here -- and the stash
+    # is repo-GLOBAL, so it crosses worktrees into whatever an auditor is
+    # reading. Same policy as Pieza 1: ANY entry blocks. This VERIFIES and
+    # REFUSES; it never pops, drops or resets, and it suggests no remedy.
+    stash_root = motor_root if motor_root is not None else project_root
+    apply_stash_rule(result, _stash_entries(stash_root))
 
     # 1. Verificar checkpoint M3 alignment
     missing_checkpoint, checkpoint_misaligned = check_checkpoint_alignment(
