@@ -287,10 +287,83 @@ class TestResolveTickets:
         assert "detected" in src
 
     def test_work_plan_fallback(self, tmp_path: Path) -> None:
-        """When no events in window, falls back to work_plan active ticket."""
+        """When no events in window, falls back to work_plan active ticket.
+
+        WOT-2026-040e narrowed this: the fallback is still the right answer for
+        a maintenance session (no flight, nothing in the bus), which is what
+        this case covers -- no events file at all.
+        """
         _write_work_plan(tmp_path, "WP-2026-168")
         # No events file
         tickets, src = _resolve_tickets(tmp_path, None)
+        assert tickets == ["WP-2026-168"]
+        assert "fallback" in src
+
+    def test_stale_work_plan_pointing_at_closed_ticket_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        """WOT-2026-040e: the fallback must not certify an already-closed ticket.
+
+        Measured twice (2026-07-23 and 2026-07-25), both times resolving to the
+        same stale WOT-2026-026k: a flight ran in a worktree without writing
+        state, the session window came up empty, and the closeout fell back to a
+        work_plan.md left over from a session days earlier. It then reported
+        seventeen green steps for a ticket that belonged to somebody else's
+        flight and had been closed on the 21st.
+
+        The discriminator is evidence, not trust: a ticket the bus already
+        recorded as terminal cannot be the ticket this session is closing.
+        """
+        _write_work_plan(tmp_path, "WP-2026-168")
+        _write_events_file(
+            tmp_path,
+            [
+                _make_event(
+                    "STATE_CHANGED",
+                    "WP-2026-168",
+                    "2026-05-01T09:00:00+00:00",
+                    1,
+                    payload={"to_state": "COMPLETED"},
+                ),
+            ],
+        )
+        # A report generated AFTER those events puts them outside this session's
+        # window -- which is precisely the shape of the incident: the flight ran
+        # days ago, this session detects nothing, and the fallback fires.
+        _write_report(tmp_path, "2026-06-01 00:00:00 UTC")
+
+        tickets, src = _resolve_tickets(tmp_path, None)
+
+        assert tickets == []
+        assert "stale" in src.lower()
+        # The diagnostic must name the offending ticket: a closeout that refuses
+        # without saying which ticket it refused is not self-service.
+        assert "WP-2026-168" in src
+
+    def test_fallback_still_works_for_a_live_ticket(self, tmp_path: Path) -> None:
+        """WOT-2026-040e anti-false-positive: only TERMINAL tickets are refused.
+
+        A work_plan whose ticket is genuinely in flight but produced no events
+        inside the session window is the legitimate fallback case. Refusing it
+        too would trade a false green for a false red.
+        """
+        _write_work_plan(tmp_path, "WP-2026-168")
+        _write_events_file(
+            tmp_path,
+            [
+                _make_event(
+                    "STATE_CHANGED",
+                    "WP-2026-168",
+                    "2026-05-01T09:00:00+00:00",
+                    1,
+                    payload={"to_state": "IN_PROGRESS"},
+                ),
+            ],
+        )
+        _write_report(tmp_path, "2026-06-01 00:00:00 UTC")
+
+        tickets, src = _resolve_tickets(tmp_path, None)
+
         assert tickets == ["WP-2026-168"]
         assert "fallback" in src
 

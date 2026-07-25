@@ -299,6 +299,23 @@ def _resolve_active_ticket(project_root: Path) -> str | None:
     return None
 
 
+def _ticket_is_terminal(events: list[dict[str, Any]], ticket_id: str) -> bool:
+    """Report whether the bus already recorded ``ticket_id`` as closed.
+
+    WOT-2026-040e. Reuses the canonical close-timestamp scan rather than
+    re-deriving "what counts as terminal": that set lives in one place
+    (``TERMINAL_STATES``) and a second opinion about it is how the two views
+    drift apart.
+
+    Before: ``events`` is the parsed bus (possibly empty); ``ticket_id`` is a
+        ticket string.
+    During: Pure scan, no I/O.
+    After: True when a STATE_CHANGED event moved that ticket into a terminal
+        state. Never raises.
+    """
+    return bool(_get_ticket_close_timestamps(events, [ticket_id]))
+
+
 def _resolve_tickets(
     project_root: Path,
     explicit_tickets: list[str] | None,
@@ -307,7 +324,12 @@ def _resolve_tickets(
 
     Before: project_root is valid, explicit_tickets may be None/empty.
     During: Priority: explicit CLI > detected in window > active from work_plan.
-    After: Returns (ticket_list, source_description).
+        The work_plan fallback is guarded (WOT-2026-040e): if the bus already
+        recorded that ticket in a terminal state, work_plan.md is stale and the
+        ticket belongs to an earlier session, so it is refused rather than
+        certified.
+    After: Returns (ticket_list, source_description). An empty list with a
+        "stale" source means the caller must not treat the close as scoped.
     """
     if explicit_tickets:
         return explicit_tickets, "explicit from CLI"
@@ -321,6 +343,18 @@ def _resolve_tickets(
 
     active = _resolve_active_ticket(project_root)
     if active:
+        # WOT-2026-040e: measured twice (2026-07-23, 2026-07-25), both times
+        # resolving to the same already-closed WOT-2026-026k. A flight ran in a
+        # worktree without writing state, the window came up empty, and the
+        # closeout certified seventeen green steps for another session's ticket.
+        # Trusting work_plan.md is the bug; the bus is the evidence.
+        if _ticket_is_terminal(events, active):
+            return [], (
+                f"stale work_plan.md: it points at {active}, which the event bus "
+                "already recorded as closed. This session produced no events of "
+                "its own, so there is nothing to certify. Pass --ticket "
+                "explicitly if you know what this session closed."
+            )
         return [active], "fallback from work_plan.md active ticket"
 
     return [], "no tickets found"
