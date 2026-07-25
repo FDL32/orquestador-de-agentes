@@ -145,6 +145,50 @@ def test_stash_that_is_pushed_and_popped_still_invalidates(tmp_path: Path) -> No
         raise AssertionError("a push+pop inside the window must still invalidate")
 
 
+def test_documented_blind_spots_are_real_and_stay_documented(tmp_path: Path) -> None:
+    """PIN the measured limits of this mechanism (WOT-2026-040t, review finding).
+
+    An adversarial audit found two mutations the snapshot cannot see. Both are
+    real -- verified byte-exact here, not reasoned about. This test exists so the
+    limit is a CHECKED property rather than a docstring nobody re-verifies: if
+    someone later widens detection, this test fails and forces the docstring to
+    be updated with it.
+
+    A barrier believed to see more than it does is worse than a narrow one.
+    """
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    target = repo / "f.py"
+    target.write_bytes(b"v1\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "add f")
+
+    # Blind spot 1: transient edit reverted to the IDENTICAL bytes. No git
+    # command runs, so nothing in the snapshot moves.
+    original = target.read_bytes()
+    pre = capture_state(repo)
+    target.write_bytes(b"MUTATED MID-SUITE\n")
+    target.write_bytes(original)
+    verify_unchanged(repo, pre)  # documented as UNDETECTED
+
+    # Blind spot 2: dirty -> differently-dirty. porcelain prints the same
+    # " M f.py" line for both contents.
+    target.write_bytes(b"v2\n")
+    pre_dirty = capture_state(repo)
+    target.write_bytes(b"v3\n")
+    verify_unchanged(repo, pre_dirty)  # documented as UNDETECTED
+
+    # But the git-mediated family IS caught -- the limit is scoped, not total.
+    pre_git = capture_state(repo)
+    _git(repo, "stash", "push", "-m", "real-mutation")
+    try:
+        verify_unchanged(repo, pre_git)
+    except AuditInvariantViolationError:
+        pass
+    else:
+        raise AssertionError("a stash must still be detected")
+
+
 def test_the_invariant_never_mutates_anything(tmp_path: Path) -> None:
     """It DETECTS; it does not exclude, lock, restore or clean up.
 

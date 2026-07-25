@@ -964,11 +964,21 @@ def run_handoff_state_sha_check(project_root: Path) -> CheckResult:
 def run_handoff_committed_check(motor_root: Path | None = None) -> CheckResult:
     """WOT-2026-040t (Pieza 1): reject a closeout whose work is not committed.
 
-    Wires the rejector into the path that runs on its own. This is the exact
-    moment the 2026-07-25 incident happened: the orchestrator ran the closeout
-    suite and the sister audit over a working tree that the flight was stashing
-    underneath it, and three measurements of the same tree disagreed. A commit
-    is immutable; a working tree is not.
+    Wires the rejector into a path that runs on its own. A commit is immutable;
+    a working tree is not.
+
+    SCOPE, stated honestly (corrected in review, WOT-2026-040t): closeout is NOT
+    the moment the 2026-07-25 incident happened -- that race ran hours earlier,
+    during the audit/suite window, and this check would have rejected the dirty
+    tree only after three contradictory verdicts already existed. Two known gaps
+    remain, both owned by follow-ups rather than silently implied away:
+      * handoff time has no invocation: declaring "ready to audit @ sha" to a
+        sister auditor triggers nothing.
+      * ``--session-close --dry-run`` returns SKIP before prepush runs
+        (scripts/closeout_steps/gates.py), which is the exact invocation
+        WOT-2026-040j used.
+    What this DOES buy: no closeout can certify a tree carrying uncommitted work
+    or a repo-global stash.
 
     BLOCKING by design, unlike its WARN-default neighbours. Those tolerate known
     historical debt; this one has none -- an uncommitted tree or a pending stash

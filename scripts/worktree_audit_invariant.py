@@ -62,10 +62,22 @@ class WorktreeState:
     ``git stash pop`` deletes ``refs/stash`` outright when it pops the last
     entry, taking that reflog with it.
 
-    HEAD's reflog is the durable trace. Stash push/pop each write a
-    ``reset: moving to HEAD`` entry there, and it is append-only for the window's
-    duration. This is precisely the signature the 2026-07-25 incident recorded
-    ("reflog: 3x reset: moving to HEAD").
+    HEAD's reflog is the durable trace for GIT-MEDIATED mutation. Stash push/pop
+    each write a ``reset: moving to HEAD`` entry there, and it is append-only for
+    the window's duration. This is precisely the signature the 2026-07-25
+    incident recorded ("reflog: 3x reset: moving to HEAD").
+
+    SCOPE, measured -- what this snapshot does NOT see (WOT-2026-040t, found by
+    adversarial audit; verified byte-exact, not reasoned):
+      * a transient plain-file edit REVERTED to the identical bytes inside the
+        window. No git command runs, so HEAD, status and reflog are all
+        unchanged and the churn is invisible.
+      * dirty -> differently-dirty churn. ``status --porcelain`` prints the same
+        ` M file.py` line for content ``v2`` and ``v3``.
+    Both are editor-level writes, not the stash/reset/checkout family this is
+    built to catch. Stating the limit here rather than implying total coverage:
+    a barrier believed to see more than it does is worse than a narrow one, and
+    closing these would mean hashing tree content, a different mechanism.
     """
 
     head: str

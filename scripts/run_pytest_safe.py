@@ -1118,6 +1118,16 @@ def main() -> int:  # noqa: C901
         }
     except Exception as exc:
         _audit_state_pre_repr = {"unavailable": str(exc)}
+        # WOT-2026-040t (review): without this line the post-check is skipped
+        # and the run prints a normal green, so a consumer reading only the exit
+        # code cannot tell "verified stable" from "never verified". Say it on
+        # stdout. Still non-blocking -- telemetry must never fail a suite -- but
+        # it must not be silent either.
+        print(
+            "[pytest-safe] AVISO: no se pudo fotografiar el arbol antes de la "
+            f"corrida ({exc}). El invariante pre/post NO se verificara: este "
+            "resultado es 'no verificado', no 'verificado estable'."
+        )
 
     _baseline_failed: list[str] = []
     if LAST_RUN_JSON.exists():
