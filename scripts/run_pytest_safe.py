@@ -37,6 +37,14 @@ if str(_PROJECT_ROOT_BOOTSTRAP) not in sys.path:
 # WP-2026-122 / WP-2026-155: Centralized path resolution via runtime.project_root
 from runtime.project_root import get_agent_dir, resolve_project_root  # noqa: E402
 
+# WOT-2026-040t (Pieza 4): pre/post invariant over the audit window. Static
+# import so check_guard_wiring's AST walker reaches this call-site.
+from scripts.worktree_audit_invariant import (  # noqa: E402
+    AuditInvariantViolationError as _AuditInvariantViolation,
+    capture_state as _invariant_capture_state,
+    verify_unchanged as _invariant_verify_unchanged,
+)
+
 
 _PROJECT_ROOT = resolve_project_root()
 _AGENT_DIR = get_agent_dir()
@@ -1093,6 +1101,24 @@ def main() -> int:  # noqa: C901
     # (against an unmodified tree, with all collaboration artifacts committed)
     # executes immediately before handoff so that the baseline reflects the true
     # pre-existing failure set, not transient states.
+    # WOT-2026-040t (Pieza 4): snapshot the delivery tree BEFORE the suite. The
+    # suite runs pytest with cwd=PROJECT_ROOT over the LIVE working tree for
+    # minutes (371s measured 2026-07-25), and a concurrent flight can stash or
+    # reset inside that window -- which is how the contaminated 8-failed run
+    # happened. Failing to snapshot must never abort the run: an unavailable
+    # snapshot degrades to "cannot verify", never to a false "verified stable".
+    _audit_state_pre = None
+    _audit_state_pre_repr = None
+    try:
+        _audit_state_pre = _invariant_capture_state(_delivery_repo_root())
+        _audit_state_pre_repr = {
+            "head": _audit_state_pre.head,
+            "status_entries": len(_audit_state_pre.status.splitlines()),
+            "head_reflog_len": _audit_state_pre.head_reflog_len,
+        }
+    except Exception as exc:
+        _audit_state_pre_repr = {"unavailable": str(exc)}
+
     _baseline_failed: list[str] = []
     if LAST_RUN_JSON.exists():
         try:
@@ -1127,6 +1153,11 @@ def main() -> int:  # noqa: C901
         # canonical-suite handoff gate can verify freshness by SHA (not by
         # timestamp). Captured once at run start; the tree must not change.
         "tested_commit_sha": _delivery_head_sha(),
+        # WOT-2026-040t (Pieza 4): the line above says "the tree must not
+        # change" -- until now a NORM nobody enforced. audit_state_pre is the
+        # snapshot that turns it into a MECHANISM: it is compared after the run
+        # and an INVALIDATED verdict is recorded if the tree moved.
+        "audit_state_pre": _audit_state_pre_repr,
         # WOT-2026-014b: informative field; does not change gate contract.
         "runner": _runner,
         "status": "started",
@@ -1207,6 +1238,25 @@ def main() -> int:  # noqa: C901
             if exit_code == 0:
                 exit_code = 1
                 summary["exit_code"] = exit_code
+
+        # WOT-2026-040t (Pieza 4): close the invariant. If the delivery tree
+        # moved while the suite ran, this result describes no single state and
+        # must be REPEATED -- it is neither green nor red. Recorded as
+        # audit_window_invalidated so a consumer can tell "invalid" from
+        # "failed": treating a contaminated run as a content verdict is exactly
+        # the 2026-07-25 mistake (three verdicts, one tree, all meaningless).
+        if _audit_state_pre is not None:
+            try:
+                _invariant_verify_unchanged(_delivery_repo_root(), _audit_state_pre)
+            except _AuditInvariantViolation as exc:
+                summary["audit_window_invalidated"] = str(exc)
+                print(f"[pytest-safe] {exc}")
+                if exit_code == 0:
+                    exit_code = 1
+                    summary["exit_code"] = exit_code
+            except Exception as exc:
+                summary["audit_window_invalidated"] = None
+                summary["audit_window_check_error"] = str(exc)
         return exit_code
     finally:
         cleanup_after = {"removed": [], "failed": []}
