@@ -131,7 +131,9 @@ class StepResult:
     """Result of a single closeout step."""
 
     name: str
-    status: str  # PASS, WARN, FAIL, SKIP
+    # NOT_VERIFIED (WOT-2026-040y): the step did not run, so its outcome is
+    # unknown. Distinct from SKIP, which means "deliberately not applicable".
+    status: str  # PASS, WARN, FAIL, SKIP, NOT_VERIFIED
     detail: str = ""
     blocking: bool = False
 
