@@ -151,6 +151,33 @@ def test_same_repo_for_both_roots_is_not_reported_twice(tmp_path: Path) -> None:
     assert len(result["pending_stash"]) == 1, result
 
 
+def test_linked_worktree_shares_one_stash_and_is_not_double_counted(
+    tmp_path: Path,
+) -> None:
+    """Two worktrees of ONE repo share refs/stash: report the entry once.
+
+    Raised by sister audit as a residual on the path-based dedup. It matters
+    here specifically: this repo runs a worktree per flight, so
+    ``run_guard(<flight worktree>, motor_root=<motor>)`` is the normal shape,
+    not a corner case. ``Path.resolve()`` sees two different paths and would
+    scan the same stash twice, reporting one problem as two.
+    """
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    _stash_something(repo)
+
+    linked = tmp_path / "flight"
+    _git(["worktree", "add", str(linked), "-b", "flight/040x"], repo)
+
+    # Precondition: different paths, one shared stash.
+    assert linked != repo
+    assert _git(["stash", "list"], linked).stdout.strip() != ""
+
+    result = pre_handoff_guard.run_guard(linked, "WOT-2026-040x", motor_root=repo)
+
+    assert len(result["pending_stash"]) == 1, result
+
+
 def test_stash_rule_blocks_on_its_own() -> None:
     """The rule must REFUSE, not merely observe (WOT-2026-040x).
 

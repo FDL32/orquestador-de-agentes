@@ -210,6 +210,53 @@ def _stash_entries(worktree: Path) -> list[str]:
         return []
 
 
+def _same_repository(left: Path, right: Path) -> bool:
+    """Report whether two paths belong to the SAME git repository.
+
+    Identity is the common git dir, not the path (WOT-2026-040x, raised by
+    sister audit): linked worktrees sit at different paths but share one
+    ``refs/stash``, so comparing paths would treat one stash as two. Comparing
+    ``--git-common-dir`` collapses them, and also collapses symlinked or
+    UNC/mapped views of the same repo, which ``Path.resolve()`` may not.
+
+    Before: both paths may or may not be inside a git repo.
+    During: one read-only ``git rev-parse --git-common-dir`` per path.
+    After: True when both resolve to the same repository. Falls back to
+        resolved-path equality when either call fails. Never raises.
+    """
+
+    def _common_dir(path: Path) -> str | None:
+        try:
+            out = subprocess.run(
+                ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                capture_output=True,
+                text=True,
+                cwd=path,
+                timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if out.returncode != 0:
+            return None
+        resolved = out.stdout.strip()
+        if not resolved:
+            return None
+        try:
+            return str(Path(resolved).resolve()).lower()
+        except OSError:
+            return resolved.lower()
+
+    left_dir = _common_dir(left)
+    right_dir = _common_dir(right)
+    if left_dir is not None and right_dir is not None:
+        return left_dir == right_dir
+
+    try:
+        return left.resolve() == right.resolve()
+    except OSError:
+        return left == right
+
+
 def _stash_entries_for_roots(
     project_root: Path,
     motor_root: Path | None,
@@ -223,19 +270,18 @@ def _stash_entries_for_roots(
 
     Before: project_root is the destination (or delivery) root; motor_root is
         the motor root or None in standalone/test contexts.
-    During: one read-only ``git stash list`` per DISTINCT root. When both paths
-        resolve to the same repo the scan runs once, so a single-repo setup is
-        not reported twice.
+    During: one read-only ``git stash list`` per DISTINCT repository. Identity
+        is ``git rev-parse --git-common-dir``, not the path: two worktrees of
+        one repo live at different paths yet SHARE ``refs/stash``, so path
+        comparison would scan the same stash twice and report one entry as two
+        problems. This repo runs a worktree per flight, so that is the normal
+        case here, not a corner. Falls back to resolved paths when git cannot
+        answer (a fixture that is not a repo yet).
     After: list of labelled entries, empty when both are clean. Never raises.
     """
     roots: list[tuple[str, Path]] = [("repo_destino", project_root)]
-    if motor_root is not None:
-        try:
-            same_repo = motor_root.resolve() == project_root.resolve()
-        except OSError:
-            same_repo = motor_root == project_root
-        if not same_repo:
-            roots.append(("repo_motor", motor_root))
+    if motor_root is not None and not _same_repository(project_root, motor_root):
+        roots.append(("repo_motor", motor_root))
 
     entries: list[str] = []
     for label, root in roots:
