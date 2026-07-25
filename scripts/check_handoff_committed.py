@@ -55,6 +55,15 @@ class GitUnavailableError(RuntimeError):
     """The worktree's git state could not be read at all."""
 
 
+class SurfaceAbsentError(RuntimeError):
+    """The declared surface is not present (as a file) at the audited SHA.
+
+    Raised as NO AUDITABLE -- deliberately NOT a content verdict. On 2026-07-25
+    the sister audit met a stashed tree and correctly refused to judge rather
+    than emitting SHIP over the void; this makes that refusal a mechanism.
+    """
+
+
 def _git(worktree: Path, *args: str) -> str:
     """Run a read-only git command in ``worktree`` and return stdout.
 
@@ -109,6 +118,57 @@ def stash_entries(worktree: Path) -> list[str]:
     """Return ``git stash list`` lines. Any entry blocks (see STASH POLICY)."""
     raw = _git(worktree, "stash", "list")
     return [line for line in raw.splitlines() if line.strip()]
+
+
+def read_surface_at_sha(worktree: Path, sha: str, paths: list[str]) -> dict[str, str]:
+    """Read the declared surface FROM A COMMIT, never from the working tree.
+
+    WOT-2026-040t, Pieza 2 -- closes F8 (audit over an unstable tree). The
+    auditor's source of truth becomes ``git show <sha>:<path>``: a commit cannot
+    be stashed, reset or checked out from under the reader, so the three
+    contradictory measurements of 2026-07-25 become unreachable by construction.
+
+    ``sha`` MUST be the SHA that the rejector (Pieza 1) emitted, passed through
+    explicitly. This function never resolves HEAD itself: between the rejector
+    clearing a state and the auditor reading it, HEAD can advance, and a re-read
+    would attach the verdict to a commit nobody cleared.
+
+    Before: ``worktree`` is a git working tree; ``sha`` is a commit-ish that the
+        rejector already cleared; ``paths`` are repo-relative surface paths.
+    During: one ``git cat-file -t`` (type barrier) plus one ``git show`` per
+        path. Read-only; touches no file on disk.
+    After: returns ``{path: content}`` for every requested path. Raises
+        SurfaceAbsentError (NO AUDITABLE) if any path is missing at that SHA, is
+        not a regular file (a directory would otherwise yield a tree listing
+        that reads like content), or if the SHA itself cannot be resolved.
+        Raises GitUnavailableError if git cannot run at all.
+    """
+    missing: list[str] = []
+    surface: dict[str, str] = {}
+
+    for path in paths:
+        spec = f"{sha}:{path}"
+        try:
+            kind = _git(worktree, "cat-file", "-t", spec).strip()
+        except GitUnavailableError:
+            missing.append(path)
+            continue
+        if kind != "blob":
+            # A tree (directory) or tag is not an auditable surface file.
+            missing.append(path)
+            continue
+        try:
+            surface[path] = _git(worktree, "show", spec)
+        except GitUnavailableError:
+            missing.append(path)
+
+    if missing:
+        raise SurfaceAbsentError(
+            "NO AUDITABLE: la superficie declarada no existe como fichero en el "
+            f"SHA auditado ({sha}). Ausente(s): {', '.join(sorted(missing))}. "
+            "Esto NO es un veredicto de contenido: el estado no es auditable."
+        )
+    return surface
 
 
 def evaluate(worktree: Path) -> tuple[int, list[str]]:
