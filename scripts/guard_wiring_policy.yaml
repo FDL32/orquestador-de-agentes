@@ -22,14 +22,13 @@ known_unwired:
   # `from scripts.check_backlog_commits_landed import audit, parse_archived_commits`
   # y agent_controller --validate corre en pre-commit/closeout. El AST lo alcanza
   # ahora -> wired. Dejarlo aqui seria una declaracion STALE que el propio gate caza.
-  # validate_batch_dag: su dueno original WOT-2026-023t quedo ARCHIVADO con el
-  # guard aun unwired (huerfano cazado por el orphan-owner check en el cierre
-  # 2026-07-22). Se RE-DECLARA con dueno VIVO: WOT-2026-038b ya posee el cableado
-  # de check_bundle_receipts en el MISMO flujo (el colector del bucle antes del
-  # fan-out); validate_batch_dag pertenece al mismo arranque de vuelo (el
-  # orquestador lo corre A MANO en cada Paso 0, medido 2026-07-22: funciono
-  # porque alguien se acordo -- norma, no barrera).
-  validate_batch_dag: WOT-2026-038b
+  # validate_batch_dag: RETIRADO (WOT-2026-027h) -- ahora cableado via import
+  # estatico: scripts/check_flight_plan_collision.py hace
+  # `from validate_batch_dag import _normalize_surface` (reuso de la forma
+  # canonica de ruta, mandado por la ficha) y ese check hermano SI corre solo en
+  # prepush_check.py::run_flight_plan_collision_check (closeout). El AST lo alcanza
+  # ahora -> wired. Dejarlo aqui seria una declaracion STALE que el propio gate
+  # caza (mismo patron que check_backlog_commits_landed / validate_observations).
   # validate_observations: RETIRADO (WOT-2026-035b) -- ahora cableado via
   # check_portable_memory_archive_schema.py (pre-commit always_run + prepush),
   # que lo importa. Dejarlo aqui seria una declaracion STALE.

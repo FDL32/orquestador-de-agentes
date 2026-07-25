@@ -919,6 +919,67 @@ def run_loop_execution_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_flight_plan_collision_check(project_root: Path) -> CheckResult:
+    """WOT-2026-027h: colision INTER-plan en queued/ (check HERMANO de validate_batch_dag).
+
+    Por que AQUI. validate_batch_dag valida UN dag y es CIEGO al conjunto; el unico
+    punto que corre solo Y conoce el destino cuyo queued/ contiene TODOS los planes es
+    el cierre. El import es ESTATICO para que `check_guard_wiring` alcance este
+    call-site y cuente el guard como CABLEADO (precedente: `run_guard_wiring_orphan_check`).
+    Retirar esta invocacion deja el guard UNWIRED -> lo caza check_guard_wiring
+    (mutation del DoD de des-cableado).
+
+    WARN (is_blocking=False) a proposito, precedente run_guard_wiring_orphan_check: el
+    queued/ real YA colisiona antes de introducir la barrera (deuda historica medida),
+    y bloquear el cierre con ella seria un falso-rojo heredado. El CHECK en si (exit!=0)
+    es fiel al contrato "colision SIEMPRE falla, sin allowlist"; es el CABLEADO el que
+    nace no bloqueante. Criterio de salida a is_blocking=True: WOT-2026-040r (limpiar
+    queued/ hasta exit 0 y endurecer con prueba que falle ante colision fixture).
+
+    Before: project_root resoluble; queued/ puede existir o no.
+    During: recorre orchestrator_pipeline/flight_plans/queued/*.json (read-only) y cruza
+        ticket-ids y shared_surfaces entre planes.
+    After: passed=True si no hay colisiones o queued/ no existe (SKIP nombrado, nunca un
+        verde mudo); False (WARN) con el listado si las hay. Read-only.
+    """
+    name = "Flight Plan Collision (WOT-2026-027h)"
+    try:
+        from scripts.check_flight_plan_collision import find_collisions
+    except ImportError:
+        from check_flight_plan_collision import (  # type: ignore[no-redef]
+            find_collisions,
+        )
+
+    queued_dir = project_root / "orchestrator_pipeline" / "flight_plans" / "queued"
+    if not queued_dir.is_dir():
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=f"SKIP: no existe {queued_dir} (sin planes en cola).",
+            is_blocking=False,
+        )
+    collisions = find_collisions(queued_dir)
+    if collisions:
+        detail = "\n".join(f"  - {c.render()}" for c in collisions)
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=(
+                f"{len(collisions)} colision(es) inter-plan en queued/:\n{detail}\n"
+                "Un ticket en 2 planes o una shared_surface compartida es una colision "
+                "(SIN allowlist). El caso legitimo de coordinacion se resuelve sacando de "
+                "queued/ el plan que espera, no relajando el check (WOT-2026-027h)."
+            ),
+            is_blocking=False,
+        )
+    return CheckResult(
+        name=name,
+        passed=True,
+        output="queued/ sin colisiones inter-plan",
+        is_blocking=False,
+    )
+
+
 def run_handoff_state_sha_check(project_root: Path) -> CheckResult:
     """WOT-2026-024t (superficie 2): a handoff's STATE section must not embed a SHA
     (it rots the instant HEAD moves). WARN by default (is_blocking=False), FAIL when
@@ -1288,6 +1349,11 @@ def run_preflight_check(
         # haber corrido de verdad, no degradado, por cada commit de ticket del
         # vuelo. SKIPEA nombrado si el orquestador no declaro commits/targets.)
         results.append(run_loop_execution_check(project_root))
+        # 6m. Flight Plan Collision (WOT-2026-027h; WARN -- el queued/ real ya
+        # colisiona antes de la barrera (deuda historica); endurecer a bloqueante
+        # en WOT-2026-040r cuando queued/ este limpio. El CHECK en si (exit!=0) es
+        # fiel a 'colision SIEMPRE falla, sin allowlist'; el CABLEADO nace WARN.)
+        results.append(run_flight_plan_collision_check(project_root))
 
     # 7. Portable Memory Archive Schema (WOT-2026-035b; bloqueante siempre,
     # no solo en closeout_mode: el archive puede corromperse en cualquier push)

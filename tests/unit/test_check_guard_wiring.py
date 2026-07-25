@@ -81,6 +81,7 @@ EXPECTED_WIRED_REAL = {
     "check_distribution_agnostic",  # WOT-2026-024z(d): cableado en pre-commit (entry: uv run python)
     "check_distribution_boundary",  # WOT-2026-025i: cableado en pre-commit (entry: uv run python)
     "check_encoding_guard",
+    "check_flight_plan_collision",  # WOT-2026-027h: cableado via import estatico en prepush_check.py::run_flight_plan_collision_check (closeout, WARN). Check HERMANO de validate_batch_dag: colision inter-plan en queued/. Endurecer a bloqueante: 040r.
     "check_guard_wiring",
     "check_handoff_committed",  # WOT-2026-040t(P1): cableado en prepush_check.py (closeout, BLOQUEANTE)
     "check_handoff_state_sha",  # WOT-2026-024t(s2): cableado en prepush_check.py (closeout, WARN/FAIL)
@@ -94,6 +95,7 @@ EXPECTED_WIRED_REAL = {
     "check_worktree_topology",
     "delivery_hygiene_check",  # v4: denominador ve el guard sin prefijo, y lo cabla
     "guard_paths",
+    "validate_batch_dag",  # WOT-2026-027h: wired via import estatico -- check_flight_plan_collision.py hace `from validate_batch_dag import _normalize_surface`, y ese check hermano corre en prepush closeout. Retirado de guard_wiring_policy.yaml (era declared-debt de WOT-2026-038b).
     "validate_all",
     "validate_contract_formation",  # WOT-2026-023m(c): cableado via import estatico en prepush_check.py::run_contract_formation_check (closeout; valida el CF triple del motor)
     "validate_observations",  # WOT-2026-035b: cableado via import estatico en check_portable_memory_archive_schema.py (retirado de known_unwired)
