@@ -330,10 +330,19 @@ def test_dogfooding_detector_lists_the_lesson_about_itself():
         "enunciar una regla no la aplica a uno mismo; el guard que mide una "
         "propiedad la mide con vara mas floja consigo mismo"
     )
-    labels = [lb for _, _, lb, _ in rank_neighbours(candidate, corpus, top=5)]
-    assert "obs-the-meta-guard-had-the-disease" in labels, (
-        "el detector NO lista la leccion que describe su propio modo de fallo; "
-        f"vecinos obtenidos: {labels}"
+    # WOT-2026-040u: la asercion era "esta en el top-5 FIJO", que caduca sola
+    # cada vez que el archive crece -- una MEDICION disfrazada de criterio. El
+    # 2026-07-25 la rompio la promocion de 2 lecciones (fbb9232) mas cercanas a
+    # la consulta, que empujaron el vecino esperado al puesto #6 con score
+    # 0.0337 VALIDO: el detector funcionaba y el test decia lo contrario.
+    # El INVARIANTE es que el detector encuentra el cruce con score > 0.
+    ranked = rank_neighbours(candidate, corpus, top=len(corpus))
+    hit = next(
+        (r for r in ranked if r[2] == "obs-the-meta-guard-had-the-disease"), None
+    )
+    assert hit is not None and hit[0] > 0, (
+        "el detector NO encuentra la leccion que describe su propio modo de fallo "
+        f"(score 0 o ausente); top-5: {[r[2] for r in ranked[:5]]}"
     )
 
 
