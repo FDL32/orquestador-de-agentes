@@ -107,6 +107,50 @@ def test_stash_alone_flips_valid_when_nothing_else_blocks(tmp_path: Path) -> Non
     assert stashed_result["valid"] is False, stashed_result
 
 
+def test_destination_stash_is_seen_when_roots_differ(tmp_path: Path) -> None:
+    """A stash in repo_destino must block, not only one in repo_motor.
+
+    Regression for the blocker the sister audit found in the first version of
+    this fix. It read ``motor_root if motor_root is not None else project_root``
+    -- so in the productive call (preflight_closeout.py:97 passes
+    ``run_guard(delivery_root=repo_destino, motor_root=repo_motor)``) the
+    destination's stash was silently dropped.
+
+    Every other test here uses ONE repo for both roots, which is exactly why
+    they all passed while the gap was live: same-repo fixtures cannot tell the
+    two roots apart.
+    """
+    destino = tmp_path / "destino"
+    motor = tmp_path / "motor"
+    init_git_repo(destino)
+    init_git_repo(motor)
+    _stash_something(destino)
+
+    assert _git(["stash", "list"], destino).stdout.strip() != ""
+    assert _git(["stash", "list"], motor).stdout.strip() == ""
+
+    result = pre_handoff_guard.run_guard(destino, "WOT-2026-040x", motor_root=motor)
+
+    assert result["pending_stash"], result
+    assert any("repo_destino" in entry for entry in result["pending_stash"]), result
+    assert result["valid"] is False, result
+
+
+def test_same_repo_for_both_roots_is_not_reported_twice(tmp_path: Path) -> None:
+    """Deduplication: one repo playing both roles yields one set of entries.
+
+    Without this, a standalone setup (motor_root == project_root) would report
+    every stash entry twice and read as though there were two problems.
+    """
+    repo = tmp_path / "solo"
+    init_git_repo(repo)
+    _stash_something(repo)
+
+    result = pre_handoff_guard.run_guard(repo, "WOT-2026-040x", motor_root=repo)
+
+    assert len(result["pending_stash"]) == 1, result
+
+
 def test_stash_rule_blocks_on_its_own() -> None:
     """The rule must REFUSE, not merely observe (WOT-2026-040x).
 

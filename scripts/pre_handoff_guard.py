@@ -210,6 +210,39 @@ def _stash_entries(worktree: Path) -> list[str]:
         return []
 
 
+def _stash_entries_for_roots(
+    project_root: Path,
+    motor_root: Path | None,
+) -> list[str]:
+    """Collect stash entries across BOTH repos (WOT-2026-040x).
+
+    A stash is per-repository, and a handoff spans two of them: the flight's
+    work can sit stashed in either. Entries are labelled by repo because
+    "stash@{0}: wip" alone does not say WHERE to look, and a diagnostic that
+    names no location is not self-service.
+
+    Before: project_root is the destination (or delivery) root; motor_root is
+        the motor root or None in standalone/test contexts.
+    During: one read-only ``git stash list`` per DISTINCT root. When both paths
+        resolve to the same repo the scan runs once, so a single-repo setup is
+        not reported twice.
+    After: list of labelled entries, empty when both are clean. Never raises.
+    """
+    roots: list[tuple[str, Path]] = [("repo_destino", project_root)]
+    if motor_root is not None:
+        try:
+            same_repo = motor_root.resolve() == project_root.resolve()
+        except OSError:
+            same_repo = motor_root == project_root
+        if not same_repo:
+            roots.append(("repo_motor", motor_root))
+
+    entries: list[str] = []
+    for label, root in roots:
+        entries.extend(f"[{label}] {line}" for line in _stash_entries(root))
+    return entries
+
+
 def apply_stash_rule(result: dict, pending_stash: list[str]) -> dict:
     """Apply the STASH POLICY to a guard *result* (WOT-2026-040x).
 
@@ -940,8 +973,12 @@ def run_guard(
     # is repo-GLOBAL, so it crosses worktrees into whatever an auditor is
     # reading. Same policy as Pieza 1: ANY entry blocks. This VERIFIES and
     # REFUSES; it never pops, drops or resets, and it suggests no remedy.
-    stash_root = motor_root if motor_root is not None else project_root
-    apply_stash_rule(result, _stash_entries(stash_root))
+    # Both repos, not just one. A first version read only motor_root when it was
+    # set; in the productive call at preflight_closeout.py:97 the delivery root
+    # is the DESTINATION and motor_root is the motor, so that version silently
+    # dropped the destination's stash. Caught by sister audit with a probe, not
+    # by these tests, whose fixtures use a single repo for both roots.
+    apply_stash_rule(result, _stash_entries_for_roots(project_root, motor_root))
 
     # 1. Verificar checkpoint M3 alignment
     missing_checkpoint, checkpoint_misaligned = check_checkpoint_alignment(
