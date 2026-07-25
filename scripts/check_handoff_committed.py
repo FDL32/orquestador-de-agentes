@@ -39,6 +39,7 @@ After: exit 0 and ``HANDOFF_OK`` plus the HEAD SHA on stdout when the state is
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -49,6 +50,28 @@ EXIT_REJECTED = 1
 EXIT_UNDETERMINED = 2
 
 _GIT_TIMEOUT = 30
+
+# Pieza 3: conventional home of decision records, so a stopped flight has
+# something committable. Kept dot-prefixed and flight-scoped to stay clearly
+# separate from productive surface.
+DECISION_DIR = ".flight-decision"
+
+# Closed vocabulary, shared verbatim with GROUP_STOP_REPORT
+# (prompts/orchestrator_autonomous_ticket_batch.md). Reusing it keeps the
+# committed record and the prompt-level report describing the same universe of
+# causes instead of drifting into two dialects.
+DECISION_CAUSE_TYPES = frozenset(
+    {
+        "CONTRACT_GAP",
+        "TEST_FAIL",
+        "TOPOLOGY",
+        "SCOPE",
+        "SUITE_RED",
+        "BUS_DRIFT",
+        "FALSE_GREEN",
+        "UNCLASSIFIED",
+    }
+)
 
 
 class GitUnavailableError(RuntimeError):
@@ -118,6 +141,96 @@ def stash_entries(worktree: Path) -> list[str]:
     """Return ``git stash list`` lines. Any entry blocks (see STASH POLICY)."""
     raw = _git(worktree, "stash", "list")
     return [line for line in raw.splitlines() if line.strip()]
+
+
+class DecisionCommitError(ValueError):
+    """A decision record was malformed and must not become a handoff."""
+
+
+def _decision_relpath(ticket: str) -> str:
+    return f"{DECISION_DIR}/{ticket}.json"
+
+
+def write_decision_record(
+    worktree: Path,
+    ticket: str,
+    state: str,
+    cause_type: str,
+    summary: str,
+    evidence: list[str],
+) -> Path:
+    """Write a committable record of a flight that produced a DECISION, not code.
+
+    WOT-2026-040t, Pieza 3. Pieza 1 requires a commit to hand off. A flight that
+    stops has no code to commit, so before this it had nothing -- and stayed in
+    limbo (F7). WOT-2026-040j is the measured case: it stopped, left zero
+    commits, and ``--session-close`` went on to certify a stale unrelated ticket.
+
+    This does NOT weaken the rejector. The stopped flight passes for the same
+    reason a coding flight does: it has a commit. The decision is simply made
+    into a thing that CAN be committed.
+
+    Before: ``worktree`` is a git working tree; ``evidence`` is non-empty and
+        ``cause_type`` belongs to DECISION_CAUSE_TYPES.
+    During: creates DECISION_DIR if needed and writes one JSON file. Writes to
+        disk but never invokes git -- committing is the caller's act, kept
+        separate so this stays a recorder and never becomes a maker.
+    After: returns the path written. Raises DecisionCommitError when the record
+        would be evidence-free or carry an unknown cause_type -- a stop without
+        evidence is a claim, and accepting it would turn the barrier into a
+        rubber stamp.
+    """
+    if not evidence:
+        raise DecisionCommitError(
+            f"decision de {ticket} sin evidencia: una parada sin evidencia es un "
+            "relato, no un registro (CEM). Adjunta comando + salida real."
+        )
+    if cause_type not in DECISION_CAUSE_TYPES:
+        raise DecisionCommitError(
+            f"cause_type desconocido: {cause_type!r}. "
+            f"Vocabulario cerrado: {', '.join(sorted(DECISION_CAUSE_TYPES))}."
+        )
+    if not summary.strip():
+        raise DecisionCommitError(f"decision de {ticket} sin summary.")
+
+    record = {
+        "ticket": ticket,
+        "state": state,
+        "cause_type": cause_type,
+        "summary": summary,
+        "evidence": list(evidence),
+    }
+    target = worktree / _decision_relpath(ticket)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(record, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    return target
+
+
+def read_decision_at_sha(worktree: Path, sha: str, ticket: str) -> dict:
+    """Read a flight's decision record FROM THE COMMIT (Pieza 2 applied to 3).
+
+    Reading the working tree here would defeat the point: a decision editable
+    after the fact is no better evidence than the mutable tree it replaced. The
+    test tampers with the file post-commit and this must still return the
+    committed text.
+
+    Before: ``sha`` is the SHA the rejector emitted; ``ticket`` names the record.
+    During: one ``read_surface_at_sha`` call plus a JSON parse. Read-only.
+    After: returns the parsed record. Raises SurfaceAbsentError (NO AUDITABLE)
+        when no decision exists at that SHA -- absence is never implicit
+        approval -- and DecisionCommitError when the committed record is not
+        valid JSON.
+    """
+    relpath = _decision_relpath(ticket)
+    raw = read_surface_at_sha(worktree, sha, [relpath])[relpath]
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise DecisionCommitError(
+            f"la decision commiteada en {relpath}@{sha} no es JSON valido: {exc}"
+        ) from exc
 
 
 def read_surface_at_sha(worktree: Path, sha: str, paths: list[str]) -> dict[str, str]:
