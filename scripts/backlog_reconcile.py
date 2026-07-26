@@ -58,12 +58,27 @@ _COL_TICKET = 1
 _COL_TITULO = 2
 _COL_SCOPE = 3
 _COL_STATUS = 4
+_COL_DEPENDS = 5
 _EXPECTED_COLS = 8
 
 # Harvest file paths / file:line cites and backticked identifiers from opaque text.
 # Anchored, no nested unbounded quantifier -> no catastrophic backtracking.
 _PATH_RE = re.compile(r"[\w./-]+\.py(?::\d+(?:-\d+)?)?")
 _IDENT_RE = re.compile(r"`([^`]{2,60})`")
+
+# WOT-2026-041f cross (e): an "accepted" marker inside a DEC line. Kept broad on
+# purpose -- a MISSED signal is worse than a noisy one, because the agent reviews
+# every signal but never sees the ones we filtered away.
+_DEC_ACCEPTED_RE = re.compile(r"\baccept(?:ed|ada|ado)\b", re.IGNORECASE)
+# WOT-2026-041f cross (f): ticket-IDs inside a free-text "Depende de" cell, which
+# may hold several ("WOT-2026-027c, WOT-2026-026j") or a literal "-".
+_TICKET_ID_IN_CELL_RE = re.compile(
+    r"\b(?:WOT|WP|WT|CTL)-\d{4}-[0-9a-z]+\b", re.IGNORECASE
+)
+# Live statuses that carry a blocker worth cross-checking (cross (f)). Distinct
+# from RECONCILE_STATES: 'blocked' rows do NOT enter reconciliation, but their
+# blocker is still checked against the live queue.
+_BLOCKED_STATE = "blocked"
 
 # Cap of grep lines kept per term in the gitignored raw/ dump (the full count still
 # goes to findings; a broad term can otherwise match thousands of lines).
@@ -386,22 +401,114 @@ def _signal_grep(terms: list[str], repo: Path, raw_sink: list[str]) -> list[dict
     return out
 
 
+def _signal_dec_accepted(ticket_id: str, dest_root: Path) -> list[dict]:
+    """WOT-2026-041f cross (e): DEC records that mention this ticket as accepted.
+
+    A ticket still sitting in a LIVE state while a DEC declares its decision
+    accepted is a DIVERGENCE worth surfacing -- but it is NOT a verdict. Several
+    innocent readings exist (the DEC accepted a design, not the implementation;
+    the row covers work beyond the DEC). The agent decides; this only reports
+    WHERE to look.
+
+    Before: ``dest_root`` may or may not hold a ``decisions`` tree; a missing
+    tree is a silent empty signal, never an error.
+    During: reads ``*.md`` under the DEC dir, matching the ticket-ID and an
+    accepted marker in the SAME file. Read-only.
+    After: a list of ``{path, line, text}`` evidence records (possibly empty).
+    Never raises: unreadable files are skipped.
+    """
+    signals: list[dict] = []
+    dec_dir = dest_root / "orchestrator_pipeline" / "decisions"
+    if not dec_dir.is_dir():
+        return signals
+    try:
+        candidates = sorted(dec_dir.rglob("*.md"))
+    except OSError:
+        return signals
+    for dec in candidates:
+        try:
+            text = dec.read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if ticket_id not in text:
+            continue
+        for idx, line in enumerate(text.splitlines(), start=1):
+            if ticket_id in line and _DEC_ACCEPTED_RE.search(line):
+                signals.append(
+                    {"path": dec.name, "line": idx, "text": line.strip()[:200]}
+                )
+    return signals
+
+
+def _signal_blocker_offqueue(depends_cell: str, live_ids: frozenset[str]) -> list[dict]:
+    """WOT-2026-041f cross (f): blockers that are NOT in the live queue.
+
+    A ``blocked`` row whose blocker is absent from the live table is a
+    divergence: the blocker may have been archived (so the row is unblocked and
+    nobody noticed) or it may be a typo / a ticket that never existed. Those
+    readings are OPPOSITE in consequence, so this emits the raw fact and lets
+    the agent resolve it -- it never says "unblock this".
+
+    Before: ``depends_cell`` is the raw "Depende de" cell; ``live_ids`` are the
+    ticket-IDs present in the live table.
+    During: pure string work, no I/O.
+    After: one record per blocker-ID not found among ``live_ids``. ``-`` and
+    empty cells yield nothing (no blocker declared is not a divergence).
+    """
+    return [
+        {"blocker": blocker, "present_in_live_queue": False}
+        for blocker in _TICKET_ID_IN_CELL_RE.findall(depends_cell or "")
+        if blocker not in live_ids
+    ]
+
+
 def _collect_all(
     rows: list[list[str]], content: str, motor_root: Path, dest_root: Path
-) -> tuple[list[dict], list[str], list[str]]:
+) -> tuple[list[dict], list[str], list[str], list[dict]]:
     """Build per-ticket signal records for every row in the reconcile set.
 
-    Returns (tickets, warnings, raw_sink). Each ticket's signals run against the
-    repo chosen by scope (_scope_repo); scope with no repo (system/infra) yields a
-    warning and empty file/grep signals (the agent judges without a repo signal).
+    Returns (tickets, warnings, raw_sink, divergences). Each ticket's signals run
+    against the repo chosen by scope (_scope_repo); scope with no repo
+    (system/infra) yields a warning and empty file/grep signals (the agent judges
+    without a repo signal).
+
+    WOT-2026-041f adds ``divergences``: cross-checks that surface a CONTRADICTION
+    between two sources (a DEC vs the row's state; a blocker vs the live queue).
+    They remain [RELATO] like every other signal -- each carries its evidence and
+    an explicit note that opposite readings exist. This script NEVER classifies.
     """
     tickets: list[dict] = []
     warnings: list[str] = []
     raw_sink: list[str] = []
+    divergences: list[dict] = []
+    # Cross (f) needs the WHOLE live table as its reference set, so it is built
+    # before the per-ticket loop: a blocker is "off-queue" relative to every live
+    # row, not just the reconciled subset.
+    live_ids = frozenset(
+        cells[_COL_TICKET] for cells in rows if len(cells) == _EXPECTED_COLS
+    )
     for cells in rows:
         if len(cells) != _EXPECTED_COLS:
             continue  # the contract gate owns shape validation; skip malformed rows
         status = cells[_COL_STATUS]
+        # Cross (f) runs on 'blocked' rows, which never enter reconciliation --
+        # that is precisely why nobody was checking their blockers.
+        if status == _BLOCKED_STATE:
+            offqueue = _signal_blocker_offqueue(cells[_COL_DEPENDS], live_ids)
+            if offqueue:
+                divergences.append(
+                    {
+                        "kind": "blocked_with_offqueue_blocker",
+                        "ticket_id": cells[_COL_TICKET],
+                        "status": status,
+                        "blockers": offqueue,
+                        "note": (
+                            "SIGNAL, not verdict: the blocker may be archived "
+                            "(row silently unblocked) or a typo. Opposite "
+                            "consequences -- the agent resolves it."
+                        ),
+                    }
+                )
         if status not in RECONCILE_STATES:
             continue
         ticket_id = cells[_COL_TICKET]
@@ -417,7 +524,25 @@ def _collect_all(
             "grep_commits": [],
             "scope_paths": [],
             "dod_terms": [],
+            "dec_accepted_hits": [],
         }
+        # Cross (e): a LIVE row whose DEC says "accepted". Runs regardless of
+        # scope repo -- DECs live in the destino, not in the scoped repo.
+        dec_hits = _signal_dec_accepted(ticket_id, dest_root)
+        if dec_hits:
+            record["dec_accepted_hits"] = dec_hits
+            divergences.append(
+                {
+                    "kind": "dec_accepted_but_ticket_live",
+                    "ticket_id": ticket_id,
+                    "status": status,
+                    "evidence": dec_hits,
+                    "note": (
+                        "SIGNAL, not verdict: the DEC may have accepted a DESIGN "
+                        "while implementation stays pending. The agent judges."
+                    ),
+                }
+            )
         if repo is None:
             warnings.append(
                 f"{ticket_id}: scope '{scope_slug}' -> no git repo (n/a); "
@@ -435,7 +560,7 @@ def _collect_all(
                     f"===== {ticket_id} ({repo_label}) =====\n" + "\n".join(ticket_sink)
                 )
         tickets.append(record)
-    return tickets, warnings, raw_sink
+    return tickets, warnings, raw_sink, divergences
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -512,7 +637,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[reconcile] ERROR: cannot create output dir: {exc}", file=sys.stderr)
         return 2
 
-    tickets, warnings, raw_sink = _collect_all(rows, content, motor_root, dest_root)
+    tickets, warnings, raw_sink, divergences = _collect_all(
+        rows, content, motor_root, dest_root
+    )
 
     repos_last_run = {
         "motor": _read_last_run(motor_root),
@@ -531,6 +658,7 @@ def main(argv: list[str] | None = None) -> int:
         "repos_last_run": repos_last_run,
         "automatic_warnings": warnings,
         "automatic_criticals": [],
+        "divergences": divergences,
         "note": "Collector output is [RELATO]; the agent produces the verdict (Fase 0).",
     }
     (out_dir / "findings.json").write_text(
@@ -545,7 +673,10 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     print(f"[reconcile] OK -> {out_dir}")
-    print(f"[reconcile] tickets={len(tickets)} warnings={len(warnings)}")
+    print(
+        f"[reconcile] tickets={len(tickets)} warnings={len(warnings)} "
+        f"divergences={len(divergences)}"
+    )
     return 0
 
 
