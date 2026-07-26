@@ -71,9 +71,61 @@ Leer `backlog.md` completo. Para cada ticket `pending`/`deferred`/
 - `last-run.json` u otro artefacto de ejecucion si existe.
 
 No existe un check determinista generico: cada DoD requiere una verificacion
-distinta. El script recolector automatico (`scripts/backlog_reconcile.py`) es
-un follow-up futuro (WOT-2026-021i); hasta que exista, esta fase se hace "a
-mano" con los comandos de arriba.
+distinta. Por eso esta fase es **recolector mas juicio**, nunca automatica.
+
+### Paso 0.1 -- EJECUTAR el recolector (obligatorio)
+
+`scripts/backlog_reconcile.py` YA EXISTE (WOT-2026-021i) y recolecta las senales
+de arriba de forma determinista. Ejecutalo ANTES de juzgar nada:
+
+```bash
+python scripts/backlog_reconcile.py \
+  --motor-root <repo_motor> \
+  --project-root <repo_destino>
+```
+
+Emite un directorio con las senales crudas por ticket (commits que citan el ID,
+existencia de los ficheros del scope, HEAD contra el que se midio). Usa `--out`
+para fijar el directorio de salida; si lo omites, lo deriva del destino.
+
+### Paso 0.2 -- CONTRATO DE AUTORIDAD (no negociable)
+
+**El script RECOLECTA; el AGENTE juzga.** Su propio docstring lo fija:
+`This script NEVER classifies` (`scripts/backlog_reconcile.py:7`). Emite senales
+etiquetadas `[RELATO]`, no veredictos.
+
+Por tanto:
+
+- **PROHIBIDO** derivar `LIKELY_DONE` / `LIKELY_PENDING` / `NEEDS_HUMAN_VERIFY`
+  de un campo del JSON. Esas tres etiquetas las emite el agente LEYENDO la
+  evidencia, nunca el recolector.
+- Un `exit 0` del recolector significa "recolecte", **no** "el backlog esta
+  reconciliado". Verifica el ARTEFACTO (el directorio de salida y su contenido),
+  no solo el codigo de salida.
+- Si el recolector falla o no cubre un ticket, esta fase se hace **a mano** con
+  los comandos de arriba para ese ticket. La ausencia de senal no es senal.
+
+### Paso 0.3 -- LEER el bloque `divergences`
+
+`findings.json` trae un bloque `divergences`: contradicciones entre DOS fuentes que
+ninguna senal por-ticket puede ver por separado. Hoy emite dos clases:
+
+- `dec_accepted_but_ticket_live`: un DEC marca el ticket como aceptado y su fila
+  sigue viva. Lectura inocente posible: el DEC acepto un DISENO, no la implementacion.
+- `blocked_with_offqueue_blocker`: una fila `blocked` cuyo bloqueante no esta en la
+  cola viva. Lecturas OPUESTAS: el bloqueante se archivo (la fila esta desbloqueada
+  y nadie lo vio) **o** es un typo. Resolver antes de proponer nada.
+
+Cada divergencia lleva su evidencia y una `note` que enuncia las lecturas opuestas.
+**Son SENAL, no veredicto:** ninguna autoriza por si sola a desbloquear, archivar ni
+reclasificar. Se investigan como cualquier otra senal de esta fase.
+
+**Alcance declarado (no inferir cobertura que no hay):** el cruce de bloqueantes
+mira SOLO las filas `blocked`, porque son las que nunca entran en reconciliacion.
+Una fila `pending` con un bloqueante archivado NO se reporta hoy. Y un bloqueante
+escrito en forma corta (`028a` en vez de `WOT-2026-028a`) **no se detecta**: la
+celda parece sin bloqueante. Si la celda "Depende de" no esta vacia pero no produjo
+senal, verificala a mano.
 
 Emitir por ticket una de estas tres clasificaciones de reconciliacion:
 

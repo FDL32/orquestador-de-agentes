@@ -43,6 +43,7 @@ _BACKLOG = """# Backlog (cola viva)
 | Baja | WOT-2026-900d | host extends copies | system/host | completed-partial | - | s | condition:x |
 | Baja | WOT-2026-900e | already closed thing | motor/done | ready-for-review | - | s | - |
 | Baja | WT-2026-900f | blocked upstream | system/sec | blocked | - | s | condition:y |
+| Baja | WOT-2026-900g | blocked by an archived ticket | motor/x | blocked | WOT-2026-777z | s | - |
 
 ## Fichas detalladas (tickets vivos)
 
@@ -488,3 +489,147 @@ def test_out_dir_is_immutable(tmp_path, monkeypatch):
     # A second run against the same base appends _NN rather than overwriting.
     second = br._unique_out_dir(tmp_path / "fixed")
     assert second != (tmp_path / "fixed")
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-041f: divergence cross-checks -- (e) DEC accepted vs live row,
+# (f) blocked row whose blocker is not in the live queue.
+#
+# Fixtures are SYNTHETIC on purpose. Pinning a live case (e.g. today's 021f /
+# 027a) would make the test decay the day that ticket is archived: it would then
+# assert against a row that no longer exists, and the failure would look like a
+# code regression instead of the calendar moving. Live cases belong in a report
+# as a DATED snapshot, never as a test oracle (WOT-2026-024t: criterio
+# invariante, evidencia fechada).
+# --------------------------------------------------------------------------- #
+
+
+def _dec(ws, name: str, body: str) -> Path:
+    dec_dir = ws / "orchestrator_pipeline" / "decisions"
+    dec_dir.mkdir(parents=True, exist_ok=True)
+    path = dec_dir / name
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+def test_041f_cross_e_dec_accepted_while_ticket_live(tmp_path):
+    """A DEC marking the ticket accepted while its row is LIVE -> divergence."""
+    ws = tmp_path / "ws"
+    _dec(
+        ws,
+        "DEC-900a.md",
+        "# DEC\n\nDecision sobre WOT-2026-900a: ACCEPTED por el usuario.\n",
+    )
+    hits = br._signal_dec_accepted("WOT-2026-900a", ws)
+    assert len(hits) == 1
+    assert hits[0]["line"] == 3
+    assert "WOT-2026-900a" in hits[0]["text"]
+
+
+def test_041f_cross_e_requires_both_id_and_marker_on_same_line(tmp_path):
+    """ANTI-FALSE-POSITIVE: the ID alone, or 'accepted' alone, is NOT a signal."""
+    ws = tmp_path / "ws"
+    _dec(
+        ws,
+        "DEC-x.md",
+        "Se menciona WOT-2026-900a sin veredicto.\nOtra cosa fue accepted.\n",
+    )
+    assert br._signal_dec_accepted("WOT-2026-900a", ws) == []
+    # And a ticket absent from every DEC yields nothing.
+    assert br._signal_dec_accepted("WOT-2026-999z", ws) == []
+
+
+def test_041f_cross_e_missing_dec_dir_is_silent(tmp_path):
+    """No DEC tree at all -> empty signal, never an exception (fail-safe)."""
+    assert br._signal_dec_accepted("WOT-2026-900a", tmp_path / "nope") == []
+
+
+def test_041f_cross_f_offqueue_blocker_is_reported(tmp_path):
+    """A blocker absent from the live queue is surfaced with its ID."""
+    live = frozenset({"WOT-2026-900a", "WOT-2026-900b"})
+    out = br._signal_blocker_offqueue("WOT-2026-777z", live)
+    assert out == [{"blocker": "WOT-2026-777z", "present_in_live_queue": False}]
+
+
+def test_041f_cross_f_multi_blocker_cell_splits(tmp_path):
+    """A cell may carry several blockers; each is checked independently."""
+    live = frozenset({"WOT-2026-900a"})
+    out = br._signal_blocker_offqueue("WOT-2026-900a, WOT-2026-888y", live)
+    assert [o["blocker"] for o in out] == ["WOT-2026-888y"]
+
+
+def test_041f_cross_f_no_blocker_is_not_a_divergence(tmp_path):
+    """ANTI-FALSE-POSITIVE: '-' / empty means no blocker declared, not a defect."""
+    live = frozenset({"WOT-2026-900a"})
+    assert br._signal_blocker_offqueue("-", live) == []
+    assert br._signal_blocker_offqueue("", live) == []
+    # A blocker that IS live is likewise silent.
+    assert br._signal_blocker_offqueue("WOT-2026-900a", live) == []
+
+
+def test_041f_divergences_reach_findings_and_carry_no_verdict(tmp_path, monkeypatch):
+    """End-to-end: divergences land in findings.json as SIGNAL, never a verdict.
+
+    The authority contract (`This script NEVER classifies`) is the load-bearing
+    clause of WOT-2026-041f: a divergence must not smuggle in a classification.
+    """
+    motor = _fake_motor(tmp_path)
+    ws = _fake_workspace(tmp_path)
+    _dec(ws, "DEC-900a.md", "WOT-2026-900a quedo accepted en el consejo.\n")
+    monkeypatch.setattr(br, "_run", _fake_run_factory(motor, ws))
+    out_dir = tmp_path / "out"
+    rc = br.main(
+        ["--motor-root", str(motor), "--project-root", str(ws), "--out", str(out_dir)]
+    )
+    assert rc == 0
+    findings = json.loads((out_dir / "findings.json").read_text(encoding="utf-8"))
+
+    kinds = {d["kind"] for d in findings["divergences"]}
+    assert "dec_accepted_but_ticket_live" in kinds
+
+    blob = json.dumps(findings["divergences"])
+    for verdict in ("LIKELY_DONE", "LIKELY_PENDING", "NEEDS_HUMAN_VERIFY"):
+        assert verdict not in blob, (
+            f"the collector emitted the verdict {verdict}; it must only emit "
+            "evidence -- the AGENT classifies (backlog_reconcile.py docstring)"
+        )
+    for d in findings["divergences"]:
+        assert d["note"], "every divergence must carry its 'signal, not verdict' note"
+
+
+def test_041f_cross_f_reaches_findings_through_collect_all(tmp_path, monkeypatch):
+    """MUTATION-VERIFY of the INTEGRATION POINT, not just the pure helper.
+
+    Regression pin for a surviving mutant found by an adversarial lens: replacing
+    ``if status == _BLOCKED_STATE:`` in ``_collect_all`` with ``if False:`` left
+    the whole suite green (26/26), because every cross-(f) test called
+    ``_signal_blocker_offqueue`` directly. A helper with teeth wired to nothing
+    is not a barrier -- the wiring needs its own test.
+
+    The fixture row ``WOT-2026-900g`` is ``blocked`` on ``WOT-2026-777z``, which
+    is absent from the live table; ``WT-2026-900f`` is ``blocked`` with ``-`` and
+    must stay silent (anti-false-positive on the same path).
+    """
+    motor = _fake_motor(tmp_path)
+    ws = _fake_workspace(tmp_path)
+    monkeypatch.setattr(br, "_run", _fake_run_factory(motor, ws))
+    out_dir = tmp_path / "out"
+    rc = br.main(
+        ["--motor-root", str(motor), "--project-root", str(ws), "--out", str(out_dir)]
+    )
+    assert rc == 0
+    findings = json.loads((out_dir / "findings.json").read_text(encoding="utf-8"))
+
+    offqueue = [
+        d
+        for d in findings["divergences"]
+        if d["kind"] == "blocked_with_offqueue_blocker"
+    ]
+    assert len(offqueue) == 1, (
+        "the blocked row with an off-queue blocker must reach findings.json "
+        f"through _collect_all; got {offqueue}"
+    )
+    assert offqueue[0]["ticket_id"] == "WOT-2026-900g"
+    assert [b["blocker"] for b in offqueue[0]["blockers"]] == ["WOT-2026-777z"]
+    # The '-' blocked row never becomes a divergence (no blocker declared).
+    assert all(d["ticket_id"] != "WT-2026-900f" for d in findings["divergences"])

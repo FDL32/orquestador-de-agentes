@@ -78,7 +78,7 @@ Ese prompt es la fuente de verdad. Hereda el contrato de evidencia de
 | Fase | Rol | Prompts | Scripts / comandos |
 |---|---|---|---|
 | 0.pre Gate | Manager | `<MOTOR_ROOT>/prompts/backlog_triage.md` | `<MOTOR_ROOT>/scripts/check_backlog_contract.py --project-root <destino>` |
-| 0 Reconciliacion | Manager | `<MOTOR_ROOT>/prompts/backlog_triage.md` | `git log --grep`, `git ls-files`, greps de DoD |
+| 0 Reconciliacion | Manager | `<MOTOR_ROOT>/prompts/backlog_triage.md` | `<MOTOR_ROOT>/scripts/backlog_reconcile.py --motor-root <motor> --project-root <destino>` (Paso 0.1); fallback manual `git log --grep`, `git ls-files`, greps de DoD |
 | 1 Clasificacion | Manager | `<MOTOR_ROOT>/prompts/audit_agent_output.md` | lectura de `backlog.md` y planes archivados |
 | 2 Agrupacion | Manager | `<MOTOR_ROOT>/prompts/backlog_triage.md` | ninguno adicional |
 | 3 Sintesis | Manager | `<MOTOR_ROOT>/prompts/backlog_triage.md` | ninguno adicional |
