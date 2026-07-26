@@ -1008,3 +1008,100 @@ def test_026g_mut_dropping_commit_cell_gate_hides_the_skip():
         "the has_commit gate in census_archived must route a commit-cell-less "
         "required row into skipped_required, not audited"
     )
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-040s: una linea FISICA puede llevar VARIAS filas logicas fusionadas.
+# El parser iteraba por linea fisica y tomaba el PRIMER ticket-ID de cada una,
+# descartando el resto en silencio -> fail-open en el DENOMINADOR: el commit del
+# 2o ticket nunca llegaba a audit(), luego no podia dar ERROR. Un guard que no
+# mira no puede bloquear.
+# --------------------------------------------------------------------------- #
+
+_FUSED_A = (
+    "| WOT-2026-111A | completed | fila A deliverable_type: code "
+    "| motor/a | completed | - | s | commit:aaaaaaa |"
+)
+_FUSED_B = (
+    "| WOT-2026-222B | completed | fila B deliverable_type: code "
+    "| motor/b | completed | - | s | commit:bbbbbbb |"
+)
+
+
+def test_fused_physical_line_yields_every_logical_row():
+    """Dos filas terminales en UNA linea fisica -> DOS pares, no uno.
+
+    DoD-1/4a de WOT-2026-040s. Falla antes del fix (devuelve 1 par: el 2o
+    ticket se pierde) y pasa despues. El control con '\n' prueba que el
+    fixture es valido -- si el caso separado tambien fallara, el test estaria
+    midiendo otra cosa.
+    """
+    separated = gl.parse_archived_commits(_FUSED_A + "\n" + _FUSED_B)
+    assert separated == [("WOT-2026-111A", "aaaaaaa"), ("WOT-2026-222B", "bbbbbbb")], (
+        "control: separadas por newline el parser ya funcionaba; si esto falla, "
+        "el fixture no representa dos filas validas"
+    )
+    fused = gl.parse_archived_commits(_FUSED_A + _FUSED_B)
+    assert fused == separated, (
+        "una linea fisica con dos filas logicas debe emitir los MISMOS pares que "
+        "las mismas dos filas separadas por newline: el 2o ticket no puede "
+        "desaparecer del denominador (fail-open)"
+    )
+
+
+def test_fused_physical_line_does_not_shrink_the_census():
+    """El DENOMINADOR declarado no puede encoger por una fusion de filas.
+
+    DoD-4a. census_archived sangra por la MISMA causa que parse_archived_commits:
+    reparar solo el parser dejaria el censo mintiendo, que es exactamente el
+    fail-open que este ticket ataca. Hallazgo de la auditoria del contrato.
+    """
+    separated = gl.census_archived(_FUSED_A + "\n" + _FUSED_B)
+    fused = gl.census_archived(_FUSED_A + _FUSED_B)
+    assert fused == separated, (
+        f"el censo de una linea fusionada debe igualar al de las filas "
+        f"separadas; separadas={separated} fusionadas={fused}"
+    )
+
+
+def test_fused_row_fix_keeps_literal_pipe_in_titulo_working():
+    """El fix NO puede reintroducir parsing posicional (STOP del contrato).
+
+    La fila viva WOT-2026-021i lleva 'system|infra' en su Titulo -> 9 celdas.
+    Por eso el ticket-ID se busca por REGEX y la celda de commit por PREFIJO,
+    nunca por indice. Este test pinnea esa restriccion de diseño: si alguien
+    arregla la fusion con cells[1], esta fila deja de parsear.
+    """
+    nine_cells = (
+        "| WOT-2026-021I | completed | titulo con system|infra dentro "
+        "deliverable_type: code | motor/x | completed | - | s | commit:ccccccc |"
+    )
+    assert gl.parse_archived_commits(nine_cells) == [("WOT-2026-021I", "ccccccc")], (
+        "una fila con '|' literal en el Titulo debe seguir parseando: el fix de "
+        "la fusion no puede volver al acceso posicional por indice"
+    )
+
+
+def test_empty_cell_is_not_mistaken_for_a_fused_row():
+    """Un '||' que es CELDA VACIA no puede partir la fila (WOT-2026-040s).
+
+    El '||' es ambiguo: cierre+apertura de dos filas fusionadas, o una celda
+    vacia dentro de UNA fila legitima. El primer intento de fix partia por '||'
+    a ciegas y devolvia [] para este caso -- cambiaba un fail-open por otro,
+    perdiendo el ticket entero. Medido antes de escribir este test.
+
+    La regla: solo se parte si el lado derecho ARRANCA una fila de verdad, o
+    sea si lleva su propia celda de ticket-ID.
+    """
+    with_empty_cell = (
+        "| WOT-2026-333C | completed | titulo || motor/x "
+        "| completed | - | s | commit:ddddddd |"
+    )
+    assert gl.parse_archived_commits(with_empty_cell) == [
+        ("WOT-2026-333C", "ddddddd")
+    ], (
+        "una fila con una celda vacia debe seguir parseando como UNA fila: "
+        "partir por '||' a ciegas la destruye"
+    )
+    # y el caso fusionado de verdad sigue partiendose
+    assert len(gl.parse_archived_commits(_FUSED_A + _FUSED_B)) == 2

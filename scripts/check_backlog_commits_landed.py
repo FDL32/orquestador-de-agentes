@@ -258,6 +258,83 @@ def _row_cells(line: str) -> list[str] | None:
     return [c.strip() for c in stripped.strip("|").split("|")]
 
 
+def _logical_rows(content: str) -> list[list[str]]:
+    """Yield the cells of every LOGICAL row, splitting fused physical lines.
+
+    WOT-2026-040s. A physical line can carry SEVERAL logical rows glued together
+    (``...commit:aaa || WOT-2026-222B | completed |...``) -- markdown degrades that
+    way when rows are edited or merged. The old readers iterated ``splitlines()``
+    and took the FIRST ticket-ID per physical line, discarding the rest in silence:
+    the second ticket never reached ``audit()``, so it could never raise ERROR. That
+    is fail-open in the DENOMINATOR -- the worst failure class for a guard whose job
+    is to block.
+
+    The split key is the ``|`` that CLOSES a row abutting the ``|`` that OPENS the
+    next one. Splitting on the cell boundary (not on a cell count) is what keeps the
+    ``system|infra`` row working: a literal pipe inside a Titulo yields 9 cells, and
+    this function never assumes a width. Consumers keep locating the ticket-ID by
+    REGEX and the evidence cell by PREFIX -- never by index (STOP of the contract).
+
+    Before: ``content`` is the archive text; may be empty.
+    During: pure string work -- no I/O, no git.
+    After: returns one cell-list per logical row, in document order. A physical line
+    holding N fused rows yields N entries, so ``len()`` is a faithful denominator.
+    Never raises.
+    """
+    rows: list[list[str]] = []
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            continue
+        # A ``||`` is AMBIGUOUS: it can be row-close + row-open (a fused line), or a
+        # single EMPTY CELL inside one legitimate row (``| a || b |``). Splitting on
+        # it blindly destroys the empty-cell row -- trading one fail-open for another
+        # (measured: the naive split returned [] for such a row, losing the ticket
+        # entirely). So we split ONLY when the right-hand side actually starts a new
+        # row: it must carry its own ticket-ID cell. Anything else stays as one row
+        # and reaches _row_cells untouched.
+        for chunk in _split_fused(stripped):
+            cells = _row_cells(chunk)
+            if cells:
+                rows.append(cells)
+    return rows
+
+
+def _split_fused(stripped: str) -> list[str]:
+    """Split a physical line into row-shaped chunks, conservatively (WOT-2026-040s).
+
+    Before: ``stripped`` is a line already known to start with ``|``.
+    During: scans each ``||`` boundary and cuts ONLY if the remainder parses as a row
+        that owns a ticket-ID -- the signature of a genuinely fused row. A ``||`` that
+        is merely an empty cell leaves the line intact.
+    After: returns >=1 chunks, each starting with ``|``. Never raises. When in doubt it
+        does NOT split: a missed split keeps today's behavior, while a wrong split would
+        silently drop a real row.
+    """
+    # Collect the cut offsets in ONE forward pass, then slice. An earlier version
+    # looped with a mutable ``rest`` and rebuilt it as ``"|" + rest[...]``, which
+    # re-created the very ``||`` it had just consumed -> the string never shrank and
+    # the loop spun forever (caught by a 124-timeout, not by review). A single pass
+    # over fixed offsets cannot fail to terminate.
+    cuts: list[tuple[int, int]] = []
+    for m in re.finditer(r"\|\s*\|", stripped):
+        candidate = "|" + stripped[m.end() - 1 :]
+        cells = _row_cells(candidate)
+        if cells and any(_TICKET_ID_RE.match(c) for c in cells):
+            cuts.append((m.start(), m.end()))
+    if not cuts:
+        return [stripped]
+    chunks: list[str] = []
+    prev_end = 0
+    for start, end in cuts:
+        piece = stripped[prev_end:start] + "|"
+        chunks.append(piece if piece.startswith("|") else "|" + piece)
+        prev_end = end - 1
+    tail = stripped[prev_end:]
+    chunks.append(tail if tail.startswith("|") else "|" + tail)
+    return chunks
+
+
 def _commit_cell(cells: list[str]) -> str | None:
     """The evidence cell of a row: the first cell starting with ``commit:``/``commits:``.
 
@@ -299,10 +376,7 @@ def parse_archived_commits(content: str) -> list[tuple[str, str]]:
     if it has both a terminal-state cell and a commit(s) cell.
     """
     pairs: list[tuple[str, str]] = []
-    for line in content.splitlines():
-        cells = _row_cells(line)
-        if cells is None:
-            continue
+    for cells in _logical_rows(content):
         if not any(c in _TERMINAL_STATES for c in cells):
             continue
         ticket_id = next((c for c in cells if _TICKET_ID_RE.match(c)), None)
@@ -339,17 +413,17 @@ def census_archived(content: str) -> dict:
     required = audited = skipped_required = skipped_legacy = 0
     skipped_required_tickets: list[str] = []
     terminal_ids: list[str] = []
-    for line in content.splitlines():
-        cells = _row_cells(line)
-        if cells is None:
-            continue
+    for cells in _logical_rows(content):
         if not any(c in _TERMINAL_STATES for c in cells):
             continue
         ticket_id = next((c for c in cells if _TICKET_ID_RE.match(c)), None)
         if not ticket_id:
             continue
         terminal_ids.append(ticket_id)
-        match = _DELIVERABLE_TYPE_RE.search(line)
+        # WOT-2026-040s: search THIS logical row, not the whole physical line.
+        # On a fused line the old ``search(line)`` could read the neighbour's
+        # ``deliverable_type`` and classify a row by someone else's evidence.
+        match = _DELIVERABLE_TYPE_RE.search(" | ".join(cells))
         dtype = match.group(1) if match else None
         has_commit = _commit_cell(cells) is not None
         if dtype in _LANDING_REQUIRED_TYPES:
