@@ -321,6 +321,7 @@
     ]
   },
   "ensemble_private_roots": [],
+  "ensemble_payload_allowlist": [],
   "role_mapping": {
     "orchestrator": {
       "backend": "claude"
