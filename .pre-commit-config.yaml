@@ -126,6 +126,18 @@ repos:
         always_run: true
         stages: [pre-commit]
 
+      # Guard: enforce MANIFEST.distribute frontier as a MECHANISM (WOT-2026-025i).
+      # Every manifest entry must resolve to >=1 tracked file (no stale entries =
+      # no holes in the frontier). Always_run + pass_filenames:false because the
+      # denominator comes from the MANIFEST, not from argv.
+      - id: check-distribution-boundary
+        name: check distribution boundary (every manifest entry resolves to tracked files)
+        entry: uv run python scripts/check_distribution_boundary.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
       # Guard against dangerous truncation of execution_log.md without archive compensation
       - id: check-history-truncation
         name: check history truncation guard

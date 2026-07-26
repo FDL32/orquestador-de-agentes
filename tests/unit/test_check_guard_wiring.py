@@ -79,6 +79,7 @@ EXPECTED_WIRED_REAL = {
     "check_destino_publish_ready",  # WOT-2026-024w (colateral): wired via check_motor_destination_integration en prepush
     "check_distributable_planning_clean",  # WOT-2026-024h(C4'): cableado via import estatico en prepush_check.py::run_distributable_planning_check (closeout, BLOQUEANTE). No es falso-WIRED: mutation-verify con par de exit-codes literal (0 limpio -> 1 al re-anadir un contrato WOT real a la superficie distribuible).
     "check_distribution_agnostic",  # WOT-2026-024z(d): cableado en pre-commit (entry: uv run python)
+    "check_distribution_boundary",  # WOT-2026-025i: cableado en pre-commit (entry: uv run python)
     "check_encoding_guard",
     "check_guard_wiring",
     "check_handoff_committed",  # WOT-2026-040t(P1): cableado en prepush_check.py (closeout, BLOQUEANTE)
