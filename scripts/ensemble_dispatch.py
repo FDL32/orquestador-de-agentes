@@ -53,6 +53,7 @@ import contextlib
 import hashlib
 import importlib.util
 import json
+import math
 import os
 import re
 import secrets
@@ -60,6 +61,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -223,7 +225,15 @@ def _resolve_project_root(raw: str) -> Path:
 # maquina. Hoy el riesgo es BAJO porque el AGENTE elige que va en el bundle; se
 # dispara cuando lo elija el MODELO (WOT-2026-027m, que declara 027n como
 # precondicion dura).
-_HIGH_ENTROPY_ASSIGNMENT = re.compile(
+# WOT-2026-027s: renombrado desde `_HIGH_ENTROPY_ASSIGNMENT`. El nombre viejo
+# MENTIA: pese a decir "entropia" no mide entropia alguna -- exige un nombre de
+# clave RECONOCIBLE (password|api_key|token|secret) y solo entonces un valor de
+# >=8 chars. Es un gate por NOMBRE-DE-CLAVE, no por aleatoriedad del valor.
+# Conservarlo hacia irrealizable el DoD (e) de aislamiento por capa: la capa 3,
+# que si mide entropia de Shannon, colisionaba nominalmente con esta y "quitar
+# la capa de entropia" no tenia un referente unico. Simbolo privado: el
+# renombrado no toca ninguna firma publica.
+_CREDENTIAL_ASSIGNMENT = re.compile(
     r"(password|api_key|token|secret)\s*=\s*[\"'][^\"']{8,}[\"']",
     re.IGNORECASE,
 )
@@ -232,6 +242,149 @@ _CREDENTIAL_LITERALS = (
     re.compile(r"ghp_[A-Za-z0-9]{20,}"),
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
 )
+
+
+# WOT-2026-027s CAPA 3: entropia REAL (Shannon), ortogonal a
+# `_CREDENTIAL_ASSIGNMENT` (que casa NOMBRES de clave conocidos y no mide nada
+# aleatorio). Cierra el vector "valor sin patron" que 027n dejo abierto y
+# declaro como riesgo residual.
+#
+# DEUDA DECLARADA -- DUENO: WOT-2026-041n. El umbral NO esta calibrado contra un
+# corpus: los bundles reales vivian en `.agent/runtime/tmp/` (gitignored) y se
+# purgaron, hecho ya declarado en el propio plan de vuelo. Elegir un numero "a
+# ojo" seria exactamente la "meseta sin medir" que AGENTS.md prohibe. Por eso
+# esta capa nace en DETECCION BASICA y deliberadamente CONSERVADORA:
+#   - solo mira tokens LARGOS (>=32 chars) y sin espacios, la forma de un
+#     secreto opaco (base64/hex), no de la prosa;
+#   - exige entropia >= 4.0 bits/caracter, que la prosa natural (~2.5-3.5) y los
+#     identificadores de codigo no alcanzan, pero base64 aleatorio (~5.5-6.0) si;
+#   - exige mezcla de clases de caracter, para no morder un hash hex de commit
+#     ni una cadena repetitiva.
+# FALSO-POSITIVO RESIDUAL MEDIDO (2026-07-27, contra el REPO REAL -- 481
+# ficheros .md/.py, no contra los fixtures de este ticket, que medirian solo a
+# si mismos): 6/481 (1.2%) muerden, y los 6 son ficheros de TEST que llevan
+# credenciales sinteticas o identificadores CamelCase largos. Prosa, prompts y
+# documentacion: 0 mordidos. Ese perfil es ACEPTABLE porque el payload real de
+# un envio son bundles de prosa, no la suite. Iteracion previa MEDIDA y
+# DESCARTADA: incluir `/ _ -` en el alfabeto daba 6/120 mordidos, todos rutas y
+# URLs (`docs/BUS_ARCHITECTURE_WT-2026-210`); una segunda iteracion que exigia
+# densidad de digitos bajaba el residual pero DEJABA DE CAZAR base64 real, asi
+# que se revirtio: un filtro que no detecta es peor que un falso positivo.
+# CRITERIO DE SALIDA de la deuda (WOT-2026-041n): reunir un corpus versionado de
+# bundles reales, barrer el umbral contra la SUITE REAL (no contra fixtures
+# escritos para el barrido) y publicar AMBOS bordes de la meseta; si la cota
+# superior queda abierta, decirlo. Hasta entonces el numero es un DEFAULT
+# CONSERVADOR declarado, no un umbral medido.
+_ENTROPY_MIN_TOKEN_LEN = 32
+_ENTROPY_BITS_THRESHOLD = 4.0
+_OPAQUE_TOKEN = re.compile(rf"[A-Za-z0-9+=]{{{_ENTROPY_MIN_TOKEN_LEN},}}")
+
+
+def _shannon_bits(value: str) -> float:
+    """Entropia de Shannon en bits/caracter de `value`.
+
+    Before: `value` es un token no vacio ya extraido del payload.
+    During: cuenta frecuencias por caracter y aplica -sum(p*log2(p)). Sin I/O.
+    After: retorna los bits por caracter (0.0 para cadena vacia o de un solo
+        simbolo repetido). No lanza.
+    """
+    if not value:
+        return 0.0
+    total = len(value)
+    counts = Counter(value)
+    return -sum((n / total) * math.log2(n / total) for n in counts.values())
+
+
+def _entropy_leak(payload_text: str) -> str | None:
+    """Token opaco de alta entropia en el payload, o None si no lo hay.
+
+    CAPA 3 (WOT-2026-027s), ortogonal a `_content_leak`: aquella mira NOMBRES de
+    clave conocidos, esta mira la FORMA del valor. Un secreto sin patron
+    reconocible (base64 opaco) solo lo ve esta.
+
+    Before: `payload_text` es el material serializado que saldria al backend.
+    During: extrae tokens de >=32 chars del alfabeto base64/hex y evalua, para
+        cada uno, entropia de Shannon y diversidad de clases de caracter. Sin
+        I/O ni red.
+    After: retorna una etiqueta describiendo el hallazgo (sin FILTRAR el valor:
+        el reason viaja a logs, incluirlo seria fugar el secreto que se intenta
+        proteger) o None. No lanza.
+    """
+    for token in _OPAQUE_TOKEN.findall(payload_text):
+        classes = sum(
+            (
+                any(c.islower() for c in token),
+                any(c.isupper() for c in token),
+                any(c.isdigit() for c in token),
+            )
+        )
+        if classes < 3:
+            continue
+        bits = _shannon_bits(token)
+        if bits >= _ENTROPY_BITS_THRESHOLD:
+            return (
+                f"token opaco de {len(token)} chars con entropia "
+                f"{bits:.2f} bits/char (umbral {_ENTROPY_BITS_THRESHOLD})"
+            )
+    return None
+
+
+# WOT-2026-027s CAPA 1: allowlist de LECTURA. Que ficheros pueden ENTRAR al
+# payload, decidido ANTES de leer el fichero -- no que contiene, que es lo que
+# miran las capas 2 y 3. Es la unica capa que puede cerrar el vector "el MODELO
+# elige el fichero" (WOT-2026-027m): las otras dos solo ven el texto una vez ya
+# se leyo, y un fichero fuera de la allowlist no debe llegar siquiera a leerse.
+#
+# ESTADO MEDIDO 2026-07-27: `ensemble_private_roots` esta VACIA en el motor y
+# AUSENTE en el destino. La capa por-RUTA que figura como existente NO PROTEGE
+# NADA hoy; esta capa 1 no hereda esa cobertura inexistente.
+#
+# Config: clave ADITIVA `ensemble_payload_allowlist` en el agents.json del
+# MOTOR, leida via `load_motor_config` (motor-explicita, ignora
+# AGENT_PROJECT_ROOT por el contrato M9). Lista VACIA o AUSENTE = allowlist
+# DESACTIVADA (retrocompatible: el pipeline de hoy sigue funcionando). Con
+# entradas, se vuelve fail-closed.
+def payload_read_allowed(
+    payload_path: Path,
+    allowlist: list[str],
+    motor_root: Path | None = None,
+) -> tuple[bool, str]:
+    """Decide si `payload_path` puede leerse como payload de un envio.
+
+    Before: `payload_path` es la ruta cruda pedida por el CLI (puede no
+        existir); `allowlist` son prefijos de ruta RELATIVOS al motor,
+        tal cual vienen de `ensemble_payload_allowlist`.
+    During: resuelve la ruta (siguiendo symlinks, para que un enlace no
+        sortee la barrera) y comprueba contencion bajo alguna raiz de la
+        allowlist. Sin leer el CONTENIDO del fichero: la decision es por
+        RUTA y ocurre ANTES de cualquier lectura.
+    After: retorna (allowed, reason). Allowlist vacia/ausente -> (True,
+        motivo nombrado) para preservar el comportamiento actual; con
+        entradas, todo lo que no este contenido -> (False, motivo). No
+        lanza: el caller decide (el CLI lo convierte en DispatchBlockedError).
+    """
+    if not allowlist:
+        return True, "allowlist de payload no configurada (capa 1 inactiva)"
+    root = (motor_root or MOTOR_ROOT).resolve()
+    try:
+        resolved = payload_path.resolve()
+    except (OSError, ValueError):
+        return False, f"ruta de payload irresoluble: {payload_path}"
+    for entry in allowlist:
+        if not entry:
+            continue
+        candidate = Path(entry)
+        base = candidate if candidate.is_absolute() else root / candidate
+        try:
+            base = base.resolve()
+        except (OSError, ValueError):
+            continue
+        if resolved == base or base in resolved.parents:
+            return True, f"payload bajo raiz permitida: {entry}"
+    return False, (
+        f"payload fuera de ensemble_payload_allowlist: {resolved} no esta bajo "
+        f"ninguna de {allowlist}"
+    )
 
 
 def _content_leak(payload_text: str) -> str | None:
@@ -245,11 +398,14 @@ def _content_leak(payload_text: str) -> str | None:
     After: retorna la etiqueta del patron (para el `reason` del caller) o None.
         No lanza: el caller decide el veredicto.
     """
-    if _HIGH_ENTROPY_ASSIGNMENT.search(payload_text):
-        return "asignacion con valor de alta entropia"
+    if _CREDENTIAL_ASSIGNMENT.search(payload_text):
+        return "asignacion a nombre de clave de credencial"
     for pattern in _CREDENTIAL_LITERALS:
         if pattern.search(payload_text):
             return f"literal de credencial ({pattern.pattern})"
+    entropy = _entropy_leak(payload_text)
+    if entropy is not None:
+        return entropy
     return None
 
 
@@ -1361,7 +1517,18 @@ def _cmd_smoke(args, config) -> int:
 
 def _cmd_run(args, config) -> int:
     project_root = _resolve_project_root(args.project_root)
-    payload = Path(args.payload_file).read_text(encoding="utf-8")
+    # WOT-2026-027s CAPA 1: la allowlist decide ANTES de leer. Fail-closed con
+    # la MISMA semantica que la barrera ya existente en `send_to_profile`
+    # (DispatchBlockedError antes de tocar red); no se introduce una tercera
+    # semantica tipo skip-con-warn. Mutation: sin este bloque, un payload de
+    # cualquier ruta entra al pipeline.
+    payload_path = Path(args.payload_file)
+    allowed, reason = payload_read_allowed(
+        payload_path, config.get("ensemble_payload_allowlist", [])
+    )
+    if not allowed:
+        raise DispatchBlockedError(f"lectura de payload BLOQUEADA: {reason}")
+    payload = payload_path.read_text(encoding="utf-8")
     transcript = run_pipeline(
         args.pipeline,
         config=config,
