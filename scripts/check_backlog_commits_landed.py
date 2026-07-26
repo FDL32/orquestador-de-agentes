@@ -570,11 +570,16 @@ def classify(
     superseded on another branch (squash-merge) -- neither is reachable from HEAD, so
     hoisting PENDING above it does not touch them.
     """
+    # WOT-2026-040c DoD(b): name the ref actually checked. These labels used to say
+    # ``origin/main`` HARDCODED while the check ran against ``ref`` -- so under
+    # ``--ref HEAD`` the guard claimed a commit was in origin/main having never
+    # looked there. A guard that reports a ref it did not measure hands the operator
+    # false evidence, and the operator closes on it.
     if _is_ancestor(sha, ref, repo):
-        return OK, "ancestor of origin/main (CAPA 1)"
+        return OK, f"ancestor of {ref} (CAPA 1)"
     pid = _patch_id(sha, repo)
     if pid and pid in patch_ids:
-        return OK, "patch-id present in origin/main (CAPA 2, rebase)"
+        return OK, f"patch-id present in {ref} (CAPA 2, rebase)"
     # WOT-2026-023q: this MUST precede CAPA 3. The object existing AND being reachable
     # from the local branch is a fact about THIS repo; the ID appearing in some subject
     # is a convention about SOME commit. The fact wins.

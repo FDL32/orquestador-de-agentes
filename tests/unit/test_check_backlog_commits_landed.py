@@ -1105,3 +1105,42 @@ def test_empty_cell_is_not_mistaken_for_a_fused_row():
     )
     # y el caso fusionado de verdad sigue partiendose
     assert len(gl.parse_archived_commits(_FUSED_A + _FUSED_B)) == 2
+
+
+def test_capa1_detail_names_the_ref_it_actually_checked(tmp_path):
+    """El detail de CAPA 1 no puede decir 'origin/main' si comprobo OTRA ref.
+
+    WOT-2026-040c DoD(b). ``classify`` recibe ``ref`` y lo usa en ``_is_ancestor``,
+    pero el mensaje llevaba ``origin/main`` HARDCODEADO: con ``--ref HEAD`` afirmaba
+    que un commit estaba en origin/main sin haberlo comprobado nunca. Un guard que
+    reporta una ref que no midio da evidencia FALSA al operador -- y el operador
+    cierra sobre esa evidencia.
+    """
+    work, *_ = _make_repo(tmp_path)
+    head = _sha(work)
+    # ref = HEAD: el sha ES ancestro de HEAD, luego cae en CAPA 1
+    verdict, detail = gl.classify("WOT-2026-0REF", head, "HEAD", work, set())
+    assert verdict == gl.OK
+    assert "CAPA 1" in detail
+    assert "origin/main" not in detail, (
+        f"el detail nombra origin/main pero la ref comprobada fue HEAD: {detail!r}"
+    )
+    assert "HEAD" in detail, f"el detail debe nombrar la ref que comprobo: {detail!r}"
+
+
+def test_capa2_detail_also_names_the_ref_it_actually_checked(tmp_path):
+    """CAPA 2 lleva el MISMO label hardcodeado que CAPA 1 -- y su propia barrera.
+
+    WOT-2026-040c DoD(b), hallazgo MAJOR de la manager-review: el fix toco CAPA 1 Y
+    CAPA 2, pero solo CAPA 1 quedaba pinneada. Un mutante que revirtiera unicamente
+    la CAPA 2 habria sobrevivido a la suite entera. Una barrera por rama tocada.
+    """
+    work, original, rebased = _rebased_pair(tmp_path)
+    patch_ids = {gl._patch_id(rebased, work)}
+    verdict, detail = gl.classify("WOT-2026-0RF2", original, "HEAD", work, patch_ids)
+    assert verdict == gl.OK
+    assert "CAPA 2" in detail
+    assert "origin/main" not in detail, (
+        f"CAPA 2 nombra origin/main pero comprobo HEAD: {detail!r}"
+    )
+    assert "HEAD" in detail, f"CAPA 2 debe nombrar la ref real: {detail!r}"
