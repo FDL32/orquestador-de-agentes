@@ -255,7 +255,10 @@ _CREDENTIAL_LITERALS = (
 # ojo" seria exactamente la "meseta sin medir" que AGENTS.md prohibe. Por eso
 # esta capa nace en DETECCION BASICA y deliberadamente CONSERVADORA:
 #   - solo mira tokens LARGOS (>=32 chars) y sin espacios, la forma de un
-#     secreto opaco (base64/hex), no de la prosa;
+#     secreto opaco en BASE64, no de la prosa. El HEX puro NO lo cubre esta
+#     rama (solo tiene 2 clases de caracter y cae en el guardia de abajo): lo
+#     cubre la capa 3b `_HEX_SECRET`, anadida en WOT-2026-041q. Hasta ese
+#     ticket este comentario decia "base64/hex" y era FALSO;
 #   - exige entropia >= 4.0 bits/caracter, que la prosa natural (~2.5-3.5) y los
 #     identificadores de codigo no alcanzan, pero base64 aleatorio (~5.5-6.0) si;
 #   - exige mezcla de clases de caracter, para no morder un hash hex de commit
@@ -278,6 +281,37 @@ _CREDENTIAL_LITERALS = (
 _ENTROPY_MIN_TOKEN_LEN = 32
 _ENTROPY_BITS_THRESHOLD = 4.0
 _OPAQUE_TOKEN = re.compile(rf"[A-Za-z0-9+=]{{{_ENTROPY_MIN_TOKEN_LEN},}}")
+# WOT-2026-041q CAPA 3b: el hex puro NO PASA por _OPAQUE_TOKEN + clases.
+#
+# EL DEFECTO QUE CIERRA (medido 2026-07-27 por un bucle adversarial externo, no
+# por la suite de 027s: 4 lentes convergieron en el mismo hueco): un secreto en
+# hex -- el formato MAS COMUN de clave API y de hash -- tiene solo DOS clases de
+# caracter (letras + digitos), asi que el guardia `classes < 3` lo descartaba
+# ANTES de mirar su entropia. Par medido: 'd41d8cd98f00b204e9800998ecf8427e5f1a2b3c'
+# ESCAPABA; con esta rama, se caza. El comentario de arriba ya prometia
+# "base64/hex" y el codigo solo cubria base64: la promesa era FALSA, que es la
+# familia "barrera del alcance" de AGENTS.md.
+#
+# POR QUE UNA RAMA PROPIA Y NO relajar `classes` a >=2: relajar el guardia
+# generico reabre falsos positivos en identificadores CamelCase largos (ya
+# medidos en 027s). El hex tiene alfabeto CERRADO, asi que se reconoce por FORMA
+# sin tocar el resto de la capa 3.
+#
+# POR QUE SIN EXCEPCION POR LONGITUD (iteracion MEDIDA Y DESCARTADA, no la
+# repitas): excluir las longitudes canonicas de hash (32/40/64) deja el repo real
+# en 0 falsos positivos... pero hace ESCAPAR MD5, SHA-1 y SHA-256, que es
+# justamente donde caen las claves API hex reales. Compraba silencio a costa de
+# la cobertura que esta capa viene a dar.
+#
+# COSTE ACEPTADO Y MEDIDO (snapshot 2026-07-27, 481 ficheros del repo real): 5
+# mordidos, de los cuales 1 es PROSA (CREDITS.md, que cita SHAs de commits de
+# repos externos) y 4 son fixtures de test. Un SHA-1 de 40 chars y una clave API
+# hex de 40 chars son INDISTINGUIBLES por forma: no existe senal que los separe
+# sin contexto semantico. Se acepta a proposito el falso positivo, porque
+# bloquear un bundle que cita un SHA es RECUPERABLE (el operador lo ve y decide)
+# mientras que dejar salir una clave API no lo es. Asimetria deliberada.
+_HEX_SECRET = re.compile(r"(?<![0-9a-zA-Z])[0-9a-fA-F]{32,}(?![0-9a-zA-Z])")
+_HEX_BITS_THRESHOLD = 3.0
 
 
 def _shannon_bits(value: str) -> float:
@@ -310,6 +344,21 @@ def _entropy_leak(payload_text: str) -> str | None:
         el reason viaja a logs, incluirlo seria fugar el secreto que se intenta
         proteger) o None. No lanza.
     """
+    for hex_hit in _HEX_SECRET.finditer(payload_text):
+        token = hex_hit.group()
+        # La FORMA hex no basta: 'a'*64 es hex valido y tiene entropia 0.00.
+        # El umbral es MAS BAJO que el de base64 porque el alfabeto hex solo
+        # tiene 16 simbolos: su maximo teorico es 4.0 bits/char (log2(16)), de
+        # modo que exigirle 4.0 lo haria inalcanzable. 3.0 deja fuera la cadena
+        # repetida y el patron trivial, y admite MD5/SHA/claves reales (medido:
+        # 3.56-3.73 bits). Hereda la MISMA deuda de calibracion que el umbral de
+        # base64: dueno WOT-2026-041n.
+        if _shannon_bits(token) < _HEX_BITS_THRESHOLD:
+            continue
+        return (
+            f"token hexadecimal opaco de {len(token)} chars "
+            "(forma de clave API o hash; WOT-2026-041q)"
+        )
     for token in _OPAQUE_TOKEN.findall(payload_text):
         classes = sum(
             (

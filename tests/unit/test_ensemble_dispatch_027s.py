@@ -41,8 +41,15 @@ _OPACO = "kJ8vQz3XpR7mNw2LtY6bHc4FdA9sG1eU5iO0"
 # Valor con nombre de clave conocido y valor DELIBERADAMENTE repetitivo (baja
 # entropia): solo la capa 2 puede verlo.
 _CON_NOMBRE = 'password = "aaaaaaaa"'
-# Falsos positivos obvios de un gate de entropia mal acotado.
+# Falso positivo obvio de un gate de entropia mal acotado: entropia 0.00.
 _CADENA_REPETIDA = "a" * 64
+# WOT-2026-041q: _SHA_HEX ERA un caso anti-falso-positivo de 027s y DEJO DE
+# SERLO a proposito. Un SHA hex de 40 chars es INDISTINGUIBLE por forma de una
+# clave API hex de 40 chars, y 027s dejaba escapar el formato mas comun de clave
+# API por tratarlo como benigno. Hoy la capa 3b lo caza: el falso positivo se
+# acepta por asimetria de dano (bloquear un bundle que cita un SHA es
+# recuperable; dejar salir una clave, no). Vive ahora en
+# test_041q_las_longitudes_de_hash_nunca_se_excluyen como contrato POSITIVO.
 _SHA_HEX = "0123456789abcdef0123456789abcdef01234567"
 
 
@@ -195,7 +202,6 @@ def test_027s_capa3_no_filtra_el_secreto_en_el_reason():
     "benigno",
     [
         _CADENA_REPETIDA,
-        _SHA_HEX,
         "esta es prosa tecnica normal sobre api_key y tokens de acceso",
         "https://github.com/usuario/repositorio/blob/main/scripts/fichero.py",
     ],
@@ -262,7 +268,17 @@ def test_027s_capa3_no_muerde_prosa_del_repo_real():
     vuelva a ampliarse sin medir.
     """
     root = Path(ed.__file__).resolve().parents[1]
-    prosa = list(root.glob("*.md")) + list((root / "prompts").glob("*.md"))
+    # WOT-2026-041q: CREDITS.md se excluye NOMBRANDOLO, no ampliando el filtro.
+    # Cita SHAs de commits de repos externos (40 chars hex), y desde la capa 3b
+    # esos son indistinguibles de una clave API hex. Es el UNICO fichero de prosa
+    # mordido (medido 2026-07-27: 1/50) y el coste esta aceptado en el docstring
+    # de _HEX_SECRET. Excluirlo aqui mantiene el test como barrera del RESTO de
+    # la prosa en vez de convertirlo en verde vacio.
+    prosa = [
+        p
+        for p in list(root.glob("*.md")) + list((root / "prompts").glob("*.md"))
+        if p.name != "CREDITS.md"
+    ]
     assert len(prosa) >= 10, "el corpus de prosa real no se resolvio"
 
     mordidos = []
@@ -277,4 +293,92 @@ def test_027s_capa3_no_muerde_prosa_del_repo_real():
     assert not mordidos, (
         f"la capa 3 muerde PROSA legitima del repo: {mordidos}. Un gate que "
         f"bloquea el trabajo real ensena al operador a saltarselo (AGENTS.md)."
+    )
+
+
+# ---------------------------------------------------------------------------
+# CAPA 3b -- hex puro (WOT-2026-041q). El hueco que 027s dejo abierto.
+#
+# Lo encontro un bucle adversarial EXTERNO (4 lentes convergieron), no la suite
+# de 027s: el mismo sesgo que escribio la capa 3 escribio sus tests, y ninguno
+# probo hex. Es la leccion de AGENTS.md "aplicate tu propia vara" pagada en el
+# vuelo siguiente.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "secreto_hex",
+    [
+        "d41d8cd98f00b204e9800998ecf8427e5f1a2b3c",
+        "A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ],
+)
+def test_041q_capa3b_caza_hex_puro(secreto_hex):
+    """EL ROJO de 041q: hex -- el formato mas comun de clave API -- escapaba.
+
+    Par medido 2026-07-27 ANTES del fix: los 3 daban None. Causa: el hex tiene
+    solo DOS clases de caracter (letras + digitos), asi que el guardia
+    `classes < 3` de la capa 3 lo descartaba ANTES de mirar su entropia.
+    """
+    assert ed._entropy_leak(secreto_hex) is not None, (
+        "un secreto hex escapa a la capa 3: es el formato mas comun de clave API"
+    )
+
+
+def test_041q_capa3b_es_ortogonal_a_la_capa3_base64():
+    """AISLAMIENTO: cada rama caza lo suyo y no depende de la otra."""
+    solo_hex = "d41d8cd98f00b204e9800998ecf8427e5f1a2b3c"
+    solo_b64 = "kJ8vQz3XpR7mNw2LtY6bHc4FdA9sG1eU5iO0"
+    assert ed._HEX_SECRET.search(solo_hex) is not None
+    assert ed._HEX_SECRET.search(solo_b64) is None, "la rama hex no debe ver base64"
+    assert ed._entropy_leak(solo_b64) is not None, "base64 sigue cazandose (regresion)"
+
+
+@pytest.mark.parametrize(
+    "benigno",
+    [
+        "a1b2c3d4e5f6a1b2",
+        "esta es prosa tecnica normal sobre api_key y tokens de acceso",
+        "el commit 4cffb30 y el tag v9.17.1 no son secretos",
+    ],
+)
+def test_041q_capa3b_no_muerde_hex_corto_ni_prosa(benigno):
+    """ANTI-FALSO-POSITIVO de la rama hex: <32 chars y prosa NO muerden."""
+    assert ed._entropy_leak(benigno) is None, f"falso positivo: {benigno!r}"
+
+
+def test_041q_las_longitudes_de_hash_nunca_se_excluyen():
+    """ITERACION MEDIDA Y DESCARTADA -- contrato para que nadie la repita.
+
+    Excluir las longitudes canonicas de hash (32/40/64) deja el repo real en 0
+    falsos positivos, y por eso resulta tentador. Pero hace ESCAPAR MD5, SHA-1 y
+    SHA-256, que es justo donde caen las claves API hex reales: compra silencio a
+    costa de la cobertura que esta capa viene a dar.
+
+    Un SHA-1 de 40 chars y una clave API hex de 40 chars son INDISTINGUIBLES por
+    forma. Se acepta el falso positivo A PROPOSITO, por asimetria de dano:
+    bloquear un bundle que cita un SHA es recuperable; dejar salir una clave no.
+    """
+    for longitud_de_hash in (32, 40, 64):
+        token = "a1b2c3d4" * (longitud_de_hash // 8)
+        assert len(token) == longitud_de_hash
+        assert ed._entropy_leak(token) is not None, (
+            f"un hex de {longitud_de_hash} chars (longitud de hash) NO debe "
+            "excluirse: es la longitud de las claves API hex reales"
+        )
+
+
+def test_041q_el_comentario_de_la_capa3_ya_no_promete_hex():
+    """El comentario decia "base64/hex" y el codigo solo cubria base64.
+
+    Familia "barrera del alcance" (AGENTS.md): un guard que anuncia mas alcance
+    del que tiene se lee como cobertura. Este contrato fija la correccion.
+    """
+    src = Path(ed.__file__).read_text(encoding="utf-8")
+    assert "WOT-2026-041q" in src, "la capa 3b perdio su ticket dueno"
+    i = src.index("_ENTROPY_MIN_TOKEN_LEN = 32")
+    cabecera = src[:i]
+    assert "secreto opaco (base64/hex)" not in cabecera, (
+        "el comentario de la capa 3 vuelve a prometer hex sin cubrirlo"
     )
