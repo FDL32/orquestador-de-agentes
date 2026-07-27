@@ -268,17 +268,17 @@ def test_027s_capa3_no_muerde_prosa_del_repo_real():
     vuelva a ampliarse sin medir.
     """
     root = Path(ed.__file__).resolve().parents[1]
-    # WOT-2026-041q: CREDITS.md se excluye NOMBRANDOLO, no ampliando el filtro.
-    # Cita SHAs de commits de repos externos (40 chars hex), y desde la capa 3b
-    # esos son indistinguibles de una clave API hex. Es el UNICO fichero de prosa
-    # mordido (medido 2026-07-27: 1/50) y el coste esta aceptado en el docstring
-    # de _HEX_SECRET. Excluirlo aqui mantiene el test como barrera del RESTO de
-    # la prosa en vez de convertirlo en verde vacio.
-    prosa = [
-        p
-        for p in list(root.glob("*.md")) + list((root / "prompts").glob("*.md"))
-        if p.name != "CREDITS.md"
-    ]
+    # WOT-2026-041r: la exclusion nominal de CREDITS.md (que 041q necesitaba) se
+    # RETIRA. Era el SINTOMA, no la solucion: silenciaba por nombre un fichero que
+    # el guardia de ETIQUETA ya no muerde. Hoy CREDITS.md entra en el barrido como
+    # cualquier otra prosa.
+    prosa = list(root.glob("*.md")) + list((root / "prompts").glob("*.md"))
+    # Coste MEDIDO y declarado de admitir el alfabeto url-safe (`_`, `-`), que es
+    # lo que cierra la salida de tokens OAuth/JWT: 2 ficheros de prosa muerden por
+    # llevar NOMBRES DE FICHERO largos con guiones bajos. Se nombran aqui para que
+    # el numero no crezca en silencio: si aparece un tercero, este test lo caza.
+    coste_url_safe = {"CHANGELOG.md", "audit_portability_legacy_surface.md"}
+    prosa = [p for p in prosa if p.name not in coste_url_safe]
     assert len(prosa) >= 10, "el corpus de prosa real no se resolvio"
 
     mordidos = []
@@ -320,9 +320,21 @@ def test_041q_capa3b_caza_hex_puro(secreto_hex):
     Par medido 2026-07-27 ANTES del fix: los 3 daban None. Causa: el hex tiene
     solo DOS clases de caracter (letras + digitos), asi que el guardia
     `classes < 3` de la capa 3 lo descartaba ANTES de mirar su entropia.
+
+    WOT-2026-041r CAMBIA EL CONTRATO a proposito: el hex ya no se caza DESNUDO,
+    sino solo con ETIQUETA de credencial cerca. Motivo medido: sin etiqueta, un
+    SHA citado en prosa es indistinguible de una clave, y la version desnuda
+    bloqueo el bundle de gobernanza de su propio ticket. De los 15 hex del repo
+    real que 041q mordia, CERO llevaban etiqueta: exigirla elimina el 100% del
+    falso positivo sin perder ningun secreto realmente presente.
     """
-    assert ed._entropy_leak(secreto_hex) is not None, (
-        "un secreto hex escapa a la capa 3: es el formato mas comun de clave API"
+    etiquetado = f'api_key = "{secreto_hex}"'
+    assert ed._entropy_leak(etiquetado) is not None, (
+        "un secreto hex ETIQUETADO escapa: es el formato mas comun de clave API"
+    )
+    assert ed._entropy_leak(secreto_hex) is None, (
+        "un hex DESNUDO no debe morder (041r): sin etiqueta es indistinguible "
+        "de un SHA citado, y morderlo entrena al operador a evadir el gate"
     )
 
 
@@ -363,7 +375,8 @@ def test_041q_las_longitudes_de_hash_nunca_se_excluyen():
     for longitud_de_hash in (32, 40, 64):
         token = "a1b2c3d4" * (longitud_de_hash // 8)
         assert len(token) == longitud_de_hash
-        assert ed._entropy_leak(token) is not None, (
+        # 041r: con ETIQUETA, porque el contrato del hex desnudo cambio.
+        assert ed._entropy_leak(f"secret: {token}") is not None, (
             f"un hex de {longitud_de_hash} chars (longitud de hash) NO debe "
             "excluirse: es la longitud de las claves API hex reales"
         )
@@ -381,4 +394,118 @@ def test_041q_el_comentario_de_la_capa3_ya_no_promete_hex():
     cabecera = src[:i]
     assert "secreto opaco (base64/hex)" not in cabecera, (
         "el comentario de la capa 3 vuelve a prometer hex sin cubrirlo"
+    )
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-041r -- contexto en la capa 3b + alfabeto url-safe.
+#
+# LA LECCION MAS CARA DEL VUELO, y por eso vive aqui como CONTRATO y no como
+# anecdota en un commit: la capa 3b de 041q bloqueo EN PRODUCCION el bundle de
+# gobernanza de su propio ticket, por citar el hash de ejemplo que documentaba
+# el fix. La reaccion del operador fue OMITIR el literal para poder enviarlo, es
+# decir, la barrera enseno su propia evasion al primer contacto con trabajo
+# legitimo. AGENTS.md: "un gate que se saltan es peor que no tenerlo".
+#
+# Si un cambio futuro vuelve a bloquear un documento que MENCIONA un hash sin
+# etiquetarlo como credencial, el arreglo NO esta hecho: estos tests lo cazan.
+# ---------------------------------------------------------------------------
+
+
+_HASH_CITADO = "d41d8cd98f00b204e9800998ecf8427e5f1a2b3c"
+
+
+@pytest.mark.parametrize(
+    "cita",
+    [
+        "Par medido: {h} ANTES escapa / DESPUES cazado.",
+        "el commit {h} toca la capa 3",
+        "https://github.com/langgenius/dify/tree/{h}",
+        "| docs-hotfix | [dify@{h}](https://x/tree/{h}) | patron |",
+    ],
+)
+def test_041r_un_hash_citado_no_bloquea(cita):
+    """EL ROJO de 041r: documentar un hash no puede bloquear el envio.
+
+    Los 4 casos son prosa REAL del repo (bundle de gobernanza, CHANGELOG,
+    CREDITS.md). Con la capa 3b de 041q los 4 bloqueaban.
+    """
+    payload = cita.format(h=_HASH_CITADO)
+    assert ed._entropy_leak(payload) is None, (
+        f"un hash CITADO bloquea el envio: {payload[:60]!r}. Eso entrena al "
+        "operador a omitir literales, que es evadir el gate (AGENTS.md)."
+    )
+
+
+@pytest.mark.parametrize(
+    "etiquetado",
+    [
+        'api_key = "{h}"',
+        "AWS_SECRET: {h}",
+        "Authorization: Bearer {h}",
+        'access_key="{h}"',
+    ],
+)
+def test_041r_un_hash_etiquetado_si_bloquea(etiquetado):
+    """La otra cara: con etiqueta de credencial, el MISMO hex debe bloquear.
+
+    Sin este test, "no bloquear citas" se cumpliria trivialmente no bloqueando
+    nada. El par cita/etiqueta es lo que hace falsable el guardia de contexto.
+    """
+    payload = etiquetado.format(h=_HASH_CITADO)
+    assert ed._entropy_leak(payload) is not None, (
+        f"un secreto hex ETIQUETADO escapa: {payload[:60]!r}"
+    )
+
+
+def test_041r_el_bundle_de_gobernanza_pasa_sin_omitir_literales():
+    """DoD (a) literal: el caso de prueba que la realidad dio gratis.
+
+    Reconstruye el fragmento exacto que provoco el DispatchBlockedError al
+    enviar el bundle de gobernanza de este cierre a challenger_codex.
+    """
+    bundle = (
+        "## HALLAZGO QUE ORIGINO 041q\n\n"
+        "027s entrego una capa 3 de entropia que NO cazaba hex puro.\n"
+        f"Par medido: {_HASH_CITADO} ANTES escapa / DESPUES cazado.\n"
+        "Los 18 tests de 027s daban VERDE.\n"
+    )
+    allowed, reason = ed.privacy_preflight(bundle, "public", {}, [])
+    assert allowed is True, (
+        f"el bundle de gobernanza vuelve a bloquearse ({reason}). Es el "
+        "incidente medido de 041r: la barrera bloquea su propia auditoria."
+    )
+
+
+@pytest.mark.parametrize(
+    "token_url_safe",
+    [
+        "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+        "ABCDabcd0123_-EFGHijkl4567_-MNOPqrst8901_-UVWXyz",
+    ],
+)
+def test_041r_base64url_ya_no_escapa(token_url_safe):
+    """Vector (B): un token OAuth/JWT salia LIMPIO desde 027s.
+
+    `_OPAQUE_TOKEN` no admitia `_` ni `-`, asi que el alfabeto url-safe quedaba
+    fuera. Hallado por dos lentes independientes del bucle L700.
+    """
+    assert ed._entropy_leak(token_url_safe) is not None, (
+        "un token base64url escapa a las 3 capas: es el formato estandar de "
+        "los tokens de sesion web"
+    )
+
+
+def test_041r_la_barra_sigue_fuera_del_alfabeto():
+    """ITERACION MEDIDA Y DESCARTADA: incluir `/` reintroduce el FP de rutas.
+
+    Medido 2026-07-27: con `/` dentro, una ruta entera casa como un solo token
+    y el repo real pasa de 11 a 26 ficheros mordidos (prosa de 2 a 4), con
+    `docs/BUS_ARCHITECTURE_WT-2026-210` y
+    `repos/FDL32/orquestador-de-agentes/rules/branches/main` como falsos
+    positivos. Es el mismo defecto que 027s ya habia medido y descartado.
+    """
+    ruta = "repos/FDL32/orquestador-de-agentes/rules/branches/main"
+    assert ed._entropy_leak(ruta) is None, (
+        "una RUTA muerde: `/` volvio al alfabeto de _OPAQUE_TOKEN"
     )
