@@ -6251,7 +6251,17 @@ def _state_status_is_terminal(state_content: str) -> bool:
     match = _STATE_STATUS_RE.search(state_content or "")
     if match is None:
         return False
-    from bus.state_machine import is_terminal_state
+    try:
+        from bus.state_machine import is_terminal_state
+    except ImportError:
+        # El docstring promete "no lanza", y el import PUEDE fallar: medido
+        # 2026-07-27, `python -c "from bus.state_machine import ..."` con cwd en
+        # el destino da `ImportError: No module named 'bus'`. Sin este except, el
+        # ImportError sube al caller -- que lo evalua ANTES de su bloque try -- y
+        # aborta el cierre con traceback en vez de correrlo. Fail-OPEN coherente
+        # con el resto del helper: sin autoridad resoluble NO se afirma
+        # terminalidad, asi que el closeout CORRE (direccion segura).
+        return False
 
     return is_terminal_state(match.group(1).strip())
 

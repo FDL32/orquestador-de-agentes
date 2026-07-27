@@ -542,6 +542,11 @@ def _regenerate_l2_l3(
     3. Solo cubre las entradas que ESTA pasada procesa. El LECTOR sigue sin
        mirar `archive/` (WOT-2026-024r), asi que una leccion archivada en una
        pasada ANTERIOR no reaparece sola.
+    4. L1 (`MEMORY.md`, el indice que un HUMANO lee primero) NO pasa por aqui:
+       `regen_memory_md(recent, stats)` recibe solo `recent`, asi que sigue
+       expulsando al 100%. Hallado por una lente adversarial DESPUES de que este
+       docstring declarara "tres limites" como si fueran exhaustivos -- el propio
+       fix media su alcance con vara mas floja que la que predicaba.
 
     Los tres son deuda DECLARADA, no resuelta: dueno WOT-2026-042e, que por eso
     queda en `completed-partial` y no en `completed`.
