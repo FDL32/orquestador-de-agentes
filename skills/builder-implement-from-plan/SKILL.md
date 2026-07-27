@@ -140,7 +140,7 @@ En `work_plan.md`:
 
 Si todas las tareas de la fase estan `[x]`:
 
-1. Ejecutar **Quality Gates completos**
+1. Ejecutar los **gates focales** de la fase (loop rapido: no autorizan handoff)
 2. Incluir `ruff format --check` sobre los archivos Python tocados
 3. Si pasan -> Continuar con siguiente fase
 4. Si fallan -> Corregir antes de continuar
@@ -185,7 +185,7 @@ Sigue esa fuente. Si esta skill y el prompt divergen, prevalece el prompt.
 ### Al Completar Fase
 
 - Todas las tareas de la fase en `[x]`
-- Quality Gates pasados
+- Gates focales de la fase pasados
 - Resumen de la fase en `execution_log.md`
 
 ### Al Completar Plan

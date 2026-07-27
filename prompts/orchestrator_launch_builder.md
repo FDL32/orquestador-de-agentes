@@ -108,7 +108,7 @@ git diff --cached --stat      # verifica el volumen antes de commitear
 Fallo real (2026-07-26): un `git add -A` metio 14.413 lineas de runtime en el
 commit del ticket.
 
-### M3. Fichero vivo escaso ⇒ mira el `archive/` hermano antes de diagnosticar
+### M3. Fichero vivo escaso => mira el `archive/` hermano antes de diagnosticar
 
 Varias superficies del sistema ROTAN: el fichero vivo conserva solo la ventana
 reciente y el historico se mueve a un directorio hermano.
@@ -130,7 +130,7 @@ Get-ChildItem <dir> ; Get-ChildItem <dir>/archive
 Fallo real (2026-07-26): se leyeron 12 eventos en `events.jsonl` y se diagnostico
 "el bus esta muerto", con 2506 eventos en el `archive/` de al lado.
 
-### M4. Validador citado ⇒ ejecutalo antes de redactar
+### M4. Validador citado => ejecutalo antes de redactar
 
 Si el contrato del ticket, este prompt o el propio artefacto nombran un
 validador, un gate o un schema para el artefacto que vas a producir, ESE
@@ -384,6 +384,10 @@ Si el scope gate pide override porque la entrega productiva vive en
 ```powershell
 python .agent/agent_controller.py --mark-ready --project-root <repo_destino> --scope-override "<razon con commit del repo_motor>"
 ```
+
+Este override cubre UNICAMENTE el caso del scope gate. NO lo uses para un
+rechazo por `stale` / `expected HEAD`: ese caso se resuelve re-creando M3, como
+indica el parrafo siguiente.
 
 Si `mark-ready` dice que `checkpoint/review-<ticket>` esta `stale` o que esperaba `HEAD`, no uses override: relanza `python .agent/agent_controller.py --pre-handoff --project-root <repo_destino> --json --force` para recrear M3 en el commit actual y luego repite `mark-ready`.
 
