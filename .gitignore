@@ -17,6 +17,11 @@ __pycache__/
 .agent/runtime/tmp/
 .agent/runtime/uv-cache/
 .agent/runtime/session/
+# WOT-2026-042k: telemetria del receipt_canary. El DESTINO ya lo ignoraba
+# (:57 de su .gitignore) pero el MOTOR no, asi que el canary ensuciaba su
+# arbol y tumbaba el Git Status Check del closeout (bloqueante). Es runtime
+# por-maquina: no viaja.
+.agent/runtime/ensemble/
 graphify-out/
 debug_output.txt
 output.txt
