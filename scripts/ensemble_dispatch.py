@@ -280,7 +280,30 @@ _CREDENTIAL_LITERALS = (
 # CONSERVADOR declarado, no un umbral medido.
 _ENTROPY_MIN_TOKEN_LEN = 32
 _ENTROPY_BITS_THRESHOLD = 4.0
-_OPAQUE_TOKEN = re.compile(rf"[A-Za-z0-9+=]{{{_ENTROPY_MIN_TOKEN_LEN},}}")
+# WOT-2026-041r: alfabeto ampliado a base64URL con `_` y `-`. Sin ellos, un
+# token OAuth/JWT estandar SALIA LIMPIO -- vector (B), preexistente desde 027s y
+# hallado por dos lentes independientes del bucle L700.
+#
+# `/` SE QUEDA FUERA A PROPOSITO (medido 2026-07-27, no teorico): incluirlo hace
+# que una RUTA entera case como un solo token y reintroduce el falso positivo que
+# 027s ya habia medido y descartado -- `docs/BUS_ARCHITECTURE_WT-2026-210`,
+# `repos/FDL32/orquestador-de-agentes/rules/branches/main`. Con `/` dentro: 26
+# ficheros mordidos y 4 de prosa; sin el: los numeros de abajo. El guardia de
+# ETIQUETA no cubre esto, porque solo se aplica a la rama hex, no a esta.
+# Consecuencia aceptada: un base64 estandar que use `/` en la posicion justa
+# puede partirse en dos tramos; como cada tramo de >=32 chars sigue casando, el
+# secreto se caza igual salvo que AMBOS lados queden por debajo del minimo.
+#
+# COSTE MEDIDO DE ADMITIR `_` y `-` (snapshot 2026-07-27, repo real de 481
+# ficheros): 11 mordidos en total -- el MISMO numero que 041q -- y 2 de PROSA,
+# frente a 1 en 041q. El fichero que entra es un NOMBRE DE FICHERO con guiones
+# bajos (`execution_log_WP-2026-037-to-041`, `DEC-008G-001-vocabulary-...`), que
+# es el precio directo e inevitable de aceptar el alfabeto url-safe. A cambio se
+# cierra la salida de tokens OAuth/JWT, que ANTES salian limpios. Se acepta: un
+# nombre de fichero bloqueado es visible y recuperable; un token de sesion que
+# sale, no. CREDITS.md, que era el falso positivo de 041q, YA NO MUERDE gracias
+# al guardia de etiqueta.
+_OPAQUE_TOKEN = re.compile(rf"[A-Za-z0-9+=_-]{{{_ENTROPY_MIN_TOKEN_LEN},}}")
 # WOT-2026-041q CAPA 3b: el hex puro NO PASA por _OPAQUE_TOKEN + clases.
 #
 # EL DEFECTO QUE CIERRA (medido 2026-07-27 por un bucle adversarial externo, no
@@ -303,15 +326,48 @@ _OPAQUE_TOKEN = re.compile(rf"[A-Za-z0-9+=]{{{_ENTROPY_MIN_TOKEN_LEN},}}")
 # justamente donde caen las claves API hex reales. Compraba silencio a costa de
 # la cobertura que esta capa viene a dar.
 #
-# COSTE ACEPTADO Y MEDIDO (snapshot 2026-07-27, 481 ficheros del repo real): 5
-# mordidos, de los cuales 1 es PROSA (CREDITS.md, que cita SHAs de commits de
-# repos externos) y 4 son fixtures de test. Un SHA-1 de 40 chars y una clave API
-# hex de 40 chars son INDISTINGUIBLES por forma: no existe senal que los separe
-# sin contexto semantico. Se acepta a proposito el falso positivo, porque
-# bloquear un bundle que cita un SHA es RECUPERABLE (el operador lo ve y decide)
-# mientras que dejar salir una clave API no lo es. Asimetria deliberada.
+# COSTE DE 041q, SUPERADO POR WOT-2026-041r (se conserva el registro porque el
+# razonamiento fue REFUTADO por medicion, y borrarlo perderia la leccion):
+# 041q mordia 5 ficheros, 1 de ellos PROSA (CREDITS.md, que cita SHAs de repos
+# externos), y justificaba ese falso positivo con una "asimetria de dano":
+# bloquear un bundle que cita un SHA seria RECUPERABLE, dejar salir una clave no.
+# LA PARTE "RECUPERABLE" RESULTO FALSA: la capa bloqueo el bundle de gobernanza
+# de su propio ticket y el operador se recupero OMITIENDO el literal, es decir,
+# aprendiendo a evadir el gate en su primer contacto con trabajo legitimo.
+# Hoy el hex NO muerde desnudo -- exige etiqueta de credencial (ver abajo) -- y
+# CREDITS.md ya no es falso positivo. Sigue siendo cierto lo unico que aquel
+# analisis acerto: un SHA-1 y una clave hex de 40 chars son INDISTINGUIBLES por
+# forma, y por eso hace falta contexto.
 _HEX_SECRET = re.compile(r"(?<![0-9a-zA-Z])[0-9a-fA-F]{32,}(?![0-9a-zA-Z])")
 _HEX_BITS_THRESHOLD = 3.0
+# WOT-2026-041r: ventana de contexto a la IZQUIERDA del token.
+#
+# POR QUE EXISTE (medido EN PRODUCCION, no teorico): la capa 3b de 041q decidia
+# por FORMA pura y bloqueo el bundle de GOBERNANZA de su propio ticket, por citar
+# el hash de ejemplo que documentaba el fix. La reaccion del operador fue OMITIR
+# el literal para poder enviarlo -- o sea, la barrera enseno su propia evasion al
+# primer contacto con trabajo legitimo. AGENTS.md lo predice: "un gate que se
+# saltan es peor que no tenerlo". Una barrera que entrena la evasion se esta
+# desactivando sola.
+#
+# LA SENAL (medida sobre el repo real, 481 ficheros): de los 15 hex que la capa
+# 3b mordia, CERO llevaban etiqueta de credencial -- todos eran citas (URLs de
+# commit, prosa tecnica, fixtures de test). O sea: exigir etiqueta elimina el
+# 100% del falso positivo SIN perder ningun secreto realmente presente.
+#
+# ASIMETRIA DELIBERADA entre ramas, y por que NO es incoherente:
+#   - HEX: exige etiqueta. Un SHA-1 y una clave hex son IDENTICOS en forma
+#     (medido en 041q), asi que la forma no puede decidir y el contexto es la
+#     unica senal disponible.
+#   - BASE64 opaco (>=4.0 bits): NO exige etiqueta. No hay un "SHA base64" que la
+#     gente cite en prosa; ese umbral ya da 0 mordidos sobre prosa real, luego
+#     pedirle contexto solo debilitaria la deteccion sin ganar nada.
+_CREDENTIAL_LABEL = re.compile(
+    r"(api[_-]?key|secret|token|password|passwd|pwd|auth|bearer|credential"
+    r"|access[_-]?key)\w*\s*[:=]?\s*[\"']?\s*$",
+    re.IGNORECASE,
+)
+_LABEL_WINDOW = 48
 
 
 def _shannon_bits(value: str) -> float:
@@ -354,6 +410,11 @@ def _entropy_leak(payload_text: str) -> str | None:
         # 3.56-3.73 bits). Hereda la MISMA deuda de calibracion que el umbral de
         # base64: dueno WOT-2026-041n.
         if _shannon_bits(token) < _HEX_BITS_THRESHOLD:
+            continue
+        izquierda = payload_text[
+            max(0, hex_hit.start() - _LABEL_WINDOW) : hex_hit.start()
+        ]
+        if not _CREDENTIAL_LABEL.search(izquierda):
             continue
         return (
             f"token hexadecimal opaco de {len(token)} chars "
