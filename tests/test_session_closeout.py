@@ -340,6 +340,73 @@ class TestResolveTickets:
         # without saying which ticket it refused is not self-service.
         assert "WP-2026-168" in src
 
+    def test_042f_archived_in_backlog_is_refused_even_with_an_empty_bus(
+        self, tmp_path: Path
+    ) -> None:
+        """WOT-2026-042f: el BACKLOG tambien es evidencia, no solo el bus.
+
+        El guard de WOT-2026-040e solo consulta el bus. MEDIDO EN VIVO
+        2026-07-27, tercera ocurrencia del mismo incidente: el dry-run del cierre
+        resolvio ``['WOT-2026-026k']`` -- cerrado el 21-jul y ya archivado -- y
+        reconciliar el bus NO lo arreglo, porque el bus NUNCA tuvo un solo evento
+        de ese ticket (`grep 026k` sobre events.jsonl y todo el archive: 0 hits).
+        El guard preguntaba a una fuente que no sabia, obtenia "no" y certificaba
+        historia falsa sobre el vuelo de otra sesion.
+
+        La evidencia que SI existia estaba en `_archive/backlog_done.md`. Este
+        test fija que se consulte: bus vacio + fila en el historico -> RECHAZO.
+
+        Mutation: sin la consulta al historico, el fallback vuelve a certificar.
+        """
+        _write_work_plan(tmp_path, "WOT-2026-026k")
+        # Sin fichero de eventos EN ABSOLUTO: es la forma exacta del incidente.
+        collab = tmp_path / ".agent" / "collaboration" / "_archive"
+        collab.mkdir(parents=True, exist_ok=True)
+        (collab / "backlog_done.md").write_text(
+            "# Backlog -- historico\n\n"
+            "| Ticket | Estado | Nota |\n"
+            "|--------|--------|------|\n"
+            "| WOT-2026-026k | completed | cerrado 2026-07-21 (commit 90ae7a5) |\n",
+            encoding="utf-8",
+        )
+
+        tickets, src = _resolve_tickets(tmp_path, None)
+
+        assert tickets == [], (
+            "el cierre certifico un ticket que el HISTORICO declara cerrado: el "
+            "guard solo mira el bus y el bus no sabia nada (regresion de "
+            "WOT-2026-042f)"
+        )
+        assert "WOT-2026-026k" in src, "el diagnostico debe nombrar el ticket"
+
+    def test_042f_a_live_ticket_absent_from_history_still_falls_back(
+        self, tmp_path: Path
+    ) -> None:
+        """WOT-2026-042f anti-falso-positivo: solo se rechaza lo ARCHIVADO.
+
+        Contrapartida obligatoria del test anterior: una sesion de mantenimiento
+        legitima (sin vuelo, sin eventos, ticket vivo) DEBE seguir resolviendo por
+        fallback. Sin este test, el fix de 042f podria bloquear todo cierre.
+        """
+        _write_work_plan(tmp_path, "WOT-2026-999z")
+        collab = tmp_path / ".agent" / "collaboration" / "_archive"
+        collab.mkdir(parents=True, exist_ok=True)
+        (collab / "backlog_done.md").write_text(
+            "# Backlog -- historico\n\n"
+            "| Ticket | Estado | Nota |\n"
+            "|--------|--------|------|\n"
+            "| WOT-2026-026k | completed | otro ticket, no el activo |\n",
+            encoding="utf-8",
+        )
+
+        tickets, src = _resolve_tickets(tmp_path, None)
+
+        assert tickets == ["WOT-2026-999z"], (
+            "un ticket VIVO ausente del historico debe seguir resolviendo por "
+            "fallback: el fix de 042f no puede bloquear cierres legitimos"
+        )
+        assert "fallback" in src
+
     def test_fallback_still_works_for_a_live_ticket(self, tmp_path: Path) -> None:
         """WOT-2026-040e anti-false-positive: only TERMINAL tickets are refused.
 

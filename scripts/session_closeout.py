@@ -316,6 +316,38 @@ def _ticket_is_terminal(events: list[dict[str, Any]], ticket_id: str) -> bool:
     return bool(_get_ticket_close_timestamps(events, [ticket_id]))
 
 
+def _ticket_is_archived_in_backlog(project_root: Path, ticket_id: str) -> bool:
+    """True si ``_archive/backlog_done.md`` ya registra ``ticket_id`` como cerrado.
+
+    WOT-2026-042f. Segunda fuente de evidencia junto al bus, no sustituta: el bus
+    puede no haber visto NUNCA un ticket (vuelo en worktree que no escribe estado,
+    o eventos ya archivados), y el historico del backlog es la superficie que el
+    humano cierra a mano.
+
+    Before: `project_root` es el `repo_destino`; `ticket_id` un id de ticket.
+    During: delega el parseo en `check_backlog_contract._ticket_has_row`, que es
+        LAYOUT-ROBUSTO (WOT-2026-023o: el id vive en cell[0] en el archive y en
+        cell[1] en el backlog vivo, y el archive tiene dos secciones distintas).
+        Reimplementar el parseo aqui seria un SEGUNDO lector del mismo dato --
+        exactamente el defecto que WOT-2026-042a acaba de corregir en el
+        controlador.
+    After: retorna bool. Si el modulo no es importable o el fichero no existe,
+        retorna False (fail-OPEN: sin evidencia NO se afirma cierre, y el guard
+        del bus sigue corriendo detras).
+    """
+    try:
+        # `scripts/` no esta en sys.path bajo pytest (el modulo solo inyecta
+        # _MOTOR_ROOT), asi que se importa por su paquete completo. Medido: el
+        # `from check_backlog_contract import ...` a secas funciona en CLI y
+        # falla en la suite -- un fail-open silencioso que dejaba el guard inerte.
+        from scripts.check_backlog_contract import _ticket_has_row
+    except ImportError:
+        return False
+
+    archive = project_root / ".agent" / "collaboration" / "_archive" / "backlog_done.md"
+    return _ticket_has_row(ticket_id, archive)
+
+
 def _resolve_tickets(
     project_root: Path,
     explicit_tickets: list[str] | None,
@@ -343,6 +375,23 @@ def _resolve_tickets(
 
     active = _resolve_active_ticket(project_root)
     if active:
+        # WOT-2026-042f: el BACKLOG tambien es evidencia. El guard de abajo
+        # (040e) solo pregunta al BUS, y en la TERCERA ocurrencia del mismo
+        # incidente (medida 2026-07-27) el bus no tenia UN SOLO evento de
+        # WOT-2026-026k -- ni vivo ni archivado -- asi que respondia "no
+        # terminal" y el fallback certificaba un ticket cerrado el 21-jul.
+        # Reconciliar el bus NO lo arreglo: la fuente que SI lo sabia era
+        # `_archive/backlog_done.md`. Se consulta ANTES del bus porque es la
+        # superficie que el humano cierra a mano y la que sobrevive al
+        # archivado de eventos.
+        if _ticket_is_archived_in_backlog(project_root, active):
+            return [], (
+                f"stale work_plan.md: it points at {active}, which "
+                "_archive/backlog_done.md already records as closed. This "
+                "session produced no events of its own, so there is nothing to "
+                "certify. Pass --ticket explicitly if you know what this "
+                "session closed."
+            )
         # WOT-2026-040e: measured twice (2026-07-23, 2026-07-25), both times
         # resolving to the same already-closed WOT-2026-026k. A flight ran in a
         # worktree without writing state, the window came up empty, and the
