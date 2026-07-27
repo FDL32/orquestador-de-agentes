@@ -829,6 +829,16 @@ def send_to_profile(
         raise DispatchBlockedError(
             f"privacy_preflight BLOQUEA el envio via '{profile_name}': {reason}"
         )
+    # WOT-2026-042k: el canary observa AQUI, no solo en `run_pipeline`.
+    # MEDIDO en el review: 9 de 9 `dispatch.py` de gov_* llaman a esta funcion
+    # DIRECTAMENTE y CERO pasan por el CLI `run`, asi que un canary anclado solo
+    # a `run_pipeline` vigilaba una ruta por la que no circula ningun bundle real
+    # -- "barrera del alcance" de AGENTS.md: cableado, muerde, y no mira donde
+    # ocurre el fallo. `send_to_profile` es el UNICO camino de salida hacia un
+    # backend (lo declara su propio docstring), luego es el paso obligado.
+    # Va DESPUES del preflight a proposito: si el envio se bloquea por privacidad
+    # no hay nada que auditar, y el canary nunca debe retrasar un fail-closed.
+    receipt_canary(payload_text, root=MOTOR_ROOT, ticket=profile_name)
     if transport is None:
         transport = _transport_api if profile["channel"] == "api" else _transport_agent
     return transport(profile, backend_cfg, messages, timeout)
@@ -1216,6 +1226,139 @@ def _load_lens_filter():
     return module.filter_lens_output
 
 
+def _load_receipt_checker():
+    """Importa `check_bundle` de check_bundle_receipts SIN modificarlo (WOT-2026-042k).
+
+    Before: `scripts/check_bundle_receipts.py` existe y define `check_bundle(text, root)`.
+    During: carga por ruta y REGISTRA en `sys.modules` antes de ejecutar -- un
+        `@dataclass` del modulo lo exige (mismo patron que `filter_lens_output`).
+    After: retorna la funcion, o `None` si el modulo no carga. A diferencia del
+        filtro de salida, aqui NO es fail-closed: el canary OBSERVA, y perder el
+        observador no debe tumbar un fan-out legitimo.
+    """
+    path = Path(__file__).resolve().parent / "check_bundle_receipts.py"
+    try:
+        spec = importlib.util.spec_from_file_location("check_bundle_receipts", path)
+        if spec is None or spec.loader is None:  # pragma: no cover - defensivo
+            return None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["check_bundle_receipts"] = module
+        spec.loader.exec_module(module)
+        return module.check_bundle
+    except (OSError, ImportError, AttributeError):  # pragma: no cover - defensivo
+        return None
+
+
+CANARY_LOG_REL = Path(".agent/runtime/ensemble/receipt_canary.jsonl")
+
+
+def _persist_canary_measurement(measurement: dict) -> None:
+    """Anade la medicion del canary como una linea NDJSON. NUNCA lanza.
+
+    WOT-2026-042k, hueco senalado por el MANAGER_REVIEW: sin artefacto, el DoD
+    de promocion a bloqueante ("cuando sus mediciones muestren saneado el rojo")
+    no es ejecutable, porque no hay mediciones que consultar.
+
+    Before: `measurement` es el dict que devuelve `receipt_canary`.
+    During: append con el MISMO patron que el scorecard -- lock del SO +
+        write binario unico, de modo que dos fan-outs concurrentes no entrelacen
+        lineas. Reutiliza `_locked_for_append` en vez de abrir un segundo
+        mecanismo de escritura.
+    After: la linea queda en `<motor>/.agent/runtime/ensemble/receipt_canary.jsonl`.
+        Ante CUALQUIER error de I/O degrada en silencio: observar es opcional,
+        enviar no. Un canary que rompe el envio deja de ser canary.
+    """
+    try:
+        path = MOTOR_ROOT / CANARY_LOG_REL
+        path.parent.mkdir(parents=True, exist_ok=True)
+        row = dict(measurement)
+        row["timestamp"] = _now_iso()
+        line = (json.dumps(row, ensure_ascii=False) + "\n").encode("utf-8")
+        with open(path, "ab") as handle, _locked_for_append(handle):
+            handle.write(line)
+            handle.flush()
+    except (OSError, ValueError, TypeError):  # pragma: no cover - defensivo
+        return
+
+
+def receipt_canary(
+    payload: str,
+    *,
+    root: Path,
+    ticket: str,
+    session_id: str | None = None,
+) -> dict | None:
+    """CANARY de recibos sobre el bundle que sale al fan-out (WOT-2026-042k).
+
+    CONTRATO CANARY -- declarado explicitamente, porque "modo canary" sin estas
+    cuatro respuestas es una palabra, no un modo:
+
+    1. QUE AUDITA: el `payload` REAL de ESTE envio, no un glob del arbol. Es la
+       diferencia que evita el deadlock de WOT-2026-042h: la deuda historica
+       (35 pass / 19 fail sobre 54 bundles con `## PROBE`, medido 2026-07-27 con
+       `--root <motor>`) NUNCA es evaluada, porque solo se mira lo que esta
+       sesion esta a punto de enviar.
+    2. QUE CUENTA COMO ROJO: >=1 seccion `## PROBE` sin recibo valido. Un payload
+       SIN secciones `## PROBE` no es rojo: es `n/a` (no todos los pipelines son
+       bundles de gobernanza con recibos).
+    3. BLOQUEA O AVISA: **NO BLOQUEA**. Emite WARN a stderr y devuelve el conteo.
+       Cablear fail-closed nace en rojo (1 de cada 3 bundles historicos falla) y
+       reproduciria el deadlock que ya tumbo a 042h. Promover a bloqueante es
+       decision posterior, CON los datos que este canary recoge.
+    4. QUE ARTEFACTO CONSERVA: una linea NDJSON por medicion en
+       `<motor>/.agent/runtime/ensemble/receipt_canary.jsonl`, ademas de
+       devolverla al llamante. La primera version solo la devolvia, y el review
+       lo marco como hueco con razon: sin artefacto, el DoD que el propio
+       `guard_wiring_policy.yaml` escribe -- "promover a bloqueante cuando sus
+       mediciones muestren saneado el rojo historico" -- es INEJECUTABLE, porque
+       no habria mediciones que consultar. Un WARN a stderr que nadie agrega es
+       indistinguible de no hacer nada.
+
+    Before: `payload` es el texto que ira a las lentes; `root` es el repo contra
+        el que resuelven los `path:` de los recibos.
+    During: read-only. Si el checker no carga, devuelve None (degrada en
+        silencio: observar es opcional, enviar no).
+    After: devuelve `{"probes", "ok", "failed", "ticket", "session_id"}` o None
+        si no aplica. NUNCA lanza ni bloquea el envio.
+    """
+    check_bundle = _load_receipt_checker()
+    if check_bundle is None:
+        return None
+    try:
+        results = check_bundle(payload, root)
+    except (OSError, ValueError):  # pragma: no cover - defensivo
+        return None
+    if not results:
+        return None
+    failed = [r for r in results if not r.ok]
+    measurement = {
+        "probes": len(results),
+        "ok": len(results) - len(failed),
+        "failed": len(failed),
+        "ticket": ticket,
+        "session_id": session_id,
+    }
+    _persist_canary_measurement(measurement)
+    if failed:
+        print(
+            f"[receipt-canary] WARN {ticket}: {len(failed)}/{len(results)} probe(s) "
+            f"sin recibo valido en el bundle que sale al fan-out (NO bloquea; "
+            f"WOT-2026-042k). Revalida: python scripts/check_bundle_receipts.py "
+            f"--bundle <bundle.md> --root {root}",
+            file=sys.stderr,
+        )
+        for r in failed:
+            print(f"[receipt-canary]   {r.header}", file=sys.stderr)
+            for p in r.problems:
+                print(f"[receipt-canary]     - {p}", file=sys.stderr)
+    else:
+        print(
+            f"[receipt-canary] OK {ticket}: {len(results)} probe(s) con recibo valido.",
+            file=sys.stderr,
+        )
+    return measurement
+
+
 def _record_round(
     project_root: Path,
     *,
@@ -1413,6 +1556,17 @@ def run_pipeline(
     }
     input_bytes = len(payload.encode("utf-8"))
     transcript: list[dict] = []
+
+    # CANARY de recibos (WOT-2026-042k): observa el bundle REAL antes de que
+    # llegue a las lentes -- el momento exacto en que un probe sin recibo
+    # propaga una premisa falsa a las 9 lentes (HUECO-1). NO bloquea: ver el
+    # contrato canary completo en `receipt_canary`.
+    receipt_canary(
+        payload,
+        root=project_root,
+        ticket=ticket,
+        session_id=session_id,
+    )
 
     # ROUND 0: premise_check -- INVARIANTE del dispatcher, no configurable.
     for rol, prof_name in participants:

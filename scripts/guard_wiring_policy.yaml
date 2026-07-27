@@ -72,6 +72,19 @@ known_unwired:
   # ANTES del fan-out, que toca los prompts de gobierno -> anti-recursion 026b prohibe
   # tocarlos en vuelo. Cableado + pasada Codex diferidos al ticket PDCA WOT-2026-038b
   # (componente 1). Deuda NOMBRADA con dueno real.
+  # ESTADO REAL ACTUALIZADO 2026-07-27 (WOT-2026-042k, hijo de 038b): YA HAY
+  # INVOCADOR, en modo CANARY -- `ensemble_dispatch.run_pipeline` llama a
+  # `receipt_canary()` sobre el payload REAL justo antes del ROUND 0, que es el
+  # punto donde el bundle alcanza a las lentes (HUECO-1). NO se tocaron los
+  # prompts de gobierno: el canary audita el payload EN VUELO, asi que la
+  # anti-recursion 026b no era el bloqueo que esta nota daba por supuesto.
+  # SIGUE LISTADO AQUI Y ES CORRECTO: `ensemble_dispatch` no es FRONTERA para
+  # este guard (no corre solo; lo lanza un agente al abrir un fan-out) y el
+  # canary OBSERVA sin bloquear -- deliberado: 35 pass / 19 fail sobre los 54
+  # bundles con `## PROBE` medidos 2026-07-27 (`--root <motor>`), o sea que
+  # fail-closed nace en rojo y reproduce el deadlock de WOT-2026-042h.
+  # PARA DEJAR DE SER DEUDA: promover el canary a bloqueante cuando sus propias
+  # mediciones muestren saneado el rojo historico. Dueno: WOT-2026-038b.
   check_bundle_receipts: WOT-2026-038b
   # check_prompt_bias (WOT-2026-026k): gate MECANICO de sesgo del PROMPT de review.
   # Su cableado natural es el arranque del bucle de review (ensemble dispatch /

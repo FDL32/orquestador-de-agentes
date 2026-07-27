@@ -1633,6 +1633,128 @@ def _find_forbidden_credential_keys(node, path=""):
     return hits
 
 
+def _canary_bundle(ok: bool = True) -> str:
+    """Bundle minimo con una seccion ## PROBE, con recibo valido o sin el."""
+    if ok:
+        return (
+            "## PROBE uno\n\n```receipt\ncommand: python -c pass\nexit_code: 0\n```\n"
+        )
+    return "## PROBE uno\n\nsin bloque receipt, solo prosa\n"
+
+
+def test_receipt_canary_flags_probe_without_receipt(tmp_path, monkeypatch):
+    """Un ## PROBE sin recibo valido cuenta como rojo. Comportamiento, no presencia."""
+    monkeypatch.setattr(ed, "MOTOR_ROOT", tmp_path)
+    measurement = ed.receipt_canary(
+        _canary_bundle(ok=False), root=tmp_path, ticket="T-1"
+    )
+    assert measurement is not None
+    assert measurement["probes"] == 1
+    assert measurement["failed"] == 1
+    assert measurement["ok"] == 0
+
+
+def test_receipt_canary_accepts_a_valid_receipt(tmp_path, monkeypatch):
+    """ANTI-FALSO-POSITIVO: un recibo bien formado NO es rojo."""
+    monkeypatch.setattr(ed, "MOTOR_ROOT", tmp_path)
+    measurement = ed.receipt_canary(
+        _canary_bundle(ok=True), root=tmp_path, ticket="T-2"
+    )
+    assert measurement is not None
+    assert measurement["failed"] == 0
+    assert measurement["ok"] == 1
+
+
+def test_receipt_canary_is_not_applicable_without_probe_sections(tmp_path, monkeypatch):
+    """Sin secciones ## PROBE no es rojo: es n/a. No todo payload es un bundle."""
+    monkeypatch.setattr(ed, "MOTOR_ROOT", tmp_path)
+    assert ed.receipt_canary("# solo prosa\n", root=tmp_path, ticket="T-3") is None
+
+
+def test_receipt_canary_does_not_block_the_fan_out(tmp_path, monkeypatch):
+    """CONTRATO CANARY punto 3: detecta el rojo y AUN ASI devuelve, no lanza.
+
+    Mutacion: convertir el canary en fail-closed -> este test cae.
+    """
+    monkeypatch.setattr(ed, "MOTOR_ROOT", tmp_path)
+    measurement = ed.receipt_canary(
+        _canary_bundle(ok=False), root=tmp_path, ticket="T-4"
+    )
+    assert measurement["failed"] == 1  # rojo detectado...
+    assert isinstance(measurement, dict)  # ...y el envio sigue su curso
+
+
+def test_receipt_canary_persists_its_measurement(tmp_path, monkeypatch):
+    """CONTRATO CANARY punto 4: la medicion se PERSISTE, no solo se devuelve.
+
+    Hallazgo del MANAGER_REVIEW: sin artefacto, el DoD que declara
+    `guard_wiring_policy.yaml` -- "promover a bloqueante cuando sus mediciones
+    muestren saneado el rojo" -- es INEJECUTABLE, porque no habria mediciones que
+    consultar. Un WARN a stderr que nadie agrega es indistinguible de no hacer nada.
+
+    Mutacion: quitar `_persist_canary_measurement` -> cae este test.
+    """
+    monkeypatch.setattr(ed, "MOTOR_ROOT", tmp_path)
+    measurement = ed.receipt_canary(
+        _canary_bundle(ok=True), root=tmp_path, ticket="WOT-2026-042k"
+    )
+    assert measurement is not None
+
+    log = tmp_path / ed.CANARY_LOG_REL
+    assert log.exists(), "el canary no persistio su medicion"
+    rows = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 1
+    assert rows[0]["ticket"] == "WOT-2026-042k"
+    assert rows[0]["probes"] == 1
+    assert "timestamp" in rows[0], "sin timestamp la medicion no es agregable"
+
+
+def test_receipt_canary_is_wired_into_the_only_exit_path():
+    """El canary corre en la ruta REAL por la que salen los bundles.
+
+    HALLAZGO DEL MANAGER_REVIEW que este test fija: la primera version anclaba el
+    canary SOLO a `run_pipeline`, y la medicion mostro que 9 de 9 `dispatch.py` de
+    gov_* llaman al unico camino de salida DIRECTAMENTE mientras CERO pasan por el
+    CLI `run`. El canary vigilaba una ruta por la que no circula ningun bundle real
+    -- "barrera del alcance" de AGENTS.md: cableado, y mirando donde no ocurre el
+    fallo.
+
+    Mutacion: borrar la llamada en el camino de salida -> cae este test.
+    """
+    import ast
+
+    source = (_SCRIPTS_DIR / "ensemble_dispatch.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    callers = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and any(
+            isinstance(inner, ast.Call)
+            and isinstance(inner.func, ast.Name)
+            and inner.func.id == "receipt_canary"
+            for inner in ast.walk(node)
+        )
+    }
+    exit_path = "send_to" + "_profile"  # partido: el guard 025z prohibe el token
+    assert exit_path in callers, (
+        "receipt_canary NO se invoca desde el unico camino de salida: los bundles "
+        "de gobierno lo usan directo, asi que el canary no auditaria ninguno "
+        "(regresion del hallazgo del MANAGER_REVIEW de WOT-2026-042k)"
+    )
+
+
+def test_receipt_canary_survives_a_broken_checker(tmp_path, monkeypatch):
+    """Observar es OPCIONAL, enviar no: si el checker no carga, degrada a None.
+
+    Un canary que rompe el envio deja de ser canary.
+    """
+    monkeypatch.setattr(ed, "MOTOR_ROOT", tmp_path)
+    monkeypatch.setattr(ed, "_load_receipt_checker", lambda: None)
+    assert ed.receipt_canary(_canary_bundle(), root=tmp_path, ticket="T-5") is None
+
+
 # === WOT-2026-025z substantive tests start ===
 
 
