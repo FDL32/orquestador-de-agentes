@@ -521,15 +521,30 @@ def _regenerate_l2_l3(
     During:
         Las proyecciones se generan sobre la UNION de ambas: archivar cambia
         DONDE vive el dato (L1), no si el agente puede LEERLO (L2/L3). El orden
-        se conserva (recientes primero) porque los generadores ya ponderan por
-        recencia.
+        es `recent` primero, DELIBERADO: los topes de abajo se llenan con lo
+        reciente ANTES de admitir archivadas, de modo que este fix nunca puede
+        expulsar una leccion nueva (medido con los datos reales del destino:
+        62 recent + 2 archivable -> 0 expulsadas, 1 recuperada).
     After:
-        L2 y L3 siguen nombrando las lecciones archivadas. No lanza.
+        Retorna None. No lanza.
 
-    Deuda residual declarada: esto arregla el ESCRITOR de las proyecciones. El
-    LECTOR sigue sin mirar `archive/` (WOT-2026-024r), asi que una leccion
-    archivada en una pasada ANTERIOR a este fix no reaparece sola: solo vuelve
-    a L2/L3 cuando su entrada este entre las que esta pasada procesa.
+    ALCANCE REAL Y SUS TRES LIMITES (review de Manager 2026-07-27: la version
+    anterior de este docstring afirmaba sin matiz que "L2 y L3 siguen nombrando
+    las lecciones archivadas", y eso es FALSO en los dos primeros casos):
+
+    1. L2 tiene tope `MAX_L2_RULES` (30) y `_extract_rules_from_entries` corta
+       EN ORDEN DE LISTA. Si `recent` ya aporta 30 reglas, la union admite CERO
+       archivadas: el fix se ANULA en silencio justo cuando la memoria crece.
+    2. L3 tiene tope `MAX_L3_OBSERVATIONS_PROFILE` (10) y
+       `generate_memory_profile_md` REORDENA por timestamp descendente antes de
+       cortar, asi que una archivada solo aparece si hay MENOS de 10 recientes:
+       por construccion una entrada vieja nunca gana a una nueva en L3.
+    3. Solo cubre las entradas que ESTA pasada procesa. El LECTOR sigue sin
+       mirar `archive/` (WOT-2026-024r), asi que una leccion archivada en una
+       pasada ANTERIOR no reaparece sola.
+
+    Los tres son deuda DECLARADA, no resuelta: dueno WOT-2026-042e, que por eso
+    queda en `completed-partial` y no en `completed`.
     """
     projected = list(recent) + list(archivable or [])
 

@@ -1062,9 +1062,7 @@ class TestSessionClose:
         un test verde contra un fixture que no espeja produccion no es senal
         (AGENTS.md, fixtures realistas).
         """
-        monkeypatch.setattr(
-            agent_controller, "STATE_FILE", tmp_path / "STATE.md", raising=False
-        )
+        monkeypatch.setattr(agent_controller, "STATE_FILE", tmp_path / "STATE.md")
 
         def mock_read(path):
             return "ACTIVE_TICKET: -\nSTATUS: COMPLETED\n"
@@ -1170,9 +1168,7 @@ class TestSessionClose:
         monkeypatch.setattr(agent_controller, "PROJECT_ROOT", tmp_path)
         # Aisla el STATE.md real: el handler lo REESCRIBE al cerrar y sin esto
         # la corrida contamina el arbol (state leak medido 2026-07-27).
-        monkeypatch.setattr(
-            agent_controller, "STATE_FILE", tmp_path / "STATE.md", raising=False
-        )
+        monkeypatch.setattr(agent_controller, "STATE_FILE", tmp_path / "STATE.md")
 
         mock_run = MagicMock(
             return_value=MagicMock(returncode=0, stdout="ok\n", stderr="")
@@ -1202,6 +1198,57 @@ class TestSessionClose:
         assert mock_run.called, (
             "el closeout NO corrio: la palabra COMPLETED en prosa se leyo como "
             "estado terminal (regresion de WOT-2026-042a)"
+        )
+
+    @pytest.mark.parametrize(
+        "terminal_status", ["SUPERSEDED", "BLOCKED_FINAL", "CLOSED", "completed"]
+    )
+    def test_042a_todos_los_terminales_del_bus_saltan_el_cierre(
+        self, monkeypatch, tmp_path, terminal_status
+    ):
+        """WOT-2026-042a: la terminalidad la decide bus.state_machine, no un set local.
+
+        Hallado por el review de Manager (BLOCKER): un
+        ``frozenset({"COMPLETED"})`` propio seria un SEGUNDO oraculo de
+        terminalidad. Y divergiria en un caso REAL: `bus/supervisor.py:956`
+        escribe ``STATUS: {state.value}`` con CUALQUIER TicketState, asi que un
+        ticket cerrado como SUPERSEDED o BLOCKED_FINAL -- terminales
+        IRREVERSIBLES por diseno -- volveria a correr el closeout ENTERO.
+
+        Cubre tambien el literal legacy ``CLOSED`` (que la autoridad reconoce
+        sin promoverlo a TicketState) y una minuscula, porque
+        `is_terminal_state` es case-insensitive en el VALOR.
+        """
+        script_dir = tmp_path / "scripts"
+        script_dir.mkdir()
+        (script_dir / "session_closeout.py").write_text("")
+        monkeypatch.setattr(agent_controller, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(agent_controller, "STATE_FILE", tmp_path / "STATE.md")
+
+        mock_run = MagicMock(
+            return_value=MagicMock(returncode=0, stdout="ok\n", stderr="")
+        )
+        monkeypatch.setattr(agent_controller.subprocess, "run", mock_run)
+        monkeypatch.setattr(
+            agent_controller,
+            "read_file",
+            lambda path: f"ACTIVE_TICKET: -\nSTATUS: {terminal_status}\n",
+        )
+
+        code = agent_controller._handle_session_close(
+            dry_run=False,
+            skip_slow=False,
+            ticket=None,
+            tickets=None,
+            force_mode=False,
+            json_output=False,
+        )
+
+        assert code == 0
+        assert not mock_run.called, (
+            f"el closeout CORRIO con STATUS: {terminal_status}, que la autoridad "
+            "bus.state_machine declara terminal: hay un segundo oraculo de "
+            "terminalidad divergente (regresion de WOT-2026-042a)"
         )
 
     def test_042a_status_field_completed_still_skips(self, monkeypatch, tmp_path):

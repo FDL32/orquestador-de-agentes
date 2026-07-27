@@ -6214,8 +6214,7 @@ def _refresh_session_tracker_after_close() -> None:
         pass
 
 
-_STATE_STATUS_RE = re.compile(r"^STATUS:\s*(\S+)", re.MULTILINE)
-_TERMINAL_STATE_STATUSES = frozenset({"COMPLETED"})
+_STATE_STATUS_RE = re.compile(r"^STATUS:\s*(\S+)\s*$", re.MULTILINE)
 
 
 def _state_status_is_terminal(state_content: str) -> bool:
@@ -6223,28 +6222,38 @@ def _state_status_is_terminal(state_content: str) -> bool:
 
     WOT-2026-042a. Nace de un fallo medido en vivo: la idempotencia de
     ``--session-close`` se decidia con ``"COMPLETED" in state_content``, un
-    substring CRUDO sobre STATE.md.
+    substring CRUDO sobre STATE.md, que es una PROYECCION.
 
     Before:
         `state_content` es el texto de STATE.md tal cual (puede venir vacio, con
         CRLF, o con lineas de prosa que NOMBREN un estado sin declararlo).
     During:
-        Casa la PRIMERA linea que declare el campo ``STATUS:`` y compara su
-        valor contra el conjunto terminal. Solo el campo cuenta: una mencion en
-        una nota de blocker, en un titulo de ticket o en un diagnostico NO es un
-        estado. Se reutiliza la forma canonica ``^STATUS:`` que ya usan :4699 y
-        `scripts/check_backlog_contract.py::_STATUS_RE` -- un dato, una forma de
-        leerlo.
+        Casa la linea que declara el campo ``STATUS:`` (misma forma anclada que
+        :4699) y delega el veredicto de terminalidad en
+        `bus.state_machine.is_terminal_state`, que es la AUTORIDAD canonica
+        (asi la cita `scripts/check_backlog_contract.py`). Solo el campo cuenta:
+        una mencion en una nota de blocker o en un titulo de ticket NO es un
+        estado.
     After:
         Retorna bool. No lanza ni muta nada. Un STATE.md sin campo ``STATUS:``
         da False (fail-OPEN deliberado: ante un fichero ilegible, la idempotencia
         NO se activa y el closeout CORRE, que es la direccion segura -- el fallo
         que este helper corrige era justamente saltarse el cierre creyendolo hecho).
+
+    Por que se DELEGA en vez de declarar un set local (review de Manager
+    2026-07-27, BLOCKER): un `frozenset({"COMPLETED"})` propio seria un SEGUNDO
+    oraculo de terminalidad -- el mismo defecto "un dato, dos formas de leerlo"
+    que este ticket dice erradicar. Y divergiria en un caso REAL, no hipotetico:
+    `bus/supervisor.py:956` escribe ``STATUS: {state.value}`` con CUALQUIER
+    TicketState, asi que un ticket cerrado como SUPERSEDED o BLOCKED_FINAL
+    (terminales IRREVERSIBLES por diseno) volveria a correr el closeout entero.
     """
     match = _STATE_STATUS_RE.search(state_content or "")
     if match is None:
         return False
-    return match.group(1).strip().upper() in _TERMINAL_STATE_STATUSES
+    from bus.state_machine import is_terminal_state
+
+    return is_terminal_state(match.group(1).strip())
 
 
 def _handle_session_close(  # noqa: C901 - delegation handler with flag building

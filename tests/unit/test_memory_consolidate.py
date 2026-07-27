@@ -86,22 +86,40 @@ def test_042e_el_call_site_de_main_pasa_las_archivables() -> None:
     """
     import ast
 
+    def _callee(node: ast.Call) -> str:
+        """Nombre del invocado, cubriendo `f(...)` y `mod.f(...)`."""
+        if isinstance(node.func, ast.Name):
+            return node.func.id
+        if isinstance(node.func, ast.Attribute):
+            return node.func.attr
+        return ""
+
+    def _names_archivable(arg: ast.expr) -> bool:
+        """True solo si el argumento es la VARIABLE `archivable`.
+
+        Endurecido tras el review de Manager: la version anterior aceptaba
+        cualquier tercer posicional, asi que un mutante
+        `_regenerate_l2_l3(recent, verbose, [])` pasaba en VERDE -- un falso
+        verde que dejaba volver el bug entero.
+        """
+        return isinstance(arg, ast.Name) and arg.id == "archivable"
+
     source = Path("scripts/memory_consolidate.py").read_text(encoding="utf-8")
     calls = [
         node
         for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "_regenerate_l2_l3"
+        if isinstance(node, ast.Call) and _callee(node) == "_regenerate_l2_l3"
     ]
     assert calls, "no se encontro ninguna llamada a _regenerate_l2_l3"
     for call in calls:
-        passes_archivable = any(kw.arg == "archivable" for kw in call.keywords) or (
-            len(call.args) >= 3
+        by_keyword = any(
+            kw.arg == "archivable" and _names_archivable(kw.value)
+            for kw in call.keywords
         )
-        assert passes_archivable, (
+        by_position = len(call.args) >= 3 and _names_archivable(call.args[2])
+        assert by_keyword or by_position, (
             f"la llamada a _regenerate_l2_l3 en la linea {call.lineno} NO pasa "
-            "las entradas archivables: consolidar volveria a expulsar la "
+            "las entradas archivables reales: consolidar volveria a expulsar la "
             "memoria de L2/L3 (regresion de WOT-2026-042e)"
         )
 
