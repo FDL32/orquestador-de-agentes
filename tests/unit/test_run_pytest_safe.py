@@ -1851,6 +1851,8 @@ class TestStampSurvivesMutatingHooks:
         head_seq: list[str],
         invariant_raises: BaseException | None = None,
         capture_raises: BaseException | None = None,
+        post_status: str = "",
+        stream_pytest_override=None,
     ) -> dict:
         """Drive main() with a delivery HEAD that CHANGES between the run-start
         stamp and the window close (that is what the mutating hooks do).
@@ -1887,11 +1889,16 @@ class TestStampSurvivesMutatingHooks:
             # i.e. the stable-window test would pass for the wrong reason.
             from scripts.worktree_audit_invariant import WorktreeState
 
-            monkeypatch.setattr(
-                mod,
-                "_invariant_capture_state",
-                lambda _root: WorktreeState(head="h", status="", head_reflog_len=1),
-            )
+            # First call = pre-snapshot (clean). Later calls = the post-window
+            # capture the re-stamp makes, which may report a DIRTY tree.
+            _captures = {"n": 0}
+
+            def _capture(_root):
+                _captures["n"] += 1
+                status = post_status if _captures["n"] > 1 else ""
+                return WorktreeState(head="h", status=status, head_reflog_len=1)
+
+            monkeypatch.setattr(mod, "_invariant_capture_state", _capture)
 
         def _verify(_root, _pre):
             if invariant_raises is not None:
@@ -1900,7 +1907,11 @@ class TestStampSurvivesMutatingHooks:
 
         monkeypatch.setattr(mod, "_invariant_verify_unchanged", _verify)
 
-        monkeypatch.setattr(mod, "stream_pytest", lambda cmd: (0, [], []))
+        monkeypatch.setattr(
+            mod,
+            "stream_pytest",
+            stream_pytest_override or (lambda cmd: (0, [], [])),
+        )
         monkeypatch.setattr(mod, "acquire_lock", lambda force_unlock=False: {"pid": 0})
         monkeypatch.setattr(mod, "release_lock", lambda: None)
         monkeypatch.setattr(
@@ -1964,6 +1975,67 @@ class TestStampSurvivesMutatingHooks:
             "that would launder the contaminated run 040t exists to catch"
         )
         assert data["exit_code"] == 1, "an invalidated window must not stay green"
+
+    def test_crash_persists_a_stamp_marked_provisional(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """WOT-2026-040n review A-1 (negative case). The re-stamp lives inside
+        the `try`; a crash jumps to the `finally`, which persists the summary
+        with the RUN-START sha. That stale stamp must not be indistinguishable
+        from a validated one.
+
+        Mutation: delete the "provisional_at_run_start" stamp_scope seed and
+        this goes RED -- last-run.json would carry a stale SHA with no field
+        saying so.
+        """
+        mod = load_runner_module()
+        base = tmp_path / ".agent" / "runtime" / "pytest-safe"
+        base.mkdir(parents=True, exist_ok=True)
+
+        def _boom(_cmd):
+            raise KeyboardInterrupt
+
+        with pytest.raises(KeyboardInterrupt):
+            self._run_main(
+                mod,
+                tmp_path,
+                monkeypatch,
+                head_seq=["pre_hooks", "post_hooks"],
+                stream_pytest_override=_boom,
+            )
+
+        data = json.loads((base / "last-run.json").read_text(encoding="utf-8"))
+        assert data["tested_commit_sha"] == "pre_hooks", (
+            "the finally persists the run-start sha after a crash"
+        )
+        assert data["stamp_scope"] == "provisional_at_run_start", (
+            "a stamp persisted by the crash path must declare itself "
+            "provisional; otherwise it reads as validated"
+        )
+
+    def test_revalidated_stamp_records_tree_dirtiness(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """WOT-2026-040n review A-2. A re-stamp over a DIRTY tree still names a
+        commit the working tree does not match, so the stamp must say so.
+
+        Mutation: drop the stamp_tree_dirty capture and this goes RED.
+        """
+        mod = load_runner_module()
+        data = self._run_main(
+            mod,
+            tmp_path,
+            monkeypatch,
+            head_seq=["pre_hooks", "post_hooks"],
+            post_status=" M scripts/run_pytest_safe.py\n",
+        )
+        assert data["tested_commit_sha"] == "post_hooks"
+        assert data["stamp_scope"] == "revalidated_at_window_close"
+        assert data["stamp_tree_dirty"] is True, (
+            "a re-stamp over a dirty tree must record that the tree does not "
+            "match the commit it names"
+        )
+        assert data["stamp_status_entries"] == 1
 
     def test_stamp_is_not_refreshed_when_window_is_unverifiable(
         self, tmp_path: Path, monkeypatch

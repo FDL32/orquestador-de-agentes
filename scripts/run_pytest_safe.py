@@ -1167,6 +1167,14 @@ def main() -> int:  # noqa: C901
         # by the mutating pre-commit hooks -- which happens AFTER the window --
         # does not make a legitimately-green suite look stale.
         "tested_commit_sha": _delivery_head_sha(),
+        # WOT-2026-040n (review A-1): declare the stamp PROVISIONAL from the
+        # start. The re-stamp below lives inside the `try`, so a crash or a
+        # Ctrl-C jumps straight to the `finally`, which persists this summary
+        # with the run-start SHA. Without this field that stale stamp would be
+        # written with exactly the same confidence as a validated one. It is
+        # overwritten with "revalidated_at_window_close" only when the window
+        # actually closed clean.
+        "stamp_scope": "provisional_at_run_start",
         # WOT-2026-040t (Pieza 4): the line above says "the tree must not
         # change" -- until now a NORM nobody enforced. audit_state_pre is the
         # snapshot that turns it into a MECHANISM: it is compared after the run
@@ -1307,6 +1315,23 @@ def main() -> int:  # noqa: C901
             _restamped = _delivery_head_sha()
             if _restamped:
                 summary["tested_commit_sha"] = _restamped
+                # WOT-2026-040n (review A-1/A-2): the SHA alone cannot say what
+                # it MEANS. Two stamps that look identical -- one validated at
+                # window close, one persisted by the `finally` after a crash or
+                # Ctrl-C -- would otherwise be indistinguishable to any
+                # consumer. Record the provenance explicitly, and with it the
+                # tree state the stamp actually describes: a re-stamp over a
+                # DIRTY tree still names a commit the working tree does not
+                # match (status_entries is already 1 in the motor, so this is
+                # a real case, not a hypothetical one).
+                summary["stamp_scope"] = "revalidated_at_window_close"
+                try:
+                    _post = _invariant_capture_state(_delivery_repo_root())
+                    summary["stamp_tree_dirty"] = bool(_post.status.strip())
+                    summary["stamp_status_entries"] = len(_post.status.splitlines())
+                except Exception as exc:
+                    summary["stamp_tree_dirty"] = None
+                    summary["stamp_scope_error"] = str(exc)
         return exit_code
     finally:
         cleanup_after = {"removed": [], "failed": []}
