@@ -76,10 +76,17 @@ Su exit code no dice si el check pasa o falla; dice que el check no corrio.
 
 - Antes de invocar un script como gate, verifica su interfaz real:
   `python <script>.py --help`. Usa solo flags que aparezcan ahi.
-- Si un comando devuelve `rc=2` (o imprime `unrecognized arguments`,
-  `no such option`, `invalid choice`, `usage:`), clasificalo como
+- Si un comando devuelve `rc=2` **acompanado de** `unrecognized arguments`,
+  `no such option`, `invalid choice` o `usage:`, clasificalo como
   `MEDICION_FALLIDA`, no como FAIL ni como PASS. Corrige la invocacion y
   vuelve a medir; solo el rc de la invocacion VALIDA es evidencia.
+- **`rc=2` NO es siempre medicion fallida.** Algunos guards lo usan como
+  VEREDICTO documentado: `check_motor_destination_integration.py:52`
+  (`EXIT_STATUS_NOT_PUBLISHABLE = 2`, "non-publishable but non-error state") y
+  `check_handoff_committed.py:50` (`EXIT_UNDETERMINED = 2`). Esos SI midieron.
+  El discriminante es el MARCADOR TEXTUAL de arriba, no el numero: sin
+  `usage:`/`unrecognized`, lee el `--help` del script antes de decidir. Tratar
+  un "NO PUBLICABLE" como "no medi" es el falso verde que esta regla combate.
 - Nunca conviertas un `MEDICION_FALLIDA` en un hallazgo sobre el sistema.
 
 Fallo real (2026-07-26): se invocaron `check_backlog_contract.py --file <ruta>` y
