@@ -63,6 +63,90 @@ implementes hasta que este guard de exit 0.
   justificacion en la salida del runner para que el Manager la registre. Si cambia
   el scope del ticket, detente.
 
+## Reglas de medicion (aplican DESDE Fase 0, no al redactar el informe)
+
+Estas cuatro reglas gobiernan como mides y como escribes MIENTRAS trabajas. No
+son criterios de revision del informe final: si las lees por primera vez al
+redactar el informe, ya has trabajado sobre medidas invalidas.
+
+### M1. `rc=2` no es un veredicto: es "no medi"
+
+Un comando que aborta por un flag/argumento que no reconoce NO ha evaluado nada.
+Su exit code no dice si el check pasa o falla; dice que el check no corrio.
+
+- Antes de invocar un script como gate, verifica su interfaz real:
+  `python <script>.py --help`. Usa solo flags que aparezcan ahi.
+- Si un comando devuelve `rc=2` (o imprime `unrecognized arguments`,
+  `no such option`, `invalid choice`, `usage:`), clasificalo como
+  `MEDICION_FALLIDA`, no como FAIL ni como PASS. Corrige la invocacion y
+  vuelve a medir; solo el rc de la invocacion VALIDA es evidencia.
+- Nunca conviertas un `MEDICION_FALLIDA` en un hallazgo sobre el sistema.
+
+Fallo real (2026-07-26): se invocaron `check_backlog_contract.py --file <ruta>` y
+`archive_event_bus.py --project-root <ruta>`; ninguno de esos flags existe. Ambos
+`rc=2` se reportaron como resultado del check.
+
+### M2. Prohibido `git add -A` / `git add .`
+
+El staging se construye contra la whitelist de `Files Likely Touched`, archivo a
+archivo:
+
+```powershell
+git add <ruta1> <ruta2> ...   # rutas explicitas, una por archivo del contrato
+git status --short            # verifica: nada staged fuera de la whitelist
+git diff --cached --stat      # verifica el volumen antes de commitear
+```
+
+- `git add -A`, `git add .` y `git add -u` estan PROHIBIDOS en el flujo del
+  Builder. Arrastran runtime, caches, artefactos de bus y estado operativo que
+  no pertenecen al ticket.
+- Si un archivo necesario esta fuera de `Files Likely Touched`, registra la
+  justificacion CEM en `execution_log.md` ANTES de hacerle `git add`.
+- Si `git diff --cached --stat` muestra un volumen desproporcionado respecto al
+  cambio contratado, detente y revisa: no commitees "por si acaso".
+
+Fallo real (2026-07-26): un `git add -A` metio 14.413 lineas de runtime en el
+commit del ticket.
+
+### M3. Fichero vivo escaso ⇒ mira el `archive/` hermano antes de diagnosticar
+
+Varias superficies del sistema ROTAN: el fichero vivo conserva solo la ventana
+reciente y el historico se mueve a un directorio hermano.
+
+- Antes de concluir nada sobre volumen, antiguedad o "esta vacio/muerto" a
+  partir de un fichero, lista su directorio padre y su `archive/`:
+
+```powershell
+Get-ChildItem <dir> ; Get-ChildItem <dir>/archive
+```
+
+- Superficies con rotacion conocida: `.agent/runtime/events/events.jsonl` ->
+  `.agent/runtime/events/archive/`; `.agent/collaboration/notifications.md` ->
+  `.agent/collaboration/archive/`; memoria `observations.jsonl` ->
+  `archive/observations.YYYY-MM.jsonl`.
+- El conteo que reportes debe declarar su UNIVERSO: "12 eventos en el fichero
+  vivo, 2506 en `archive/`" no es lo mismo que "12 eventos".
+
+Fallo real (2026-07-26): se leyeron 12 eventos en `events.jsonl` y se diagnostico
+"el bus esta muerto", con 2506 eventos en el `archive/` de al lado.
+
+### M4. Validador citado ⇒ ejecutalo antes de redactar
+
+Si el contrato del ticket, este prompt o el propio artefacto nombran un
+validador, un gate o un schema para el artefacto que vas a producir, ESE
+validador define el formato. No infieras el formato del artefacto por analogia,
+por ejemplos vistos ni por memoria.
+
+- Localiza y ejecuta el validador ANTES de escribir el artefacto (aunque sea
+  contra un fichero vacio o un borrador minimo): su salida de error es la
+  especificacion del formato.
+- Vuelve a ejecutarlo tras cada escritura, hasta `0 errors`.
+- Si el validador no es ejecutable o no lo encuentras, detente y reportalo; no
+  redactes a ciegas.
+
+Fallo real (2026-07-26): se redacto un artefacto inventando su formato con el
+validador citado en el propio prompt -> 23 errores y 3 reescrituras completas.
+
 ## Objetivo
 `{{DESCRIPCION_DEL_OBJETIVO_Y_ROOT_CAUSE}}`
 
@@ -164,7 +248,13 @@ Si el ticket toca evidencia git, review packets, scope gates o `mark-ready`:
 - verifica comportamiento con working tree sucio y commit real del ticket cuando
   el contrato lo pida.
 
-## Quality gates
+## Gates focales (loop rapido - NO autorizan handoff)
+
+Todo lo de esta seccion es **loop rapido** segun la politica WOT-2026-011g de
+la seccion siguiente: sirve para iterar mientras trabajas y para detectar fallos
+temprano, pero NINGUNO de estos comandos autoriza `READY_FOR_REVIEW`, declarar
+suite canonica ni handoff. La evidencia de cierre vive en "Cierre canonico".
+
 Ejecuta y registra salida real en `execution_log.md`:
 
 ```powershell

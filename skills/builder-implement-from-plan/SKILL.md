@@ -147,16 +147,14 @@ Si todas las tareas de la fase estan `[x]`:
 
 ### Paso 10: Cierre Canonico (solo al completar el plan entero)
 
-Cuando TODAS las fases estan completadas y los quality gates pasan:
+El contrato de cierre canonico (comandos, orden, evidencia de bus, distincion
+loop rapido vs cierre, y que hacer si `checkpoint/review-<ticket>` esta `stale`)
+lo define el prompt canonico, no esta skill:
 
-```bash
-python .agent/agent_controller.py --pre-handoff --project-root <workspace> --json --force
-python .agent/agent_controller.py --mark-ready --project-root <workspace> --json --force
-```
+- `prompts/orchestrator_launch_builder.md`, secciones "Loop rapido vs cierre
+  canonico (politica WOT-2026-011g)" y "Registro y cierre" (`cid-bui-implement-v1`).
 
-**Este paso es obligatorio.** Sin el `--mark-ready`, el bus no recibe `BUILDER_EXIT` y el Manager nunca revisa.
-
-Si `--mark-ready` falla porque `checkpoint/review-<ticket>` esta obsoleto (`stale`, `expected HEAD`), no uses `--scope-override`: ejecuta `python .agent/agent_controller.py --pre-handoff --project-root <workspace> --json --force` otra vez para recrear M3 sobre el HEAD actual de `repo_motor` y despues reintenta `--mark-ready`.
+Sigue esa fuente. Si esta skill y el prompt divergen, prevalece el prompt.
 
 ## Escalacion
 
@@ -194,13 +192,7 @@ Si `--mark-ready` falla porque `checkpoint/review-<ticket>` esta obsoleto (`stal
 
 - Todas las fases completadas
 - Resumen final en `execution_log.md`
-- Ejecutar cierre canonico (OBLIGATORIO, en este orden):
-
-```bash
-python .agent/agent_controller.py --pre-handoff --project-root <workspace> --json --force
-python .agent/agent_controller.py --mark-ready --project-root <workspace> --json --force
-```
-
+- Cierre canonico ejecutado segun el Paso 10 (contrato en el prompt canonico)
 - Estado cambiado a `READY_FOR_REVIEW` por el controller (no manualmente)
 
 ## References
