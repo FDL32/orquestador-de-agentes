@@ -504,14 +504,41 @@ def generate_memory_profile_md(entries: list[dict[str, Any]]) -> str:
 def _regenerate_l2_l3(
     recent: list[dict[str, Any]],
     verbose: bool,
+    archivable: list[dict[str, Any]] | None = None,
 ) -> None:
-    """Regenerate memory_rules.md (L2) and memory_profile.md (L3)."""
-    rules_md = generate_memory_rules_md(recent)
+    """Regenerate memory_rules.md (L2) and memory_profile.md (L3).
+
+    WOT-2026-042e. Antes esta funcion recibia SOLO `recent` (el buffer
+    post-cutoff), asi que toda entrada de mas de 30 dias desaparecia de L2 y L3
+    en el momento de archivarse. Sumado a WOT-2026-024r (`bus/memory_loader.py`
+    no referencia `archive/`), el efecto medido era que ARCHIVAR EQUIVALE A
+    BORRAR desde el punto de vista del agente -- y ocurria dentro del cierre
+    canonico, en silencio.
+
+    Before:
+        `recent` son las entradas post-cutoff; `archivable` las que se mueven al
+        archive en esta misma pasada (None = ninguna, para callers legacy).
+    During:
+        Las proyecciones se generan sobre la UNION de ambas: archivar cambia
+        DONDE vive el dato (L1), no si el agente puede LEERLO (L2/L3). El orden
+        se conserva (recientes primero) porque los generadores ya ponderan por
+        recencia.
+    After:
+        L2 y L3 siguen nombrando las lecciones archivadas. No lanza.
+
+    Deuda residual declarada: esto arregla el ESCRITOR de las proyecciones. El
+    LECTOR sigue sin mirar `archive/` (WOT-2026-024r), asi que una leccion
+    archivada en una pasada ANTERIOR a este fix no reaparece sola: solo vuelve
+    a L2/L3 cuando su entrada este entre las que esta pasada procesa.
+    """
+    projected = list(recent) + list(archivable or [])
+
+    rules_md = generate_memory_rules_md(projected)
     MEMORY_RULES_MD.write_text(rules_md, encoding="utf-8")
     if verbose:
         print(f"Regenerated {MEMORY_RULES_MD}")
 
-    profile_md = generate_memory_profile_md(recent)
+    profile_md = generate_memory_profile_md(projected)
     MEMORY_PROFILE_MD.write_text(profile_md, encoding="utf-8")
     if verbose:
         print(f"Regenerated {MEMORY_PROFILE_MD}")
@@ -679,7 +706,9 @@ def _apply_consolidation(
     if verbose:
         print(f"Regenerated {MEMORY_MD}")
 
-    _regenerate_l2_l3(recent, verbose)
+    # WOT-2026-042e: se pasan TAMBIEN las archivables -- archivar cambia donde
+    # vive el dato, no si el agente puede leerlo.
+    _regenerate_l2_l3(recent, verbose, archivable=archivable)
 
     print(
         f"\n[APPLIED] Kept {len(recent)} entries, dropped {stats['dropped']}, deduped {stats['deduped']}, archived {stats['archived']}"

@@ -6214,6 +6214,39 @@ def _refresh_session_tracker_after_close() -> None:
         pass
 
 
+_STATE_STATUS_RE = re.compile(r"^STATUS:\s*(\S+)", re.MULTILINE)
+_TERMINAL_STATE_STATUSES = frozenset({"COMPLETED"})
+
+
+def _state_status_is_terminal(state_content: str) -> bool:
+    """True si el CAMPO ``STATUS:`` de STATE.md declara un estado terminal.
+
+    WOT-2026-042a. Nace de un fallo medido en vivo: la idempotencia de
+    ``--session-close`` se decidia con ``"COMPLETED" in state_content``, un
+    substring CRUDO sobre STATE.md.
+
+    Before:
+        `state_content` es el texto de STATE.md tal cual (puede venir vacio, con
+        CRLF, o con lineas de prosa que NOMBREN un estado sin declararlo).
+    During:
+        Casa la PRIMERA linea que declare el campo ``STATUS:`` y compara su
+        valor contra el conjunto terminal. Solo el campo cuenta: una mencion en
+        una nota de blocker, en un titulo de ticket o en un diagnostico NO es un
+        estado. Se reutiliza la forma canonica ``^STATUS:`` que ya usan :4699 y
+        `scripts/check_backlog_contract.py::_STATUS_RE` -- un dato, una forma de
+        leerlo.
+    After:
+        Retorna bool. No lanza ni muta nada. Un STATE.md sin campo ``STATUS:``
+        da False (fail-OPEN deliberado: ante un fichero ilegible, la idempotencia
+        NO se activa y el closeout CORRE, que es la direccion segura -- el fallo
+        que este helper corrige era justamente saltarse el cierre creyendolo hecho).
+    """
+    match = _STATE_STATUS_RE.search(state_content or "")
+    if match is None:
+        return False
+    return match.group(1).strip().upper() in _TERMINAL_STATE_STATUSES
+
+
 def _handle_session_close(  # noqa: C901 - delegation handler with flag building
     dry_run: bool,
     skip_slow: bool,
@@ -6239,9 +6272,18 @@ def _handle_session_close(  # noqa: C901 - delegation handler with flag building
         - Returns exit code from session_closeout.py (0=success, 1=failure).
         - If already completed, exits 0 without running anything.
     """
-    # Idempotency check: if STATE.md already terminal and no --force, skip
+    # Idempotency check: if STATE.md already terminal and no --force, skip.
+    #
+    # WOT-2026-042a: se lee el CAMPO `STATUS:`, no un substring del fichero.
+    # El guardia anterior (`"COMPLETED" in state_content`) casaba cualquier
+    # MENCION de la palabra sobre STATE.md, que es una PROYECCION: una nota de
+    # blocker o un titulo de ticket que la nombrara saltaba el closeout entero
+    # (gates, reconcile, archivado) devolviendo exit 0 con already_completed.
+    # Es el patron CEM "un exit 0 puede significar que no hice nada", con
+    # disparador TEXTUAL. Mismo `^STATUS:` canonico que ya usan :4699 y
+    # scripts/check_backlog_contract.py::_STATUS_RE (un dato, una forma de leerlo).
     state_content = read_file(STATE_FILE)
-    if not force_mode and state_content and "COMPLETED" in state_content:
+    if not force_mode and state_content and _state_status_is_terminal(state_content):
         if json_output:
             print(
                 json.dumps({"status": "already_completed", "plan_id": "N/A"}, indent=2)

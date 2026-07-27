@@ -1049,11 +1049,25 @@ class TestTicketProseIntegration:
 class TestSessionClose:
     """WP-2026-169: Test --session-close handler delegation and idempotency."""
 
-    def test_session_close_already_completed(self, monkeypatch):
-        """When STATE.md already COMPLETED and no --force, exit 0 silently."""
+    def test_session_close_already_completed(self, monkeypatch, tmp_path):
+        """When STATE.md already COMPLETED and no --force, exit 0 silently.
+
+        WOT-2026-042a: el fixture usaba el formato LEGACY ``Estado actual:``,
+        que ya no existe en ningun STATE.md vivo (el formato vivo es
+        ``ACTIVE_TICKET:``/``STATUS:``, ver el docstring de
+        `_sync_state_after_session_close`; medido 2026-07-27: los unicos
+        ``Estado actual:`` del arbol viven en backups de abril y mayo). Al
+        acotar la idempotencia al CAMPO ``STATUS:``, este fixture irreal dejo
+        de casar. Se actualiza al formato REAL en vez de relajar el guardia:
+        un test verde contra un fixture que no espeja produccion no es senal
+        (AGENTS.md, fixtures realistas).
+        """
+        monkeypatch.setattr(
+            agent_controller, "STATE_FILE", tmp_path / "STATE.md", raising=False
+        )
 
         def mock_read(path):
-            return "Estado actual: COMPLETED\n"
+            return "ACTIVE_TICKET: -\nSTATUS: COMPLETED\n"
 
         monkeypatch.setattr(agent_controller, "read_file", mock_read)
 
@@ -1135,6 +1149,97 @@ class TestSessionClose:
         assert code == 0
         assert mock_run.call_args[0][0][1] == str(script_path)
         assert mock_run.call_args.kwargs["cwd"] == destination_root
+
+    def test_042a_completed_mentioned_in_prose_does_not_skip_the_closeout(
+        self, monkeypatch, tmp_path
+    ):
+        """WOT-2026-042a: la idempotencia mira el CAMPO STATUS, no cualquier mencion.
+
+        El guardia anterior era ``"COMPLETED" in state_content``: un substring
+        CRUDO sobre STATE.md, que es una PROYECCION. Cualquier linea que
+        NOMBRARA la palabra -- una nota de blocker, un titulo de ticket -- se
+        leia como estado terminal y saltaba el closeout ENTERO devolviendo
+        exit 0. Es el patron CEM de "un exit 0 puede significar no hice nada".
+
+        Mutation: si el guardia vuelve al substring, este test cae porque el
+        closeout NO se delega (mock_run.called es False).
+        """
+        script_dir = tmp_path / "scripts"
+        script_dir.mkdir()
+        (script_dir / "session_closeout.py").write_text("")
+        monkeypatch.setattr(agent_controller, "PROJECT_ROOT", tmp_path)
+        # Aisla el STATE.md real: el handler lo REESCRIBE al cerrar y sin esto
+        # la corrida contamina el arbol (state leak medido 2026-07-27).
+        monkeypatch.setattr(
+            agent_controller, "STATE_FILE", tmp_path / "STATE.md", raising=False
+        )
+
+        mock_run = MagicMock(
+            return_value=MagicMock(returncode=0, stdout="ok\n", stderr="")
+        )
+        monkeypatch.setattr(agent_controller.subprocess, "run", mock_run)
+
+        # STATUS real = IN_PROGRESS. La palabra COMPLETED aparece en PROSA.
+        def mock_read(path):
+            return (
+                "ACTIVE_TICKET: WOT-2026-999z\n"
+                "STATUS: IN_PROGRESS\n"
+                "BLOCKER: el guard de aterrizaje no marca COMPLETED al cerrar\n"
+            )
+
+        monkeypatch.setattr(agent_controller, "read_file", mock_read)
+
+        code = agent_controller._handle_session_close(
+            dry_run=False,
+            skip_slow=False,
+            ticket=None,
+            tickets=None,
+            force_mode=False,
+            json_output=False,
+        )
+
+        assert code == 0
+        assert mock_run.called, (
+            "el closeout NO corrio: la palabra COMPLETED en prosa se leyo como "
+            "estado terminal (regresion de WOT-2026-042a)"
+        )
+
+    def test_042a_status_field_completed_still_skips(self, monkeypatch, tmp_path):
+        """WOT-2026-042a: la idempotencia LEGITIMA se conserva.
+
+        Contrapartida del test anterior: cuando el CAMPO STATUS es terminal, el
+        closeout sigue saltandose sin --force. El fix acota el guardia, no lo
+        elimina.
+        """
+        script_dir = tmp_path / "scripts"
+        script_dir.mkdir()
+        (script_dir / "session_closeout.py").write_text("")
+        monkeypatch.setattr(agent_controller, "PROJECT_ROOT", tmp_path)
+
+        mock_run = MagicMock(
+            return_value=MagicMock(returncode=0, stdout="ok\n", stderr="")
+        )
+        monkeypatch.setattr(agent_controller.subprocess, "run", mock_run)
+
+        def mock_read(path):
+            return "ACTIVE_TICKET: -\nSTATUS: COMPLETED\n"
+
+        monkeypatch.setattr(agent_controller, "read_file", mock_read)
+
+        code = agent_controller._handle_session_close(
+            dry_run=False,
+            skip_slow=False,
+            ticket=None,
+            tickets=None,
+            force_mode=False,
+            json_output=False,
+        )
+
+        assert code == 0
+        assert not mock_run.called, (
+            "el closeout corrio con STATUS: COMPLETED y sin --force: la "
+            "idempotencia legitima se ha perdido"
+        )
 
     def test_session_close_dry_run_passes_ticket(self, monkeypatch, tmp_path):
         """--session-close --dry-run --ticket WP-2026-168 passes the flag."""

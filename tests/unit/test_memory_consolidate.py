@@ -19,6 +19,93 @@ from scripts.memory_consolidate import (
 )
 
 
+def test_042e_l2_l3_incluyen_las_entradas_archivadas(monkeypatch, tmp_path) -> None:
+    """WOT-2026-042e: consolidar NO debe expulsar la memoria de L2/L3.
+
+    Defecto medido 2026-07-27: `_regenerate_l2_l3(recent, ...)` recibia SOLO el
+    buffer post-cutoff, asi que toda entrada de mas de 30 dias desaparecia de
+    L2 (`memory_rules.md`) y L3 (`memory_profile.md`) al archivarse. Combinado
+    con WOT-2026-024r (`memory_loader` no lee `archive/`), el efecto es que
+    ARCHIVAR EQUIVALE A BORRAR desde el punto de vista del agente -- y ocurre
+    como parte del cierre canonico, sobre datos que nadie recupera.
+
+    Mutation: si `_regenerate_l2_l3` vuelve a recibir solo `recent`, la leccion
+    vieja desaparece de ambas proyecciones y este test cae.
+    """
+    import scripts.memory_consolidate as mc
+
+    vieja = (
+        "REGLA VIEJA PERO VIGENTE: el guard mide con vara mas floja "
+        "que la que predica y sale verde igual"
+    )
+    nueva = (
+        "REGLA RECIENTE: un exit 0 puede significar que no hice nada "
+        "en operaciones idempotentes"
+    )
+    old_ts = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+    new_ts = datetime.now(timezone.utc).isoformat()
+
+    entries = [
+        {"timestamp": old_ts, "signal": vieja, "domain": "quality"},
+        {"timestamp": new_ts, "signal": nueva, "domain": "quality"},
+    ]
+    recent, archivable = split_by_age(entries, days=30)
+    assert len(recent) == 1 and len(archivable) == 1, "el fixture debe partir 1/1"
+
+    rules = tmp_path / "memory_rules.md"
+    profile = tmp_path / "memory_profile.md"
+    monkeypatch.setattr(mc, "MEMORY_RULES_MD", rules)
+    monkeypatch.setattr(mc, "MEMORY_PROFILE_MD", profile)
+
+    mc._regenerate_l2_l3(recent, verbose=False, archivable=archivable)
+
+    rules_txt = rules.read_text(encoding="utf-8")
+    profile_txt = profile.read_text(encoding="utf-8")
+    assert nueva in rules_txt, "la leccion reciente debe estar en L2"
+    assert vieja in rules_txt, (
+        "la leccion ARCHIVADA desaparecio de L2: consolidar expulsa la memoria "
+        "de los niveles legibles (regresion de WOT-2026-042e)"
+    )
+    assert vieja[:60] in profile_txt, (
+        "la leccion ARCHIVADA desaparecio de L3 (regresion de WOT-2026-042e)"
+    )
+
+
+def test_042e_el_call_site_de_main_pasa_las_archivables() -> None:
+    """WOT-2026-042e: el CALL-SITE tambien esta cubierto, no solo la funcion.
+
+    Hueco medido durante el propio fix: el test de arriba llama a
+    `_regenerate_l2_l3` DIRECTAMENTE, asi que un mutante que devolviera el
+    call-site de `main` a `_regenerate_l2_l3(recent, verbose)` lo dejaba VERDE
+    y el bug volvia a produccion. Es la leccion de AGENTS.md sobre barreras que
+    no miran donde ocurre el fallo: la funcion admitia el argumento y nadie se
+    lo pasaba.
+
+    Se audita el AST en vez del texto crudo: un comentario que mencione
+    `archivable` no debe dar por bueno el cableado.
+    """
+    import ast
+
+    source = Path("scripts/memory_consolidate.py").read_text(encoding="utf-8")
+    calls = [
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_regenerate_l2_l3"
+    ]
+    assert calls, "no se encontro ninguna llamada a _regenerate_l2_l3"
+    for call in calls:
+        passes_archivable = any(kw.arg == "archivable" for kw in call.keywords) or (
+            len(call.args) >= 3
+        )
+        assert passes_archivable, (
+            f"la llamada a _regenerate_l2_l3 en la linea {call.lineno} NO pasa "
+            "las entradas archivables: consolidar volveria a expulsar la "
+            "memoria de L2/L3 (regresion de WOT-2026-042e)"
+        )
+
+
 def test_is_noise_tool_called() -> None:
     """Tool X called patterns should be dropped."""
     assert is_noise("Tool view_file called") is True
