@@ -1161,8 +1161,20 @@ def main() -> int:  # noqa: C901
         "run_dir": str(run_dir),
         # WOT-2026-010c: record the motor HEAD this run tested, so the
         # canonical-suite handoff gate can verify freshness by SHA (not by
-        # timestamp). Captured once at run start; the tree must not change.
+        # timestamp). Provisional at run start; the tree must not change DURING
+        # the run. WOT-2026-040n re-resolves this field when the measurement
+        # window closes (see "re-stamp" below), so a content-preserving rewrite
+        # by the mutating pre-commit hooks -- which happens AFTER the window --
+        # does not make a legitimately-green suite look stale.
         "tested_commit_sha": _delivery_head_sha(),
+        # WOT-2026-040n (review A-1): declare the stamp PROVISIONAL from the
+        # start. The re-stamp below lives inside the `try`, so a crash or a
+        # Ctrl-C jumps straight to the `finally`, which persists this summary
+        # with the run-start SHA. Without this field that stale stamp would be
+        # written with exactly the same confidence as a validated one. It is
+        # overwritten with "revalidated_at_window_close" only when the window
+        # actually closed clean.
+        "stamp_scope": "provisional_at_run_start",
         # WOT-2026-040t (Pieza 4): the line above says "the tree must not
         # change" -- until now a NORM nobody enforced. audit_state_pre is the
         # snapshot that turns it into a MECHANISM: it is compared after the run
@@ -1267,6 +1279,59 @@ def main() -> int:  # noqa: C901
             except Exception as exc:
                 summary["audit_window_invalidated"] = None
                 summary["audit_window_check_error"] = str(exc)
+
+        # WOT-2026-040n: re-stamp tested_commit_sha now that the measurement
+        # window is CLOSED. The stamp used to be captured only at run start,
+        # i.e. on the wrong side of the mutating pre-commit hooks
+        # (end-of-file-fixer, mixed-line-ending, trailing-whitespace,
+        # ruff-format). Those hooks rewrite the tree between the stamp and the
+        # commit, so the commit produced a HEAD the stamp could never match and
+        # pre_handoff_guard fired `stale_run` on legitimate work -- an
+        # AVOIDABLE full-suite re-run, observed in 2 of 2 closeouts.
+        #
+        # This REORDERS the stamping point; it does not relax the freshness
+        # gate. The asymmetry is the whole point, and it is load-bearing:
+        #   * tree moved DURING the suite (stash/reset/checkout) -> the 040t
+        #     invariant already invalidated the run above, and the guard below
+        #     keeps `tested_commit_sha` at its run-start value, so the result
+        #     stays invalid. Re-stamping here would have laundered exactly the
+        #     contaminated run 040t exists to catch.
+        #   * tree only reformatted by hooks AFTER the window -> not
+        #     contamination of the measurement, just a post-measurement
+        #     content-preserving rewrite; the stamp is allowed to describe the
+        #     tree that was actually measured.
+        # Requires POSITIVE proof of stability, not merely absence of a
+        # violation: when the pre-snapshot was unavailable (_audit_state_pre is
+        # None) the window is "not verified", and re-stamping there would
+        # assert a stability nobody measured -- the same laundering, reached by
+        # a different route. Keep the run-start value in that case.
+        # Fail-open: if the delivery HEAD cannot be resolved, keep the
+        # run-start value rather than blanking a field the gate depends on.
+        if (
+            _audit_state_pre is not None
+            and not summary.get("audit_window_invalidated")
+            and not summary.get("audit_window_check_error")
+        ):
+            _restamped = _delivery_head_sha()
+            if _restamped:
+                summary["tested_commit_sha"] = _restamped
+                # WOT-2026-040n (review A-1/A-2): the SHA alone cannot say what
+                # it MEANS. Two stamps that look identical -- one validated at
+                # window close, one persisted by the `finally` after a crash or
+                # Ctrl-C -- would otherwise be indistinguishable to any
+                # consumer. Record the provenance explicitly, and with it the
+                # tree state the stamp actually describes: a re-stamp over a
+                # DIRTY tree still names a commit the working tree does not
+                # match (status_entries is already 1 in the motor, so this is
+                # a real case, not a hypothetical one).
+                summary["stamp_scope"] = "revalidated_at_window_close"
+                try:
+                    _post = _invariant_capture_state(_delivery_repo_root())
+                    summary["stamp_tree_dirty"] = bool(_post.status.strip())
+                    summary["stamp_status_entries"] = len(_post.status.splitlines())
+                except Exception as exc:
+                    summary["stamp_tree_dirty"] = None
+                    summary["stamp_scope_error"] = str(exc)
         return exit_code
     finally:
         cleanup_after = {"removed": [], "failed": []}

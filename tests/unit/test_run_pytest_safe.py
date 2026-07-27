@@ -1820,3 +1820,241 @@ class TestSuiteRegressionReportWiring:
         )
         assert code == 1, "red suite must keep exit_code 1 with the reporter wired"
         assert "[suite-regression]" in out
+
+
+class TestStampSurvivesMutatingHooks:
+    """WOT-2026-040n: the stamp is re-resolved when the measurement window
+    CLOSES, and that re-stamp is strictly conditioned on the 040t invariant.
+
+    The point of this class is the ASYMMETRY, because without it the fix reads
+    like a bypass of WOT-2026-040t:
+
+      * tree only REFORMATTED by the mutating pre-commit hooks (after the
+        window) -> the run stays valid and the stamp follows the delivery HEAD,
+        so pre_handoff_guard stops firing `stale_run` on legitimate work.
+      * tree MOVED DURING the suite (stash/reset/checkout) -> 040t invalidates
+        the run and the stamp must NOT be refreshed; re-stamping there would
+        launder exactly the contaminated run 040t exists to catch.
+      * window NOT VERIFIABLE (no pre-snapshot) -> also no re-stamp: absence of
+        a violation is not proof of stability.
+
+    [NON-REVERSE-CLASSICAL: fija la asimetria de un reordenamiento; el rojo
+    previo lo da el probe de DoD del vuelo, no un bug con node-id.]
+    """
+
+    def _run_main(
+        self,
+        mod,
+        tmp_path: Path,
+        monkeypatch,
+        *,
+        head_seq: list[str],
+        invariant_raises: BaseException | None = None,
+        capture_raises: BaseException | None = None,
+        post_status: str = "",
+        stream_pytest_override=None,
+    ) -> dict:
+        """Drive main() with a delivery HEAD that CHANGES between the run-start
+        stamp and the window close (that is what the mutating hooks do).
+
+        ``head_seq`` is consumed one value per _delivery_head_sha() call, so the
+        first call (run start) and the last (re-stamp) can differ.
+        """
+        base = tmp_path / ".agent" / "runtime" / "pytest-safe"
+        base.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(mod, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(mod, "_PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(mod, "_PROJECT_ROOT_BOOTSTRAP", tmp_path)
+        monkeypatch.setattr(mod, "LAST_RUN_JSON", base / "last-run.json")
+        monkeypatch.setattr(mod, "LAST_RUN_LOG", base / "last-run.log")
+        monkeypatch.setattr(mod, "RUN_HISTORY_JSONL", base / "run_history.jsonl")
+
+        pending = list(head_seq)
+
+        def _fake_head() -> str:
+            return pending.pop(0) if len(pending) > 1 else pending[0]
+
+        monkeypatch.setattr(mod, "_delivery_head_sha", _fake_head)
+
+        if capture_raises is not None:
+
+            def _raise_capture(_root):
+                raise capture_raises
+
+            monkeypatch.setattr(mod, "_invariant_capture_state", _raise_capture)
+        else:
+            # A REAL WorktreeState: main() reads .head/.status/.head_reflog_len
+            # to build audit_state_pre. A bare object() would raise there and
+            # silently route this harness down the "unverifiable window" path --
+            # i.e. the stable-window test would pass for the wrong reason.
+            from scripts.worktree_audit_invariant import WorktreeState
+
+            # First call = pre-snapshot (clean). Later calls = the post-window
+            # capture the re-stamp makes, which may report a DIRTY tree.
+            _captures = {"n": 0}
+
+            def _capture(_root):
+                _captures["n"] += 1
+                status = post_status if _captures["n"] > 1 else ""
+                return WorktreeState(head="h", status=status, head_reflog_len=1)
+
+            monkeypatch.setattr(mod, "_invariant_capture_state", _capture)
+
+        def _verify(_root, _pre):
+            if invariant_raises is not None:
+                raise invariant_raises
+            return None
+
+        monkeypatch.setattr(mod, "_invariant_verify_unchanged", _verify)
+
+        monkeypatch.setattr(
+            mod,
+            "stream_pytest",
+            stream_pytest_override or (lambda cmd: (0, [], [])),
+        )
+        monkeypatch.setattr(mod, "acquire_lock", lambda force_unlock=False: {"pid": 0})
+        monkeypatch.setattr(mod, "release_lock", lambda: None)
+        monkeypatch.setattr(
+            mod, "cleanup_known_temp_dirs", lambda: {"removed": [], "failed": []}
+        )
+        monkeypatch.setattr(mod, "check_canonical_state_leak", lambda snap: [])
+        monkeypatch.setattr(mod, "snapshot_canonical_state", lambda: {})
+        monkeypatch.setattr(
+            mod,
+            "select_test_runner",
+            lambda interp, args, xdist, run_dir, test_dir: (["echo"], "pytest"),
+        )
+        monkeypatch.setattr(mod, "resolve_test_interpreter", lambda: sys.executable)
+        monkeypatch.setattr(sys, "argv", ["run_pytest_safe.py", "--level", "all"])
+
+        mod.main()
+        return json.loads((base / "last-run.json").read_text(encoding="utf-8"))
+
+    def test_stamp_follows_head_when_only_hooks_rewrote_the_tree(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """The defect being closed: hooks rewrite the tree AFTER the window, so
+        the commit lands on a new HEAD. The stamp must describe the tree that
+        was actually measured, not the pre-hook HEAD.
+
+        Mutation: delete the re-stamp block in main() and this goes RED
+        (tested_commit_sha stays at the run-start value 'pre_hooks').
+        """
+        mod = load_runner_module()
+        data = self._run_main(
+            mod, tmp_path, monkeypatch, head_seq=["pre_hooks", "post_hooks"]
+        )
+        assert data.get("audit_window_invalidated") is None
+        assert data["tested_commit_sha"] == "post_hooks", (
+            "with a stable measurement window the stamp must be re-resolved at "
+            "window close, so the handoff gate stops seeing a false stale_run"
+        )
+
+    def test_stamp_is_not_refreshed_when_tree_moved_during_the_run(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """The other half of the asymmetry -- this is what keeps the fix from
+        being a bypass of WOT-2026-040t.
+
+        Mutation: drop the `audit_window_invalidated` condition from the
+        re-stamp guard and this goes RED, because a contaminated run would then
+        get a stamp matching the delivery HEAD and look handoff-ready.
+        """
+        mod = load_runner_module()
+        violation = mod._AuditInvariantViolation("MEDICION INVALIDADA: test")
+        data = self._run_main(
+            mod,
+            tmp_path,
+            monkeypatch,
+            head_seq=["pre_hooks", "post_hooks"],
+            invariant_raises=violation,
+        )
+        assert data.get("audit_window_invalidated"), "040t must invalidate this run"
+        assert data["tested_commit_sha"] == "pre_hooks", (
+            "a run whose tree moved DURING the suite must NOT be re-stamped: "
+            "that would launder the contaminated run 040t exists to catch"
+        )
+        assert data["exit_code"] == 1, "an invalidated window must not stay green"
+
+    def test_crash_persists_a_stamp_marked_provisional(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """WOT-2026-040n review A-1 (negative case). The re-stamp lives inside
+        the `try`; a crash jumps to the `finally`, which persists the summary
+        with the RUN-START sha. That stale stamp must not be indistinguishable
+        from a validated one.
+
+        Mutation: delete the "provisional_at_run_start" stamp_scope seed and
+        this goes RED -- last-run.json would carry a stale SHA with no field
+        saying so.
+        """
+        mod = load_runner_module()
+        base = tmp_path / ".agent" / "runtime" / "pytest-safe"
+        base.mkdir(parents=True, exist_ok=True)
+
+        def _boom(_cmd):
+            raise KeyboardInterrupt
+
+        with pytest.raises(KeyboardInterrupt):
+            self._run_main(
+                mod,
+                tmp_path,
+                monkeypatch,
+                head_seq=["pre_hooks", "post_hooks"],
+                stream_pytest_override=_boom,
+            )
+
+        data = json.loads((base / "last-run.json").read_text(encoding="utf-8"))
+        assert data["tested_commit_sha"] == "pre_hooks", (
+            "the finally persists the run-start sha after a crash"
+        )
+        assert data["stamp_scope"] == "provisional_at_run_start", (
+            "a stamp persisted by the crash path must declare itself "
+            "provisional; otherwise it reads as validated"
+        )
+
+    def test_revalidated_stamp_records_tree_dirtiness(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """WOT-2026-040n review A-2. A re-stamp over a DIRTY tree still names a
+        commit the working tree does not match, so the stamp must say so.
+
+        Mutation: drop the stamp_tree_dirty capture and this goes RED.
+        """
+        mod = load_runner_module()
+        data = self._run_main(
+            mod,
+            tmp_path,
+            monkeypatch,
+            head_seq=["pre_hooks", "post_hooks"],
+            post_status=" M scripts/run_pytest_safe.py\n",
+        )
+        assert data["tested_commit_sha"] == "post_hooks"
+        assert data["stamp_scope"] == "revalidated_at_window_close"
+        assert data["stamp_tree_dirty"] is True, (
+            "a re-stamp over a dirty tree must record that the tree does not "
+            "match the commit it names"
+        )
+        assert data["stamp_status_entries"] == 1
+
+    def test_stamp_is_not_refreshed_when_window_is_unverifiable(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """No pre-snapshot => the window is 'not verified', never 'verified
+        stable'. Absence of a violation is not proof of stability.
+
+        Mutation: weaken the guard to `not summary.get(...)` alone (dropping the
+        `_audit_state_pre is not None` requirement) and this goes RED.
+        """
+        mod = load_runner_module()
+        data = self._run_main(
+            mod,
+            tmp_path,
+            monkeypatch,
+            head_seq=["pre_hooks", "post_hooks"],
+            capture_raises=RuntimeError("git unavailable"),
+        )
+        assert data["tested_commit_sha"] == "pre_hooks", (
+            "an unverifiable window must not be re-stamped: that would assert a "
+            "stability nobody measured"
+        )
