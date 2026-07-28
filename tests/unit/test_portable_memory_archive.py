@@ -86,10 +86,17 @@ def repo(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def wired(repo: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Apunta el loader al fixture: `.agent` y raiz de repo del fixture."""
-    agent_dir = repo / ".agent"
-    monkeypatch.setattr(memory_loader, "get_agent_dir", lambda: agent_dir)
-    monkeypatch.setattr(memory_loader, "_get_repo_root", lambda: repo)
+    """Apunta el loader al fixture parcheando UNA sola cosa: `get_agent_dir`.
+
+    Deliberadamente NO se parchea `_get_repo_root`: ese patch era REDUNDANTE
+    (medido en review -- los 10 tests pasan igual sin el) porque la produccion
+    deriva la raiz de `_get_memory_dir()`. Un mock redundante es justo lo que
+    enmascara una ruta real rota: si manana alguien volviera a resolver la raiz
+    por su cuenta -- reintroduciendo la fuga de aislamiento que este ticket ya
+    corrigio una vez --, con el patch puesto estos tests seguirian verdes.
+    Sin el, se ponen rojos.
+    """
+    monkeypatch.setattr(memory_loader, "get_agent_dir", lambda: repo / ".agent")
     return repo
 
 
@@ -100,7 +107,7 @@ def _archive(repo: Path) -> Path:
 # --- DoD.1: comportamiento, con RECIBO de hermeticidad --------------------
 
 
-def test_bootstrap_context_contains_archive_canary(wired: Path, capsys):
+def test_bootstrap_context_contains_archive_canary(wired: Path):
     """Archive con canario y CERO L1/L2/L3 -> el uuid llega al contexto.
 
     Recibo obligatorio: imprime `git rev-parse --show-toplevel` y asserta que
@@ -259,7 +266,7 @@ def test_loader_degrades_instead_of_breaking_on_corrupt_archive(wired: Path):
     assert memory_loader.get_bootstrap_context() == ""
 
 
-def test_dedup_key_prefers_stable_id_and_falls_back(wired: Path):
+def test_dedup_key_prefers_stable_id_and_falls_back():
     """`id` estable cuando existe; si no, la clave de reconcile + timestamp.
 
     143 de 153 entradas del archive real tienen `id` (medido 2026-07-28); las
