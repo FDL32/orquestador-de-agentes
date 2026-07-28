@@ -275,20 +275,37 @@ def test_dedup_key_prefers_stable_id_and_falls_back(wired: Path):
 # --- DoD.2: invariante contra el archive REAL -----------------------------
 
 
-def test_real_archive_ids_reach_the_context():
-    """INVARIANTE, no medicion: la interseccion no es vacia.
+def test_real_archive_entries_reach_the_context():
+    """INVARIANTE, no medicion: el contenido del archive REAL llega al contexto.
 
-    No fija QUE id: un id concreto caduca solo en cuanto alguien consolide.
-    Corre contra el repo real (sin fixture) porque es la prueba de equivalencia
-    de ruta productiva: el loader real, sobre el archive real.
+    No fija QUE entrada: cualquier id o ticket concreto caduca solo en cuanto
+    alguien consolide. Corre contra el repo real (sin fixture) porque es la
+    prueba de equivalencia de ruta productiva: el loader real sobre el archive
+    real.
+
+    Se mide por `source_ticket` + `signal`, NO por `id`: medido 2026-07-28, las
+    153 entradas del archive tienen `source_ticket`, asi que el formateador
+    imprime el ticket y el `id` solo aparece si esta embebido en el texto de la
+    senal. Un invariante sobre `id` pasaba por COINCIDENCIA (1 de 93 entradas
+    exclusivas del archive), que es la clase de verde que este ticket existe
+    para eliminar.
     """
     archived = read_archive_observations(_ROOT)
     if not archived:
         pytest.skip("el motor no tiene archive portable en este checkout")
 
-    ids = {r["id"] for r in archived if isinstance(r.get("id"), str) and r["id"]}
     context = memory_loader.get_bootstrap_context()
-    assert ids & {i for i in ids if i in context}, (
-        "ningun id del archive tracked aparece en el contexto: el puente "
+    reached = [
+        r
+        for r in archived
+        if str(r.get("signal") or "")[:60] and str(r.get("signal"))[:60] in context
+    ]
+    assert reached, (
+        "ninguna senal del archive tracked aparece en el contexto: el puente "
         "archive -> contexto no existe"
+    )
+    # No es solo "alguna": el archive entra COMPLETO (el shaping es A2).
+    assert len(reached) >= len(archived) // 2, (
+        f"solo {len(reached)} de {len(archived)} entradas del archive llegan al "
+        "contexto: algo esta filtrando la memoria portable"
     )
