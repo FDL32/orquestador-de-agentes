@@ -114,6 +114,71 @@ def check_command_is_canonical(settings: dict) -> list[str]:
     return []
 
 
+#: Every non-PreToolUse hook command, mapped to the target it must resolve.
+#: WOT-2026-042d invariant (d): the gate audits ALL commands, not only the
+#: write guard. Before this map, mutating a PostToolUse command to
+#: ``sys.exit(0)`` left the gate at rc=0 ("OK, portable, fail-closed") -- the
+#: mechanism existed, was wired, and did not look where the defect lived
+#: (AGENTS.md, "barrera del alcance").
+_NON_GATING_TARGETS: dict[tuple[str, str], tuple[str, str]] = {
+    ("PostToolUse", "Read|Grep|Glob|WebFetch"): (
+        "native_post_tool_hook.py",
+        "agent_hooks",
+    ),
+    ("PostToolUse", "Write|Edit|MultiEdit"): (
+        "encoding_post_write_hook.py",
+        "scripts",
+    ),
+    ("PreCompact", ""): ("pre_compact_hook.py", "agent_hooks"),
+    ("Stop", ""): ("native_stop_hook.py", "agent_hooks"),
+    ("SubagentStop", ""): ("subagent_stop_hook.py", "agent_hooks"),
+}
+
+
+def check_all_hook_commands_are_canonical(settings: dict) -> list[str]:
+    """Every hook command must be a canonical bootstrap, not a guessed path.
+
+    WOT-2026-042d invariant (d). The write guard already had this check; the
+    other five commands did not, so nothing stopped them from regressing to
+    ``cands=[root/'orquestador_de_agentes'/..., ...]`` + ``sys.exit(0)`` -- a
+    hook that resolves the motor by GUESSING a directory name and reports
+    success when every guess misses.
+
+    Before: the parsed tracked settings.
+    During: for each known (event, matcher) pair, compares the command against
+    ``claude_guard_entry.canonical_command_for(script, parent)``. That function
+    is the SINGLE SOURCE of the literal -- duplicating the string here would
+    reintroduce exactly the drift this gate exists to prevent.
+    After: returns one violation per non-canonical or unknown command.
+    """
+    violations: list[str] = []
+    for event, entries in settings.get("hooks", {}).items():
+        if event == "PreToolUse":
+            continue  # covered by check_command_is_canonical
+        for entry in entries:
+            matcher = entry.get("matcher", "")
+            target = _NON_GATING_TARGETS.get((event, matcher))
+            for hook in entry.get("hooks", []):
+                if hook.get("type") != "command":
+                    continue
+                if target is None:
+                    violations.append(
+                        f"{event} hook with matcher {matcher!r} is not a known "
+                        "hook target; add it to _NON_GATING_TARGETS so its "
+                        "command is audited (unaudited hooks fail green)"
+                    )
+                    continue
+                expected = claude_guard_entry.canonical_command_for(*target)
+                if hook.get("command") != expected:
+                    violations.append(
+                        f"{event} hook ({target[0]}) command is not the canonical "
+                        "bootstrap; it must resolve via the walk-up root then the "
+                        "motor link, and exit non-zero with a diagnostic when its "
+                        "target is missing (never a silent exit 0)"
+                    )
+    return violations
+
+
 def check_entrypoint_fails_closed() -> list[str]:
     """The canonical entrypoint must exit non-zero with no resolvable guard."""
     if not _ENTRYPOINT.exists():
@@ -156,6 +221,7 @@ def check_settings_file(path: Path) -> list[str]:
         check_no_personal_grants(settings)
         + check_write_guard_present(settings)
         + check_command_is_canonical(settings)
+        + check_all_hook_commands_are_canonical(settings)
         + check_entrypoint_fails_closed()
     )
 

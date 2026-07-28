@@ -216,13 +216,62 @@ def _path_is_within(path_obj: Path, root: Path) -> bool:
         return False
 
 
-def canonical_hook_command() -> str:
-    """The exact command a tracked .claude/settings.json hook must use.
+#: Hook scripts live under one of these two package dirs, relative to the root.
+_HOOK_PARENTS: dict[str, tuple[str, ...]] = {
+    "agent_hooks": ("'.agent'", "'hooks'"),
+    "scripts": ("'scripts'",),
+}
 
-    Single source of truth shared by the settings builder and the portability
-    gate. A minimal bootstrap that locates this entrypoint (own or via link)
-    and runs it with ``cwd=<repo_root>``; fails closed if the entrypoint is not
-    found.
+
+def canonical_command_for(script: str, parent: str = "agent_hooks") -> str:
+    """The exact command a tracked ``.claude/settings.json`` hook must use.
+
+    WOT-2026-042d: single source of truth for ALL hook commands, not only the
+    ``PreToolUse`` write guard. Before this generalization, five of the six
+    commands resolved the motor by GUESSING directory names
+    (``cands=[root/'orquestador_de_agentes'/..., root/..., root/'agent_system'/...]``)
+    and exited 0 when every guess missed -- a hook that cannot fail red is not
+    a hook.
+
+    Before: ``script`` is a hook filename (e.g. ``native_stop_hook.py``) and
+    ``parent`` selects its package dir (``agent_hooks`` -> ``.agent/hooks``,
+    ``scripts`` -> ``scripts``).
+    During: builds the same two-step cascade the write guard already used --
+    (i) the script under the walk-up root, (ii) failing that, the
+    ``motor_root`` from ``motor_destination_link.json``. The link is an
+    artifact of the DESTINO, never of the motor, so it is strictly a FALLBACK:
+    in the motor branch (i) always wins and the link is never consulted.
+    After: returns the command string. The command it builds exits non-zero
+    with a diagnostic on stderr when the target cannot be resolved -- never a
+    silent ``exit 0``.
+
+    Raises ``KeyError`` for an unknown ``parent`` (fail-closed: an unmapped
+    package dir must not silently degrade to a guessed path).
+    """
+    segments = "/".join(_HOOK_PARENTS[parent])
+    boot = (
+        "import sys,json,subprocess; from pathlib import Path; "
+        "r=next((p for p in [Path('.').resolve()]+list(Path('.').resolve().parents) "
+        "if (p/'.claude').exists()),Path('.').resolve()); "
+        f"e=r/{segments}/'{script}'; "
+        "l=r/'.agent'/'config'/'motor_destination_link.json'; "
+        "e=e if e.exists() else ((Path(json.loads(l.read_text(encoding='utf-8'))['motor_root'])"
+        f"/{segments}/'{script}') if l.exists() else e); "
+        "sys.exit(subprocess.run([sys.executable,str(e)],input=sys.stdin.buffer.read(),"
+        "cwd=str(r)).returncode) if e.exists() else "
+        f"(sys.stderr.write('HOOK INACTIVE: {script} not found; "
+        "hook failed (fail-closed).'),sys.exit(2))"
+    )
+    return 'python -c "' + boot + '"'
+
+
+def canonical_hook_command() -> str:
+    """The exact command the ``PreToolUse`` write guard must use.
+
+    Kept as the named entry point for the write guard specifically; the general
+    generator is ``canonical_command_for``. The write guard carries its own
+    ``SECURITY HOOK INACTIVE`` wording because a missing WRITE guard is a
+    security failure, not merely an inert hook.
     """
     boot = (
         "import sys,json,subprocess; from pathlib import Path; "
