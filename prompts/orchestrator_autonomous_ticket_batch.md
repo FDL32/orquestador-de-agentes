@@ -236,10 +236,10 @@ CLOSE adds a **phase 2 (challenge)** after phase 1's `1->9->2`:
 each governance fan-out, the orchestrator emits a challenge nonce EXTERNAL to the
 executor:
 
-    python scripts/ensemble_dispatch.py emit-nonce --commit <sha> --loop-id <L700|L800> \
+    python scripts/ensemble_dispatch.py emit-nonce --commit-sha <sha> --loop-id <L700|L800> \
         --issuer-backend-key BA01 --project-root <destino>
 
-Pass that nonce (and the `--commit <sha>` under review) into every `run_loop_round`
+Pass that nonce (and the `--commit-sha <sha>` under review) into every `run_loop_round`
 call: each round's receipt copies both, so `check_loop_execution` can later PROVE
 the fan-out ran -- `>=N` rounds with DISTINCT `backend_key` and a nonce emitted
 BEFORE the round. Then declare the flight's ticket commits in

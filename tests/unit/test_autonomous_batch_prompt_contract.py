@@ -26,6 +26,9 @@ tier scope, seam guard against dangling references).
 
 from __future__ import annotations
 
+import argparse
+import contextlib
+import importlib.util
 import re
 from pathlib import Path
 
@@ -260,6 +263,180 @@ def test_no_dangling_script_references() -> None:
     assert referenced, "expected at least one scripts/*.py reference to check"
     missing = [name for name in referenced if not (SCRIPTS / name).is_file()]
     assert not missing, f"dangling script references (do not exist): {missing}"
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-T6: the seam guard above proves the CITED SCRIPT exists; it stops one
+# level short -- it never looks at the FLAGS the prompt prescribes for it. The
+# prompt ordered `emit-nonce --commit <sha>`; the real CLI declares
+# `--commit-sha`. argparse rejects the documented invocation with exit 2, the
+# executor skips emit-nonce, and (per the prompt's own line: "Skipping
+# emit-nonce leaves the barrier in SKIP") the governance loop silently reverts
+# to a norm.
+#
+# The anchor is the REAL argparse of scripts/ensemble_dispatch.py, never a grep
+# for the literal "--commit-sha": a string check freezes TEXT and would diverge
+# again the moment the CLI renames the flag. Mutation must bite in BOTH
+# directions -- revert the prompt -> RED, rename the CLI flag -> RED.
+# Scope: emit-nonce and ONLY emit-nonce (not a generic flag validator).
+# ---------------------------------------------------------------------------
+
+
+def _prompt_emit_nonce_flags() -> list[str]:
+    """The long flags the prompt prescribes for the `emit-nonce` invocation.
+
+    Scoped to the command span: the fenced invocation starts at
+    `ensemble_dispatch.py emit-nonce` and continues over `\\` line
+    continuations.
+    """
+    lines = _read().splitlines()
+    starts = [
+        i
+        for i, ln in enumerate(lines)
+        if re.search(r"ensemble_dispatch\.py\s+emit-nonce", ln)
+    ]
+    assert len(starts) == 1, (
+        f"the prompt must spell the emit-nonce invocation EXACTLY ONCE "
+        f"(found {len(starts)}); more than one makes the flag extraction "
+        f"ambiguous and lets a stale copy survive"
+    )
+    span = [lines[starts[0]]]
+    while span[-1].rstrip().endswith("\\") and starts[0] + len(span) < len(lines):
+        span.append(lines[starts[0] + len(span)])
+    command = " ".join(part.rstrip("\\ ").strip() for part in span)
+    return re.findall(r"(--[A-Za-z0-9][A-Za-z0-9-]*)", command)
+
+
+def _emit_nonce_parser_actions() -> dict:
+    """The REAL argparse actions of the `emit-nonce` subparser, harvested from
+    scripts/ensemble_dispatch.py itself.
+
+    The parser is built inline inside `main()`, so there is no factory to
+    import. We call `main` with a sentinel-raising `parse_args` monkeypatch:
+    the parser tree is fully constructed by then, and nothing after parsing
+    runs -- no side effects.
+    """
+
+    spec = importlib.util.spec_from_file_location(
+        "_ensemble_dispatch_under_test", SCRIPTS / "ensemble_dispatch.py"
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    captured: dict = {}
+
+    class _ParserCapturedError(Exception):
+        """Sentinel: parser fully built, stop before any side effect runs."""
+
+    real_parse_args = argparse.ArgumentParser.parse_args
+
+    def _capture(self, args=None, namespace=None):
+        captured["parser"] = self
+        raise _ParserCapturedError
+
+    argparse.ArgumentParser.parse_args = _capture
+    try:
+        with contextlib.suppress(_ParserCapturedError):
+            module.main([])
+    finally:
+        argparse.ArgumentParser.parse_args = real_parse_args
+
+    parser = captured.get("parser")
+    assert parser is not None, (
+        "failed to capture the ensemble_dispatch argparse parser; the "
+        "interrogation seam (main() building the parser) has changed"
+    )
+    subparsers = [
+        a for a in parser._actions if isinstance(a, argparse._SubParsersAction)
+    ]
+    assert len(subparsers) == 1, "expected exactly one subparser group"
+    choices = subparsers[0].choices
+    assert "emit-nonce" in choices, (
+        "scripts/ensemble_dispatch.py must expose the `emit-nonce` subcommand: "
+        "the prompt's governance barrier depends on it"
+    )
+    return choices["emit-nonce"]
+
+
+def test_prompt_emit_nonce_flags_match_the_real_cli() -> None:
+    """Every flag the prompt prescribes for `emit-nonce` must be a flag the
+    REAL argparse subparser declares.
+
+    Anchored to the CODE, not to a string. Two-directional mutation:
+    - revert the prompt's `--commit-sha` to `--commit` -> RED (the prompt
+      prescribes a flag the CLI does not declare);
+    - rename `--commit-sha` in scripts/ensemble_dispatch.py -> RED (the CLI no
+      longer declares the flag the prompt prescribes).
+
+    A literal grep for "--commit-sha" would only catch the first.
+    """
+
+    sub = _emit_nonce_parser_actions()
+    declared: set[str] = set()
+    for action in sub._actions:
+        if isinstance(action, argparse._HelpAction):
+            continue
+        declared.update(action.option_strings)
+    prompt_flags = _prompt_emit_nonce_flags()
+    assert prompt_flags, "the prompt's emit-nonce invocation must carry flags"
+    unknown = sorted(f for f in prompt_flags if f not in declared)
+    assert not unknown, (
+        f"the prompt prescribes flags the real emit-nonce CLI does not "
+        f"declare: {unknown} (declared: {sorted(declared)}). An executor "
+        f"following the contract gets argparse exit 2, skips emit-nonce, and "
+        f"the governance barrier degrades to SKIP -- the prompt's own words: "
+        f"'Skipping emit-nonce leaves the barrier in SKIP'"
+    )
+
+
+def test_prompt_emit_nonce_invocation_parses_for_real() -> None:
+    """The prompt's invocation must actually PARSE against the real subparser,
+    not merely use known flag names: this catches a required flag the prompt
+    forgot as well as a misspelled one.
+
+    Placeholders (`<sha>`, `<destino>`) are substituted with dummy values; the
+    parse is the assertion, nothing is executed.
+    """
+    sub = _emit_nonce_parser_actions()
+    argv: list[str] = []
+    for flag in _prompt_emit_nonce_flags():
+        argv.extend([flag, "X"])
+    try:
+        sub.parse_args(argv)
+    except SystemExit as exc:  # pragma: no cover - only on a real contract break
+        raise AssertionError(
+            f"the emit-nonce invocation documented in the prompt does not "
+            f"parse against the real CLI (argparse exit {exc.code}); "
+            f"reconstructed argv: {argv}"
+        ) from exc
+
+
+def test_emit_nonce_flag_check_ignores_optional_flags_the_prompt_omits() -> None:
+    """ANTI-FALSE-POSITIVE: the check is one-directional by design -- the
+    prompt's flags must exist in the CLI, NOT the reverse.
+
+    `--nonce` is an OPTIONAL flag of the real subparser that the prompt does
+    not cite (it is a test-reproducibility escape hatch). A symmetric check
+    would go RED on it and block every future CLI addition. Proof the asymmetry
+    is real and intentional, not accidental.
+    """
+
+    sub = _emit_nonce_parser_actions()
+    declared_optional = {
+        opt
+        for action in sub._actions
+        if not action.required and not isinstance(action, argparse._HelpAction)
+        for opt in action.option_strings
+    }
+    omitted = declared_optional - set(_prompt_emit_nonce_flags())
+    assert omitted, (
+        "premise: the real emit-nonce CLI must declare at least one OPTIONAL "
+        "flag the prompt does not cite, otherwise this anti-false-positive "
+        "guard proves nothing"
+    )
+    # And the main check is green despite them -- asserted by
+    # test_prompt_emit_nonce_flags_match_the_real_cli passing alongside this.
 
 
 def test_prompt_cites_the_real_destination_context_path() -> None:
