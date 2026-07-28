@@ -57,6 +57,16 @@ else:
 
 get_agent_dir = importlib.import_module("runtime.project_root").get_agent_dir
 
+# WOT-2026-024r (A1): the portable archive reader. Imported from `bus/`, never
+# from `scripts/reconcile_portable_memory.py` -- that would invert the dependency
+# (bus -> scripts) and drag in `--apply` and the "promoted == is in a commit"
+# semantics, which belong to reconcile and not to a reader.
+from bus.portable_memory_archive import (  # noqa: E402
+    CorruptArchiveError,
+    dedup_key,
+    read_archive_observations,
+)
+
 
 # Default max observations when falling back to raw L1.
 _L1_FALLBACK_LIMIT = 15
@@ -172,37 +182,103 @@ def _format_observations_as_text(observations: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _get_repo_root() -> Path:
+    """Repo root that owns the portable archive.
+
+    Derived from ``_get_memory_dir()`` (``<root>/.agent/runtime/memory``) rather
+    than from ``get_agent_dir()`` so that any caller which redirects the memory
+    dir -- as the existing tests do -- also redirects the archive. Resolving the
+    root independently would let a test that patched only the memory dir still
+    read the REAL motor archive: an isolation leak that turns a hermetic test
+    into one that silently depends on this machine's memory.
+    """
+    return _get_memory_dir().parent.parent.parent
+
+
+def _read_portable_archive() -> list[dict[str, Any]]:
+    """Portable archive entries, or ``[]`` on any failure.
+
+    WOT-2026-024r (A1): the tracked archive is the only memory surface that
+    travels by git. Reading it is what turns it from write-only into memory.
+
+    Fail-safe by contract of this module ("never raises"): a corrupt archive
+    degrades the context instead of breaking every caller of the loader
+    (bootstrap, review bridge, pre-compact hook). The fail-CLOSED barrier for a
+    corrupt archive is ``validate_observations --strict``, wired in prepush.
+    """
+    try:
+        return read_archive_observations(_get_repo_root())
+    except (CorruptArchiveError, OSError, ValueError):
+        return []
+
+
+def _format_archive_as_text(observations: list[dict[str, Any]]) -> str:
+    """Format archive entries as a markdown section."""
+    if not observations:
+        return ""
+    lines = [
+        "# Portable Memory (tracked archive)",
+        "",
+        f"{len(observations)} lesson(s) that travel with the repo:",
+        "",
+    ]
+    for obs in observations:
+        ts = str(obs.get("timestamp") or "")[:19]
+        topic = obs.get("topic", "general")
+        signal = str(obs.get("signal") or "")[:200]
+        ticket = obs.get("source_ticket") or obs.get("id") or "unknown"
+        lines.append(f"- [{ts}] **{topic}**: {signal} ({ticket})")
+    return "\n".join(lines)
+
+
 # --- Public API ---
 
 
 def get_bootstrap_context() -> str:
-    """Load context for bootstrap: L3 profile, falling back to L2, then L1.
+    """Load context for bootstrap: portable archive + best local tier.
 
     This is the primary entry point for session_bootstrap.md and any agent
     that needs a quick context summary of project memory.
 
-    Before: Memory files may or may not exist in memory directory.
-    During: Tries L3 (memory_profile.md), then L2 (memory_rules.md),
-            then L1 raw observations (last _L1_FALLBACK_LIMIT entries).
-    After: Returns a markdown string with the best available memory tier.
-           Never returns None; returns empty string if no memory exists.
+    WOT-2026-024r (A1): the tracked portable archive is now ALWAYS included,
+    not used as a last-resort fallback. Before this, memory promoted to the
+    archive was versioned, pushed -- and read by nobody: the loader only ever
+    looked at L3/L2/L1, all three gitignored. A backend cloning the repo got
+    the archive and no way to reach it. Measured cost (2026-07-27): a lesson
+    stored twice was repeated anyway and destroyed 7 tests. It was not a memory
+    gap; it was memory written, versioned and never read.
+
+    Before: memory files may or may not exist in the memory directory.
+    During: reads the tracked archive, then the best available local tier
+            (L3 profile -> L2 rules -> L1 raw observations). Entries the local
+            tier already holds win over the archived copy: L1 is the LIVE copy
+            and may have been edited after being archived, so on a stable-``id``
+            collision the live entry is the newer truth.
+    After: returns a markdown string combining both. Never returns None;
+           returns empty string when there is no memory at all.
     """
+    archived = _read_portable_archive()
+
     # Priority 1: L3 profile (brief, high-level)
-    profile = _try_read_file(_get_profile_file())
-    if profile:
-        return profile
+    local = _try_read_file(_get_profile_file())
+    if not local:
+        # Priority 2: L2 rules (domain-organized rules)
+        local = _try_read_file(_get_rules_file())
+    live: list[dict[str, Any]] = []
+    if not local:
+        # Priority 3: L1 raw observations (last N entries)
+        live = _read_observations()
+        local = _format_observations_as_text(live)
 
-    # Priority 2: L2 rules (domain-organized rules)
-    rules = _try_read_file(_get_rules_file())
-    if rules:
-        return rules
+    if archived and live:
+        # Precedence is per ENTRY, not per source: drop the archived copy only
+        # for entries the live tier already carries.
+        seen = {dedup_key(entry) for entry in live}
+        archived = [e for e in archived if dedup_key(e) not in seen]
 
-    # Priority 3: L1 fallback (last N raw observations)
-    observations = _read_observations()
-    if observations:
-        return _format_observations_as_text(observations)
-
-    return ""
+    archive_text = _format_archive_as_text(archived)
+    sections = [s for s in (archive_text, local) if s]
+    return "\n\n".join(sections)
 
 
 def get_review_context(domain: str | None = None) -> str:
