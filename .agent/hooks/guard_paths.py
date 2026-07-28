@@ -144,6 +144,145 @@ def _resolve_destino_from_target(path_obj: Path, repo_root: Path) -> Path | None
     return None
 
 
+def _read_gitdir_pointer(
+    git_marker: Path, anchor: Path, *, require_prefix: bool = True
+) -> Path | None:
+    """Parse a git pointer file, anchoring relative targets on ``anchor``.
+
+    Before: ``git_marker`` is a git pointer FILE. The two pointer files of a
+    worktree use DIFFERENT formats, verified on the real machine (2026-07-28):
+    the worktree's own ``.git`` is ``gitdir: <path>``, while the registry's
+    ``gitdir`` back-pointer is a BARE path with no prefix. ``require_prefix``
+    selects the format; a fixture that writes the prefix on BOTH goes green
+    without reproducing the machine.
+    During: reads the file as UTF-8, takes the first non-empty line, strips the
+    ``gitdir: `` prefix when required, and anchors relative targets on
+    ``anchor`` (``git worktree add --relative-paths``, git 2.53, writes both
+    pointers relative).
+    After: returns the resolved target ``Path``; returns ``None`` on any I/O,
+    Unicode, parse or resolution error -- fail-closed, never raises.
+    """
+    try:
+        raw = git_marker.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+    target = ""
+    for line in raw.splitlines():
+        if line.strip():
+            target = line.strip()
+            break
+    if require_prefix:
+        if not target.startswith("gitdir: "):
+            return None
+        target = target[len("gitdir: ") :].strip()
+    elif target.startswith("gitdir:"):
+        # Fail-closed: the back-pointer format is a BARE path. A prefixed value
+        # here is malformed, not a lenient alternative.
+        return None
+    if not target:
+        return None
+    try:
+        candidate = Path(target)
+        if not candidate.is_absolute():
+            candidate = anchor / candidate
+        return candidate.resolve()
+    except (OSError, ValueError):
+        return None
+
+
+def _resolve_motor_worktree(repo_root: Path, path_obj: Path) -> Path | None:
+    """WOT-2026-042p Source 4: accept a worktree of the SAME repo as ``repo_root``.
+
+    Before: ``path_obj`` is a target outside ``repo_root``; ``repo_root`` is the
+    session root (itself possibly a worktree, e.g. the ``_dev`` motor worktree,
+    whose ``.git`` is a FILE, while the canonical checkout's ``.git`` is a DIR).
+    During: walks the target's ancestors and, for each candidate root, validates
+    a full two-way binding WITHOUT invoking git (``guard_paths`` has zero
+    ``subprocess`` usage; adding it would be a regression on a security
+    surface): the candidate's ``.git`` must be a FILE pointing at
+    ``<session_common>/worktrees/<name>``, that registry directory must exist,
+    and its ``gitdir`` back-pointer must point back at the candidate's own
+    ``.git``. Requiring ``gd.parent.name == "worktrees"`` plus
+    ``gd.parent.parent == session_common`` rejects a NESTED fabricated registry
+    (``worktrees/<real>/worktrees/pwned``), which a mere ``"worktrees" in
+    gd.parts`` test accepts.
+    After: returns the resolved candidate root, or ``None`` for an unrelated
+    repo, a fabricated registry, a registry impersonating a real worktree name,
+    a candidate whose ``.git`` is a DIRECTORY (the canonical checkout, which
+    reaches the guard via ``_is_within_repo`` instead), or any I/O, Unicode,
+    parse or resolution error -- fail-closed, never raises.
+    """
+    session_common = _resolve_git_common_dir(repo_root)
+    if session_common is None:
+        return None
+
+    for candidate in [path_obj, *path_obj.parents]:
+        if (candidate / ".git").is_file():
+            # Only the NEAREST candidate carrying a worktree pointer is
+            # considered: if it fails validation, do not keep walking up
+            # looking for a permissive ancestor (fail-closed).
+            return _validate_worktree_binding(candidate, session_common)
+    return None
+
+
+def _validate_worktree_binding(candidate: Path, session_common: Path) -> Path | None:
+    """Validate the two-way ``.git`` binding of a single worktree candidate.
+
+    Before: ``candidate/.git`` is a FILE; ``session_common`` is the resolved
+    common dir of the session root.
+    During: applies the hardened filters -- registry must be a DIRECT child of
+    ``<session_common>/worktrees``, must exist as a directory, and its
+    ``gitdir`` back-pointer (a BARE path) must resolve to ``candidate/.git``.
+    After: returns ``candidate.resolve()`` when every filter passes, else
+    ``None`` -- fail-closed, never raises.
+    """
+    git_marker = candidate / ".git"
+    gd = _read_gitdir_pointer(git_marker, candidate)
+    if gd is None or gd.parent.name != "worktrees" or not gd.is_dir():
+        return None
+    back_pointer_file = gd / "gitdir"
+    if not back_pointer_file.is_file():
+        return None
+    back_pointer = _read_gitdir_pointer(back_pointer_file, gd, require_prefix=False)
+    if back_pointer is None:
+        return None
+    try:
+        if gd.parent.parent.resolve() != session_common:
+            return None
+        if back_pointer != git_marker.resolve():
+            return None
+        return candidate.resolve()
+    except (OSError, ValueError):
+        return None
+
+
+def _resolve_git_common_dir(root: Path) -> Path | None:
+    """Resolve the shared ``.git`` common dir of ``root``, without invoking git.
+
+    Before: ``root`` is a repo root whose ``.git`` may be a DIRECTORY (canonical
+    checkout) or a FILE (a worktree, e.g. the ``_dev`` motor worktree).
+    During: a ``.git`` directory IS the common dir; a ``.git`` file points at
+    ``<common>/worktrees/<name>``, so the common dir is its grandparent.
+    After: returns the resolved common dir, or ``None`` on a missing marker,
+    a malformed pointer or any resolution error -- fail-closed, never raises.
+    """
+    git_marker = root / ".git"
+    if git_marker.is_dir():
+        try:
+            return git_marker.resolve()
+        except (OSError, ValueError):
+            return None
+    if git_marker.is_file():
+        gd = _read_gitdir_pointer(git_marker, root)
+        if gd is None or gd.parent.name != "worktrees":
+            return None
+        try:
+            return gd.parent.parent.resolve()
+        except (OSError, ValueError):
+            return None
+    return None
+
+
 def _resolve_extra_root(repo_root: Path, path_obj: Path | None = None) -> Path | None:
     """Resolve a second valid root beyond ``repo_root``.
 
@@ -158,6 +297,12 @@ def _resolve_extra_root(repo_root: Path, path_obj: Path | None = None) -> Path |
     resolves to ``repo_root`` -- the real topology where the link lives in the
     destino, not the motor. Fail-closed when the link is missing, malformed,
     points to a different motor, or the ancestor lacks a repo marker.
+    Source 4 (WOT-2026-042p, fallback after source 3): a git worktree of the
+    SAME repo as ``repo_root``, validated by a two-way ``.git`` binding read
+    from disk without invoking git -- see ``_resolve_motor_worktree``. Unblocks
+    flights declaring ``worktree_isolation.required``, which previously died on
+    their first write and could only proceed by abusing ``AGENT_PROJECT_ROOT``
+    (documented motor-wide for the repo_destino, not for a motor worktree).
 
     Returns ``None`` (fail-safe, never raises) when no source resolves,
     when the resolved value is malformed, when the resolved path does not
@@ -191,7 +336,10 @@ def _resolve_extra_root(repo_root: Path, path_obj: Path | None = None) -> Path |
             return candidate
 
     if path_obj is not None:
-        return _resolve_destino_from_target(path_obj, repo_root)
+        destino = _resolve_destino_from_target(path_obj, repo_root)
+        if destino is not None:
+            return destino
+        return _resolve_motor_worktree(repo_root, path_obj)
 
     return None
 

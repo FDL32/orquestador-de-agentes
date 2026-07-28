@@ -717,6 +717,240 @@ class TestGitSegmentMatch:
         assert "protegida por patron" in reason
 
 
+class TestMotorWorktreeRoot:
+    """WOT-2026-042p: guard_paths accepts a git worktree of the SAME repo as
+    the session root, resolved by READING the ``.git`` pointer files -- never by
+    invoking git (``guard_paths`` has zero ``subprocess`` usage; adding it would
+    be a regression on a security surface).
+
+    Before this Source 4, every flight declaring ``worktree_isolation.required``
+    died on its first write with "fuera del repo" (measured 2026-07-28 flying
+    WOT-2026-042d), and the only unblock was abusing ``AGENT_PROJECT_ROOT`` --
+    a variable documented motor-wide for the repo_destino, not for a worktree of
+    the motor.
+
+    Fixtures reproduce the REAL machine layout: the session root is itself a
+    worktree (``.git`` FILE, like the ``_dev`` motor worktree) while the
+    canonical checkout has a ``.git`` DIRECTORY. A fixture using only a ``.git``
+    directory would go green without reproducing the real topology.
+
+    The nested-registry case is the CONFIRMED AND EXPLOITED hole: a naive
+    ``"worktrees" in gd.parts`` check ACCEPTS
+    ``<common>/worktrees/<real>/worktrees/pwned``, because ``parts`` does not
+    require ``worktrees`` to be a DIRECT child of the common dir. The hardened
+    resolver blocks it via ``gd.parent.name == "worktrees"`` together with
+    ``gd.parent.parent == session_common``.
+    """
+
+    def setup_method(self):
+        _clean_workspace()
+        self._saved_project_root = os.environ.get("AGENT_PROJECT_ROOT")
+        # Canonical checkout: .git is a DIRECTORY (the shared common dir).
+        self.canonical = (TEST_WORKSPACE / "canonical").resolve()
+        self.common = self.canonical / ".git"
+        (self.common / "worktrees").mkdir(parents=True, exist_ok=True)
+        # Session root: itself a WORKTREE (.git is a FILE) -- the real _dev case.
+        self.session_root = self._make_worktree("session_dev")
+        # An unrelated repo with its own independent common dir.
+        self.foreign = (TEST_WORKSPACE / "foreign").resolve()
+        (self.foreign / ".git").mkdir(parents=True, exist_ok=True)
+
+    def teardown_method(self):
+        if self._saved_project_root is None:
+            os.environ.pop("AGENT_PROJECT_ROOT", None)
+        else:
+            os.environ["AGENT_PROJECT_ROOT"] = self._saved_project_root
+        _clean_workspace()
+
+    def _make_worktree(self, name: str, relative: bool = False) -> Path:
+        """Create a structurally REAL worktree: registry + both pointers.
+
+        The two pointer files use DIFFERENT formats on the real machine
+        (verified 2026-07-28 against ``orquestador_wt_042d``): the worktree's
+        own ``.git`` is ``gitdir: <path>``, the registry's ``gitdir``
+        back-pointer is a BARE path. Writing the prefix on both produced an
+        unreal fixture that went green while the real worktree stayed blocked.
+        """
+        root = (TEST_WORKSPACE / name).resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        registry = self.common / "worktrees" / name
+        registry.mkdir(parents=True, exist_ok=True)
+        if relative:
+            # git 2.53 `git worktree add --relative-paths` writes BOTH relative.
+            fwd = os.path.relpath(registry, root).replace("\\", "/")
+            back = os.path.relpath(root / ".git", registry).replace("\\", "/")
+        else:
+            fwd = str(registry)
+            back = str(root / ".git")
+        (root / ".git").write_text(f"gitdir: {fwd}\n", encoding="utf-8")
+        (registry / "gitdir").write_text(f"{back}\n", encoding="utf-8")
+        return root
+
+    def _blocked(self, target: Path, monkeypatch) -> tuple[bool, str]:
+        monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+        return _is_protected_path(
+            str(target), DEFAULT_ALLOWLIST, {}, repo_root=self.session_root
+        )
+
+    # --- Fixture 1: a real sibling worktree is ACCEPTED -------------------
+    def test_sibling_worktree_allowed(self, monkeypatch):
+        flight = self._make_worktree("wt_flight")
+        blocked, reason = self._blocked(flight / "src" / "main.py", monkeypatch)
+        assert blocked is False, reason
+
+    # --- Fixture 2: relative pointers (git 2.53) are ACCEPTED -------------
+    def test_sibling_worktree_relative_pointers_allowed(self, monkeypatch):
+        flight = self._make_worktree("wt_relative", relative=True)
+        blocked, reason = self._blocked(flight / "src" / "main.py", monkeypatch)
+        assert blocked is False, reason
+
+    # --- Fixture 3: canonical checkout (.git DIRECTORY) -> blocked here ---
+    def test_canonical_checkout_dotgit_dir_blocked(self, monkeypatch):
+        """A ``.git`` DIRECTORY is not a worktree pointer, so Source 4 returns
+        None. This is CORRECT, not a latent bug: the canonical checkout reaches
+        the guard through ``_is_within_repo`` before Source 4 is ever consulted.
+        """
+        blocked, reason = self._blocked(self.canonical / "src" / "main.py", monkeypatch)
+        assert blocked is True
+        assert "fuera del repo" in reason
+
+    # --- Fixture 4: an unrelated repo stays blocked -----------------------
+    def test_foreign_repo_blocked(self, monkeypatch):
+        blocked, reason = self._blocked(self.foreign / "src" / "main.py", monkeypatch)
+        assert blocked is True
+        assert "fuera del repo" in reason
+
+    # --- Fixture 5: fabricated registry (dir does NOT exist) -> blocked ---
+    def test_fabricated_registry_blocked(self, monkeypatch):
+        """caseA: a ``.git`` file pointing at a registry that was never created.
+        It reports the SAME common dir as the motor and passes the naive check;
+        it dies on the "registry EXISTS" filter.
+        """
+        evil = (TEST_WORKSPACE / "evil_invented").resolve()
+        evil.mkdir(parents=True, exist_ok=True)
+        (evil / ".git").write_text(
+            f"gitdir: {self.common / 'worktrees' / 'inventado'}\n", encoding="utf-8"
+        )
+        blocked, reason = self._blocked(evil / "payload.py", monkeypatch)
+        assert blocked is True
+        assert "fuera del repo" in reason
+
+    # --- Fixture 6: registry IMPERSONATING a real worktree -> blocked -----
+    def test_impersonated_registry_blocked(self, monkeypatch):
+        """caseB: the registry EXISTS (it belongs to a real worktree), so filter
+        (3) passes -- only the back-pointer kills it, because that registry's
+        ``gitdir`` points at the REAL worktree, not at the impostor.
+        """
+        real = self._make_worktree("wt_real")
+        evil = (TEST_WORKSPACE / "evil_impostor").resolve()
+        evil.mkdir(parents=True, exist_ok=True)
+        (evil / ".git").write_text(
+            f"gitdir: {self.common / 'worktrees' / 'wt_real'}\n", encoding="utf-8"
+        )
+        blocked, reason = self._blocked(evil / "payload.py", monkeypatch)
+        assert blocked is True
+        assert "fuera del repo" in reason
+        # The impersonated worktree itself must still be writable.
+        ok, why = self._blocked(real / "src" / "main.py", monkeypatch)
+        assert ok is False, why
+
+    # --- Fixture 7: NESTED registry -- the exploited hole -----------------
+    def test_nested_registry_blocked(self, monkeypatch):
+        """CONFIRMED AND EXPLOITED vector: a naive ``"worktrees" in gd.parts``
+        check accepts ``<common>/worktrees/<real>/worktrees/pwned`` because
+        ``parts`` does not require ``worktrees`` to be a DIRECT child.
+
+        MEASURED (2026-07-28): in THIS resolver the filter that actually stops
+        the nested geometry is (8) ``gd.parent.parent == session_common``
+        (``.../worktrees/wt_host`` != ``.../.git``); dropping (8) turns this
+        test red. That does not make (7) redundant -- it is isolated by
+        ``test_sibling_worktrees_dir_not_direct_child_blocked``, which is the
+        only test that fails when (7) is dropped. Both filters are load-bearing
+        and each has its own isolating mutation; this test pins the reported
+        vector end-to-end.
+        """
+        real = self._make_worktree("wt_host")
+        nested = self.common / "worktrees" / "wt_host" / "worktrees" / "pwned"
+        nested.mkdir(parents=True, exist_ok=True)
+        evil = (TEST_WORKSPACE / "evil_nested").resolve()
+        evil.mkdir(parents=True, exist_ok=True)
+        (evil / ".git").write_text(f"gitdir: {nested}\n", encoding="utf-8")
+        # A full two-way binding in the REAL back-pointer format (bare path):
+        # the back-pointer DOES point at the impostor, so this case can only be
+        # rejected by the direct-child filter, never by a format mismatch.
+        (nested / "gitdir").write_text(f"{evil / '.git'}\n", encoding="utf-8")
+        blocked, reason = self._blocked(evil / "payload.py", monkeypatch)
+        assert blocked is True, "nested fabricated registry must NOT be accepted"
+        assert "fuera del repo" in reason
+        # The legitimate host worktree is unaffected.
+        ok, why = self._blocked(real / "src" / "main.py", monkeypatch)
+        assert ok is False, why
+
+    def test_sibling_worktrees_dir_not_direct_child_blocked(self, monkeypatch):
+        """Isolates filter (7) ``gd.parent.name == "worktrees"``.
+
+        Geometry: ``<common>/decoy/<name>`` -- the registry IS a grandchild of
+        the common dir, so filter (8) ``gd.parent.parent == session_common``
+        PASSES, and the full two-way back-pointer binding is valid. Only the
+        name of the parent directory distinguishes it from a real registry.
+        Mutation that isolates (7): DROP it (``if gd is None or not
+        gd.is_dir()``) and this test is the ONLY one that fails. Relaxing (7)
+        to ``"worktrees" in gd.parts`` does NOT isolate it -- measured
+        2026-07-28: this geometry has no ``worktrees`` segment at all, so the
+        naive form rejects it too. Git only ever registers worktrees under
+        ``worktrees/``.
+        """
+        evil = (TEST_WORKSPACE / "evil_decoy_dir").resolve()
+        evil.mkdir(parents=True, exist_ok=True)
+        registry = self.common / "decoy" / "wt_decoy"
+        registry.mkdir(parents=True, exist_ok=True)
+        (evil / ".git").write_text(f"gitdir: {registry}\n", encoding="utf-8")
+        (registry / "gitdir").write_text(f"{evil / '.git'}\n", encoding="utf-8")
+        blocked, reason = self._blocked(evil / "payload.py", monkeypatch)
+        assert blocked is True, "registry outside a 'worktrees' dir must not pass"
+        assert "fuera del repo" in reason
+
+    # --- Fail-closed on malformed / unreadable pointers -------------------
+    def test_malformed_pointer_blocked(self, monkeypatch):
+        for body in ("", "not a pointer\n", "gitdir:\n", "gitdir\n", "GITDIR: x\n"):
+            evil = (TEST_WORKSPACE / f"evil_{abs(hash(body))}").resolve()
+            evil.mkdir(parents=True, exist_ok=True)
+            (evil / ".git").write_text(body, encoding="utf-8")
+            blocked, reason = self._blocked(evil / "payload.py", monkeypatch)
+            assert blocked is True, f"malformed pointer {body!r} must block"
+            assert "fuera del repo" in reason
+
+    def test_back_pointer_format_asymmetry_is_pinned(self, monkeypatch):
+        """Regression barrier for the unreal-fixture defect (2026-07-28).
+
+        The back-pointer is a BARE path; a ``gitdir: ``-prefixed value there is
+        malformed. Writing the prefix on BOTH files made every fixture green
+        while the REAL worktree stayed blocked -- the unit tests and the machine
+        disagreed, and the machine was right. This test fails if the resolver is
+        ever relaxed to accept both formats interchangeably on the back-pointer.
+        """
+        root = self._make_worktree("wt_fmt")
+        registry = self.common / "worktrees" / "wt_fmt"
+        # Real format (bare) -> accepted.
+        assert self._blocked(root / "src" / "a.py", monkeypatch)[0] is False
+        # Prefixed back-pointer is NOT the real format -> fail-closed.
+        (registry / "gitdir").write_text(f"gitdir: {root / '.git'}\n", encoding="utf-8")
+        blocked, reason = self._blocked(root / "src" / "a.py", monkeypatch)
+        assert blocked is True
+        assert "fuera del repo" in reason
+
+    def test_registry_without_back_pointer_blocked(self, monkeypatch):
+        """Registry dir exists but carries no ``gitdir`` file -> fail-closed."""
+        registry = self.common / "worktrees" / "no_back"
+        registry.mkdir(parents=True, exist_ok=True)
+        evil = (TEST_WORKSPACE / "evil_no_back").resolve()
+        evil.mkdir(parents=True, exist_ok=True)
+        (evil / ".git").write_text(f"gitdir: {registry}\n", encoding="utf-8")
+        blocked, reason = self._blocked(evil / "payload.py", monkeypatch)
+        assert blocked is True
+        assert "fuera del repo" in reason
+
+
 class TestEnvIsolation:
     """WOT-2026-021r: teardown_method must RESTORE a pre-existing
     AGENT_PROJECT_ROOT, never unconditionally pop it. If it pops, a suite run
