@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python -c \"import sys,subprocess; from pathlib import Path; cwd=Path('.').resolve(); root=next((p for p in [cwd]+list(cwd.parents) if (p/'.claude').exists()),cwd); cands=[root/'orquestador_de_agentes'/'.agent'/'hooks'/'native_post_tool_hook.py', root/'.agent'/'hooks'/'native_post_tool_hook.py', root/'agent_system'/'.agent'/'hooks'/'native_post_tool_hook.py']; hook=next((p for p in cands if p.exists()),None); data=sys.stdin.buffer.read(); sys.exit(0 if hook is None else subprocess.run([sys.executable,str(hook)],input=data).returncode)\""
+            "command": "python -c \"import sys,json,subprocess; from pathlib import Path; r=next((p for p in [Path('.').resolve()]+list(Path('.').resolve().parents) if (p/'.claude').exists()),Path('.').resolve()); e=r/'.agent'/'hooks'/'native_post_tool_hook.py'; l=r/'.agent'/'config'/'motor_destination_link.json'; e=e if e.exists() else ((Path(json.loads(l.read_text(encoding='utf-8'))['motor_root'])/'.agent'/'hooks'/'native_post_tool_hook.py') if l.exists() else e); sys.exit(subprocess.run([sys.executable,str(e)],input=sys.stdin.buffer.read(),cwd=str(r)).returncode) if e.exists() else (sys.stderr.write('HOOK INACTIVE: native_post_tool_hook.py not found; hook failed (fail-closed).'),sys.exit(2))\""
           }
         ]
       },
@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python -c \"import sys,subprocess; from pathlib import Path; cwd=Path('.').resolve(); root=next((p for p in [cwd]+list(cwd.parents) if (p/'.claude').exists()),cwd); hook=root/'scripts'/'encoding_post_write_hook.py'; sys.exit(subprocess.run([sys.executable,str(hook)],input=sys.stdin.buffer.read(),cwd=str(root)).returncode) if hook.exists() else sys.exit(0)\""
+            "command": "python -c \"import sys,json,subprocess; from pathlib import Path; r=next((p for p in [Path('.').resolve()]+list(Path('.').resolve().parents) if (p/'.claude').exists()),Path('.').resolve()); e=r/'scripts'/'encoding_post_write_hook.py'; l=r/'.agent'/'config'/'motor_destination_link.json'; e=e if e.exists() else ((Path(json.loads(l.read_text(encoding='utf-8'))['motor_root'])/'scripts'/'encoding_post_write_hook.py') if l.exists() else e); sys.exit(subprocess.run([sys.executable,str(e)],input=sys.stdin.buffer.read(),cwd=str(r)).returncode) if e.exists() else (sys.stderr.write('HOOK INACTIVE: encoding_post_write_hook.py not found; hook failed (fail-closed).'),sys.exit(2))\""
           }
         ]
       }
@@ -37,7 +37,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python -c \"import sys,subprocess; from pathlib import Path; cwd=Path('.').resolve(); root=next((p for p in [cwd]+list(cwd.parents) if (p/'.claude').exists()),cwd); cands=[root/'orquestador_de_agentes'/'.agent'/'hooks'/'pre_compact_hook.py', root/'.agent'/'hooks'/'pre_compact_hook.py', root/'agent_system'/'.agent'/'hooks'/'pre_compact_hook.py']; hook=next((p for p in cands if p.exists()),None); data=sys.stdin.buffer.read(); sys.exit(0 if hook is None else subprocess.run([sys.executable,str(hook)],input=data).returncode)\""
+            "command": "python -c \"import sys,json,subprocess; from pathlib import Path; r=next((p for p in [Path('.').resolve()]+list(Path('.').resolve().parents) if (p/'.claude').exists()),Path('.').resolve()); e=r/'.agent'/'hooks'/'pre_compact_hook.py'; l=r/'.agent'/'config'/'motor_destination_link.json'; e=e if e.exists() else ((Path(json.loads(l.read_text(encoding='utf-8'))['motor_root'])/'.agent'/'hooks'/'pre_compact_hook.py') if l.exists() else e); sys.exit(subprocess.run([sys.executable,str(e)],input=sys.stdin.buffer.read(),cwd=str(r)).returncode) if e.exists() else (sys.stderr.write('HOOK INACTIVE: pre_compact_hook.py not found; hook failed (fail-closed).'),sys.exit(2))\""
           }
         ]
       }
@@ -48,7 +48,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python -c \"import sys,subprocess; from pathlib import Path; cwd=Path('.').resolve(); root=next((p for p in [cwd]+list(cwd.parents) if (p/'.claude').exists()),cwd); cands=[root/'orquestador_de_agentes'/'.agent'/'hooks'/'native_stop_hook.py', root/'.agent'/'hooks'/'native_stop_hook.py', root/'agent_system'/'.agent'/'hooks'/'native_stop_hook.py']; hook=next((p for p in cands if p.exists()),None); data=sys.stdin.buffer.read(); sys.exit(0 if hook is None else subprocess.run([sys.executable,str(hook)],input=data).returncode)\""
+            "command": "python -c \"import sys,json,subprocess; from pathlib import Path; r=next((p for p in [Path('.').resolve()]+list(Path('.').resolve().parents) if (p/'.claude').exists()),Path('.').resolve()); e=r/'.agent'/'hooks'/'native_stop_hook.py'; l=r/'.agent'/'config'/'motor_destination_link.json'; e=e if e.exists() else ((Path(json.loads(l.read_text(encoding='utf-8'))['motor_root'])/'.agent'/'hooks'/'native_stop_hook.py') if l.exists() else e); sys.exit(subprocess.run([sys.executable,str(e)],input=sys.stdin.buffer.read(),cwd=str(r)).returncode) if e.exists() else (sys.stderr.write('HOOK INACTIVE: native_stop_hook.py not found; hook failed (fail-closed).'),sys.exit(2))\""
           }
         ]
       }
@@ -59,7 +59,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python -c \"import sys,subprocess; from pathlib import Path; cwd=Path('.').resolve(); root=next((p for p in [cwd]+list(cwd.parents) if (p/'.claude').exists()),cwd); cands=[root/'orquestador_de_agentes'/'.agent'/'hooks'/'subagent_stop_hook.py', root/'.agent'/'hooks'/'subagent_stop_hook.py', root/'agent_system'/'.agent'/'hooks'/'subagent_stop_hook.py']; hook=next((p for p in cands if p.exists()),None); data=sys.stdin.buffer.read(); sys.exit(0 if hook is None else subprocess.run([sys.executable,str(hook)],input=data).returncode)\""
+            "command": "python -c \"import sys,json,subprocess; from pathlib import Path; r=next((p for p in [Path('.').resolve()]+list(Path('.').resolve().parents) if (p/'.claude').exists()),Path('.').resolve()); e=r/'.agent'/'hooks'/'subagent_stop_hook.py'; l=r/'.agent'/'config'/'motor_destination_link.json'; e=e if e.exists() else ((Path(json.loads(l.read_text(encoding='utf-8'))['motor_root'])/'.agent'/'hooks'/'subagent_stop_hook.py') if l.exists() else e); sys.exit(subprocess.run([sys.executable,str(e)],input=sys.stdin.buffer.read(),cwd=str(r)).returncode) if e.exists() else (sys.stderr.write('HOOK INACTIVE: subagent_stop_hook.py not found; hook failed (fail-closed).'),sys.exit(2))\""
           }
         ]
       }

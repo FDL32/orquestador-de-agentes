@@ -10,7 +10,9 @@ pollute that walk-up. Each fixture cleans up after itself.
 from __future__ import annotations
 
 import json
+import shlex
 import shutil
+import subprocess
 import sys
 import uuid
 from collections.abc import Iterator
@@ -497,3 +499,263 @@ class TestFleetMode:
         dest = fleet_root / "d"
         _make_link(dest, motor_root=str(motor))
         assert gate.check_hook_file_exists(dest, _CANONICAL) == []
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-042d -- the five muted hooks
+#
+# DELIVERABLE tests for invariants (a)(b)(c)(d). The 13 tests above are
+# NO-REGRESSION (PreToolUse + permissions) and must stay green.
+#
+# BINDING (flight plan, "EXIGENCIA DE RUTA REAL"): an assertion over the TEXT of
+# settings.json does NOT satisfy (a) or (b). ``assert 'cands=[' not in text``
+# passes without proving anything -- it cannot tell a fixed hook from a DELETED
+# one. So (b), and one test of (a), LAUNCH THE REAL WRAPPER by subprocess with
+# its target absent and assert exit != 0 plus a stderr diagnostic.
+#
+# BINDING (flight plan, "AISLAMIENTO OBLIGATORIO"): every test that launches a
+# wrapper runs in a TEMPORARY tree with its own .claude/ and .agent/ and writes
+# NOTHING outside it -- these hooks persist state (observations.jsonl). If a
+# wrapper resolved to the real motor during a test, the TEST is wrong.
+# ---------------------------------------------------------------------------
+
+_MOTOR_SETTINGS = _ROOT / ".claude" / "settings.json"
+_HOOK_PAYLOAD = (
+    b'{"tool_name":"Read","session_id":"t","result":{"filePath":"x","content":"a"}}'
+)
+
+
+def _sandbox_tree(root: Path) -> Path:
+    """A self-contained repo-like tree with its own ``.claude`` marker.
+
+    The marker stops the wrappers' walk-up HERE, so nothing resolves out to the
+    real motor and writes into the real runtime.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    (root / ".claude").mkdir(exist_ok=True)
+    (root / ".agent" / "hooks").mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _run_hook_command(command: str, cwd: Path) -> subprocess.CompletedProcess:
+    """Launch a settings.json hook command for real, in a sandboxed cwd.
+
+    Executes the exact ``python -c "<code>"`` payload from settings.json, so it
+    exercises the SAME resolution path production takes rather than a
+    reimplementation of it.
+    """
+    return subprocess.run(
+        [sys.executable, "-c", shlex.split(command)[-1]],
+        input=_HOOK_PAYLOAD,
+        cwd=str(cwd),
+        capture_output=True,
+        timeout=60,
+    )
+
+
+def _motor_commands() -> dict[str, str]:
+    """Tracked motor settings commands, keyed ``event::matcher``."""
+    data = json.loads(_MOTOR_SETTINGS.read_text(encoding="utf-8"))
+    out: dict[str, str] = {}
+    for event, entries in data["hooks"].items():
+        for entry in entries:
+            for hook in entry["hooks"]:
+                out[f"{event}::{entry.get('matcher', '')}"] = hook["command"]
+    return out
+
+
+@pytest.fixture
+def sandbox(fleet_root: Path) -> Path:
+    """A hermetic tree OUTSIDE the repo; ``fleet_root`` cleans it up."""
+    return _sandbox_tree(fleet_root / "sandbox")
+
+
+class TestInvariantAResolution:
+    """(a) No hook command resolves the motor by a GUESSED directory name."""
+
+    def test_no_command_guesses_a_directory_name(self):
+        """Cheap canary, deliberately NOT the evidence for (a).
+
+        The real evidence is ``test_wrapper_resolves_target_in_sandbox``, which
+        runs the path instead of reading it.
+        """
+        for key, cmd in _motor_commands().items():
+            assert "cands=[" not in cmd, f"{key} still guesses directory names"
+
+    def test_wrapper_resolves_target_in_sandbox(self, sandbox: Path):
+        """RUNS the real command: with the target PRESENT it must reach it.
+
+        Distinguishes a fixed hook from a deleted one, which a text assertion
+        cannot. The stub writes a marker, so success is proven by an ARTIFACT --
+        a muted hook also exits 0.
+        """
+        marker = sandbox / "reached.txt"
+        stub = sandbox / ".agent" / "hooks" / "native_post_tool_hook.py"
+        stub.write_text(
+            "from pathlib import Path\n"
+            f"Path(r'{marker}').write_text('reached', encoding='utf-8')\n",
+            encoding="utf-8",
+        )
+        result = _run_hook_command(
+            _motor_commands()["PostToolUse::Read|Grep|Glob|WebFetch"], sandbox
+        )
+        assert result.returncode == 0, result.stderr.decode(errors="replace")
+        assert marker.read_text(encoding="utf-8") == "reached"
+
+
+class TestInvariantBFailsClosed:
+    """(b) With no resolvable target, a hook exits != 0 with a diagnostic.
+
+    The invariant the flight plan singles out: its evidence MUST be a real
+    wrapper launch. Before the fix every one of these exited 0 silently, so
+    this class is a barrier that could not have existed before.
+    """
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "PostToolUse::Read|Grep|Glob|WebFetch",
+            "PostToolUse::Write|Edit|MultiEdit",
+            "PreCompact::",
+            "Stop::",
+            "SubagentStop::",
+        ],
+    )
+    def test_missing_target_exits_nonzero_with_stderr(self, key: str, sandbox: Path):
+        """Target ABSENT in the sandbox -> exit != 0 AND a stderr diagnostic."""
+        result = _run_hook_command(_motor_commands()[key], sandbox)
+        assert result.returncode != 0, (
+            f"{key} exited 0 with no resolvable target: the silent fail-green "
+            "that WOT-2026-042d removes"
+        )
+        stderr = result.stderr.decode(errors="replace")
+        assert "HOOK INACTIVE" in stderr, f"{key} failed mute: {stderr!r}"
+
+    def test_failing_hooks_write_no_runtime_state(self, sandbox: Path):
+        """Counterpart of demanding the real path: these wrappers persist state."""
+        for key, cmd in _motor_commands().items():
+            if not key.startswith("PreToolUse"):
+                _run_hook_command(cmd, sandbox)
+        assert not (sandbox / ".agent" / "runtime").exists(), (
+            "a failing hook must not create runtime state"
+        )
+
+
+class TestInvariantCPayloadArrives:
+    """(c) native_post_tool_hook reaches post_tool_hook without ImportError."""
+
+    def test_payload_reaches_post_tool_hook_and_writes_observation(
+        self, fleet_root: Path
+    ):
+        """Runs the REAL wrapper and asserts the ARTIFACT it must produce.
+
+        Evidence is a record with ``source: post_tool_hook``: of the 73 (motor)
+        / 64 (destino) records in observations.jsonl, ZERO had that source
+        before this fix -- all were manual promotions. Exit 0 alone proves
+        nothing here, because the OLD code also exited 0.
+        """
+        cwd = _sandbox_tree(fleet_root / "payload")
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(_ROOT / ".agent" / "hooks" / "native_post_tool_hook.py"),
+            ],
+            input=_HOOK_PAYLOAD,
+            cwd=str(cwd),
+            capture_output=True,
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stderr.decode(errors="replace")
+        written = cwd / ".agent" / "runtime" / "memory" / "observations.jsonl"
+        assert written.exists(), (
+            "the payload never reached post_tool_hook: the ImportError branch "
+            "is disguising the failure again"
+        )
+        record = json.loads(written.read_text(encoding="utf-8").splitlines()[0])
+        assert record["source"] == "post_tool_hook"
+        assert record["tool"] == "view_file"
+
+    def test_broken_payload_import_is_not_disguised_as_success(self, fleet_root: Path):
+        """A payload that cannot be imported must FAIL, not print and exit 0.
+
+        Behavioural, not textual: an earlier version of this test grepped for
+        ``except ImportError`` and failed on a COMMENT that merely named the old
+        branch -- detecting text instead of behaviour, the very anti-pattern the
+        flight plan forbids.
+
+        Runs a COPY of the real wrapper inside a sandbox tree whose own
+        ``hooks/post_tool_hook.py`` raises on import. The wrapper prepends its
+        grandparent (``.agent/``) and great-grandparent to ``sys.path``, so the
+        sandbox copies shadow the real modules -- shadowing via ``PYTHONPATH``
+        would NOT work, since those inserts land at ``sys.path[0]``, ahead of it
+        (measured 2026-07-28: the real ``bus`` won and the probe exited 0).
+        """
+        sandbox_root = fleet_root / "broken_payload"
+        agent = sandbox_root / ".agent"
+        (agent / "hooks").mkdir(parents=True)
+        (agent / "hooks" / "__init__.py").write_text("", encoding="utf-8")
+        (agent / "hooks" / "post_tool_hook.py").write_text(
+            "raise ImportError('shadowed payload')\n", encoding="utf-8"
+        )
+        wrapper = agent / "hooks" / "native_post_tool_hook.py"
+        wrapper.write_text(
+            (_ROOT / ".agent" / "hooks" / "native_post_tool_hook.py").read_text(
+                encoding="utf-8"
+            ),
+            encoding="utf-8",
+        )
+        cwd = _sandbox_tree(sandbox_root / "cwd")
+        result = subprocess.run(
+            [sys.executable, str(wrapper)],
+            input=_HOOK_PAYLOAD,
+            cwd=str(cwd),
+            capture_output=True,
+            timeout=60,
+        )
+        assert result.returncode != 0, (
+            "a broken payload import exited 0: the error branch is "
+            "indistinguishable from success again"
+        )
+        assert b"ImportError" in result.stderr or b"Error" in result.stderr
+
+
+class TestInvariantDGuardCoversAll:
+    """(d) The wired guard audits ALL hook commands, not only PreToolUse."""
+
+    def test_tracked_motor_settings_pass(self):
+        """The real tracked file is clean under the extended gate."""
+        settings = json.loads(_MOTOR_SETTINGS.read_text(encoding="utf-8"))
+        assert gate.check_all_hook_commands_are_canonical(settings) == []
+
+    def test_reverted_post_tool_use_is_rejected(self):
+        """MUTATION of (d): revert a PostToolUse to guessing + exit 0 -> violation.
+
+        This is the gate's red. Before WOT-2026-042d it returned rc=0 ("OK,
+        portable, fail-closed") for this exact input: the guard was wired and
+        fail-closed, and simply did not look at PostToolUse.
+        """
+        data = json.loads(_MOTOR_SETTINGS.read_text(encoding="utf-8"))
+        data["hooks"]["PostToolUse"][0]["hooks"][0]["command"] = (
+            "python -c \"import sys; cands=['a']; sys.exit(0)\""
+        )
+        assert gate.check_all_hook_commands_are_canonical(data) != []
+
+    def test_unknown_hook_target_is_rejected(self):
+        """An unmapped hook must not pass unaudited (fail-closed by scope)."""
+        data = json.loads(_MOTOR_SETTINGS.read_text(encoding="utf-8"))
+        data["hooks"]["Notification"] = [
+            {"matcher": "", "hooks": [{"type": "command", "command": "python -c ''"}]}
+        ]
+        assert gate.check_all_hook_commands_are_canonical(data) != []
+
+    def test_gate_uses_canonical_generator_not_a_duplicated_literal(self):
+        """The expected literal comes from claude_guard_entry, the single source.
+
+        Duplicating the bootstrap inside the gate would reintroduce the drift
+        class the gate exists to prevent, so changing the generator must change
+        what the gate accepts.
+        """
+        expected = claude_guard_entry.canonical_command_for(
+            "native_post_tool_hook.py", "agent_hooks"
+        )
+        assert _motor_commands()["PostToolUse::Read|Grep|Glob|WebFetch"] == expected
