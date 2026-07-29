@@ -100,6 +100,80 @@ def test_multi_segment_dec_id_is_not_truncated() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Resolucion POR SCOPE (endurecida en review) y sus asimetrias declaradas
+# ---------------------------------------------------------------------------
+
+
+def test_scope_selects_the_registry_cross_scope_is_rejected(tmp_path: Path) -> None:
+    """El scope ELIGE el registro: citar el id del repo equivocado es ROJO.
+
+    Regresion del review (bucle L700, 2026-07-29): tres lentes independientes y
+    la refutacion final de Codex cazaron que `check_file` fusionaba los dos
+    registros y `receipt_is_valid` descartaba el scope, asi que un
+    `DEC-<id> (motor)` cuyo id solo vivia en el DESTINO pasaba VERDE.
+
+    Contradecia la clausula D5 del propio prompt que este vuelo escribio: "un
+    DEC-<id> que NO EXISTE en el registro que su propio scope declara es recibo
+    INVALIDO". La NORMA y la BARRERA no pueden discrepar. FAIL sin el fix
+    (ambos daban OK), PASS con el.
+    """
+    solo_destino = {"010D-001"}
+    solo_motor = {"008B-001"}
+
+    cruzado = tmp_path / "FP-20260730-cruzado.tickets.md"
+    cruzado.write_text("Recibo: DEC-010D-001 (motor)\n", encoding="utf-8")
+    assert cdr.check_file(cruzado, solo_motor, solo_destino)[0] == "ERROR"
+
+    cruzado.write_text("Recibo: DEC-008B-001 (destino)\n", encoding="utf-8")
+    assert cdr.check_file(cruzado, solo_motor, solo_destino)[0] == "ERROR"
+
+    # Y cada uno contra SU registro sigue en verde (anti-falso-rojo).
+    cruzado.write_text("Recibo: DEC-008B-001 (motor)\n", encoding="utf-8")
+    assert cdr.check_file(cruzado, solo_motor, solo_destino)[0] == "OK"
+    cruzado.write_text("Recibo: DEC-010D-001 (destino)\n", encoding="utf-8")
+    assert cdr.check_file(cruzado, solo_motor, solo_destino)[0] == "OK"
+
+
+def test_receipt_is_valid_accepts_scope_mapping_and_plain_set() -> None:
+    """La funcion PURA admite mapping (scope-estricto) y set plano (scope-agnostico)."""
+    mapping = {"motor": {"008B-001"}, "destino": {"010D-001"}}
+    assert cdr.receipt_is_valid("DEC-008B-001 (motor)", mapping) is True
+    assert cdr.receipt_is_valid("DEC-008B-001 (destino)", mapping) is False
+    # set plano: se aplica a cualquier scope (llamante con un solo registro)
+    assert cdr.receipt_is_valid("DEC-008B-001 (destino)", {"008B-001"}) is True
+
+
+def test_dec_no_aplica_short_circuits_co_cited_ids() -> None:
+    """PRECEDENCIA declarada: un `DEC-no-aplica` con motivo vale por si solo.
+
+    Un id inventado que ACOMPANE al no-aplica no se caza. Se pinea porque es
+    una asimetria real de la funcion pura, no un descuido: el contrato promete
+    "referencia verificable U override declarado", y el no-aplica ES el
+    override.
+    """
+    receipt = "DEC-no-aplica: no adjudica nada\nVer tambien DEC-999Z-001 (motor)"
+    assert cdr.receipt_is_valid(receipt, REGISTRY) is True
+
+
+def test_module_docstring_declares_scope_resolution_and_its_gap() -> None:
+    """La promesa y el hueco van ESCRITOS: una promesa falsa es peor que un limite.
+
+    El docstring debe (a) decir que resuelve POR SCOPE -- lo que el codigo hace
+    de verdad tras el endurecimiento -- y (b) nombrar al dueno del hueco de
+    alcance que Codex levanto (los planes de `queued/` no se miran).
+    """
+    source = " ".join(_MODULE_PATH.read_text(encoding="utf-8").lower().split())
+    assert "su propio scope declara" in source, (
+        "el docstring debe declarar que el id se resuelve contra el registro "
+        "que su scope declara, no contra la union"
+    )
+    assert "wot-2026-043a" in source, (
+        "el hueco de alcance (planes de queued/ sin mirar, buzones por ruta "
+        "fija) debe salir con dueno declarado, no en silencio"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Registros reales del repo (frontera, no mocks)
 # ---------------------------------------------------------------------------
 

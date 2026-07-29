@@ -7,11 +7,30 @@ nada verifica sigue siendo una norma -- este guard es la barrera.
 
 Que valida (y que NO)
 ---------------------
-Valida que el `DEC-<id>` que un recibo cita EXISTE en el registro que el PROPIO
-recibo declara por su scope. Nada mas. En particular NO promete detectar
-contradiccion SEMANTICA entre la adjudicacion y la DEC: eso exigiria un juez de
-prosa, no converge (muro `WOT-2026-025c`) y seria irreproducible. La promesa
-exacta es: *no pasa sin referencia verificable u override declarado*.
+Valida que el `DEC-<id>` que un recibo cita EXISTE en el registro QUE SU PROPIO
+SCOPE DECLARA. Nada mas. En particular NO promete detectar contradiccion
+SEMANTICA entre la adjudicacion y la DEC: eso exigiria un juez de prosa, no
+converge (muro `WOT-2026-025c`) y seria irreproducible. La promesa exacta es:
+*no pasa sin referencia verificable u override declarado*.
+
+El scope NO es decorativo (endurecido en review, 2026-07-29)
+-----------------------------------------------------------
+La primera version fusionaba los dos registros y descartaba el scope: un recibo
+`DEC-<id> (motor)` cuyo id solo existia en el DESTINO pasaba VERDE. Lo cazaron
+tres lentes independientes del bucle L700 y lo confirmo la refutacion final de
+Codex citando la clausula D5 del prompt de diseno que este mismo vuelo escribio:
+*"un DEC-<id> que NO EXISTE en el registro que su propio scope declara es recibo
+INVALIDO"*. La NORMA (`WOT-2026-042w`) y la BARRERA (`WOT-2026-042x`) no pueden
+contradecirse -- si la barrera es mas laxa que la norma, la norma es decorativa.
+
+ALCANCE DECLARADO (limitacion honesta, no defecto oculto)
+---------------------------------------------------------
+Este guard inspecciona las FICHAS (`*.tickets.md`) de los buzones que se le
+pasan por `--inbox`. La clausula D5 pide recibo para "una ficha O UN PLAN", y
+los PLANES de `flight_plans/queued/*.json` NO los mira nadie todavia: lo levanto
+la refutacion final de Codex y es un hueco REAL, no un non-goal. Ademas los
+buzones estan cableados por ruta fija, asi que un tercer buzon se ignoraria en
+silencio. Follow-up con dueno: `WOT-2026-043a`.
 
 La funcion PURA
 ---------------
@@ -22,11 +41,11 @@ reescribirlo; una validacion embebida en el transporte moriria con el.
 
 Topologia: el guard NO cruza repos
 ----------------------------------
-El scope `(motor)` resuelve contra `docs/decisions/` del propio motor. El scope
-`(destino)` resuelve contra el registro que se le pasa como ARGUMENTO
-(`--destino-registry`). Si no se le pasa, el recibo `(destino)` se marca
-NO VERIFICABLE con motivo y NUNCA se da por bueno. Resolver la topologia
-motor<->destino DENTRO del guard es una STOP condition del contrato.
+El registro del motor sale de `docs/decisions/` del propio motor. El del destino
+NO se descubre: entra como ARGUMENTO (`--destino-registry`) -- resolver la
+topologia motor<->destino DENTRO del guard es una STOP condition del contrato.
+Si NO se le pasa, una ficha con scope `(destino)` se marca NO VERIFICABLE con
+motivo y NUNCA se da por buena.
 
 Before / During / After
 -----------------------
@@ -43,6 +62,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 
@@ -76,31 +96,54 @@ _RE_MOTOR_FILE = re.compile(r"^DEC-(.+?-\d+)-", re.IGNORECASE)
 _RE_DESTINO_HEADING = re.compile(r"^#{1,6}\s+DEC-(.+?-\d+)\s*(?:--|$)")
 
 
-def receipt_is_valid(receipt: str, registry: set[str]) -> bool:
+def receipt_is_valid(receipt: str, registry: Mapping[str, set[str]] | set[str]) -> bool:
     """Funcion PURA: el recibo cita un DEC que existe en el registro dado.
 
     NO resuelve topologia, NO hace I/O y NO conoce el mecanismo del drenaje que
-    la invoca. El llamante decide QUE registro corresponde al scope del recibo y
-    se lo pasa ya resuelto.
+    la invoca. El llamante construye el `registry` y se lo pasa ya resuelto.
+
+    RESOLUCION POR SCOPE (WOT-2026-042x, endurecido tras el review): el scope
+    entre parentesis dice contra QUE registro se resuelve el id, y esta funcion
+    lo HONRA. Un `DEC-<id> (motor)` cuyo id solo exista en el registro del
+    DESTINO es recibo INVALIDO, y viceversa. Antes resolvia contra la UNION, de
+    modo que un scope mis-etiquetado pasaba en verde: lo cazo el bucle L700
+    (tres lentes independientes) y lo confirmo la refutacion final de Codex
+    contra la clausula D5 del prompt de diseno, que dice literal "un DEC-<id>
+    que NO EXISTE en el registro que su propio scope declara es recibo
+    INVALIDO". La NORMA (042w) y la BARRERA (042x) no podian contradecirse.
 
     Args:
         receipt: Texto del recibo (una linea o el cuerpo que lo contiene).
-        registry: Ids de DEC existentes en el registro contra el que se resuelve,
-            normalizados en mayusculas.
+        registry: O bien un mapping `{"motor": {...}, "destino": {...}}` -- la
+            forma que permite resolver POR SCOPE -- o bien un `set` plano, que
+            se aplica a cualquier scope (util para tests de la forma del recibo
+            y para llamantes que solo tienen un registro).
 
     Returns:
         True sii el recibo es `DEC-no-aplica: <motivo>` con motivo no vacio, o
-        cita al menos un `DEC-<id>` y TODOS los ids citados existen en
-        `registry`. False en cualquier otro caso (incluido recibo ausente).
+        cita al menos un `DEC-<id>` y TODOS los ids citados existen en el
+        registro QUE SU SCOPE DECLARA. False en cualquier otro caso (incluido
+        recibo ausente).
+
+        PRECEDENCIA: un `DEC-no-aplica` con motivo vale por si solo y NO se
+        verifican los ids que el texto pueda citar ademas. Es coherente con la
+        promesa ("override declarado"), pero significa que un id inventado que
+        acompane a un no-aplica NO se caza.
     """
     no_aplica = _RE_NO_APLICA.search(receipt)
     if no_aplica and no_aplica.group(1).strip().lower() not in ("", "n/a", "na"):
         return True
 
-    ids = [m.group(1).upper() for m in _RE_SCOPED.finditer(receipt)]
-    if not ids:
+    hits = [(m.group(1).upper(), m.group(2)) for m in _RE_SCOPED.finditer(receipt)]
+    if not hits:
         return False
-    return all(dec_id in registry for dec_id in ids)
+
+    def _ids_for(scope: str) -> set[str]:
+        if isinstance(registry, Mapping):
+            return registry.get(scope) or set()
+        return registry
+
+    return all(dec_id in _ids_for(scope) for dec_id, scope in hits)
 
 
 def load_motor_registry(motor_root: Path) -> set[str]:
@@ -164,9 +207,12 @@ def check_file(
             "resolver nunca se da por bueno",
         )
 
-    registry = set(motor_registry)
-    if destino_registry is not None:
-        registry |= destino_registry
+    # POR SCOPE, no la union: un `DEC-<id> (motor)` cuyo id solo viva en el
+    # registro del destino es INVALIDO (clausula D5 del prompt de diseno).
+    registry = {
+        "motor": set(motor_registry),
+        "destino": set(destino_registry) if destino_registry is not None else set(),
+    }
 
     if receipt_is_valid(text, registry):
         return ("OK", f"{path.name}: recibo valido")
