@@ -143,13 +143,26 @@ _INVISIBLE_CHARS = "".join(
 def is_substantive(row: dict) -> bool:
     """True sii la ronda APORTO contenido. Falso sii corrio y callo.
 
-    NO hay umbral de longitud, y no es una omision: medirlo asi seria un falso
-    positivo POR CONSTRUCCION. `evidencia` se guarda truncada a 500 caracteres
-    (249 de 472 rondas historicas caen exactamente en el tope) y una respuesta
-    sustantiva almacenada fuera de linea ocupa ~46 caracteres
-    ("raw/router__lectura__dif__qwen3.6.json (2134c)"). Un umbral sobre ese campo
-    marcaria como muda una ronda de 2134 caracteres. El unico observable honesto
-    es el tamano REAL de la salida, que es justo lo que `output_chars` anade.
+    DESVIACION DECLARADA DEL DoD (b) de WOT-2026-043q. El DoD pedia "umbral =
+    constante declarada, justificada con BARRIDO sobre el scorecard REAL,
+    publicando AMBOS bordes de la meseta". **Aqui NO hay umbral de longitud, y la
+    desviacion es deliberada**: el barrido se hizo y REFUTO la premisa del DoD.
+    `evidencia` -- el unico campo de tamano que existia-- se guarda truncada a 500
+    caracteres (249 de 472 rondas historicas caen EXACTAMENTE en el tope) y una
+    respuesta sustantiva almacenada fuera de linea ocupa ~46 caracteres
+    ("raw/router__lectura__dif__qwen3.6.json (2134c)"): cualquier umbral sobre ese
+    campo marcaria muda una ronda de 2134 caracteres, un falso positivo POR
+    CONSTRUCCION. Por eso se anadio `output_chars` (medida EXACTA) y el criterio
+    es `== 0`, que es una MEDICION, no una constante ajustable a ojo.
+
+    LIMITE CONOCIDO de esa decision (declarado, no descubierto luego): una
+    respuesta de RUIDO no vacia ("ok", "si") cuenta como sustantiva. Filtrar eso
+    es juzgar CALIDAD SEMANTICA, que es competencia del adjudicador
+    (`failure_mode`, que este criterio ya respeta) y que en el gate reproduciria
+    el muro de WOT-2026-025c. Si algun dia se quiere un `MIN_OUTPUT_CHARS`, ahora
+    SI hay con que barrerlo: `output_chars` empieza a acumular datos desde este
+    ticket -- antes no existia el dato, asi que el barrido pedido por el DoD era
+    literalmente imposible sobre el historico.
 
     Criterio (fail-OPEN ante ausencia de dato, a proposito):
     - `output_chars == 0` -> muda.
