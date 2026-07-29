@@ -13,6 +13,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS_DIR = PROJECT_ROOT / "scripts"
@@ -293,6 +295,30 @@ def test_one_silent_lens_drops_the_count_below_minimum():
     assert [s["backend_key"] for s in v["silent_rounds"]] == ["BA13"]
 
 
+def test_invisible_only_reply_is_not_substantive():
+    """Hallazgo del bucle de gobierno L1400 (lente gemma4, CONFIRMADO en el arbol):
+    `_record_round` mide sobre `text.strip()`, asi que una respuesta de solo
+    blancos ya llega con output_chars=0 -- pero `str.strip()` NO quita los
+    invisibles Unicode, y un zero-width space medía 1 y contaba como aportacion."""
+    emitted = [_emitted()]
+    sc = []
+    for bk in ("BA10", "BA11", "BA12", "BA13"):
+        row = _ronda(bk)
+        row.update({"output_chars": 1, "evidencia": "​"})
+        sc.append(row)
+    v = cle.audit_commit(sc, emitted, commit_sha="abc", min_distinct=4)
+    assert v["ok"] is False
+    assert len(v["silent_rounds"]) == 4
+
+
+def test_whitespace_only_reply_already_arrives_as_zero_chars():
+    """El otro lado del mismo hallazgo, REFUTADO al medirlo: los blancos normales
+    NO necesitan tratamiento especial aqui porque `_record_round` los strippea
+    antes de medir. Se pinea en la ruta productiva para que siga siendo cierto."""
+    text = "   \n\t  "
+    assert len(text.strip()) == 0
+
+
 def test_legacy_rows_without_output_chars_stay_substantive():
     """ANTI-FALSO-POSITIVO (fail-OPEN deliberado): las filas anteriores a este
     ticket NO llevan `output_chars`. Tratar "campo ausente" como muda invalidaria
@@ -324,19 +350,64 @@ def test_truncated_evidencia_is_not_used_as_a_size_proxy():
     assert v["ok"] is True
 
 
-def test_diagnosis_distinguishes_transport_from_empty_backend():
-    """(e) DoD: "no hubo llamada" y "hubo llamada y respondio vacio" exigen accion
-    distinta, asi que el diagnostico debe decir CUAL es."""
-    sin_llamada = _muda("BA10")  # sin latency_ms: no consta que se llamara
-    assert "TRANSPORTE" in cle.diagnose_silence(sin_llamada)
+def test_silence_diagnosis_never_blames_transport_on_a_row():
+    """(e) DoD, con el ALCANCE que la medicion permite: una ronda muda CON FILA es
+    siempre "hubo llamada y respondio vacio". El otro lado ("no hubo llamada") no
+    es observable aqui -- `run_loop_round` calcula la latencia DESPUES de
+    `send_to_profile` y no captura excepciones, asi que un fallo de transporte no
+    llega a escribir fila (medido: `latency_ms is None` en 0 de 479 rondas reales;
+    y un timeout real de deepseek en el vuelo de este ticket dejo 0 filas).
 
-    llamada_vacia = _muda("BA11")
-    llamada_vacia["latency_ms"] = 4210  # hubo round-trip, pero volvio vacio
-    assert "BACKEND" in cle.diagnose_silence(llamada_vacia)
+    Pinea que el diagnostico NO culpe al transporte por la fila, y que REMITA a
+    donde si se ve (la lente ausente del recuento). Una version previa infería el
+    transporte desde `latency_ms is None`: era codigo muerto que habría mandado a
+    revisar credenciales ante un fallo de backend."""
+    con_latencia = _muda("BA11")
+    con_latencia["latency_ms"] = 4210
+    sin_latencia = _muda("BA10")  # no ocurre en produccion, pero no debe mentir
+    for row in (con_latencia, sin_latencia):
+        msg = cle.diagnose_silence(row)
+        assert "BACKEND" in msg
+        assert "TRANSPORTE" not in msg.split("Un fallo de TRANSPORTE")[0]
+        assert "no deja fila" in msg  # remite a donde SI se observa
 
     descartada = _muda("BA12")
     descartada["failure_mode"] = "no_contribution: missing_cite_block"
     assert "adjudicacion" in cle.diagnose_silence(descartada)
+
+
+def test_transport_failure_writes_no_row_at_all(tmp_path, monkeypatch):
+    """La PREMISA del test anterior, verificada en la ruta productiva en vez de
+    asumida: si `send_to_profile` levanta, `run_loop_round` propaga y NO escribe
+    fila. Por eso "no hubo llamada" se manifiesta como lente ausente."""
+    cfg = {
+        "ensemble_profiles": {"p0": {"backend": "nan", "model": "m0"}},
+        "backends": {"nan": {}},
+    }
+    monkeypatch.setattr(ed, "_backend_version", lambda _b: "v0")
+
+    def _boom(*a, **k):
+        raise TimeoutError("The read operation timed out")
+
+    monkeypatch.setattr(ed, "send_to_profile", _boom)
+    with pytest.raises(TimeoutError):
+        ed.run_loop_round(
+            "p0",
+            "bundle",
+            config=cfg,
+            project_root=tmp_path,
+            ticket="WOT-2026-043q",
+            task_type="code-review",
+            rol="challenger",
+            phase="fanout",
+            loop_id="L700",
+            backend_key="BA10",
+            sensitivity="public",
+            commit_sha="abc123",
+            challenge_nonce="N1",
+        )
+    rows, _sha = ed._read_scorecard(tmp_path)
+    assert rows == [], "un fallo de transporte NO debe dejar receipt de ronda"
 
 
 def test_end_to_end_silent_fanout_fails_through_run_loop_round(tmp_path, monkeypatch):

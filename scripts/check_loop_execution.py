@@ -121,6 +121,24 @@ def min_distinct_for(deliverable_type: str | None) -> int:
 # senal equivalente en filas antiguas.
 EMPTY_EVIDENCIA_MARKER = "(respuesta vacia)"
 
+# Invisibles Unicode que `str.strip()` NO elimina y que, solos, no son una
+# aportacion: zero-width space/non-joiner/joiner, BOM/zero-width no-break y el
+# espacio ideografico. No es un umbral de longitud (ver `is_substantive`): es la
+# misma nocion de "vacio" que ya aplica `_record_round`, extendida a los
+# caracteres que su `.strip()` deja pasar.
+_INVISIBLE_CHARS = "".join(
+    (
+        # escapes, no literales: en el fuente son indistinguibles de un espacio
+        # normal y ruff los marca como ambiguos (RUF001).
+        chr(0x200B),  # zero-width space
+        chr(0x200C),  # zero-width non-joiner
+        chr(0x200D),  # zero-width joiner
+        chr(0xFEFF),  # zero-width no-break space (BOM)
+        chr(0x3000),  # ideographic space
+        chr(0x00A0),  # no-break space
+    )
+)
+
 
 def is_substantive(row: dict) -> bool:
     """True sii la ronda APORTO contenido. Falso sii corrio y callo.
@@ -153,30 +171,51 @@ def is_substantive(row: dict) -> bool:
         return False
     if row.get("outcome") == "no-aportacion":
         return False
-    return (row.get("evidencia") or "").strip() != EMPTY_EVIDENCIA_MARKER
+    evidencia = row.get("evidencia") or ""
+    if evidencia.strip() == EMPTY_EVIDENCIA_MARKER:
+        return False
+    # Respuesta INVISIBLE: `_record_round` mide sobre `text.strip()`, que deja
+    # fuera espacios y saltos (una respuesta de solo blancos ya llega con
+    # output_chars=0), pero `str.strip()` NO quita los invisibles Unicode --
+    # un zero-width space sigue midiendo 1. Sin esto, un backend que devuelve un
+    # invisible cuenta como lente que aporta.
+    #
+    # Solo se aplica cuando la fila TIENE texto: una `evidencia` ausente o vacia
+    # es una fila legacy sin ese campo, y tratarla como muda invertiria el
+    # fail-OPEN de arriba (lo pinea `test_legacy_rows_without_output_chars_stay_substantive`).
+    visible = evidencia.strip(_INVISIBLE_CHARS).strip()
+    return bool(visible) or not evidencia.strip()
 
 
 def diagnose_silence(row: dict) -> str:
-    """Por que callo esta ronda: distingue NO HUBO LLAMADA de HUBO LLAMADA VACIA.
+    """Por que callo esta ronda, y donde NO hay que buscar.
 
-    Exigen accion DISTINTA y el mensaje de error debe decir cual es: lo primero
-    se arregla en el transporte (config del CLI, red, credenciales -- el caso que
-    origino este ticket fue un `service_tier` global que mataba a codex sin emitir
-    veredicto), lo segundo en el backend o en el bundle que se le mando.
+    ALCANCE REAL, medido antes de escribir esto (479 rondas del scorecard,
+    `latency_ms is None` en 0): **una ronda muda con fila SIEMPRE es "hubo llamada
+    y la respuesta llego vacia"**. El caso "no hubo llamada" NO puede aparecer
+    aqui, porque `run_loop_round` calcula `latency_ms` DESPUES de que
+    `send_to_profile` retorne y no captura excepciones: si el transporte falla
+    (timeout, credenciales, `service_tier` invalido) la excepcion sube y NO se
+    escribe fila ninguna. Medido en vivo el 2026-07-29: un timeout de
+    `deepseek-v4-flash` en este mismo vuelo dejo CERO filas.
+
+    Por eso esta funcion NO infiere el transporte desde `latency_ms`: una version
+    previa lo hacia y era CODIGO MUERTO con un mensaje que habria mandado al
+    humano a revisar credenciales por un fallo de backend. La distincion que pide
+    el DoD (e) es REAL, pero su otro lado NO se observa en el scorecard: se
+    observa en la AUSENCIA de fila, que es cosa del recuento de lentes
+    (`min_distinct`), no de este diagnostico. El mensaje lo dice explicitamente
+    para que nadie vuelva a buscar el transporte en la fila equivocada.
     """
     failure_mode = (row.get("failure_mode") or "").strip()
     if failure_mode:
         # La adjudicacion ya clasifico esta ronda; su etiqueta manda sobre
         # cualquier inferencia nuestra.
         return f"respuesta descartada por la adjudicacion: {failure_mode}"
-    if row.get("latency_ms") is None:
-        return (
-            "sin llamada verificable (no hay latencia registrada): revisa el "
-            "TRANSPORTE -- config del CLI, credenciales o red"
-        )
     return (
         "hubo llamada y la respuesta llego VACIA: revisa el BACKEND o el bundle "
-        "enviado (tamano, formato)"
+        "enviado (tamano, formato). Un fallo de TRANSPORTE no deja fila: se "
+        "manifiesta como lente AUSENTE del recuento, no como ronda muda"
     )
 
 
