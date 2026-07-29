@@ -250,6 +250,56 @@ def test_lenses_and_silent_rounds_partition_the_same_pass():
     )
 
 
+def test_output_chars_alone_decides_silence():
+    """Hallazgo de la AUDITORIA HERMANA (contexto fresco, 2026-07-29): el fixture
+    `_muda` pone las TRES senales de silencio a la vez, asi que ninguna rama queda
+    discriminada -- se podia BORRAR `output_chars == 0` (el mecanismo estrella de
+    este ticket) y las 26 pruebas seguian verdes. Medido: MUT-A/B/C/D -> 26 passed;
+    solo neutralizando las tres a la vez mordia.
+
+    Este test aisla la rama: `output_chars=0` con `evidencia` SUSTANTIVA y sin
+    `outcome`. Si alguien quita esa condicion del criterio, esto se pone rojo."""
+    emitted = [_emitted()]
+    sc = []
+    for bk in ("BA10", "BA11", "BA12", "BA13"):
+        row = _ronda(bk)
+        # solo la senal nueva: la evidencia parece sustantiva y no hay outcome
+        row.update({"output_chars": 0, "evidencia": "un hallazgo largo y citado"})
+        sc.append(row)
+    v = cle.audit_commit(sc, emitted, commit_sha="abc", min_distinct=4)
+    assert v["ok"] is False, "output_chars==0 debe bastar por si solo para MUDA"
+    assert v["distinct_backends"] == []
+
+
+def test_outcome_no_aportacion_alone_decides_silence():
+    """Misma cura para la segunda rama: `outcome` solo, sin las otras dos senales.
+    Cubre la fila que marca el FILTRO DE LENTE (no el texto vacio)."""
+    emitted = [_emitted()]
+    sc = []
+    for bk in ("BA10", "BA11", "BA12", "BA13"):
+        row = _ronda(bk)
+        row.update({"output_chars": 1500, "outcome": "no-aportacion", "evidencia": "x"})
+        sc.append(row)
+    v = cle.audit_commit(sc, emitted, commit_sha="abc", min_distinct=4)
+    assert v["ok"] is False
+    assert v["distinct_backends"] == []
+
+
+def test_empty_evidencia_marker_alone_decides_silence():
+    """Tercera rama aislada: el marcador historico solo. Es la unica senal que
+    tienen las filas ANTERIORES a `output_chars`, asi que su rama debe morder sin
+    ayuda de las otras dos."""
+    emitted = [_emitted()]
+    sc = []
+    for bk in ("BA10", "BA11", "BA12", "BA13"):
+        row = _ronda(bk)
+        row["evidencia"] = "(respuesta vacia)"  # sin output_chars, sin outcome
+        sc.append(row)
+    v = cle.audit_commit(sc, emitted, commit_sha="abc", min_distinct=4)
+    assert v["ok"] is False
+    assert v["distinct_backends"] == []
+
+
 def test_silent_lens_does_not_count_as_execution():
     """MUTATION (direccion 1): 4 backends DISTINTOS que devuelven CERO BYTES no son
     un bucle ejecutado. Es el fallo del ticket: "no corrio" y "corrio y callo" eran
