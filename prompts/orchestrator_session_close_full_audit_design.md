@@ -113,6 +113,22 @@ D3. FOLLOW-UP DEL MOTOR (parte (b) de B1.3.7): si en el cierre descubres un defe
     dedupe contra backlog.md. Su destino final (backlog.md) lo escribe DESARROLLO en su Bloque 5.
     NUNCA se escribe un follow-up en repo_motor ni en memoria (AGENTS.md).
 D4. NO escribes backlog.md (lo hace desarrollo al fusionar el inbox). NO commiteas ningun repo.
+D5. RECIBO DE DECISIONES (obligatorio -- WOT-2026-042w). Antes de dar por buena una ficha o un plan,
+    CONSULTA el registro de decisiones y verifica que su recibo esta escrito y es resoluble. Son DOS
+    registros y NO se mezclan: `<motor>/docs/decisions/*.md` -> scope (motor);
+    `<workspace>/.agent/planning/decisions.md` -> scope (destino). LECTURA ONLY: no anadas, edites ni
+    reordenes ninguna DEC (crear o cambiar una DEC es decision humana aparte).
+    Cada artefacto lleva su recibo en UNA de estas TRES formas exactas y parseables:
+      DEC-<id> (motor)
+      DEC-<id> (destino)
+      DEC-no-aplica: <motivo>
+    El scope entre parentesis dice contra QUE registro se resuelve el id. Un `DEC-<id>` que NO EXISTE
+    en el registro que su propio scope declara es recibo INVALIDO -> el artefacto no cierra (ROJO), no
+    se le concede el beneficio de la duda. `DEC-no-aplica` exige motivo escrito; vacio o "n/a" no vale.
+    Si la adjudicacion del artefacto CONTRADICE una DEC aceptada, el recibo declara ademas
+    `supersedes: DEC-<id>` o `invalidates: DEC-<id>` sobre la DEC CONCRETA, con motivo. El override
+    queda ESCRITO y NO existe flag para saltarselo: contradecir en silencio una DEC aceptada es
+    justamente el fallo que este recibo previene.
 
 == BLOQUE L - LIMPIEZA DE RESIDUOS DE RUNTIME (propio; hueco cazado por el bucle) ==
 L1. La sesion genero residuos gitignored que git status NO ve pero ensucian semanticamente el
@@ -134,7 +150,8 @@ M1. Hubo alguna LECCIoN de comportamiento (no infraestructura)? Infra -> documen
 SALIDA: reporte por bloque (H/I/F/A/T/D/L/M), con VEREDICTO por artefacto (FRESCO/STALE/DEAD, solido/
 CHANGES) y el estado de huella (cero / no-cero con explicacion). La sesion de diseno cierra LIMPIA
 solo si: huella cero verificada, todo plan FRESCO o su staleness anotada, toda ficha con evidencia y
-sin duplicado, todo hallazgo triado, y los residuos de runtime resueltos (conservados con dueno o retirados).
+sin duplicado, TODO artefacto con su recibo de decisiones escrito y resoluble (D5), todo hallazgo
+triado, y los residuos de runtime resueltos (conservados con dueno o retirados).
 ```
 
 ---

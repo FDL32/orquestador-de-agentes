@@ -83,7 +83,8 @@ QUE PRODUCES:
 
 (2) TICKET NUEVO (que no existe como fila en backlog) -> backlog_inbox/<FP-...>.tickets.md:
   - Por ticket: titulo, scope, deliverable_type, clasificacion, DoD binario, ROJO verificado en vivo
-    (command:+exit_code / artefacto), MUTATION que aisla, superficie cerrada, evidencia de origen (SHA/probe).
+    (command:+exit_code / artefacto), MUTATION que aisla, superficie cerrada, evidencia de origen (SHA/probe),
+    y el RECIBO DE DECISIONES obligatorio (ver REGISTRO DE DECISIONES abajo).
     (ROJO/MUTATION no aplican si deliverable_type es documentation/research/analysis.)
   - NO asignes WOT-id ni estado: los pone la sesion de desarrollo al fusionar (unico actor que ve el
     backlog completo -> sin colision de id). Cada propuesta = fichero distinto.
@@ -136,6 +137,26 @@ es que el vuelo pide mas evidencia que la agrupacion.
      (max 2 rondas). Si un ticket sigue en CHANGES tras 2 rondas -> sacalo del vuelo (a DISENO_PRIMERO
      o al inbox como pendiente), no bloquees el vuelo entero por el.
 6. Registrar: plan validado en queued/ (+ fila en INDEX.md) y/o fichas en backlog_inbox/.
+
+REGISTRO DE DECISIONES (obligatorio ANTES de adjudicar -- WOT-2026-042w):
+Una adjudicacion de diseno puede contradecir una decision YA ACEPTADA sin que nadie se entere. Por eso
+consultar el registro NO es opcional y su resultado se ESCRIBE. Hay DOS registros y NO se mezclan:
+  - `<motor>/docs/decisions/*.md`            -> scope (motor)
+  - `<workspace>/.agent/planning/decisions.md` -> scope (destino)
+LECTURA ONLY: no anadas, edites ni reordenes ninguna DEC. Crear o cambiar una DEC es decision humana aparte.
+
+RECIBO: cada ficha de backlog_inbox/ y cada plan de queued/ lleva un recibo en UNA de estas TRES formas
+exactas y parseables (el scope entre parentesis es obligatorio -- dice contra QUE registro se resuelve):
+  DEC-<id> (motor)
+  DEC-<id> (destino)
+  DEC-no-aplica: <motivo>
+Un `DEC-<id>` que no EXISTE en el registro que su propio scope declara es un recibo INVALIDO, no un
+descuido: el gate lo rechaza. `DEC-no-aplica` exige motivo escrito; no vale vacio ni "n/a".
+
+SI TU ADJUDICACION CONTRADICE UNA DEC ACEPTADA: no la ignores y no la reescribas. Declara en el mismo
+recibo `supersedes: DEC-<id>` (la sustituye) o `invalidates: DEC-<id>` (la deja sin efecto), citando la
+DEC CONCRETA y el motivo. El override queda ESCRITO y NO existe flag para saltarselo: una contradiccion
+silenciosa con una DEC aceptada es exactamente el fallo que este recibo previene.
 
 DEFINICIoN DE "LISTO" (un ticket entra al vuelo solo si): DoD binario + ROJO reproducible read-only
 (o PROBE_PENDING_DEV declarado) + MUTATION que aisla + superficie cerrada + clasificacion APTO_AUTONOMO
