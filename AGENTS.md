@@ -204,6 +204,44 @@ append `--project-root <destino>` to commands that operate on project state.
 
 ## Convenciones
 
+### Prompt/contrato citado => LEELO ENTERO antes de redactar contra el (2026-07-29)
+
+**Norma dura, no consejo.** Si un prompt te lo pegan en el chat, lo enlaza otro prompt que te
+pegaron, o un proceso lo declara como su contrato, **lo abres y lo lees ENTERO antes de producir
+nada que se mida contra el**. `grep` dirigido, `diff` contra otra copia y lectura de la seccion que
+creias relevante **NO cuentan como leerlo**: son muestreo, y el muestreo no puede ver lo que OMITES.
+
+- **El grep responde tu pregunta, no la del contrato.** Solo encuentra lo que ya sospechabas que
+  estaba; las clausulas que no imaginaste son justo las que no vas a grepear.
+- **Es aplicacion directa de M4** (`prompts/orchestrator_launch_builder.md:140-155`, *"validador
+  citado => ejecutalo antes de redactar"*) a la superficie NORMATIVA: si un validador ejecutable
+  define el formato de un artefacto, un contrato define el formato de un PROCESO. M4 cubria solo lo
+  primero; esta norma cierra lo segundo.
+- **Coste medido y asumible:** los 7 prompts canonicos del pipeline suman ~2400 lineas. Es
+  drasticamente mas barato que el fallo que evita.
+- **Enrutar NO exime de leer.** Este repo prohibe re-declarar criterios normativos (*"skill apunta,
+  prompt gobierna"*): sigues sin copiarlos, pero **no puedes enrutar hacia un contrato que no has
+  leido** -- no sabrias que clausulas existen para nombrarlas.
+- **Si decides NO leer entero, DECLARALO ANTES** con su motivo y su riesgo. Un muestreo declarado es
+  una decision; un muestreo silencioso que se presenta como cobertura es `falso_verde`.
+
+**Fallo real que la origina (2026-07-29, cazado por el USUARIO, no por el bucle):** se redacto el
+prompt de arranque de un vuelo trabajando `prompts/orchestrator_autonomous_ticket_batch.md` (571
+lineas) por grep + diff, sin abrirlo entero. Quedaron fuera `:193-220` (un `MANAGER_REVIEW` **por
+ticket** y la forma exacta `1->9->2` con lector-FS obligatorio), `:355-380` (`GROUP_STOP_REPORT`) y
+`:439-462` (cierre bloqueante: `batch_run_<ts>.json` + auditoria hermana + condicion 6
+dual-contract). El prompt resultante decia *"antes de CADA fan-out emite el nonce"* sin decir cuantos
+ni cuando, y `MANAGER_REVIEW` aparecia **0 veces**: un ejecutor podia implementar dos tickets, correr
+UN bucle al final y creerse conforme.
+
+**Agravante que hace la norma insuficiente por si sola:** ese prompt SE PASO por un bucle de 4 lentes
+y **ninguna lo cazo**, porque a las lentes se les paso el contrato **por REFERENCIA (rutas), no por
+CONTENIDO**: solo podian auditar coherencia interna. La barrera complementaria -- que el recolector
+meta el contenido del contrato EN el bundle -- esta fichada como `WOT-2026-042y`. Lo predijo, literal,
+una leccion que ya estaba en memoria: `obs-api-only-reader-reads-current-state-not-ought-to-be`
+(*"un review multi-backend necesita un lector-con-filesystem o un bundle que incluya la semantica
+explicita"*).
+
 - Lee `PROJECT.md` antes de tocar arquitectura o estado.
 - Lee `INTERACTION_MODES.md` antes de operar por chat o por terminal.
 - Para tickets que tocan sincronizacion de estado, bus, proyecciones o codigo topologia-aware (`repo_motor + repo_destino`), comprueba primero si el sintoma encaja con un patron documentado en `docs/KNOWN_FAILURE_PATTERNS.md` antes de proponer un fix nuevo.
