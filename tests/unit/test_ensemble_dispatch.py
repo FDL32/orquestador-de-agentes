@@ -548,7 +548,12 @@ def test_scorecard_fields_prefix_is_frozen():
         # Al final por el mismo motivo que 025y/037b: el prefijo es frozen.
         "commit_sha",
         "challenge_nonce",
-    ], "los 9 campos nuevos deben ir DESPUES del prefijo frozen (D1)"
+        # WOT-2026-043q: output_chars mide el tamano REAL de la respuesta antes
+        # de truncar. Distingue "corrio y callo" de "corrio y respondio", que
+        # eran indistinguibles para check_loop_execution. Al final, igual que
+        # los anteriores: el prefijo de 16 sigue siendo frozen.
+        "output_chars",
+    ], "los 10 campos nuevos deben ir DESPUES del prefijo frozen (D1)"
     # WOT-2026-037b review (mimo lens): append_scorecard normaliza via
     # {k: row.get(k) for k in SCORECARD_FIELDS}; una clave DUPLICADA se
     # colapsaria en silencio (la 2a pisa la 1a) sin error. Invariante: la

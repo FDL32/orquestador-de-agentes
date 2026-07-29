@@ -16,9 +16,23 @@ Que verifica (y que NO)
 -----------------------
 Por cada `commit_sha` de ticket que se le pasa, este guard exige en el scorecard
 `>=N` receipts de EJECUCION (`event=="ronda"`) de ese SHA con `backend_key`
-DISTINTO y un `challenge_nonce` que fue EMITIDO FUERA del ejecutor
-(`emitted_nonces.jsonl`) ANTES de la ronda. `N` es proporcional al
-`deliverable_type` (un typo/doc no exige 9 lentes).
+DISTINTO, un `challenge_nonce` que fue EMITIDO FUERA del ejecutor
+(`emitted_nonces.jsonl`) ANTES de la ronda, y CONTENIDO en la respuesta. `N` es
+proporcional al `deliverable_type` (un typo/doc no exige 9 lentes).
+
+SUSTANCIA, no solo independencia (WOT-2026-043q)
+------------------------------------------------
+`WOT-2026-040b` cerro la INDEPENDENCIA (N `backend_key` distintos) pero no la
+SUSTANCIA: una lente que NO RESPONDE y una que RESPONDE VACIO eran
+INDISTINGUIBLES para esta barrera -- ninguna condicion exigia contenido, asi que
+N backends devolviendo cero bytes contaban como bucle EJECUTADO y el guard daba
+rc=0. Ahora una ronda muda no cuenta como lente (`is_substantive`) y ademas se
+NOMBRA en la salida, distinguiendo TRANSPORTE (no hubo llamada) de BACKEND (hubo
+llamada y respondio vacio), porque exigen accion distinta.
+
+El caso real que lo origino: un `service_tier` global invalido mataba a codex-cli
+SIN emitir veredicto y SIN consumir tokens -- no llegaba a haber llamada-- y el
+bucle se contabilizaba igual.
 
 Adjudicado por el propio bucle 1->9->2 sobre esta cuestion de diseño (Codex final,
 2026-07-24):
@@ -101,6 +115,71 @@ def min_distinct_for(deliverable_type: str | None) -> int:
     )
 
 
+# Marcador que `_record_round` escribe en `evidencia` cuando el backend no
+# devolvio texto. Es el observable HISTORICO de una ronda muda: existe en el
+# scorecard desde antes de `output_chars`, y por eso el criterio lo acepta como
+# senal equivalente en filas antiguas.
+EMPTY_EVIDENCIA_MARKER = "(respuesta vacia)"
+
+
+def is_substantive(row: dict) -> bool:
+    """True sii la ronda APORTO contenido. Falso sii corrio y callo.
+
+    NO hay umbral de longitud, y no es una omision: medirlo asi seria un falso
+    positivo POR CONSTRUCCION. `evidencia` se guarda truncada a 500 caracteres
+    (249 de 472 rondas historicas caen exactamente en el tope) y una respuesta
+    sustantiva almacenada fuera de linea ocupa ~46 caracteres
+    ("raw/router__lectura__dif__qwen3.6.json (2134c)"). Un umbral sobre ese campo
+    marcaria como muda una ronda de 2134 caracteres. El unico observable honesto
+    es el tamano REAL de la salida, que es justo lo que `output_chars` anade.
+
+    Criterio (fail-OPEN ante ausencia de dato, a proposito):
+    - `output_chars == 0` -> muda.
+    - `outcome == "no-aportacion"` -> muda (lo deriva `_record_round` desde el
+      texto vacio, y tambien lo fija el filtro de lente).
+    - `evidencia == "(respuesta vacia)"` -> muda.
+    - Sin ninguna de esas senales -> SUSTANTIVA.
+
+    La ultima clausula es el anti-falso-positivo: las filas anteriores a este
+    ticket no llevan `output_chars`, y tratar "campo ausente" como muda
+    invalidaria RETROACTIVAMENTE bucles ya corridos -- un gate que hace eso es
+    inservible y se le rodea (leccion WOT-2026-042x). Medido sobre el scorecard
+    real ANTES de endurecer: de 16 commits con fan-out, solo 2 pierden una lente
+    (5990486: 5->4, ea02701: 7->6) y NINGUNO cae por debajo de su min_distinct.
+    Por eso este ticket NO necesita constante de cutoff: no hay deuda historica
+    que grandfatherear.
+    """
+    if row.get("output_chars") == 0:
+        return False
+    if row.get("outcome") == "no-aportacion":
+        return False
+    return (row.get("evidencia") or "").strip() != EMPTY_EVIDENCIA_MARKER
+
+
+def diagnose_silence(row: dict) -> str:
+    """Por que callo esta ronda: distingue NO HUBO LLAMADA de HUBO LLAMADA VACIA.
+
+    Exigen accion DISTINTA y el mensaje de error debe decir cual es: lo primero
+    se arregla en el transporte (config del CLI, red, credenciales -- el caso que
+    origino este ticket fue un `service_tier` global que mataba a codex sin emitir
+    veredicto), lo segundo en el backend o en el bundle que se le mando.
+    """
+    failure_mode = (row.get("failure_mode") or "").strip()
+    if failure_mode:
+        # La adjudicacion ya clasifico esta ronda; su etiqueta manda sobre
+        # cualquier inferencia nuestra.
+        return f"respuesta descartada por la adjudicacion: {failure_mode}"
+    if row.get("latency_ms") is None:
+        return (
+            "sin llamada verificable (no hay latencia registrada): revisa el "
+            "TRANSPORTE -- config del CLI, credenciales o red"
+        )
+    return (
+        "hubo llamada y la respuesta llego VACIA: revisa el BACKEND o el bundle "
+        "enviado (tamano, formato)"
+    )
+
+
 def _valid_nonces_for(
     emitted: list[dict], commit_sha: str, loop_id: str | None
 ) -> dict[str, str]:
@@ -149,13 +228,36 @@ def distinct_execution_backends(
     este commit. Devolver el CONJUNTO (no el conteo) deja que el caller reporte
     QUIENES corrieron.
     """
+    return {
+        row.get("backend_key")
+        for row in structurally_valid_rounds(
+            scorecard_rows, emitted, commit_sha=commit_sha, loop_id=loop_id
+        )
+        if is_substantive(row)
+    }
+
+
+def structurally_valid_rounds(
+    scorecard_rows: list[dict],
+    emitted: list[dict],
+    *,
+    commit_sha: str,
+    loop_id: str | None = None,
+) -> list[dict]:
+    """Rondas que pasan todos los filtros ESTRUCTURALES, sin mirar el contenido.
+
+    Es la pasada UNICA que comparten el recuento de lentes y el listado de mudas
+    (WOT-2026-043q): la sustancia es el ULTIMO filtro y el unico que las separa,
+    asi que duplicar aqui la cadena de filtros haria que las dos vistas
+    divergieran en cuanto alguien tocara una sola.
+    """
     valid_nonces = _valid_nonces_for(emitted, commit_sha, loop_id)
     issuers = {
         row.get("issuer_backend_key")
         for row in emitted
         if row.get("commit_sha") == commit_sha and row.get("issuer_backend_key")
     }
-    backends: set[str] = set()
+    rounds: list[dict] = []
     for row in scorecard_rows:
         if row.get("event") != "ronda":
             continue
@@ -173,8 +275,37 @@ def distinct_execution_backends(
         row_ts = row.get("ts")
         if row_ts is not None and emitted_ts > row_ts:
             continue  # el nonce se emitio DESPUES de la ronda: sin ceremonia previa
-        backends.add(bk)
-    return backends
+        rounds.append(row)
+    return rounds
+
+
+def silent_rounds(
+    scorecard_rows: list[dict],
+    emitted: list[dict],
+    *,
+    commit_sha: str,
+    loop_id: str | None = None,
+) -> list[dict]:
+    """Rondas estructuralmente validas que NO aportaron contenido: corrieron y callaron.
+
+    Son exactamente las que `distinct_execution_backends` descarta por
+    `is_substantive`. Se devuelven aparte para que el CLI pueda NOMBRARLAS: un gate
+    que dice "4/4" sin decir quien callo obliga a re-medir a mano, y "conte a mano"
+    no es barrera.
+    """
+    return [
+        {
+            "backend_key": row.get("backend_key"),
+            "diagnosis": diagnose_silence(row),
+            "outcome": row.get("outcome"),
+            "failure_mode": row.get("failure_mode"),
+            "output_chars": row.get("output_chars"),
+        }
+        for row in structurally_valid_rounds(
+            scorecard_rows, emitted, commit_sha=commit_sha, loop_id=loop_id
+        )
+        if not is_substantive(row)
+    ]
 
 
 def audit_commit(
@@ -199,6 +330,12 @@ def audit_commit(
         "distinct_backends": sorted(backends),
         "min_distinct": min_distinct,
         "ok": len(backends) >= min_distinct,
+        # WOT-2026-043q: rondas que corrieron y callaron. Se reportan SIEMPRE
+        # (tambien en verde): una lente muda es una senal aunque el resto alcance
+        # el minimo.
+        "silent_rounds": silent_rounds(
+            scorecard_rows, emitted, commit_sha=commit_sha, loop_id=loop_id
+        ),
     }
 
 
@@ -274,14 +411,24 @@ def main(argv: list[str] | None = None) -> int:
             f"{len(v['distinct_backends'])}/{v['min_distinct']} lentes distintas "
             f"{v['distinct_backends']}"
         )
+        # WOT-2026-043q: nombrar a quien callo, en verde y en rojo. Un contador
+        # sin nombres obliga a re-medir a mano.
+        for s in v["silent_rounds"]:
+            print(
+                f"[loop-exec]   MUDA {s['backend_key']}: {s['diagnosis']} "
+                f"(output_chars={s['output_chars']})"
+            )
     if failures:
         print(
             "\n[loop-exec] ERROR: el bucle 1->9->2 NO corrio (o corrio DEGRADADO) "
             "para el/los commit(s) de arriba.\n"
             "  Cada commit de ticket exige >=N rondas de EJECUCION con backend_key\n"
-            "  DISTINTO y un challenge_nonce emitido FUERA (emit-nonce) ANTES de la\n"
-            "  ronda. Corre el bucle de gobierno de verdad -- no es una norma, es una\n"
-            "  barrera (WOT-2026-040b)."
+            "  DISTINTO, un challenge_nonce emitido FUERA (emit-nonce) ANTES de la\n"
+            "  ronda, y CONTENIDO en la respuesta: una lente que corre y CALLA no\n"
+            "  aporta independencia (WOT-2026-043q). Las rondas MUDA de arriba, si\n"
+            "  las hay, dicen si el fallo es de TRANSPORTE (no hubo llamada) o del\n"
+            "  BACKEND (hubo llamada y respondio vacio). Corre el bucle de gobierno\n"
+            "  de verdad -- no es una norma, es una barrera (WOT-2026-040b)."
         )
         return 1
     print("[loop-exec] OK: cada commit tiene el fan-out de gobierno ejecutado.")

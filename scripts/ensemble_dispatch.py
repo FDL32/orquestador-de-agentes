@@ -147,6 +147,14 @@ SCORECARD_FIELDS = [
     # a ESE challenge de ESE commit. Al final (prefijo frozen invariante).
     "commit_sha",
     "challenge_nonce",
+    # WOT-2026-043q: tamano REAL de la respuesta del backend, en caracteres del
+    # texto crudo ANTES de truncar. `evidencia` NO sirve para medirlo: se guarda
+    # como `text[:500]`, asi que 249 de 472 rondas historicas caen exactamente en
+    # el tope, y una respuesta almacenada fuera de linea ("raw/....json (2134c)")
+    # ocupa 46 caracteres pese a ser sustantiva. Sin este campo, una lente que NO
+    # RESPONDE y una que RESPONDE VACIO son indistinguibles para la barrera del
+    # bucle. Al final (prefijo frozen invariante).
+    "output_chars",
 ]
 
 ADJUDICATED_OUTCOMES = {
@@ -1416,6 +1424,11 @@ def _record_round(
             # emitido fuera.
             "commit_sha": commit_sha,
             "challenge_nonce": challenge_nonce,
+            # WOT-2026-043q: se mide sobre `text` (crudo, ya stripeado) y NO
+            # sobre `evidencia`, que va truncada a 500. 0 == el backend no
+            # aporto nada; es el unico observable que distingue "corrio y callo"
+            # de "corrio y respondio".
+            "output_chars": len(text),
         },
     )
 

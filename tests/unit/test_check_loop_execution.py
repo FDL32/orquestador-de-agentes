@@ -209,3 +209,226 @@ def test_end_to_end_degraded_fails(tmp_path):
 def test_read_emitted_nonces_missing_file_is_empty(tmp_path):
     """Un destino sin emisiones aun devuelve lista vacia (no crashea)."""
     assert ed.read_emitted_nonces(tmp_path) == []
+
+
+# ------------------------------------------ SUSTANCIA vs silencio (WOT-2026-043q)
+def _muda(backend, **kw):
+    """Ronda que corrio y CALLO, con la forma exacta que escribe `_record_round`
+    ante un `reply` vacio: outcome derivado + marcador en evidencia + 0 chars."""
+    row = _ronda(backend, **kw)
+    row.update(
+        {
+            "output_chars": 0,
+            "outcome": "no-aportacion",
+            "evidencia": "(respuesta vacia)",
+        }
+    )
+    return row
+
+
+def test_lenses_and_silent_rounds_partition_the_same_pass():
+    """Las dos vistas (lentes que cuentan / rondas mudas) salen de UNA sola pasada
+    estructural y son complementarias: la sustancia es el unico filtro que las
+    separa. Pinea que nadie duplique la cadena de filtros y las haga divergir."""
+    emitted = [_emitted()]
+    sc = [
+        _ronda("BA10"),
+        _muda("BA11"),
+        _ronda("BA12"),
+        {**_ronda("BA13"), "event": "adjudicate"},  # estructuralmente invalida
+        _ronda("BA01"),  # el emisor: tampoco es estructuralmente valida
+    ]
+    valid = cle.structurally_valid_rounds(sc, emitted, commit_sha="abc")
+    v = cle.audit_commit(sc, emitted, commit_sha="abc", min_distinct=4)
+    # las descartadas por estructura no aparecen en NINGUNA de las dos vistas
+    assert {r["backend_key"] for r in valid} == {"BA10", "BA11", "BA12"}
+    assert len(v["distinct_backends"]) + len(v["silent_rounds"]) == len(valid)
+    assert set(v["distinct_backends"]).isdisjoint(
+        {s["backend_key"] for s in v["silent_rounds"]}
+    )
+
+
+def test_silent_lens_does_not_count_as_execution():
+    """MUTATION (direccion 1): 4 backends DISTINTOS que devuelven CERO BYTES no son
+    un bucle ejecutado. Es el fallo del ticket: "no corrio" y "corrio y callo" eran
+    indistinguibles, y N backends mudos daban rc=0."""
+    emitted = [_emitted()]
+    sc = [_muda(bk) for bk in ("BA10", "BA11", "BA12", "BA13")]
+    v = cle.audit_commit(sc, emitted, commit_sha="abc", min_distinct=4)
+    assert v["ok"] is False
+    assert v["distinct_backends"] == []
+    # y las NOMBRA: un contador sin nombres obliga a re-medir a mano
+    assert {s["backend_key"] for s in v["silent_rounds"]} == {
+        "BA10",
+        "BA11",
+        "BA12",
+        "BA13",
+    }
+
+
+def test_substantive_answers_still_pass():
+    """MUTATION (direccion 2 / CONTROL POSITIVO): el MISMO fan-out con respuestas
+    REALES sigue en verde. Sin esta direccion el criterio podria estar rechazandolo
+    todo y el test de arriba pasaria igual."""
+    emitted = [_emitted()]
+    sc = []
+    for bk in ("BA10", "BA11", "BA12", "BA13"):
+        row = _ronda(bk)
+        row.update({"output_chars": 1800, "evidencia": "hallazgo real y citado"})
+        sc.append(row)
+    v = cle.audit_commit(sc, emitted, commit_sha="abc", min_distinct=4)
+    assert v["ok"] is True
+    assert len(v["distinct_backends"]) == 4
+    assert v["silent_rounds"] == []
+
+
+def test_one_silent_lens_drops_the_count_below_minimum():
+    """El caso REAL medido en el scorecard: no todas mudas, solo una. 4 lentes de
+    las que 1 calla -> 3, por debajo del minimo de `code`."""
+    emitted = [_emitted()]
+    sc = [_ronda(bk) for bk in ("BA10", "BA11", "BA12")] + [_muda("BA13")]
+    v = cle.audit_commit(sc, emitted, commit_sha="abc", min_distinct=4)
+    assert v["ok"] is False
+    assert v["distinct_backends"] == ["BA10", "BA11", "BA12"]
+    assert [s["backend_key"] for s in v["silent_rounds"]] == ["BA13"]
+
+
+def test_legacy_rows_without_output_chars_stay_substantive():
+    """ANTI-FALSO-POSITIVO (fail-OPEN deliberado): las filas anteriores a este
+    ticket NO llevan `output_chars`. Tratar "campo ausente" como muda invalidaria
+    RETROACTIVAMENTE bucles ya corridos, y un gate asi se rodea (WOT-2026-042x).
+    Medido: de 16 commits historicos con fan-out, ninguno cae bajo su minimo."""
+    emitted = [_emitted()]
+    sc = [_ronda(bk) for bk in ("BA10", "BA11", "BA12", "BA13")]
+    assert all("output_chars" not in row for row in sc)
+    v = cle.audit_commit(sc, emitted, commit_sha="abc", min_distinct=4)
+    assert v["ok"] is True
+
+
+def test_truncated_evidencia_is_not_used_as_a_size_proxy():
+    """Por que NO hay umbral de longitud: una respuesta sustantiva guardada FUERA
+    DE LINEA ocupa ~46 caracteres en `evidencia` ("raw/....json (2134c)"). Un
+    umbral sobre ese campo la marcaria muda -- falso positivo por construccion."""
+    emitted = [_emitted()]
+    sc = []
+    for bk in ("BA10", "BA11", "BA12", "BA13"):
+        row = _ronda(bk)
+        row.update(
+            {
+                "output_chars": 2134,
+                "evidencia": "raw/router__lectura__dif__qwen3.6.json (2134c)",
+            }
+        )
+        sc.append(row)
+    v = cle.audit_commit(sc, emitted, commit_sha="abc", min_distinct=4)
+    assert v["ok"] is True
+
+
+def test_diagnosis_distinguishes_transport_from_empty_backend():
+    """(e) DoD: "no hubo llamada" y "hubo llamada y respondio vacio" exigen accion
+    distinta, asi que el diagnostico debe decir CUAL es."""
+    sin_llamada = _muda("BA10")  # sin latency_ms: no consta que se llamara
+    assert "TRANSPORTE" in cle.diagnose_silence(sin_llamada)
+
+    llamada_vacia = _muda("BA11")
+    llamada_vacia["latency_ms"] = 4210  # hubo round-trip, pero volvio vacio
+    assert "BACKEND" in cle.diagnose_silence(llamada_vacia)
+
+    descartada = _muda("BA12")
+    descartada["failure_mode"] = "no_contribution: missing_cite_block"
+    assert "adjudicacion" in cle.diagnose_silence(descartada)
+
+
+def test_end_to_end_silent_fanout_fails_through_run_loop_round(tmp_path, monkeypatch):
+    """END-TO-END en la ruta PRODUCTIVA: `run_loop_round` es quien escribe los
+    receipts del bucle de gobierno. Con un transporte que devuelve cadena vacia,
+    4 backends distintos dejan 4 filas y el gate las rechaza por MUDAS."""
+    ed.emit_nonce(
+        tmp_path,
+        commit_sha="abc123",
+        loop_id="L700",
+        issuer_role="orchestrator",
+        issuer_backend_key="BA01",
+        nonce="FIXED_NONCE",
+    )
+    config = {
+        "ensemble_profiles": {
+            f"p{i}": {"backend": "nan", "model": f"m{i}"} for i in range(4)
+        },
+        "backends": {"nan": {}},
+    }
+    monkeypatch.setattr(ed, "_backend_version", lambda _b: "v0")
+    monkeypatch.setattr(
+        ed, "send_to_profile", lambda *a, **k: ""
+    )  # el backend calla: cero bytes
+    for i, bk in enumerate(("BA10", "BA11", "BA12", "BA13")):
+        ed.run_loop_round(
+            f"p{i}",
+            "bundle",
+            config=config,
+            project_root=tmp_path,
+            ticket="WOT-2026-043q",
+            task_type="code-review",
+            rol="challenger",
+            phase="fanout",
+            loop_id="L700",
+            backend_key=bk,
+            sensitivity="internal",
+            commit_sha="abc123",
+            challenge_nonce="FIXED_NONCE",
+        )
+    rows, _sha = ed._read_scorecard(tmp_path)
+    assert len(rows) == 4
+    assert all(r["output_chars"] == 0 for r in rows)
+
+    verdicts = cle.audit(tmp_path, commit_shas=["abc123"], deliverable_type="code")
+    assert verdicts[0]["ok"] is False
+    assert len(verdicts[0]["silent_rounds"]) == 4
+
+
+def test_end_to_end_substantive_fanout_passes_through_run_loop_round(
+    tmp_path, monkeypatch
+):
+    """CONTROL POSITIVO de la ruta productiva: identico al anterior salvo que el
+    transporte responde. Si este tambien fallara, el test de arriba no probaria
+    nada sobre el silencio."""
+    ed.emit_nonce(
+        tmp_path,
+        commit_sha="abc123",
+        loop_id="L700",
+        issuer_role="orchestrator",
+        issuer_backend_key="BA01",
+        nonce="FIXED_NONCE",
+    )
+    config = {
+        "ensemble_profiles": {
+            f"p{i}": {"backend": "nan", "model": f"m{i}"} for i in range(4)
+        },
+        "backends": {"nan": {}},
+    }
+    monkeypatch.setattr(ed, "_backend_version", lambda _b: "v0")
+    monkeypatch.setattr(ed, "send_to_profile", lambda *a, **k: "REFUTA: " + "x" * 900)
+    for i, bk in enumerate(("BA10", "BA11", "BA12", "BA13")):
+        ed.run_loop_round(
+            f"p{i}",
+            "bundle",
+            config=config,
+            project_root=tmp_path,
+            ticket="WOT-2026-043q",
+            task_type="code-review",
+            rol="challenger",
+            phase="fanout",
+            loop_id="L700",
+            backend_key=bk,
+            sensitivity="internal",
+            commit_sha="abc123",
+            challenge_nonce="FIXED_NONCE",
+        )
+    rows, _sha = ed._read_scorecard(tmp_path)
+    # el tamano REAL se mide antes de truncar: evidencia va a 500, output_chars no
+    assert all(r["output_chars"] == 908 for r in rows)
+    assert all(len(r["evidencia"]) == 500 for r in rows)
+
+    verdicts = cle.audit(tmp_path, commit_shas=["abc123"], deliverable_type="code")
+    assert verdicts[0]["ok"] is True
+    assert verdicts[0]["silent_rounds"] == []
