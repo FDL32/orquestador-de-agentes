@@ -74,6 +74,7 @@ EXPECTED_WIRED_REAL = {
     "check_commit_worktree",
     "check_closeout_reconciliation",  # WOT-2026-024w: cableado en prepush_check.py (closeout, WARN/STRICT)
     "check_contract_backlog_reconcile",  # WOT-2026-024e: cableado en prepush_check.py (closeout, WARN/FAIL)
+    "check_dec_receipt",  # WOT-2026-042x: cableado en prepush_check.py::run_dec_receipt_check (closeout). Barrera de la NORMA de 042w (recibo DEC en las fichas de diseno). No es falso-WIRED: mutation-verify con par de exit-codes literal sobre la invocacion REAL (1 sin recibo / 1 con DEC-<id> inexistente -> 0 con `DEC-no-aplica: <motivo>`), y 14/14 fichas reales del destino degradan a WARN por el grandfathering.
     "check_deliverables_exist",
     "check_destination_pii_leak",  # WOT-2026-020t: cableado en prepush_check.py (closeout, WARN/FAIL)
     "check_destino_publish_ready",  # WOT-2026-024w (colateral): wired via check_motor_destination_integration en prepush

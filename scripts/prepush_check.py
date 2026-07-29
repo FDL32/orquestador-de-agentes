@@ -1259,6 +1259,76 @@ def run_portable_memory_archive_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_dec_receipt_check(project_root: Path) -> CheckResult:
+    """Ejecuta la barrera del recibo DEC sobre los buzones de fichas (WOT-2026-042x).
+
+    `WOT-2026-042w` puso la NORMA en los dos prompts de sesion de DISENO: toda
+    ficha deja un recibo estructurado (`DEC-<id> (motor)`, `DEC-<id> (destino)`
+    o `DEC-no-aplica: <motivo>`). Este cableado es lo que la convierte en
+    BARRERA: sin un camino que corra solo, la norma depende de que alguien se
+    acuerde. Se cablea AQUI y no en el paso 8.bis del prompt de cierre porque
+    `check_guard_wiring.py:11` no cuenta los prompts como superficie -- la cita
+    en 8.bis documenta el criterio, nunca lo ejecuta.
+
+    El guard vive SOLO en el motor: su ruta y su `--motor-root` se resuelven
+    contra el MOTOR, nunca contra `project_root`, siguiendo el mismo patron que
+    `run_portable_memory_archive_check` (WOT-2026-038j: construirlos desde el
+    destino produce un FALSO ROJO por un fichero que nunca estuvo ahi).
+
+    El registro del destino se pasa como ARGUMENTO. Resolver la topologia
+    motor<->destino DENTRO del guard es una STOP condition del contrato: si el
+    registro no existe, no se pasa el flag y todo recibo `(destino)` queda
+    NO VERIFICABLE (ERROR), nunca "valido por defecto".
+
+    Args:
+        project_root: Raiz del destino sobre la que corre el preflight; de ella
+            se derivan los buzones de fichas y el registro de decisiones.
+
+    Returns:
+        CheckResult con el estado de la barrera del recibo DEC.
+    """
+    motor_root = _MOTOR_ROOT
+    try:
+        from runtime.motor_link import resolve_motor_root
+
+        resolved_motor_root = resolve_motor_root(project_root)
+        if (
+            resolved_motor_root is not None
+            and (resolved_motor_root / "scripts" / "check_dec_receipt.py").exists()
+        ):
+            motor_root = resolved_motor_root
+    except ImportError:
+        pass
+
+    cmd = [
+        sys.executable,
+        str(motor_root / "scripts" / "check_dec_receipt.py"),
+        "--motor-root",
+        str(motor_root),
+    ]
+
+    destino_registry = project_root / ".agent" / "planning" / "decisions.md"
+    if destino_registry.is_file():
+        cmd += ["--destino-registry", str(destino_registry)]
+
+    for inbox in (
+        # Los DOS buzones reales, medidos sobre el destino el 2026-07-29 (6 + 8
+        # = las 14 fichas del censo del contrato). El segundo vive bajo
+        # `collaboration/`, no bajo `planning/`: pasar solo el primero habria
+        # dejado 8 de 14 fichas SIN mirar, con el guard igualmente en verde.
+        project_root / "orchestrator_pipeline" / "backlog_inbox",
+        project_root / ".agent" / "collaboration" / "backlog_inbox",
+    ):
+        if inbox.is_dir():
+            cmd += ["--inbox", str(inbox)]
+
+    return run_subprocess_check(
+        cmd=cmd,
+        name="DEC Receipt Barrier (WOT-2026-042x)",
+        project_root=project_root,
+    )
+
+
 def run_preflight_check(
     project_root: Path | None = None,
     expected_artifacts: list[str] | None = None,
@@ -1354,6 +1424,13 @@ def run_preflight_check(
         # en WOT-2026-040r cuando queued/ este limpio. El CHECK en si (exit!=0) es
         # fiel a 'colision SIEMPRE falla, sin allowlist'; el CABLEADO nace WARN.)
         results.append(run_flight_plan_collision_check(project_root))
+        # 6n. DEC Receipt Barrier (WOT-2026-042x; la norma de 042w cableada).
+        # Va en closeout y no en pre-commit porque su superficie son los buzones
+        # de fichas del DESTINO, que este es el unico camino auto-ejecutable que
+        # conoce. Las fichas anteriores a GRANDFATHER_CUTOFF degradan a WARN
+        # dentro del propio guard (censo medido: 14/14 sin recibo), asi que el
+        # cableado no bloquea la deuda historica.
+        results.append(run_dec_receipt_check(project_root))
 
     # 7. Portable Memory Archive Schema (WOT-2026-035b; bloqueante siempre,
     # no solo en closeout_mode: el archive puede corromperse en cualquier push)
