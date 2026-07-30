@@ -565,9 +565,16 @@ def test_041c_dod_d_signature_is_additive_for_existing_consumers(
 ):
     """DoD (d): ADITIVIDAD. Sin `extra_roots` la conducta es la heredada.
 
-    Los consumidores actuales (`ensemble_dispatch.py`,
-    `build_extraction_prompt.py`) llaman posicionalmente; omitir el kwarg debe
-    dar EXACTAMENTE el mismo veredicto que antes del fix.
+    CENSO de consumidores REALES (invocacion, no mencion), verificado por grep
+    `filter_lens_output(` el 2026-07-30: `scripts/ensemble_dispatch.py:1664` y
+    el propio CLI de este modulo. `build_extraction_prompt.py` NO es consumidor:
+    solo NOMBRA la funcion en un docstring (`:56`) como ejemplo del patron de
+    reuso, y nunca la invoca -- premisa falsa del bundle de MANAGER_REVIEW,
+    cazada por la lente y corregida aqui en vez de dejarse viva.
+
+    `extra_roots` es kwarg-only (`*`), asi que ninguna llamada POSICIONAL
+    existente puede romperse; omitir el kwarg debe dar EXACTAMENTE el mismo
+    veredicto que antes del fix.
     """
     (destino_root / "scripts").mkdir()
     (destino_root / "scripts" / "local_only.py").write_text(
@@ -601,6 +608,92 @@ def test_041c_duplicated_root_does_not_duplicate_problems(destino_root: Path):
 
     assert accepted is False
     assert len(problems) == 1, problems
+
+
+def test_041c_empty_extra_roots_behaves_like_none(destino_root: Path):
+    """`extra_roots=[]` == `extra_roots=None` (hallazgo P5-3 del MANAGER_REVIEW).
+
+    Hoy ambos caen en `*(extra_roots or ())`. Un refactor a `if extra_roots is
+    not None:` cambiaria la semantica de la lista vacia sin que nada cayera:
+    este test lo pinnea.
+    """
+    text = _cite(
+        "scripts/ausente.py", 1, "def ausente_del_todo", verdict="Incorrecto: falla."
+    )
+
+    assert flo.filter_lens_output(
+        text, destino_root, cite_only=True, extra_roots=[]
+    ) == flo.filter_lens_output(text, destino_root, cite_only=True, extra_roots=None)
+
+
+def test_041c_duplicate_inside_extra_roots_is_deduplicated(
+    destino_root: Path, motor_root: Path
+):
+    """El duplicado en posicion NO-primera tambien se deduplica (P5-2).
+
+    El test hermano cubre `root` repetido en `extra_roots`; este cubre el mismo
+    root repetido DENTRO de la lista extra, que recorre otra rama del `seen`.
+    """
+    text = _cite(
+        "scripts/ausente.py", 1, "def ausente_del_todo", verdict="Incorrecto: falla."
+    )
+
+    accepted, _reason, problems = flo.filter_lens_output(
+        text, destino_root, cite_only=True, extra_roots=[motor_root, motor_root]
+    )
+
+    assert accepted is False
+    assert len(problems) == 1, problems
+    assert flo._candidate_roots(destino_root, [motor_root, motor_root]) == [
+        destino_root,
+        motor_root,
+    ]
+
+
+def test_041c_same_relative_path_in_both_roots_verifies_against_either(
+    destino_root: Path, motor_root: Path
+):
+    """COLISION DE NOMBRES entre roots (hallazgo P5-1 del MANAGER_REVIEW).
+
+    El MISMO path relativo existe en AMBOS roots con contenido DISTINTO. La
+    cita debe aceptarse si su quote verifica contra CUALQUIERA de los dos, y
+    rechazarse si no verifica contra NINGUNO. Sin este test, un cambio en el
+    orden de iteracion alteraria el veredicto en silencio.
+    """
+    (destino_root / "scripts").mkdir()
+    (destino_root / "scripts" / "colision.py").write_text(
+        "SOLO_EN_DESTINO = 1\n", encoding="utf-8"
+    )
+    (motor_root / "scripts" / "colision.py").write_text(
+        "SOLO_EN_MOTOR = 2\n", encoding="utf-8"
+    )
+    kwargs = {"cite_only": True, "extra_roots": [motor_root]}
+
+    # Verifica contra el root PRIMARIO (destino).
+    ok_destino, _, _ = flo.filter_lens_output(
+        _cite(
+            "scripts/colision.py", 1, "SOLO_EN_DESTINO", verdict="Incorrecto: falla."
+        ),
+        destino_root,
+        **kwargs,
+    )
+    # Verifica contra el root EXTRA (motor), mismo path relativo.
+    ok_motor, _, _ = flo.filter_lens_output(
+        _cite("scripts/colision.py", 1, "SOLO_EN_MOTOR", verdict="Incorrecto: falla."),
+        destino_root,
+        **kwargs,
+    )
+    # No verifica contra NINGUNO -> sigue siendo fabricacion.
+    ok_ninguno, reason, _ = flo.filter_lens_output(
+        _cite("scripts/colision.py", 1, "EN_NINGUNO_DE_LOS_DOS", verdict="Incorrecto."),
+        destino_root,
+        **kwargs,
+    )
+
+    assert ok_destino is True
+    assert ok_motor is True
+    assert ok_ninguno is False
+    assert reason == "fabricated_citation"
 
 
 def test_041c_cli_extra_root_flag_flips_the_verdict(
