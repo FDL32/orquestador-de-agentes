@@ -125,16 +125,25 @@ es que el vuelo pide mas evidencia que la agrupacion.
      NO-codigo el universo mecanico es sub-problema abierto (026k): declara la limitacion, no finjas.
    - 8 nan (4 comun + 4 lente-dif), concurrencia <=4, veredicto por CONTENIDO. Los nan NO ven FS:
      mete en el bundle el CODIGO COMPLETO relevante (no un diff parcial) + los PROBES YA EJECUTADOS.
-     RUTA DE DESPACHO CANONICA: el subcomando del motor
-     `python <motor>/scripts/ensemble_dispatch.py loop-round` (una invocacion por lente, cada una con
-     su `--backend-key`, `--phase`, `--loop-id`, `--commit-sha` y `--challenge-nonce`). Esa puerta es
-     frontera PUBLICA del motor: esta VERSIONADA y pineada por un test end-to-end que ejerce la CLI
-     real, y es la UNICA via por la que la ronda queda REGISTRADA en el scorecard, de modo que
-     `check_loop_execution` pueda acreditar el bucle.
-     LIMITE MEDIDO 2026-07-31, no lo des por resuelto: `ensemble_dispatch.py` NO figura hoy en
-     `MANIFEST.distribute` (`grep` -> 0 hits), luego un destino INSTALADO puede no recibirlo. Para el
-     motor y sus workspaces de dogfooding la ruta es correcta y atestiguable; declararla portable a
-     cualquier destino exige antes cerrar `WOT-2026-044k`, que es su dueno.
+     RUTA DE DESPACHO CANONICA -- contrato de consumo MOTOR-HOSTED (WOT-2026-044k):
+     `python <MOTOR_ROOT>/scripts/ensemble_dispatch.py loop-round --project-root <DESTINO_ROOT>`
+     (una invocacion por lente, cada una con su `--backend-key`, `--phase`, `--loop-id`,
+     `--commit-sha` y `--challenge-nonce`). El despachador se EJECUTA SIEMPRE DESDE EL ARBOL DEL
+     MOTOR y escribe su runtime en el destino; es la UNICA via por la que la ronda queda REGISTRADA
+     en el scorecard, de modo que `check_loop_execution` pueda acreditar el bucle. Esta pineado por
+     un test end-to-end que ejerce la CLI real con sus flags.
+     PRECONDICION EXPLICITA: exige MOTOR ACCESIBLE desde la sesion (arbol del motor legible, resuelto
+     por `AGENT_PROJECT_ROOT`/`--project-root` o por `.agent/config/motor_destination_link.json` del
+     destino). Es la topologia normal de trabajo: motor abierto + destino enlazado.
+     NO ES DISTRIBUIBLE POR COPIA, y esto no es una deuda sino una PROPIEDAD DEL DISENO (medido
+     2026-07-31): `ensemble_dispatch.py` deriva `MOTOR_ROOT` de `Path(__file__).parent.parent` (:81),
+     su `load_motor_config()` es motor-explicita e IGNORA `AGENT_PROJECT_ROOT` (:198-200), y
+     `_resolve_project_root` RECHAZA que `--project-root` sea el propio motor (:207). Una COPIA en
+     `<destino>/scripts/` tomaria el DESTINO como su motor, leeria la config equivocada y rechazaria
+     la invocacion natural: copiarlo no lo hace portable, lo ROMPE. Por eso NO figura en
+     `MANIFEST.distribute` y no debe anadirse crudo. Un destino que deba correr el fan-out SIN motor
+     accesible necesitaria un wrapper que resuelva el motor real desde el link -- diseno aparte, hoy
+     no existe y ningun prompt lo promete.
      NO uses como herramienta canonica ningun driver bajo `<workspace>/orchestrator_pipeline/**`:
      esa ruta esta GITIGNORADA en el destino y el motor NO la distribuye, luego un bucle despachado
      por ahi es NO ATESTIGUABLE y cualquier fix sobre ella es un verde EFIMERO (WOT-2026-044k, y el
