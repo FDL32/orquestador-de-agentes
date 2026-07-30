@@ -123,9 +123,23 @@ es que el vuelo pide mas evidencia que la agrupacion.
      hasta PROMPT_OK. El universo del bundle se DERIVA mecanicamente del objeto bajo review (para
      codigo: git ls-tree/AST/lista de ficheros + hash); tu AnADES, nunca RECORTAS. Para artefactos
      NO-codigo el universo mecanico es sub-problema abierto (026k): declara la limitacion, no finjas.
-   - 8 nan (4 comun + 4 lente-dif) via <workspace>/orchestrator_pipeline/reports/gov_3a/fanout_driver.py
-     (concurrencia <=4, veredicto por CONTENIDO). Los nan NO ven FS: mete en el bundle el CODIGO
-     COMPLETO relevante (no un diff parcial) + los PROBES YA EJECUTADOS.
+   - 8 nan (4 comun + 4 lente-dif), concurrencia <=4, veredicto por CONTENIDO. Los nan NO ven FS:
+     mete en el bundle el CODIGO COMPLETO relevante (no un diff parcial) + los PROBES YA EJECUTADOS.
+     RUTA DE DESPACHO CANONICA: el subcomando del motor
+     `python <motor>/scripts/ensemble_dispatch.py loop-round` (una invocacion por lente, cada una con
+     su `--backend-key`, `--phase`, `--loop-id`, `--commit-sha` y `--challenge-nonce`). Esa puerta es
+     frontera PUBLICA del motor: esta VERSIONADA y pineada por un test end-to-end que ejerce la CLI
+     real, y es la UNICA via por la que la ronda queda REGISTRADA en el scorecard, de modo que
+     `check_loop_execution` pueda acreditar el bucle.
+     LIMITE MEDIDO 2026-07-31, no lo des por resuelto: `ensemble_dispatch.py` NO figura hoy en
+     `MANIFEST.distribute` (`grep` -> 0 hits), luego un destino INSTALADO puede no recibirlo. Para el
+     motor y sus workspaces de dogfooding la ruta es correcta y atestiguable; declararla portable a
+     cualquier destino exige antes cerrar `WOT-2026-044k`, que es su dueno.
+     NO uses como herramienta canonica ningun driver bajo `<workspace>/orchestrator_pipeline/**`:
+     esa ruta esta GITIGNORADA en el destino y el motor NO la distribuye, luego un bucle despachado
+     por ahi es NO ATESTIGUABLE y cualquier fix sobre ella es un verde EFIMERO (WOT-2026-044k, y el
+     residuo de cableado del driver historico es WOT-2026-044d). Un destino recien instalado NO tiene
+     ese fichero; el subcomando del motor si.
    - Codex por STDIN, cwd = el arbol que debe LEER: python <motor>/scripts/run_codex_audit.py
      --repo-root <motor> (para leer codigo del motor; declara por ambito que el backlog/planning
      viven en el WORKSPACE -- regla WOT-2026-038l). El hilo principal (con FS) consolida y caza los
