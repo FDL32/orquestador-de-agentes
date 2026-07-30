@@ -1831,6 +1831,57 @@ def _cmd_run(args, config) -> int:
     return 0
 
 
+def _cmd_loop_round(args, config) -> int:
+    """UNA ronda de un bucle de GOBIERNO por CLI (WOT-2026-043z).
+
+    `run_loop_round` existia y propagaba los 4 campos que lee la barrera
+    (WOT-2026-026q) pero no tenia puerta: los bucles `1->9->2` la importaban a
+    mano, asi que ninguna ruta DOCUMENTADA dejaba un bucle atestiguable. Este
+    subcomando es esa puerta -- nada mas. NO toca `run_pipeline`: su ronda 0 es
+    `premise_check` (INVARIANTE) y su trafico de smoke no debe contar como
+    ronda de gobierno (:1465-1469).
+
+    UNA invocacion = UNA ronda = UN `backend_key`. El fan-out de N lentes son N
+    invocaciones: es lo que hace que el recuento de claves DISTINTAS de
+    `check_loop_execution` sea significativo en vez de decorativo.
+
+    Before: `--content-file` pasa la allowlist de payload (misma barrera que
+        `run`); `--project-root` es el destino-rol, nunca el motor.
+    During: delega en `run_loop_round`, que despacha via `send_to_profile`
+        (preflight de privacidad fail-closed) y APPENDEA exactamente UNA fila.
+    After: imprime la respuesta del backend tal cual (el consolidador es el
+        chat, nivel 0) y retorna 0. Propaga `DispatchBlockedError` /
+        `ValueError` a `main`, que los mapea a exit != 0.
+    """
+    project_root = _resolve_project_root(args.project_root)
+    content_path = Path(args.content_file)
+    allowed, reason = payload_read_allowed(
+        content_path, config.get("ensemble_payload_allowlist", [])
+    )
+    if not allowed:
+        raise DispatchBlockedError(f"lectura de payload BLOQUEADA: {reason}")
+    reply = run_loop_round(
+        args.profile,
+        content_path.read_text(encoding="utf-8"),
+        config=config,
+        project_root=project_root,
+        ticket=args.ticket,
+        task_type=args.task_type,
+        rol=args.rol,
+        phase=args.phase,
+        loop_id=args.loop_id,
+        backend_key=args.backend_key,
+        sensitivity=args.data_sensitivity,
+        ronda=args.ronda,
+        context_kind=args.context_kind,
+        session_id=args.session_id,
+        commit_sha=args.commit_sha,
+        challenge_nonce=args.challenge_nonce,
+    )
+    print(reply)
+    return 0
+
+
 def _cmd_adjudicate(args, config) -> int:
     project_root = _resolve_project_root(args.project_root)
     out_path = adjudicate(
@@ -1903,6 +1954,44 @@ def main(argv: list[str] | None = None) -> int:
         help="sesion scratch opcional (D5: legitimo correr fuera de una)",
     )
 
+    p_loop = sub.add_parser(
+        "loop-round",
+        help="UNA ronda de un bucle de gobierno 1->9->2, registrada y atestiguable",
+    )
+    p_loop.add_argument("--profile", required=True)
+    p_loop.add_argument("--content-file", required=True)
+    p_loop.add_argument("--ticket", required=True)
+    p_loop.add_argument("--task-type", required=True)
+    p_loop.add_argument("--rol", required=True, choices=["proposer", "challenger"])
+    p_loop.add_argument(
+        "--phase", required=True, help="etapa de gobierno (CONTRACT_AUDIT, ...)"
+    )
+    p_loop.add_argument(
+        "--loop-id", required=True, help="registro citable del bucle (Lxxxx)"
+    )
+    p_loop.add_argument(
+        "--backend-key",
+        required=True,
+        help="clave del backend de ESTA ronda; la barrera cuenta claves DISTINTAS",
+    )
+    p_loop.add_argument(
+        "--data-sensitivity",
+        required=True,
+        choices=["public", "private", "secret"],
+    )
+    p_loop.add_argument("--ronda", type=int, default=1)
+    p_loop.add_argument("--context-kind", default="diff")
+    p_loop.add_argument(
+        "--commit-sha", default=None, help="commit bajo review (WOT-2026-040b)"
+    )
+    p_loop.add_argument(
+        "--challenge-nonce",
+        default=None,
+        help="nonce emitido FUERA por `emit-nonce`, ANTES de esta ronda",
+    )
+    p_loop.add_argument("--session-id", default=None)
+    p_loop.add_argument("--project-root", required=True)
+
     p_adj = sub.add_parser("adjudicate", help="adjudicar outcome de una ronda")
     p_adj.add_argument("--ticket", required=True)
     p_adj.add_argument("--ronda", type=int, required=True)
@@ -1960,6 +2049,7 @@ def main(argv: list[str] | None = None) -> int:
     handlers = {
         "smoke": _cmd_smoke,
         "run": _cmd_run,
+        "loop-round": _cmd_loop_round,
         "adjudicate": _cmd_adjudicate,
         "leaders": _cmd_leaders,
         "emit-nonce": _cmd_emit_nonce,

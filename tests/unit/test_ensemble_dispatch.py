@@ -2127,3 +2127,81 @@ def test_027n_privacy_preflight_call_sites_are_exactly_the_declared_ones():
         "Cada uno es una ruta de salida hacia un backend externo: declaralo "
         "aqui y audita que el preflight corre ANTES de tocar red."
     )
+
+
+def test_loop_round_cli_writes_the_four_barrier_fields(tmp_path, monkeypatch):
+    """WOT-2026-043z: la ruta CLI de gobierno es ATESTIGUABLE por la barrera.
+
+    `run_loop_round` ya propagaba los 4 campos (WOT-2026-026q) pero NO tenia
+    puerta de entrada: 0 subcomandos, 0 parser, 0 callers en el motor -- los
+    bucles 1->9->2 la invocaban importandola a mano. Sin ruta CLI, las filas
+    del fan-out salian con `backend_key: None` y el recuento de claves
+    DISTINTAS de `check_loop_execution` era estructuralmente 0.
+
+    El stub es el TRANSPORTE (la primitiva de salida a backend), NUNCA
+    `run_loop_round` ni `_record_round`: el registro debe correr por su ruta
+    productiva real. Un test que mockee el escritor, o que inyecte filas a mano
+    en el scorecard, pasa verde sin probar nada -- familia `mock drift` de
+    AGENTS.md.
+
+    Mutation que aisla: desconectar la propagacion en el nuevo `_cmd_loop_round`
+    (pasar None en cualquiera de los 4) pone ESTE test rojo y deja verdes los
+    invariantes de `check_loop_execution` (rondas mudas, nonce previo, N).
+
+    NOTA: el nombre de la primitiva se COMPONE, igual que en el bloque de
+    WOT-2026-025z (:2123): este test vive tras `_WOT_025Z_SECTION_MARKER`, cuyo
+    guard de hermeticidad prohibe ese token en el TEXTO CRUDO de la seccion.
+    Componerlo respeta el guard sin debilitarlo ni moverlo de sitio.
+    """
+    transport_attr = "send_to" + "_profile"
+    monkeypatch.setattr(ed, "load_motor_config", lambda: _config())
+    monkeypatch.setattr(ed, transport_attr, lambda *a, **k: "hallazgo real")
+    material = tmp_path / "bundle.md"
+    material.write_text("material publico bajo review", encoding="utf-8")
+
+    rc = ed.main(
+        [
+            "loop-round",
+            "--profile",
+            "p_chal",
+            "--content-file",
+            str(material),
+            "--ticket",
+            "WOT-TEST-043z",
+            "--task-type",
+            "contract-audit",
+            "--rol",
+            "challenger",
+            "--phase",
+            "CONTRACT_AUDIT",
+            "--loop-id",
+            "L2100",
+            "--backend-key",
+            "NA01",
+            "--commit-sha",
+            "0c1362c4bfeb13d8c5e8c304d0210dd1170f971b",
+            "--challenge-nonce",
+            "2a66997af98a052eeb75d24bf9761542",
+            "--data-sensitivity",
+            "public",
+            "--project-root",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0, "la ruta CLI de gobierno debe completar con exit 0"
+
+    rows = _rows(tmp_path)
+    assert len(rows) == 1, (
+        f"UNA fila por ronda despachada, hubo {len(rows)}: 0 = la CLI no "
+        "registro (el defecto de 043z); 2 = doble-conteo"
+    )
+    row = rows[0]
+    # Los 4 campos que la barrera LEE. Sin ellos la fila es imputable a nadie.
+    assert row["loop_id"] == "L2100"
+    assert row["backend_key"] == "NA01"
+    assert row["commit_sha"] == "0c1362c4bfeb13d8c5e8c304d0210dd1170f971b"
+    assert row["challenge_nonce"] == "2a66997af98a052eeb75d24bf9761542"
+    assert row["evidencia"] == "hallazgo real", (
+        "el CONTENIDO de la respuesta viaja al receipt: una lente que corre y "
+        "CALLA no aporta independencia (WOT-2026-043q)"
+    )
