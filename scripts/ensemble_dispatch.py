@@ -1652,8 +1652,17 @@ def run_pipeline(
 
             discarded_reason = None
             if filter_lens_output is not None and rol == "challenger" and reply:
+                # WOT-2026-041c: las lentes auditan artefactos del MOTOR
+                # (`scripts/`, `bus/`, `prompts/`, `tests/`) mientras el runtime
+                # vive en el DESTINO. Con `project_root` como UNICO root, toda
+                # cita legitima al motor se descartaba como
+                # `fabricated_citation` -- justo la contribucion mas valiosa (la
+                # que cita codigo real), dejando pasar las respuestas vagas.
+                # Los dos roots son estructuralmente distintos: como
+                # `_resolve_project_root` PROHIBE `project_root == MOTOR_ROOT`,
+                # la lista es cerrada, no un registro de N roots arbitrarios.
                 accepted, reason, problems = filter_lens_output(
-                    reply, project_root, cite_only=True
+                    reply, project_root, cite_only=True, extra_roots=[MOTOR_ROOT]
                 )
                 if not accepted:
                     discarded_reason = reason

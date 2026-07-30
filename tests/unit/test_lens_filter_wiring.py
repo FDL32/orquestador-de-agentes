@@ -209,3 +209,71 @@ def test_discarded_output_recorded_as_no_aportacion(tmp_path: Path):
     assert discarded, rows
     assert discarded[0]["failure_mode"]
     assert "creeme" in discarded[0]["evidencia"]
+
+
+def test_041c_cite_to_a_real_motor_file_survives_the_production_route(tmp_path: Path):
+    """WOT-2026-041c DoD (a) EN LA RUTA DE PRODUCCION, no en un unit test.
+
+    `run_pipeline` pasa `project_root` (el DESTINO) como root del filtro, pero
+    las lentes auditan artefactos del MOTOR. Antes del fix, esta cita -- a un
+    fichero REAL del motor, con quote REAL leido del disco -- se descartaba
+    como `fabricated_citation`, perdiendo justo la contribucion que cita
+    codigo real.
+
+    El quote se DERIVA del fichero vivo, nunca de un numero de linea recordado:
+    una linea hardcodeada caduca en cuanto alguien edita el modulo, y el test
+    se pondria rojo por staleness del fixture en vez de por el defecto (paso
+    de verdad al medir este ticket).
+    """
+    cited_rel = "scripts/filter_lens_output.py"
+    lines = (_MOTOR_ROOT / cited_rel).read_text(encoding="utf-8").splitlines()
+    lineno = next(
+        i for i, ln in enumerate(lines, 1) if ln.startswith("def classify_verdict")
+    )
+
+    good = (
+        "Incorrecto: el validador resuelve las citas contra un unico root.\n\n"
+        "```cite\n"
+        f"path: {cited_rel}\n"
+        f"line: {lineno}\n"
+        f"quote: {lines[lineno - 1].strip()}\n"
+        "```\n"
+    )
+    transcript = _run(
+        tmp_path, ["PREMISES-OK", "PREMISES-OK", "propuesta", good], filter_on=True
+    )
+
+    challenger_r1 = [
+        t for t in transcript if t["ronda"] == 1 and t["rol"] == "challenger"
+    ]
+    assert challenger_r1, transcript
+    assert "discarded_reason" not in challenger_r1[0], challenger_r1[0]
+
+
+def test_041c_fabricated_cite_still_discarded_in_the_production_route(tmp_path: Path):
+    """WOT-2026-041c DoD (c) en la ruta real: el multi-root NO abre la puerta.
+
+    Control negativo del test anterior: si el fix hubiera relajado la
+    validacion (aceptar cualquier root, o rutas sin resolver), esta cita
+    inventada tambien pasaria -- y el guard seria fail-open, PEOR que el
+    defecto que arregla.
+    """
+    bad = (
+        "Incorrecto: hay un bug grave aqui.\n\n"
+        "```cite\n"
+        "path: scripts/no_existe_ni_en_motor_ni_en_destino.py\n"
+        "line: 3\n"
+        "quote: def totalmente_inventado()\n"
+        "```\n"
+    )
+    transcript = _run(
+        tmp_path, ["PREMISES-OK", "PREMISES-OK", "propuesta", bad], filter_on=True
+    )
+
+    challenger_r1 = [
+        t for t in transcript if t["ronda"] == 1 and t["rol"] == "challenger"
+    ]
+    assert challenger_r1, transcript
+    entry = challenger_r1[0]
+    assert "discarded_reason" in entry, entry
+    assert "fabricated_citation" in entry["discarded_reason"], entry

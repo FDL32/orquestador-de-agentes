@@ -380,3 +380,259 @@ def test_027o_cli_exit_code_discriminates(repo: Path, capsys):
 
     assert flo.main(["--lens-output", str(good), "--root", str(repo)]) == 0
     assert flo.main(["--lens-output", str(bad), "--root", str(repo)]) == 1
+
+
+# --------------------------------------------------------------------------
+# WOT-2026-041c: el filtro resolvia las citas contra UN SOLO root.
+#
+# En la ruta de PRODUCCION (`ensemble_dispatch.py`) el root pasado es el
+# DESTINO, pero los artefactos que las lentes auditan (`scripts/`, `bus/`,
+# `prompts/`, `tests/`) viven en el MOTOR: toda cita legitima al motor se
+# descartaba como `fabricated_citation`, perdiendo justo la contribucion mas
+# valiosa (la que cita codigo real) y dejando pasar las respuestas vagas.
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def destino_root(tmp_path: Path) -> Path:
+    """Root PRIMARIO (rol destino): tiene runtime, no los artefactos citados."""
+    root = tmp_path / "destino"
+    (root / ".agent").mkdir(parents=True)
+    (root / ".agent" / "state.md").write_text(
+        "ticket: WOT-2026-041c\n", encoding="utf-8"
+    )
+    return root
+
+
+@pytest.fixture
+def motor_root(tmp_path: Path) -> Path:
+    """Root EXTRA (rol motor): aqui viven los artefactos que la lente cita."""
+    root = tmp_path / "motor"
+    (root / "scripts").mkdir(parents=True)
+    (root / "scripts" / "filter_lens_output.py").write_text(
+        "import os\ndef validate_lens_cites(text, root):\n    return True, []\n",
+        encoding="utf-8",
+    )
+    return root
+
+
+def test_041c_dod_a_cite_to_motor_file_is_accepted(
+    destino_root: Path, motor_root: Path
+):
+    """DoD (a): cita a un fichero del MOTOR, ACEPTADA con root primario=DESTINO.
+
+    Es el defecto exacto: sin `extra_roots` esta misma salida se descartaba
+    como `fabricated_citation`, que es lo que el test hermano de abajo pinnea.
+    """
+    text = _cite(
+        "scripts/filter_lens_output.py",
+        2,
+        "def validate_lens_cites",
+        verdict="Incorrecto: el validador resuelve contra un unico root.",
+    )
+
+    accepted, reason, problems = flo.filter_lens_output(
+        text, destino_root, cite_only=True, extra_roots=[motor_root]
+    )
+
+    assert accepted is True, (reason, problems)
+    assert reason == "accepted"
+
+
+def test_041c_dod_a_same_cite_without_extra_root_is_the_measured_rojo(
+    destino_root: Path, motor_root: Path
+):
+    """El ROJO de referencia: MISMO texto, sin `extra_roots` -> fabricada.
+
+    Fija que el test de (a) mide el AMBITO DE ROOT y no otra cosa: la unica
+    diferencia entre ambos es el root extra. Sin este par, un (a) verde no
+    probaria que el defecto existia.
+    """
+    text = _cite(
+        "scripts/filter_lens_output.py",
+        2,
+        "def validate_lens_cites",
+        verdict="Incorrecto: el validador resuelve contra un unico root.",
+    )
+
+    accepted, reason, problems = flo.filter_lens_output(
+        text, destino_root, cite_only=True
+    )
+
+    assert accepted is False
+    assert reason == "fabricated_citation"
+    assert any("does not resolve" in p for p in problems), problems
+
+
+def test_041c_dod_b_cite_to_destino_file_still_accepted(
+    destino_root: Path, motor_root: Path
+):
+    """DoD (b): la cita al root PRIMARIO sigue aceptada (no se rompe lo que va).
+
+    El fix no puede convertirse en "solo mira el motor": el destino es el root
+    canonico del call-site y debe seguir resolviendo.
+    """
+    (destino_root / "scripts").mkdir()
+    (destino_root / "scripts" / "local_only.py").write_text(
+        "def solo_en_destino():\n    return 1\n", encoding="utf-8"
+    )
+    text = _cite(
+        "scripts/local_only.py",
+        1,
+        "def solo_en_destino",
+        verdict="Incorrecto: la premisa es falsa en el destino.",
+    )
+
+    accepted, reason, problems = flo.filter_lens_output(
+        text, destino_root, cite_only=True, extra_roots=[motor_root]
+    )
+
+    assert accepted is True, (reason, problems)
+    assert reason == "accepted"
+
+
+def test_041c_dod_c_path_absent_in_both_roots_is_still_fabricated(
+    destino_root: Path, motor_root: Path
+):
+    """DoD (c): INVARIANTE ANTI-FABRICACION. Ausente en AMBOS -> fabricada.
+
+    Relajar esto convertiria el guard en fail-open, que es PEOR que el defecto
+    que arregla: el guard existe para cazar citas inventadas.
+    """
+    text = _cite(
+        "scripts/no_existe_en_ningun_root.py",
+        3,
+        "def totalmente_inventado",
+        verdict="Incorrecto: hay un bug grave aqui.",
+    )
+
+    accepted, reason, problems = flo.filter_lens_output(
+        text, destino_root, cite_only=True, extra_roots=[motor_root]
+    )
+
+    assert accepted is False
+    assert reason == "fabricated_citation"
+    assert any("does not resolve" in p for p in problems), problems
+
+
+def test_041c_dod_c_fabricated_quote_in_extra_root_is_still_fabricated(
+    destino_root: Path, motor_root: Path
+):
+    """DoD (c), segunda mitad: la ruta RESUELVE (en el motor) pero el quote NO
+    esta en la linea citada -> sigue siendo fabricacion.
+
+    Es el caso que el multi-root podria haber ENMASCARADO: el problema del root
+    primario es "does not resolve", que ESCONDERIA que el defecto real es un
+    quote inventado. `_most_informative_problem` prefiere el de contenido.
+    """
+    text = _cite(
+        "scripts/filter_lens_output.py",
+        2,
+        "mock_subprocess_inventado",
+        verdict="Incorrecto: el modulo parchea subprocess.",
+    )
+
+    accepted, reason, problems = flo.filter_lens_output(
+        text, destino_root, cite_only=True, extra_roots=[motor_root]
+    )
+
+    assert accepted is False
+    assert reason == "fabricated_citation"
+    assert any("quote not found" in p for p in problems), problems
+
+
+def test_041c_dod_c_escape_from_all_roots_is_still_rejected(
+    destino_root: Path, motor_root: Path
+):
+    """DoD (c): el escape-de-root sigue vivo con multi-root.
+
+    Un `../` que existiera en la maquina no puede colarse por la puerta nueva.
+    """
+    text = _cite(
+        "../fuera.py", 1, "def cualquier_cosa", verdict="Incorrecto: esto falla."
+    )
+
+    accepted, reason, _ = flo.filter_lens_output(
+        text, destino_root, cite_only=True, extra_roots=[motor_root]
+    )
+
+    assert accepted is False
+    assert reason == "fabricated_citation"
+
+
+def test_041c_dod_d_signature_is_additive_for_existing_consumers(
+    destino_root: Path, motor_root: Path
+):
+    """DoD (d): ADITIVIDAD. Sin `extra_roots` la conducta es la heredada.
+
+    Los consumidores actuales (`ensemble_dispatch.py`,
+    `build_extraction_prompt.py`) llaman posicionalmente; omitir el kwarg debe
+    dar EXACTAMENTE el mismo veredicto que antes del fix.
+    """
+    (destino_root / "scripts").mkdir()
+    (destino_root / "scripts" / "local_only.py").write_text(
+        "def solo_en_destino():\n    return 1\n", encoding="utf-8"
+    )
+    text = _cite(
+        "scripts/local_only.py",
+        1,
+        "def solo_en_destino",
+        verdict="Incorrecto: la premisa es falsa en el destino.",
+    )
+
+    sin_kwarg = flo.filter_lens_output(text, destino_root, cite_only=True)
+    con_none = flo.filter_lens_output(
+        text, destino_root, cite_only=True, extra_roots=None
+    )
+
+    assert sin_kwarg == con_none
+    assert sin_kwarg[0] is True, sin_kwarg
+
+
+def test_041c_duplicated_root_does_not_duplicate_problems(destino_root: Path):
+    """Pasar el MISMO root dos veces no duplica el mensaje de problema."""
+    text = _cite(
+        "scripts/ausente.py", 1, "def ausente_del_todo", verdict="Incorrecto: falla."
+    )
+
+    accepted, _reason, problems = flo.filter_lens_output(
+        text, destino_root, cite_only=True, extra_roots=[destino_root]
+    )
+
+    assert accepted is False
+    assert len(problems) == 1, problems
+
+
+def test_041c_cli_extra_root_flag_flips_the_verdict(
+    destino_root: Path, motor_root: Path
+):
+    """La ruta CLI expone el fix y su exit code DISCRIMINA.
+
+    Barrera de cableado: el mecanismo no vale si el call-site no puede
+    alcanzarlo. Mismo fichero, misma cita; solo cambia `--extra-root`.
+    """
+    lens = destino_root / "lens.md"
+    lens.write_text(
+        _cite(
+            "scripts/filter_lens_output.py",
+            2,
+            "def validate_lens_cites",
+            verdict="Incorrecto: resuelve contra un unico root.",
+        ),
+        encoding="utf-8",
+    )
+
+    assert flo.main(["--lens-output", str(lens), "--root", str(destino_root)]) == 1
+    assert (
+        flo.main(
+            [
+                "--lens-output",
+                str(lens),
+                "--root",
+                str(destino_root),
+                "--extra-root",
+                str(motor_root),
+            ]
+        )
+        == 0
+    )

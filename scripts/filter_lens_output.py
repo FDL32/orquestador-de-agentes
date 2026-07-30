@@ -30,6 +30,7 @@ import importlib.util
 import json
 import re
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 
@@ -212,28 +213,93 @@ def classify_verdict(text: str) -> str:
     return "neutral"
 
 
-def validate_lens_cites(text: str, root: Path) -> tuple[bool, list[str]]:
+def _candidate_roots(root: Path, extra_roots: Sequence[Path] | None) -> list[Path]:
+    """Roots contra los que se intenta resolver una cita, en orden y sin duplicar.
+
+    Before: `root` es el root primario (el que ya recibian los consumidores);
+        `extra_roots` son roots ADICIONALES declarados por el call-site.
+    During: concatena `[root, *extra_roots]` preservando el orden y descartando
+        repetidos por su forma resuelta (un mismo arbol pasado dos veces no debe
+        duplicar mensajes de problema).
+    After: retorna la lista de roots a probar. SIEMPRE incluye `root` primero,
+        de modo que el comportamiento con `extra_roots=None` es identico al
+        anterior (aditividad, DoD (d)).
+
+    NO es un registro de N roots arbitrarios (eso seria diseno nuevo y es
+    STOP declarado del ticket): es la lista CERRADA que el call-site pasa
+    explicitamente -- en la ruta del ensemble, destino + motor.
+    """
+    roots: list[Path] = []
+    seen: set[Path] = set()
+    for cand in [root, *(extra_roots or ())]:
+        try:
+            key = Path(cand).resolve()
+        except (OSError, ValueError):  # pragma: no cover - defensivo
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        roots.append(Path(cand))
+    return roots
+
+
+def _most_informative_problem(attempts: list[str | None]) -> str:
+    """Elige el problema que mejor DIAGNOSTICA, entre los de todos los roots.
+
+    Before: `attempts` son los problemas de validar UNA cita contra cada root
+        candidato, en el orden de `_candidate_roots`. Ninguno es None (si alguno
+        lo fuera, la cita habria verificado y no se llamaria a esta funcion).
+    During: prefiere un problema de CONTENIDO (la ruta resolvio en ese root pero
+        el quote/linea no cuadra) sobre uno de RESOLUCION ("does not resolve" /
+        "escapes root"). Motivo: con multi-root, el problema del root primario
+        es casi siempre "no resuelve", lo que ESCONDERIA el diagnostico real de
+        una cita cuyo path SI existe en otro root y cuyo quote es FABRICADO --
+        exactamente el caso que este filtro existe para cazar.
+    After: retorna el mensaje elegido. Nunca inventa texto: siempre es uno de
+        los `attempts` reales.
+    """
+    resolution_markers = ("does not resolve", "escapes root", "is absolute")
+    for problem in attempts:
+        if problem and not any(m in problem for m in resolution_markers):
+            return problem
+    return attempts[0] or "cita no verificable"
+
+
+def validate_lens_cites(
+    text: str, root: Path, *, extra_roots: Sequence[Path] | None = None
+) -> tuple[bool, list[str]]:
     """Verifica los bloques ```cite del schema lens-answer/v1.
 
     Before: `text` es la salida cruda de una lente sin filesystem; `root` es
-        el arbol contra el que se verifican las citas.
-    During: por cada bloque ```cite exige `path:` relativo dentro de root y
-        resoluble, `line:` entero existente en el fichero, y `quote:` de al
-        menos `_MIN_QUOTE_LEN` caracteres que APAREZCA en esa linea. Todo
-        read-only: abrir, leer, comparar substring. No ejecuta NADA (un
-        `command:` en la salida de una lente se ignora como prosa).
+        el arbol contra el que se verifican las citas. `extra_roots` son roots
+        ADICIONALES admisibles (WOT-2026-041c): en la ruta del ensemble las
+        lentes auditan artefactos del MOTOR mientras el runtime vive en el
+        DESTINO, y con un solo root toda cita legitima al motor se descartaba
+        como `fabricated_citation`.
+    During: por cada bloque ```cite exige `path:` relativo, resoluble DENTRO de
+        alguno de los roots candidatos, `line:` entero existente en el fichero,
+        y `quote:` de al menos `_MIN_QUOTE_LEN` caracteres que APAREZCA en esa
+        linea. La cita se acepta si verifica COMPLETA contra AL MENOS UN root;
+        el invariante anti-fabricacion no se relaja: un path que no resuelve en
+        NINGUN root, que escapa de TODOS, o cuyo quote no esta en la linea
+        citada, sigue siendo fabricacion. Todo read-only: abrir, leer, comparar
+        substring. No ejecuta NADA (un `command:` se ignora como prosa).
     After: retorna `(ok, problems)`. `ok=False` con `problems` citables si no
-        hay bloque cite ('missing_cite_block') o si alguna cita no verifica.
+        hay bloque cite ('missing_cite_block') o si alguna cita no verifica
+        contra ningun root (se reporta el problema del root PRIMARIO, que es el
+        que el call-site considera canonico).
     """
     blocks = _CITE_FENCE_RE.findall(text)
     if not blocks:
         return False, ["missing_cite_block (schema lens-answer/v1 exige ```cite)"]
 
+    roots = _candidate_roots(root, extra_roots)
     problems: list[str] = []
     for block in blocks:
-        problem = _validate_one_cite(block, root)
-        if problem:
-            problems.append(problem)
+        attempts = [_validate_one_cite(block, cand) for cand in roots]
+        if any(problem is None for problem in attempts):
+            continue
+        problems.append(_most_informative_problem(attempts))
     return (not problems), problems
 
 
@@ -296,7 +362,11 @@ def _validate_one_cite(block: str, root: Path) -> str | None:
 
 
 def filter_lens_output(
-    text: str, root: Path, *, cite_only: bool = False
+    text: str,
+    root: Path,
+    *,
+    cite_only: bool = False,
+    extra_roots: Sequence[Path] | None = None,
 ) -> tuple[bool, str, list[str]]:
     """Decide si la salida de una lente se acepta como APORTACION.
 
@@ -308,6 +378,9 @@ def filter_lens_output(
         un receipt de ejecucion solo puede ser fabricado (H9). El default
         `False` conserva la conducta heredada del CLI standalone: receipt si
         existe, cite si no (brazos CON filesystem que si ejecutan).
+        `extra_roots` (WOT-2026-041c) declara roots ADICIONALES admisibles para
+        las citas; omitirlo reproduce exactamente la conducta anterior
+        (aditividad para los consumidores actuales).
     During: (1) verifica las CITAS -- fabricada (path que no resuelve, escapa
         del root, o quote que no esta en la linea) descarta la salida;
         (2) clasifica la FORMA del veredicto. Ambos mecanismos son
@@ -317,7 +390,7 @@ def filter_lens_output(
         'no_contribution'}.
     """
     if cite_only or not _RECEIPT_PRESENT_RE.search(text):
-        ok, problems = validate_lens_cites(text, root)
+        ok, problems = validate_lens_cites(text, root, extra_roots=extra_roots)
         if not ok:
             missing = any(p.startswith("missing_cite_block") for p in problems)
             return (
@@ -348,6 +421,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--lens-output", required=True, type=Path)
     parser.add_argument("--root", required=True, type=Path)
+    parser.add_argument(
+        "--extra-root",
+        action="append",
+        type=Path,
+        default=None,
+        dest="extra_roots",
+        help=(
+            "root ADICIONAL admisible para las citas (repetible). WOT-2026-041c: "
+            "el ensemble corre con runtime en el destino y artefactos en el motor."
+        ),
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
@@ -357,7 +441,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[lens-filter] ERROR: cannot read {args.lens_output}: {exc}")
         return 2
 
-    accepted, reason, problems = filter_lens_output(text, args.root)
+    accepted, reason, problems = filter_lens_output(
+        text, args.root, extra_roots=args.extra_roots
+    )
     if args.json:
         print(
             json.dumps(
