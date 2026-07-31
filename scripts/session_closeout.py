@@ -466,6 +466,49 @@ def _step_prepush_check(
     )
 
 
+def _step_verification_mode_off(motor_root: Path, dry_run: bool) -> StepResult:
+    """Apaga el modo verificacion del Stop hook al cerrar la sesion (WOT-2026-044u).
+
+    Por que existe: el centinela `.agent/runtime/verification_mode` vive en el MOTOR
+    y hace que el Stop hook exija `[EVIDENCIA]`/`[HIPOTESIS]` en cierres que mutaron
+    el repo. Si una sesion lo enciende y nadie lo apaga, la SIGUIENTE sesion hereda
+    la barrera sin haberla pedido.
+
+    NO ES BLOQUEANTE por diseno: es higiene de estado, no un gate. Un fallo aqui
+    jamas debe tumbar un cierre; se reporta como WARN visible (no SKIP generico,
+    que seria silencio) para que quede en el informe.
+
+    Idempotente: si el centinela no existe, devuelve OK con detail explicito.
+    """
+    sentinel = motor_root / ".agent" / "runtime" / "verification_mode"
+    if dry_run:
+        estado = "presente" if sentinel.is_file() else "ausente"
+        return StepResult(
+            name="verification_mode_off",
+            status="SKIP",
+            detail=f"dry-run; centinela {estado}",
+        )
+    try:
+        if not sentinel.is_file():
+            return StepResult(
+                name="verification_mode_off",
+                status="PASS",
+                detail="already off",
+            )
+        sentinel.unlink()
+        return StepResult(
+            name="verification_mode_off",
+            status="PASS",
+            detail=f"sentinel removed: {sentinel}",
+        )
+    except OSError as exc:
+        return StepResult(
+            name="verification_mode_off",
+            status="WARN",
+            detail=f"no se pudo apagar el modo verificacion: {exc}",
+        )
+
+
 def _step_local_audit(project_root: Path, dry_run: bool) -> StepResult:
     """Run local_audit.py as an informational snapshot."""
     return _step_local_audit_impl(
@@ -725,6 +768,7 @@ def run_closeout(
         motor_root = resolve_motor_root(project_root)
         if motor_root is not None:
             report.steps.append(_check_versioned_filenames(motor_root))
+            report.steps.append(_step_verification_mode_off(motor_root, dry_run))
         else:
             report.steps.append(
                 StepResult(

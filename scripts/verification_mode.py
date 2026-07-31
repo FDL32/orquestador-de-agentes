@@ -80,8 +80,34 @@ def status_hash(status_text: str) -> str:
     return _hash(status_text)
 
 
-def turn_on(root: Path) -> int:
-    """Escribe el centinela con el baseline git actual."""
+def ensure_on(root: Path, quiet: bool = False) -> int:
+    """Enciende SOLO si no estaba ya encendido. Idempotente y sin rebaseline.
+
+    Diferencia critica con `turn_on`: si el centinela ya existe, NO re-mide el
+    baseline. Un `init` de resume o un reintento re-mediria contra el estado
+    ACTUAL -- que ya incluye el trabajo hecho -- y borraria la prueba de mutacion,
+    dejando la barrera muda justo en la sesion que mas la necesita.
+
+    `quiet=True` suprime stdout: quien invoca desde otro script (p.ej.
+    `init_session_scratch.py init`) emite JSON estructurado que otros parsean,
+    y un mensaje humano por delante lo corrompe. Medido: sin quiet, `init`
+    imprimia "verification_mode ON ..." ANTES de su JSON.
+
+    Exigido por revision adversarial Codex ("E1 ensure-on, no `on` ciego").
+    """
+    target = root / SENTINEL_RELPATH
+    try:
+        if target.is_file():
+            if not quiet:
+                print(f"verification_mode ya ON (baseline conservado): {target}")
+            return 0
+    except OSError:
+        pass
+    return turn_on(root, quiet=quiet)
+
+
+def turn_on(root: Path, quiet: bool = False) -> int:
+    """Escribe el centinela con el baseline git actual (RE-MIDE siempre)."""
     head = _git(root, "rev-parse", "HEAD")
     status = _git(root, "status", "--porcelain")
     if head is None or status is None:
@@ -99,8 +125,9 @@ def turn_on(root: Path) -> int:
     target = root / SENTINEL_RELPATH
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    print(f"verification_mode ON  ({target})")
-    print(f"  baseline_head={payload['baseline_head'][:12]}")
+    if not quiet:
+        print(f"verification_mode ON  ({target})")
+        print(f"  baseline_head={payload['baseline_head'][:12]}")
     return 0
 
 
@@ -137,7 +164,7 @@ def show_status(root: Path) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("action", choices=["on", "off", "status"])
+    parser.add_argument("action", choices=["on", "ensure-on", "off", "status"])
     parser.add_argument(
         "--root",
         type=Path,
@@ -149,6 +176,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.action == "on":
         return turn_on(root)
+    if args.action == "ensure-on":
+        return ensure_on(root)
     if args.action == "off":
         return turn_off(root)
     return show_status(root)

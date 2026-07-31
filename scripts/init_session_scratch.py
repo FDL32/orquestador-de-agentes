@@ -607,6 +607,29 @@ def _release_lock(session_dir: Path, sid: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _ensure_verification_mode(root: Path) -> None:
+    """Enciende el modo verificacion del Stop hook al abrir sesion (WOT-2026-044u).
+
+    Cierra el cableado: sin esto, el centinela dependia de que un humano se
+    acordara de crearlo, y una barrera que nadie invoca es una norma, no un
+    mecanismo (AGENTS.md).
+
+    Usa `ensure_on`, NO `turn_on`: si el centinela ya existe se conserva su
+    baseline. Re-medirlo en un resume lo compararia contra un arbol que YA
+    incluye el trabajo hecho, y la mutacion dejaria de verse.
+
+    FAIL-OPEN TOTAL y silencioso: encender una barrera de higiene jamas puede
+    romper un `init` ni ensuciar su salida JSON, que otros consumen.
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from verification_mode import ensure_on
+
+        ensure_on(root, quiet=True)
+    except Exception:
+        return
+
+
 def cmd_init(args: argparse.Namespace) -> int:  # noqa: C901
     root = _validate_project_root(args.project_root)
     if root is None:
@@ -748,6 +771,7 @@ def cmd_init(args: argparse.Namespace) -> int:  # noqa: C901
         json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8"
     )
     _write_lock(sdir, sid, "init")
+    _ensure_verification_mode(root)
     print(
         json.dumps(
             {
