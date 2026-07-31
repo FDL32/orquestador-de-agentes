@@ -25,16 +25,66 @@ sys.path.insert(0, str(HOOK_DIR))
 import native_stop_hook as hook  # noqa: E402
 
 
-def make_root(tmp_path, *, sentinel: bool = False, sentinel_as_dir: bool = False):
-    """Crea una raiz de repo sintetica con `.claude/` y centinela opcional."""
+def _run_git(root, *args):
+    subprocess.run(["git", "-C", str(root), *args], capture_output=True, check=True)
+
+
+def make_git_repo(tmp_path):
+    """Repo git REAL y hermetico (tiene su propio .git, no hace walk-up)."""
+    _run_git(tmp_path, "init", "-q")
+    _run_git(tmp_path, "config", "user.email", "t@example.invalid")
+    _run_git(tmp_path, "config", "user.name", "T")
+    (tmp_path / "seed.txt").write_text("seed\n", encoding="utf-8")
+    _run_git(tmp_path, "add", "seed.txt")
+    _run_git(tmp_path, "commit", "-q", "-m", "seed")
+    return tmp_path
+
+
+def current_baseline(root):
+    """Baseline git tal y como lo escribe scripts/verification_mode.py."""
+    head = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True
+    ).stdout.decode()
+    status = subprocess.run(
+        ["git", "-C", str(root), "status", "--porcelain"], capture_output=True
+    ).stdout.decode()
+    return {
+        "baseline_head": head.strip(),
+        "baseline_status_hash": hook.status_hash(status),
+    }
+
+
+def make_root(
+    tmp_path,
+    *,
+    sentinel: bool = False,
+    sentinel_as_dir: bool = False,
+    mutated: bool = True,
+    baseline: dict | None = None,
+    sentinel_text: str | None = None,
+):
+    """Raiz sintetica con `.claude/`, repo git y centinela opcional.
+
+    `mutated=True` (por defecto) deja el arbol CAMBIADO respecto al baseline,
+    que es la condicion bajo la cual el hook debe exigir clasificacion.
+    """
     (tmp_path / ".claude").mkdir()
-    if sentinel or sentinel_as_dir:
+    make_git_repo(tmp_path)
+
+    if sentinel or sentinel_as_dir or sentinel_text is not None:
         target = tmp_path / hook.SENTINEL_RELPATH
         target.parent.mkdir(parents=True, exist_ok=True)
         if sentinel_as_dir:
             target.mkdir()
+        elif sentinel_text is not None:
+            target.write_text(sentinel_text, encoding="utf-8")
         else:
-            target.write_text("on", encoding="utf-8")
+            data = baseline if baseline is not None else current_baseline(tmp_path)
+            target.write_text(json.dumps(data), encoding="utf-8")
+
+    if mutated:
+        # Mutacion estructural posterior al baseline: fichero nuevo sin trackear.
+        (tmp_path / "mutacion.txt").write_text("cambio\n", encoding="utf-8")
     return tmp_path
 
 
@@ -160,6 +210,114 @@ class TestBloqueo:
         assert rc == 0
         assert result.get("continue") is True
         assert "decision" not in result
+
+
+class TestPuertaMutacion:
+    """Proporcionalidad: sin mutacion del repo NO se exige recibo.
+
+    Justificacion medida (2026-07-31): sobre 33.476 mensajes finales reales de
+    1654 transcripts, el criterio "falta el marcador" bloqueaba 33.473 (100,0%).
+    Sin esta puerta la barrera es un denial-of-service, no un mecanismo.
+    """
+
+    def test_sin_mutacion_no_bloquea(self, tmp_path):
+        root = make_root(tmp_path, sentinel=True, mutated=False)
+        payload = json.dumps(
+            {
+                "cwd": str(root),
+                "stop_hook_active": False,
+                "last_assistant_message": UNMARKED,
+            }
+        )
+        _, result, _ = run_hook(payload, root)
+        assert result.get("continue") is True
+        assert "decision" not in result
+
+    def test_head_distinto_es_mutacion(self, tmp_path):
+        """Un commit nuevo mueve HEAD: eso basta como prueba de mutacion."""
+        root = make_root(tmp_path, sentinel=True, mutated=False)
+        (root / "otro.txt").write_text("x\n", encoding="utf-8")
+        _run_git(root, "add", "otro.txt")
+        _run_git(root, "commit", "-q", "-m", "cambio")
+        payload = json.dumps(
+            {
+                "cwd": str(root),
+                "stop_hook_active": False,
+                "last_assistant_message": UNMARKED,
+            }
+        )
+        _, result, _ = run_hook(payload, root)
+        assert result.get("decision") == "block"
+
+    def test_baseline_ausente_no_bloquea(self, tmp_path):
+        """Centinela sin baseline -> no se puede probar mutacion -> fail-open."""
+        root = make_root(tmp_path, sentinel_text="")
+        payload = json.dumps(
+            {
+                "cwd": str(root),
+                "stop_hook_active": False,
+                "last_assistant_message": UNMARKED,
+            }
+        )
+        _, result, _ = run_hook(payload, root)
+        assert result.get("continue") is True
+
+    def test_centinela_json_invalido_no_bloquea(self, tmp_path):
+        root = make_root(tmp_path, sentinel_text="{roto")
+        payload = json.dumps(
+            {
+                "cwd": str(root),
+                "stop_hook_active": False,
+                "last_assistant_message": UNMARKED,
+            }
+        )
+        _, result, _ = run_hook(payload, root)
+        assert result.get("continue") is True
+
+    def test_sin_repo_git_no_bloquea(self, tmp_path):
+        """Sin git medible no hay prueba de mutacion: fail-open."""
+        root = tmp_path / "sinrepo"
+        root.mkdir()
+        (root / ".claude").mkdir()
+        target = root / hook.SENTINEL_RELPATH
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            json.dumps({"baseline_head": "deadbeef", "baseline_status_hash": "x"}),
+            encoding="utf-8",
+        )
+        payload = json.dumps(
+            {
+                "cwd": str(root),
+                "stop_hook_active": False,
+                "last_assistant_message": UNMARKED,
+            }
+        )
+        _, result, _ = run_hook(payload, root)
+        assert result.get("continue") is True
+
+
+class TestCoherenciaScriptHook:
+    """El script que enciende y el hook que lee deben hashear IGUAL.
+
+    Si divergieran, el baseline nunca casaria y la barrera bloquearia siempre
+    o nunca. Este test pinea el acoplamiento deliberado.
+    """
+
+    def test_status_hash_es_el_mismo(self):
+        sys.path.insert(0, str(pathlib.Path(__file__).parent.parent.parent / "scripts"))
+        import verification_mode
+
+        muestra = "?? nuevo.txt\n M editado.py\n"
+        assert verification_mode.status_hash(muestra) == hook.status_hash(muestra)
+
+    def test_centinela_no_cuenta_como_mutacion(self):
+        """El centinela vive DENTRO del arbol; no debe verse a si mismo."""
+        assert hook.status_hash("") == hook.status_hash("?? .agent/\n")
+        assert hook.status_hash("") == hook.status_hash(
+            "?? .agent/runtime/verification_mode\n"
+        )
+        # Un fichero real SI cuenta.
+        assert hook.status_hash("") != hook.status_hash("?? codigo.py\n")
 
 
 class TestGuardReentrada:

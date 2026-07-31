@@ -29,12 +29,22 @@ During (proceso)
 1. Si no existe el centinela `.agent/runtime/verification_mode` -> no-op absoluto.
 2. Si el payload es raro (vacio, no-JSON, campo ausente/no-str/vacio) -> fail-open.
 3. Si `stop_hook_active` esta ausente o es truthy -> fail-open (guard de reentrada).
-4. Si el mensaje final NO contiene `[EVIDENCIA]` ni `[HIPOTESIS]` -> `decision: block`.
+4. PUERTA DE MUTACION: si no HAY PRUEBA de que el repo cambio desde el baseline
+   guardado al encender el modo -> fail-open. Un cierre conversacional no debe recibo.
+5. Si el mensaje final NO contiene `[EVIDENCIA]` ni `[HIPOTESIS]` -> `decision: block`.
 
-El criterio es un SUBSTRING CHECK sobre marcadores declarados. No interpreta prosa,
-no busca lenguaje causal, no aplica regex sobre contenido: detecta la AUSENCIA de una
-marca deliberada. Esto respeta el NON-GOAL literal de WOT-2026-044r ("no analisis
-semantico de prosa") y el muro de WOT-2026-025c (8 versiones fallidas de ese enfoque).
+El criterio es un SUBSTRING CHECK sobre marcadores declarados, condicionado por un
+hecho ESTRUCTURAL (git HEAD + status). No interpreta prosa, no busca lenguaje causal,
+no aplica regex sobre contenido. Esto respeta el NON-GOAL literal de WOT-2026-044r
+("no analisis semantico de prosa") y el muro de WOT-2026-025c (8 versiones fallidas).
+
+POR QUE LA PUERTA DE MUTACION NO ES OPCIONAL (medicion 2026-07-31, no heredada):
+sobre 33.476 mensajes finales reales extraidos de 1654 transcripts de esta maquina,
+el criterio "falta el marcador" A SECAS bloqueaba 33.473, el 100,0%. El 22,5% eran
+mensajes de menos de 120 caracteres ("court", "Commiteo el cierre del backlog") sin
+afirmacion causal alguna. Sin esta puerta, activar la barrera por defecto seria un
+denial-of-service sobre el agente. Con ella, solo paga recibo quien toco el arbol.
+Direccion ratificada por revision adversarial de Codex ("C+D minimo").
 
 After (post-condiciones)
 ------------------------
@@ -53,7 +63,9 @@ campo no documentado en code.claude.com/docs/en/hooks.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -67,12 +79,15 @@ SENTINEL_RELPATH = Path(".agent") / "runtime" / "verification_mode"
 #: Tope defensivo del texto devuelto al agente.
 REASON_MAX_LEN = 400
 
+#: Tope de espera de los probes git. Un hook lento degrada cada parada.
+GIT_TIMEOUT_S = 5
+
 _REASON = (
-    "Cierre sin clasificar. Antes de entregar, marca el mensaje final:\n"
-    "  [EVIDENCIA] <comando/test/archivo/exit code que lo respalda>\n"
+    "Cierre sin clasificar tras MUTAR el repo. Marca el mensaje final:\n"
+    "  [EVIDENCIA] <comando/test/exit code concreto que lo respalda>\n"
     "  [HIPOTESIS] <que NO comprobaste>\n"
-    "Toda afirmacion causal, historica o de estado va precedida de un probe "
-    "ejecutado, o marcada como hipotesis. No repitas el mismo cierre sin clasificar."
+    "Usa [EVIDENCIA] solo si adjuntas recibo; si no mediste, usa [HIPOTESIS]. "
+    "No repitas el mismo cierre sin clasificar."
 )
 
 
@@ -89,16 +104,93 @@ def find_repo_root(start: Path) -> Path:
     return start
 
 
-def sentinel_active(root: Path) -> bool:
-    """True solo si el centinela existe y es un fichero REGULAR.
+def read_sentinel(root: Path) -> dict | None:
+    """Lee el centinela y devuelve su baseline, o None si no esta activo.
 
-    Un centinela que sea directorio o enlace roto se trata como inactivo
-    (fail-open), no como activo: ante ambiguedad, el hook no bloquea.
+    El centinela debe ser un fichero REGULAR. Uno que sea directorio o enlace
+    roto se trata como inactivo (fail-open), no como activo: ante ambiguedad,
+    el hook no bloquea.
+
+    Contenido esperado: JSON con `baseline_head` y `baseline_status_hash`,
+    escrito por quien enciende el modo verificacion. Un centinela vacio o con
+    JSON invalido devuelve `{}`: el modo esta activo pero SIN baseline, y
+    `repo_mutated` lo tratara como "no se puede probar mutacion" -> no bloquea.
     """
+    path = root / SENTINEL_RELPATH
     try:
-        return (root / SENTINEL_RELPATH).is_file()
+        if not path.is_file():
+            return None
+        raw = path.read_text(encoding="utf-8").strip()
     except OSError:
+        return None
+
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _git(root: Path, *args: str) -> str | None:
+    """Ejecuta git en `root` y devuelve stdout, o None si no se pudo medir."""
+    try:
+        proc = subprocess.run(  # noqa: S603
+            ["git", "-C", str(root), *args],  # noqa: S607
+            capture_output=True,
+            timeout=GIT_TIMEOUT_S,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.decode("utf-8", "replace")
+
+
+def repo_mutated(root: Path, baseline: dict) -> bool:
+    """True solo si HAY PRUEBA de que el arbol cambio desde el baseline.
+
+    Compara HEAD y el hash de `git status --porcelain` contra los valores
+    guardados al encender el modo verificacion. Es un hecho ESTRUCTURAL sobre
+    el repo, no una interpretacion del texto del agente.
+
+    Devuelve False ante cualquier ambiguedad -- baseline ausente, git ilegible,
+    timeout, directorio sin repo -- porque sin prueba de mutacion no hay motivo
+    para bloquear (fail-open).
+    """
+    head_expected = baseline.get("baseline_head")
+    status_expected = baseline.get("baseline_status_hash")
+    if not isinstance(head_expected, str) or not isinstance(status_expected, str):
         return False
+
+    head_now = _git(root, "rev-parse", "HEAD")
+    status_now = _git(root, "status", "--porcelain")
+    if head_now is None or status_now is None:
+        return False
+
+    if head_now.strip() != head_expected.strip():
+        return True
+    return status_hash(status_now) != status_expected
+
+
+def status_hash(status_text: str) -> str:
+    """Hash estable de `git status --porcelain`, normalizando saltos de linea.
+
+    Excluye del calculo el propio centinela y su directorio: encender el modo
+    ESCRIBE un fichero dentro del arbol, asi que sin esta exclusion el centinela
+    se veria a si mismo como mutacion y bloquearia todo cierre desde el primer
+    turno. Medido en probe hermetico: tras crear el centinela, `git status`
+    pasa de vacio a `?? .agent/`.
+    """
+    noise = (".agent/runtime/verification_mode", ".agent/runtime/", ".agent/")
+    kept = []
+    for line in status_text.replace("\r\n", "\n").split("\n"):
+        path = line[3:].strip() if len(line) > 3 else ""
+        if path and path in noise:
+            continue
+        kept.append(line)
+    return hashlib.sha256("\n".join(kept).encode("utf-8")).hexdigest()
 
 
 def needs_classification(payload: dict) -> bool:
@@ -154,7 +246,15 @@ def main() -> None:
         start = Path(cwd) if isinstance(cwd, str) and cwd else Path.cwd()
         root = find_repo_root(start.resolve())
 
-        if not sentinel_active(root):
+        baseline = read_sentinel(root)
+        if baseline is None:
+            emit({"continue": True})
+            return
+
+        # Proporcionalidad: un cierre puramente conversacional no debe recibo.
+        # Solo se exige clasificacion si el turno MUTO el repo, que es un hecho
+        # estructural medible, no una lectura de la prosa del agente.
+        if not repo_mutated(root, baseline):
             emit({"continue": True})
             return
 
