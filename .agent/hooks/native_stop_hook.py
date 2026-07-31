@@ -31,17 +31,23 @@ During (proceso)
 3. Si `stop_hook_active` esta ausente o es truthy -> fail-open (guard de reentrada).
 4. PUERTA DE MUTACION: si no HAY PRUEBA de que el repo cambio desde el baseline
    guardado al encender el modo -> fail-open. Un cierre conversacional no debe recibo.
-5. Si el mensaje final NO contiene `[EVIDENCIA]` ni `[HIPOTESIS]` -> `decision: block`,
+5. Si ninguna LINEA del mensaje final ABRE con `[EVIDENCIA]` o `[HIPOTESIS]`
+   -> `decision: block`,
    SALVO que el entorno pida modo observacion (`AGENT_VERIFICATION_MODE=observe` o
    `AGENT_DISABLE_VERIFICATION_STOP_HOOK=1`), en cuyo caso REGISTRA el bloqueo
    evitado en `verification_observations.jsonl` y deja pasar. Ese escape existe
    para no estrenar una barrera bloqueante en un vuelo autonomo, que corre sin
    humano delante.
 
-El criterio es un SUBSTRING CHECK sobre marcadores declarados, condicionado por un
-hecho ESTRUCTURAL (git HEAD + status). No interpreta prosa, no busca lenguaje causal,
-no aplica regex sobre contenido. Esto respeta el NON-GOAL literal de WOT-2026-044r
-("no analisis semantico de prosa") y el muro de WOT-2026-025c (8 versiones fallidas).
+El criterio es un ANCLA POSICIONAL sobre marcadores declarados (el marcador debe
+ABRIR una linea), condicionado por un hecho ESTRUCTURAL (git HEAD + status). No
+interpreta prosa ni busca lenguaje causal: la regex solo mira DONDE aparece un
+literal fijo, no que dice el texto. Esto respeta el NON-GOAL literal de
+WOT-2026-044r ("no analisis semantico de prosa") y el muro de WOT-2026-025c.
+
+Fue un SUBSTRING suelto hasta que el canario de WOT-2026-044y lo refuto en vivo:
+un cierre que solo MENCIONABA los marcadores al explicar el mecanismo se
+auto-aprobaba. Ver `MARKER_RE`.
 
 POR QUE LA PUERTA DE MUTACION NO ES OPCIONAL (medicion 2026-07-31, no heredada):
 sobre 33.476 mensajes finales reales extraidos de 1654 transcripts de esta maquina,
@@ -71,6 +77,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -79,6 +86,18 @@ from pathlib import Path
 
 #: Marcadores de clasificacion. Su AUSENCIA es lo que se detecta.
 MARKERS: tuple[str, ...] = ("[EVIDENCIA]", "[HIPOTESIS]")
+
+#: El marcador solo CLASIFICA si abre una linea. Un mensaje que se limita a
+#: MENCIONARLO ("el hook exige [EVIDENCIA] al cerrar") no esta clasificando nada.
+#:
+#: DEFECTO REAL medido en el canario de WOT-2026-044y (2026-07-31): al explicar el
+#: mecanismo en un cierre, el propio texto contenia los literales y se auto-aprobo
+#: (`has_marker: true` en canary_stop.jsonl). Ningun test lo vio porque todos usaban
+#: mensajes que o clasificaban de verdad o no mencionaban el marcador.
+#:
+#: Sigue siendo MECANICO: ancla posicional, no interpretacion de prosa. El prefijo
+#: opcional admite el adorno markdown habitual (negrita, cita, vinetas).
+MARKER_RE = re.compile(r"(?m)^[ \t>*_]{0,6}\[(?:EVIDENCIA|HIPOTESIS)\]")
 
 #: Centinela opt-in. Sin este fichero el hook es un no-op absoluto.
 SENTINEL_RELPATH = Path(".agent") / "runtime" / "verification_mode"
@@ -89,12 +108,17 @@ REASON_MAX_LEN = 400
 #: Tope de espera de los probes git. Un hook lento degrada cada parada.
 GIT_TIMEOUT_S = 5
 
+#: Texto devuelto al agente al bloquear.
+#:
+#: Los ejemplos van EN LINEA, nunca abriendo linea: si empezaran con el literal,
+#: el propio `reason` pasaria el filtro y un agente que lo reenviara tal cual
+#: cerraria sin clasificar nada. Lo cazo un test, no una revision.
 _REASON = (
-    "Cierre sin clasificar tras MUTAR el repo. Marca el mensaje final:\n"
-    "  [EVIDENCIA] <comando/test/exit code concreto que lo respalda>\n"
-    "  [HIPOTESIS] <que NO comprobaste>\n"
-    "Usa [EVIDENCIA] solo si adjuntas recibo; si no mediste, usa [HIPOTESIS]. "
-    "No repitas el mismo cierre sin clasificar."
+    "Cierre sin clasificar tras MUTAR el repo. Abre una linea del mensaje final "
+    'con uno de los dos marcadores: "[EVIDENCIA]" seguido del comando, test o '
+    'exit code concreto que lo respalda, o "[HIPOTESIS]" seguido de lo que NO '
+    "comprobaste. Usa el primero solo si adjuntas recibo; si no mediste, usa el "
+    "segundo. Mencionarlos dentro de una frase no clasifica."
 )
 
 
@@ -219,7 +243,7 @@ def needs_classification(payload: dict) -> bool:
     if not isinstance(message, str) or not message.strip():
         return False
 
-    return not any(marker in message for marker in MARKERS)
+    return MARKER_RE.search(message) is None
 
 
 def _observe_only() -> bool:

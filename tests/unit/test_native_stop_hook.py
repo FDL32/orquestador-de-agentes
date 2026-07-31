@@ -321,6 +321,54 @@ class TestCoherenciaScriptHook:
         assert hook.status_hash("") != hook.status_hash("?? codigo.py\n")
 
 
+class TestMarcadorDebeClasificar:
+    """El marcador CLASIFICA solo si abre linea; mencionarlo no basta.
+
+    DEFECTO REAL cazado por el canario de WOT-2026-044y (2026-07-31), no por
+    revision ni por los tests previos: al explicar el mecanismo en un cierre, el
+    propio texto contenia los literales y el hook lo dio por clasificado
+    (`has_marker: true` en canary_stop.jsonl). Los tests anteriores no podian
+    verlo porque usaban mensajes que o clasificaban de verdad o no mencionaban
+    el marcador -- ninguno cubria el caso intermedio.
+    """
+
+    def _bloquea(self, message):
+        return hook.needs_classification(
+            {"stop_hook_active": False, "last_assistant_message": message}
+        )
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "El hook exige [EVIDENCIA] o [HIPOTESIS] al cerrar.",
+            "Marca el mensaje final con [EVIDENCIA] cuando midas algo.",
+            "Los marcadores son [EVIDENCIA] y [HIPOTESIS].",
+        ],
+    )
+    def test_mencion_no_clasifica(self, message):
+        assert self._bloquea(message) is True
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "[EVIDENCIA] pytest -> 25 passed",
+            "[HIPOTESIS] no comprobado en CI",
+            "**[EVIDENCIA]** ruff check exit 0",
+            "> [HIPOTESIS] sin medir todavia",
+            "He terminado el ajuste.\n\n[EVIDENCIA] suite verde, exit 0",
+        ],
+    )
+    def test_marcador_en_linea_si_clasifica(self, message):
+        assert self._bloquea(message) is False
+
+    def test_el_propio_reason_no_se_autoaprueba(self):
+        """El texto que el hook devuelve al agente no puede valer como cierre.
+
+        Si el agente reenviara el `reason` tal cual, seguiria sin clasificar.
+        """
+        assert self._bloquea(hook._REASON) is True
+
+
 class TestObserveOnly:
     """Escape por entorno: mide pero NO bloquea (WOT-2026-044t).
 
