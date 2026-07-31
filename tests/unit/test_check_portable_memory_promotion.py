@@ -425,3 +425,79 @@ def test_the_two_lessons_promoted_on_20260721_are_still_in_the_archive():
         assert obs_id in body, (
             f"leccion revertida (PROHIBIDO por DEC-026F-001): {obs_id}"
         )
+
+
+def test_hook_telemetry_is_not_a_lesson_and_is_not_an_orphan(tmp_path: Path) -> None:
+    """WOT-2026-045-REMED: la telemetria de post_tool_hook NO es una leccion.
+
+    Medido 2026-07-31 sobre el motor: el guard reportaba 243 huerfanas y las 243
+    eran records `topic=tool_usage` escritos por `.agent/hooks/post_tool_hook.py`
+    en CADA tool call -- sin `id`, sin `source_ticket`, 4 dias de ruido. Ninguna
+    era una leccion perdida.
+
+    Por que importa: un guard que grita exit 4 de forma PERMANENTE sobre ruido es
+    un guard cuya senal ya nadie lee. Si manana se pierde una leccion REAL entra
+    en el mismo monton y nadie la ve. El universo del guard estaba mal definido,
+    no su logica (cf. obs-landing-guard-without-denominator).
+
+    Mutation: si `is_lesson` vuelve a clasificar la telemetria de hook como
+    leccion, este test pasa a ROJO (exit 4 en vez de 0).
+    """
+    repo = _make_repo(tmp_path)
+    telemetry = {
+        "timestamp": "2026-07-28T07:46:40.133489+00:00",
+        "topic": "tool_usage",
+        "signal": "Tool view_file called",
+        "source": "post_tool_hook",
+        "tool": "view_file",
+        "context": "Read file unknown, 0 lines",
+        "session_id": "deb74bfd-13d7-45e7-996d-831c9f4489ab",
+        "call_count": 0,
+    }
+    _write(repo / OBS_REL, [telemetry])
+
+    proc = _run(repo)
+
+    assert proc.returncode == EXIT_OK, (
+        "la telemetria de hook no viaja: su ausencia del archive NO es huerfandad.\n"
+        f"stdout: {proc.stdout}"
+    )
+
+
+def test_a_real_lesson_with_topic_tool_usage_is_still_an_orphan(tmp_path: Path) -> None:
+    """CONTRAEJEMPLO (adjudicado por Codex, bucle L801): el discriminante es la
+    PROCEDENCIA, no la ETIQUETA.
+
+    Filtrar por `topic` a secas enmascararia PARA SIEMPRE cualquier leccion
+    legitima que use ese topic -- convertiria un falso POSITIVO (ruido, molesto)
+    en un falso NEGATIVO (leccion perdida en silencio, mucho peor). La asimetria
+    de riesgo manda: el guard debe seguir cazando una leccion REAL aunque
+    comparta topic con la telemetria.
+
+    Este test AISLA esa rama: mismo `topic` que la telemetria, pero con `id`,
+    `source_ticket` y `source` de sesion -> SIGUE siendo huerfana (exit 4).
+    Mutation: si el criterio degenera a `topic == "tool_usage"`, esto se pone
+    ROJO.
+    """
+    repo = _make_repo(tmp_path)
+    real_lesson = {
+        "timestamp": "2026-07-31T22:00:00+00:00",
+        "id": "obs-una-leccion-real-sobre-uso-de-herramientas",
+        "topic": "tool_usage",
+        "domain": "testing",
+        "applies_to": "all",
+        "signal": "Una leccion REAL que casualmente usa el topic tool_usage.",
+        "source": "session-2026-07-31",
+        "source_ticket": "WOT-2026-045-REMED",
+        "confidence": 0.9,
+        "impact": "high",
+    }
+    _write(repo / OBS_REL, [real_lesson])
+
+    proc = _run(repo)
+
+    assert proc.returncode == EXIT_ORPHANS, (
+        "una leccion REAL con topic=tool_usage DEBE seguir contando como huerfana: "
+        "el discriminante es la procedencia (source/id/source_ticket), no la etiqueta.\n"
+        f"stdout: {proc.stdout}"
+    )
