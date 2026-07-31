@@ -810,7 +810,12 @@ def send_to_profile(
     config: dict,
     sensitivity: str | None = None,
     transport=None,
-    timeout: int = 120,
+    # 120 s no daba: un reto de review sobre un repo real hace que el backend
+    # CLI inspeccione arbol e historial. Medido 2026-07-31: prompt trivial
+    # rc=0 en 10,1 s; payload real de 1,9 KB rc=0 en 143,4 s. Con 120 s el
+    # dispatch abortaba y el mensaje "backend CLI sin respuesta" atribuia mal
+    # la causa -> reviews decorativas.
+    timeout: int = 300,
 ) -> str:
     """UNICO camino de salida hacia un backend; el preflight corre AQUI.
 
