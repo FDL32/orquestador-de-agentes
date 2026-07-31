@@ -105,6 +105,94 @@ as a confusing per-ticket failure.
 
 ---
 
+## Paso 0-bis: START CONTEXT ISOLATION is DUAL-CONTRACT -- never self-certified
+
+> **Naming, deliberate:** this is `start_context_isolation`, NOT a "freshness
+> gate". That term is already taken in this prompt by the SEMANTIC freshness of
+> the DAG against the live backlog (WOT-2026-023t, "Validate the DAG before
+> executing it"). Two different gates must not share a name.
+
+A start gate must NEVER ask the executor to certify a property of ITSELF (that
+its context is fresh, that it did not author the arranque prompt, that it has no
+conflict of interest). Such a predicate is **unfalsifiable from the inside**: a
+contaminated executor that believes itself clean emits exactly the same
+certification as a clean one. This is the SAME prohibition condition 6 already
+encodes for the close (`the executor CANNOT self-certify it`); it applies to the
+START with equal force, and this section exists because the close-side rule was
+in place while the start-side one was not.
+
+**MEASURED, twice, on consecutive days (2026-07-30/31), same flight, same clause:**
+
+- **Failure 1** -- a genuinely FRESH session self-disqualified after reading the
+  preparatory commits in `git log`, mistaking a permanent repository artifact for
+  proof of authorship. Cure applied: define the clause in CONVERSATIONAL terms
+  (lesson `obs-gating-clause-must-not-make-its-own-object-impossible`).
+- **Failure 2** -- the MIRROR case, and the cure for failure 1 is what produced
+  it: the criterion WAS conversational, the executor read it CORRECTLY, and it
+  still could not proceed, because a conversational predicate ABOUT ONESELF
+  cannot be discharged from the inside. The executor was right to stop.
+
+**Do NOT "fix" this with a self-executed receipt.** A rejected repair (recorded so
+it is not re-proposed): anchoring the gate on a session artifact the executor
+creates itself -- e.g. `init_session_scratch.py init` -- proves NOTHING about
+freshness. `_generate_session_id` is `UTC-minute + git-HEAD-short-sha +
+secrets.token_hex(2)`, `--session-id` is a plain user override, and none of those
+inputs is a function of the conversation: a contaminated session runs the same
+command, gets `status: ok`, and proceeds. Such a receipt would convert an HONEST
+STOP into a FALSE GO -- strictly worse than the deadlock it replaces. Worse still,
+the only semantic input is the git HEAD sha, a PERMANENT repository artifact,
+which is precisely the class of criterion the freshness lesson forbids. A
+self-issued receipt proves PROVENANCE (a session ran a command at time T against
+root R), never FRESHNESS.
+
+**The contract, therefore:**
+
+1. The attestation lives in its OWN pre-flight artifact, NOT in
+   `batch_run_<ts>.json`. Writing `batch_run` is itself a mutation of the destino
+   and the contract lists it as an OUTPUT of the run, so "declare it PENDING in
+   `batch_run` before mutating anything" would contradict itself. The executor
+   writes `start_context_isolation.json` in the destino-rol reports dir BEFORE
+   touching any ticket, with `status: PENDING` plus the observable answer; the
+   later `batch_run_<ts>.json` only COPIES the resolved receipt. The executor
+   never resolves it.
+2. **A third party resolves it BEFORE the executor mutates anything.** External
+   resolution is a PREVENTIVE gate, not a post-hoc one: a contaminated flight
+   creates commits, moves `backlog.md`, appends to the bus/ledger, writes memory
+   and may push. A sibling audit can DETECT and demand repair, but it cannot make
+   those effects not have happened. Removing the start gate because the executor
+   cannot discharge it is a non-sequitur that happens to benefit the executor:
+   the rigorous form is *"I cannot decide this, therefore I stay `PENDING` and
+   wait"*, never *"nobody can decide it, therefore nobody blocks me"*.
+
+   **WHO the third party is -- named, because an unnamed resolver reproduces the
+   very defect this section cures (a rule nobody can discharge):** the resolver is
+   the **human operator who pastes the arranque prompt**, or a **Manager/sibling
+   session in fresh context** acting before the first ticket. It is **NOT** the
+   sibling auditor of `prompts/audit_autonomous_ticket_batch.md`: that prompt
+   states it arrives AFTER the batch closes or stops, so it is structurally
+   incapable of resolving a PREVENTIVE gate. The resolution is recorded in
+   `start_context_isolation.json` as `{status: RESOLVED, approved_by,
+   approved_at, prompt_sha256, project_root_resolved}`.
+
+   **DECLARED DEBT, so this reads as a contract-in-force and not as a mechanism
+   that already bites:** today this gate is a NORM, not a wired barrier -- nothing
+   refuses to run when the receipt is missing, and neither the sibling auditor
+   prompt nor its skill nor any test currently reads
+   `start_context_isolation.json`. Wiring it (the barrier, its parity across both
+   prompts and the skill, and its tests) is `WOT-2026-044r`. Until that lands, an
+   executor that finds no receipt MUST stop and ask for one; it must not infer
+   approval from its absence.
+3. **The ONLY question the executor may answer at start is OBSERVABLE, not
+   introspective:** *"has the triage been discussed, have the governance loops
+   been run, or was this prompt drafted IN THIS THREAD?"* -- answered by LOOKING
+   AT THE CONVERSATION, not by reasoning about oneself. If yes: STOP and say so.
+4. **Reading preparatory commits in `git log` is NOT disqualifying.** The history
+   is permanent and every future session will see it; if that sufficed to
+   disqualify, the flight would be UNEXECUTABLE BY CONSTRUCTION. A clause that
+   makes its own object impossible is not strict -- it is broken.
+
+---
+
 ## PORTABILITY (root requirement) -- this executor is of the MOTOR, not of any single dogfooding instance
 
 This is a portable tool: it must be able to run against **any `repo_destino`**,
@@ -209,6 +297,16 @@ each model owns, then a synthesis on the MAIN thread (never a subagent's verdict
   reader WITH filesystem is MANDATORY -- it catches the nan false-positives the
   models cannot see without a tree. **mode=parallel**: independence IS the
   guarantee; NEVER `chain` to verify.
+  **WHY it is mandatory (the invariant, not an anecdote):** every blind lens reads
+  the SAME bundle, so a defect in the COLLECTOR'S probes is not averaged out by
+  adding lenses -- it is AMPLIFIED CORRELATED ERROR arriving in the costume of
+  consensus. A finding that requires executing a command or resolving a reference
+  against the tree is UNREACHABLE for a blind lens no matter how many vote.
+  **Therefore: unanimity among blind lenses is NOT evidence of robustness; the
+  ability to VERIFY is.** Never drop the `+1`, and put the PROBES THEMSELVES in
+  the bundle -- a blind lens can only be as correct as the collector's evidence.
+  (Dated incidents supporting this live in memory and the session reports, not
+  here: this prompt is portable and states the invariant, not one run's history.)
 - **`2` = synthesis = Claude -> Claude -> Codex.** Claude consolidates and
   VERIFIES each finding against the real tree (discards nan false-positives); a
   second Claude pass hardens the synthesis; then Codex refutes it. Codex runs in
@@ -483,6 +581,23 @@ declared `DONE` only if ALL 8 conditions hold:
 Conditions 4 and 5 encode real false-greens: `ERROR=0` is **not** the same as
 audited (the landing guard used to SKIP rows lacking a `commit:` cell), and a
 suite run PRE-commit reports the PARENT's `tested_sha`.
+
+**The freshness attestation of Paso 0-bis is NOT a ninth PREDICATE condition.**
+The predicate stays at EIGHT, deliberately: its cardinality is a load-bearing
+invariant shared with the sibling auditor
+(`test_predicate_declares_its_cardinality`, WOT-2026-039a), and adding a row to
+ONE of the two prompts is exactly the half-landed split that test exists to
+catch. Start context isolation is a PRE-FLIGHT gate (Paso 0-bis), like the accessibility
+census of Paso 0 -- it runs BEFORE the state machine and is not part of the run's
+closing predicate. It lives in its own artifact, `start_context_isolation.json`,
+written BEFORE any ticket; `batch_run_<ts>.json` only COPIES the resolved receipt
+into a top-level `start_context_isolation` field, OUTSIDE the `PREDICATE` block.
+A receipt self-marked `RESOLVED` by the executor is self-certification:
+`falso_verde`. **Parity debt (`WOT-2026-044r`): moving this out of the PREDICATE
+avoids the cardinality split, but the new channel has NO parity test of its own
+yet -- the sibling auditor prompt, its skill and the test suite do not read this
+field today. Until that is wired, this is a NORM, not a barrier, and it is
+declared as such rather than presented as an enforced mechanism.**
 
 Emit it as a `PREDICATE` block inside `batch_run_<ts>.json`, one entry per
 condition -> command -> real exit/value.
