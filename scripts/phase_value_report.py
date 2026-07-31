@@ -181,18 +181,29 @@ def format_denominator(report: Report) -> str:
 
     Fixed format on purpose: "publish the denominator" without a shape lets it be
     buried in a comment or a debug log the reader never sees.
+
+    The contracted line is emitted VERBATIM, with no extra fields spliced into it
+    (MANAGER_REVIEW finding, lens deepseek): an earlier version inserted
+    ``descartadas_ilegibles=N`` in the middle of it whenever a corrupt line showed
+    up. Fixing a shape and then extending it is the same defect as not fixing one
+    -- a consumer that parses this line positionally breaks. Unparsable lines are
+    still reported (the contract requires counting them), but on their OWN line,
+    where they cannot deform the contracted one.
     """
-    extra = ""
-    if report.dropped_unparsable:
-        extra = f" descartadas_ilegibles={report.dropped_unparsable}"
-    return (
+    line = (
         f"[denominador] filas={report.total_rows} elegibles={report.eligible} "
         f"descartadas_legacy={report.dropped_legacy} "
-        f"(sin phase o sin backend_key){extra} | "
+        f"(sin phase o sin backend_key) | "
         f"sustantivas_medidas={report.substantive_measured} "
         f"sustantivas_fail_open={report.substantive_fail_open} "
         f"mudas={report.mute}"
     )
+    if report.dropped_unparsable:
+        line += (
+            f"\n[denominador] descartadas_ilegibles={report.dropped_unparsable} "
+            f"(lineas que no parsean como JSON)"
+        )
+    return line
 
 
 def format_table(report: Report) -> str:

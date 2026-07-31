@@ -153,6 +153,28 @@ def test_denominator_line_has_the_contracted_shape(tmp_path: Path) -> None:
         assert token in line, f"missing {token!r} in: {line!r}"
 
 
+def test_contracted_denominator_line_is_never_extended(tmp_path: Path) -> None:
+    """The contracted line stays byte-identical even when extra counts exist.
+
+    MANAGER_REVIEW finding (lens deepseek): an earlier version spliced
+    ``descartadas_ilegibles=N`` INTO the contracted line whenever a corrupt row
+    appeared. Fixing a shape and then extending it defeats the point -- anything
+    parsing it positionally breaks on the rare input. Extra counts get their own
+    line; the contracted one never changes shape.
+    """
+    path = tmp_path / pvr.SCORECARD_REL
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    path.write_text(json.dumps(_row()) + "\n", encoding="utf-8")
+    clean = pvr.format_denominator(pvr.build_report(tmp_path)).splitlines()[0]
+
+    path.write_text(json.dumps(_row()) + "\n{ broken\n", encoding="utf-8")
+    out = pvr.format_denominator(pvr.build_report(tmp_path)).splitlines()
+
+    assert out[0] == clean, "the contracted line changed shape because of a corrupt row"
+    assert len(out) == 2 and "descartadas_ilegibles=1" in out[1], out
+
+
 def test_substantive_splits_measured_from_fail_open(tmp_path: Path) -> None:
     """``is_substantive`` is FAIL-OPEN: no ``output_chars`` still counts as YES.
 
