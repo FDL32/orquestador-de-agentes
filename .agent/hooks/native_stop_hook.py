@@ -31,8 +31,8 @@ During (proceso)
 3. Si `stop_hook_active` esta ausente o es truthy -> fail-open (guard de reentrada).
 4. PUERTA DE MUTACION: si no HAY PRUEBA de que el repo cambio desde el baseline
    guardado al encender el modo -> fail-open. Un cierre conversacional no debe recibo.
-5. Si ninguna LINEA del mensaje final ABRE con `[EVIDENCIA]` o `[HIPOTESIS]`
-   -> `decision: block`,
+5. Si ninguna LINEA del mensaje final -- FUERA de un bloque de codigo -- ABRE con
+   `[EVIDENCIA]` o `[HIPOTESIS]` -> `decision: block`,
    SALVO que el entorno pida modo observacion (`AGENT_VERIFICATION_MODE=observe` o
    `AGENT_DISABLE_VERIFICATION_STOP_HOOK=1`), en cuyo caso REGISTRA el bloqueo
    evitado en `verification_observations.jsonl` y deja pasar. Ese escape existe
@@ -224,6 +224,33 @@ def status_hash(status_text: str) -> str:
     return hashlib.sha256("\n".join(kept).encode("utf-8")).hexdigest()
 
 
+def classifies(message: str) -> bool:
+    """True si alguna linea FUERA de un bloque de codigo abre con un marcador.
+
+    Ignorar los fences cierra el ultimo hueco del ancla posicional: un cierre que
+    MUESTRE un ejemplo dentro de ``` se auto-aprobaria, que es la misma familia
+    del defecto que el canario cazo en vivo (mencionar != clasificar), solo que
+    por otra via.
+
+    Medido sobre el corpus real (33.476 mensajes finales de 1654 transcripts):
+    871 llevan fence (2,6%) y CERO tienen su unico marcador dentro de uno. Se
+    cierra igual porque el caso natural donde aparece es documentar el propio
+    mecanismo -- exactamente lo que ya fallo una vez.
+
+    Sigue siendo mecanico: cuenta delimitadores y mira posicion, no interpreta.
+    """
+    in_fence = False
+    for line in message.replace("\r\n", "\n").split("\n"):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if MARKER_RE.match(line):
+            return True
+    return False
+
+
 def needs_classification(payload: dict) -> bool:
     """Decide si el cierre debe bloquearse por falta de marcador.
 
@@ -243,7 +270,7 @@ def needs_classification(payload: dict) -> bool:
     if not isinstance(message, str) or not message.strip():
         return False
 
-    return MARKER_RE.search(message) is None
+    return not classifies(message)
 
 
 def _observe_only() -> bool:

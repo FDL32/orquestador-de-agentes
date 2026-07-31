@@ -361,6 +361,43 @@ class TestMarcadorDebeClasificar:
     def test_marcador_en_linea_si_clasifica(self, message):
         assert self._bloquea(message) is False
 
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "```\n[EVIDENCIA] ejemplo dentro de codigo\n```",
+            "```bash\n[HIPOTESIS] ejemplo\n```",
+            "  ```\n  [EVIDENCIA] fence indentado\n  ```",
+            "| col |\n|-----|\n| [EVIDENCIA] en tabla |",
+            "        [EVIDENCIA] indentado 8 espacios",
+            "ok [EVIDENCIA] con texto antes en la misma linea",
+        ],
+    )
+    def test_marcador_no_clasificable_bloquea(self, message):
+        """Un marcador que no ABRE linea util no clasifica.
+
+        Incluye el hueco de los code fences: mostrar un EJEMPLO dentro de ```
+        no es clasificar el cierre. Salio del barrido exhaustivo, no del corpus:
+        sobre 33.476 mensajes reales hay 871 con fence (2,6%) y CERO con su
+        unico marcador dentro de uno -- pero el caso natural donde aparece es
+        documentar el propio mecanismo, que es justo lo que ya fallo una vez.
+        """
+        assert self._bloquea(message) is True
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "```\ncode\n```\n\n[EVIDENCIA] fuera del fence, exit 0",
+            "[EVIDENCIA] real\n\n```\n[EVIDENCIA] ejemplo\n```",
+            "[EVIDENCIA] real\n\n```\nfence sin cerrar",
+            "Hecho.\r\n[EVIDENCIA] con CRLF",
+            "_[EVIDENCIA]_ cursiva",
+            "> **[EVIDENCIA]** cita con negrita",
+        ],
+    )
+    def test_marcador_fuera_de_fence_si_clasifica(self, message):
+        """Control negativo del fence: lo de fuera sigue valiendo."""
+        assert self._bloquea(message) is False
+
     def test_el_propio_reason_no_se_autoaprueba(self):
         """El texto que el hook devuelve al agente no puede valer como cierre.
 
