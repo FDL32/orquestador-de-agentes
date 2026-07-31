@@ -315,7 +315,10 @@ class TestCoherenciaScriptHook:
         """El centinela vive DENTRO del arbol; no debe verse a si mismo."""
         assert hook.status_hash("") == hook.status_hash("?? .agent/\n")
         assert hook.status_hash("") == hook.status_hash(
-            "?? .agent/runtime/verification_mode\n"
+            "?? .agent/runtime/verification_mode.json\n"
+        )
+        assert hook.status_hash("") == hook.status_hash(
+            "?? .agent/runtime/verification_observations.json\n"
         )
         # Un fichero real SI cuenta.
         assert hook.status_hash("") != hook.status_hash("?? codigo.py\n")
@@ -455,7 +458,7 @@ class TestObserveOnly:
             cwd=str(root),
             env={**os.environ, "AGENT_VERIFICATION_MODE": "observe"},
         )
-        log = root / ".agent" / "runtime" / "verification_observations.jsonl"
+        log = root / ".agent" / "runtime" / "verification_observations.json"
         assert log.is_file()
         record = json.loads(log.read_text(encoding="utf-8").strip())
         assert record["would_have_blocked"] is True
@@ -471,7 +474,7 @@ class TestObserveOnly:
             cwd=str(root),
             env={**os.environ, "AGENT_VERIFICATION_MODE": "observe"},
         )
-        log = root / ".agent" / "runtime" / "verification_observations.jsonl"
+        log = root / ".agent" / "runtime" / "verification_observations.json"
         assert UNMARKED not in log.read_text(encoding="utf-8")
 
     def test_sin_env_si_bloquea(self, tmp_path):

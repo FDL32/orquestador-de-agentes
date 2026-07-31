@@ -480,7 +480,7 @@ def _step_verification_mode_off(motor_root: Path, dry_run: bool) -> StepResult:
 
     Idempotente: si el centinela no existe, devuelve OK con detail explicito.
     """
-    sentinel = motor_root / ".agent" / "runtime" / "verification_mode"
+    sentinel = motor_root / ".agent" / "runtime" / "verification_mode.json"
     if dry_run:
         estado = "presente" if sentinel.is_file() else "ausente"
         return StepResult(

@@ -32,7 +32,13 @@ During (proceso y recursos)
 
 After (post-condiciones y errores)
 ----------------------------------
-- `on` -> existe `.agent/runtime/verification_mode` con JSON valido; rc 0.
+- `on` -> existe `.agent/runtime/verification_mode.json` con JSON valido; rc 0.
+
+La extension `.json` NO es cosmetica: los `.gitignore` de motor y destino cubren
+`.agent/runtime/*.json`, pero NO un fichero sin extension. Con el nombre antiguo
+(`verification_mode` pelado) el centinela quedaba UNTRACKED y visible en
+`git status`, rompiendo la condicion "arboles limpios" del vuelo autonomo que lo
+enciende. Lo cazo el ejecutor del vuelo, no los tests (WOT-2026-044t).
 - `off` -> el centinela no existe; rc 0.
 - Si git falla en `on`, NO escribe centinela y devuelve rc 1: un centinela sin
   baseline dejaria el hook activo pero incapaz de probar mutacion.
@@ -49,7 +55,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SENTINEL_RELPATH = Path(".agent") / "runtime" / "verification_mode"
+SENTINEL_RELPATH = Path(".agent") / "runtime" / "verification_mode.json"
 GIT_TIMEOUT_S = 10
 
 

@@ -92,6 +92,45 @@ class TestEnsureOn:
         assert antes["baseline_status_hash"] != despues["baseline_status_hash"]
 
 
+class TestArtefactosNoEnsucianElArbol:
+    """Los artefactos runtime deben casar las reglas de .gitignore YA existentes.
+
+    DEFECTO REAL cazado por el EJECUTOR DEL VUELO, no por estos tests ni por
+    revision: el centinela se llamaba `verification_mode`, sin extension. Los
+    .gitignore de motor y destino cubren `.agent/runtime/*.json` y `*.txt`, pero
+    no un fichero pelado, asi que aparecia como `?? .agent/runtime/verification_mode`
+    y rompia la condicion "arboles limpios" del vuelo autonomo que lo enciende.
+
+    Lo mismo aplicaba al log de observaciones, que era `.jsonl` (los .jsonl se
+    listan uno a uno en el .gitignore, no por glob).
+
+    La leccion es de ALCANCE, no de mecanismo: los tests corrian sobre tmp_path
+    sin .gitignore, luego eran ciegos a esto por construccion.
+    """
+
+    def test_centinela_tiene_extension_cubierta(self):
+        assert verification_mode.SENTINEL_RELPATH.suffix == ".json", (
+            "el centinela debe casar `.agent/runtime/*.json`; sin extension queda "
+            "untracked y ensucia el arbol"
+        )
+
+    def test_hook_y_script_comparten_la_ruta(self):
+        """Si divergieran, el hook leeria un centinela que nadie escribe."""
+        hook_dir = REPO_ROOT / ".agent" / "hooks"
+        sys.path.insert(0, str(hook_dir))
+        import native_stop_hook
+
+        assert native_stop_hook.SENTINEL_RELPATH == verification_mode.SENTINEL_RELPATH
+
+    def test_log_de_observaciones_tiene_extension_cubierta(self):
+        """El log del modo observe tampoco puede ensuciar el arbol."""
+        source = (REPO_ROOT / ".agent" / "hooks" / "native_stop_hook.py").read_text(
+            encoding="utf-8"
+        )
+        assert '"verification_observations.json"' in source
+        assert "verification_observations.jsonl" not in source
+
+
 class TestEncendidoEnInit:
     """`init` debe encender el modo SIN corromper su salida JSON."""
 

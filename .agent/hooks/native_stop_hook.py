@@ -35,7 +35,7 @@ During (proceso)
    `[EVIDENCIA]` o `[HIPOTESIS]` -> `decision: block`,
    SALVO que el entorno pida modo observacion (`AGENT_VERIFICATION_MODE=observe` o
    `AGENT_DISABLE_VERIFICATION_STOP_HOOK=1`), en cuyo caso REGISTRA el bloqueo
-   evitado en `verification_observations.jsonl` y deja pasar. Ese escape existe
+   evitado en `verification_observations.json` y deja pasar. Ese escape existe
    para no estrenar una barrera bloqueante en un vuelo autonomo, que corre sin
    humano delante.
 
@@ -100,7 +100,7 @@ MARKERS: tuple[str, ...] = ("[EVIDENCIA]", "[HIPOTESIS]")
 MARKER_RE = re.compile(r"(?m)^[ \t>*_]{0,6}\[(?:EVIDENCIA|HIPOTESIS)\]")
 
 #: Centinela opt-in. Sin este fichero el hook es un no-op absoluto.
-SENTINEL_RELPATH = Path(".agent") / "runtime" / "verification_mode"
+SENTINEL_RELPATH = Path(".agent") / "runtime" / "verification_mode.json"
 
 #: Tope defensivo del texto devuelto al agente.
 REASON_MAX_LEN = 400
@@ -214,7 +214,12 @@ def status_hash(status_text: str) -> str:
     turno. Medido en probe hermetico: tras crear el centinela, `git status`
     pasa de vacio a `?? .agent/`.
     """
-    noise = (".agent/runtime/verification_mode", ".agent/runtime/", ".agent/")
+    noise = (
+        ".agent/runtime/verification_mode.json",
+        ".agent/runtime/verification_observations.json",
+        ".agent/runtime/",
+        ".agent/",
+    )
     kept = []
     for line in status_text.replace("\r\n", "\n").split("\n"):
         path = line[3:].strip() if len(line) > 3 else ""
@@ -293,7 +298,7 @@ def _observe_only() -> bool:
 def _record_observation(root: Path, payload: dict) -> None:
     """Registra un bloqueo EVITADO para poder medir la tasa real.
 
-    Escribe JSONL en `.agent/runtime/verification_observations.jsonl`. Guarda
+    Escribe JSONL en `.agent/runtime/verification_observations.json`. Guarda
     metadatos y la LONGITUD del mensaje, nunca su texto: el hook no debe volcar
     contenido de sesion a disco.
 
@@ -308,7 +313,7 @@ def _record_observation(root: Path, payload: dict) -> None:
             "message_len": len(payload.get("last_assistant_message") or ""),
             "would_have_blocked": True,
         }
-        target = root / ".agent" / "runtime" / "verification_observations.jsonl"
+        target = root / ".agent" / "runtime" / "verification_observations.json"
         target.parent.mkdir(parents=True, exist_ok=True)
         with target.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
