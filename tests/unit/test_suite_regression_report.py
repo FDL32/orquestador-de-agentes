@@ -238,6 +238,24 @@ def test_negative_control_all_complete_runs_unchanged(tmp_path: Path) -> None:
     assert not warns
 
 
+def test_no_level_all_rows_at_all_is_distinct_from_no_complete_ones(
+    tmp_path: Path,
+) -> None:
+    """A history with NO ``level=all`` row is its own case, not "no complete runs".
+
+    Gap found by the closing adversarial pass (lens mimo) and confirmed by probe:
+    the branch behaved correctly but no test reached it. The two emptiness cases
+    must stay distinguishable -- "nothing to compare" (no full-suite run was ever
+    recorded) is a different operational fact from "rows exist but all of them are
+    filtered", and collapsing them would hide which one you are looking at.
+    """
+    hist = _write(tmp_path / "h.jsonl", [_rec(10.0, level="unit") for _ in range(4)])
+    warns, info = csr.analyze(csr._iter_records(hist), window=5, threshold_pct=20.0)
+    assert not warns
+    assert "sin corridas level=all" in info, info
+    assert "COMPLETAS" not in info, "collapsed into the no-complete-runs message"
+
+
 def test_no_complete_runs_says_so_instead_of_falling_back(tmp_path: Path) -> None:
     """FALLBACK: no complete run -> say it, never silently use the old criterion.
 
