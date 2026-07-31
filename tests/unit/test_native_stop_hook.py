@@ -11,6 +11,7 @@ Cubre:
 """
 
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -318,6 +319,107 @@ class TestCoherenciaScriptHook:
         )
         # Un fichero real SI cuenta.
         assert hook.status_hash("") != hook.status_hash("?? codigo.py\n")
+
+
+class TestObserveOnly:
+    """Escape por entorno: mide pero NO bloquea (WOT-2026-044t).
+
+    Existe para que un vuelo autonomo -- sin humano delante -- no estrene una
+    barrera bloqueante en la corrida que debe salir sola. Exigido por revision
+    adversarial Codex: "no es defendible estrenarla en el vuelo autonomo".
+    """
+
+    def _payload(self, root):
+        return json.dumps(
+            {
+                "cwd": str(root),
+                "session_id": "s-test",
+                "stop_hook_active": False,
+                "last_assistant_message": UNMARKED,
+            }
+        )
+
+    @pytest.mark.parametrize(
+        "env",
+        [
+            {"AGENT_VERIFICATION_MODE": "observe"},
+            {"AGENT_VERIFICATION_MODE": "OBSERVE"},
+            {"AGENT_DISABLE_VERIFICATION_STOP_HOOK": "1"},
+        ],
+    )
+    def test_observe_no_bloquea(self, tmp_path, env):
+        root = make_root(tmp_path, sentinel=True)
+        proc = subprocess.run(
+            [sys.executable, str(HOOK_PATH)],
+            input=self._payload(root).encode("utf-8"),
+            capture_output=True,
+            cwd=str(root),
+            env={**os.environ, **env},
+        )
+        result = json.loads(proc.stdout.decode("utf-8").strip())
+        assert result.get("continue") is True
+        assert "decision" not in result
+
+    def test_observe_registra_la_observacion(self, tmp_path):
+        """La medicion es el motivo de observe-only frente a un apagado seco."""
+        root = make_root(tmp_path, sentinel=True)
+        subprocess.run(
+            [sys.executable, str(HOOK_PATH)],
+            input=self._payload(root).encode("utf-8"),
+            capture_output=True,
+            cwd=str(root),
+            env={**os.environ, "AGENT_VERIFICATION_MODE": "observe"},
+        )
+        log = root / ".agent" / "runtime" / "verification_observations.jsonl"
+        assert log.is_file()
+        record = json.loads(log.read_text(encoding="utf-8").strip())
+        assert record["would_have_blocked"] is True
+        assert record["message_len"] == len(UNMARKED)
+
+    def test_observacion_no_vuelca_el_mensaje(self, tmp_path):
+        """Telemetria SIN contenido de sesion: solo la longitud."""
+        root = make_root(tmp_path, sentinel=True)
+        subprocess.run(
+            [sys.executable, str(HOOK_PATH)],
+            input=self._payload(root).encode("utf-8"),
+            capture_output=True,
+            cwd=str(root),
+            env={**os.environ, "AGENT_VERIFICATION_MODE": "observe"},
+        )
+        log = root / ".agent" / "runtime" / "verification_observations.jsonl"
+        assert UNMARKED not in log.read_text(encoding="utf-8")
+
+    def test_sin_env_si_bloquea(self, tmp_path):
+        """Control negativo: el escape debe ser explicito, no el default."""
+        root = make_root(tmp_path, sentinel=True)
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k
+            not in ("AGENT_VERIFICATION_MODE", "AGENT_DISABLE_VERIFICATION_STOP_HOOK")
+        }
+        proc = subprocess.run(
+            [sys.executable, str(HOOK_PATH)],
+            input=self._payload(root).encode("utf-8"),
+            capture_output=True,
+            cwd=str(root),
+            env=env,
+        )
+        result = json.loads(proc.stdout.decode("utf-8").strip())
+        assert result.get("decision") == "block"
+
+    def test_valor_arbitrario_no_activa_el_escape(self, tmp_path):
+        """`AGENT_VERIFICATION_MODE=on` NO es `observe`: no debe abrir."""
+        root = make_root(tmp_path, sentinel=True)
+        proc = subprocess.run(
+            [sys.executable, str(HOOK_PATH)],
+            input=self._payload(root).encode("utf-8"),
+            capture_output=True,
+            cwd=str(root),
+            env={**os.environ, "AGENT_VERIFICATION_MODE": "on"},
+        )
+        result = json.loads(proc.stdout.decode("utf-8").strip())
+        assert result.get("decision") == "block"
 
 
 class TestGuardReentrada:

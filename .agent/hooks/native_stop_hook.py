@@ -31,7 +31,12 @@ During (proceso)
 3. Si `stop_hook_active` esta ausente o es truthy -> fail-open (guard de reentrada).
 4. PUERTA DE MUTACION: si no HAY PRUEBA de que el repo cambio desde el baseline
    guardado al encender el modo -> fail-open. Un cierre conversacional no debe recibo.
-5. Si el mensaje final NO contiene `[EVIDENCIA]` ni `[HIPOTESIS]` -> `decision: block`.
+5. Si el mensaje final NO contiene `[EVIDENCIA]` ni `[HIPOTESIS]` -> `decision: block`,
+   SALVO que el entorno pida modo observacion (`AGENT_VERIFICATION_MODE=observe` o
+   `AGENT_DISABLE_VERIFICATION_STOP_HOOK=1`), en cuyo caso REGISTRA el bloqueo
+   evitado en `verification_observations.jsonl` y deja pasar. Ese escape existe
+   para no estrenar una barrera bloqueante en un vuelo autonomo, que corre sin
+   humano delante.
 
 El criterio es un SUBSTRING CHECK sobre marcadores declarados, condicionado por un
 hecho ESTRUCTURAL (git HEAD + status). No interpreta prosa, no busca lenguaje causal,
@@ -65,8 +70,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -215,6 +222,49 @@ def needs_classification(payload: dict) -> bool:
     return not any(marker in message for marker in MARKERS)
 
 
+def _observe_only() -> bool:
+    """True si el entorno pide modo observacion (mide, no bloquea).
+
+    Acepta `AGENT_VERIFICATION_MODE=observe` (preferido: dice QUE hace) y
+    `AGENT_DISABLE_VERIFICATION_STOP_HOOK=1` (escotilla de emergencia).
+
+    Motivo (revision adversarial Codex): un vuelo autonomo corre SIN humano
+    delante. Estrenar ahi una barrera bloqueante mezcla la entrega de los
+    tickets con el experimento de un mecanismo nunca ejercitado en vuelo, y
+    `stop_hook_active` -- el guard de reentrada que acotaria un bucle -- NO esta
+    documentado, luego no puede sostener el argumento de autonomia.
+    """
+    if os.environ.get("AGENT_VERIFICATION_MODE", "").strip().lower() == "observe":
+        return True
+    return os.environ.get("AGENT_DISABLE_VERIFICATION_STOP_HOOK", "").strip() == "1"
+
+
+def _record_observation(root: Path, payload: dict) -> None:
+    """Registra un bloqueo EVITADO para poder medir la tasa real.
+
+    Escribe JSONL en `.agent/runtime/verification_observations.jsonl`. Guarda
+    metadatos y la LONGITUD del mensaje, nunca su texto: el hook no debe volcar
+    contenido de sesion a disco.
+
+    Fail-open total: si no se puede escribir, no pasa nada. La observacion es
+    telemetria, no un gate.
+    """
+    try:
+        record = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "session_id": payload.get("session_id"),
+            "cwd": payload.get("cwd"),
+            "message_len": len(payload.get("last_assistant_message") or ""),
+            "would_have_blocked": True,
+        }
+        target = root / ".agent" / "runtime" / "verification_observations.jsonl"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except (OSError, TypeError, ValueError):
+        return
+
+
 def emit(result: dict) -> None:
     """Escribe el veredicto en stdout como JSON y termina con exit 0."""
     print(json.dumps(result))
@@ -259,6 +309,18 @@ def main() -> None:
             return
 
         if needs_classification(payload):
+            # Escape por entorno (WOT-2026-044t): en `observe` la barrera MIDE
+            # pero no bloquea. Existe para que un vuelo autonomo -- sin humano
+            # delante -- no estrene un mecanismo bloqueante en la corrida que
+            # debe salir sola, conservando la medicion de cuantos cierres
+            # habrian sido bloqueados.
+            if _observe_only():
+                _record_observation(root, payload)
+                sys.stderr.write(
+                    "native_stop_hook: OBSERVE -- habria bloqueado; no bloquea.\n"
+                )
+                emit({"continue": True})
+                return
             emit({"decision": "block", "reason": _REASON[:REASON_MAX_LEN]})
             return
     except SystemExit:
