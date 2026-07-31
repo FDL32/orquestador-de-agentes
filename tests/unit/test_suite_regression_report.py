@@ -34,8 +34,17 @@ def _rec(
     errors: int = 0,
     slow: dict[str, float] | None = None,
     sha: str = "abc1234",
+    args_mode: str = "default_discovery",
+    passed: int = 4000,
 ) -> dict:
-    """One run_history record in the REAL measured shape."""
+    """One run_history record in the REAL measured shape.
+
+    WOT-2026-044o: ``args_mode`` defaults to ``default_discovery`` -- the value the
+    runner REALLY writes for an unfiltered run. The previous default was
+    ``"default"``, a value that appears in ZERO of the 498 measured records
+    (the real domain is ``default_discovery`` | ``explicit_args``); an unreal
+    fixture cannot exercise the filter this ticket adds.
+    """
     top = [
         {"seconds": s, "phase": "call", "nodeid": nid}
         for nid, s in (slow or {}).items()
@@ -43,10 +52,10 @@ def _rec(
     return {
         "finished_at": "2026-07-17T00:00:00+00:00",
         "level": level,
-        "args_mode": "default",
+        "args_mode": args_mode,
         "status": status,
         "exit_code": 1 if (failed_count or errors) else 0,
-        "passed": 4000,
+        "passed": passed,
         "skipped": 47,
         "failed_count": failed_count,
         "errors": errors,
@@ -158,3 +167,114 @@ def test_main_always_exits_zero_even_with_warn(tmp_path: Path) -> None:
     """The invariant: WARN present, but the process still exits 0 (never blocks)."""
     hist = _write(tmp_path / "h.jsonl", [*_STABLE, _rec(360.0)])
     assert csr.main(["--history", str(hist)]) == 0
+
+
+# ------------------------------------- WOT-2026-044o: only COMPLETE runs count
+#
+# A run launched with a filter (``-k something``) executes a SUBSET of the suite
+# but is recorded with ``level=all`` just like a complete one. Measured on the
+# real history (498 records, 2026-07-31): ``args_mode`` separates the two
+# populations -- ``default_discovery`` n=304 passed median 4618, vs
+# ``explicit_args`` n=25 passed median 1. Reading "the last level=all row"
+# without that filter can land on a filtered run and declare the suite within
+# budget while it is not.
+#
+# DECLARED LIMIT (measured, not assumed): ``args_mode`` is an IMPERFECT PROXY for
+# "complete". 1 of those 25 ``explicit_args`` rows was actually complete
+# (passed=4396, duration 303.58s) -- an explicit invocation of the whole suite.
+# The filter discards it. The bias is SAFE BY CONSTRUCTION: it drops complete
+# runs, never accepts filtered ones, so it can make the trigger stricter but can
+# NEVER manufacture a false green.
+
+
+def test_filtered_current_run_no_longer_hides_a_regression(tmp_path: Path) -> None:
+    """MUTATION: the exact false green this ticket closes.
+
+    The last ``level=all`` row is a FILTERED run that took 27s. Before the fix the
+    comparison anchored on it and stayed silent (27s < median -> no regression).
+    After the fix that row is not eligible as CURRENT, the last COMPLETE run
+    (353s vs a ~250s median) is, and the regression surfaces.
+
+    The filtered row is the ONLY thing deciding the verdict: remove it and the
+    outcome is identical (see the negative control below).
+    """
+    records = [*_STABLE, _rec(353.0), _rec(27.0, args_mode="explicit_args", passed=1)]
+    hist = _write(tmp_path / "h.jsonl", records)
+    warns, info = csr.analyze(csr._iter_records(hist), window=5, threshold_pct=20.0)
+    assert any("[total]" in w for w in warns), (
+        f"the filtered 27s run still masks the 353s regression; info={info!r}"
+    )
+
+
+def test_filtered_runs_excluded_from_the_median(tmp_path: Path) -> None:
+    """The OTHER end: a filtered run must not pollute the baseline either.
+
+    Both ends of the comparison use the same eligibility rule; filtering only one
+    of them leaves the bug alive through the other half.
+    """
+    noisy = [_rec(5.0, args_mode="explicit_args", passed=1) for _ in range(4)]
+    hist = _write(tmp_path / "h.jsonl", [*_STABLE, *noisy, _rec(360.0)])
+    warns, _info = csr.analyze(csr._iter_records(hist), window=5, threshold_pct=20.0)
+    assert any("[total]" in w for w in warns), (
+        "median got polluted by 5s filtered runs -> 360s no longer looks degraded"
+    )
+
+
+def test_negative_control_all_complete_runs_unchanged(tmp_path: Path) -> None:
+    """NEGATIVE CONTROL: with no filtered rows the filter is the identity.
+
+    Distinguishes "I fixed the selection" from "I changed the computation": on a
+    history where every row is complete, the verdict must be exactly what it was
+    before the ticket -- WARN for a degraded run, silence for a stable one.
+    """
+    degraded = _write(tmp_path / "d.jsonl", [*_STABLE, _rec(360.0)])
+    warns, _info = csr.analyze(
+        csr._iter_records(degraded), window=5, threshold_pct=20.0
+    )
+    assert any("[total]" in w for w in warns)
+
+    stable = _write(tmp_path / "s.jsonl", [*_STABLE, _rec(251.0)])
+    warns, _info = csr.analyze(csr._iter_records(stable), window=5, threshold_pct=20.0)
+    assert not warns
+
+
+def test_no_complete_runs_says_so_instead_of_falling_back(tmp_path: Path) -> None:
+    """FALLBACK: no complete run -> say it, never silently use the old criterion.
+
+    A silent fallback to "last level=all" would reintroduce the very defect this
+    ticket closes, so the absence of eligible data must be NAMED.
+    """
+    only_filtered = [_rec(27.0, args_mode="explicit_args", passed=1) for _ in range(6)]
+    hist = _write(tmp_path / "h.jsonl", only_filtered)
+    warns, info = csr.analyze(csr._iter_records(hist), window=5, threshold_pct=20.0)
+    assert not warns
+    assert "completa" in info.lower(), f"the reason is not named; info={info!r}"
+
+
+def test_report_publishes_its_denominator(tmp_path: Path) -> None:
+    """DENOMINATOR (WOT-2026-043l): say how many rows were compared and dropped.
+
+    A report that does not publish its denominator is indistinguishable from one
+    that looked at nothing.
+    """
+    records = [*_STABLE, _rec(27.0, args_mode="explicit_args", passed=1), _rec(360.0)]
+    hist = _write(tmp_path / "h.jsonl", records)
+    _warns, info = csr.analyze(csr._iter_records(hist), window=5, threshold_pct=20.0)
+    assert "1 filtrada" in info, f"discarded count not published; info={info!r}"
+
+
+def test_close_prompt_states_the_complete_run_criterion() -> None:
+    """The prose reader must not silently keep the old criterion.
+
+    ``prompts/orchestrator_session_close_full_audit.md`` fixes the trigger in
+    prose; if the code filters by ``args_mode`` and the prompt still says "the
+    last level=all row", the next auditor has to rediscover this by measuring.
+    This asserts the prompt NAMES the field -- not semantic parity between prose
+    and code (that has no oracle), just that the prose cannot stay stale unnoticed.
+    """
+    prompt = _ROOT / "prompts" / "orchestrator_session_close_full_audit.md"
+    text = prompt.read_text(encoding="utf-8")
+    assert "args_mode" in text or "default_discovery" in text, (
+        "the close prompt still states the trigger without the complete-run "
+        "criterion (WOT-2026-044o)"
+    )

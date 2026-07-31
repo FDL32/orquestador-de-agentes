@@ -13,9 +13,11 @@ to ``.agent/runtime/pytest-safe/run_history.jsonl`` (counts, ``duration_s``,
 regression (a new slow test, a fixture that got pricier) stays invisible until
 the suite "feels" slow. WOT-2026-021x designed the pilot comparison method.
 
-During: parse the jsonl READ-ONLY, keep only ``level=all`` + ``status=finished``
+During: parse the jsonl READ-ONLY, keep only COMPLETE (``args_mode=
+default_discovery``, WOT-2026-044o) + ``level=all`` + ``status=finished``
 + NOT-failed records that carry a real ``duration_s``, compare the CURRENT (last
-``level=all``) run against the MEDIAN of the previous K comparable runs, and emit
+COMPLETE ``level=all``) run against the MEDIAN of the previous K comparable runs,
+and emit
 a classified WARN if the total duration or a ``top_slowest`` nodeid grew beyond a
 configurable threshold. Corrupt lines, missing fields, ``dry-run`` rows and
 failed runs are SKIPPED, never crash. No write, no mkdir: pure reader.
@@ -94,10 +96,42 @@ def _duration(rec: dict[str, Any]) -> float | None:
     return None
 
 
+def _is_full_run(rec: dict[str, Any]) -> bool:
+    """True if the record is a COMPLETE suite run, not a filtered one (044o).
+
+    A run launched with a filter (``-k something``) executes a SUBSET of the suite
+    but is recorded with ``level=all`` exactly like a complete one, so ``level``
+    alone cannot tell them apart. ``args_mode`` can: the runner writes
+    ``default_discovery`` when invoked with no explicit test arguments and
+    ``explicit_args`` otherwise.
+
+    Measured on the real history (498 records, 2026-07-31): over ``level=all`` +
+    ``finished``, ``default_discovery`` n=304 with a passed median of 4618, versus
+    ``explicit_args`` n=25 with a passed median of 1 -- effectively disjoint
+    populations.
+
+    DECLARED LIMIT, measured rather than assumed: this is an IMPERFECT PROXY.
+    ``args_mode`` means "invoked without explicit arguments", which is not
+    literally "complete": 1 of those 25 ``explicit_args`` rows WAS a complete run
+    (passed=4396, 303.58s) launched explicitly, and this predicate discards it.
+    The bias is SAFE BY CONSTRUCTION -- it drops complete runs, never admits
+    filtered ones -- so it can only make the trigger stricter and can never
+    manufacture a false green. A ``passed > N`` threshold would classify that row
+    correctly but would expire on its own as the suite grows, which this repo
+    forbids; a structural field does not.
+
+    Single source of truth on purpose: BOTH ends of the comparison (the current
+    run and the baseline history) route through this predicate, so they cannot
+    drift apart and re-open the defect through the half nobody filtered.
+    """
+    return rec.get("args_mode") == "default_discovery"
+
+
 def _is_comparable(rec: dict[str, Any]) -> bool:
-    """A record usable as a green baseline: level=all, finished, green, timed."""
+    """A record usable as a green baseline: complete, level=all, finished, green, timed."""
     return (
-        rec.get("level") == "all"
+        _is_full_run(rec)
+        and rec.get("level") == "all"
         and rec.get("status") == "finished"
         and not _is_failed(rec)
         and _duration(rec) is not None
@@ -179,9 +213,21 @@ def analyze(
     WARN lines; ``info`` is a single human line describing what happened. Never
     raises.
     """
-    level_all = [r for r in records if r.get("level") == "all"]
-    if not level_all:
+    # WOT-2026-044o: BOTH ends of the comparison are restricted to COMPLETE runs.
+    # Filtering only the baseline would leave the defect alive through the other
+    # half: the CURRENT run could still be a filtered one whose 27s wall-clock
+    # silently declares the suite within budget.
+    all_level_all = [r for r in records if r.get("level") == "all"]
+    level_all = [r for r in all_level_all if _is_full_run(r)]
+    dropped = len(all_level_all) - len(level_all)
+    if not all_level_all:
         return [], "sin corridas level=all en run_history -> nada que comparar"
+    if not level_all:
+        # NEVER fall back to the unfiltered list: that IS the bug this closes.
+        return [], (
+            f"sin corridas COMPLETAS en run_history ({dropped} filtrada(s) "
+            f"descartada(s)) -> disparador NO VERIFICABLE"
+        )
 
     current = level_all[-1]
     if current.get("status") == "dry-run":
@@ -209,15 +255,20 @@ def analyze(
     warns.extend(_check_nodeids(current, history, threshold_pct))
 
     sha = str(current.get("tested_commit_sha") or "?")[:10]
+    # WOT-2026-043l: publish the denominator. A report that does not say how many
+    # rows it compared and how many it dropped is indistinguishable from one that
+    # looked at nothing.
+    denom = f"{len(history)} corridas completas"
+    if dropped:
+        denom += f", {dropped} filtrada(s) descartada(s)"
     if warns:
         info = (
             f"regresion(es) de rendimiento detectada(s) @ {sha} vs mediana de "
-            f"{len(history)} corridas (umbral {threshold_pct:.0f}%)"
+            f"{denom} (umbral {threshold_pct:.0f}%)"
         )
     else:
         info = (
-            f"sin regresion @ {sha} vs mediana de {len(history)} corridas "
-            f"(umbral {threshold_pct:.0f}%)"
+            f"sin regresion @ {sha} vs mediana de {denom} (umbral {threshold_pct:.0f}%)"
         )
     return warns, info
 

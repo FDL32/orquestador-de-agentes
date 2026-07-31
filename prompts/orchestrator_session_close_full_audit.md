@@ -116,11 +116,12 @@ Ejecuta en este orden y reporta por bloque:
    - Reporta cada punto como VERIFICADO (con el comando) o NO VERIFICADO. Un hardcode en un fichero que VIAJA es bloqueante: contamina a todos los destinos.
 
 3.6 OPTIMIZACION DE SUITE (opcional, solo si la evidencia lo pide). NO es parte del cierre obligatorio: es una capacidad que el cierre PUEDE disparar cuando la telemetria justifica el gasto.
-   - Disparador (MEDIBLE, no "por si acaso"). Umbral CANONICO -- si lo cambias, cambialo AQUI: **duracion de `--level all` > 300 s**. Fuente: `<repo_motor>/.agent/runtime/pytest-safe/run_history.jsonl`, campo `duration_s` de la ultima linea con `"level": "all"` y `"status": "finished"`. Dispara si se cumple CUALQUIERA:
+   - Disparador (MEDIBLE, no "por si acaso"). Umbral CANONICO -- si lo cambias, cambialo AQUI: **duracion de `--level all` > 300 s**. Fuente: `<repo_motor>/.agent/runtime/pytest-safe/run_history.jsonl`, campo `duration_s` de la ultima linea con `"level": "all"`, `"status": "finished"` **y `"args_mode": "default_discovery"`**. Dispara si se cumple CUALQUIERA:
      (a) `duration_s` de esta sesion > 300 s;
-     (b) tendencia: la mediana de `duration_s` de las 5 corridas `level=all` mas recientes supera en >20% la de las 5 anteriores;
-     (c) el mismo `nodeid` aparece en `top_slowest` en >=3 de las 5 ultimas corridas.
+     (b) tendencia: la mediana de `duration_s` de las 5 corridas COMPLETAS mas recientes supera en >20% la de las 5 anteriores;
+     (c) el mismo `nodeid` aparece en `top_slowest` en >=3 de las 5 ultimas corridas COMPLETAS.
      Los tres se computan del MISMO fichero; CITA el numero que obtuviste.
+   - **SOLO CORRIDAS COMPLETAS (WOT-2026-044o).** `level: all` NO basta: una corrida lanzada con filtro (`-k algo`) ejecuta un SUBCONJUNTO y se registra igual con `level: all`. Medido 2026-07-31 sobre 498 corridas reales: `args_mode` separa las poblaciones (`default_discovery` n=304, mediana 4618 passed; `explicit_args` n=25, mediana 1 passed). Tomar "la ultima linea `level: all`" a secas puede caer sobre una corrida filtrada, medir 27 s en vez de 400 s y declarar la suite dentro de presupuesto siendo FALSO -- es el falso verde que este criterio cierra. Si tras filtrar no queda ninguna corrida completa, el disparador es **NO VERIFICABLE**: dilo, no caigas al criterio viejo.
    - OJO ROOT: `run_history.jsonl` vive en `<repo_motor>`; un destino puede no tenerlo (solo `last-run.json`). Si el repo cuya suite auditas no lo tiene, el disparador es **NO VERIFICABLE**: dilo asi, no lo declares "dentro de presupuesto".
    - Si dispara: `prompts/suite_optimization.md` (contract_id cid-suite-optimization-v1). Es RECOLECTOR -> JUEZ: lee `run_history.jsonl` + la tabla de durations; NUNCA optimices desde la intuicion ni desde la atribucion de pytest (TRAMPA-1 del prompt: la atribucion MIENTE con teardown session-scoped).
    - Non-goals que el cierre debe hacer respetar: NUNCA mock-drift, NUNCA relajar asserts, NUNCA tocar barreras git reales. Un piloto exige before/after medido y guard; sin las DOS condiciones duras del PASO 2, no se aplica.
