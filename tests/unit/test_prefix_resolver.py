@@ -477,7 +477,16 @@ def test_discover_motor_root_when_cwd_is_motor(tmp_path: Path) -> None:
     assert discover_motor_root(motor) == motor
 
 
-def test_discover_motor_root_undiscoverable(tmp_path: Path) -> None:
+def test_discover_motor_root_undiscoverable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WOT-2026-045g: a bare tmp_path must be undiscoverable regardless of the
+    process environment. discover_motor_root's third path consults
+    AGENT_PROJECT_ROOT; the canonical suite runs with that variable exported
+    (run_pytest_safe.py is invoked with it), so without isolation this test
+    returns the real motor and goes red for whoever measures the motor the
+    documented way. delenv isolates the test, not the resolver."""
+    monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
     bare = tmp_path / "bare"
     bare.mkdir()
     assert discover_motor_root(bare) is None
