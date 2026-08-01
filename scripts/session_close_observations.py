@@ -25,6 +25,7 @@ _MOTOR_ROOT_BOOTSTRAP = Path(__file__).resolve().parent.parent
 if str(_MOTOR_ROOT_BOOTSTRAP) not in sys.path:
     sys.path.insert(0, str(_MOTOR_ROOT_BOOTSTRAP))
 
+from bus import observation_domains  # noqa: E402  # origen: LEA-2026-002o
 from bus.redact import redact  # noqa: E402
 
 
@@ -47,18 +48,9 @@ REPORT_FILE = MEMORY_DIR / "session_close_report.md"
 # Valid categories per work_plan.md (legacy)
 VALID_CATEGORIES = {"convention", "decision", "fact", "pattern"}
 
-# Canonical domains per ap-schema.md
-VALID_DOMAINS = {
-    "security-gates",
-    "integration-tests",
-    "protocol-handlers",
-    "bus-architecture",
-    "review-quality",
-    "config-schema",
-    "testing",
-    "delivery-hygiene",
-    "builder-contract",
-}
+# Canonical domains per ap-schema.md.
+# canonical source bus/observation_domains.py (re-exported here).
+VALID_DOMAINS: frozenset[str] = observation_domains.VALID_DOMAINS
 
 # Valid impact values
 VALID_IMPACTS = {"low", "medium", "high"}

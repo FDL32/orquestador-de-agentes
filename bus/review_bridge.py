@@ -9,11 +9,13 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
 from . import (
+    observation_domains,
     opencode_transport,
     review_observations,
     review_packet,
@@ -75,8 +77,9 @@ MAX_OBSERVATION_SIGNAL_CHARS = review_observations.MAX_OBSERVATION_SIGNAL_CHARS
 _UNSUPPORTED_JSON_FLAG_PATTERNS = opencode_transport.UNSUPPORTED_JSON_FLAG_PATTERNS
 
 # Domain-to-deliverable_type relevance mapping (WP-2026-177).
-# Canonical source: bus/review_observations.py (re-exported here).
-DOMAIN_DTYPE_MAP: dict[str, set[str]] = review_observations.DOMAIN_DTYPE_MAP
+# Canonical source: bus/observation_domains.py, encadenado via
+# bus/review_observations.py (re-exported here). origen: LEA-2026-002o.
+DOMAIN_DTYPE_MAP: Mapping[str, frozenset[str]] = review_observations.DOMAIN_DTYPE_MAP
 
 
 # ReviewDecision is defined in bus.decision_parser (WT-2026-255a).
@@ -163,8 +166,15 @@ class TicketStateIngest:
             value = match.group(1).strip().lower()
             if "+" in value:
                 return "mixed"
-            valid_types = {"code", "documentation", "research", "analysis", "mixed"}
-            return value if value in valid_types else "code"
+            # canonical source bus/observation_domains.py. Este
+            # literal era el vocabulario contra el que se contrastan los
+            # `deliverable_types` de cada dominio; duplicarlo aqui dejaba el
+            # mismo agujero un nivel mas abajo.
+            return (
+                value
+                if value in observation_domains.VALID_DELIVERABLE_TYPES
+                else "code"
+            )
         except Exception:
             return "code"
 

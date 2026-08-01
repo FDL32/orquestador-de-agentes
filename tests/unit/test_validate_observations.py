@@ -189,17 +189,19 @@ class TestValidateDomain:
     """Tests para validacion de domain (enum)."""
 
     def test_valid_values(self):
-        """Valores validos de domain."""
-        valid_domains = {
-            "security-gates",
-            "integration-tests",
-            "protocol-handlers",
-            "bus-architecture",
-            "review-quality",
-            "config-schema",
-            "testing",
-        }
-        for value in valid_domains:
+        """Valores validos de domain.
+
+        esta lista estaba escrita a mano y llevaba tiempo
+        DESINCRONIZADA -- enumeraba 7 de los 9 dominios (le faltaban
+        `delivery-hygiene` y `builder-contract`), asi que pasaba en verde sin
+        cubrir el enum real. Ahora se deriva de la fuente unica; la barrera
+        estatica de tests/unit/test_observation_domains.py impide reintroducir
+        una copia literal.
+        """
+        from bus.observation_domains import VALID_DOMAINS
+
+        assert VALID_DOMAINS, "el enum no puede estar vacio"
+        for value in VALID_DOMAINS:
             assert validate_domain(value) is None, f"{value} deberia ser valido"
 
     def test_invalid_not_string(self):

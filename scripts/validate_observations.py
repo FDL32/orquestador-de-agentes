@@ -36,19 +36,31 @@ from pathlib import Path
 from typing import Any
 
 
-# Valores permitidos para campos enum
+# Bootstrap repo_motor before importing sibling packages when executed by
+# absolute path with cwd pointing at repo_destino.
+#
+# este modulo NO tenia bootstrap porque hasta ahora solo usaba
+# stdlib. Al importar `bus.observation_domains` pasa a necesitarlo: la ruta
+# fail-closed de `scripts/reconcile_portable_memory.py` invoca este fichero por
+# RUTA ABSOLUTA del motor con el cwd apuntando al destino, y sin esto el import
+# fallaria justo en la barrera que protege la memoria portable.
+_MOTOR_ROOT_BOOTSTRAP = Path(__file__).resolve().parent.parent
+if str(_MOTOR_ROOT_BOOTSTRAP) not in sys.path:
+    sys.path.insert(0, str(_MOTOR_ROOT_BOOTSTRAP))
+
+from bus.observation_domains import VALID_DOMAINS  # noqa: E402
+
+
+# Valores permitidos para campos enum.
+#
+# OJO: `applies_to` y `deliverable_type` son vocabularios DISTINTOS. Este dice
+# "docs"; el del work plan dice "documentation" y ademas tiene
+# "research"/"analysis". No los unifiques: ver bus/observation_domains.py.
 VALID_APPLIES_TO = {"code", "mixed", "docs", "all"}
-VALID_DOMAINS = {
-    "security-gates",
-    "integration-tests",
-    "protocol-handlers",
-    "bus-architecture",
-    "review-quality",
-    "config-schema",
-    "testing",
-    "delivery-hygiene",
-    "builder-contract",
-}
+
+# `VALID_DOMAINS` se importa de bus/observation_domains.py (fuente unica,
+# origen: LEA-2026-002o). Era un literal duplicado en tres scripts, y ninguno estaba
+# atado al enrutado de bus/review_observations.py.
 VALID_IMPACTS = {"low", "medium", "high"}
 VALID_CATEGORIES = {"convention", "decision", "fact", "pattern"}
 

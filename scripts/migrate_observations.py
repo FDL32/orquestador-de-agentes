@@ -44,24 +44,17 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+from bus import observation_domains  # noqa: E402  # origen: LEA-2026-002o
 from bus.ticket_id import TICKET_ID_PATTERN  # noqa: E402  # WT-2026-251a
 from runtime.project_root import get_agent_dir  # noqa: E402
 
 
 # --- Constants ---
 
-# Valid domains (must match validate_observations.py VALID_DOMAINS)
-VALID_DOMAINS: set[str] = {
-    "security-gates",
-    "integration-tests",
-    "protocol-handlers",
-    "bus-architecture",
-    "review-quality",
-    "config-schema",
-    "testing",
-    "delivery-hygiene",
-    "builder-contract",
-}
+# canonical source bus/observation_domains.py (re-exported here).
+# El comentario anterior decia "must match validate_observations.py": una copia
+# que sabia que era copia y confiaba en que alguien la mantuviera a mano.
+VALID_DOMAINS: frozenset[str] = observation_domains.VALID_DOMAINS
 
 # Domain mapping for domains that exist in data but are not in VALID_DOMAINS.
 # Key: actual domain value found in observations.jsonl.

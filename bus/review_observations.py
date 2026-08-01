@@ -18,29 +18,25 @@ from __future__ import annotations
 import json
 import re
 import warnings
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import observation_domains
 from .memory_loader import get_review_context
 
 
 MAX_RUBRIC_OBSERVATIONS = 5
 MAX_OBSERVATION_SIGNAL_CHARS = 200
 
-# Domain-to-deliverable_type relevance mapping (WP-2026-177)
+# Domain-to-deliverable_type relevance mapping (WP-2026-177).
 # Maps each domain to the set of deliverable_types it applies to.
 # Canonical entries use 'domain'; legacy entries use topic='manager-review-rubric'.
-DOMAIN_DTYPE_MAP: dict[str, set[str]] = {
-    "review-quality": {"code", "mixed", "documentation", "research", "analysis"},
-    "delivery-hygiene": {"code", "mixed"},
-    "builder-contract": {"code", "mixed"},
-    "testing": {"code", "mixed"},
-    "security-gates": {"code", "mixed"},
-    "integration-tests": {"code", "mixed"},
-    "protocol-handlers": {"code", "mixed"},
-    "bus-architecture": {"code", "mixed"},
-    "config-schema": {"code", "mixed"},
-}
+#
+# Canonical source bus/observation_domains.py (re-exported here).
+# Era un literal que podia desincronizarse de VALID_DOMAINS sin que nada lo
+# notara; ahora ambos se derivan de DOMAIN_SPECS.
+DOMAIN_DTYPE_MAP: Mapping[str, frozenset[str]] = observation_domains.DOMAIN_DTYPE_MAP
 
 
 # ---------------------------------------------------------------------------

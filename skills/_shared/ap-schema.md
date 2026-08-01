@@ -27,7 +27,7 @@ Plantilla compartida para registrar anti-patrones de forma consistente entre Bui
   "topic": "kebab-del-patron",
   "signal": "Que fallo exactamente y que regla se deriva",
   "source": "human_audit_WOT-XXXX | session-YYYY-MM-DD",
-  "domain": "security-gates | integration-tests | protocol-handlers | bus-architecture | review-quality | config-schema | testing | delivery-hygiene | builder-contract",
+  "domain": "ver tabla 'Dominios canonicos' mas abajo",
   "applies_to": "code | mixed | docs | all",
   "confidence": 0.95,
   "impact": "low | medium | high",
@@ -43,7 +43,7 @@ Plantilla compartida para registrar anti-patrones de forma consistente entre Bui
 - `topic` (string): identificador kebab-case del patron o hallazgo.
 - `signal` (string): descripcion clara de que fallo y que regla se deriva.
 - `source` (string): origen de la observacion (`human_audit_WOT-XXXX`, `session-YYYY-MM-DD`, etc.).
-- `domain` (string): categoria estable del dominio (ver valores permitidos arriba).
+- `domain` (string): categoria estable del dominio (ver "Dominios canonicos").
 - `applies_to` (string): donde impacta la observacion (`code`, `mixed`, `docs`, `all`).
 - `confidence` (float): valor entre `0.0` y `1.0` que indica certeza del hallazgo.
 - `source_ticket` (string): ticket que genero la observacion.
@@ -64,10 +64,41 @@ Plantilla compartida para registrar anti-patrones de forma consistente entre Bui
 
 - `confidence` debe estar en el rango `[0.0, 1.0]`.
 - `applies_to` debe ser uno de: `code`, `mixed`, `docs`, `all`.
-- `domain` debe elegir un valor util y estable de la lista anterior.
+- `domain` debe ser uno de los de la tabla "Dominios canonicos" (abajo), elegido
+  por su criterio de exclusion, no por parecido tematico.
 - `anti_pattern_id` solo puede usarse si el ID ya existe en `anti-patterns.md`.
 - **Orden obligatorio**: primero se escribe en `anti-patterns.md`; luego se propaga a `code-rules.md`, `review-checklist.md` y `observations.jsonl`.
 - Cada AP nuevo debe tener las cuatro superficies alineadas.
+
+## Dominios canonicos
+
+Fuente unica: `bus/observation_domains.py` (`DOMAIN_SPECS`). Esta tabla se
+verifica contra ese modulo en `tests/unit/test_observation_domains.py`: si
+anades un dominio en el codigo y no aqui (o al reves), el test falla.
+
+`deliverable_types` NO es decorativo: es el ENRUTADO. Determina en que manager
+reviews se recupera la observacion. Un dominio que valida pero no enruta produce
+memoria que nadie lee jamas (origen: LEA-2026-002o).
+
+OJO: `deliverable_types` usa el vocabulario del work plan
+(`code|documentation|research|analysis|mixed`), que NO es el de `applies_to`
+(`code|mixed|docs|all`). Son enums distintos: uno dice `docs`, el otro
+`documentation`.
+
+| dominio | criterio (excluyente) | deliverable_types |
+| --- | --- | --- |
+| `security-gates` | Barrera de seguridad o permisos cuyo fallo ABRE acceso. Frente a `testing`: el dano es exposicion, no falso verde. | `code, mixed` |
+| `integration-tests` | Fallo que solo aparece al combinar componentes reales. Frente a `testing`: la unidad pasaba; el defecto vive en la juntura. | `code, mixed` |
+| `protocol-handlers` | Forma exacta del mensaje que viaja entre agentes o herramientas (claves, anidamiento). Frente a `config-schema`: el dato circula, no se persiste. | `code, mixed` |
+| `bus-architecture` | Topologia y estado operativo del PROPIO bus: terminacion, recuperacion, autoridad de lectura. Frente a `cross-phase-state`: el objeto es el bus, no un dato de dominio que lo atraviesa. | `code, mixed` |
+| `review-quality` | Criterios de evidencia y decision del Manager al revisar una entrega. Frente a `builder-contract`: es el lado que juzga, no el que produce. | `code, documentation, research, analysis, mixed` |
+| `config-schema` | Forma y acceso seguro a configuracion persistida o parseada. Frente a `protocol-handlers`: el dato se guarda y se relee, no se envia. | `code, mixed` |
+| `testing` | El test como instrumento: cobertura, ortogonalidad, falso verde. Frente a `contract-fixtures`: el hallazgo agota UNA superficie. | `code, mixed` |
+| `delivery-hygiene` | Que se commitea, donde, con que nombre, y si el cierre esta completo. Frente a `review-quality`: es mecanica de entrega, no juicio sobre el contenido. | `code, mixed` |
+| `builder-contract` | Obligaciones del Builder al implementar: alcance, evidencia, no exceder el ticket. Frente a `review-quality`: es el lado que produce, no el que juzga. | `code, mixed` |
+| `contract-fixtures` | Elevar una identidad compartida a fixture transversal cuando el mismo fallo aparece por TERCERA vez. Frente a `testing`: el hallazgo es la reincidencia a traves de superficies, y la accion es crear la fixture comun, no arreglar el test que fallo. | `code, mixed` |
+| `warning-contracts` | Avisos contrastados contra un historico: excluir la ejecucion en curso, distinguir reintento de repeticion. Frente a `review-quality`: el objeto es el aviso que emite una herramienta y su ventana de comparacion, no la evidencia de una revision. | `code, mixed` |
+| `cross-phase-state` | Estado persistido entre fases: procedencia, vigencia, invalidacion, relectura. Frente a `bus-architecture`: el objeto es un dato de dominio que sobrevive a la fase que lo escribio y que otra fase relee, no la topologia del bus. | `code, mixed` |
 
 ## Ejemplo minimo (canonico)
 
