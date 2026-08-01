@@ -119,6 +119,15 @@ EVENTS_REL = Path(".agent") / "runtime" / "events" / "events.jsonl"
 
 WORK_PLAN_REL = Path(".agent") / "collaboration" / "work_plan.md"
 
+LOOP_EXECUTION_TARGETS_REL = (
+    Path(".agent") / "collaboration" / "loop_execution_targets.txt"
+)
+
+BACKLOG_REL = Path(".agent") / "collaboration" / "backlog.md"
+BACKLOG_ARCHIVE_REL = Path(".agent") / "collaboration" / "_archive" / "backlog_done.md"
+
+DELIVERABLE_TYPE_RE = re.compile(r"deliverable_type:\s*([^\s|]+)")
+
 SCRIPTS_DIR = "scripts"
 
 TICKET_RE = re.compile(TICKET_ID_PATTERN)
@@ -683,6 +692,198 @@ def _step_git_clean(project_root: Path, dry_run: bool) -> StepResult:
     )
 
 
+def _resolve_deliverable_type_for_ticket(project_root: Path, ticket_id: str) -> str:
+    """Resolve the ``deliverable_type`` declared for ``ticket_id`` in the backlog.
+
+    WOT-2026-045a. `_resolve_tickets` only returns ticket IDs, not their
+    metadata, so the writer must go look the type up itself.
+
+    Before: ``project_root`` is the repo_destino; ``ticket_id`` is a resolved
+        ticket string.
+    During: Searches for a row containing ``ticket_id`` first in the live
+        backlog (`.agent/collaboration/backlog.md`), then in the archive
+        (`_archive/backlog_done.md`). Within the matching row, extracts the
+        literal ``deliverable_type: <value>`` cell text with
+        ``DELIVERABLE_TYPE_RE``. Values are NEVER normalized (e.g. `doc` or
+        `process` are emitted verbatim): deciding taxonomy is a DEC, not
+        Builder work.
+    After: Returns the raw string value found. Falls back to `"code"` (the
+        ticket's own declared type and the strictest alongside `mixed`) when
+        the ticket has no row in either file, the row has no
+        `deliverable_type:` cell, or the file cannot be read. Never raises.
+    """
+    for rel in (BACKLOG_REL, BACKLOG_ARCHIVE_REL):
+        path = project_root / rel
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for line in content.splitlines():
+            if ticket_id not in line:
+                continue
+            m = DELIVERABLE_TYPE_RE.search(line)
+            if m:
+                return m.group(1)
+    # No row found in either surface, or the row lacked the cell: fall back
+    # to "code" (documented default per contract WOT-2026-045a).
+    return "code"
+
+
+def _git_log_shas_for_ticket(
+    motor_root: Path, ticket_id: str, since_args: list[str]
+) -> tuple[list[str] | None, str]:
+    """Run `git log --grep=<ticket_id>` and return matching shas.
+
+    WOT-2026-045a. Extracted so the caller stays under complexity budget.
+
+    Before: ``motor_root`` is a resolvable git repo root; ``since_args`` is
+        `["--since=<ISO>"]` or `[]` (open window).
+    During: `subprocess.run(["git", "log", "--format=%H",
+        f"--grep={ticket_id}", "--fixed-strings", *since_args],
+        cwd=motor_root)`, never reading `$?` after a pipe.
+    After: Returns `(shas, "")` on success (possibly an empty list when no
+        commit matches). Returns `(None, detail)` on any git failure (OSError
+        or non-zero returncode), where `detail` explains the failure.
+    """
+    cmd = [
+        "git",
+        "log",
+        "--format=%H",
+        f"--grep={ticket_id}",
+        "--fixed-strings",
+        *since_args,
+    ]
+    try:
+        result = subprocess.run(  # noqa: S603
+            cmd,
+            cwd=motor_root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+    except OSError as exc:
+        return None, f"git log failed for {ticket_id}: {exc}"
+    if result.returncode != 0:
+        return None, (
+            f"git log rc={result.returncode} for {ticket_id}: {result.stderr.strip()}"
+        )
+    return [s for s in result.stdout.splitlines() if s.strip()], ""
+
+
+def _step_write_loop_execution_targets(
+    project_root: Path,
+    ticket_ids: list[str],
+    window_start: datetime | None,
+    dry_run: bool,
+) -> StepResult:
+    """Write `.agent/collaboration/loop_execution_targets.txt` self-running.
+
+    WOT-2026-045a. Closes the productor gap: today nobody writes this file by
+    code, so `check_loop_execution` (via `prepush_check.py:848`) always sees
+    either a hand-maintained file or none, and a flight that ran and one that
+    did not produce the identical SKIP observable. This writer derives the
+    file from the SAME ticket resolution the closeout already trusts
+    (`_resolve_tickets`), so the scope is never self-declared by a human.
+
+    Before: ``project_root`` is the repo_destino; ``ticket_ids`` is the
+        resolved list from `_resolve_tickets` (called immediately before this
+        step in `run_closeout`); ``window_start`` is the flight window from
+        `_resolve_session_window` (called one line earlier still); ``dry_run``
+        mirrors the flag every other mutating step in this module receives
+        (`_step_cleanup_builder_session`, `_step_git_clean`, the `_step_archive_*`
+        family, ...).
+    During: WOT-2026-045a review (defecto 2): when ``dry_run`` is True, this
+        step performs NO filesystem I/O at all -- it does not run `git log`
+        and does not touch the targets file, matching the module's unanimous
+        pattern (every other mutating step short-circuits to SKIP before any
+        write) and the module docstring's promise (`:26`) that `git status
+        --short` stays clean after `--dry-run`. Otherwise, for each ticket,
+        runs `git log --format=%H --grep=<ticket_id> --fixed-strings` (plus
+        `--since=<window_start ISO>` when the window is known) with
+        `cwd=<motor_root>` via `subprocess.run` (never `$?` after a pipe).
+        Every matching commit produces one line, unbounded, in git's own
+        order. Resolves `deliverable_type` per ticket via
+        `_resolve_deliverable_type_for_ticket`. If `motor_root` cannot be
+        resolved (`runtime.motor_link` unavailable or no link), the step is a
+        no-op SKIP: git log has no root to run against.
+    After: In dry-run, always returns SKIP with detail "Skipped in dry-run
+        mode" and the file is left untouched (created, deleted, or absent --
+        whatever state it was already in). Otherwise: if at least one commit
+        line was produced, writes the whole file (never appends) with one
+        `<sha> <deliverable_type>` line per commit and returns PASS. If zero
+        tickets or zero matching commits exist, deletes the file if present
+        (so the consumer's `if not targets_file.exists()` branch fires) and
+        returns PASS with a "nothing to declare" detail. Never raises: git
+        failures degrade to SKIP with the stderr detail recorded.
+    """
+    name = "write_loop_execution_targets"
+    if dry_run:
+        return StepResult(
+            name=name,
+            status="SKIP",
+            detail="Skipped in dry-run mode",
+        )
+    targets_path = project_root / LOOP_EXECUTION_TARGETS_REL
+
+    try:
+        from runtime.motor_link import resolve_motor_root
+    except ImportError:
+        return StepResult(
+            name=name,
+            status="SKIP",
+            detail="runtime.motor_link not available; writer skipped",
+        )
+
+    motor_root = resolve_motor_root(project_root)
+    if motor_root is None:
+        return StepResult(
+            name=name,
+            status="SKIP",
+            detail="motor_root not resolvable; writer skipped",
+        )
+
+    since_args: list[str] = []
+    window_detail = "no window filter (None: this flight's window is open)"
+    if window_start is not None:
+        since_iso = window_start.strftime("%Y-%m-%dT%H:%M:%S")
+        since_args = [f"--since={since_iso}"]
+        window_detail = f"--since={since_iso}"
+
+    lines: list[str] = []
+    for ticket_id in ticket_ids:
+        shas, error_detail = _git_log_shas_for_ticket(motor_root, ticket_id, since_args)
+        if shas is None:
+            return StepResult(name=name, status="SKIP", detail=error_detail)
+        if not shas:
+            continue
+        dtype = _resolve_deliverable_type_for_ticket(project_root, ticket_id)
+        lines.extend(f"{sha} {dtype}" for sha in shas)
+
+    if not lines:
+        if targets_path.exists():
+            targets_path.unlink()
+        return StepResult(
+            name=name,
+            status="PASS",
+            detail=(
+                f"nothing to declare (tickets={ticket_ids or 'none'}, "
+                f"window={window_detail}); file removed if present"
+            ),
+        )
+
+    targets_path.parent.mkdir(parents=True, exist_ok=True)
+    targets_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return StepResult(
+        name=name,
+        status="PASS",
+        detail=(
+            f"wrote {len(lines)} commit line(s) for {len(ticket_ids)} "
+            f"ticket(s); window={window_detail}"
+        ),
+    )
+
+
 def run_closeout(
     project_root: Path,
     dry_run: bool = False,
@@ -710,6 +911,11 @@ def run_closeout(
             name="resolve_tickets",
             status="PASS" if ticket_ids else "WARN",
             detail=f"Source: {ticket_src}. Tickets: {ticket_ids or 'none'}",
+        )
+    )
+    report.steps.append(
+        _step_write_loop_execution_targets(
+            project_root, ticket_ids, _window_start, dry_run
         )
     )
     prepush = _step_prepush_check(project_root, dry_run, skip_gates=skip_gates)
