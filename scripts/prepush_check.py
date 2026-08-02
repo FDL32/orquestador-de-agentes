@@ -62,12 +62,24 @@ if str(_MOTOR_ROOT) not in sys.path:
 
 
 class CheckResult(NamedTuple):
-    """Resultado de un check individual."""
+    """Resultado de un check individual.
+
+    `skipped` distingue "paso porque se ejecuto y valido" de "paso porque no
+    habia nada que validar". Los dos llevan `passed=True` y el informe de
+    cierre los mostraba identicos (`[OK] <nombre>`), asi que un gate saltado
+    era indistinguible de uno cumplido -- incluido en gates BLOQUEANTES.
+
+    Es un campo y no una convencion de texto a proposito: detectarlo con
+    `output.startswith("SKIP")` dejaba fuera los saltos redactados de otra
+    forma ("No backlog.md at ... (skipped)") y dependia de mayusculas y del
+    idioma del mensaje (bucle L700, lentes Codex y GLM-5.2, 2026-08-02).
+    """
 
     name: str
     passed: bool
     output: str
     is_blocking: bool = True
+    skipped: bool = False
 
 
 def _configure_stdio() -> None:
@@ -287,6 +299,7 @@ def run_ruff_format_check(project_root: Path) -> CheckResult:
                 "justifica."
             ),
             is_blocking=True,
+            skipped=True,
         )
     return run_subprocess_check(
         cmd=["uv", "run", "ruff", "format", "--check", "."],
@@ -463,6 +476,7 @@ def run_backlog_contract_check(project_root: Path) -> CheckResult:
             passed=True,
             output=f"No backlog.md at {backlog} (skipped)",
             is_blocking=True,
+            skipped=True,
         )
     try:
         from scripts.check_backlog_contract import (
@@ -547,6 +561,7 @@ def run_contract_formation_check(project_root: Path) -> CheckResult:
             passed=True,
             output="motor CF triple not materialized (skipped)",
             is_blocking=True,
+            skipped=True,
         )
     try:
         from scripts.validate_contract_formation import main as validate_cf_main
@@ -1526,6 +1541,33 @@ def run_preflight_check(
     print("=" * 60)
     print()
 
+    blocking_failed = _print_preflight_report(results)
+
+    _print_preflight_verdict(blocking_failed, skip_gates)
+
+    if skip_gates:
+        return 0
+    return 0 if not blocking_failed else 1
+
+
+def _print_preflight_report(results: list[CheckResult]) -> bool:
+    """Print one line per check and return whether a blocking check failed.
+
+    Before: `results` es la secuencia de checks ya ejecutados.
+    During: imprime `[OK]`/`[FAIL]` por check. Imprime el `output` cuando el
+        check FALLA (diagnostico) y tambien cuando PASO SIN EJECUTARSE
+        (procedencia del SKIP).
+    After: devuelve True si algun check bloqueante fallo. No muta nada.
+
+    Por que un SKIP tiene que imprimirse aunque `passed` sea True: un gate que
+    no se ha ejecutado NO es un gate que corrio y paso, y el informe es lo
+    unico que lee un humano al cerrar. La condicion original era
+    `if not result.passed and result.output`, asi que el SKIP de
+    `run_ruff_format_check` -- que sale con `passed=True` y lleva su
+    procedencia en `output` -- se presentaba como `[OK] Ruff Format Check` a
+    secas. El test de aquel SKIP verificaba el `CheckResult`, no el informe, y
+    por eso no lo cazo (bucle L700, lente Codex, 2026-08-02).
+    """
     blocking_failed = False
 
     for result in results:
@@ -1533,7 +1575,16 @@ def run_preflight_check(
         blocking_marker = "" if result.is_blocking else " (informacional)"
         print(f"{status} {result.name}{blocking_marker}")
 
-        if not result.passed and result.output:
+        # Un salto pasa pero NO se ejecuto: su motivo es tan necesario como el
+        # diagnostico de un fallo. Se lee del CAMPO, no del texto: la version
+        # anterior miraba `output.startswith("SKIP")` y ocultaba los saltos
+        # redactados de otra forma, incluidos dos BLOQUEANTES.
+        is_skip = result.passed and (
+            result.skipped or result.output.strip().startswith("SKIP")
+        )
+        if is_skip:
+            print("      (SKIP: este gate no se ha ejecutado)")
+        if result.output and (not result.passed or is_skip):
             # Mostrar solo las primeras lineas del output si hay error
             lines = result.output.strip().split("\n")
             for line in lines[:10]:  # Mostrar max 10 lineas
@@ -1546,11 +1597,7 @@ def run_preflight_check(
 
         print()
 
-    _print_preflight_verdict(blocking_failed, skip_gates)
-
-    if skip_gates:
-        return 0
-    return 0 if not blocking_failed else 1
+    return blocking_failed
 
 
 def _print_preflight_verdict(blocking_failed: bool, skip_gates: bool) -> None:

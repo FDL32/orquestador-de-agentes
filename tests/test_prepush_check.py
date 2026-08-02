@@ -17,9 +17,11 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from scripts.prepush_check import (
     CheckResult,
     _format_check_optout,
+    _print_preflight_report,
     run_agent_controller_validate,
     run_delivery_hygiene_check,
     run_git_status_check,
@@ -176,9 +178,17 @@ class TestRuffFormatOptOut:
             Ignored path via `extend-exclude`: <motor>/tests/sandbox
         Ese rc=0 es indistinguible de un opt-out que funciona, de modo que
         sin este control positivo los tests de abajo pasarian sin ejercitar
-        nada. El probe usa `--isolated` por el mismo motivo por el que lo usa
-        el gate: para que el veredicto dependa del fixture y no de la config
-        del repo que lo hospeda.
+        nada.
+
+        LIMITE DECLARADO (cazado por la lente Codex del bucle L700): este
+        probe usa `--isolated` y el gate real NO -- corre `uv run ruff format
+        --check .`, sin aislar. NO son la misma ruta. Lo que el control
+        positivo prueba es que el fixture esta REALMENTE sucio, o sea que un
+        rc=0 posterior no puede atribuirse a un arbol limpio; no prueba que el
+        gate mida igual. Esa segunda mitad la cubre el assert de
+        "Would reformat" del test negativo, que exige que ruff HAYA LEIDO el
+        fichero. Una version anterior de este docstring afirmaba que el gate
+        usaba `--isolated`: era falso.
         """
         (root / "sample.py").write_text(
             "x = {'a':1,   'b':2}\ndef f( a ,b ):\n  return a+b\n",
@@ -277,6 +287,111 @@ class TestRuffFormatOptOut:
 
         assert result.passed is True
         assert "pyproject.toml" in result.output
+
+    def test_el_skip_es_visible_en_el_informe_de_cierre(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """La procedencia del SKIP debe llegar al INFORME, no solo al objeto.
+
+        Cazado por la lente Codex del bucle L700 (2026-08-02) y confirmado en
+        el codigo: el reporter imprime `result.output` bajo la condicion
+        `if not result.passed and result.output`. Como el SKIP sale con
+        `passed=True`, su procedencia MUERE ahi y un lector del cierre ve
+
+            [OK] Ruff Format Check
+
+        indistinguible de "ruff format corrio y paso". Es el mismo defecto que
+        `test_optout_declarado_convierte_el_fallo_en_skip` creia estar
+        pineando: aquel afirma sobre el `CheckResult`, no sobre el artefacto
+        que lee un humano. Verificar el objeto y creer haber verificado el
+        informe es la version de "medir tu parser y creer haber medido la ruta
+        productiva".
+        """
+        results = [
+            CheckResult(
+                name="Ruff Format Check",
+                passed=True,
+                output=(
+                    "SKIP: el proyecto declina `ruff format` en pyproject.toml "
+                    "([tool.motor] format-check = false)."
+                ),
+                is_blocking=True,
+            )
+        ]
+        _print_preflight_report(results)
+        printed = capsys.readouterr().out
+
+        assert "Ruff Format Check" in printed
+        assert "SKIP" in printed, (
+            "un gate que NO se ejecuto no puede presentarse como [OK] a secas: "
+            f"el informe fue {printed!r}"
+        )
+        assert "pyproject.toml" in printed, (
+            "la procedencia debe llegar al informe; sin ella el lector no "
+            "puede distinguir un gate saltado de un gate que corrio y paso"
+        )
+
+    def test_un_salto_sin_la_palabra_skip_tambien_es_visible(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """El salto se marca en el DATO, no se adivina del texto.
+
+        Cazado por la lente GLM-5.2 del bucle L700 (2026-08-02), que refuto la
+        correccion anterior: detectar el salto con
+        `output.startswith("SKIP")` cierra UNA INSTANCIA y deja viva la CLASE.
+        Medido en el propio fichero, hay al menos dos gates BLOQUEANTES que
+        pasan sin ejecutarse y cuyo texto NO empieza por "SKIP":
+
+            :461  "No backlog.md at <ruta> (skipped)"
+            :545  "motor CF triple not materialized (skipped)"
+
+        Un cierre en un destino sin `backlog.md` imprimia
+        `[OK] Backlog Contract Check`, indistinguible de "corrio y valido".
+        Ademas el criterio por prefijo es fragil por naturaleza: sensible a
+        mayusculas y al idioma del mensaje.
+
+        Por eso `CheckResult` lleva ahora un campo `skipped` explicito y el
+        reporter lo lee a el. El texto puede decir lo que quiera.
+        """
+        results = [
+            CheckResult(
+                name="Backlog Contract Check",
+                passed=True,
+                output="No backlog.md at /x (skipped)",
+                is_blocking=True,
+                skipped=True,
+            )
+        ]
+        _print_preflight_report(results)
+        printed = capsys.readouterr().out
+
+        assert "No backlog.md" in printed, (
+            "un gate que no se ejecuto debe mostrar su motivo aunque su texto "
+            f"no empiece por SKIP. Informe: {printed!r}"
+        )
+        assert "[OK]" not in printed.split("\n")[0] or "SKIP" in printed, (
+            "un salto no puede presentarse como un [OK] pelado"
+        )
+
+    def test_un_check_que_paso_de_verdad_no_se_marca_como_salto(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Mutacion inversa: un check ejecutado y verde NO debe verse saltado."""
+        results = [
+            CheckResult(
+                name="Ruff Check",
+                passed=True,
+                output="All checks passed!",
+                is_blocking=True,
+            )
+        ]
+        _print_preflight_report(results)
+        printed = capsys.readouterr().out
+
+        assert "[OK] Ruff Check" in printed
+        assert "SKIP" not in printed, (
+            "marcar como salto un check que SI corrio invierte el defecto"
+        )
 
     def test_ruff_toml_no_es_sitio_valido_para_el_optout(self, tmp_path: Path) -> None:
         """`ruff.toml` NO puede alojar la declaracion: ruff rechaza el fichero.
