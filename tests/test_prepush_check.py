@@ -393,6 +393,79 @@ class TestRuffFormatOptOut:
             "marcar como salto un check que SI corrio invierte el defecto"
         )
 
+    def test_el_discriminante_es_contrato_publico_y_no_puede_renombrarse(
+        self, tmp_path: Path
+    ) -> None:
+        """El nombre exacto de la clave es CONTRATO con los destinos.
+
+        Un destino declina `ruff format` escribiendo, en SU propio
+        `pyproject.toml`, exactamente estas tres cosas: la tabla `tool.motor`,
+        la clave `format-check` y el booleano `false`. El motor no puede
+        renombrar ninguna sin romper a todo destino que ya lo haya declarado
+        -- y el destino no se entera: su fichero sigue ahi, su suite sigue
+        verde, y lo unico que cambia es que el gate del motor deja de
+        reconocerlo y su cierre vuelve a bloquearse. Es un fallo SILENCIOSO y
+        a distancia.
+
+        El resto de la suite usa el literal en fixtures y docstrings, pero eso
+        NO lo ancla: un renombrado que actualice fixtures y codigo en el mismo
+        commit los deja a todos verdes y rompe el contrato igual. Este test
+        existe para que ese commit tenga que TOCAR una barrera que dice, con
+        todas las letras, que el nombre es publico.
+
+        Destino real que depende de esto (2026-08-03): el `pyproject.toml` de
+        LEA, escrito en su commit `2730d1b` citando `LEA-2026-002k`.
+
+        Si de verdad hay que renombrar la clave, este test es el sitio donde
+        se decide: hay que cambiarlo A PROPOSITO y, en el mismo movimiento,
+        migrar los destinos o aceptar un alias de transicion.
+        """
+        # El contrato, escrito como lo escribe un destino -- no importado de
+        # una constante del motor, que se renombraria sola con el codigo.
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "fixture"\nversion = "0"\n'
+            'requires-python = ">=3.10"\n\n[tool.motor]\nformat-check = false\n',
+            encoding="utf-8",
+        )
+
+        assert _format_check_optout(tmp_path) == "pyproject.toml", (
+            "el motor ha dejado de reconocer `[tool.motor] format-check = "
+            "false`. Si el renombrado es deliberado, migra los destinos que "
+            "ya lo declaran (LEA: commit 2730d1b) o acepta un alias; si no, "
+            "es una regresion que rompe su cierre en silencio"
+        )
+
+    def test_solo_el_booleano_false_concede_el_optout(self, tmp_path: Path) -> None:
+        """Ni `true`, ni la cadena "false", ni la clave ausente conceden nada.
+
+        Complemento del contrato de arriba: fija el VALOR, no solo el nombre.
+        `motor.get("format-check") is False` es estricto al booleano TOML, y
+        eso debe seguir siendo cierto -- aflojarlo a un `not motor.get(...)`
+        haria que la clave AUSENTE concediese el opt-out, apagando el gate en
+        todo destino que declare `[tool.motor]` para cualquier otra cosa.
+        """
+        head = (
+            '[project]\nname = "fixture"\nversion = "0"\n'
+            'requires-python = ">=3.10"\n\n[tool.motor]\n'
+        )
+        for body, esperado in (
+            ("format-check = false\n", "pyproject.toml"),
+            ("format-check = true\n", None),
+            ('format-check = "false"\n', None),
+            ("otra-clave = true\n", None),
+            # `0` es el caso que DISCRIMINA entre `is False` y un `not`
+            # falsy-permisivo: sin el, aflojar la condicion a
+            # `not motor.get("format-check", True)` sobrevive a la mutacion
+            # (medido 2026-08-03: los 37 tests seguian verdes). Un `0` en un
+            # campo booleano es dato mal escrito, no un permiso.
+            ("format-check = 0\n", None),
+            ('format-check = ""\n', None),
+        ):
+            (tmp_path / "pyproject.toml").write_text(head + body, encoding="utf-8")
+            assert _format_check_optout(tmp_path) == esperado, (
+                f"con `{body.strip()}` el opt-out deberia ser {esperado!r}"
+            )
+
     def test_ruff_toml_no_es_sitio_valido_para_el_optout(self, tmp_path: Path) -> None:
         """`ruff.toml` NO puede alojar la declaracion: ruff rechaza el fichero.
 
