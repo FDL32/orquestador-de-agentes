@@ -213,7 +213,19 @@ def _format_check_optout(project_root: Path) -> str | None:
         [tool.motor]
         format-check = false
 
-    en `ruff.toml` o en `pyproject.toml` del destino.
+    Sitio soportado: UNICAMENTE `pyproject.toml`.
+
+    Por que NO se lee del fichero de config de ruff, aunque fuese el sitio
+    natural de la decision: ese fichero es config PLANA con esquema CERRADO
+    -- ruff valida el fichero entero y `[tool.motor]` (convenio de pyproject)
+    le da `unknown field`, igual que una clave suelta en la raiz. Ruff aborta
+    y `ruff check` sube de rc=0 a rc=2. Medido 2026-08-02 sobre ruff real.
+
+    La trampa era doble, y por eso ese offering se retiro: declararlo ahi
+    romperia el gate de lint que el destino SI adopta y ademas NO concederia
+    el opt-out (el TOML deja de parsear, se cae al fail-closed de abajo y se
+    devuelve None). Se rompe el lint y se sigue bloqueado. Un destino sin
+    `pyproject.toml` debe crearlo solo con esta declaracion.
 
     Por que explicita y no inferida de `[format]`: la presencia de una
     seccion `[format]` significa lo CONTRARIO con la misma frecuencia -- un
@@ -225,7 +237,7 @@ def _format_check_optout(project_root: Path) -> str | None:
     Fail-closed: si el TOML no parsea, se devuelve None y el gate muerde. Un
     fichero de config roto no puede ser un permiso.
     """
-    for name in ("ruff.toml", "pyproject.toml"):
+    for name in ("pyproject.toml",):
         candidate = project_root / name
         if not candidate.is_file():
             continue
