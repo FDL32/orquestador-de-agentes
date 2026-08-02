@@ -44,6 +44,12 @@ from pathlib import Path
 from typing import NamedTuple
 
 
+try:  # Python 3.11+
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - 3.10 usa el backport
+    import tomli as tomllib  # type: ignore[no-redef]
+
+
 # Bootstrap: motor root must be on sys.path so `runtime.*` imports resolve
 # even when this script runs with cwd inside a destination workspace.
 _MOTOR_ROOT = Path(__file__).resolve().parent.parent
@@ -198,15 +204,78 @@ def run_ruff_check(project_root: Path) -> CheckResult:
     )
 
 
-def run_ruff_format_check(project_root: Path) -> CheckResult:
-    """Ejecuta ruff format --check en el proyecto.
+def _format_check_optout(project_root: Path) -> str | None:
+    """Devuelve el fichero donde el proyecto DECLINA `ruff format`, o None.
 
-    Args:
-        project_root: Raiz del proyecto donde ejecutar ruff.
+    Un destino puede decidir por diseno no adoptar el formateador. Para que
+    el motor lo reconozca sin adivinar, la declaracion es EXPLICITA:
 
-    Returns:
-        CheckResult con el estado del check de formato.
+        [tool.motor]
+        format-check = false
+
+    en `ruff.toml` o en `pyproject.toml` del destino.
+
+    Por que explicita y no inferida de `[format]`: la presencia de una
+    seccion `[format]` significa lo CONTRARIO con la misma frecuencia -- un
+    proyecto que deja el formateador preconfigurado para activarlo mas
+    adelante (`quote-style = "preserve"` "por si alguien lo activa algun
+    dia"). Inferir el opt-out de ahi apagaria el gate en destinos que nunca
+    lo pidieron, que es justo el fallo que este cambio evita.
+
+    Fail-closed: si el TOML no parsea, se devuelve None y el gate muerde. Un
+    fichero de config roto no puede ser un permiso.
     """
+    for name in ("ruff.toml", "pyproject.toml"):
+        candidate = project_root / name
+        if not candidate.is_file():
+            continue
+        try:
+            data = tomllib.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError):
+            continue
+        section = data.get("tool", {})
+        if not isinstance(section, dict):
+            continue
+        motor = section.get("motor", {})
+        if isinstance(motor, dict) and motor.get("format-check") is False:
+            return name
+    return None
+
+
+def run_ruff_format_check(project_root: Path) -> CheckResult:
+    """Ejecuta ruff format --check en el proyecto, salvo opt-out declarado.
+
+    Before:
+        `project_root` es la raiz del proyecto a verificar. Puede declarar
+        `[tool.motor] format-check = false` para declinar el formateador.
+
+    During:
+        Si existe la declaracion, NO se invoca ruff: se devuelve un SKIP que
+        CITA el fichero que lo autoriza. Si no, se ejecuta
+        `ruff format --check .` como siempre.
+
+    After:
+        Devuelve un CheckResult siempre bloqueante. Un SKIP sale con
+        `passed=True` y procedencia en `output`; un skip sin procedencia
+        seria indistinguible de un gate roto.
+
+    Contexto (LEA-2026-002k): un destino con `ruff format` declinado por
+    decision anclada en su propia suite quedaba con el cierre bloqueado por
+    un rojo CORRECTO que el motor no sabia interpretar.
+    """
+    optout = _format_check_optout(project_root)
+    if optout is not None:
+        return CheckResult(
+            name="Ruff Format Check",
+            passed=True,
+            output=(
+                f"SKIP: el proyecto declina `ruff format` en {optout} "
+                "([tool.motor] format-check = false). El gate NO se ha "
+                "ejecutado; la decision es del destino y su fichero la "
+                "justifica."
+            ),
+            is_blocking=True,
+        )
     return run_subprocess_check(
         cmd=["uv", "run", "ruff", "format", "--check", "."],
         name="Ruff Format Check",

@@ -143,6 +143,135 @@ class TestRuffFormatCheck:
         assert result.is_blocking is True
 
 
+class TestRuffFormatOptOut:
+    """Un destino puede DECLINAR `ruff format` y el gate debe reconocerlo.
+
+    Contexto (LEA-2026-002k / WOT-2026-047e): `run_ruff_format_check` corria
+    `ruff format --check .` sin excepcion posible, asi que un proyecto que
+    decide por diseno no adoptar el formateador quedaba con el cierre
+    bloqueado por un rojo CORRECTO. La decision estaba declarada y anclada en
+    su propia suite, pero el motor no tenia forma de leerla.
+
+    El discriminante es EXPLICITO (`format-check = false` bajo
+    `[tool.motor]`), no inferido de la presencia de `[format]`: un `ruff.toml`
+    puede traer `[format]` configurado justamente para el caso contrario --
+    dejar preparada la activacion futura -- y confundir ambas cosas volveria
+    a apagar el gate donde nadie lo pidio.
+    """
+
+    def _write_unformatted(self, root: Path) -> None:
+        """Deja un fichero que `ruff format --check` rechaza con seguridad.
+
+        Control positivo obligatorio, y no es ceremonia: `tmp_path` en esta
+        suite NO es el de pytest, es un factory re-enraizado DENTRO del arbol
+        del motor (`conftest.py::tmp_path` / `SESSION_RUNTIME_ROOT`), que
+        cuelga de `tests/sandbox`. Y el `pyproject.toml` del motor lista
+        `tests/sandbox` en `extend-exclude`, asi que ruff descubre esa
+        configuracion "via parent" y DESCARTA el fixture entero antes de
+        mirarlo: contesta rc=0 con "No Python files found".
+
+        Medido con `ruff -v` desde el propio fixture:
+            Using configuration file (via parent) at: <motor>/pyproject.toml
+            Ignored path via `extend-exclude`: <motor>/tests/sandbox
+        Ese rc=0 es indistinguible de un opt-out que funciona, de modo que
+        sin este control positivo los tests de abajo pasarian sin ejercitar
+        nada. El probe usa `--isolated` por el mismo motivo por el que lo usa
+        el gate: para que el veredicto dependa del fixture y no de la config
+        del repo que lo hospeda.
+        """
+        (root / "sample.py").write_text(
+            "x = {'a':1,   'b':2}\ndef f( a ,b ):\n  return a+b\n",
+            encoding="utf-8",
+        )
+        probe = subprocess.run(
+            ["ruff", "format", "--check", "--isolated", "."],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+            encoding="utf-8",
+            errors="replace",
+        )
+        assert probe.returncode != 0, (
+            "control positivo fallido: el fixture deberia estar sin formatear, "
+            f"pero ruff lo acepta.\nstdout={probe.stdout}\nstderr={probe.stderr}"
+        )
+
+    def test_optout_declarado_convierte_el_fallo_en_skip(self, tmp_path: Path) -> None:
+        """Con el opt-out declarado, un arbol sin formatear NO bloquea."""
+        self._write_unformatted(tmp_path)
+        (tmp_path / "ruff.toml").write_text(
+            "line-length = 88\n\n[tool.motor]\nformat-check = false\n",
+            encoding="utf-8",
+        )
+
+        result = run_ruff_format_check(tmp_path)
+
+        assert result.passed is True
+        assert result.is_blocking is True, "el gate sigue siendo bloqueante"
+        assert "SKIP" in result.output.upper()
+        assert "ruff.toml" in result.output, (
+            "el SKIP debe CITAR el fichero que lo autoriza; un skip sin "
+            "procedencia es indistinguible de un gate roto"
+        )
+
+    def test_sin_optout_un_arbol_sin_formatear_sigue_bloqueando(
+        self, tmp_path: Path
+    ) -> None:
+        """Mutacion inversa: sin la declaracion, el gate muerde igual que antes."""
+        self._write_unformatted(tmp_path)
+        (tmp_path / "ruff.toml").write_text("line-length = 88\n", encoding="utf-8")
+
+        result = run_ruff_format_check(tmp_path)
+
+        assert result.passed is False, (
+            "sin opt-out declarado el gate NO puede aflojarse"
+        )
+
+    def test_format_configurado_no_es_optout(self, tmp_path: Path) -> None:
+        """`[format]` presente NO significa declinar: puede ser preparacion.
+
+        Este es el falso-positivo que el diseno evita a proposito. El
+        `ruff.toml` real de LEA trae `quote-style = "preserve"` bajo
+        `[format]` con el comentario "por si alguien lo activa algun dia":
+        leerlo como opt-out apagaria el gate en todo destino que haya dejado
+        el formateador preconfigurado.
+        """
+        self._write_unformatted(tmp_path)
+        (tmp_path / "ruff.toml").write_text(
+            '[format]\nquote-style = "preserve"\n', encoding="utf-8"
+        )
+
+        result = run_ruff_format_check(tmp_path)
+
+        assert result.passed is False
+
+    def test_optout_en_pyproject_tambien_vale(self, tmp_path: Path) -> None:
+        """No todo destino tiene `ruff.toml`; el contrato tambien se declara ahi."""
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "fixture"\nversion = "0"\n'
+            'requires-python = ">=3.10"\n\n[tool.motor]\nformat-check = false\n',
+            encoding="utf-8",
+        )
+        self._write_unformatted(tmp_path)
+
+        result = run_ruff_format_check(tmp_path)
+
+        assert result.passed is True
+        assert "pyproject.toml" in result.output
+
+    def test_optout_malformado_no_apaga_el_gate(self, tmp_path: Path) -> None:
+        """Un TOML corrupto es fail-closed: ante duda, el gate muerde."""
+        self._write_unformatted(tmp_path)
+        (tmp_path / "ruff.toml").write_text(
+            "[tool.motor\nformat-check = false\n", encoding="utf-8"
+        )
+
+        result = run_ruff_format_check(tmp_path)
+
+        assert result.passed is False
+
+
 class TestAgentControllerValidate:
     """Tests for agent_controller --validate integration."""
 
