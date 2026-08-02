@@ -19,6 +19,7 @@ from unittest.mock import patch
 
 from scripts.prepush_check import (
     CheckResult,
+    _format_check_optout,
     run_agent_controller_validate,
     run_delivery_hygiene_check,
     run_git_status_check,
@@ -198,19 +199,26 @@ class TestRuffFormatOptOut:
         )
 
     def test_optout_declarado_convierte_el_fallo_en_skip(self, tmp_path: Path) -> None:
-        """Con el opt-out declarado, un arbol sin formatear NO bloquea."""
-        self._write_unformatted(tmp_path)
-        (tmp_path / "ruff.toml").write_text(
-            "line-length = 88\n\n[tool.motor]\nformat-check = false\n",
+        """Con el opt-out declarado, un arbol sin formatear NO bloquea.
+
+        La declaracion va en `pyproject.toml`, el UNICO sitio soportado; ver
+        `test_ruff_toml_no_es_sitio_valido_para_el_optout` para por que
+        `ruff.toml` no puede alojarla.
+        """
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "fixture"\nversion = "0"\n'
+            'requires-python = ">=3.10"\n\n[tool.motor]\nformat-check = false\n',
             encoding="utf-8",
         )
+        (tmp_path / "ruff.toml").write_text("line-length = 88\n", encoding="utf-8")
+        self._write_unformatted(tmp_path)
 
         result = run_ruff_format_check(tmp_path)
 
         assert result.passed is True
         assert result.is_blocking is True, "el gate sigue siendo bloqueante"
         assert "SKIP" in result.output.upper()
-        assert "ruff.toml" in result.output, (
+        assert "pyproject.toml" in result.output, (
             "el SKIP debe CITAR el fichero que lo autoriza; un skip sin "
             "procedencia es indistinguible de un gate roto"
         )
@@ -226,6 +234,16 @@ class TestRuffFormatOptOut:
 
         assert result.passed is False, (
             "sin opt-out declarado el gate NO puede aflojarse"
+        )
+        # Sin esto el test es un FALSO VERDE, cazado por el bucle L700 (BA10 y
+        # BA11, 2026-08-02): `passed is False` tambien se cumple cuando ruff
+        # aborta sin mirar nada -- p.ej. el `unknown field` de un ruff.toml
+        # invalido, o el fixture excluido por `extend-exclude`. Exigir la
+        # frase de reformateo obliga a que ruff HAYA LEIDO el fichero sucio,
+        # que es lo unico que prueba que el gate mordio por la razon correcta.
+        assert "Would reformat" in result.output, (
+            "el gate debe fallar PORQUE ruff vio el fichero sin formatear, no "
+            f"porque ruff abortase sin mirarlo. Salida real: {result.output!r}"
         )
 
     def test_format_configurado_no_es_optout(self, tmp_path: Path) -> None:
@@ -259,6 +277,44 @@ class TestRuffFormatOptOut:
 
         assert result.passed is True
         assert "pyproject.toml" in result.output
+
+    def test_ruff_toml_no_es_sitio_valido_para_el_optout(self, tmp_path: Path) -> None:
+        """`ruff.toml` NO puede alojar la declaracion: ruff rechaza el fichero.
+
+        `ruff.toml` es config PLANA con esquema CERRADO -- sus claves van en la
+        raiz y ruff valida el fichero entero. `[tool.motor]` (el convenio de
+        `pyproject.toml`) lo hace irrecuperable, y una clave suelta en la raiz
+        tampoco pasa: ambas dan `unknown field`, ruff aborta y `ruff check`
+        sube de rc=0 a rc=2. Medido 2026-08-02 sobre ruff real:
+
+            ruff failed
+              Cause: TOML parse error at line 1, column 1
+            unknown field `tool`
+
+        Consecuencia doble, y por eso el offering original era una TRAMPA:
+        escribirlo en `ruff.toml` rompe el gate de lint que el destino SI
+        adopta, y ademas NO concede el opt-out -- el TOML deja de parsear,
+        `_format_check_optout` es fail-closed y devuelve None. Se rompe el
+        lint y se sigue bloqueado.
+
+        Por eso `pyproject.toml` es el UNICO sitio soportado. Este test pinea
+        que nadie vuelva a ofrecer `ruff.toml` como candidato.
+        """
+        source = _format_check_optout.__doc__ or ""
+        assert "ruff.toml" not in source.split("Sitio soportado")[0], (
+            "el docstring no puede ofrecer ruff.toml como sitio de la "
+            "declaracion: ruff rechaza el fichero entero"
+        )
+
+        # Un ruff.toml con la declaracion NO concede opt-out (fail-closed).
+        (tmp_path / "ruff.toml").write_text(
+            "line-length = 88\n\n[tool.motor]\nformat-check = false\n",
+            encoding="utf-8",
+        )
+        assert _format_check_optout(tmp_path) is None, (
+            "ruff.toml con [tool.motor] no parsea como config de ruff; "
+            "aceptarlo aqui daria un opt-out que rompe el lint del destino"
+        )
 
     def test_optout_malformado_no_apaga_el_gate(self, tmp_path: Path) -> None:
         """Un TOML corrupto es fail-closed: ante duda, el gate muerde."""
