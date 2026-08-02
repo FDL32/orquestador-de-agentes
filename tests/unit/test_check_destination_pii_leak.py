@@ -113,6 +113,54 @@ def test_clean_destination_is_exit_0(tmp_path: Path) -> None:
     assert rc == 0
 
 
+def test_cero_incluidos_con_enlaces_presentes_es_exit_2(tmp_path: Path) -> None:
+    """`0 clean, 0 leaking, 0 unauditable of 0 included` NO puede salir rc=0.
+
+    Medido 2026-08-03: apuntando `--motor-root` al checkout PRINCIPAL, los 13
+    destinos de la maquina resuelven su link a ESE motor, marcan la identidad
+    de dogfooding y quedan TODOS excluidos. El censo termina con
+    `links_total=17 included=0 excluded=13` y el script devolvia **rc=0**.
+
+    Es el mismo falso verde que el `exit 2` de este script ya combate para el
+    destino sin `.git` -- su docstring lo dice literal: "0 leaks must never
+    mean 0 audited" -- pero entrando por una puerta que aquel guard no
+    vigilaba. Un cero sin denominador es indistinguible de un cero con
+    denominador, y el operador que lo lea concluye "sin fugas" cuando lo
+    cierto es "no se miro nada".
+
+    El caso legitimo de `included=0` -- una maquina sin ningun destino -- se
+    distingue por `links_total`: si no hay enlaces, no hay nada que auditar y
+    rc=0 es correcto. Lo que no puede pasar es haber ENCONTRADO enlaces y
+    auditar cero.
+    """
+    motor = _make_motor(tmp_path)
+    # El destino apunta al MISMO motor -> identidad de dogfooding -> excluido.
+    _make_destination(tmp_path, "dest_self", motor)
+
+    _audits, discovery = run_audit(motor)
+    assert discovery.links_total >= 1, "el fixture debe tener al menos un enlace"
+    assert not discovery.included, "el fixture debe dejar included=0"
+
+    rc = main(["--motor-root", str(motor)])
+    assert rc == 2, (
+        "auditar CERO destinos habiendo encontrado enlaces es un fallo "
+        f"operacional, no un aprobado (rc={rc})"
+    )
+
+
+def test_maquina_sin_ningun_enlace_sigue_siendo_exit_0(tmp_path: Path) -> None:
+    """Mutacion inversa: sin enlaces NO hay nada que auditar y rc=0 es correcto.
+
+    Sin este test, el fix anterior podria haberse hecho exigiendo
+    `included>=1` siempre, convirtiendo una maquina limpia recien instalada en
+    un fallo permanente.
+    """
+    motor = _make_motor(tmp_path)
+    _audits, discovery = run_audit(motor)
+    assert discovery.links_total == 0
+    assert main(["--motor-root", str(motor)]) == 0
+
+
 def test_tracked_link_is_detected_and_exit_1(tmp_path: Path) -> None:
     motor = _make_motor(tmp_path)
     other_motor = tmp_path / "other_motor"

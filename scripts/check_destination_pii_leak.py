@@ -31,9 +31,16 @@ During: censuses parent(motor_root) one level deep, then per included
         mutation anywhere.
 After: exit 0 iff every included destination was audited and none leaks;
        exit 1 listing every leaking destination and file; exit 2 on operational
-       error (git missing, or an included destination without .git), still
-       listing any leaks found. Prints the census accounting so nothing is
-       dropped silently.
+       error (git missing, an included destination without .git, or links found
+       but ZERO destinations audited), still listing any leaks found. Prints the
+       census accounting so nothing is dropped silently.
+
+Zero-denominator guard (2026-08-03): `0 of 0 included` with links present is an
+operational error, not a pass -- the same "0 leaks must never mean 0 audited"
+rule as the walk-up guard, by another door. Pointing --motor-root at a checkout
+that every link declares as its motor excludes them ALL by dogfooding identity
+and used to return rc=0 over an empty census. A machine with NO links at all is
+the legitimate case and still exits 0.
 """
 
 from __future__ import annotations
@@ -195,6 +202,23 @@ def main(argv: list[str] | None = None) -> int:
         print(
             "[pii-leak] exit 2: an included destination could not be audited "
             "(0 leaks would not mean 0 audited)."
+        )
+        return 2
+    if not audits and discovery.links_total:
+        # Un cero SIN denominador es indistinguible de un cero CON denominador,
+        # y el lector concluye "sin fugas" cuando lo cierto es "no se miro
+        # nada". Es el mismo falso verde que el exit 2 de arriba impide para el
+        # destino sin .git, por otra puerta: apuntando --motor-root al checkout
+        # PRINCIPAL, todo destino que lo declare en su link marca identidad de
+        # dogfooding y queda excluido, dejando included=0 (medido 2026-08-03:
+        # links_total=17 included=0 excluded=13, y devolvia rc=0).
+        # Una maquina SIN enlaces es el caso legitimo y sigue saliendo 0.
+        print(
+            f"[pii-leak] exit 2: {discovery.links_total} link(s) found but ZERO "
+            "destinations audited; every one was excluded or skipped. A green "
+            "result here would mean 'nothing was looked at', not 'nothing leaks'. "
+            "Check --motor-root: pointing it at a checkout that every link "
+            "declares as its motor excludes them all by dogfooding identity."
         )
         return 2
     if leaking:
