@@ -47,6 +47,83 @@ def test_valid_backlog_passes(tmp_path: Path) -> None:
     assert cbc.validate_backlog(root / ".agent" / "collaboration" / "backlog.md") == []
 
 
+def test_cola_vacia_es_estado_terminal_legitimo(tmp_path: Path) -> None:
+    """Una tabla SIN filas es un proyecto acabado, no una violacion.
+
+    Medido 2026-08-02 en el cierre real del destino LEA: `--session-close`
+    dejo la cola vacia -- que era el OBJETIVO de la sesion -- y este checker
+    devolvio rc=1 con "active 'Vista rapida' table has no rows". El contrato
+    prohibia el estado terminal legitimo del proyecto: vaciar la cola es
+    exactamente lo que hace un destino que termina su trabajo.
+
+    La regla original protegia de otra cosa -- una tabla vacia por ERROR de
+    parseo o por seccion mal formada --, y esa proteccion la da
+    `_extract_active_table`, que ya devuelve `table_error` cuando la seccion
+    no existe o no se puede leer (ver
+    `test_missing_vista_rapida_section_blocks`). Distinguir "no hay seccion"
+    de "la seccion existe y esta vacia" es lo que faltaba.
+    """
+    root = _write_backlog(tmp_path, "", "")
+    errors = cbc.validate_backlog(root / ".agent" / "collaboration" / "backlog.md")
+    assert errors == [], (
+        "una cola vacia con su cabecera intacta es el estado terminal de un "
+        f"proyecto acabado, no un defecto. Errores: {errors}"
+    )
+
+
+def test_seccion_ausente_sigue_bloqueando(tmp_path: Path) -> None:
+    """Mutacion inversa: la cola vacia se permite, la seccion rota NO.
+
+    Sin este test, el fix de la cola vacia podria haberse hecho aflojando
+    `_extract_active_table` y perdiendo la deteccion de un backlog corrupto.
+    """
+    collab = tmp_path / ".agent" / "collaboration"
+    collab.mkdir(parents=True, exist_ok=True)
+    (collab / "backlog.md").write_text("# Backlog sin seccion\n", encoding="utf-8")
+    errors = cbc.validate_backlog(collab / "backlog.md")
+    assert errors, "un backlog sin la seccion 'Vista rapida' sigue siendo invalido"
+
+
+def test_el_centinela_de_sesion_cerrada_no_es_un_ticket_fantasma(
+    tmp_path: Path,
+) -> None:
+    """`ACTIVE_TICKET: -` significa "ninguno", no un ticket llamado "-".
+
+    Medido 2026-08-02, y es el motor contradiciendose a si mismo:
+    `.agent/agent_controller.py:6176` ESCRIBE `ACTIVE_TICKET: -` al cerrar la
+    sesion, y su propio docstring lo declara centinela ("tras cerrar la
+    sesion ya no hay ticket activo"). Pero `_ACTIVE_TICKET_RE` captura `\\S+`,
+    asi que `-` entraba como id de ticket y el checker lo denunciaba como
+    fantasma: "STATE.md ACTIVE_TICKET '-' has NO row en backlog.md".
+
+    Un cierre correcto producia rc=1 por su propia escritura.
+    """
+    root = _write_backlog(tmp_path, "", "")
+    state = root / ".agent" / "collaboration" / "STATE.md"
+    state.write_text("ACTIVE_TICKET: -\nSTATUS: COMPLETED\n", encoding="utf-8")
+
+    ticket, status = cbc._read_active_ticket(root)
+    assert ticket is None, (
+        f"el centinela de 'ninguno' no puede leerse como ticket (leido: {ticket!r})"
+    )
+    assert status is None
+
+
+def test_un_ticket_real_ausente_del_backlog_sigue_siendo_fantasma(
+    tmp_path: Path,
+) -> None:
+    """Mutacion inversa: exceptuar el centinela NO puede apagar la deteccion."""
+    root = _write_backlog(tmp_path, _VALID_ROWS, "")
+    state = root / ".agent" / "collaboration" / "STATE.md"
+    state.write_text(
+        "ACTIVE_TICKET: WOT-2026-999z\nSTATUS: IN_PROGRESS\n", encoding="utf-8"
+    )
+
+    ticket, status = cbc._read_active_ticket(root)
+    assert ticket == "WOT-2026-999z", "un ticket REAL debe seguir leyendose"
+    assert status == "IN_PROGRESS"
+
+
 def test_fail_closed_without_project_root(monkeypatch) -> None:
     # No --project-root and no AGENT_PROJECT_ROOT -> fail closed (no cwd fallback).
     monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)

@@ -279,8 +279,12 @@ def validate_backlog(backlog_path: Path) -> list[str]:
     rows, table_error = _extract_active_table(content)
     if table_error:
         return [table_error]
-    if not rows:
-        return ["active 'Vista rapida' table has no rows"]
+    # Una tabla SIN filas es el estado terminal legitimo de un proyecto que
+    # acabo su cola, no una violacion: `--session-close` la deja asi a
+    # proposito. Lo que si es defecto -- seccion ausente o ilegible -- ya lo
+    # devuelve `_extract_active_table` como `table_error` mas arriba, asi que
+    # exigir >=1 fila solo prohibia terminar (medido en el cierre real del
+    # destino LEA, 2026-08-02: rc=1 por haber cumplido el objetivo).
 
     for row in rows:
         cells = [c.strip() for c in row.strip().strip("|").split("|")]
@@ -339,6 +343,11 @@ def _check_ficha_bodies(content: str) -> list[str]:
 # post-close residual and passes.
 # ---------------------------------------------------------------------------
 
+# Valores que STATE.md usa para decir "no hay ticket activo". El motor escribe
+# `-` al cerrar sesion; los demas son formas equivalentes que puede dejar una
+# proyeccion o una plantilla. Ninguno es un identificador de ticket.
+_NO_ACTIVE_TICKET_SENTINELS = frozenset({"-", "--", "none", "None", "NONE", "N/A"})
+
 _ACTIVE_TICKET_RE = re.compile(r"^ACTIVE_TICKET:\s*(\S+)", re.MULTILINE)
 _STATUS_RE = re.compile(r"^STATUS:\s*(\S+)", re.MULTILINE)
 
@@ -358,6 +367,15 @@ def _read_active_ticket(root: Path) -> tuple[str | None, str | None]:
     if not m:
         return None, None
     ticket = m.group(1).strip()
+    # `-` es el CENTINELA de "ninguno" que escribe el propio motor al cerrar
+    # sesion (`.agent/agent_controller.py`, "tras cerrar la sesion ya no hay
+    # ticket activo"). El regex captura `\S+`, asi que sin esta excepcion se
+    # leia como un ticket llamado "-" y se denunciaba como fantasma: un
+    # cierre correcto producia rc=1 por su propia escritura (medido en el
+    # destino LEA, 2026-08-02). Tratarlo como ausencia devuelve el par
+    # (None, None), que es justo el contrato de "el check no aplica".
+    if ticket in _NO_ACTIVE_TICKET_SENTINELS:
+        return None, None
     status_m = _STATUS_RE.search(content)
     status = status_m.group(1).strip() if status_m else None
     return (ticket or None), status
