@@ -116,8 +116,8 @@ Ejecuta en este orden y reporta por bloque:
    - Reporta cada punto como VERIFICADO (con el comando) o NO VERIFICADO. Un hardcode en un fichero que VIAJA es bloqueante: contamina a todos los destinos.
 
 3.6 OPTIMIZACION DE SUITE (opcional, solo si la evidencia lo pide). NO es parte del cierre obligatorio: es una capacidad que el cierre PUEDE disparar cuando la telemetria justifica el gasto.
-   - Disparador (MEDIBLE, no "por si acaso"). Umbral CANONICO -- si lo cambias, cambialo AQUI: **duracion de `--level all` > 300 s**. Fuente: `<repo_motor>/.agent/runtime/pytest-safe/run_history.jsonl`, campo `duration_s` de la ultima linea con `"level": "all"`, `"status": "finished"` **y `"args_mode": "default_discovery"`**. Dispara si se cumple CUALQUIERA:
-     (a) `duration_s` de esta sesion > 300 s;
+   - Disparador (MEDIBLE, no "por si acaso"). Umbral CANONICO -- si lo cambias, cambialo AQUI: **duracion de `--level all` > 600 s**. Fuente: `<repo_motor>/.agent/runtime/pytest-safe/run_history.jsonl`, campo `duration_s` de la ultima linea con `"level": "all"`, `"status": "finished"` **y `"args_mode": "default_discovery"`**. Dispara si se cumple CUALQUIERA:
+     (a) `duration_s` de esta sesion > 600 s;
      (b) tendencia: la mediana de `duration_s` de las 5 corridas COMPLETAS mas recientes supera en >20% la de las 5 anteriores;
      (c) el mismo `nodeid` aparece en `top_slowest` en >=3 de las 5 ultimas corridas COMPLETAS.
      Los tres se computan del MISMO fichero; CITA el numero que obtuviste.
@@ -125,7 +125,7 @@ Ejecuta en este orden y reporta por bloque:
    - OJO ROOT: `run_history.jsonl` vive en `<repo_motor>`; un destino puede no tenerlo (solo `last-run.json`). Si el repo cuya suite auditas no lo tiene, el disparador es **NO VERIFICABLE**: dilo asi, no lo declares "dentro de presupuesto".
    - Si dispara: `prompts/suite_optimization.md` (contract_id cid-suite-optimization-v1). Es RECOLECTOR -> JUEZ: lee `run_history.jsonl` + la tabla de durations; NUNCA optimices desde la intuicion ni desde la atribucion de pytest (TRAMPA-1 del prompt: la atribucion MIENTE con teardown session-scoped).
    - Non-goals que el cierre debe hacer respetar: NUNCA mock-drift, NUNCA relajar asserts, NUNCA tocar barreras git reales. Un piloto exige before/after medido y guard; sin las DOS condiciones duras del PASO 2, no se aplica.
-   - Si NO dispara: dilo con los NUMEROS reales (`suite <N>s < 300s; tendencia <+X%>; sin nodeid recurrente`), no con la formula vacia. Si no puedes computarlos: `disparador NO VERIFICABLE: <razon>`.
+   - Si NO dispara: dilo con los NUMEROS reales (`suite <N>s < 600s; tendencia <+X%>; sin nodeid recurrente`), no con la formula vacia. Si no puedes computarlos: `disparador NO VERIFICABLE: <razon>`.
 
 3.7 REGISTRO DE FOLLOW-UPS DEL MOTOR -- va la ULTIMA del Bloque 1 a proposito: recoge los follow-ups que generan 3.4/3.5/3.6. (cierra el agujero: los follow-ups que proponen 1-3 NO pueden quedarse en el chat ni en la memoria de sesion; se persisten como tickets candidatos en el backlog del WORKSPACE de desarrollo del motor para que puedan desarrollarse despues). El motor (`repo_motor`) debe permanecer agnostico/portable: NUNCA se escribe un follow-up en `repo_motor` (ver `prompts/audit_portability_legacy_surface.md`). El destino del registro es el repo_destino del motor = su workspace de dogfooding.
    - **Gate de evidencia (mismo umbral que el Bloque 4 para memoria):** un follow-up SOLO se registra si tiene evidencia verificable (SHA/diff/exit-code/cita de prompt/evento de bus). Sin evidencia -> se descarta o se degrada a observacion; no se infla el backlog con "seria bueno revisar X" especulativo.
