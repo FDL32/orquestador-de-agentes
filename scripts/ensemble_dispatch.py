@@ -745,6 +745,50 @@ def _kill_process_tree(pid: int) -> None:
             os.kill(pid, signal.SIGKILL)
 
 
+def _render_model_flag(profile: dict, backend_cfg: dict) -> list[str]:
+    """Renderiza la plantilla `model_flag` del BACKEND con el modelo del PERFIL.
+
+    WOT-2026-047y. El modelo es atributo del PERFIL pero su SINTAXIS es del
+    BACKEND: cada CLI la escribe a su manera (`--model X`, `-m X`, `--model=X`).
+    Por eso la plantilla se declara en el backend -- `model_flag: ["--model",
+    "{model}"]` -- y aqui solo se sustituye. Meter `--model` en
+    `backends.<n>.args` seria PEOR que no hacer nada: `args` aplica a TODOS los
+    perfiles del backend y fijaria un modelo unico, rompiendo el contrato
+    perfil->modelo. Precedente de sintaxis en el arbol: `bus/review_bridge.py`
+    invoca opencode con `["--agent", "manager", "--model", model]`.
+
+    Before: `profile` puede declarar `model` (str no vacio) o no declararlo /
+        declararlo `null`; `backend_cfg` puede declarar `model_flag` como lista
+        de strings con `{model}` en algun elemento.
+    During: sin modelo en el perfil no renderiza nada (los perfiles
+        `model: null` -- `proposer_claude`, `challenger_codex` -- dejan que el
+        CLI use su default, que es el contrato vigente). Con modelo, sustituye
+        `{model}` en cada elemento de la plantilla.
+    After: retorna la lista de argumentos a insertar (vacia si el perfil no
+        declara modelo). Un perfil CON modelo contra un backend SIN plantilla
+        lanza RuntimeError en vez de devolver `[]`: devolver la lista vacia
+        reintroduciria el defecto exacto que el ticket cierra -- el CLI correria
+        su default y el scorecard registraria el declarado, sin senal. El
+        validador de config (`_validate_ensemble_agent_model`) lo bloquea antes,
+        en la carga; esta comprobacion es la defensa en profundidad para el
+        `backend_cfg` que NO pasa por el loader (inyeccion directa en tests o en
+        un caller futuro), porque el modo de fallo es SILENCIOSO y por eso no
+        puede depender de una sola barrera.
+    """
+    model = profile.get("model")
+    if not model:
+        return []
+    template = backend_cfg.get("model_flag")
+    if not template:
+        raise RuntimeError(
+            f"el perfil declara model '{model}' pero el backend "
+            f"'{profile.get('backend')}' no declara plantilla 'model_flag': el "
+            "modelo se perderia y el CLI correria su default en silencio "
+            "(WOT-2026-047y)"
+        )
+    return [part.replace("{model}", model) for part in template]
+
+
 def _transport_agent(
     profile: dict, backend_cfg: dict, messages: list[dict], timeout: int
 ) -> str:
@@ -776,15 +820,30 @@ def _transport_agent(
       `cwd=` condicional) y sin tocar la firma publica del transporte
       `transport(profile, backend_cfg, messages, timeout)`, que los tests
       inyectan como `_FakeTransport` con esa aridad exacta.
+
+    WOT-2026-047y -- inyeccion del modelo:
+    - `profile["model"]` NO entraba en argv en NINGUNA de las dos ramas, asi
+      que el CLI corria su modelo por DEFECTO mientras el scorecard registraba
+      el DECLARADO: la telemetria que rankea `backend_leaders.json` era falsa
+      para todo perfil `channel: agent` con modelo. Se inyecta via
+      `_render_model_flag` (plantilla del backend), antes del sentinel `-` en
+      la rama stdin y antes del prompt en la rama argv.
+    - `_transport_api` NO se toca: los `channel: api` pasan el modelo en el
+      body JSON y estaban sanos.
     """
     prompt = "\n\n".join(m["content"] for m in messages)
     via_stdin = bool(backend_cfg.get("prompt_via_stdin"))
+    model_args = _render_model_flag(profile, backend_cfg)
+    base = [backend_cfg["executable"], *backend_cfg.get("args", []), *model_args]
     if via_stdin:
-        cmd = [backend_cfg["executable"], *backend_cfg.get("args", []), "-"]
+        # El flag del modelo va ANTES del sentinel: `-` cierra la linea de
+        # comando diciendo "el prompt viene por stdin", y cualquier argumento
+        # posterior lo leeria el CLI como parte del prompt.
+        cmd = [*base, "-"]
         stdin_mode = subprocess.PIPE
         stdin_payload: str | None = prompt
     else:
-        cmd = [backend_cfg["executable"], *backend_cfg.get("args", []), prompt]
+        cmd = [*base, prompt]
         stdin_mode = subprocess.DEVNULL
         stdin_payload = None
     repo_root = backend_cfg.get("repo_root")

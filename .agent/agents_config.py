@@ -497,6 +497,24 @@ def _validate_ensemble_backend_extras(backend_name: str, backend: dict) -> None:
             f"{sorted(leaked)}: credentials are referenced ONLY by env "
             "var name (api_key_env) -- agents.json is a versioned file"
         )
+    # WOT-2026-047y: la plantilla que inyecta el modelo del perfil en el argv.
+    # Una plantilla sin `{model}` renderizaria un flag sin valor y el CLI caeria
+    # a su default en silencio: exactamente el fallo que el ticket cierra.
+    if "model_flag" in backend:
+        template = backend["model_flag"]
+        if not isinstance(template, list) or not all(
+            isinstance(part, str) for part in template
+        ):
+            raise AgentsConfigError(
+                f"Backend '{backend_name}': 'model_flag' must be a list of "
+                'strings (e.g. ["--model", "{model}"])'
+            )
+        if not any("{model}" in part for part in template):
+            raise AgentsConfigError(
+                f"Backend '{backend_name}': 'model_flag' must contain the "
+                "'{model}' placeholder in at least one element, otherwise the "
+                "profile model is never rendered into the argv"
+            )
 
 
 def _validate_ensemble_profile(prof_name: str, prof: object, backends: dict) -> None:
@@ -531,6 +549,38 @@ def _validate_ensemble_profile(prof_name: str, prof: object, backends: dict) -> 
         )
     if prof["channel"] == "api":
         _validate_ensemble_api_fields(prof_name, prof)
+    elif prof["channel"] == "agent":
+        _validate_ensemble_agent_model(prof_name, prof, backends)
+
+
+def _validate_ensemble_agent_model(prof_name: str, prof: dict, backends: dict) -> None:
+    """channel=agent con `model` exige `model_flag` en su backend (fail-closed).
+
+    WOT-2026-047y. Sin esto, un perfil que declara `model` contra un backend sin
+    plantilla se enviaba EN SILENCIO al modelo por defecto del CLI, y el
+    scorecard registraba el declarado: un fallo indetectable desde el registro.
+    El gate lo convierte en un error de carga con el campo exacto.
+
+    No exige nada al perfil SIN modelo (`model: null` es el contrato vigente de
+    `proposer_claude` y `challenger_codex`: dejan que el CLI elija).
+    """
+    model = prof.get("model")
+    if not model:
+        return
+    if not isinstance(model, str):
+        raise AgentsConfigError(
+            f"Ensemble profile '{prof_name}': 'model' must be a string or null"
+        )
+    backend_name = prof["backend"]
+    template = backends.get(backend_name, {}).get("model_flag")
+    if not template:
+        raise AgentsConfigError(
+            f"Ensemble profile '{prof_name}' declares model '{model}' but "
+            f"backend '{backend_name}' has no 'model_flag' template: the model "
+            "would be silently dropped and the CLI would run its default "
+            f'(WOT-2026-047y). Declare e.g. "model_flag": ["--model", '
+            '"{model}"] in the backend.'
+        )
 
 
 def _validate_ensemble_api_fields(prof_name: str, prof: dict) -> None:

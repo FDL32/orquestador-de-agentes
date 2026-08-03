@@ -1077,6 +1077,206 @@ def test_real_config_codex_delivers_multiline_prompt_intact(monkeypatch):
     )
 
 
+# --- WOT-2026-047y: inyeccion de profile["model"] en el argv -----------------
+#
+# ROJO que fijan: `_transport_agent` construia `cmd = [executable, *args,
+# prompt]` sin `profile["model"]` en NINGUNA de las dos ramas. El CLI corria su
+# modelo por DEFECTO mientras `_append_scorecard` registraba el DECLARADO, asi
+# que `backend_leaders.json` rankeaba por un campo falso para todo perfil
+# `channel: agent` con modelo -- indetectable desde el registro.
+#
+# Se asevera sobre el ARGV CONSTRUIDO, nunca sobre stdout: afirmar sobre la
+# respuesta mediria el backend, no la inyeccion. Los dos exit codes del mutation
+# pair medido (opencode 1.16.2) eran 0; el discriminante era el CONTENIDO.
+
+
+def _capture_argv(monkeypatch, profile, backend_cfg, prompt="hola"):
+    """Ejerce `_transport_agent` con Popen capturado y devuelve el argv real."""
+    captured: dict = {}
+
+    class _ArgvCapturingPopen:
+        pid = 4747
+
+        def __init__(self, cmd, *a, **k):
+            captured["cmd"] = cmd
+
+        def communicate(self, input=None, timeout=None):
+            captured["input"] = input
+            return ("ok", "")
+
+    monkeypatch.setattr(ed.subprocess, "Popen", _ArgvCapturingPopen)
+    ed._transport_agent(
+        profile, backend_cfg, [{"role": "user", "content": prompt}], timeout=10
+    )
+    return captured
+
+
+def test_047y_model_is_injected_into_argv_rama_argv(monkeypatch):
+    """Rama argv: el modelo del perfil entra en el cmd, ANTES del prompt.
+
+    Mutation: devolver `[]` en `_render_model_flag` -> este test cae en ROJO.
+    """
+    captured = _capture_argv(
+        monkeypatch,
+        {"backend": "opencode", "channel": "agent", "model": "opencode-go/glm-5.2"},
+        {
+            "executable": "opencode",
+            "args": ["run"],
+            "model_flag": ["--model", "{model}"],
+        },
+        prompt="PROMPT-047Y",
+    )
+    assert captured["cmd"] == [
+        "opencode",
+        "run",
+        "--model",
+        "opencode-go/glm-5.2",
+        "PROMPT-047Y",
+    ], (
+        "el modelo del PERFIL debe entrar en el argv con la sintaxis declarada "
+        f"por el BACKEND; cmd={captured['cmd']}"
+    )
+
+
+def test_047y_model_is_injected_before_stdin_sentinel(monkeypatch):
+    """Rama prompt_via_stdin: el flag va ANTES del sentinel `-`.
+
+    El sentinel cierra la linea de comando; un argumento posterior lo leeria el
+    CLI como parte del prompt. Mutation: mover la inyeccion detras del sentinel
+    -> este test cae.
+    """
+    captured = _capture_argv(
+        monkeypatch,
+        {"backend": "fake", "channel": "agent", "model": "modelo-x"},
+        {
+            "executable": "fake-cli",
+            "args": ["exec"],
+            "prompt_via_stdin": True,
+            "model_flag": ["--model", "{model}"],
+        },
+        prompt="PAYLOAD",
+    )
+    assert captured["cmd"] == ["fake-cli", "exec", "--model", "modelo-x", "-"], (
+        f"el flag del modelo debe preceder al sentinel '-'; cmd={captured['cmd']}"
+    )
+    assert captured["cmd"][-1] == "-", "el sentinel sigue siendo el ultimo argumento"
+    assert captured["input"] == "PAYLOAD", "el prompt sigue viajando por stdin"
+
+
+def test_047y_profile_without_model_keeps_argv_untouched(monkeypatch):
+    """`model: null` (proposer_claude, challenger_codex) no anade nada.
+
+    Es el contrato vigente: esos perfiles dejan que el CLI use su default. Un
+    fix que inyectara un flag vacio los romperia.
+    """
+    captured = _capture_argv(
+        monkeypatch,
+        {"backend": "claude", "channel": "agent", "model": None},
+        {
+            "executable": "claude",
+            "args": ["-p"],
+            "prompt_via_stdin": True,
+            "model_flag": ["--model", "{model}"],
+        },
+    )
+    assert captured["cmd"] == ["claude", "-p", "-"], (
+        f"sin modelo declarado el argv no cambia; cmd={captured['cmd']}"
+    )
+
+
+def test_047y_model_without_backend_template_fails_loud_not_silent(monkeypatch):
+    """DEFENSA EN PROFUNDIDAD: modelo declarado + backend sin plantilla -> raise.
+
+    El validador de config lo bloquea antes, pero `_transport_agent` acepta un
+    `backend_cfg` inyectado que NO pasa por el loader. Devolver `[]` ahi
+    reintroduciria el defecto exacto del ticket -- el CLI corriendo su default
+    mientras el scorecard registra el declarado -- y el modo de fallo es
+    SILENCIOSO: por eso no puede depender de una sola barrera.
+
+    Mutation: devolver `[]` en vez de lanzar -> este test cae.
+    """
+    with pytest.raises(RuntimeError, match="model_flag"):
+        _capture_argv(
+            monkeypatch,
+            {"backend": "sin-plantilla", "channel": "agent", "model": "modelo-y"},
+            {"executable": "cli", "args": []},
+        )
+
+
+def test_047y_real_config_opencode_profile_renders_its_model(monkeypatch):
+    """ANTI FIXTURE DRIFT: la CONFIG REAL, no un dict inline (patron de 027k).
+
+    Los tests de arriba prueban el MECANISMO con backends inventados; este exige
+    que `challenger_opencode_glm_5_2` (BA06) -- el perfil cuya unica fila del
+    scorecard registraba `opencode-go/glm-5.2` mientras el proceso corria
+    `gpt-5.4-mini` -- resuelva su modelo contra la config versionada.
+
+    Mutation: quitar `model_flag` del backend opencode en agents.json -> cae.
+    """
+    cfg = ed.load_motor_config()
+    profile = cfg["ensemble_profiles"]["challenger_opencode_glm_5_2"]
+    backend_cfg = cfg["backends"][profile["backend"]]
+    # Anclaje por IDENTIDAD al loader canonico: sin esto, sustituir
+    # `load_motor_config()` por un dict inline dejaria el test verde y
+    # reintroduciria el fixture drift que existe para impedir.
+    assert backend_cfg == ed.load_motor_config()["backends"][profile["backend"]], (
+        "el backend_cfg ejercido debe venir de load_motor_config()"
+    )
+    declared = profile["model"]
+    assert declared, "el perfil BA06 declara un modelo en la config real"
+
+    captured = _capture_argv(monkeypatch, profile, backend_cfg)
+    assert declared in captured["cmd"], (
+        "el modelo DECLARADO en la config real debe aparecer en el argv que "
+        f"recibe el CLI; cmd={captured['cmd']}. Si esta asercion cae, el "
+        "scorecard vuelve a registrar un modelo que el proceso no corrio"
+    )
+
+
+def test_047y_api_channel_still_passes_model_in_body_not_argv(monkeypatch):
+    """ANTI-FALSO-POSITIVO: los `channel: api` NO cambian de comportamiento.
+
+    Pasan el modelo en el body JSON (`_transport_api`), nunca en argv. Un fix
+    que tocara su ruta los romperia; este test lo pinea.
+    """
+    sent: dict = {}
+
+    class _FakeResp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {"choices": [{"message": {"content": "respuesta-api"}}]}
+            ).encode("utf-8")
+
+    def _fake_urlopen(req, timeout=None):
+        sent["body"] = json.loads(req.data.decode("utf-8"))
+        return _FakeResp()
+
+    monkeypatch.setenv("FAKE_KEY_047Y", "sk-test")
+    monkeypatch.setattr(ed.urllib.request, "urlopen", _fake_urlopen)
+
+    out = ed._transport_api(
+        {
+            "channel": "api",
+            "model": "deepseek-v4-flash-0731",
+            "api_key_env": "FAKE_KEY_047Y",
+            "api_base_url": "https://example.invalid/v1/chat/completions",
+        },
+        {"executable": "", "args": []},
+        [{"role": "user", "content": "hola"}],
+        timeout=10,
+    )
+    assert out == "respuesta-api"
+    assert sent["body"]["model"] == "deepseek-v4-flash-0731", (
+        "el canal api sigue pasando el modelo en el BODY JSON, intacto"
+    )
+
+
 def test_run_pipeline_writes_only_ensemble_runtime(tmp_path):
     """B2: el dispatcher no aplica nada al arbol; su unica escritura es el
     runtime de ensemble bajo el project_root."""
@@ -1184,6 +1384,74 @@ def test_schema_rejects_non_bool_trusted(tmp_path):
     cfg = _schema_config()
     cfg["backends"]["fake"]["trusted"] = "yes"
     with pytest.raises(AgentsConfigError, match="trusted"):
+        _validate_ensemble(cfg, tmp_path / "agents.json")
+
+
+def test_047y_schema_rejects_agent_model_without_backend_template(tmp_path):
+    """FAIL-CLOSED: `channel: agent` + `model` sin `model_flag` en su backend.
+
+    Sin este gate, el perfil se enviaba EN SILENCIO al modelo por defecto del
+    CLI mientras el scorecard registraba el declarado -- un fallo que el
+    registro no puede delatar. Mutation: quitar la llamada a
+    `_validate_ensemble_agent_model` -> este test cae.
+    """
+    cfg = _schema_config()
+    cfg["ensemble_profiles"]["p_prop"] = {
+        "backend": "fake",
+        "channel": "agent",
+        "model": "modelo-que-nadie-inyecta",
+        "data_sensitivity": "public",
+        "write": False,
+    }
+    with pytest.raises(AgentsConfigError, match="model_flag"):
+        _validate_ensemble(cfg, tmp_path / "agents.json")
+
+
+def test_047y_schema_accepts_agent_model_with_template_and_null_model(tmp_path):
+    """CONTROL POSITIVO del gate anterior: lo legitimo sigue pasando.
+
+    (a) perfil agent con modelo y backend CON plantilla -> valido;
+    (b) perfil agent con `model: null` y backend SIN plantilla -> valido, que
+        es el contrato vigente de `proposer_claude` / `challenger_codex`.
+    Sin este control, el gate podria estar bloqueando todo y el test de arriba
+    saldria verde igual.
+    """
+    cfg = _schema_config()
+    cfg["backends"]["fake"]["model_flag"] = ["--model", "{model}"]
+    cfg["ensemble_profiles"]["p_prop"] = {
+        "backend": "fake",
+        "channel": "agent",
+        "model": "modelo-x",
+        "data_sensitivity": "public",
+        "write": False,
+    }
+    assert _validate_ensemble(cfg, tmp_path / "agents.json") is None
+
+    cfg = _schema_config()
+    cfg["ensemble_profiles"]["p_prop"] = {
+        "backend": "fake",
+        "channel": "agent",
+        "model": None,
+        "data_sensitivity": "public",
+        "write": False,
+    }
+    assert _validate_ensemble(cfg, tmp_path / "agents.json") is None
+
+
+def test_047y_schema_rejects_model_flag_without_placeholder(tmp_path):
+    """Una plantilla sin `{model}` renderiza un flag sin valor: mismo defecto.
+
+    El CLI caeria a su default en silencio, que es exactamente lo que el ticket
+    cierra. Tambien se rechaza una plantilla que no sea lista de strings.
+    """
+    cfg = _schema_config()
+    cfg["backends"]["fake"]["model_flag"] = ["--model"]
+    with pytest.raises(AgentsConfigError, match="placeholder"):
+        _validate_ensemble(cfg, tmp_path / "agents.json")
+
+    cfg = _schema_config()
+    cfg["backends"]["fake"]["model_flag"] = "--model {model}"
+    with pytest.raises(AgentsConfigError, match="list of"):
         _validate_ensemble(cfg, tmp_path / "agents.json")
 
 

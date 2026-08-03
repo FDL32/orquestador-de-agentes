@@ -69,6 +69,10 @@
       "args": [
         "run"
       ],
+      "model_flag": [
+        "--model",
+        "{model}"
+      ],
       "discovery": {
         "method": "path_only"
       }
