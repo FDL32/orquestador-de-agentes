@@ -86,6 +86,26 @@ EVENTS = frozenset(
         "tool_used",
         "ensemble_ref",
         "backlog_triage_decision",
+        # WOT-2026-043t: the audit trail of a HOTFIX DE DESBLOQUEO -- the
+        # `preexisting gate unblock` that finding_triage_protocol.md authorizes
+        # (1-3 lines, low risk, isolated test) and that nobody was recording.
+        # Measured 2026-08-04 on origin/main: the label was used ONCE ever
+        # (WOT-2026-018b, 2026-07-02) and 4+ real unblocks since then left no
+        # trace. This event is the surface where that trace lands; pair it with
+        # `--require-write`, because a receipt that IS the evidence must not
+        # vanish under the E1 fail-open.
+        #
+        # DECLARED LIMIT -- this is a NORM, not a wired barrier. The event and
+        # the flag exist and bite (exit 2 on an incomplete receipt, exit 3 when
+        # the append fails), and the invocation is now spelled out in
+        # finding_triage_protocol.md. But NOTHING runs it by itself: no hook, no
+        # closeout step, no prepush check emits it. By this repo's own rule a
+        # command cited in a prompt is a norm, so an unblock still depends on
+        # the operator remembering. Wiring it -- and the verifier that cross-
+        # checks unblock-shaped commits against these receipts -- is the
+        # remaining half, and its two channels are designed and measured in
+        # `reports/CIERRE_4FASES_y_DECISION_20260804.md` (PARTE 3), NOT here.
+        "preexisting_gate_unblock",
     }
 )
 
@@ -111,6 +131,23 @@ REQUIRED_BY_EVENT: dict[str, frozenset[str]] = {
     "tool_used": frozenset({"generator", "reference"}),
     "ensemble_ref": frozenset({"generator", "reference"}),
     "backlog_triage_decision": frozenset({"generator", "reference"}),
+    # WOT-2026-043t: an unblock receipt must carry the SAME minimum evidence the
+    # triage protocol demands of the classification it records
+    # (`prompts/_shared/finding_triage_protocol.md`, "Evidencia minima"): claim
+    # or symptom, the command/diff/SHA/path that verifies it, the triage decision
+    # taken, and why it is not scope creep. Mapped one-to-one:
+    #   evidencia     -> claim/symptom + why it is not scope creep
+    #   reference     -> the command/diff/SHA/path (a POINTER, never a copy)
+    #   decision      -> the triage decision actually taken
+    #   gate_fallante -> WHICH obligatory gate was blocked (specific to unblocks)
+    #   ticket_id     -> the ticket that was being unblocked
+    # A receipt missing `decision` or `reference` validates for the script but is
+    # useless to audit the classification -- the exact false-green this event
+    # exists to prevent (raised by the L5000 loop, verified against the protocol).
+    # Every field already exists in LEDGER_FIELDS: no new schema surface.
+    "preexisting_gate_unblock": frozenset(
+        {"ticket_id", "gate_fallante", "evidencia", "decision", "reference"}
+    ),
 }
 
 LEDGER_FIELDS = frozenset(
@@ -826,59 +863,28 @@ def cmd_add(args: argparse.Namespace) -> int:  # noqa: C901
         )
         return 2
 
+    # WOT-2026-043t: validacion GENERICA sobre `required`. Antes habia un
+    # bloque `if` HARDCODEADO por campo (generator / decision / artifact_path /
+    # enfoque_intentado / reference), asi que anadir un campo a
+    # REQUIRED_BY_EVENT NO lo hacia obligatorio: el evento nuevo se registraba
+    # sin el y el guard salia verde. Fail-open estructural, cazado por el bucle
+    # L4800 al anadir `preexisting_gate_unblock` (medido: los 3 casos --
+    # completo, sin gate_fallante y sin evidencia -- daban los 3 exit 0).
+    # Recorrer el contrato en vez de repetirlo cierra la clase entera.
     required = REQUIRED_BY_EVENT[event]
-    if "generator" in required and not args.generator:
-        print(
-            json.dumps(
-                {
-                    "written": False,
-                    "reason": f"missing required field for event={event}: generator",
-                }
+    for field in sorted(required):
+        if not getattr(args, field, None):
+            print(
+                json.dumps(
+                    {
+                        "written": False,
+                        "reason": (
+                            f"missing required field for event={event}: {field}"
+                        ),
+                    }
+                )
             )
-        )
-        return 2
-    if "decision" in required and not args.decision:
-        print(
-            json.dumps(
-                {
-                    "written": False,
-                    "reason": f"missing required field for event={event}: decision",
-                }
-            )
-        )
-        return 2
-    if "artifact_path" in required and not args.artifact_path:
-        print(
-            json.dumps(
-                {
-                    "written": False,
-                    "reason": f"missing required field for event={event}: artifact_path",
-                }
-            )
-        )
-        return 2
-    if "enfoque_intentado" in required and not args.enfoque_intentado:
-        print(
-            json.dumps(
-                {
-                    "written": False,
-                    "reason": (
-                        f"missing required field for event={event}: enfoque_intentado"
-                    ),
-                }
-            )
-        )
-        return 2
-    if "reference" in required and not args.reference:
-        print(
-            json.dumps(
-                {
-                    "written": False,
-                    "reason": f"missing required field for event={event}: reference",
-                }
-            )
-        )
-        return 2
+            return 2
 
     artifact_path = args.artifact_path
     if artifact_path is not None and not _validate_artifact_path(artifact_path, sdir):

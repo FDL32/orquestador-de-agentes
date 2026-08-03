@@ -41,3 +41,29 @@ Evidencia minima por clasificacion:
 - comando/diff/SHA/ruta que lo verifica;
 - decision de triage elegida;
 - por que no es scope creep.
+
+## Donde se registra un `preexisting gate unblock` (WOT-2026-043t)
+
+La fila del hotfix de desbloqueo decia "se registra como `preexisting gate
+unblock`" **sin nombrar donde ni como**, y por eso nadie lo escribia: medido el
+2026-08-04 sobre `origin/main`, la etiqueta se uso UNA vez (`WOT-2026-018b`,
+2026-07-02) y los desbloqueos posteriores no dejaron rastro. Uno de ellos
+(`c344854`) mantuvo `WOT-2026-021e` reabierto 28 dias con su evidencia declarada
+"irrecuperable". El mecanismo concreto:
+
+```
+python scripts/init_session_scratch.py --project-root <destino> add \
+    --session-id <sid> --event preexisting_gate_unblock \
+    --ticket-id <TICKET> \
+    --gate-fallante "<el gate obligatorio que bloqueaba>" \
+    --evidencia "<sintoma + por que no es scope creep>" \
+    --decision "<la decision de triage tomada>" \
+    --reference "<SHA/comando/ruta que lo verifica>" \
+    --require-write
+```
+
+Los cinco campos son OBLIGATORIOS y mapean uno a uno con la evidencia minima de
+arriba; el emisor rechaza (exit 2) un recibo incompleto. **`--require-write` no
+es opcional aqui**: sin el, un fallo de escritura devuelve exit 0 por el contrato
+E1 y el rastro se pierde EN SILENCIO -- un append fallido no escribe nada, asi
+que la perdida es indistinguible de "no hubo desbloqueo".

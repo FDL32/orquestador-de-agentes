@@ -2097,3 +2097,83 @@ class TestArchiveRejectsIncompleteArtifactDecision:
             f.get("line") == 1 and "artifact_path" in f.get("error", "")
             for f in out["findings"]
         ), out["findings"]
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-043t: el evento del rastro de desbloqueo + la validacion GENERICA.
+#
+# El bucle L4800 (codex) cazo que `preexisting_gate_unblock` se citaba como caso
+# motivador del flag --require-write pero NO existia en la allowlist EVENTS: el
+# emisor lo rechazaba como `unknown event` antes de llegar al append. Al anadirlo
+# aparecio un fail-open ESTRUCTURAL: cmd_add validaba los campos obligatorios con
+# un bloque `if` HARDCODEADO por campo, asi que anadir uno a REQUIRED_BY_EVENT no
+# lo hacia obligatorio (medido: los 3 casos daban exit 0). Ahora se recorre el
+# contrato en vez de repetirlo.
+# --------------------------------------------------------------------------- #
+class TestPreexistingGateUnblockEvent:
+    def test_event_is_registrable(self):
+        """El evento existe: sin esto el flag citaba un caso irregistrable."""
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"ub_{uuid.uuid4().hex[:8]}")
+        sid = _sentinel_id()
+        _init_session(repo, sid)
+        result = _add_record(
+            repo,
+            sid,
+            event="preexisting_gate_unblock",
+            ticket_id="WOT-2026-999x",
+            gate_fallante="run_pytest_safe --level all",
+            evidencia="false state-leak por clave basename; no es scope creep",
+            decision="hotfix de desbloqueo",
+            reference="c344854",
+        )
+        assert result.returncode == 0, result.stdout
+        assert json.loads(result.stdout)["written"] is True
+
+    @pytest.mark.parametrize(
+        "missing",
+        ["gate_fallante", "evidencia", "ticket_id", "decision", "reference"],
+    )
+    def test_required_fields_bite(self, missing):
+        """Un recibo sin gate, sin evidencia o sin ticket es un marcador vacio.
+
+        Mutacion alcanzable: volver al bloque `if` hardcodeado (que no cubria
+        estos campos) -> los tres casos pasan a exit 0 y este test se pone ROJO.
+        """
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"ub2_{uuid.uuid4().hex[:8]}")
+        sid = _sentinel_id()
+        _init_session(repo, sid)
+        fields = {
+            "ticket_id": "WOT-2026-999x",
+            "gate_fallante": "run_pytest_safe",
+            "evidencia": "falso state-leak; no es scope creep: 1 linea, test aislado",
+            "decision": "hotfix de desbloqueo (1-3 lineas, bajo riesgo)",
+            "reference": "c344854",
+        }
+        del fields[missing]
+        result = _add_record(repo, sid, event="preexisting_gate_unblock", **fields)
+        assert result.returncode == 2, (
+            f"falta {missing} -> debe rechazar con exit 2; got {result.returncode}: "
+            f"{result.stdout}"
+        )
+        assert missing in result.stdout
+
+    @pytest.mark.parametrize(
+        ("event", "fields"),
+        [
+            ("artifact_added", {"generator": "g", "artifact_path": "f.txt"}),
+            ("batch_retry", {"enfoque_intentado": "probe"}),
+            ("lock_reclaimed", {}),
+        ],
+    )
+    def test_generic_validation_does_not_regress_existing_events(self, event, fields):
+        """CONTROL NEGATIVO: los eventos que ya existian siguen aceptandose.
+
+        Mutacion alcanzable: una validacion generica demasiado estricta (p.ej.
+        exigir todos los LEDGER_FIELDS) -> ROJO. Cubre tambien el caso
+        `required` vacio (`lock_reclaimed`), que un bucle mal escrito rompe.
+        """
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"ub3_{uuid.uuid4().hex[:8]}")
+        sid = _sentinel_id()
+        _init_session(repo, sid)
+        result = _add_record(repo, sid, event=event, **fields)
+        assert result.returncode == 0, f"{event} regresiono: {result.stdout}"
