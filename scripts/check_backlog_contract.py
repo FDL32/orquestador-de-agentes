@@ -98,6 +98,9 @@ _TICKET_ROW_CELL_RE = re.compile(r"^(?:WOT|WP|WT)-\d{4}-\w+$")
 # which only references the concept and is allowed. The ficha may summarize or
 # point to the contract; it may not own the FLT.
 _FLT_DECLARATION_RE = re.compile(r"^\s*[-*]\s*\*\*Files Likely Touched", re.IGNORECASE)
+# WOT-2026-043t: ticket id SEARCHED inside a line (the constants above are anchored
+# with ^...$ for whole-cell matches and cannot find an id embedded in prose).
+_TICKET_ID_IN_TEXT_RE = re.compile(r"\b((?:WOT|WP|WT)-\d{4}-\w+)\b")
 
 
 def resolve_destino_root(cli_value: str | None) -> tuple[Path | None, str | None]:
@@ -302,6 +305,64 @@ def validate_backlog(backlog_path: Path) -> list[str]:
 
     errors.extend(_ticket_rows_outside_table(content))
     errors.extend(_check_ficha_bodies(content))
+    errors.extend(_check_ficha_pointers(content, rows))
+    return errors
+
+
+def _check_ficha_pointers(content: str, rows: list[str]) -> list[str]:
+    """A row that DELEGATES its detail to a ficha must have that ficha reachable.
+
+    WOT-2026-043t/fase-3. Compressing a fat row to "pointer + invariant criterion"
+    turns the pointer into part of the CONTRACT, not a convenience: if the ficha is
+    deleted, renamed or never created, the row keeps a criterion it can no longer
+    justify and NOTHING notices -- the row still parses, so every other check here
+    stays green. Both adversarial lenses of loop L4500 raised this independently,
+    and it is the same family as WOT-2026-044p: a guard that reports OK about a
+    surface it never looked at.
+
+    Detects the delegation by the literal the compression emits (``ver ficha`` +
+    the row's own ticket id), so a row that merely MENTIONS another ticket's ficha
+    is not dragged in.
+
+    Before: ``content`` is the whole backlog; ``rows`` the live-table rows.
+    During: pure string parsing -- collects ``### <TICKET>`` headers, then checks
+        every delegating row against them. No disk, no git.
+    After: one error per row whose ficha is missing or duplicated.
+    """
+    errors: list[str] = []
+    headers: dict[str, int] = {}
+    for line in content.splitlines():
+        if not line.startswith("### "):
+            continue
+        m = _TICKET_ID_IN_TEXT_RE.search(line)
+        if m:
+            headers[m.group(1)] = headers.get(m.group(1), 0) + 1
+
+    for row in rows:
+        cells = [c.strip() for c in row.strip().strip("|").split("|")]
+        if len(cells) != len(_TABLE_HEADER_COLS):
+            continue
+        ticket_cell, desc = cells[1], cells[2]
+        m = _TICKET_ID_IN_TEXT_RE.search(ticket_cell)
+        if not m:
+            continue
+        ticket = m.group(1)
+        # Only a row delegating ITS OWN detail counts; a row citing someone
+        # else's ficha is not making a claim about its own completeness.
+        if "ver ficha" not in desc or ticket not in desc:
+            continue
+        n = headers.get(ticket, 0)
+        if n == 0:
+            errors.append(
+                f"{ticket}: the row delegates its detail to ficha '### {ticket}' "
+                "but no such ficha exists -- the pointer is dangling, so the "
+                "criterion it defers to is unreachable"
+            )
+        elif n > 1:
+            errors.append(
+                f"{ticket}: {n} fichas '### {ticket}' exist -- an ambiguous "
+                "pointer cannot say which one carries the evidence"
+            )
     return errors
 
 

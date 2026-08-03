@@ -664,3 +664,65 @@ def test_state_md_without_active_ticket_not_applicable(tmp_path: Path) -> None:
     (collab / "STATE.md").write_text("STATUS: UNKNOWN\n", encoding="utf-8")
     _write_backlog(tmp_path, _VALID_ROWS)
     assert cbc.validate_active_ticket_state(tmp_path) == []
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-043t (fase 3): comprimir una fila gorda a "puntero + criterio
+# invariante" convierte el PUNTERO en parte del contrato. Si la ficha se borra o
+# se duplica, la fila conserva un criterio que ya no puede justificar y NADA lo
+# nota: la fila sigue parseando, asi que el resto de checks siguen verdes. Lo
+# levantaron las DOS lentes del bucle L4500 de forma independiente.
+# --------------------------------------------------------------------------- #
+_PTR_ROW = (
+    "| Media | WOT-2026-0P9Z | resumen. ver ficha `### WOT-2026-0P9Z` abajo. "
+    "| motor/x | pending | - | origen | - |"
+)
+
+
+def test_043t_pointer_with_reachable_ficha_passes() -> None:
+    """CONTROL POSITIVO: fila que delega + ficha presente -> sin errores."""
+    content = "\n".join([_PTR_ROW, "", "### WOT-2026-0P9Z - resumen"])
+    assert cbc._check_ficha_pointers(content, [_PTR_ROW]) == []
+
+
+def test_043t_dangling_pointer_is_an_error() -> None:
+    """El defecto: la fila delega en una ficha que NO existe.
+
+    Mutacion alcanzable: retirar la llamada a _check_ficha_pointers de
+    validate_backlog (o devolver [] siempre) -> este test se pone ROJO.
+    """
+    errors = cbc._check_ficha_pointers(_PTR_ROW, [_PTR_ROW])
+    assert len(errors) == 1
+    assert "WOT-2026-0P9Z" in errors[0]
+    assert "dangling" in errors[0]
+
+
+def test_043t_duplicate_ficha_is_an_error() -> None:
+    """Dos fichas con el mismo id: el puntero no puede decir cual manda."""
+    content = "\n".join([_PTR_ROW, "### WOT-2026-0P9Z - a", "### WOT-2026-0P9Z - b"])
+    errors = cbc._check_ficha_pointers(content, [_PTR_ROW])
+    assert len(errors) == 1
+    assert "2 fichas" in errors[0]
+
+
+def test_043t_row_without_pointer_needs_no_ficha() -> None:
+    """CONTROL NEGATIVO: una fila autosuficiente no exige ficha.
+
+    Mutacion alcanzable: exigir ficha a TODA fila -> ROJO. Sin este test, el
+    guard obligaria a crear 180 fichas vacias para las filas que no delegan.
+    """
+    row = "| Media | WOT-2026-0Q8Y | todo el criterio aqui | s | pending | - | o | - |"
+    assert cbc._check_ficha_pointers(row, [row]) == []
+
+
+def test_043t_citing_another_tickets_ficha_does_not_claim_own_completeness() -> None:
+    """Una fila que MENCIONA la ficha de OTRO ticket no delega la suya.
+
+    Mutacion alcanzable: casar 'ver ficha' sin comprobar que el id citado es el
+    de la propia fila -> ROJO (pediria una ficha que esta fila nunca prometio).
+    """
+    row = (
+        "| Media | WOT-2026-0R7X | criterio propio; contexto en ver ficha "
+        "`### WOT-2026-0P9Z` | s | pending | - | o | - |"
+    )
+    assert cbc._check_ficha_pointers(row, [row]) == []
