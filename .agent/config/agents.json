@@ -212,7 +212,7 @@
         "backend": "nan_api",
         "model": "deepseek-v4-flash",
         "backend_version": null,
-        "status": "active"
+        "status": "deprecated"
       },
       "BA11": {
         "backend": "nan_api",
@@ -258,7 +258,7 @@
           {
             "phase": "fanout-comun",
             "function": "participant",
-            "backend_key": "BA10"
+            "backend_key": "BA14"
           },
           {
             "phase": "fanout-comun",
@@ -278,7 +278,7 @@
           {
             "phase": "fanout-dif",
             "function": "participant",
-            "backend_key": "BA10"
+            "backend_key": "BA14"
           },
           {
             "phase": "fanout-dif",
@@ -320,7 +320,7 @@
           {
             "phase": "challenge-fanout",
             "function": "participant",
-            "backend_key": "BA10"
+            "backend_key": "BA14"
           },
           {
             "phase": "challenge-fanout",
