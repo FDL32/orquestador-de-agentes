@@ -72,6 +72,17 @@ from bus.portable_memory_archive import (  # noqa: E402
 # Default max observations when falling back to raw L1.
 _L1_FALLBACK_LIMIT = 15
 
+# WOT-2026-024r (A2): cap on archive entries handed to `get_compact_context`.
+# `pre_compact_hook.py` injects that string WHOLE and UNTRUNCATED, so an
+# uncapped archive (175 entries, ~12400 tokens measured 2026-08-03) would land
+# 30x the previous payload at the exact moment the session compacts for lack of
+# context. 50 keeps roughly a third of today's archive (~3500 tokens) -- the
+# newest third, which is what a compaction needs -- and bounds the worst case
+# as the archive keeps growing. It is a CAP, not a target: below it nothing is
+# dropped. Not tuned to a measured optimum; it is the round number both review
+# lenses proposed, and the value is a knob, not a contract.
+_COMPACT_ARCHIVE_CAP = 50
+
 
 # --- Paths (computed lazily for testability) ---
 
@@ -211,6 +222,31 @@ def _read_portable_archive() -> list[dict[str, Any]]:
         return read_archive_observations(_get_repo_root())
     except (CorruptArchiveError, OSError, ValueError):
         return []
+
+
+def _cap_by_recency(
+    observations: list[dict[str, Any]], cap: int
+) -> list[dict[str, Any]]:
+    """The ``cap`` newest entries, or all of them when under the cap.
+
+    WOT-2026-024r (A2). Bounds what `get_compact_context` hands to the
+    pre-compact hook, which injects it untruncated. Sorting is explicit rather
+    than assumed: the archive arrives in file-and-line order (oldest first), so
+    slicing without sorting would keep the OLDEST entries -- the exact opposite
+    of what a compaction needs.
+
+    Before: ``observations`` may be in any order; ``cap`` is a positive int.
+    During: sorts by ``timestamp`` descending; a missing timestamp sorts last
+        (empty string) and never jumps ahead of a dated entry.
+    After: returns at most ``cap`` entries, newest first. Never raises.
+    """
+    if len(observations) <= cap:
+        return observations
+    return sorted(
+        observations,
+        key=lambda obs: str(obs.get("timestamp") or ""),
+        reverse=True,
+    )[:cap]
 
 
 def _format_archive_as_text(observations: list[dict[str, Any]]) -> str:
@@ -409,18 +445,30 @@ def get_compact_context() -> str:
     context -- so it was the worst possible place to stay blind to the only
     memory surface that survives a clone.
 
-    Unlike `get_review_context`, the archive is included WHOLE and unfiltered:
-    compaction has no domain to narrow to, and the point of the hook is to keep
-    what the session would otherwise forget.
+    Unlike `get_review_context` there is no domain to narrow to, so the archive
+    is capped by RECENCY instead: `pre_compact_hook.py` injects this string
+    WHOLE and UNTRUNCATED into `additionalContext`, and the full archive is
+    49526 of 51236 chars (~12400 tokens, measured 2026-08-03) -- a 30x increase
+    delivered at the exact moment the session is compacting for lack of room.
+    Reading the archive is the ticket; flooding the hook is not. Two review
+    lenses flagged this independently and both were right: capping a regression
+    introduced by this same change is mitigation, not new design.
+
+    The cap keeps the NEWEST entries because compaction is about carrying the
+    session forward, and it is deliberately generous -- it bounds the worst
+    case without silently dropping memory in the common one.
+
+    Note on precedence: dedup runs against L1 only. L2 is prose with no stable
+    ``id``, so there is nothing to collide with.
 
     Before: Memory files may or may not exist.
-    During: Reads the archive, then combines L3 profile and L2 rules with a
-            separator. Falls back to L1 raw observations if neither exists,
-            applying per-ENTRY precedence (the live L1 copy wins on a stable-id
-            collision, same rule as A1).
+    During: Reads the archive newest-first and caps it, then combines L3
+            profile and L2 rules with a separator. Falls back to L1 raw
+            observations if neither exists, applying per-ENTRY precedence (the
+            live L1 copy wins on a stable-id collision, same rule as A1).
     After: Returns a markdown string with combined memory content.
     """
-    archived = _read_portable_archive()
+    archived = _cap_by_recency(_read_portable_archive(), _COMPACT_ARCHIVE_CAP)
 
     parts: list[str] = []
 

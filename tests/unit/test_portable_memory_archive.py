@@ -689,3 +689,72 @@ def test_a2_gates_still_work_with_no_archive_at_all(tmp_path: Path, monkeypatch)
         domain="delivery-hygiene"
     )
     assert "REGLA-LOCAL-VIVA" in memory_loader.get_compact_context()
+
+
+# --- A2, correccion del MANAGER_REVIEW: el cap por recencia ----------------
+#
+# Dos lentes independientes devolvieron CAMBIOS por el mismo motivo: el archive
+# entero (~12400 tokens) llegaba SIN TRUNCAR al pre_compact_hook, justo cuando
+# la sesion compacta por falta de contexto. El cap es la mitigacion.
+
+
+def test_a2_compact_context_caps_the_archive_by_recency(wired: Path):
+    """Por encima del cap se conservan las entradas MAS NUEVAS, no las primeras.
+
+    Mutation: `[:cap]` sin ordenar -> el archive llega en orden de fichero
+    (oldest first) y este test cae, porque se quedarian las VIEJAS.
+    """
+    cap = memory_loader._COMPACT_ARCHIVE_CAP
+    entries = []
+    for i in range(cap + 10):
+        obs = _observation(f"CANARY-A2-CAP-{i:03d}")
+        # Orden de FICHERO ascendente por fecha: las primeras son las VIEJAS.
+        obs["timestamp"] = f"2026-01-01T00:{i:02d}:00+00:00"
+        entries.append(obs)
+    _write_jsonl(_archive(wired), entries)
+
+    ctx = memory_loader.get_compact_context()
+
+    newest = entries[-1]["id"]
+    oldest = entries[0]["id"]
+    assert newest in ctx, "la entrada MAS NUEVA debe sobrevivir al cap"
+    assert oldest not in ctx, (
+        "la entrada MAS VIEJA sobrevivio al cap: se esta truncando sin ordenar "
+        "por recencia, que es justo lo contrario de lo que una compactacion "
+        "necesita"
+    )
+
+
+def test_a2_compact_cap_does_not_drop_anything_below_the_limit(wired: Path):
+    """CONTROL POSITIVO: por debajo del cap no se pierde NADA.
+
+    Sin este control, un cap roto que devolviera siempre pocas entradas pasaria
+    el test de arriba igualmente.
+    """
+    cap = memory_loader._COMPACT_ARCHIVE_CAP
+    entries = [_observation(f"CANARY-A2-UNDER-{i:03d}") for i in range(cap - 5)]
+    _write_jsonl(_archive(wired), entries)
+
+    ctx = memory_loader.get_compact_context()
+    missing = [e["id"] for e in entries if e["id"] not in ctx]
+    assert not missing, f"el cap descarto entradas estando por debajo: {missing}"
+
+
+def test_a2_review_context_is_not_capped(wired: Path):
+    """El cap es SOLO de compact: la review ya acota por dominio.
+
+    Mutation: aplicar el cap tambien en `get_review_context` -> este test cae.
+    """
+    cap = memory_loader._COMPACT_ARCHIVE_CAP
+    entries = []
+    for i in range(cap + 10):
+        obs = _domain_observation(f"CANARY-A2-NOCAP-{i:03d}", "delivery-hygiene")
+        obs["timestamp"] = f"2026-01-01T00:{i:02d}:00+00:00"
+        entries.append(obs)
+    _write_jsonl(_archive(wired), entries)
+
+    ctx = memory_loader.get_review_context(domain="delivery-hygiene")
+    assert entries[0]["id"] in ctx, (
+        "la review perdio la entrada mas vieja de su dominio: el cap de compact "
+        "se ha filtrado a una puerta que acota por dominio, no por volumen"
+    )
