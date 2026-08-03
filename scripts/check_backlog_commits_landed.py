@@ -116,13 +116,15 @@ EXIT_SKIPPED_REQUIRED = 5
 # invisible to the census. Same family as EXIT_SKIPPED_REQUIRED (evidence the guard
 # cannot see), distinct code so the caller can tell the two shapes apart.
 #
-# DECLARED LIMIT (do not read this detector as a wired barrier): it lives in
-# ``census_archived``, which ONLY this file's CLI calls -- and that CLI runs in no
-# pre-commit hook and no closeout step. The static-import wiring recorded in
-# ``guard_wiring_policy.yaml`` reaches ``audit``/``parse_archived_commits`` (via
-# agent_controller::_ticket_landed_by_archived_commit), NOT the census. So today
-# this bites only when a human runs the CLI. Wiring it is its own surface and is
-# NOT done here (measured 2026-08-03).
+# WIRED (WOT-2026-043t, second half): the detector is no longer CLI-only. It was
+# a NORM while ``census_archived`` was called by this file's CLI alone -- a path
+# nothing runs by itself. ``prepush_check.run_landed_evidence_shape_check`` now
+# calls the census on the closeout path and BLOCKS on a malformed row; the
+# mutation is pinned by ``tests/test_prepush_landed_evidence_shape.py``, which
+# also asserts the call-site itself is registered (a check nobody invokes is a
+# norm, not a barrier). The older static-import wiring recorded in
+# ``guard_wiring_policy.yaml`` reaches ``audit``/``parse_archived_commits`` via
+# agent_controller and remains unchanged; this is a SECOND, distinct call-site.
 EXIT_MALFORMED_EVIDENCE = 6
 
 # Verdicts (per-SHA).

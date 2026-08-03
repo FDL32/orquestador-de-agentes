@@ -1262,6 +1262,80 @@ def run_closeout_reconciliation_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_landed_evidence_shape_check(project_root: Path) -> CheckResult:
+    """Fail a close whose archived row carries commit evidence the guard cannot read.
+
+    WOT-2026-043t. ``census_archived`` classifies TERMINAL rows; a row whose SHA was
+    written into the STATE cell has no terminal state, so it matched none of
+    required/audited/skipped_required/skipped_legacy and VANISHED -- while
+    ``check_backlog_commits_landed`` still printed ``ERROR=0``. Measured 2026-08-03
+    while archiving WOT-2026-040u: the row was real, the SHA was real, and no counter
+    ever saw it.
+
+    This is the WIRING half. The detector alone was a NORM: ``census_archived`` is
+    called only by that script's CLI, and the CLI runs in no hook -- the static-import
+    wiring recorded in ``guard_wiring_policy.yaml`` reaches ``audit``/
+    ``parse_archived_commits`` via agent_controller, never the census. Here it runs on
+    a path that runs by itself.
+
+    BLOCKING by design, unlike its ``run_closeout_reconciliation_check`` sibling: that
+    one defaults to WARN because it reports pre-existing drift owned by older tickets
+    (a hard block would be a false red on debt the closing ticket does not own). This
+    one has NO such debt -- the real archive measures 0 malformed rows today -- so a
+    malformed row can only be introduced by the close being pushed. Blocking on your
+    own defect is not a false red.
+
+    Before: ``project_root`` is the destino whose ``_archive/backlog_done.md`` holds
+        the closed rows. A missing archive is a PASS (nothing archived yet), never a
+        fabricated failure.
+    During: reads that one file and runs the pure-string census over it. No git, no
+        network, no mutation.
+    After: ``passed`` False (blocking) naming every offending ticket, or True.
+    """
+    name = "Landed Evidence Shape (WOT-2026-043t)"
+    try:
+        from scripts.check_backlog_commits_landed import census_archived
+    except ImportError:
+        from check_backlog_commits_landed import (
+            census_archived,  # type: ignore[no-redef]
+        )
+
+    archive = project_root / ".agent" / "collaboration" / "_archive" / "backlog_done.md"
+    if not archive.exists():
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=f"SKIP: no {archive.name} in the destino (nothing archived yet)",
+        )
+    try:
+        census = census_archived(archive.read_text(encoding="utf-8-sig"))
+    except OSError as exc:
+        return CheckResult(
+            name=name, passed=False, output=f"cannot read {archive}: {exc}"
+        )
+    malformed = census.get("malformed_evidence_tickets", [])
+    if malformed:
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=(
+                f"{len(malformed)} archived row(s) carry a commit(s) cell but NO "
+                f"terminal state, so the landing census cannot see them and its "
+                f"ERROR=0 would be a false green. Put the terminal state in its own "
+                f"cell and keep the SHA in the commit(s) cell. "
+                f"Tickets: {', '.join(malformed)}"
+            ),
+        )
+    return CheckResult(
+        name=name,
+        passed=True,
+        output=(
+            f"every archived row with commit evidence is readable by the census "
+            f"(required={census['required']} audited={census['audited']})"
+        ),
+    )
+
+
 def run_motor_destination_integration_check(
     project_root: Path, motor_root: Path | None = None
 ) -> CheckResult:
@@ -1495,6 +1569,10 @@ def run_preflight_check(
         results.append(run_destination_pii_check(project_root))
         # 6e. Closeout Reconciliation (WOT-2026-024w; WARN default, FAIL opt-in)
         results.append(run_closeout_reconciliation_check(project_root))
+        # 6e-bis. Landed Evidence Shape (WOT-2026-043t; BLOQUEANTE: a diferencia de
+        # 6e no arrastra deuda historica -- el archive real mide 0 filas malformadas,
+        # asi que una solo puede entrar con el cierre que se esta empujando)
+        results.append(run_landed_evidence_shape_check(project_root))
         # 6f. Motor<->Destino Integration (WOT-2026-024w; WARN default, FAIL opt-in)
         results.append(run_motor_destination_integration_check(project_root))
         # 6g. Contract Formation Check (WOT-2026-023m(c); bloqueante en cierre)
