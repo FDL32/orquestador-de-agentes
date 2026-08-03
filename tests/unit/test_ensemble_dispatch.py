@@ -1612,7 +1612,7 @@ _FORBIDDEN_TEST_DIFF_TOKENS = (
 _WOT_025Z_SECTION_MARKER = "# === WOT-2026-025z substantive tests start ==="
 
 _NAN_MODELS = {
-    "deepseek-v4-flash": "challenger_nan_deepseek_v4_flash",
+    "deepseek-v4-flash-0731": "challenger_nan_deepseek_v4_flash",
     "qwen3.6": "challenger_nan_qwen3_6",
     "mimo-v2.5": "challenger_nan_mimo_v2_5",
     "gemma4": "challenger_nan_gemma4",
