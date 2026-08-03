@@ -421,6 +421,105 @@ class TestExitCodes:
         assert output["written"] is False
         assert output.get("degraded") is True
 
+    # ------------------------------------------------------------------ #
+    # WOT-2026-043t: E1 opt-out. The hybrid contract (fail-OPEN on
+    # infrastructure) is right for telemetry -- a disk failure must not kill a
+    # flight -- and WRONG when the record IS the audit trail. Measured
+    # 2026-08-04: a failed append writes NOTHING, so the loss is silent and
+    # indistinguishable from "there was no event to record". `--require-write`
+    # lets the caller whose record is evidence fail closed instead.
+    # ------------------------------------------------------------------ #
+    def test_add_require_write_fails_closed_when_manifest_unwritable(self, tmp_path):
+        """El caso que motiva el flag: la evidencia no aterriza -> exit 3.
+
+        Mutacion alcanzable: retirar la rama de `require_write` en cmd_add (o
+        devolver 0 igualmente) -> este test se pone ROJO.
+        """
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"rw_{uuid.uuid4().hex[:8]}")
+        sid = _sentinel_id()
+        _init_session(repo, sid)
+
+        manifest = repo / ".agent" / "runtime" / "session" / sid / "manifest.jsonl"
+        manifest.write_text("", encoding="utf-8")
+        os.chmod(str(manifest), stat.S_IREAD)
+
+        result = _run_scratch(
+            [
+                "--project-root",
+                str(repo),
+                "add",
+                "--session-id",
+                sid,
+                "--event",
+                "artifact_added",
+                "--generator",
+                "test",
+                "--artifact-path",
+                "file.txt",
+                "--require-write",
+            ]
+        )
+
+        os.chmod(str(manifest), stat.S_IWRITE | stat.S_IREAD)
+
+        assert result.returncode == _iss.EXIT_WRITE_REQUIRED, (
+            "with --require-write an unwritable manifest must fail CLOSED "
+            f"(exit {_iss.EXIT_WRITE_REQUIRED}); got {result.returncode}: "
+            f"{result.stdout}"
+        )
+        output = json.loads(result.stdout)
+        assert output["written"] is False
+        assert output.get("required_write") is True
+
+    def test_add_without_require_write_keeps_e1_fail_open(self, tmp_path):
+        """CONTROL NEGATIVO: sin el flag, E1 sigue intacto (exit 0).
+
+        Mutacion alcanzable: hacer el fail-closed incondicional -> ROJO. Sin
+        este test, el opt-in podria convertirse en regresion para los llamantes
+        existentes de telemetria.
+        """
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"rw2_{uuid.uuid4().hex[:8]}")
+        sid = _sentinel_id()
+        _init_session(repo, sid)
+
+        manifest = repo / ".agent" / "runtime" / "session" / sid / "manifest.jsonl"
+        manifest.write_text("", encoding="utf-8")
+        os.chmod(str(manifest), stat.S_IREAD)
+
+        result = _add_record(repo, sid, generator="test", artifact_path="file.txt")
+
+        os.chmod(str(manifest), stat.S_IWRITE | stat.S_IREAD)
+
+        assert result.returncode == 0, (
+            f"sin --require-write el contrato E1 debe seguir fail-OPEN: {result.stdout}"
+        )
+
+    def test_add_require_write_is_transparent_on_success(self, tmp_path):
+        """CONTROL POSITIVO: con manifest escribible, el flag no cambia nada."""
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"rw3_{uuid.uuid4().hex[:8]}")
+        sid = _sentinel_id()
+        _init_session(repo, sid)
+
+        result = _run_scratch(
+            [
+                "--project-root",
+                str(repo),
+                "add",
+                "--session-id",
+                sid,
+                "--event",
+                "artifact_added",
+                "--generator",
+                "test",
+                "--artifact-path",
+                "file.txt",
+                "--require-write",
+            ]
+        )
+
+        assert result.returncode == 0, result.stdout
+        assert json.loads(result.stdout)["written"] is True
+
     def test_add_exit2_artifact_path_outside(self, tmp_path):
         repo = _make_repo(REAL_SYSTEM_TEMP, f"e2_{uuid.uuid4().hex[:8]}")
         sid = _sentinel_id()

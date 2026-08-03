@@ -18,6 +18,11 @@ Design decisions (plan v2, plan-audit adversarial with probes executed):
 - ``required`` CONDITIONAL by event: ``lock_reclaimed`` -> ``frozenset()`` empty.
 - Exit codes hybrid (E1): infrastructure -> exit 0 + ``degraded: true``; usage -> exit 2;
   OK -> exit 0.
+- E1 OPT-OUT (WOT-2026-043t): ``add --require-write`` -> exit 3 when the append
+  fails. E1 is right for telemetry (a disk failure must not kill a flight) and
+  WRONG when the record IS the audit trail: a failed append writes NOTHING, so
+  the loss is silent and indistinguishable from "nothing happened". Opt-in, so
+  every existing caller keeps E1 unchanged.
 """
 
 from __future__ import annotations
@@ -53,6 +58,10 @@ from bus.redact import redact_payload  # noqa: E402
 LOCK_TTL = 900
 TAKEOVER_TTL = 60
 KEEP_LAST_K = 10
+# WOT-2026-043t: exit code for `add --require-write` when the append fails. It is
+# NOT 2 (usage) nor 0 (the E1 degraded default): a caller must be able to tell
+# "the evidence did not land" apart from both a bad invocation and a soft skip.
+EXIT_WRITE_REQUIRED = 3
 MANIFEST_NAME = "manifest.jsonl"
 LOCK_NAME = "lock.json"
 STATE_NAME = ".session_state.json"
@@ -941,15 +950,19 @@ def cmd_add(args: argparse.Namespace) -> int:  # noqa: C901
     try:
         _append_record(manifest, scrubbed)
     except OSError as exc:
-        print(
-            json.dumps(
-                {
-                    "written": False,
-                    "degraded": True,
-                    "reason": f"manifest not writable: {exc}",
-                }
-            )
-        )
+        # WOT-2026-043t: --require-write turns the E1 degraded exit 0 into a hard
+        # failure for callers whose record IS the evidence. Default behaviour is
+        # unchanged (exit 0 + degraded), so no existing caller regresses.
+        degraded_payload = {
+            "written": False,
+            "degraded": True,
+            "reason": f"manifest not writable: {exc}",
+        }
+        if getattr(args, "require_write", False):
+            degraded_payload["required_write"] = True
+            print(json.dumps(degraded_payload))
+            return EXIT_WRITE_REQUIRED
+        print(json.dumps(degraded_payload))
         return 0
     print(json.dumps({"written": True, "session_id": sid, "event": event}))
     return 0
@@ -1320,6 +1333,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_p.add_argument("--decision", default=None, help="Decision text.")
     add_p.add_argument("--repo-role", default=None, help="Override repo role.")
+    # WOT-2026-043t: opt-in fail-closed for records that ARE the evidence.
+    # The E1 hybrid contract (module docstring) is deliberate: a disk failure in
+    # session infrastructure must NOT kill a flight, so `add` returns exit 0 with
+    # `degraded: true`. That is right for telemetry -- and WRONG when the record
+    # is the audit trail itself: a `preexisting_gate_unblock` receipt that never
+    # lands leaves NO line in the manifest (measured 2026-08-04: the 3 real
+    # manifests contain 0 `degraded` markers, because a failed append writes
+    # nothing at all). The absence is silent and indistinguishable from "there
+    # was no unblock". Callers whose record is evidence pass this flag; E1 is
+    # preserved for every existing caller, which is why it is opt-in.
+    add_p.add_argument(
+        "--require-write",
+        action="store_true",
+        help=(
+            "Fail closed (exit 3) if the record cannot be appended, instead of "
+            "the default degraded exit 0. Use when the record IS the evidence."
+        ),
+    )
     # WOT-2026-023w: anti-loop fields for event=batch_retry.
     add_p.add_argument(
         "--stage", default=None, help="Owner-stage of the failed attempt."
