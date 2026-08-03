@@ -165,6 +165,17 @@ SCORECARD_FIELDS = [
     # RESPONDE y una que RESPONDE VACIO son indistinguibles para la barrera del
     # bucle. Al final (prefijo frozen invariante).
     "output_chars",
+    # WOT-2026-048g: el modelo que el backend dice haber USADO, extraido de su
+    # STDERR. `model` es el DECLARADO por el perfil; este es el REPORTADO por el
+    # proceso. WOT-2026-047y hizo que coincidieran por construccion (el flag
+    # entra en el argv), pero un CLI que ACEPTE el flag y sirva otro modelo
+    # seguia siendo invisible: el scorecard solo tenia la version declarada.
+    # No hace falta parsear cada CLI ni disenar nada: AMBOS lo declaran ya y el
+    # transporte tiraba el stderr (medido 2026-08-03: opencode escribe
+    # "> builder - glm-5.2"; codex escribe "model: gpt-5.5"). None = el backend
+    # no lo declaro (canal api, o CLI sin banner): AUSENCIA de dato, nunca
+    # desacuerdo. Al final (prefijo frozen invariante).
+    "model_reported",
 ]
 
 ADJUDICATED_OUTCOMES = {
@@ -745,6 +756,46 @@ def _kill_process_tree(pid: int) -> None:
             os.kill(pid, signal.SIGKILL)
 
 
+# WOT-2026-048g: marca que `_transport_agent` antepone cuando el CLI sale con
+# rc != 0. `_record_round` la reconoce y registra la fila como `no-aportacion`
+# con `failure_mode`, en vez de contarla como intervencion valida.
+_TRANSPORT_FAILED_PREFIX = "[transport-failed] "
+
+# WOT-2026-048g: el modelo que el CLI dice estar usando, en su banner de STDERR.
+# Medido 2026-08-03 sobre los dos backends CLI reales:
+#   opencode -> "> builder - glm-5.2"   (separador U+00B7 en la salida real)
+#   codex    -> "model: gpt-5.5"
+# Deliberadamente ESTRECHO: solo estas dos formas. Un parser generoso inventaria
+# desacuerdos donde solo hay un formato no previsto, y un falso "el backend
+# corrio otro modelo" es peor que no tener el dato -- por eso lo no reconocido
+# es None (ausencia), nunca un valor adivinado.
+_REPORTED_MODEL_KEY = "_model_reported"
+
+_MODEL_REPORTED_PATTERNS = (
+    re.compile(r"^\s*model:\s*(?P<model>[^\s]+)\s*$", re.MULTILINE),
+    re.compile(r"^\s*>\s*\w+\s*[·|-]\s*(?P<model>[^\s]+)\s*$", re.MULTILINE),
+)
+
+
+def _extract_reported_model(stderr_text: str) -> str | None:
+    """Modelo que el CLI declara usar, o None si no lo declara.
+
+    Before: `stderr_text` es el STDERR crudo del backend (puede traer codigos
+        ANSI y venir vacio).
+    During: limpia los escapes ANSI y prueba los patrones conocidos en orden.
+    After: retorna el primer modelo reconocido, o None. NUNCA lanza: este dato
+        es telemetria y no puede tumbar una ronda que si respondio.
+    """
+    if not stderr_text:
+        return None
+    clean = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", stderr_text)
+    for pattern in _MODEL_REPORTED_PATTERNS:
+        match = pattern.search(clean)
+        if match:
+            return match.group("model").strip() or None
+    return None
+
+
 def _render_model_flag(profile: dict, backend_cfg: dict) -> list[str]:
     """Renderiza la plantilla `model_flag` del BACKEND con el modelo del PERFIL.
 
@@ -868,13 +919,36 @@ def _transport_agent(
         **popen_kwargs,
     )
     try:
-        out, _err = proc.communicate(input=stdin_payload, timeout=timeout)
+        out, err = proc.communicate(input=stdin_payload, timeout=timeout)
+        # WOT-2026-048g: el modelo REPORTADO viaja por el perfil (dict mutable
+        # que el caller ya tiene) y no por el valor de retorno. La firma
+        # `transport(profile, backend_cfg, messages, timeout) -> str` es
+        # CONTRATO: los tests inyectan `_FakeTransport` con esa aridad exacta y
+        # devolviendo un str; cambiarla a tupla los rompe a todos y convierte un
+        # anadido de telemetria en una migracion.
+        profile[_REPORTED_MODEL_KEY] = _extract_reported_model(err)
     except subprocess.TimeoutExpired:
         _kill_process_tree(proc.pid)
         raise RuntimeError(
             f"backend CLI sin respuesta tras {timeout}s; arbol de procesos "
             "matado (pipe-inheritance hang, medido 2026-07-16)"
         ) from None
+    # WOT-2026-048g: un rc != 0 marca la salida como NO UTILIZABLE. El exit code
+    # sigue sin ser veredicto POSITIVO -- un rc 0 con Auth Error es el caso que
+    # obliga a validar por CONTENIDO, y eso no cambia --, pero un rc != 0 es un
+    # fallo DECLARADO por el propio CLI y descartarlo era lo que dejaba pasar
+    # basura como aportacion. Medido 2026-08-03: `codex.cmd exec` devuelve rc=1
+    # con el volcado de un `taskkill` ("CORRECTO: el proceso con PID ... ha sido
+    # terminado.") en STDOUT; el scorecard lo registraba con failure_mode None,
+    # o sea indistinguible de una revision real. Se anota en el texto en vez de
+    # vaciarlo: vaciar borraria la evidencia de QUE devolvio el backend.
+    # `getattr` y no `proc.returncode`: un Popen REAL siempre lo tiene tras
+    # `communicate()`, pero los dobles de test que solo capturan el argv no, y
+    # un AttributeError aqui convertiria un fallo de fixture en un fallo de
+    # transporte. Ausente = 0 = conducta heredada (aditividad).
+    rc = getattr(proc, "returncode", 0)
+    if rc:
+        return f"{_TRANSPORT_FAILED_PREFIX}rc={rc}\n{out or ''}"
     return out or ""
 
 
@@ -1475,6 +1549,16 @@ def _record_round(
     # evidencia. La derivacion original (texto vacio -> no-aportacion) se
     # conserva intacta cuando no se pasa override.
     text = (reply or "").strip()
+    # WOT-2026-048g: un transporte que fallo (rc != 0) NO es una intervencion.
+    # Se deriva AQUI, en el registrador, y no solo en el bucle `run`, porque
+    # `run_loop_round` -- la ruta que usa el gobierno por chat -- no pasa por el
+    # filtro de lente y registraba la basura como aportacion valida. El texto se
+    # CONSERVA (es la evidencia de que devolvio el backend); lo que cambia es su
+    # clasificacion. Un `outcome_override` explicito del caller sigue mandando.
+    if text.startswith(_TRANSPORT_FAILED_PREFIX):
+        rc_line = text[len(_TRANSPORT_FAILED_PREFIX) :].split("\n", 1)[0].strip()
+        outcome_override = outcome_override or "no-aportacion"
+        failure_mode = failure_mode or f"transport_failed: {rc_line}"
     append_scorecard(
         project_root,
         {
@@ -1509,6 +1593,9 @@ def _record_round(
             # aporto nada; es el unico observable que distingue "corrio y callo"
             # de "corrio y respondio".
             "output_chars": len(text),
+            # WOT-2026-048g: el DECLARADO va en `model`; este es el que el
+            # backend dijo usar. Que difieran es la senal que 047y no podia dar.
+            "model_reported": profile.get(_REPORTED_MODEL_KEY),
         },
     )
 

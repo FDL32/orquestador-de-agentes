@@ -74,13 +74,21 @@ _L1_FALLBACK_LIMIT = 15
 
 # WOT-2026-024r (A2): cap on archive entries handed to `get_compact_context`.
 # `pre_compact_hook.py` injects that string WHOLE and UNTRUNCATED, so an
-# uncapped archive (175 entries, ~12400 tokens measured 2026-08-03) would land
-# 30x the previous payload at the exact moment the session compacts for lack of
-# context. 50 keeps roughly a third of today's archive (~3500 tokens) -- the
-# newest third, which is what a compaction needs -- and bounds the worst case
-# as the archive keeps growing. It is a CAP, not a target: below it nothing is
-# dropped. Not tuned to a measured optimum; it is the round number both review
-# lenses proposed, and the value is a knob, not a contract.
+# uncapped archive would land 30x the previous payload at the exact moment the
+# session compacts for lack of context.
+#
+# SWEEP (snapshot 2026-08-03, archive of 175 entries; the numbers are EVIDENCE,
+# the invariant is "bounded", not any particular figure):
+#     cap  10 ->  3046 chars (~760 tokens)
+#     cap  25 ->  7375 chars (~1840 tokens)
+#     cap  50 -> 14831 chars (~3700 tokens)
+#     cap 100 -> 29490 chars (~7370 tokens)
+#     cap 175 -> 49526 chars (~12380 tokens)  <- uncapped today
+# The cost is LINEAR (~74 chars/entry): there is no plateau and therefore no
+# optimum to discover. Picking a cap is choosing a token budget, not tuning a
+# threshold -- which is why this is a knob and not a contract. 50 buys ~3700
+# tokens, roughly a third of today's archive and the NEWEST third, which is
+# what a compaction needs. Below the cap nothing is dropped.
 _COMPACT_ARCHIVE_CAP = 50
 
 

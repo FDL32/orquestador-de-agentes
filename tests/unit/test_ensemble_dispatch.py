@@ -553,7 +553,14 @@ def test_scorecard_fields_prefix_is_frozen():
         # eran indistinguibles para check_loop_execution. Al final, igual que
         # los anteriores: el prefijo de 16 sigue siendo frozen.
         "output_chars",
-    ], "los 10 campos nuevos deben ir DESPUES del prefijo frozen (D1)"
+        # WOT-2026-048g: model_reported es el modelo que el BACKEND dice haber
+        # usado (extraido de su stderr), frente a `model`, que es el DECLARADO
+        # por el perfil. Cierra el residuo de WOT-2026-047y: aquel hizo que
+        # declarado y solicitado coincidan por construccion, pero un CLI que
+        # aceptara el flag y sirviera otro modelo seguia siendo invisible. Al
+        # final, igual que todos los anteriores: el prefijo de 16 es frozen.
+        "model_reported",
+    ], "los 11 campos nuevos deben ir DESPUES del prefijo frozen (D1)"
     # WOT-2026-037b review (mimo lens): append_scorecard normaliza via
     # {k: row.get(k) for k in SCORECARD_FIELDS}; una clave DUPLICADA se
     # colapsaria en silencio (la 2a pisa la 1a) sin error. Invariante: la
@@ -2472,4 +2479,288 @@ def test_loop_round_cli_writes_the_four_barrier_fields(tmp_path, monkeypatch):
     assert row["evidencia"] == "hallazgo real", (
         "el CONTENIDO de la respuesta viaja al receipt: una lente que corre y "
         "CALLA no aporta independencia (WOT-2026-043q)"
+    )
+
+
+# --- WOT-2026-048g: un transporte que FALLO no es una intervencion -----------
+#
+# ROJO que fijan, medido 2026-08-03 en una ronda de gobierno real: `codex.cmd
+# exec` devolvio rc=1 con el volcado de un `taskkill` ("CORRECTO: el proceso con
+# PID ... ha sido terminado.") en STDOUT. `_transport_agent` descartaba el
+# `returncode` y devolvia ese texto tal cual, asi que el scorecard registraba la
+# fila con `failure_mode: None` y `outcome: None` -- INDISTINGUIBLE de una
+# revision real. Peor que el hueco de WOT-2026-048e ("cero filas"): una fila
+# falsa CONTAMINA el registro en vez de dejar un hueco visible.
+#
+# El exit code sigue sin ser veredicto POSITIVO (rc=0 con Auth Error es el caso
+# que obliga a validar por CONTENIDO). Lo que cambia es que un rc != 0 es un
+# fallo DECLARADO por el propio CLI y ya no se ignora.
+
+
+def test_048g_nonzero_rc_is_marked_as_transport_failed(monkeypatch):
+    """El transporte marca la salida cuando el CLI sale con rc != 0.
+
+    Mutation: ignorar `proc.returncode` -> el texto sale limpio y este test cae.
+    """
+
+    class _FailingPopen:
+        pid = 4848
+        returncode = 1
+
+        def __init__(self, cmd, *a, **k):
+            pass
+
+        def communicate(self, input=None, timeout=None):
+            return ("CORRECTO: el proceso con PID 123 ha sido terminado.", "")
+
+    monkeypatch.setattr(ed.subprocess, "Popen", _FailingPopen)
+
+    out = ed._transport_agent(
+        {"backend": "codex", "channel": "agent"},
+        {"executable": "codex.cmd", "args": ["exec"]},
+        [{"role": "user", "content": "audita esto"}],
+        timeout=10,
+    )
+    assert out.startswith(ed._TRANSPORT_FAILED_PREFIX), (
+        f"un rc != 0 debe marcar la salida como no utilizable; out={out!r}"
+    )
+    assert "rc=1" in out, "la marca debe conservar el codigo de salida real"
+    assert "ha sido terminado" in out, (
+        "el texto del backend se CONSERVA: es la evidencia de que devolvio; "
+        "vaciarlo borraria lo unico que permite diagnosticar el fallo"
+    )
+
+
+def test_048g_zero_rc_output_is_untouched(monkeypatch):
+    """CONTROL POSITIVO: con rc=0 la salida no se toca.
+
+    Sin este control, un fix que marcara SIEMPRE pasaria el test de arriba.
+    """
+
+    class _OkPopen:
+        pid = 4849
+        returncode = 0
+
+        def __init__(self, cmd, *a, **k):
+            pass
+
+        def communicate(self, input=None, timeout=None):
+            return ("VEREDICTO: APROBADO", "")
+
+    monkeypatch.setattr(ed.subprocess, "Popen", _OkPopen)
+
+    out = ed._transport_agent(
+        {"backend": "fake", "channel": "agent"},
+        {"executable": "cli", "args": []},
+        [{"role": "user", "content": "x"}],
+        timeout=10,
+    )
+    assert out == "VEREDICTO: APROBADO", (
+        "una respuesta con rc=0 debe llegar INTACTA al caller"
+    )
+
+
+def test_048g_failed_transport_is_recorded_as_no_aportacion(tmp_path):
+    """La ruta de GOBIERNO (`run_loop_round`) clasifica la basura correctamente.
+
+    Es la ruta que importa: no pasa por el filtro de lente del bucle `run`, asi
+    que sin esta derivacion la fila entraba como aportacion valida.
+
+    Mutation: quitar la derivacion de `_record_round` -> outcome vuelve a None.
+    """
+    dumped = "CORRECTO: el proceso con PID 123 ha sido terminado."
+    transport = _FakeTransport(replies=[f"{ed._TRANSPORT_FAILED_PREFIX}rc=1\n{dumped}"])
+    ed.run_loop_round(
+        "p_chal",
+        "audita esto",
+        config=_config(),
+        project_root=tmp_path,
+        ticket="WOT-TEST-048g",
+        task_type="code-review",
+        rol="challenger",
+        phase="challenge-fanout",
+        loop_id="L800",
+        backend_key="BA05",
+        sensitivity="public",
+        transport=transport,
+    )
+
+    rows = _rows(tmp_path)
+    assert len(rows) == 1, "sigue habiendo UNA fila: el fallo se registra, no se oculta"
+    row = rows[0]
+    assert row["outcome"] == "no-aportacion", (
+        "un transporte fallido NO puede contar como intervencion valida: era "
+        f"indistinguible de una revision real; outcome={row['outcome']!r}"
+    )
+    assert row["failure_mode"] and "transport_failed" in row["failure_mode"], (
+        f"la fila debe declarar POR QUE se descarto; failure_mode={row.get('failure_mode')!r}"
+    )
+    assert "rc=1" in row["failure_mode"], "el failure_mode conserva el exit code"
+    assert dumped in row["evidencia"], (
+        "la evidencia conserva lo que devolvio el backend: sin ella nadie puede "
+        "diagnosticar por que fallo"
+    )
+
+
+def test_048g_healthy_reply_keeps_counting_as_aportacion(tmp_path):
+    """CONTROL POSITIVO de la ruta de gobierno: una revision real no se degrada."""
+    transport = _FakeTransport(replies=["VEREDICTO: CAMBIOS -- hallazgo real"])
+    ed.run_loop_round(
+        "p_chal",
+        "audita esto",
+        config=_config(),
+        project_root=tmp_path,
+        ticket="WOT-TEST-048g-ok",
+        task_type="code-review",
+        rol="challenger",
+        phase="challenge-fanout",
+        loop_id="L800",
+        backend_key="BA11",
+        sensitivity="public",
+        transport=transport,
+    )
+    row = _rows(tmp_path)[0]
+    assert row["outcome"] is None, (
+        "una respuesta sana debe seguir contando como aportacion; el filtro no "
+        "puede degradar lo legitimo"
+    )
+    assert row["failure_mode"] is None
+
+
+# --- WOT-2026-048g: el modelo REPORTADO por el backend ----------------------
+#
+# WOT-2026-047y hizo que declarado y solicitado coincidan por construccion (el
+# flag entra en el argv), pero dejo un residuo declarado: un CLI que ACEPTE el
+# flag y sirva OTRO modelo seguia siendo invisible, porque el scorecard solo
+# guardaba el DECLARADO.
+#
+# No hizo falta disenar nada ni parsear cada CLI: AMBOS backends ya declaran el
+# modelo efectivo en su STDERR y `_transport_agent` lo estaba TIRANDO. Medido
+# 2026-08-03 contra los binarios reales: opencode escribe "> builder - glm-5.2"
+# (con U+00B7) y codex escribe "model: gpt-5.5".
+
+
+def test_048g_extracts_reported_model_from_real_stderr_shapes():
+    """Las DOS formas reales, mas los negativos.
+
+    Los negativos son la mitad que importa: un parser generoso inventaria
+    desacuerdos donde solo hay un formato no previsto, y un falso "el backend
+    corrio otro modelo" es peor que no tener el dato.
+    """
+    opencode_stderr = "\x1b[0m\n> builder · glm-5.2\n\x1b[0m\n"
+    codex_stderr = "OpenAI Codex v0.130.0\n--------\nworkdir: D\nmodel: gpt-5.5\n"
+
+    assert ed._extract_reported_model(opencode_stderr) == "glm-5.2", (
+        "el banner de opencode trae codigos ANSI: si no se limpian, no casa"
+    )
+    assert ed._extract_reported_model(codex_stderr) == "gpt-5.5"
+    # Negativos: ausencia de dato, NUNCA un valor adivinado.
+    assert ed._extract_reported_model("") is None
+    assert ed._extract_reported_model(None) is None
+    assert ed._extract_reported_model("ruido sin banner\notra linea\n") is None
+
+
+def test_048g_transport_publishes_reported_model_on_the_profile(monkeypatch):
+    """El transporte deja el modelo reportado en el perfil (canal lateral).
+
+    Va por el perfil y NO por el valor de retorno a proposito: la firma
+    `transport(profile, backend_cfg, messages, timeout) -> str` es CONTRATO --
+    los tests inyectan `_FakeTransport` con esa aridad exacta --, asi que
+    devolver una tupla convertiria telemetria en migracion.
+
+    Mutation: dejar de asignar `profile[_REPORTED_MODEL_KEY]` -> cae.
+    """
+
+    class _StderrPopen:
+        pid = 4850
+        returncode = 0
+
+        def __init__(self, cmd, *a, **k):
+            pass
+
+        def communicate(self, input=None, timeout=None):
+            return ("respuesta", "\x1b[0m\n> builder · glm-5.2\n")
+
+    monkeypatch.setattr(ed.subprocess, "Popen", _StderrPopen)
+
+    profile = {
+        "backend": "opencode",
+        "channel": "agent",
+        "model": "opencode-go/glm-5.2",
+    }
+    ed._transport_agent(
+        profile,
+        {
+            "executable": "opencode",
+            "args": ["run"],
+            "model_flag": ["--model", "{model}"],
+        },
+        [{"role": "user", "content": "x"}],
+        timeout=10,
+    )
+    assert profile[ed._REPORTED_MODEL_KEY] == "glm-5.2", (
+        "el modelo que el backend dice USAR debe quedar disponible para el "
+        "scorecard; sin el, un CLI que acepte el flag y sirva otro modelo "
+        "seguiria siendo invisible (residuo declarado de WOT-2026-047y)"
+    )
+
+
+def test_048g_scorecard_records_declared_and_reported_side_by_side(tmp_path):
+    """La fila lleva AMBOS: `model` (declarado) y `model_reported`.
+
+    NO se comparan automaticamente: los valores difieren en FORMA (el perfil
+    declara `opencode-go/glm-5.2` y el CLI reporta `glm-5.2`), asi que esto es
+    telemetria para que un humano vea la discrepancia, no un comparador. Vender
+    lo contrario seria el falso verde que este ticket combate.
+    """
+    config = _config()
+    config["ensemble_profiles"]["p_chal"][ed._REPORTED_MODEL_KEY] = "glm-5.2"
+    transport = _FakeTransport(replies=["hallazgo"])
+    ed.run_loop_round(
+        "p_chal",
+        "revisa",
+        config=config,
+        project_root=tmp_path,
+        ticket="WOT-TEST-048g-model",
+        task_type="code-review",
+        rol="challenger",
+        phase="challenge-fanout",
+        loop_id="L800",
+        backend_key="BA06",
+        sensitivity="public",
+        transport=transport,
+    )
+    row = _rows(tmp_path)[0]
+    assert row["model"] == "m2", "el DECLARADO por el perfil se conserva"
+    assert row["model_reported"] == "glm-5.2", (
+        "el REPORTADO por el backend debe viajar a la fila: es el unico dato "
+        "que permite detectar que el proceso corrio otro modelo"
+    )
+
+
+def test_048g_absent_reported_model_is_none_not_a_guess(tmp_path):
+    """CONTROL POSITIVO: sin banner, el campo es None (ausencia), no un valor.
+
+    Los `channel: api` no tienen stderr y ningun CLI esta obligado a declarar
+    su modelo: `None` significa "no lo dijo", nunca "coincide".
+    """
+    transport = _FakeTransport(replies=["hallazgo"])
+    ed.run_loop_round(
+        "p_chal",
+        "revisa",
+        config=_config(),
+        project_root=tmp_path,
+        ticket="WOT-TEST-048g-none",
+        task_type="code-review",
+        rol="challenger",
+        phase="challenge-fanout",
+        loop_id="L800",
+        backend_key="BA11",
+        sensitivity="public",
+        transport=transport,
+    )
+    row = _rows(tmp_path)[0]
+    assert row["model_reported"] is None, (
+        "sin banner el campo es AUSENCIA de dato; inventar un valor aqui seria "
+        "afirmar que el backend confirmo algo que nunca dijo"
     )

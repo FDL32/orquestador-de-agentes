@@ -758,3 +758,77 @@ def test_a2_review_context_is_not_capped(wired: Path):
         "la review perdio la entrada mas vieja de su dominio: el cap de compact "
         "se ha filtrado a una puerta que acota por dominio, no por volumen"
     )
+
+
+# --- WOT-2026-048g: el filtro por `domain` necesita que `domain` exista ------
+#
+# Hallazgo de DOS lentes del MANAGER_REVIEW de A2: filtrar por `domain` se
+# sostiene en la medicion (175/175 poblado) pero asume no-nulidad FUTURA.
+#
+# Medido al verificarlo: el riesgo es REAL y alcanzable, no hipotetico.
+# `validate_observations --strict` exige `domain` en su rama por defecto, PERO
+# tiene una rama `has_category` que lo permite AUSENTE, y 34 de las 175 entradas
+# del archive real llevan `category`. Una entrada sin `domain` no casaria NUNCA
+# con ningun dominio y desapareceria del contexto de review en SILENCIO.
+
+
+def test_048g_every_archive_entry_carries_a_domain(wired: Path):
+    """Una entrada sin `domain` es INVISIBLE para la puerta de review.
+
+    No casa con ningun dominio, asi que se pierde sin ruido -- justo el modo de
+    fallo silencioso que WOT-2026-024r existe para cerrar. Este test lo
+    convierte en un rojo explicito.
+
+    Mutation: quitar `domain` de la entrada -> este test cae.
+    """
+    sin_dominio = _observation("CANARY-048G-SIN-DOMINIO")
+    sin_dominio.pop("domain", None)
+    con_dominio = _domain_observation("CANARY-048G-CON-DOMINIO", "testing")
+    _write_jsonl(_archive(wired), [sin_dominio, con_dominio])
+
+    huerfanas = [
+        e for e in memory_loader._read_portable_archive() if not e.get("domain")
+    ]
+    assert huerfanas, "fixture invalido: se esperaba al menos una entrada sin domain"
+
+    # La entrada CON dominio llega; la que no lo tiene, no llega por NINGUN
+    # dominio. Se asevera el sintoma real, no una propiedad del formateador.
+    ctx = memory_loader.get_review_context(domain="testing")
+    assert "CANARY-048G-CON-DOMINIO" in ctx
+    assert "CANARY-048G-SIN-DOMINIO" not in ctx, (
+        "una entrada sin `domain` no puede colarse en un dominio que no declara"
+    )
+
+    # Y no aparece en NINGUNO de los dominios conocidos: esta huerfana.
+    for dom in ("testing", "delivery-hygiene", "review-quality"):
+        assert "CANARY-048G-SIN-DOMINIO" not in memory_loader.get_review_context(
+            domain=dom
+        )
+    # El unico sitio donde sigue siendo alcanzable es la puerta sin filtro.
+    assert "CANARY-048G-SIN-DOMINIO" in memory_loader.get_compact_context(), (
+        "compact no filtra por dominio: es la unica red que recoge una entrada "
+        "huerfana. Si esto cae, una entrada sin `domain` seria INALCANZABLE por "
+        "todas las puertas"
+    )
+
+
+def test_048g_real_archive_has_no_orphan_entries():
+    """CONTRATO sobre el archive REAL: cero entradas sin `domain`.
+
+    Es el invariante, no la medicion: no fija un numero de entradas (que caduca
+    solo), fija que NINGUNA carece de dominio. Si una entrada nueva entra por la
+    rama `has_category` del validador -- que permite `domain` ausente y la usan
+    34 entradas hoy -- este test la caza antes de que se pierda en silencio.
+    """
+    archive = memory_loader._read_portable_archive()
+    if not archive:
+        pytest.skip("sin archive portable en este arbol")
+    huerfanas = [
+        (e.get("id") or e.get("source_ticket") or "?")
+        for e in archive
+        if not e.get("domain")
+    ]
+    assert not huerfanas, (
+        f"{len(huerfanas)} entrada(s) del archive sin `domain`: serian invisibles "
+        f"para get_review_context en TODOS los dominios -> {huerfanas[:5]}"
+    )
