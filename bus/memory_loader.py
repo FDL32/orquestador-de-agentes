@@ -64,6 +64,7 @@ get_agent_dir = importlib.import_module("runtime.project_root").get_agent_dir
 from bus.portable_memory_archive import (  # noqa: E402
     CorruptArchiveError,
     dedup_key,
+    is_lesson,
     read_archive_observations,
 )
 
@@ -382,21 +383,89 @@ def get_compact_context() -> str:
     return ""
 
 
+def _recallable_observations() -> list[dict[str, Any]]:
+    """The pool `recall_observations` searches: live L1 + tracked archive.
+
+    WOT-2026-047d: the twin of A1's fix, applied to the OTHER memory gate.
+    `get_bootstrap_context` has read the portable archive since A1; recall did
+    not, so the two doors disagreed about what memory exists. Measured on the
+    real repo (2026-08-03): L1 held 427 entries of which 343 (80%) were
+    `post_tool_hook` telemetry, while the tracked archive held 174 lessons and
+    ZERO telemetry. They are not subsets -- recall reached none of the entries
+    that actually travel between machines.
+
+    Two filters, deliberately asymmetric:
+      - Telemetry is dropped by PROVENANCE (`is_lesson`), never by label. It is
+        80% of L1 and drowns the real lessons in any keyword query.
+      - Precedence is per ENTRY, exactly as A1 does it: on a stable-``id``
+        collision the LIVE L1 copy wins, because it may have been edited after
+        being archived.
+
+    Before: no state required; either source may be missing.
+    During: reads all of L1 (limit=0) and every archive month; no writes.
+    After: returns the union NEWEST-FIRST -- `_read_observations` is newest-first
+        but the archive comes in file-and-line order (oldest first), so the pool
+        is re-sorted by `timestamp` rather than concatenated. Never raises -- a
+        corrupt archive degrades to L1 only (see `_read_portable_archive`).
+    """
+    live_all = _read_observations(limit=0)
+    live = [obs for obs in live_all if is_lesson(obs)]
+    archived = [obs for obs in _read_portable_archive() if is_lesson(obs)]
+
+    if archived and live_all:
+        # Dedup contra L1 COMPLETO, no contra `live` ya filtrado. Si una entrada
+        # viva dejo de ser leccion (p.ej. se reescribio con un topic
+        # autogenerado), sigue siendo la copia MAS RECIENTE de ese `id`:
+        # deduplicar contra la lista filtrada la haria invisible en `seen` y el
+        # archive REINTRODUCIRIA su version vieja. Es decir, la entrada
+        # archivada y OBSOLETA resucitaria, que es justo lo contrario de la
+        # precedencia por-entrada de A1.
+        seen = {dedup_key(entry) for entry in live_all}
+        archived = [e for e in archived if dedup_key(e) not in seen]
+
+    # Orden NEWEST-FIRST sobre el pool unido. No es cosmetico: los consumidores
+    # truncan con `limit` (`memory_context.py --recall` hace `[:limit]`), asi que
+    # el orden decide QUE lecciones ve el agente. Concatenar `live + archived`
+    # dejaba las 174 entradas del archive SIEMPRE detras de las vivas: con un
+    # `--limit` pequeño volvian a ser inalcanzables -- el mismo fallo que este
+    # ticket corrige, reintroducido por la puerta de atras.
+    #
+    # Medido el 2026-08-03: con los datos de HOY la concatenacion ya salia
+    # ordenada por coincidencia (el L1 vivo filtrado queda casi vacio y domina
+    # el archive). Ordenar es lo que convierte esa coincidencia en invariante.
+    #
+    # `timestamp` ausente ordena al final (cadena vacia), nunca reordena por
+    # delante de una entrada fechada.
+    return sorted(
+        live + archived,
+        key=lambda obs: str(obs.get("timestamp") or ""),
+        reverse=True,
+    )
+
+
 def recall_observations(
     query: str | None = None,
     limit: int = _L1_FALLBACK_LIMIT,
 ) -> list[dict[str, Any]]:
-    """Direct L1 recall from observations.jsonl with optional keyword filtering.
+    """Recall lessons from live L1 **and** the tracked portable archive.
 
-    Before: Requires no state; observations.jsonl may or may not exist.
-    During: Reads observations, optionally filters by keyword match on signal.
-    After: Returns a list of matching observation dicts (newest first), or empty list.
+    WOT-2026-047d: until this ticket the recall gate delegated entirely to
+    `observations.jsonl` -- the gitignored buffer -- so the 174 lessons that
+    travel by git were unreachable through it. See `_recallable_observations`
+    for the measured numbers and the precedence rule.
+
+    Before: Requires no state; neither source needs to exist.
+    During: Builds the live+archive pool, optionally filters by keyword match
+        on signal, topic or source.
+    After: Returns a list of matching observation dicts (live entries first),
+        or empty list. Never raises.
     """
+    observations = _recallable_observations()
+
     if query:
-        # Filter over the FULL file, then truncate. Reading only a recent
-        # window first (the previous behavior) made queries blind to older
-        # observations even though they exist in L1.
-        observations = _read_observations(limit=0)
+        # Filter over the FULL pool, then truncate. Reading only a recent
+        # window first (the pre-WOT-2026-021 behavior) made queries blind to
+        # older observations even though they exist.
         query_lower = query.lower()
         filtered = []
         for obs in observations:
@@ -407,7 +476,7 @@ def recall_observations(
                 filtered.append(obs)
         return filtered[:limit]
 
-    return _read_observations(limit=limit)
+    return observations[:limit]
 
 
 def get_memory_tier_status() -> dict[str, bool]:

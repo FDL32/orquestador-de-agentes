@@ -316,3 +316,207 @@ def test_real_archive_entries_reach_the_context():
         f"solo {len(reached)} de {len(archived)} entradas del archive llegan al "
         "contexto: algo esta filtrando la memoria portable"
     )
+
+
+# --- WOT-2026-047d: la puerta de RECALL tambien lee el archive ------------
+#
+# `get_bootstrap_context` (A1, arriba) es UNA de las dos puertas de memoria.
+# La otra es `recall_observations`, y hasta este ticket delegaba entera en
+# `_read_observations` -> `observations.jsonl`, el buffer GITIGNORED. Medido el
+# 2026-08-03 sobre el repo real: L1 tenia 427 entradas de las que 343 (80%) eran
+# telemetria de `post_tool_hook`, mientras el archive TRACKED tenia 174 lecciones
+# y CERO telemetria. No son subconjunto: el recall no alcanzaba ni una de las
+# entradas que viajan por git. `f6e9068` mando a los builders de Kilo y Codex
+# exactamente a esa funcion.
+
+
+def test_recall_reaches_a_lesson_only_in_the_archive(wired: Path):
+    """DoD.2 -- una leccion AUSENTE de L1 se encuentra por `--query`.
+
+    Mutacion (1): si `recall_observations` vuelve a leer solo L1, el canario del
+    archive desaparece y este test cae. Es la mutacion INDEPENDIENTE de la de
+    telemetria: aqui no hay ningun record de `post_tool_hook`.
+
+    L1 existe y NO esta vacio a proposito: un L1 ausente haria pasar el test por
+    un fallback trivial en vez de por la union real de las dos fuentes.
+    """
+    canary = f"CANARY-047D-{uuid.uuid4()}"
+    _write_jsonl(_archive(wired), [_observation(canary, topic="lesson")])
+    _write_jsonl(
+        memory_loader._get_observations_file(),
+        [_observation("OTRA-ENTRADA-VIVA", topic="lesson")],
+    )
+
+    hits = memory_loader.recall_observations(query=canary, limit=50)
+
+    assert [h for h in hits if h.get("id") == canary], (
+        f"la leccion {canary} vive SOLO en el archive tracked y el recall no la "
+        "encuentra: la puerta de recall sigue ciega a la memoria portable"
+    )
+
+
+def test_recall_drops_hook_telemetry(wired: Path):
+    """DoD.3 -- la telemetria de `post_tool_hook` NO sale en el recall.
+
+    Mutacion (3) INDEPENDIENTE de la (1): aqui el canario de telemetria vive en
+    L1, asi que revertir SOLO el filtro pone este test rojo sin tocar el de
+    arriba.
+
+    Discrimina por PROCEDENCIA (`is_lesson`), nunca por la etiqueta: un record
+    con el mismo `topic` pero con `id`/`source_ticket` es una leccion legitima y
+    DEBE seguir apareciendo. Esa segunda mitad es lo que impide que el filtro se
+    convierta en un falso NEGATIVO silencioso.
+    """
+    marker = f"MARCA-047D-{uuid.uuid4()}"
+    telemetry = {
+        "timestamp": "2026-08-03T00:00:00+00:00",
+        "topic": "tool_usage",
+        "signal": f"{marker} telemetria mecanica",
+        "source": "post_tool_hook",
+    }
+    # Mismo topic y misma marca, pero CON identidad promovible: es leccion.
+    real_lesson = {
+        "id": f"LECCION-{marker}",
+        "timestamp": "2026-08-03T00:00:00+00:00",
+        "topic": "tool_usage",
+        "signal": f"{marker} leccion legitima sobre uso de herramientas",
+        "source": "post_tool_hook",
+        "source_ticket": "WOT-2026-047d",
+    }
+    _write_jsonl(memory_loader._get_observations_file(), [telemetry, real_lesson])
+
+    hits = memory_loader.recall_observations(query=marker, limit=50)
+
+    assert not [h for h in hits if h.get("signal") == telemetry["signal"]], (
+        "la telemetria de post_tool_hook aparece en el recall: es el 80% de L1 "
+        "y ahoga las lecciones reales"
+    )
+    assert [h for h in hits if h.get("id") == real_lesson["id"]], (
+        "se filtro una LECCION legitima por compartir `topic` con la "
+        "telemetria: el filtro discrimina por etiqueta, no por procedencia"
+    )
+
+
+def test_live_entry_that_stopped_being_a_lesson_still_wins(wired: Path):
+    """La precedencia por-entrada se mide contra L1 COMPLETO, no contra el filtrado.
+
+    Hallazgo del bucle L800/BA05 (codex), reproducido con probe antes de
+    corregir: si una entrada VIVA deja de ser leccion (se reescribio con un
+    topic autogenerado), desaparecia de la lista filtrada y por tanto de `seen`
+    -- y entonces el archive REINTRODUCIA su copia vieja. El resultado era el
+    opuesto exacto de la regla de A1: la version archivada y OBSOLETA ganaba a
+    la viva.
+
+    Mutation: calcular `seen` desde `live` (filtrado) en vez de `live_all` ->
+    este test se pone ROJO.
+    """
+    marker = f"PRECEDENCIA-047D-{uuid.uuid4()}"
+    stale_but_live = {
+        "id": marker,
+        "timestamp": "2026-08-01T00:00:00+00:00",
+        # Topic autogenerado: `is_lesson` lo excluye del recall...
+        "topic": "architecture",
+        "signal": f"{marker} version VIVA reescrita",
+        "source": "session-close",
+        "source_ticket": "WOT-2026-047d",
+    }
+    archived_copy = {
+        "id": marker,
+        "timestamp": "2026-07-01T00:00:00+00:00",
+        "topic": "lesson",
+        "signal": f"{marker} version ARCHIVADA obsoleta",
+        "source": "test",
+        "source_ticket": "WOT-2026-047d",
+    }
+    _write_jsonl(memory_loader._get_observations_file(), [stale_but_live])
+    _write_jsonl(_archive(wired), [archived_copy])
+
+    hits = memory_loader.recall_observations(query=marker, limit=50)
+
+    assert not [h for h in hits if h.get("signal") == archived_copy["signal"]], (
+        "la copia ARCHIVADA y obsoleta reaparecio: `seen` se calculo sobre L1 "
+        "ya filtrado, asi que la entrada viva no la tapo (precedencia de A1 rota)"
+    )
+
+
+def test_plain_recall_without_query_also_drops_telemetry(wired: Path):
+    """El filtro cubre la rama SIN query, no solo la de `--query`.
+
+    Hallazgo del bucle L800/BA05: el DoD dice "la telemetria NO aparece en el
+    resultado del recall", sin acotar a la rama con query. Una mutacion que
+    aplicara `is_lesson` SOLO dentro del `if query:` dejaba verde el test de
+    telemetria y reintroducia el ruido en `memory_context.py --recall` plano,
+    que es justo la ruta que un agente usa sin argumentos.
+    """
+    marker = f"PLANO-047D-{uuid.uuid4()}"
+    telemetry = {
+        "timestamp": "2026-08-03T00:00:00+00:00",
+        "topic": "tool_usage",
+        "signal": f"{marker} telemetria mecanica",
+        "source": "post_tool_hook",
+    }
+    lesson = {
+        "id": f"LECCION-{marker}",
+        "timestamp": "2026-08-03T00:00:01+00:00",
+        "topic": "lesson",
+        "signal": f"{marker} leccion real",
+        "source": "test",
+        "source_ticket": "WOT-2026-047d",
+    }
+    _write_jsonl(memory_loader._get_observations_file(), [telemetry, lesson])
+
+    hits = memory_loader.recall_observations(limit=50)
+
+    assert not [h for h in hits if h.get("signal") == telemetry["signal"]], (
+        "el recall SIN query devuelve telemetria de hook: el filtro solo cubre "
+        "la rama con query"
+    )
+    assert [h for h in hits if h.get("id") == lesson["id"]], (
+        "el recall sin query perdio la leccion legitima"
+    )
+
+
+def test_recall_pool_is_newest_first_across_both_sources(wired: Path):
+    """El pool unido sale NEWEST-FIRST, no "L1 entero y luego el archive".
+
+    Hallazgo del bucle L800/BA05: `_read_observations` es newest-first pero
+    `read_archive_observations` va en orden de fichero y linea (mas antiguo
+    primero), asi que `live + archived` NO era newest-first. Importa porque los
+    consumidores truncan: `memory_context.py --recall` hace `[:limit]`, de modo
+    que el orden decide QUE lecciones ve el agente -- y con la concatenacion el
+    archive quedaba siempre detras, inalcanzable con un `--limit` pequeño.
+
+    El fixture pone la entrada MAS NUEVA en el archive y la mas vieja en L1,
+    que es el caso que la concatenacion ordenaba mal. Mutation: volver a
+    `return live + archived` -> ROJO.
+    """
+    marker = f"ORDEN-047D-{uuid.uuid4()}"
+    old_live = {
+        "id": f"VIEJA-{marker}",
+        "timestamp": "2026-01-01T00:00:00+00:00",
+        "topic": "lesson",
+        "signal": f"{marker} entrada VIEJA en L1",
+        "source": "test",
+        "source_ticket": "WOT-2026-047d",
+    }
+    new_archived = {
+        "id": f"NUEVA-{marker}",
+        "timestamp": "2026-12-31T00:00:00+00:00",
+        "topic": "lesson",
+        "signal": f"{marker} entrada NUEVA en el archive",
+        "source": "test",
+        "source_ticket": "WOT-2026-047d",
+    }
+    _write_jsonl(memory_loader._get_observations_file(), [old_live])
+    _write_jsonl(_archive(wired), [new_archived])
+
+    hits = memory_loader.recall_observations(query=marker, limit=50)
+    stamps = [str(h.get("timestamp") or "") for h in hits]
+
+    assert stamps == sorted(stamps, reverse=True), (
+        f"el pool no sale newest-first: {stamps}"
+    )
+    assert hits[0]["id"] == new_archived["id"], (
+        "la entrada mas NUEVA vive en el archive y no encabeza el recall: el "
+        "archive quedo detras de L1 y un --limit pequeño la haria invisible"
+    )
