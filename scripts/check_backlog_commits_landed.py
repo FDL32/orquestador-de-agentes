@@ -112,6 +112,18 @@ EXIT_VERDICT_ERROR = 4
 # WOT-2026-024c DoD-2: a required row with no commit evidence was silently skipped.
 # ERROR=0 is not enough for exit 0 -- the denominator must be clean too.
 EXIT_SKIPPED_REQUIRED = 5
+# WOT-2026-043t: a row carries commit evidence but no terminal state, so it is
+# invisible to the census. Same family as EXIT_SKIPPED_REQUIRED (evidence the guard
+# cannot see), distinct code so the caller can tell the two shapes apart.
+#
+# DECLARED LIMIT (do not read this detector as a wired barrier): it lives in
+# ``census_archived``, which ONLY this file's CLI calls -- and that CLI runs in no
+# pre-commit hook and no closeout step. The static-import wiring recorded in
+# ``guard_wiring_policy.yaml`` reaches ``audit``/``parse_archived_commits`` (via
+# agent_controller::_ticket_landed_by_archived_commit), NOT the census. So today
+# this bites only when a human runs the CLI. Wiring it is its own surface and is
+# NOT done here (measured 2026-08-03).
+EXIT_MALFORMED_EVIDENCE = 6
 
 # Verdicts (per-SHA).
 OK = "OK"
@@ -402,6 +414,11 @@ def census_archived(content: str) -> dict:
                                this ticket exists to expose (their tickets are listed).
       - ``skipped_legacy``   : terminal rows with NO deliverable_type at all (exempt).
 
+    A row that carries commit evidence but NO terminal state is NOT terminal, so it
+    matches none of the four classes above and would vanish silently (WOT-2026-043t,
+    measured 2026-08-03). Its ticket-ids are reported separately in
+    ``malformed_evidence_tickets``: the evidence exists, the row shape is wrong.
+
     deliverable_type is read as a SUBSTRING of the whole row text (DoD-1 surface fix),
     never as a positional column. Duplicate ticket-ids across terminal rows are counted
     (DoD-5): a ticket appearing twice is reported, never silently double-counted.
@@ -412,9 +429,28 @@ def census_archived(content: str) -> dict:
     """
     required = audited = skipped_required = skipped_legacy = 0
     skipped_required_tickets: list[str] = []
+    malformed_evidence_tickets: list[str] = []
     terminal_ids: list[str] = []
     for cells in _logical_rows(content):
         if not any(c in _TERMINAL_STATES for c in cells):
+            # WOT-2026-043t: a row carrying commit evidence but NO terminal state
+            # falls through every counter -- it is neither required, nor audited,
+            # nor skipped. Measured 2026-08-03: writing the SHA into the STATE cell
+            # (`| ... | commit:abc1234 | - |`) instead of its own cell made the row
+            # VANISH from the census while the guard still exited ERROR=0. Surface
+            # it as its own class: the evidence is there, the shape is wrong.
+            #
+            # ``superseded`` is EXCLUDED, and that exclusion is measured, not assumed:
+            # the archive holds 6 superseded rows, 3 of them carrying a commit(s) cell
+            # (e.g. WOT-2026-027b, WOT-2026-040j). A superseded row is a legitimate
+            # non-landing close -- the work moved to another ticket -- so it is not
+            # malformed. Flagging it would make this detector cry wolf on its first
+            # real run, which is how a new barrier gets switched off.
+            if any(c == "superseded" for c in cells):
+                continue
+            ticket_id = next((c for c in cells if _TICKET_ID_RE.match(c)), None)
+            if ticket_id and _commit_cell(cells) is not None:
+                malformed_evidence_tickets.append(ticket_id)
             continue
         ticket_id = next((c for c in cells if _TICKET_ID_RE.match(c)), None)
         if not ticket_id:
@@ -442,6 +478,7 @@ def census_archived(content: str) -> dict:
         "skipped_required": skipped_required,
         "skipped_legacy": skipped_legacy,
         "skipped_required_tickets": sorted(skipped_required_tickets),
+        "malformed_evidence_tickets": sorted(malformed_evidence_tickets),
         "duplicate_tickets": duplicate_tickets,
     }
 
@@ -646,6 +683,15 @@ def _print_text_report(
             f"[landed]   SKIPPED_REQUIRED: {tid} -- terminal code/mixed row with no "
             "commit(s) evidence (landing UNVERIFIED; needs human decision)"
         )
+    # WOT-2026-043t: a row with commit evidence but no terminal state falls through
+    # every counter above. Name it, or it stays invisible behind a green ERROR=0.
+    for tid in census.get("malformed_evidence_tickets", []):
+        print(
+            f"[landed]   MALFORMED_EVIDENCE: {tid} -- row carries a commit(s) cell but "
+            "NO terminal state, so it is invisible to the census. Put the terminal "
+            f"state ({'/'.join(sorted(_TERMINAL_STATES))}) in its own cell and keep "
+            "the SHA in the commit(s) cell"
+        )
     # DoD-5: report ticket-ids that appear in more than one terminal row.
     for tid, n in sorted(census["duplicate_tickets"].items()):
         print(f"[landed]   DUPLICATE: {tid} appears in {n} terminal rows")
@@ -761,6 +807,18 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return EXIT_SKIPPED_REQUIRED
+    # WOT-2026-043t: same family -- evidence exists but the guard cannot see it, so
+    # exit 0 would be a false green. Measured 2026-08-03: the malformed row vanished
+    # from all four counters while the guard still printed ERROR=0.
+    malformed = census.get("malformed_evidence_tickets", [])
+    if malformed:
+        print(
+            f"[landed] FAIL: {len(malformed)} row(s) carry commit evidence but NO "
+            f"terminal state -- invisible to the census, so exit 0 would be a false "
+            f"green. Tickets: {', '.join(malformed)}",
+            file=sys.stderr,
+        )
+        return EXIT_MALFORMED_EVIDENCE
     return EXIT_OK
 
 

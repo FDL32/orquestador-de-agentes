@@ -787,6 +787,73 @@ def test_dod2_clean_denominator_exits_ok(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
+# WOT-2026-043t: a row with commit evidence but NO terminal state is invisible to
+# the census -- it matches none of required/audited/skipped_required/skipped_legacy,
+# so the guard exits 0 without ever having looked at it. Measured 2026-08-03 while
+# archiving WOT-2026-040u: the SHA was written into the STATE cell and the row
+# vanished, with the guard still printing ERROR=0.
+# --------------------------------------------------------------------------- #
+def test_043t_commit_evidence_without_terminal_state_is_surfaced():
+    """A row whose SHA sits in the STATE cell (so it has no terminal state) must be
+    reported in `malformed_evidence_tickets` instead of vanishing.
+
+    Reachable mutation: drop the malformed-evidence branch (the pre-fix `continue`)
+    -> the ticket disappears from every counter and this goes RED.
+    """
+    row = (
+        "| Media | WOT-2026-0M1M | work deliverable_type: code | motor/x | "
+        "commit:abc1234 | - | s | - |\n"
+    )
+    census = gl.census_archived(row)
+    assert census["malformed_evidence_tickets"] == ["WOT-2026-0M1M"], (
+        "a row carrying a commit cell but no terminal state must be surfaced, not "
+        f"silently dropped; got {census}"
+    )
+    # It is genuinely invisible to the four ordinary counters -- that IS the defect.
+    assert census["required"] == 0
+    assert census["audited"] == 0
+    assert census["skipped_required"] == 0
+    assert census["skipped_legacy"] == 0
+
+
+def test_043t_superseded_row_with_commit_is_not_malformed():
+    """CONTROL NEGATIVO. `superseded` is a legitimate non-landing close, and the real
+    archive holds such rows WITH a commit cell (WOT-2026-027b, WOT-2026-040j measured
+    2026-08-03). Flagging them would make the detector cry wolf on its first real run.
+
+    Reachable mutation: remove the `superseded` exclusion -> this goes RED.
+    """
+    row = (
+        "| Alta | WOT-2026-0S2S | moved elsewhere deliverable_type: code | motor/x | "
+        "superseded | WOT-2026-0T2T | s | commit:abc1234 |\n"
+    )
+    census = gl.census_archived(row)
+    assert census["malformed_evidence_tickets"] == [], (
+        f"a superseded row is a legitimate close, not malformed evidence; got {census}"
+    )
+
+
+def test_043t_malformed_evidence_makes_guard_exit_nonzero(tmp_path):
+    """The census SEEING the row is not enough: the guard must FAIL on it, or the
+    detector is a print statement. Asserted at the exit-code layer (main owns it).
+
+    Reachable mutation: return EXIT_OK regardless of malformed_evidence_tickets ->
+    this goes RED.
+    """
+    _origin, work = _make_repo(tmp_path)
+    row = (
+        "| Media | WOT-2026-0M2M | work deliverable_type: code | motor/x | "
+        "commit:abc1234 | - | s | - |\n"
+    )
+    dest = _archive_raw(tmp_path, work, row)
+    rc = _run_main(tmp_path, work, dest)
+    assert rc == gl.EXIT_MALFORMED_EVIDENCE, (
+        f"a row with unreadable commit evidence must fail the guard even with "
+        f"ERROR=0; got exit {rc}"
+    )
+
+
+# --------------------------------------------------------------------------- #
 # DoD-3: a plural `commits:sha1+sha2` row is AUDITED (each SHA), not skipped or
 # counted as an offender. `"commits:x".startswith("commit:")` is False today.
 # --------------------------------------------------------------------------- #
