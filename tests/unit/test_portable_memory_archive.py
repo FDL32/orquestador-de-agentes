@@ -520,3 +520,172 @@ def test_recall_pool_is_newest_first_across_both_sources(wired: Path):
         "la entrada mas NUEVA vive en el archive y no encabeza el recall: el "
         "archive quedo detras de L1 y un --limit pequeño la haria invisible"
     )
+
+
+# --- WOT-2026-024r (A2): las DOS puertas que quedaban ciegas ---------------
+#
+# `get_bootstrap_context` (A1) y el recall (047d) ya leian el archive. Faltaban
+# `get_review_context` -- el contexto del MANAGER, el que decide si un trabajo
+# se aprueba -- y `get_compact_context`, que alimenta el pre-compact hook, o
+# sea el momento exacto en que una sesion esta a punto de PERDER su contexto.
+# Las dos leian solo superficies gitignoradas.
+#
+# El filtro de `get_review_context` va por `domain` y no por `topic`: medido
+# sobre el archive REAL (2026-08-03), las 175 entradas traen `domain` poblado
+# (CERO nulos) en 9 valores que hablan el MISMO vocabulario que el consumidor
+# (`delivery-hygiene` 55, `review-quality` 55, `testing` 15, ...), mientras que
+# L2 solo declara `architecture` y `lesson`.
+
+
+def _domain_observation(canary: str, domain: str) -> dict:
+    obs = _observation(canary)
+    obs["domain"] = domain
+    return obs
+
+
+def test_a2_review_context_reaches_a_lesson_only_in_the_archive(wired: Path):
+    """La puerta del MANAGER ve una leccion que solo vive en el archive."""
+    canary = f"CANARY-A2-REVIEW-{uuid.uuid4()}"
+    _write_jsonl(_archive(wired), [_domain_observation(canary, "delivery-hygiene")])
+
+    assert not memory_loader._get_rules_file().exists()
+    assert not memory_loader._get_observations_file().exists()
+
+    assert canary in memory_loader.get_review_context(domain="delivery-hygiene")
+
+
+def test_a2_mutation_review_gate_alone_goes_red(wired: Path):
+    """MUTACION INDEPENDIENTE de la puerta de review.
+
+    Truncar el archive deja en rojo SOLO el review; compact se comprueba en su
+    propio test, que es lo que exige el DoD (mutaciones independientes).
+    """
+    canary = f"CANARY-A2-MUT-REVIEW-{uuid.uuid4()}"
+    archive = _archive(wired)
+    _write_jsonl(archive, [_domain_observation(canary, "delivery-hygiene")])
+    assert canary in memory_loader.get_review_context(domain="delivery-hygiene")
+
+    archive.write_text("", encoding="utf-8")  # MUTACION
+    assert canary not in memory_loader.get_review_context(domain="delivery-hygiene")
+
+    _write_jsonl(archive, [_domain_observation(canary, "delivery-hygiene")])
+    assert canary in memory_loader.get_review_context(domain="delivery-hygiene")
+
+
+def test_a2_review_context_filters_by_domain_not_by_topic(wired: Path):
+    """Una leccion de OTRO dominio no contamina una review especializada.
+
+    Es el anti-ruido del filtro: sin el, una review de `delivery-hygiene`
+    recibiria las 175 entradas del archive entero.
+    """
+    mine = f"CANARY-A2-MINE-{uuid.uuid4()}"
+    other = f"CANARY-A2-OTHER-{uuid.uuid4()}"
+    _write_jsonl(
+        _archive(wired),
+        [
+            _domain_observation(mine, "delivery-hygiene"),
+            _domain_observation(other, "bus-architecture"),
+        ],
+    )
+
+    ctx = memory_loader.get_review_context(domain="delivery-hygiene")
+    assert mine in ctx
+    assert other not in ctx, (
+        "una leccion de otro dominio se colo en la review: el filtro por "
+        "`domain` no esta discriminando y la review recibe ruido"
+    )
+
+
+def test_a2_review_context_without_domain_gets_the_whole_archive(wired: Path):
+    """Sin dominio no hay nada que acotar: entra el archive completo."""
+    a = f"CANARY-A2-NODOM-A-{uuid.uuid4()}"
+    b = f"CANARY-A2-NODOM-B-{uuid.uuid4()}"
+    _write_jsonl(
+        _archive(wired),
+        [_domain_observation(a, "delivery-hygiene"), _domain_observation(b, "testing")],
+    )
+
+    ctx = memory_loader.get_review_context()
+    assert a in ctx and b in ctx
+
+
+def test_a2_compact_context_reaches_a_lesson_only_in_the_archive(wired: Path):
+    """La puerta del pre-compact hook ve el archive, sin filtrar por dominio."""
+    canary = f"CANARY-A2-COMPACT-{uuid.uuid4()}"
+    _write_jsonl(_archive(wired), [_domain_observation(canary, "testing")])
+
+    assert not memory_loader._get_profile_file().exists()
+    assert not memory_loader._get_rules_file().exists()
+
+    assert canary in memory_loader.get_compact_context()
+
+
+def test_a2_mutation_compact_gate_alone_goes_red(wired: Path):
+    """MUTACION INDEPENDIENTE de la puerta de compact (la hermana de la de review)."""
+    canary = f"CANARY-A2-MUT-COMPACT-{uuid.uuid4()}"
+    archive = _archive(wired)
+    _write_jsonl(archive, [_domain_observation(canary, "testing")])
+    assert canary in memory_loader.get_compact_context()
+
+    archive.write_text("", encoding="utf-8")  # MUTACION
+    assert canary not in memory_loader.get_compact_context()
+
+    _write_jsonl(archive, [_domain_observation(canary, "testing")])
+    assert canary in memory_loader.get_compact_context()
+
+
+def test_a2_live_l1_wins_over_archived_copy_in_both_gates(wired: Path):
+    """Precedencia POR ENTRADA, igual que A1: la copia VIVA de L1 gana.
+
+    L1 pudo editarse DESPUES de archivarse, asi que ante colision de `id`
+    estable manda la viva. Se ejerce en las dos puertas con el mismo dato.
+    """
+    stable_id = f"A2-DEDUP-{uuid.uuid4()}"
+    live_marker = "VERSION-VIVA"
+    archived_marker = "VERSION-ARCHIVADA"
+
+    live = {
+        "id": stable_id,
+        "timestamp": "2026-08-01T00:00:00+00:00",
+        "topic": "lesson",
+        "domain": "delivery-hygiene",
+        "signal": live_marker,
+        "source": "test",
+        "source_ticket": "WOT-2026-024r",
+    }
+    archived = dict(live)
+    archived["signal"] = archived_marker
+
+    _write_jsonl(memory_loader._get_observations_file(), [live])
+    _write_jsonl(_archive(wired), [archived])
+    assert not memory_loader._get_rules_file().exists()
+    assert not memory_loader._get_profile_file().exists()
+
+    for ctx in (
+        memory_loader.get_review_context(domain="delivery-hygiene"),
+        memory_loader.get_compact_context(),
+    ):
+        assert live_marker in ctx
+        assert archived_marker not in ctx, (
+            "la copia ARCHIVADA piso a la VIVA: la precedencia por-entrada de "
+            "A1 no se esta aplicando en esta puerta"
+        )
+
+
+def test_a2_gates_still_work_with_no_archive_at_all(tmp_path: Path, monkeypatch):
+    """CONTROL POSITIVO: sin archive, las puertas siguen sirviendo lo local.
+
+    Sin este control, un fallo que vaciara SIEMPRE la salida pasaria los tests
+    de mutacion de arriba (que solo comprueban que el canario desaparece).
+    """
+    root = tmp_path / "sin_archive"
+    (root / ".agent" / "runtime" / "memory").mkdir(parents=True)
+    monkeypatch.setattr(memory_loader, "get_agent_dir", lambda: root / ".agent")
+
+    rules = "## Domain: delivery-hygiene\n\nREGLA-LOCAL-VIVA\n"
+    memory_loader._get_rules_file().write_text(rules, encoding="utf-8")
+
+    assert "REGLA-LOCAL-VIVA" in memory_loader.get_review_context(
+        domain="delivery-hygiene"
+    )
+    assert "REGLA-LOCAL-VIVA" in memory_loader.get_compact_context()

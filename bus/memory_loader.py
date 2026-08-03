@@ -282,31 +282,77 @@ def get_bootstrap_context() -> str:
     return "\n\n".join(sections)
 
 
+def _archive_for_domain(domain: str | None) -> list[dict[str, Any]]:
+    """Archive entries relevant to ``domain`` (all of them when domain is None).
+
+    WOT-2026-024r (A2). The archive entries carry a populated ``domain`` field
+    that speaks the SAME vocabulary as this gate's callers -- measured on the
+    real repo (2026-08-03): 175 entries, ZERO without a domain, across 9 values
+    (`delivery-hygiene` 55, `review-quality` 55, `testing` 15, ...), and
+    `delivery-hygiene` is literally the domain in this module's own usage
+    example. So the filter keys on ``domain``, not on ``topic``/``source``:
+    those are free-form labels, while ``domain`` is the field the review gate
+    already reasons in.
+
+    Why this matters more than it looks: L2 (`memory_rules.md`) only declares
+    the domains `architecture` and `lesson`, so a review asking for
+    `delivery-hygiene` matched NOTHING in L2 while 55 lessons on exactly that
+    subject sat unread in the tracked archive.
+
+    Before: no state required; the archive may be missing or corrupt.
+    During: reads the archive (never raises) and keeps entries whose ``domain``
+        matches case-insensitively.
+    After: returns the matching entries, or ``[]``. A domain with no matches
+        returns ``[]`` -- the caller decides what to do with that, and here it
+        deliberately does NOT widen to the whole archive: dumping 175 unrelated
+        lessons into a specialised review is the noise this filter exists to
+        prevent.
+    """
+    archived = _read_portable_archive()
+    if domain is None:
+        return archived
+    wanted = domain.strip().lower()
+    return [e for e in archived if str(e.get("domain") or "").lower() == wanted]
+
+
 def get_review_context(domain: str | None = None) -> str:
-    """Load context for review: L2 rules filtered by domain, falling back to L1.
+    """Load context for review: portable archive + L2 rules, falling back to L1.
+
+    WOT-2026-024r (A2): the tracked archive is now read here too. Until this
+    ticket only `get_bootstrap_context` (A1) and the recall gate (WOT-2026-047d)
+    reached it, so the MANAGER's review context -- the one that decides whether
+    work is approved -- was blind to every lesson that travels by git. See
+    `_archive_for_domain` for the measured numbers and why the filter keys on
+    ``domain``.
 
     Before: Requires optional domain string (e.g., 'delivery-hygiene').
-    During: Tries L2 rules first. If a domain is specified, filters rules
-            to that domain. Falls back to L1 raw observations if L2 is empty.
-    After: Returns a markdown string with relevant rules or observations.
+    During: Reads archive entries for the domain, then L2 rules (filtered by
+            domain when given). Falls back to L1 raw observations if L2 is
+            empty. Precedence is per ENTRY only against L1, exactly as A1 does
+            it: L2 is prose, not entries, so there is nothing to dedup against.
+    After: Returns a markdown string combining the portable memory section and
+           the local rules/observations. Never returns None.
     """
+    archived = _archive_for_domain(domain)
+
     rules = _try_read_file(_get_rules_file())
     if not rules:
         observations = _read_observations()
-        if observations:
-            return _format_observations_as_text(observations)
-        return ""
+        local = _format_observations_as_text(observations) if observations else ""
+        if archived and observations:
+            # Per-ENTRY precedence: the LIVE L1 copy wins, because it may have
+            # been edited after being archived (same rule as A1).
+            seen = {dedup_key(entry) for entry in observations}
+            archived = [e for e in archived if dedup_key(e) not in seen]
+    elif domain is None:
+        local = rules
+    else:
+        # Filter rules by domain; no matching domain rules -> all rules.
+        local = _filter_rules_by_domain(rules, domain) or rules
 
-    if domain is None:
-        return rules
-
-    # Filter rules by domain
-    filtered = _filter_rules_by_domain(rules, domain)
-    if filtered:
-        return filtered
-
-    # No matching domain rules: return all rules as fallback
-    return rules
+    archive_text = _format_archive_as_text(archived)
+    sections = [s for s in (archive_text, local) if s]
+    return "\n\n".join(sections)
 
 
 def _has_wing_headers(rules_text: str) -> bool:
@@ -356,13 +402,26 @@ def _filter_rules_by_domain(rules_text: str, domain: str) -> str:
 
 
 def get_compact_context() -> str:
-    """Load combined context for pre-compact: L3 + L2, falling back to L1.
+    """Load combined context for pre-compact: portable archive + L3 + L2.
+
+    WOT-2026-024r (A2): the tracked archive is now read here too. This gate
+    feeds the pre-compact hook -- the moment a session is about to LOSE its
+    context -- so it was the worst possible place to stay blind to the only
+    memory surface that survives a clone.
+
+    Unlike `get_review_context`, the archive is included WHOLE and unfiltered:
+    compaction has no domain to narrow to, and the point of the hook is to keep
+    what the session would otherwise forget.
 
     Before: Memory files may or may not exist.
-    During: Combines L3 profile and L2 rules with a separator.
-            Falls back to L1 raw observations if neither exists.
+    During: Reads the archive, then combines L3 profile and L2 rules with a
+            separator. Falls back to L1 raw observations if neither exists,
+            applying per-ENTRY precedence (the live L1 copy wins on a stable-id
+            collision, same rule as A1).
     After: Returns a markdown string with combined memory content.
     """
+    archived = _read_portable_archive()
+
     parts: list[str] = []
 
     profile = _try_read_file(_get_profile_file())
@@ -374,13 +433,17 @@ def get_compact_context() -> str:
         parts.append(rules)
 
     if parts:
-        return "\n\n---\n\n".join(parts)
+        local = "\n\n---\n\n".join(parts)
+    else:
+        observations = _read_observations()
+        local = _format_observations_as_text(observations) if observations else ""
+        if archived and observations:
+            seen = {dedup_key(entry) for entry in observations}
+            archived = [e for e in archived if dedup_key(e) not in seen]
 
-    observations = _read_observations()
-    if observations:
-        return _format_observations_as_text(observations)
-
-    return ""
+    archive_text = _format_archive_as_text(archived)
+    sections = [s for s in (archive_text, local) if s]
+    return "\n\n".join(sections)
 
 
 def _recallable_observations() -> list[dict[str, Any]]:
