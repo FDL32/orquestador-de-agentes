@@ -24,6 +24,8 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from bus.subprocess_env import build_backend_env
+
 
 # WT-2026-242a: Patterns that indicate --format json is not supported by the
 # real manager_executable. Used by the review runner's try-first logic to
@@ -121,7 +123,11 @@ def build_review_env() -> dict[str, str]:
             mtime are deleted).
     After: Returns the environment dict for subprocess execution.
     """
-    env = os.environ.copy()
+    # WOT-2026-048d: allowlist, no `os.environ.copy()`. Antes, cada review
+    # heredaba el entorno COMPLETO del orquestador -- medido: 4 credenciales
+    # viajaban al subproceso. La auth de opencode vive en el HOME scratch que
+    # esta misma funcion prepara, no en variables, asi que el filtro no la toca.
+    env = build_backend_env()
     tmp_root = Path(tempfile.gettempdir())
     scratch_home = Path(tempfile.mkdtemp(prefix="opencode-review-", dir=tmp_root))
 

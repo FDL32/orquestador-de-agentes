@@ -54,25 +54,41 @@ class TestReviewEnvIsolation:
         review_env["TEST_VAR"] = "test_value"
         assert "TEST_VAR" not in os.environ
 
-    def test_review_env_inherits_non_home_process_vars(self, tmp_path: Path) -> None:
-        """Test _review_env() still preserves ordinary process environment variables."""
+    def test_review_env_passes_what_the_backend_needs_and_nothing_else(
+        self, tmp_path: Path
+    ) -> None:
+        """WOT-2026-048d: allowlist, no herencia total.
+
+        Este test ASEVERABA lo contrario -- que toda variable del proceso
+        sobrevive salvo las de HOME -- y ese era exactamente el defecto: medido
+        el 2026-08-03, 4 credenciales del orquestador viajaban a cada review
+        (`GITHUB_PERSONAL_ACCESS_TOKEN`, `GITHUB_TOKEN`, `NAN_API_KEY`,
+        `POSTHOG_API_KEY`). Se reescribe para pinear el contrato NUEVO, no para
+        silenciarlo: lo que sigue verificando es que el filtro no vacia el
+        entorno (control positivo) y que el HOME scratch se respeta.
+        """
         runtime_dir = tmp_path / ".agent" / "runtime" / "events"
         event_bus = EventBus(runtime_dir=runtime_dir)
         bridge = ReviewBridge(event_bus=event_bus, project_root=tmp_path)
 
         review_env = bridge._review_env()
 
-        for key, value in os.environ.items():
-            if key in {
-                "HOME",
-                "USERPROFILE",
-                "XDG_CONFIG_HOME",
-                "XDG_DATA_HOME",
-                "XDG_STATE_HOME",
-            }:
-                continue
-            assert key in review_env
-            assert review_env[key] == value
+        # Control POSITIVO: el backend necesita PATH para arrancar.
+        assert review_env.get("PATH"), "el saneado dejo al backend sin PATH"
+
+        # Ninguna credencial del proceso padre sobrevive.
+        leaked = [
+            key
+            for key in review_env
+            if any(
+                token in key.upper()
+                for token in ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL")
+            )
+        ]
+        assert not leaked, f"credenciales heredadas por el subproceso: {leaked}"
+
+        # El HOME scratch que prepara `build_review_env` sigue aplicandose.
+        assert review_env["HOME"] != os.environ.get("HOME")
 
 
 class TestManagerBackendFallback:

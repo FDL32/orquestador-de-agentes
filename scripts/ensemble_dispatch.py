@@ -80,6 +80,15 @@ except ImportError:  # pragma: no cover -- Windows
 
 MOTOR_ROOT = Path(__file__).resolve().parent.parent
 _AGENT_DIR = MOTOR_ROOT / ".agent"
+# WOT-2026-048d: MOTOR_ROOT va DELANTE de `.agent`, y esto no contradice el
+# comentario de abajo: lo COMPLETA. `agents_config` (que vive en `.agent/`)
+# importa `runtime.project_root`, y `runtime` debe resolver a
+# `<motor>/runtime/`, NO a `.agent/runtime/` (que tiene `__init__.py` y gana si
+# esta antes). Medido: con MOTOR_ROOT por APPEND, el import revienta con
+# `No module named 'runtime.project_root'`. Poner el motor primero fija la
+# resolucion correcta y de paso hace importable `bus/`.
+if str(MOTOR_ROOT) not in sys.path:
+    sys.path.insert(0, str(MOTOR_ROOT))
 # APPEND, nunca insert(0): con .agent al frente, `runtime` resolveria a
 # `.agent/runtime/` en vez de `<motor>/runtime/` (hazard documentado en
 # AGENTS.md para la coleccion de pytest).
@@ -87,6 +96,7 @@ if str(_AGENT_DIR) not in sys.path:
     sys.path.append(str(_AGENT_DIR))
 
 from agents_config import load_agents_config  # noqa: E402
+from bus.subprocess_env import build_backend_env  # noqa: E402
 
 
 SCORECARD_REL = Path(".agent/runtime/ensemble/scorecard.jsonl")
@@ -790,6 +800,12 @@ def _transport_agent(
         shell=False,
         encoding="utf-8",
         errors="replace",
+        # WOT-2026-048d: `env` EXPLICITO. Sin este argumento, Popen hereda el
+        # entorno completo del orquestador y cada lente recibia sus 4
+        # credenciales (medido 2026-08-03). La auth de los CLI vive en el HOME,
+        # no en variables: probe funcional con este entorno minimo -> `opencode
+        # run --model ...` y `codex exec` responden correctamente.
+        env=build_backend_env(),
         **popen_kwargs,
     )
     try:
