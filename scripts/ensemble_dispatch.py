@@ -840,6 +840,49 @@ def _render_model_flag(profile: dict, backend_cfg: dict) -> list[str]:
     return [part.replace("{model}", model) for part in template]
 
 
+def _render_readonly_agent_flag(profile: dict, backend_cfg: dict) -> list[str]:
+    """Traduce `write: false` del PERFIL a `--agent <readonly>` del BACKEND.
+
+    WOT-2026-048k. `write: false` era un campo DECORATIVO: `agents_config.py`
+    validaba su TIPO (bool) y nadie validaba su EFECTO, asi que la unica
+    consecuencia de declararlo era que el lector confiaba en el. Sin `--agent`,
+    `opencode run` cae en su `default_agent` -- que en este repo es `builder`,
+    con `edit/bash/task: allow` -- y la lente auditora recibia el system prompt
+    del Builder: instrucciones para implementar el ticket activo y cerrarlo con
+    `--mark-ready`. Medido 2026-08-05: una lente GLM delibero sobre su whitelist
+    de `Files Likely Touched` y sobre si invocar `--mark-ready`, ninguna de las
+    dos cosas presente en su bundle. Lo unico que impidio la escritura fue la
+    disciplina del propio modelo, que no es un guardrail.
+
+    La asimetria con `_render_model_flag` es DELIBERADA. Alli un perfil con
+    modelo contra un backend sin plantilla lanza RuntimeError, porque el modo de
+    fallo es silencioso Y el scorecard registraria un dato FALSO. Aqui, en
+    cambio, un backend sin `readonly_agent` no puede recibir un nombre de agente
+    inventado: el CLI lo rechazaria, o peor, lo resolveria a otra cosa. Se
+    devuelve `[]` y la restriccion queda sin cablear para ESE backend. Esa
+    laguna es real y se cierra con el gate fail-closed
+    (`check_agent_write_enforced`), que es superficie propia y NO entra aqui:
+    hoy los 7 perfiles del ensemble declaran `write: false` y ningun backend
+    salvo `opencode` declara enforcement, asi que un fail-closed en esta funcion
+    tumbaria el ensemble entero -- incluidos los `channel: api`, que van por HTTP
+    y nunca tuvieron el problema.
+
+    Before: `profile` puede declarar `write` (bool) o no declararlo;
+        `backend_cfg` puede declarar `readonly_agent` (str no vacio).
+    During: sin `write: false` no renderiza nada (backward-compat). Con
+        `write: false` y `readonly_agent` declarado, emite `["--agent", <name>]`.
+    After: retorna la lista de argumentos a insertar (vacia si no aplica). El
+        caller la coloca ANTES del prompt / del sentinel `-`, porque cualquier
+        argumento posterior al prompt lo leeria el CLI como parte del mensaje.
+    """
+    if profile.get("write") is not False:
+        return []
+    agent_name = backend_cfg.get("readonly_agent")
+    if not agent_name:
+        return []
+    return ["--agent", agent_name]
+
+
 def _transport_agent(
     profile: dict, backend_cfg: dict, messages: list[dict], timeout: int
 ) -> str:
@@ -881,11 +924,27 @@ def _transport_agent(
       la rama stdin y antes del prompt en la rama argv.
     - `_transport_api` NO se toca: los `channel: api` pasan el modelo en el
       body JSON y estaban sanos.
+
+    WOT-2026-048k -- inyeccion del agente read-only:
+    - `profile["write"]` tampoco entraba en argv, asi que `write: false` era
+      DECORATIVO y el CLI caia en su `default_agent` (aqui `builder`, con
+      `edit/bash/task: allow`): una lente AUDITORA recibia el system prompt del
+      IMPLEMENTADOR. Se inyecta via `_render_readonly_agent_flag`, en la misma
+      posicion que el modelo y por la misma razon (antes del prompt / del
+      sentinel `-`).
+    - `_transport_api` NO se toca aqui tampoco: los `channel: api` no tienen
+      system prompt de agente ni permisos de FS -- el vector no existe.
     """
     prompt = "\n\n".join(m["content"] for m in messages)
     via_stdin = bool(backend_cfg.get("prompt_via_stdin"))
     model_args = _render_model_flag(profile, backend_cfg)
-    base = [backend_cfg["executable"], *backend_cfg.get("args", []), *model_args]
+    agent_args = _render_readonly_agent_flag(profile, backend_cfg)
+    base = [
+        backend_cfg["executable"],
+        *backend_cfg.get("args", []),
+        *model_args,
+        *agent_args,
+    ]
     if via_stdin:
         # El flag del modelo va ANTES del sentinel: `-` cierra la linea de
         # comando diciendo "el prompt viene por stdin", y cualquier argumento

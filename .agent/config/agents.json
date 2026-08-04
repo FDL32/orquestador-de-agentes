@@ -74,6 +74,7 @@
         "--model",
         "{model}"
       ],
+      "readonly_agent": "auditor",
       "discovery": {
         "method": "path_only"
       }

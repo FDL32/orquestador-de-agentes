@@ -2910,3 +2910,127 @@ def test_048g_absent_reported_model_is_none_not_a_guess(tmp_path):
         "sin banner el campo es AUSENCIA de dato; inventar un valor aqui seria "
         "afirmar que el backend confirmo algo que nunca dijo"
     )
+
+
+def test_transport_agent_binds_readonly_agent_when_profile_declares_no_write(
+    monkeypatch,
+):
+    """WOT-2026-048k: un perfil con `write: false` debe despacharse con `--agent`.
+
+    Antes de este ticket `write: false` era DECORATIVO: `_transport_agent`
+    construia el cmd sin traducir ese campo a NADA, asi que `opencode run` caia
+    en su `default_agent` (`builder`) -- un agente con `edit/bash/task: allow` --
+    y una lente AUDITORA recibia el system prompt del Builder. Medido 2026-08-05:
+    la lente GLM delibero sobre si invocar `--mark-ready` y sobre su whitelist de
+    `Files Likely Touched`, ninguna de las dos cosas presente en su bundle.
+
+    Mutation: quitar la inyeccion de `--agent` -> este test cae en RED.
+    """
+    captured: dict = {}
+
+    class _CapturingPopen:
+        pid = 444
+
+        def __init__(self, cmd, *a, **k):
+            captured["cmd"] = cmd
+
+        def communicate(self, input=None, timeout=None):
+            return ("veredicto", "")
+
+    monkeypatch.setattr(ed.subprocess, "Popen", _CapturingPopen)
+
+    ed._transport_agent(
+        {"backend": "fake", "write": False},
+        {"executable": "fake-cli", "args": ["run"], "readonly_agent": "auditor"},
+        [{"role": "user", "content": "audita esto"}],
+        timeout=10,
+    )
+    cmd = captured["cmd"]
+    assert "--agent" in cmd, (
+        "un perfil con write:false debe llevar --agent en argv: sin el, el CLI "
+        "usa su default_agent (de ESCRITURA) y la declaracion es decorativa"
+    )
+    assert cmd[cmd.index("--agent") + 1] == "auditor", (
+        "el valor de --agent debe ser el readonly_agent declarado por el backend"
+    )
+    # El flag va ANTES del prompt: cualquier argumento posterior al prompt lo
+    # leeria el CLI como parte del mensaje.
+    assert cmd.index("--agent") < cmd.index("audita esto"), (
+        "--agent debe preceder al prompt en argv"
+    )
+
+
+def test_transport_agent_does_not_bind_agent_when_profile_allows_write(monkeypatch):
+    """Backward-compat (WOT-2026-048k): un perfil SIN `write: false` no cambia.
+
+    Cero regresion para cualquier perfil que no declare la restriccion, y para
+    los backends que no declaran `readonly_agent` (los `channel: api` nunca pasan
+    por aqui, pero un `channel: agent` sin enforcement debe seguir corriendo).
+
+    Mutation: inyectar `--agent` siempre -> este test cae en RED.
+    """
+    captured: dict = {}
+
+    class _CapturingPopen:
+        pid = 555
+
+        def __init__(self, cmd, *a, **k):
+            captured["cmd"] = cmd
+
+        def communicate(self, input=None, timeout=None):
+            return ("ok", "")
+
+    monkeypatch.setattr(ed.subprocess, "Popen", _CapturingPopen)
+
+    # (1) perfil que NO declara write -> sin --agent
+    ed._transport_agent(
+        {"backend": "fake"},
+        {"executable": "fake-cli", "args": ["run"], "readonly_agent": "auditor"},
+        [{"role": "user", "content": "hola"}],
+        timeout=10,
+    )
+    assert captured["cmd"] == ["fake-cli", "run", "hola"], (
+        "un perfil sin write:false no debe recibir --agent (backward-compat)"
+    )
+
+    # (2) perfil write:false pero backend SIN readonly_agent -> sin --agent,
+    #     no se inventa un nombre de agente que el CLI no conoce.
+    ed._transport_agent(
+        {"backend": "fake", "write": False},
+        {"executable": "fake-cli", "args": ["run"]},
+        [{"role": "user", "content": "hola"}],
+        timeout=10,
+    )
+    assert "--agent" not in captured["cmd"], (
+        "sin readonly_agent declarado no se puede inventar el nombre del agente"
+    )
+
+
+def test_real_config_opencode_binds_readonly_agent_for_glm_lens():
+    """WOT-2026-048k: la CONFIG REAL debe cablear el enforcement, no solo el mecanismo.
+
+    Los dos tests de arriba prueban el MECANISMO con un backend_cfg inventado a
+    mano. Este ejerce la config VERSIONADA -- misma leccion de fixture drift que
+    `test_real_config_codex_delivers_multiline_prompt_intact`: el mecanismo puede
+    funcionar mientras el consumidor real no lo usa.
+
+    Mutation: quitar `readonly_agent` del backend opencode en agents.json, o
+    quitar `write: false` del perfil GLM -> este test cae.
+    """
+    cfg = ed.load_motor_config()
+    backend_cfg = cfg["backends"]["opencode"]
+    profile = cfg["ensemble_profiles"]["challenger_opencode_glm_5_2"]
+
+    # Anclaje por identidad a la config real (mismo patron que 027k): sin esto,
+    # sustituir el loader por un dict inline dejaria el test verde.
+    assert backend_cfg == ed.load_motor_config()["backends"]["opencode"], (
+        "el backend_cfg debe venir de load_motor_config(), no de un dict inline"
+    )
+    assert profile.get("write") is False, (
+        "el perfil GLM es una lente AUDITORA: debe declarar write: false"
+    )
+    assert backend_cfg.get("readonly_agent") == "auditor", (
+        "el backend opencode debe declarar el agente read-only que hace efectivo "
+        "el write:false; sin el, la declaracion vuelve a ser decorativa y la "
+        "lente corre bajo default_agent (builder, con edit/bash/task allow)"
+    )
