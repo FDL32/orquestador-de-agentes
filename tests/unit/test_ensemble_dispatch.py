@@ -1884,6 +1884,83 @@ _FORBIDDEN_TEST_DIFF_TOKENS = (
     "urllib",
 )
 
+# ---------------------------------------------------------------------------
+# WOT-2026-026t/GLM: el techo de tiempo es POR BACKEND. Un unico default de 300s
+# mataba a `opencode`, que vive pegado a ese techo (p50=94s, p90=236s, max=280s
+# sobre 14 rondas reales). Tres timeouts el 2026-08-04, uno de ellos con el
+# proceso VIVO trabajando al morir.
+# ---------------------------------------------------------------------------
+
+
+class TestBackendTimeout:
+    """El timeout se lee del backend; el default manda si no lo declara."""
+
+    def test_backend_timeout_s_overrides_the_default(self):
+        """MUTACION ALCANZABLE: quitar la lectura de `timeout_s` -> llega 300.
+
+        Sin este test, subir el techo de opencode en agents.json seria un cambio
+        de config INERTE: el codigo lo ignoraria y nada lo notaria.
+        """
+        cfg = _config()
+        cfg["backends"]["fake"]["timeout_s"] = 600
+        seen: dict = {}
+
+        def transport(profile, backend_cfg, messages, timeout):
+            seen["timeout"] = timeout
+            return "ok"
+
+        ed.send_to_profile(
+            "p_chal",
+            [{"role": "user", "content": "x"}],
+            config=cfg,
+            sensitivity="public",
+            transport=transport,
+        )
+        assert seen["timeout"] == 600
+
+    def test_backend_without_timeout_s_keeps_the_default(self):
+        """CONTROL POSITIVO: el cambio es ADITIVO, no toca a quien no lo declara."""
+        seen: dict = {}
+
+        def transport(profile, backend_cfg, messages, timeout):
+            seen["timeout"] = timeout
+            return "ok"
+
+        ed.send_to_profile(
+            "p_chal",
+            [{"role": "user", "content": "x"}],
+            config=_config(),
+            sensitivity="public",
+            transport=transport,
+        )
+        assert seen["timeout"] == 300
+
+    def test_real_config_gives_opencode_more_room_than_the_rest(self):
+        """El arbol REAL, no un fixture: opencode 600, los demas en su default.
+
+        Fixture-only no valdria aqui: el defecto que se cierra vivia en la config
+        real (`agents.json`), y un test hermetico sobre `_config()` habria pasado
+        verde mientras opencode seguia muriendo a los 300s.
+        """
+        cfg = ed.load_motor_config()
+        seen: dict = {}
+
+        def transport(profile, backend_cfg, messages, timeout):
+            seen[profile["backend"]] = timeout
+            return "ok"
+
+        for prof in ("challenger_opencode_glm_5_2", "challenger_codex"):
+            ed.send_to_profile(
+                prof,
+                [{"role": "user", "content": "x"}],
+                config=cfg,
+                sensitivity="public",
+                transport=transport,
+            )
+        assert seen["opencode"] == 600, "opencode necesita techo propio"
+        assert seen["codex"] == 300, "el resto no debe heredar el techo de opencode"
+
+
 _WOT_025Z_SECTION_MARKER = "# === WOT-2026-025z substantive tests start ==="
 
 _NAN_MODELS = {

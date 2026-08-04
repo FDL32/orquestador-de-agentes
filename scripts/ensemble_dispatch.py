@@ -929,9 +929,21 @@ def _transport_agent(
         profile[_REPORTED_MODEL_KEY] = _extract_reported_model(err)
     except subprocess.TimeoutExpired:
         _kill_process_tree(proc.pid)
+        # El mensaje NO debe AFIRMAR una causa que no ha medido. La version
+        # anterior decia "pipe-inheritance hang" en TODO timeout, y ese texto fijo
+        # se leyo como diagnostico: el 2026-08-04 llevo a atribuir tres timeouts de
+        # `opencode` a un cuelgue del backend cuando el proceso estaba VIVO
+        # trabajando y solo era lento (p90=236s contra un techo de 300s). Un
+        # diagnostico inventado viaja a los informes y cuesta mas que el fallo.
+        # Se enumeran las causas POSIBLES y se dice cual verificar primero.
         raise RuntimeError(
-            f"backend CLI sin respuesta tras {timeout}s; arbol de procesos "
-            "matado (pipe-inheritance hang, medido 2026-07-16)"
+            f"backend CLI sin respuesta tras {timeout}s; arbol de procesos matado. "
+            "CAUSA NO DETERMINADA -- comprueba en este orden: (1) latencia normal "
+            "del backend por encima del techo (mira `latency_ms` de sus rondas OK "
+            "en scorecard.jsonl y sube `timeout_s` de ese backend en agents.json "
+            "si roza); (2) el proceso seguia vivo al morir (tasklist durante la "
+            "corrida); (3) pipe-inheritance hang (medido 2026-07-16), que es UNA "
+            "hipotesis, no el veredicto por defecto."
         ) from None
     # WOT-2026-048g: un rc != 0 marca la salida como NO UTILIZABLE. El exit code
     # sigue sin ser veredicto POSITIVO -- un rc 0 con Auth Error es el caso que
@@ -979,6 +991,7 @@ def send_to_profile(
     """
     profile = config["ensemble_profiles"][profile_name]
     backend_cfg = config["backends"][profile["backend"]]
+    timeout = int(backend_cfg.get("timeout_s") or timeout)
     payload_text = json.dumps(messages, ensure_ascii=False)
     effective = sensitivity or profile.get("data_sensitivity")
     allowed, reason = privacy_preflight(

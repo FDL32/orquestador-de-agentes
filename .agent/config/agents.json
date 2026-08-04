@@ -66,6 +66,7 @@
     },
     "opencode": {
       "executable": "opencode",
+      "timeout_s": 600,
       "args": [
         "run"
       ],
