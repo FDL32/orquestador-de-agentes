@@ -703,6 +703,221 @@ def validate_archive_row_arity(root: Path) -> list[str]:
     return errors
 
 
+# ---------------------------------------------------------------------------
+# WOT-2026-026t (fase estado): una fila ARCHIVADA con estado NO-TERMINAL es
+# trabajo pendiente que desaparecio de la cola viva. Nadie la ve: este gate
+# validaba la cola viva y no el archivo, asi que la transicion
+# `pending -> archivado` no tenia barrera.
+#
+# MEDIDO 2026-08-04 sobre el archivo real: 18 filas con estado NO-TERMINAL
+# archivadas y AUSENTES de la cola viva. Ninguna era trabajo perdido -- 17 tenian
+# commit ancestro de HEAD que las cerraba y `015i` habia hecho su trabajo sin citar
+# el id -- pero durante semanas fueron INVISIBLES en las dos superficies: la cola no
+# las lista y el archivo las declara pendientes. La fuga es de ETIQUETADO, y esta
+# barrera la cierra por construccion.
+#
+# Las 18 salieron en DOS tandas, y la segunda solo aparecio tras una pasada
+# adversarial externa: las 9 primeras eran filas de 8 celdas; las otras 9 estan
+# ROTAS por un pipe sin escapar (arity 9) o pertenecen a la seccion historica de 7
+# columnas, y la primera version de este guard las SALTABA por heredar el scope de
+# `validate_archive_row_arity`. Reportaba OK sobre una superficie que no miraba --
+# el mismo falso verde que viene a cerrar. De ahi que la lectura del estado sea
+# ARITY-INDEPENDIENTE (ver `_archive_row_state`).
+#
+# VOCABULARIO TERMINAL: lista blanca, NO complemento de LIVE_STATES.
+#
+# La primera version derivaba "terminal" por COMPLEMENTO ("todo lo que no sea
+# LIVE_STATES") con el argumento de que enumerar caducaria. Un probe propio la
+# REFUTO antes de commitear: inyectada la errata `competed` (typo de `completed`)
+# en una fila Prioridad-led, el gate devolvia exit 0 -- una errata tipografica
+# pasaba como estado terminal valido, que es justo el falso verde que este guard
+# viene a cerrar.
+#
+# El censo del archivo real desmonta el argumento del complemento: hay SEIS
+# etiquetas terminales distintas y cuatro concentran 269 de 271 filas
+# (`completed` 250, `done` 15, `absorbed` 2, `superseded` 2, mas dos formas de un
+# solo uso). El vocabulario ES enumerable, asi que la lista blanca no caduca en la
+# practica; y si algun dia hace falta una etiqueta nueva, anadirla aqui es una
+# linea con dueno -- muy preferible a que cualquier cadena arbitraria valga.
+#
+# Las dos formas de un solo uso quedan como BASELINE DECLARADO (evidencia fechada,
+# no criterio -- WOT-2026-024t), no como vocabulario recomendado: se aceptan porque
+# existen en la historia, no porque debieran repetirse.
+# ---------------------------------------------------------------------------
+
+# Etiquetas de cierre canonicas para una fila archivada.
+ARCHIVE_TERMINAL_STATES = frozenset(
+    {
+        "completed",
+        "done",
+        "closed",
+        "absorbed",
+        "superseded",
+        # Cierres NEGATIVOS: el ticket termina sin entregarse, y eso es un final
+        # legitimo, no un pendiente. `blocked-final` es ademas terminal en el
+        # vocabulario del bus (bus.state_machine, por complemento de
+        # NON_TERMINAL_STATES); `not-pursued` es la decision explicita de no
+        # hacerlo. Ambos censados en el archivo real 2026-08-04.
+        "blocked-final",
+        "not-pursued",
+    }
+)
+
+# Formas historicas de un solo uso, censadas 2026-08-04. Se toleran porque ya
+# estan escritas; NO son vocabulario a imitar. Nada debe ANADIR entradas aqui para
+# silenciar un cierre nuevo: usa ARCHIVE_TERMINAL_STATES.
+_ARCHIVE_TERMINAL_LEGACY = frozenset({"completed-via-010n", "resuelto-por-workflow"})
+
+
+def _archive_row_state(cells: list[str]) -> str:
+    """Locate the Estado cell of an archived row, tolerating pipe-shifted rows.
+
+    Position alone is NOT enough (measured 2026-08-04): the canonical index is 4,
+    but an unescaped pipe INSIDE the Titulo cell splits it in two and shifts every
+    later column one slot right -- `WOT-2026-015n` and `WOT-2026-021i` keep their
+    real `completed` at index 5, while index 4 holds the Scope (`motor/...`).
+    Reading index 4 blindly reported those as UNKNOWN states, i.e. accused two
+    correctly-closed rows.
+
+    The canonical index 4 has PRIORITY and the fallback is NARROW, because the two
+    failure modes must not be conflated (regression caught by mutation while
+    building this): a SHIFTED column and a TYPO look alike at index 4 -- both hold
+    something that is not a state. If the fallback simply scanned for any known
+    state, the typo `competed` would be silently skipped in favour of the real
+    `completed` sitting one slot right, and the guard would stop catching exactly
+    the misspelling it exists for.
+
+    The discriminator is what index 4 CONTAINS. A shifted row leaves the Scope
+    there, and Scope has a recognisable shape (`motor/...`, `ci/...`: a slug with a
+    slash, never a state word). So: read index 4; if it is a known state, done. If
+    it looks like a Scope slug, the row is shifted -- look one slot right. Anything
+    else at index 4 is reported as-is, which is how a typo stays visible.
+    """
+    known = ARCHIVE_TERMINAL_STATES | _ARCHIVE_TERMINAL_LEGACY | set(LIVE_STATES)
+    candidate = cells[4].lower()
+    if candidate in known:
+        return candidate
+    # Scope-shaped cell at the Estado slot => the row is pipe-shifted, not mistyped.
+    if "/" in candidate and len(cells) > 5:
+        shifted = cells[5].lower()
+        if shifted in known:
+            return shifted
+    return candidate
+
+
+def _compact_closure_log_states(archive: Path) -> list[str]:
+    """Audit the archive's COMPACT closure-log rows (``| Ticket | Estado | Nota |``).
+
+    The Prioridad-led check above deliberately ignores these rows: the id sits at a
+    different index and they are closure NOTES, not queue snapshots -- counting them
+    in the duplicate-id checks would turn normal layering into false positives.
+
+    But "not a queue row" does not mean "may declare pending work". A compact row
+    saying `| WOT-... | pending | ...` claims live work inside history exactly like
+    a Prioridad-led one, and the Prioridad-led guard would never see it. An
+    adversarial pass raised this as an open hole; measured 2026-08-04 there are 124
+    compact rows and ZERO carry a live state, so this closes the door BEFORE anyone
+    walks through it rather than after (the 18 rows the sibling check found were
+    only visible once someone looked).
+
+    Scope note: only the state VOCABULARY is audited here. Unknown labels are NOT
+    reported for compact rows -- their Nota column is free prose and a two-cell
+    layout gives no reliable way to tell a typo from an abbreviation.
+    """
+    live = set(LIVE_STATES)
+    errors: list[str] = []
+    for line in archive.read_text(encoding="utf-8-sig").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("| "):
+            continue
+        raw = stripped.split("|")
+        # Compact layout: id at raw index 1 (no Prioridad column). A Prioridad-led
+        # row has its id at index 2 and is handled by the caller.
+        if len(raw) <= 2 or not _TICKET_ROW_CELL_RE.match(raw[1].strip()):
+            continue
+        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        if len(cells) <= 1:
+            continue
+        state = cells[1].lower()
+        if state in live:
+            errors.append(
+                f"{raw[1].strip()}: compact closure-log row declares the "
+                f"NON-terminal state '{state}'. The closure log records how a "
+                f"ticket ENDED; a live state there hides pending work inside "
+                f"history just like an archived queue row does."
+            )
+    return errors
+
+
+def validate_archive_states(root: Path) -> list[str]:
+    """Return violations for archived rows still carrying a LIVE (non-terminal) state.
+
+    Before: ``root`` is the destino root; the archive may or may not exist.
+    During: reads only Prioridad-led rows (id at raw index 2, same convention as
+        _row_ticket_id) -- the archive's compact ``| Ticket | Estado | Nota |``
+        closure-log rows use a different layout and are not queue snapshots.
+        Cross-references the live queue so the diagnostic can say whether the
+        ticket is merely mislabeled or has vanished from both surfaces.
+    After: one error per archived row whose state belongs to LIVE_STATES. No
+        mutation.
+    """
+    collab = root / ".agent" / "collaboration"
+    archive = collab / "_archive" / "backlog_done.md"
+    if not archive.exists():
+        return []
+
+    live_ids = set(_ticket_row_ids(collab / "backlog.md"))
+    errors: list[str] = []
+    errors.extend(_compact_closure_log_states(archive))
+    for line in archive.read_text(encoding="utf-8-sig").splitlines():
+        stripped = line.strip()
+        tid = _row_ticket_id(stripped)
+        if tid is None:
+            continue
+        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        # ARITY-INDEPENDIENTE (hallazgo del bucle L800, Codex): la primera version
+        # hacia `continue` cuando la arity no era 8, heredando el scope de
+        # validate_archive_row_arity. Eso dejaba INVISIBLES 9 filas MAS -- las
+        # rotas por un pipe sin escapar (`014a/b/d/e/f/g/h/i`, arity 9) y una de
+        # la seccion historica de 7 columnas (`WT-2026-250c`) -- todas con estado
+        # LIVE. El guard daba OK sobre una superficie que nunca miraba, que es
+        # justo el falso verde que viene a cerrar.
+        # La arity es competencia de validate_archive_row_arity; AQUI solo importa
+        # que la celda de Estado exista y se pueda leer. En las tres layouts
+        # censadas (7, 8 y 9+ celdas) el Estado sigue en el indice 4, porque el
+        # pipe que rompe la fila aparece DESPUES, en el texto del titulo.
+        if len(cells) <= 4:
+            continue  # sin celda de Estado que auditar
+        state = _archive_row_state(cells)
+        if state in ARCHIVE_TERMINAL_STATES or state in _ARCHIVE_TERMINAL_LEGACY:
+            continue
+        if state in LIVE_STATES:
+            where = (
+                "it also has a live row (so the archived copy is the stale one)"
+                if tid in live_ids
+                else "and it has NO live row -- the ticket is invisible in BOTH surfaces"
+            )
+            errors.append(
+                f"{tid}: archived row still declares the NON-terminal state "
+                f"'{state}' {where}. A row in _archive/backlog_done.md is HISTORY: "
+                f"it must carry a terminal state "
+                f"({'/'.join(sorted(ARCHIVE_TERMINAL_STATES))}). Close it with its "
+                f"landing evidence (commit:<sha>) or move it back to the live queue "
+                f"-- do not leave pending work filed as history."
+            )
+        else:
+            # Ni terminal ni live: casi siempre una ERRATA (`competed`) que el
+            # complemento de LIVE_STATES habria aceptado como terminal.
+            errors.append(
+                f"{tid}: archived row has the UNKNOWN state '{state}' -- it is "
+                f"neither a terminal state "
+                f"({'/'.join(sorted(ARCHIVE_TERMINAL_STATES))}) nor a live one. "
+                f"Almost certainly a typo: an unrecognised label must NOT pass as "
+                f"'closed' just because it is not a live state."
+            )
+    return errors
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Fail-closed gate for the live backlog contract (WOT-2026-012b)."
@@ -727,6 +942,8 @@ def main(argv: list[str] | None = None) -> int:
     violations = violations + validate_live_archive_integrity(root)
     # WOT-2026-026z: arity of NEW Prioridad-led rows in the archive.
     violations = violations + validate_archive_row_arity(root)
+    # WOT-2026-026t: archived rows must not keep a non-terminal (live) state.
+    violations = violations + validate_archive_states(root)
     if violations:
         print(
             f"[backlog-contract] {len(violations)} violation(s) in {backlog}:",

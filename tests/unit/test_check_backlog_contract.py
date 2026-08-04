@@ -726,3 +726,133 @@ def test_043t_citing_another_tickets_ficha_does_not_claim_own_completeness() -> 
         "`### WOT-2026-0P9Z` | s | pending | - | o | - |"
     )
     assert cbc._check_ficha_pointers(row, [row]) == []
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-026t: una fila ARCHIVADA con estado NO-TERMINAL es trabajo pendiente
+# archivado como historia -- invisible en las dos superficies. Medido 2026-08-04:
+# 18 filas asi (9 de 8 celdas + 9 rotas por un pipe), ninguna era trabajo perdido
+# pero todas llevaban semanas fuera de la vista.
+# ---------------------------------------------------------------------------
+
+
+def _archive_row(ticket: str, estado: str, extra_pipe: bool = False) -> str:
+    """Fila Prioridad-led de archivo. Con ``extra_pipe`` simula el pipe sin
+    escapar que rompe la arity y desplaza las columnas una posicion."""
+    titulo = "titulo | partido" if extra_pipe else "titulo"
+    return f"| Media | {ticket} | {titulo} | motor/scope | {estado} | - | origen | - |"
+
+
+def test_026t_archived_row_with_live_state_is_a_violation(tmp_path) -> None:
+    """El defecto fundacional: `pending` archivado.
+
+    Mutacion alcanzable: quitar la comprobacion `state in LIVE_STATES` -> el
+    caso pasa en verde y las 18 filas medidas siguen invisibles.
+    """
+    collab = tmp_path / ".agent" / "collaboration" / "_archive"
+    collab.mkdir(parents=True)
+    (collab / "backlog_done.md").write_text(
+        _archive_row("WOT-2026-0A1A", "pending") + "\n", encoding="utf-8"
+    )
+    errors = cbc.validate_archive_states(tmp_path)
+    assert len(errors) == 1
+    assert "NON-terminal state 'pending'" in errors[0]
+
+
+def test_026t_archived_row_with_terminal_state_passes(tmp_path) -> None:
+    """CONTROL POSITIVO: un cierre normal no debe molestar."""
+    collab = tmp_path / ".agent" / "collaboration" / "_archive"
+    collab.mkdir(parents=True)
+    (collab / "backlog_done.md").write_text(
+        _archive_row("WOT-2026-0A2A", "completed") + "\n", encoding="utf-8"
+    )
+    assert cbc.validate_archive_states(tmp_path) == []
+
+
+def test_026t_typo_state_does_not_pass_as_terminal(tmp_path) -> None:
+    """Una ERRATA no puede colarse por 'no ser un estado live'.
+
+    Este test existe por una REGRESION real: la primera version derivaba
+    'terminal' por complemento de LIVE_STATES, y `competed` (typo de
+    `completed`) pasaba en verde. Mutacion alcanzable: volver al complemento
+    -> ROJO.
+    """
+    collab = tmp_path / ".agent" / "collaboration" / "_archive"
+    collab.mkdir(parents=True)
+    (collab / "backlog_done.md").write_text(
+        _archive_row("WOT-2026-0A3A", "competed") + "\n", encoding="utf-8"
+    )
+    errors = cbc.validate_archive_states(tmp_path)
+    assert len(errors) == 1
+    assert "UNKNOWN state 'competed'" in errors[0]
+
+
+def test_026t_pipe_broken_row_is_still_audited(tmp_path) -> None:
+    """Una fila ROTA por un pipe no queda fuera de alcance.
+
+    Hallazgo de un bucle adversarial: la primera version hacia `continue` si la
+    arity no era 8, heredando el scope del guard de aridad; eso dejaba 9 filas
+    con estado live invisibles. Mutacion alcanzable: reponer ese `continue`
+    -> ROJO.
+    """
+    collab = tmp_path / ".agent" / "collaboration" / "_archive"
+    collab.mkdir(parents=True)
+    (collab / "backlog_done.md").write_text(
+        _archive_row("WOT-2026-0A4A", "pending", extra_pipe=True) + "\n",
+        encoding="utf-8",
+    )
+    errors = cbc.validate_archive_states(tmp_path)
+    assert len(errors) == 1
+    assert "NON-terminal state 'pending'" in errors[0]
+
+
+def test_026t_shifted_row_reads_its_real_state_not_the_scope(tmp_path) -> None:
+    """Una fila desplazada NO debe acusarse por leer el Scope como Estado.
+
+    Medido: `WOT-2026-015n` y `WOT-2026-021i` estan bien cerradas (`completed`
+    en el indice 5), pero el indice 4 contiene su Scope (`motor/...`). Leer la
+    posicion a ciegas las denunciaba como estado desconocido. Mutacion
+    alcanzable: quitar el desplazamiento por forma-de-Scope -> ROJO.
+    """
+    collab = tmp_path / ".agent" / "collaboration" / "_archive"
+    collab.mkdir(parents=True)
+    (collab / "backlog_done.md").write_text(
+        _archive_row("WOT-2026-0A5A", "completed", extra_pipe=True) + "\n",
+        encoding="utf-8",
+    )
+    assert cbc.validate_archive_states(tmp_path) == []
+
+
+def test_026t_missing_archive_is_not_a_violation(tmp_path) -> None:
+    """Un destino sin archivo todavia no incumple nada."""
+    (tmp_path / ".agent" / "collaboration").mkdir(parents=True)
+    assert cbc.validate_archive_states(tmp_path) == []
+
+
+def test_026t_compact_closure_log_row_with_live_state_is_a_violation(tmp_path) -> None:
+    """El closure-log compacto tampoco puede declarar trabajo vivo.
+
+    Hueco levantado por una pasada adversarial: el check Prioridad-led ignora las
+    filas compactas (`| Ticket | Estado | Nota |`) a proposito, asi que una
+    compacta con `pending` no la veia nadie. Medido: 124 compactas, 0 con estado
+    live -- se cierra la puerta ANTES de que alguien la cruce. Mutacion
+    alcanzable: quitar la llamada a `_compact_closure_log_states` -> ROJO.
+    """
+    collab = tmp_path / ".agent" / "collaboration" / "_archive"
+    collab.mkdir(parents=True)
+    (collab / "backlog_done.md").write_text(
+        "| WOT-2026-0A6A | pending | nota de cierre |\n", encoding="utf-8"
+    )
+    errors = cbc.validate_archive_states(tmp_path)
+    assert len(errors) == 1
+    assert "compact closure-log row" in errors[0]
+
+
+def test_026t_compact_closure_log_row_with_terminal_state_passes(tmp_path) -> None:
+    """CONTROL POSITIVO: una nota de cierre normal no molesta."""
+    collab = tmp_path / ".agent" / "collaboration" / "_archive"
+    collab.mkdir(parents=True)
+    (collab / "backlog_done.md").write_text(
+        "| WOT-2026-0A7A | completed | cerrado canonico |\n", encoding="utf-8"
+    )
+    assert cbc.validate_archive_states(tmp_path) == []

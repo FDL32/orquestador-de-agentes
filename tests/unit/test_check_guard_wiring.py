@@ -93,6 +93,11 @@ EXPECTED_WIRED_REAL = {
     "check_ruff_hook_scope",  # WOT-2026-024w: cableado en .pre-commit-config.yaml (always_run)
     "check_skill_collisions",  # WOT-2026-024w: cableado en .pre-commit-config.yaml (always_run)
     "check_ticket_nomenclature",  # WOT-2026-024w: cableado en .pre-commit-config.yaml (always_run)
+    # WOT-2026-026t DoD-(c): cableado en .pre-commit-config.yaml (always_run,
+    # stages: [pre-commit]). WIRED verificado a mano ademas del parseo: el hook
+    # `check-stale-operational-note` invoca el script en cada commit, y su
+    # mutation-verify demuestra que muerde (nota-prohibicion sin fecha -> rc=1).
+    "check_stale_operational_note",
     "check_worktree_topology",
     "delivery_hygiene_check",  # v4: denominador ve el guard sin prefijo, y lo cabla
     "guard_paths",
