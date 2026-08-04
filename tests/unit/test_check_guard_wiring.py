@@ -98,6 +98,12 @@ EXPECTED_WIRED_REAL = {
     # `check-stale-operational-note` invoca el script en cada commit, y su
     # mutation-verify demuestra que muerde (nota-prohibicion sin fecha -> rc=1).
     "check_stale_operational_note",
+    # WOT-2026-026t: cableado en .pre-commit-config.yaml (hook
+    # `check-suite-freshness`, always_run, stages: [pre-commit]). Es un AVISO, no
+    # una barrera de correccion -- exit 0 SIEMPRE --, pero entra en el set WIRED
+    # igual: el criterio de este baseline es "lo invoca un camino que corre solo",
+    # no "bloquea". Su mutation-verify vive en test_check_suite_freshness.py.
+    "check_suite_freshness",
     "check_worktree_topology",
     "delivery_hygiene_check",  # v4: denominador ve el guard sin prefijo, y lo cabla
     "guard_paths",
