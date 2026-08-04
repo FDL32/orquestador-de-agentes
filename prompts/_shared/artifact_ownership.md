@@ -11,6 +11,7 @@
 | closeout_<ticket>.md | orchestrator_pipeline paso 8 -- SOLO pipeline-driven | cierre de cada ticket | audit_pipeline Fase 1 | RELATO por-ticket; ausente en cierre manual |
 | execution_log.md | Builder + cierre (archivado) | durante el ticket | scope gate, validate, audit_pipeline | bitacora; re-derivar de git |
 | backlog.md (cola viva) | humano/Manager (NUNCA el closeout) | fuera del cierre | check_backlog_contract | estado de cola, no evidencia de cierre |
+| _archive/backlog_done.md (historico terminal) | humano/Manager, al cerrar el ticket | paso 8.ter del cierre, o fuera de el | check_backlog_contract (`validate_archive_states`) | cerrar es un TRASPASO entre estas DOS superficies, no un cambio de etiqueta: un estado terminal NO vive en la cola viva, y una fila archivada con estado VIVO es trabajo pendiente guardado como historia -- invisible en ambas (WOT-2026-026t: 18 filas medidas 2026-08-04) |
 | events.jsonl (bus) | runtime/supervisor | continuo | closure_invariants, validate | EVIDENCIA canonica |
 | last-run.json | run_pytest_safe.py | tras suite | canonical-suite gate | EVIDENCIA (tested_commit_sha+exit) |
 

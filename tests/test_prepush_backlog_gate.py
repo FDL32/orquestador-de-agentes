@@ -89,3 +89,41 @@ def test_preflight_closeout_mode_includes_gate(tmp_path: Path, monkeypatch) -> N
     assert pc.run_preflight_check(tmp_path, closeout_mode=True) == 1
     # fuera de closeout-mode, el gate de backlog NO corre -> exit 0
     assert pc.run_preflight_check(tmp_path, closeout_mode=False) == 0
+
+
+def test_closeout_gate_catches_archived_row_with_live_state(tmp_path: Path) -> None:
+    """WOT-2026-026t: el gate de closeout ve la fuga INVERSA, no solo la evidente.
+
+    El caso evidente (un estado terminal en la cola viva) ya lo cubria
+    `validate_backlog`. El inverso -- una fila ARCHIVADA que conserva estado vivo,
+    o sea trabajo pendiente guardado como historia -- lo detecta
+    `validate_archive_states`, y esa funcion se entrego cableada SOLO en la CLI:
+    el camino de `--session-close` (el automatizado, donde importa) no la
+    invocaba. Lo caso una pasada adversarial externa.
+
+    MUTACION ALCANZABLE: quitar `validate_archive_states(project_root)` de
+    `run_backlog_contract_check` -> este test pasa a VERDE con la fila rota, que
+    es exactamente el falso verde que el ticket cierra.
+    """
+    import scripts.prepush_check as pc
+
+    collab = tmp_path / ".agent" / "collaboration"
+    (collab / "_archive").mkdir(parents=True)
+    # Cola viva bien formada y VACIA de terminales: el defecto no esta aqui.
+    (collab / "backlog.md").write_text(
+        "## Vista rapida\n\n"
+        "| Prioridad | Ticket | Titulo | Scope | Estado | Depende de | Origen | Reactivation |\n"
+        "|---|---|---|---|---|---|---|---|\n",
+        encoding="utf-8",
+    )
+    # La fuga: archivada pero todavia `pending`.
+    (collab / "_archive" / "backlog_done.md").write_text(
+        "| Media | WOT-2026-0B1B | titulo | motor/scope | pending | - | origen | - |\n",
+        encoding="utf-8",
+    )
+
+    result = pc.run_backlog_contract_check(tmp_path)
+
+    assert result.passed is False, "el gate de closeout debe BLOQUEAR la fuga inversa"
+    assert result.is_blocking is True
+    assert "NON-terminal state 'pending'" in result.output

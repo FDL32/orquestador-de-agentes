@@ -24,7 +24,10 @@ sobre una sesion verde y reconciliada.
 ## Mapa de nombres
 
 - **Prompt:** `prompts/orchestrator_session_close_full_audit.md` (instruccion detallada
-  para el agente auditor, 4 bloques).
+  para el agente auditor; bloques 1, 2, 2.5, 3, 4 y 5).
+  - **Cierre del ESTADO del backlog:** Bloque 5, paso `8.ter`. Cerrar un ticket es un
+    TRASPASO de `backlog.md` a `_archive/backlog_done.md`, no un cambio de etiqueta
+    (WOT-2026-026t). El criterio vive en el prompt; esta skill no lo redeclara.
 - **Skill:** `skills/session-close-full-audit/` (paquete operativo estable).
 - **Trigger:** `/close-full-audit` (API humana corta y estable).
 - **Salida:** reporte adversarial por bloque (conclusiones etiquetadas +

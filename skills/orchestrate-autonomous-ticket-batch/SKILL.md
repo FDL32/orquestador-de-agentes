@@ -21,7 +21,7 @@ mayor numero de tickets posible **con garantias**.
 
 NO reimplementa el metodo. El flujo completo (deteccion de modo y delegacion,
 maquina de estados con ruteo al owner-stage, causas de parada dura,
-`GROUP_STOP_REPORT`, regla de contencion, las 7 barreras no negociables por
+`GROUP_STOP_REPORT`, regla de contencion, las 8 barreras no negociables por
 ticket y las salidas de la corrida) vive en
 `prompts/orchestrator_autonomous_ticket_batch.md`. **El prompt es la fuente de
 verdad; si algo diverge, prevalece el prompt.**

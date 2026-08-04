@@ -481,22 +481,34 @@ def run_backlog_contract_check(project_root: Path) -> CheckResult:
     try:
         from scripts.check_backlog_contract import (
             validate_archive_row_arity,
+            validate_archive_states,
             validate_backlog,
             validate_live_archive_integrity,
         )
     except ImportError:
         from check_backlog_contract import (  # type: ignore[no-redef]
             validate_archive_row_arity,
+            validate_archive_states,
             validate_backlog,
             validate_live_archive_integrity,
         )
     # WOT-2026-027i / WOT-2026-026z: the live<->archive duplicate check and the
     # archive arity check both need the destino root (they read the archive), so
     # they are wired here alongside validate_backlog rather than inside it.
+    # WOT-2026-026t: `validate_archive_states` closes the MIRROR of the defect in
+    # this function's own docstring. That text describes how terminal rows piled
+    # up in the LIVE queue because no --session-close gate invoked the check; the
+    # inverse leak -- a row archived while still `pending`, i.e. pending work
+    # filed as history -- was measured at 18 rows on 2026-08-04 and was invisible
+    # in BOTH surfaces. The check shipped wired only into the standalone CLI, so
+    # the closeout path (the automated one, where it matters) did not run it: an
+    # adversarial pass caught that omission here. Same lesson, third time:
+    # a guard nobody invokes is a norm, not a barrier.
     violations = (
         validate_backlog(backlog)
         + validate_live_archive_integrity(project_root)
         + validate_archive_row_arity(project_root)
+        + validate_archive_states(project_root)
     )
     if violations:
         detail = "\n".join(f"  - {v}" for v in violations)

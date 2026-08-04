@@ -846,7 +846,26 @@ Solo cerrar si:
 En cierre:
 
 1. Actualizar `execution_log.md` con commits, gates y decision artifact.
-2. Actualizar `backlog.md` a `completed`.
+2. **CERRAR EL ESTADO DEL TICKET -- es un TRASPASO, no un cambio de etiqueta.**
+   `completed` NO existe en la cola viva: los estados terminales viven en
+   `_archive/backlog_done.md`. Escribir `completed` en `backlog.md` produce
+   exactamente la violacion que `check_backlog_contract.py` bloquea. El cierre
+   correcto es:
+   - **MOVER** la fila de `backlog.md` a
+     `.agent/collaboration/_archive/backlog_done.md`, con un estado terminal
+     (`completed` / `done` / `closed` / `absorbed` / `superseded` /
+     `blocked-final` / `not-pursued`) y su EVIDENCIA de aterrizaje en la celda
+     `Reactivation` (`commit:<sha>`, o el ticket que lo absorbe).
+   - Si el trabajo NO esta entregado del todo, el ticket **no se archiva**: se
+     queda en la cola viva con un estado vivo (`ready-for-review`,
+     `completed-partial`, ...). Archivar algo pendiente lo vuelve INVISIBLE en
+     las dos superficies -- medido 2026-08-04: 18 filas asi, ninguna era trabajo
+     perdido pero todas llevaban semanas fuera de la vista.
+   - **Verificar con el gate, no de memoria:**
+     `python <MOTOR_ROOT>/scripts/check_backlog_contract.py --project-root .`
+     -> exit 0 obligatorio. El gate audita AMBAS superficies (WOT-2026-026t):
+     rechaza un estado terminal en la cola viva, un estado vivo en el archivo, y
+     una etiqueta desconocida que se cuele como cierre.
 3. Actualizar `PROJECT.md` si el ticket cambia arquitectura.
 4. Actualizar `CHANGELOG.md` si el ticket cambia comportamiento funcional.
 5. Consolidar memoria solo si hay aprendizaje reusable o si el ticket toca

@@ -476,7 +476,7 @@ still `unverified`).
 
 ---
 
-## The 7 non-negotiable per-ticket barriers (design section 11)
+## The 8 non-negotiable per-ticket barriers (design section 11)
 
 The executor MUST run these for every ticket it processes; each one caught a
 real false-green in the evidence that informed this design:
@@ -518,6 +518,26 @@ real false-green in the evidence that informed this design:
    verify the guard's counter actually rose for this ticket's row.
 7. **Never read `$?` after a pipe.** Use `subprocess` + `returncode`, or
    `PIPESTATUS`, for any git/exit-code check.
+8. **Close the ticket's STATE, and close it as a TRANSFER** (WOT-2026-026t).
+   Landing the commit is not closing the ticket: the scheduling surfaces must
+   agree with reality, and they are TWO.
+   - A terminal state does NOT live in the live queue. Writing `completed` into
+     `backlog.md` is the violation `check_backlog_contract.py` blocks. The row
+     MOVES to `.agent/collaboration/_archive/backlog_done.md` carrying a terminal
+     state (`completed`/`done`/`closed`/`absorbed`/`superseded`/`blocked-final`/
+     `not-pursued`) and its landing evidence in `Reactivation` (`commit:<sha>`,
+     or the ticket that absorbs it).
+   - **The reverse is the silent one**: a row archived while still `pending` is
+     pending work filed as history -- the live queue does not list it and the
+     archive calls it pending, so it is invisible in BOTH surfaces. Measured
+     2026-08-04: 18 such rows; none was lost work, all had been out of sight for
+     weeks. If the ticket is NOT fully delivered it stays in the live queue with
+     a live state; it does not get archived "to tidy up".
+   - **Verify by command, never by memory** -- same discipline as barrier 6, and
+     the same failure mode (a guard that does not see the row):
+     `python <MOTOR_ROOT>/scripts/check_backlog_contract.py --project-root <DESTINO_ROOT>`
+     -> exit 0 REQUIRED. It audits both surfaces: terminal-in-live-queue,
+     live-in-archive, and an unknown label sneaking through as a closure.
 
 ---
 
