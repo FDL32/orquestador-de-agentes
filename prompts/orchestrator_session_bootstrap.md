@@ -200,6 +200,14 @@ Reglas duras del orquestador (verificadas en sesiones reales):
 - **Rigor proporcional:** ajusta gates y pruebas al blast radius y reversibilidad del cambio.
 - **Root/topologia antes de relaunch:** valida `AGENT_PROJECT_ROOT`, `repo_motor`, `repo_destino`, bus legible y ticket activo antes de abrir Builder.
 
+**`git commit` aborta con `mixed line ending ... Failed`:** no es un fallo tuyo ni del repo, es el
+flujo -- el hook ARREGLA el fichero y deja el commit SIN hacer. Re-`git add` y repite (verificando
+antes que tus cambios sobrevivieron: el arreglo reescribe el fichero). La causa es MEZCLAR vias de
+escritura en un mismo fichero: `Write`/`Edit` dejan **CRLF** en Windows y `cat >> <<'EOF'`/`printf`
+dejan **LF**. Elige UNA via por fichero -- ampliar con heredoc un fichero creado con `Write` es el
+caso que mas muerde. Detalle, medicion y las dos creencias falsas que conviene no heredar:
+[AGENTS.md](AGENTS.md), "No MEZCLES vias de escritura en el mismo fichero".
+
 **Manager devuelve `inspect` / CHANGES fantasma:** la causa raiz se corrigio en WP-2026-120 (el parser JSON del bridge leia un schema inexistente). Ya NO es comportamiento esperado: si reaparece un `changes` con `attempt-N.md` de BLOCKERS vacios, es una regresion del parser en `bus/review_bridge.py` — investigarla, no normalizarla. Cierre manual canonico si hace falta: `python .agent/agent_controller.py --manager-approve --ticket WOT-XXXX --force`.
 
 ## Reglas no negociables

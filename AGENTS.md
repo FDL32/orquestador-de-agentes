@@ -267,6 +267,42 @@ explicita"*).
 - `scripts/check_encoding_guard.py` sigue siendo la autoridad de cierre; el
   hook es defensa en profundidad, no su sustituto.
 
+#### No MEZCLES vias de escritura en el mismo fichero (line endings, medido 2026-08-04)
+
+**El sintoma:** `git commit` ABORTA con `mixed line ending ... Failed` y el hook deja el fichero
+"arreglado" pero SIN commitear. El commit **no existe**; hay que re-`git add` y repetir. Paso TRES
+veces en una sola sesion, y las tres por lo mismo.
+
+**La causa, medida (no la que parece):** en Windows, las dos vias de escritura del agente dejan
+finales de linea DISTINTOS en el mismo repo.
+
+| Via | Deja |
+|---|---|
+| `Write`/`Edit` (y `Path.write_text()` en modo texto) | **CRLF** -- Windows traduce `\n` al escribir |
+| `cat >> f <<'EOF'`, `printf`, `Path.write_bytes()`, `write_text(..., newline="")` | **LF** |
+
+Escribir un fichero con una via y AMPLIARLO con la otra lo deja MIXTO, que es lo que el hook caza.
+Reproducido: `write_text()` (CRLF) + `cat >>` heredoc -> `CRLF=2 LF_total=3 bare_LF=1` -> MIXTO.
+
+**Dos creencias FALSAS que conviene no heredar** (ambas se sostuvieron una sesion entera antes de
+medirse):
+1. *"La mezcla la introduce `git add` al aplicar `.gitattributes`"*. **NO.** Probado: `git add` no
+   toca el working tree (`CRLF=0 LF=2` antes y despues; la normalizacion ocurre solo en el INDICE).
+2. *"Verificar los line endings antes de stagear no sirve"*. **SI sirve** -- y es la barrera. Lo que
+   no servia era mi comprobacion, porque medi el fichero ENTERO (`crlf == lf` -> "homogeneo") en vez
+   de buscar LF SOLITARIOS. Un fichero con 2248 CRLF y 1 bare LF pasa el primer test y falla el hook.
+
+**Regla operativa:**
+- Elige UNA via por fichero. Para `.py`/`.md` del motor, `Write`/`Edit` (la que el hook de encoding
+  ya cubre); si amplias por `Bash`, hazlo con la MISMA via con que se creo.
+- Anadir tests a un fichero existente con `cat >>` es el caso que mas muerde: usa `Edit`, o
+  normaliza despues.
+- Comprobacion correcta (cuenta bare LF, no compara totales):
+  `raw.count(b"\r\n")` vs `raw.count(b"\n")`; si la diferencia es > 0 **y** hay CRLF, esta MIXTO.
+- Si el hook ya aborto: **no es un fallo, es el flujo**. El fichero queda arreglado en disco; haz
+  `git add` de nuevo y repite el commit. Verifica antes que tus cambios sobrevivieron
+  (`grep` de un token propio), porque el arreglo reescribe el fichero.
+
 ## Archivado de colaboracion (WP-2026-100)
 
 - `scripts/archive_collaboration_artifacts.py` mueve `PLAN_WP-*.md` y `AUDIT_WP-*.md` cerrados a `.agent/collaboration/_archive/plan_audit/`.
