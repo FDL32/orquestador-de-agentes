@@ -253,6 +253,36 @@ explicita"*).
   aclaraciones van en una linea separada; texto como `o modulo equivalente` en
   el mismo bullet puede impedir que el parser de FLT reconozca la ruta.
 
+### Orden de trabajo: AGRUPA los commits, la suite va la ULTIMA (WOT-2026-026t)
+
+**La suite canonica es el ULTIMO paso antes del push, nunca uno intermedio.** El contrato exige
+`tested_commit_sha == HEAD` (`pre_handoff_guard.py:561`), asi que **cualquier commit posterior a la
+suite la invalida** y obliga a re-correrla entera (~7 min).
+
+```
+ORDEN CORRECTO                          ORDEN QUE DESPERDICIA
+1. TODOS los commits                    suite -> commit -> suite -> commit -> suite
+2. suite canonica (UNA vez)             (medido 2026-08-04: 3 corridas, ~15 min tirados)
+3. verificar tested_commit_sha == HEAD
+4. push
+```
+
+**Es la misma familia que la regla del bucle** (`obs-canonical-suite-runs-after-the-loop-not-before`:
+el bucle adversarial pide cambios, asi que una suite previa queda invalidada). Ahora generalizada:
+**cualquier** escritura posterior invalida la corrida, venga de un bucle o de un commit propio.
+
+**Barrera cableada, no norma** (`scripts/check_suite_freshness.py`, hook `check-suite-freshness` en
+`pre-commit`): avisa ANTES de commitear si existe una suite verde COMPLETA en el HEAD actual que
+ese commit invalidaria, citando cuantos tests se pierden. **No bloquea** -- un commit a mitad de
+sesion es legitimo, y bloquearlo forzaria a correr la suite entre cada par de commits, que es el
+desperdicio que se quiere evitar. La barrera BLOQUEANTE (no publicar con suite stale) ya existe y
+vive en `pre_handoff_guard`.
+
+Por que no bastaba lo que ya habia: la comprobacion `tested_commit_sha == HEAD` existia en DOS
+sitios (`pre_handoff_guard`, `collect_system_health`), pero ambos corren DESPUES -- en el handoff o
+en la auditoria de salud. Te avisan cuando ya pagaste la corrida. El unico momento en que esa
+informacion AHORRA trabajo es antes del commit.
+
 ### Convencion de encoding y gap v1 (WOT-2026-010e)
 
 - **Preferir Write/Edit sobre heredoc** para contenido no-ASCII en archivos de

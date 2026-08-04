@@ -120,6 +120,14 @@ repos:
         always_run: true
         stages: [pre-commit]
 
+      - id: check-suite-freshness
+        name: check suite freshness (avisa si este commit invalida la suite verde)
+        entry: uv run python scripts/check_suite_freshness.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
       # Guard: lo que VIAJA no puede nombrar ESTA maquina. El denominador sale de
       # MANIFEST.distribute (52 entradas -> 143 ficheros tracked; skills/ expande a
       # 92). Caza el nombre del workspace, el sufijo _dev de la worktree, la raiz de
