@@ -991,6 +991,27 @@ def send_to_profile(
     """
     profile = config["ensemble_profiles"][profile_name]
     backend_cfg = config["backends"][profile["backend"]]
+    # WOT-2026-026t: el techo NO puede ser uno solo para todos los backends. El
+    # default de 300 s se fijo con datos de codex. `opencode` (GLM) no tiene una
+    # media alta: tiene VARIANZA enorme. Medido 2026-08-04 sobre 14 rondas del
+    # scorecard: p50=91 s, max=280 s, desviacion tipica 83 s, ratio max/min 80x.
+    # Y la MISMA tarea (un bundle de auditoria de 5,9 KB) se midio TRES veces con
+    # resultados distintos: 388 s completo, 500 s completo, y una que agoto 600 s.
+    # De ahi 900 s: lo que hay que cubrir no es la media, es la COLA.
+    #
+    # CINCO hipotesis REFUTADAS por probe antes de llegar aqui -- no repetirlas:
+    #   backend caido/geo-bloqueado -> un PONG responde en 7 s;
+    #   tamano del payload          -> 5000 chars en 5 s, y hay rondas OK con 17 KB;
+    #   acceso a filesystem         -> leer un fichero y contar sus lineas, 9 s;
+    #   bug en este modulo          -> el CLI directo `opencode run --model` tarda igual;
+    #   concurrencia entre lentes   -> el control con GLM SOLO tardo 500 s, MAS
+    #                                  que los 388 s con Codex en paralelo.
+    # Lo que si tarda es el TRABAJO que el bundle ordena (leer un contrato de 259
+    # lineas, auditar 3 entradas, responder 6 preguntas), no el transporte.
+    #
+    # Se lee del backend para no regalarle 900 s a `nan_api`, que responde en
+    # segundos; el default del parametro sigue mandando si el backend no declara
+    # `timeout_s` (aditivo: cero efecto sobre los que no lo usan).
     timeout = int(backend_cfg.get("timeout_s") or timeout)
     payload_text = json.dumps(messages, ensure_ascii=False)
     effective = sensitivity or profile.get("data_sensitivity")

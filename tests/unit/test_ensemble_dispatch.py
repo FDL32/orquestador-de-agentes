@@ -21,6 +21,7 @@ it pins:
 from __future__ import annotations
 
 import email.message
+import inspect
 import io
 import json
 import sys
@@ -1957,8 +1958,21 @@ class TestBackendTimeout:
                 sensitivity="public",
                 transport=transport,
             )
-        assert seen["opencode"] == 600, "opencode necesita techo propio"
-        assert seen["codex"] == 300, "el resto no debe heredar el techo de opencode"
+        # INVARIANTE, no medicion (WOT-2026-024t): el numero exacto es evidencia
+        # fechada y cambia cuando cambia la cola de latencia del backend -- este
+        # test pineaba `== 600` y se puso ROJO al subirlo a 900 con datos nuevos,
+        # que es justo el criterio-que-caduca-solo. Lo que NO debe cambiar es la
+        # relacion: opencode necesita MAS techo que el resto, porque su latencia
+        # tiene varianza enorme (ratio max/min 80x medido 2026-08-04).
+        assert seen["opencode"] > seen["codex"], (
+            "opencode necesita techo propio, MAYOR que el default del resto"
+        )
+        default_timeout = (
+            inspect.signature(ed.send_to_profile).parameters["timeout"].default
+        )
+        assert seen["codex"] == default_timeout, (
+            "el resto no debe heredar el techo de opencode: usa el default"
+        )
 
 
 class TestBackendKeyMatchesProfile:
