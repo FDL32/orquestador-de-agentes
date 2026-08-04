@@ -1961,6 +1961,61 @@ class TestBackendTimeout:
         assert seen["codex"] == 300, "el resto no debe heredar el techo de opencode"
 
 
+class TestBackendKeyMatchesProfile:
+    """El receipt de la ronda no puede atribuirse a una lente que no ejecuto."""
+
+    def _run(self, profile_name, backend_key, tmp_path):
+        cfg = ed.load_motor_config()
+
+        def transport(profile, backend_cfg, messages, timeout):
+            return "ok"
+
+        return ed.run_loop_round(
+            profile_name,
+            "x",
+            config=cfg,
+            project_root=tmp_path,
+            ticket="T",
+            task_type="triage",
+            rol="challenger",
+            phase="p",
+            loop_id="L700",
+            backend_key=backend_key,
+            sensitivity="public",
+            transport=transport,
+        )
+
+    def test_wrong_key_is_rejected_before_dispatch(self, tmp_path):
+        """El fallo REAL de 2026-08-04: GLM registrado como BA12 (nan/mimo).
+
+        MUTACION ALCANZABLE: quitar la comparacion -> la ronda se despacha y
+        deja un receipt que miente sobre que lente audito.
+        """
+        with pytest.raises(ValueError, match="no corresponde al perfil"):
+            self._run("challenger_opencode_glm_5_2", "BA12", tmp_path)
+
+    def test_same_backend_different_lens_is_also_rejected(self, tmp_path):
+        """Por que la comparacion es de IDENTIDAD, no de backend.
+
+        Los cuatro perfiles `nan_api` comparten backend: un check por backend
+        aceptaria qwen+BA12 y fabricaria independencia entre dos rondas del
+        MISMO modelo, que es justo lo que la barrera cuenta.
+        MUTACION: comparar `profile["backend"]` en vez de la clave -> VERDE.
+        """
+        with pytest.raises(ValueError, match="no corresponde al perfil"):
+            self._run("challenger_nan_qwen3_6", "BA12", tmp_path)
+
+    def test_matching_key_passes(self, tmp_path):
+        """CONTROL POSITIVO: la invocacion correcta no se molesta."""
+        assert self._run("challenger_opencode_glm_5_2", "BA06", tmp_path) == "ok"
+
+    def test_error_names_the_key_the_caller_should_use(self, tmp_path):
+        """Gate self-service: el mensaje dice COMO arreglarlo, no solo que fallo."""
+        with pytest.raises(ValueError) as exc:
+            self._run("challenger_opencode_glm_5_2", "BA12", tmp_path)
+        assert "--backend-key BA06" in str(exc.value)
+
+
 _WOT_025Z_SECTION_MARKER = "# === WOT-2026-025z substantive tests start ==="
 
 _NAN_MODELS = {

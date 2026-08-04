@@ -1671,6 +1671,36 @@ def run_loop_round(
             f"task_type '{task_type}' invalido; usa uno de {sorted(TASK_TYPES)}"
         )
     profile = config["ensemble_profiles"][profile_name]
+    # WOT-2026-026t: `backend_key` es el RECIBO de quien ejecuto la ronda, y
+    # `check_loop_execution` cuenta claves DISTINTAS para acreditar la
+    # independencia del bucle. Una clave que no es la del perfil no "elige" nada
+    # -- el transporte resuelve backend y modelo desde el PERFIL -- pero deja un
+    # receipt que MIENTE sobre que lente audito. Medido 2026-08-04: dos rondas
+    # de `challenger_opencode_glm_5_2` quedaron archivadas como BA12 (nan_api /
+    # mimo-v2.5) por pasar la clave equivocada; el fallo no dio ningun sintoma.
+    #
+    # La comparacion es de IDENTIDAD EXACTA, no de backend: los cuatro perfiles
+    # `nan_api` comparten backend, asi que un check por backend aceptaria
+    # `challenger_nan_qwen3_6 + BA12` y fabricaria independencia entre dos
+    # rondas del MISMO modelo. Se valida ANTES de despachar para no gastar una
+    # llamada al backend en una ronda cuyo receipt ya nace invalido.
+    expected_key = profile.get("backend_key")
+    if expected_key and backend_key != expected_key:
+        actual = (
+            config.get("ensemble_registry", {}).get("backend_keys", {}).get(backend_key)
+        ) or {}
+        detalle = (
+            f" ('{backend_key}' es {actual.get('backend')}/{actual.get('model')})"
+            if actual
+            else f" ('{backend_key}' no existe en el registro)"
+        )
+        raise ValueError(
+            f"backend_key '{backend_key}' no corresponde al perfil "
+            f"'{profile_name}', cuya clave es '{expected_key}'{detalle}. El "
+            "receipt de la ronda quedaria atribuido a una lente que no ejecuto, "
+            f"y la barrera de independencia cuenta esa columna. Usa "
+            f"--backend-key {expected_key}."
+        )
     _t0 = time.perf_counter()
     reply = send_to_profile(
         profile_name,
