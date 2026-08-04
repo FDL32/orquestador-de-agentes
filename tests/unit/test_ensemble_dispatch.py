@@ -654,6 +654,72 @@ def test_task_type_invalid_blocks_cli_exit_nonzero(tmp_path, monkeypatch):
     assert rc == 1, "task_type invalido debe bloquear via ValueError -> exit 1"
 
 
+def test_loop_round_usage_error_leaves_auditable_row(tmp_path, monkeypatch):
+    """WOT-2026-048i: un error de USO de `loop-round` deja FILA con `failure_mode`.
+
+    El exit code YA era correcto (`return 1`), y NO se toca -- ese es el
+    NON-GOAL de la ficha. Lo que faltaba es RASTRO: el `[BLOCKED]` sale por
+    stderr y la ronda muere SIN dejar fila, asi que "nadie consulto a esta
+    lente" y "la invocacion estaba mal escrita" son indistinguibles en el
+    scorecard. Medido 2026-08-05 sobre el motor 0be12cb: `--task-type`
+    con guion BAJO -> rc=1, stdout vacio, delta de filas = 0.
+
+    Por que la fila se escribe en el HANDLER y no en `run_loop_round`: la
+    validacion de `run_loop_round` (`:1749`) ocurre ANTES de resolver
+    `profile` (`:1753`), y `_record_round` EXIGE un `profile` dict. En el
+    handler el perfil SI es resoluble desde la config.
+
+    Mutation que aisla la rama: quitar el pre-check del handler deja el
+    `raise` interno como unica via -> la fila no se escribe y
+    `len(rows) == 0`, con el rc SIN cambiar (sigue siendo 1). Es decir: el
+    test NO puede pasar por el exit code, solo por la fila.
+    """
+    monkeypatch.setattr(ed, "load_motor_config", lambda: _config())
+    monkeypatch.setattr(ed, "send_to_profile", lambda *a, **k: "ok")
+    payload_file = tmp_path / "payload.txt"
+    payload_file.write_text("material publico", encoding="utf-8")
+    rc = ed.main(
+        [
+            "loop-round",
+            "--profile",
+            "p_chal",
+            "--content-file",
+            str(payload_file),
+            "--ticket",
+            "WOT-TEST-048i",
+            "--task-type",
+            "contract_audit",
+            "--rol",
+            "challenger",
+            "--phase",
+            "CONTRACT_AUDIT",
+            "--loop-id",
+            "L999",
+            "--backend-key",
+            "BKA",
+            "--data-sensitivity",
+            "public",
+            "--project-root",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 1, "un error de USO sigue saliendo con exit 1 (NON-GOAL: no se toca)"
+    rows = _rows(tmp_path)
+    assert len(rows) == 1, (
+        "el error de USO debe dejar EXACTAMENTE UNA fila auditable; sin ella, "
+        f"'nadie consulto' y 'invocacion mal escrita' son iguales: {rows}"
+    )
+    row = rows[0]
+    assert row["failure_mode"] == "usage-error", (
+        f"la fila debe declarar POR QUE murio, no solo que murio: {row}"
+    )
+    assert row["ticket"] == "WOT-TEST-048i", (
+        f"la fila debe ser atribuible al ticket que la provoco: {row}"
+    )
+    assert row["loop_id"] == "L999", f"debe conservar el loop_id: {row}"
+    assert row["backend_key"] == "BKA", f"debe conservar el backend_key: {row}"
+
+
 def test_latency_ms_measured_with_controlled_delta(tmp_path, monkeypatch):
     """(d) [ENMIENDA -- delta controlado, NUNCA floor assertion]. perf_counter
     se monkeypatchea para avanzar un delta CONOCIDO (50ms) en cada llamada;

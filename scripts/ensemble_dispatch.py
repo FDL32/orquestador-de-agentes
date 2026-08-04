@@ -2145,6 +2145,47 @@ def _cmd_loop_round(args, config) -> int:
     """
     project_root = _resolve_project_root(args.project_root)
     content_path = Path(args.content_file)
+    # WOT-2026-048i: un error de USO deja RASTRO, no solo un stderr.
+    #
+    # El exit code YA era correcto (`main` mapea ValueError -> 1) y NO se toca:
+    # ese es el NON-GOAL de la ficha. Lo que faltaba es la FILA. Sin ella, el
+    # scorecard no distingue "nadie consulto a esta lente" de "la invocacion
+    # estaba mal escrita", y un consolidador que cuente filas para acreditar N
+    # lentes distintas cuenta de menos SIN sintoma.
+    #
+    # POR QUE AQUI Y NO EN `run_loop_round`: alli la validacion de `task_type`
+    # (`:1749`) corre ANTES de resolver `profile` (`:1753`), y `_record_round`
+    # EXIGE un `profile` dict. En este handler el perfil SI es resoluble desde
+    # la config, asi que la fila puede ser ATRIBUIBLE (ticket, loop_id,
+    # backend_key) en vez de un registro huerfano.
+    #
+    # Se registra y se RE-LANZA: el contrato de `main` sigue mapeando el
+    # ValueError a exit 1. La fila es aditiva, no sustituye al fallo.
+    if args.task_type not in TASK_TYPES:
+        profile = (config.get("ensemble_profiles") or {}).get(args.profile)
+        if profile is not None:
+            _record_round(
+                project_root,
+                ticket=args.ticket,
+                task_type=args.task_type,
+                rol=args.rol,
+                profile=profile,
+                backend_version=None,
+                ronda=args.ronda,
+                reply="",
+                input_bytes=0,
+                context_kind=args.context_kind,
+                failure_mode="usage-error",
+                session_id=args.session_id,
+                phase=args.phase,
+                loop_id=args.loop_id,
+                backend_key=args.backend_key,
+                commit_sha=args.commit_sha,
+                challenge_nonce=args.challenge_nonce,
+            )
+        raise ValueError(
+            f"task_type '{args.task_type}' invalido; usa uno de {sorted(TASK_TYPES)}"
+        )
     allowed, reason = payload_read_allowed(
         content_path, config.get("ensemble_payload_allowlist", [])
     )
