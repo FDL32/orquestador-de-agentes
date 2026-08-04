@@ -182,6 +182,32 @@ root R), never FRESHNESS.
    prompts and the skill, and its tests) is `WOT-2026-044r`. Until that lands, an
    executor that finds no receipt MUST stop and ask for one; it must not infer
    approval from its absence.
+
+   **SEALING ORDER -- the receipt is the LAST step, never the first (measured
+   2026-08-05).** `prompt_sha256` binds the receipt to the EXACT bytes of the
+   arranque file, so ANY later edit invalidates it. That is the field working as
+   designed, not a bug -- but it dictates an order that is easy to get backwards:
+
+   > **audit and correct the arranque prompt FIRST, seal it LAST.**
+
+   Therefore, whoever prepares an arranque prompt MUST ask the human operator,
+   BEFORE emitting the receipt and in these terms: *"do you want a governance
+   loop over this prompt before I seal it?"* -- because a loop run AFTER sealing
+   forces a re-emission that needs the operator's approval all over again.
+   Measured on 2026-08-05 preparing the Lote A flight: the receipt was emitted,
+   then the loop was run, then Codex BA05 returned NO LISTO with exact text to
+   add -- and applying it broke the hash of a receipt the operator had just
+   approved. Nobody was misled (the mismatch is exactly what the field exists to
+   surface), but the operator's approval was spent twice on the same artifact.
+
+   **And a receipt that EXISTS is not a receipt that APPLIES.** Verify
+   `prompt_sha256` against the file you are about to execute, plus
+   `project_root_resolved` and `scope`. Measured the same day: a
+   `start_context_isolation.json` with `status: RESOLVED` was found in the
+   reports dir -- from a DIFFERENT flight sealed four days earlier, pointing at
+   another arranque file. An executor checking only `status == RESOLVED` would
+   have flown on a stranger's approval, which is the precise failure this gate
+   exists to prevent.
 3. **The ONLY question the executor may answer at start is OBSERVABLE, not
    introspective:** *"has the triage been discussed, have the governance loops
    been run, or was this prompt drafted IN THIS THREAD?"* -- answered by LOOKING
