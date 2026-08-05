@@ -921,6 +921,78 @@ def run_guard_wiring_orphan_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_agent_write_enforced_check(project_root: Path) -> CheckResult:
+    """WOT-2026-048h: `write: false` sin enforcement posible es DECORATIVO (WARN).
+
+    Cierra la laguna DECLARADA de WOT-2026-048k cableando
+    `check_agent_write_enforced` en un camino que corre solo -- citarlo en un
+    prompt seria una norma, no una barrera (punto (3) del DoD).
+
+    NACE EN WARN, y es una decision de ALCANCE, no una relajacion: la deuda es
+    PREEXISTENTE (`claude` y `codex` no declaran `readonly_agent` hoy), asi que
+    nacer bloqueante dejaria el repo en rojo permanente por algo que este ticket
+    no contrata arreglar -- tocar `agents.json` es superficie de otro ticket. Es
+    el mismo patron con que nacieron `run_workspace_contract_formation_check` y
+    `run_flight_plan_collision_check`. Endurecerlo a bloqueante exige antes
+    declarar `readonly_agent` en esos dos backends: DECISION DEL OPERADOR.
+
+    Contrato del WARN en este runner: `run_preflight_check` imprime
+    `result.output` SOLO si `not result.passed`. Un WARN modelado como
+    `passed=True` seria INVISIBLE -- exactamente la deuda-invisible que estos
+    gates combaten. Por eso WARN == `passed=False` + `is_blocking=False`.
+
+    Before: `.agent/config/agents.json` del MOTOR (los perfiles del ensemble
+        viven ahi, no en el destino).
+    During: read-only; delega en `find_unenforced_pairs`, que es puro.
+    After: `passed=True` si no hay pares huerfanos o la config no es legible
+        (SKIP nombrado); `passed=False` + `is_blocking=False` nombrando CADA par
+        (perfil, backend) cuya restriccion no se puede enforcear.
+    """
+    name = "Agent Write Enforced (WOT-2026-048h, WARN)"
+    import json
+
+    try:
+        from scripts.check_agent_write_enforced import find_unenforced_pairs
+    except ImportError:
+        return CheckResult(
+            name=name,
+            passed=True,
+            output="SKIP: check_agent_write_enforced no importable",
+            is_blocking=False,
+        )
+    cfg_path = _MOTOR_ROOT / ".agent" / "config" / "agents.json"
+    try:
+        config = json.loads(cfg_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=f"SKIP: no se pudo leer {cfg_path}: {exc}",
+            is_blocking=False,
+        )
+    pairs = find_unenforced_pairs(config)
+    if not pairs:
+        return CheckResult(
+            name=name,
+            passed=True,
+            output="OK: todo perfil con vector (channel: agent) y write:false enforcea.",
+            is_blocking=False,
+        )
+    detalle = "; ".join(f"{p['profile']} -> {p['backend']}" for p in pairs)
+    return CheckResult(
+        name=name,
+        passed=False,
+        output=(
+            f"WARN ({len(pairs)} par/es): declaran `write: false` sin poder "
+            f"enforcearlo, la restriccion es DECORATIVA -- {detalle}. "
+            "Deuda PREEXISTENTE (WOT-2026-048h nace WARN a proposito). Remedio: "
+            "declarar `readonly_agent` en esos backends; NO quitar `write: false` "
+            "(silencia el gate sin quitar el vector)."
+        ),
+        is_blocking=False,
+    )
+
+
 def _principal_sync_plan(project_root: Path) -> dict | None:
     """Plan READ-ONLY de sync del checkout PRINCIPAL, o None si no es resoluble.
 
@@ -1717,6 +1789,13 @@ def run_preflight_check(
         # El script existia y funcionaba desde hacia meses; lo que faltaba era
         # ESTA linea -- sin ella era una norma, no una barrera.)
         results.append(run_principal_freshness_check(project_root))
+        # 6l-ter. Agent Write Enforced (WOT-2026-048h; WARN -- `write: false` que
+        # no se puede enforcear es DECORATIVO. Nace WARN porque la deuda es
+        # PREEXISTENTE (claude/codex sin `readonly_agent`) y arreglarla toca
+        # `agents.json`, superficie de otro ticket; endurecer a bloqueante es
+        # decision del operador. Cablearlo AQUI es el punto (3) de su DoD:
+        # citarlo en un prompt seria una norma, no una barrera.)
+        results.append(run_agent_write_enforced_check(project_root))
         # 6m. Flight Plan Collision (WOT-2026-027h; WARN -- el queued/ real ya
         # colisiona antes de la barrera (deuda historica); endurecer a bloqueante
         # en WOT-2026-040r cuando queued/ este limpio. El CHECK en si (exit!=0) es

@@ -66,6 +66,7 @@ _EMPTY_POLICY = {"known_unwired": {}, "extra_guards": {}, "wired_via": {}}
 # The COUNT is not the invariant -- the SAME set is (a classifier that drops a real
 # call-site and picks up a bogus one prints the same number).
 EXPECTED_WIRED_REAL = {
+    "check_agent_write_enforced",  # WOT-2026-048h: cableado via import estatico en prepush_check.py::run_agent_write_enforced_check (closeout, WARN -- nace WARN porque la deuda claude/codex sin readonly_agent es PREEXISTENTE)
     "check_agents_accessible",  # WOT-2026-026e(A7): cableado por import en preflight_codeonly_pipeline.py
     "check_backlog_commits_landed",  # WOT-2026-024q: cableado via import estatico en agent_controller.py::_ticket_landed_by_archived_commit (retirado de known_unwired)
     "check_backlog_contract",
