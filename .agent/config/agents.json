@@ -52,9 +52,7 @@
       "executable": "codex.cmd",
       "args": [
         "exec",
-        "--skip-git-repo-check",
-        "-c",
-        "service_tier=\"fast\""
+        "--skip-git-repo-check"
       ],
       "prompt_via_stdin": true,
       "discovery": {
