@@ -2145,6 +2145,39 @@ def _cmd_loop_round(args, config) -> int:
     """
     project_root = _resolve_project_root(args.project_root)
     content_path = Path(args.content_file)
+
+    # PROTOCOLO DE BUNDLE (2026-08-05): avisa ANTES de gastar la ronda si el
+    # encargo no declara sus invariantes de suficiencia.
+    #
+    # Medido con la MISMA lente (BA06), el MISMO cwd y ficheros del MISMO repo:
+    # bundle SIN protocolo -> 106 bytes sin veredicto; CON protocolo -> 4708 y
+    # un informe completo. Una lente muda es indistinguible de una que no
+    # encontro nada, asi que el fallo NO es ruidoso: por eso se avisa aqui.
+    #
+    # WARN y NO bloqueo, a proposito: el guard verifica FORMA (que los
+    # invariantes esten declarados), no que sean CIERTOS. Bloquear con un
+    # detector de cadenas obligaria a escribir las palabras magicas y
+    # convertiria el protocolo en cargo cult. El aviso llega cuando aun es
+    # barato corregir; la decision sigue siendo del operador.
+    if content_path.is_file():
+        try:
+            from scripts.check_loop_bundle_protocol import check_bundle
+
+            _missing = check_bundle(
+                content_path.read_text(encoding="utf-8", errors="replace")
+            )
+            if _missing:
+                print(
+                    f"[loop-bundle] WARN: el bundle no declara {len(_missing)} "
+                    f"invariante(s) del protocolo: {', '.join(_missing)}. "
+                    "Medido: una lente sin protocolo devolvio 106 bytes; con el, 4708.",
+                    file=sys.stderr,
+                )
+        except Exception as exc:  # un aviso NUNCA rompe el despacho
+            # Se REPORTA en vez de tragarse: un `except: pass` silencioso es el
+            # mismo modo de fallo que este guard existe para cazar (algo que
+            # calla es indistinguible de algo que no encontro nada).
+            print(f"[loop-bundle] aviso no disponible: {exc}", file=sys.stderr)
     # WOT-2026-048i: un error de USO deja RASTRO, no solo un stderr.
     #
     # El exit code YA era correcto (`main` mapea ValueError -> 1) y NO se toca:

@@ -106,6 +106,17 @@ extra_guards:
   delivery_hygiene_check: scripts/delivery_hygiene_check.py
 
 wired_via:
+  # check_loop_bundle_protocol (2026-08-05): import LAZY dentro del handler de
+  # `loop-round`, no en el modulo -- por eso el AST de 1-hop no lo alcanza. Es un
+  # camino que corre solo: TODA ronda de bucle pasa por ahi antes de despachar.
+  # Avisa (WARN, no bloquea) si el bundle no declara sus 3 invariantes de
+  # suficiencia. Medido con la misma lente: 106 bytes sin protocolo vs 4708 con el.
+  check_loop_bundle_protocol: >-
+    scripts/ensemble_dispatch.py:2164 (from scripts.check_loop_bundle_protocol
+    import check_bundle, dentro de cmd_loop_round) -> check_bundle(...) :2166.
+    Probe: python scripts/ensemble_dispatch.py loop-round --content-file
+    <bundle-sin-protocolo> ... -> imprime "[loop-bundle] WARN: el bundle no
+    declara 3 invariante(s)"; con un bundle conforme, 0 avisos.
   # Cableado REAL de 2 saltos que el AST de 1 salto no alcanza (residual R5 de la spec):
   # guard_script = SCRIPT_DIR.parent/"scripts"/"pre_handoff_guard.py"  (salto 1: path->var)
   # cmd = [sys.executable, str(guard_script), ...]                     (salto 2: var->lista)

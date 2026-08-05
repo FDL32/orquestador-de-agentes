@@ -853,3 +853,108 @@ class TestTerminalStatusVocabulary:
         assert any("status" in f for f in fields), (
             "un estado fuera de vocabulario falla"
         )
+
+
+class TestTicketIdNotMutilatedByCharClass:
+    r"""El ID del ticket llega ENTERO al reporte de error (F-3, traspaso 2026-08-05).
+
+    Que protege
+    -----------
+    `validate_ticket_contracts` capturaba el ID con `[A-Z][A-Z0-9_\-]+\b`, clase
+    que EXCLUYE minusculas. Con un sufijo en minuscula -- que es la convencion de
+    este repo (`WOT-2026-047w`, `CTL-2026-013a`) -- el `\b` retrocede hasta el
+    ultimo guion y el ID se reporta MUTILADO:
+
+        '## CTL-2026-013a' -> 'CTL-2026-'      (medido antes del fix)
+        '## WOT-2026-047w' -> 'WOT-2026-'      (afecta tambien al prefijo propio)
+
+    Por que NO es cosmetico: ese `tid` se usa como identificador en el mensaje de
+    error, asi que N tickets distintos de la misma familia colapsan en la MISMA
+    etiqueta. Reportado desde el destino Crear_Texto_LLM: 17/17 errores decian
+    `CTL-2026-` pelado y ninguno identificaba su ticket. El baseline solo era
+    utilizable por CONTEO, nunca por etiqueta.
+
+    Origen del hallazgo: la sesion del destino propuso una causa (truncado
+    deliberado a family form en :336-338) que era FALSA -- ese truncado existe,
+    pero solo para PLAN-IDs. Una lente lo refuto y la causa real resulto ser la
+    clase de caracteres. El sintoma era real; el mecanismo, no.
+    """
+
+    def _tids(self, content: str, tmp_path):
+        f = tmp_path / "tickets.md"
+        f.write_text(content, encoding="utf-8")
+        res = VResult()
+        validate_ticket_contracts(str(f), res)
+        return [e.field_ for e in res.errors] + [str(e) for e in res.errors]
+
+    def test_lowercase_suffix_id_is_reported_whole(self, tmp_path):
+        """Un ID con sufijo en minuscula no puede llegar cortado al reporte."""
+        content = "## CTL-2026-013a\n\n- **Status:** pending\n"
+        blob = " ".join(self._tids(content, tmp_path))
+        assert "CTL-2026-013a" in blob, (
+            "el ID se reporto MUTILADO: la clase de caracteres excluye minusculas, "
+            f"asi que dos tickets de la misma familia colapsan en la misma etiqueta. blob={blob[:200]!r}"
+        )
+
+    def test_two_sibling_tickets_do_not_collapse(self, tmp_path):
+        """El fallo REAL: dos tickets distintos indistinguibles en el reporte."""
+        content = (
+            "## CTL-2026-013a\n\n- **Status:** pending\n\n"
+            "## CTL-2026-013e\n\n- **Status:** pending\n"
+        )
+        blob = " ".join(self._tids(content, tmp_path))
+        assert "CTL-2026-013a" in blob and "CTL-2026-013e" in blob, (
+            "dos tickets hermanos colapsan en la misma etiqueta: el reporte no "
+            f"permite saber CUAL falla. blob={blob[:200]!r}"
+        )
+
+    def test_uppercase_suffix_still_works(self, tmp_path):
+        """Control de no-regresion: el caso que YA funcionaba sigue igual."""
+        content = "## CTL-2026-013A\n\n- **Status:** pending\n"
+        blob = " ".join(self._tids(content, tmp_path))
+        assert "CTL-2026-013A" in blob
+
+    def test_double_letter_suffix_not_mutilated(self, tmp_path):
+        """Bucle L800 (codex #1 + BA06): sufijo de DOS letras tambien entero.
+
+        No hay ids asi en el repo hoy (la convencion es `NNNx`, una letra), pero
+        la version anterior del fix los mutilaba a `CTL-2026` y el defecto habria
+        vuelto en silencio el dia que apareciera uno.
+        """
+        content = "## CTL-2026-013ab\n\n- **Status:** pending\n"
+        blob = " ".join(self._tids(content, tmp_path))
+        assert "CTL-2026-013ab" in blob, f"sufijo doble mutilado. blob={blob[:200]!r}"
+
+    def test_lowercase_in_the_middle_not_mutilated(self, tmp_path):
+        """Bucle L800 (codex #2): minuscula en MEDIO del id, no solo al final."""
+        content = "## CTL-2026-a13\n\n- **Status:** pending\n"
+        blob = " ".join(self._tids(content, tmp_path))
+        assert "CTL-2026-a13" in blob, (
+            f"minuscula interna mutilada. blob={blob[:200]!r}"
+        )
+
+    def test_extra_segment_after_lowercase_suffix(self, tmp_path):
+        """Bucle L800 (codex #3): un segmento posterior no corta el id."""
+        content = "## CTL-2026-013a-01\n\n- **Status:** pending\n"
+        blob = " ".join(self._tids(content, tmp_path))
+        assert "CTL-2026-013a-01" in blob, (
+            f"segmento posterior perdido. blob={blob[:200]!r}"
+        )
+
+    def test_uppercase_prose_heading_is_not_a_ticket(self, tmp_path):
+        """Bucle L800 (BA06 #2 + codex #6): `## TODO` NO es un ticket.
+
+        Defecto PREEXISTENTE, no introducido por este fix: el regex antiguo
+        tambien aceptaba `TODO`/`API`/`JSON` como ids y emitia checklist de
+        campos obligatorios contra ellos. Se cierra exigiendo un DIGITO en el id.
+        """
+        content = (
+            "## T-REAL-001\n\n- **Status:** pending\n\n"
+            "## TODO\n\n- nota suelta de prosa.\n\n"
+            "## API\n\n- otra nota.\n"
+        )
+        blob = " ".join(self._tids(content, tmp_path))
+        assert "T-REAL-001" in blob, "el ticket real deberia seguir validandose"
+        assert "TODO" not in blob and " API" not in blob, (
+            f"un encabezado de prosa en mayusculas se trato como ticket. blob={blob[:300]!r}"
+        )

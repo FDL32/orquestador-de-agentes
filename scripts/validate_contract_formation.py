@@ -131,7 +131,33 @@ def validate_ticket_contracts(fp: str, res: VResult) -> None:
     blocks = re.split(r"\n(?=##\s+(?:<?[A-Z]))", content)
     found = False
     for block in blocks:
-        m = re.match(r"##\s+(<[A-Z][A-Z0-9_\-]+>|[A-Z][A-Z0-9_\-]+\b)", block.strip())
+        # La clase incluye MINUSCULAS a proposito (F-3, 2026-08-05): la convencion
+        # de ids de este repo lleva sufijo en minuscula (`WOT-2026-047w`,
+        # `CTL-2026-013a`). Con `[A-Z0-9_\-]+\b` el `\b` retrocedia hasta el ultimo
+        # guion y el id se reportaba MUTILADO (`CTL-2026-`), asi que N tickets de
+        # la misma familia colapsaban en la MISMA etiqueta de error y el reporte
+        # no permitia saber cual fallaba. Medido en el destino: 17/17 errores sin
+        # identificar su ticket.
+        # El ID se captura como TOKEN COMPLETO (hasta espacio o fin de linea), no
+        # cortando en el primer `\b` (F-3, 2026-08-05 + bucle L800 nonce 8662423b).
+        #
+        # Dos defectos que esta forma cierra, ambos MEDIDOS:
+        #  1. MUTILACION. `[A-Z0-9_\-]+\b` excluia minusculas, y la convencion de
+        #     ids de este repo lleva sufijo en minuscula (`WOT-2026-047w`). El `\b`
+        #     retrocedia hasta el ultimo guion -> el error decia `WOT-2026-` pelado
+        #     y N tickets hermanos colapsaban en la MISMA etiqueta (17/17 errores
+        #     sin identificar su ticket, reportado desde el destino).
+        #  2. PROSA DE UNA PALABRA EN MAYUSCULAS. `## TODO`, `## API`, `## JSON`
+        #     matcheaban como si fueran tickets -- defecto PREEXISTENTE, no
+        #     introducido aqui: el regex viejo tambien los aceptaba. Se exige ahora
+        #     al menos un DIGITO en el id, que es lo que distingue un identificador
+        #     (`CTL-2026-013a`, `T-HEALTH-001`) de una palabra (`TODO`).
+        #
+        # El placeholder `<NOMBRE>` conserva su rama propia: no lleva digito.
+        m = re.match(
+            r"##\s+(<[A-Z][A-Za-z0-9_\-]*>|[A-Z][A-Za-z0-9_\-]*[0-9][A-Za-z0-9_\-]*)(?=\s|$)",
+            block.strip(),
+        )
         if m:
             found = True
             _chk_ticket(block, m.group(1), fp, res)
