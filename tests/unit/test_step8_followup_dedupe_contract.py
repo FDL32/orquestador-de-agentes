@@ -40,6 +40,18 @@ Mutacion que lo pone en ROJO (DoD: "retirar el barrido del paso 8")
   duplicar el criterio en vez de remitir -> ROJO en
     test_step8_points_to_single_criterion_instead_of_redeclaring
 
+Par de exit-codes del revert, en el formato obligatorio del Paso 3 de
+`prompts/manager_review.md` (medido 2026-08-05 sobre HEAD 8f4c423; la mutacion
+retira el bloque "DEDUPE OBLIGATORIO" del paso 8 y restaura despues)::
+
+    mutation-verify:
+      sin_fix:  command: python -m pytest tests/unit/test_step8_followup_dedupe_contract.py -q   exit_code: 1   # 4 failed, 5 passed
+      con_fix:  command: python -m pytest tests/unit/test_step8_followup_dedupe_contract.py -q   exit_code: 0   # 9 passed
+
+Los 5 que sobreviven a la mutacion son los de CONTROL (8.bis intacto + el flujo
+ejecutable), y esa asimetria es la prueba de aislamiento: si cayeran TODOS, el
+test estaria midiendo el fichero entero y no la clausula.
+
 Before / During / After
 -----------------------
 Before: el prompt existe en `<motor>/prompts/`.
@@ -173,3 +185,179 @@ def test_8bis_still_declares_the_same_surfaces(surface: str) -> None:
         f"8.bis dejo de nombrar la superficie {surface!r}: el paso 8 remite a "
         "un criterio que ya no declara lo que promete"
     )
+
+
+# ---------------------------------------------------------------------------
+# DoD (b) PROPIAMENTE DICHO: fixture CONCRETO + flujo EJECUTADO + salida EXACTA.
+#
+# Los tests de arriba fijan la NORMA (que la clausula exista y remita a un unico
+# criterio). Eso NO es el DoD (b): un test que grepea prosa no asevera "una
+# salida del flujo". Blocker #1 del MANAGER REVIEW (codex, nonce ba348ceb).
+#
+# Este bloque ejecuta el flujo real -- `find_similar_signals.py`, la ayuda
+# mecanica que la clausula DEDUPE nombra -- con un candidato NOMBRADO contra una
+# ficha existente NOMBRADA, y asevera el veredicto EXACTO que el paso 8 obliga a
+# emitir. El fixture esta fijado en el test, no juzgado "por equivalencia".
+# ---------------------------------------------------------------------------
+
+# Ficha EXISTENTE nombrada (vive en la cola viva del destino).
+FIXTURE_EXISTING_TICKET = "WOT-2026-047w"
+
+# Candidato de follow-up NOMBRADO: reformulacion del MISMO hallazgo que ya
+# ficha 047w. Un dedupe correcto debe reconocerlo y NO dar de alta fila nueva.
+FIXTURE_CANDIDATE = (
+    "EL ALTA DE FOLLOW-UPS PROPIOS (PASO 8) NO TIENE DEDUP: el paso 8 del "
+    "cierre no comprueba si el follow-up ya estaba fichado, a diferencia de "
+    "8.bis que si barre tres superficies."
+)
+
+
+def _resolve_live_backlog() -> Path | None:
+    """Localiza el `backlog.md` del destino de forma PORTABLE.
+
+    Via `AGENT_PROJECT_ROOT` o `motor_destination_link.json`, NUNCA por nombre
+    de directorio fijo: el motor es agnostico del destino (`manager_review.md`
+    Paso 1b). Devuelve None si no hay destino resoluble -> el test se salta,
+    porque su objeto es el flujo, no la instalacion.
+    """
+    import json
+    import os
+
+    env = os.environ.get("AGENT_PROJECT_ROOT")
+    candidates = []
+    if env:
+        candidates.append(Path(env))
+
+    # El link vive en el DESTINO, no en el motor. Sin AGENT_PROJECT_ROOT hay que
+    # descubrir el destino: se buscan hermanos del motor que declaren un link
+    # cuyo `motor_root` apunte de vuelta a este motor (relacion bidireccional
+    # verificada, no un nombre de directorio adivinado).
+    for sibling in MOTOR_ROOT.parent.iterdir():
+        if not sibling.is_dir() or sibling == MOTOR_ROOT:
+            continue
+        link = sibling / ".agent" / "config" / "motor_destination_link.json"
+        if not link.is_file():
+            continue
+        try:
+            data = json.loads(link.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        declared = data.get("motor_root")
+        if not declared or Path(declared).resolve() != MOTOR_ROOT.resolve():
+            continue
+        # Un mismo motor puede servir a VARIOS destinos (medido: uno con prefijo
+        # WOT y otro con CTL). El fixture de este test vive en la cola del
+        # destino cuyo `ticket_prefix` es WOT; elegir "el primero que aparezca"
+        # haria el test dependiente del orden del filesystem.
+        if data.get("ticket_prefix") == FIXTURE_EXISTING_TICKET.split("-")[0]:
+            candidates.append(sibling)
+
+    for root in candidates:
+        backlog = root / ".agent" / "collaboration" / "backlog.md"
+        if backlog.is_file():
+            return backlog
+    return None
+
+
+def test_dedupe_flow_emits_ya_cubierto_for_a_known_duplicate() -> None:
+    """DoD (b): el flujo REAL sobre un candidato duplicado nombra la ficha viva.
+
+    Ejecuta `find_similar_signals.py` -- la ayuda mecanica que la clausula
+    DEDUPE nombra -- con el candidato fijado arriba contra el backlog vivo, y
+    exige que `WOT-2026-047w` salga como vecino de MAYOR score. Ese es el hit
+    que obliga al operador a emitir `[DEDUPE: YA CUBIERTO por WOT-2026-047w ...]`
+    en vez de dar de alta una fila nueva.
+
+    NO se asevera un veredicto emitido por el script: el script genera SENAL y
+    NUNCA veredicto (NON-GOAL de la ficha). Lo que se asevera es que la senal
+    IDENTIFICA la ficha correcta -- sin eso, la norma del paso 8 seria
+    inaplicable en la practica.
+    """
+    import json
+    import subprocess
+    import sys
+
+    backlog = _resolve_live_backlog()
+    if backlog is None:
+        pytest.skip(
+            "no hay destino resoluble (AGENT_PROJECT_ROOT / link): "
+            "el flujo necesita un backlog vivo"
+        )
+
+    script = MOTOR_ROOT / "scripts" / "find_similar_signals.py"
+    assert script.is_file(), f"ayuda mecanica ausente: {script}"
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--text",
+            FIXTURE_CANDIDATE,
+            "--backlog",
+            str(backlog),
+            "--top",
+            "3",
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=120,
+    )
+    assert proc.returncode == 0, (
+        f"el generador de senal debe salir 0 SIEMPRE (con o sin vecinos); "
+        f"rc={proc.returncode} stderr={proc.stderr[:300]}"
+    )
+
+    payload = json.loads(proc.stdout)
+    neighbours = payload.get("neighbours") or []
+    assert neighbours, (
+        "el flujo no devolvio NINGUN vecino para un candidato que reformula un "
+        f"hallazgo YA fichado como {FIXTURE_EXISTING_TICKET}: el dedupe del "
+        "paso 8 seria inaplicable y el duplicado entraria"
+    )
+
+    top = neighbours[0]
+    assert top.get("label") == FIXTURE_EXISTING_TICKET, (
+        f"el vecino de mayor score fue {top.get('label')!r}, se esperaba "
+        f"{FIXTURE_EXISTING_TICKET!r}. Sin este hit, un operador que aplique la "
+        "clausula DEDUPE del paso 8 concluiria SIN VECINOS y daria de alta un "
+        "duplicado -- exactamente el incidente de 2026-07-22."
+    )
+    assert top.get("score", 0) > 0, "score no positivo: la senal no discrimina"
+
+
+def test_dedupe_flow_reports_its_own_denominator() -> None:
+    """El flujo publica CUANTO escaneo: un probe sin denominador no cuenta.
+
+    Norma del repo ("un probe que no publica su denominador no cuenta"). Si el
+    dedupe barriera 0 filas, `SIN VECINOS` seria verdadero y vacio a la vez.
+    """
+    import json
+    import subprocess
+    import sys
+
+    backlog = _resolve_live_backlog()
+    if backlog is None:
+        pytest.skip("no hay destino resoluble (AGENT_PROJECT_ROOT / link)")
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(MOTOR_ROOT / "scripts" / "find_similar_signals.py"),
+            "--text",
+            FIXTURE_CANDIDATE,
+            "--backlog",
+            str(backlog),
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=120,
+    )
+    payload = json.loads(proc.stdout)
+    assert payload.get("scanned", 0) > 0, (
+        "el flujo declara scanned=0: estaria deduplicando contra la nada"
+    )
+    assert payload.get("coverage"), "el flujo no declara que superficies cubrio"
