@@ -62,7 +62,11 @@
         "extension_glob": "openai.chatgpt-*",
         "binary_name": "codex.exe",
         "path_fallback": true
-      }
+      },
+      "model_flag": [
+        "-m",
+        "{model}"
+      ]
     },
     "opencode": {
       "executable": "opencode",
@@ -120,7 +124,7 @@
     "challenger_codex": {
       "backend": "codex",
       "channel": "agent",
-      "model": null,
+      "model": "gpt-5.4",
       "context": "diff-o-artefacto-publico",
       "write": false,
       "data_sensitivity": "public",
@@ -201,7 +205,7 @@
       },
       "BA05": {
         "backend": "codex",
-        "model": null,
+        "model": "gpt-5.4",
         "backend_version": null,
         "status": "active"
       },

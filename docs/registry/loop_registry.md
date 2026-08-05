@@ -11,7 +11,7 @@
 | backend_key | backend | model | status |
 |-------------|---------|-------|--------|
 | BA01 | claude | — | active |
-| BA05 | codex | — | active |
+| BA05 | codex | gpt-5.4 | active |
 | BA06 | opencode | opencode-go/glm-5.2 | active |
 | BA10 | nan_api | deepseek-v4-flash | deprecated |
 | BA11 | nan_api | qwen3.6 | active |
