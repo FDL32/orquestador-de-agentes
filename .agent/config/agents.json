@@ -52,7 +52,9 @@
       "executable": "codex.cmd",
       "args": [
         "exec",
-        "--skip-git-repo-check"
+        "--skip-git-repo-check",
+        "--sandbox",
+        "read-only"
       ],
       "prompt_via_stdin": true,
       "discovery": {
@@ -80,7 +82,9 @@
     "claude": {
       "executable": "claude",
       "args": [
-        "-p"
+        "-p",
+        "--tools",
+        "Read,Grep,Glob"
       ],
       "prompt_via_stdin": true,
       "discovery": {

@@ -41,6 +41,47 @@ from pathlib import Path
 # sin permisos de FS. Vigilar esos seria over-gating (ver docstring).
 VECTOR_CHANNELS = {"agent"}
 
+# Herramientas capaces de MUTAR el arbol. Si una allowlist las excluye todas,
+# el backend no puede escribir aunque el modelo lo intente. Se enumeran las
+# mutadoras (lista corta y estable) en vez de las de lectura: una allowlist de
+# lectura desactualizada dejaria pasar una herramienta nueva de escritura.
+WRITE_CAPABLE_TOOLS = {
+    "Bash",
+    "Edit",
+    "Write",
+    "NotebookEdit",
+    "MultiEdit",
+    "Task",
+    "Agent",
+}
+
+
+def has_native_sandbox(backend: dict) -> bool:
+    """El backend declara en sus `args` un enforcement de solo lectura.
+
+    Dos formas VALIDAS, ambas verificadas por canario el 2026-08-05:
+      - sandbox nativo del CLI: par adyacente (`--sandbox`|`-s`, `read-only`).
+        `--sandbox` suelto no acredita nada, y `workspace-write` /
+        `danger-full-access` son modos de ESCRITURA.
+      - allowlist de herramientas sin ninguna mutadora (forma de `claude`):
+        `--tools Read,Grep,Glob`. Se comprueba contra `WRITE_CAPABLE_TOOLS`
+        (se enumeran las MUTADORAS, no las de lectura: una allowlist de
+        lectura desactualizada dejaria pasar una herramienta nueva).
+
+    Before: `backend` es el dict de un backend de `agents.json`.
+    During: puro, sin I/O.
+    After: True sii los args acreditan que el backend no puede escribir.
+    """
+    args = [str(a) for a in (backend.get("args") or [])]
+    for i, a in enumerate(args[:-1]):
+        if a in ("--sandbox", "-s") and args[i + 1] == "read-only":
+            return True
+        if a in ("--tools", "--allowedTools", "--allowed-tools"):
+            granted = {t.strip() for t in args[i + 1].replace(",", " ").split()}
+            if granted and not (granted & WRITE_CAPABLE_TOOLS):
+                return True
+    return False
+
 
 def find_unenforced_pairs(config: dict) -> list[dict]:
     """Pares (perfil, backend) que declaran `write: false` y no pueden enforcearlo.
@@ -53,6 +94,7 @@ def find_unenforced_pairs(config: dict) -> list[dict]:
     """
     backends = config.get("backends") or {}
     out: list[dict] = []
+
     for name, profile in (config.get("ensemble_profiles") or {}).items():
         if profile.get("channel") not in VECTOR_CHANNELS:
             continue
@@ -60,6 +102,17 @@ def find_unenforced_pairs(config: dict) -> list[dict]:
             continue
         backend_name = profile.get("backend")
         backend = backends.get(backend_name)
+        if backend is not None and has_native_sandbox(backend):
+            # Segunda forma VALIDA de enforcement, anadida 2026-08-05 tras un
+            # incidente real: una lente codex con `write: false` ESCRIBIO en el
+            # workspace de otra sesion (4 ficheros de estado). `readonly_agent`
+            # es el mecanismo de opencode; codex no lo tiene, pero SI trae un
+            # sandbox nativo (`--sandbox read-only`) que el backend puede
+            # declarar en sus `args`. Reconocerlo cierra el vector sin obligar a
+            # inventar un "agente readonly" que ese CLI no soporta.
+            # Verificado por CANARIO: con el flag, un encargo que pide crear un
+            # fichero no lo crea; sin el, escribe.
+            continue
         if backend is None or not backend.get("readonly_agent"):
             out.append(
                 {

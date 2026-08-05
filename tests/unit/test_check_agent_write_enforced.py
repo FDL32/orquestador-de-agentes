@@ -10,7 +10,11 @@ from __future__ import annotations
 
 import json
 
-from scripts.check_agent_write_enforced import find_unenforced_pairs, main
+from scripts.check_agent_write_enforced import (
+    find_unenforced_pairs,
+    has_native_sandbox,
+    main,
+)
 
 
 def _cfg(profiles: dict, backends: dict) -> dict:
@@ -191,3 +195,75 @@ def test_warn_is_visible_not_silent(tmp_path, monkeypatch):
     assert "p_huerfano" in r.output, (
         f"debe nombrar el par, no decir 'hay deuda': {r.output}"
     )
+
+
+class TestNativeSandboxCountsAsEnforcement:
+    """Un sandbox nativo del CLI acredita `write: false` (incidente 2026-08-05).
+
+    Contexto medido: una lente `codex` con `write: false` ESCRIBIO en el
+    workspace de otra sesion -- reescribio `work_plan.md`, `TURN.md`, `STATE.md`
+    y `.session_state.json`. La restriccion era DECORATIVA porque `codex` no
+    declara `readonly_agent` (mecanismo de opencode) y nadie miraba otra forma.
+
+    La leccion, y por eso hay tests para AMBAS formas: la lente no fallo por
+    inestabilidad, fallo por encargo mal acotado. GLM, sin permisos, ABORTA;
+    codex, con permisos, ACTUA. El encargo malo es el mismo; el dano, no.
+    """
+
+    def test_codex_style_sandbox_flag_is_accepted(self):
+        backend = {"args": ["exec", "--skip-git-repo-check", "--sandbox", "read-only"]}
+        assert has_native_sandbox(backend) is True
+
+    def test_short_sandbox_flag_is_accepted(self):
+        assert has_native_sandbox({"args": ["exec", "-s", "read-only"]}) is True
+
+    def test_write_capable_sandbox_modes_are_rejected(self):
+        """`workspace-write` y `danger-full-access` NO son readonly."""
+        for mode in ("workspace-write", "danger-full-access"):
+            assert has_native_sandbox({"args": ["exec", "--sandbox", mode]}) is False, (
+                f"{mode} permite escribir y no puede acreditar write:false"
+            )
+
+    def test_bare_sandbox_flag_acredits_nothing(self):
+        assert has_native_sandbox({"args": ["exec", "--sandbox"]}) is False
+
+    def test_claude_style_readonly_tool_allowlist_is_accepted(self):
+        backend = {"args": ["-p", "--tools", "Read,Grep,Glob"]}
+        assert has_native_sandbox(backend) is True
+
+    def test_tool_allowlist_with_a_mutating_tool_is_rejected(self):
+        """Una sola herramienta mutadora en la allowlist reabre el vector."""
+        for tool in ("Bash", "Edit", "Write", "Task"):
+            backend = {"args": ["-p", "--tools", f"Read,Grep,{tool}"]}
+            assert has_native_sandbox(backend) is False, (
+                f"{tool} puede mutar el arbol: la allowlist no acredita readonly"
+            )
+
+    def test_backend_without_any_enforcement_is_reported(self):
+        """Control: sin sandbox ni readonly_agent, el par sigue siendo huerfano."""
+        config = {
+            "backends": {"x": {"args": ["run"]}},
+            "ensemble_profiles": {
+                "p": {"backend": "x", "channel": "agent", "write": False}
+            },
+        }
+        pairs = find_unenforced_pairs(config)
+        assert [p["profile"] for p in pairs] == ["p"]
+
+    def test_real_config_has_no_unenforced_agent_profiles(self):
+        """El repo REAL: ningun perfil con vector queda sin enforcement.
+
+        Este es el test que habria cazado el incidente antes de que ocurriera.
+        """
+        import json
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[2]
+        config = json.loads(
+            (root / ".agent" / "config" / "agents.json").read_text(encoding="utf-8")
+        )
+        pairs = find_unenforced_pairs(config)
+        assert pairs == [], (
+            f"perfiles con write:false y vector sin enforcement: "
+            f"{[p['profile'] for p in pairs]}"
+        )
