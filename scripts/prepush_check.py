@@ -921,6 +921,112 @@ def run_guard_wiring_orphan_check(project_root: Path) -> CheckResult:
     )
 
 
+def _principal_sync_plan(project_root: Path) -> dict | None:
+    """Plan READ-ONLY de sync del checkout PRINCIPAL, o None si no es resoluble.
+
+    WOT-2026-048l. Aislado en su propio helper para que el check sea testable sin
+    tocar git: los tests monkeypatchean ESTA funcion, no `subprocess`.
+
+    Before: `project_root` es el destino-rol; el motor se resuelve por link.
+    During: delega en `sync_principal.plan_sync`, que es el nucleo de decision
+        PURO -- no muta nada (ni fetch: se pasa el target ya conocido).
+    After: devuelve el dict del plan (`action` in {already_current, advance,
+        rescue_then_advance, refuse_named_branch, error}) o None si no hay motor,
+        no hay checkout principal, o git no responde.
+    """
+    try:
+        from runtime.motor_link import resolve_motor_root
+        from scripts.sync_principal import _detect_primary, plan_sync
+    except ImportError:
+        return None
+    motor_root = resolve_motor_root(project_root)
+    if motor_root is None:
+        return None
+    try:
+        primary = _detect_primary(motor_root)
+        if primary is None:
+            return None
+        return plan_sync(motor_root, primary, "origin/main", stamp="prepush")
+    except Exception:
+        # Un guard que revienta por git es peor que uno que declara SKIP: el
+        # cierre no debe caerse por no poder mirar un checkout de consumo.
+        return None
+
+
+def run_principal_freshness_check(project_root: Path) -> CheckResult:
+    """WOT-2026-048l: la frescura del PRINCIPAL se comprueba y se AVISA.
+
+    `sync_principal.py` existia, funcionaba y NADIE lo invocaba: 0 hits en este
+    fichero y en `agent_controller.py`; el prompt de cierre lo citaba solo para
+    NORMALIZAR el estado stale, nunca para prescribirlo. Censo semantico: el
+    otro mecanismo (`daily_sync_principal.ps1`) solo se cita a si mismo. Era una
+    NORMA, no una barrera -- y su ausencia hizo divergir el propio prompt de
+    cierre (297 vs 290 lineas) mientras el operador leia el checkout obsoleto.
+
+    AVISA, NO EJECUTA (decision del DoD (b), no re-decidida aqui): aplicar el
+    sync mutaria un checkout que el operador puede estar usando. Por eso
+    `is_blocking=False` y por eso el output CITA EL COMANDO EXACTO en vez de
+    correrlo -- un aviso que obliga a buscar el remedio no es accionable.
+
+    Before: `project_root` es el destino-rol.
+    During: lee el plan read-only via `_principal_sync_plan`. Sin mutacion.
+    After: `passed=True` siempre (avisa, no bloquea). El VEREDICTO vive en el
+        output: nombra el sha origen y destino cuando hay drift, y declara un
+        SKIP EXPLICITO cuando el principal no es resoluble -- nunca un verde mudo.
+    """
+    name = "Principal Freshness (WOT-2026-048l)"
+    plan = _principal_sync_plan(project_root)
+    if plan is None:
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=(
+                "SKIP: no hay checkout principal resoluble (motor sin link, sin "
+                "worktree principal, o git no responde). No es un fallo: es un "
+                "SKIP nombrado para no dejar un verde mudo."
+            ),
+            is_blocking=False,
+        )
+    action = plan.get("action")
+    if action == "already_current":
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=f"principal AL DIA con origin/main ({plan.get('primary_sha')}).",
+            is_blocking=False,
+        )
+    if action == "refuse_named_branch":
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=(
+                f"AVISO: el principal esta en la rama '{plan.get('branch')}', no "
+                "detached. Es consume-only por diseno (NON-GOAL de 048l: no se "
+                "pone en una rama). Revisalo a mano."
+            ),
+            is_blocking=False,
+        )
+    if action == "error":
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=f"SKIP: {plan.get('reason', 'no se pudo resolver el plan')}",
+            is_blocking=False,
+        )
+    return CheckResult(
+        name=name,
+        passed=True,
+        output=(
+            f"AVISO: el checkout principal esta STALE -- {plan.get('primary_sha')} "
+            f"-> {plan.get('target_sha')} (accion: {action}). Los destinos "
+            "consumen de ahi, asi que un prompt leido en el principal puede estar "
+            "obsoleto. Remedio: "
+            "python scripts/sync_principal.py --apply --fetch"
+        ),
+        is_blocking=False,
+    )
+
+
 def run_loop_execution_check(project_root: Path) -> CheckResult:
     """WOT-2026-040b: el bucle de gobierno 1->9->2 corrio de verdad, no degradado.
 
@@ -1605,6 +1711,12 @@ def run_preflight_check(
         # haber corrido de verdad, no degradado, por cada commit de ticket del
         # vuelo. SKIPEA nombrado si el orquestador no declaro commits/targets.)
         results.append(run_loop_execution_check(project_root))
+        # 6l-bis. Principal Freshness (WOT-2026-048l; WARN -- AVISA, no ejecuta:
+        # aplicar el sync mutaria un checkout que el operador puede estar usando.
+        # Va en el cierre porque es el punto que corre solo y resuelve el motor.
+        # El script existia y funcionaba desde hacia meses; lo que faltaba era
+        # ESTA linea -- sin ella era una norma, no una barrera.)
+        results.append(run_principal_freshness_check(project_root))
         # 6m. Flight Plan Collision (WOT-2026-027h; WARN -- el queued/ real ya
         # colisiona antes de la barrera (deuda historica); endurecer a bloqueante
         # en WOT-2026-040r cuando queued/ este limpio. El CHECK en si (exit!=0) es
