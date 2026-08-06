@@ -78,6 +78,19 @@ EXPECTED_WIRED_REAL = {
     "check_dec_receipt",  # WOT-2026-042x: cableado en prepush_check.py::run_dec_receipt_check (closeout). Barrera de la NORMA de 042w (recibo DEC en las fichas de diseno). No es falso-WIRED: mutation-verify con par de exit-codes literal sobre la invocacion REAL (1 sin recibo / 1 con DEC-<id> inexistente -> 0 con `DEC-no-aplica: <motivo>`), y 14/14 fichas reales del destino degradan a WARN por el grandfathering.
     "check_deliverables_exist",
     "check_destination_pii_leak",  # WOT-2026-020t: cableado en prepush_check.py (closeout, WARN/FAIL)
+    # WOT-2026-049c: NO es falso-WIRED, pero su `wired` es ACOTADO y hay que leerlo asi.
+    # Declarado en extra_guards porque no lleva prefijo check_/validate_/guard_ y por eso
+    # `find_guards()` NUNCA lo censaba (medido: in-censo False sin declarar / True con ello);
+    # el exit 0 previo no lo aprobaba, es que no lo veia. Call-sites REALES verificados:
+    # scripts/closeout_steps/gates.py:54,70,71,120 (step_prepush_check -> run_script_fn), y
+    # session_closeout.py:921-923 CORTA el cierre si status == "FAIL" (probe: --session-close
+    # --force con arbol sucio -> exit 1, report `| 3 | prepush_check | FAIL | Yes |`).
+    # ALCANCE del "wired": alcanzable desde `session_closeout`, NO "corre solo ante cualquier
+    # publicacion" -- un `git push` directo NO lo ejecuta (probe en remoto bare aislado: 9 hooks
+    # de pre-push, prepush_check ausente de toda la salida). Si el contrato que se quiere es
+    # "bloquea el push directo", el estado correcto seria unwired + deuda declarada; esa es una
+    # decision de politica pendiente del operador, declarada en la ficha de WOT-2026-049c.
+    "prepush_check",
     "check_destino_publish_ready",  # WOT-2026-024w (colateral): wired via check_motor_destination_integration en prepush
     "check_distributable_planning_clean",  # WOT-2026-024h(C4'): cableado via import estatico en prepush_check.py::run_distributable_planning_check (closeout, BLOQUEANTE). No es falso-WIRED: mutation-verify con par de exit-codes literal (0 limpio -> 1 al re-anadir un contrato WOT real a la superficie distribuible).
     "check_distribution_agnostic",  # WOT-2026-024z(d): cableado en pre-commit (entry: uv run python)
