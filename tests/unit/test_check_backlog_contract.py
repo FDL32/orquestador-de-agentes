@@ -856,3 +856,112 @@ def test_026t_compact_closure_log_row_with_terminal_state_passes(tmp_path) -> No
         "| WOT-2026-0A7A | completed | cerrado canonico |\n", encoding="utf-8"
     )
     assert cbc.validate_archive_states(tmp_path) == []
+
+
+def test_049c_live_row_depending_on_a_closed_ticket_is_a_violation(tmp_path) -> None:
+    """Una fila VIVA no puede depender de un ticket ya cerrado.
+
+    Caso real que la origina: `049g` quedo `pending` con `Depende de:
+    WOT-2026-049c` DESPUES de que `049c` se cerrara con `commit:4199f17`. El
+    contrato salia rc=0 porque la celda `Depende de` solo se nombraba para
+    EXCLUIRLA del matching de ids -- se conocia y se evitaba a proposito, pero
+    nada validaba el ESTADO del ticket citado. Un bloqueo que apunta a un
+    difunto es indistinguible de uno real y congela al heredero.
+
+    Mutacion alcanzable: quitar la llamada a `validate_live_dependencies` en
+    `main()` -> este test queda en ROJO.
+    """
+    collab = tmp_path / ".agent" / "collaboration"
+    (collab / "_archive").mkdir(parents=True)
+    (collab / "backlog.md").write_text(
+        "| Alta | WOT-2026-0B1A | titulo | scope | pending | WOT-2026-0B1B | x | - |\n",
+        encoding="utf-8",
+    )
+    (collab / "_archive" / "backlog_done.md").write_text(
+        "| Alta | WOT-2026-0B1B | titulo | scope | completed | - | x | commit:abc1234 |\n",
+        encoding="utf-8",
+    )
+    errors = cbc.validate_live_dependencies(tmp_path)
+    assert len(errors) == 1
+    assert "WOT-2026-0B1A" in errors[0]
+    assert "WOT-2026-0B1B" in errors[0]
+    assert "CERRADO" in errors[0]
+
+
+def test_049c_live_row_depending_on_a_live_ticket_passes(tmp_path) -> None:
+    """CONTROL NEGATIVO: un bloqueo REAL no debe dispararse.
+
+    Sin este control el guard podria estar marcando toda dependencia, un falso
+    positivo que haria inservible la celda `Depende de`.
+    """
+    collab = tmp_path / ".agent" / "collaboration"
+    (collab / "_archive").mkdir(parents=True)
+    (collab / "backlog.md").write_text(
+        "| Alta | WOT-2026-0B2A | titulo | scope | pending | WOT-2026-0B2B | x | - |\n"
+        "| Alta | WOT-2026-0B2B | titulo | scope | pending | - | x | - |\n",
+        encoding="utf-8",
+    )
+    (collab / "_archive" / "backlog_done.md").write_text(
+        "| Alta | WOT-2026-0B2C | titulo | scope | completed | - | x | commit:abc1234 |\n",
+        encoding="utf-8",
+    )
+    assert cbc.validate_live_dependencies(tmp_path) == []
+
+
+def test_049c_multi_dependency_cell_resolves_each_id(tmp_path) -> None:
+    """La celda puede citar VARIOS ids (precedente real: `WOT-2026-013b`).
+
+    Discriminante: con un solo id cerrado entre dos, dispara UNA vez y nombra
+    exactamente el cerrado, no la celda entera.
+    """
+    collab = tmp_path / ".agent" / "collaboration"
+    (collab / "_archive").mkdir(parents=True)
+    (collab / "backlog.md").write_text(
+        "| Alta | WOT-2026-0B3A | t | s | pending | WOT-2026-0B3B, WOT-2026-0B3C | x | - |\n"
+        "| Alta | WOT-2026-0B3C | t | s | pending | - | x | - |\n",
+        encoding="utf-8",
+    )
+    (collab / "_archive" / "backlog_done.md").write_text(
+        "| Alta | WOT-2026-0B3B | t | s | completed | - | x | commit:abc1234 |\n",
+        encoding="utf-8",
+    )
+    errors = cbc.validate_live_dependencies(tmp_path)
+    assert len(errors) == 1
+    assert "WOT-2026-0B3B" in errors[0]
+    assert "WOT-2026-0B3C" not in errors[0]
+
+
+def test_049c_no_dependency_or_missing_archive_is_silent(tmp_path) -> None:
+    """CONTROL: '-' y archive ausente no son violaciones (destino recien creado)."""
+    collab = tmp_path / ".agent" / "collaboration"
+    collab.mkdir(parents=True)
+    (collab / "backlog.md").write_text(
+        "| Alta | WOT-2026-0B4A | t | s | pending | - | x | - |\n",
+        encoding="utf-8",
+    )
+    assert cbc.validate_live_dependencies(tmp_path) == []
+
+
+def test_049c_main_wires_the_dependency_check(tmp_path, capsys) -> None:
+    """El cableado en `main()`, no solo la funcion.
+
+    MUTACION QUE ESTE TEST MATA Y LOS OTROS NO: si se retira la linea
+    `violations + validate_live_dependencies(root)` de `main()`, los tests que
+    invocan la funcion directamente siguen VERDES -- el mutante sobrevive porque
+    no alcanzan la rama del cableado. Medido: con el cableado retirado, el guard
+    sobre el destino real pasaba de exit 1 a exit 0. Por eso este test entra por
+    `main()` y afirma sobre su EXIT CODE.
+    """
+    collab = tmp_path / ".agent" / "collaboration"
+    (collab / "_archive").mkdir(parents=True)
+    (collab / "backlog.md").write_text(
+        "| Alta | WOT-2026-0B5A | t | s | pending | WOT-2026-0B5B | x | - |\n",
+        encoding="utf-8",
+    )
+    (collab / "_archive" / "backlog_done.md").write_text(
+        "| Alta | WOT-2026-0B5B | t | s | completed | - | x | commit:abc1234 |\n",
+        encoding="utf-8",
+    )
+    rc = cbc.main(["--project-root", str(tmp_path)])
+    assert rc == 1
+    assert "WOT-2026-0B5B" in capsys.readouterr().err

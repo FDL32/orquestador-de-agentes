@@ -918,6 +918,87 @@ def validate_archive_states(root: Path) -> list[str]:
     return errors
 
 
+def _terminal_ticket_states(archive: Path) -> dict[str, str]:
+    """Map ticket id -> terminal state for every archived Prioridad-led row.
+
+    Before: ``archive`` exists and is readable.
+    During: reads only rows whose id is parseable by ``_row_ticket_id``; skips
+        rows without a readable Estado cell. Arity-INDEPENDIENTE a proposito
+        (ver validate_archive_states): gatear por arity==8 escondio 9 filas.
+    After: returns the mapping; no mutation. Rows in a live state are omitted,
+        so a lookup miss means "not closed" (or "not archived").
+    """
+    terminal: dict[str, str] = {}
+    for line in archive.read_text(encoding="utf-8-sig").splitlines():
+        stripped = line.strip()
+        tid = _row_ticket_id(stripped)
+        if tid is None:
+            continue
+        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        if len(cells) <= 4:
+            continue
+        state = _archive_row_state(cells)
+        if state in ARCHIVE_TERMINAL_STATES or state in _ARCHIVE_TERMINAL_LEGACY:
+            terminal[tid] = state
+    return terminal
+
+
+def validate_live_dependencies(root: Path) -> list[str]:
+    """Return violations for LIVE rows whose ``Depende de`` cites a TERMINAL ticket.
+
+    Before: ``root`` is the destino root; ``backlog.md`` may or may not exist and
+        the archive may be absent (a fresh destino has no closures yet).
+    During: reads the ``Depende de`` cell (raw index 5) of every Prioridad-led row
+        in the LIVE queue and resolves each cited id against the archive's
+        terminal states. A cell may cite SEVERAL ids separated by commas
+        (precedent: ``WOT-2026-013b`` -> ``WOT-2026-011e, WOT-2026-010m``), so
+        each is resolved independently. ``-`` and empty mean "no dependency".
+        Arity-INDEPENDIENTE by deliberate design: the sibling
+        validate_archive_states documents that gating on arity==8 hid 9 rows
+        broken by an unescaped pipe. The dependency cell keeps index 5 across the
+        censused layouts because the extra pipe appears LATER, inside the title.
+    After: one error per live row blocked by an already-closed ticket. No mutation.
+
+    WOT-2026-049c (barrera del bucle de gobierno): `049g` quedo `pending` con
+    `Depende de: WOT-2026-049c` DESPUES de que `049c` se cerrara con
+    `commit:4199f17`. El contrato salia rc=0 porque la celda `Depende de` solo se
+    nombraba para EXCLUIRLA del matching de ids (`:76`, `:89`, `:469-470`,
+    `:517`) -- se conocia la celda y se evitaba a proposito, pero NADA validaba
+    el ESTADO del ticket citado. Es el patron del denominador: el guard corre,
+    sale verde, y el objeto no esta en su universo. Un bloqueo que apunta a un
+    difunto es indistinguible de un bloqueo real, y congela al heredero.
+    """
+    collab = root / ".agent" / "collaboration"
+    backlog = collab / "backlog.md"
+    archive = collab / "_archive" / "backlog_done.md"
+    if not backlog.exists() or not archive.exists():
+        return []
+
+    terminal = _terminal_ticket_states(archive)
+    errors: list[str] = []
+    for line in backlog.read_text(encoding="utf-8-sig").splitlines():
+        stripped = line.strip()
+        tid = _row_ticket_id(stripped)
+        if tid is None:
+            continue
+        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        if len(cells) <= 5:
+            continue
+        raw = cells[5]
+        if raw in {"", "-"}:
+            continue
+        for dep in (d.strip() for d in raw.split(",")):
+            state = terminal.get(dep)
+            if state is not None:
+                errors.append(
+                    f"{tid}: 'Depende de' cita {dep}, que ya esta CERRADO "
+                    f"(estado '{state}' en _archive/backlog_done.md). Un bloqueo "
+                    f"que apunta a un ticket terminal congela la fila sin motivo: "
+                    f"pon '-' si la dependencia ya no aplica."
+                )
+    return errors
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Fail-closed gate for the live backlog contract (WOT-2026-012b)."
@@ -944,6 +1025,8 @@ def main(argv: list[str] | None = None) -> int:
     violations = violations + validate_archive_row_arity(root)
     # WOT-2026-026t: archived rows must not keep a non-terminal (live) state.
     violations = violations + validate_archive_states(root)
+    # WOT-2026-049c: una fila VIVA no puede depender de un ticket ya cerrado.
+    violations = violations + validate_live_dependencies(root)
     if violations:
         print(
             f"[backlog-contract] {len(violations)} violation(s) in {backlog}:",
