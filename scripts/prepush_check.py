@@ -36,18 +36,42 @@ BY-DESIGN (WOT-2026-049c): esto es un gate de CIERRE DE SESION, no de push.
     que lo esquiva existe A PROPOSITO. La decision se tomo con estas medidas
     (2026-08-06), no por olvido:
 
-    - **Coste:** 24.2 s y 25 checks por invocacion. Un `pre-push` lo cobraria
-      en CADA push, no solo al cerrar.
+    - **Coste:** 25 checks en `--closeout-mode`. Los SEGUNDOS son dato
+      EMPIRICO, no propiedad deducible del codigo: medidos 2026-08-06 en esta
+      maquina dieron 25.0 s (closeout, 3 de los 25 en FAIL informacional) y
+      12.0 s (base). Trata la magnitud como orientativa y re-mide si la
+      necesitas; lo que NO depende de la maquina es el reparto de checks de
+      abajo, que sale del propio codigo. Un `pre-push` cobraria ese coste en
+      CADA push, no solo al cerrar.
     - **Alcance equivocado:** la MAYORIA de esos 25 checks son
       closeout-especificos (backlog contract, handoff committed, closeout
       reconciliation, flight plan collision, DEC receipt...). Son preguntas
       que NO tienen sentido ante un `git push` cualquiera: interrogan el
-      cierre de un ticket, no la sanidad de unos commits.
-    - **Solapamiento:** `ruff-check` ya corre entre los 9 hooks de `pre-push`.
-      Cablear este script lo duplicaria.
-    - **Blast radius:** los hooks son COMPARTIDOS por worktree (`.git` es un
-      fichero; los hooks viven en `orquestador_de_agentes/.git/hooks/`), asi
-      que cablearlo afectaria a DOS arboles, no solo al activo.
+      cierre de un ticket, no la sanidad de unos commits. El reparto se lee
+      EN ESTE FICHERO, sin cronometro: el bloque `if closeout_mode:` contiene
+      18 `results.append`, y en ejecucion el modo cierre reporta 25 checks
+      frente a 7 sin el flag. Es decir, 18 de 25 -- la mayoria -- solo
+      existen al cerrar. (Cuenta los `results.append` si quieres re-medirlo:
+      hay 26 sitios en el fichero y uno no dispara, asi que cuenta la SALIDA
+      ejecutada, no los sitios.) Cablear esto a `pre-push` pagaria 18
+      preguntas de cierre en cada push.
+    - **Solapamiento:** `ruff-check` ya corre entre los 9 hooks de la etapa
+      `pre-push`. Cablear este script lo duplicaria. Re-verificable parseando
+      el YAML (no por grep): un hook entra en `pre-push` si `stages` lo
+      incluye o si es `None` (hereda todas las etapas) -- 2026-08-06 daba 9,
+      con `prepush_check` AUSENTE de `.pre-commit-config.yaml`.
+    - **Blast radius:** los hooks son COMPARTIDOS por worktree. Es un hecho
+      de la topologia del checkout, no del codigo, asi que va con su comando
+      de re-verificacion en vez de pedir fe:
+          test -f .git && cat .git          # es un FICHERO, no un directorio
+          git rev-parse --git-common-dir    # resuelve FUERA de este arbol
+          ls "$(git rev-parse --git-common-dir)/hooks/"
+      Medido 2026-08-06: `.git` es un fichero (`gitdir: .../
+      orquestador_de_agentes/.git/worktrees/orquestador_de_agentes_dev`), el
+      common-dir es `orquestador_de_agentes/.git`, y alli viven `pre-commit`
+      y `pre-push`. Cablearlo afectaria a DOS arboles, no solo al activo.
+      (Si algun dia este repo deja de ser un worktree, los tres comandos lo
+      dicen solos y esta razon decae -- por eso van aqui.)
 
     Si estas aqui preguntandote "por que esto no bloquea el push": no es un
     hueco que tapar. Cablearlo a `pre-push` es un cambio de politica que
