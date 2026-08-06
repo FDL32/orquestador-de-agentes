@@ -922,22 +922,42 @@ def _terminal_ticket_states(archive: Path) -> dict[str, str]:
     """Map ticket id -> terminal state for every archived Prioridad-led row.
 
     Before: ``archive`` exists and is readable.
-    During: reads only rows whose id is parseable by ``_row_ticket_id``; skips
-        rows without a readable Estado cell. Arity-INDEPENDIENTE a proposito
+    During: reads BOTH layouts del archive, que es justo donde la primera version
+        de esta funcion fallaba. (1) Filas Prioridad-led (id en indice 2, Estado
+        en 4), via ``_row_ticket_id``. (2) El closure-log COMPACTO
+        (``| Ticket | Estado | Nota |``, id en indice 1), el mismo layout que
+        ``_compact_closure_log_states`` audita. Arity-INDEPENDIENTE a proposito
         (ver validate_archive_states): gatear por arity==8 escondio 9 filas.
     After: returns the mapping; no mutation. Rows in a live state are omitted,
         so a lookup miss means "not closed" (or "not archived").
+
+    POR QUE MIRA LOS DOS LAYOUTS (bucle de gobierno, lentes BA11 y BA13):
+    la primera version solo censaba Prioridad-led y por eso reproducia EL MISMO
+    defecto que su propio guard denuncia -- un censo incompleto que sale verde
+    sobre un universo que excluye el objeto. Medido antes del arreglo: 299 ids
+    terminales censados, 81 en el closure-log compacto, **77 cerrados SOLO ahi**
+    e invisibles, y **4 falsos negativos REALES** (`020l`->`020k`,
+    `020v`->`020u`, `038e`->`020a`, `042g`->`042f`, todos `completed`). El
+    hermano `validate_archive_states` ya habia tenido que anadir
+    `_compact_closure_log_states` por esta misma razon: la leccion estaba
+    escrita y esta funcion no la aplicaba.
     """
     terminal: dict[str, str] = {}
     for line in archive.read_text(encoding="utf-8-sig").splitlines():
         stripped = line.strip()
+        raw = stripped.split("|")
         tid = _row_ticket_id(stripped)
-        if tid is None:
+        if tid is not None:
+            cells = [c.strip() for c in stripped.strip("|").split("|")]
+            if len(cells) <= 4:
+                continue
+            state = _archive_row_state(cells)
+        elif len(raw) > 2 and _TICKET_ROW_CELL_RE.match(raw[1].strip()):
+            # Layout compacto: | Ticket | Estado | Nota |
+            tid = raw[1].strip()
+            state = raw[2].strip().lower()
+        else:
             continue
-        cells = [c.strip() for c in stripped.strip("|").split("|")]
-        if len(cells) <= 4:
-            continue
-        state = _archive_row_state(cells)
         if state in ARCHIVE_TERMINAL_STATES or state in _ARCHIVE_TERMINAL_LEGACY:
             terminal[tid] = state
     return terminal

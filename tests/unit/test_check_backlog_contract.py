@@ -965,3 +965,27 @@ def test_049c_main_wires_the_dependency_check(tmp_path, capsys) -> None:
     rc = cbc.main(["--project-root", str(tmp_path)])
     assert rc == 1
     assert "WOT-2026-0B5B" in capsys.readouterr().err
+
+
+def test_049c_terminal_census_reads_the_compact_closure_log(tmp_path) -> None:
+    """El censo de cerrados cubre los DOS layouts del archive.
+
+    MUTACION QUE ESTE TEST MATA: si `_terminal_ticket_states` vuelve a leer solo
+    filas Prioridad-led, un ticket cerrado con NOTA "| WOT-2026-0C1B | completed | cerrado con nota compacta |\n"A
+    (`| Ticket | Estado | Nota |`) desaparece del denominador y la fila viva que
+    depende de el pasa DESAPERCIBIDA. Es el mismo defecto que este guard
+    denuncia, cometido por el guard. Medido antes del arreglo: 77 tickets
+    cerrados solo en compacto e invisibles -> 13 falsos negativos reales.
+    """
+    collab = tmp_path / ".agent" / "collaboration"
+    (collab / "_archive").mkdir(parents=True)
+    (collab / "backlog.md").write_text(
+        "| Alta | WOT-2026-0C1A | t | s | pending | WOT-2026-0C1B | x | - |\n",
+        encoding="utf-8",
+    )
+    (collab / "_archive" / "backlog_done.md").write_text(
+        "| WOT-2026-0C1B | completed | cerrado con nota compacta |\n", encoding="utf-8"
+    )
+    errors = cbc.validate_live_dependencies(tmp_path)
+    assert len(errors) == 1
+    assert "WOT-2026-0C1B" in errors[0]
