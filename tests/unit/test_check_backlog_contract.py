@@ -674,14 +674,14 @@ def test_state_md_without_active_ticket_not_applicable(tmp_path: Path) -> None:
 # levantaron las DOS lentes del bucle L4500 de forma independiente.
 # --------------------------------------------------------------------------- #
 _PTR_ROW = (
-    "| Media | WOT-2026-0P9Z | resumen. ver ficha `### WOT-2026-0P9Z` abajo. "
+    "| Media | WOT-2026-0p9z | resumen. ver ficha `### WOT-2026-0p9z` abajo. "
     "| motor/x | pending | - | origen | - |"
 )
 
 
 def test_043t_pointer_with_reachable_ficha_passes() -> None:
     """CONTROL POSITIVO: fila que delega + ficha presente -> sin errores."""
-    content = "\n".join([_PTR_ROW, "", "### WOT-2026-0P9Z - resumen"])
+    content = "\n".join([_PTR_ROW, "", "### WOT-2026-0p9z - resumen"])
     assert cbc._check_ficha_pointers(content, [_PTR_ROW]) == []
 
 
@@ -693,13 +693,13 @@ def test_043t_dangling_pointer_is_an_error() -> None:
     """
     errors = cbc._check_ficha_pointers(_PTR_ROW, [_PTR_ROW])
     assert len(errors) == 1
-    assert "WOT-2026-0P9Z" in errors[0]
+    assert "WOT-2026-0p9z" in errors[0]
     assert "dangling" in errors[0]
 
 
 def test_043t_duplicate_ficha_is_an_error() -> None:
     """Dos fichas con el mismo id: el puntero no puede decir cual manda."""
-    content = "\n".join([_PTR_ROW, "### WOT-2026-0P9Z - a", "### WOT-2026-0P9Z - b"])
+    content = "\n".join([_PTR_ROW, "### WOT-2026-0p9z - a", "### WOT-2026-0p9z - b"])
     errors = cbc._check_ficha_pointers(content, [_PTR_ROW])
     assert len(errors) == 1
     assert "2 fichas" in errors[0]
@@ -711,7 +711,7 @@ def test_043t_row_without_pointer_needs_no_ficha() -> None:
     Mutacion alcanzable: exigir ficha a TODA fila -> ROJO. Sin este test, el
     guard obligaria a crear 180 fichas vacias para las filas que no delegan.
     """
-    row = "| Media | WOT-2026-0Q8Y | todo el criterio aqui | s | pending | - | o | - |"
+    row = "| Media | WOT-2026-0q8y | todo el criterio aqui | s | pending | - | o | - |"
     assert cbc._check_ficha_pointers(row, [row]) == []
 
 
@@ -722,8 +722,8 @@ def test_043t_citing_another_tickets_ficha_does_not_claim_own_completeness() -> 
     de la propia fila -> ROJO (pediria una ficha que esta fila nunca prometio).
     """
     row = (
-        "| Media | WOT-2026-0R7X | criterio propio; contexto en ver ficha "
-        "`### WOT-2026-0P9Z` | s | pending | - | o | - |"
+        "| Media | WOT-2026-0r7x | criterio propio; contexto en ver ficha "
+        "`### WOT-2026-0p9z` | s | pending | - | o | - |"
     )
     assert cbc._check_ficha_pointers(row, [row]) == []
 
@@ -752,7 +752,7 @@ def test_026t_archived_row_with_live_state_is_a_violation(tmp_path) -> None:
     collab = tmp_path / ".agent" / "collaboration" / "_archive"
     collab.mkdir(parents=True)
     (collab / "backlog_done.md").write_text(
-        _archive_row("WOT-2026-0A1A", "pending") + "\n", encoding="utf-8"
+        _archive_row("WOT-2026-0a1a", "pending") + "\n", encoding="utf-8"
     )
     errors = cbc.validate_archive_states(tmp_path)
     assert len(errors) == 1
@@ -764,7 +764,7 @@ def test_026t_archived_row_with_terminal_state_passes(tmp_path) -> None:
     collab = tmp_path / ".agent" / "collaboration" / "_archive"
     collab.mkdir(parents=True)
     (collab / "backlog_done.md").write_text(
-        _archive_row("WOT-2026-0A2A", "completed") + "\n", encoding="utf-8"
+        _archive_row("WOT-2026-0a2a", "completed") + "\n", encoding="utf-8"
     )
     assert cbc.validate_archive_states(tmp_path) == []
 
@@ -780,7 +780,7 @@ def test_026t_typo_state_does_not_pass_as_terminal(tmp_path) -> None:
     collab = tmp_path / ".agent" / "collaboration" / "_archive"
     collab.mkdir(parents=True)
     (collab / "backlog_done.md").write_text(
-        _archive_row("WOT-2026-0A3A", "competed") + "\n", encoding="utf-8"
+        _archive_row("WOT-2026-0a3a", "competed") + "\n", encoding="utf-8"
     )
     errors = cbc.validate_archive_states(tmp_path)
     assert len(errors) == 1
@@ -798,7 +798,7 @@ def test_026t_pipe_broken_row_is_still_audited(tmp_path) -> None:
     collab = tmp_path / ".agent" / "collaboration" / "_archive"
     collab.mkdir(parents=True)
     (collab / "backlog_done.md").write_text(
-        _archive_row("WOT-2026-0A4A", "pending", extra_pipe=True) + "\n",
+        _archive_row("WOT-2026-0a4a", "pending", extra_pipe=True) + "\n",
         encoding="utf-8",
     )
     errors = cbc.validate_archive_states(tmp_path)
@@ -817,7 +817,7 @@ def test_026t_shifted_row_reads_its_real_state_not_the_scope(tmp_path) -> None:
     collab = tmp_path / ".agent" / "collaboration" / "_archive"
     collab.mkdir(parents=True)
     (collab / "backlog_done.md").write_text(
-        _archive_row("WOT-2026-0A5A", "completed", extra_pipe=True) + "\n",
+        _archive_row("WOT-2026-0a5a", "completed", extra_pipe=True) + "\n",
         encoding="utf-8",
     )
     assert cbc.validate_archive_states(tmp_path) == []
@@ -841,7 +841,7 @@ def test_026t_compact_closure_log_row_with_live_state_is_a_violation(tmp_path) -
     collab = tmp_path / ".agent" / "collaboration" / "_archive"
     collab.mkdir(parents=True)
     (collab / "backlog_done.md").write_text(
-        "| WOT-2026-0A6A | pending | nota de cierre |\n", encoding="utf-8"
+        "| WOT-2026-0a6a | pending | nota de cierre |\n", encoding="utf-8"
     )
     errors = cbc.validate_archive_states(tmp_path)
     assert len(errors) == 1
@@ -853,7 +853,7 @@ def test_026t_compact_closure_log_row_with_terminal_state_passes(tmp_path) -> No
     collab = tmp_path / ".agent" / "collaboration" / "_archive"
     collab.mkdir(parents=True)
     (collab / "backlog_done.md").write_text(
-        "| WOT-2026-0A7A | completed | cerrado canonico |\n", encoding="utf-8"
+        "| WOT-2026-0a7a | completed | cerrado canonico |\n", encoding="utf-8"
     )
     assert cbc.validate_archive_states(tmp_path) == []
 
@@ -874,17 +874,17 @@ def test_049c_live_row_depending_on_a_closed_ticket_is_a_violation(tmp_path) -> 
     collab = tmp_path / ".agent" / "collaboration"
     (collab / "_archive").mkdir(parents=True)
     (collab / "backlog.md").write_text(
-        "| Alta | WOT-2026-0B1A | titulo | scope | pending | WOT-2026-0B1B | x | - |\n",
+        "| Alta | WOT-2026-0b1a | titulo | scope | pending | WOT-2026-0b1b | x | - |\n",
         encoding="utf-8",
     )
     (collab / "_archive" / "backlog_done.md").write_text(
-        "| Alta | WOT-2026-0B1B | titulo | scope | completed | - | x | commit:abc1234 |\n",
+        "| Alta | WOT-2026-0b1b | titulo | scope | completed | - | x | commit:abc1234 |\n",
         encoding="utf-8",
     )
     errors = cbc.validate_live_dependencies(tmp_path)
     assert len(errors) == 1
-    assert "WOT-2026-0B1A" in errors[0]
-    assert "WOT-2026-0B1B" in errors[0]
+    assert "WOT-2026-0b1a" in errors[0]
+    assert "WOT-2026-0b1b" in errors[0]
     assert "CERRADO" in errors[0]
 
 
@@ -897,12 +897,12 @@ def test_049c_live_row_depending_on_a_live_ticket_passes(tmp_path) -> None:
     collab = tmp_path / ".agent" / "collaboration"
     (collab / "_archive").mkdir(parents=True)
     (collab / "backlog.md").write_text(
-        "| Alta | WOT-2026-0B2A | titulo | scope | pending | WOT-2026-0B2B | x | - |\n"
-        "| Alta | WOT-2026-0B2B | titulo | scope | pending | - | x | - |\n",
+        "| Alta | WOT-2026-0b2a | titulo | scope | pending | WOT-2026-0b2b | x | - |\n"
+        "| Alta | WOT-2026-0b2b | titulo | scope | pending | - | x | - |\n",
         encoding="utf-8",
     )
     (collab / "_archive" / "backlog_done.md").write_text(
-        "| Alta | WOT-2026-0B2C | titulo | scope | completed | - | x | commit:abc1234 |\n",
+        "| Alta | WOT-2026-0b2c | titulo | scope | completed | - | x | commit:abc1234 |\n",
         encoding="utf-8",
     )
     assert cbc.validate_live_dependencies(tmp_path) == []
@@ -917,18 +917,18 @@ def test_049c_multi_dependency_cell_resolves_each_id(tmp_path) -> None:
     collab = tmp_path / ".agent" / "collaboration"
     (collab / "_archive").mkdir(parents=True)
     (collab / "backlog.md").write_text(
-        "| Alta | WOT-2026-0B3A | t | s | pending | WOT-2026-0B3B, WOT-2026-0B3C | x | - |\n"
-        "| Alta | WOT-2026-0B3C | t | s | pending | - | x | - |\n",
+        "| Alta | WOT-2026-0b3a | t | s | pending | WOT-2026-0b3b, WOT-2026-0b3c | x | - |\n"
+        "| Alta | WOT-2026-0b3c | t | s | pending | - | x | - |\n",
         encoding="utf-8",
     )
     (collab / "_archive" / "backlog_done.md").write_text(
-        "| Alta | WOT-2026-0B3B | t | s | completed | - | x | commit:abc1234 |\n",
+        "| Alta | WOT-2026-0b3b | t | s | completed | - | x | commit:abc1234 |\n",
         encoding="utf-8",
     )
     errors = cbc.validate_live_dependencies(tmp_path)
     assert len(errors) == 1
-    assert "WOT-2026-0B3B" in errors[0]
-    assert "WOT-2026-0B3C" not in errors[0]
+    assert "WOT-2026-0b3b" in errors[0]
+    assert "WOT-2026-0b3c" not in errors[0]
 
 
 def test_049c_no_dependency_or_missing_archive_is_silent(tmp_path) -> None:
@@ -936,7 +936,7 @@ def test_049c_no_dependency_or_missing_archive_is_silent(tmp_path) -> None:
     collab = tmp_path / ".agent" / "collaboration"
     collab.mkdir(parents=True)
     (collab / "backlog.md").write_text(
-        "| Alta | WOT-2026-0B4A | t | s | pending | - | x | - |\n",
+        "| Alta | WOT-2026-0b4a | t | s | pending | - | x | - |\n",
         encoding="utf-8",
     )
     assert cbc.validate_live_dependencies(tmp_path) == []
@@ -955,23 +955,23 @@ def test_049c_main_wires_the_dependency_check(tmp_path, capsys) -> None:
     collab = tmp_path / ".agent" / "collaboration"
     (collab / "_archive").mkdir(parents=True)
     (collab / "backlog.md").write_text(
-        "| Alta | WOT-2026-0B5A | t | s | pending | WOT-2026-0B5B | x | - |\n",
+        "| Alta | WOT-2026-0b5a | t | s | pending | WOT-2026-0b5b | x | - |\n",
         encoding="utf-8",
     )
     (collab / "_archive" / "backlog_done.md").write_text(
-        "| Alta | WOT-2026-0B5B | t | s | completed | - | x | commit:abc1234 |\n",
+        "| Alta | WOT-2026-0b5b | t | s | completed | - | x | commit:abc1234 |\n",
         encoding="utf-8",
     )
     rc = cbc.main(["--project-root", str(tmp_path)])
     assert rc == 1
-    assert "WOT-2026-0B5B" in capsys.readouterr().err
+    assert "WOT-2026-0b5b" in capsys.readouterr().err
 
 
 def test_049c_terminal_census_reads_the_compact_closure_log(tmp_path) -> None:
     """El censo de cerrados cubre los DOS layouts del archive.
 
     MUTACION QUE ESTE TEST MATA: si `_terminal_ticket_states` vuelve a leer solo
-    filas Prioridad-led, un ticket cerrado con NOTA "| WOT-2026-0C1B | completed | cerrado con nota compacta |\n"A
+    filas Prioridad-led, un ticket cerrado con NOTA "| WOT-2026-0c1b | completed | cerrado con nota compacta |\n"A
     (`| Ticket | Estado | Nota |`) desaparece del denominador y la fila viva que
     depende de el pasa DESAPERCIBIDA. Es el mismo defecto que este guard
     denuncia, cometido por el guard. Medido antes del arreglo: 77 tickets
@@ -980,15 +980,15 @@ def test_049c_terminal_census_reads_the_compact_closure_log(tmp_path) -> None:
     collab = tmp_path / ".agent" / "collaboration"
     (collab / "_archive").mkdir(parents=True)
     (collab / "backlog.md").write_text(
-        "| Alta | WOT-2026-0C1A | t | s | pending | WOT-2026-0C1B | x | - |\n",
+        "| Alta | WOT-2026-0c1a | t | s | pending | WOT-2026-0c1b | x | - |\n",
         encoding="utf-8",
     )
     (collab / "_archive" / "backlog_done.md").write_text(
-        "| WOT-2026-0C1B | completed | cerrado con nota compacta |\n", encoding="utf-8"
+        "| WOT-2026-0c1b | completed | cerrado con nota compacta |\n", encoding="utf-8"
     )
     errors = cbc.validate_live_dependencies(tmp_path)
     assert len(errors) == 1
-    assert "WOT-2026-0C1B" in errors[0]
+    assert "WOT-2026-0c1b" in errors[0]
 
 
 def test_049c_dependency_cell_with_prose_still_resolves_the_id(tmp_path) -> None:
@@ -1004,16 +1004,16 @@ def test_049c_dependency_cell_with_prose_still_resolves_the_id(tmp_path) -> None
     collab = tmp_path / ".agent" / "collaboration"
     (collab / "_archive").mkdir(parents=True)
     (collab / "backlog.md").write_text(
-        "| Alta | WOT-2026-0D1A | t | s | pending | WOT-2026-0D1B [0D1C SATISFECHA: archivada] | x | - |\n",
+        "| Alta | WOT-2026-0d1a | t | s | pending | WOT-2026-0d1b [0D1C SATISFECHA: archivada] | x | - |\n",
         encoding="utf-8",
     )
     (collab / "_archive" / "backlog_done.md").write_text(
-        "| Alta | WOT-2026-0D1B | t | s | completed | - | x | commit:abc1234 |\n",
+        "| Alta | WOT-2026-0d1b | t | s | completed | - | x | commit:abc1234 |\n",
         encoding="utf-8",
     )
     errors = cbc.validate_live_dependencies(tmp_path)
     assert len(errors) == 1
-    assert "WOT-2026-0D1B" in errors[0]
+    assert "WOT-2026-0d1b" in errors[0]
 
 
 def test_049c_dash_with_historical_prose_is_not_a_dependency(tmp_path) -> None:
@@ -1029,11 +1029,74 @@ def test_049c_dash_with_historical_prose_is_not_a_dependency(tmp_path) -> None:
     collab = tmp_path / ".agent" / "collaboration"
     (collab / "_archive").mkdir(parents=True)
     (collab / "backlog.md").write_text(
-        "| Alta | WOT-2026-0D2A | t | s | pending | - [0D2B SATISFECHA 2026-07-21: archivada] | x | - |\n",
+        "| Alta | WOT-2026-0d2a | t | s | pending | - [0D2B SATISFECHA 2026-07-21: archivada] | x | - |\n",
         encoding="utf-8",
     )
     (collab / "_archive" / "backlog_done.md").write_text(
-        "| Alta | WOT-2026-0D2B | t | s | completed | - | x | commit:abc1234 |\n",
+        "| Alta | WOT-2026-0d2b | t | s | completed | - | x | commit:abc1234 |\n",
         encoding="utf-8",
     )
     assert cbc.validate_live_dependencies(tmp_path) == []
+
+
+def test_049c_namespaced_id_is_not_a_backlog_dependency(tmp_path) -> None:
+    """`DEC-WOT-...` es una DECISION, no un ticket de backlog.
+
+    Con `\b` como frontera, `DEC-WOT-2026-047b` se trocea y se extrae el
+    `WOT-2026-047b` de dentro: una dependencia INVENTADA que la celda no
+    declara. Caso vivo en la fila de `WOT-2026-047c`.
+    MUTACION: quitar la frontera izquierda del patron -> ROJO.
+    """
+    collab = tmp_path / ".agent" / "collaboration"
+    (collab / "_archive").mkdir(parents=True)
+    (collab / "backlog.md").write_text(
+        "| Alta | WOT-2026-0e1a | t | s | pending | DEC-WOT-2026-0e1b | x | - |\n",
+        encoding="utf-8",
+    )
+    (collab / "_archive" / "backlog_done.md").write_text(
+        "| Alta | WOT-2026-0e1b | t | s | completed | - | x | commit:abc1234 |\n",
+        encoding="utf-8",
+    )
+    assert cbc.validate_live_dependencies(tmp_path) == []
+
+
+def test_049c_uppercase_suffix_id_is_not_split(tmp_path) -> None:
+    """`WOT-2026-STATE-RECON-A` no debe producir el fantasma `WOT-2026-STATE`.
+
+    Con un sufijo permisivo, el patron corta en el primer guion y fabrica un id
+    que no existe. Caso vivo en la fila de `WOT-2026-030b`.
+    MUTACION: ampliar la clase del sufijo -> ROJO.
+    """
+    collab = tmp_path / ".agent" / "collaboration"
+    (collab / "_archive").mkdir(parents=True)
+    (collab / "backlog.md").write_text(
+        "| Alta | WOT-2026-0e2a | t | s | pending | WOT-2026-STATE-RECON-A | x | - |\n",
+        encoding="utf-8",
+    )
+    (collab / "_archive" / "backlog_done.md").write_text(
+        "| Alta | WOT-2026-0e9z | t | s | completed | - | x | commit:abc1234 |\n",
+        encoding="utf-8",
+    )
+    assert cbc.validate_live_dependencies(tmp_path) == []
+
+
+def test_049c_dangling_dependency_is_reported(tmp_path) -> None:
+    """Un id que no existe en NINGUNA superficie congela la fila igual.
+
+    `terminal.get()` daria None y se leeria como "no cerrado": silencio sobre una
+    fila igualmente bloqueada. Casos vivos: `044u/044y/044x` -> `WOT-2026-044t`.
+    MUTACION: quitar la rama del colgante -> ROJO.
+    """
+    collab = tmp_path / ".agent" / "collaboration"
+    (collab / "_archive").mkdir(parents=True)
+    (collab / "backlog.md").write_text(
+        "| Alta | WOT-2026-0e3a | t | s | pending | WOT-2026-0e3z | x | - |\n",
+        encoding="utf-8",
+    )
+    (collab / "_archive" / "backlog_done.md").write_text(
+        "| Alta | WOT-2026-0e9z | t | s | completed | - | x | commit:abc1234 |\n",
+        encoding="utf-8",
+    )
+    errors = cbc.validate_live_dependencies(tmp_path)
+    assert len(errors) == 1
+    assert "NO EXISTE" in errors[0]

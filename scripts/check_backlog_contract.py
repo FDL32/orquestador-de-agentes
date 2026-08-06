@@ -89,10 +89,23 @@ _FICHA_RE = re.compile(r"^### (WOT|WP|WT)-\d{4}-\w+(?:\s+-\s+.+)?$")
 # id (e.g. 'Depende de'), which must NOT match.
 _TICKET_ROW_CELL_RE = re.compile(r"^(?:WOT|WP|WT)-\d{4}-\w+$")
 
-# Igual que el anterior pero SIN anclas: extrae ids incrustados en texto libre.
-# La celda `Depende de` admite prosa junto al id (casos reales:
-# `WOT-2026-026j [026h SATISFECHA ...]`), y un match exacto los perderia.
-_TICKET_ID_IN_TEXT_RE = re.compile(r"(?:WOT|WP|WT)-\d{4}-[a-z0-9]+")
+# Extrae ids de la celda `Depende de`, que admite PROSA junto al id (caso real:
+# `WOT-2026-026j [026h SATISFECHA ...]`), asi que un match anclado los perderia.
+#
+# NOMBRE PROPIO a proposito: existe ya `_TICKET_ID_IN_TEXT_RE` (WOT-2026-043t,
+# mas abajo) con OTROS consumidores. Reutilizarlo habria cambiado en silencio el
+# comportamiento de codigo ajeno para arreglar el mio.
+#
+# Las dos diferencias con aquel son deliberadas y cada una cierra un caso vivo:
+#   `(?<![\w-])`  frontera IZQUIERDA. Con `\b`, `DEC-WOT-2026-047b` -- una
+#                 DECISION, no un ticket -- se trocea y se extrae el
+#                 `WOT-2026-047b` de dentro, inventando una dependencia que la
+#                 celda no declara (fila viva de `WOT-2026-047c`).
+#   `[a-z0-9]+`   sufijo en minuscula, no `\w+`. Con `\w+`,
+#                 `WOT-2026-STATE-RECON-A` produce el id fantasma
+#                 `WOT-2026-STATE` (fila viva de `WOT-2026-030b`).
+# Ambos los cazo la lente codex del bucle; ninguna de las cinco anteriores.
+_DEPENDS_ON_ID_RE = re.compile(r"(?<![\w-])(?:WOT|WP|WT)-\d{4}-[a-z0-9]+(?![\w-])")
 
 # WOT-2026-013j: a detailed ficha must NOT re-declare Files Likely Touched. The
 # canonical FLT lives ONLY in the frozen contract (ticket_contracts.md) and then
@@ -1002,6 +1015,7 @@ def validate_live_dependencies(root: Path) -> list[str]:
         return []
 
     terminal = _terminal_ticket_states(archive)
+    live_ids = set(_ticket_row_ids(backlog))
     errors: list[str] = []
     for line in backlog.read_text(encoding="utf-8-sig").splitlines():
         stripped = line.strip()
@@ -1012,7 +1026,15 @@ def validate_live_dependencies(root: Path) -> list[str]:
         if len(cells) <= 5:
             continue
         raw = cells[5]
-        if raw in {"", "-"}:
+        # El CENTINELA `-` declara "sin dependencia", y la prosa que le sigue es
+        # traza HISTORICA de un bloqueo ya satisfecho, conservada a proposito
+        # (caso vivo: `- [028a SATISFECHA 2026-07-21: archivada ...]`). Se honra
+        # el centinela por si mismo: si la celda EMPIEZA por `-`, no hay
+        # dependencia, aunque el texto de la traza cite ids con prefijo completo.
+        # Sin esto, `- [WOT-2026-028a SATISFECHA]` seria un FALSO POSITIVO --
+        # hueco que levanto la lente codex sobre el test anti-falso-positivo
+        # anterior, que solo cubria la variante sin prefijo (`- [0D2B ...]`).
+        if raw in {"", "-"} or raw.startswith("-"):
             continue
         # EXTRAE ids, no los separa por comas (bucle de gobierno, lente lector-FS):
         # la celda puede llevar PROSA pegada al id -- casos reales medidos,
@@ -1022,7 +1044,22 @@ def validate_live_dependencies(root: Path) -> list[str]:
         # `026u`->`028a`, ambos `completed`) quedaban invisibles. Es el MISMO patron
         # del denominador que este guard existe para cerrar, en su tercera forma.
         # `findall` sobre el patron de ticket captura el id venga como venga.
-        for dep in dict.fromkeys(_TICKET_ID_IN_TEXT_RE.findall(raw)):
+        for dep in dict.fromkeys(_DEPENDS_ON_ID_RE.findall(raw)):
+            if dep not in terminal and dep not in live_ids:
+                # COLGANTE: el id no existe en NINGUNA superficie. `terminal.get`
+                # daria None y se leeria como "no cerrado" -- silencio sobre una
+                # fila igualmente congelada. Casos vivos: `044u/044y/044x` ->
+                # `WOT-2026-044t`, inexistente. Es el mismo falso verde por
+                # denominador, y por eso NO se aplaza (la lente codex senalo que
+                # dejarlo fuera era el mismo aplazamiento por el que ya me
+                # tumbaron una ronda antes).
+                errors.append(
+                    f"{tid}: 'Depende de' cita {dep}, que NO EXISTE ni en la cola "
+                    f"viva ni en _archive/backlog_done.md. Un bloqueo hacia un id "
+                    f"fantasma congela la fila igual que uno hacia un difunto: "
+                    f"corrige el id o pon '-'."
+                )
+                continue
             state = terminal.get(dep)
             if state is not None:
                 errors.append(
