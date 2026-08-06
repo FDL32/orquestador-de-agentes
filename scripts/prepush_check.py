@@ -29,6 +29,29 @@ After (Post-condiciones y Errores):
     - skills/validate_all.py se ejecuta pero no afecta el exit code.
     - Excepciones: subprocess.CalledProcessError si algun comando falla,
       FileNotFoundError si falta algun archivo requerido.
+
+BY-DESIGN (WOT-2026-049c): esto es un gate de CIERRE DE SESION, no de push.
+    El nombre ENGANA. Pese a llamarse `prepush_check`, este script NO esta
+    cableado al hook `pre-push` y **eso es deliberado**: el `git push` directo
+    que lo esquiva existe A PROPOSITO. La decision se tomo con estas medidas
+    (2026-08-06), no por olvido:
+
+    - **Coste:** 24.2 s y 25 checks por invocacion. Un `pre-push` lo cobraria
+      en CADA push, no solo al cerrar.
+    - **Alcance equivocado:** la MAYORIA de esos 25 checks son
+      closeout-especificos (backlog contract, handoff committed, closeout
+      reconciliation, flight plan collision, DEC receipt...). Son preguntas
+      que NO tienen sentido ante un `git push` cualquiera: interrogan el
+      cierre de un ticket, no la sanidad de unos commits.
+    - **Solapamiento:** `ruff-check` ya corre entre los 9 hooks de `pre-push`.
+      Cablear este script lo duplicaria.
+    - **Blast radius:** los hooks son COMPARTIDOS por worktree (`.git` es un
+      fichero; los hooks viven en `orquestador_de_agentes/.git/hooks/`), asi
+      que cablearlo afectaria a DOS arboles, no solo al activo.
+
+    Si estas aqui preguntandote "por que esto no bloquea el push": no es un
+    hueco que tapar. Cablearlo a `pre-push` es un cambio de politica que
+    revierte una decision medida, no un fix.
 """
 
 from __future__ import annotations
