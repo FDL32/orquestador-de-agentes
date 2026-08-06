@@ -76,13 +76,28 @@ def check_pre_closure_invariants(event_bus, plan_id: str) -> list[str]:
     return result
 
 
+def _is_reconciled_event(event) -> bool:
+    """True if the event was emitted by reconcile_ticket (synthetic, not a real closure)."""
+    return event.payload.get("source") == "reconcile_ticket"
+
+
+def _latest_real_builder_exit(event_bus, plan_id: str):
+    """Return the latest BUILDER_EXIT that is NOT from reconcile_ticket, or None."""
+    for event in reversed(
+        event_bus.read_events(ticket_id=plan_id, event_type="BUILDER_EXIT")
+    ):
+        if not _is_reconciled_event(event):
+            return event
+    return None
+
+
 def check_post_closure_built_exit(
     event_bus, plan_id: str, log_status: str
 ) -> tuple[list[str], list[str]]:
     """Check BUILDER_EXIT invariant. Returns (errors, warnings)."""
     errors: list[str] = []
     warnings: list[str] = []
-    builder_exit = event_bus.latest_event(ticket_id=plan_id, event_type="BUILDER_EXIT")
+    builder_exit = _latest_real_builder_exit(event_bus, plan_id)
     if not builder_exit:
         if bus_has_ticket_events(event_bus, plan_id):
             errors.append(
@@ -160,9 +175,13 @@ def check_builder_exit_order(event_bus, plan_id: str) -> list[str]:
     lower sequence number.
     """
     warnings: list[str] = []
-    builder_exits = event_bus.read_events(ticket_id=plan_id, event_type="BUILDER_EXIT")
+    builder_exits = [
+        e
+        for e in event_bus.read_events(ticket_id=plan_id, event_type="BUILDER_EXIT")
+        if not _is_reconciled_event(e)
+    ]
     if not builder_exits:
-        # No BUILDER_EXIT yet - invariant doesn't apply
+        # No real BUILDER_EXIT yet (only reconciled or none) - invariant doesn't apply
         return warnings
 
     state_events = event_bus.read_events(ticket_id=plan_id, event_type="STATE_CHANGED")

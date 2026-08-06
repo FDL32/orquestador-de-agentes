@@ -222,9 +222,16 @@ class TestInvariants:
         # Some other event exists for the ticket, so the bus IS present and can
         # verify the invariant: the missing BUILDER_EXIT is a real violation.
         other_event = MagicMock()
+        other_event.event_type = "STATE_CHANGED"
         mock_bus = MagicMock()
+
+        def _read_events_side_effect(ticket_id=None, event_type=None):
+            if event_type == "BUILDER_EXIT":
+                return []
+            return [other_event]
+
+        mock_bus.read_events = MagicMock(side_effect=_read_events_side_effect)
         mock_bus.latest_event = MagicMock(return_value=None)
-        mock_bus.read_events = MagicMock(return_value=[other_event])
         with patch("agent_controller.event_bus", mock_bus):
             result = _check_invariants(plan_content, log_content, "READY_FOR_REVIEW")
             assert any("Missing BUILDER_EXIT" in err for err in result["errors"])
@@ -258,12 +265,20 @@ class TestInvariants:
         plan_content = "# Work Plan\n\n**ID:** WP-2026-065\n\n**Estado:** APPROVED"
         log_content = "# Execution Log\n\n**Estado:** READY_FOR_REVIEW"
         mock_event = MagicMock()
+        mock_event.event_type = "BUILDER_EXIT"
         mock_event.payload = {
             "ticket_id": "WP-2026-065",
             "exit_reason": "Completed",
             "completion_summary": "Done",
         }
         mock_bus = MagicMock()
+
+        def _read_events_side_effect(ticket_id=None, event_type=None):
+            if event_type == "BUILDER_EXIT":
+                return [mock_event]
+            return []
+
+        mock_bus.read_events = MagicMock(side_effect=_read_events_side_effect)
         mock_bus.latest_event = MagicMock(return_value=mock_event)
         with (
             patch("agent_controller.event_bus", mock_bus),
