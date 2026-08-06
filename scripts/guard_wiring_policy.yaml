@@ -104,6 +104,11 @@ extra_guards:
   # Barreras REALES sin prefijo de guard. v3 no podia ni verlas ni contarlas.
   pre_handoff_guard: scripts/pre_handoff_guard.py
   delivery_hygiene_check: scripts/delivery_hygiene_check.py
+  # WOT-2026-049c: `prepush_check` no lleva prefijo check_/validate_/guard_, asi
+  # que NUNCA entraba en el denominador de find_guards() -- el exit 0 del guard
+  # no lo aprobaba, es que no lo veia. Declararlo aqui lo mete en el censo; el
+  # veredicto (cableado vs norma declarada) lo decide `wired_via` mas abajo.
+  prepush_check: scripts/prepush_check.py
 
 wired_via:
   # check_loop_bundle_protocol (2026-08-05): import LAZY dentro del handler de
