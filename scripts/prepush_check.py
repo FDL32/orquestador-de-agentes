@@ -48,13 +48,12 @@ BY-DESIGN (WOT-2026-049c): esto es un gate de CIERRE DE SESION, no de push.
       reconciliation, flight plan collision, DEC receipt...). Son preguntas
       que NO tienen sentido ante un `git push` cualquiera: interrogan el
       cierre de un ticket, no la sanidad de unos commits. El reparto se lee
-      EN ESTE FICHERO, sin cronometro: el bloque `if closeout_mode:` contiene
-      18 `results.append`, y en ejecucion el modo cierre reporta 25 checks
-      frente a 7 sin el flag. Es decir, 18 de 25 -- la mayoria -- solo
-      existen al cerrar. (Cuenta los `results.append` si quieres re-medirlo:
-      hay 26 sitios en el fichero y uno no dispara, asi que cuenta la SALIDA
-      ejecutada, no los sitios.) Cablear esto a `pre-push` pagaria 18
-      preguntas de cierre en cada push.
+      EN ESTE FICHERO y se re-deriva SIN ejecutar nada: cuenta los
+      `results.append` de `run_checks`. Dentro del bloque `if closeout_mode:`
+      hay 18; fuera hay 7 (los 5 base mas portable-memory y validate_all).
+      18 + 7 = 25, y coincide con lo que la corrida reporta. Es decir, 18 de
+      25 -- la mayoria -- solo existen al cerrar. Cablear esto a `pre-push`
+      pagaria esas 18 preguntas de cierre en cada push.
     - **Solapamiento:** `ruff-check` ya corre entre los 9 hooks de la etapa
       `pre-push`. Cablear este script lo duplicaria. Re-verificable parseando
       el YAML (no por grep): un hook entra en `pre-push` si `stages` lo
