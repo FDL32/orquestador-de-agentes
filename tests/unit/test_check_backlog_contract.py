@@ -989,3 +989,51 @@ def test_049c_terminal_census_reads_the_compact_closure_log(tmp_path) -> None:
     errors = cbc.validate_live_dependencies(tmp_path)
     assert len(errors) == 1
     assert "WOT-2026-0C1B" in errors[0]
+
+
+def test_049c_dependency_cell_with_prose_still_resolves_the_id(tmp_path) -> None:
+    """La celda `Depende de` admite PROSA pegada al id, y el id debe resolverse.
+
+    Caso real medido: `WOT-2026-029e` cita
+    `WOT-2026-026j [026h SATISFECHA 2026-07-21: ...]`. Con `split(",")` + lookup
+    EXACTO ese token no resuelve NUNCA y se descarta EN SILENCIO -- un falso
+    negativo invisible, el mismo patron del denominador en su tercera forma.
+
+    MUTACION ALCANZABLE: volver a `raw.split(",")` -> este test queda ROJO.
+    """
+    collab = tmp_path / ".agent" / "collaboration"
+    (collab / "_archive").mkdir(parents=True)
+    (collab / "backlog.md").write_text(
+        "| Alta | WOT-2026-0D1A | t | s | pending | WOT-2026-0D1B [0D1C SATISFECHA: archivada] | x | - |\n",
+        encoding="utf-8",
+    )
+    (collab / "_archive" / "backlog_done.md").write_text(
+        "| Alta | WOT-2026-0D1B | t | s | completed | - | x | commit:abc1234 |\n",
+        encoding="utf-8",
+    )
+    errors = cbc.validate_live_dependencies(tmp_path)
+    assert len(errors) == 1
+    assert "WOT-2026-0D1B" in errors[0]
+
+
+def test_049c_dash_with_historical_prose_is_not_a_dependency(tmp_path) -> None:
+    """CONTROL ANTI-FALSO-POSITIVO: `-` con traza historica NO es un bloqueo.
+
+    Caso real: `WOT-2026-026u` declara
+    `- [028a SATISFECHA 2026-07-21: archivada ...]`. El `-` dice "sin
+    dependencia" y la prosa es la traza de una dependencia YA satisfecha, que se
+    conserva a proposito. Extraer un id de ahi seria inventar un bloqueo que la
+    fila declara resuelto. Por eso el patron exige el PREFIJO COMPLETO
+    (`WOT-YYYY-`), no un sufijo suelto como `028a`.
+    """
+    collab = tmp_path / ".agent" / "collaboration"
+    (collab / "_archive").mkdir(parents=True)
+    (collab / "backlog.md").write_text(
+        "| Alta | WOT-2026-0D2A | t | s | pending | - [0D2B SATISFECHA 2026-07-21: archivada] | x | - |\n",
+        encoding="utf-8",
+    )
+    (collab / "_archive" / "backlog_done.md").write_text(
+        "| Alta | WOT-2026-0D2B | t | s | completed | - | x | commit:abc1234 |\n",
+        encoding="utf-8",
+    )
+    assert cbc.validate_live_dependencies(tmp_path) == []

@@ -89,6 +89,11 @@ _FICHA_RE = re.compile(r"^### (WOT|WP|WT)-\d{4}-\w+(?:\s+-\s+.+)?$")
 # id (e.g. 'Depende de'), which must NOT match.
 _TICKET_ROW_CELL_RE = re.compile(r"^(?:WOT|WP|WT)-\d{4}-\w+$")
 
+# Igual que el anterior pero SIN anclas: extrae ids incrustados en texto libre.
+# La celda `Depende de` admite prosa junto al id (casos reales:
+# `WOT-2026-026j [026h SATISFECHA ...]`), y un match exacto los perderia.
+_TICKET_ID_IN_TEXT_RE = re.compile(r"(?:WOT|WP|WT)-\d{4}-[a-z0-9]+")
+
 # WOT-2026-013j: a detailed ficha must NOT re-declare Files Likely Touched. The
 # canonical FLT lives ONLY in the frozen contract (ticket_contracts.md) and then
 # work_plan.md; a ficha that re-declares it drifts and forces manual packet
@@ -934,10 +939,12 @@ def _terminal_ticket_states(archive: Path) -> dict[str, str]:
     POR QUE MIRA LOS DOS LAYOUTS (bucle de gobierno, lentes BA11 y BA13):
     la primera version solo censaba Prioridad-led y por eso reproducia EL MISMO
     defecto que su propio guard denuncia -- un censo incompleto que sale verde
-    sobre un universo que excluye el objeto. Medido antes del arreglo: 299 ids
-    terminales censados, 81 en el closure-log compacto, **77 cerrados SOLO ahi**
-    e invisibles, y **4 falsos negativos REALES** (`020l`->`020k`,
-    `020v`->`020u`, `038e`->`020a`, `042g`->`042f`, todos `completed`). El
+    sobre un universo que excluye el objeto. SNAPSHOT FECHADO 2026-08-06 (es
+    EVIDENCIA, no criterio: caduca sola y no debe releerse como invariante):
+    censo 299 -> 408 ids terminales al mirar los dos layouts, con 109 cerrados
+    SOLO en el compacto, y 13 falsos negativos REALES que antes no se veian
+    (entre ellos `020l`->`020k`, `020v`->`020u`, `038e`->`020a`,
+    `042g`->`042f`, todos `completed`). El
     hermano `validate_archive_states` ya habia tenido que anadir
     `_compact_closure_log_states` por esta misma razon: la leccion estaba
     escrita y esta funcion no la aplicaba.
@@ -1007,7 +1014,15 @@ def validate_live_dependencies(root: Path) -> list[str]:
         raw = cells[5]
         if raw in {"", "-"}:
             continue
-        for dep in (d.strip() for d in raw.split(",")):
+        # EXTRAE ids, no los separa por comas (bucle de gobierno, lente lector-FS):
+        # la celda puede llevar PROSA pegada al id -- casos reales medidos,
+        # `WOT-2026-026j [026h SATISFECHA ...]` y `- [028a SATISFECHA ...]`. Un
+        # `split(",")` + lookup EXACTO convierte eso en un token que NUNCA resuelve
+        # y se descarta EN SILENCIO: dos violaciones vivas (`029e`->`026j` y
+        # `026u`->`028a`, ambos `completed`) quedaban invisibles. Es el MISMO patron
+        # del denominador que este guard existe para cerrar, en su tercera forma.
+        # `findall` sobre el patron de ticket captura el id venga como venga.
+        for dep in dict.fromkeys(_TICKET_ID_IN_TEXT_RE.findall(raw)):
             state = terminal.get(dep)
             if state is not None:
                 errors.append(
