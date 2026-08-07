@@ -123,7 +123,7 @@ estructurado (canal primario del bridge; el transcript es fallback):
 
 #### Barrera de regresion (SOLO bugfix/regresion/barrera-nueva)
 
-Aplica el Paso 3 de `prompts/manager_review.md` (fuente normativa, contract_id cid-man-review-v2): revierte el fix, el test debe FALLAR (exit != 0); restaura, debe PASAR (exit 0). Registra el par con el formato literal:
+Aplica el Paso 3 de `prompts/manager_review.md` (fuente normativa, contract_id cid-man-review-v2): revierte el fix, el test debe FALLAR (exit != 0); restaura, debe PASAR (exit 0). El Paso 3 gobierna ademas QUE mutacion ejecutar y COMO leer el `exit_code`: no elijas la mutacion por tu cuenta ni des por buena la barrera sin abrirlo. Registra el par con el formato literal:
 
 ```
 mutation-verify:
