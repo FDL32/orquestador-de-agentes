@@ -1340,9 +1340,9 @@ def test_049a_dag_filename_coherence_contract_prosa() -> None:
     correct_json = re.compile(r"backlog_triage_<YYYYMMDD-HHMMSS>\.json")
     # Legacy patterns that must NOT appear anywhere
     legacy_json = re.compile(r"backlog_triage_output\.json")
-    legacy_md_no_seconds = re.compile(
-        r"backlog_triage_<YYYYMMDD-HHMM>\.md"
-    )  # HHMM without SS
+    legacy_no_seconds = re.compile(
+        r"backlog_triage_<YYYYMMDD-HHMM>\.(?:json|md)"
+    )  # HHMM without SS, either extension
 
     sites = [
         ("prompts/backlog_triage.md", _read_file("prompts/backlog_triage.md")),
@@ -1375,10 +1375,9 @@ def test_049a_dag_filename_coherence_contract_prosa() -> None:
             f"`backlog_triage_output.json` ({len(legacy_json_hits)} occurrence(s)). "
             f"All sites must use the timestamped pattern (WOT-2026-049a)"
         )
-        legacy_md_hits = legacy_md_no_seconds.findall(text)
+        legacy_md_hits = legacy_no_seconds.findall(text)
         assert not legacy_md_hits, (
-            f"{filepath} still references the legacy MD pattern "
-            f"`backlog_triage_<YYYYMMDD-HHMM>.md` (without seconds; "
-            f"{len(legacy_md_hits)} occurrence(s)). "
+            f"{filepath} still references a legacy timestamped pattern "
+            f"without seconds ({len(legacy_md_hits)} occurrence(s)). "
             f"All sites must use HHMMSS (WOT-2026-049a)"
         )

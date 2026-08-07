@@ -314,13 +314,12 @@ Dos artefactos, en el mismo turno, bajo
   desarrolladas.
 - JSON portable: `backlog_triage_<YYYYMMDD-HHMMSS>.json`, con el esquema:
 
-**BARRERA (obligatoria, ANTES de escribir el nuevo par):** si existe
-cualquier `backlog_triage_*.json` previo en el directorio de reports,
-copiarlo a `backlog_triage_<YYYYMMDD-HHMMSS>.json` con `shutil.copy2`
-ANTES de sobrescribir. Esto preserva el DAG anterior sin intervencion
-humana. El timestamp debe ser de SEGUNDOS para evitar colisiones entre
-corridas rapidas. La copia es atomica: write-tmp-then-rename, no write
-directo.
+**BARRERA (PENDIENTE — follow-up ticket, no implementada en codigo):**
+el diseno original (`shutil.copy2` + write-tmp-then-rename, sin
+intervencion humana) requiere un script que sea dueno de la escritura
+del DAG. Hoy el DAG lo escribe el agente siguiendo este prompt; la
+barrera es una NORMA, no un mecanismo. Ver ticket de follow-up para
+cablear la copia automatica del previo antes de sobrescribir.
 
 ```json
 {
