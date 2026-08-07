@@ -272,3 +272,63 @@ def test_real_exit_after_ready_warns():
     assert any("ORDER INVARIANT" in w for w in warnings), (
         f"Expected ORDER INVARIANT warning, got: {warnings}"
     )
+
+
+def test_synthetic_exit_before_ready_does_not_mask_real_exit_after():
+    """El filtro de `check_builder_exit_order` DEBE tener dientes propios.
+
+    Hueco cazado por el Review 2 fresh-context de WOT-2026-050a: los dos tests
+    de orden anteriores pasaban IDENTICOS con y sin el filtro -- el primero por
+    el early-return `if not builder_exits` y el segundo por la via de
+    `has_prior_exit`. Dos verdes redundantes por rutas distintas: exactamente el
+    falso-verde de la leccion 021u (un fixture que no AISLA la rama mutada).
+
+    Este fixture es el unico donde ambas versiones DIVERGEN:
+      seq=1  BUILDER_EXIT  SINTETICO (source=reconcile_ticket)
+      seq=2  STATE_CHANGED -> READY_FOR_REVIEW
+      seq=3  BUILDER_EXIT  REAL
+
+    Con el filtro: el sintetico NO cuenta, luego el RFR de seq=2 no tiene
+    ningun exit REAL previo -> ORDER INVARIANT.
+    Sin el filtro (pre-fix): el sintetico cuenta como exit previo y el warning
+    DESAPARECE -> el mutante sobrevive.
+    """
+    mod = _load_closure_invariants()
+
+    events = [
+        _make_event(
+            "BUILDER_EXIT",
+            "WOT-2026-050a",
+            {
+                "exit_reason": "reconcile_ticket: forced close",
+                "source": "reconcile_ticket",
+            },
+            sequence_number=1,
+        ),
+        _make_event(
+            "STATE_CHANGED",
+            "WOT-2026-050a",
+            {
+                "to_state": "READY_FOR_REVIEW",
+            },
+            sequence_number=2,
+        ),
+        _make_event(
+            "BUILDER_EXIT",
+            "WOT-2026-050a",
+            {
+                "exit_reason": "builder finished",
+                "completion_summary": "real work",
+            },
+            sequence_number=3,
+        ),
+    ]
+
+    bus = MockEventBus(events)
+    warnings = mod.check_builder_exit_order(bus, "WOT-2026-050a")
+
+    # Un exit SINTETICO no puede satisfacer el orden por un RFR posterior.
+    assert any("ORDER INVARIANT" in w for w in warnings), (
+        "Un BUILDER_EXIT sintetico NO debe contar como exit previo del "
+        f"READY_FOR_REVIEW. Warnings: {warnings}"
+    )
