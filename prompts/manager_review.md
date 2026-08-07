@@ -168,6 +168,21 @@ Resultado esperado (con EVIDENCIA de exit-code, no narrativa):
 - sin fix: el test de regresion FALLA -> registra `command:` y `exit_code:` != 0;
 - con fix: el test de regresion PASA -> registra `command:` y `exit_code:` == 0.
 
+**Como se LEE ese `exit_code:` (aplica a TODO `exit_code:` de esta review, no
+solo al par de mutacion):** usa `subprocess.returncode` o `PIPESTATUS`, NUNCA
+`$?` tras un pipe -- `cmd | tail` devuelve el rc de `tail`, no el de `cmd`, y
+`tail` casi siempre sale 0. Misma regla ya vigente para CI remoto en
+`prompts/audit_pipeline.md:315-316`; aqui se generaliza porque el fallo no es
+exclusivo de `gh`. Si necesitas acotar la salida, redirige a fichero y lee el rc
+antes de filtrar (`cmd >/tmp/out 2>&1; rc=$?; tail /tmp/out`), o usa
+`set -o pipefail`.
+
+Caso medido (2026-08-08): un gate se reporto como defectuoso ("devuelve rc=0 con
+violaciones") por leer `$?` tras `| tail`; su `main()` hacia `return 1`
+correctamente. El defecto era del probe, no del gate. Un rc leido mal es un
+hallazgo FALSO con formato de evidencia: cumple `command:` + `exit_code:` y aun
+asi miente.
+
 Formato obligatorio del par (mismo literal en este Paso 3, en el SKILL y en el review artifact):
 
 ```
