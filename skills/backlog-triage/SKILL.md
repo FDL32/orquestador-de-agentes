@@ -93,9 +93,6 @@ Ese prompt es la fuente de verdad. Hereda el contrato de evidencia de
 
 ## Salidas
 
-- `<destino>/orchestrator_pipeline/reports/backlog_triage_<YYYYMMDD-HHMM>.md`
-- `<destino>/orchestrator_pipeline/reports/backlog_triage_output.json`
-
 Esquema completo del JSON y estructura del informe en
 `prompts/backlog_triage.md`.
 

@@ -1315,44 +1315,70 @@ def test_023u_triage_phase2_separates_dependency_from_preference() -> None:
 
 
 _PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"
+_SKILLS_DIR = Path(__file__).resolve().parent.parent.parent / "skills"
 
 
-def _read_prompt(name: str) -> str:
-    return (_PROMPTS_DIR / name).read_text(encoding="utf-8")
+def _read_file(rel_path: str) -> str:
+    return (_PROMPTS_DIR.parent / rel_path).read_text(encoding="utf-8")
 
 
 def test_049a_dag_filename_coherence_contract_prosa() -> None:
     """The DAG output filename must use the timestamped pattern
-    `backlog_triage_<YYYYMMDD-HHMMSS>.json` in ALL contract prose sites.
-    Mutation: revert any site to `backlog_triage_output.json` -> RED.
+    `backlog_triage_<YYYYMMDD-HHMMSS>.json` in ALL contract prose sites,
+    and NO site may contain the legacy fixed-name pattern.
+
+    Mutation: inject `backlog_triage_output.json` into any site -> RED.
+    Mutation: inject `backlog_triage_<YYYYMMDD-HHMM>.json` (no seconds) -> RED.
 
     Sites checked (WOT-2026-049a):
     - prompts/backlog_triage.md (schema definition + command example)
     - prompts/orchestrator_autonomous_ticket_batch.md (prose + command)
     - prompts/orchestrator_pipeline.md (prose)
+    - skills/backlog-triage/SKILL.md (skill pointer -- must NOT re-declare)
     """
-    timestamped_pattern = re.compile(r"backlog_triage_<YYYYMMDD-HHMMSS>\.json")
-    legacy_pattern = re.compile(r"backlog_triage_output\.json")
+    # Correct pattern: timestamped with seconds
+    correct_json = re.compile(r"backlog_triage_<YYYYMMDD-HHMMSS>\.json")
+    # Legacy patterns that must NOT appear anywhere
+    legacy_json = re.compile(r"backlog_triage_output\.json")
+    legacy_md_no_seconds = re.compile(
+        r"backlog_triage_<YYYYMMDD-HHMM>\.md"
+    )  # HHMM without SS
 
     sites = [
-        ("backlog_triage.md", _read_prompt("backlog_triage.md")),
+        ("prompts/backlog_triage.md", _read_file("prompts/backlog_triage.md")),
         (
-            "orchestrator_autonomous_ticket_batch.md",
-            _read_prompt("orchestrator_autonomous_ticket_batch.md"),
+            "prompts/orchestrator_autonomous_ticket_batch.md",
+            _read_file("prompts/orchestrator_autonomous_ticket_batch.md"),
         ),
-        ("orchestrator_pipeline.md", _read_prompt("orchestrator_pipeline.md")),
+        (
+            "prompts/orchestrator_pipeline.md",
+            _read_file("prompts/orchestrator_pipeline.md"),
+        ),
+        (
+            "skills/backlog-triage/SKILL.md",
+            _read_file("skills/backlog-triage/SKILL.md"),
+        ),
     ]
 
-    for filename, text in sites:
-        # Must contain the new timestamped pattern
-        assert timestamped_pattern.search(text), (
-            f"{filename} must reference the timestamped DAG pattern "
-            f"`backlog_triage_<YYYYMMDD-HHMMSS>.json` (WOT-2026-049a)"
-        )
-        # Must NOT contain the old fixed-name pattern
-        legacy_matches = legacy_pattern.findall(text)
-        assert not legacy_matches, (
-            f"{filename} still references the legacy fixed-name "
-            f"`backlog_triage_output.json` ({len(legacy_matches)} occurrence(s)). "
+    for filepath, text in sites:
+        is_skill = "skills/" in filepath
+        if not is_skill:
+            # Prompt files MUST contain the correct timestamped pattern
+            assert correct_json.search(text), (
+                f"{filepath} must reference the timestamped JSON pattern "
+                f"`backlog_triage_<YYYYMMDD-HHMMSS>.json` (WOT-2026-049a)"
+            )
+        # ALL sites (prompts AND skills) must NOT contain legacy patterns
+        legacy_json_hits = legacy_json.findall(text)
+        assert not legacy_json_hits, (
+            f"{filepath} still references the legacy JSON name "
+            f"`backlog_triage_output.json` ({len(legacy_json_hits)} occurrence(s)). "
             f"All sites must use the timestamped pattern (WOT-2026-049a)"
+        )
+        legacy_md_hits = legacy_md_no_seconds.findall(text)
+        assert not legacy_md_hits, (
+            f"{filepath} still references the legacy MD pattern "
+            f"`backlog_triage_<YYYYMMDD-HHMM>.md` (without seconds; "
+            f"{len(legacy_md_hits)} occurrence(s)). "
+            f"All sites must use HHMMSS (WOT-2026-049a)"
         )
