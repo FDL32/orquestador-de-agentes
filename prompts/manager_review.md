@@ -178,6 +178,32 @@ mutation-verify:
 
 Si el test pasa con y sin el fix, marcar falso-verde y emitir `CHANGES`. La transicion PASS->FAIL al revertir el fix es OBLIGATORIA como evidencia para todo ticket code/mixed que corrige bug, regresion o introduce barrera nueva; un closeout que afirma la barrera sin el par de exit-codes del revert (el bloque `mutation-verify:` relleno) cuenta como relato, no evidencia (E3: 3 false-greens - 014e/014g/014a - solo se cazaron asi).
 
+**La mutacion la dicta el ARTEFACTO, no el revisor.** Si el artefacto nombra un
+patron, formato o nombre CONCRETO Y REPRODUCIBLE que dice cazar -- en su
+docstring, su mensaje de error, su nombre, o el DoD de la ficha -- esa es la
+mutacion obligatoria, ejecutada LITERALMENTE. Si nombra N, se ejecutan N. Una
+mutacion elegida por el revisor es evidencia ADICIONAL, nunca sustitutiva.
+
+Linea divisoria: ¿el artefacto nombra una INSTANCIA reproducible
+(`backlog_triage_<YYYYMMDD-HHMM>.json`) o solo una CATEGORIA generica ("pipes",
+"regresiones")? Instancia -> mutacion obligatoria que la empareje. Categoria ->
+vale la eleccion del revisor, pero el informe la etiqueta literalmente como
+`mutacion de criterio del revisor: <razon>`, para que el auditor externo sepa que
+NO se probo el contrato declarado del artefacto.
+
+PROHIBIDO cerrar con "sin declaracion verificable" a secas: o hay instancia
+nombrada (y se muta), o se etiqueta la eleccion propia. No hay tercera via.
+
+Por que esta regla existe: `:152` exige "al menos UN test" que falle sin el fix,
+y esa permisividad deja al revisor elegir la mutacion -- que tiende a ser la que
+confirma su expectativa, y esa suele pasar. El artefacto que se describe a si
+mismo es un liston que el revisor no escribio y no puede renegociar mientras
+juzga. Caso WOT-2026-049a: el docstring del test prometia cazar
+`backlog_triage_<YYYYMMDD-HHMM>.json`, pero su regex solo cubria `.md`; la
+mutacion elegida por el revisor (`backlog_triage_output.json`) salio ROJA y el
+blocker se dio por CERRADO. La mutacion declarada salia VERDE (`exit=0`). Lo cazo
+una pasada adversarial externa, no el review.
+
 Para tickets que no corrigen bugs, sustituye esta barrera por el criterio
 binario declarado en `AUDIT_{{TICKET_ID}}.md`.
 
