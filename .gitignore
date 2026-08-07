@@ -58,7 +58,11 @@ tests/.test_workspace/
 # NO re-anadir un seed ni un placeholder: el CONTRACT_GAP (CG-WOT-2026-024h.md)
 # demostro que ninguna forma del seed neutro pasa validate_contract_formation.
 .agent/planning/ticket_contracts.md
-orchestrator_pipeline/
+orchestrator_pipeline/*
+!orchestrator_pipeline/reports/
+orchestrator_pipeline/reports/*
+!orchestrator_pipeline/reports/backlog_triage_*.json
+!orchestrator_pipeline/reports/backlog_triage_*.md
 
 # Cache de modulos de PowerShell creada accidentalmente en el arbol
 /Microsoft/

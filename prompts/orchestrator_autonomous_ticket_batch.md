@@ -378,7 +378,7 @@ Dispatch particulars are non-negotiable and cost real time when ignored: NEVER
 more than 4-5 nan concurrent (HTTP 429); prefer sequential with a pause, retry
 429s; verdict by CONTENT, never by rc (PONG-019o). Canonical loop reference:
 `prompts/backlog_triage.md`. The DAG's `ensemble_policy` per group (see
-`backlog_triage_output.json`) declares which extra loops a group triggers beyond
+`backlog_triage_<YYYYMMDD-HHMMSS>.json`) declares which extra loops a group triggers beyond
 these three fixed governance loops; the schema formalization is `WOT-2026-026b`.
 The synthesis verdict is ALWAYS the main thread's, never a subagent's self-report
 (harness lesson, 3rd batch run).
@@ -677,7 +677,7 @@ Before consuming any DAG produced by `/backlog-triage`, run:
 
 ```
 python <MOTOR_ROOT>/scripts/validate_batch_dag.py \
-    <destino>/orchestrator_pipeline/reports/backlog_triage_output.json \
+    <destino>/orchestrator_pipeline/reports/backlog_triage_<YYYYMMDD-HHMMSS>.json \
     --live-backlog <destino>/.agent/collaboration/backlog.md \
     --head-sha <HEAD actual del motor>
 ```

@@ -1304,3 +1304,55 @@ def test_023u_triage_phase2_separates_dependency_from_preference() -> None:
         "global cascade (inaugural incident 2026-07-13)"
     )
     assert TRIAGE_PROMPT.is_file()
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-049a: contract-prosa coherence test
+# Verifies that the DAG output filename cited in contract prose matches the
+# timestamped pattern the system now produces. This is a PROSA-LEVEL test:
+# it checks text consistency, not runtime behavior.
+# ---------------------------------------------------------------------------
+
+
+_PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"
+
+
+def _read_prompt(name: str) -> str:
+    return (_PROMPTS_DIR / name).read_text(encoding="utf-8")
+
+
+def test_049a_dag_filename_coherence_contract_prosa() -> None:
+    """The DAG output filename must use the timestamped pattern
+    `backlog_triage_<YYYYMMDD-HHMMSS>.json` in ALL contract prose sites.
+    Mutation: revert any site to `backlog_triage_output.json` -> RED.
+
+    Sites checked (WOT-2026-049a):
+    - prompts/backlog_triage.md (schema definition + command example)
+    - prompts/orchestrator_autonomous_ticket_batch.md (prose + command)
+    - prompts/orchestrator_pipeline.md (prose)
+    """
+    timestamped_pattern = re.compile(r"backlog_triage_<YYYYMMDD-HHMMSS>\.json")
+    legacy_pattern = re.compile(r"backlog_triage_output\.json")
+
+    sites = [
+        ("backlog_triage.md", _read_prompt("backlog_triage.md")),
+        (
+            "orchestrator_autonomous_ticket_batch.md",
+            _read_prompt("orchestrator_autonomous_ticket_batch.md"),
+        ),
+        ("orchestrator_pipeline.md", _read_prompt("orchestrator_pipeline.md")),
+    ]
+
+    for filename, text in sites:
+        # Must contain the new timestamped pattern
+        assert timestamped_pattern.search(text), (
+            f"{filename} must reference the timestamped DAG pattern "
+            f"`backlog_triage_<YYYYMMDD-HHMMSS>.json` (WOT-2026-049a)"
+        )
+        # Must NOT contain the old fixed-name pattern
+        legacy_matches = legacy_pattern.findall(text)
+        assert not legacy_matches, (
+            f"{filename} still references the legacy fixed-name "
+            f"`backlog_triage_output.json` ({len(legacy_matches)} occurrence(s)). "
+            f"All sites must use the timestamped pattern (WOT-2026-049a)"
+        )

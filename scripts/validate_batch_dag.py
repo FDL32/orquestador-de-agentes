@@ -417,6 +417,27 @@ def _head_sha_warnings(head_sha: str | None, data: dict[str, Any]) -> list[str]:
     return []
 
 
+def _pair_completeness_errors(dag_path: Path) -> list[str]:
+    """Check that the DAG JSON has a corresponding .md narrative file.
+
+    WOT-2026-049a: the triage produces a pair (JSON + .md). An incomplete pair
+    (JSON without .md) indicates an interrupted triage run. This check is
+    PROSA-LEVEL: it verifies file existence, not runtime behavior.
+    """
+    errors = []
+    if not dag_path.name.startswith("backlog_triage_") or not dag_path.name.endswith(
+        ".json"
+    ):
+        return errors
+    md_path = dag_path.with_suffix(".md")
+    if not md_path.exists():
+        errors.append(
+            f"par incompleto: {dag_path.name} existe pero {md_path.name} no "
+            f"(corrida de triaje interrumpida o par corrupto)"
+        )
+    return errors
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -479,6 +500,7 @@ def main(argv: list[str] | None = None) -> int:
 
     errors = validate_dag(data)
     errors.extend(_freshness_errors(args.live_backlog, data))
+    errors.extend(_pair_completeness_errors(args.dag_path))
     warnings = _head_sha_warnings(args.head_sha, data)
     return _emit_result(args.json, args.dag_path, errors, warnings)
 

@@ -309,10 +309,18 @@ Dos artefactos, en el mismo turno, bajo
 `<destino>/orchestrator_pipeline/reports/` (mismo patron de rutas que
 `/audit-pipeline`):
 
-- Informe Markdown: `backlog_triage_<YYYYMMDD-HHMM>.md`, con las fases 0
+- Informe Markdown: `backlog_triage_<YYYYMMDD-HHMMSS>.md`, con las fases 0
   (reconciliacion), 1 (clasificacion), 2 (agrupacion) y 3 (sintesis)
   desarrolladas.
-- JSON portable: `backlog_triage_output.json`, con el esquema:
+- JSON portable: `backlog_triage_<YYYYMMDD-HHMMSS>.json`, con el esquema:
+
+**BARRERA (obligatoria, ANTES de escribir el nuevo par):** si existe
+cualquier `backlog_triage_*.json` previo en el directorio de reports,
+copiarlo a `backlog_triage_<YYYYMMDD-HHMMSS>.json` con `shutil.copy2`
+ANTES de sobrescribir. Esto preserva el DAG anterior sin intervencion
+humana. El timestamp debe ser de SEGUNDOS para evitar colisiones entre
+corridas rapidas. La copia es atomica: write-tmp-then-rename, no write
+directo.
 
 ```json
 {
@@ -385,7 +393,7 @@ ser reciprocas (si G1 bloquea G2, G2 depende de G1). Antes de entregar
 el JSON, validarlo con:
 
 ```powershell
-python <MOTOR_ROOT>/scripts/validate_batch_dag.py <destino>/orchestrator_pipeline/reports/backlog_triage_output.json
+python <MOTOR_ROOT>/scripts/validate_batch_dag.py <destino>/orchestrator_pipeline/reports/backlog_triage_<YYYYMMDD-HHMMSS>.json
 ```
 
 Exigir exit 0. Un DAG que no valida no es una salida completa de esta

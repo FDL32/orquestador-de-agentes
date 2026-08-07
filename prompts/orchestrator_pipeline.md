@@ -48,11 +48,11 @@ pipeline cuando una base rota pueda contaminar tickets dependientes.
      no lo valida ni lo archiva automaticamente.
 4. Lee `PROJECT.md` y confirma `Ticket prefix:`.
 5. Si `/backlog-triage` ya se ejecuto (existe
-   `backlog_triage_output.json` reciente en `PIPELINE_REPORTS_DIR`) O el
+   `backlog_triage_*.json` reciente en `PIPELINE_REPORTS_DIR`) O el
    backlog en `BACKLOG_PATH` tiene mas de 6 tickets `pending` o mezcla
    scopes/autoridades distintas, ejecuta `/backlog-triage`
    (`<MOTOR_ROOT>/prompts/backlog_triage.md`) si aun no corrio, y usa SU
-   SALIDA (`backlog_triage_output.json`) como orden de la cola: los tickets
+   SALIDA (`backlog_triage_<YYYYMMDD-HHMMSS>.json`) como orden de la cola: los tickets
    `LIKELY_DONE` NO entran, los `REQUIERE_HUMANO` no entran en pipeline
    autonomo. Si no aplica ninguna condicion (backlog pequeno/homogeneo y sin
    salida de triage previa), lee `BACKLOG_PATH` y ordena tickets por
