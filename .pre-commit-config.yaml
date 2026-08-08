@@ -1,3 +1,7 @@
+# WOT-2026-046f: sin esto, `pre-commit install` solo cablea pre-commit y el
+# hook commit-msg NO se instalaria -- seria una norma, no una barrera.
+default_install_hook_types: [pre-commit, pre-push, commit-msg]
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0
@@ -173,6 +177,21 @@ repos:
         language: system
         pass_filenames: false
         stages: [pre-commit]
+
+      # WOT-2026-046f: el guard hermano de arriba cubre FICHEROS; el MENSAJE de
+      # commit nunca fue su superficie (a3966ae llevo 3 acentos y ningun
+      # mecanismo lo vio). Es "la barrera del alcance, no del mecanismo"
+      # (WOT-2026-024x): un guard bien implementado que no mira donde ocurre el
+      # fallo. Alcance DECIDIDO: bloquea corrupcion (mojibake, controles),
+      # AVISA de acentos/tipografia. Medido sobre los 1385 commits del repo: 0
+      # con mojibake, 64 con acentos o tipografia -- castellano correcto que
+      # bloquear seria rechazar la propia historia del proyecto.
+      # stages: [commit-msg] -- el unico stage donde git provee el mensaje.
+      - id: check-commit-message-encoding
+        name: check commit message encoding (corrupcion bloquea, acentos avisan)
+        entry: uv run python scripts/check_commit_message_encoding.py
+        language: system
+        stages: [commit-msg]
 
       # WOT-2026-003c: tracked .claude/settings.json must stay portable (no
       # personal permissions.allow) and any write-gating hook must FAIL CLOSED
