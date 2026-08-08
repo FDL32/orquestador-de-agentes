@@ -417,6 +417,29 @@ def _head_sha_warnings(head_sha: str | None, data: dict[str, Any]) -> list[str]:
     return []
 
 
+_TRIAGE_NAME_RE = re.compile(r"^backlog_triage_\d{8}-\d{4,6}\.json$")
+
+
+def _is_triage_artifact_name(name: str) -> bool:
+    """True only for a canonical triage artifact: ``backlog_triage_<ts>.json``.
+
+    WOT-2026-051a (d), DECIDED in the ticket, not by the implementer: a JSON
+    whose suffix is not a timestamp is IGNORED by the pair check rather than
+    rejected. This CLI validates GENERIC DAGs, so demanding an ``.md`` sibling
+    from every file merely *starting* with ``backlog_triage_`` would break
+    legitimate consumers -- and would resurrect the legacy
+    ``backlog_triage_output.json`` name that 049a retired from the contract.
+
+    The second group accepts 4-6 digits because the destination's own history
+    holds both widths (``20260711-0239`` alongside ``20260808-010534``).
+
+    Before: `name` is a bare filename, never a path.
+    During: pure regex match; no I/O.
+    After: returns a bool. Never raises.
+    """
+    return bool(_TRIAGE_NAME_RE.match(name))
+
+
 def _pair_completeness_errors(dag_path: Path) -> list[str]:
     """Check that the DAG JSON has a corresponding .md narrative file.
 
@@ -424,10 +447,8 @@ def _pair_completeness_errors(dag_path: Path) -> list[str]:
     (JSON without .md) indicates an interrupted triage run. This check is
     PROSA-LEVEL: it verifies file existence, not runtime behavior.
     """
-    errors = []
-    if not dag_path.name.startswith("backlog_triage_") or not dag_path.name.endswith(
-        ".json"
-    ):
+    errors: list[str] = []
+    if not _is_triage_artifact_name(dag_path.name):
         return errors
     md_path = dag_path.with_suffix(".md")
     if not md_path.exists():
@@ -435,6 +456,18 @@ def _pair_completeness_errors(dag_path: Path) -> list[str]:
             f"par incompleto: {dag_path.name} existe pero {md_path.name} no "
             f"(corrida de triaje interrumpida o par corrupto)"
         )
+        return errors
+    # WOT-2026-051a (e): existence is not completeness. A run that creates the
+    # narrative and dies before writing it leaves an EMPTY .md -- exactly the
+    # interrupted-run failure this check exists to catch.
+    try:
+        if not md_path.read_text(encoding="utf-8-sig").strip():
+            errors.append(
+                f"par incompleto: {md_path.name} existe pero esta vacio "
+                f"(corrida de triaje interrumpida o par corrupto)"
+            )
+    except OSError as e:
+        errors.append(f"par incompleto: no se pudo leer {md_path.name}: {e}")
     return errors
 
 
@@ -480,7 +513,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     try:
-        content = args.dag_path.read_text(encoding="utf-8")
+        # WOT-2026-051a: utf-8-sig, not utf-8. A BOM made `json.loads` abort
+        # with "Unexpected UTF-8 BOM" BEFORE validate_dag() and before the
+        # 049a pair check -- so a single stray BOM disabled every validation
+        # this CLI performs. utf-8-sig is a strict superset: it reads files
+        # with and without a BOM, so no bomless input changes behavior.
+        content = args.dag_path.read_text(encoding="utf-8-sig")
         data = json.loads(content)
     except (OSError, json.JSONDecodeError) as e:
         message = f"no se pudo leer/parsear el archivo: {e}"

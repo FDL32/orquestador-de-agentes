@@ -531,3 +531,132 @@ def test_023u_same_pair_sharing_real_surface_without_dep_fails(
         "the shared surface IS a real dependency and demands serialization"
     )
     assert "solapamiento" in result.stderr.lower()
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-051a: BOM tolerance + pair-completeness shape/content checks.
+#
+# The pair check landed in WOT-2026-049a with NO tests (verified: `grep
+# backlog_triage` over this file returned 0 hits before this block). So these
+# tests pin BOTH the new behavior and the 049a contract that was never pinned.
+# ---------------------------------------------------------------------------
+
+
+def _write_pair(
+    tmp_path: Path,
+    stem: str,
+    *,
+    md: str | None = "narrativa hermana\n",
+    bom: bool = False,
+) -> Path:
+    """Write a triage pair: `<stem>.json` (+ optional `<stem>.md`).
+
+    `md=None` omits the narrative entirely; `bom=True` prefixes the JSON with
+    a UTF-8 BOM, which is what any Windows writer using utf-8-sig produces.
+    """
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    json_path = tmp_path / f"{stem}.json"
+    payload = json.dumps(_valid_dag(), indent=2)
+    if bom:
+        json_path.write_bytes(b"\xef\xbb\xbf" + payload.encode("utf-8"))
+    else:
+        json_path.write_text(payload, encoding="utf-8")
+    if md is not None:
+        (tmp_path / f"{stem}.md").write_text(md, encoding="utf-8")
+    return json_path
+
+
+def test_051a_bom_dag_validates_like_its_bomless_twin(tmp_path: Path) -> None:
+    """(a) A DAG with a BOM must validate EXACTLY like the same DAG without it.
+
+    Before the fix `read_text(encoding="utf-8")` raised `Unexpected UTF-8 BOM`
+    inside the try/except, so the CLI died at PARSE time -- before
+    `validate_dag()` and before the 049a pair check ran. Not one validation
+    executed. Measured on the destination's own
+    `backlog_triage_20260711-0239.json` (bytes efbbbf, exit 1).
+    """
+    plain = _run(_write_pair(tmp_path / "plain", "backlog_triage_20260101-000000"))
+    with_bom = _run(
+        _write_pair(tmp_path / "bom", "backlog_triage_20260101-000000", bom=True)
+    )
+    assert with_bom.returncode == plain.returncode == 0, (
+        "a BOM must not change the verdict; utf-8-sig is a strict superset of "
+        f"utf-8 (plain={plain.returncode} bom={with_bom.returncode} "
+        f"stderr={with_bom.stderr!r})"
+    )
+    assert "BOM" not in with_bom.stderr
+
+
+def test_051a_bom_does_not_mask_a_real_error(tmp_path: Path) -> None:
+    """(a-MUTATION) The BOM fix must not become a blanket pass.
+
+    A BOM'd DAG that is genuinely INVALID must still be rejected -- proving the
+    fix restored parsing rather than short-circuiting validation.
+    """
+    dag = _valid_dag()
+    dag["groups"][0]["class"] = "NOT-A-CLASS"
+    path = tmp_path / "backlog_triage_20260101-000000.json"
+    path.write_bytes(b"\xef\xbb\xbf" + json.dumps(dag, indent=2).encode("utf-8"))
+    (tmp_path / "backlog_triage_20260101-000000.md").write_text("x", encoding="utf-8")
+    result = _run(path)
+    assert result.returncode == 1, "a BOM'd but invalid DAG must still be rejected"
+    assert "BOM" not in result.stderr, "it must fail on the CLASS, not on parsing"
+
+
+def test_051a_missing_md_still_rejected(tmp_path: Path) -> None:
+    """The 049a contract itself, never pinned by a test until now."""
+    result = _run(_write_pair(tmp_path, "backlog_triage_20260101-000000", md=None))
+    assert result.returncode == 1
+    assert "par incompleto" in result.stderr.lower()
+
+
+@pytest.mark.parametrize("blank", ["", "   \n\t  \n"])
+def test_051a_empty_md_is_not_a_complete_pair(tmp_path: Path, blank: str) -> None:
+    """(e) An EMPTY .md must not count as a complete pair.
+
+    `exists()` alone reads an interrupted run -- one that created the file and
+    died before writing it -- as success, which is precisely the failure mode
+    049a set out to catch.
+    """
+    result = _run(_write_pair(tmp_path, "backlog_triage_20260101-000000", md=blank))
+    assert result.returncode == 1, (
+        "an empty/whitespace-only narrative is an interrupted run, not a pair"
+    )
+    assert "par incompleto" in result.stderr.lower()
+
+
+@pytest.mark.parametrize(
+    "stem",
+    [
+        "backlog_triage_output",  # legacy name 049a retired from the contract
+        "backlog_triage_NOESFECHA",  # non-timestamp suffix
+        "backlog_triage_2026011",  # too short to be YYYYMMDD-HHMMSS
+    ],
+)
+def test_051a_non_timestamp_names_are_ignored_by_pair_check(
+    tmp_path: Path, stem: str
+) -> None:
+    """(d) DECIDED in the ticket: a JSON whose suffix is not YYYYMMDD-HHMMSS is
+    IGNORED by the pair check -- empty error list, no error.
+
+    Rationale (not the Builder's call): the CLI validates GENERIC DAGs, so
+    demanding an .md sibling from every file starting with `backlog_triage_`
+    would break legitimate consumers passing files outside the triage pattern.
+    """
+    result = _run(_write_pair(tmp_path, stem, md=None))
+    assert result.returncode == 0, (
+        f"{stem}.json does not match the triage timestamp pattern, so the pair "
+        f"check must ignore it (stderr={result.stderr!r})"
+    )
+    assert "par incompleto" not in result.stderr.lower()
+
+
+def test_051a_timestamped_name_still_demands_its_pair(tmp_path: Path) -> None:
+    """(d-MUTATION) Makes the test above non-tautological: the SAME missing-.md
+    situation with a WELL-FORMED timestamp must still be rejected. Otherwise
+    'ignore bad names' could silently degrade into 'ignore everything'."""
+    result = _run(_write_pair(tmp_path, "backlog_triage_20260808-010534", md=None))
+    assert result.returncode == 1, (
+        "a canonical triage name must still require its .md sibling"
+    )
+    assert "par incompleto" in result.stderr.lower()
