@@ -50,6 +50,13 @@ if str(_MOTOR_ROOT_BOOTSTRAP) not in sys.path:
 
 from bus.observation_domains import VALID_DOMAINS  # noqa: E402
 
+# WOT-2026-047f: single source of truth for "is this record hook telemetry?".
+# Defined ONCE in bus/portable_memory_archive.py and consumed by
+# reconcile_portable_memory, memory_loader and now this validator. Duplicating
+# the predicate would give two definitions of observation identity that would
+# diverge in silence.
+from bus.portable_memory_archive import is_hook_telemetry  # noqa: E402
+
 
 # Valores permitidos para campos enum.
 #
@@ -400,6 +407,22 @@ def validate_file(
             errors.append(
                 f"linea {line_num}: entrada debe ser objeto JSON, no {type(record).__name__}"
             )
+            continue
+
+        # WOT-2026-047f: skip hook telemetry by PROVENANCE, never by label.
+        # The default target is the GITIGNORED BUFFER where hooks dump
+        # tool-call telemetry; that telemetry legitimately lacks domain/
+        # confidence/applies_to/source_ticket and is not a lesson. Reporting it
+        # as 3100 schema errors made a close session diagnose "schema drift in
+        # portable memory" -- a FALSE diagnosis that nearly opened a migration
+        # ticket for a non-existent problem.
+        #
+        # is_hook_telemetry ANDs four conditions on purpose, so a hand-written
+        # lesson (which carries id/source_ticket) is never skipped. Filtering by
+        # `topic` alone would mask forever any legitimate lesson using that
+        # topic: a false POSITIVE (noise) traded for a false NEGATIVE (a lesson
+        # lost in silence), and the risk asymmetry runs the other way.
+        if is_hook_telemetry(record):
             continue
 
         # Validate fields

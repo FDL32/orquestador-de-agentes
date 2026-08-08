@@ -615,3 +615,128 @@ class TestWOT2026013oContractDomains:
         # Canonical applies_to values pass.
         for v in ("code", "mixed", "docs", "all"):
             assert validate_applies_to(v) is None
+
+
+# =============================================================================
+# WOT-2026-047f: the default target must not be a structural red.
+#
+# Measured 2026-08-02 (motor 4d65156) and re-measured 2026-08-08: with
+# --strict and no --file the CLI validates the GITIGNORED BUFFER, where hooks
+# dump tool-call telemetry, and returns "Validacion FALLIDA: 3100 error(es)".
+# The TRACKED ARCHIVE validates clean. There is NO schema drift in portable
+# memory: there is a LESSON validator pointed at a file that mixes telemetry
+# with lessons, and telemetry does not meet the lesson schema NOR SHOULD IT.
+#
+# Why it is not cosmetic: a close session ran it without --file, read the red
+# and reported "the motor has schema drift in its memory" -- a FALSE diagnosis
+# that would have opened a migration ticket for a non-existent problem.
+#
+# Fix chosen (of the three the ticket allows): filter by PROVENANCE reusing
+# is_hook_telemetry from bus/portable_memory_archive.py, which already
+# discriminates by SHAPE and not by label. Filtering by `topic` alone would
+# mask forever any legitimate lesson using that topic -- turning a false
+# POSITIVE (noise) into a false NEGATIVE (a lesson lost in silence), and the
+# risk asymmetry runs the other way.
+# =============================================================================
+
+_TELEMETRY = {
+    "timestamp": "2026-07-28T07:46:40.133489+00:00",
+    "topic": "tool_usage",
+    "signal": "Tool view_file called",
+    "source": "post_tool_hook",
+    "tool": "view_file",
+    "context": "Read file unknown, 0 lines",
+    "session_id": "deb74bfd-13d7-45e7-996d-831c9f4489ab",
+    "call_count": 0,
+}
+
+_LESSON = {
+    "timestamp": "2026-08-02T10:00:00+00:00",
+    "topic": "lesson",
+    "signal": "un guard que nadie invoca es una norma, no una barrera",
+    "source": "manual",
+    "domain": "testing",
+    "confidence": 0.9,
+    "applies_to": "code",
+    "source_ticket": "WOT-2026-047f",
+    "id": "obs-guard-wiring",
+}
+
+
+def _write_jsonl(path: Path, records: list[dict[str, Any]]) -> Path:
+    path.write_text(
+        "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_047f_telemetry_is_not_reported_as_schema_error(tmp_path: Path) -> None:
+    """(2) A buffer mixing telemetry + one real lesson must not report the
+    telemetry entries as schema errors.
+
+    Telemetry legitimately lacks domain/confidence/applies_to/source_ticket;
+    it is not a lesson and was never meant to be one.
+    """
+    from validate_observations import validate_file
+
+    path = _write_jsonl(tmp_path / "observations.jsonl", [_TELEMETRY] * 5 + [_LESSON])
+    success, errors = validate_file(path, strict=True)
+    assert success, (
+        "telemetry must be skipped by provenance, not flagged as broken "
+        f"lessons (errors={errors[:3]})"
+    )
+    assert not errors
+
+
+def test_047f_a_real_broken_lesson_is_still_caught(tmp_path: Path) -> None:
+    """(3-MUTATION) The filter must NOT become a blanket pass.
+
+    A genuine lesson with an invalid domain must still fail, proving we
+    skipped telemetry rather than switching validation off.
+    """
+    from validate_observations import validate_file
+
+    broken = dict(_LESSON, domain="not-a-canonical-domain")
+    path = _write_jsonl(tmp_path / "observations.jsonl", [_TELEMETRY, broken])
+    success, errors = validate_file(path, strict=True)
+    assert not success, "a real lesson with a bad domain must still be rejected"
+    assert any("domain" in e for e in errors)
+
+
+def test_047f_telemetry_shaped_but_identified_is_still_a_lesson(
+    tmp_path: Path,
+) -> None:
+    """Provenance, not label: a record carrying source=post_tool_hook AND
+    topic=tool_usage but WITH an id/source_ticket is a hand-written lesson and
+    must still be validated. This is the false-negative the ticket warns about.
+    """
+    from validate_observations import validate_file
+
+    promoted = dict(
+        _TELEMETRY, id="obs-promoted", source_ticket="WOT-2026-047f", domain="bogus"
+    )
+    path = _write_jsonl(tmp_path / "observations.jsonl", [promoted])
+    success, errors = validate_file(path, strict=True)
+    assert not success, (
+        "a record with identity is a LESSON even if it looks like telemetry; "
+        "filtering by topic alone would hide it forever"
+    )
+    assert any("domain" in e for e in errors)
+
+
+def test_047f_archive_still_validates_strictly(tmp_path: Path) -> None:
+    """(3) --file <archive> keeps validating exactly as today.
+
+    The real barrier must not be loosened: the archive holds lessons only, so
+    a broken one there must still fail.
+    """
+    from validate_observations import validate_file
+
+    archive = _write_jsonl(
+        tmp_path / "observations.2026-08.jsonl",
+        [_LESSON, dict(_LESSON, id="obs-2", confidence=99.0)],
+    )
+    success, errors = validate_file(archive, strict=True)
+    assert not success, "confidence out of [0,1] must still be rejected"
+    assert any("confidence" in e for e in errors)
