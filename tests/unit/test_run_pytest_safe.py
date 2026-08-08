@@ -402,6 +402,120 @@ def test_resolve_test_interpreter_falls_back_when_destination_has_no_venv(
 
 
 # =============================================================================
+# WOT-2026-041h: the runner must DIAGNOSE an incomplete interpreter.
+#
+# Two branches of the same resolve_test_interpreter:
+#   RAMA 1 (destination): interpreter without pytest -> "NO TESTS RAN" named the
+#     SYMPTOM and hid the CAUSE. Fails closed (exit 5), so it stops the chain.
+#   RAMA 2 (motor): `if active != motor` means the motor case falls to
+#     sys.executable (:187), which may be the SYSTEM python without deps. Does
+#     NOT fail closed -- measured cost ~1h with exit_code None / finished_at
+#     None (= never finished, which is not the same as failed).
+# =============================================================================
+
+
+def test_041h_missing_pytest_diagnostic_names_interpreter_and_remedy(
+    tmp_path: Path,
+) -> None:
+    """(a) RAMA 1: the message must name the interpreter, the cause and the fix.
+
+    DoD is explicit: the output contains the interpreter PATH and the word
+    pytest -- not just "NO TESTS RAN", which describes the symptom and lets an
+    operator conclude "this repo has no tests" instead of "this env is
+    incomplete".
+    """
+    mod = load_runner_module()
+    fake_interpreter = str(tmp_path / "no_pytest" / "python.exe")
+    diagnostic = mod.incomplete_interpreter_diagnostic(fake_interpreter)
+    assert fake_interpreter in diagnostic, (
+        "the diagnostic must NAME the resolved interpreter, else the operator "
+        "cannot tell WHICH environment is incomplete"
+    )
+    assert "pytest" in diagnostic.lower(), "it must name the missing package"
+    assert any(
+        hint in diagnostic.lower() for hint in ("install", "instal", "uv ", "pip ")
+    ), "a self-service gate must say HOW to fix it, not just what broke"
+
+
+def test_041h_unittest_fallback_still_returns_nonzero(tmp_path: Path) -> None:
+    """(b) No regression: the fallback path must keep failing closed.
+
+    The ticket REFUTED its own initial suspicion (a misleading exit 0): the
+    probe measured EXIT_CODE=5 and closeout_steps/gates.py:55 demands
+    returncode == 0, so the chain already fails closed. This pins that.
+    """
+    mod = load_runner_module()
+    command, runner = mod.select_test_runner(
+        sys.executable, [], [], tmp_path, _probe=False
+    )
+    assert runner == "unittest", "no pytest -> unittest discover fallback"
+    assert "unittest" in command
+
+
+def test_041h_warns_when_motor_interpreter_is_not_the_venv(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """(d) RAMA 2: motor case + sys.executable != root .venv -> WARN naming BOTH.
+
+    This is the branch that cost ~1h: it does NOT fail closed, it just runs with
+    the wrong interpreter and dies by timeout leaving exit_code None.
+    """
+    mod = load_runner_module()
+    motor = tmp_path / "motor"
+    motor.mkdir()
+    venv_py = _make_venv(motor)  # a .venv EXISTS...
+    mod._PROJECT_ROOT = motor
+    mod._PROJECT_ROOT_BOOTSTRAP = motor  # ...and this is the motor case
+
+    resolved = mod.resolve_test_interpreter()
+    captured = capsys.readouterr()
+    warning = captured.out + captured.err
+
+    assert resolved == sys.executable, (
+        "(e) behavior is unchanged -- this is a WARN, never a redirect"
+    )
+    assert "WARN" in warning.upper(), "an undiagnosed mismatch is what cost ~1h"
+    assert str(venv_py) in warning, "the WARN must name the venv NOT being used"
+    assert sys.executable in warning, "and the interpreter actually in use"
+
+
+def test_041h_no_warn_when_motor_runs_from_its_own_venv(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """(f) MUTATION half: with the CORRECT venv there must be SILENCE.
+
+    Without this, the WARN could degrade into always-on noise and still pass
+    the test above.
+    """
+    mod = load_runner_module()
+    motor = tmp_path / "motor"
+    motor.mkdir()
+    mod._PROJECT_ROOT = motor
+    mod._PROJECT_ROOT_BOOTSTRAP = motor
+    # No .venv under motor -> nothing to compare against -> nothing to warn about.
+    resolved = mod.resolve_test_interpreter()
+    warning = (lambda c: c.out + c.err)(capsys.readouterr())
+
+    assert resolved == sys.executable
+    assert "WARN" not in warning.upper(), (
+        "no .venv means no mismatch; warning here would be false noise"
+    )
+
+
+def test_041h_warn_is_not_fail_closed(tmp_path: Path) -> None:
+    """(e) The WARN must NOT raise: CI, tox, uv run and pipx are legitimate
+    cases where sys.executable is not the root .venv. Blocking them would be
+    worse than the failure being diagnosed."""
+    mod = load_runner_module()
+    motor = tmp_path / "motor"
+    motor.mkdir()
+    _make_venv(motor)
+    mod._PROJECT_ROOT = motor
+    mod._PROJECT_ROOT_BOOTSTRAP = motor
+    assert mod.resolve_test_interpreter() == sys.executable  # returns, never raises
+
+
+# =============================================================================
 # WOT-2026-017a: failed_test_ids field in last-run.json (G4)
 # =============================================================================
 

@@ -159,6 +159,65 @@ def _venv_python(root: Path) -> Path | None:
     return None
 
 
+def incomplete_interpreter_diagnostic(interpreter: str) -> str:
+    """Explain that *interpreter* lacks pytest, and how to fix it.
+
+    WOT-2026-041h (RAMA 1): the fallback to ``unittest discover`` reported
+    "Ran 0 tests / NO TESTS RAN", which names the SYMPTOM (nothing executed)
+    and hides the CAUSE (this interpreter has no pytest). An operator reads it
+    as "this repo has no tests" rather than "this environment is incomplete".
+
+    AGENTS.md, "gates self-service": a gate preserves autonomy only if it says
+    what failed, how to reproduce it and how to re-validate. Naming the
+    interpreter matters because the whole failure mode is not knowing WHICH
+    environment was picked.
+
+    Before: `interpreter` is the resolved interpreter path.
+    During: pure string building; no I/O, no probing.
+    After: returns a multi-line diagnostic. Never raises.
+    """
+    return (
+        f"[WARN] El interprete resuelto no tiene pytest: {interpreter}\n"
+        f"       Causa: ese entorno esta INCOMPLETO (falta el paquete pytest),\n"
+        f"       no que este repo carezca de tests.\n"
+        f"       Remedio: instala pytest en ESE interprete, p.ej.\n"
+        f"         uv add --dev pytest      (o)  {interpreter} -m pip install pytest\n"
+        f"       Se cae a 'unittest discover' como fallback degradado."
+    )
+
+
+def _warn_if_interpreter_is_not_root_venv(interpreter: str, root: Path) -> None:
+    """WARN when running the motor suite outside its own ``.venv``.
+
+    WOT-2026-041h (RAMA 2): ``resolve_test_interpreter`` prefers a venv only
+    ``if active != motor``; the motor case falls to ``sys.executable``, which
+    may be the SYSTEM python without the repo's deps. Measured cost: ~1h with
+    ``--level all`` returning "(no output)" and dying by timeout, leaving
+    ``last-run.json`` with ``exit_code: None`` + ``finished_at: None`` -- i.e.
+    NEVER FINISHED, which is not the same as failed, and nothing said why.
+
+    Deliberately a WARN and NOT fail-closed (DoD (e)): CI, tox, ``uv run`` and
+    pipx all legitimately run from a different interpreter, and blocking them
+    would be worse than the failure this diagnoses.
+
+    Before: `interpreter` is the resolved path; `root` is the repo root.
+    During: filesystem probe for ``root/.venv``; writes to stderr only.
+    After: returns None. Never raises.
+    """
+    venv_py = _venv_python(root)
+    if venv_py is None or Path(interpreter).resolve() == venv_py.resolve():
+        return
+    print(
+        f"[WARN] La suite corre con un interprete que NO es el .venv del repo.\n"
+        f"       en uso : {interpreter}\n"
+        f"       .venv  : {venv_py}\n"
+        f"       Si faltan deps, la corrida puede morir por timeout y dejar\n"
+        f"       last-run.json con exit_code=None (no termino != fallo).\n"
+        f"       Legitimo en CI/tox/uv run/pipx; por eso es WARN y no bloqueo.",
+        file=sys.stderr,
+    )
+
+
 def resolve_test_interpreter() -> str:
     """Pick the interpreter that has the *delivery repo's* dependencies.
 
@@ -184,6 +243,10 @@ def resolve_test_interpreter() -> str:
         venv_py = _venv_python(active)
         if venv_py is not None:
             return str(venv_py)
+    # WOT-2026-041h (RAMA 2): the motor case falls through to sys.executable,
+    # which may be the system python without this repo's deps. Diagnose it
+    # BEFORE the suite starts -- silence here is what cost ~1h of a session.
+    _warn_if_interpreter_is_not_root_venv(sys.executable, active)
     return sys.executable
 
 
@@ -496,6 +559,11 @@ def select_test_runner(
             f"--basetemp={run_dir}",
         ]
         return command, "pytest"
+
+    # WOT-2026-041h (RAMA 1): say WHY we are degrading. Without this the run
+    # only ever printed "NO TESTS RAN", which reads as "this repo has no
+    # tests" instead of "this interpreter is incomplete".
+    print(incomplete_interpreter_diagnostic(interpreter), file=sys.stderr)
 
     # Fallback: unittest discover (ignores xdist_flags and basetemp --
     # neither is meaningful for unittest).

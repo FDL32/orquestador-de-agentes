@@ -422,6 +422,19 @@ evidencia de cierre. El `cierre canonico` de un ticket exige la suite canonica
 `mark-ready` con eventos reales. Nunca presentes evidencia de loop rapido como
 handoff o cierre. Politica canonica en `prompts/orchestrator_launch_builder.md`.
 
+**Duracion de `--level all` y timeout (WOT-2026-041h).** La suite canonica tarda
+**~906s medidos** (~15 min). Muchos harness imponen un timeout por defecto de
+**900s**, asi que la corrida muere **por 6 segundos** y deja `last-run.json` con
+`exit_code: None` + `finished_at: None` -- que significa **NO TERMINO**, no
+"fallo". Usa un timeout **>= 1800s**. Coste medido de no saberlo: ~1h de sesion.
+
+**Corre la suite con el `.venv` del repo.** `resolve_test_interpreter` prefiere
+el `.venv` solo cuando el workspace activo != motor; en el caso motor cae a
+`sys.executable`, que puede ser el Python del sistema **sin las deps**. Desde
+WOT-2026-041h el runner emite un `[WARN]` nombrando ambas rutas antes de
+arrancar. Es WARN y no bloqueo a proposito: CI, tox, `uv run` y pipx son casos
+legitimos. Si lo ves, comprueba que no te faltan deps antes de fiarte del rojo.
+
 El comando `--health` proporciona un resumen operativo derivado de manifests y estado canónico.
 
 ### Auditoría de salud del sistema (periódica, tras cambios)
