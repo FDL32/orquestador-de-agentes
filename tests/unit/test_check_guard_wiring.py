@@ -72,6 +72,14 @@ EXPECTED_WIRED_REAL = {
     "check_backlog_contract",
     "check_batch_run_accounting",  # WOT-2026-025k: cableado via import estatico en batch_destination_controller.py::_batch_run_orphan_gsr_tickets y prepush_check.py::run_batch_run_accounting_check (closeout, WARN)
     "check_claude_settings_portability",
+    # WOT-2026-046f: cableado en pre-commit con stages: [commit-msg] MAS
+    # default_install_hook_types: [pre-commit, pre-push, commit-msg] -- sin esa
+    # segunda mitad `pre-commit install` no instala el hook y el guard seria una
+    # norma, no una barrera. NO es falso-WIRED: verificado en la ruta productiva
+    # con `git commit` real, par de exit-codes literal -- mensaje con mojibake ->
+    # "check commit message encoding ... Failed" y HEAD NO avanza; mensaje limpio
+    # -> Passed y el commit aterriza (3dad216 es ese control negativo).
+    "check_commit_message_encoding",
     "check_commit_worktree",
     "check_closeout_reconciliation",  # WOT-2026-024w: cableado en prepush_check.py (closeout, WARN/STRICT)
     "check_contract_backlog_reconcile",  # WOT-2026-024e: cableado en prepush_check.py (closeout, WARN/FAIL)
