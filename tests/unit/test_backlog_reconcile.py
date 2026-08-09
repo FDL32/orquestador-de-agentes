@@ -44,6 +44,7 @@ _BACKLOG = """# Backlog (cola viva)
 | Baja | WOT-2026-900e | already closed thing | motor/done | ready-for-review | - | s | - |
 | Baja | WT-2026-900f | blocked upstream | system/sec | blocked | - | s | condition:y |
 | Baja | WOT-2026-900g | blocked by an archived ticket | motor/x | blocked | WOT-2026-777z | s | - |
+| Baja | WOT-2026-900h | pending with archived blocker | motor/y | pending | WOT-2026-777z | s | - |
 
 ## Fichas detalladas (tickets vivos)
 
@@ -231,7 +232,13 @@ def test_reconcile_set_is_pending_deferred_completedpartial(tmp_path, monkeypatc
     """DoD-b: only pending/deferred/completed-partial; excludes blocked/terminal/ficha."""
     _rc, findings, _m, _w, _o = _run_main(tmp_path, monkeypatch)
     ids = {t["ticket_id"] for t in findings["tickets"]}
-    assert ids == {"WOT-2026-900a", "WOT-2026-900b", "WOT-2026-900c", "WOT-2026-900d"}
+    assert ids == {
+        "WOT-2026-900a",
+        "WOT-2026-900b",
+        "WOT-2026-900c",
+        "WOT-2026-900d",
+        "WOT-2026-900h",
+    }
     assert "WOT-2026-900e" not in ids  # ready-for-review
     assert "WT-2026-900f" not in ids  # blocked
 
@@ -625,11 +632,70 @@ def test_041f_cross_f_reaches_findings_through_collect_all(tmp_path, monkeypatch
         for d in findings["divergences"]
         if d["kind"] == "blocked_with_offqueue_blocker"
     ]
-    assert len(offqueue) == 1, (
-        "the blocked row with an off-queue blocker must reach findings.json "
-        f"through _collect_all; got {offqueue}"
+    assert len(offqueue) == 2, (
+        "the blocked row AND the pending row with off-queue blockers must reach "
+        f"findings.json through _collect_all; got {offqueue}"
     )
     assert offqueue[0]["ticket_id"] == "WOT-2026-900g"
     assert [b["blocker"] for b in offqueue[0]["blockers"]] == ["WOT-2026-777z"]
+    assert offqueue[1]["ticket_id"] == "WOT-2026-900h"
+    assert [b["blocker"] for b in offqueue[1]["blockers"]] == ["WOT-2026-777z"]
     # The '-' blocked row never becomes a divergence (no blocker declared).
     assert all(d["ticket_id"] != "WT-2026-900f" for d in findings["divergences"])
+
+
+def test_046g_pending_row_with_archived_blocker_is_divergence(tmp_path, monkeypatch):
+    """WOT-2026-046g: pending rows with archived blockers are flagged.
+
+    The fixture row WOT-2026-900h is 'pending' with dependency on WOT-2026-777z,
+    which is absent from the live table. Before WOT-2026-046g, only 'blocked'
+    rows were checked; now pending/CP rows with dependencies are also checked.
+    """
+    motor = _fake_motor(tmp_path)
+    ws = _fake_workspace(tmp_path)
+    monkeypatch.setattr(br, "_run", _fake_run_factory(motor, ws))
+    out_dir = tmp_path / "out"
+    rc = br.main(
+        ["--motor-root", str(motor), "--project-root", str(ws), "--out", str(out_dir)]
+    )
+    assert rc == 0
+    findings = json.loads((out_dir / "findings.json").read_text(encoding="utf-8"))
+
+    offqueue = [
+        d
+        for d in findings["divergences"]
+        if d["kind"] == "blocked_with_offqueue_blocker"
+    ]
+    ticket_ids = [d["ticket_id"] for d in offqueue]
+    # WOT-2026-900h (pending with archived blocker) must appear
+    assert "WOT-2026-900h" in ticket_ids, (
+        "pending row with archived blocker must be flagged as divergence; "
+        f"got divergences: {offqueue}"
+    )
+    # WOT-2026-900g (blocked with archived blocker) must still appear
+    assert "WOT-2026-900g" in ticket_ids
+    # The pending row with '-' must NOT appear
+    assert all(d["ticket_id"] != "WOT-2026-900a" for d in findings["divergences"])
+
+
+def test_046g_pending_row_with_live_blocker_not_flagged(tmp_path, monkeypatch):
+    """ANTI-FALSE-POSITIVE: pending row whose blocker IS live must not be flagged."""
+    motor = _fake_motor(tmp_path)
+    ws = _fake_workspace(tmp_path)
+    # Add a pending row whose blocker IS in the live queue
+    backlog = (ws / ".agent" / "collaboration" / "backlog.md").read_text(
+        encoding="utf-8"
+    )
+    backlog += "| Baja | WOT-2026-900i | pending with live blocker | motor/z | pending | WOT-2026-900a | s | - |\n"
+    (ws / ".agent" / "collaboration" / "backlog.md").write_text(
+        backlog, encoding="utf-8"
+    )
+    monkeypatch.setattr(br, "_run", _fake_run_factory(motor, ws))
+    out_dir = tmp_path / "out"
+    rc = br.main(
+        ["--motor-root", str(motor), "--project-root", str(ws), "--out", str(out_dir)]
+    )
+    assert rc == 0
+    findings = json.loads((out_dir / "findings.json").read_text(encoding="utf-8"))
+    # WOT-2026-900i must NOT appear in divergences (blocker is live)
+    assert all(d["ticket_id"] != "WOT-2026-900i" for d in findings["divergences"])

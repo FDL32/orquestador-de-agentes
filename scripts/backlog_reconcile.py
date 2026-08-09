@@ -491,10 +491,14 @@ def _collect_all(
         if len(cells) != _EXPECTED_COLS:
             continue  # the contract gate owns shape validation; skip malformed rows
         status = cells[_COL_STATUS]
-        # Cross (f) runs on 'blocked' rows, which never enter reconciliation --
-        # that is precisely why nobody was checking their blockers.
-        if status == _BLOCKED_STATE:
-            offqueue = _signal_blocker_offqueue(cells[_COL_DEPENDS], live_ids)
+        depends_cell = cells[_COL_DEPENDS]
+        # Cross (f): check for off-queue blockers on:
+        # 1. 'blocked' rows (original logic -- never enter reconciliation)
+        # 2. 'pending'/'completed-partial' rows with a non-empty dependency cell
+        #    (WOT-2026-046g: these may be silently unblocked)
+        has_dependency = depends_cell and depends_cell.strip() not in ("", "-")
+        if status == _BLOCKED_STATE or (status in RECONCILE_STATES and has_dependency):
+            offqueue = _signal_blocker_offqueue(depends_cell, live_ids)
             if offqueue:
                 divergences.append(
                     {
