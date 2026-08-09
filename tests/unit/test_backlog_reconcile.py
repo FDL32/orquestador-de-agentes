@@ -632,14 +632,12 @@ def test_041f_cross_f_reaches_findings_through_collect_all(tmp_path, monkeypatch
         for d in findings["divergences"]
         if d["kind"] == "blocked_with_offqueue_blocker"
     ]
-    assert len(offqueue) == 2, (
-        "the blocked row AND the pending row with off-queue blockers must reach "
-        f"findings.json through _collect_all; got {offqueue}"
+    assert len(offqueue) == 1, (
+        "the blocked row with an off-queue blocker must reach findings.json "
+        f"through _collect_all; got {offqueue}"
     )
     assert offqueue[0]["ticket_id"] == "WOT-2026-900g"
     assert [b["blocker"] for b in offqueue[0]["blockers"]] == ["WOT-2026-777z"]
-    assert offqueue[1]["ticket_id"] == "WOT-2026-900h"
-    assert [b["blocker"] for b in offqueue[1]["blockers"]] == ["WOT-2026-777z"]
     # The '-' blocked row never becomes a divergence (no blocker declared).
     assert all(d["ticket_id"] != "WT-2026-900f" for d in findings["divergences"])
 
@@ -661,19 +659,27 @@ def test_046g_pending_row_with_archived_blocker_is_divergence(tmp_path, monkeypa
     assert rc == 0
     findings = json.loads((out_dir / "findings.json").read_text(encoding="utf-8"))
 
-    offqueue = [
+    # pending/CP rows use 'pending_with_offqueue_blocker' kind
+    pending_offqueue = [
+        d
+        for d in findings["divergences"]
+        if d["kind"] == "pending_with_offqueue_blocker"
+    ]
+    pending_ids = [d["ticket_id"] for d in pending_offqueue]
+    # WOT-2026-900h (pending with archived blocker) must appear
+    assert "WOT-2026-900h" in pending_ids, (
+        "pending row with archived blocker must be flagged as divergence; "
+        f"got divergences: {pending_offqueue}"
+    )
+    # blocked rows still use 'blocked_with_offqueue_blocker' kind
+    blocked_offqueue = [
         d
         for d in findings["divergences"]
         if d["kind"] == "blocked_with_offqueue_blocker"
     ]
-    ticket_ids = [d["ticket_id"] for d in offqueue]
-    # WOT-2026-900h (pending with archived blocker) must appear
-    assert "WOT-2026-900h" in ticket_ids, (
-        "pending row with archived blocker must be flagged as divergence; "
-        f"got divergences: {offqueue}"
-    )
+    blocked_ids = [d["ticket_id"] for d in blocked_offqueue]
     # WOT-2026-900g (blocked with archived blocker) must still appear
-    assert "WOT-2026-900g" in ticket_ids
+    assert "WOT-2026-900g" in blocked_ids
     # The pending row with '-' must NOT appear
     assert all(d["ticket_id"] != "WOT-2026-900a" for d in findings["divergences"])
 

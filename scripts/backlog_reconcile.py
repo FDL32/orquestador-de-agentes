@@ -500,17 +500,32 @@ def _collect_all(
         if status == _BLOCKED_STATE or (status in RECONCILE_STATES and has_dependency):
             offqueue = _signal_blocker_offqueue(depends_cell, live_ids)
             if offqueue:
+                # WOT-2026-046g: use different kind for pending/CP rows vs blocked rows
+                kind = (
+                    "blocked_with_offqueue_blocker"
+                    if status == _BLOCKED_STATE
+                    else "pending_with_offqueue_blocker"
+                )
+                note = (
+                    (
+                        "SIGNAL, not verdict: the blocker may be archived "
+                        "(row silently unblocked) or a typo. Opposite "
+                        "consequences -- the agent resolves it."
+                    )
+                    if status == _BLOCKED_STATE
+                    else (
+                        "SIGNAL, not verdict: a pending/CP row declares a blocker "
+                        "that is not in the live queue. The blocker may be archived "
+                        "(dependency satisfied) or a typo. The agent resolves it."
+                    )
+                )
                 divergences.append(
                     {
-                        "kind": "blocked_with_offqueue_blocker",
+                        "kind": kind,
                         "ticket_id": cells[_COL_TICKET],
                         "status": status,
                         "blockers": offqueue,
-                        "note": (
-                            "SIGNAL, not verdict: the blocker may be archived "
-                            "(row silently unblocked) or a typo. Opposite "
-                            "consequences -- the agent resolves it."
-                        ),
+                        "note": note,
                     }
                 )
         if status not in RECONCILE_STATES:
